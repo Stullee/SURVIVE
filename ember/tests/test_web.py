@@ -189,14 +189,15 @@ def test_dashboard_payload(ingress_client: TestClient) -> None:
     assert "mock" not in data
     for key in ("agent", "economy", "ledger", "memorial", "lives", "transitions", "system", "events"):
         assert key in data
-    # No wake cycle has run yet; the agent's sections are real but empty. Owner actions arrive in phase 4.
+    # No wake cycle has run yet; the agent's sections are real but empty.
     assert data["system"]["agent_error"] is None
     assert data["now"] is None
     for key in ("projects", "activity", "approvals", "inbox", "upgrades"):
         assert data[key] == []
     assert set(data["mind"]) == {"strategy", "identity", "lessons", "journal"}
     assert data["mind"]["strategy"].startswith("# Strategy")
-    assert data["coming_in_phase"] == {"owner_actions": 4}
+    assert data["coming_in_phase"] == {}
+    assert data["badges"] == {"approvals_pending": 0, "approvals_todo": 0, "inbox_unread": 0, "upgrades_new": 0}
     assert data["agent"]["cycles_enabled"] is False  # tests switch the scheduler off
     assert len(data["economy"]["days"]) == 30
     assert data["agent"]["state"] == "alive"

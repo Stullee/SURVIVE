@@ -29,8 +29,8 @@ router = APIRouter()
 
 _INDEX_TEMPLATE = (WEB_DIR / "index.html").read_text(encoding="utf-8")
 
-# What arrives with a later phase: the owner's buttons on approvals, inbox and upgrades (phase 4).
-COMING_IN_PHASE = {"owner_actions": 4}
+# Sections still waiting for a later phase (none since 0.3.0; kept for pages loaded from older versions).
+COMING_IN_PHASE: dict[str, int] = {}
 UNAVAILABLE = JSONResponse({"error": "the economy is not available, see the system log"}, status_code=503)
 
 
