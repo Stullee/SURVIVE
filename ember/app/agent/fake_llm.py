@@ -19,12 +19,21 @@ What the rest of Ember can rely on:
   ``flaky`` call counter and a test script carry state from one call to the next.
 * Standard library only; no sockets, subprocesses or threads, so it runs inside ``netguard.sealed()``.
 
+The fake can't understand what its owner writes, but it never ignores it. Messages from the owner in the
+planner's ``SINCE YOUR LAST WAKE`` section put "Answer my owner's message" first in the plan; with messages
+in the act brief's ``FROM YOUR OWNER`` section, the first act turn is a ``message_owner`` reply that quotes
+the latest one and says plainly that it comes from the dry-run fake model, which can't answer it (with dry
+run off, Claude does). That reply is the cycle's only message to the owner. The owner's decisions are
+acknowledged in the plan's assessment, the reply and the journal. Only those two sections are read, never
+tool results, and their quoted parts are parsed as JSON.
+
 Scenarios (the ``scenario`` argument; the app takes it from ``EMBER_FAKE_SCENARIO`` and the delay from
 ``EMBER_FAKE_DELAY_MS``):
 
 ``founder``    the default script: plan, list the workspace, research, write a draft, update the project,
                every third cycle ask to publish (disclosed as AI-written), sleep, report, reflect.
-``idle``       every plan has no steps (an idle cycle is one cheap call).
+``idle``       every plan has no steps (an idle cycle is one cheap call), unless the owner wrote: then the
+               only step is answering.
 ``drain``      replies close to ``max_tokens`` and many steps, so money runs out: critical, will, death.
 ``flaky``      every 4th call fails: not sent, HTTP 529 or interrupted with partial usage (in that order).
 ``chaos``      misbehaves often: path traversal, oversized writes, unknown tools, wrong input types, a
@@ -104,6 +113,14 @@ CHAOS: dict[str, tuple[str, ...]] = {
     "will": ("cut_off", "empty"),
 }
 _OPEN_STATUSES = ("idea", "active", "waiting")
+NEWS_SECTION = "SINCE YOUR LAST WAKE"  # the planner context's news
+OWNER_SECTION = "FROM YOUR OWNER"  # the act brief's news (the same lines)
+ANSWER_STEP = "Answer my owner's message"
+QUOTE_CHARS = 120
+DRY_RUN_REPLY = (
+    "This reply comes from Ember's built-in fake model in dry run: it can't really understand or answer your "
+    "message. With dry run off, Claude reads and answers your messages."
+)
 
 
 # --- scripted turns (tests) ---
@@ -520,6 +537,13 @@ _CREATE_STEP = re.compile(r"Create a project: (.+)")
 _QUESTION = re.compile(r"^Question: (.+)$", re.MULTILINE)
 _READ_PAGE = re.compile(r"^Read this page: (\S+)", re.MULTILINE)
 _SUSPICIOUS = re.compile(r"ignore|spend_money|options\.json|api key|admin mode|system notice", re.IGNORECASE)
+_MESSAGE_LINE = re.compile(r"Message from your owner \(([^()\n]*)\): ")
+_REQUEST_HEAD = re.compile(r"Request #(\d+) \([a-z_]+\) ")
+_UPGRADE_HEAD = re.compile(r"Upgrade request #(\d+) ")
+_DECIDED = re.compile(r": ([a-z]+(?: [a-z]+)*?)(?: in version (\d+\.\d+\.\d+))?(?:\.|$)")
+_UNSAFE = re.compile(r"[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]")  # what tools refuse, and every line break
+_JSON = json.JSONDecoder()
+_ANSWER = "answer my owner"  # in a plan step or goal: the cycle answers the owner
 
 
 @dataclass(frozen=True)
@@ -539,6 +563,80 @@ def parse_focus(text: str) -> Project | None:
     """The act brief's ``Focus project: #3 Title [active]`` line."""
     match = _FOCUS.search(text)
     return Project(int(match[1]), match[3] or "active", match[2].strip()) if match else None
+
+
+@dataclass(frozen=True)
+class OwnerMessage:
+    created_at: str
+    text: str | None  # None if the line was cut where the text can't be read
+
+
+@dataclass(frozen=True)
+class Decision:
+    """The owner's decision on an approval or upgrade request, as a news line tells it."""
+
+    upgrade: bool
+    id: int
+    title: str
+    status: str  # as written: "approved with changes", "released", ...
+    version: str = ""
+
+
+@dataclass(frozen=True)
+class OwnerNews:
+    messages: tuple[OwnerMessage, ...] = ()
+    decisions: tuple[Decision, ...] = ()
+
+
+def section(text: str, title: str) -> str | None:
+    """The body of the first ``== title ==`` section, up to the next heading."""
+    match = re.search(rf"^== {re.escape(title)} ==\n(.*?)(?=\n== |\Z)", text, re.MULTILINE | re.DOTALL)
+    return match[1] if match else None
+
+
+def owner_news(text: str, title: str) -> OwnerNews:
+    """The owner's messages and decisions in one section (``SINCE YOUR LAST WAKE`` or ``FROM YOUR OWNER``).
+
+    Only lines in the exact shapes the context writes count, and their quoted parts are JSON, read with
+    ``json``. A section cut to its budget (``…[N bytes cut]``) simply has fewer lines.
+    """
+    messages: list[OwnerMessage] = []
+    decisions: list[Decision] = []
+    for line in (section(text, title) or "").splitlines():
+        match = _MESSAGE_LINE.match(line)
+        if match:
+            messages.append(OwnerMessage(match[1], _json_text(line[match.end() :])))
+            continue
+        decision = _decision(line)
+        if decision is not None:
+            decisions.append(decision)
+    return OwnerNews(tuple(messages), tuple(decisions))
+
+
+def _decision(line: str) -> Decision | None:
+    upgrade = _UPGRADE_HEAD.match(line)
+    head = upgrade or _REQUEST_HEAD.match(line)
+    if head is None:
+        return None
+    try:
+        title, end = _JSON.raw_decode(line, head.end())
+    except ValueError:
+        return None
+    decided = _DECIDED.match(line, end)
+    if not isinstance(title, str) or decided is None:
+        return None
+    return Decision(upgrade is not None, int(head[1]), title, decided[1], decided[2] or "")
+
+
+def _json_text(raw: str) -> str | None:
+    """The JSON string that makes up the rest of a line; one cut short gets its closing quote back."""
+    for candidate in [raw, *(raw[:end] + '"' for end in range(len(raw), max(0, len(raw) - 6), -1))]:
+        try:
+            value = json.loads(candidate)
+        except ValueError:
+            continue
+        return value if isinstance(value, str) else None
+    return None
 
 
 @dataclass
@@ -871,13 +969,23 @@ class FakeTransport:
         cycle = int(last[1]) + 1 if last else 1
         open_ = [p for p in parse_projects(context) if p.status in _OPEN_STATUSES]
         focus = next((p for p in open_ if p.status == "active"), open_[0] if open_ else None)
+        news = owner_news(context, NEWS_SECTION)
+        heard = _heard(news)
+        answer = [ANSWER_STEP if len(news.messages) == 1 else "Answer my owner's messages"] if news.messages else []
         if self.scenario == "idle":
+            rest, goal = (
+                ("Nothing else is worth spending money on right now.", "Answer my owner, then save money.")
+                if news.messages
+                else (
+                    "Nothing is worth spending money on right now; sleeping is the cheapest useful thing to do.",
+                    "Save money and wait for news from my owner.",
+                )
+            )
             return {
-                "assessment": f"I am {state} with ${balance}. {len(open_)} open project(s). Nothing is worth "
-                "spending money on right now; sleeping is the cheapest useful thing to do.",
-                "goal": "Save money and wait for news from my owner.",
+                "assessment": f"I am {state} with ${balance}. {len(open_)} open project(s). {heard}{rest}"[:600],
+                "goal": goal,
                 "focus_project_id": focus.id if focus else None,
-                "steps": [],
+                "steps": answer,
                 "sleep_minutes": rng.choice([480, 720, 1_440]),
             }
         taken = {p.title.lower() for p in open_}
@@ -900,9 +1008,9 @@ class FakeTransport:
         )
         if cycle % 3 == 0 and not critical:
             steps.append("Ask my owner to approve publishing a short listing, disclosed as written by an AI")
-        if ("Message from your owner" in context or rng.random() < 0.25) and len(steps) < 5:
+        if not news.messages and rng.random() < 0.25 and len(steps) < 5:
             steps.append("Send my owner a short progress message")
-        steps = [s[:200] for s in steps[:5]]
+        steps = answer + [s[:200] for s in steps[:5]]  # answering the owner comes first
         where = (
             f"{len(open_)} open project(s); the most promising is #{focus.id} {focus.title}."
             if focus
@@ -910,8 +1018,8 @@ class FakeTransport:
         )
         plan = {
             "assessment": (
-                f"I am {state} with a balance of ${balance}. {where} Revenue only counts when my owner records it, "
-                "so the aim is a concrete draft my owner can judge."
+                f"I am {state} with a balance of ${balance}. {heard}{where} Revenue only counts when my owner records "
+                "it, so the aim is a concrete draft my owner can judge."
                 + (" Money is short: cheap steps only." if critical else "")
             )[:600],
             "goal": (
@@ -963,7 +1071,9 @@ class FakeTransport:
     def _remaining_turns(self, conv: _Conversation, crng: random.Random) -> list[list[str]]:
         """The cycle's planned turns (stage names) that haven't been attempted yet."""
         plan = _PLAN_SECTION.search(conv.brief)
-        steps = plan[1].lower() if plan else ""
+        lines = (plan[1].lower() if plan else "").splitlines()
+        answering = any(_ANSWER in line for line in lines)
+        steps = "\n".join(line for line in lines if _ANSWER not in line)
         wanted = {
             "research": "research" in steps,
             "write": "write" in steps,
@@ -971,10 +1081,16 @@ class FakeTransport:
             "approval": "approv" in steps,
             "message": "message" in steps,
         }
-        if not any(wanted.values()):  # no plan we understand: the default founder cycle
+        only_answering = answering and not any(wanted.values())
+        if not any(wanted.values()) and not answering:  # no plan we understand: the default founder cycle
             wanted = dict.fromkeys(("research", "write", "update"), True)
             wanted["approval"] = crng.random() < 1 / 3
             wanted["message"] = crng.random() < 0.25
+        # The owner wrote (or the plan says so, though the brief lost their words): answer first, and let the
+        # answer be this cycle's only message to them.
+        reply = answering or bool(owner_news(conv.brief, OWNER_SECTION).messages)
+        if reply:
+            wanted["message"] = False
         if self.scenario == "drain":
             sequence = ["research", "write", "research", "append", "research", "append", "update"]
         else:
@@ -982,7 +1098,9 @@ class FakeTransport:
             if self.scenario == "injection" and wanted["write"]:
                 sequence.insert(sequence.index("write") + 1, "reread")
         sequence.append("sleep")
-        turns = [["survey"] if conv.focus else ["survey", "create"]]
+        turns = [["reply"]] if reply else []
+        if not only_answering:
+            turns.append(["survey"] if conv.focus else ["survey", "create"])
         pairable = {"update", "approval", "message", "sleep"}
         for stage in sequence:
             last = turns[-1]
@@ -1009,6 +1127,8 @@ class FakeTransport:
         path = f"projects/{slug(idea.title)}.md"
         if stage == "survey":
             return "workspace_list", {}
+        if stage == "reply":
+            return "message_owner", {"text": owner_reply(owner_news(conv.brief, OWNER_SECTION))}
         if stage == "create":
             return "project_create", {
                 "title": idea.title,
@@ -1311,6 +1431,7 @@ class FakeTransport:
 
 _STAGE_TOOLS = {
     "survey": "workspace_list",
+    "reply": "message_owner",
     "create": "project_create",
     "research": "research",
     "write": "workspace_write",
@@ -1323,6 +1444,7 @@ _STAGE_TOOLS = {
 }
 _INTROS = {
     "survey": "First I'll look at what is already in my workspace.",
+    "reply": "My owner wrote to me, so I'll answer first.",
     "research": "Before writing anything, I'll check what already exists and what it costs.",
     "write": "Now I'll write a first draft.",
     "update": "I'll record what I did on the project.",
@@ -1456,6 +1578,54 @@ def last_will_text(context: str, rng: random.Random) -> str:
     return "\n".join(lines)
 
 
+def owner_reply(news: OwnerNews) -> str:
+    """The answer to the owner's messages: it quotes the latest and says plainly that the fake can't answer it."""
+    latest = news.messages[-1].text if news.messages else None
+    quote = _quote(latest or "", QUOTE_CHARS)
+    parts = [f'You wrote: "{quote}"' if quote else "Thank you for your message."]
+    if len(news.messages) > 1:
+        parts[0] += f" (the latest of your {len(news.messages)} messages)"
+    if news.decisions:
+        parts.append(" ".join(acknowledge(d, to_owner=True) for d in news.decisions[:4]))
+    parts.append(DRY_RUN_REPLY)
+    return "\n\n".join(parts)
+
+
+def acknowledge(decision: Decision, to_owner: bool = False) -> str:
+    """One sentence on the owner's decision, e.g. "My owner approved request #3 "Post" with changes; …"."""
+    who, whose = ("You", "your") if to_owner else ("My owner", "their")
+    what = f'{"upgrade request" if decision.upgrade else "request"} #{decision.id} "{_quote(decision.title, 60)}"'
+    sentences = {
+        "approved": f"{who} approved {what}.",
+        "approved with changes": f"{who} approved {what} with changes; I'd use {whose} version.",
+        "rejected": f"{who} rejected {what}; I won't pursue it as it was.",
+        "done": f"{who} carried out {what}.",
+        "failed": f"{who} tried {what}, but it failed.",
+        "accepted": f"{who} accepted {what}.",
+        "declined": f"{who} declined {what}.",
+        "released": f"{who} released {what}" + (f" in version {decision.version}." if decision.version else "."),
+    }
+    return sentences.get(decision.status, f"{what[0].upper()}{what[1:]}: {decision.status}.")
+
+
+def _heard(news: OwnerNews) -> str:
+    """What a plan's assessment says about the owner's news ("" if there is none)."""
+    parts = []
+    if news.messages:
+        count = len(news.messages)
+        parts.append(f"My owner sent me {'a message' if count == 1 else f'{count} messages'}; I'll answer first.")
+    parts += [acknowledge(d) for d in news.decisions[:2]]
+    if len(news.decisions) > 2:
+        parts.append(f"There is news on {len(news.decisions) - 2} more of my requests.")
+    return "".join(f"{part} " for part in parts)
+
+
+def _quote(text: str, limit: int) -> str:
+    """Text on one line, without the characters tools refuse, cut to ``limit`` characters."""
+    flat = " ".join(_UNSAFE.sub(" ", text).split())
+    return flat if len(flat) <= limit else flat[:limit].rstrip() + "…"
+
+
 def _journal(conv: _Conversation, short: bool = False) -> dict[str, str]:
     act = conv.of("act")
     ok = [c for c in act if not c.error and c.result is not None]
@@ -1464,6 +1634,9 @@ def _journal(conv: _Conversation, short: bool = False) -> dict[str, str]:
     topic = f"#{focus.id} {focus.title}" if focus else "this cycle"
     summary = f"Worked on {topic}: {len(ok)} of {len(act)} tool calls worked"[:240]
     lines = ["What I did:", *(f"- {_describe(c)}" for c in ok[:8])] if ok else ["I did not get any tool call done."]
+    decisions = owner_news(conv.brief, OWNER_SECTION).decisions
+    if decisions:  # first, so a shortened entry keeps them
+        lines = ["News from my owner:", *(f"- {acknowledge(d)}" for d in decisions[:4]), *lines]
     if failed:
         lines += ["What didn't work:", *(f"- {c.name}: {(c.result or '')[:160]}" for c in failed[:4])]
     lines += ["Next: keep the next step small and check demand before writing more."]
@@ -1481,7 +1654,9 @@ def _describe(call: _Call) -> str:
         "workspace_write": f"wrote {args.get('path')}",
         "project_update": f"updated project #{args.get('project_id')}",
         "request_approval": "asked my owner to approve a publish request (nothing happens until they decide)",
-        "message_owner": "sent my owner a short message",
+        "message_owner": "answered my owner's message (a simulated reply: the fake model can't really answer it)"
+        if DRY_RUN_REPLY in str(args.get("text"))
+        else "sent my owner a short message",
         "set_sleep": f"asked to sleep {args.get('minutes')} min",
     }.get(call.name, f"used {call.name}")
 
