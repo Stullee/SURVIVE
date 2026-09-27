@@ -24,7 +24,7 @@ from typing import Any
 
 from ..db import Database
 from ..economy.clock import Clock, to_iso
-from . import store
+from . import netguard, store
 from .memory import Memory, MemoryError_
 from .sandbox import Jail, SandboxError
 from .store import OPEN_STATUSES, AgentScope
@@ -323,7 +323,8 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
         if name == "research":
             outcome = handler(ctx, args)
         else:
-            with ctx.db.transaction() as conn:
+            # Tool handlers never need the network, in live mode too (only the model calls do).
+            with ctx.db.transaction() as conn, netguard.sealed():
                 outcome = handler(ctx, args, conn)
                 if outcome.ok:
                     ctx.state.counts[name] = ctx.state.counts.get(name, 0) + 1

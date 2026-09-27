@@ -41,15 +41,19 @@ def cycles_enabled_by_env() -> bool:
     return os.environ.get("EMBER_SCHEDULER", "").strip().lower() not in ("off", "0", "false", "no")
 
 
-def select_transport(mode: str, session: int, stop: threading.Event | None = None) -> Transport:
-    """The only place a model transport is chosen: the fake in dry run; nothing live until phase 5."""
+def select_transport(mode: str, session: int, stop: threading.Event | None = None, api_key: str = "") -> Transport:
+    """The only place a model transport is chosen: the fake in dry run, the Anthropic API live."""
     if mode == "dry_run":
         from .fake_llm import FakeTransport
 
         scenario = os.environ.get("EMBER_FAKE_SCENARIO", "founder").strip() or "founder"
         delay = int(os.environ.get("EMBER_FAKE_DELAY_MS", "800") or 0)
         return FakeTransport(seed=session, scenario=scenario, delay_ms=delay, stop=stop)
-    return OfflineTransport(simulated=False)
+    if not api_key:
+        return OfflineTransport(simulated=False)
+    from ..economy.anthropic_transport import AnthropicTransport
+
+    return AnthropicTransport(api_key, stop)
 
 
 @dataclass(frozen=True)
@@ -77,7 +81,9 @@ class Agent:
         self.mode = economy.mode
         self.stop = threading.Event()
         self.cycles_enabled = cycles_enabled_by_env() if cycles_enabled is None else cycles_enabled
-        self.transport = transport or select_transport(self.mode, economy.life.session(), self.stop)
+        self.transport = transport or select_transport(
+            self.mode, economy.life.session(), self.stop, self.settings.anthropic_api_key.get_secret_value()
+        )
         self.meter: MeteredModel = economy.metered(self.transport)
         self.wake_requested = False
         self.last_wake_request: datetime | None = None
@@ -150,8 +156,11 @@ class Agent:
         """Why no cycle can run at all right now (None if one could)."""
         if not self.cycles_enabled:
             return "Wake cycles are switched off (EMBER_SCHEDULER=off)"
-        if self.mode == "live":
-            return "Live wake cycles arrive in phase 5; switch dry run on to watch the agent work"
+        if self.mode == "live" and not self.settings.anthropic_api_key.get_secret_value():
+            return "Live mode needs the Anthropic API key in the app options"
+        api_blocked = getattr(self.transport, "blocked", None)
+        if api_blocked:
+            return api_blocked
         if not self.economy.health.lock_held:
             return "Another Ember process is using the data folder"
         if self.economy.health.broken:

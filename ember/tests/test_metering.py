@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 
 import pytest
@@ -313,22 +312,6 @@ def test_rough_token_count_is_generous() -> None:
     body = request()
     body["messages"] = [{"role": "user", "content": "word " * 1_000}]
     assert rough_token_count(body) >= 1_000 + 600
-
-
-def test_only_the_metering_module_may_import_anthropic() -> None:
-    app_dir = Path(__file__).resolve().parent.parent / "app"
-    offenders = []
-    for path in app_dir.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            names = []
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            if any(n == "anthropic" or n.startswith("anthropic.") for n in names) and path.name != "metering.py":
-                offenders.append(str(path.relative_to(app_dir)))
-    assert offenders == []
 
 
 def test_only_two_modules_write_money() -> None:

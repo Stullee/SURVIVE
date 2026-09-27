@@ -13,9 +13,9 @@ is exactly one HTTP request (the client never retries on its own; a retry or a
    ``api_cost`` ledger row.
 
 The transport is picked from the mode, so a dry run can never reach the real
-API: the fake model (phase 3) is ``simulated``, the Anthropic transport
-(phase 5) is not, and every row records which one ran. This is the only module
-that may ever import the ``anthropic`` package.
+API: the fake model (agent/fake_llm.py) is ``simulated``, the Anthropic
+transport (anthropic_transport.py, the only module that imports the
+``anthropic`` package) is not, and every row records which one ran.
 """
 
 from __future__ import annotations

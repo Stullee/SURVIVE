@@ -17,6 +17,11 @@
 unset SUPERVISOR_TOKEN HASSIO_TOKEN
 rm -f /run/s6/container_environment/SUPERVISOR_TOKEN /run/s6/container_environment/HASSIO_TOKEN
 
+# The Anthropic SDK reads these; none may redirect the agent's model calls or add
+# headers to them. The transport ignores proxies anyway and only reaches api.anthropic.com.
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy NO_PROXY no_proxy
+for name in $(env | sed -n 's/^\(ANTHROPIC_[A-Z0-9_]*\)=.*/\1/p'); do unset "$name"; done
+
 bashio::log.info "Starting Ember..."
 cd /opt/ember || bashio::exit.nok "Ember is not installed in /opt/ember"
 exec python3 -m app

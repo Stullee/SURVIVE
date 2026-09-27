@@ -8,8 +8,8 @@ so a bug in a tool handler (or anything it calls) can't reach the network or
 start another program. The web server, the database and the rest of the app
 are not affected.
 
-In phase 5 the real model transport needs the network, so only the tool
-handlers are sealed there.
+In live mode the model transport needs the network, so only the tool
+handlers are sealed there (tools.run seals them in both modes).
 """
 
 from __future__ import annotations
