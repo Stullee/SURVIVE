@@ -243,6 +243,8 @@ def _scheduler(state: AppState) -> str:
             "wake_requested": agent.wake_requested,
             "running_cycle": agent.running_cycle,
             "transport": type(agent.transport).__name__,
+            "transport_simulated": getattr(agent.transport, "simulated", None),
+            "api_blocked": getattr(agent.transport, "blocked", None),
         }
         decision = agent.decide()
         data["decision_now"] = {
@@ -307,9 +309,9 @@ def _agent(state: AppState) -> str:
         for table, columns in (
             ("projects", ["id", "status", "title", "next_step", "updated_at"]),
             ("journal", ["cycle_id", "author", "summary"]),
-            ("approvals", ["id", "status", "type", "title"]),
-            ("messages", ["id", "sender", "read_at", "text"]),
-            ("upgrades", ["id", "status", "priority", "title"]),
+            ("approvals", ["id", "status", "type", "title", "version", "decided_at", "closed_at", "seen_cycle_id"]),
+            ("messages", ["id", "sender", "read_at", "seen_cycle_id", "text"]),
+            ("upgrades", ["id", "status", "priority", "title", "released_version", "seen_cycle_id"]),
         ):
             rows = conn.execute(
                 f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC LIMIT 15",
