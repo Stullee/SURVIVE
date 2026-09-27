@@ -136,6 +136,8 @@ class CycleRunner:
             min_sleep=self.settings.min_sleep_minutes,
             max_sleep=self.settings.max_sleep_minutes,
             state=state,
+            # A fetched PDF has no size limit, so reading pages costs real money only if the owner allows it.
+            allow_fetch=self.dry_run or self.settings.web_fetch,
         )
         ctx.research = self._research_fn(ctx)
         end = CycleEnd("failed", "the cycle ended unexpectedly")

@@ -52,6 +52,7 @@ options:
       cache_read: 0.2
   web_search_usd_per_1000: 10
   dry_run: true
+  web_fetch: false
   # Change this number (and restart) to re-enable an agent stopped with the kill switch.
   kill_switch_reset: 0
   log_level: info
@@ -77,5 +78,6 @@ schema:
       cache_read: float(0.000001,1000)
   web_search_usd_per_1000: float(0.000001,1000)
   dry_run: bool
+  web_fetch: bool
   kill_switch_reset: int(0,1000000)
   log_level: list(debug|info|warning|error)

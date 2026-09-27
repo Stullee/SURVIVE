@@ -70,6 +70,12 @@ configuration:
     description: >-
       On: the agent uses a built-in fake model and never calls the Anthropic
       API, so nothing costs money. Turn off only when you are ready.
+  web_fetch:
+    name: Let the agent read whole web pages
+    description: >-
+      Off: the agent can only search the web. On: it can also read pages it
+      found. PDFs have no size limit, so one read can cost more than the
+      per-cycle cap before the budget guard notices and stops the cycle.
   kill_switch_reset:
     name: Kill switch reset
     description: >-

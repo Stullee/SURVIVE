@@ -286,6 +286,7 @@ class ToolContext:
     max_sleep: int
     state: CycleTools
     research: ResearchFn | None = None
+    allow_fetch: bool = True  # the owner's web_fetch option (live mode)
     nonce: str = field(default_factory=lambda: secrets.token_hex(3))
 
     def now(self) -> str:
@@ -579,6 +580,8 @@ def _write_journal(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
 def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     url = args.get("url")
     if url is not None:
+        if not ctx.allow_fetch:
+            raise ToolError("reading whole pages is switched off by your owner; search instead")
         if not url.startswith("https://") or any(c.isspace() for c in url):
             raise ToolError("the url must start with https:// and contain no spaces")
         if url not in ctx.state.seen_urls:
