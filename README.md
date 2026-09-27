@@ -26,7 +26,8 @@ calls the Anthropic API and nothing costs money.
 2. Add `https://github.com/Stullee/SURVIVE` and close the dialog.
 3. Find **Ember** in the store, install it, and start it. The Supervisor builds
    the image on your device from `ember/Dockerfile` (a few minutes on a Raspberry Pi).
-4. Turn on **Show in sidebar** and open Ember.
+4. On the app's **Info** tab turn on **Watchdog** (restarts Ember if it crashes)
+   and **Show in sidebar**, then open Ember.
 
 Requirements: a Home Assistant installation with apps (Home Assistant OS) on amd64 or aarch64.
 
@@ -41,9 +42,10 @@ The default prices come from Anthropic's pricing page as of 2026-09-27
 1,000). **Please verify them** before switching dry run off.
 
 Both the planner and the worker default to `claude-sonnet-5`. The spec suggested
-Haiku 4.5 as a cheaper worker, but Anthropic lists it for retirement not sooner
-than 2026-10-15; to use a cheaper worker later, add its prices to the price table
-and set `worker_model`.
+Haiku 4.5 as a cheaper worker; to use it (or any other model), add its prices to
+the price table and set `worker_model`. Haiku 4.5 is not deprecated as of
+2026-09-27: Anthropic lists its retirement as "not sooner than 2026-10-15" and
+gives at least 60 days' notice before retiring a model.
 
 ## Home Assistant sensors
 
@@ -54,11 +56,17 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
 ## Security model
 
 - **Ingress only.** The server accepts connections from the Supervisor's Ingress
-  proxy (172.30.32.2) and nothing else, except `GET /api/sensors` from Home
-  Assistant Core (172.30.32.1). Enforced in `ember/app/security.py`.
+  proxy (172.30.32.2) and nothing else, except `GET /api/sensors` from the Home
+  Assistant host network (172.30.32.1: Home Assistant Core, but also apps that use
+  host networking). That endpoint only returns non-sensitive numbers. Enforced
+  in `ember/app/security.py`.
 - **Least privilege.** `homeassistant_api: false`, `hassio_api: false`, no host
   network, no mapped folders besides the app's own `/data`, no published ports.
   `ember/tests/test_manifest.py` fails if any of this is loosened.
+- **No Supervisor token.** The Supervisor hands every app a token that can
+  change the app's own options or uninstall it, even with `hassio_api: false`.
+  The s6 run script deletes it before Python starts, so nothing in the container
+  can raise its own spending caps.
 - **CSRF.** State-changing requests must carry an `X-Ember-Request: 1` header,
   which cross-site pages can't send.
 - **Strict CSP.** No inline scripts or styles; Chart.js is vendored, nothing is
@@ -85,6 +93,9 @@ EMBER_DATA_DIR=../dev/data EMBER_DEV_MODE=1 python -m app
 
 `EMBER_DATA_DIR` replaces `/data`; `EMBER_DEV_MODE=1` turns off the Ingress IP
 filter (there is no Ingress proxy locally). Never set it inside Home Assistant.
+In dev mode the server listens on 127.0.0.1 only (override with `EMBER_HOST`)
+and answers only requests addressed to `localhost`, `127.0.0.1` or `[::1]`, which
+stops other machines and DNS-rebinding web pages from reaching it.
 
 ### With docker-compose
 

@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import LoadedSettings, Settings, load_settings
-from app.security import AccessPolicy, ingress_base_href
+from app.security import AccessPolicy, ingress_base_href, is_local_host_header
 from app.version import read_version
 from tests.conftest import HA_CORE, INGRESS
 
@@ -230,23 +230,76 @@ def test_broken_database_does_not_stop_the_dashboard(client_factory: Callable, d
         assert client.get("/api/health").json()["database"] == "error"
 
 
-def test_unhandled_errors_are_logged_and_hidden(client_factory: Callable, monkeypatch) -> None:
+def test_unhandled_errors_are_logged_once_and_hidden(client_factory: Callable, monkeypatch) -> None:
     from app import mock
 
     def explode(*args, **kwargs):
         raise RuntimeError("kaboom " + KEY)
 
     monkeypatch.setattr(mock, "dashboard", explode)
-    app_settings = LoadedSettings(Settings())
-    from app.main import create_app
-
-    app = create_app(app_settings, dev_mode=False)
-    with TestClient(app, client=INGRESS, raise_server_exceptions=False) as client:
+    # The TestClient re-raises unhandled errors by default: getting a response
+    # at all shows the app handled the error itself.
+    with client_factory() as client:
         response = client.get("/api/dashboard")
         assert response.status_code == 500
-        assert "kaboom" not in response.text
+        assert response.json() == {"error": "internal error, see the system log"}
+        # Error responses carry the same security headers as everything else.
+        assert "script-src 'self'" in response.headers["content-security-policy"]
+        assert response.headers["cache-control"] == "no-store"
         events = client.get("/api/events").json()
-    logged = [e for e in events if e["level"] == "error" and "Unhandled error" in e["message"]]
-    assert logged
+    logged = [e for e in events if e["level"] == "error"]
+    assert len(logged) == 1
+    assert "Unhandled error on GET /api/dashboard" in logged[0]["message"]
     assert KEY not in json.dumps(logged)
     assert "kaboom" in json.dumps(logged)  # the traceback is kept for the owner, minus secrets
+
+
+@pytest.mark.parametrize("path", ["/api/dashboard/", "/api/sensors/", "/static", "/api/health/"])
+def test_no_redirects_out_of_ingress(ingress_client: TestClient, path: str) -> None:
+    """A redirect's absolute Location would drop the /api/hassio_ingress/<token> prefix."""
+    response = ingress_client.get(path, follow_redirects=False, headers={"Host": "homeassistant.local:8123"})
+    assert response.status_code == 404
+    assert "location" not in response.headers
+
+
+@pytest.mark.parametrize(
+    ("host", "local"),
+    [
+        ("localhost", True),
+        ("localhost:8099", True),
+        ("LOCALHOST:8099", True),
+        ("127.0.0.1:8099", True),
+        ("[::1]:8099", True),
+        ("[::1]", True),
+        ("evil.example:8099", False),
+        ("localhost.evil.example", False),
+        ("127.0.0.1.nip.io:8099", False),
+        ("192.168.1.20:8099", False),
+        ("", False),
+        (None, False),
+        ("localhost:8099:1", False),
+    ],
+)
+def test_is_local_host_header(host: str | None, local: bool) -> None:
+    assert is_local_host_header(host) is local
+
+
+def test_dev_mode_answers_localhost_only(client_factory: Callable) -> None:
+    """Blocks DNS rebinding: a web page that points its own hostname at 127.0.0.1."""
+    with client_factory(dev_mode=True, client=("172.17.0.1", 40000)) as client:
+        assert client.get("/api/dashboard", headers={"Host": "localhost:8099"}).status_code == 200
+        assert client.get("/api/dashboard", headers={"Host": "127.0.0.1:8099"}).status_code == 200
+        assert client.get("/api/dashboard", headers={"Host": "attacker.example:8099"}).status_code == 403
+        response = client.post("/api/dashboard", headers={"Host": "attacker.example:8099", "X-Ember-Request": "1"})
+        assert response.status_code == 403
+
+
+def test_refused_request_cannot_forge_log_lines(client_factory: Callable, caplog) -> None:
+    forged = "/x%0a2026-09-27 19:00:00 ERROR app.main: Anthropic API key rejected"
+    with client_factory(client=("172.30.33.9", 1234)) as client:
+        assert client.get(forged).status_code == 403
+    refused = [r.getMessage() for r in caplog.records if "Refused request" in r.getMessage()]
+    assert len(refused) == 1
+    # The decoded newline is logged as the two characters backslash + n, never as a line break.
+    assert "\n" not in refused[0]
+    assert r"/x\n2026-09-27" in refused[0]

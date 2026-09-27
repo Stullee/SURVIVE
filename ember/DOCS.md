@@ -12,11 +12,15 @@ your approval, and only you can record revenue.
 
 ## Getting started
 
-1. Start the app and open **Ember** from the sidebar (or **Open web UI**).
-2. Leave **Dry run** on. In dry run the agent uses a built-in fake model and
+1. On the app's **Info** tab, turn on **Watchdog** (Home Assistant then restarts
+   Ember if it ever crashes) and **Show in sidebar**.
+2. Start the app and open **Ember** from the sidebar (or **Open web UI**).
+3. Leave **Dry run** on. In dry run the agent uses a built-in fake model and
    never calls the API.
-3. When the agent is ready (phase 5), add your Anthropic API key, check the
-   price table against Anthropic's pricing page, and turn dry run off.
+4. When the agent is ready (phase 5), add your Anthropic API key, check the
+   price table against Anthropic's pricing page, and turn dry run off. The API
+   key field is optional, so the **Configuration** tab hides it until you turn
+   on **Show unused optional configuration options**.
 
 ## Options
 
@@ -55,13 +59,15 @@ problem shown at the top of the dashboard.
 
 Ember never calls Home Assistant. Instead, Home Assistant can read a small JSON
 document from Ember with a [RESTful sensor](https://www.home-assistant.io/integrations/sensor.rest/).
-The exact URL is shown in Ember's dashboard under **System → Sensor URL**; for a
-locally installed app it is `http://local-ember:8099/api/sensors`. Add this to
-your `configuration.yaml` and restart Home Assistant:
+The URL contains the app's internal hostname, which depends on how the app was
+installed (for example `7db9e05f-ember` from a repository, `local-ember` for a
+local copy). Copy the exact URL from Ember's dashboard under **System → Sensor
+URL**, use it as `resource` below, add this to your `configuration.yaml` and
+restart Home Assistant:
 
 ```yaml
 rest:
-  - resource: http://local-ember:8099/api/sensors
+  - resource: http://<hostname>:8099/api/sensors
     scan_interval: 300
     sensor:
       - name: Ember balance
@@ -81,9 +87,14 @@ While phase 1 is installed these values are preview data (`"mock": true`).
 
 - The dashboard is only reachable through Home Assistant Ingress, so only
   logged-in Home Assistant users can open it. Direct connections are refused.
-  The one exception is `/api/sensors`, which Home Assistant itself may read.
-- The app has no access to the Home Assistant or Supervisor API, runs without
-  host networking and maps no folders besides its own `/data`.
+  The one exception is `/api/sensors`, which can be read from the Home Assistant
+  host network (Home Assistant itself, and apps that use host networking). It
+  only contains the agent's state, balance, runway and today's spending.
+- The app has no access to the Home Assistant API, runs without host
+  networking and maps no folders besides its own `/data`. The Supervisor gives
+  every app a token for a few Supervisor endpoints about itself (such as its own
+  options); Ember removes that token at startup, so the agent can never change
+  its own settings or spending caps.
 - The API key is kept in the app options and never written to logs, the
   database or the dashboard.
 

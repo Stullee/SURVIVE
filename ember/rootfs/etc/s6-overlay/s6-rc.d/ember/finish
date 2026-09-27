@@ -1,8 +1,9 @@
 #!/command/with-contenv bashio
 # shellcheck shell=bash
 # ==============================================================================
-# Ember stopped. After a crash, stop the whole container: the Supervisor's
-# watchdog then restarts the app and the failure shows up in its log.
+# Ember stopped. After a crash, stop the whole container so the failure is
+# visible in Home Assistant; with the app's Watchdog switched on (see DOCS.md)
+# the Supervisor then restarts it.
 # ==============================================================================
 declare exit_code=${1}
 if [[ "${exit_code}" -ne 0 ]] && [[ "${exit_code}" -ne 256 ]]; then

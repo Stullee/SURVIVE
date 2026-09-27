@@ -9,4 +9,4 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-"tests/**" = ["S105", "S106", "B017"]
+"tests/**" = ["S104", "S105", "S106", "B017"]

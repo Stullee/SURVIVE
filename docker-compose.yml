@@ -11,9 +11,12 @@ services:
       context: ./ember
     image: local/ember:dev
     environment:
-      # There is no Ingress proxy here, so accept direct connections.
-      # Never set this inside Home Assistant.
+      # There is no Ingress proxy here, so accept direct connections (for a
+      # localhost Host header only). Never set this inside Home Assistant.
       EMBER_DEV_MODE: "1"
+      # Listen on all interfaces inside the container; the port below is only
+      # published on this machine's localhost.
+      EMBER_HOST: 0.0.0.0
       TZ: Europe/Berlin
     ports:
       # Bound to localhost only: the dashboard has no login of its own.

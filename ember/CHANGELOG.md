@@ -8,7 +8,7 @@
 - Your constitution has a new section, "Mindset: solutions, not obstacles": treat blockers as problems to solve
   together with your owner, inside your priorities and hard rules, and only call something impossible after
   exploring the options.
-- The worker model is now claude-sonnet-5 (same as the planner). Claude Haiku 4.5 is scheduled for retirement.
+- The worker model is now claude-sonnet-5, the same model as the planner (your owner's choice).
 - Still phase 1: the agent does not run yet and nothing calls the Anthropic API.
 
 ## 0.1.0

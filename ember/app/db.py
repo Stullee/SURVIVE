@@ -210,6 +210,15 @@ class Database:
             )
             return int(cur.lastrowid)
 
+    def prune_events(self, keep: int) -> int:
+        """Delete all but the newest ``keep`` events. Returns how many were deleted."""
+        with self.connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM events WHERE id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)",
+                (keep,),
+            )
+            return cur.rowcount
+
     def recent_events(self, limit: int = 50, min_level: str = "info") -> list[dict[str, Any]]:
         levels = ["debug", "info", "warning", "error"]
         allowed = levels[levels.index(min_level) :] if min_level in levels else levels

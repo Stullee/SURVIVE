@@ -12,15 +12,14 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
 from . import events, paths
 from .config import LoadedSettings, load_settings
-from .logging_setup import register_secret, setup_logging
-from .security import AccessPolicy, SecurityMiddleware
+from .logging_setup import printable, register_secret, setup_logging
+from .security import AccessPolicy, ASGIApp, Message, Receive, Scope, SecurityMiddleware, Send
 from .state import AppState
 from .version import app_version
 from .web import router
@@ -31,6 +30,45 @@ log = logging.getLogger(__name__)
 def dev_mode_enabled() -> bool:
     """Local development outside Home Assistant (docker-compose): no Ingress IP filter."""
     return os.environ.get("EMBER_DEV_MODE", "").strip().lower() in {"1", "true", "yes"}
+
+
+class CatchAllMiddleware:
+    """Turn any unhandled error into a logged 500 response.
+
+    It sits inside SecurityMiddleware, so error responses get the same security
+    headers as every other response, and the error is logged exactly once.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracking_send)
+        except Exception:
+            log.exception("Unhandled error on %s %s", scope["method"], printable(scope["path"], 200))
+            if started:
+                raise
+            body = b'{"error":"internal error, see the system log"}'
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 500,
+                    "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
 
 
 def create_app(loaded: LoadedSettings | None = None, *, dev_mode: bool | None = None) -> FastAPI:
@@ -50,16 +88,15 @@ def create_app(loaded: LoadedSettings | None = None, *, dev_mode: bool | None = 
                 events.uninstall(handler)
             _record(state, "info", "system", "Stopped")
 
-    app = FastAPI(title="Ember", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    # redirect_slashes=False: a redirect's absolute Location would leave the Ingress path.
+    app = FastAPI(
+        title="Ember", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan, redirect_slashes=False
+    )
+    # The middleware added last runs first: SecurityMiddleware wraps CatchAllMiddleware.
+    app.add_middleware(CatchAllMiddleware)
     app.add_middleware(SecurityMiddleware, policy=AccessPolicy(dev_mode=dev_mode))
     app.include_router(router)
     app.mount("/static", StaticFiles(directory=paths.WEB_DIR / "static"), name="static")
-
-    @app.exception_handler(Exception)
-    async def unhandled(request: Request, exc: Exception) -> JSONResponse:
-        log.error("Unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
-        return JSONResponse({"error": "internal error, see the system log"}, status_code=500)
-
     return app
 
 
@@ -74,6 +111,7 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
         state.db_error = str(exc)
         log.error("Database unavailable: %s", exc)
         return state
+    database.prune_events(events.KEEP_EVENTS)
     state.born_at = database.set_meta_if_missing("born_at", state.started_at)
     database.set_meta("last_started_at", state.started_at)
     _record(

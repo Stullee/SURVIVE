@@ -46,7 +46,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/data"
           docker run -d --name ember --platform ${{ matrix.platform }} \
-            -e EMBER_DEV_MODE=1 -v "$RUNNER_TEMP/data:/data" -p 8099:8099 local/ember:ci
+            -e EMBER_DEV_MODE=1 -e EMBER_HOST=0.0.0.0 -v "$RUNNER_TEMP/data:/data" -p 8099:8099 local/ember:ci
           for i in $(seq 1 60); do
             curl -fsS http://127.0.0.1:8099/api/health && break
             sleep 2

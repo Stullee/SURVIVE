@@ -8,6 +8,15 @@
 # bashio::config (which calls the Supervisor API), so the same image also runs
 # outside Home Assistant with docker-compose.
 # ==============================================================================
+
+# The Supervisor gives every app a token for its own Supervisor API endpoints,
+# even with hassio_api: false. With it, code in this container could change
+# Ember's options (spending caps, dry run) or restart and uninstall the app.
+# Ember never needs it, so it is removed before the Python process starts, from
+# this environment and from the s6 copy that later scripts would load.
+unset SUPERVISOR_TOKEN HASSIO_TOKEN
+rm -f /run/s6/container_environment/SUPERVISOR_TOKEN /run/s6/container_environment/HASSIO_TOKEN
+
 bashio::log.info "Starting Ember..."
 cd /opt/ember || bashio::exit.nok "Ember is not installed in /opt/ember"
 exec python3 -m app

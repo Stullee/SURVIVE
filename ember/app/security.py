@@ -3,12 +3,18 @@
 Inside Home Assistant the dashboard is only reachable through Ingress: the
 Supervisor proxies authenticated users' requests from 172.30.32.2 (it also runs
 the watchdog health check from there). Everything else is refused, with one
-exception: Home Assistant Core may read the small sensor JSON so the owner can
-set up a REST sensor. Core runs on the host network, so its requests arrive
-from the internal network's gateway address, 172.30.32.1.
+exception: ``GET /api/sensors`` is also answered for 172.30.32.1 so the owner
+can set up a REST sensor. That address is the internal network's gateway, which
+is where requests from the Home Assistant host network come from: Home Assistant
+Core itself, but also any app that runs with host networking and processes on
+the host. The sensor JSON therefore only ever contains non-sensitive numbers.
 
 State-changing requests must also carry the ``X-Ember-Request`` header, which a
 cross-site form or image tag can't add; that blocks cross-site request forgery.
+
+In local development (``EMBER_DEV_MODE``) there is no Ingress proxy, so any
+client may connect, but only with a ``localhost`` Host header: that stops a
+DNS-rebinding web page from talking to a developer's instance.
 """
 
 from __future__ import annotations
@@ -19,6 +25,8 @@ import re
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
+from .logging_setup import printable
+
 log = logging.getLogger(__name__)
 
 Scope = MutableMapping[str, Any]
@@ -28,12 +36,14 @@ Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 INGRESS_PROXY_IP = ipaddress.ip_address("172.30.32.2")
-HOME_ASSISTANT_CORE_IP = ipaddress.ip_address("172.30.32.1")
-CORE_READ_PATHS = frozenset({"/api/sensors"})
+HOST_NETWORK_GATEWAY_IP = ipaddress.ip_address("172.30.32.1")
+HOST_NETWORK_READ_PATHS = frozenset({"/api/sensors"})
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 CSRF_HEADER = "x-ember-request"
+DEV_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "[::1]"})
 
 _INGRESS_PATH = re.compile(r"/api/hassio_ingress/[A-Za-z0-9_\-]{1,128}")
+_HOST_PORT = re.compile(r"^(\[[0-9a-fA-F:.]+\]|[^:\[\]]+)(?::\d{1,5})?$")
 
 SECURITY_HEADERS: list[tuple[bytes, bytes]] = [
     (
@@ -59,6 +69,12 @@ def ingress_base_href(header_value: str | None) -> str:
     return "/"
 
 
+def is_local_host_header(value: str | None) -> bool:
+    """True for ``localhost``, ``127.0.0.1`` or ``[::1]``, with or without a port."""
+    match = _HOST_PORT.match((value or "").strip().lower())
+    return bool(match) and match.group(1) in DEV_HOSTNAMES
+
+
 class AccessPolicy:
     def __init__(self, dev_mode: bool = False) -> None:
         self.dev_mode = dev_mode
@@ -72,7 +88,7 @@ class AccessPolicy:
             return False
         if ip == INGRESS_PROXY_IP:
             return True
-        return ip == HOME_ASSISTANT_CORE_IP and method in ("GET", "HEAD") and path in CORE_READ_PATHS
+        return ip == HOST_NETWORK_GATEWAY_IP and method in ("GET", "HEAD") and path in HOST_NETWORK_READ_PATHS
 
 
 class SecurityMiddleware:
@@ -83,7 +99,9 @@ class SecurityMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "websocket":
-            # The dashboard uses no websockets; refuse them outright.
+            # The dashboard uses no websockets (and the image ships no websocket
+            # library, so uvicorn refuses upgrades itself). Refuse them here too in
+            # case a future dependency adds one.
             await send({"type": "websocket.close", "code": 1008})
             return
         if scope["type"] != "http":
@@ -96,6 +114,9 @@ class SecurityMiddleware:
         if not self.policy.allows(host, path, method):
             self._report(host, path)
             await _plain(send, 403, b"Forbidden")
+            return
+        if self.policy.dev_mode and not is_local_host_header(_header(scope, "host")):
+            await _plain(send, 403, b"Development mode only answers requests for localhost")
             return
         if method not in SAFE_METHODS and _header(scope, CSRF_HEADER) != "1":
             await _plain(send, 403, b"Missing X-Ember-Request header")
@@ -118,7 +139,11 @@ class SecurityMiddleware:
         if key in self._reported or len(self._reported) > 100:
             return
         self._reported.add(key)
-        log.warning("Refused request from %s to %s (only Home Assistant Ingress may connect)", key, path[:100])
+        log.warning(
+            "Refused request from %s to %s (only Home Assistant Ingress may connect)",
+            printable(key, 64),
+            printable(path, 100),
+        )
 
 
 def _header(scope: Scope, name: str) -> str | None:

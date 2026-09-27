@@ -10,11 +10,21 @@ from __future__ import annotations
 import logging
 import re
 import sys
+import time
+from collections.abc import Callable
 
 _KEY_PATTERN = re.compile(r"sk-ant-[A-Za-z0-9_\-]{4,}")
 _secrets: set[str] = set()
 
 _LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARNING, "error": logging.ERROR}
+
+# Warnings uvicorn logs for malformed requests, before the app sees them. Any
+# client on the internal network can trigger them, so they are rate-limited.
+CLIENT_TRIGGERED_WARNINGS = (
+    "Invalid HTTP request received",
+    "Unsupported upgrade request",
+    "No supported WebSocket library detected",
+)
 
 
 def register_secret(value: str) -> None:
@@ -31,9 +41,39 @@ def redact(text: str) -> str:
     return _KEY_PATTERN.sub("sk-ant-***", text)
 
 
+def printable(text: str, limit: int = 200) -> str:
+    """Make client-supplied text safe to put in a log line.
+
+    Control characters (newlines in particular) are escaped so a request can't
+    forge extra log lines, and the length is capped.
+    """
+    return "".join(ch if ch.isprintable() else ch.encode("unicode_escape").decode("ascii") for ch in text[:limit])
+
+
 class RedactingFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         return redact(super().format(record))
+
+
+class RepeatedWarningFilter(logging.Filter):
+    """Lets each client-triggered uvicorn warning through at most once per window."""
+
+    def __init__(self, window_seconds: float = 300.0, clock: Callable[[], float] = time.monotonic) -> None:
+        super().__init__()
+        self.window = window_seconds
+        self._clock = clock
+        self._last: dict[str, float] = {}
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        for prefix in CLIENT_TRIGGERED_WARNINGS:
+            if message.startswith(prefix):
+                now = self._clock()
+                last = self._last.get(prefix)
+                if last is not None and now - last < self.window:
+                    return False
+                self._last[prefix] = now
+        return True
 
 
 def setup_logging(level: str = "info") -> None:
@@ -51,6 +91,9 @@ def setup_logging(level: str = "info") -> None:
         uv_logger = logging.getLogger(name)
         uv_logger.handlers.clear()
         uv_logger.propagate = True
+    uvicorn_error = logging.getLogger("uvicorn.error")
+    if not any(isinstance(f, RepeatedWarningFilter) for f in uvicorn_error.filters):
+        uvicorn_error.addFilter(RepeatedWarningFilter())
     # HTTP clients log every request line at INFO; keep that out of normal logs.
     for name in ("httpx", "httpx2", "httpcore"):
         logging.getLogger(name).setLevel(logging.WARNING)

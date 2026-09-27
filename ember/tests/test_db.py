@@ -158,3 +158,14 @@ def test_transaction_rolls_back_on_error(tmp_path: Path) -> None:
 def test_utcnow_format() -> None:
     stamp = dbmod.utcnow()
     assert len(stamp) == 20 and stamp.endswith("Z") and stamp[10] == "T"
+
+
+def test_prune_events_keeps_newest(tmp_path: Path) -> None:
+    db_file = tmp_path / "ember.db"
+    migrate(db_file)
+    database = Database(db_file)
+    for i in range(12):
+        database.add_event("info", "system", f"event {i}")
+    assert database.prune_events(5) == 7
+    assert [e["message"] for e in database.recent_events()] == [f"event {i}" for i in range(11, 6, -1)]
+    assert database.prune_events(5) == 0
