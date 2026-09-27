@@ -1,0 +1,328 @@
+"""The agent as the app sees it: when to wake, running a cycle, recovery, dashboard data.
+
+``decide()`` is the single place that says whether a wake cycle runs now (and
+why not, when it doesn't); the scheduler only calls it and waits. All times come
+from the injected clock, so tests drive the agent's day with a fake clock.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import shutil
+import threading
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any
+
+from .. import events, paths
+from ..config import LoadedSettings
+from ..db import Database
+from ..economy.clock import from_iso, to_iso
+from ..economy.metering import MeteredModel, OfflineTransport, Transport, usd_cap_to_micros
+from ..economy.pricing import opening_cost
+from ..economy.service import Economy
+from . import store
+from .loop import CycleEnd, CycleRunner
+from .memory import CAPS, Memory
+from .sandbox import Jail
+from .store import AgentScope
+
+log = logging.getLogger(__name__)
+
+FIRST_WAKE_DELAY = timedelta(minutes=2)
+BOOT_GRACE = timedelta(seconds=60)
+CRASH_LOOP = 3
+MAX_WILL_ATTEMPTS = 3
+WAKE_NOW_MIN_GAP = timedelta(seconds=60)
+
+
+def cycles_enabled_by_env() -> bool:
+    return os.environ.get("EMBER_SCHEDULER", "").strip().lower() not in ("off", "0", "false", "no")
+
+
+def select_transport(mode: str, session: int, stop: threading.Event | None = None) -> Transport:
+    """The only place a model transport is chosen: the fake in dry run; nothing live until phase 5."""
+    if mode == "dry_run":
+        from .fake_llm import FakeTransport
+
+        scenario = os.environ.get("EMBER_FAKE_SCENARIO", "founder").strip() or "founder"
+        delay = int(os.environ.get("EMBER_FAKE_DELAY_MS", "800") or 0)
+        return FakeTransport(seed=session, scenario=scenario, delay_ms=delay, stop=stop)
+    return OfflineTransport(simulated=False)
+
+
+@dataclass(frozen=True)
+class Decision:
+    run: bool
+    trigger: str | None = None
+    reason: str = ""
+    wait_until: datetime | None = None
+
+
+class Agent:
+    def __init__(
+        self,
+        db: Database,
+        loaded: LoadedSettings,
+        economy: Economy,
+        transport: Transport | None = None,
+        cycles_enabled: bool | None = None,
+    ) -> None:
+        self.db = db
+        self.loaded = loaded
+        self.settings = loaded.settings
+        self.economy = economy
+        self.clock = economy.clock
+        self.mode = economy.mode
+        self.stop = threading.Event()
+        self.cycles_enabled = cycles_enabled_by_env() if cycles_enabled is None else cycles_enabled
+        self.transport = transport or select_transport(self.mode, economy.life.session(), self.stop)
+        self.meter: MeteredModel = economy.metered(self.transport)
+        self.wake_requested = False
+        self.last_wake_request: datetime | None = None
+        self.running_cycle = False
+        self._lock = threading.Lock()  # one cycle at a time in this process
+
+    # --- where things live ---
+
+    def scope(self) -> AgentScope:
+        status = self.economy.life.evaluate()
+        return AgentScope(self.mode, self.economy.life.session(), status.life_id or 0)
+
+    def roots(self) -> tuple[Jail, Jail]:
+        base = paths.data_dir() / "dry_run" if self.mode == "dry_run" else paths.data_dir()
+        return Jail(base / "workspace"), Jail(base / "memory")
+
+    def memory(self, scope: AgentScope | None = None) -> Memory:
+        return Memory(self.db, self.roots()[1], scope or self.scope())
+
+    def _key(self, name: str) -> str:
+        return f"agent.{self.mode}.{name}"
+
+    def _meta_time(self, name: str) -> datetime | None:
+        value = self.db.get_meta(self._key(name))
+        try:
+            return from_iso(value) if value else None
+        except ValueError:
+            return None
+
+    def _set_time(self, name: str, moment: datetime | None) -> None:
+        self.db.set_meta(self._key(name), to_iso(moment) if moment else "")
+
+    # --- startup ---
+
+    def recover(self) -> None:
+        """Tidy up after a crash or restart; prepare the dry-run folders and memory files."""
+        now = self.clock.now()
+        with self.db.transaction() as conn:
+            store.interrupt_open_tool_calls(conn, to_iso(now))
+        if self.mode == "dry_run":
+            self._rotate_dry_run_folders()
+        workspace, memory_root = self.roots()
+        for jail in (workspace, memory_root):
+            jail.ensure_root()
+            jail.remove_temporary_files()
+        scope = self.scope()
+        with self.db.transaction() as conn:
+            self.memory(scope).ensure(conn, to_iso(now))
+        wake = self._meta_time("next_wake_at")
+        if wake is not None and wake < now + BOOT_GRACE:
+            # Give the owner a minute to pause after an update or restart.
+            self._set_time("next_wake_at", now + BOOT_GRACE)
+
+    def _rotate_dry_run_folders(self) -> None:
+        session = str(self.economy.life.session())
+        key = "agent.dry_run.folder_session"
+        if self.db.get_meta(key) == session:
+            return
+        base = paths.data_dir() / "dry_run"
+        for name in ("workspace", "memory"):
+            current, previous = base / name, base / f"{name}.prev"
+            if current.exists():
+                shutil.rmtree(previous, ignore_errors=True)
+                current.rename(previous)
+        self.db.set_meta(key, session)
+
+    # --- deciding ---
+
+    def blocked_reason(self) -> str | None:
+        """Why no cycle can run at all right now (None if one could)."""
+        if not self.cycles_enabled:
+            return "Wake cycles are switched off (EMBER_SCHEDULER=off)"
+        if self.mode == "live":
+            return "Live wake cycles arrive in phase 5; switch dry run on to watch the agent work"
+        if not self.economy.health.lock_held:
+            return "Another Ember process is using the data folder"
+        if self.economy.health.broken:
+            return "Spending is stopped after a bookkeeping error; restart the app"
+        status = self.economy.life.evaluate()
+        if status.state not in ("alive", "critical"):
+            reasons = {
+                "paused": "The agent is paused",
+                "killed": "The agent was stopped with the kill switch",
+                "dead": "The agent is dead",
+                "unfunded": "The agent has no money yet",
+            }
+            return reasons.get(status.state, f"The agent is {status.state}")
+        return None
+
+    def decide(self, now: datetime | None = None) -> Decision:
+        now = now or self.clock.now()
+        blocked = self.blocked_reason()
+        if blocked:
+            return Decision(False, reason=blocked)
+        status = self.economy.life.evaluate()
+        if status.last_will_due and not self._gave_up_will(status.life_id):
+            retry = self._meta_time("will_retry_at")
+            if retry is None or now >= retry or self.wake_requested:
+                return Decision(True, "last_will", "the last will is due")
+            return Decision(False, reason="The last will is due; retrying later", wait_until=retry)
+        if self.wake_requested:
+            return Decision(True, "owner", "woken by the owner")
+        wake = self._meta_time("next_wake_at")
+        if wake is None:
+            wake = now + FIRST_WAKE_DELAY
+            self._set_time("next_wake_at", wake)
+            self.db.set_meta(self._key("next_wake_reason"), "first wake-up")
+        if now < wake:
+            return Decision(
+                False, reason=self.db.get_meta(self._key("next_wake_reason")) or "sleeping", wait_until=wake
+            )
+        if self._crash_loop():
+            return Decision(False, reason="The last cycles were all interrupted; press Wake now to try again")
+        opening = opening_cost(self.settings, self.db, self.mode) or 0
+        scope = self.economy.life.scope()
+        today = self.economy.books.cap_spend_on(scope, self.clock.today())
+        if usd_cap_to_micros(self.settings.daily_spend_cap_usd) - today < opening:
+            tomorrow = self._next_local_midnight(now) + timedelta(minutes=5)
+            self._set_time("next_wake_at", tomorrow)
+            self.db.set_meta(self._key("next_wake_reason"), "waiting for the daily cap to reset")
+            return Decision(False, reason="Waiting for the daily cap to reset", wait_until=tomorrow)
+        return Decision(True, "schedule", "scheduled wake-up")
+
+    def _gave_up_will(self, life_id: int | None) -> bool:
+        return life_id is not None and self.db.get_meta(self._key("will_given_up")) == str(life_id)
+
+    def _crash_loop(self) -> bool:
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                "SELECT status FROM cycles WHERE simulated = ? AND session = ? ORDER BY id DESC LIMIT ?",
+                (1 if self.mode == "dry_run" else 0, self.economy.life.session(), CRASH_LOOP),
+            ).fetchall()
+        return len(rows) == CRASH_LOOP and all(r["status"] == "interrupted" for r in rows)
+
+    def _next_local_midnight(self, now: datetime) -> datetime:
+        local = now.astimezone(self.clock.tz)
+        return self.clock.day_start(local.date() + timedelta(days=1))
+
+    def request_wake(self) -> tuple[int, dict[str, Any]]:
+        """The owner pressed Wake now: (HTTP status, body)."""
+        now = self.clock.now()
+        if self.running_cycle:
+            return 409, {"code": "cycle_running", "error": "a wake cycle is already running"}
+        blocked = self.blocked_reason()
+        if blocked:
+            return 409, {"code": "not_runnable", "error": blocked}
+        if self.last_wake_request and now - self.last_wake_request < WAKE_NOW_MIN_GAP:
+            return 429, {"code": "too_soon", "error": "wait a minute between wake-ups"}
+        self.last_wake_request = now
+        self.wake_requested = True
+        events.record(self.db, "info", "agent", "The owner woke the agent")
+        return 202, {"queued": True}
+
+    # --- running ---
+
+    def run_cycle(self, trigger: str) -> CycleEnd:
+        if not self._lock.acquire(blocking=False):
+            return CycleEnd("skipped", "a cycle is already running", skipped=True)
+        self.running_cycle = True
+        try:
+            if trigger == "owner":
+                self.wake_requested = False
+            scope = self.scope()
+            workspace, memory_root = self.roots()
+            runner = CycleRunner(
+                self.db,
+                self.settings,
+                self.clock,
+                self.economy,
+                self.meter,
+                scope,
+                workspace,
+                Memory(self.db, memory_root, scope),
+                self.stop,
+            )
+            end = runner.run(trigger)
+            self._after(trigger, end)
+            return end
+        finally:
+            self.running_cycle = False
+            self._lock.release()
+
+    def _after(self, trigger: str, end: CycleEnd) -> None:
+        now = self.clock.now()
+        failures = int(self.db.get_meta(self._key("failures")) or 0)
+        if trigger == "last_will":
+            if end.status == "completed":
+                self._set_time("will_retry_at", None)
+                self.db.set_meta(self._key("will_attempts"), "0")
+            elif end.status == "refused":
+                self._set_time("will_retry_at", self._next_local_midnight(now) + timedelta(minutes=5))
+            else:
+                attempts = int(self.db.get_meta(self._key("will_attempts")) or 0) + 1
+                self.db.set_meta(self._key("will_attempts"), str(attempts))
+                if attempts >= MAX_WILL_ATTEMPTS:
+                    # Each attempt costs money; stop trying rather than spend the rest on a failing call.
+                    life_id = self.economy.life.evaluate().life_id
+                    self.db.set_meta(self._key("will_given_up"), str(life_id))
+                    events.record(
+                        self.db, "error", "agent", f"Gave up on the last will after {attempts} failed attempts"
+                    )
+                    return
+                minutes = min(self.settings.max_sleep_minutes, 30 * 2 ** (attempts - 1))
+                self._set_time("will_retry_at", now + timedelta(minutes=minutes))
+            return
+        if end.status == "interrupted":
+            return
+        if end.status in ("completed", "idle"):
+            minutes = end.sleep_minutes or self.settings.wake_interval_minutes
+            minutes = max(self.settings.min_sleep_minutes, min(self.settings.max_sleep_minutes, minutes))
+            self.db.set_meta(self._key("failures"), "0")
+            reason = "scheduled"
+        else:
+            failures += 1
+            self.db.set_meta(self._key("failures"), str(failures))
+            minutes = min(self.settings.max_sleep_minutes, self.settings.min_sleep_minutes * 2 ** (failures - 1))
+            reason = f"after a {end.status} cycle, backing off"
+        self._set_time("next_wake_at", now + timedelta(minutes=minutes))
+        self.db.set_meta(self._key("next_wake_reason"), reason)
+
+    # --- dashboard ---
+
+    def agent_fields(self) -> dict[str, Any]:
+        blocked = self.blocked_reason()
+        wake = self._meta_time("next_wake_at")
+        reason = self.db.get_meta(self._key("next_wake_reason")) or None
+        can_wake = blocked is None and not self.running_cycle
+        return {
+            "next_wake_at": to_iso(wake) if wake and blocked is None else None,
+            "next_wake_reason": reason if blocked is None else None,
+            "can_wake": can_wake,
+            "wake_blocked_reason": blocked or ("A wake cycle is running" if self.running_cycle else None),
+            "cycles_enabled": self.cycles_enabled,
+        }
+
+    def dashboard(self) -> dict[str, Any]:
+        from . import views
+
+        return views.dashboard(self)
+
+    def cycle_detail(self, cycle_id: int) -> dict[str, Any] | None:
+        from . import views
+
+        return views.cycle_detail(self, cycle_id)
+
+    def memory_files(self) -> dict[str, str]:
+        memory = self.memory()
+        return {name: memory.read(name) for name in CAPS}

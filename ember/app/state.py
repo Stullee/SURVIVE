@@ -5,11 +5,15 @@ from __future__ import annotations
 import logging
 import socket
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .config import LoadedSettings
 from .db import Database, utcnow
 from .economy.service import Economy
+
+if TYPE_CHECKING:
+    from .agent.scheduler import Scheduler
+    from .agent.service import Agent
 from .events import DatabaseLogHandler
 from .version import app_version, build_id
 
@@ -27,6 +31,9 @@ class AppState:
     log_handler: DatabaseLogHandler | None = None
     economy: Economy | None = None
     economy_error: str | None = None
+    agent: Agent | None = None
+    agent_error: str | None = None
+    scheduler: Scheduler | None = None
 
     def system_info(self) -> dict[str, Any]:
         settings = self.loaded.settings
@@ -52,6 +59,7 @@ class AppState:
             "price_warnings": settings.price_warnings(),
             "economy_error": self.economy_error,
             "economy_broken": self.economy.health.broken if self.economy is not None else None,
+            "agent_error": self.agent_error,
         }
 
     def recent_events(self, limit: int = 30) -> list[dict[str, Any]]:

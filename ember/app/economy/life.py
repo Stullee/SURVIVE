@@ -50,6 +50,7 @@ RUNWAY_WINDOW = timedelta(days=7)
 RUNWAY_CAP_DAYS = 365.0
 LAST_MODE_KEY = "economy.last_mode"
 SESSION_KEY = "economy.dry_run.session_mark"  # newest ledger id when the dry-run session began
+SESSION_NO_KEY = "economy.dry_run.session_no"  # counts dry-run sessions (the agent's records are kept per session)
 PAUSED_KEY = "control.paused"
 KILLED_KEY = "control.killed"
 
@@ -127,6 +128,13 @@ class Life:
         mark = self.db.get_meta(SESSION_KEY)
         return Scope("dry_run", int(mark) if mark and mark.isdigit() else 0)
 
+    def session(self) -> int:
+        """The dry-run session number (0 in live mode): the agent keeps its projects, files and journal per session."""
+        if self.mode == "live":
+            return 0
+        value = self.db.get_meta(SESSION_NO_KEY)
+        return int(value) if value and value.isdigit() else 0
+
     def current(self) -> sqlite3.Row | None:
         with self.db.connection() as conn:
             return conn.execute("SELECT * FROM lives WHERE mode = ? ORDER BY id DESC LIMIT 1", (self.mode,)).fetchone()
@@ -174,6 +182,7 @@ class Life:
                     if dry is not None and dry["ended_at"] is None:
                         self._end(conn, dry, "ended", "dry-run session ended", now)
                     self.db.set_meta(SESSION_KEY, str(self.books.last_id()))
+                    self.db.set_meta(SESSION_NO_KEY, str(self.session() + 1))
                     self._birth(conn, "dry_run", now, "new dry-run session")
                 if live is not None and live["ended_at"] is None and live["state"] != "dormant":
                     self._transition(conn, live, "dormant", REASONS["dormant"], now)

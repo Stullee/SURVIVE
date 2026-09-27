@@ -30,9 +30,9 @@
     <p class="identity-meta" id="identity-meta">&nbsp;</p>
     <div class="topbar-actions">
       <div class="controls" role="group" aria-label="Agent controls">
-        <button type="button" class="btn" disabled title="Available in phase 4">Wake now</button>
+        <button type="button" class="btn" id="wake-button" disabled>Wake now</button>
         <button type="button" class="btn" id="pause-button" disabled>Pause</button>
-        <button type="button" class="btn btn-danger" disabled title="Available in phase 4">Kill switch</button>
+        <button type="button" class="btn btn-danger" id="kill-button" disabled title="Arrives in phase 4">Kill switch</button>
       </div>
       <button type="button" class="btn btn-ghost" id="theme-toggle">Theme: auto</button>
       <p class="control-status" id="control-status" role="status"></p>
@@ -83,6 +83,7 @@
     <button type="button" role="tab" class="tab" id="tab-upgrades" aria-controls="panel-upgrades" aria-selected="false">Upgrades <span class="badge" id="badge-upgrades" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-mind" aria-controls="panel-mind" aria-selected="false">Mind</button>
     <button type="button" role="tab" class="tab" id="tab-system" aria-controls="panel-system" aria-selected="false">System <span class="badge badge-alert" id="badge-system" hidden></span></button>
+    <button type="button" role="tab" class="tab" id="tab-diagnostics" aria-controls="panel-diagnostics" aria-selected="false">Diagnostics</button>
   </nav>
 
   <main id="main" tabindex="-1">
@@ -95,6 +96,7 @@
         <dl class="facts" id="memorial-facts"></dl>
         <h3>Last will</h3>
         <blockquote class="last-will" id="memorial-will"></blockquote>
+        <p class="muted small memorial-will-note" id="memorial-will-note" hidden></p>
         <p class="memorial-revive" id="memorial-revive"></p>
         <div class="memorial-actions">
           <button type="button" class="btn" id="memorial-suggested" hidden></button>
@@ -108,22 +110,34 @@
           <span class="live" id="now-live" hidden><span class="live-dot" aria-hidden="true"></span>Cycle running</span>
         </div>
         <div class="empty-state" id="now-empty" hidden></div>
-        <p class="now-status" id="now-status">&nbsp;</p>
-        <div class="now-grid" id="now-grid">
-          <div>
-            <h3 class="small-head">Plan for this cycle</h3>
-            <pre class="plan" id="now-plan"></pre>
-          </div>
-          <div>
-            <h3 class="small-head">Cycle budget</h3>
-            <p class="now-budget" id="now-budget">&nbsp;</p>
-            <div class="meter" id="now-meter" role="meter" aria-label="Spent this cycle as a share of the cycle cap"
-                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-              <div class="meter-fill"></div>
+        <div class="now-body" id="now-body" hidden>
+          <p class="now-status" id="now-status"></p>
+          <div class="now-notes" id="now-notes" hidden></div>
+          <ol class="phases" id="now-phases" aria-label="Progress of this cycle" hidden></ol>
+          <div class="now-grid">
+            <div>
+              <h3 class="small-head" id="now-plan-head">Goal</h3>
+              <p class="plan" id="now-plan"></p>
+              <details class="plan-detail" id="now-plan-detail" hidden>
+                <summary>Plan details</summary>
+                <div class="plan-detail-body" id="now-plan-body"></div>
+              </details>
             </div>
-            <h3 class="small-head">Doing</h3>
-            <p class="now-action" id="now-action">&nbsp;</p>
+            <div>
+              <h3 class="small-head" id="now-budget-head">Cycle budget</h3>
+              <p class="now-budget" id="now-budget"></p>
+              <div class="meter" id="now-meter" role="meter" aria-label="Spent in this cycle as a share of the cycle cap"
+                   aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div class="meter-fill"></div>
+              </div>
+              <p class="tile-sub" id="now-budget-sub" hidden></p>
+              <div id="now-action-wrap">
+                <h3 class="small-head" id="now-action-head">Doing</h3>
+                <p class="now-action" id="now-action"></p>
+              </div>
+            </div>
           </div>
+          <p class="now-next" id="now-next"></p>
         </div>
       </article>
 
@@ -187,6 +201,7 @@
     </section>
 
     <section class="panel" id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" hidden>
+      <p class="panel-intro">The last 10 wake cycles, newest first. Open one to see its steps.</p>
       <ol class="timeline" id="activity"></ol>
     </section>
 
@@ -197,10 +212,10 @@
     <section class="panel" id="panel-inbox" role="tabpanel" aria-labelledby="tab-inbox" hidden>
       <article class="card">
         <ol class="chat" id="inbox"></ol>
-        <form class="composer" id="composer" hidden>
+        <form class="composer" id="composer">
           <label class="visually-hidden" for="composer-text">Message to the agent</label>
-          <textarea id="composer-text" rows="2" placeholder="Write to the agent (phase 4)" disabled></textarea>
-          <button type="submit" class="btn" disabled>Send</button>
+          <textarea id="composer-text" rows="2" placeholder="Replying arrives in phase 4" disabled></textarea>
+          <button type="submit" class="btn" id="composer-send" disabled title="Arrives in phase 4">Send</button>
         </form>
       </article>
     </section>
@@ -242,6 +257,21 @@
         <h2>Options</h2>
         <p class="card-sub">As loaded from the app configuration. The API key is never shown.</p>
         <div class="table-wrap" id="options"></div>
+      </article>
+    </section>
+
+    <section class="panel" id="panel-diagnostics" role="tabpanel" aria-labelledby="tab-diagnostics" hidden>
+      <article class="card">
+        <h2>Diagnostics</h2>
+        <p class="card-sub">A text report of the whole system, for troubleshooting. Copy it and paste it to whoever helps you; it never contains your API key.</p>
+        <div class="diag-actions" role="group" aria-label="Diagnostics report">
+          <button type="button" class="btn btn-primary" id="diag-load">Load report</button>
+          <button type="button" class="btn" id="diag-copy" disabled>Copy</button>
+          <button type="button" class="btn" id="diag-download" disabled>Download .txt</button>
+        </div>
+        <p class="form-status" id="diag-status" role="status"></p>
+        <p class="muted small diag-meta" id="diag-meta" hidden></p>
+        <pre class="diag-report" id="diag-report" tabindex="0" hidden></pre>
       </article>
     </section>
   </main>

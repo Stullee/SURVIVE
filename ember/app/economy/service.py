@@ -221,7 +221,7 @@ class Economy:
             result.append(f"Spending is stopped after a bookkeeping error: {self.health.broken}. Restart the app.")
         status = self.life.evaluate()
         held = status.settled_balance - status.balance
-        if held > 0:
+        if held > 0 and self.mode == "live":  # simulated charges have no Console to check against
             result.append(
                 f"${micros_to_usd(held):.2f} of interrupted calls was charged at the worst case. Check the real cost in"
                 " the Anthropic Console and record the difference as an API cost correction (decrease)."

@@ -11,8 +11,9 @@ import html
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Path, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
+from . import diagnostics
 from .db import utcnow
 from .economy.ledger import OWNER_KINDS
 from .economy.service import Economy, Reply
@@ -26,8 +27,8 @@ router = APIRouter()
 
 _INDEX_TEMPLATE = (WEB_DIR / "index.html").read_text(encoding="utf-8")
 
-# Sections that arrive with later phases; the dashboard shows them as empty placeholders.
-COMING_IN_PHASE = {"now": 3, "projects": 3, "activity": 3, "mind": 3, "approvals": 4, "inbox": 4, "upgrades": 4}
+# What arrives with a later phase: the owner's buttons on approvals, inbox and upgrades (phase 4).
+COMING_IN_PHASE = {"owner_actions": 4}
 UNAVAILABLE = JSONResponse({"error": "the economy is not available, see the system log"}, status_code=503)
 
 
@@ -93,6 +94,26 @@ def dashboard(request: Request) -> dict[str, Any]:
     }
     if economy is not None:
         payload.update(economy.dashboard())
+        agent = state.agent
+        if agent is not None and payload.get("agent"):
+            parts = agent.dashboard()
+            will = parts.pop("last_will")
+            payload.update(parts)
+            payload["agent"].update(agent.agent_fields())
+            payload["agent"]["cycle_running"] = agent.running_cycle or bool(parts["now"] and parts["now"]["running"])
+            if payload.get("memorial"):
+                payload["memorial"]["last_will"] = will["text"] if will else None
+                payload["memorial"]["last_will_cut_off"] = bool(will and will["cut_off"])
+        elif payload.get("agent"):
+            payload["agent"].update(
+                {
+                    "next_wake_at": None,
+                    "next_wake_reason": None,
+                    "can_wake": False,
+                    "cycles_enabled": False,
+                    "wake_blocked_reason": f"The agent could not start: {state.agent_error}",
+                }
+            )
     else:
         payload.update(
             {"agent": None, "economy": None, "ledger": None, "memorial": None, "lives": [], "transitions": []}
@@ -149,7 +170,10 @@ def add_entry(
         return UNAVAILABLE
     if kind not in OWNER_KINDS:
         return JSONResponse({"error": "unknown kind of entry", "field": "kind"}, status_code=404)
-    return _reply(economy.record(kind, body, _owner(request)))
+    reply = economy.record(kind, body, _owner(request))
+    if reply.status == 201:
+        _poke(request)  # money in may revive the agent or end its starvation
+    return _reply(reply)
 
 
 @router.post("/api/ledger/{entry_id}/correct")
@@ -177,4 +201,37 @@ def _control(request: Request, paused: bool) -> JSONResponse:
     if economy is None:
         return UNAVAILABLE
     status = economy.set_paused(paused, _owner(request))
+    _poke(request)
     return JSONResponse({"state": status.state, "paused": paused})
+
+
+def _poke(request: Request) -> None:
+    scheduler = _state(request).scheduler
+    if scheduler is not None:
+        scheduler.poke()
+
+
+@router.post("/api/control/wake")
+def wake(request: Request) -> JSONResponse:
+    state = _state(request)
+    if state.agent is None:
+        return JSONResponse({"code": "not_runnable", "error": "the agent is not running"}, status_code=409)
+    status, body = state.agent.request_wake()
+    if status == 202 and state.scheduler is not None:
+        state.scheduler.poke()
+    return JSONResponse(body, status_code=status)
+
+
+@router.get("/api/cycles/{cycle_id}")
+def cycle(request: Request, cycle_id: Annotated[int, Path(ge=1, le=2**62)]) -> JSONResponse:
+    agent = _state(request).agent
+    detail = agent.cycle_detail(cycle_id) if agent is not None else None
+    if detail is None:
+        return JSONResponse({"error": "no such wake cycle"}, status_code=404)
+    return JSONResponse(detail)
+
+
+@router.get("/api/diagnostics")
+def diagnostics_report(request: Request) -> PlainTextResponse:
+    """A text report of the whole system for troubleshooting (never contains secrets)."""
+    return PlainTextResponse(diagnostics.report(_state(request)))

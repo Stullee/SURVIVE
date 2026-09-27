@@ -1,0 +1,261 @@
+"""Dashboard data for the agent's sections: Now, Projects, Activity, Mind, and the owner queues."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from typing import TYPE_CHECKING, Any
+
+from ..economy.costs import micros_to_usd
+from . import store
+
+if TYPE_CHECKING:
+    from .service import Agent
+
+ACTIVITY_CYCLES = 10
+
+
+def _usd(micros: int | None) -> float:
+    return micros_to_usd(int(micros or 0))
+
+
+def dashboard(agent: Agent) -> dict[str, Any]:
+    scope = agent.scope()
+    simulated = 1 if agent.mode == "dry_run" else 0
+    with agent.db.connection() as conn:
+        latest = conn.execute(
+            "SELECT * FROM cycles WHERE simulated = ? AND session = ? ORDER BY id DESC LIMIT 1",
+            (simulated, scope.session),
+        ).fetchone()
+        now = _now(agent, conn, latest) if latest else None
+        projects = [_project(conn, p) for p in store.all_projects(conn, scope)]
+        cycles = conn.execute(
+            "SELECT * FROM cycles WHERE simulated = ? AND session = ? ORDER BY id DESC LIMIT ?",
+            (simulated, scope.session, ACTIVITY_CYCLES),
+        ).fetchall()
+        activity = [_activity(conn, c) for c in cycles]
+        journal = [
+            {
+                "cycle_id": j["cycle_id"],
+                "created_at": j["created_at"],
+                "author": j["author"],
+                "summary": j["summary"],
+                "entry": j["entry"],
+            }
+            for j in store.journal(conn, scope, 20)
+        ]
+        approvals = [
+            {
+                "id": r["id"],
+                "created_at": r["created_at"],
+                "type": r["type"],
+                "title": r["title"],
+                "description": r["description"],
+                "payload": r["payload"],
+                "expected_cost": r["expected_cost"],
+                "expected_benefit": r["expected_benefit"],
+                "status": r["status"],
+                "project_id": r["project_id"],
+                "simulated": r["mode"] == "dry_run",
+            }
+            for r in store.queue(conn, "approvals", scope)
+        ]
+        inbox = [
+            {
+                "id": r["id"],
+                "created_at": r["created_at"],
+                "sender": r["sender"],
+                "text": r["text"],
+                "read_at": r["read_at"],
+                "simulated": r["mode"] == "dry_run",
+            }
+            for r in store.queue(conn, "messages", scope)
+        ]
+        upgrades = [
+            {
+                "id": r["id"],
+                "created_at": r["created_at"],
+                "title": r["title"],
+                "problem": r["problem"],
+                "proposed_change": r["proposed_change"],
+                "expected_benefit": r["expected_benefit"],
+                "priority": r["priority"],
+                "status": r["status"],
+                "simulated": r["mode"] == "dry_run",
+            }
+            for r in store.queue(conn, "upgrades", scope)
+        ]
+        will = store.last_will(conn, scope.life_id) if scope.life_id else None
+    return {
+        "now": now,
+        "projects": projects,
+        "activity": activity,
+        "mind": {**agent.memory_files(), "journal": journal},
+        "approvals": approvals,
+        "inbox": inbox,
+        "upgrades": upgrades,
+        "last_will": {"text": will["text"], "cut_off": bool(will["cut_off"])} if will else None,
+    }
+
+
+def _now(agent: Agent, conn: sqlite3.Connection, c: sqlite3.Row) -> dict[str, Any]:
+    spent, pending = agent.economy.books.cycle_spend(c["id"])
+    plan = json.loads(c["plan"]) if c["plan"] else None
+    return {
+        "cycle_id": c["id"],
+        "running": c["status"] == "running",
+        "trigger": c["trigger"],
+        "status": c["status"],
+        "note": c["note"],
+        "started_at": c["started_at"],
+        "ended_at": c["ended_at"],
+        "phase": c["phase"] if c["status"] == "running" else None,
+        "step": c["step"],
+        "max_steps": c["max_steps"],
+        "spent_usd": _usd(spent),
+        "pending_usd": _usd(pending),
+        "cycle_cap_usd": _usd(c["cap_micros"]),
+        "plan": plan.get("goal") if plan else None,
+        "plan_detail": {"assessment": plan.get("assessment", ""), "steps": plan.get("steps", [])} if plan else None,
+        "current_action": c["current_action"],
+        "act_end_reason": c["act_end_reason"],
+    }
+
+
+def _project(conn: sqlite3.Connection, p: sqlite3.Row) -> dict[str, Any]:
+    spent = conn.execute(
+        "SELECT COALESCE(SUM(l.cost_micros), 0), COUNT(DISTINCT y.id) FROM llm_calls l JOIN cycles y"
+        " ON y.id = l.cycle_id WHERE y.project_id = ?",
+        (p["id"],),
+    ).fetchone()
+    earned = conn.execute(
+        "SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type = 'revenue' AND project_id = ?", (p["id"],)
+    ).fetchone()[0]
+    pending = conn.execute(
+        "SELECT COUNT(*) FROM approvals WHERE project_id = ? AND status = 'pending'", (p["id"],)
+    ).fetchone()[0]
+    return {
+        "id": p["id"],
+        "title": p["title"],
+        "hypothesis": p["hypothesis"],
+        "status": p["status"],
+        "next_step": p["next_step"],
+        "notes": p["notes"],
+        "spent_usd": _usd(spent[0]),
+        "earned_usd": _usd(earned),
+        "cycles": int(spent[1]),
+        "pending_approvals": int(pending),
+        "created_at": p["created_at"],
+        "updated_at": p["updated_at"],
+    }
+
+
+def _activity(conn: sqlite3.Connection, c: sqlite3.Row) -> dict[str, Any]:
+    calls = conn.execute("SELECT * FROM llm_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
+    tool_rows = conn.execute("SELECT * FROM tool_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
+    by_call: dict[int, list[sqlite3.Row]] = {}
+    for t in tool_rows:
+        by_call.setdefault(t["llm_call_id"], []).append(t)
+    steps: list[dict[str, Any]] = []
+    cost = 0
+    for call in calls:
+        cost += call["cost_micros"]
+        steps.append(_call_step(call))
+        steps.extend(_tool_step(t) for t in by_call.get(call["id"], []))
+    journal = conn.execute("SELECT summary FROM journal WHERE cycle_id = ?", (c["id"],)).fetchone()
+    return {
+        "cycle_id": c["id"],
+        "trigger": c["trigger"],
+        "status": c["status"],
+        "note": c["note"],
+        "started_at": c["started_at"],
+        "ended_at": c["ended_at"],
+        "summary": journal["summary"] if journal else None,
+        "cost_usd": _usd(cost),
+        "calls": len(calls),
+        "tools": len(tool_rows),
+        "steps": steps,
+    }
+
+
+def _call_step(call: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "kind": "llm",
+        "id": call["id"],
+        "purpose": call["purpose"],
+        "model": call["model"],
+        "status": call["status"],
+        "cost_usd": _usd(call["cost_micros"]),
+        "estimate_usd": _usd(call["estimate_micros"]),
+        "input_tokens": call["input_tokens"],
+        "output_tokens": call["output_tokens"],
+        "cache_read_tokens": call["cache_read_tokens"],
+        "stop_reason": call["stop_reason"],
+        "guard_reason": call["guard_reason"],
+        "error": call["error"],
+    }
+
+
+def _tool_step(t: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "kind": "tool",
+        "id": t["id"],
+        "name": t["tool"],
+        "origin": t["origin"],
+        "status": t["status"],
+        "summary": t["summary"],
+    }
+
+
+def cycle_detail(agent: Agent, cycle_id: int) -> dict[str, Any] | None:
+    simulated = 1 if agent.mode == "dry_run" else 0
+    with agent.db.connection() as conn:
+        c = conn.execute("SELECT * FROM cycles WHERE id = ? AND simulated = ?", (cycle_id, simulated)).fetchone()
+        if c is None:
+            return None
+        calls = conn.execute(
+            "SELECT l.*, t.text AS text FROM llm_calls l LEFT JOIN call_texts t ON t.llm_call_id = l.id"
+            " WHERE l.cycle_id = ? ORDER BY l.id",
+            (cycle_id,),
+        ).fetchall()
+        tool_rows = conn.execute("SELECT * FROM tool_calls WHERE cycle_id = ? ORDER BY id", (cycle_id,)).fetchall()
+        summary = _activity(conn, c)
+    return {
+        "cycle": summary,
+        "plan": json.loads(c["plan"]) if c["plan"] else None,
+        "calls": [
+            {
+                "id": r["id"],
+                "purpose": r["purpose"],
+                "model": r["model"],
+                "status": r["status"],
+                "estimate_usd": _usd(r["estimate_micros"]),
+                "cost_usd": _usd(r["cost_micros"]),
+                "input_tokens": r["input_tokens"],
+                "output_tokens": r["output_tokens"],
+                "cache_write_tokens": r["cache_write_5m_tokens"] + r["cache_write_1h_tokens"],
+                "cache_read_tokens": r["cache_read_tokens"],
+                "stop_reason": r["stop_reason"],
+                "guard_reason": r["guard_reason"],
+                "error": r["error"],
+                "request_id": r["request_id"],
+                "text": r["text"],
+            }
+            for r in calls
+        ],
+        "tools": [
+            {
+                "id": t["id"],
+                "llm_call_id": t["llm_call_id"],
+                "seq": t["seq"],
+                "phase": t["phase"],
+                "origin": t["origin"],
+                "name": t["tool"],
+                "status": t["status"],
+                "input": t["input"],
+                "result": t["result"],
+                "summary": t["summary"],
+            }
+            for t in tool_rows
+        ],
+    }

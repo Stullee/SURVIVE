@@ -4,11 +4,15 @@
 "use strict";
 
 (function () {
-  var POLL_RUNNING_MS = 5000;
+  var POLL_RUNNING_MS = 3000;
   var POLL_IDLE_MS = 30000;
   var POLL_ERROR_MS = 15000;
+  // After "Wake now" the cycle starts within seconds; poll fast until it shows up (or this runs out).
+  var WAKE_FAST_POLL_MS = 20000;
   // Neither Ingress hop times out on its own, so a hung backend would otherwise freeze the page.
   var REQUEST_TIMEOUT_MS = 10000;
+  // The diagnostics report gathers the whole system, which may take longer than a dashboard poll.
+  var DIAGNOSTICS_TIMEOUT_MS = 30000;
   // Narrower balance charts have no room for grant labels; the tooltip and the table still show them.
   var GRANT_LABEL_MIN_WIDTH = 480;
 
@@ -31,7 +35,12 @@
     correction: null,
     ledgerById: {},
     controlBusy: false,
+    wakeBusy: false,
+    fastPollUntil: 0,    // Date.now() until which the dashboard is polled fast (after "Wake now")
     controlTimer: null,
+    cycles: {},          // cycle id -> the Activity item built for it (patched in place on each poll)
+    nowPlanKey: null,
+    diag: { text: null, loadedAt: null, busy: false },
   };
 
   // The phase-1 scenario switcher is gone; drop its stored choice.
@@ -196,6 +205,50 @@
     return h("time", { datetime: iso, title: fmtDateTime(iso), text: text || relTime(iso) });
   }
 
+  var intFmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+  var oneDecimalFmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
+
+  function count(value) { var v = num(value); return isNaN(v) ? "–" : intFmt.format(v); }
+
+  // "42 s", "3 min", "1 h 5 min" between two ISO times (the second defaults to now).
+  function duration(fromIso, toIso) {
+    var a = new Date(fromIso).getTime();
+    var b = toIso ? new Date(toIso).getTime() : Date.now();
+    if (!fromIso || isNaN(a) || isNaN(b) || b < a) return "";
+    var seconds = Math.round((b - a) / 1000);
+    if (seconds < 60) return seconds + " s";
+    var minutes = Math.round(seconds / 60);
+    if (minutes < 60) return minutes + " min";
+    return Math.floor(minutes / 60) + " h" + (minutes % 60 ? " " + (minutes % 60) + " min" : "");
+  }
+
+  function byteSize(n) {
+    if (n < 1024) return intFmt.format(n) + " bytes";
+    if (n < 1024 * 1024) return oneDecimalFmt.format(n / 1024) + " KB";
+    return oneDecimalFmt.format(n / (1024 * 1024)) + " MB";
+  }
+
+  // Agent-written values are shown as plain text; anything that isn't a string is shown as JSON.
+  function asText(value) {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "string") return value;
+    try { return JSON.stringify(value, null, 2); } catch (e) { return String(value); }
+  }
+
+  // Tool inputs arrive as JSON text: indent them for reading, or show them as they are.
+  function prettyJson(value) {
+    if (typeof value !== "string") return asText(value);
+    try { return JSON.stringify(JSON.parse(value), null, 2); } catch (e) { return value; }
+  }
+
+  // Server texts may or may not end with a full stop.
+  function endSentence(text) {
+    text = String(text).trim();
+    return /[.!?…]$/.test(text) ? text : text + ".";
+  }
+
+  function lowerFirst(text) { text = String(text); return text.charAt(0).toLowerCase() + text.slice(1); }
+
   function versionLabel(version) {
     if (version === null || version === undefined) return "";
     return /^\d/.test(String(version)) ? "v" + version : String(version);
@@ -271,6 +324,39 @@
     adjustment: { icon: "±", label: "Other correction", sign: 1 },
   };
 
+  var CYCLE_STATUS = {
+    running: { icon: "●", label: "Running", tone: "accent" },
+    completed: { icon: "✓", label: "Completed", tone: "good" },
+    idle: { icon: "◌", label: "Idle", tone: "" },
+    refused: { icon: "⊘", label: "Refused", tone: "warning" },
+    failed: { icon: "✕", label: "Failed", tone: "critical" },
+    stopped: { icon: "■", label: "Stopped", tone: "" },
+    interrupted: { icon: "↯", label: "Interrupted", tone: "warning" },
+  };
+
+  var CALL_STATUS = {
+    ok: { icon: "✓", label: "OK", tone: "good" },
+    pending: { icon: "◔", label: "In progress", tone: "accent" },
+    refused: { icon: "⊘", label: "Refused", tone: "warning" },
+    failed: { icon: "✕", label: "Failed", tone: "critical" },
+    interrupted: { icon: "↯", label: "Interrupted", tone: "warning" },
+  };
+
+  var TOOL_STATUS = {
+    ok: { icon: "✓", label: "OK", tone: "good" },
+    started: { icon: "◔", label: "Running", tone: "accent" },
+    error: { icon: "✕", label: "Error", tone: "critical" },
+    skipped: { icon: "–", label: "Skipped", tone: "" },
+    interrupted: { icon: "↯", label: "Interrupted", tone: "warning" },
+  };
+
+  var TRIGGERS = { schedule: "scheduled", owner: "woken by you", last_will: "last will" };
+  var PHASES = { plan: "Plan", act: "Act", reflect: "Reflect", last_will: "Last will" };
+  var PURPOSES = { plan: "Plan", work: "Work", reflect: "Reflect", research: "Research", last_will: "Last will" };
+
+  function triggerText(trigger) { return TRIGGERS[trigger] || (trigger ? String(trigger).replace(/_/g, " ") : "–"); }
+  function purposeText(purpose) { return PURPOSES[purpose] || (purpose ? sentence(String(purpose).replace(/_/g, " ")) : "Model call"); }
+
   function statusOrder(vocab, key) { var s = vocab[key]; return s ? s.order : 9; }
 
   function chip(vocab, key, fallbackLabel) {
@@ -280,6 +366,26 @@
   }
 
   function plainChip(text) { return h("span", { class: "chip", text: text }); }
+
+  // Rows the agent made in a dry run: nothing real happened.
+  function testTag() {
+    return h("span", { class: "chip", "data-tone": "test", title: "Made in a dry run: nothing real happened" }, "test");
+  }
+
+  // Title of the owner's buttons that are shown but not usable yet.
+  function laterTitle() {
+    var coming = ui.data && isObject(ui.data.coming_in_phase) ? ui.data.coming_in_phase : {};
+    return "Arrives in phase " + (coming.owner_actions || 4);
+  }
+
+  function laterButton(label) {
+    return h("button", { type: "button", class: "btn", disabled: true, title: laterTitle(), text: label });
+  }
+
+  // Scrollable, height-capped text. Focusable so keyboard users can scroll it.
+  function capped(text, mono) {
+    return h("pre", { class: "capped" + (mono ? " mono" : ""), tabindex: "0", text: text });
+  }
 
   function emptyState(tag, title, text) {
     return h(tag, { class: "empty-state" }, h("p", { class: "empty-title", text: title }), text ? h("p", { class: "muted", text: text }) : null);
@@ -293,11 +399,14 @@
     this.status = status || 0;
   }
 
-  function request(method, url, body) {
+  // options: {accept: "text/plain", timeout: ms}
+  function request(method, url, body, options) {
+    options = options || {};
+    var timeout = options.timeout || REQUEST_TIMEOUT_MS;
     var controller = typeof AbortController === "function" ? new AbortController() : null;
     var timedOut = false;
-    var timer = window.setTimeout(function () { timedOut = true; if (controller) controller.abort(); }, REQUEST_TIMEOUT_MS);
-    var opts = { method: method, headers: { Accept: "application/json" }, cache: "no-store", credentials: "same-origin" };
+    var timer = window.setTimeout(function () { timedOut = true; if (controller) controller.abort(); }, timeout);
+    var opts = { method: method, headers: { Accept: options.accept || "application/json" }, cache: "no-store", credentials: "same-origin" };
     if (controller) opts.signal = controller.signal;
     if (method !== "GET") {
       opts.headers["Content-Type"] = "application/json";
@@ -316,7 +425,7 @@
       return res;
     }, function (err) {
       window.clearTimeout(timer);
-      if (timedOut) throw new RequestError("timeout", "no answer within " + REQUEST_TIMEOUT_MS / 1000 + " seconds");
+      if (timedOut) throw new RequestError("timeout", "no answer within " + timeout / 1000 + " seconds");
       throw new RequestError("network", "no connection" + (err && err.message ? ": " + err.message : ""));
     });
   }
@@ -354,7 +463,9 @@
       ui.fetchError = null;
       document.body.removeAttribute("data-stale");
       render();
-      next = d.agent && d.agent.cycle_running ? POLL_RUNNING_MS : POLL_IDLE_MS;
+      var running = !!(d.agent && d.agent.cycle_running) || !!(isObject(d.now) && d.now.running);
+      if (running) ui.fastPollUntil = 0;  // the woken cycle has started; from here on its running state decides
+      next = running || Date.now() < ui.fastPollUntil ? POLL_RUNNING_MS : POLL_IDLE_MS;
     }).catch(function (err) {
       if (seq !== ui.seq) return;
       if (!(err instanceof RequestError)) {
@@ -390,6 +501,7 @@
     header: "Header", controls: "Controls", kpis: "Key numbers", badges: "Tab badges", memorial: "Memorial",
     now: "Now", lives: "Previous lives", charts: "Charts", table: "Table", ledger: "Ledger", forms: "Forms",
     projects: "Projects", activity: "Activity", approvals: "Approvals", inbox: "Inbox", upgrades: "Upgrades", mind: "Mind",
+    cycleDetail: "Cycle details", diagnostics: "Diagnostics",
   };
 
   // True while the user has keyboard focus or selected text inside the element: rebuilding it would take them away.
@@ -397,12 +509,14 @@
     if (!el) return false;
     var active = document.activeElement;
     if (active && active !== document.body && el.contains(active)) return true;
+    return hasSelectionIn(el);
+  }
+
+  function hasSelectionIn(el) {
     var sel = window.getSelection ? window.getSelection() : null;
-    if (sel && sel.rangeCount && !sel.isCollapsed) {
-      var range = sel.getRangeAt(0);
-      if (el.contains(range.commonAncestorContainer) || range.intersectsNode(el)) return true;
-    }
-    return false;
+    if (!el || !sel || !sel.rangeCount || sel.isCollapsed) return false;
+    var range = sel.getRangeAt(0);
+    return el.contains(range.commonAncestorContainer) || range.intersectsNode(el);
   }
 
   function safely(name, fn) {
@@ -418,12 +532,15 @@
   }
 
   // Renders one section unless its data is unchanged or the user is busy inside it.
+  // fn may return false when it left a part out (the user was busy there): the section is rendered again next time.
   function section(name, slice, guardIds, fn) {
     var key;
     try { key = JSON.stringify(slice); } catch (e) { key = null; }
     if (key !== null && ui.rendered[name] === key) return;
     if (guardIds && guardIds.some(function (id) { return isBusy($(id)); })) return;
-    ui.rendered[name] = safely(name, fn) ? key : null;
+    var complete = true;
+    var ok = safely(name, function () { complete = fn() !== false; });
+    ui.rendered[name] = ok && complete ? key : null;
   }
 
   function render() {
@@ -441,14 +558,15 @@
     section("events", [d.events], ["events"], function () { renderEvents(arr(d.events)); });
     section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d, agent); });
     safely("controls", function () { renderControls(agent); });
-    section("kpis", [d.agent, d.economy, d.mode, coming.now, minute], ["kpis"], function () { renderKpis(d, agent, coming); });
-    safely("badges", function () { renderBadges(d, coming); });
+    section("kpis", [d.agent, d.economy, d.mode, d.now && d.now.started_at, minute], ["kpis"], function () { renderKpis(d, agent); });
+    safely("badges", function () { renderBadges(d); });
 
     var dead = agent.state === "dead" && isObject(d.memorial);
     $("memorial").hidden = !dead;
     $("now-card").hidden = dead;
     if (dead) section("memorial", [d.memorial, agent.revive, agent.name], ["memorial"], function () { renderMemorial(d.memorial, agent); });
-    else section("now", [d.now, coming.now, agent.state, agent.next_wake_at, !!d.agent, minute], ["now-card"], function () { renderNow(d.now, agent, coming.now); });
+    // Updated in place (no focusable parts are rebuilt), so a running cycle stays live even while the owner reads it.
+    else section("now", [d.now, agent, minute], null, function () { return renderNow(d.now, agent); });
     section("lives", [d.lives, d.memorial && d.memorial.life_id], ["lives-card"], function () { renderLives(arr(d.lives), d.memorial); });
     section("charts", [economy.days], null, function () { renderCharts(economy); });
     if (Array.isArray(economy.days)) section("table", [economy.days, ui.tableOpen], ["economy-table"], function () { renderTable(economy); });
@@ -456,12 +574,13 @@
     section("ledger", [d.ledger, d.mode], ["ledger-list"], function () { renderLedger(d); });
     safely("forms", function () { updateForms(d, agent); });
 
-    section("projects", [d.projects, coming.projects], ["projects"], function () { renderProjects(arr(d.projects), coming.projects); });
-    section("activity", [d.activity, coming.activity, minute], ["activity"], function () { renderActivity(arr(d.activity), coming.activity); });
-    section("approvals", [d.approvals, coming.approvals, minute], ["approvals"], function () { renderApprovals(arr(d.approvals), coming.approvals); });
-    section("inbox", [d.inbox, coming.inbox, agent.name, minute], ["inbox"], function () { renderInbox(arr(d.inbox), agent.name, coming.inbox); });
-    section("upgrades", [d.upgrades, coming.upgrades, minute], ["upgrades"], function () { renderUpgrades(arr(d.upgrades), coming.upgrades); });
-    section("mind", [d.mind, coming.mind, ui.mind, minute], ["mind-body"], function () { renderMind(d.mind, coming.mind); });
+    section("projects", [d.projects, minute], ["projects"], function () { renderProjects(arr(d.projects)); });
+    // Patched item by item, so an open cycle, its loaded details and their scroll positions survive the fast polls.
+    section("activity", [d.activity, minute], null, function () { return renderActivity(arr(d.activity)); });
+    section("approvals", [d.approvals, projectTitles(d), coming, minute], ["approvals"], function () { renderApprovals(arr(d.approvals), projectTitles(d)); });
+    section("inbox", [d.inbox, agent.name, coming, minute], ["inbox"], function () { renderInbox(arr(d.inbox), agent.name); });
+    section("upgrades", [d.upgrades, coming, minute], ["upgrades"], function () { renderUpgrades(arr(d.upgrades)); });
+    section("mind", [d.mind, ui.mind, minute], ["mind-body"], function () { renderMind(d.mind); });
 
     // Again, now that section errors are known (only changed banners reach the DOM).
     safely("banners", renderBanners);
@@ -500,6 +619,14 @@
   }
 
   function renderControls(agent) {
+    $("kill-button").title = laterTitle();
+    if (!ui.wakeBusy) {
+      var wake = $("wake-button");
+      var canWake = agent.can_wake === true && !agent.unavailable;
+      wake.disabled = !canWake;
+      if (canWake) wake.removeAttribute("title");
+      else wake.title = agent.unavailable ? "The economy is not available" : agent.wake_blocked_reason ? String(agent.wake_blocked_reason) : "The agent can't be woken right now";
+    }
     if (ui.controlBusy) return;
     var btn = $("pause-button");
     btn.textContent = agent.paused ? "Resume" : "Pause";
@@ -602,7 +729,7 @@
 
   // ---- Key numbers
 
-  function renderKpis(d, a, coming) {
+  function renderKpis(d, a) {
     var e = isObject(d.economy) ? d.economy : {};
     var totals = isObject(e.totals) ? e.totals : {};
     var dry = isDryRun(d);
@@ -654,12 +781,23 @@
     else if (a.state === "killed" || a.killed) { wake.textContent = "Never"; wakeSub.textContent = "The kill switch is on"; }
     else if (a.paused) { wake.textContent = "Paused"; wakeSub.textContent = "Resume to schedule the next cycle"; }
     else if (a.state === "unfunded") { wake.textContent = "Waiting"; wakeSub.textContent = "Grant funds to start"; }
-    else if (a.cycle_running) { wake.textContent = "Awake"; wakeSub.textContent = "Cycle started " + relTime(a.last_wake_at); }
-    else if (a.next_wake_at) { wake.textContent = relTime(a.next_wake_at); wakeSub.textContent = fmtDateTime(a.next_wake_at); }
-    else {
-      wake.textContent = "Not scheduled yet";
+    else if (a.cycle_running) {
+      var started = a.last_wake_at || (isObject(d.now) ? d.now.started_at : null);
+      wake.textContent = "Awake";
+      wakeSub.textContent = started ? "Cycle started " + relTime(started) : "A cycle is running";
+    } else if (a.next_wake_at && validDate(new Date(a.next_wake_at))) {
+      var reason = a.next_wake_reason ? " · " + a.next_wake_reason : "";
+      if (new Date(a.next_wake_at).getTime() <= Date.now()) {
+        wake.textContent = "Due now";
+        wakeSub.textContent = "Was due " + relTime(a.next_wake_at) + reason;
+      } else {
+        wake.textContent = relTime(a.next_wake_at);
+        wakeSub.textContent = fmtDateTime(a.next_wake_at) + reason;
+      }
+    } else {
+      wake.textContent = a.cycles_enabled === false ? "Off" : "Not scheduled";
       wake.setAttribute("data-size", "text");
-      wakeSub.textContent = coming.now ? "Wake cycles arrive in phase " + coming.now : " ";
+      wakeSub.textContent = a.wake_blocked_reason || a.next_wake_reason || "\u00a0";
     }
   }
 
@@ -676,26 +814,23 @@
     meter.setAttribute("data-level", ratio >= 1 ? "critical" : ratio >= 0.75 ? "warning" : "normal");
   }
 
-  function setBadge(id, count) {
+  function setBadge(id, n, what) {
     var el = $(id);
-    el.hidden = !count;
-    el.textContent = count ? String(count) : "";
-    if (count) el.setAttribute("aria-label", count + " need attention");
+    el.hidden = !n;
+    el.textContent = n ? String(n) : "";
+    if (n) el.setAttribute("aria-label", n + " " + (what || "need attention"));
     else el.removeAttribute("aria-label");
   }
 
-  function renderBadges(d, coming) {
-    setBadge("badge-approvals", coming.approvals ? 0 : arr(d.approvals).filter(function (x) {
-      return x.status === "pending" || x.status === "approved" || x.status === "approved_with_changes";
-    }).length);
-    var inbox = coming.inbox ? [] : arr(d.inbox).slice().sort(byDate("created_at"));
-    var lastOwner = -1;
-    inbox.forEach(function (m, i) { if (m.from === "owner") lastOwner = i; });
-    setBadge("badge-inbox", inbox.slice(lastOwner + 1).filter(function (m) { return m.from === "agent"; }).length);
-    setBadge("badge-upgrades", coming.upgrades ? 0 : arr(d.upgrades).filter(function (x) { return x.status === "new"; }).length);
+  function renderBadges(d) {
+    setBadge("badge-approvals", arr(d.approvals).filter(function (x) { return isObject(x) && x.status === "pending"; }).length, "waiting for you");
+    setBadge("badge-inbox", arr(d.inbox).filter(isUnread).length, "unread");
+    setBadge("badge-upgrades", arr(d.upgrades).filter(function (x) { return isObject(x) && x.status === "new"; }).length, "new");
     var sys = d.system;
     setBadge("badge-system", arr(sys.config_errors).length + (isObject(sys.database) && sys.database.ok === false ? 1 : 0) + (sys.economy_broken ? 1 : 0));
   }
+
+  function isUnread(m) { return isObject(m) && m.sender === "agent" && !m.read_at; }
 
   function byDate(key) {
     return function (x, y) { return new Date(x[key]).getTime() - new Date(y[key]).getTime(); };
@@ -715,8 +850,12 @@
       h("dt", { text: "Earned" }), h("dd", { text: usd(m.total_revenue_usd) }),
     ]);
     var will = $("memorial-will");
-    will.textContent = m.last_will ? m.last_will : "No last will was written.";
-    will.setAttribute("data-empty", m.last_will ? "false" : "true");
+    var hasWill = typeof m.last_will === "string" && m.last_will.trim() !== "";
+    will.textContent = hasWill ? m.last_will : "No last will was written.";
+    will.setAttribute("data-empty", hasWill ? "false" : "true");
+    var willNote = $("memorial-will-note");
+    willNote.hidden = !(hasWill && m.last_will_cut_off);
+    willNote.textContent = hasWill && m.last_will_cut_off ? "The will was cut off before " + name + " could finish it." : "";
     var revive = isObject(agent.revive) ? agent.revive : null;
     // Owner amounts have whole cents, so round the threshold up.
     var needed = revive ? amountText(revive.needed_usd) : null;
@@ -739,33 +878,140 @@
     return (Math.ceil(Math.round(v * 1e6) / 1e4) / 100).toFixed(2);
   }
 
-  function renderNow(now, agent, comingPhase) {
+  var PHASE_ORDER = ["plan", "act", "reflect"];
+
+  // One sentence about the next wake: when and why, or why there is none.
+  function nextWakeText(agent) {
+    if (agent.unavailable) return "The agent doesn't run while the economy is unavailable.";
+    if (agent.killed) return "The kill switch is on, so the agent doesn't wake.";
+    var reason = agent.next_wake_reason ? " (" + agent.next_wake_reason + ")" : "";
+    if (agent.next_wake_at && validDate(new Date(agent.next_wake_at))) {
+      if (new Date(agent.next_wake_at).getTime() <= Date.now()) return "Next wake: due now" + reason + ".";
+      return "Next wake " + relTime(agent.next_wake_at) + ", " + fmtDateTime(agent.next_wake_at) + reason + ".";
+    }
+    if (agent.paused) return "No wake is scheduled while the agent is paused.";
+    var why = agent.wake_blocked_reason || agent.next_wake_reason;
+    if (agent.cycles_enabled === false) return why ? "Wake cycles are off: " + endSentence(lowerFirst(why)) : "Wake cycles are off.";
+    return why ? "No wake is scheduled: " + endSentence(lowerFirst(why)) : "No wake is scheduled.";
+  }
+
+  function renderNow(now, agent) {
     var hasNow = isObject(now);
-    $("now-live").hidden = !(hasNow && now.running);
-    $("now-grid").hidden = !hasNow;
-    $("now-status").hidden = !hasNow;
+    var running = hasNow && now.running === true;
+    $("now-live").hidden = !running;
+    $("now-body").hidden = !hasNow;
     $("now-empty").hidden = hasNow;
     if (!hasNow) {
-      replace($("now-empty"), comingPhase
-        ? [h("p", { class: "empty-title", text: "Wake cycles arrive in phase " + comingPhase + "." }),
-          h("p", { class: "muted", text: "Until then the agent doesn't run." + (agent.unavailable ? "" : " The money figures on this page are real.") })]
-        : [h("p", { class: "empty-title", text: "No wake cycle has run yet." })]);
-      return;
+      replace($("now-empty"), [
+        h("p", { class: "empty-title", text: agent.unavailable ? "The agent is not running." : "No wake cycle has run yet." }),
+        h("p", { class: "muted", text: nextWakeText(agent) })]);
+      ui.nowPlanKey = null;
+      return true;
     }
-    var status;
-    if (now.running) {
-      status = "Cycle #" + now.cycle_id + " · " + now.phase + " phase · step " + now.step + " of " + now.max_steps + " · started " + relTime(now.started_at);
-    } else if (agent.paused) {
-      status = "Paused by you. No model calls are made while paused.";
+
+    // Status line: what is happening (or what happened last).
+    var status = [];
+    if (running) {
+      status.push(h("strong", { text: "Cycle #" + now.cycle_id }), " · " + triggerText(now.trigger) + " · started ", timeEl(now.started_at));
     } else {
-      status = "Sleeping. Last cycle #" + now.cycle_id + " started " + relTime(now.started_at) +
-        (agent.next_wake_at ? "; next wake " + relTime(agent.next_wake_at) + "." : ".");
+      var took = duration(now.started_at, now.ended_at);
+      status.push(chip(CYCLE_STATUS, now.status, sentence(now.status || "unknown")), " ",
+        h("strong", { text: "Last cycle #" + now.cycle_id }), " · " + triggerText(now.trigger) + " · ",
+        now.ended_at ? ["ended ", timeEl(now.ended_at)] : ["started ", timeEl(now.started_at)],
+        took && now.ended_at ? " · took " + took : "");
     }
-    $("now-status").textContent = status;
-    $("now-plan").textContent = now.plan || "No plan yet.";
+    replace($("now-status"), status);
+
+    var notes = [];
+    if (!running && agent.paused) notes.push(h("p", { text: "Paused by you. No model calls are made while paused." }));
+    if (now.note) notes.push(h("p", { text: sentence(now.note) }));
+    $("now-notes").hidden = !notes.length;
+    replace($("now-notes"), notes);
+
+    renderPhases(now, running);
+
+    // Goal and plan
+    $("now-plan-head").textContent = running ? "Goal for this cycle" : "Goal of the last cycle";
+    var plan = $("now-plan");
+    plan.textContent = now.plan ? String(now.plan) : running && (now.phase === "plan" || !now.phase) ? "Planning…" : "No plan was made.";
+    plan.setAttribute("data-empty", now.plan ? "false" : "true");
+    var complete = true;
+    var detail = isObject(now.plan_detail) ? now.plan_detail : null;
+    var detailKey = JSON.stringify(detail);
+    $("now-plan-detail").hidden = !detail;
+    if (detailKey !== ui.nowPlanKey) {
+      if (hasSelectionIn($("now-plan-body"))) complete = false;
+      else {
+        replace($("now-plan-body"), detail ? planView(detail) : []);
+        ui.nowPlanKey = detailKey;
+      }
+    }
+
+    // Money
+    $("now-budget-head").textContent = running ? "Cycle budget" : "Spent in the last cycle";
     $("now-budget").textContent = usd(now.spent_usd) + " of " + usd(now.cycle_cap_usd) + " cycle cap";
     setMeter($("now-meter"), now.spent_usd, now.cycle_cap_usd);
-    $("now-action").textContent = now.current_action || (now.running ? "Thinking…" : "Nothing, asleep.");
+    var pending = num(now.pending_usd) > 0 && running;
+    $("now-budget-sub").hidden = !pending;
+    $("now-budget-sub").textContent = pending ? usd(now.pending_usd) + " reserved for the call in progress" : "";
+
+    // What it is doing, or how acting ended
+    var action = $("now-action");
+    if (running) {
+      $("now-action-wrap").hidden = false;
+      $("now-action-head").textContent = "Doing";
+      action.textContent = now.current_action ? String(now.current_action) : "Thinking…";
+    } else {
+      $("now-action-wrap").hidden = !now.act_end_reason;
+      $("now-action-head").textContent = "Acting ended";
+      action.textContent = now.act_end_reason ? sentence(now.act_end_reason) : "";
+    }
+    if (running && now.act_end_reason) action.textContent += " (acting ended: " + now.act_end_reason + ")";
+
+    var next = $("now-next");
+    next.hidden = running;
+    next.textContent = running ? "" : nextWakeText(agent);
+    return complete;
+  }
+
+  // Plan → Act → Reflect, with the current phase marked (icon + text, never color alone).
+  function renderPhases(now, running) {
+    var el = $("now-phases");
+    if (!running || !now.phase) { el.hidden = true; replace(el, []); return; }
+    var list = PHASE_ORDER.indexOf(now.phase) >= 0 ? PHASE_ORDER : [now.phase];
+    var current = list.indexOf(now.phase);
+    el.hidden = false;
+    replace(el, list.map(function (phase, i) {
+      var state = i < current ? "done" : i === current ? "current" : "next";
+      var label = PHASES[phase] || sentence(String(phase).replace(/_/g, " "));
+      if (state === "current" && num(now.max_steps) > 0 && (phase === "act" || num(now.step) > 0)) {
+        label += ", step " + count(now.step) + " of " + count(now.max_steps);
+      }
+      return h("li", { "data-state": state, "aria-current": state === "current" ? "step" : null },
+        h("span", { class: "phase-icon", "aria-hidden": "true", text: state === "done" ? "✓" : state === "current" ? "●" : "○" }),
+        h("span", { text: label }),
+        h("span", { class: "visually-hidden", text: state === "done" ? " (done)" : state === "current" ? " (now)" : " (still to come)" }));
+    }));
+  }
+
+  // {goal?, assessment, steps: [text]} as written by the agent; unknown parts are shown as text too.
+  function planView(plan) {
+    var parts = [];
+    var goal = plan.goal || plan.plan;
+    if (goal) parts.push(h("p", { class: "plan-goal pre-line", text: asText(goal) }));
+    if (plan.assessment) parts.push(h("h4", { class: "small-head", text: "Assessment" }), h("p", { class: "pre-line", text: asText(plan.assessment) }));
+    var steps = arr(plan.steps);
+    if (steps.length) {
+      parts.push(h("h4", { class: "small-head", text: "Steps" }),
+        h("ol", { class: "plan-steps" }, steps.map(function (step) { return h("li", { class: "pre-line", text: asText(step) }); })));
+    }
+    var rest = Object.keys(plan).filter(function (k) {
+      return ["goal", "plan", "assessment", "steps"].indexOf(k) < 0 && plan[k] !== null && plan[k] !== undefined && plan[k] !== "";
+    });
+    if (rest.length) {
+      parts.push(h("pre", { class: "capped mono", tabindex: "0", text: rest.map(function (k) { return k + ": " + asText(plan[k]); }).join("\n") }));
+    }
+    return parts.length ? parts : h("p", { class: "muted", text: "The plan is empty." });
   }
 
   function renderLives(lives, memorial) {
@@ -1133,47 +1379,271 @@
     return "Entered as " + text + (e.fx_rate ? " at " + e.fx_rate + " USD per " + e.orig_currency : "");
   }
 
-  // ---- Projects, activity, approvals, inbox, upgrades, mind (real from phase 3/4 on)
+  // ---- Projects, activity, approvals, inbox, upgrades, mind
+  // Everything here is written by the agent: plain text only, and URLs are never turned into links.
 
-  function renderProjects(projects, comingPhase) {
+  function projectTitles(d) {
+    var titles = {};
+    arr(d.projects).forEach(function (p) { if (isObject(p) && p.id !== undefined) titles[String(p.id)] = p.title; });
+    return titles;
+  }
+
+  function renderProjects(projects) {
     var el = $("projects");
-    if (comingPhase) {
-      replace(el, emptyState("div", "Projects arrive in phase " + comingPhase + ".", "Once the agent runs, each project it tries shows up here with what it cost and what it earned."));
+    if (!projects.length) {
+      replace(el, emptyState("div", "No projects yet.", "When the agent starts a project, it shows up here with its hypothesis, its next step, and what it cost and earned."));
       return;
     }
-    var sorted = projects.slice().sort(function (x, y) { return statusOrder(PROJECT_STATUS, x.status) - statusOrder(PROJECT_STATUS, y.status); });
-    if (!sorted.length) { replace(el, emptyState("div", "No projects yet.")); return; }
-    replace(el, sorted.map(function (p) {
-      return h("article", { class: "card project" },
-        chip(PROJECT_STATUS, p.status),
-        h("h3", { text: p.title }),
-        h("p", { class: "hypothesis", text: p.hypothesis }),
-        h("div", { class: "money" },
-          h("div", null, h("span", { text: "Spent" }), usd(p.spent_usd)),
-          h("div", null, h("span", { text: "Earned" }), usd(p.earned_usd))),
-        h("p", { class: "next" }, h("strong", { text: "Next: " }), p.next_step || "–"));
+    var openIds = {};
+    Array.prototype.forEach.call(el.querySelectorAll("details[open]"), function (x) { openIds[x.getAttribute("data-id")] = true; });
+    var sorted = projects.slice().sort(function (x, y) {
+      return statusOrder(PROJECT_STATUS, x.status) - statusOrder(PROJECT_STATUS, y.status) ||
+        (new Date(y.updated_at).getTime() || 0) - (new Date(x.updated_at).getTime() || 0);
+    });
+    var counts = {};
+    var spent = 0;
+    var earned = 0;
+    sorted.forEach(function (p) {
+      counts[p.status] = (counts[p.status] || 0) + 1;
+      spent += num(p.spent_usd) || 0;
+      earned += num(p.earned_usd) || 0;
+    });
+    var tally = Object.keys(PROJECT_STATUS).filter(function (k) { return counts[k]; }).map(function (k) {
+      return counts[k] + " " + PROJECT_STATUS[k].label.toLowerCase();
+    });
+    replace(el, [
+      h("p", { class: "panel-intro projects-summary", text: plural(sorted.length, "project") + (tally.length ? ": " + tally.join(", ") : "") +
+        ". Spent " + usd(spent) + ", earned " + usd(earned) + " in total." }),
+      sorted.map(function (p) { return projectCard(p, !!openIds[String(p.id)]); }),
+    ]);
+  }
+
+  function projectCard(p, notesOpen) {
+    var waiting = num(p.pending_approvals) > 0;
+    return h("article", { class: "card project", "data-id": String(p.id) },
+      h("div", { class: "project-head" }, chip(PROJECT_STATUS, p.status, sentence(p.status || "unknown")),
+        waiting ? h("span", { class: "chip", "data-tone": "warning" }, h("span", { "aria-hidden": "true", text: "◔" }),
+          plural(p.pending_approvals, "approval") + " waiting") : null),
+      h("h3", { text: p.title || "Untitled project" }),
+      p.hypothesis ? h("p", { class: "hypothesis", text: p.hypothesis }) : null,
+      h("dl", { class: "money" },
+        h("div", null, h("dt", { text: "Spent" }), h("dd", { text: usd(p.spent_usd) })),
+        h("div", null, h("dt", { text: "Earned" }), h("dd", { text: usd(p.earned_usd) })),
+        h("div", null, h("dt", { text: "Cycles" }), h("dd", { text: count(p.cycles) }))),
+      h("p", { class: "next" }, h("strong", { text: "Next step: " }), p.next_step ? String(p.next_step) : "–"),
+      p.notes ? h("details", { class: "notes", "data-id": String(p.id), open: notesOpen },
+        h("summary", { text: "Notes" }), h("pre", { class: "notes-text", text: asText(p.notes) })) : null,
+      h("p", { class: "muted small project-dates" }, "Started ", timeEl(p.created_at), " · updated ", timeEl(p.updated_at)));
+  }
+
+  // ---- Activity: one item per cycle, patched in place. Returns false when an item was left out
+  // because the owner had text selected in it (it is updated on the next poll).
+  function renderActivity(cycles) {
+    var el = $("activity");
+    if (!cycles.length) {
+      ui.cycles = {};
+      replace(el, emptyState("li", "No wake cycles yet.", "Each wake cycle shows up here with its steps and what it cost."));
+      return true;
+    }
+    var complete = true;
+    var keep = {};
+    var minute = Math.floor(Date.now() / 60000);
+    var items = cycles.map(function (c) {
+      var id = String(c.cycle_id);
+      var item = ui.cycles[id] || buildCycleItem(id);
+      keep[id] = item;
+      item.running = c.status === "running";
+      var key = JSON.stringify([c, minute]);
+      if (item.key !== key) {
+        if (hasSelectionIn(item.summary) || hasSelectionIn(item.steps)) complete = false;
+        else {
+          replace(item.summary, cycleSummary(c));
+          replace(item.steps, cycleSteps(c));
+          item.key = key;
+          if (item.detail || item.detailError) renderCycleDetail(item);
+        }
+      }
+      return item.li;
+    });
+    Array.prototype.slice.call(el.children).forEach(function (child) { if (items.indexOf(child) < 0) el.removeChild(child); });
+    items.forEach(function (li, i) { if (el.children[i] !== li) el.insertBefore(li, el.children[i] || null); });
+    ui.cycles = keep;
+    return complete;
+  }
+
+  function buildCycleItem(id) {
+    var item = { id: id, key: null, detail: null, detailError: null, loading: false, running: false };
+    var panelId = "cycle-detail-" + id;
+    item.summary = h("summary");
+    item.steps = h("div", { class: "cycle-steps" });
+    item.toggle = h("button", { type: "button", class: "btn btn-small", "aria-expanded": "false", "aria-controls": panelId,
+      "aria-label": "Show details of cycle #" + id, text: "Show details" });
+    item.reload = h("button", { type: "button", class: "btn btn-small btn-ghost", hidden: true, "aria-label": "Reload details of cycle #" + id, text: "Reload" });
+    item.status = h("span", { class: "detail-status muted small", role: "status" });
+    item.body = h("div", { class: "detail-body" });
+    item.panel = h("div", { class: "cycle-detail", id: panelId, hidden: true }, item.body);
+    item.li = h("li", { "data-id": id },
+      h("details", { class: "cycle", "data-id": id }, item.summary,
+        h("div", { class: "cycle-body" }, item.steps, h("div", { class: "detail-bar" }, item.toggle, item.reload, item.status), item.panel)));
+    item.toggle.addEventListener("click", function () { toggleCycleDetail(item); });
+    item.reload.addEventListener("click", function () { loadCycleDetail(item); });
+    return item;
+  }
+
+  function cycleSummary(c) {
+    var took = c.ended_at ? duration(c.started_at, c.ended_at) : "";
+    var meta = [triggerText(c.trigger), " · ", timeEl(c.started_at)];
+    if (took) meta.push(" · took " + took);
+    meta.push(" · " + plural(c.calls, "model call") + ", " + plural(c.tools, "tool call"));
+    return [
+      h("span", { class: "cycle-title" }, h("strong", { text: "Cycle #" + c.cycle_id }), " ", chip(CYCLE_STATUS, c.status, sentence(c.status || "unknown"))),
+      h("span", { class: "cycle-cost", text: usd(c.cost_usd) }),
+      h("span", { class: "cycle-meta" }, meta),
+      c.summary || c.note ? h("span", { class: "cycle-text" },
+        c.summary ? String(c.summary) : null,
+        c.note ? h("span", { class: "cycle-note", text: (c.summary ? " · " : "") + sentence(c.note) }) : null) : null,
+    ];
+  }
+
+  function cycleSteps(c) {
+    var steps = arr(c.steps);
+    if (!steps.length) return h("p", { class: "muted small", text: c.status === "running" ? "No steps yet." : "No steps were recorded." });
+    return h("ol", { class: "steps", "aria-label": "Steps of cycle #" + c.cycle_id }, steps.map(function (s) {
+      return s.kind === "tool" ? toolStep(s) : llmStep(s);
     }));
   }
 
-  function renderActivity(cycles, comingPhase) {
-    var el = $("activity");
-    if (comingPhase) {
-      replace(el, emptyState("li", "Activity arrives in phase " + comingPhase + ".", "Every wake cycle and each step in it will be listed here, with what it cost."));
-      return;
+  function tokensText(x) {
+    var parts = [count(x.input_tokens) + " in", count(x.output_tokens) + " out"];
+    if (num(x.cache_write_tokens) > 0) parts.push(count(x.cache_write_tokens) + " cache write");
+    if (num(x.cache_read_tokens) > 0) parts.push(count(x.cache_read_tokens) + " cache read");
+    return parts.join(" · ") + " tokens";
+  }
+
+  function callProblems(x, cls) {
+    return [
+      x.guard_reason ? h("span", { class: cls, text: (x.status === "refused" ? "Not sent: " : "Guard: ") + x.guard_reason }) : null,
+      x.error ? h("span", { class: cls, text: "Error: " + x.error }) : null,
+    ];
+  }
+
+  function llmStep(s) {
+    var pending = s.status === "pending";
+    return h("li", { "data-kind": "llm" },
+      h("span", { class: "kind", text: "Model" }),
+      h("span", { class: "step-main" },
+        h("span", { class: "step-title" }, h("strong", { text: purposeText(s.purpose) }), s.model ? " · " + s.model + " " : " ", chip(CALL_STATUS, s.status, sentence(s.status || "unknown"))),
+        pending ? null : h("span", { class: "step-text muted", text: tokensText(s) + (s.stop_reason ? " · stopped: " + s.stop_reason : "") }),
+        callProblems(s, "step-problem")),
+      h("span", { class: "cost" },
+        pending ? "…" : usd(s.cost_usd),
+        isNaN(num(s.estimate_usd)) ? null : h("span", { class: "est", text: (pending ? "reserved " : "est. ") + usd(s.estimate_usd) })));
+  }
+
+  function toolStep(s) {
+    return h("li", { "data-kind": "tool" },
+      h("span", { class: "kind", text: "Tool" }),
+      h("span", { class: "step-main" },
+        h("span", { class: "step-title" }, h("strong", { text: s.name || "tool" }), s.origin === "server" ? " · server tool " : " ", chip(TOOL_STATUS, s.status, sentence(s.status || "unknown"))),
+        s.summary ? h("span", { class: "step-text", text: String(s.summary) }) : null),
+      h("span", { class: "cost" }));
+  }
+
+  function toggleCycleDetail(item) {
+    var open = item.panel.hidden;
+    item.panel.hidden = !open;
+    item.toggle.setAttribute("aria-expanded", String(open));
+    item.toggle.textContent = open ? "Hide details" : "Show details";
+    item.toggle.setAttribute("aria-label", (open ? "Hide" : "Show") + " details of cycle #" + item.id);
+    if (open && !item.detail && !item.loading) loadCycleDetail(item);
+    else safely("cycleDetail", function () { renderCycleDetail(item); });
+  }
+
+  function loadCycleDetail(item) {
+    if (item.loading) return;
+    item.loading = true;
+    safely("cycleDetail", function () { renderCycleDetail(item); });
+    request("GET", "api/cycles/" + encodeURIComponent(item.id)).then(function (res) {
+      if (res.status === 404) throw new RequestError("http", "this cycle is no longer stored", 404);
+      if (!res.ok) throw httpError(res);
+      if (!isObject(res.data)) throw new RequestError("malformed", "not JSON");
+      item.detail = { data: res.data, loadedAt: new Date() };
+      item.detailError = null;
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      item.detailError = err;
+    }).then(function () {
+      item.loading = false;
+      safely("cycleDetail", function () { renderCycleDetail(item); });
+      safely("banners", renderBanners);
+    });
+  }
+
+  function renderCycleDetail(item) {
+    item.reload.hidden = !(item.detail || item.detailError) || item.panel.hidden || item.loading && !item.detail;
+    item.status.hidden = item.panel.hidden;
+    var status;
+    if (item.loading) status = "Loading…";
+    else if (item.detailError) status = "Couldn't load the details (" + errorText(item.detailError) + ")." + (item.detailError.status === 404 ? "" : " Try Reload.");
+    else if (item.detail) status = "Loaded " + timeFmt.format(item.detail.loadedAt) + (item.running ? ". The cycle is still running; reload for newer steps." : "");
+    else status = "";
+    item.status.textContent = status;
+    item.status.setAttribute("data-kind", item.detailError && !item.loading ? "error" : "");
+    if (item.detail && !hasSelectionIn(item.body) && item.body.getAttribute("data-loaded") !== String(item.detail.loadedAt.getTime())) {
+      replace(item.body, cycleDetailView(item.detail.data));
+      item.body.setAttribute("data-loaded", String(item.detail.loadedAt.getTime()));
+    } else if (!item.detail && item.loading) {
+      replace(item.body, h("p", { class: "muted", text: "Loading the plan, the model's texts and the tool calls…" }));
+    } else if (!item.detail) {
+      replace(item.body, []);
     }
-    if (!cycles.length) { replace(el, emptyState("li", "Nothing has happened yet.")); return; }
-    var openIds = {};
-    Array.prototype.forEach.call(el.querySelectorAll("details[open]"), function (x) { openIds[x.getAttribute("data-id")] = true; });
-    replace(el, cycles.map(function (c) {
-      var details = h("details", { "data-id": String(c.cycle_id), open: !!openIds[String(c.cycle_id)] },
-        h("summary", null,
-          h("strong", { text: "Cycle #" + c.cycle_id + (c.status === "running" ? " (running)" : "") }),
-          h("span", { class: "cycle-cost", text: usd(c.cost_usd) }),
-          h("span", { class: "cycle-meta" }, timeEl(c.started_at), " · ", c.summary)),
-        h("ol", { class: "steps" }, arr(c.steps).map(function (s) {
-          return h("li", null, h("span", { class: "kind", text: s.kind }), h("span", { text: s.summary }), h("span", { class: "cost", text: usd(s.cost_usd) }));
-        })));
-      return h("li", null, details);
+  }
+
+  // GET api/cycles/{id}: the plan, then each model call with its text and the tool calls it made.
+  function cycleDetailView(data) {
+    var calls = arr(data.calls);
+    var tools = arr(data.tools).slice().sort(function (a, b) { return (num(a.seq) || 0) - (num(b.seq) || 0); });
+    var parts = [h("section", { class: "detail-part" }, h("h3", { text: "Plan" }),
+      isObject(data.plan) ? planView(data.plan) : h("p", { class: "muted", text: "No plan was recorded." }))];
+    var shown = {};
+    calls.forEach(function (call) {
+      var own = tools.filter(function (t) { return t.llm_call_id !== null && t.llm_call_id !== undefined && String(t.llm_call_id) === String(call.id); });
+      own.forEach(function (t) { shown[String(t.id)] = true; });
+      parts.push(callView(call, own));
+    });
+    var other = tools.filter(function (t) { return !shown[String(t.id)]; });
+    if (other.length) parts.push(h("section", { class: "detail-part" }, h("h3", { text: "Other tool calls" }), toolList(other)));
+    if (!calls.length && !tools.length) parts.push(h("p", { class: "muted", text: "No model or tool calls were recorded." }));
+    return parts;
+  }
+
+  function callView(call, tools) {
+    var money = call.status === "pending"
+      ? "reserved " + usd(call.estimate_usd)
+      : usd(call.cost_usd) + (isNaN(num(call.estimate_usd)) ? "" : " (estimated " + usd(call.estimate_usd) + ")");
+    var meta = [call.model, tokensText(call), money, call.stop_reason ? "stopped: " + call.stop_reason : null,
+      call.request_id ? "request " + call.request_id : null].filter(function (x) { return x; });
+    return h("section", { class: "detail-part" },
+      h("h3", null, "Model call #" + call.id + " · " + purposeText(call.purpose) + " ", chip(CALL_STATUS, call.status, sentence(call.status || "unknown"))),
+      h("p", { class: "detail-meta", text: meta.join(" · ") }),
+      h("p", { class: "detail-problems" }, callProblems(call, "step-problem")),
+      h("h4", { class: "small-head", text: "Model text" }),
+      call.text ? capped(String(call.text), false) : h("p", { class: "muted small", text: "No text." }),
+      tools.length ? [h("h4", { class: "small-head", text: plural(tools.length, "tool call") }), toolList(tools)] : null);
+  }
+
+  function toolList(tools) {
+    return h("ol", { class: "detail-tools" }, tools.map(function (t) {
+      var where = [t.seq !== undefined && t.seq !== null ? "#" + t.seq : null, t.origin === "server" ? "server tool" : null,
+        t.phase ? (PHASES[t.phase] || t.phase) + " phase" : null].filter(function (x) { return x; }).join(" · ");
+      return h("li", null,
+        h("p", { class: "detail-tool-head" }, h("strong", { text: t.name || "tool" }), " ", chip(TOOL_STATUS, t.status, sentence(t.status || "unknown")),
+          where ? h("span", { class: "muted small", text: " " + where }) : null),
+        t.summary ? h("p", { class: "pre-line", text: String(t.summary) }) : null,
+        h("h5", { class: "small-head", text: "Input" }),
+        t.input !== null && t.input !== undefined && t.input !== "" ? capped(prettyJson(t.input), true) : h("p", { class: "muted small", text: "No input." }),
+        h("h5", { class: "small-head", text: "Result" }),
+        t.result ? capped(asText(t.result), true) : h("p", { class: "muted small", text: t.status === "started" ? "Still running." : "No result." }));
     }));
   }
 
@@ -1182,106 +1652,123 @@
     spend_money: "Spend money", sell: "Sell", other: "Other",
   };
 
-  function renderApprovals(items, comingPhase) {
+  function renderApprovals(items, titles) {
     var el = $("approvals");
-    if (comingPhase) {
-      replace(el, emptyState("div", "Approvals arrive in phase " + comingPhase + ".", "Before the agent publishes, contacts someone or spends money, it will ask you here."));
-      return;
-    }
     var sorted = items.slice().sort(function (x, y) {
       var o = statusOrder(APPROVAL_STATUS, x.status) - statusOrder(APPROVAL_STATUS, y.status);
-      return o || new Date(y.created_at) - new Date(x.created_at);
+      return o || (new Date(y.created_at).getTime() || 0) - (new Date(x.created_at).getTime() || 0);
     });
-    if (!sorted.length) { replace(el, emptyState("div", "No requests.")); return; }
+    if (!sorted.length) {
+      replace(el, emptyState("div", "No requests.", "Before the agent publishes, contacts someone or spends money, it asks you here."));
+      return;
+    }
     replace(el, sorted.map(function (a) {
       var actions = null;
       if (a.status === "pending") {
-        actions = h("div", { class: "item-actions" },
-          h("button", { type: "button", class: "btn", disabled: true, title: "Available in phase 4", text: "Approve" }),
-          h("button", { type: "button", class: "btn", disabled: true, title: "Available in phase 4", text: "Approve with changes" }),
-          h("button", { type: "button", class: "btn", disabled: true, title: "Available in phase 4", text: "Reject" }));
+        actions = h("div", { class: "item-actions" }, laterButton("Approve"), laterButton("Approve with changes"), laterButton("Reject"));
       } else if (a.status === "approved" || a.status === "approved_with_changes") {
-        actions = h("div", { class: "item-actions" },
-          h("button", { type: "button", class: "btn", disabled: true, title: "Available in phase 4", text: "Mark done" }));
+        actions = h("div", { class: "item-actions" }, laterButton("Mark done"));
       }
-      return h("article", { class: "card" },
+      var project = a.project_id !== null && a.project_id !== undefined
+        ? (titles[String(a.project_id)] ? titles[String(a.project_id)] + " (#" + a.project_id + ")" : "#" + a.project_id) : null;
+      var payload = asText(a.payload);
+      return h("article", { class: "card approval", "data-id": String(a.id) },
         h("div", { class: "item-head" },
-          h("h3", { text: a.title }), plainChip(APPROVAL_TYPES[a.type] || a.type), chip(APPROVAL_STATUS, a.status)),
-        h("p", { text: a.description }),
-        h("pre", { class: "payload", text: a.payload }),
+          h("h3", { text: a.title || "Untitled request" }), plainChip(APPROVAL_TYPES[a.type] || sentence(String(a.type || "other").replace(/_/g, " "))),
+          chip(APPROVAL_STATUS, a.status, sentence(String(a.status || "unknown").replace(/_/g, " "))), a.simulated ? testTag() : null),
+        a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
+        payload ? h("div", { class: "payload-wrap" },
+          h("p", { class: "payload-note" }, h("span", { "aria-hidden": "true", text: "! " }), "Written by the agent; check it before acting."),
+          h("pre", { class: "payload capped", tabindex: "0", text: payload })) : null,
         h("dl", { class: "item-grid" },
-          h("div", null, h("dt", { text: "Expected cost" }), h("dd", { text: a.expected_cost })),
-          h("div", null, h("dt", { text: "Expected benefit" }), h("dd", { text: a.expected_benefit }))),
+          h("div", null, h("dt", { text: "Expected cost" }), h("dd", { text: asText(a.expected_cost) || "–" })),
+          h("div", null, h("dt", { text: "Expected benefit" }), h("dd", { text: asText(a.expected_benefit) || "–" })),
+          project ? h("div", null, h("dt", { text: "Project" }), h("dd", { text: project })) : null),
         a.decision_comment || a.result_note ? h("div", { class: "decision" },
-          a.decision_comment ? h("p", null, h("strong", { text: "Your comment: " }), a.decision_comment) : null,
-          a.result_note ? h("p", null, h("strong", { text: "Result: " }), a.result_note) : null) : null,
+          a.decision_comment ? h("p", null, h("strong", { text: "Your comment: " }), String(a.decision_comment)) : null,
+          a.result_note ? h("p", null, h("strong", { text: "Result: " }), String(a.result_note)) : null) : null,
         h("p", { class: "muted small" }, "Requested ", timeEl(a.created_at)),
         actions);
     }));
   }
 
-  function renderInbox(messages, agentName, comingPhase) {
+  function renderInbox(messages, agentName) {
     var el = $("inbox");
-    $("composer").hidden = !!comingPhase;
-    if (comingPhase) {
-      replace(el, emptyState("li", "The inbox arrives in phase " + comingPhase + ".", "You and the agent will be able to write to each other here."));
-      return;
-    }
+    var title = laterTitle();
+    $("composer-send").title = title;
+    $("composer-text").placeholder = "Replying " + lowerFirst(title);
     var sorted = messages.slice().sort(byDate("created_at"));
-    if (!sorted.length) { replace(el, emptyState("li", "No messages yet.")); return; }
-    replace(el, sorted.map(function (m) {
-      return h("li", { "data-from": m.from },
-        h("span", { class: "who" }, m.from === "owner" ? "You" : agentName, " · ", timeEl(m.created_at)),
-        h("span", { text: m.text }));
-    }));
-  }
-
-  function renderUpgrades(items, comingPhase) {
-    var el = $("upgrades");
-    if (comingPhase) {
-      replace(el, emptyState("div", "Upgrade requests arrive in phase " + comingPhase + ".", "The agent will suggest changes to its own tools here, for you to accept or decline."));
+    if (!sorted.length) {
+      replace(el, emptyState("li", "No messages yet.", (agentName || "The agent") + " writes here when it has a question or news for you."));
       return;
     }
-    var sorted = items.slice().sort(function (x, y) { return statusOrder(UPGRADE_STATUS, x.status) - statusOrder(UPGRADE_STATUS, y.status); });
-    if (!sorted.length) { replace(el, emptyState("div", "No upgrade requests.")); return; }
-    replace(el, sorted.map(function (u) {
-      return h("article", { class: "card" },
-        h("div", { class: "item-head" },
-          h("h3", { text: u.title }), plainChip("Priority: " + u.priority),
-          chip(UPGRADE_STATUS, u.status, u.status)),
-        h("dl", { class: "item-grid" },
-          h("div", null, h("dt", { text: "Problem" }), h("dd", { text: u.problem })),
-          h("div", null, h("dt", { text: "Proposed change" }), h("dd", { text: u.proposed_change })),
-          h("div", null, h("dt", { text: "Expected benefit" }), h("dd", { text: u.expected_benefit }))),
-        u.decision_comment ? h("p", { class: "decision" }, h("strong", { text: "Your comment: " }), u.decision_comment) : null,
-        h("p", { class: "muted small" }, "Requested ", timeEl(u.created_at)),
-        u.status === "new" ? h("div", { class: "item-actions" },
-          h("button", { type: "button", class: "btn", disabled: true, title: "Available in phase 4", text: "Accept" }),
-          h("button", { type: "button", class: "btn", disabled: true, title: "Available in phase 4", text: "Decline" })) : null);
+    replace(el, sorted.map(function (m) {
+      var fromOwner = m.sender === "owner";
+      return h("li", { "data-from": fromOwner ? "owner" : "agent", "data-id": String(m.id) },
+        h("span", { class: "who" }, fromOwner ? "You" : agentName || "Ember", " · ", timeEl(m.created_at),
+          isUnread(m) ? [" ", h("span", { class: "chip", "data-tone": "accent" }, h("span", { "aria-hidden": "true", text: "●" }), "Unread")] : null,
+          m.simulated ? [" ", testTag()] : null),
+        h("span", { class: "msg-text", text: asText(m.text) }));
     }));
   }
 
-  function renderMind(mind, comingPhase) {
-    var empty = !!comingPhase || !isObject(mind);
+  function renderUpgrades(items) {
+    var el = $("upgrades");
+    var sorted = items.slice().sort(function (x, y) {
+      return statusOrder(UPGRADE_STATUS, x.status) - statusOrder(UPGRADE_STATUS, y.status) ||
+        (new Date(y.created_at).getTime() || 0) - (new Date(x.created_at).getTime() || 0);
+    });
+    if (!sorted.length) {
+      replace(el, emptyState("div", "No upgrade requests.", "The agent suggests changes to its own tools here, for you to accept or decline."));
+      return;
+    }
+    replace(el, sorted.map(function (u) {
+      return h("article", { class: "card", "data-id": String(u.id) },
+        h("div", { class: "item-head" },
+          h("h3", { text: u.title || "Untitled request" }), u.priority ? plainChip("Priority: " + u.priority) : null,
+          chip(UPGRADE_STATUS, u.status, sentence(String(u.status || "unknown"))), u.simulated ? testTag() : null),
+        h("dl", { class: "item-grid" },
+          h("div", null, h("dt", { text: "Problem" }), h("dd", { class: "pre-line", text: asText(u.problem) || "–" })),
+          h("div", null, h("dt", { text: "Proposed change" }), h("dd", { class: "pre-line", text: asText(u.proposed_change) || "–" })),
+          h("div", null, h("dt", { text: "Expected benefit" }), h("dd", { class: "pre-line", text: asText(u.expected_benefit) || "–" }))),
+        u.decision_comment ? h("p", { class: "decision" }, h("strong", { text: "Your comment: " }), String(u.decision_comment)) : null,
+        h("p", { class: "muted small" }, "Requested ", timeEl(u.created_at)),
+        u.status === "new" ? h("div", { class: "item-actions" }, laterButton("Accept"), laterButton("Decline")) : null);
+    }));
+  }
+
+  var MIND_EMPTY = {
+    strategy: "The agent hasn't written a strategy yet.",
+    lessons: "No lessons yet.",
+    identity: "The agent hasn't described itself yet.",
+  };
+
+  function renderMind(mind) {
+    var empty = !isObject(mind);
     $("mind-tabs").hidden = empty;
     $("mind-note").hidden = empty;
     $("mind-body").hidden = empty;
     $("mind-empty").hidden = !empty;
     if (empty) {
-      replace($("mind-empty"), comingPhase
-        ? [h("p", { class: "empty-title", text: "The agent's notes arrive in phase " + comingPhase + "." }),
-          h("p", { class: "muted", text: "Its strategy, lessons, identity and journal will be readable here." })]
-        : h("p", { class: "empty-title", text: "No notes yet." }));
+      replace($("mind-empty"), [h("p", { class: "empty-title", text: "No notes yet." }),
+        h("p", { class: "muted", text: "The agent's strategy, lessons, identity and journal show up here once it has run." })]);
       return;
     }
     var body = $("mind-body");
     if (ui.mind === "journal") {
-      var entries = arr(mind.journal);
+      var entries = arr(mind.journal).slice().sort(function (x, y) { return (new Date(y.created_at).getTime() || 0) - (new Date(x.created_at).getTime() || 0); });
       replace(body, entries.length ? h("ol", { class: "journal" }, entries.map(function (j) {
-        return h("li", null, h("p", { class: "when" }, "Cycle #" + j.cycle_id + " · ", timeEl(j.created_at)), h("p", { text: j.summary }));
+        var entry = asText(j.entry);
+        return h("li", null,
+          h("p", { class: "when" }, j.cycle_id !== null && j.cycle_id !== undefined ? "Cycle #" + j.cycle_id + " · " : "", timeEl(j.created_at),
+            j.author === "system" ? " · written by the system" : ""),
+          j.summary ? h("p", { class: "journal-summary", text: String(j.summary) }) : null,
+          entry && entry !== j.summary ? h("pre", { class: "journal-entry", text: entry }) : null);
       })) : h("p", { class: "muted", text: "The journal is empty." }));
     } else {
-      replace(body, h("pre", { text: mind[ui.mind] || "(empty)" }));
+      // Markdown written by the agent, shown as it is (never rendered).
+      var text = asText(mind[ui.mind]);
+      replace(body, text.trim() ? h("pre", { class: "mind-text", text: text }) : h("p", { class: "muted", text: MIND_EMPTY[ui.mind] || "Nothing written yet." }));
     }
   }
 
@@ -2022,9 +2509,149 @@
     });
   });
 
+  // "Wake now": the server queues a cycle (202) or says why not (409, 429).
+  $("wake-button").addEventListener("click", function () {
+    if (!ui.data || !ui.data.agent || ui.wakeBusy) return;
+    var btn = this;
+    var hadFocus = document.activeElement === btn;
+    ui.wakeBusy = true;
+    btn.disabled = true;
+    setControlStatus("Asking " + agentName() + " to wake up…", false);
+    request("POST", "api/control/wake", {}).then(function (res) {
+      var data = isObject(res.data) ? res.data : {};
+      if (res.status === 202 || (res.ok && data.queued === true)) {
+        ui.fastPollUntil = Date.now() + WAKE_FAST_POLL_MS;
+        setControlStatus("Waking up…", false);
+        return;
+      }
+      if ((res.status === 409 || res.status === 429) && typeof data.error === "string" && data.error) {
+        setControlStatus(endSentence(sentence(data.error)), true);
+        return;
+      }
+      if (res.status === 429) { setControlStatus("Too soon after the last wake. Try again in a little while.", true); return; }
+      if (res.status === 409) { setControlStatus(agentName() + " can't be woken right now.", true); return; }
+      throw httpError(res);
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setControlStatus("Could not wake " + agentName() + ": " + errorText(err) + ".", true);
+    }).then(function () {
+      ui.wakeBusy = false;
+      if (ui.data) safely("controls", function () { renderControls(ui.data.agent || standInAgent(ui.data)); });
+      if (hadFocus && !btn.disabled && (!document.activeElement || document.activeElement === document.body)) btn.focus();
+      refresh();
+    });
+  });
+
+  // ------------------------------------------------------------------ diagnostics
+
+  function setDiagStatus(text, kind) {
+    var el = $("diag-status");
+    el.textContent = text;
+    el.setAttribute("data-kind", kind || "");
+  }
+
+  function diagnosticsFileName(when) {
+    var d = when || new Date();
+    var two = function (n) { return String(n).padStart(2, "0"); };
+    return "ember-diagnostics-" + d.getFullYear() + "-" + two(d.getMonth() + 1) + "-" + two(d.getDate()) +
+      "-" + two(d.getHours()) + two(d.getMinutes()) + two(d.getSeconds()) + ".txt";
+  }
+
+  function reportBytes(text) {
+    return typeof Blob === "function" ? new Blob([text]).size : text.length;
+  }
+
+  function showDiagnostics() {
+    var diag = ui.diag;
+    var has = typeof diag.text === "string";
+    $("diag-report").hidden = !has;
+    $("diag-meta").hidden = !has;
+    $("diag-copy").disabled = !has;
+    $("diag-download").disabled = !has;
+    $("diag-load").textContent = diag.busy ? "Loading…" : has ? "Reload report" : "Load report";
+    if (!has) return;
+    $("diag-report").textContent = diag.text;
+    var lines = diag.text.split("\n").length;
+    $("diag-meta").textContent = byteSize(reportBytes(diag.text)) + " · " + plural(lines, "line") + " · loaded " +
+      dateTimeFmt.format(diag.loadedAt) + " (" + timeFmt.format(diag.loadedAt) + ")";
+  }
+
+  function loadDiagnostics() {
+    var diag = ui.diag;
+    if (diag.busy) return;
+    diag.busy = true;
+    setDiagStatus("Loading the report…", "");
+    safely("diagnostics", showDiagnostics);
+    request("GET", "api/diagnostics", null, { accept: "text/plain", timeout: DIAGNOSTICS_TIMEOUT_MS }).then(function (res) {
+      if (!res.ok) throw httpError(res);
+      if (typeof res.text !== "string" || !res.text.trim()) throw new RequestError("malformed", "the report is empty");
+      diag.text = res.text;
+      diag.loadedAt = new Date();
+      setDiagStatus("", "");
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setDiagStatus("Couldn't load the report (" + errorText(err) + ")." + (diag.text ? " The report below is the one loaded earlier." : " Try again."), "error");
+    }).then(function () {
+      diag.busy = false;
+      safely("diagnostics", showDiagnostics);
+      safely("banners", renderBanners);
+    });
+  }
+
+  // The Clipboard API needs a secure context, and Home Assistant is often opened over plain http.
+  function copyDiagnostics() {
+    var text = ui.diag.text;
+    if (typeof text !== "string") return;
+    var size = byteSize(reportBytes(text));
+    var done = function () { setDiagStatus("Copied the report (" + size + ") to the clipboard.", "ok"); };
+    if (window.isSecureContext && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      navigator.clipboard.writeText(text).then(done, function () { copyBySelection(done); });
+    } else {
+      copyBySelection(done);
+    }
+  }
+
+  function copyBySelection(done) {
+    var pre = $("diag-report");
+    var sel = window.getSelection ? window.getSelection() : null;
+    if (!sel || !document.createRange) {
+      setDiagStatus("This browser can't copy for you. Select the report below and copy it with Ctrl+C (Cmd+C on a Mac).", "error");
+      return;
+    }
+    var range = document.createRange();
+    range.selectNodeContents(pre);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    if (ok) {
+      sel.removeAllRanges();
+      done();
+    } else {
+      setDiagStatus("The browser didn't allow copying. The whole report is selected: press Ctrl+C (Cmd+C on a Mac) to copy it.", "error");
+    }
+  }
+
+  function downloadDiagnostics() {
+    var text = ui.diag.text;
+    if (typeof text !== "string") return;
+    var name = diagnosticsFileName(ui.diag.loadedAt);
+    var url = window.URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+    var link = h("a", { href: url, download: name, hidden: true });
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(function () { window.URL.revokeObjectURL(url); }, 60000);
+    setDiagStatus("Saved as " + name + " (check your downloads).", "ok");
+  }
+
+  $("diag-load").addEventListener("click", loadDiagnostics);
+  $("diag-copy").addEventListener("click", copyDiagnostics);
+  $("diag-download").addEventListener("click", downloadDiagnostics);
+
   // ------------------------------------------------------------------ tabs
 
-  var TABS = ["overview", "ledger", "projects", "activity", "approvals", "inbox", "upgrades", "mind", "system"];
+  var TABS = ["overview", "ledger", "projects", "activity", "approvals", "inbox", "upgrades", "mind", "system", "diagnostics"];
   var MIND_TABS = ["strategy", "lessons", "identity", "journal"];
 
   // Arrow keys, Home and End move between tabs; focus follows the selection.
@@ -2065,9 +2692,8 @@
     $("mind-body").setAttribute("aria-labelledby", "mind-tab-" + name);
     if (focus) $("mind-tab-" + name).focus();
     if (ui.data) {
-      var coming = isObject(ui.data.coming_in_phase) ? ui.data.coming_in_phase : {};
       ui.rendered.mind = null;
-      section("mind", [ui.data.mind, coming.mind, ui.mind], null, function () { renderMind(ui.data.mind, coming.mind); });
+      section("mind", [ui.data.mind, ui.mind], null, function () { renderMind(ui.data.mind); });
     }
   }
 

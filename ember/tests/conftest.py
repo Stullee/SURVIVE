@@ -23,6 +23,9 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("EMBER_DATA_DIR", str(directory))
     monkeypatch.delenv("EMBER_OPTIONS_PATH", raising=False)
     monkeypatch.delenv("EMBER_DEV_MODE", raising=False)
+    # Tests run wake cycles explicitly; the background scheduler only keeps the economy current.
+    monkeypatch.setenv("EMBER_SCHEDULER", "off")
+    monkeypatch.setenv("EMBER_FAKE_DELAY_MS", "0")
     return directory
 
 

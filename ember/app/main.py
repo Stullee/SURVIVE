@@ -18,6 +18,8 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
 from . import events, paths
+from .agent.scheduler import Scheduler
+from .agent.service import Agent
 from .config import LoadedSettings, load_settings
 from .economy.metering import ProcessLock, lock_path
 from .economy.service import Economy
@@ -28,9 +30,6 @@ from .version import app_version
 from .web import router
 
 log = logging.getLogger(__name__)
-
-# How often the life state is re-evaluated (runway changes with time, not only with money).
-EVALUATE_EVERY_SECONDS = 300
 
 
 def dev_mode_enabled() -> bool:
@@ -89,13 +88,15 @@ def create_app(loaded: LoadedSettings | None = None, *, dev_mode: bool | None = 
         app.state.ember = state
         if state.db_error is None:
             state.log_handler = events.install(state.db)
-        evaluator = asyncio.create_task(_evaluate_periodically(state)) if state.economy is not None else None
+        if state.economy is not None:
+            # One task re-evaluates the economy and wakes the agent (see agent/scheduler.py).
+            state.scheduler = Scheduler(state.db, state.economy, state.agent)
+            state.scheduler.start()
         try:
             yield
         finally:
-            if evaluator is not None:
-                evaluator.cancel()
-                await asyncio.gather(evaluator, return_exceptions=True)
+            if state.scheduler is not None:
+                await state.scheduler.stop()
             await asyncio.to_thread(_stop, state)
 
     # redirect_slashes=False: a redirect's absolute Location would leave the Ingress path.
@@ -150,20 +151,14 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
             economy.stop()
         return state
     state.economy = economy
+    try:
+        agent = Agent(database, loaded, economy)
+        agent.recover()
+        state.agent = agent
+    except Exception as exc:  # noqa: BLE001 - the dashboard and the economy must still come up
+        state.agent_error = redact(f"{type(exc).__name__}: {exc}")
+        log.exception("The agent could not start; no wake cycles will run")
     return state
-
-
-async def _evaluate_periodically(state: AppState) -> None:
-    economy = state.economy
-    assert economy is not None
-    while True:
-        await asyncio.sleep(EVALUATE_EVERY_SECONDS)
-        try:
-            await asyncio.to_thread(economy.tick)
-            # Events written directly (owner actions, guard refusals) are pruned here; the log mirror prunes its own.
-            await asyncio.to_thread(state.db.prune_events, events.KEEP_EVENTS)
-        except Exception:  # noqa: BLE001 - keep evaluating; the error is in the system log
-            log.exception("Periodic life-state evaluation failed")
 
 
 def _stop(state: AppState) -> None:
@@ -173,6 +168,10 @@ def _stop(state: AppState) -> None:
         events.uninstall(state.log_handler)
         state.log_handler = None
     _record(state, "info", "system", "Stopped")
+    if state.agent is not None and state.agent.running_cycle:
+        # A cycle thread is still finishing; leave the connection to it. The next start
+        # charges any unfinished call at its worst case.
+        return
     state.db.close()
 
 

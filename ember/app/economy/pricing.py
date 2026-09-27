@@ -35,9 +35,10 @@ class CallProfile:
     max_tokens: int
 
 
-# Placeholders until the agent loop (phase 3) measures its real prompts.
-PLANNER_OPENING = CallProfile(input_tokens=6_000, max_tokens=3_000)
-LAST_WILL = CallProfile(input_tokens=4_000, max_tokens=1_500)
+# The largest requests the agent builds (measured in tests/test_agent_requests.py, which keeps them in step):
+# the planning call that opens a wake cycle, and the last will. The agent never sends a bigger one.
+PLANNER_OPENING = CallProfile(input_tokens=8_500, max_tokens=1_200)
+LAST_WILL = CallProfile(input_tokens=5_500, max_tokens=1_000)
 
 
 def _decimal(value: str | None, default: Decimal) -> Decimal:

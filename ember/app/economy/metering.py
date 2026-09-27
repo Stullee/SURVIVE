@@ -337,8 +337,8 @@ class MeteredModel:
             if refusal is None:
                 cycle_id = int(
                     conn.execute(
-                        "INSERT INTO cycles (life_id, boot_id, started_at, status, trigger, simulated, cap_micros)"
-                        " VALUES (?, ?, ?, 'running', ?, ?, ?)",
+                        "INSERT INTO cycles (life_id, boot_id, started_at, status, trigger, simulated, cap_micros,"
+                        " session) VALUES (?, ?, ?, 'running', ?, ?, ?, ?)",
                         (
                             status.life_id,
                             self.boot_id,
@@ -346,6 +346,7 @@ class MeteredModel:
                             trigger,
                             1 if self.simulated else 0,
                             usd_cap_to_micros(self.settings.cycle_spend_cap_usd),
+                            self.life.session(),
                         ),
                     ).lastrowid
                 )

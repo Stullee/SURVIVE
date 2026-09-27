@@ -181,6 +181,7 @@ class Jail:
             return 0, 0
         for dirpath, dirnames, filenames in os.walk(self.root, followlinks=False):
             dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
+            files += len(dirnames)  # folders count toward the entry limit too
             for name in filenames:
                 info = os.lstat(os.path.join(dirpath, name))
                 if stat.S_ISREG(info.st_mode):
@@ -195,6 +196,11 @@ class Jail:
         if not isinstance(content, str):
             raise SandboxError("the content must be text")
         *folders, name = self.parts(path)
+        missing = self._missing_folders(folders)
+        if missing:
+            entries, _ = self.usage()
+            if entries + missing + 1 > self.limits.max_files:
+                raise SandboxError(f"the workspace holds at most {self.limits.max_files} entries; delete some first")
         with self._folder(folders, create=True) as folder:
             info = self._file_info(folder, name)
             if info is not None and create_only:
@@ -226,6 +232,16 @@ class Jail:
                 raise
             os.fsync(folder)
         return len(data)
+
+    def _missing_folders(self, folders: list[str]) -> int:
+        """How many folders of the path don't exist yet (they count toward the entry limit)."""
+        for depth in range(len(folders), -1, -1):
+            try:
+                with self._folder(folders[:depth]):
+                    return len(folders) - depth
+            except SandboxError:
+                continue
+        return len(folders)
 
     def delete(self, path: str) -> None:
         *folders, name = self.parts(path)
