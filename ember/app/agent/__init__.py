@@ -1,1 +1,1 @@
-"""The agent: wake cycle, tools, memory and the model client (built in phases 3 and 5)."""
+"""The agent: wake cycles, tools, memory and the fake model for dry runs."""
