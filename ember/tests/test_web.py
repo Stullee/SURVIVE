@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import LoadedSettings, Settings, load_settings
 from app.security import AccessPolicy, ingress_base_href
+from app.version import read_version
 from tests.conftest import HA_CORE, INGRESS
 
 KEY = "sk-ant-api03-verysecretkeyvalue0987654321"
@@ -159,7 +161,8 @@ def test_websockets_refused(ingress_client: TestClient) -> None:
 
 
 def test_health(ingress_client: TestClient) -> None:
-    assert ingress_client.get("/api/health").json() == {"status": "ok", "version": "0.1.0", "database": "ok"}
+    version = read_version(Path(__file__).resolve().parent.parent / "config.yaml")
+    assert ingress_client.get("/api/health").json() == {"status": "ok", "version": version, "database": "ok"}
 
 
 def test_dashboard_payload(ingress_client: TestClient) -> None:

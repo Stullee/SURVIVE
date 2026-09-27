@@ -31,7 +31,7 @@ your approval, and only you can record revenue.
 | Shortest / longest sleep | 30 / 1440 min | Bounds for the sleep time the agent chooses. |
 | Tool steps per cycle | 15 | Maximum tool calls in one cycle. |
 | Planner model | claude-sonnet-5 | Plans each cycle. |
-| Worker model | claude-haiku-4-5-20251001 | Carries out the plan and writes the journal. |
+| Worker model | claude-sonnet-5 | Carries out the plan and writes the journal. |
 | Price table | see below | USD per million tokens for each model. |
 | Web search price | 10 USD per 1,000 | Charged per search on top of tokens. |
 | Dry run | on | Fake model, no API calls, no cost. |
@@ -43,10 +43,11 @@ Default prices (USD per million tokens, from Anthropic's pricing page on
 | Model | Input | Output | Cache write 5 min | Cache write 1 h | Cache read |
 |---|---|---|---|---|---|
 | claude-sonnet-5 | 2.00 | 10.00 | 2.50 | 4.00 | 0.20 |
-| claude-haiku-4-5-20251001 | 1.00 | 5.00 | 1.25 | 2.00 | 0.10 |
 
-Both models used for planning and work must be listed in the price table. If
-the options are inconsistent (for example a cycle cap above the daily cap),
+To use another model (for example a cheaper worker), add its prices to the
+table. Both the planner and the worker model must be listed there.
+
+If the options are inconsistent (for example a cycle cap above the daily cap),
 Ember starts in **safe mode**: built-in defaults, dry run forced on, and the
 problem shown at the top of the dashboard.
 

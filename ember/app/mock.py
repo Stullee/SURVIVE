@@ -217,7 +217,7 @@ def _activity(now: datetime) -> list[dict[str, Any]]:
                 [
                     ("llm", "plan (claude-sonnet-5)", 0.0198),
                     ("tool", 'message_owner "Question about Impressum for the glossary"', 0.0),
-                    ("llm", "reflect (claude-haiku-4-5-20251001)", 0.0087),
+                    ("llm", "reflect (claude-sonnet-5)", 0.0087),
                 ],
             ),
             (
@@ -229,7 +229,7 @@ def _activity(now: datetime) -> list[dict[str, Any]]:
                     ("tool", 'web_search "Ko-fi terms of service Germany"', 0.0100),
                     ("tool", "web_fetch ko-fi.com/terms", 0.0),
                     ("tool", 'request_approval "Create a Ko-fi page"', 0.0),
-                    ("llm", "reflect (claude-haiku-4-5-20251001)", 0.0102),
+                    ("llm", "reflect (claude-sonnet-5)", 0.0102),
                 ],
             ),
         ]

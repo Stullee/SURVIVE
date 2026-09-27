@@ -37,8 +37,13 @@ All options, their defaults and the default price table are documented in
 **Documentation** tab. Keep **Dry run** on until phase 5.
 
 The default prices come from Anthropic's pricing page as of 2026-09-27
-(Sonnet 5: $2 / $10 per million input / output tokens; Haiku 4.5: $1 / $5; web
-search $10 per 1,000). **Please verify them** before switching dry run off.
+(Sonnet 5: $2 / $10 per million input / output tokens, web search $10 per
+1,000). **Please verify them** before switching dry run off.
+
+Both the planner and the worker default to `claude-sonnet-5`. The spec suggested
+Haiku 4.5 as a cheaper worker, but Anthropic lists it for retirement not sooner
+than 2026-10-15; to use a cheaper worker later, add its prices to the price table
+and set `worker_model`.
 
 ## Home Assistant sensors
 

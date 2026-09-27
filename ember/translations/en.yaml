@@ -35,7 +35,9 @@ configuration:
     description: Model that plans each cycle. Must be listed in the price table.
   worker_model:
     name: Worker model
-    description: Cheaper model that carries out the plan and writes the journal. Must be listed in the price table.
+    description: >-
+      Model that carries out the plan and writes the journal. Can be a cheaper
+      model than the planner. Must be listed in the price table.
   price_table:
     name: Price table
     description: >-

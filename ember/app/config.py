@@ -47,14 +47,6 @@ class ModelPrice(BaseModel):
 # edit them in the app options. Must match the defaults in config.yaml.
 DEFAULT_PRICE_TABLE: tuple[ModelPrice, ...] = (
     ModelPrice(model="claude-sonnet-5", input=2.0, output=10.0, cache_write_5m=2.5, cache_write_1h=4.0, cache_read=0.2),
-    ModelPrice(
-        model="claude-haiku-4-5-20251001",
-        input=1.0,
-        output=5.0,
-        cache_write_5m=1.25,
-        cache_write_1h=2.0,
-        cache_read=0.1,
-    ),
 )
 
 
@@ -71,7 +63,7 @@ class Settings(BaseModel):
     max_sleep_minutes: int = Field(default=1_440, ge=5, le=10_080)
     max_tool_steps: int = Field(default=15, ge=1, le=100)
     planner_model: str = Field(default="claude-sonnet-5", min_length=1, max_length=100)
-    worker_model: str = Field(default="claude-haiku-4-5-20251001", min_length=1, max_length=100)
+    worker_model: str = Field(default="claude-sonnet-5", min_length=1, max_length=100)
     price_table: tuple[ModelPrice, ...] = DEFAULT_PRICE_TABLE
     web_search_usd_per_1000: float = Field(default=10.0, ge=0, le=1_000)
     dry_run: bool = True

@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.1.0"
+version: "0.1.1"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -41,7 +41,7 @@ options:
   max_sleep_minutes: 1440
   max_tool_steps: 15
   planner_model: claude-sonnet-5
-  worker_model: claude-haiku-4-5-20251001
+  worker_model: claude-sonnet-5
   # USD per million tokens. Check https://platform.claude.com/docs/en/about-claude/pricing
   price_table:
     - model: claude-sonnet-5
@@ -50,12 +50,6 @@ options:
       cache_write_5m: 2.5
       cache_write_1h: 4
       cache_read: 0.2
-    - model: claude-haiku-4-5-20251001
-      input: 1
-      output: 5
-      cache_write_5m: 1.25
-      cache_write_1h: 2
-      cache_read: 0.1
   web_search_usd_per_1000: 10
   dry_run: true
   log_level: info

@@ -75,7 +75,7 @@ def test_models_must_have_prices(write_options: Callable[[dict], Path]) -> None:
 
 def test_duplicate_price_entries_rejected(write_options: Callable[[dict], Path]) -> None:
     entry = DEFAULT_PRICE_TABLE[0].model_dump()
-    write_options({"price_table": [entry, entry, DEFAULT_PRICE_TABLE[1].model_dump()]})
+    write_options({"price_table": [entry, entry]})
     loaded = load_settings()
     assert loaded.safe_mode
     assert any("more than once" in e for e in loaded.errors)
@@ -83,7 +83,7 @@ def test_duplicate_price_entries_rejected(write_options: Callable[[dict], Path])
 
 def test_negative_price_rejected(write_options: Callable[[dict], Path]) -> None:
     bad = {**DEFAULT_PRICE_TABLE[0].model_dump(), "output": -1}
-    write_options({"price_table": [bad, DEFAULT_PRICE_TABLE[1].model_dump()]})
+    write_options({"price_table": [bad]})
     assert load_settings().safe_mode
 
 
