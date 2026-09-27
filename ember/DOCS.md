@@ -6,9 +6,9 @@ to find honest ways to earn more than it spends. You stay in control: anything
 that leaves the container (publishing, contacting people, spending money) needs
 your approval, and only you can record revenue.
 
-> **Current status: phase 1 of 5.** The dashboard shows made-up preview data so
-> you can review the layout. The agent does not run yet, nothing calls the
-> Anthropic API, and nothing costs money.
+> **Current status: phase 2 of 5.** The economy works: balance, spending limits,
+> life states and your money entries are real. The agent itself does not run
+> yet (phase 3), nothing calls the Anthropic API, and nothing costs money.
 
 ## Getting started
 
@@ -55,6 +55,56 @@ If the options are inconsistent (for example a cycle cap above the daily cap),
 Ember starts in **safe mode**: built-in defaults, dry run forced on, and the
 problem shown at the top of the dashboard.
 
+## Money
+
+The balance is what Ember may spend: your grants and recorded revenue, minus API
+costs and expenses, plus or minus corrections. Everything is in a ledger that
+can only be added to, never edited; mistakes are fixed with correction entries,
+so the history always stays visible.
+
+On the dashboard you can record:
+
+- **Grant**: money you allow Ember to spend. This doesn't buy API credits; make
+  sure your Anthropic account has at least this much. The starting balance
+  from the options is recorded as the first grant, once.
+- **Revenue**: money Ember earned (with its source). Only you can record
+  revenue; the agent can never report its own.
+- **Expense**: real-world money you spent on Ember's behalf (a domain, a fee).
+- **Adjustment**: add to or subtract from the balance for anything else.
+- **API cost correction**: if Anthropic's Console shows a different cost than
+  Ember computed, record the difference here.
+- **Correct** on an earlier grant, revenue or expense reduces it (up to its full
+  amount, which voids it).
+
+Amounts are typed like `12.50` or `12,50` (at most two decimals). Entries can be
+in USD or EUR; for EUR you enter the exchange rate and the original amount is
+kept. You can date an entry up to a year back. Ember asks for confirmation when
+an amount is far larger than your usual ones, or when an entry would make the
+agent critical or end its life. Sending the same form twice records it once.
+
+**Spending limits.** Before every API call Ember works out the most the call
+could cost and refuses it if that could break the per-cycle cap, the daily cap
+(per local calendar day, so up to twice the cap can be spent around midnight),
+or the balance. A small reserve is always kept so the agent can write its last
+will. As an outside safety net, give Ember its own
+[Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
+API key and set a monthly spend limit there.
+
+**Dry run** uses the fake model. Its simulated costs are shown as a separate
+test balance that starts from your real balance; nothing real is spent. In dry
+run you can also record *test money*, which only exists in the current dry-run
+session. Each time you switch dry run on, a new session starts from scratch.
+
+## Life states
+
+| State | Meaning |
+|---|---|
+| alive | Running normally. |
+| critical | Less than 2 days of runway (balance divided by the average daily spending of the last 7 active days), or it couldn't afford its next planning call. It stays critical until runway is back to 4 days *and* money came in. The first time, it writes a last will. |
+| paused | You paused it. Nothing runs until you resume. |
+| unfunded | No money yet and nothing spent: grant funds to start. |
+| dead | The balance ran out, or it could no longer afford even its last will. No model calls. The dashboard shows a memorial. A grant large enough for a fresh start begins a new life (the dashboard shows the amount needed); resuming alone never revives. |
+
 ## Home Assistant sensors (optional)
 
 Ember never calls Home Assistant. Instead, Home Assistant can read a small JSON
@@ -81,7 +131,11 @@ rest:
         value_template: "{{ value_json.state }}"
 ```
 
-While phase 1 is installed these values are preview data (`"mock": true`).
+The JSON also has `mode` (`live` or `dry_run`), `runway_known` (runway is
+reported as 365 days while it is unknown, for example before any spending),
+`today_api_spend_usd`, `daily_cap_usd` and `safe_mode`. In dry run the balance
+is the test balance. If the database can't be read, `state` is `unknown` and the
+numbers are empty.
 
 ## Security
 

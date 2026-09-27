@@ -11,13 +11,14 @@ everything that leaves the container, and only the owner can record revenue.
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Skeleton: app manifest, Dockerfile, Ingress dashboard with preview data, SQLite + migrations, docker-compose | **done** |
-| 2 | Economy: ledger, cost accounting, budget guard, runway, life states, money entry, chart | next |
-| 3 | Agent in dry run: wake cycle, fake model, local tools, memory, projects, activity | |
+| 2 | Economy: ledger, cost accounting, budget guard, runway, life states, money entry, chart | **done** |
+| 3 | Agent in dry run: wake cycle, fake model, local tools, memory, projects, activity | in progress |
 | 4 | Owner loop: approvals, inbox, upgrade requests, controls, changelog awareness | |
 | 5 | Go live: real Anthropic client, web search/fetch, prompt caching, final security and cost review | |
 
-In phase 1 the dashboard shows made-up data (with a banner saying so). Nothing
-calls the Anthropic API and nothing costs money.
+The economy is real from phase 2 on; sections that arrive in later phases are
+shown as empty placeholders. Nothing calls the Anthropic API yet and nothing
+costs money.
 
 ## Install in Home Assistant
 
@@ -166,7 +167,7 @@ ember/                       the app
     db.py, migrations/       SQLite and numbered migrations
     security.py              Ingress IP filter, CSRF check, security headers
     web.py, web/             routes, dashboard HTML/CSS/JS, vendored Chart.js
-    mock.py                  phase-1 preview data
+    economy/                 ledger, life states, cost estimates, budget guard (metering.py)
     agent/constitution.md    the agent's fixed system prompt core
   tests/
 ```
@@ -195,6 +196,22 @@ the documentation wins:
   (the spec calls them configurable) and `log_level`.
 - **Cold backups** (`backup: cold`): the app pauses while Home Assistant takes a
   backup so the SQLite file is consistent.
+- **Worst-case estimates include server tools and caching.** The spec's
+  estimate (input tokens + max_tokens) would miss web-search charges, cache
+  writes and the server-side tool loop, so the guard prices those too and
+  refuses requests it can't bound (for example a server tool without
+  `max_uses`).
+- **Death and the last will.** "Dead at balance ≤ 0" alone would let the agent
+  die without its last will, or linger unable to afford any call. Ember keeps a
+  small reserve for the last will, dies when the balance is used up *or* when
+  it can no longer afford its last will ("starved"), and turns critical when it
+  can't afford a planning call. Leaving critical needs 4 days of runway and new
+  money, so the state doesn't flip back and forth around 2 days.
+- **Extra ledger types and states.** `api_cost_correction` (align with the
+  Console) and typed corrections instead of edits; a state `unfunded` for an
+  agent that has no money yet (not dead: it never lived).
+- **Dry-run economy.** Simulated costs use a separate test balance per dry-run
+  session, so a dry run never touches the live balance.
 
 ## License
 
