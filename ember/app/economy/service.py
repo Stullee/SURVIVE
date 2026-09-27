@@ -226,7 +226,7 @@ class Economy:
                 f"${micros_to_usd(held):.2f} of interrupted calls was charged at the worst case. Check the real cost in"
                 " the Anthropic Console and record the difference as an API cost correction (decrease)."
             )
-        opening = opening_cost(self.settings, self.db)
+        opening = opening_cost(self.settings, self.db, self.mode)
         if opening is not None:
             for label, cap in (
                 ("cycle spend cap", self.settings.cycle_spend_cap_usd),

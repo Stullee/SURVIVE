@@ -93,7 +93,7 @@ def test_interrupted_call_known_to_cost_more_than_its_estimate_is_an_overrun(dat
         model.call(cycle, "work", request(max_tokens=1_000))
     result = failed.value.result
     assert result.cost_micros == 110_000 and result.overrun
-    assert safety_factor(economy.db, "claude-sonnet-5") > 1
+    assert safety_factor(economy.db, "claude-sonnet-5", "dry_run") > 1
     with pytest.raises(CallRefused, match="stopped"):
         model.call(cycle, "work", request())
 
@@ -140,7 +140,7 @@ def test_learning_us_inference_is_not_an_overrun(data_dir: Path) -> None:
     cycle = model.open_cycle("test")
     result = model.call(cycle, "work", request(max_tokens=1_000))
     assert result.cost_micros == 13_200 and not result.overrun
-    assert safety_factor(economy.db, "claude-sonnet-5") == 1
+    assert safety_factor(economy.db, "claude-sonnet-5", "dry_run") == 1
 
 
 def test_model_calls_refuse_to_run_inside_a_transaction(data_dir: Path) -> None:
@@ -319,3 +319,63 @@ def test_an_economy_that_fails_to_start_keeps_the_dashboard_up(client_factory, m
         data = client.get("api/dashboard").json()
         assert data["agent"] is None and "disk I/O error" in data["system"]["economy_error"]
         assert client.get("api/sensors").json()["state"] == "unknown"
+
+
+# --- hooks for the agent loop ---
+
+
+def test_safety_factor_is_per_mode(data_dir: Path) -> None:
+    economy = make_economy(data_dir, Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=5))
+    model, _ = metered(economy, ScriptedTransport(outcomes=[Completed(message(1_000, 5_000))]))
+    cycle = model.open_cycle("test")
+    assert model.call(cycle, "work", request(max_tokens=1_000)).overrun
+    assert safety_factor(economy.db, "claude-sonnet-5", "dry_run") > 1
+    assert safety_factor(economy.db, "claude-sonnet-5", "live") == 1  # a fake overrun says nothing about the API
+
+
+def test_quote_and_headroom(data_dir: Path) -> None:
+    economy = make_economy(data_dir, Settings(starting_balance_usd=50, daily_spend_cap_usd=1, cycle_spend_cap_usd=0.25))
+    model, _ = metered(economy)
+    cycle = model.open_cycle("test")
+    assert model.quote(request(max_tokens=1_000)) == 12_000
+    assert model.headroom(cycle) == 250_000
+    model.call(cycle, "work", request(max_tokens=1_000))  # costs 4,000
+    assert model.headroom(cycle) == 246_000
+    with pytest.raises(Exception, match="max_tokens"):
+        model.quote({"model": "claude-sonnet-5", "messages": []})
+
+
+def test_cycles_only_end_with_known_statuses(data_dir: Path) -> None:
+    economy = make_economy(data_dir, Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=5))
+    model, _ = metered(economy)
+    cycle = model.open_cycle("test")
+    with pytest.raises(ValueError, match="unknown cycle status"):
+        model.close_cycle(cycle, "running")
+    assert model.close_cycle(cycle, "idle") is True
+    assert model.close_cycle(cycle, "completed") is False
+
+
+def test_failed_calls_are_events_and_request_ids_are_kept(data_dir: Path) -> None:
+    from app.economy.metering import Rejected
+
+    economy = make_economy(data_dir, Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=5))
+    outcomes = [Completed(message(), "req_ok"), Rejected(529, "overloaded", "req_529")]
+    model, _ = metered(economy, ScriptedTransport(outcomes=outcomes))
+    cycle = model.open_cycle("test")
+    model.call(cycle, "work", request())
+    with pytest.raises(CallFailed):
+        model.call(cycle, "work", request())
+    with economy.db.connection() as conn:
+        ids = [r[0] for r in conn.execute("SELECT request_id FROM llm_calls ORDER BY id")]
+    assert ids == ["req_ok", "req_529"]
+    assert any("failed: HTTP 529" in e["message"] for e in economy.db.recent_events(limit=10))
+
+
+def test_recording_the_last_will(data_dir: Path) -> None:
+    economy = make_economy(data_dir)
+    life = economy.status().life_id
+    with economy.db.transaction() as conn:
+        assert economy.life.record_last_will(conn, life, "2026-09-01T12:00:00Z") is True
+        assert economy.life.record_last_will(conn, life, "2026-09-01T12:00:01Z") is False  # only once per life
+    status = economy.status()
+    assert status.last_will_at == "2026-09-01T12:00:00Z" and not status.last_will_due

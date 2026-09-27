@@ -68,21 +68,59 @@ def test_symlinks_are_never_followed(jail: Jail, tmp_path: Path) -> None:
 
 
 def test_a_link_swapped_in_after_the_check_is_not_followed(jail: Jail, tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    from app.agent import sandbox
+
     secret = tmp_path / "secret.md"
     secret.write_text("keep")
     jail.write("note.md", "x")
-    real_resolve = jail.resolve
+    real_info = sandbox.Jail._file_info
 
-    def swap(path: str, **kwargs):  # noqa: ANN003, ANN202
-        target = real_resolve(path, **kwargs)
-        if kwargs.get("must_exist"):
-            os.unlink(target)
-            os.symlink(secret, target)
-        return target
+    def swap(self, folder, name):  # noqa: ANN001, ANN202
+        info = real_info(self, folder, name)
+        os.unlink(name, dir_fd=folder)
+        os.symlink(secret, name, dir_fd=folder)
+        return info
 
-    monkeypatch.setattr(jail, "resolve", swap)
+    monkeypatch.setattr(sandbox.Jail, "_file_info", swap)
     with pytest.raises(SandboxError, match="links"):
         jail.read("note.md")
+    assert secret.read_text() == "keep"
+
+
+def test_a_folder_swapped_for_a_link_is_not_followed(jail: Jail, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    jail.write("notes/a.md", "x")
+    os.unlink(jail.root / "notes" / "a.md")
+    os.rmdir(jail.root / "notes")
+    os.symlink(outside, jail.root / "notes")
+    with pytest.raises(SandboxError, match="links"):
+        jail.write("notes/b.md", "escape")
+    assert list(outside.iterdir()) == []
+
+
+def test_hard_links_and_special_files_are_refused(jail: Jail, tmp_path: Path) -> None:
+    database = tmp_path / "ember.db"
+    database.write_text("secret rows")
+    jail.ensure_root()
+    os.link(database, jail.root / "db.md")
+    with pytest.raises(SandboxError, match="hard links"):
+        jail.read("db.md")
+    with pytest.raises(SandboxError, match="hard links"):
+        jail.write("db.md", "overwrite")
+    assert database.read_text() == "secret rows"
+    os.mkfifo(jail.root / "pipe.md")
+    with pytest.raises(SandboxError, match="regular file"):
+        jail.read("pipe.md")  # must not hang waiting for a writer
+
+
+def test_create_only_and_leftover_temp_files(jail: Jail) -> None:
+    jail.write("a.md", "x", create_only=True)
+    with pytest.raises(SandboxError, match="already exists"):
+        jail.write("a.md", "y", create_only=True)
+    (jail.root / ".tmp-deadbeef").write_text("half")
+    assert [e.path for e in jail.listing()] == ["a.md"]
+    assert jail.remove_temporary_files() == 1
 
 
 def test_limits(jail: Jail) -> None:

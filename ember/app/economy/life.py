@@ -154,8 +154,8 @@ class Life:
 
     def revive_threshold(self) -> int | None:
         """Balance a new life needs: one planning call plus the last-will reserve."""
-        opening = opening_cost(self.settings, self.db)
-        reserve = last_will_reserve(self.settings, self.db)
+        opening = opening_cost(self.settings, self.db, self.mode)
+        reserve = last_will_reserve(self.settings, self.db, self.mode)
         if opening is None or reserve is None:
             return None
         return opening + reserve
@@ -435,6 +435,15 @@ class Life:
                 conn.execute("UPDATE lives SET state = 'critical' WHERE id = ?", (life["id"],))
             events.record(self.db, "warning", "life", reason, {"life_id": life["id"]})
             return "critical"
+
+    def record_last_will(self, conn: sqlite3.Connection, life_id: int, at: str) -> bool:
+        """Mark the will as written (inside the caller's transaction). A life that already ended is left alone."""
+        updated = conn.execute(
+            "UPDATE lives SET last_will_at = ?, last_will_due = 0"
+            " WHERE id = ? AND ended_at IS NULL AND last_will_at IS NULL",
+            (at, life_id),
+        ).rowcount
+        return updated == 1
 
     # --- the owner's switches ---
 

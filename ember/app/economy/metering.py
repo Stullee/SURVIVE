@@ -52,6 +52,8 @@ from .pricing import (
 
 log = logging.getLogger(__name__)
 
+# How a wake cycle can end ("stopped" is also set by the guard after an overrun).
+CYCLE_END_STATUSES = frozenset({"completed", "idle", "refused", "failed", "stopped", "interrupted"})
 # Calls that open a wake cycle; refusing one of them for lack of money is starvation.
 OPENING_PURPOSES = frozenset({"plan", "last_will"})
 _PURPOSE = re.compile(r"^[a-z_]{1,32}$")
@@ -214,6 +216,7 @@ class _Settlement:
     overrun: bool = False
     us_inference: bool = False
     expected: int = 0  # the estimate, adjusted for a price multiplier learned from this response
+    request_id: str | None = None
 
 
 # --- the process lock ---
@@ -351,6 +354,9 @@ class MeteredModel:
         return cycle_id
 
     def close_cycle(self, cycle_id: int, status: str = "completed", note: str | None = None) -> bool:
+        """End a running cycle. Returns False if it had already ended (e.g. stopped after an overrun)."""
+        if status not in CYCLE_END_STATUSES:
+            raise ValueError(f"unknown cycle status {status!r}")
         with self.db.connection() as conn:
             updated = conn.execute(
                 "UPDATE cycles SET status = ?, ended_at = ?, note = COALESCE(?, note)"
@@ -380,6 +386,38 @@ class MeteredModel:
         if result.status != "ok":
             raise CallFailed(result)
         return result
+
+    def quote(self, request: Mapping[str, Any]) -> int:
+        """The worst case the guard would reserve for ``request`` now (reads only). Raises Unpriceable."""
+        try:
+            input_tokens = self.transport.count_tokens(request)
+        except Exception:  # noqa: BLE001 - same fallback as reserve()
+            input_tokens = rough_token_count(request)
+        plan = plan_request(request, input_tokens)
+        price = self.settings.price_for(plan.model)
+        if price is None:
+            raise Unpriceable(f"model {plan.model!r} has no entry in the price table")
+        return self._estimate(plan, price, Decimal(str(self.settings.web_search_usd_per_1000)), geo_multiplier(self.db))
+
+    def headroom(self, cycle_id: int, purpose: str = "work") -> int:
+        """How much the next call of ``purpose`` in this cycle may cost: the tightest of the cycle cap, the daily
+        cap and the balance (keeping the last-will reserve unless the will is written or this is the will)."""
+        status = self.life.evaluate()
+        scope = self.life.scope()
+        with self.db.connection() as conn:
+            cycle = conn.execute("SELECT cap_micros FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
+        if cycle is None:
+            return 0
+        spent, reserved = self.books.cycle_spend(cycle_id)
+        pending = self.books.pending(scope)
+        daily_cap = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
+        today = self.books.cap_spend_on(scope, self.clock.today())
+        room = min(cycle["cap_micros"] - spent - reserved, daily_cap - today - pending, status.balance - pending)
+        if purpose != "last_will" and status.last_will_at is None:
+            room = min(
+                room, status.balance - pending - (last_will_reserve(self.settings, self.db, self.life.mode) or 0)
+            )
+        return max(0, room)
 
     def reserve(self, cycle_id: int, purpose: str, request: Mapping[str, Any]) -> Reservation:
         """Check and record a call before it is sent. Raises CallRefused after committing the refusal."""
@@ -476,7 +514,8 @@ class MeteredModel:
 
     def _estimate(self, plan: Plan, price: ModelPrice, search_price: Decimal, geo: Decimal) -> int:
         base = worst_case_micros(plan, price, search_price, geo)
-        return int((Decimal(base) * safety_factor(self.db, plan.model)).to_integral_value(rounding=ROUND_CEILING))
+        factor = safety_factor(self.db, plan.model, self.life.mode)
+        return int((Decimal(base) * factor).to_integral_value(rounding=ROUND_CEILING))
 
     def _money_refusal(
         self, cycle: Any, status: LifeStatus, purpose: str, estimate: int
@@ -516,7 +555,7 @@ class MeteredModel:
                 "balance",
             ), opening and estimate > settled
         if purpose != "last_will" and status.last_will_at is None:
-            reserve = last_will_reserve(self.settings, self.db) or 0
+            reserve = last_will_reserve(self.settings, self.db, self.life.mode) or 0
             if available - estimate < reserve:
                 return (
                     f"this call would dip into the ${micros_to_usd(reserve):.4f} kept back for the last will{held}",
@@ -546,7 +585,7 @@ class MeteredModel:
                     **{k: str(Decimal(str(v))) for k, v in price.model_dump().items() if k != "model"},
                     "web_search_usd_per_1000": str(search_price),
                     "geo_multiplier": str(geo),
-                    "safety_factor": str(safety_factor(self.db, price.model)),
+                    "safety_factor": str(safety_factor(self.db, price.model, self.life.mode)),
                 }
             )
         cursor = conn.execute(
@@ -584,6 +623,7 @@ class MeteredModel:
                 uncertain=True,
                 error=f"cost could not be computed ({type(exc).__name__}); charged the worst case",
             )
+        settled.request_id = getattr(outcome, "request_id", None)
         try:
             self._store(reservation, settled)
         except Exception as exc:  # noqa: BLE001 - spending stops until a restart
@@ -701,7 +741,7 @@ class MeteredModel:
                 " billing_uncertain = ?, input_tokens = ?, output_tokens = ?, cache_write_5m_tokens = ?,"
                 " cache_write_1h_tokens = ?, cache_read_tokens = ?, web_search_requests = ?,"
                 " web_fetch_requests = ?, response_model = ?, stop_reason = ?, message_id = ?, service_tier = ?,"
-                " inference_geo = ?, error = ?, usage_raw = ? WHERE id = ? AND status = 'pending'",
+                " inference_geo = ?, error = ?, usage_raw = ?, request_id = ? WHERE id = ? AND status = 'pending'",
                 (
                     s.status,
                     to_iso(now),
@@ -722,6 +762,7 @@ class MeteredModel:
                     s.inference_geo,
                     error,
                     json.dumps(s.usage_raw, default=str) if s.usage_raw is not None else None,
+                    (s.request_id or "")[:100] or None,
                     res.call_id,
                 ),
             )
@@ -730,6 +771,15 @@ class MeteredModel:
                     "INSERT INTO ledger (ts, occurred_on, type, amount_micros, simulated, llm_call_id, created_by)"
                     " VALUES (?, ?, 'api_cost', ?, ?, ?, 'system')",
                     (to_iso(now), row["local_day"], s.cost, 1 if self.simulated else 0, res.call_id),
+                )
+            if s.status in ("failed", "interrupted"):
+                charged = f"; charged ${micros_to_usd(s.cost):.4f} (worst case)" if s.cost else "; nothing charged"
+                events.record(
+                    self.db,
+                    "warning",
+                    "economy",
+                    f"Call #{res.call_id} ({res.model}) {s.status}: {s.error or 'no answer'}{charged}",
+                    {"call_id": res.call_id, "request_id": s.request_id},
                 )
             if s.us_inference and mark_us_inference(self.db):
                 events.record(
@@ -747,7 +797,7 @@ class MeteredModel:
                     + "; ".join(s.notes),
                 )
             if s.overrun:
-                factor = raise_safety_factor(self.db, res.model, s.floor, s.expected)
+                factor = raise_safety_factor(self.db, res.model, s.floor, s.expected, self.life.mode)
                 conn.execute(
                     "UPDATE cycles SET status = 'stopped', ended_at = ?, note = ? WHERE id = ? AND status = 'running'",
                     (to_iso(now), "a call cost more than its worst-case estimate", res.cycle_id),

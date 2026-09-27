@@ -7,13 +7,15 @@ stored so every later estimate includes them:
   on token prices. Ember never asks for it, but when a response reports it,
   estimates and costs use the multiplier from then on.
 * If a call ever costs more than its worst-case estimate, the estimate for that
-  model is scaled up (the safety factor), so the same mistake can't repeat.
+  model is scaled up (the safety factor), so the same mistake can't repeat. The
+  factor is kept per mode: an overrun of the fake model in a dry run says
+  nothing about the real API.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_CEILING, Decimal, InvalidOperation
 
 from ..config import Settings
 from ..db import Database
@@ -58,34 +60,39 @@ def mark_us_inference(db: Database) -> bool:
     return True
 
 
-def safety_factor(db: Database, model: str) -> Decimal:
-    return min(MAX_SAFETY_FACTOR, max(Decimal(1), _decimal(db.get_meta(_SAFETY_PREFIX + model), Decimal(1))))
+def _safety_key(model: str, mode: str) -> str:
+    return f"{_SAFETY_PREFIX}{mode}.{model}"
 
 
-def raise_safety_factor(db: Database, model: str, actual: int, estimate: int) -> Decimal:
+def safety_factor(db: Database, model: str, mode: str = "live") -> Decimal:
+    value = _decimal(db.get_meta(_safety_key(model, mode)), Decimal(1))
+    return min(MAX_SAFETY_FACTOR, max(Decimal(1), value))
+
+
+def raise_safety_factor(db: Database, model: str, actual: int, estimate: int, mode: str = "live") -> Decimal:
     """After a call cost more than estimated, scale that model's estimates up (10% margin)."""
-    current = safety_factor(db, model)
+    current = safety_factor(db, model, mode)
     needed = (Decimal(actual) / Decimal(max(estimate, 1)) * current * Decimal("1.1")).quantize(Decimal("0.01"))
     factor = min(MAX_SAFETY_FACTOR, max(current, needed))
-    db.set_meta(_SAFETY_PREFIX + model, str(factor))
+    db.set_meta(_safety_key(model, mode), str(factor))
     return factor
 
 
-def profile_cost(settings: Settings, db: Database, model: str, profile: CallProfile) -> int | None:
+def profile_cost(settings: Settings, db: Database, model: str, profile: CallProfile, mode: str = "live") -> int | None:
     """Worst-case micros of one ``profile`` call on ``model``; None if the model has no price."""
     price = settings.price_for(model)
     if price is None:
         return None
     plan = Plan(model=model, input_tokens=profile.input_tokens, max_output_tokens=profile.max_tokens)
     estimate = worst_case_micros(plan, price, settings.web_search_usd_per_1000, geo_multiplier(db))
-    return int((Decimal(estimate) * safety_factor(db, model)).to_integral_value(rounding="ROUND_CEILING"))
+    return int((Decimal(estimate) * safety_factor(db, model, mode)).to_integral_value(rounding=ROUND_CEILING))
 
 
-def opening_cost(settings: Settings, db: Database) -> int | None:
+def opening_cost(settings: Settings, db: Database, mode: str = "live") -> int | None:
     """What the planning call that opens a wake cycle can cost at most."""
-    return profile_cost(settings, db, settings.planner_model, PLANNER_OPENING)
+    return profile_cost(settings, db, settings.planner_model, PLANNER_OPENING, mode)
 
 
-def last_will_reserve(settings: Settings, db: Database) -> int | None:
+def last_will_reserve(settings: Settings, db: Database, mode: str = "live") -> int | None:
     """Money held back so the agent can always write its last will."""
-    return profile_cost(settings, db, settings.worker_model, LAST_WILL)
+    return profile_cost(settings, db, settings.worker_model, LAST_WILL, mode)
