@@ -34,23 +34,25 @@ def test_cache_writes_are_priced_at_the_highest_ttl() -> None:
 
 def test_server_tool_loops_without_caching() -> None:
     plan = plan_request(base(tools=[search(2)]), input_tokens=1_000)
-    # 2 uses -> up to 4 iterations; each later one re-reads the prompt plus 8,000 tokens per earlier result.
-    tokens = 1_000 + (1_000 + 8_000) + (1_000 + 16_000) + (1_000 + 24_000)
-    assert worst_case_micros(plan, PRICE, 10) == tokens * 2 + 1_000 * 10 + 2 * 10_000
+    # Up to 10 samplings; each later one re-reads the prompt, every result (8,000 tokens each) and the output.
+    later = 9 * (1_000 + 2 * 8_000 + 1_000)
+    assert worst_case_micros(plan, PRICE, 10) == (1_000 + later) * 2 + 1_000 * 10 + 2 * 10_000
 
 
 def test_server_tool_loops_with_caching() -> None:
     body = base(tools=[search(1)], system=[{"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}}])
     plan = plan_request(body, input_tokens=1_000)
-    first = 1_000 * 2.5
-    later = sum((1_000 + (k - 1) * 8_000) * 0.2 + 8_000 * 2.5 for k in (1, 2))
-    assert worst_case_micros(plan, PRICE, 10) == int(first + later) + 1_000 * 10 + 10_000
+    grown = 8_000 + 1_000
+    tokens = 1_000 * 2.5 + 9 * (1_000 + grown) * 0.2 + grown * 2.5 + 1_000 * (2.5 - 0.2)
+    assert worst_case_micros(plan, PRICE, 10) == round(tokens) + 1_000 * 10 + 10_000
 
 
-def test_iterations_are_capped_at_the_api_limit() -> None:
-    few = plan_request(base(tools=[search(8)]), 100)
-    many = plan_request(base(tools=[search(50)]), 100)
-    assert worst_case_micros(many, PRICE, 10) - 50 * 10_000 == worst_case_micros(few, PRICE, 10) - 8 * 10_000
+def test_one_search_is_priced_at_the_api_loop_limit() -> None:
+    """Attempts beyond max_uses come back as error results and the loop keeps sampling (up to 10 times)."""
+    body = base(max_tokens=2_000, tools=[search(1)])
+    plan = plan_request(body, input_tokens=20_000)
+    reviewed_real_bill = 577_600  # 20k prompt, one search, then retries until the loop limit
+    assert worst_case_micros(plan, PRICE, 10) >= reviewed_real_bill
 
 
 def test_unfinished_server_tool_calls_are_paid_by_the_next_request() -> None:
@@ -110,11 +112,23 @@ def test_multiplier_applies_to_tokens_not_searches() -> None:
         base(tools=[{"type": "bash_20250124", "name": "bash"}]),
         base(tools=[{"type": "web_search_20250305", "name": "web_search"}]),
         base(tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 0}]),
+        base(tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 10**18}]),
+        base(max_tokens=10**18),
+        base(tools=["web_search"]),
+        base(messages=[{"role": "user", "content": [{"type": "document", "source": {"type": "url", "url": "x"}}]}]),
+        base(messages=[{"role": "user", "content": [{"type": "image", "source": {"type": "file", "file_id": "f"}}]}]),
+        base(system=[{"type": "text", "text": "x"}, {"type": "document", "source": {"type": "url", "url": "y"}}]),
     ],
 )
 def test_unpriceable_requests(body: dict) -> None:
     with pytest.raises(Unpriceable):
         plan_request(body, 100)
+
+
+def test_inline_content_is_accepted() -> None:
+    image = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBOR"}}
+    plan = plan_request(base(messages=[{"role": "user", "content": [image]}]), 1_500)
+    assert plan.input_tokens == 1_500
 
 
 def test_direct_only_new_tools_are_accepted() -> None:

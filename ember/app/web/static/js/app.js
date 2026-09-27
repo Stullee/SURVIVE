@@ -1445,7 +1445,7 @@
     f.form.addEventListener("input", function (ev) { onFormInput(f, ev); });
     f.form.addEventListener("change", function (ev) { onFormInput(f, ev); });
     f.confirmYes.addEventListener("click", function () {
-      f.flags[f.pendingFlag] = true;
+      f.flags[f.pendingFlag] = f.pendingValue;
       submitForm(f);
     });
     f.confirmNo.addEventListener("click", function () {
@@ -1619,7 +1619,8 @@
     }
     if (f.fields.test_money && v.test_money !== null) body.test_money = v.test_money;
     body.idempotency_key = f.idKey;
-    if (f.flags.confirm_state_change) body.confirm_state_change = true;
+    // The server checks the confirmation against the state it names, so it can't cover a worse outcome.
+    if (f.flags.confirm_state_change) body.confirm_state_change = f.flags.confirm_state_change;
     if (f.flags.confirm_large) body.confirm_large = true;
     return body;
   }
@@ -1667,8 +1668,9 @@
     f.pendingFlag = null;
   }
 
-  function showConfirm(f, flag, message, danger) {
+  function showConfirm(f, flag, message, danger, value) {
     f.pendingFlag = flag;
+    f.pendingValue = value === undefined ? true : value;
     f.confirmMsg.textContent = message;
     f.confirmYes.className = danger ? "btn btn-danger" : "btn";
     f.confirm.hidden = false;
@@ -1747,11 +1749,15 @@
   function stateChangeMessage(data) {
     var name = agentName();
     var after = usd(data.balance_after_usd);
+    // In dry run, real money also counts for the sleeping live agent, which the server checks too.
+    var live = data.mode === "live" && ui.data && ui.data.mode === "dry_run";
+    var who = live ? "the live " + name : name;
+    var real = live ? "This is real money, not test money. " : "";
     if (data.state_after === "dead") {
-      return "This would kill " + name + ": the balance afterwards (" + after + ") is too little to stay alive. Record it anyway?";
+      return real + "This would kill " + who + ": the balance afterwards (" + after + ") is too little to stay alive. Record it anyway?";
     }
-    return "This changes " + name + "'s state from " + stateLabel(data.state_before) + " to " + stateLabel(data.state_after) +
-      " (balance afterwards: " + after + "). Record it anyway?";
+    return real + "This changes " + who + "'s state from " + stateLabel(data.state_before) + " to " +
+      stateLabel(data.state_after) + " (balance afterwards: " + after + "). Record it anyway?";
   }
 
   function handleFormResponse(f, res) {
@@ -1759,7 +1765,7 @@
     if (res.status === 201 || res.status === 200) {
       onSaved(f, data.entry, res.status === 200 || data.replay === true);
     } else if (res.status === 409 && data.code === "would_change_state") {
-      showConfirm(f, "confirm_state_change", stateChangeMessage(data), data.state_after === "dead");
+      showConfirm(f, "confirm_state_change", stateChangeMessage(data), data.state_after === "dead", String(data.state_after || ""));
     } else if (res.status === 409 && data.code === "unusually_large") {
       var typical = isNaN(num(data.typical_usd)) ? "" : ": typical entries are about " + usd(data.typical_usd);
       showConfirm(f, "confirm_large", (isNaN(num(data.amount_usd)) ? "This amount" : usd(data.amount_usd)) + " is much more than usual" + typical +

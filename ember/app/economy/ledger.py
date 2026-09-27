@@ -114,12 +114,13 @@ class DuplicateKeyMismatch(ValueError):
 class Scope:
     """Which ledger rows belong to a mode's economy.
 
-    ``sim_since`` is when the current dry-run session started; simulated rows
-    from before it belong to an earlier session and no longer count.
+    ``sim_mark`` is the newest ledger id when the current dry-run session
+    started; simulated rows up to it belong to an earlier session and no longer
+    count. (An id, not a time: the clock may be set back between sessions.)
     """
 
     mode: str
-    sim_since: str | None = None
+    sim_mark: int | None = None
 
     @property
     def simulated(self) -> bool:
@@ -127,9 +128,9 @@ class Scope:
 
     def where(self, alias: str = "") -> tuple[str, tuple[Any, ...]]:
         prefix = f"{alias}." if alias else ""
-        if self.mode == "live" or self.sim_since is None:
+        if self.mode == "live" or self.sim_mark is None:
             return f"{prefix}simulated = 0", ()
-        return f"({prefix}simulated = 0 OR {prefix}ts >= ?)", (self.sim_since,)
+        return f"({prefix}simulated = 0 OR {prefix}id > ?)", (self.sim_mark,)
 
 
 @dataclass(frozen=True)
@@ -202,11 +203,24 @@ def _key(body: dict[str, Any]) -> str:
     return key
 
 
-def confirmations(body: Any) -> tuple[bool, bool]:
-    """(confirm_state_change, confirm_large) from a request body."""
+STATE_SEVERITY = {"unfunded": 1, "critical": 1, "dead": 2}
+
+
+def confirmations(body: Any) -> tuple[str | None, bool]:
+    """(the state change the owner accepted, confirm_large) from a request body.
+
+    ``confirm_state_change`` echoes the ``state_after`` of the question it
+    answers ("critical", "unfunded" or "dead"), so a confirmation of "critical"
+    can't be used to write an entry that turns out to kill the agent.
+    """
     if not isinstance(body, dict):
-        return False, False
-    return _flag(body, "confirm_state_change"), _flag(body, "confirm_large")
+        return None, False
+    accepted = body.get("confirm_state_change")
+    if accepted in (None, False):
+        accepted = None
+    elif accepted not in STATE_SEVERITY:
+        raise EntryError("confirm_state_change", 'confirm with the state you accept: "critical", "unfunded" or "dead"')
+    return accepted, _flag(body, "confirm_large")
 
 
 class Books:
@@ -235,9 +249,12 @@ class Books:
         """How much interrupted calls may have been overcharged (charged estimate minus known floor).
 
         Death is judged as if that money were still there, so an estimate alone
-        can't kill the agent; the budget guard still counts the full charge.
+        can't kill the agent; the budget guard still counts the full charge. A
+        refund the owner records after checking the Console (a negative API cost
+        correction) settles that uncertainty: it is netted against the excess.
         """
         where, params = scope.where("l")
+        plain, plain_params = scope.where()
         with self.db.connection() as conn:
             row = conn.execute(
                 "SELECT COALESCE(SUM(c.cost_micros - c.floor_micros), 0) FROM ledger l"
@@ -247,7 +264,12 @@ class Books:
                 " AND k.llm_call_id = c.id)",
                 params,
             ).fetchone()
-        return max(0, int(row[0]))
+            refunds = conn.execute(
+                "SELECT COALESCE(-SUM(amount_micros), 0) FROM ledger WHERE type = 'api_cost_correction'"
+                f" AND amount_micros < 0 AND llm_call_id IS NULL AND {plain}",
+                plain_params,
+            ).fetchone()
+        return max(0, int(row[0]) - int(refunds[0]))
 
     # --- spending ---
 
@@ -257,6 +279,20 @@ class Books:
             row = conn.execute(
                 f"SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type IN {_API_SPEND_TYPES}"
                 f" AND occurred_on = ? AND {where}",
+                (day.isoformat(), *params),
+            ).fetchone()
+        return int(row[0])
+
+    def cap_spend_on(self, scope: Scope, day: date) -> int:
+        """API spend that counts toward the daily cap: charges and cost increases, never refunds.
+
+        A refund of earlier overcharges (a negative correction) is money back, not room to spend more today.
+        """
+        where, params = scope.where()
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE (type = 'api_cost'"
+                f" OR (type = 'api_cost_correction' AND amount_micros > 0)) AND occurred_on = ? AND {where}",
                 (day.isoformat(), *params),
             ).fetchone()
         return int(row[0])
@@ -433,20 +469,20 @@ class Books:
             "can_correct": correctable and remaining > 0,
         }
 
-    def typical_amount(self, ledger_type: str) -> int | None:
-        """Median of the owner's earlier entries of this type (for the 'unusually large' check)."""
+    def typical_amount(self, ledger_type: str, simulated: bool = False) -> int | None:
+        """Median of the owner's earlier entries of this type, real or test money (for the 'unusually large' check)."""
         with self.db.connection() as conn:
             rows = conn.execute(
                 "SELECT ABS(amount_micros) FROM ledger WHERE type = ? AND created_by = 'owner'"
-                " AND corrects_id IS NULL AND idempotency_key <> ?",
-                (ledger_type, STARTING_GRANT_KEY),
+                " AND corrects_id IS NULL AND idempotency_key <> ? AND simulated = ?",
+                (ledger_type, STARTING_GRANT_KEY, 1 if simulated else 0),
             ).fetchall()
         values = [int(row[0]) for row in rows]
         return int(statistics.median(values)) if values else None
 
     def unusually_large(self, prepared: PreparedEntry) -> tuple[bool, int | None]:
         """(is it far above what the owner usually enters, the typical amount)."""
-        typical = self.typical_amount(prepared.type)
+        typical = self.typical_amount(prepared.type, prepared.simulated)
         threshold = max(LARGE_FLOOR_MICROS, LARGE_FACTOR * (typical or 0))
         return abs(prepared.amount_micros) > threshold, typical
 
@@ -466,7 +502,7 @@ class Books:
         sign = 1
         if spec.directions is not None:
             direction = body.get("direction")
-            if direction not in spec.directions:
+            if not isinstance(direction, str) or direction not in spec.directions:
                 raise EntryError("direction", f"choose {' or '.join(repr(d) for d in spec.directions)}")
             sign = spec.directions[direction]
         elif body.get("direction") not in (None, ""):
@@ -501,9 +537,19 @@ class Books:
                 raise EntryError("test_money", "test money only exists in dry run")
 
         day, day_given = self._day(body.get("day"))
+        micros = sign * dollars_to_micros(amount)
+        if spec.type == "api_cost_correction" and micros < 0:
+            # A refund corrects a day's recorded cost; it can't turn a day's API spend negative.
+            recorded = self.api_spend_on(Scope("live"), day)
+            if -micros > recorded:
+                raise EntryError(
+                    "amount",
+                    f"the API cost recorded for {day.isoformat()} is only ${micros_to_usd(max(recorded, 0)):.2f};"
+                    " choose the day the cost was charged, or use Other correction",
+                )
         return PreparedEntry(
             type=spec.type,
-            amount_micros=sign * dollars_to_micros(amount),
+            amount_micros=micros,
             simulated=test_money,
             source=source or None,
             note=note or None,
@@ -539,7 +585,8 @@ class Books:
             raise EntryError("id", "only grants, revenue and expenses can be corrected this way")
         amount = dollars_to_micros(parse_amount(body.get("amount")))
         remaining = target["amount_micros"] + corrected
-        if amount > remaining:
+        key_used = isinstance(body.get("idempotency_key"), str) and self._key_used(body["idempotency_key"])
+        if amount > remaining and not key_used:  # a retry is compared with what was stored, not re-validated
             raise EntryError("amount", f"at most {micros_to_usd(remaining):.2f} USD of this entry is left to correct")
         note = _text(body, "note", MAX_NOTE)
         if not note:
@@ -556,6 +603,10 @@ class Books:
             corrects_id=target["id"],
             entered_by=entered_by,
         )
+
+    def _key_used(self, key: str) -> bool:
+        with self.db.connection() as conn:
+            return conn.execute("SELECT 1 FROM ledger WHERE idempotency_key = ?", (key,)).fetchone() is not None
 
     @staticmethod
     def _fx_rate(value: Any) -> Decimal:

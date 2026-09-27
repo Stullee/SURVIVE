@@ -99,7 +99,7 @@ def metered(economy: Economy, transport: ScriptedTransport | None = None) -> tup
 def owner(economy: Economy, kind: str, amount: str, **fields: Any) -> dict[str, Any]:
     """Record an owner entry, confirming any question; returns the reply body."""
     body = {"amount": amount, "idempotency_key": uuid.uuid4().hex, **fields}
-    body.setdefault("confirm_state_change", True)
+    body.setdefault("confirm_state_change", "dead")
     body.setdefault("confirm_large", True)
     if kind in ("expense",):
         body.setdefault("note", "test expense")

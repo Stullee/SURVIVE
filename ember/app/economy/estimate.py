@@ -5,16 +5,20 @@ upper bound for everything the request can make Anthropic bill. Anything in a
 request that this module can't bound is refused rather than guessed at.
 
 Web tools: each server tool use can make the API run the model again over the
-prompt plus the results so far (a server-side loop), so a request with U tool
-uses is priced as up to U + 2 sampling iterations (one spare for a tool error),
-at most 10 (the API's own loop limit). Each tool result is assumed to add at
-most an allowance of tokens; web_fetch is bounded by its ``max_content_tokens``
-(required), web search results by ``SEARCH_RESULT_ALLOWANCE_TOKENS``. When the
-request uses prompt caching, the API caches tool results itself, so in later
-iterations the earlier context is priced as cache reads and only the new
-results as cache writes. The remaining estimation risk (a search returning
-more text than the allowance, a cache miss inside one loop) is detected after
-the call: the actual cost is compared with the estimate.
+prompt plus the results so far (a server-side loop). Tool attempts beyond
+``max_uses`` come back as error results and the loop keeps going, so the only
+hard limit on the number of samplings is the API's own (10, then
+``pause_turn``). A request with server tools is therefore priced as 10
+samplings, each re-reading at most the prompt, every tool result and all output
+so far. Each tool result is assumed to add at most an allowance of tokens:
+web_fetch is bounded by its ``max_content_tokens`` (required), web search
+results by ``SEARCH_RESULT_ALLOWANCE_TOKENS``. When the request uses prompt
+caching, the API caches the loop's context itself, so later samplings read it
+from the cache and what is new is written once. Assumption (to verify with a
+live call in phase 5): ``max_tokens`` bounds the output of the whole loop. The
+remaining estimation risk (a result larger than its allowance, a cache miss
+inside one loop) is detected after the call: the actual cost is compared with
+the estimate.
 """
 
 from __future__ import annotations
@@ -29,6 +33,12 @@ from .costs import dec
 
 MAX_SERVER_ITERATIONS = 10
 SEARCH_RESULT_ALLOWANCE_TOKENS = 8_000
+# Sanity bounds: anything larger is a bug in the caller, not a request to price.
+MAX_OUTPUT_TOKENS = 1_000_000
+MAX_INPUT_TOKENS = 10_000_000
+MAX_TOOL_USES = 100
+# Content sources whose size is in the request itself (a URL or an uploaded file is billed by what it points to).
+_INLINE_SOURCES = frozenset({"base64", "text", "content"})
 
 # Request fields the estimate understands. Anything else could change the price
 # (fallback models, fast mode, priority tier, US-only inference, MCP servers,
@@ -92,13 +102,20 @@ def plan_request(request: Mapping[str, Any], input_tokens: int) -> Plan:
     if not isinstance(model, str) or not model:
         raise Unpriceable("request has no model")
     max_tokens = request.get("max_tokens")
-    if not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens <= 0:
-        raise Unpriceable("request needs a positive integer max_tokens")
-    if not isinstance(input_tokens, int) or input_tokens < 0:
-        raise Unpriceable("input token count is missing")
+    if not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or not 0 < max_tokens <= MAX_OUTPUT_TOKENS:
+        raise Unpriceable(f"request needs max_tokens between 1 and {MAX_OUTPUT_TOKENS:,}")
+    if not isinstance(input_tokens, int) or isinstance(input_tokens, bool) or not 0 <= input_tokens <= MAX_INPUT_TOKENS:
+        raise Unpriceable("the prompt's token count is missing or implausible")
+    _check_sources(request.get("system"))
+    _check_sources(request.get("messages"))
 
     search_uses = fetch_uses = fetch_allowance = 0
-    for tool in request.get("tools") or []:
+    tools = request.get("tools") or []
+    if not isinstance(tools, list):
+        raise Unpriceable("tools must be a list")
+    for tool in tools:
+        if not isinstance(tool, Mapping):
+            raise Unpriceable("every tool must be an object")
         kind = tool.get("type")
         if kind in (None, "custom"):
             continue  # a tool Ember runs itself: no extra charge from Anthropic
@@ -107,13 +124,13 @@ def plan_request(request: Mapping[str, Any], input_tokens: int) -> Plan:
         if kind in _DIRECT_ONLY and tool.get("allowed_callers") != ["direct"]:
             raise Unpriceable(f"{kind} must set allowed_callers ['direct']")
         uses = tool.get("max_uses")
-        if not isinstance(uses, int) or isinstance(uses, bool) or uses < 1:
-            raise Unpriceable(f"{kind} needs max_uses of at least 1")
+        if not isinstance(uses, int) or isinstance(uses, bool) or not 1 <= uses <= MAX_TOOL_USES:
+            raise Unpriceable(f"{kind} needs max_uses between 1 and {MAX_TOOL_USES}")
         if kind in _SEARCH_TOOLS:
             search_uses += uses
         else:
             content = tool.get("max_content_tokens")
-            if not isinstance(content, int) or isinstance(content, bool) or content <= 0:
+            if not isinstance(content, int) or isinstance(content, bool) or not 0 < content <= MAX_OUTPUT_TOKENS:
                 raise Unpriceable(f"{kind} needs max_content_tokens")
             fetch_uses += uses
             fetch_allowance = max(fetch_allowance, content)
@@ -141,28 +158,46 @@ def worst_case_micros(
     multiplier: Decimal = Decimal(1),
 ) -> int:
     """Upper bound of what ``plan`` can cost, in micros (rounded up)."""
-    uses = plan.tool_uses
-    iterations = 1 if uses == 0 else min(MAX_SERVER_ITERATIONS, uses + 2)
     first_rate = dec(price.input)
     if "5m" in plan.cache_ttls:
         first_rate = max(first_rate, dec(price.cache_write_5m))
     if "1h" in plan.cache_ttls:
         first_rate = max(first_rate, dec(price.cache_write_1h))
-    allowance = max(
-        SEARCH_RESULT_ALLOWANCE_TOKENS if plan.search_uses or plan.pending_searches else 0,
-        plan.fetch_allowance_tokens,
-    )
     prompt = plan.input_tokens
-    tokens = prompt * first_rate
-    for k in range(1, iterations):
+    output = plan.max_output_tokens
+    tokens = prompt * first_rate + output * dec(price.output)
+    if plan.tool_uses:
+        allowance = max(
+            SEARCH_RESULT_ALLOWANCE_TOKENS if plan.search_uses or plan.pending_searches else 0,
+            plan.fetch_allowance_tokens,
+        )
+        # Everything a later sampling can see beyond the prompt: all tool results (they may all
+        # arrive at once, in parallel) and all output written so far.
+        grown = plan.tool_uses * allowance + output
+        later = MAX_SERVER_ITERATIONS - 1
         if plan.cache_ttls:
-            tokens += (prompt + (k - 1) * allowance) * dec(price.cache_read) + allowance * dec(price.cache_write_5m)
+            read, write = dec(price.cache_read), dec(price.cache_write_5m)
+            # Later samplings read the context from the cache; what's new is written once; and if the
+            # prompt's own entry misses once inside the loop, it is written again.
+            tokens += later * (prompt + grown) * read + grown * write + prompt * (write - read)
         else:
-            tokens += (prompt + k * allowance) * first_rate
-    tokens += plan.max_output_tokens * dec(price.output)
+            tokens += later * (prompt + grown) * first_rate
     searches = (plan.search_uses + plan.pending_searches) * dec(web_search_usd_per_1000) * 1000
     total = tokens * dec(multiplier) + searches
     return int(total.to_integral_value(rounding=ROUND_CEILING))
+
+
+def _check_sources(node: Any) -> None:
+    """Refuse images and documents given by URL or file id: their size isn't in the request."""
+    if isinstance(node, Mapping):
+        source = node.get("source")
+        if isinstance(source, Mapping) and source.get("type") not in _INLINE_SOURCES:
+            raise Unpriceable(f"content from a {source.get('type')!r} source can't be sized before it is sent")
+        for value in node.values():
+            _check_sources(value)
+    elif isinstance(node, list):
+        for value in node:
+            _check_sources(value)
 
 
 def _cache_ttls(request: Mapping[str, Any]) -> set[str]:

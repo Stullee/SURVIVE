@@ -6,6 +6,7 @@ database layer is synchronous and must never run on the event loop.
 
 from __future__ import annotations
 
+import contextlib
 import html
 from typing import Annotated, Any
 
@@ -39,9 +40,18 @@ def _economy(request: Request) -> Economy | None:
 
 
 def _owner(request: Request) -> str | None:
-    """The Home Assistant user behind an Ingress request (set by the Supervisor's proxy)."""
+    """The Home Assistant user behind an Ingress request, as the Supervisor's proxy reports it.
+
+    Only a label for the audit trail, never an authorization: the headers can be
+    forged by any Home Assistant user. They arrive as UTF-8 bytes that the server
+    decodes as Latin-1, so non-ASCII names are decoded again here.
+    """
     name = request.headers.get("x-remote-user-display-name") or request.headers.get("x-remote-user-name")
-    return printable(name, 60) if name else None
+    if not name:
+        return None
+    with contextlib.suppress(UnicodeEncodeError, UnicodeDecodeError):
+        name = name.encode("latin-1").decode("utf-8")
+    return printable(name, 60)
 
 
 def _reply(reply: Reply) -> JSONResponse:

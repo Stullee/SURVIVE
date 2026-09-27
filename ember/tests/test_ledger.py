@@ -179,7 +179,7 @@ def test_corrections(data_dir: Path) -> None:
     assert economy.correct(adjustment["id"], {"amount": "1", "note": "x", "idempotency_key": key()}).status == 422
     assert economy.correct(999, {"amount": "1", "note": "x", "idempotency_key": key()}).status == 404
     economy.correct(
-        grant["id"], {"amount": "6", "note": "void", "idempotency_key": key(), "confirm_state_change": True}
+        grant["id"], {"amount": "6", "note": "void", "idempotency_key": key(), "confirm_state_change": "dead"}
     )
     assert economy.books.entry(grant["id"])["can_correct"] is False
     assert economy.books.balance(Scope("dry_run")) == 21_000_000

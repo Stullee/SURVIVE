@@ -10,6 +10,7 @@ budget guard (API costs); nothing else writes money.
 from __future__ import annotations
 
 import logging
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,6 +23,7 @@ from ..logging_setup import printable
 from .clock import Clock, from_iso
 from .costs import micros_to_usd
 from .ledger import (
+    STATE_SEVERITY,
     Books,
     DuplicateKeyMismatch,
     EntryError,
@@ -42,7 +44,6 @@ TYPE_LABELS = {
     "adjustment": "an adjustment",
     "api_cost_correction": "an API cost correction",
 }
-_WORSE = {"alive": 0, "critical": 1, "dead": 2}
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,7 @@ class Economy:
         return self.life.start()
 
     def stop(self) -> None:
+        self.health.lock_held = False  # nothing in this process may spend once the lock is given up
         if self.lock is not None:
             self.lock.release()
 
@@ -134,7 +136,11 @@ class Economy:
             return Reply(status, {"error": str(exc), "field": exc.field})
         return self._write(prepared, confirm_state, confirm_large)
 
-    def _write(self, prepared: PreparedEntry, confirm_state: bool, confirm_large: bool) -> Reply:
+    def _write(self, prepared: PreparedEntry, accepted: str | None, confirm_large: bool) -> Reply:
+        # In dry run, a real (not test-money) entry also moves the sleeping live agent's balance.
+        lives = [self.life]
+        if self.mode == "dry_run" and not prepared.simulated:
+            lives.append(Life(self.db, self.settings, self.clock, self.books, "live"))
         with self.db.transaction() as conn:
             try:
                 existing = self.books.existing(prepared)
@@ -154,26 +160,40 @@ class Economy:
                             "typical_usd": micros_to_usd(typical) if typical is not None else None,
                         },
                     )
-            before = self.life.evaluate()
+            befores = [life.evaluate() for life in lives]
             conn.execute("SAVEPOINT owner_entry")
-            entry_id = self.books.insert(conn, prepared)
-            after = self.life.evaluate()
-            if not confirm_state and _worse(before, after):
+            try:
+                entry_id = self.books.insert(conn, prepared)
+            except sqlite3.IntegrityError:
+                # Another request changed the same entry in the meantime (the database refused this one).
                 conn.execute("ROLLBACK TO owner_entry")
                 conn.execute("RELEASE owner_entry")
+                changed = {"error": "the entry was changed meanwhile; reload and try again", "code": "conflict"}
+                return Reply(409, changed)
+            afters = [life.evaluate() for life in lives]
+            for life, before, after in zip(lives, befores, afters, strict=True):
+                worse = _worse_state(before, after)
+                if worse is None or (accepted is not None and STATE_SEVERITY[accepted] >= STATE_SEVERITY[worse]):
+                    continue
+                conn.execute("ROLLBACK TO owner_entry")
+                conn.execute("RELEASE owner_entry")
+                whose = "the live agent's" if life is not self.life else "the agent's"
                 return Reply(
                     409,
                     {
-                        "error": f"this would change the agent's state from {before.state} to {_shown(after)}",
+                        "error": f"this would change {whose} state from {before.state} to {worse}",
                         "code": "would_change_state",
+                        "mode": life.mode,
                         "state_before": before.state,
-                        "state_after": _shown(after),
+                        "state_after": worse,
                         "balance_after_usd": micros_to_usd(after.balance),
                     },
                 )
             conn.execute("RELEASE owner_entry")
             events.record(self.db, "info", "ledger", _describe(prepared, entry_id), {"entry_id": entry_id})
             status = self.life.evaluate_and_persist()
+            for life in lives[1:]:
+                life.persist_if_dead()  # a confirmed death of the sleeping live agent is recorded now, not later
         return Reply(201, {"entry": self.books.entry(entry_id), "economy": self._summary(status)})
 
     def set_paused(self, paused: bool, who: str | None = None) -> LifeStatus:
@@ -199,6 +219,13 @@ class Economy:
             result.append("Another Ember process is using the data folder; model calls are refused.")
         if self.health.broken:
             result.append(f"Spending is stopped after a bookkeeping error: {self.health.broken}. Restart the app.")
+        status = self.life.evaluate()
+        held = status.settled_balance - status.balance
+        if held > 0:
+            result.append(
+                f"${micros_to_usd(held):.2f} of interrupted calls was charged at the worst case. Check the real cost in"
+                " the Anthropic Console and record the difference as an API cost correction (decrease)."
+            )
         opening = opening_cost(self.settings, self.db)
         if opening is not None:
             for label, cap in (
@@ -249,7 +276,7 @@ class Economy:
             "pending_usd": micros_to_usd(status.pending),
             "runway_days": _round(status.runway.days),
             "runway_note": status.runway.note,
-            "today_spend_usd": micros_to_usd(self.books.api_spend_on(scope, self.clock.today())),
+            "today_spend_usd": micros_to_usd(self.books.cap_spend_on(scope, self.clock.today())),
             "daily_cap_usd": self.settings.daily_spend_cap_usd,
             "cycle_cap_usd": self.settings.cycle_spend_cap_usd,
             "last_wake_at": last_wake,
@@ -315,25 +342,21 @@ class Economy:
             "runway_days": round(min(runway, RUNWAY_CAP_DAYS), 1) if runway is not None else RUNWAY_CAP_DAYS,
             "runway_known": runway is not None,
             "today_api_spend_usd": round(
-                micros_to_usd(self.books.api_spend_on(self.life.scope(), self.clock.today())), 2
+                micros_to_usd(self.books.cap_spend_on(self.life.scope(), self.clock.today())), 2
             ),
             "daily_cap_usd": self.settings.daily_spend_cap_usd,
         }
 
 
-def _worse(before: LifeStatus, after: LifeStatus) -> bool:
-    """Would the entry make things worse for the agent: critical, dead, or out of money before it started?"""
+def _worse_state(before: LifeStatus, after: LifeStatus) -> str | None:
+    """The worse state an entry would bring (dead, unfunded or critical), or None if it wouldn't."""
     if after.state == "dead" and before.state != "dead":
-        return True
-    if after.state == "unfunded" and before.state in ("alive", "critical"):
-        return True
-    return after.critical and not before.critical and after.state != "dead"
-
-
-def _shown(status: LifeStatus) -> str:
-    if status.state in ("dead", "critical"):
-        return status.state
-    return "critical" if status.critical else status.state
+        return "dead"
+    if after.state == "unfunded" and before.state not in ("unfunded", "dead"):
+        return "unfunded"
+    if after.critical and not before.critical and after.state != "dead":
+        return "critical"
+    return None
 
 
 def _describe(prepared: PreparedEntry, entry_id: int) -> str:

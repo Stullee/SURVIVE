@@ -73,6 +73,7 @@ _KNOWN_USAGE_KEYS = frozenset(
 )
 _KNOWN_SERVER_TOOLS = frozenset({"web_search_requests", "web_fetch_requests"})
 _STANDARD_GEOS = frozenset({"global", "not_available"})
+_SNAPSHOT_SUFFIX = re.compile(r"^-\d{8}$")
 
 
 # --- transports ---
@@ -212,6 +213,7 @@ class _Settlement:
     notes: list[str] = field(default_factory=list)
     overrun: bool = False
     us_inference: bool = False
+    expected: int = 0  # the estimate, adjusted for a price multiplier learned from this response
 
 
 # --- the process lock ---
@@ -361,6 +363,11 @@ class MeteredModel:
 
     def call(self, cycle_id: int, purpose: str, request: Mapping[str, Any]) -> CallResult:
         """Reserve, send and settle one model request. Raises CallRefused or CallFailed."""
+        with self.db.connection() as conn:
+            if conn.in_transaction:
+                # The reservation must be committed before the request is sent, and nothing may hold the
+                # database while waiting for the API.
+                raise RuntimeError("model calls must not run inside a database transaction")
         # The request that is priced is exactly the request that is sent.
         frozen = copy.deepcopy(dict(request))
         reservation = self.reserve(cycle_id, purpose, frozen)
@@ -484,7 +491,7 @@ class MeteredModel:
                 "cap",
             ), False
         daily_cap = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
-        today = self.books.api_spend_on(scope, self.clock.today())
+        today = self.books.cap_spend_on(scope, self.clock.today())
         pending = self.books.pending(scope)
         if today + pending + estimate > daily_cap:
             return (
@@ -493,20 +500,28 @@ class MeteredModel:
                 "cap",
             ), False
         available = status.balance - pending
+        # Uncertain charges were booked at their worst case; judged on what they really cost, the agent may
+        # still afford the call. Then it is refused (the money isn't proven), but it doesn't starve.
+        settled = status.settled_balance - pending
         opening = purpose in OPENING_PURPOSES
+        held = (
+            f"; ${micros_to_usd(settled - available):.4f} of uncertain charges may still be refunded"
+            if (settled > available)
+            else ""
+        )
         if estimate > available:
             return (
                 f"not enough money: this call can cost up to ${micros_to_usd(estimate):.4f},"
-                f" ${micros_to_usd(max(available, 0)):.4f} is available",
+                f" ${micros_to_usd(max(available, 0)):.4f} is available{held}",
                 "balance",
-            ), opening
+            ), opening and estimate > settled
         if purpose != "last_will" and status.last_will_at is None:
             reserve = last_will_reserve(self.settings, self.db) or 0
             if available - estimate < reserve:
                 return (
-                    f"this call would dip into the ${micros_to_usd(reserve):.4f} kept back for the last will",
+                    f"this call would dip into the ${micros_to_usd(reserve):.4f} kept back for the last will{held}",
                     "balance",
-                ), opening
+                ), opening and settled - estimate < reserve
         return None, False
 
     def _insert_call(
@@ -596,19 +611,27 @@ class MeteredModel:
             if partial == Usage():
                 partial = Usage(input_tokens=res.plan.input_tokens)
             known = cost_micros(partial, res.price, res.search_price, res.geo)
+            # Charge the worst case, or what is already known to be billed if that is more (then the
+            # estimate was wrong: handled like any other overrun).
             return _Settlement(
                 "interrupted",
-                res.estimate,
-                min(known, res.estimate),
+                max(res.estimate, known),
+                known,
                 True,
                 usage=partial,
                 usage_raw=outcome.partial_usage,
                 error=outcome.error[:500],
+                overrun=known > res.estimate,
+                expected=res.estimate,
             )
 
         response = outcome.response
-        raw = response.get("usage") or {}
+        raw = response.get("usage")
         notes: list[str] = []
+        if not isinstance(raw, Mapping) or not raw.get("input_tokens") or "output_tokens" not in raw:
+            # Every answer reports its usage; without it the bill is unknown (a transport bug).
+            notes.append("usage missing or incomplete")
+            raw = raw if isinstance(raw, Mapping) else {}
         usage = Usage.from_api(raw, _remainder_ttl(res.plan))
         iterations = raw.get("iterations")
         if isinstance(iterations, list) and iterations:
@@ -640,10 +663,12 @@ class MeteredModel:
             multiplier = US_INFERENCE_MULTIPLIER
             notes.append(f"inference region {geo_value}")
         response_model = response.get("model")
-        if isinstance(response_model, str) and response_model and response_model != res.model:
+        if isinstance(response_model, str) and response_model and not _same_model(response_model, res.model):
             notes.append(f"answered by {response_model} instead of {res.model}")
 
         known = cost_micros(usage, res.price, res.search_price, multiplier)
+        # A multiplier first learned from this answer (US-only inference) isn't an estimation error.
+        expected = int((Decimal(res.estimate) * multiplier / res.geo).to_integral_value(rounding=ROUND_CEILING))
         uncertain = bool(notes)
         cost = max(known, res.estimate) if uncertain else known
         return _Settlement(
@@ -659,8 +684,9 @@ class MeteredModel:
             service_tier=str(tier)[:30] if tier else None,
             inference_geo=str(geo_value)[:30] if geo_value else None,
             notes=notes,
-            overrun=known > res.estimate,
+            overrun=known > expected,
             us_inference=us_inference,
+            expected=expected,
         )
 
     def _store(self, res: Reservation, s: _Settlement) -> None:
@@ -721,7 +747,7 @@ class MeteredModel:
                     + "; ".join(s.notes),
                 )
             if s.overrun:
-                factor = raise_safety_factor(self.db, res.model, s.floor, res.estimate)
+                factor = raise_safety_factor(self.db, res.model, s.floor, s.expected)
                 conn.execute(
                     "UPDATE cycles SET status = 'stopped', ended_at = ?, note = ? WHERE id = ? AND status = 'running'",
                     (to_iso(now), "a call cost more than its worst-case estimate", res.cycle_id),
@@ -731,7 +757,7 @@ class MeteredModel:
                     "error",
                     "economy",
                     f"Call #{res.call_id} cost ${micros_to_usd(s.floor):.4f}, more than its worst-case estimate"
-                    f" ${micros_to_usd(res.estimate):.4f}. The wake cycle was stopped and estimates for {res.model}"
+                    f" ${micros_to_usd(s.expected):.4f}. The wake cycle was stopped and estimates for {res.model}"
                     f" are now scaled by {factor}.",
                 )
             self.life.evaluate_and_persist()
@@ -741,6 +767,13 @@ def _state_refusal(status: LifeStatus) -> tuple[str, str] | None:
     if status.can_run:
         return None
     return (f"the agent is {status.state}", "state")
+
+
+def _same_model(answered: str, requested: str) -> bool:
+    """An alias (claude-haiku-4-5) is answered by its dated snapshot (claude-haiku-4-5-20251001)."""
+    return answered == requested or (
+        answered.startswith(requested) and bool(_SNAPSHOT_SUFFIX.match(answered[len(requested) :]))
+    )
 
 
 def _remainder_ttl(plan: Plan) -> str:

@@ -8,12 +8,15 @@ Home Assistant's time zone. Days are computed through the time zone, so the
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+log = logging.getLogger(__name__)
 
 
 def owner_timezone() -> tzinfo:
@@ -22,7 +25,9 @@ def owner_timezone() -> tzinfo:
         return UTC
     try:
         return ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError):
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        # Days (the daily cap, the chart) then follow UTC instead of the owner's calendar.
+        log.error("Unknown time zone %r; days are counted in UTC", name[:60])
         return UTC
 
 

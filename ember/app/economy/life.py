@@ -49,7 +49,7 @@ CRITICAL_LEAVE_DAYS = 4.0
 RUNWAY_WINDOW = timedelta(days=7)
 RUNWAY_CAP_DAYS = 365.0
 LAST_MODE_KEY = "economy.last_mode"
-SESSION_KEY = "economy.dry_run.session_started_at"
+SESSION_KEY = "economy.dry_run.session_mark"  # newest ledger id when the dry-run session began
 PAUSED_KEY = "control.paused"
 KILLED_KEY = "control.killed"
 
@@ -124,7 +124,8 @@ class Life:
     def scope(self) -> Scope:
         if self.mode == "live":
             return Scope("live")
-        return Scope("dry_run", self.db.get_meta(SESSION_KEY))
+        mark = self.db.get_meta(SESSION_KEY)
+        return Scope("dry_run", int(mark) if mark and mark.isdigit() else 0)
 
     def current(self) -> sqlite3.Row | None:
         with self.db.connection() as conn:
@@ -172,7 +173,7 @@ class Life:
                 if last_mode != "dry_run" or dry is None:
                     if dry is not None and dry["ended_at"] is None:
                         self._end(conn, dry, "ended", "dry-run session ended", now)
-                    self.db.set_meta(SESSION_KEY, now)
+                    self.db.set_meta(SESSION_KEY, str(self.books.last_id()))
                     self._birth(conn, "dry_run", now, "new dry-run session")
                 if live is not None and live["ended_at"] is None and live["state"] != "dormant":
                     self._transition(conn, live, "dormant", REASONS["dormant"], now)
@@ -317,7 +318,10 @@ class Life:
                 critical_since, critical_mark = to_iso(now), self.books.last_id()
         else:
             recovered = runway.days is None or runway.days >= CRITICAL_LEAVE_DAYS
-            if recovered and self.books.money_in_after(scope, critical_mark or 0):
+            # It must also be able to plan again (a starving agent often has no runway figure at all).
+            threshold = self.revive_threshold() or 0
+            affordable = balance - pending >= threshold
+            if recovered and affordable and self.books.money_in_after(scope, critical_mark or 0):
                 critical_since = critical_mark = None
         if critical_since is not None:
             reason = life["state_reason"] if life["state"] == "critical" else "Runway is under 2 days"
@@ -388,6 +392,17 @@ class Life:
             overlap = (min(finish, end) - max(begin, start)).total_seconds()
             total += max(0.0, overlap)
         return total
+
+    def persist_if_dead(self) -> LifeStatus:
+        """Record a death at once without otherwise waking the life (used for the dormant live life)."""
+        with self.db.transaction() as conn:
+            life = _current(conn, self.mode)
+            if life is None:
+                return LifeStatus(self.mode, None, "unknown", "No life has started yet")
+            status, _ = self._assess(life)
+            if status.state == "dead" and life["ended_at"] is None:
+                self._persist(conn, life, status, to_iso(self.clock.now()))
+            return status
 
     # --- events from the budget guard ---
 

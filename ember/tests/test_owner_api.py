@@ -71,7 +71,9 @@ def test_confirmations(ingress_client: TestClient) -> None:
     expense = post(ingress_client, "api/ledger/expense", {**body, "note": "everything"})
     # An agent that never spent API money doesn't die from an expense, but it is left with nothing: ask first.
     assert expense.status_code == 409 and expense.json()["state_after"] == "unfunded"
-    confirmed = post(ingress_client, "api/ledger/expense", {**body, "note": "everything", "confirm_state_change": True})
+    confirmed = post(
+        ingress_client, "api/ledger/expense", {**body, "note": "everything", "confirm_state_change": "unfunded"}
+    )
     assert confirmed.status_code == 201
     assert ingress_client.get("api/dashboard").json()["agent"]["state"] == "unfunded"
 

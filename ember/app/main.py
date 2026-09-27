@@ -21,7 +21,7 @@ from . import events, paths
 from .config import LoadedSettings, load_settings
 from .economy.metering import ProcessLock, lock_path
 from .economy.service import Economy
-from .logging_setup import printable, register_secret, setup_logging
+from .logging_setup import printable, redact, register_secret, setup_logging
 from .security import AccessPolicy, ASGIApp, Message, Receive, Scope, SecurityMiddleware, Send
 from .state import AppState
 from .version import app_version
@@ -124,7 +124,7 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
     except Exception as exc:  # noqa: BLE001 - the dashboard must still come up
         # Anything from a missing file to a damaged page or a stuck lock ends up
         # here; the dashboard shows it and the agent stays stopped.
-        state.db_error = str(exc)
+        state.db_error = redact(str(exc))
         log.error("Database unavailable: %s", exc)
         database.close()
         return state
@@ -139,13 +139,15 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
         _record(state, "error", "config", f"Invalid option: {error}")
     if loaded.safe_mode:
         _record(state, "warning", "config", "Safe mode: built-in defaults are used and dry-run is forced on.")
-    economy = Economy(database, loaded, lock=ProcessLock(lock_path(paths.data_dir())))
+    economy: Economy | None = None
     try:
+        economy = Economy(database, loaded, lock=ProcessLock(lock_path(paths.data_dir())))
         economy.start()
     except Exception as exc:  # noqa: BLE001 - the dashboard must still come up
-        state.economy_error = f"{type(exc).__name__}: {exc}"
+        state.economy_error = redact(f"{type(exc).__name__}: {exc}")
         log.exception("The economy could not start; model calls are disabled")
-        economy.stop()
+        if economy is not None:
+            economy.stop()
         return state
     state.economy = economy
     return state
@@ -158,6 +160,8 @@ async def _evaluate_periodically(state: AppState) -> None:
         await asyncio.sleep(EVALUATE_EVERY_SECONDS)
         try:
             await asyncio.to_thread(economy.tick)
+            # Events written directly (owner actions, guard refusals) are pruned here; the log mirror prunes its own.
+            await asyncio.to_thread(state.db.prune_events, events.KEEP_EVENTS)
         except Exception:  # noqa: BLE001 - keep evaluating; the error is in the system log
             log.exception("Periodic life-state evaluation failed")
 
