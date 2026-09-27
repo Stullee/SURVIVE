@@ -14,6 +14,7 @@ At runtime the whole process shares one connection (see :class:`Database`).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -97,8 +98,22 @@ def connect(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=10, isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Without this, INSERT OR REPLACE deletes rows without firing DELETE triggers,
+    # which would get around the append-only ledger.
+    conn.execute("PRAGMA recursive_triggers = ON")
     conn.execute("PRAGMA busy_timeout = 10000")
     return conn
+
+
+def _refuse_on_event_loop() -> None:
+    """The database layer is synchronous. On the event loop thread, coroutines
+    would share the one connection and silently join each other's transactions,
+    so database work there must go through asyncio.to_thread."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError("database access on the event loop; use asyncio.to_thread")
 
 
 @contextmanager
@@ -228,11 +243,13 @@ class Database:
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
+        _refuse_on_event_loop()
         with self._lock:
             yield self._open()
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
+        _refuse_on_event_loop()
         with self._lock:
             conn = self._open()
             if conn.in_transaction:
@@ -243,6 +260,7 @@ class Database:
                 yield conn
 
     def close(self) -> None:
+        _refuse_on_event_loop()
         with self._lock:
             if self._conn is not None:
                 self._conn.close()

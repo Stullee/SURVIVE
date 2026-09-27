@@ -7,6 +7,7 @@ can see what is wrong.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -18,6 +19,8 @@ from fastapi.staticfiles import StaticFiles
 from . import db as dbmod
 from . import events, paths
 from .config import LoadedSettings, load_settings
+from .economy.metering import ProcessLock, lock_path
+from .economy.service import Economy
 from .logging_setup import printable, register_secret, setup_logging
 from .security import AccessPolicy, ASGIApp, Message, Receive, Scope, SecurityMiddleware, Send
 from .state import AppState
@@ -25,6 +28,9 @@ from .version import app_version
 from .web import router
 
 log = logging.getLogger(__name__)
+
+# How often the life state is re-evaluated (runway changes with time, not only with money).
+EVALUATE_EVERY_SECONDS = 300
 
 
 def dev_mode_enabled() -> bool:
@@ -78,18 +84,19 @@ def create_app(loaded: LoadedSettings | None = None, *, dev_mode: bool | None = 
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        state = _start(loaded, dev_mode)
+        # Database work never runs on the event loop (see db._refuse_on_event_loop).
+        state = await asyncio.to_thread(_start, loaded, dev_mode)
         app.state.ember = state
         if state.db_error is None:
             state.log_handler = events.install(state.db)
+        evaluator = asyncio.create_task(_evaluate_periodically(state)) if state.economy is not None else None
         try:
             yield
         finally:
-            if state.log_handler is not None:
-                events.uninstall(state.log_handler)
-                state.log_handler = None
-            _record(state, "info", "system", "Stopped")
-            state.db.close()
+            if evaluator is not None:
+                evaluator.cancel()
+                await asyncio.gather(evaluator, return_exceptions=True)
+            await asyncio.to_thread(_stop, state)
 
     # redirect_slashes=False: a redirect's absolute Location would leave the Ingress path.
     app = FastAPI(
@@ -111,7 +118,8 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
         if applied:
             log.info("Database schema is now at version %d", max(applied))
         database.prune_events(events.KEEP_EVENTS)
-        state.born_at = database.set_meta_if_missing("born_at", state.started_at)
+        # Phase 1 stored the install time as "born_at"; a life's birth is in the lives table now.
+        state.installed_at = database.set_meta_if_missing("born_at", state.started_at)
         database.set_meta("last_started_at", state.started_at)
     except Exception as exc:  # noqa: BLE001 - the dashboard must still come up
         # Anything from a missing file to a damaged page or a stuck lock ends up
@@ -131,7 +139,37 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
         _record(state, "error", "config", f"Invalid option: {error}")
     if loaded.safe_mode:
         _record(state, "warning", "config", "Safe mode: built-in defaults are used and dry-run is forced on.")
+    economy = Economy(database, loaded, lock=ProcessLock(lock_path(paths.data_dir())))
+    try:
+        economy.start()
+    except Exception as exc:  # noqa: BLE001 - the dashboard must still come up
+        state.economy_error = f"{type(exc).__name__}: {exc}"
+        log.exception("The economy could not start; model calls are disabled")
+        economy.stop()
+        return state
+    state.economy = economy
     return state
+
+
+async def _evaluate_periodically(state: AppState) -> None:
+    economy = state.economy
+    assert economy is not None
+    while True:
+        await asyncio.sleep(EVALUATE_EVERY_SECONDS)
+        try:
+            await asyncio.to_thread(economy.tick)
+        except Exception:  # noqa: BLE001 - keep evaluating; the error is in the system log
+            log.exception("Periodic life-state evaluation failed")
+
+
+def _stop(state: AppState) -> None:
+    if state.economy is not None:
+        state.economy.stop()
+    if state.log_handler is not None:
+        events.uninstall(state.log_handler)
+        state.log_handler = None
+    _record(state, "info", "system", "Stopped")
+    state.db.close()
 
 
 def _record(state: AppState, level: str, kind: str, message: str, details: dict | None = None) -> None:

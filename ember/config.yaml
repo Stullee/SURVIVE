@@ -68,11 +68,11 @@ schema:
   worker_model: str(1,100)
   price_table:
     - model: str(1,100)
-      input: float(0,1000)
-      output: float(0,1000)
-      cache_write_5m: float(0,1000)
-      cache_write_1h: float(0,1000)
-      cache_read: float(0,1000)
-  web_search_usd_per_1000: float(0,1000)
+      input: float(0.000001,1000)
+      output: float(0.000001,1000)
+      cache_write_5m: float(0.000001,1000)
+      cache_write_1h: float(0.000001,1000)
+      cache_read: float(0.000001,1000)
+  web_search_usd_per_1000: float(0.000001,1000)
   dry_run: bool
   log_level: list(debug|info|warning|error)

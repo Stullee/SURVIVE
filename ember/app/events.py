@@ -36,6 +36,9 @@ KEEP_EVENTS = 5000
 PRUNE_EVERY = 200
 
 _STOP = object()
+# LogRecord attribute set by record(): the event is already in the database.
+RECORDED = "ember_recorded"
+_LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARNING, "error": logging.ERROR}
 
 
 class DatabaseLogHandler(logging.Handler):
@@ -58,6 +61,8 @@ class DatabaseLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         if threading.current_thread() is self._writer:
             return  # never mirror problems of the mirror itself
+        if getattr(record, RECORDED, False):
+            return  # already written to the events table by record()
         try:
             message = redact(record.getMessage())
             exc_name = record.exc_info[0].__name__ if record.exc_info and record.exc_info[0] else ""
@@ -140,6 +145,25 @@ def _report_failure(what: str, exc: BaseException | None) -> None:
         sys.stderr.write(f"Ember: {what} ({reason})\n")
     except Exception:  # noqa: BLE001, S110 - nothing sensible left to do
         pass
+
+
+def record(
+    db: Database,
+    level: str,
+    kind: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Write an event for the dashboard now (inside the caller's transaction, if any) and print it to the app log.
+
+    Use this for events that belong to what just happened (a grant, a refused
+    call, a death), so they commit or roll back together with it.
+    """
+    db.add_event(level, kind, message, details)
+    (logger or logging.getLogger("app.events")).log(
+        _LEVELS.get(level, logging.INFO), "%s", message, extra={RECORDED: True}
+    )
 
 
 def install(db: Database) -> DatabaseLogHandler:

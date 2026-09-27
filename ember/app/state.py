@@ -9,6 +9,7 @@ from typing import Any
 
 from .config import LoadedSettings
 from .db import Database, utcnow
+from .economy.service import Economy
 from .events import DatabaseLogHandler
 from .version import app_version
 
@@ -22,8 +23,10 @@ class AppState:
     dev_mode: bool = False
     db_error: str | None = None
     started_at: str = field(default_factory=utcnow)
-    born_at: str | None = None
+    installed_at: str | None = None
     log_handler: DatabaseLogHandler | None = None
+    economy: Economy | None = None
+    economy_error: str | None = None
 
     def system_info(self) -> dict[str, Any]:
         settings = self.loaded.settings
@@ -36,7 +39,7 @@ class AppState:
         return {
             "version": app_version(),
             "started_at": self.started_at,
-            "born_at": self.born_at,
+            "installed_at": self.installed_at,
             "dry_run": settings.dry_run,
             "dev_mode": self.dev_mode,
             "safe_mode": self.loaded.safe_mode,
@@ -45,6 +48,9 @@ class AppState:
             "options": settings.public_dict(),
             "database": {"ok": self.db_error is None, "error": self.db_error, "schema_version": schema_version},
             "sensor_url": sensor_url(),
+            "price_warnings": settings.price_warnings(),
+            "economy_error": self.economy_error,
+            "economy_broken": self.economy.health.broken if self.economy is not None else None,
         }
 
     def recent_events(self, limit: int = 30) -> list[dict[str, Any]]:

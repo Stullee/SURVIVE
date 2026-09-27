@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import LoadedSettings, Settings, load_settings
+from app.db import discover_migrations
 from app.security import AccessPolicy, ingress_base_href, is_local_host_header
 from app.version import read_version
 from tests.conftest import HA_CORE, INGRESS
@@ -185,30 +186,24 @@ def test_health(ingress_client: TestClient) -> None:
 
 def test_dashboard_payload(ingress_client: TestClient) -> None:
     data = ingress_client.get("/api/dashboard").json()
-    assert data["mock"] is True
-    for key in ("agent", "economy", "now", "projects", "activity", "approvals", "inbox", "upgrades", "mind", "system"):
+    assert "mock" not in data
+    for key in ("agent", "economy", "ledger", "memorial", "lives", "transitions", "system", "events"):
         assert key in data
+    # Sections of later phases are empty placeholders, never preview data.
+    assert data["now"] is None and data["mind"] is None
+    for key in ("projects", "activity", "approvals", "inbox", "upgrades"):
+        assert data[key] == []
+    assert data["coming_in_phase"]["approvals"] == 4
     assert len(data["economy"]["days"]) == 30
-    assert data["system"]["database"] == {"ok": True, "error": None, "schema_version": 1}
+    assert data["agent"]["state"] == "alive"
+    assert data["agent"]["balance_usd"] == 20.0
+    assert data["system"]["database"] == {"ok": True, "error": None, "schema_version": len(discover_migrations())}
     assert data["system"]["dry_run"] is True
     assert any(e["message"].startswith("Started version") for e in data["events"])
 
 
-@pytest.mark.parametrize("scenario", ["alive", "paused", "critical", "dead"])
-def test_dashboard_scenarios(ingress_client: TestClient, scenario: str) -> None:
-    data = ingress_client.get("/api/dashboard", params={"scenario": scenario}).json()
-    assert data["agent"]["state"] == scenario
-    assert (data["memorial"] is not None) == (scenario == "dead")
-    balances = [d["balance_usd"] for d in data["economy"]["days"]]
-    assert min(balances) >= 0
-    if scenario == "critical":
-        assert data["agent"]["runway_days"] < 2
-    if scenario == "dead":
-        assert data["agent"]["balance_usd"] == 0
-
-
-def test_unknown_scenario_falls_back(ingress_client: TestClient) -> None:
-    assert ingress_client.get("/api/dashboard", params={"scenario": "zombie"}).json()["agent"]["state"] == "alive"
+def test_scenario_parameter_is_ignored(ingress_client: TestClient) -> None:
+    assert ingress_client.get("/api/dashboard", params={"scenario": "dead"}).json()["agent"]["state"] == "alive"
 
 
 def test_api_key_never_in_responses(client_factory: Callable, write_options: Callable) -> None:
@@ -229,13 +224,15 @@ def test_safe_mode_is_reported(client_factory: Callable, write_options: Callable
     assert any(e["kind"] == "config" and e["level"] == "error" for e in events)
 
 
-def test_born_at_survives_restarts(client_factory: Callable) -> None:
+def test_install_time_and_life_survive_restarts(client_factory: Callable) -> None:
     loaded = LoadedSettings(Settings())
     with client_factory(loaded) as client:
-        first = client.get("/api/dashboard").json()["system"]["born_at"]
+        first = client.get("/api/dashboard").json()
     with client_factory(loaded) as client:
-        second = client.get("/api/dashboard").json()["system"]
-    assert second["born_at"] == first
+        second = client.get("/api/dashboard").json()
+    assert second["system"]["installed_at"] == first["system"]["installed_at"]
+    assert second["agent"]["life_id"] == first["agent"]["life_id"]
+    assert second["agent"]["balance_usd"] == 20.0  # the starting balance is recorded once
 
 
 def test_broken_database_does_not_stop_the_dashboard(client_factory: Callable, data_dir) -> None:
@@ -249,12 +246,12 @@ def test_broken_database_does_not_stop_the_dashboard(client_factory: Callable, d
 
 
 def test_unhandled_errors_are_logged_once_and_hidden(client_factory: Callable, monkeypatch) -> None:
-    from app import mock
+    from app.economy.service import Economy
 
     def explode(*args, **kwargs):
         raise RuntimeError("kaboom " + KEY)
 
-    monkeypatch.setattr(mock, "dashboard", explode)
+    monkeypatch.setattr(Economy, "dashboard", explode)
     # The TestClient re-raises unhandled errors by default: getting a response
     # at all shows the app handled the error itself.
     with client_factory() as client:

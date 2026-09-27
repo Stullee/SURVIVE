@@ -60,13 +60,14 @@ class Usage:
                 raise ValueError(f"usage field {name} must be a non-negative integer, got {value!r}")
 
     @classmethod
-    def from_api(cls, usage: Mapping[str, Any]) -> Usage:
+    def from_api(cls, usage: Mapping[str, Any], remainder_ttl: str = "5m") -> Usage:
         """Build from the ``usage`` object of a Messages API response (as a dict).
 
         Every field may be missing or null. Cache writes are split into 5-minute
-        and 1-hour writes when the response says so; any part of
-        ``cache_creation_input_tokens`` the breakdown doesn't cover is charged at
-        the 5-minute rate (streamed responses can under-report the breakdown).
+        and 1-hour writes when the response says so. Streamed responses only
+        report the split for the first step of a server-tool loop, so any part of
+        ``cache_creation_input_tokens`` the split doesn't cover is charged at
+        ``remainder_ttl``: the longest cache lifetime the request asked for.
         """
 
         def count(mapping: Mapping[str, Any] | None, key: str) -> int:
@@ -78,7 +79,10 @@ class Usage:
         write_1h = count(creation, "ephemeral_1h_input_tokens")
         remainder = count(usage, "cache_creation_input_tokens") - write_5m - write_1h
         if remainder > 0:
-            write_5m += remainder
+            if remainder_ttl == "1h":
+                write_1h += remainder
+            else:
+                write_5m += remainder
         server = usage.get("server_tool_use") or {}
         return cls(
             input_tokens=count(usage, "input_tokens"),

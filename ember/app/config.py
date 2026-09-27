@@ -24,22 +24,39 @@ from . import paths
 log = logging.getLogger(__name__)
 
 
+# The smallest price the options accept: a price of 0 would make calls look free
+# and switch every spending limit off.
+MIN_PRICE = 0.000001
+
+
 class ModelPrice(BaseModel):
     """USD per million tokens for one model."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     model: str = Field(min_length=1, max_length=100)
-    input: float = Field(ge=0, le=1000)
-    output: float = Field(ge=0, le=1000)
-    cache_write_5m: float = Field(ge=0, le=1000)
-    cache_write_1h: float = Field(ge=0, le=1000)
-    cache_read: float = Field(ge=0, le=1000)
+    input: float = Field(ge=MIN_PRICE, le=1000)
+    output: float = Field(ge=MIN_PRICE, le=1000)
+    cache_write_5m: float = Field(ge=MIN_PRICE, le=1000)
+    cache_write_1h: float = Field(ge=MIN_PRICE, le=1000)
+    cache_read: float = Field(ge=MIN_PRICE, le=1000)
 
     @field_validator("model")
     @classmethod
     def _strip_model(cls, value: str) -> str:
         return value.strip()
+
+    @model_validator(mode="after")
+    def _plausible(self) -> ModelPrice:
+        # Anthropic's price structure; a row that breaks it is almost certainly a typo
+        # (for example a price per thousand tokens instead of per million).
+        if not self.cache_read <= self.input <= self.cache_write_5m <= self.cache_write_1h:
+            raise ValueError(
+                f"prices for {self.model} must satisfy cache_read <= input <= cache_write_5m <= cache_write_1h"
+            )
+        if self.output < self.input:
+            raise ValueError(f"prices for {self.model}: output must not be cheaper than input")
+        return self
 
 
 # Defaults from https://platform.claude.com/docs/en/about-claude/pricing
@@ -48,6 +65,36 @@ class ModelPrice(BaseModel):
 DEFAULT_PRICE_TABLE: tuple[ModelPrice, ...] = (
     ModelPrice(model="claude-sonnet-5", input=2.0, output=10.0, cache_write_5m=2.5, cache_write_1h=4.0, cache_read=0.2),
 )
+
+# Published prices of models the owner is likely to configure (same source and date).
+# Only used to warn about configured prices that look far too low.
+REFERENCE_PRICES: dict[str, ModelPrice] = {
+    p.model: p
+    for p in (
+        *DEFAULT_PRICE_TABLE,
+        ModelPrice(
+            model="claude-haiku-4-5", input=1.0, output=5.0, cache_write_5m=1.25, cache_write_1h=2.0, cache_read=0.1
+        ),
+        ModelPrice(
+            model="claude-haiku-4-5-20251001",
+            input=1.0,
+            output=5.0,
+            cache_write_5m=1.25,
+            cache_write_1h=2.0,
+            cache_read=0.1,
+        ),
+        ModelPrice(
+            model="claude-opus-5", input=5.0, output=25.0, cache_write_5m=6.25, cache_write_1h=10.0, cache_read=0.5
+        ),
+        ModelPrice(
+            model="claude-opus-5-5", input=4.0, output=20.0, cache_write_5m=5.0, cache_write_1h=8.0, cache_read=0.2
+        ),
+        ModelPrice(
+            model="claude-sonnet-4-6", input=3.0, output=15.0, cache_write_5m=3.75, cache_write_1h=6.0, cache_read=0.3
+        ),
+    )
+}
+REFERENCE_WEB_SEARCH_USD_PER_1000 = 10.0
 
 
 class Settings(BaseModel):
@@ -65,7 +112,7 @@ class Settings(BaseModel):
     planner_model: str = Field(default="claude-sonnet-5", min_length=1, max_length=100)
     worker_model: str = Field(default="claude-sonnet-5", min_length=1, max_length=100)
     price_table: tuple[ModelPrice, ...] = DEFAULT_PRICE_TABLE
-    web_search_usd_per_1000: float = Field(default=10.0, ge=0, le=1_000)
+    web_search_usd_per_1000: float = Field(default=10.0, ge=MIN_PRICE, le=1_000)
     dry_run: bool = True
     log_level: Literal["debug", "info", "warning", "error"] = "info"
 
@@ -111,6 +158,26 @@ class Settings(BaseModel):
             if price.model == model:
                 return price
         return None
+
+    def price_warnings(self) -> list[str]:
+        """Configured prices far below Anthropic's published ones (likely typos)."""
+        warnings = []
+        for price in self.price_table:
+            reference = REFERENCE_PRICES.get(price.model)
+            if reference is None:
+                continue
+            for name in ("input", "output", "cache_write_5m", "cache_write_1h", "cache_read"):
+                if getattr(price, name) < getattr(reference, name) / 2:
+                    warnings.append(
+                        f"{price.model} {name} is {getattr(price, name)} USD per million tokens; "
+                        f"Anthropic's published price is {getattr(reference, name)}"
+                    )
+        if self.web_search_usd_per_1000 < REFERENCE_WEB_SEARCH_USD_PER_1000 / 2:
+            warnings.append(
+                f"web search is {self.web_search_usd_per_1000} USD per 1,000 searches; "
+                f"the published price is {REFERENCE_WEB_SEARCH_USD_PER_1000}"
+            )
+        return warnings
 
     @property
     def api_key_set(self) -> bool:

@@ -1,15 +1,21 @@
-"""HTTP routes for the dashboard and the read-only JSON API."""
+"""HTTP routes: the dashboard, its JSON API and the owner's actions.
+
+Routes are plain functions (FastAPI runs them in a worker thread), because the
+database layer is synchronous and must never run on the event loop.
+"""
 
 from __future__ import annotations
 
 import html
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Body, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from . import mock
 from .db import utcnow
+from .economy.ledger import OWNER_KINDS
+from .economy.service import Economy, Reply
+from .logging_setup import printable
 from .paths import WEB_DIR
 from .security import ingress_base_href
 from .state import AppState
@@ -19,9 +25,27 @@ router = APIRouter()
 
 _INDEX_TEMPLATE = (WEB_DIR / "index.html").read_text(encoding="utf-8")
 
+# Sections that arrive with later phases; the dashboard shows them as empty placeholders.
+COMING_IN_PHASE = {"now": 3, "projects": 3, "activity": 3, "mind": 3, "approvals": 4, "inbox": 4, "upgrades": 4}
+UNAVAILABLE = JSONResponse({"error": "the economy is not available, see the system log"}, status_code=503)
+
 
 def _state(request: Request) -> AppState:
     return request.app.state.ember
+
+
+def _economy(request: Request) -> Economy | None:
+    return _state(request).economy
+
+
+def _owner(request: Request) -> str | None:
+    """The Home Assistant user behind an Ingress request (set by the Supervisor's proxy)."""
+    name = request.headers.get("x-remote-user-display-name") or request.headers.get("x-remote-user-name")
+    return printable(name, 60) if name else None
+
+
+def _reply(reply: Reply) -> JSONResponse:
+    return JSONResponse(reply.body, status_code=reply.status)
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -40,11 +64,27 @@ def health(request: Request) -> dict[str, Any]:
 
 
 @router.get("/api/dashboard")
-def dashboard(request: Request, scenario: str = Query("alive", max_length=20)) -> dict[str, Any]:
+def dashboard(request: Request) -> dict[str, Any]:
     state = _state(request)
-    settings = state.loaded.settings
-    payload = mock.dashboard(settings.agent_name, settings.daily_spend_cap_usd, settings.cycle_spend_cap_usd, scenario)
-    payload["generated_at"] = utcnow()
+    economy = state.economy
+    payload: dict[str, Any] = {
+        "generated_at": utcnow(),
+        "mode": "dry_run" if state.loaded.settings.dry_run else "live",
+        "coming_in_phase": COMING_IN_PHASE,
+        "now": None,
+        "projects": [],
+        "activity": [],
+        "approvals": [],
+        "inbox": [],
+        "upgrades": [],
+        "mind": None,
+    }
+    if economy is not None:
+        payload.update(economy.dashboard())
+    else:
+        payload.update(
+            {"agent": None, "economy": None, "ledger": None, "memorial": None, "lives": [], "transitions": []}
+        )
     payload["system"] = state.system_info()
     payload["events"] = state.recent_events()
     return payload
@@ -52,11 +92,25 @@ def dashboard(request: Request, scenario: str = Query("alive", max_length=20)) -
 
 @router.get("/api/sensors")
 def sensors(request: Request) -> JSONResponse:
-    """Small JSON document for a Home Assistant REST sensor (see README)."""
+    """Small JSON document for a Home Assistant REST sensor (see DOCS.md)."""
     state = _state(request)
-    data = mock.sensors()
-    data["name"] = state.loaded.settings.agent_name
-    data["dry_run"] = state.loaded.settings.dry_run
+    economy = state.economy
+    data: dict[str, Any]
+    if economy is None:
+        data = {
+            "name": state.loaded.settings.agent_name,
+            "state": "unknown",
+            "mode": "dry_run" if state.loaded.settings.dry_run else "live",
+            "safe_mode": state.loaded.safe_mode,
+            "balance_usd": None,
+            "runway_days": None,
+            "runway_known": False,
+            "today_api_spend_usd": None,
+            "daily_cap_usd": state.loaded.settings.daily_spend_cap_usd,
+        }
+    else:
+        data = economy.sensors()
+    data["dry_run"] = data["mode"] == "dry_run"  # kept from 0.1.x for existing sensor setups
     data["updated_at"] = utcnow()
     return JSONResponse(data)
 
@@ -64,3 +118,51 @@ def sensors(request: Request) -> JSONResponse:
 @router.get("/api/events")
 def events(request: Request, limit: int = Query(100, ge=1, le=500)) -> list[dict[str, Any]]:
     return _state(request).recent_events(limit=limit)
+
+
+@router.get("/api/ledger")
+def ledger(request: Request, limit: int = Query(50, ge=1, le=500)) -> JSONResponse:
+    economy = _economy(request)
+    if economy is None:
+        return UNAVAILABLE
+    return JSONResponse({"mode": economy.mode, "entries": economy.books.entries(economy.life.scope(), limit)})
+
+
+@router.post("/api/ledger/{kind}")
+def add_entry(
+    request: Request, kind: Annotated[str, Path(max_length=20)], body: Annotated[Any, Body()] = None
+) -> JSONResponse:
+    economy = _economy(request)
+    if economy is None:
+        return UNAVAILABLE
+    if kind not in OWNER_KINDS:
+        return JSONResponse({"error": "unknown kind of entry", "field": "kind"}, status_code=404)
+    return _reply(economy.record(kind, body, _owner(request)))
+
+
+@router.post("/api/ledger/{entry_id}/correct")
+def correct_entry(
+    request: Request, entry_id: Annotated[int, Path(ge=1, le=2**62)], body: Annotated[Any, Body()] = None
+) -> JSONResponse:
+    economy = _economy(request)
+    if economy is None:
+        return UNAVAILABLE
+    return _reply(economy.correct(entry_id, body, _owner(request)))
+
+
+@router.post("/api/control/pause")
+def pause(request: Request) -> JSONResponse:
+    return _control(request, paused=True)
+
+
+@router.post("/api/control/resume")
+def resume(request: Request) -> JSONResponse:
+    return _control(request, paused=False)
+
+
+def _control(request: Request, paused: bool) -> JSONResponse:
+    economy = _economy(request)
+    if economy is None:
+        return UNAVAILABLE
+    status = economy.set_paused(paused, _owner(request))
+    return JSONResponse({"state": status.state, "paused": paused})

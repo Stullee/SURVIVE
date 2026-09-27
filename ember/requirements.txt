@@ -3,6 +3,8 @@
 # Phase 3/5 will add the anthropic SDK.
 fastapi==0.141.1
 uvicorn==0.54.0
+# Time zone data for zoneinfo, independent of what the base image ships.
+tzdata==2026.4
 # Transitive (pinned too):
 annotated-doc==0.0.5
 annotated-types==0.8.0
