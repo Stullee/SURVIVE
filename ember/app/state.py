@@ -11,7 +11,7 @@ from .config import LoadedSettings
 from .db import Database, utcnow
 from .economy.service import Economy
 from .events import DatabaseLogHandler
-from .version import app_version
+from .version import app_version, build_id
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ class AppState:
                 log.warning("Could not read schema version: %s", exc)
         return {
             "version": app_version(),
+            "build": build_id(),
             "started_at": self.started_at,
             "installed_at": self.installed_at,
             "dry_run": settings.dry_run,

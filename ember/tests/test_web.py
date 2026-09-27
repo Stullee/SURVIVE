@@ -365,3 +365,33 @@ def test_frontend_has_no_html_sinks() -> None:
             if sinks.search(code):
                 offenders.append(f"{path.name}:{number}: {line.strip()}")
     assert offenders == []
+
+
+def test_page_and_api_carry_the_build_and_assets_are_revalidated(ingress_client: TestClient) -> None:
+    from app.version import build_id
+
+    page = ingress_client.get("/").text
+    build = build_id()
+    assert f'<meta name="ember-build" content="{build}">' in page
+    assert f"static/js/app.js?v={build}" in page and "__BUILD__" not in page
+    assert ingress_client.get("/api/dashboard").json()["system"]["build"] == build
+    static = ingress_client.get(f"/static/js/app.js?v={build}")
+    assert static.headers["cache-control"] == "no-cache"  # always checked with the server, never stale
+
+
+def test_the_build_changes_with_the_static_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import shutil
+
+    from app import paths, version
+
+    web = tmp_path / "web"
+    shutil.copytree(paths.WEB_DIR, web)
+    monkeypatch.setattr(paths, "WEB_DIR", web)
+    version.build_id.cache_clear()
+    try:
+        first = version.build_id()
+        (web / "static" / "js" / "app.js").write_text("// changed", encoding="utf-8")
+        version.build_id.cache_clear()
+        assert version.build_id() != first
+    finally:
+        version.build_id.cache_clear()

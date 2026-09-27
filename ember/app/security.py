@@ -127,8 +127,11 @@ class SecurityMiddleware:
                 headers = list(message.get("headers", []))
                 names = {name.lower() for name, _ in headers}
                 headers.extend(h for h in SECURITY_HEADERS if h[0] not in names)
-                if b"cache-control" not in names and not path.startswith("/static/"):
-                    headers.append((b"cache-control", b"no-store"))
+                if b"cache-control" not in names:
+                    # Pages and API answers are never stored; static files may be, but are checked with the
+                    # server on every use (cheap: an unchanged file is answered 304), so an update is never
+                    # hidden behind a cached old script.
+                    headers.append((b"cache-control", b"no-cache" if path.startswith("/static/") else b"no-store"))
                 message["headers"] = headers
             await send(message)
 

@@ -41,6 +41,41 @@
 
   function $(id) { return document.getElementById(id); }
 
+  // ---- Staying in step with the server
+
+  // The build this page was served with. After an update of the app, a page that stayed open would run
+  // the old script against the new server's data, so it reloads itself (once per new build).
+  var PAGE_BUILD = (function () {
+    var meta = document.querySelector('meta[name="ember-build"]');
+    return meta ? meta.getAttribute("content") || "" : "";
+  })();
+  var RELOAD_MARK = "ember-reloaded-for:";
+
+  function reloadedFor(build) {
+    var mark = RELOAD_MARK + build;
+    try { if (window.sessionStorage.getItem("ember-reloaded-for") === build) return true; } catch (e) { /* ignore */ }
+    return window.name === mark;
+  }
+
+  function markReload(build) {
+    try { window.sessionStorage.setItem("ember-reloaded-for", build); } catch (e) { /* window.name still works */ }
+    window.name = RELOAD_MARK + build;
+  }
+
+  // Returns true when the page is reloading and the data must not be rendered.
+  function followServerBuild(d) {
+    var server = isObject(d.system) && typeof d.system.build === "string" ? d.system.build : "";
+    ui.buildMismatch = false;
+    if (!server || !PAGE_BUILD || server === PAGE_BUILD) return false;
+    if (!reloadedFor(server)) {
+      markReload(server);
+      window.location.reload();
+      return true;
+    }
+    ui.buildMismatch = true;  // reloading didn't help (for example a cached page): ask the owner
+    return false;
+  }
+
   function loadPref(key, fallback) {
     try { return window.localStorage.getItem(key) || fallback; } catch (e) { return fallback; }
   }
@@ -314,6 +349,7 @@
       if (!isObject(d) || !isObject(d.system) || !(isObject(d.agent) || d.agent === null)) {
         throw new RequestError("malformed", res.data === undefined ? "not JSON" : "agent or system data missing");
       }
+      if (followServerBuild(d)) { next = null; return; }
       ui.data = d;
       ui.fetchError = null;
       document.body.removeAttribute("data-stale");
@@ -331,7 +367,7 @@
       // The server answered, so the system log (which says what went wrong) is probably readable.
       if (err.kind === "http" || err.kind === "malformed") loadEvents(seq);
     }).then(function () {
-      if (seq === ui.seq) schedule(next);
+      if (seq === ui.seq && next !== null) schedule(next);
     });
   }
 
@@ -477,6 +513,9 @@
 
   function bannerSpecs() {
     var list = [];
+    if (ui.buildMismatch) {
+      list.push({ kind: "warning", icon: "!", title: "Ember was updated. Reload this page (or open Ember again from the sidebar) to use the new version." });
+    }
     var err = ui.fetchError;
     var retry = " Retrying; the numbers below may be out of date.";
     if (err) {

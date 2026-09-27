@@ -20,7 +20,7 @@ from .logging_setup import printable
 from .paths import WEB_DIR
 from .security import ingress_base_href
 from .state import AppState
-from .version import app_version
+from .version import app_version, build_id
 
 router = APIRouter()
 
@@ -61,8 +61,10 @@ def _reply(reply: Reply) -> JSONResponse:
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index(request: Request) -> HTMLResponse:
     base = ingress_base_href(request.headers.get("x-ingress-path"))
-    page = _INDEX_TEMPLATE.replace("__BASE_HREF__", html.escape(base, quote=True)).replace(
-        "__VERSION__", html.escape(app_version(), quote=True)
+    page = (
+        _INDEX_TEMPLATE.replace("__BASE_HREF__", html.escape(base, quote=True))
+        .replace("__VERSION__", html.escape(app_version(), quote=True))
+        .replace("__BUILD__", html.escape(build_id(), quote=True))
     )
     return HTMLResponse(page)
 

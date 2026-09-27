@@ -8,10 +8,12 @@
   <base href="__BASE_HREF__">
   <title>Ember</title>
   <meta name="color-scheme" content="light dark">
-  <link rel="stylesheet" href="static/css/app.css?v=__VERSION__">
-  <script src="static/js/theme.js?v=__VERSION__"></script>
-  <script src="static/vendor/chart.umd.min.js?v=__VERSION__" defer></script>
-  <script src="static/js/app.js?v=__VERSION__" defer></script>
+  <!-- What this page is running; an open page reloads itself when the server reports another build. -->
+  <meta name="ember-build" content="__BUILD__">
+  <link rel="stylesheet" href="static/css/app.css?v=__BUILD__">
+  <script src="static/js/theme.js?v=__BUILD__"></script>
+  <script src="static/vendor/chart.umd.min.js?v=__BUILD__" defer></script>
+  <script src="static/js/app.js?v=__BUILD__" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main" id="skip-link">Skip to content</a>
