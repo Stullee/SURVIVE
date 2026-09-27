@@ -160,6 +160,9 @@ pre, .pre-line, .msg-text, .cycle-text, .step-text, .hypothesis, .plan { unicode
 .btn:disabled { color: var(--muted); cursor: not-allowed; }
 .btn-ghost { background: transparent; }
 .btn-danger:not(:disabled) { color: var(--critical-text); border-color: var(--critical); }
+/* The final "do it" of a dangerous action: filled, white on red (4.6:1 in both themes). */
+.btn-danger-solid:not(:disabled) { background: var(--critical); border-color: var(--critical); color: #fff; font-weight: 600; }
+.btn-danger-solid:hover:not(:disabled) { background: color-mix(in srgb, var(--critical) 88%, #000); }
 .btn-primary:not(:disabled) { border-color: var(--accent); font-weight: 600; }
 .btn-small { min-height: 30px; padding: 3px 10px; font-size: 0.85rem; }
 .btn[aria-pressed="true"] { background: var(--surface-2); border-color: var(--accent); font-weight: 600; }
@@ -279,6 +282,9 @@ pre, .pre-line, .msg-text, .cycle-text, .step-text, .hypothesis, .plan { unicode
   font-size: 0.75rem; font-weight: 700; text-align: center; line-height: 20px;
 }
 .badge-alert { background: var(--critical); }
+.badge + .badge { margin-left: 3px; }
+.badge-icon { margin-right: 3px; font-size: 0.7rem; }
+.badge-todo { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
 
 .subtabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
 .subtab {
@@ -412,7 +418,7 @@ th[scope="row"] { width: 40%; font-weight: 500; }
 .form-note { font-size: 0.9rem; font-weight: 600; }
 .field { display: grid; gap: 4px; min-width: 0; }
 .field label, .field legend { font-weight: 600; font-size: 0.9rem; }
-.field input[type="text"], .field input[type="date"], .field select, .field textarea {
+.field input[type="text"], .field input[type="date"], .field select, .field textarea, .action-panel .field input, .action-panel .field textarea {
   width: 100%; min-width: 0; min-height: 38px; padding: 6px 10px;
   color: var(--text); background: var(--surface);
   border: 1px solid var(--field-border); border-radius: 8px;
@@ -510,6 +516,7 @@ fieldset.field legend { padding: 0; margin-bottom: 4px; }
 .cycle-detail { border-top: 1px solid var(--grid); padding-top: 10px; }
 .detail-body { display: grid; gap: 14px; }
 .detail-part { display: grid; gap: 4px; min-width: 0; }
+.detail-part + .detail-part { border-top: 1px solid var(--grid); padding-top: 12px; }
 .detail-part > h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 0.95rem; }
 .detail-meta { color: var(--text-2); font-size: 0.85rem; }
 .detail-problems:empty { display: none; }
@@ -531,8 +538,41 @@ fieldset.field legend { padding: 0; margin-bottom: 4px; }
 .item-grid > div { min-width: 0; }
 .item-grid dt { color: var(--text-2); font-size: 0.8rem; }
 .item-grid dd { margin: 0; }
-.decision { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--grid); font-size: 0.9rem; }
+.decision { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--grid); font-size: 0.9rem; display: grid; gap: 2px; }
 .item-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.item-actions:empty { display: none; }
+.item-actions .btn[aria-expanded="true"] { background: var(--surface-2); border-color: var(--accent); font-weight: 600; }
+.item-status { margin-top: 8px; }
+.item-status[data-kind="ok"] { color: var(--good-text); font-weight: 600; }
+.item-status[data-kind="error"] { color: var(--critical-text); font-weight: 600; }
+
+/* Owner queues: grouped by what they need from the owner. */
+.queue { display: grid; gap: 20px; }
+.queue-group { display: grid; gap: 10px; }
+.queue-head { font-size: 1rem; }
+.todo-note {
+  margin: 8px 0 4px; padding: 8px 10px; border-radius: 8px; font-weight: 600; font-size: 0.9rem;
+  background: var(--surface-2); border-left: 3px solid var(--accent);
+}
+.final-wrap { margin-top: 8px; }
+.payload.final { border-left: 3px solid var(--accent); }
+.seen { color: var(--text-2); font-size: 0.85rem; }
+.seen[data-seen="no"] { color: var(--muted); }
+.result-link { color: var(--accent-text); text-decoration: underline; }
+.link-text { overflow-wrap: anywhere; }
+
+.action-panel {
+  margin-top: 12px; padding: 14px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--ring); border-left: 4px solid var(--accent);
+  display: grid; gap: 10px; max-width: 720px;
+}
+.action-panel-danger { border-left-color: var(--critical); }
+.action-panel h3 { font-size: 0.95rem; }
+.action-panel .form-intro { display: grid; gap: 4px; }
+.action-panel textarea.mono { font-size: 0.85rem; }
+.counter { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.counter[data-over="true"] { color: var(--critical-text); font-weight: 600; }
+.ledger-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 0.9rem; color: var(--text-2); }
 
 /* --- Inbox -------------------------------------------------------------- */
 
@@ -542,15 +582,24 @@ fieldset.field legend { padding: 0; margin-bottom: 4px; }
 .chat li[data-from="owner"] { justify-self: end; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
 .chat .who { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font-size: 0.8rem; color: var(--text-2); margin-bottom: 2px; }
 .chat .msg-text { display: block; white-space: pre-wrap; }
-.composer { display: flex; gap: 8px; align-items: flex-end; }
+.chat li[data-unread="true"] { box-shadow: inset 3px 0 0 var(--accent); }
+.chat .seen { display: block; margin-top: 2px; font-size: 0.8rem; }
+.composer { display: flex; gap: 8px; align-items: flex-start; }
+.composer-field { flex: 1 1 auto; min-width: 0; display: grid; gap: 4px; }
+.composer-hint { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; }
+.composer .btn { margin-top: 1px; }
 .composer textarea:disabled { color: var(--muted); cursor: not-allowed; }
+.composer textarea[aria-invalid="true"] { border-color: var(--critical); box-shadow: inset 0 0 0 1px var(--critical); }
+#inbox-title:focus { outline: none; }
+#inbox-status { margin-bottom: 8px; }
 .composer textarea {
-  flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--surface-2);
-  border: 1px solid var(--ring); border-radius: 8px; padding: 8px; resize: vertical;
+  width: 100%; min-width: 0; font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--field-border); border-radius: 8px; padding: 8px; resize: vertical;
 }
 
 /* --- Mind --------------------------------------------------------------- */
 
+#mind-note { margin-bottom: 10px; }
 .mind-body pre { background: var(--surface-2); border-radius: 8px; padding: 12px; }
 .journal { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
 .journal li { border-left: 2px solid var(--grid); padding-left: 12px; display: grid; gap: 4px; min-width: 0; }
@@ -593,6 +642,20 @@ fieldset.field legend { padding: 0; margin-bottom: 4px; }
 .memorial-will-note { margin: -8px auto 16px; }
 .memorial-revive { color: var(--text-2); margin-bottom: 10px; }
 .memorial-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+
+/* --- Kill switch dialog ------------------------------------------------- */
+
+.dialog {
+  width: min(520px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto;
+  padding: 18px; border-radius: var(--radius); border: 1px solid var(--critical); border-top-width: 4px;
+  background: var(--surface); color: var(--text);
+}
+.dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+.dialog form { display: grid; gap: 12px; }
+.dialog h2 { font-size: 1.1rem; }
+.dialog-text { display: grid; gap: 6px; color: var(--text-2); font-size: 0.9rem; }
+.dialog .field input { width: 100%; min-height: 38px; padding: 6px 10px; color: var(--text); background: var(--surface); border: 1px solid var(--field-border); border-radius: 8px; }
+.dialog .field [aria-invalid="true"] { border-color: var(--critical); box-shadow: inset 0 0 0 1px var(--critical); }
 
 /* --- Diagnostics -------------------------------------------------------- */
 

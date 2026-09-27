@@ -41,6 +41,10 @@
     cycles: {},          // cycle id -> the Activity item built for it (patched in place on each poll)
     nowPlanKey: null,
     diag: { text: null, loadedAt: null, busy: false },
+    refocus: null,       // after the owner's own action: the card status line to focus once the list is re-rendered
+    sending: false,      // an inbox message is on its way
+    markingRead: false,
+    killBusy: false,
   };
 
   // The phase-1 scenario switcher is gone; drop its stored choice.
@@ -301,17 +305,21 @@
 
   var APPROVAL_STATUS = {
     pending: { icon: "◔", label: "Waiting for you", tone: "warning", order: 0 },
-    approved: { icon: "✓", label: "Approved, to do", tone: "accent", order: 1 },
-    approved_with_changes: { icon: "✓", label: "Approved with changes, to do", tone: "accent", order: 1 },
+    approved: { icon: "☐", label: "Approved, to do", tone: "accent", order: 1 },
+    approved_with_changes: { icon: "☐", label: "Approved with changes, to do", tone: "accent", order: 1 },
     done: { icon: "✓", label: "Done", tone: "good", order: 2 },
-    rejected: { icon: "✕", label: "Rejected", tone: "critical", order: 3 },
+    failed: { icon: "✕", label: "Failed", tone: "critical", order: 2 },
+    rejected: { icon: "✕", label: "Rejected", tone: "", order: 2 },
+    withdrawn: { icon: "–", label: "Withdrawn by the agent", tone: "", order: 2 },
+    expired: { icon: "◌", label: "Expired", tone: "", order: 2 },
   };
 
   var UPGRADE_STATUS = {
     "new": { icon: "◔", label: "New", tone: "warning", order: 0 },
-    accepted: { icon: "✓", label: "Accepted", tone: "accent", order: 1 },
+    accepted: { icon: "☐", label: "Accepted, to release", tone: "accent", order: 1 },
     released: { icon: "✓", label: "Released", tone: "good", order: 2 },
-    declined: { icon: "✕", label: "Declined", tone: "", order: 3 },
+    declined: { icon: "✕", label: "Declined", tone: "", order: 2 },
+    withdrawn: { icon: "–", label: "Withdrawn by the agent", tone: "", order: 2 },
   };
 
   // sign: how an entry's amount_usd moves the balance.
@@ -372,10 +380,12 @@
     return h("span", { class: "chip", "data-tone": "test", title: "Made in a dry run: nothing real happened" }, "test");
   }
 
-  // Title of the owner's buttons that are shown but not usable yet.
+  // The owner's actions are live since phase 4. A server that still lists them as coming later
+  // (coming_in_phase.owner_actions) gets them shown but disabled, with this title.
   function laterTitle() {
     var coming = ui.data && isObject(ui.data.coming_in_phase) ? ui.data.coming_in_phase : {};
-    return "Arrives in phase " + (coming.owner_actions || 4);
+    var phase = num(coming.owner_actions);
+    return phase > 0 ? "Arrives in phase " + phase : null;
   }
 
   function laterButton(label) {
@@ -577,11 +587,13 @@
     section("projects", [d.projects, minute], ["projects"], function () { renderProjects(arr(d.projects)); });
     // Patched item by item, so an open cycle, its loaded details and their scroll positions survive the fast polls.
     section("activity", [d.activity, minute], null, function () { return renderActivity(arr(d.activity)); });
-    section("approvals", [d.approvals, projectTitles(d), coming, minute], ["approvals"], function () { renderApprovals(arr(d.approvals), projectTitles(d)); });
-    section("inbox", [d.inbox, agent.name, coming, minute], ["inbox"], function () { renderInbox(arr(d.inbox), agent.name); });
-    section("upgrades", [d.upgrades, coming, minute], ["upgrades"], function () { renderUpgrades(arr(d.upgrades)); });
+    // Owner queues: patched card by card, so an open decision form keeps what the owner typed.
+    section("approvals", [d.approvals, projectTitles(d), coming, agent.name, minute], null, function () { return renderApprovals(arr(d.approvals), projectTitles(d)); });
+    section("inbox", [d.inbox, d.badges, agent.name, coming, minute], ["inbox"], function () { renderInbox(arr(d.inbox), agent.name, badgeCounts(d).unread); });
+    section("upgrades", [d.upgrades, coming, agent.name, minute], null, function () { return renderUpgrades(arr(d.upgrades)); });
     section("mind", [d.mind, ui.mind, minute], ["mind-body"], function () { renderMind(d.mind); });
 
+    ui.refocus = null;  // only for the render right after the owner's action
     // Again, now that section errors are known (only changed banners reach the DOM).
     safely("banners", renderBanners);
     $("updated").textContent = "Updated " + timeFmt.format(new Date());
@@ -619,7 +631,14 @@
   }
 
   function renderControls(agent) {
-    $("kill-button").title = laterTitle();
+    var kill = $("kill-button");
+    var later = laterTitle();
+    var killed = agent.state === "killed" || !!agent.killed;
+    kill.disabled = !!later || killed || !!agent.unavailable;
+    if (later) kill.title = later;
+    else if (killed) kill.title = "The kill switch is already on";
+    else if (agent.unavailable) kill.title = "The economy is not available";
+    else kill.removeAttribute("title");
     if (!ui.wakeBusy) {
       var wake = $("wake-button");
       var canWake = agent.can_wake === true && !agent.unavailable;
@@ -692,8 +711,9 @@
     if (warnings.length) {
       list.push({ kind: "warning", icon: "!", title: warnings.length === 1 ? String(warnings[0]) : "Please check:", items: warnings.length === 1 ? null : warnings });
     }
-    if (agent.state === "killed") {
-      list.push({ kind: "warning", icon: "■", title: "The kill switch is on. " + name + " makes no model calls." });
+    if (agent.state === "killed" || agent.killed) {
+      list.push({ kind: "warning", icon: "■", title: "Stopped with the kill switch. To let " + name + " run again: Settings → Apps → Ember → Configuration → " +
+        "change 'Kill switch reset' to any other number → Save → Restart the app." });
     } else if (agent.state === "unfunded") {
       list.push({ kind: "info", icon: "i", title: "Waiting for money: grant funds to start " + name + ".", action: { label: "Grant funds", form: "grant" } });
     }
@@ -792,6 +812,7 @@
         wakeSub.textContent = "Was due " + relTime(a.next_wake_at) + reason;
       } else {
         wake.textContent = relTime(a.next_wake_at);
+        if (wake.textContent.length > 10) wake.setAttribute("data-size", "text");  // "in 3 h 20 min" fits on one line
         wakeSub.textContent = fmtDateTime(a.next_wake_at) + reason;
       }
     } else {
@@ -814,20 +835,41 @@
     meter.setAttribute("data-level", ratio >= 1 ? "critical" : ratio >= 0.75 ? "warning" : "normal");
   }
 
-  function setBadge(id, n, what) {
+  // Icon + number (never color alone); the label says what the number counts.
+  function setBadge(id, n, icon, what) {
     var el = $(id);
     el.hidden = !n;
-    el.textContent = n ? String(n) : "";
-    if (n) el.setAttribute("aria-label", n + " " + (what || "need attention"));
-    else el.removeAttribute("aria-label");
+    replace(el, n ? [h("span", { class: "badge-icon", "aria-hidden": "true", text: icon }), String(n)] : []);
+    if (n) {
+      el.setAttribute("aria-label", n + " " + what);
+      el.title = n + " " + what;
+    } else {
+      el.removeAttribute("aria-label");
+      el.removeAttribute("title");
+    }
+  }
+
+  // The server's counts cover every row (the lists hold only the latest 30); without them, count the rows.
+  function badgeCounts(d) {
+    var b = isObject(d.badges) ? d.badges : {};
+    var rows = function (list, test) { return arr(list).filter(function (x) { return isObject(x) && test(x); }).length; };
+    var pick = function (key, fallback) { var v = num(b[key]); return isNaN(v) ? fallback() : v; };
+    return {
+      pending: pick("approvals_pending", function () { return rows(d.approvals, function (x) { return x.status === "pending"; }); }),
+      todo: pick("approvals_todo", function () { return rows(d.approvals, function (x) { return x.status === "approved" || x.status === "approved_with_changes"; }); }),
+      unread: pick("inbox_unread", function () { return rows(d.inbox, isUnread); }),
+      upgrades: pick("upgrades_new", function () { return rows(d.upgrades, function (x) { return x.status === "new"; }); }),
+    };
   }
 
   function renderBadges(d) {
-    setBadge("badge-approvals", arr(d.approvals).filter(function (x) { return isObject(x) && x.status === "pending"; }).length, "waiting for you");
-    setBadge("badge-inbox", arr(d.inbox).filter(isUnread).length, "unread");
-    setBadge("badge-upgrades", arr(d.upgrades).filter(function (x) { return isObject(x) && x.status === "new"; }).length, "new");
+    var c = badgeCounts(d);
+    setBadge("badge-approvals", c.pending, "◔", "waiting for your decision");
+    setBadge("badge-approvals-todo", c.todo, "☐", "approved, to carry out");
+    setBadge("badge-inbox", c.unread, "●", "unread");
+    setBadge("badge-upgrades", c.upgrades, "◔", "new");
     var sys = d.system;
-    setBadge("badge-system", arr(sys.config_errors).length + (isObject(sys.database) && sys.database.ok === false ? 1 : 0) + (sys.economy_broken ? 1 : 0));
+    setBadge("badge-system", arr(sys.config_errors).length + (isObject(sys.database) && sys.database.ok === false ? 1 : 0) + (sys.economy_broken ? 1 : 0), "!", "need attention");
   }
 
   function isUnread(m) { return isObject(m) && m.sender === "agent" && !m.read_at; }
@@ -1440,6 +1482,7 @@
   // because the owner had text selected in it (it is updated on the next poll).
   function renderActivity(cycles) {
     var el = $("activity");
+    $("activity-intro").hidden = !cycles.length;
     if (!cycles.length) {
       ui.cycles = {};
       replace(el, emptyState("li", "No wake cycles yet.", "Each wake cycle shows up here with its steps and what it cost."));
@@ -1532,8 +1575,9 @@
     return h("li", { "data-kind": "llm" },
       h("span", { class: "kind", text: "Model" }),
       h("span", { class: "step-main" },
-        h("span", { class: "step-title" }, h("strong", { text: purposeText(s.purpose) }), s.model ? " · " + s.model + " " : " ", chip(CALL_STATUS, s.status, sentence(s.status || "unknown"))),
-        pending ? null : h("span", { class: "step-text muted", text: tokensText(s) + (s.stop_reason ? " · stopped: " + s.stop_reason : "") }),
+        h("span", { class: "step-title" }, h("strong", { text: purposeText(s.purpose) }), " ", chip(CALL_STATUS, s.status, sentence(s.status || "unknown"))),
+        h("span", { class: "step-text muted", text: [s.model, pending ? null : tokensText(s), s.stop_reason ? "stopped: " + s.stop_reason : null]
+          .filter(function (x) { return x; }).join(" · ") }),
         callProblems(s, "step-problem")),
       h("span", { class: "cost" },
         pending ? "…" : usd(s.cost_usd),
@@ -1587,7 +1631,8 @@
     else if (item.detailError) status = "Couldn't load the details (" + errorText(item.detailError) + ")." + (item.detailError.status === 404 ? "" : " Try Reload.");
     else if (item.detail) status = "Loaded " + timeFmt.format(item.detail.loadedAt) + (item.running ? ". The cycle is still running; reload for newer steps." : "");
     else status = "";
-    item.status.textContent = status;
+    // A live region: only touch it when the text changes, or screen readers repeat it on every poll.
+    if (item.status.textContent !== status) item.status.textContent = status;
     item.status.setAttribute("data-kind", item.detailError && !item.loading ? "error" : "");
     if (item.detail && !hasSelectionIn(item.body) && item.body.getAttribute("data-loaded") !== String(item.detail.loadedAt.getTime())) {
       replace(item.body, cycleDetailView(item.detail.data));
@@ -1652,89 +1697,661 @@
     spend_money: "Spend money", sell: "Sell", other: "Other",
   };
 
+  // The server's rule for owner-entered result links (http or https, no spaces, nothing before an @ in the host).
+  var LINK_RE = /^https?:\/\/[^\s@\/]+(\/\S*)?$/;
+  var VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
+
+  function linkProblem(value) {
+    if (value.length > 2048) return "Keep the link under 2,048 characters.";
+    if (!/^https?:\/\//.test(value)) return "Use an http or https link (it starts with http:// or https://).";
+    if (/\s/.test(value)) return "Remove the spaces from the link.";
+    if (!LINK_RE.test(value)) return "Use a plain link without a user name or password (nothing before an @).";
+    return null;
+  }
+
+  // An owner-entered link: a real link only after validation, opened in a new tab without a referrer.
+  function ownerLink(value) {
+    var text = String(value);
+    var url = null;
+    if (!linkProblem(text)) {
+      try { url = new URL(text); } catch (e) { url = null; }
+    }
+    if (!url || !/^https?:$/.test(url.protocol) || url.username || url.password) return h("span", { class: "link-text", text: text });
+    var a = document.createElement("a");
+    a.setAttribute("href", url.href);
+    a.setAttribute("rel", "noopener noreferrer");
+    a.setAttribute("target", "_blank");
+    a.className = "result-link";
+    append(a, [text, h("span", { class: "visually-hidden", text: " (opens in a new tab)" })]);
+    return a;
+  }
+
+  function seenLine(seen) {
+    return h("p", { class: "seen", "data-seen": seen ? "yes" : "no" },
+      h("span", { "aria-hidden": "true", text: seen ? "✓ " : "◌ " }), (seen ? "Seen by " : "Not yet seen by ") + agentName());
+  }
+
+  // ---- Owner queues (approvals, upgrades): grouped lists of cards kept across polls.
+  // Each card's view is rebuilt when its row changes; its buttons, an open action panel (with what the owner
+  // typed) and its status line stay, so a poll never wipes the owner's input.
+
+  function queueRoot(root, groups, empty) {
+    if (root.ember) return root.ember;
+    var q = { items: {}, groups: {}, empty: h("div", { class: "queue-empty", hidden: true }) };
+    append(root, q.empty);
+    groups.forEach(function (g) {
+      var head = h("h2", { class: "queue-head" });
+      var list = h("div", { class: "stack" });
+      var sectionEl = h("section", { class: "queue-group", "data-group": g.key, "aria-label": g.title, hidden: true }, head, list);
+      q.groups[g.key] = { spec: g, head: head, list: list, section: sectionEl };
+      append(root, sectionEl);
+    });
+    replace(q.empty, empty);
+    root.ember = q;
+    return q;
+  }
+
+  function renderQueue(root, opts) {
+    var q = queueRoot(root, opts.groups, opts.empty);
+    var complete = true;
+    var keep = {};
+    var placed = {};
+    opts.groups.forEach(function (g) { placed[g.key] = []; });
+    opts.rows.forEach(function (row) {
+      var id = String(row.id);
+      var it = q.items[id] || newQueueItem(opts.kind, id, opts.panel);
+      keep[id] = it;
+      var actionKey = opts.actionKey(row) + "|" + (laterTitle() || "");
+      if (it.actionKey !== null && it.actionKey !== actionKey) {
+        // The row changed under an open panel: its input no longer applies.
+        if (it.open && !it.expectChange) setItemStatus(it, "This request changed meanwhile, so the form was closed. Check it again below.", "error");
+        closePanel(it, false);
+        it.panels = {};
+      }
+      it.expectChange = false;
+      it.row = row;
+      if (it.actionKey !== actionKey) {
+        replace(it.actions, opts.actions(it, row));
+        it.actionKey = actionKey;
+        syncPanelButtons(it);
+      }
+      var key = JSON.stringify([row, opts.viewKey || null, agentName(), Math.floor(Date.now() / 60000)]);
+      if (it.key !== key) {
+        if (isBusy(it.view)) complete = false;
+        else {
+          replace(it.view, opts.view(row));
+          it.key = key;
+        }
+      }
+      var group = opts.groups.filter(function (g) { return g.match(row.status); })[0] || opts.groups[opts.groups.length - 1];
+      placed[group.key].push(it.card);
+    });
+    Object.keys(q.items).forEach(function (id) {
+      if (!keep[id] && q.items[id].card.parentNode) q.items[id].card.parentNode.removeChild(q.items[id].card);
+    });
+    q.items = keep;
+    opts.groups.forEach(function (g) {
+      var grp = q.groups[g.key];
+      var cards = placed[g.key];
+      Array.prototype.slice.call(grp.list.children).forEach(function (c) { if (cards.indexOf(c) < 0) grp.list.removeChild(c); });
+      cards.forEach(function (c, i) { if (grp.list.children[i] !== c) grp.list.insertBefore(c, grp.list.children[i] || null); });
+      grp.section.hidden = !cards.length;
+      grp.head.textContent = g.title + " (" + cards.length + ")";
+    });
+    q.empty.hidden = opts.rows.length > 0;
+    // After the owner's own action the card may have moved to another group, which drops focus: give it back.
+    var lost = !document.activeElement || document.activeElement === document.body;
+    if (ui.refocus && lost && root.contains(ui.refocus)) ui.refocus.focus();
+    return complete;
+  }
+
+  function newQueueItem(kind, id, panelFor) {
+    var it = { kind: kind, id: id, key: null, actionKey: null, row: null, open: null, panels: {}, panelFor: panelFor, expectChange: false };
+    it.view = h("div", { class: "item-view" });
+    it.actions = h("div", { class: "item-actions", role: "group", "aria-label": "Actions" });
+    it.slot = h("div", { class: "panel-slot", id: kind + "-panel-" + id });
+    it.status = h("p", { class: "form-status item-status", role: "status", tabindex: "-1" });
+    it.card = h("article", { class: "card " + kind, "data-id": id }, it.view, it.actions, it.slot, it.status);
+    return it;
+  }
+
+  function setItemStatus(it, text, kind) {
+    it.status.textContent = text;
+    it.status.setAttribute("data-kind", kind || "");
+  }
+
+  function panelButton(it, mode, label, danger) {
+    var later = laterTitle();
+    if (later) return laterButton(label);
+    var b = h("button", { type: "button", class: "btn" + (danger ? " btn-danger" : ""), "data-mode": mode, "aria-expanded": "false", "aria-controls": it.slot.id, text: label });
+    b.addEventListener("click", function () { togglePanel(it, mode); });
+    return b;
+  }
+
+  function syncPanelButtons(it) {
+    Array.prototype.forEach.call(it.actions.querySelectorAll("[data-mode]"), function (b) {
+      b.setAttribute("aria-expanded", String(b.getAttribute("data-mode") === it.open));
+    });
+  }
+
+  function togglePanel(it, mode) {
+    if (it.open === mode) { closePanel(it, true); return; }
+    var panel = it.panels[mode] || (it.panels[mode] = buildPanel(it, it.panelFor(it, mode)));
+    replace(it.slot, panel.form);
+    it.open = mode;
+    syncPanelButtons(it);
+    setItemStatus(it, "", "");
+    var first = panel.form.querySelector("textarea, input");
+    (first || panel.submit).focus();
+  }
+
+  function closePanel(it, returnFocus) {
+    var mode = it.open;
+    replace(it.slot, []);
+    it.open = null;
+    syncPanelButtons(it);
+    if (returnFocus && mode) {
+      var b = it.actions.querySelector('[data-mode="' + mode + '"]');
+      if (b) b.focus();
+    }
+  }
+
+  // spec: {title, intro: [nodes], fields: [{name, label, hint, rows, value, max, required, missing, check}], extra: [nodes],
+  //        submit, danger, url, body(values) -> JSON, done(res, values) -> status text}
+  function buildPanel(it, spec) {
+    var base = it.slot.id + "-" + spec.mode;
+    var panel = { spec: spec, fields: {}, busy: false };
+    var title = h("h3", { id: base + "-title", text: spec.title });
+    panel.status = h("p", { class: "form-status", role: "status" });
+    panel.submit = h("button", { type: "submit", class: spec.danger ? "btn btn-danger-solid" : "btn btn-primary", text: spec.submit });
+    var cancel = h("button", { type: "button", class: "btn btn-ghost", text: "Cancel" });
+    var fields = spec.fields.map(function (f) {
+      var id = base + "-" + f.name;
+      var control = f.rows
+        ? h("textarea", { id: id, rows: String(f.rows), spellcheck: f.mono ? "false" : null, class: f.mono ? "mono" : null })
+        : h("input", { type: "text", id: id, autocomplete: "off", spellcheck: "false", inputmode: f.inputmode || null });
+      control.value = f.value || "";
+      var hint = f.hint ? h("p", { class: "hint", id: id + "-hint", text: f.hint }) : null;
+      var counter = f.max ? h("p", { class: "counter", id: id + "-count" }) : null;
+      var error = h("p", { class: "field-error", id: id + "-error", hidden: true });
+      control.setAttribute("aria-describedby", [hint ? id + "-hint" : null, counter ? id + "-count" : null, id + "-error"].filter(function (x) { return x; }).join(" "));
+      if (f.required) control.setAttribute("aria-required", "true");
+      var field = { spec: f, control: control, error: error, counter: counter };
+      panel.fields[f.name] = field;
+      updateCounter(field);
+      control.addEventListener("input", function () { clearPanelError(field); updateCounter(field); });
+      return h("div", { class: "field" }, h("label", { for: id, text: f.label }), control, hint, counter, error);
+    });
+    panel.form = h("form", { class: "action-panel" + (spec.danger ? " action-panel-danger" : ""), novalidate: true, "aria-labelledby": base + "-title" },
+      title, spec.intro && spec.intro.length ? h("div", { class: "form-intro" }, spec.intro) : null, fields, spec.extra || null,
+      h("div", { class: "form-actions" }, panel.submit, cancel), panel.status);
+    panel.form.addEventListener("submit", function (ev) { ev.preventDefault(); submitPanel(it, panel); });
+    panel.form.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") { ev.preventDefault(); closePanel(it, true); }
+      else if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); submitPanel(it, panel); }
+    });
+    cancel.addEventListener("click", function () { closePanel(it, true); });
+    return panel;
+  }
+
+  function updateCounter(field) {
+    if (!field.counter) return;
+    var n = field.control.value.trim().length;
+    field.counter.textContent = intFmt.format(n) + " / " + intFmt.format(field.spec.max) + " characters";
+    field.counter.setAttribute("data-over", n > field.spec.max ? "true" : "false");
+  }
+
+  function showPanelError(field, message) {
+    field.error.textContent = message;
+    field.error.hidden = false;
+    field.control.setAttribute("aria-invalid", "true");
+  }
+
+  function clearPanelError(field) {
+    field.error.textContent = "";
+    field.error.hidden = true;
+    field.control.removeAttribute("aria-invalid");
+  }
+
+  function setPanelStatus(panel, text, kind) {
+    panel.status.textContent = text;
+    panel.status.setAttribute("data-kind", kind || "");
+  }
+
+  function fieldProblem(f, value) {
+    if (!value) return f.required ? f.missing || "Please fill this in." : null;
+    if (f.max && value.length > f.max) return "Keep it under " + intFmt.format(f.max) + " characters (it has " + intFmt.format(value.length) + ").";
+    return f.check ? f.check(value) : null;
+  }
+
+  function submitPanel(it, panel) {
+    if (panel.busy) return;
+    var spec = panel.spec;
+    var values = {};
+    var problems = [];
+    Object.keys(panel.fields).forEach(function (name) {
+      var field = panel.fields[name];
+      clearPanelError(field);
+      values[name] = field.control.value.trim();
+      var msg = fieldProblem(field.spec, values[name]);
+      if (msg) problems.push([field, msg]);
+    });
+    if (problems.length) {
+      problems.forEach(function (p) { showPanelError(p[0], p[1]); });
+      setPanelStatus(panel, problems.length === 1 ? "Please fix the marked field." : "Please fix the marked fields.", "error");
+      problems[0][0].control.focus();
+      return;
+    }
+    panel.busy = true;
+    panel.submit.disabled = true;
+    var label = panel.submit.textContent;
+    panel.submit.textContent = "Saving…";
+    setPanelStatus(panel, "Saving…", "");
+    request("POST", spec.url, spec.body(values)).then(function (res) {
+      if (res.ok) {
+        it.expectChange = true;
+        it.panels = {};
+        closePanel(it, false);
+        setItemStatus(it, spec.done(res, values), "ok");
+        ui.refocus = it.status;
+        it.status.focus();
+        refresh();
+        return;
+      }
+      ownerFailure(res, panel.fields, function (text) { setPanelStatus(panel, text, "error"); }, function (text) {
+        // Conflict or gone: the form no longer applies; say so on the card and update the list.
+        closePanel(it, false);
+        it.panels = {};
+        setItemStatus(it, text, "error");
+        ui.refocus = it.status;
+        it.status.focus();
+      });
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setPanelStatus(panel, (err.kind === "timeout" ? "Ember did not answer in time" : "Couldn't reach Ember") +
+        ", so it's not clear whether this was saved. The list updates in a moment; check it before you try again.", "error");
+      refresh();
+    }).then(function () {
+      panel.busy = false;
+      panel.submit.disabled = false;
+      panel.submit.textContent = label;
+    });
+  }
+
+  // {error, field} answers: 422 next to the named field, 409/404 close the form (it changed or is gone), 503 unavailable.
+  function ownerFailure(res, fields, say, gone) {
+    var data = isObject(res.data) ? res.data : {};
+    var msg = typeof data.error === "string" && data.error ? endSentence(sentence(data.error)) : "";
+    if (res.status === 422 && msg && typeof data.field === "string" && fields[data.field]) {
+      showPanelError(fields[data.field], msg);
+      say("Please fix the marked field.");
+      fields[data.field].control.focus();
+      return;
+    }
+    if ((res.status === 409 || res.status === 404) && gone) {
+      var why = data.field === "expected_version"
+        ? "This request changed meanwhile (for example in another browser tab), so nothing was saved."
+        : msg ? "Nothing was saved: " + lowerFirst(msg) : "Nothing was saved: it changed meanwhile.";
+      gone(why + " The list is updated now; check it again.");
+      refresh();
+      return;
+    }
+    if (res.status === 503) { say("Ember can't do this right now (" + (msg ? lowerFirst(msg).replace(/\.$/, "") : "unavailable") + "). Nothing was changed."); return; }
+    say(msg && res.status === 422 ? msg : "Ember refused this (" + httpError(res).message + "). Nothing was changed.");
+  }
+
+  // ---- Approvals
+
+  var APPROVAL_GROUPS = [
+    { key: "pending", title: "Waiting for your decision", match: function (s) { return s === "pending"; } },
+    { key: "todo", title: "Approved, to carry out", match: function (s) { return s === "approved" || s === "approved_with_changes"; } },
+    { key: "closed", title: "Closed", match: function () { return true; } },
+  ];
+
   function renderApprovals(items, titles) {
-    var el = $("approvals");
     var sorted = items.slice().sort(function (x, y) {
       var o = statusOrder(APPROVAL_STATUS, x.status) - statusOrder(APPROVAL_STATUS, y.status);
-      return o || (new Date(y.created_at).getTime() || 0) - (new Date(x.created_at).getTime() || 0);
+      return o || (new Date(y.created_at).getTime() || 0) - (new Date(x.created_at).getTime() || 0) || num(y.id) - num(x.id);
     });
-    if (!sorted.length) {
-      replace(el, emptyState("div", "No requests.", "Before the agent publishes, contacts someone or spends money, it asks you here."));
-      return;
-    }
-    replace(el, sorted.map(function (a) {
-      var actions = null;
-      if (a.status === "pending") {
-        actions = h("div", { class: "item-actions" }, laterButton("Approve"), laterButton("Approve with changes"), laterButton("Reject"));
-      } else if (a.status === "approved" || a.status === "approved_with_changes") {
-        actions = h("div", { class: "item-actions" }, laterButton("Mark done"));
-      }
-      var project = a.project_id !== null && a.project_id !== undefined
-        ? (titles[String(a.project_id)] ? titles[String(a.project_id)] + " (#" + a.project_id + ")" : "#" + a.project_id) : null;
-      var payload = asText(a.payload);
-      return h("article", { class: "card approval", "data-id": String(a.id) },
-        h("div", { class: "item-head" },
-          h("h3", { text: a.title || "Untitled request" }), plainChip(APPROVAL_TYPES[a.type] || sentence(String(a.type || "other").replace(/_/g, " "))),
-          chip(APPROVAL_STATUS, a.status, sentence(String(a.status || "unknown").replace(/_/g, " "))), a.simulated ? testTag() : null),
-        a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
-        payload ? h("div", { class: "payload-wrap" },
-          h("p", { class: "payload-note" }, h("span", { "aria-hidden": "true", text: "! " }), "Written by the agent; check it before acting."),
-          h("pre", { class: "payload capped", tabindex: "0", text: payload })) : null,
-        h("dl", { class: "item-grid" },
-          h("div", null, h("dt", { text: "Expected cost" }), h("dd", { text: asText(a.expected_cost) || "–" })),
-          h("div", null, h("dt", { text: "Expected benefit" }), h("dd", { text: asText(a.expected_benefit) || "–" })),
-          project ? h("div", null, h("dt", { text: "Project" }), h("dd", { text: project })) : null),
-        a.decision_comment || a.result_note ? h("div", { class: "decision" },
-          a.decision_comment ? h("p", null, h("strong", { text: "Your comment: " }), String(a.decision_comment)) : null,
-          a.result_note ? h("p", null, h("strong", { text: "Result: " }), String(a.result_note)) : null) : null,
-        h("p", { class: "muted small" }, "Requested ", timeEl(a.created_at)),
-        actions);
-    }));
+    return renderQueue($("approvals"), {
+      kind: "approval", rows: sorted, groups: APPROVAL_GROUPS, viewKey: titles,
+      empty: emptyState("div", "No requests.", "Before the agent publishes, contacts someone or spends money, it asks you here."),
+      view: function (a) { return approvalView(a, titles); },
+      actionKey: function (a) { return a.status + "|" + a.version; },
+      actions: approvalActions,
+      panel: approvalPanel,
+    });
   }
 
-  function renderInbox(messages, agentName) {
-    var el = $("inbox");
-    var title = laterTitle();
-    $("composer-send").title = title;
-    $("composer-text").placeholder = "Replying " + lowerFirst(title);
-    var sorted = messages.slice().sort(byDate("created_at"));
-    if (!sorted.length) {
-      replace(el, emptyState("li", "No messages yet.", (agentName || "The agent") + " writes here when it has a question or news for you."));
-      return;
-    }
-    replace(el, sorted.map(function (m) {
-      var fromOwner = m.sender === "owner";
-      return h("li", { "data-from": fromOwner ? "owner" : "agent", "data-id": String(m.id) },
-        h("span", { class: "who" }, fromOwner ? "You" : agentName || "Ember", " · ", timeEl(m.created_at),
-          isUnread(m) ? [" ", h("span", { class: "chip", "data-tone": "accent" }, h("span", { "aria-hidden": "true", text: "●" }), "Unread")] : null,
-          m.simulated ? [" ", testTag()] : null),
-        h("span", { class: "msg-text", text: asText(m.text) }));
-    }));
+  function approvalView(a, titles) {
+    var todo = a.status === "approved" || a.status === "approved_with_changes";
+    var project = a.project_id !== null && a.project_id !== undefined
+      ? (titles[String(a.project_id)] ? titles[String(a.project_id)] + " (#" + a.project_id + ")" : "#" + a.project_id) : null;
+    var payload = asText(a.payload);
+    var final = a.final_payload ? asText(a.final_payload) : "";
+    return [
+      h("div", { class: "item-head" },
+        h("h3", { text: a.title || "Untitled request" }), plainChip(APPROVAL_TYPES[a.type] || sentence(String(a.type || "other").replace(/_/g, " "))),
+        chip(APPROVAL_STATUS, a.status, sentence(String(a.status || "unknown").replace(/_/g, " "))), a.simulated ? testTag() : null),
+      a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
+      todo ? h("p", { class: "todo-note" }, h("span", { "aria-hidden": "true", text: "☐ " }), "You approved this; carry it out, then mark it done or failed.") : null,
+      final ? h("div", { class: "final-wrap" },
+        h("h4", { class: "small-head", text: "Your version (the agent must use this)" }),
+        h("pre", { class: "payload final capped", tabindex: "0", text: final })) : null,
+      payload ? h("div", { class: "payload-wrap" },
+        final ? h("h4", { class: "small-head", text: "The agent's original" }) : null,
+        h("p", { class: "payload-note" }, h("span", { "aria-hidden": "true", text: "! " }), "Written by the agent; check it before acting."),
+        h("pre", { class: "payload capped", tabindex: "0", text: payload })) : null,
+      h("dl", { class: "item-grid" },
+        h("div", null, h("dt", { text: "Expected cost" }), h("dd", { text: asText(a.expected_cost) || "–" })),
+        h("div", null, h("dt", { text: "Expected benefit" }), h("dd", { text: asText(a.expected_benefit) || "–" })),
+        project ? h("div", null, h("dt", { text: "Project" }), h("dd", { text: project })) : null),
+      decisionInfo(a),
+      h("p", { class: "muted small" }, "Requested ", timeEl(a.created_at), " · #" + a.id),
+    ];
   }
+
+  function decisionInfo(a) {
+    var parts = [];
+    if (a.decided_at) {
+      var verb = a.status === "rejected" ? "Rejected" : a.final_payload ? "Approved with changes" : "Approved";
+      parts.push(h("p", null, h("strong", { text: verb }), " by " + (a.decided_by || "you") + " · ", timeEl(a.decided_at)));
+      if (a.decision_comment) parts.push(h("p", { class: "pre-line" }, h("strong", { text: "Comment: " }), String(a.decision_comment)));
+    }
+    if (a.closed_at) {
+      parts.push(h("p", null, h("strong", { text: a.status === "failed" ? "Marked failed" : "Marked done" }), " · ", timeEl(a.closed_at)));
+      if (a.result_note) parts.push(h("p", { class: "pre-line" }, h("strong", { text: "Result: " }), String(a.result_note)));
+      if (a.result_link) parts.push(h("p", { class: "result-line" }, h("strong", { text: "Link: " }), ownerLink(a.result_link)));
+    }
+    if (!parts.length) return null;
+    parts.push(seenLine(!!a.seen_by_agent));
+    return h("div", { class: "decision" }, parts);
+  }
+
+  function approvalActions(it, a) {
+    if (a.status === "pending") {
+      return [panelButton(it, "approve", "Approve"), panelButton(it, "approve_with_changes", "Approve with changes"), panelButton(it, "reject", "Reject", true)];
+    }
+    if (a.status === "approved" || a.status === "approved_with_changes") {
+      return [panelButton(it, "done", "Mark done"), panelButton(it, "failed", "Mark failed")];
+    }
+    return [];
+  }
+
+  var COMMENT_FIELD = { name: "comment", label: "Comment for the agent (optional)", rows: 2, max: 2000 };
+
+  function approvalPanel(it, mode) {
+    var a = it.row;
+    var version = a.version;
+    var url = "api/approvals/" + encodeURIComponent(String(a.id)) + "/";
+    var name = agentName();
+    if (mode === "approve" || mode === "approve_with_changes" || mode === "reject") {
+      var original = asText(a.payload);
+      var specs = {
+        approve: { title: "Approve this request", submit: "Approve",
+          intro: [h("p", { text: "After approving, carry it out yourself, then mark it done or failed here. " + name + " sees your decision on its next wake." })],
+          fields: [COMMENT_FIELD] },
+        approve_with_changes: { title: "Approve with your changes", submit: "Approve with changes",
+          intro: [h("p", { text: "Edit the text: " + name + " must use your version. If you leave it as it is, this is recorded as a plain approval." })],
+          fields: [{ name: "final_payload", label: "Your version", rows: 8, value: original, max: 8000, required: true, missing: "Write the version " + name + " must use." }, COMMENT_FIELD] },
+        reject: { title: "Reject this request?", submit: "Reject", danger: true,
+          intro: [h("p", { text: "A rejected request can't be approved later. " + name + " sees your decision on its next wake." })],
+          fields: [{ name: "comment", label: "Why (optional, " + name + " reads it)", rows: 2, max: 2000 }] },
+      };
+      var spec = specs[mode];
+      spec.mode = mode;
+      spec.url = url + "decide";
+      spec.body = function (v) {
+        var decision = mode;
+        var body = { decision: decision, expected_version: version };
+        if (mode === "approve_with_changes") {
+          // Unchanged text is a plain approval (also when only surrounding blank lines differ).
+          if (v.final_payload === original.trim()) body.decision = "approve";
+          else body.final_payload = v.final_payload;
+        }
+        if (v.comment) body.comment = v.comment;
+        return body;
+      };
+      spec.done = function (res, v) {
+        var st = isObject(res.data) && isObject(res.data.approval) ? res.data.approval.status : null;
+        if (mode === "reject") return "Rejected. " + name + " sees this on its next wake.";
+        if (mode === "approve_with_changes" && st === "approved") return "Approved as it was (the text was unchanged). Carry it out, then mark it done or failed.";
+        if (mode === "approve_with_changes") return "Approved with your changes. Carry it out with your version, then mark it done or failed.";
+        return "Approved. Carry it out, then mark it done or failed.";
+      };
+      return spec;
+    }
+    // Close: done or failed
+    var failed = mode === "failed";
+    var extra = null;
+    if (a.type === "spend_money" || a.type === "sell") {
+      var expense = a.type === "spend_money";
+      var ledgerButton = h("button", { type: "button", class: "btn btn-small", text: expense ? "Open the expense form" : "Open the revenue form" });
+      ledgerButton.addEventListener("click", function () { openLedgerForm(expense ? "expense" : "revenue"); });
+      extra = h("div", { class: "ledger-hint" },
+        h("p", { text: expense ? "If it cost money, record the expense in the ledger." : "If it earned money, record the revenue in the ledger." }), ledgerButton);
+    }
+    return {
+      mode: mode, title: failed ? "Mark as failed" : "Mark as done", submit: failed ? "Mark failed" : "Mark done",
+      intro: [h("p", { text: "Tell " + name + " how it went; it reads this on its next wake." })],
+      fields: [
+        { name: "result_note", label: failed ? "What went wrong" : "What happened (optional)", rows: 3, max: 2000, required: failed, missing: "Say what went wrong." },
+        { name: "result_link", label: "Link to the result (optional)", inputmode: "url", check: linkProblem,
+          hint: name + " will see this link and can read it; don't paste links containing access tokens." },
+      ],
+      extra: extra,
+      url: url + "close",
+      body: function (v) {
+        var body = { outcome: failed ? "failed" : "done", expected_version: version };
+        if (v.result_note) body.result_note = v.result_note;
+        if (v.result_link) body.result_link = v.result_link;
+        return body;
+      },
+      done: function () { return (failed ? "Marked failed. " : "Marked done. ") + name + " sees this on its next wake."; },
+    };
+  }
+
+  // ---- Upgrades
+
+  var UPGRADE_GROUPS = [
+    { key: "new", title: "Waiting for your decision", match: function (s) { return s === "new"; } },
+    { key: "accepted", title: "Accepted, to release", match: function (s) { return s === "accepted"; } },
+    { key: "closed", title: "Closed", match: function () { return true; } },
+  ];
 
   function renderUpgrades(items) {
-    var el = $("upgrades");
     var sorted = items.slice().sort(function (x, y) {
       return statusOrder(UPGRADE_STATUS, x.status) - statusOrder(UPGRADE_STATUS, y.status) ||
-        (new Date(y.created_at).getTime() || 0) - (new Date(x.created_at).getTime() || 0);
+        (new Date(y.created_at).getTime() || 0) - (new Date(x.created_at).getTime() || 0) || num(y.id) - num(x.id);
     });
-    if (!sorted.length) {
-      replace(el, emptyState("div", "No upgrade requests.", "The agent suggests changes to its own tools here, for you to accept or decline."));
-      return;
+    return renderQueue($("upgrades"), {
+      kind: "upgrade", rows: sorted, groups: UPGRADE_GROUPS,
+      empty: emptyState("div", "No upgrade requests.", "The agent suggests changes to its own tools here, for you to accept or decline."),
+      view: upgradeView,
+      actionKey: function (u) { return String(u.status); },
+      actions: function (it, u) {
+        if (u.status === "new") return [panelButton(it, "accepted", "Accept"), panelButton(it, "released", "Mark released"), panelButton(it, "declined", "Decline", true)];
+        if (u.status === "accepted") return [panelButton(it, "released", "Mark released"), panelButton(it, "declined", "Decline", true)];
+        return [];
+      },
+      panel: upgradePanel,
+    });
+  }
+
+  function upgradeView(u) {
+    var decided = [];
+    if (u.decided_at) {
+      decided.push(h("p", null, h("strong", { text: (UPGRADE_STATUS[u.status] || { label: sentence(String(u.status)) }).label.replace(/, to release$/, "") }), " · ", timeEl(u.decided_at)));
     }
-    replace(el, sorted.map(function (u) {
-      return h("article", { class: "card", "data-id": String(u.id) },
-        h("div", { class: "item-head" },
-          h("h3", { text: u.title || "Untitled request" }), u.priority ? plainChip("Priority: " + u.priority) : null,
-          chip(UPGRADE_STATUS, u.status, sentence(String(u.status || "unknown"))), u.simulated ? testTag() : null),
-        h("dl", { class: "item-grid" },
-          h("div", null, h("dt", { text: "Problem" }), h("dd", { class: "pre-line", text: asText(u.problem) || "–" })),
-          h("div", null, h("dt", { text: "Proposed change" }), h("dd", { class: "pre-line", text: asText(u.proposed_change) || "–" })),
-          h("div", null, h("dt", { text: "Expected benefit" }), h("dd", { class: "pre-line", text: asText(u.expected_benefit) || "–" }))),
-        u.decision_comment ? h("p", { class: "decision" }, h("strong", { text: "Your comment: " }), String(u.decision_comment)) : null,
-        h("p", { class: "muted small" }, "Requested ", timeEl(u.created_at)),
-        u.status === "new" ? h("div", { class: "item-actions" }, laterButton("Accept"), laterButton("Decline")) : null);
-    }));
+    if (u.released_version) decided.push(h("p", null, h("strong", { text: "Released in " }), versionLabel(u.released_version)));
+    if (u.owner_note) decided.push(h("p", { class: "pre-line" }, h("strong", { text: "Your note: " }), String(u.owner_note)));
+    return [
+      h("div", { class: "item-head" },
+        h("h3", { text: u.title || "Untitled request" }), u.priority ? plainChip("Priority: " + u.priority) : null,
+        chip(UPGRADE_STATUS, u.status, sentence(String(u.status || "unknown"))), u.simulated ? testTag() : null),
+      h("dl", { class: "item-grid" },
+        h("div", null, h("dt", { text: "Problem" }), h("dd", { class: "pre-line", text: asText(u.problem) || "–" })),
+        h("div", null, h("dt", { text: "Proposed change" }), h("dd", { class: "pre-line", text: asText(u.proposed_change) || "–" })),
+        h("div", null, h("dt", { text: "Expected benefit" }), h("dd", { class: "pre-line", text: asText(u.expected_benefit) || "–" }))),
+      decided.length ? h("div", { class: "decision" }, decided) : null,
+      h("p", { class: "muted small" }, "Requested ", timeEl(u.created_at), " · #" + u.id),
+    ];
+  }
+
+  function upgradePanel(it, mode) {
+    var name = agentName();
+    var note = { name: "note", label: mode === "declined" ? "Why (optional, " + name + " reads it)" : "Note for the agent (optional)", rows: 2, max: 2000 };
+    var specs = {
+      accepted: { title: "Accept this upgrade request", submit: "Accept",
+        intro: [h("p", { text: "Accepting tells " + name + " you plan to make this change. Mark it released once it's in a version of the app." })], fields: [note] },
+      released: { title: "Mark as released", submit: "Mark released",
+        intro: [h("p", { text: "Say in which version of the app the change is included." })],
+        fields: [{ name: "version", label: "Released in version", hint: "Like 0.4.0.", required: true, missing: "Enter the version, like 0.4.0.", inputmode: "decimal",
+          check: function (v) { return VERSION_RE.test(v) ? null : "Enter the version as three numbers, like 0.4.0."; } }, note] },
+      declined: { title: "Decline this upgrade request?", submit: "Decline", danger: true,
+        intro: [h("p", { text: name + " sees your decision on its next wake." })], fields: [note] },
+    };
+    var spec = specs[mode];
+    spec.mode = mode;
+    spec.url = "api/upgrades/" + encodeURIComponent(String(it.row.id));
+    spec.body = function (v) {
+      var body = { status: mode };
+      if (v.note) body.note = v.note;
+      if (mode === "released") body.version = v.version;
+      return body;
+    };
+    spec.done = function (res, v) {
+      if (mode === "released") return "Marked released in " + versionLabel(v.version) + ".";
+      return (mode === "accepted" ? "Accepted. " : "Declined. ") + name + " sees this on its next wake.";
+    };
+    return spec;
+  }
+
+  // ---- Inbox
+
+  function renderInbox(messages, agentName, unread) {
+    var el = $("inbox");
+    var name = agentName || "Ember";
+    var sorted = messages.slice().sort(function (x, y) { return byDate("created_at")(x, y) || num(x.id) - num(y.id); });
+    var unreadRows = sorted.filter(isUnread);
+    $("inbox-sub").textContent = unread ? plural(unread, "unread message") + " from " + name + "." : "No unread messages.";
+    var mark = $("inbox-mark-read");
+    mark.hidden = !unreadRows.length || !!laterTitle();
+    if (!sorted.length) {
+      replace(el, emptyState("li", "No messages yet.", name + " writes here when it has a question or news for you. You can write first, too."));
+    } else {
+      replace(el, sorted.map(function (m) {
+        var fromOwner = m.sender === "owner";
+        var who = fromOwner ? (m.entered_by ? String(m.entered_by) : "You") : name;
+        return h("li", { "data-from": fromOwner ? "owner" : "agent", "data-id": String(m.id), "data-unread": isUnread(m) ? "true" : null },
+          h("span", { class: "who" }, who, " · ", timeEl(m.created_at),
+            isUnread(m) ? [" ", h("span", { class: "chip", "data-tone": "accent" }, h("span", { "aria-hidden": "true", text: "●" }), "Unread")] : null,
+            m.simulated ? [" ", testTag()] : null),
+          h("span", { class: "msg-text", text: asText(m.text) }),
+          fromOwner ? seenLine(!!m.seen_by_agent) : null);
+      }));
+    }
+    var later = laterTitle();
+    var text = $("composer-text");
+    text.disabled = !!later;
+    $("composer-send").disabled = !!later || ui.sending;
+    if (later) {
+      $("composer-send").title = later;
+      text.placeholder = "Replying " + lowerFirst(later);
+    } else {
+      $("composer-send").removeAttribute("title");
+      text.placeholder = "Write to " + name + "…";
+    }
+    $("composer-label").textContent = "Message to " + name;
+  }
+
+  function composerCount() {
+    var n = $("composer-text").value.trim().length;
+    var el = $("composer-count");
+    el.textContent = n ? intFmt.format(n) + " / 2,000 characters" : "";
+    el.setAttribute("data-over", n > 2000 ? "true" : "false");
+  }
+
+  function composerError(text) {
+    var err = $("composer-error");
+    err.textContent = text || "";
+    err.hidden = !text;
+    if (text) $("composer-text").setAttribute("aria-invalid", "true");
+    else $("composer-text").removeAttribute("aria-invalid");
+  }
+
+  function setComposerStatus(text, kind) {
+    $("composer-status").textContent = text;
+    $("composer-status").setAttribute("data-kind", kind || "");
+  }
+
+  function sendMessage() {
+    if (ui.sending || laterTitle()) return;
+    var box = $("composer-text");
+    var text = box.value.trim();
+    composerError("");
+    if (!text) { composerError("Write a message first."); box.focus(); return; }
+    if (text.length > 2000) { composerError("Keep the message under 2,000 characters (it has " + intFmt.format(text.length) + ")."); box.focus(); return; }
+    ui.sending = true;
+    var send = $("composer-send");
+    send.disabled = true;
+    send.textContent = "Sending…";
+    setComposerStatus("Sending…", "");
+    request("POST", "api/inbox", { text: text }).then(function (res) {
+      if (res.status === 201 || res.ok) {
+        box.value = "";
+        composerCount();
+        setComposerStatus("Sent. " + agentName() + " reads it on its next wake.", "ok");
+        refresh();
+        return;
+      }
+      var data = isObject(res.data) ? res.data : {};
+      if (res.status === 422 && data.field === "text" && typeof data.error === "string" && data.error) {
+        composerError(endSentence(sentence(data.error)));
+        setComposerStatus("Nothing was sent.", "error");
+        box.focus();
+        return;
+      }
+      ownerFailure(res, {}, function (msg) { setComposerStatus(msg, "error"); }, null);
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setComposerStatus((err.kind === "timeout" ? "Ember did not answer in time" : "Couldn't reach Ember") +
+        ", so the message may or may not have been sent. Check the conversation before you send it again.", "error");
+      refresh();
+    }).then(function () {
+      ui.sending = false;
+      send.textContent = "Send";
+      send.disabled = !!laterTitle();
+    });
+  }
+
+  function markAllRead() {
+    if (ui.markingRead || !ui.data) return;
+    var ids = arr(ui.data.inbox).filter(function (m) { return isObject(m) && m.sender === "agent"; }).map(function (m) { return num(m.id); }).filter(function (n) { return n > 0; });
+    if (!ids.length) return;
+    var btn = $("inbox-mark-read");
+    ui.markingRead = true;
+    btn.disabled = true;
+    var status = $("inbox-status");
+    status.setAttribute("data-kind", "");
+    status.textContent = "Marking as read…";
+    request("POST", "api/inbox/read", { up_to_id: Math.max.apply(null, ids) }).then(function (res) {
+      if (!res.ok) {
+        ownerFailure(res, {}, function (msg) { status.textContent = msg; status.setAttribute("data-kind", "error"); }, null);
+        return;
+      }
+      var n = isObject(res.data) ? num(res.data.marked) : NaN;
+      status.textContent = isNaN(n) ? "Marked as read." : n === 1 ? "Marked 1 message as read." : "Marked " + intFmt.format(n) + " messages as read.";
+      status.setAttribute("data-kind", "ok");
+      $("inbox-title").focus();  // the button disappears once nothing is unread
+      refresh();
+    }).catch(function (err) {
+      status.textContent = "Couldn't mark the messages as read (" + errorText(err) + ").";
+      status.setAttribute("data-kind", "error");
+    }).then(function () {
+      ui.markingRead = false;
+      btn.disabled = false;
+    });
   }
 
   var MIND_EMPTY = {
@@ -2498,7 +3115,11 @@
       if (!res.ok) throw httpError(res);
       var paused = isObject(res.data) && typeof res.data.paused === "boolean" ? res.data.paused : !resume;
       btn.textContent = paused ? "Resume" : "Pause";
-      setControlStatus(resume ? "Resumed." : "Paused. No model calls are made until you resume.", false);
+      if (resume && isObject(res.data) && res.data.state === "killed") {
+        setControlStatus("The pause is lifted, but the kill switch is still on, so " + agentName() + " stays stopped. The banner says how to reset it.", true);
+      } else {
+        setControlStatus(resume ? "Resumed." : "Paused. No model calls are made until you resume.", false);
+      }
     }).catch(function (err) {
       setControlStatus((resume ? "Could not resume: " : "Could not pause: ") + errorText(err) + ".", true);
     }).then(function () {
@@ -2542,6 +3163,113 @@
     });
   });
 
+  // ------------------------------------------------------------------ kill switch
+  // A modal dialog: the owner types the agent's name exactly before the confirm button works.
+
+  function killFieldError(id, text) {
+    var err = $(id + "-error");
+    err.textContent = text || "";
+    err.hidden = !text;
+    if (text) $(id).setAttribute("aria-invalid", "true");
+    else $(id).removeAttribute("aria-invalid");
+  }
+
+  function setKillStatus(text, kind) {
+    $("kill-status").textContent = text;
+    $("kill-status").setAttribute("data-kind", kind || "");
+  }
+
+  function syncKillConfirm() {
+    $("kill-confirm").disabled = ui.killBusy || $("kill-name").value.trim() !== agentName();
+  }
+
+  function openKillDialog() {
+    var dialog = $("kill-dialog");
+    var name = agentName();
+    $("kill-name-show").textContent = name;
+    $("kill-title").textContent = "Stop " + name + " with the kill switch?";
+    $("kill-desc-1").textContent = "The kill switch stops " + name + " for good: no more model calls, and a running cycle ends at its next call. Unlike Pause, Resume doesn't undo it.";
+    $("kill-name").value = "";
+    $("kill-reason").value = "";
+    killFieldError("kill-name", "");
+    killFieldError("kill-reason", "");
+    setKillStatus("", "");
+    syncKillConfirm();
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+    $("kill-name").focus();
+  }
+
+  function closeKillDialog() {
+    var dialog = $("kill-dialog");
+    if (dialog.open && typeof dialog.close === "function") dialog.close();
+    else dialog.removeAttribute("open");
+  }
+
+  $("kill-button").addEventListener("click", function () {
+    if (!ui.data || !ui.data.agent || this.disabled) return;
+    openKillDialog();
+  });
+  $("kill-name").addEventListener("input", function () { killFieldError("kill-name", ""); syncKillConfirm(); });
+  $("kill-reason").addEventListener("input", function () { killFieldError("kill-reason", ""); });
+  $("kill-cancel").addEventListener("click", closeKillDialog);
+  // Escape (the dialog's cancel event) and Cancel both return focus to the kill switch.
+  $("kill-dialog").addEventListener("close", function () {
+    var btn = $("kill-button");
+    if (!btn.disabled) btn.focus();
+    else $("main").focus();
+  });
+  $("kill-form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    if (ui.killBusy) return;
+    var name = $("kill-name").value.trim();
+    var reason = $("kill-reason").value.trim();
+    if (name !== agentName()) { killFieldError("kill-name", "Type the agent's name exactly: " + agentName() + "."); $("kill-name").focus(); return; }
+    if (reason.length > 300) { killFieldError("kill-reason", "Keep the reason under 300 characters (it has " + intFmt.format(reason.length) + ")."); $("kill-reason").focus(); return; }
+    ui.killBusy = true;
+    syncKillConfirm();
+    setKillStatus("Stopping…", "");
+    var body = { confirm_name: name };
+    if (reason) body.reason = reason;
+    request("POST", "api/control/kill", body).then(function (res) {
+      if (res.ok) {
+        closeKillDialog();
+        setControlStatus(agentName() + " was stopped with the kill switch.", false);
+        refresh();
+        return;
+      }
+      var data = isObject(res.data) ? res.data : {};
+      if (res.status === 422 && (data.field === "confirm_name" || data.field === "reason") && typeof data.error === "string") {
+        killFieldError(data.field === "reason" ? "kill-reason" : "kill-name", endSentence(sentence(data.error)));
+        setKillStatus("Nothing was changed.", "error");
+        $(data.field === "reason" ? "kill-reason" : "kill-name").focus();
+        return;
+      }
+      ownerFailure(res, {}, function (msg) { setKillStatus(msg, "error"); }, null);
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setKillStatus((err.kind === "timeout" ? "Ember did not answer in time" : "Couldn't reach Ember") +
+        ", so it's not clear whether the kill switch is on. Check the header after the next update.", "error");
+      refresh();
+    }).then(function () {
+      ui.killBusy = false;
+      syncKillConfirm();
+    });
+  });
+
+  // ------------------------------------------------------------------ inbox composer
+
+  $("composer").addEventListener("submit", function (ev) { ev.preventDefault(); sendMessage(); });
+  $("composer-text").addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); sendMessage(); }
+  });
+  $("composer-text").addEventListener("input", function () {
+    composerError("");
+    composerCount();
+    if ($("composer-status").getAttribute("data-kind") === "ok") setComposerStatus("", "");
+  });
+  $("inbox-mark-read").addEventListener("click", markAllRead);
+
   // ------------------------------------------------------------------ diagnostics
 
   function setDiagStatus(text, kind) {
@@ -2570,10 +3298,15 @@
     $("diag-download").disabled = !has;
     $("diag-load").textContent = diag.busy ? "Loading…" : has ? "Reload report" : "Load report";
     if (!has) return;
-    $("diag-report").textContent = diag.text;
-    var lines = diag.text.split("\n").length;
-    $("diag-meta").textContent = byteSize(reportBytes(diag.text)) + " · " + plural(lines, "line") + " · loaded " +
-      dateTimeFmt.format(diag.loadedAt) + " (" + timeFmt.format(diag.loadedAt) + ")";
+    var report = $("diag-report");
+    var stamp = String(diag.loadedAt.getTime());
+    if (report.getAttribute("data-loaded") !== stamp) {  // keeps scroll and selection while a reload is in flight
+      report.textContent = diag.text;
+      report.setAttribute("data-loaded", stamp);
+    }
+    var lines = diag.text.replace(/\n$/, "").split("\n").length;
+    replace($("diag-meta"), [byteSize(reportBytes(diag.text)) + " · " + plural(lines, "line") + " · ",
+      timeEl(diag.loadedAt.toISOString(), "loaded at " + timeFmt.format(diag.loadedAt))]);
   }
 
   function loadDiagnostics() {
@@ -2714,7 +3447,6 @@
     if (ui.data) section("table", [ui.data.economy && ui.data.economy.days, ui.tableOpen], null, function () { renderTable(ui.data.economy || {}); });
   });
 
-  $("composer").addEventListener("submit", function (ev) { ev.preventDefault(); });
 
   // Fragment links would resolve against <base href> and reload the page, so handle skip-link in JS.
   $("skip-link").addEventListener("click", function (ev) { ev.preventDefault(); $("main").focus(); });

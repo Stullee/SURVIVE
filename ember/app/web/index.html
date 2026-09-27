@@ -32,7 +32,7 @@
       <div class="controls" role="group" aria-label="Agent controls">
         <button type="button" class="btn" id="wake-button" disabled>Wake now</button>
         <button type="button" class="btn" id="pause-button" disabled>Pause</button>
-        <button type="button" class="btn btn-danger" id="kill-button" disabled title="Arrives in phase 4">Kill switch</button>
+        <button type="button" class="btn btn-danger" id="kill-button" disabled aria-haspopup="dialog">Kill switch</button>
       </div>
       <button type="button" class="btn btn-ghost" id="theme-toggle">Theme: auto</button>
       <p class="control-status" id="control-status" role="status"></p>
@@ -78,7 +78,7 @@
     <button type="button" role="tab" class="tab" id="tab-ledger" aria-controls="panel-ledger" aria-selected="false">Ledger</button>
     <button type="button" role="tab" class="tab" id="tab-projects" aria-controls="panel-projects" aria-selected="false">Projects</button>
     <button type="button" role="tab" class="tab" id="tab-activity" aria-controls="panel-activity" aria-selected="false">Activity</button>
-    <button type="button" role="tab" class="tab" id="tab-approvals" aria-controls="panel-approvals" aria-selected="false">Approvals <span class="badge" id="badge-approvals" hidden></span></button>
+    <button type="button" role="tab" class="tab" id="tab-approvals" aria-controls="panel-approvals" aria-selected="false">Approvals <span class="badge" id="badge-approvals" hidden></span><span class="badge badge-todo" id="badge-approvals-todo" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-inbox" aria-controls="panel-inbox" aria-selected="false">Inbox <span class="badge" id="badge-inbox" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-upgrades" aria-controls="panel-upgrades" aria-selected="false">Upgrades <span class="badge" id="badge-upgrades" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-mind" aria-controls="panel-mind" aria-selected="false">Mind</button>
@@ -201,27 +201,40 @@
     </section>
 
     <section class="panel" id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" hidden>
-      <p class="panel-intro">The last 10 wake cycles, newest first. Open one to see its steps.</p>
+      <p class="panel-intro" id="activity-intro" hidden>The last 10 wake cycles, newest first. Open one to see its steps.</p>
       <ol class="timeline" id="activity"></ol>
     </section>
 
     <section class="panel" id="panel-approvals" role="tabpanel" aria-labelledby="tab-approvals" hidden>
-      <div class="stack" id="approvals"></div>
+      <div class="queue" id="approvals"></div>
     </section>
 
     <section class="panel" id="panel-inbox" role="tabpanel" aria-labelledby="tab-inbox" hidden>
       <article class="card">
+        <div class="card-head">
+          <div>
+            <h2 id="inbox-title" tabindex="-1">Conversation</h2>
+            <p class="card-sub" id="inbox-sub">&nbsp;</p>
+          </div>
+          <button type="button" class="btn" id="inbox-mark-read" hidden>Mark all read</button>
+        </div>
+        <p class="form-status" id="inbox-status" role="status"></p>
         <ol class="chat" id="inbox"></ol>
-        <form class="composer" id="composer">
-          <label class="visually-hidden" for="composer-text">Message to the agent</label>
-          <textarea id="composer-text" rows="2" placeholder="Replying arrives in phase 4" disabled></textarea>
-          <button type="submit" class="btn" id="composer-send" disabled title="Arrives in phase 4">Send</button>
+        <form class="composer" id="composer" novalidate>
+          <div class="composer-field">
+            <label class="visually-hidden" for="composer-text" id="composer-label">Message to the agent</label>
+            <textarea id="composer-text" rows="3" aria-describedby="composer-hint composer-count composer-error"></textarea>
+            <p class="hint composer-hint"><span id="composer-hint">Ctrl+Enter (Cmd+Enter on a Mac) sends.</span> <span class="counter" id="composer-count"></span></p>
+            <p class="field-error" id="composer-error" hidden></p>
+          </div>
+          <button type="submit" class="btn btn-primary" id="composer-send">Send</button>
         </form>
+        <p class="form-status" id="composer-status" role="status"></p>
       </article>
     </section>
 
     <section class="panel" id="panel-upgrades" role="tabpanel" aria-labelledby="tab-upgrades" hidden>
-      <div class="stack" id="upgrades"></div>
+      <div class="queue" id="upgrades"></div>
     </section>
 
     <section class="panel" id="panel-mind" role="tabpanel" aria-labelledby="tab-mind" hidden>
@@ -275,6 +288,32 @@
       </article>
     </section>
   </main>
+
+  <dialog class="dialog" id="kill-dialog" aria-labelledby="kill-title" aria-describedby="kill-desc">
+    <form id="kill-form" novalidate>
+      <h2 id="kill-title">Stop the agent with the kill switch?</h2>
+      <div id="kill-desc" class="dialog-text">
+        <p id="kill-desc-1">The kill switch stops the agent for good: no more model calls, and a running cycle ends at its next call. Unlike Pause, Resume doesn't undo it.</p>
+        <p>To let it run again later, you change "Kill switch reset" in the app's configuration and restart the app.</p>
+      </div>
+      <div class="field">
+        <label for="kill-name">Type <strong id="kill-name-show">Ember</strong> to confirm</label>
+        <input type="text" id="kill-name" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="kill-name-error">
+        <p class="field-error" id="kill-name-error" hidden></p>
+      </div>
+      <div class="field">
+        <label for="kill-reason">Reason (optional)</label>
+        <input type="text" id="kill-reason" autocomplete="off" aria-describedby="kill-reason-hint kill-reason-error">
+        <p class="hint" id="kill-reason-hint">Up to 300 characters. It goes into the system log.</p>
+        <p class="field-error" id="kill-reason-error" hidden></p>
+      </div>
+      <p class="form-status" id="kill-status" role="status"></p>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-danger-solid" id="kill-confirm" disabled>Stop with the kill switch</button>
+        <button type="button" class="btn btn-ghost" id="kill-cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
 
   <footer class="footer">
     <span id="footer-version">&nbsp;</span>
