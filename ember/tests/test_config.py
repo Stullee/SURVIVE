@@ -108,10 +108,17 @@ def test_non_object_json_starts_safe_mode(data_dir: Path) -> None:
 
 
 def test_validation_errors_do_not_echo_values(write_options: Callable[[dict], Path]) -> None:
-    write_options({"anthropic_api_key": KEY, "daily_spend_cap_usd": "lots"})
+    # The secret is itself the invalid value in each field, so echoing inputs would expose it.
+    write_options({"anthropic_api_key": [KEY], "agent_name": KEY * 2, "planner_model": {"id": KEY}})
     loaded = load_settings()
     assert loaded.safe_mode
+    assert len(loaded.errors) >= 3
     assert all(KEY not in e for e in loaded.errors)
+
+
+def test_api_key_is_trimmed(write_options: Callable[[dict], Path]) -> None:
+    write_options({"anthropic_api_key": f"  {KEY}\n"})
+    assert load_settings().settings.anthropic_api_key.get_secret_value() == KEY
 
 
 def test_unknown_options_are_ignored(write_options: Callable[[dict], Path]) -> None:

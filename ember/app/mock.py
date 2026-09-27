@@ -11,11 +11,12 @@ the dashboard shows a banner while it is in use.
 from __future__ import annotations
 
 import random
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 SCENARIOS = ("alive", "paused", "critical", "dead")
 DAYS = 30
+DEATH_INDEX = DAYS - 4  # in the "dead" preview the money runs out on this day
 
 
 def _iso(dt: datetime) -> str:
@@ -44,7 +45,7 @@ def _economy(scenario: str, today: date) -> dict[str, Any]:
         scale = (sum(grants) - sum(expenses) - 0.85) / sum(raw_costs)
         costs = [c * scale for c in raw_costs]
     else:  # dead: the money runs out three days ago
-        death_index = DAYS - 4
+        death_index = DEATH_INDEX
         scale = (sum(grants) - sum(expenses)) / sum(raw_costs[: death_index + 1])
         costs = [c * scale if i <= death_index else 0.0 for i, c in enumerate(raw_costs)]
     days = []
@@ -84,10 +85,19 @@ def _economy(scenario: str, today: date) -> dict[str, Any]:
 def dashboard(agent_name: str, daily_cap: float, cycle_cap: float, scenario: str = "alive") -> dict[str, Any]:
     scenario = scenario if scenario in SCENARIOS else "alive"
     now = datetime.now(UTC).replace(microsecond=0)
-    born = now - timedelta(days=DAYS - 1, hours=5)
+    first_day = now.date() - timedelta(days=DAYS - 1)
+    born = datetime.combine(first_day, time(9, 0), UTC)  # the day of the first grant
+    died = datetime.combine(first_day + timedelta(days=DEATH_INDEX), time(21, 0), UTC)
     economy = _economy(scenario, now.date())
     running = scenario == "alive"
     state = scenario
+    # When the most recent wake cycle started, consistent with each life state.
+    last_cycle = {
+        "alive": now - timedelta(minutes=6),
+        "critical": now - timedelta(minutes=40),
+        "paused": now - timedelta(days=2),
+        "dead": died - timedelta(hours=1),
+    }[scenario]
     agent = {
         "name": agent_name,
         "state": state,
@@ -98,7 +108,7 @@ def dashboard(agent_name: str, daily_cap: float, cycle_cap: float, scenario: str
         "today_spend_usd": economy["today_spend_usd"],
         "daily_cap_usd": daily_cap,
         "cycle_cap_usd": cycle_cap,
-        "last_wake_at": _iso(now - timedelta(minutes=6)),
+        "last_wake_at": _iso(last_cycle),
         "next_wake_at": None if scenario in ("paused", "dead") else _iso(now + timedelta(hours=3, minutes=54)),
         "cycle_running": running,
     }
@@ -107,14 +117,14 @@ def dashboard(agent_name: str, daily_cap: float, cycle_cap: float, scenario: str
         "scenario": scenario,
         "agent": agent,
         "economy": economy,
-        "now": _now(now, running, cycle_cap),
+        "now": _now(last_cycle, running, cycle_cap),
         "projects": _projects(),
-        "activity": _activity(now),
+        "activity": _activity(last_cycle, running),
         "approvals": _approvals(now),
         "inbox": _inbox(now, agent_name),
         "upgrades": _upgrades(now),
         "mind": _mind(now, agent_name),
-        "memorial": _memorial(agent_name, born, now, economy) if scenario == "dead" else None,
+        "memorial": _memorial(agent_name, born, died, economy) if scenario == "dead" else None,
     }
     return payload
 
@@ -130,12 +140,12 @@ def sensors(scenario: str = "alive") -> dict[str, Any]:
     }
 
 
-def _now(now: datetime, running: bool, cycle_cap: float) -> dict[str, Any]:
+def _now(started: datetime, running: bool, cycle_cap: float) -> dict[str, Any]:
     return {
         "cycle_id": 58,
         "running": running,
         "phase": "act" if running else "sleeping",
-        "started_at": _iso(now - timedelta(minutes=6)),
+        "started_at": _iso(started),
         "step": 4 if running else None,
         "max_steps": 15,
         "spent_usd": 0.0412 if running else 0.0,
@@ -195,7 +205,7 @@ def _projects() -> list[dict[str, Any]]:
     ]
 
 
-def _activity(now: datetime) -> list[dict[str, Any]]:
+def _activity(latest: datetime, running: bool) -> list[dict[str, Any]]:
     cycles = []
     for n, (minutes_ago, summary, cost, tools) in enumerate(
         [
@@ -237,8 +247,8 @@ def _activity(now: datetime) -> list[dict[str, Any]]:
         cycles.append(
             {
                 "cycle_id": 58 - n,
-                "started_at": _iso(now - timedelta(minutes=minutes_ago)),
-                "status": "running" if n == 0 else "completed",
+                "started_at": _iso(latest - timedelta(minutes=minutes_ago - 6)),
+                "status": "running" if n == 0 and running else "completed",
                 "summary": summary,
                 "cost_usd": cost,
                 "steps": [{"kind": kind, "summary": text, "cost_usd": c} for kind, text, c in tools],
@@ -407,8 +417,7 @@ def _mind(now: datetime, agent_name: str) -> dict[str, Any]:
     }
 
 
-def _memorial(agent_name: str, born: datetime, now: datetime, economy: dict[str, Any]) -> dict[str, Any]:
-    died = now - timedelta(days=3)
+def _memorial(agent_name: str, born: datetime, died: datetime, economy: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": agent_name,
         "born_at": _iso(born),

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app import db as dbmod
-from app.db import Database, DatabaseTooNewError, MigrationError, discover_migrations, migrate
+from app.db import Database, DatabaseTooNewError, MigrationError, discover_migrations, migrate, split_statements
 
 
 def _write(directory: Path, name: str, sql: str) -> None:
@@ -169,3 +169,139 @@ def test_prune_events_keeps_newest(tmp_path: Path) -> None:
     assert database.prune_events(5) == 7
     assert [e["message"] for e in database.recent_events()] == [f"event {i}" for i in range(11, 6, -1)]
     assert database.prune_events(5) == 0
+
+
+def test_table_rebuild_migration_keeps_child_rows(tmp_path: Path) -> None:
+    """SQLite's documented rebuild procedure must not cascade-delete rows (e.g. ledger history)."""
+    mig_dir = tmp_path / "migrations"
+    _write(
+        mig_dir,
+        "0001_first.sql",
+        "CREATE TABLE cycles (id INTEGER PRIMARY KEY, name TEXT);\n"
+        "CREATE TABLE ledger (id INTEGER PRIMARY KEY, cycle_id INTEGER REFERENCES cycles(id) ON DELETE CASCADE);\n",
+    )
+    db_file = tmp_path / "ember.db"
+    migrate(db_file, discover_migrations(mig_dir))
+    database = Database(db_file)
+    with database.transaction() as conn:
+        conn.execute("INSERT INTO cycles (id, name) VALUES (1, 'a'), (2, 'b')")
+        conn.execute("INSERT INTO ledger (cycle_id) VALUES (1), (1), (2)")
+    database.close()
+
+    _write(
+        mig_dir,
+        "0002_rebuild.sql",
+        "CREATE TABLE cycles_new (id INTEGER PRIMARY KEY, name TEXT, note TEXT NOT NULL DEFAULT '');\n"
+        "INSERT INTO cycles_new (id, name) SELECT id, name FROM cycles;\n"
+        "DROP TABLE cycles;\n"
+        "ALTER TABLE cycles_new RENAME TO cycles;\n",
+    )
+    migrate(db_file, discover_migrations(mig_dir), backup_dir=tmp_path / "backups")
+    database = Database(db_file)
+    with database.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM ledger").fetchone()[0] == 3
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1  # enforcement is back on
+    database.close()
+
+
+def test_migration_leaving_broken_foreign_keys_is_rolled_back(tmp_path: Path) -> None:
+    mig_dir = tmp_path / "migrations"
+    _write(
+        mig_dir,
+        "0001_first.sql",
+        "CREATE TABLE cycles (id INTEGER PRIMARY KEY);\n"
+        "CREATE TABLE ledger (id INTEGER PRIMARY KEY, cycle_id INTEGER REFERENCES cycles(id));\n",
+    )
+    db_file = tmp_path / "ember.db"
+    migrate(db_file, discover_migrations(mig_dir))
+    _write(mig_dir, "0002_orphan.sql", "INSERT INTO ledger (cycle_id) VALUES (99);\n")
+    with pytest.raises(MigrationError, match="foreign key"):
+        migrate(db_file, discover_migrations(mig_dir), backup_dir=tmp_path / "backups")
+    database = Database(db_file)
+    assert database.schema_version() == 1
+    with database.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM ledger").fetchone()[0] == 0
+    database.close()
+
+
+@pytest.mark.parametrize("statement", ["COMMIT;", "BEGIN;", "  -- note\nEND TRANSACTION;", "savepoint x;", "ROLLBACK;"])
+def test_transaction_statements_in_migrations_are_refused(tmp_path: Path, statement: str) -> None:
+    mig_dir = tmp_path / "migrations"
+    _write(mig_dir, "0001_first.sql", f"CREATE TABLE a (x INTEGER);\n{statement}\nCREATE TABLE b (x INTEGER);\n")
+    db_file = tmp_path / "ember.db"
+    with pytest.raises(MigrationError, match="transaction statement"):
+        migrate(db_file, discover_migrations(mig_dir))
+    with Database(db_file).connection() as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert "a" not in tables and "b" not in tables
+
+
+def test_bad_later_migration_prevents_earlier_pending_ones(tmp_path: Path) -> None:
+    """All pending files are checked before any is applied."""
+    mig_dir = tmp_path / "migrations"
+    _write(mig_dir, "0001_first.sql", "CREATE TABLE a (x INTEGER);\n")
+    _write(mig_dir, "0002_second.sql", "CREATE TABLE b (x INTEGER);\nCOMMIT;\n")
+    db_file = tmp_path / "ember.db"
+    with pytest.raises(MigrationError):
+        migrate(db_file, discover_migrations(mig_dir))
+    with Database(db_file).connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 0
+
+
+def test_split_statements() -> None:
+    sql = (
+        "-- header\nCREATE TABLE a (x TEXT); INSERT INTO a VALUES ('semi;colon');\n"
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; SELECT 2; END;\n-- trailing comment\n"
+    )
+    statements = split_statements(sql)
+    assert len(statements) == 3
+    assert statements[1] == "INSERT INTO a VALUES ('semi;colon');"
+    assert statements[2].startswith("CREATE TRIGGER") and statements[2].endswith("END;")
+    with pytest.raises(MigrationError, match="incomplete"):
+        split_statements("CREATE TABLE a (x INTEGER)")
+
+
+def test_shipped_migrations_are_valid() -> None:
+    for migration in discover_migrations():
+        for statement in split_statements(migration.path.read_text(encoding="utf-8")):
+            assert not statement.upper().lstrip().startswith(("BEGIN", "COMMIT", "END", "ROLLBACK"))
+
+
+def test_nested_transaction_joins_the_outer_one(tmp_path: Path) -> None:
+    db_file = tmp_path / "ember.db"
+    migrate(db_file)
+    database = Database(db_file)
+    with database.transaction() as conn:
+        conn.execute("INSERT INTO meta (key, value, updated_at) VALUES ('outer', '1', 'now')")
+        with database.transaction() as inner:
+            inner.execute("INSERT INTO meta (key, value, updated_at) VALUES ('inner', '1', 'now')")
+        database.set_meta("helper", "1")  # a helper call inside the transaction doesn't deadlock
+    assert {database.get_meta(k) for k in ("outer", "inner", "helper")} == {"1"}
+
+    with pytest.raises(RuntimeError), database.transaction():
+        database.set_meta("rolled_back", "1")
+        raise RuntimeError("abort")
+    assert database.get_meta("rolled_back") is None
+    database.close()
+
+
+def test_rollback_does_not_mask_the_real_error(tmp_path: Path) -> None:
+    db_file = tmp_path / "ember.db"
+    migrate(db_file)
+    database = Database(db_file)
+    database.set_meta("k", "v")
+    with pytest.raises(sqlite3.IntegrityError), database.transaction() as conn:
+        # INSERT OR ROLLBACK ends the transaction itself before the error reaches us.
+        conn.execute("INSERT OR ROLLBACK INTO meta (key, value, updated_at) VALUES ('k', 'v', 'now')")
+    database.close()
+
+
+def test_one_connection_for_the_process(tmp_path: Path) -> None:
+    db_file = tmp_path / "ember.db"
+    migrate(db_file)
+    database = Database(db_file)
+    with database.connection() as first, database.connection() as second:
+        assert first is second
+    database.close()
+    assert database.get_meta("anything") is None  # reopens after close
+    database.close()

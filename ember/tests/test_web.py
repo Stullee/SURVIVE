@@ -303,3 +303,20 @@ def test_refused_request_cannot_forge_log_lines(client_factory: Callable, caplog
     # The decoded newline is logged as the two characters backslash + n, never as a line break.
     assert "\n" not in refused[0]
     assert r"/x\n2026-09-27" in refused[0]
+
+
+def test_database_failure_after_migrations_does_not_stop_the_dashboard(client_factory: Callable, monkeypatch) -> None:
+    """A damaged page or a stuck lock can fail the first writes even though migrations succeeded."""
+    import sqlite3
+
+    from app.db import Database
+
+    def damaged(self, key, value):
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    monkeypatch.setattr(Database, "set_meta_if_missing", damaged)
+    with client_factory() as client:
+        assert client.get("/").status_code == 200
+        system = client.get("/api/dashboard").json()["system"]
+    assert system["database"]["ok"] is False
+    assert "malformed" in system["database"]["error"]

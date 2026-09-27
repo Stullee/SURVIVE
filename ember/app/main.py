@@ -80,13 +80,16 @@ def create_app(loaded: LoadedSettings | None = None, *, dev_mode: bool | None = 
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         state = _start(loaded, dev_mode)
         app.state.ember = state
-        handler = events.install(state.db) if state.db_error is None else None
+        if state.db_error is None:
+            state.log_handler = events.install(state.db)
         try:
             yield
         finally:
-            if handler is not None:
-                events.uninstall(handler)
+            if state.log_handler is not None:
+                events.uninstall(state.log_handler)
+                state.log_handler = None
             _record(state, "info", "system", "Stopped")
+            state.db.close()
 
     # redirect_slashes=False: a redirect's absolute Location would leave the Ingress path.
     app = FastAPI(
@@ -107,13 +110,16 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
         applied = dbmod.migrate(database.path)
         if applied:
             log.info("Database schema is now at version %d", max(applied))
+        database.prune_events(events.KEEP_EVENTS)
+        state.born_at = database.set_meta_if_missing("born_at", state.started_at)
+        database.set_meta("last_started_at", state.started_at)
     except Exception as exc:  # noqa: BLE001 - the dashboard must still come up
+        # Anything from a missing file to a damaged page or a stuck lock ends up
+        # here; the dashboard shows it and the agent stays stopped.
         state.db_error = str(exc)
         log.error("Database unavailable: %s", exc)
+        database.close()
         return state
-    database.prune_events(events.KEEP_EVENTS)
-    state.born_at = database.set_meta_if_missing("born_at", state.started_at)
-    database.set_meta("last_started_at", state.started_at)
     _record(
         state,
         "info",

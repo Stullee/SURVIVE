@@ -69,6 +69,13 @@ class Settings(BaseModel):
     dry_run: bool = True
     log_level: Literal["debug", "info", "warning", "error"] = "info"
 
+    @field_validator("anthropic_api_key", mode="before")
+    @classmethod
+    def _strip_key(cls, value: Any) -> Any:
+        # A key pasted with a stray space or newline would otherwise look "set"
+        # but fail every API call.
+        return value.strip() if isinstance(value, str) else value
+
     @field_validator("agent_name", "planner_model", "worker_model", mode="before")
     @classmethod
     def _strip(cls, value: Any) -> Any:

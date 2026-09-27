@@ -9,6 +9,7 @@ from typing import Any
 
 from .config import LoadedSettings
 from .db import Database, utcnow
+from .events import DatabaseLogHandler
 from .version import app_version
 
 log = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ class AppState:
     db_error: str | None = None
     started_at: str = field(default_factory=utcnow)
     born_at: str | None = None
+    log_handler: DatabaseLogHandler | None = None
 
     def system_info(self) -> dict[str, Any]:
         settings = self.loaded.settings
@@ -48,6 +50,9 @@ class AppState:
     def recent_events(self, limit: int = 30) -> list[dict[str, Any]]:
         if self.db_error is not None:
             return []
+        if self.log_handler is not None:
+            # Show warnings logged a moment ago (they are written in the background).
+            self.log_handler.flush(timeout=0.5)
         try:
             return self.db.recent_events(limit=limit)
         except Exception as exc:  # noqa: BLE001 - reported, never raised
