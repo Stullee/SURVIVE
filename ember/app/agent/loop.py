@@ -42,6 +42,7 @@ MAX_CONVERSATION_BYTES = 24_000
 MAX_EMPTY_NUDGES = 1
 RETRY_DELAY_SECONDS = 5.0
 NUDGE = "Continue with the plan, or reply with a short report of what you did."
+CUT_OFF = "Your reply was cut off at the length limit. Continue in shorter parts, or use a tool."
 STEP_GROWTH_BYTES = 20_000  # what one step can add: up to 4 tool results and the model's own reply
 
 
@@ -431,6 +432,8 @@ class CycleRunner:
                 act.end_reason = "done"
                 break
             if stop == "max_tokens":
+                if not act.pending:  # the conversation must end with a user turn (no prefill)
+                    act.turns.append({"role": "user", "content": [{"type": "text", "text": CUT_OFF}]})
                 continue
             act.end_reason = f"the model stopped ({stop})"
             break
@@ -488,9 +491,13 @@ class CycleRunner:
         self._check_stop()
         brief = context.brief(snap, self.dry_run, plan.to_json(), focus, self.settings.max_tool_steps)
         turns = list(act.turns)
-        if not act.pending and turns and turns[-1]["role"] == "user":
-            turns.pop()  # an unanswered nudge: the reflect turn replaces it (roles must alternate)
-        request = prompts.reflect_request(self.settings, brief, turns, act.pending)
+        pending = list(act.pending)
+        if turns and turns[-1]["role"] == "user":
+            # A trailing user turn (tool results plus a nudge, or a nudge alone): keep its tool results,
+            # which answer the tool calls before it, and let the reflect prompt replace the rest.
+            kept = [b for b in turns.pop()["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
+            pending = [*kept, *pending]
+        request = prompts.reflect_request(self.settings, brief, turns, pending)
         try:
             if self.meter.quote(request) > self.meter.headroom(cycle_id, "reflect"):
                 return False

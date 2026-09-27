@@ -126,9 +126,16 @@ def work_request(settings: Settings, brief: str, turns: list[dict[str, Any]], *,
 def reflect_request(
     settings: Settings, brief: str, turns: list[dict[str, Any]], pending_results: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """The final turn of the same conversation (so the cached prefix is reused)."""
+    """The final turn of the same conversation (so the cached prefix is reused).
+
+    Roles must alternate: when there was no act turn at all, the reflect prompt joins the brief's turn.
+    """
     request = work_request(settings, brief, turns)
-    request["messages"].append({"role": "user", "content": [*pending_results, _text(REFLECT_PROMPT)]})
+    messages = request["messages"]
+    if messages[-1]["role"] == "user":
+        messages[-1] = {"role": "user", "content": [*messages[-1]["content"], *pending_results, _text(REFLECT_PROMPT)]}
+    else:
+        messages.append({"role": "user", "content": [*pending_results, _text(REFLECT_PROMPT)]})
     return request
 
 
