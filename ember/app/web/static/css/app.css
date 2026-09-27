@@ -346,6 +346,8 @@ main:focus { outline: none; }
 .money-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--grid); }
 
 .table-wrap { overflow-x: auto; margin-top: 12px; }
+/* Tables scroll inside their wrapper, so words stay whole (anywhere-breaking would shrink columns to one letter). */
+.table-wrap table { overflow-wrap: break-word; }
 table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
 th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--grid); }
 th { color: var(--text-2); font-weight: 600; }
@@ -493,6 +495,7 @@ fieldset.field legend { padding: 0; margin-bottom: 4px; }
 .log .level[data-level="warning"] { color: var(--warning-text); font-weight: 600; }
 .log .level[data-level="error"] { color: var(--critical-text); font-weight: 600; }
 .log.lives li { grid-template-columns: 70px minmax(0, 1fr); }
+.log.transitions li { grid-template-columns: 200px 110px minmax(0, 1fr); }
 .event-details { grid-column: 1 / -1; font-size: 0.85rem; }
 .event-details summary { cursor: pointer; color: var(--text-2); width: max-content; max-width: 100%; }
 .event-details > * + * { margin-top: 6px; }
@@ -543,6 +546,7 @@ body[data-stale="true"] .live { display: none; }
   .log li { grid-template-columns: minmax(0, 1fr) auto; }
   .log .msg { grid-column: 1 / -1; }
   .log.lives li { grid-template-columns: minmax(0, 1fr); }
+  .log.transitions li { grid-template-columns: minmax(0, 1fr) auto; }
   .chart-box { height: 220px; }
   .money-form { padding: 12px; }
   .card-head { flex-wrap: wrap; }

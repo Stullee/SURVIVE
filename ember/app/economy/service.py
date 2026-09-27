@@ -322,8 +322,10 @@ class Economy:
 
 
 def _worse(before: LifeStatus, after: LifeStatus) -> bool:
-    """Would the entry make things worse for the agent (critical or dead)?"""
+    """Would the entry make things worse for the agent: critical, dead, or out of money before it started?"""
     if after.state == "dead" and before.state != "dead":
+        return True
+    if after.state == "unfunded" and before.state in ("alive", "critical"):
         return True
     return after.critical and not before.critical and after.state != "dead"
 

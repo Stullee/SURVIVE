@@ -101,6 +101,7 @@
   var dateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
   var dateTimeFmt = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
   var timeFmt = new Intl.DateTimeFormat(undefined, { timeStyle: "medium" });
+  var shortTimeFmt = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
   var relFmt = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 
   function num(value) { return value === null || value === undefined || value === "" ? NaN : Number(value); }
@@ -187,9 +188,12 @@
     alive: { icon: "●", label: "Alive" },
     critical: { icon: "▲", label: "Critical" },
     paused: { icon: "❚❚", label: "Paused" },
-    unfunded: { icon: "○", label: "Waiting for funds" },
+    unfunded: { icon: "○", label: "Waiting for money" },
     killed: { icon: "■", label: "Killed" },
     dead: { icon: "✝", label: "Dead" },
+    dormant: { icon: "◌", label: "Dormant" },
+    ended: { icon: "◌", label: "Session ended" },
+    "new": { icon: "○", label: "Born" },
     unknown: { icon: "…", label: "Unknown" },
   };
 
@@ -306,14 +310,15 @@
       if (seq !== ui.seq) return;
       if (!res.ok) throw httpError(res);
       var d = res.data;
-      if (!isObject(d) || !isObject(d.agent) || !isObject(d.system)) {
+      // agent, economy, ledger and memorial are null while the economy is unavailable (the system part says why).
+      if (!isObject(d) || !isObject(d.system) || !(isObject(d.agent) || d.agent === null)) {
         throw new RequestError("malformed", res.data === undefined ? "not JSON" : "agent or system data missing");
       }
       ui.data = d;
       ui.fetchError = null;
       document.body.removeAttribute("data-stale");
       render();
-      next = d.agent.cycle_running ? POLL_RUNNING_MS : POLL_IDLE_MS;
+      next = d.agent && d.agent.cycle_running ? POLL_RUNNING_MS : POLL_IDLE_MS;
     }).catch(function (err) {
       if (seq !== ui.seq) return;
       if (!(err instanceof RequestError)) {
@@ -388,7 +393,7 @@
   function render() {
     var d = ui.data;
     if (!d) return;
-    var agent = d.agent;
+    var agent = d.agent || standInAgent(d);
     var economy = isObject(d.economy) ? d.economy : {};
     var coming = isObject(d.coming_in_phase) ? d.coming_in_phase : {};
     // Sections showing relative times are refreshed once a minute even when the data is unchanged.
@@ -398,22 +403,22 @@
     section("system", [d.system, d.mode], ["system-facts", "options"], function () { renderSystem(d); });
     section("transitions", [d.transitions], ["transitions"], function () { renderTransitions(arr(d.transitions)); });
     section("events", [d.events], ["events"], function () { renderEvents(arr(d.events)); });
-    section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d); });
+    section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d, agent); });
     safely("controls", function () { renderControls(agent); });
-    section("kpis", [agent, economy.totals, economy.self_sufficiency_ratio, d.mode, coming.now, minute], ["kpis"], function () { renderKpis(d, coming); });
+    section("kpis", [d.agent, d.economy, d.mode, coming.now, minute], ["kpis"], function () { renderKpis(d, agent, coming); });
     safely("badges", function () { renderBadges(d, coming); });
 
     var dead = agent.state === "dead" && isObject(d.memorial);
     $("memorial").hidden = !dead;
     $("now-card").hidden = dead;
     if (dead) section("memorial", [d.memorial, agent.revive, agent.name], ["memorial"], function () { renderMemorial(d.memorial, agent); });
-    else section("now", [d.now, coming.now, agent.state, agent.next_wake_at, minute], ["now-card"], function () { renderNow(d.now, agent, coming.now); });
+    else section("now", [d.now, coming.now, agent.state, agent.next_wake_at, !!d.agent, minute], ["now-card"], function () { renderNow(d.now, agent, coming.now); });
     section("lives", [d.lives, d.memorial && d.memorial.life_id], ["lives-card"], function () { renderLives(arr(d.lives), d.memorial); });
     section("charts", [economy.days], null, function () { renderCharts(economy); });
-    section("table", [economy.days, ui.tableOpen], ["economy-table"], function () { renderTable(economy); });
+    if (Array.isArray(economy.days)) section("table", [economy.days, ui.tableOpen], ["economy-table"], function () { renderTable(economy); });
 
     section("ledger", [d.ledger, d.mode], ["ledger-list"], function () { renderLedger(d); });
-    safely("forms", function () { updateForms(d); });
+    safely("forms", function () { updateForms(d, agent); });
 
     section("projects", [d.projects, coming.projects], ["projects"], function () { renderProjects(arr(d.projects), coming.projects); });
     section("activity", [d.activity, coming.activity, minute], ["activity"], function () { renderActivity(arr(d.activity), coming.activity); });
@@ -427,8 +432,13 @@
     $("updated").textContent = "Updated " + timeFmt.format(new Date());
   }
 
-  function renderHeader(d) {
-    var agent = d.agent;
+  // While the economy is unavailable the page still shows the agent's name and the system part.
+  function standInAgent(d) {
+    var options = isObject(d.system.options) ? d.system.options : {};
+    return { name: options.agent_name || "Ember", state: "unknown", paused: false, killed: false, unavailable: true };
+  }
+
+  function renderHeader(d, agent) {
     var name = agent.name || "Ember";
     var st = LIFE_STATES[agent.state] || LIFE_STATES.unknown;
     document.title = name + " · " + st.label;
@@ -457,8 +467,9 @@
     if (ui.controlBusy) return;
     var btn = $("pause-button");
     btn.textContent = agent.paused ? "Resume" : "Pause";
-    btn.disabled = !!agent.killed;
+    btn.disabled = !!agent.killed || !!agent.unavailable;
     if (agent.killed) btn.title = "The kill switch is on";
+    else if (agent.unavailable) btn.title = "The economy is not available";
     else btn.removeAttribute("title");
   }
 
@@ -496,8 +507,13 @@
     if (isObject(sys.database) && sys.database.ok === false) {
       list.push({ kind: "error", icon: "✕", title: "The database could not be opened. The agent will not run until this is fixed.", items: [sys.database.error] });
     }
+    if (sys.economy_error) {
+      list.push({ kind: "error", icon: "✕", title: "The economy could not be started, so money can't be recorded and the agent does not run. The System log has the details.", items: [String(sys.economy_error)] });
+    } else if (!d.agent && !(isObject(sys.database) && sys.database.ok === false)) {
+      list.push({ kind: "error", icon: "✕", title: "The economy is not available right now. The System log has the details." });
+    }
     if (sys.economy_broken) {
-      list.push({ kind: "error", icon: "✕", title: "The ledger could not be written, so " + name + " refuses all model calls until the app is restarted. Restart the app; the System log has the details." });
+      list.push({ kind: "error", icon: "✕", title: "Spending is stopped after a bookkeeping error. Restart the app; the System log has the details.", items: [String(sys.economy_broken)] });
     }
     if (arr(sys.config_errors).length) {
       list.push({ kind: "error", icon: "✕", title: "Invalid app options. Running in safe mode (built-in defaults, dry run on). Fix them in the app's Configuration tab.", items: sys.config_errors });
@@ -505,15 +521,18 @@
     if (arr(sys.price_warnings).length) {
       list.push({ kind: "warning", icon: "!", title: "Some prices in the app options look too low, so costs would be under-counted. Check the price table in the app's Configuration tab.", items: sys.price_warnings });
     }
-    var warnings = arr(agent.warnings);
+    // economy_broken is also among the agent's warnings; it already has its own banner.
+    var warnings = arr(agent.warnings).filter(function (w) { return !(sys.economy_broken && String(w).indexOf(String(sys.economy_broken)) >= 0); });
     if (warnings.length) {
       list.push({ kind: "warning", icon: "!", title: warnings.length === 1 ? String(warnings[0]) : "Please check:", items: warnings.length === 1 ? null : warnings });
     }
     if (agent.state === "killed") {
       list.push({ kind: "warning", icon: "■", title: "The kill switch is on. " + name + " makes no model calls." });
     } else if (agent.state === "unfunded") {
-      list.push({ kind: "info", icon: "i", title: name + " has no money yet. It starts once you grant funds.", action: { label: "Grant funds", form: "grant" } });
-    } else if (agent.state === "critical") {
+      list.push({ kind: "info", icon: "i", title: "Waiting for money: grant funds to start " + name + ".", action: { label: "Grant funds", form: "grant" } });
+    }
+    // critical stays true while the episode lasts, also when paused.
+    if (agent.state === "critical" || (agent.critical && agent.state !== "dead" && agent.state !== "killed")) {
       list.push({ kind: "warning", icon: "▲", title: "Runway is under 2 days. Grant funds or record revenue." +
         (agent.last_will_due ? " " + name + " will write its last will on its next wake." : ""), action: { label: "Grant funds", form: "grant" } });
     }
@@ -544,8 +563,7 @@
 
   // ---- Key numbers
 
-  function renderKpis(d, coming) {
-    var a = d.agent;
+  function renderKpis(d, a, coming) {
     var e = isObject(d.economy) ? d.economy : {};
     var totals = isObject(e.totals) ? e.totals : {};
     var dry = isDryRun(d);
@@ -556,11 +574,15 @@
 
     var runway = $("kpi-runway");
     var days = num(a.runway_days);
-    if (isNaN(days)) {
+    if (a.unavailable) {
+      runway.textContent = "–";
+      $("kpi-runway-sub").textContent = "the economy is not available";
+    } else if (isNaN(days)) {
       runway.textContent = "–";
       $("kpi-runway-sub").textContent = a.runway_note || "not enough spending to estimate";
     } else {
-      runway.textContent = plural(days, "day");
+      // The server caps the runway at a year.
+      runway.textContent = days >= 365 ? "365+ days" : plural(days, "day");
       $("kpi-runway-sub").textContent = a.runway_note || "at the last 7 days' spending";
     }
     runway.setAttribute("data-tone", !isNaN(days) && days < 2 ? "critical" : "");
@@ -571,17 +593,28 @@
     if (num(a.pending_usd) > 0) sub += " · " + usd(a.pending_usd) + " reserved for a call in progress";
     $("kpi-today-sub").textContent = sub;
 
-    var ratio = num(e.self_sufficiency_ratio);
-    $("kpi-ratio").textContent = pct(e.self_sufficiency_ratio);
-    $("kpi-ratio-sub").textContent = isNaN(ratio) ? "no costs recorded yet" : "earned revenue ÷ total cost" + (dry ? " (simulated)" : "");
+    // In dry run the headline is the simulated figure; the live one stays next to it.
+    var ratioValue = dry ? e.simulated_self_sufficiency_ratio : e.self_sufficiency_ratio;
+    var ratio = num(ratioValue);
+    $("kpi-ratio").textContent = pct(ratioValue);
+    var ratioSub = isNaN(ratio) ? "no costs recorded yet" : "earned revenue ÷ total cost" + (dry ? ", simulated" : "");
+    if (dry && !isNaN(num(e.self_sufficiency_ratio))) ratioSub += " · live " + pct(e.self_sufficiency_ratio);
+    $("kpi-ratio-sub").textContent = ratioSub;
+
+    if (a.unavailable) {
+      $("kpi-balance-sub").textContent = "the economy is not available";
+      $("kpi-today-sub").textContent = "\u00a0";
+      $("kpi-ratio-sub").textContent = "\u00a0";
+    }
 
     var wake = $("kpi-wake");
     var wakeSub = $("kpi-wake-sub");
     wake.removeAttribute("data-size");
-    if (a.state === "dead") { wake.textContent = "Never"; wakeSub.textContent = "The agent has died"; }
+    if (a.unavailable) { wake.textContent = "–"; wakeSub.textContent = "\u00a0"; }
+    else if (a.state === "dead") { wake.textContent = "Never"; wakeSub.textContent = "The agent has died"; }
     else if (a.state === "killed" || a.killed) { wake.textContent = "Never"; wakeSub.textContent = "The kill switch is on"; }
     else if (a.paused) { wake.textContent = "Paused"; wakeSub.textContent = "Resume to schedule the next cycle"; }
-    else if (a.state === "unfunded") { wake.textContent = "Waiting"; wakeSub.textContent = "Grant funds to start the agent"; }
+    else if (a.state === "unfunded") { wake.textContent = "Waiting"; wakeSub.textContent = "Grant funds to start"; }
     else if (a.cycle_running) { wake.textContent = "Awake"; wakeSub.textContent = "Cycle started " + relTime(a.last_wake_at); }
     else if (a.next_wake_at) { wake.textContent = relTime(a.next_wake_at); wakeSub.textContent = fmtDateTime(a.next_wake_at); }
     else {
@@ -676,7 +709,7 @@
     if (!hasNow) {
       replace($("now-empty"), comingPhase
         ? [h("p", { class: "empty-title", text: "Wake cycles arrive in phase " + comingPhase + "." }),
-          h("p", { class: "muted", text: "Until then the agent doesn't run. The money figures on this page are real." })]
+          h("p", { class: "muted", text: "Until then the agent doesn't run." + (agent.unavailable ? "" : " The money figures on this page are real.") })]
         : [h("p", { class: "empty-title", text: "No wake cycle has run yet." })]);
       return;
     }
@@ -703,7 +736,7 @@
     replace($("lives"), list.map(function (l) {
       return h("li", null,
         h("span", { class: "when", text: "Life " + l.id }),
-        h("span", { class: "msg", text: fmtDate(l.born_at) + " – " + fmtDate(l.died_at) + (l.reason ? " · " + l.reason : "") }));
+        h("span", { class: "msg", text: fmtDate(l.born_at) + " – " + fmtDate(l.died_at) + (l.state ? " · " + stateLabel(l.state) : "") + (l.reason ? " · " + l.reason : "") }));
     }));
   }
 
@@ -714,6 +747,17 @@
   ];
 
   function renderCharts(economy) {
+    var available = Array.isArray(economy.days);
+    $("chart-unavailable").hidden = available;
+    document.querySelector(".chart-card .money-actions").hidden = !available;
+    $("table-toggle").hidden = !available;
+    if (!available) {
+      document.querySelector(".chart-part").hidden = true;
+      $("economy-table").hidden = true;
+      destroyCharts();
+      return;
+    }
+    if (!ui.chartFallback) document.querySelector(".chart-part").hidden = false;
     var days = arr(economy.days);
     // Scriptable options and tooltips read the days from here (they can run while a chart is being built).
     ui.days = days;
@@ -984,6 +1028,7 @@
   // ---- Ledger
 
   function correctionRemaining(e) {
+    if (!isNaN(num(e.remaining_usd))) return Math.max(0, num(e.remaining_usd));
     return Math.max(0, Math.abs(num(e.amount_usd) || 0) - Math.abs(num(e.corrected_usd) || 0));
   }
 
@@ -991,6 +1036,11 @@
     var entries = arr(isObject(d.ledger) ? d.ledger.entries : null);
     var dry = isDryRun(d);
     ui.ledgerById = {};
+    if (!isObject(d.ledger)) {
+      $("ledger-sub").textContent = "";
+      replace($("ledger-list"), emptyState("li", "The ledger can't be read right now.", "The banner above and the System tab say why."));
+      return;
+    }
     $("ledger-sub").textContent = "Newest first." + (dry ? " Dry run: entries marked “test money” or “simulated” never count in live mode." : "");
     if (!entries.length) {
       replace($("ledger-list"), emptyState("li", "No entries yet.", "Grants, revenue, expenses and API costs will be listed here."));
@@ -1013,8 +1063,10 @@
       }
       var meta = ["#" + e.id];
       if (e.occurred_on) meta.push(fmtDay(e.occurred_on));
-      meta.push("recorded " + fmtDateTime(e.ts));
-      meta.push(e.created_by === "owner" ? "by you" : e.created_by === "system" ? "by the system" : "by " + e.created_by);
+      var recorded = new Date(e.ts);
+      var sameDay = validDate(recorded) && e.occurred_on === recorded.getFullYear() + "-" + String(recorded.getMonth() + 1).padStart(2, "0") + "-" + String(recorded.getDate()).padStart(2, "0");
+      meta.push("recorded " + (sameDay ? shortTimeFmt.format(recorded) : fmtDateTime(e.ts)));
+      meta.push(e.entered_by ? "by " + e.entered_by : e.created_by === "owner" ? "by you" : e.created_by === "system" ? "by the system" : "by " + e.created_by);
       if (e.llm_call_id !== null && e.llm_call_id !== undefined) meta.push("call #" + e.llm_call_id);
       var correct = null;
       if (e.can_correct) {
@@ -1203,12 +1255,13 @@
     replace($("system-facts"), [
       h("dt", { text: "Version" }), h("dd", { text: s.version }),
       h("dt", { text: "Started" }), h("dd", null, timeEl(s.started_at, fmtDateTime(s.started_at))),
-      h("dt", { text: "First started" }), h("dd", { text: s.born_at ? fmtDateTime(s.born_at) : "–" }),
+      h("dt", { text: "Installed" }), h("dd", { text: s.installed_at || s.born_at ? fmtDateTime(s.installed_at || s.born_at) : "–" }),
       h("dt", { text: "Mode" }), h("dd", { text: (isDryRun(d) ? "Dry run (fake model, simulated API costs)" : "Live (real API calls, real money)") + (s.dev_mode ? " · local development" : "") }),
       h("dt", { text: "Options" }), h("dd", { text: s.config_source + (s.safe_mode ? " · SAFE MODE" : "") }),
       h("dt", { text: "API key" }), h("dd", { text: options.anthropic_api_key_set ? "Set (hidden)" : "Not set" }),
       h("dt", { text: "Database" }), h("dd", { text: db.ok ? "OK, schema version " + db.schema_version : "Error: " + db.error }),
-      h("dt", { text: "Ledger" }), h("dd", { text: s.economy_broken ? "Could not be written; model calls are refused until the app restarts" : "OK" }),
+      h("dt", { text: "Economy" }), h("dd", { text: s.economy_error ? "Not available: " + s.economy_error
+        : s.economy_broken ? "Spending stopped until the app restarts: " + s.economy_broken : d.agent ? "OK" : "Not available" }),
       h("dt", { text: "Sensor URL" }), h("dd", null, h("code", { text: s.sensor_url }),
         h("span", { class: "muted small", text: " for a Home Assistant REST sensor (see the app's Documentation tab)" })),
     ]);
@@ -1219,7 +1272,7 @@
     replace($("transitions"), list.length ? list.map(function (t) {
       return h("li", null,
         h("span", { class: "when" }, timeEl(t.ts, fmtDateTime(t.ts))),
-        h("span", { class: "level", text: t.mode === "dry_run" ? "dry run" : t.mode }),
+        h("span", { class: "level", text: (t.mode === "dry_run" ? "dry run" : t.mode) + (t.life_id ? " · life " + t.life_id : "") }),
         h("span", { class: "msg" },
           h("strong", null, stateLabel(t.from_state), h("span", { "aria-hidden": "true", text: " → " }), h("span", { class: "visually-hidden", text: " to " }), stateLabel(t.to_state)),
           t.reason ? " · " + t.reason : ""));
@@ -1291,14 +1344,17 @@
       intro: "Money the agent earned, for example a tip you received for its work.",
       fields: [
         { name: "amount", kind: "amount", currency: true },
-        { name: "source", kind: "text", label: "Source (optional)", hint: "Where the money came from, for example Ko-fi." },
+        { name: "source", kind: "text", label: "Source", hint: "Where the money came from, for example Ko-fi.", required: true, missing: "Say where the money came from." },
         { name: "day", kind: "day" },
         { name: "note", kind: "note", label: "Note (optional)" },
+        { name: "test_money", kind: "test_money" },
       ],
     },
     grant: {
       title: "Grant funds", endpoint: "api/ledger/grant",
-      intro: "This records money you allow Ember to spend. It doesn't buy API credits; make sure your Anthropic account has at least this much.",
+      intro: function () {
+        return "This records money you allow " + agentName() + " to spend. It doesn't buy API credits; make sure your Anthropic account has at least this much.";
+      },
       fields: [
         { name: "amount", kind: "amount", currency: true },
         { name: "day", kind: "day" },
@@ -1311,8 +1367,9 @@
       intro: "Money you paid for the agent outside the Anthropic API, for example a domain or a platform fee.",
       fields: [
         { name: "amount", kind: "amount", currency: true },
-        { name: "note", kind: "note", label: "What it was for (optional)" },
+        { name: "note", kind: "note", label: "What it was for", required: true, missing: "Say what it was for." },
         { name: "day", kind: "day" },
+        { name: "test_money", kind: "test_money" },
       ],
     },
     "api-correction": {
@@ -1323,7 +1380,7 @@
           options: [["increase", "Increase the API cost"], ["decrease", "Decrease the API cost"]] },
         { name: "amount", kind: "amount", label: "By how much (USD)" },
         { name: "day", kind: "day", hint: "The day whose cost you correct. Leave empty for today." },
-        { name: "note", kind: "note", label: "Note (optional)", hint: "For example: to match the Anthropic Console." },
+        { name: "note", kind: "note", label: "Reason", hint: "For example: to match the Anthropic Console.", required: true, missing: "Say why you correct the API cost." },
       ],
     },
     adjustment: {
@@ -1344,7 +1401,7 @@
     title: "Correct an entry", submitLabel: "Record correction",
     fields: [
       { name: "amount", kind: "amount", label: "Amount to take back (USD)", hint: "For example 5 or 12.50, at most what is left of the entry." },
-      { name: "note", kind: "note", label: "Note (optional)" },
+      { name: "note", kind: "note", label: "Reason", required: true, missing: "Say why this entry is corrected." },
     ],
   };
 
@@ -1353,6 +1410,10 @@
     var bytes = new Uint8Array(16);
     window.crypto.getRandomValues(bytes);
     return Array.prototype.map.call(bytes, function (b) { return (b < 16 ? "0" : "") + b.toString(16); }).join("");
+  }
+
+  function introText(spec) {
+    return typeof spec.intro === "function" ? spec.intro() : spec.intro;
   }
 
   function buildForm(key, spec) {
@@ -1364,7 +1425,7 @@
     };
     f.form = h("form", { class: "money-form", id: id, novalidate: true, hidden: true, "aria-labelledby": id + "-title" },
       h("h3", { id: id + "-title", text: spec.title }),
-      spec.intro ? h("p", { class: "form-intro", text: spec.intro }) : null);
+      spec.intro ? (f.intro = h("p", { class: "form-intro", text: introText(spec) })) : null);
     f.lead = h("p", { class: "form-note", hidden: true });
     append(f.form, f.lead);
     spec.fields.forEach(function (fs) { append(f.form, buildField(f, fs)); });
@@ -1458,9 +1519,9 @@
         err), extra];
     } else {
       var isDay = fs.kind === "day";
-      field.control = fs.kind === "note"
-        ? h("textarea", { id: ids.id, rows: "2", "aria-describedby": described, "data-field": fs.name, required: fs.required ? true : null })
-        : h("input", { type: isDay ? "date" : "text", id: ids.id, autocomplete: "off", "aria-describedby": described, "data-field": fs.name });
+      // Notes and sources are single lines on the server (500 and 200 characters).
+      field.control = h("input", { type: isDay ? "date" : "text", id: ids.id, autocomplete: "off", "aria-describedby": described, "data-field": fs.name,
+        maxlength: isDay ? null : fs.kind === "note" ? "500" : "200", required: fs.required ? true : null });
       wrap = h("div", { class: "field" },
         h("label", { for: ids.id, text: fs.label || (isDay ? "Day (optional)" : fs.name) }), field.control,
         fs.hint || isDay ? h("p", { class: "hint", id: ids.hint, text: fs.hint || "The day the money moved. Leave empty for today." }) : null,
@@ -1532,6 +1593,7 @@
         if (fs.currency && v.currency === "EUR") {
           var fx = fxProblem(v.fx_rate);
           if (fx) problems.push({ field: "fx_rate", message: fx });
+          else if (!msg && eurToUsdCents(v.amount, v.fx_rate) === 0) problems.push({ field: "amount", message: "The amount is too small." });
         }
         return;
       }
@@ -1639,11 +1701,16 @@
       field.preview.textContent = "";
       return;
     }
+    field.preview.hidden = false;
+    field.preview.textContent = "Recorded as " + usdLarge.format(eurToUsdCents(amount, rate) / 100) + ".";
+  }
+
+  // The USD cents the server stores for a EUR amount: amount × rate, rounded half-up to whole cents.
+  function eurToUsdCents(amount, rate) {
     var m = /^([0-9])(?:[.,]([0-9]{1,6}))?$/.exec(rate);
     var rateMicros = Number(m[1]) * 1e6 + Number(((m[2] || "") + "000000").slice(0, 6));
-    var micros = Math.round(cents(amount) * rateMicros / 100);
-    field.preview.hidden = false;
-    field.preview.textContent = "Recorded as " + usdExact.format(micros / 1e6) + ".";
+    var product = cents(amount) * rateMicros; // cents × 1e6, exact below 2^53
+    return Math.floor(product / 1e6) + (product % 1e6 >= 500000 ? 1 : 0);
   }
 
   function submitForm(f) {
@@ -1659,6 +1726,7 @@
       return;
     }
     var body = buildBody(f, v);
+    var hadFocus = document.activeElement === f.submit;
     f.busy = true;
     f.submit.disabled = true;
     f.submit.textContent = "Saving…";
@@ -1671,6 +1739,8 @@
       f.busy = false;
       f.submit.disabled = false;
       f.submit.textContent = f.spec.submitLabel || f.spec.title;
+      // Disabling the focused button sent focus to <body>; return it unless something else took it.
+      if (hadFocus && !f.form.hidden && (!document.activeElement || document.activeElement === document.body)) f.submit.focus();
     });
   }
 
@@ -1687,11 +1757,13 @@
   function handleFormResponse(f, res) {
     var data = isObject(res.data) ? res.data : {};
     if (res.status === 201 || res.status === 200) {
-      onSaved(f, data.entry, res.status === 200);
+      onSaved(f, data.entry, res.status === 200 || data.replay === true);
     } else if (res.status === 409 && data.code === "would_change_state") {
       showConfirm(f, "confirm_state_change", stateChangeMessage(data), data.state_after === "dead");
     } else if (res.status === 409 && data.code === "unusually_large") {
-      showConfirm(f, "confirm_large", "This is much more than usual: typical entries are about " + usd(data.typical_usd) + ". Check the amount. Record it anyway?", false);
+      var typical = isNaN(num(data.typical_usd)) ? "" : ": typical entries are about " + usd(data.typical_usd);
+      showConfirm(f, "confirm_large", (isNaN(num(data.amount_usd)) ? "This amount" : usd(data.amount_usd)) + " is much more than usual" + typical +
+        ". Check the amount. Record it anyway?", false);
     } else if (res.status === 409 && data.code === "duplicate_key_mismatch") {
       f.idKey = newKey();
       f.unresolved = false;
@@ -1705,6 +1777,11 @@
       } else {
         setStatus(f, msg, "error");
       }
+    } else if (res.status === 503) {
+      setStatus(f, "Ember can't record money right now (" + httpError(res).message + "). Nothing was saved.", "error");
+    } else if (res.status === 404 && f === ui.correction) {
+      setStatus(f, "This entry can't be corrected: it was not found.", "error");
+      refresh();
     } else if (res.status >= 500) {
       f.unresolved = true;
       setStatus(f, "Ember had an error (" + httpError(res).message + "). It may or may not have been saved. Submitting again is safe: it won't be recorded twice.", "error");
@@ -1765,6 +1842,7 @@
     });
     var f = ui.forms[key];
     if (!f) return;
+    if (f.intro) f.intro.textContent = introText(f.spec);  // the agent's name may have loaded since
     if (amount) {
       f.fields.amount.control.value = amount;
       if (f.fields.amount.currency) f.fields.amount.currency.value = "USD";
@@ -1813,10 +1891,9 @@
     focusFirst(f);
   }
 
-  function updateForms(d) {
+  function updateForms(d, agent) {
     var dry = isDryRun(d);
     var today = todayIso();
-    var agent = d.agent;
     var all = Object.keys(ui.forms).map(function (k) { return ui.forms[k]; }).concat([ui.correction]);
     all.forEach(function (f) {
       if (f.fields.test_money) f.fields.test_money.wrap.hidden = !dry;
@@ -1878,21 +1955,24 @@
   }
 
   $("pause-button").addEventListener("click", function () {
-    if (!ui.data || ui.controlBusy) return;
+    if (!ui.data || !ui.data.agent || ui.controlBusy) return;
     var btn = this;
     var resume = !!ui.data.agent.paused;
+    var hadFocus = document.activeElement === btn;
     ui.controlBusy = true;
     btn.disabled = true;
     setControlStatus(resume ? "Resuming…" : "Pausing…", false);
     request("POST", resume ? "api/control/resume" : "api/control/pause", {}).then(function (res) {
       if (!res.ok) throw httpError(res);
-      btn.textContent = resume ? "Pause" : "Resume";
+      var paused = isObject(res.data) && typeof res.data.paused === "boolean" ? res.data.paused : !resume;
+      btn.textContent = paused ? "Resume" : "Pause";
       setControlStatus(resume ? "Resumed." : "Paused. No model calls are made until you resume.", false);
     }).catch(function (err) {
       setControlStatus((resume ? "Could not resume: " : "Could not pause: ") + errorText(err) + ".", true);
     }).then(function () {
       ui.controlBusy = false;
       btn.disabled = false;
+      if (hadFocus && (!document.activeElement || document.activeElement === document.body)) btn.focus();
       refresh();
     });
   });
