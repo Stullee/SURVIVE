@@ -58,6 +58,7 @@ def test_uvicorn_runs_with_safe_settings(monkeypatch: pytest.MonkeyPatch) -> Non
     assert captured["proxy_headers"] is False  # the client address must be the real peer
     assert captured["log_config"] is None  # keeps the redacting log setup
     assert captured["access_log"] is False
+    assert captured["timeout_graceful_shutdown"] <= 3  # well inside the Supervisor's 10 s stop timeout
     assert "SUPERVISOR_TOKEN" not in os.environ
 
 

@@ -68,6 +68,7 @@ _KNOWN_USAGE_KEYS = frozenset(
         "service_tier",
         "inference_geo",
         "iterations",
+        "output_tokens_details",  # e.g. thinking_tokens: already part of output_tokens
     }
 )
 _KNOWN_SERVER_TOOLS = frozenset({"web_search_requests", "web_fetch_requests"})
@@ -381,10 +382,15 @@ class MeteredModel:
         plan: Plan | None = None
         problem: str | None = None
         try:
-            plan = plan_request(request, self.transport.count_tokens(request))
+            try:
+                input_tokens = self.transport.count_tokens(request)
+            except Exception:  # noqa: BLE001 - e.g. the counting endpoint is rate limited
+                log.warning("Counting the prompt's tokens failed; using a generous rough count", exc_info=True)
+                input_tokens = rough_token_count(request)
+            plan = plan_request(request, input_tokens)
         except Unpriceable as exc:
             problem = str(exc)
-        except Exception as exc:  # noqa: BLE001 - counting tokens may fail; the call is refused
+        except Exception as exc:  # noqa: BLE001 - a request that can't be sized is refused
             problem = f"could not size the request ({type(exc).__name__})"
 
         refusal: tuple[str, str] | None = None

@@ -349,3 +349,19 @@ def test_secrets_never_reach_the_dashboard_log(client_factory: Callable, write_o
     assert "some.library: request headers" in body
     assert custom_key not in body
     assert KEY not in body
+
+
+def test_frontend_has_no_html_sinks() -> None:
+    """Agent-written text will be shown here; an XSS in this page could read Home Assistant's login tokens,
+    because the Ingress frame is same-origin with Home Assistant. Text must only ever go through textContent."""
+    static = Path(__file__).resolve().parent.parent / "app" / "web" / "static"
+    sinks = re.compile(r"\b(innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval)\b|new Function\(")
+    offenders = []
+    for path in static.rglob("*.js"):
+        if "vendor" in path.parts:
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            code = line.split("//", 1)[0] if not line.strip().startswith("*") else ""
+            if sinks.search(code):
+                offenders.append(f"{path.name}:{number}: {line.strip()}")
+    assert offenders == []

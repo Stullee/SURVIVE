@@ -107,8 +107,8 @@ def plan_request(request: Mapping[str, Any], input_tokens: int) -> Plan:
         if kind in _DIRECT_ONLY and tool.get("allowed_callers") != ["direct"]:
             raise Unpriceable(f"{kind} must set allowed_callers ['direct']")
         uses = tool.get("max_uses")
-        if not isinstance(uses, int) or isinstance(uses, bool) or uses < 0:
-            raise Unpriceable(f"{kind} needs max_uses")
+        if not isinstance(uses, int) or isinstance(uses, bool) or uses < 1:
+            raise Unpriceable(f"{kind} needs max_uses of at least 1")
         if kind in _SEARCH_TOOLS:
             search_uses += uses
         else:
@@ -184,14 +184,22 @@ def _cache_ttls(request: Mapping[str, Any]) -> set[str]:
 
 
 def _unresolved_server_tool_uses(messages: Iterable[Mapping[str, Any]]) -> tuple[int, int]:
-    """Server tool calls the API started but hasn't run yet (e.g. after pause_turn).
+    """Server tool calls the API started but hasn't run yet; they run at the start of this request.
 
-    They run at the start of the next request, so that request pays for them.
+    That happens after ``pause_turn`` (the assistant turn is the last message), and
+    when a server tool and a client tool were called in parallel: the answer then
+    stops for the client tool, and the deferred server call runs once the tool
+    results are sent (the last message is a user turn of only tool results).
     """
     messages = list(messages)
-    if not messages or messages[-1].get("role") != "assistant":
+    if not messages:
         return 0, 0
-    content = messages[-1].get("content")
+    last = messages[-1]
+    if last.get("role") == "user" and len(messages) >= 2 and _only_tool_results(last.get("content")):
+        last = messages[-2]
+    if last.get("role") != "assistant":
+        return 0, 0
+    content = last.get("content")
     if not isinstance(content, list):
         return 0, 0
     answered = {block.get("tool_use_id") for block in content if isinstance(block, Mapping)}
@@ -206,3 +214,11 @@ def _unresolved_server_tool_uses(messages: Iterable[Mapping[str, Any]]) -> tuple
         else:
             searches += 1
     return searches, fetches
+
+
+def _only_tool_results(content: Any) -> bool:
+    return (
+        isinstance(content, list)
+        and bool(content)
+        and all(isinstance(block, Mapping) and block.get("type") == "tool_result" for block in content)
+    )

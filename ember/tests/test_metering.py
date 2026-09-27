@@ -287,6 +287,28 @@ def test_a_backwards_clock_is_refused(data_dir: Path) -> None:
         model.call(cycle, "work", request())
 
 
+def test_thinking_token_details_are_not_an_unknown_charge(data_dir: Path) -> None:
+    economy = make_economy(data_dir, GENEROUS)
+    outcome = Completed(message(1_000, 200, output_tokens_details={"thinking_tokens": 150}))
+    model, _ = metered(economy, ScriptedTransport(outcomes=[outcome]))
+    cycle = model.open_cycle("test")
+    result = model.call(cycle, "work", request())
+    assert not result.billing_uncertain and result.cost_micros == 4_000
+
+
+def test_a_failed_token_count_falls_back_to_a_rough_count(data_dir: Path) -> None:
+    class NoCounting(ScriptedTransport):
+        def count_tokens(self, request):  # noqa: ANN001, ANN201
+            raise RuntimeError("rate limited")
+
+    economy = make_economy(data_dir, GENEROUS)
+    model, _ = metered(economy, NoCounting())
+    cycle = model.open_cycle("test")
+    result = model.call(cycle, "plan", request())
+    assert result.status == "ok"
+    assert result.estimate_micros == (rough_token_count(request()) * 2) + 1_000 * 10
+
+
 def test_rough_token_count_is_generous() -> None:
     body = request()
     body["messages"] = [{"role": "user", "content": "word " * 1_000}]

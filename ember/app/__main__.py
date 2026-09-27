@@ -38,6 +38,9 @@ def main() -> None:
         access_log=False,
         server_header=False,
         proxy_headers=False,  # the client address must be the real peer (Ingress proxy), never a header
+        # Home Assistant kills an app 10 s after asking it to stop (also for cold backups); an open
+        # browser connection must not keep the shutdown, and closing the database, waiting.
+        timeout_graceful_shutdown=2,
     )
 
 

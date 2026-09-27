@@ -69,6 +69,23 @@ def test_unfinished_server_tool_calls_are_paid_by_the_next_request() -> None:
     assert (plan.pending_searches, plan.pending_fetches) == (1, 0)
 
 
+def test_server_calls_deferred_behind_client_tools_are_paid_by_the_next_request() -> None:
+    messages = [
+        {"role": "user", "content": "find it and note it"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {"query": "a"}},
+                {"type": "tool_use", "id": "toolu_1", "name": "workspace_write", "input": {}},
+            ],
+        },
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}]},
+    ]
+    plan = plan_request(base(messages=messages), 500)
+    assert plan.pending_searches == 1
+    assert worst_case_micros(plan, PRICE, 10) > 500 * 2 + 1_000 * 10 + 10_000
+
+
 def test_multiplier_applies_to_tokens_not_searches() -> None:
     plan = plan_request(base(tools=[search(1)]), 1_000)
     plain = worst_case_micros(plan, PRICE, 10)
@@ -92,6 +109,7 @@ def test_multiplier_applies_to_tokens_not_searches() -> None:
         base(tools=[{"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 1}]),
         base(tools=[{"type": "bash_20250124", "name": "bash"}]),
         base(tools=[{"type": "web_search_20250305", "name": "web_search"}]),
+        base(tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 0}]),
     ],
 )
 def test_unpriceable_requests(body: dict) -> None:
