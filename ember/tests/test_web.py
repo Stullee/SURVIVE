@@ -1,0 +1,249 @@
+"""Ingress access rules, base-path handling, security headers and the JSON API."""
+
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Callable
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.config import LoadedSettings, Settings, load_settings
+from app.security import AccessPolicy, ingress_base_href
+from tests.conftest import HA_CORE, INGRESS
+
+KEY = "sk-ant-api03-verysecretkeyvalue0987654321"
+
+
+# --- base path -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("/api/hassio_ingress/AbC-123_xyz", "/api/hassio_ingress/AbC-123_xyz/"),
+        (None, "/"),
+        ("", "/"),
+        ("/api/hassio_ingress/", "/"),
+        ('/api/hassio_ingress/abc"><script>alert(1)</script>', "/"),
+        ("/api/hassio_ingress/abc/../../evil", "/"),
+        ("https://evil.example/api/hassio_ingress/abc", "/"),
+        ("//evil.example/x", "/"),
+    ],
+)
+def test_ingress_base_href(header: str | None, expected: str) -> None:
+    assert ingress_base_href(header) == expected
+
+
+def test_index_uses_ingress_path(ingress_client: TestClient) -> None:
+    response = ingress_client.get("/", headers={"X-Ingress-Path": "/api/hassio_ingress/Tok_en-1"})
+    assert response.status_code == 200
+    assert '<base href="/api/hassio_ingress/Tok_en-1/">' in response.text
+    assert "__BASE_HREF__" not in response.text and "__VERSION__" not in response.text
+
+
+def test_index_ignores_malicious_ingress_header(ingress_client: TestClient) -> None:
+    response = ingress_client.get("/", headers={"X-Ingress-Path": '"><script>alert(1)</script>'})
+    assert '<base href="/">' in response.text
+    assert "<script>alert(1)</script>" not in response.text
+
+
+def test_all_page_urls_are_relative(ingress_client: TestClient) -> None:
+    """Absolute URLs would bypass the Ingress prefix."""
+    html = ingress_client.get("/").text
+    for url in re.findall(r'(?:src|href)="([^"]+)"', html):
+        if url in ("/",):  # the base href itself outside Ingress
+            continue
+        assert not url.startswith(("/", "http:", "https:")), url
+    js = ingress_client.get("/static/js/app.js").text
+    for url in re.findall(r"""fetch\(\s*["']([^"']+)""", js):
+        assert not url.startswith(("/", "http")), url
+
+
+def test_static_assets_served(ingress_client: TestClient) -> None:
+    for path in (
+        "/static/css/app.css",
+        "/static/js/app.js",
+        "/static/js/theme.js",
+        "/static/vendor/chart.umd.min.js",
+    ):
+        response = ingress_client.get(path)
+        assert response.status_code == 200, path
+    assert "Chart.js v4" in ingress_client.get("/static/vendor/chart.umd.min.js").text[:200]
+
+
+# --- access policy -----------------------------------------------------------
+
+
+def test_policy_ingress_only() -> None:
+    policy = AccessPolicy()
+    assert policy.allows("172.30.32.2", "/", "GET")
+    assert policy.allows("172.30.32.2", "/api/anything", "POST")
+    assert not policy.allows("172.30.33.5", "/", "GET")  # another app on the internal network
+    assert not policy.allows("192.168.1.20", "/", "GET")  # the LAN
+    assert not policy.allows("127.0.0.1", "/", "GET")
+    assert not policy.allows(None, "/", "GET")
+    assert not policy.allows("testclient", "/", "GET")
+
+
+def test_policy_home_assistant_core_may_read_sensors_only() -> None:
+    policy = AccessPolicy()
+    assert policy.allows("172.30.32.1", "/api/sensors", "GET")
+    assert not policy.allows("172.30.32.1", "/api/sensors", "POST")
+    assert not policy.allows("172.30.32.1", "/", "GET")
+    assert not policy.allows("172.30.32.1", "/api/dashboard", "GET")
+    assert not policy.allows("172.30.33.7", "/api/sensors", "GET")
+
+
+def test_policy_dev_mode_allows_direct_access() -> None:
+    assert AccessPolicy(dev_mode=True).allows("172.17.0.1", "/", "GET")
+
+
+def test_other_clients_are_refused(client_factory: Callable) -> None:
+    with client_factory(client=("172.30.33.9", 1234)) as client:
+        assert client.get("/").status_code == 403
+        assert client.get("/api/dashboard").status_code == 403
+        assert client.get("/api/sensors").status_code == 403
+        assert client.get("/static/js/app.js").status_code == 403
+
+
+def test_core_can_read_sensors(client_factory: Callable) -> None:
+    with client_factory(client=HA_CORE) as client:
+        response = client.get("/api/sensors")
+        assert response.status_code == 200
+        body = response.json()
+        assert {"state", "balance_usd", "runway_days", "name", "dry_run", "updated_at"} <= body.keys()
+        assert client.get("/").status_code == 403
+
+
+def test_refused_requests_are_logged_once(client_factory: Callable) -> None:
+    with client_factory(client=("172.30.33.9", 1234)) as client:
+        client.get("/")
+        client.get("/api/dashboard")
+    with client_factory(client=INGRESS) as client:
+        events = client.get("/api/events").json()
+    refused = [e for e in events if "Refused request" in e["message"]]
+    assert len(refused) == 1
+
+
+def test_state_changing_requests_need_csrf_header(ingress_client: TestClient) -> None:
+    # No POST routes exist yet: with the header the router answers 405, without it the middleware 403.
+    assert ingress_client.post("/api/dashboard").status_code == 403
+    assert ingress_client.post("/api/dashboard", headers={"X-Ember-Request": "1"}).status_code == 405
+
+
+def test_security_headers(ingress_client: TestClient) -> None:
+    response = ingress_client.get("/")
+    csp = response.headers["content-security-policy"]
+    assert "script-src 'self'" in csp and "unsafe-inline" not in csp
+    assert "frame-ancestors 'self'" in csp
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["cache-control"] == "no-store"
+    assert "server" not in response.headers
+
+
+def test_no_api_docs_exposed(ingress_client: TestClient) -> None:
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert ingress_client.get(path).status_code == 404
+
+
+def test_websockets_refused(ingress_client: TestClient) -> None:
+    from starlette.websockets import WebSocketDisconnect
+
+    with pytest.raises(WebSocketDisconnect), ingress_client.websocket_connect("/ws"):
+        pass
+
+
+# --- API ---------------------------------------------------------------------
+
+
+def test_health(ingress_client: TestClient) -> None:
+    assert ingress_client.get("/api/health").json() == {"status": "ok", "version": "0.1.0", "database": "ok"}
+
+
+def test_dashboard_payload(ingress_client: TestClient) -> None:
+    data = ingress_client.get("/api/dashboard").json()
+    assert data["mock"] is True
+    for key in ("agent", "economy", "now", "projects", "activity", "approvals", "inbox", "upgrades", "mind", "system"):
+        assert key in data
+    assert len(data["economy"]["days"]) == 30
+    assert data["system"]["database"] == {"ok": True, "error": None, "schema_version": 1}
+    assert data["system"]["dry_run"] is True
+    assert any(e["message"].startswith("Started version") for e in data["events"])
+
+
+@pytest.mark.parametrize("scenario", ["alive", "paused", "critical", "dead"])
+def test_dashboard_scenarios(ingress_client: TestClient, scenario: str) -> None:
+    data = ingress_client.get("/api/dashboard", params={"scenario": scenario}).json()
+    assert data["agent"]["state"] == scenario
+    assert (data["memorial"] is not None) == (scenario == "dead")
+    balances = [d["balance_usd"] for d in data["economy"]["days"]]
+    assert min(balances) >= 0
+    if scenario == "critical":
+        assert data["agent"]["runway_days"] < 2
+    if scenario == "dead":
+        assert data["agent"]["balance_usd"] == 0
+
+
+def test_unknown_scenario_falls_back(ingress_client: TestClient) -> None:
+    assert ingress_client.get("/api/dashboard", params={"scenario": "zombie"}).json()["agent"]["state"] == "alive"
+
+
+def test_api_key_never_in_responses(client_factory: Callable, write_options: Callable) -> None:
+    write_options({"anthropic_api_key": KEY})
+    with client_factory(load_settings()) as client:
+        for path in ("/", "/api/dashboard", "/api/sensors", "/api/events", "/api/health"):
+            assert KEY not in client.get(path).text
+        assert client.get("/api/dashboard").json()["system"]["options"]["anthropic_api_key_set"] is True
+
+
+def test_safe_mode_is_reported(client_factory: Callable, write_options: Callable) -> None:
+    write_options({"daily_spend_cap_usd": 0.1, "cycle_spend_cap_usd": 0.5})
+    with client_factory(load_settings()) as client:
+        system = client.get("/api/dashboard").json()["system"]
+        events = client.get("/api/events").json()
+    assert system["safe_mode"] is True and system["dry_run"] is True
+    assert system["config_errors"]
+    assert any(e["kind"] == "config" and e["level"] == "error" for e in events)
+
+
+def test_born_at_survives_restarts(client_factory: Callable) -> None:
+    loaded = LoadedSettings(Settings())
+    with client_factory(loaded) as client:
+        first = client.get("/api/dashboard").json()["system"]["born_at"]
+    with client_factory(loaded) as client:
+        second = client.get("/api/dashboard").json()["system"]
+    assert second["born_at"] == first
+
+
+def test_broken_database_does_not_stop_the_dashboard(client_factory: Callable, data_dir) -> None:
+    (data_dir / "ember.db").write_bytes(b"this is not a sqlite database" * 100)
+    with client_factory() as client:
+        assert client.get("/").status_code == 200
+        data = client.get("/api/dashboard").json()
+        assert data["system"]["database"]["ok"] is False
+        assert data["system"]["database"]["error"]
+        assert client.get("/api/health").json()["database"] == "error"
+
+
+def test_unhandled_errors_are_logged_and_hidden(client_factory: Callable, monkeypatch) -> None:
+    from app import mock
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("kaboom " + KEY)
+
+    monkeypatch.setattr(mock, "dashboard", explode)
+    app_settings = LoadedSettings(Settings())
+    from app.main import create_app
+
+    app = create_app(app_settings, dev_mode=False)
+    with TestClient(app, client=INGRESS, raise_server_exceptions=False) as client:
+        response = client.get("/api/dashboard")
+        assert response.status_code == 500
+        assert "kaboom" not in response.text
+        events = client.get("/api/events").json()
+    logged = [e for e in events if e["level"] == "error" and "Unhandled error" in e["message"]]
+    assert logged
+    assert KEY not in json.dumps(logged)
+    assert "kaboom" in json.dumps(logged)  # the traceback is kept for the owner, minus secrets

@@ -1,0 +1,13 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Ember stopped. After a crash, stop the whole container: the Supervisor's
+# watchdog then restarts the app and the failure shows up in its log.
+# ==============================================================================
+declare exit_code=${1}
+if [[ "${exit_code}" -ne 0 ]] && [[ "${exit_code}" -ne 256 ]]; then
+  bashio::log.warning "Ember exited with code ${exit_code}; stopping the app"
+  echo "${exit_code}" > /run/s6-linux-init-container-results/exitcode
+  exec /run/s6/basedir/bin/halt
+fi
+bashio::log.info "Ember stopped"

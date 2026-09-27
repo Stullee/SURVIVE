@@ -1,0 +1,15 @@
+# Local development data (docker-compose mounts dev/data as /data)
+dev/data/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

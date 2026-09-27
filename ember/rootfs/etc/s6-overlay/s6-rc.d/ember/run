@@ -1,0 +1,13 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Start Ember: the dashboard (served through Ingress) and, from phase 3 on, the
+# agent's wake-cycle scheduler, both in one Python process.
+#
+# Options are read by Python from /data/options.json rather than with
+# bashio::config (which calls the Supervisor API), so the same image also runs
+# outside Home Assistant with docker-compose.
+# ==============================================================================
+bashio::log.info "Starting Ember..."
+cd /opt/ember || bashio::exit.nok "Ember is not installed in /opt/ember"
+exec python3 -m app

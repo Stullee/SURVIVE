@@ -1,0 +1,34 @@
+{
+  "anthropic_api_key": "",
+  "agent_name": "Ember",
+  "starting_balance_usd": 20,
+  "daily_spend_cap_usd": 1,
+  "cycle_spend_cap_usd": 0.25,
+  "wake_interval_minutes": 240,
+  "min_sleep_minutes": 30,
+  "max_sleep_minutes": 1440,
+  "max_tool_steps": 15,
+  "planner_model": "claude-sonnet-5",
+  "worker_model": "claude-haiku-4-5-20251001",
+  "price_table": [
+    {
+      "model": "claude-sonnet-5",
+      "input": 2,
+      "output": 10,
+      "cache_write_5m": 2.5,
+      "cache_write_1h": 4,
+      "cache_read": 0.2
+    },
+    {
+      "model": "claude-haiku-4-5-20251001",
+      "input": 1,
+      "output": 5,
+      "cache_write_5m": 1.25,
+      "cache_write_1h": 2,
+      "cache_read": 0.1
+    }
+  ],
+  "web_search_usd_per_1000": 10,
+  "dry_run": true,
+  "log_level": "info"
+}

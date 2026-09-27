@@ -1,0 +1,12 @@
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "S", "BLE"]
+ignore = [
+  "S101",  # assert is how pytest works
+  "S608",  # the one dynamic SQL builds placeholders, never values
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "B017"]

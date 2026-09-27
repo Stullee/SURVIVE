@@ -1,0 +1,73 @@
+configuration:
+  anthropic_api_key:
+    name: Anthropic API key
+    description: >-
+      Key from console.anthropic.com. Only needed when dry run is off. Stored by
+      Home Assistant; Ember never logs or displays it.
+  agent_name:
+    name: Agent name
+    description: What the agent calls itself.
+  starting_balance_usd:
+    name: Starting balance (USD)
+    description: >-
+      Your first grant to the agent, recorded once when it is born. Later
+      grants are added from the dashboard.
+  daily_spend_cap_usd:
+    name: Daily spending cap (USD)
+    description: Hard limit on API spending per day. Calls that could exceed it are refused.
+  cycle_spend_cap_usd:
+    name: Spending cap per wake cycle (USD)
+    description: Hard limit on API spending in one wake cycle. Must not exceed the daily cap.
+  wake_interval_minutes:
+    name: Default sleep between wake cycles (minutes)
+    description: Used when the agent does not choose its own sleep time.
+  min_sleep_minutes:
+    name: Shortest sleep (minutes)
+    description: The agent can't choose to wake up sooner than this.
+  max_sleep_minutes:
+    name: Longest sleep (minutes)
+    description: The agent can't choose to sleep longer than this.
+  max_tool_steps:
+    name: Tool steps per cycle
+    description: Maximum number of tool calls the agent may make in one wake cycle.
+  planner_model:
+    name: Planner model
+    description: Model that plans each cycle. Must be listed in the price table.
+  worker_model:
+    name: Worker model
+    description: Cheaper model that carries out the plan and writes the journal. Must be listed in the price table.
+  price_table:
+    name: Price table
+    description: >-
+      Anthropic prices in USD per million tokens, used to compute costs and
+      enforce the caps. Prices change; check them against Anthropic's pricing page.
+    fields:
+      model:
+        name: Model ID
+        description: Exact model ID, for example claude-sonnet-5.
+      input:
+        name: Input
+        description: USD per million input tokens.
+      output:
+        name: Output
+        description: USD per million output tokens.
+      cache_write_5m:
+        name: Cache write, 5 minutes
+        description: USD per million tokens written to the 5-minute prompt cache.
+      cache_write_1h:
+        name: Cache write, 1 hour
+        description: USD per million tokens written to the 1-hour prompt cache.
+      cache_read:
+        name: Cache read
+        description: USD per million tokens read from the prompt cache.
+  web_search_usd_per_1000:
+    name: Web search price (USD per 1,000 searches)
+    description: Charged by Anthropic on top of tokens for each web search.
+  dry_run:
+    name: Dry run
+    description: >-
+      On: the agent uses a built-in fake model and never calls the Anthropic
+      API, so nothing costs money. Turn off only when you are ready.
+  log_level:
+    name: Log level
+    description: How much detail goes to the app log.

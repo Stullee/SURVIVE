@@ -1,0 +1,27 @@
+# Run the Ember app locally, outside Home Assistant. See README.md, "Local development".
+#
+#   mkdir -p dev/data && cp dev/options.example.json dev/data/options.json
+#   docker compose up --build
+#   open http://localhost:8099
+#
+# dev/data plays the role of the app's /data folder (options.json, ember.db, ...).
+services:
+  ember:
+    build:
+      context: ./ember
+    image: local/ember:dev
+    environment:
+      # There is no Ingress proxy here, so accept direct connections.
+      # Never set this inside Home Assistant.
+      EMBER_DEV_MODE: "1"
+      TZ: Europe/Berlin
+    ports:
+      # Bound to localhost only: the dashboard has no login of its own.
+      - "127.0.0.1:8099:8099"
+    volumes:
+      - ./dev/data:/data
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
