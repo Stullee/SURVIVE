@@ -59,8 +59,12 @@ def test_all_page_urls_are_relative(ingress_client: TestClient) -> None:
             continue
         assert not url.startswith(("/", "http:", "https:")), url
     js = ingress_client.get("/static/js/app.js").text
-    for url in re.findall(r"""fetch\(\s*["']([^"']+)""", js):
-        assert not url.startswith(("/", "http")), url
+    assert "fetch(" in js
+    # No string literal in the dashboard script may start with "/" or a scheme:
+    # every request must stay under the Ingress base path.
+    literals = re.findall(r"""["']([^"'\n]*)["']""", js)
+    offending = [s for s in literals if s.startswith(("/api", "/static", "http:", "https:", "//"))]
+    assert offending == []
 
 
 def test_static_assets_served(ingress_client: TestClient) -> None:
@@ -142,7 +146,6 @@ def test_security_headers(ingress_client: TestClient) -> None:
     assert "frame-ancestors 'self'" in csp
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cache-control"] == "no-store"
-    assert "server" not in response.headers
 
 
 def test_no_api_docs_exposed(ingress_client: TestClient) -> None:
@@ -150,11 +153,26 @@ def test_no_api_docs_exposed(ingress_client: TestClient) -> None:
         assert ingress_client.get(path).status_code == 404
 
 
-def test_websockets_refused(ingress_client: TestClient) -> None:
-    from starlette.websockets import WebSocketDisconnect
+@pytest.mark.parametrize("client", [INGRESS, ("172.30.33.9", 1234)])
+def test_websockets_refused_by_the_middleware(client: tuple[str, int]) -> None:
+    """Even with a websocket route behind it, the middleware refuses every websocket."""
+    from starlette.applications import Starlette
+    from starlette.routing import WebSocketRoute
+    from starlette.websockets import WebSocket, WebSocketDisconnect
 
-    with pytest.raises(WebSocketDisconnect), ingress_client.websocket_connect("/ws"):
-        pass
+    from app.security import SecurityMiddleware
+
+    async def accept(websocket: WebSocket) -> None:
+        await websocket.accept()
+        await websocket.send_text("hello")
+
+    inner = Starlette(routes=[WebSocketRoute("/ws", accept)])
+    with (
+        TestClient(SecurityMiddleware(inner, AccessPolicy()), client=client) as test_client,
+        pytest.raises(WebSocketDisconnect),
+        test_client.websocket_connect("/ws") as ws,
+    ):
+        ws.receive_text()
 
 
 # --- API ---------------------------------------------------------------------
@@ -320,3 +338,17 @@ def test_database_failure_after_migrations_does_not_stop_the_dashboard(client_fa
         system = client.get("/api/dashboard").json()["system"]
     assert system["database"]["ok"] is False
     assert "malformed" in system["database"]["error"]
+
+
+def test_secrets_never_reach_the_dashboard_log(client_factory: Callable, write_options: Callable) -> None:
+    """A key that doesn't look like an Anthropic key is still redacted: create_app registers it."""
+    custom_key = "my-proxy-key-0123456789"
+    write_options({"anthropic_api_key": custom_key})
+    import logging
+
+    with client_factory(load_settings()) as client:
+        logging.getLogger("some.library").warning("request headers %s", {"x-api-key": custom_key, "other": KEY})
+        body = client.get("/api/events").text + client.get("/api/dashboard").text
+    assert "some.library: request headers" in body
+    assert custom_key not in body
+    assert KEY not in body

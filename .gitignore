@@ -1,5 +1,6 @@
 # Local development data (docker-compose mounts dev/data as /data)
 dev/data/
+dev/data-local/
 
 # Python
 __pycache__/

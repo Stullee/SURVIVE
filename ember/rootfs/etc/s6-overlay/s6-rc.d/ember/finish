@@ -1,14 +1,22 @@
 #!/command/with-contenv bashio
 # shellcheck shell=bash
 # ==============================================================================
-# Ember stopped. After a crash, stop the whole container so the failure is
-# visible in Home Assistant; with the app's Watchdog switched on (see DOCS.md)
-# the Supervisor then restarts it.
+# Ember stopped. Always stop the whole container, whatever the exit code.
+#
+# Restarting inside the container would re-read /data/options.json, which code
+# in the container could have edited (for example to raise the spending caps).
+# A restart through the Supervisor (the app's Watchdog, see DOCS.md) rewrites
+# that file from the options the owner saved in Home Assistant first.
 # ==============================================================================
 declare exit_code=${1}
-if [[ "${exit_code}" -ne 0 ]] && [[ "${exit_code}" -ne 256 ]]; then
-  bashio::log.warning "Ember exited with code ${exit_code}; stopping the app"
-  echo "${exit_code}" > /run/s6-linux-init-container-results/exitcode
-  exec /run/s6/basedir/bin/halt
+if [[ "${exit_code}" -eq 256 ]]; then
+  # Killed by a signal: report it the way a shell would (128 + signal number).
+  exit_code=$((128 + ${2:-0}))
 fi
-bashio::log.info "Ember stopped"
+if [[ "${exit_code}" -ne 0 ]]; then
+  bashio::log.warning "Ember exited with code ${exit_code}; stopping the app"
+else
+  bashio::log.info "Ember stopped; stopping the app"
+fi
+echo "${exit_code}" > /run/s6-linux-init-container-results/exitcode
+exec /run/s6/basedir/bin/halt

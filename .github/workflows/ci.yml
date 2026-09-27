@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install -r requirements-dev.txt ruff
+      - run: pip install -r requirements-dev.txt
       - run: python -m pytest -W error
       - run: ruff check app tests
       - run: ruff format --check app tests
@@ -33,8 +33,8 @@ jobs:
         platform: [linux/amd64, linux/arm64]
     steps:
       - uses: actions/checkout@v5
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
       - name: Build (as the Supervisor does, but without its extra labels)
         run: >-
           docker buildx build ember
@@ -67,4 +67,4 @@ jobs:
           echo "expected 403, got $code"; exit 1
       - name: Container logs
         if: always()
-        run: docker logs ember || true
+        run: for c in ember ember-strict; do echo "== $c"; docker logs "$c" || true; done

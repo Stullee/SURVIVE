@@ -63,10 +63,14 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
 - **Least privilege.** `homeassistant_api: false`, `hassio_api: false`, no host
   network, no mapped folders besides the app's own `/data`, no published ports.
   `ember/tests/test_manifest.py` fails if any of this is loosened.
-- **No Supervisor token.** The Supervisor hands every app a token that can
-  change the app's own options or uninstall it, even with `hassio_api: false`.
-  The s6 run script deletes it before Python starts, so nothing in the container
-  can raise its own spending caps.
+- **Options can't be changed from inside.** The Supervisor hands every app a
+  token that can change the app's own options or uninstall it, even with
+  `hassio_api: false`; the s6 run script deletes it before Python starts. And
+  whenever the Python process exits, the whole container stops instead of
+  restarting in place, so a restart always goes through the Supervisor, which
+  rewrites `/data/options.json` from the options you saved. The remaining
+  guarantee is on later phases: the agent's tools must never be able to write
+  outside its workspace or control processes.
 - **CSRF.** State-changing requests must carry an `X-Ember-Request: 1` header,
   which cross-site pages can't send.
 - **Strict CSP.** No inline scripts or styles; Chart.js is vendored, nothing is
@@ -87,11 +91,12 @@ cd ember
 python3.12 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
 python -m pytest                 # run the tests
-EMBER_DATA_DIR=../dev/data EMBER_DEV_MODE=1 python -m app
+EMBER_DATA_DIR=../dev/data-local EMBER_DEV_MODE=1 python -m app
 # open http://localhost:8099
 ```
 
-`EMBER_DATA_DIR` replaces `/data`; `EMBER_DEV_MODE=1` turns off the Ingress IP
+`EMBER_DATA_DIR` replaces `/data` (a different folder from the one docker-compose
+uses, whose files belong to root); `EMBER_DEV_MODE=1` turns off the Ingress IP
 filter (there is no Ingress proxy locally). Never set it inside Home Assistant.
 In dev mode the server listens on 127.0.0.1 only (override with `EMBER_HOST`)
 and answers only requests addressed to `localhost`, `127.0.0.1` or `[::1]`, which
@@ -177,10 +182,11 @@ the documentation wins:
   `BUILD_FROM` in 2026.04. The base image is set directly in the `Dockerfile`.
 - **Multi-arch base image** `ghcr.io/home-assistant/base-python:3.12-alpine3.24`
   (pinned) instead of per-architecture images.
-- **Sensor endpoint reachable by Home Assistant Core.** Ingress requires a
-  browser session, so a REST sensor can't use it. `GET /api/sensors` is also
-  accepted from Core's internal address (172.30.32.1); everything else stays
-  Ingress-only.
+- **Sensor endpoint readable from the Home Assistant host network.** Ingress
+  requires a browser session, so a REST sensor can't use it. `GET /api/sensors`
+  is also accepted from the host-network gateway (172.30.32.1: Home Assistant
+  Core, but also apps with host networking and host processes); everything else
+  stays Ingress-only.
 - **Price table shape.** Home Assistant option schemas allow nesting two levels
   deep, so `price_table` is a list of per-model entries (with separate 5-minute
   and 1-hour cache-write prices, as Anthropic bills them) and the web-search

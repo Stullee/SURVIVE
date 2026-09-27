@@ -64,3 +64,22 @@ def test_client_triggered_uvicorn_warnings_are_rate_limited() -> None:
     # Anything else from uvicorn is never filtered.
     assert flt.filter(record("Something else")) is True
     assert flt.filter(record("Something else")) is True
+
+
+def test_app_log_on_stdout_is_redacted(capsys) -> None:
+    from app.logging_setup import setup_logging
+
+    root = logging.getLogger()
+    saved_level, saved_handlers = root.level, list(root.handlers)
+    try:
+        setup_logging("info")
+        logging.getLogger("some.library").warning("headers %s", {"x-api-key": KEY})
+        logging.getLogger("uvicorn.error").error("Exception in ASGI application: %s", KEY)
+    finally:
+        for handler in list(root.handlers):
+            if handler not in saved_handlers:
+                root.removeHandler(handler)
+        root.setLevel(saved_level)
+    out = capsys.readouterr().out
+    assert "some.library: headers" in out and "uvicorn.error: Exception in ASGI application" in out
+    assert KEY not in out

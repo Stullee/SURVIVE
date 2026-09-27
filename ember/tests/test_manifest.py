@@ -28,34 +28,41 @@ def test_required_keys() -> None:
     assert isinstance(MANIFEST["version"], str)
 
 
+ALLOWED_KEYS = {
+    "name",
+    "version",
+    "slug",
+    "description",
+    "url",
+    "arch",
+    "init",
+    "startup",
+    "boot",
+    "ingress",
+    "ingress_port",
+    "panel_icon",
+    "panel_title",
+    "homeassistant_api",
+    "hassio_api",
+    "host_network",
+    "backup",
+    "watchdog",
+    "options",
+    "schema",
+}
+
+
 def test_least_privilege() -> None:
+    """An allowlist: any new manifest key (a new privilege, device, mapping...) must be reviewed here."""
+    assert set(MANIFEST) <= ALLOWED_KEYS, set(MANIFEST) - ALLOWED_KEYS
     assert MANIFEST["ingress"] is True
     assert MANIFEST["ingress_port"] == 8099
     assert MANIFEST["homeassistant_api"] is False
     assert MANIFEST["hassio_api"] is False
     assert MANIFEST.get("host_network", False) is False
-    for forbidden in (
-        "map",
-        "ports",
-        "privileged",
-        "devices",
-        "full_access",
-        "docker_api",
-        "host_pid",
-        "host_ipc",
-        "host_uts",
-        "host_dbus",
-        "auth_api",
-        "hassio_role",
-        "kernel_modules",
-        "uart",
-        "usb",
-        "gpio",
-        "apparmor",
-        "environment",
-    ):
-        assert forbidden not in MANIFEST, forbidden
     assert MANIFEST["init"] is False  # s6-overlay v3 must be PID 1
+    assert MANIFEST.get("panel_admin", True) is True  # only admins get the control panel
+    assert MANIFEST["backup"] == "cold"  # a consistent copy of the SQLite database
 
 
 def test_no_build_yaml_and_local_build() -> None:

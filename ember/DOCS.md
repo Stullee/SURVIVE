@@ -93,8 +93,10 @@ While phase 1 is installed these values are preview data (`"mock": true`).
 - The app has no access to the Home Assistant API, runs without host
   networking and maps no folders besides its own `/data`. The Supervisor gives
   every app a token for a few Supervisor endpoints about itself (such as its own
-  options); Ember removes that token at startup, so the agent can never change
-  its own settings or spending caps.
+  options); Ember removes that token at startup. When Ember's process exits,
+  the app stops completely instead of restarting by itself, so every restart
+  goes through Home Assistant, which rewrites the options you saved. Turn on
+  **Watchdog** so that happens automatically.
 - The API key is kept in the app options and never written to logs, the
   database or the dashboard.
 
