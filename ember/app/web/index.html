@@ -23,21 +23,23 @@
         <span class="state-icon" aria-hidden="true">…</span>
         <span class="state-label">Loading</span>
       </span>
+      <span class="mode-badge" id="mode-badge" hidden>Dry run: API costs are simulated</span>
     </div>
     <p class="identity-meta" id="identity-meta">&nbsp;</p>
     <div class="topbar-actions">
       <div class="controls" role="group" aria-label="Agent controls">
         <button type="button" class="btn" disabled title="Available in phase 4">Wake now</button>
-        <button type="button" class="btn" disabled title="Available in phase 4">Pause</button>
+        <button type="button" class="btn" id="pause-button" disabled>Pause</button>
         <button type="button" class="btn btn-danger" disabled title="Available in phase 4">Kill switch</button>
       </div>
-      <button type="button" class="btn btn-ghost" id="theme-toggle" aria-label="Color theme">Theme: auto</button>
+      <button type="button" class="btn btn-ghost" id="theme-toggle">Theme: auto</button>
+      <p class="control-status" id="control-status" role="status"></p>
     </div>
   </header>
 
   <div id="banners" class="banners" aria-live="polite"></div>
 
-  <section class="kpis" aria-label="Key numbers">
+  <section class="kpis" id="kpis" aria-label="Key numbers">
     <article class="tile tile-hero">
       <h2 class="tile-label">Balance</h2>
       <p class="tile-value hero" id="kpi-balance">–</p>
@@ -46,7 +48,7 @@
     <article class="tile">
       <h2 class="tile-label">Runway</h2>
       <p class="tile-value" id="kpi-runway">–</p>
-      <p class="tile-sub" id="kpi-runway-sub">at the last 7 days' spending</p>
+      <p class="tile-sub" id="kpi-runway-sub">&nbsp;</p>
     </article>
     <article class="tile">
       <h2 class="tile-label">Spent today</h2>
@@ -60,7 +62,7 @@
     <article class="tile">
       <h2 class="tile-label">Self-sufficiency</h2>
       <p class="tile-value" id="kpi-ratio">–</p>
-      <p class="tile-sub">earned revenue ÷ total cost</p>
+      <p class="tile-sub" id="kpi-ratio-sub">earned revenue ÷ total cost</p>
     </article>
     <article class="tile">
       <h2 class="tile-label">Next wake</h2>
@@ -71,6 +73,7 @@
 
   <nav class="tabs" role="tablist" aria-label="Sections">
     <button type="button" role="tab" class="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true">Overview</button>
+    <button type="button" role="tab" class="tab" id="tab-ledger" aria-controls="panel-ledger" aria-selected="false">Ledger</button>
     <button type="button" role="tab" class="tab" id="tab-projects" aria-controls="panel-projects" aria-selected="false">Projects</button>
     <button type="button" role="tab" class="tab" id="tab-activity" aria-controls="panel-activity" aria-selected="false">Activity</button>
     <button type="button" role="tab" class="tab" id="tab-approvals" aria-controls="panel-approvals" aria-selected="false">Approvals <span class="badge" id="badge-approvals" hidden></span></button>
@@ -86,11 +89,15 @@
         <p class="memorial-kicker">In memory of</p>
         <h2 id="memorial-name">Ember</h2>
         <p class="memorial-dates" id="memorial-dates"></p>
+        <p class="memorial-reason" id="memorial-reason"></p>
         <dl class="facts" id="memorial-facts"></dl>
         <h3>Last will</h3>
         <blockquote class="last-will" id="memorial-will"></blockquote>
-        <p class="muted">Only an owner grant can revive the agent. The revival is logged.</p>
-        <button type="button" class="btn" disabled title="Available in phase 2">Grant funds to revive</button>
+        <p class="memorial-revive" id="memorial-revive"></p>
+        <div class="memorial-actions">
+          <button type="button" class="btn" id="memorial-suggested" hidden></button>
+          <button type="button" class="btn" id="memorial-grant">Grant funds</button>
+        </div>
       </article>
 
       <article class="card now" id="now-card">
@@ -98,8 +105,9 @@
           <h2>Now</h2>
           <span class="live" id="now-live" hidden><span class="live-dot" aria-hidden="true"></span>Cycle running</span>
         </div>
+        <div class="empty-state" id="now-empty" hidden></div>
         <p class="now-status" id="now-status">&nbsp;</p>
-        <div class="now-grid">
+        <div class="now-grid" id="now-grid">
           <div>
             <h3 class="small-head">Plan for this cycle</h3>
             <pre class="plan" id="now-plan"></pre>
@@ -125,17 +133,49 @@
           </div>
           <button type="button" class="btn btn-ghost" id="table-toggle" aria-expanded="false" aria-controls="economy-table">Show table</button>
         </div>
-        <ul class="legend" id="flow-legend" aria-label="Legend"></ul>
-        <div class="chart-box"><canvas id="flow-chart" role="img" aria-label="Daily API cost, expenses and revenue"></canvas></div>
-        <h3 class="chart-title">Balance at the end of each day</h3>
-        <ul class="legend" id="balance-legend" aria-label="Legend"></ul>
-        <div class="chart-box chart-box-small"><canvas id="balance-chart" role="img" aria-label="Balance over time with owner grants marked"></canvas></div>
+        <p class="card-note" id="simulated-note" hidden></p>
+        <p class="muted chart-fallback" id="chart-fallback" hidden>The chart library failed to load, so the charts can't be drawn. The table below has the same numbers.</p>
+        <div class="chart-part">
+          <ul class="legend" id="flow-legend" aria-label="Legend"></ul>
+          <div class="chart-box"><canvas id="flow-chart" role="img" aria-label="Daily API cost, expenses and revenue"></canvas></div>
+          <h3 class="chart-title">Balance at the end of each day</h3>
+          <ul class="legend" id="balance-legend" aria-label="Legend"></ul>
+          <div class="chart-box chart-box-small"><canvas id="balance-chart" role="img" aria-label="Balance over time with owner grants marked"></canvas></div>
+        </div>
         <div class="table-wrap" id="economy-table" hidden></div>
         <div class="money-actions" role="group" aria-label="Record money">
-          <button type="button" class="btn" disabled title="Available in phase 2">Add revenue</button>
-          <button type="button" class="btn" disabled title="Available in phase 2">Grant funds</button>
-          <button type="button" class="btn" disabled title="Available in phase 2">Record expense</button>
+          <button type="button" class="btn" data-open-form="revenue">Add revenue</button>
+          <button type="button" class="btn" data-open-form="grant">Grant funds</button>
+          <button type="button" class="btn" data-open-form="expense">Record expense</button>
         </div>
+      </article>
+
+      <article class="card" id="lives-card" hidden>
+        <h2>Previous lives</h2>
+        <p class="card-sub">Earlier lives of this agent in this mode, newest first.</p>
+        <ol class="log lives" id="lives"></ol>
+      </article>
+    </section>
+
+    <section class="panel" id="panel-ledger" role="tabpanel" aria-labelledby="tab-ledger" hidden>
+      <article class="card">
+        <h2>Record money</h2>
+        <p class="card-sub">Entries can't be edited or deleted later. To fix a mistake, record a correction.</p>
+        <div class="form-picker" role="group" aria-label="What to record">
+          <button type="button" class="btn" data-form-toggle="revenue" aria-expanded="false" aria-controls="form-revenue">Add revenue</button>
+          <button type="button" class="btn" data-form-toggle="grant" aria-expanded="false" aria-controls="form-grant">Grant funds</button>
+          <button type="button" class="btn" data-form-toggle="expense" aria-expanded="false" aria-controls="form-expense">Record expense</button>
+          <button type="button" class="btn" data-form-toggle="api-correction" aria-expanded="false" aria-controls="form-api-correction">Correct API cost</button>
+          <button type="button" class="btn" data-form-toggle="adjustment" aria-expanded="false" aria-controls="form-adjustment">Other correction</button>
+        </div>
+        <div id="ledger-forms"></div>
+      </article>
+      <article class="card">
+        <h2 id="ledger-title" tabindex="-1">Ledger</h2>
+        <p class="card-sub" id="ledger-sub">The latest entries, newest first.</p>
+        <p class="form-status" id="ledger-status" role="status"></p>
+        <div id="correction-form-slot"></div>
+        <ol class="ledger" id="ledger-list"></ol>
       </article>
     </section>
 
@@ -154,7 +194,7 @@
     <section class="panel" id="panel-inbox" role="tabpanel" aria-labelledby="tab-inbox" hidden>
       <article class="card">
         <ol class="chat" id="inbox"></ol>
-        <form class="composer" id="composer">
+        <form class="composer" id="composer" hidden>
           <label class="visually-hidden" for="composer-text">Message to the agent</label>
           <textarea id="composer-text" rows="2" placeholder="Write to the agent (phase 4)" disabled></textarea>
           <button type="submit" class="btn" disabled>Send</button>
@@ -168,31 +208,27 @@
 
     <section class="panel" id="panel-mind" role="tabpanel" aria-labelledby="tab-mind" hidden>
       <article class="card">
-        <div class="subtabs" role="tablist" aria-label="Mind">
-          <button type="button" role="tab" class="subtab" data-mind="strategy" aria-selected="true">Strategy</button>
-          <button type="button" role="tab" class="subtab" data-mind="lessons" aria-selected="false">Lessons</button>
-          <button type="button" role="tab" class="subtab" data-mind="identity" aria-selected="false">Identity</button>
-          <button type="button" role="tab" class="subtab" data-mind="journal" aria-selected="false">Journal</button>
+        <div class="empty-state" id="mind-empty" hidden></div>
+        <div class="subtabs" id="mind-tabs" role="tablist" aria-label="Mind">
+          <button type="button" role="tab" class="subtab" id="mind-tab-strategy" data-mind="strategy" aria-controls="mind-body" aria-selected="true">Strategy</button>
+          <button type="button" role="tab" class="subtab" id="mind-tab-lessons" data-mind="lessons" aria-controls="mind-body" aria-selected="false" tabindex="-1">Lessons</button>
+          <button type="button" role="tab" class="subtab" id="mind-tab-identity" data-mind="identity" aria-controls="mind-body" aria-selected="false" tabindex="-1">Identity</button>
+          <button type="button" role="tab" class="subtab" id="mind-tab-journal" data-mind="journal" aria-controls="mind-body" aria-selected="false" tabindex="-1">Journal</button>
         </div>
-        <p class="muted small">Read-only. The agent keeps these notes itself.</p>
-        <div id="mind-body" class="mind-body"></div>
+        <p class="muted small" id="mind-note">Read-only. The agent keeps these notes itself.</p>
+        <div id="mind-body" class="mind-body" role="tabpanel" aria-labelledby="mind-tab-strategy" tabindex="0"></div>
       </article>
     </section>
 
     <section class="panel" id="panel-system" role="tabpanel" aria-labelledby="tab-system" hidden>
-      <article class="card" id="preview-card">
-        <h2>Preview</h2>
-        <p class="card-sub">Phase 1 shows made-up data. Pick a life state to preview how the dashboard looks.</p>
-        <div class="segmented" role="group" aria-label="Preview life state" id="scenario-buttons">
-          <button type="button" class="btn" data-scenario="alive">Alive</button>
-          <button type="button" class="btn" data-scenario="paused">Paused</button>
-          <button type="button" class="btn" data-scenario="critical">Critical</button>
-          <button type="button" class="btn" data-scenario="dead">Dead</button>
-        </div>
-      </article>
       <article class="card">
         <h2>Status</h2>
         <dl class="facts" id="system-facts"></dl>
+      </article>
+      <article class="card">
+        <h2>Life-state history</h2>
+        <p class="card-sub">Every change of the agent's life state, newest first.</p>
+        <ol class="log transitions" id="transitions"></ol>
       </article>
       <article class="card">
         <h2>System log</h2>
