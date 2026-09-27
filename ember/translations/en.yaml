@@ -70,6 +70,11 @@ configuration:
     description: >-
       On: the agent uses a built-in fake model and never calls the Anthropic
       API, so nothing costs money. Turn off only when you are ready.
+  kill_switch_reset:
+    name: Kill switch reset
+    description: >-
+      The kill switch on the dashboard stops the agent for good. To let it run
+      again, change this number to any other value and restart the app.
   log_level:
     name: Log level
     description: How much detail goes to the app log.

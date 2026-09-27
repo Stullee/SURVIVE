@@ -1,0 +1,248 @@
+"""Phase 4: the owner's side of the queues, what the agent hears about it, and the kill switch."""
+
+from __future__ import annotations
+
+import ast
+import json
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app import paths
+from app.agent import news
+from app.agent.owner import Owner, apply_kill_switch_reset, kill
+from app.agent.service import Agent
+from app.economy.life import KILLED_KEY
+from tests.test_agent import make_agent, plan, rows, text, tools
+from tests.test_owner_api import CSRF, post
+
+APPROVAL = {
+    "type": "publish",
+    "title": "Post the guide",
+    "description": "Publish the guide on my blog.",
+    "payload": "Hello world, written by an AI.",
+    "expected_cost": "none",
+    "expected_benefit": "first readers",
+}
+
+
+def owner(agent: Agent) -> Owner:
+    return Owner(agent.db, agent.clock, agent.economy, agent.scope(), agent.settings.agent_name)
+
+
+def sent_text(request: dict[str, Any]) -> str:
+    return json.dumps(request["messages"], ensure_ascii=False)
+
+
+def cycle_with_approval() -> list[Any]:
+    return [
+        plan(steps=["ask to publish"]),
+        tools(("request_approval", APPROVAL), ("message_owner", {"text": "Please look at request 1."})),
+        text("Asked."),
+        tools(("write_journal", {"summary": "Asked to publish", "entry": "Waiting."})),
+    ]
+
+
+def test_a_decision_reaches_the_next_plan_once(data_dir: Path) -> None:
+    agent, transport = make_agent(
+        data_dir, [*cycle_with_approval(), plan(steps=[], sleep=600), plan(steps=[], sleep=600)]
+    )
+    assert agent.run_cycle("schedule").status == "completed"
+    approval = rows(agent, "SELECT id, version, status FROM approvals")[0]
+    assert approval["status"] == "pending"
+    who = owner(agent)
+    decided = who.decide(
+        approval["id"],
+        {"decision": "approve_with_changes", "final_payload": "Hi there, written by an AI.", "comment": "shorter"},
+        "Stefan",
+    )
+    assert decided.status == 200 and decided.body["approval"]["status"] == "approved_with_changes"
+    assert who.send_message({"text": "Good morning!"}, "Stefan").status == 201
+
+    agent.run_cycle("schedule")
+    planned = sent_text(transport.sent[-1])
+    assert "approved with changes" in planned and "Hi there, written by an AI." in planned
+    assert "shorter" in planned and "Good morning!" in planned
+    seen = rows(
+        agent, "SELECT seen_cycle_id FROM approvals UNION ALL SELECT seen_cycle_id FROM messages WHERE sender = 'owner'"
+    )
+    assert all(r["seen_cycle_id"] for r in seen)
+
+    agent.run_cycle("schedule")
+    assert "Hi there" not in sent_text(transport.sent[-1]) and "Good morning" not in sent_text(transport.sent[-1])
+
+
+def test_decisions_are_checked(data_dir: Path) -> None:
+    agent, _ = make_agent(data_dir, cycle_with_approval())
+    agent.run_cycle("schedule")
+    who = owner(agent)
+    approval_id = rows(agent, "SELECT id FROM approvals")[0]["id"]
+    assert who.decide(approval_id, {"decision": "maybe"}, None).body["field"] == "decision"
+    assert who.decide(approval_id, {"decision": "approve_with_changes"}, None).body["field"] == "final_payload"
+    assert who.decide(approval_id, {"decision": "approve", "extra": 1}, None).body["field"] == "extra"
+    assert who.decide(approval_id, {"decision": "approve", "expected_version": 5}, None).status == 409
+    assert who.close(approval_id, {"outcome": "done"}, None).status == 409  # not approved yet
+    same = who.decide(approval_id, {"decision": "approve_with_changes", "final_payload": APPROVAL["payload"]}, "Stefan")
+    assert same.body["approval"]["status"] == "approved"  # no change is a plain approval
+    assert who.decide(approval_id, {"decision": "reject"}, None).status == 409
+    assert who.close(approval_id, {"outcome": "failed"}, None).body["field"] == "result_note"
+    bad = who.close(approval_id, {"outcome": "done", "result_link": "https://user:pw@example.com/x"}, None)
+    assert bad.body["field"] == "result_link"
+    done = who.close(approval_id, {"outcome": "done", "result_link": "https://example.com/post"}, "Stefan")
+    assert done.status == 200 and done.body["approval"]["status"] == "done"
+    assert who.decide(10_000, {"decision": "approve"}, None).status == 404
+
+
+def test_the_database_keeps_decisions_final(data_dir: Path) -> None:
+    agent, _ = make_agent(data_dir, cycle_with_approval())
+    agent.run_cycle("schedule")
+    approval_id = rows(agent, "SELECT id FROM approvals")[0]["id"]
+    with pytest.raises(sqlite3.IntegrityError), agent.db.transaction() as conn:
+        conn.execute("UPDATE approvals SET status = 'done' WHERE id = ?", (approval_id,))
+    owner(agent).decide(approval_id, {"decision": "reject", "comment": "no"}, None)
+    with pytest.raises(sqlite3.IntegrityError), agent.db.transaction() as conn:
+        conn.execute("UPDATE approvals SET decision_comment = 'yes' WHERE id = ?", (approval_id,))
+    with pytest.raises(sqlite3.IntegrityError), agent.db.transaction() as conn:
+        conn.execute("UPDATE approvals SET status = 'approved' WHERE id = ?", (approval_id,))
+
+
+def test_upgrade_requests_and_inbox(data_dir: Path) -> None:
+    upgrade = {
+        "title": "Let me read RSS feeds",
+        "problem": "I can't follow news.",
+        "proposed_change": "An RSS tool.",
+        "expected_benefit": "Better ideas.",
+        "priority": "low",
+    }
+    agent, transport = make_agent(
+        data_dir,
+        [
+            plan(steps=["ask"]),
+            tools(("request_upgrade", upgrade), ("message_owner", {"text": "Filed an upgrade request."})),
+            text("Done."),
+            tools(("write_journal", {"summary": "Asked for RSS", "entry": "."})),
+            plan(steps=[], sleep=600),
+        ],
+    )
+    agent.run_cycle("schedule")
+    who = owner(agent)
+    upgrade_id = rows(agent, "SELECT id FROM upgrades")[0]["id"]
+    assert who.update_upgrade(upgrade_id, {"status": "released"}, None).body["field"] == "version"
+    assert who.update_upgrade(upgrade_id, {"status": "accepted", "note": "next week"}, None).status == 200
+    assert who.update_upgrade(upgrade_id, {"status": "accepted"}, None).status == 409
+    assert who.update_upgrade(upgrade_id, {"status": "released", "version": "0.4.0"}, None).status == 200
+    assert who.update_upgrade(upgrade_id, {"status": "declined"}, None).status == 409
+    assert agent.dashboard()["badges"] == {
+        "approvals_pending": 0,
+        "approvals_todo": 0,
+        "inbox_unread": 1,
+        "upgrades_new": 0,
+    }
+    message_id = rows(agent, "SELECT id FROM messages WHERE sender = 'agent'")[0]["id"]
+    assert who.mark_read({"up_to_id": message_id}).body == {"marked": 1}
+    assert agent.dashboard()["badges"]["inbox_unread"] == 0
+    assert who.send_message({"text": "  "}, None).body["field"] == "text"
+    assert who.send_message({"text": "bad \x07 bell"}, None).body["field"] == "text"
+    agent.run_cycle("schedule")
+    planned = sent_text(transport.sent[-1])
+    assert "released in version 0.4.0" in planned and "next week" in planned
+
+
+def test_the_kill_switch_and_its_reset(data_dir: Path) -> None:
+    agent, transport = make_agent(data_dir, [])
+    economy = agent.economy
+    assert apply_kill_switch_reset(agent.db, economy, 0) is False  # first start: remembered
+    wrong = kill(agent.db, economy, "Ember", {"confirm_name": "ember"}, None)
+    assert wrong.status == 422 and economy.status().state == "alive"
+    done = kill(agent.db, economy, "Ember", {"confirm_name": "Ember", "reason": "testing"}, "Stefan")
+    assert done.status == 200 and done.body["state"] == "killed"
+    assert agent.decide().run is False
+    end = agent.run_cycle("owner")
+    assert end.status in ("skipped", "refused") and transport.sent == []
+    assert apply_kill_switch_reset(agent.db, economy, 0) is False  # unchanged option: still killed
+    assert economy.status().state == "killed"
+    assert apply_kill_switch_reset(agent.db, economy, 1) is True
+    assert economy.status().state == "alive"
+    assert agent.db.get_meta(KILLED_KEY) == "0"
+
+
+CHANGELOG = """<!-- notes -->
+
+## 0.3.0
+
+Third.
+
+## 0.2.0
+
+Second.
+
+## 0.1.10
+
+Tenth.
+
+## 0.1.1
+
+First fix.
+"""
+
+
+def test_changelog_news(tmp_path: Path) -> None:
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text(CHANGELOG, encoding="utf-8")
+    first = news.changelog_news(path, None, "0.3.0")
+    assert "Third." in first and "Second." not in first
+    upgraded = news.changelog_news(path, "0.1.1", "0.3.0")
+    assert upgraded.index("Third.") < upgraded.index("Second.") < upgraded.index("Tenth.")
+    assert "First fix." not in upgraded and "from 0.1.1 to 0.3.0" in upgraded
+    assert news.changelog_news(path, "0.3.0", "0.3.0") == ""
+    assert "downgraded from 0.4.0 to 0.3.0" in news.changelog_news(path, "0.4.0", "0.3.0")
+    assert news.changelog_news(tmp_path / "missing.md", None, "0.3.0") == ""
+
+
+def test_the_agent_hears_about_its_upgrade_once(
+    data_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text(CHANGELOG, encoding="utf-8")
+    monkeypatch.setattr(paths, "CHANGELOG_PATH", path)
+    monkeypatch.setattr("app.agent.loop.app_version", lambda: "0.3.0")
+    agent, transport = make_agent(data_dir, [plan(steps=[], sleep=600), plan(steps=[], sleep=600)])
+    agent.db.set_meta(news.changelog_key("dry_run"), "0.2.0")
+    agent.run_cycle("schedule")
+    assert "YOUR SOFTWARE" in sent_text(transport.sent[-1]) and "Third." in sent_text(transport.sent[-1])
+    agent.run_cycle("schedule")
+    assert "YOUR SOFTWARE" not in sent_text(transport.sent[-1])
+
+
+def test_the_agent_never_imports_the_owner_side() -> None:
+    agent_dir = Path(__file__).resolve().parent.parent / "app" / "agent"
+    for source in agent_dir.glob("*.py"):
+        if source.name == "owner.py":
+            continue
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                names = [node.module or ""] + [a.name for a in node.names]
+                assert "owner" not in names and not (node.module or "").endswith(".owner"), source.name
+            elif isinstance(node, ast.Import):
+                assert not any(a.name.endswith(".owner") for a in node.names), source.name
+
+
+def test_owner_routes(ingress_client: TestClient) -> None:
+    assert post(ingress_client, "api/inbox", {"text": "Hello Ember"}).status_code == 201
+    inbox = ingress_client.get("api/dashboard").json()["inbox"]
+    assert inbox[0]["text"] == "Hello Ember" and inbox[0]["entered_by"] == "Stefan"
+    assert post(ingress_client, "api/approvals/7/decide", {"decision": "approve"}).status_code == 404
+    assert post(ingress_client, "api/upgrades/7", {"status": "accepted"}).status_code == 404
+    assert post(ingress_client, "api/inbox/read", {"up_to_id": 1}).json() == {"marked": 0}
+    assert post(ingress_client, "api/control/kill", {"confirm_name": "nope"}).status_code == 422
+    assert post(ingress_client, "api/control/kill", {"confirm_name": "Ember"}, headers={}).status_code == 403
+    assert post(ingress_client, "api/control/kill", {"confirm_name": "Ember"}).json() == {"state": "killed"}
+    sensors = ingress_client.get("api/sensors").json()
+    assert sensors["state"] == "killed" and sensors["kill_switch_engaged"] is True
+    assert {"approvals_pending", "inbox_unread", "next_wake_at"} <= set(sensors)
+    assert post(ingress_client, "api/control/resume").json()["state"] == "killed"  # resume never clears a kill
+    assert CSRF["X-Ember-Request"] == "1"

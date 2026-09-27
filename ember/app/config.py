@@ -114,6 +114,7 @@ class Settings(BaseModel):
     price_table: tuple[ModelPrice, ...] = DEFAULT_PRICE_TABLE
     web_search_usd_per_1000: float = Field(default=10.0, ge=MIN_PRICE, le=1_000)
     dry_run: bool = True
+    kill_switch_reset: int = Field(default=0, ge=0, le=1_000_000)
     log_level: Literal["debug", "info", "warning", "error"] = "info"
 
     @field_validator("anthropic_api_key", mode="before")

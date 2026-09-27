@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
 from . import events, paths
+from .agent.owner import apply_kill_switch_reset
 from .agent.scheduler import Scheduler
 from .agent.service import Agent
 from .config import LoadedSettings, load_settings
@@ -144,6 +145,7 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
     try:
         economy = Economy(database, loaded, lock=ProcessLock(lock_path(paths.data_dir())))
         economy.start()
+        apply_kill_switch_reset(database, economy, loaded.settings.kill_switch_reset)
     except Exception as exc:  # noqa: BLE001 - the dashboard must still come up
         state.economy_error = redact(f"{type(exc).__name__}: {exc}")
         log.exception("The economy could not start; model calls are disabled")

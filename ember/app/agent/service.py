@@ -318,6 +318,14 @@ class Agent:
 
         return views.dashboard(self)
 
+    def sensor_fields(self) -> dict[str, Any]:
+        from . import views
+
+        with self.db.connection() as conn:
+            counts = views.badges(conn, self.scope())
+        wake = self._meta_time("next_wake_at") if self.blocked_reason() is None else None
+        return {**counts, "next_wake_at": to_iso(wake) if wake else None, "cycle_running": self.running_cycle}
+
     def cycle_detail(self, cycle_id: int) -> dict[str, Any] | None:
         from . import views
 

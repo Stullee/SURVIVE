@@ -30,7 +30,7 @@ from ..economy.metering import CallFailed, CallRefused, CallResult, MeteredModel
 from ..economy.pricing import LAST_WILL, PLANNER_OPENING
 from ..economy.service import Economy
 from ..version import app_version
-from . import context, netguard, prompts, store, tools
+from . import context, netguard, news, prompts, store, tools
 from .memory import Memory
 from .sandbox import Jail
 from .store import AgentScope
@@ -215,6 +215,7 @@ class CycleRunner:
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
         local = self.clock.now().astimezone(self.clock.tz).strftime("%A %Y-%m-%d %H:%M %Z")
         with self.db.connection() as conn:
+            fresh = news.collect(conn, self.db, self.scope, app_version())
             return context.snapshot(
                 conn,
                 self.scope,
@@ -227,6 +228,7 @@ class CycleRunner:
                 today_spend=today,
                 daily_cap=self.settings.daily_spend_cap_usd,
                 cycle_cap=self.settings.cycle_spend_cap_usd,
+                news=fresh,
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> CallResult:
@@ -271,6 +273,8 @@ class CycleRunner:
         plan = self._parse_plan(text)
         if plan is None:
             return CycleEnd("failed", "the plan wasn't valid JSON")
+        with self.db.transaction() as conn:
+            news.mark_seen(conn, self.db, self.scope, cycle_id, snap.news, [m["id"] for m in snap.owner_messages])
         focus = None
         with self.db.connection() as conn:
             if plan.focus_project_id is not None:

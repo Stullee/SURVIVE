@@ -14,8 +14,10 @@ from fastapi import APIRouter, Body, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from . import diagnostics
+from .agent import owner as owner_side
 from .db import utcnow
 from .economy.ledger import OWNER_KINDS
+from .economy.life import KILLED_KEY
 from .economy.service import Economy, Reply
 from .logging_setup import printable
 from .paths import WEB_DIR
@@ -91,6 +93,7 @@ def dashboard(request: Request) -> dict[str, Any]:
         "inbox": [],
         "upgrades": [],
         "mind": None,
+        "badges": None,
     }
     if economy is not None:
         payload.update(economy.dashboard())
@@ -143,6 +146,9 @@ def sensors(request: Request) -> JSONResponse:
         }
     else:
         data = economy.sensors()
+        data["kill_switch_engaged"] = state.db.get_meta(KILLED_KEY) == "1"
+        if state.agent is not None:
+            data.update(state.agent.sensor_fields())
     data["dry_run"] = data["mode"] == "dry_run"  # kept from 0.1.x for existing sensor setups
     data["updated_at"] = utcnow()
     return JSONResponse(data)
@@ -220,6 +226,70 @@ def wake(request: Request) -> JSONResponse:
     if status == 202 and state.scheduler is not None:
         state.scheduler.poke()
     return JSONResponse(body, status_code=status)
+
+
+@router.post("/api/control/kill")
+def kill(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    state = _state(request)
+    if state.economy is None:
+        return UNAVAILABLE
+    reply = owner_side.kill(state.db, state.economy, state.loaded.settings.agent_name, body, _owner(request))
+    _poke(request)
+    return _reply(reply)
+
+
+def _owner_actions(request: Request) -> owner_side.Owner | None:
+    state = _state(request)
+    if state.economy is None or state.agent is None:
+        return None
+    return owner_side.Owner(
+        state.db, state.economy.clock, state.economy, state.agent.scope(), state.loaded.settings.agent_name
+    )
+
+
+NO_AGENT = JSONResponse({"error": "the agent is not available, see the system log"}, status_code=503)
+ItemId = Annotated[int, Path(ge=1, le=2**62)]
+
+
+@router.post("/api/approvals/{approval_id}/decide")
+def decide_approval(request: Request, approval_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    reply = actions.decide(approval_id, body, _owner(request))
+    return _reply(reply)
+
+
+@router.post("/api/approvals/{approval_id}/close")
+def close_approval(request: Request, approval_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.close(approval_id, body, _owner(request)))
+
+
+@router.post("/api/inbox")
+def send_message(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.send_message(body, _owner(request)))
+
+
+@router.post("/api/inbox/read")
+def mark_read(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.mark_read(body))
+
+
+@router.post("/api/upgrades/{upgrade_id}")
+def update_upgrade(request: Request, upgrade_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.update_upgrade(upgrade_id, body, _owner(request)))
 
 
 @router.get("/api/cycles/{cycle_id}")

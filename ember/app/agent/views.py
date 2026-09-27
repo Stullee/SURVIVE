@@ -19,6 +19,16 @@ def _usd(micros: int | None) -> float:
     return micros_to_usd(int(micros or 0))
 
 
+def badges(conn: sqlite3.Connection, scope: store.AgentScope) -> dict[str, int]:
+    """What waits for the owner (also in the Home Assistant sensor, so counts only, no text)."""
+    return {
+        "approvals_pending": store.count_rows(conn, "approvals", scope, "status = 'pending'"),
+        "approvals_todo": store.count_rows(conn, "approvals", scope, "status IN ('approved', 'approved_with_changes')"),
+        "inbox_unread": store.count_rows(conn, "messages", scope, "sender = 'agent' AND read_at IS NULL"),
+        "upgrades_new": store.count_rows(conn, "upgrades", scope, "status = 'new'"),
+    }
+
+
 def dashboard(agent: Agent) -> dict[str, Any]:
     scope = agent.scope()
     simulated = 1 if agent.mode == "dry_run" else 0
@@ -56,6 +66,15 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "expected_benefit": r["expected_benefit"],
                 "status": r["status"],
                 "project_id": r["project_id"],
+                "version": r["version"],
+                "decided_at": r["decided_at"],
+                "decided_by": r["decided_by"],
+                "decision_comment": r["decision_comment"],
+                "final_payload": r["final_payload"],
+                "closed_at": r["closed_at"],
+                "result_note": r["result_note"],
+                "result_link": r["result_link"],
+                "seen_by_agent": r["seen_cycle_id"] is not None,
                 "simulated": r["mode"] == "dry_run",
             }
             for r in store.queue(conn, "approvals", scope)
@@ -67,6 +86,8 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "sender": r["sender"],
                 "text": r["text"],
                 "read_at": r["read_at"],
+                "entered_by": r["entered_by"],
+                "seen_by_agent": r["seen_cycle_id"] is not None,
                 "simulated": r["mode"] == "dry_run",
             }
             for r in store.queue(conn, "messages", scope)
@@ -81,12 +102,17 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "expected_benefit": r["expected_benefit"],
                 "priority": r["priority"],
                 "status": r["status"],
+                "decided_at": r["decided_at"],
+                "owner_note": r["owner_note"],
+                "released_version": r["released_version"],
                 "simulated": r["mode"] == "dry_run",
             }
             for r in store.queue(conn, "upgrades", scope)
         ]
         will = store.last_will(conn, scope.life_id) if scope.life_id else None
+        counts = badges(conn, scope)
     return {
+        "badges": counts,
         "now": now,
         "projects": projects,
         "activity": activity,

@@ -19,17 +19,19 @@ from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from . import store
 from .memory import Memory
+from .news import News
 from .sandbox import Jail
 from .store import AgentScope
 
 PLANNER_BUDGETS = {
     "status": 500,
-    "news": 1_500,
+    "news": 2_300,
+    "software": 1_200,
     "projects": 2_000,
     "pending": 400,
     "strategy": 2_000,
-    "identity": 800,
-    "lessons": 1_500,
+    "identity": 600,
+    "lessons": 1_300,
     "journal": 600,
     "workspace": 400,
 }
@@ -83,6 +85,7 @@ class Snapshot:
     memory: dict[str, str] = field(default_factory=dict)
     workspace: list[str] = field(default_factory=list)
     journal: list[sqlite3.Row] = field(default_factory=list)
+    news: News = field(default_factory=News)
 
 
 def snapshot(
@@ -98,6 +101,7 @@ def snapshot(
     today_spend: int,
     daily_cap: float,
     cycle_cap: float,
+    news: News | None = None,
 ) -> Snapshot:
     projects = store.open_projects(conn, scope)
     money: dict[int, tuple[int, int]] = {}
@@ -134,6 +138,7 @@ def snapshot(
         memory=memory.read_all(),
         workspace=files,
         journal=journal,
+        news=news or News(),
     )
 
 
@@ -180,8 +185,10 @@ def news_text(s: Snapshot) -> str:
         lines.append(f"Last cycle #{c['id']} ended {c['status']}" + (f" ({c['note']})" if c["note"] else "") + ".")
     if s.last_journal is not None:
         lines.append(f"Your last journal summary: {s.last_journal['summary']}")
+    lines.extend(s.news.approval_lines())
     for m in s.owner_messages:
-        lines.append(f"Message from your owner ({m['created_at']}): {m['text']}")
+        lines.append(f"Message from your owner ({m['created_at']}): {json.dumps(m['text'], ensure_ascii=False)}")
+    lines.extend(s.news.upgrade_lines())
     return "\n".join(lines) or "Nothing new."
 
 
@@ -191,6 +198,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> str:
     parts = [
         ("STATUS", cut(status_text(s, dry_run), b["status"])),
         ("SINCE YOUR LAST WAKE", cut(news_text(s), b["news"])),
+        *([("YOUR SOFTWARE", cut(s.news.changelog, b["software"]))] if s.news.changelog else []),
         ("OPEN PROJECTS", cut(project_lines(s), b["projects"])),
         ("WAITING FOR YOUR OWNER", cut(pending, b["pending"])),
         ("STRATEGY", cut(s.memory.get("strategy", ""), b["strategy"])),
