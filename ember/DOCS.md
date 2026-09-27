@@ -80,7 +80,10 @@ Amounts are typed like `12.50` or `12,50` (at most two decimals). Entries can be
 in USD or EUR; for EUR you enter the exchange rate and the original amount is
 kept. You can date an entry up to a year back. Ember asks for confirmation when
 an amount is far larger than your usual ones, or when an entry would make the
-agent critical or end its life. Sending the same form twice records it once.
+agent critical or end its life; the confirmation covers only the outcome it
+showed you. Sending the same form twice records it once. An API cost decrease
+(a refund) can't be larger than the API cost recorded on its day, and it never
+adds room under that day's spending cap.
 
 **Spending limits.** Before every API call Ember works out the most the call
 could cost and refuses it if that could break the per-cycle cap, the daily cap
@@ -141,6 +144,11 @@ numbers are empty.
 
 - The dashboard is only reachable through Home Assistant Ingress, so only
   logged-in Home Assistant users can open it. Direct connections are refused.
+  Any Home Assistant user can open it, not only administrators (hiding the
+  sidebar entry doesn't stop a direct link), and the user name Ember records
+  next to an entry comes from a header that users can forge, so treat it as a
+  label. Phase 4 adds an optional owner passphrase for money entries and
+  approvals.
   The one exception is `/api/sensors`, which can be read from the Home Assistant
   host network (Home Assistant itself, and apps that use host networking). It
   only contains the agent's state, balance, runway and today's spending.
