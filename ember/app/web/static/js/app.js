@@ -41,6 +41,8 @@
     cycles: {},          // cycle id -> the Activity item built for it (patched in place on each poll)
     nowPlanKey: null,
     diag: { text: null, loadedAt: null, busy: false },
+    // The agent's files: the list and the open file are loaded when the tab opens and on Refresh, never polled.
+    ws: { list: null, loadedAt: null, busy: false, error: null, file: null, fileBusy: false, fileError: null, fileSeq: 0 },
     refocus: null,       // after the owner's own action: the card status line to focus once the list is re-rendered
     sending: false,      // an inbox message is on its way
     markingRead: false,
@@ -511,7 +513,7 @@
     header: "Header", controls: "Controls", kpis: "Key numbers", badges: "Tab badges", memorial: "Memorial",
     now: "Now", lives: "Previous lives", charts: "Charts", table: "Table", ledger: "Ledger", forms: "Forms",
     projects: "Projects", activity: "Activity", approvals: "Approvals", inbox: "Inbox", upgrades: "Upgrades", mind: "Mind",
-    cycleDetail: "Cycle details", diagnostics: "Diagnostics",
+    cycleDetail: "Cycle details", diagnostics: "Diagnostics", workspace: "Workspace", workspaceFile: "Workspace file",
   };
 
   // True while the user has keyboard focus or selected text inside the element: rebuilding it would take them away.
@@ -589,7 +591,7 @@
     section("activity", [d.activity, minute], null, function () { return renderActivity(arr(d.activity)); });
     // Owner queues: patched card by card, so an open decision form keeps what the owner typed.
     section("approvals", [d.approvals, projectTitles(d), coming, agent.name, minute], null, function () { return renderApprovals(arr(d.approvals), projectTitles(d)); });
-    section("inbox", [d.inbox, d.badges, agent.name, coming, minute], ["inbox"], function () { renderInbox(arr(d.inbox), agent.name, badgeCounts(d).unread); });
+    section("inbox", [d.inbox, d.badges, agent.name, coming, d.mode, minute], ["inbox"], function () { renderInbox(arr(d.inbox), agent.name, badgeCounts(d).unread, isDryRun(d)); });
     section("upgrades", [d.upgrades, coming, agent.name, minute], null, function () { return renderUpgrades(arr(d.upgrades)); });
     section("mind", [d.mind, ui.mind, minute], ["mind-body"], function () { renderMind(d.mind); });
 
@@ -2229,7 +2231,7 @@
 
   // ---- Inbox
 
-  function renderInbox(messages, agentName, unread) {
+  function renderInbox(messages, agentName, unread, dry) {
     var el = $("inbox");
     var name = agentName || "Ember";
     var sorted = messages.slice().sort(function (x, y) { return byDate("created_at")(x, y) || num(x.id) - num(y.id); });
@@ -2263,6 +2265,9 @@
       text.placeholder = "Write to " + name + "…";
     }
     $("composer-label").textContent = "Message to " + name;
+    // In dry run the fake model answers: say so above the box, and to screen readers in it.
+    $("inbox-dry-note").hidden = !dry;
+    text.setAttribute("aria-describedby", (dry ? "inbox-dry-note " : "") + "composer-hint composer-count composer-error");
   }
 
   function composerCount() {
@@ -3382,9 +3387,211 @@
   $("diag-copy").addEventListener("click", copyDiagnostics);
   $("diag-download").addEventListener("click", downloadDiagnostics);
 
+  // ------------------------------------------------------------------ workspace
+  // The files the agent wrote. Their text is only ever shown with textContent, never rendered (an .html or .svg
+  // file stays text), and the server sends them as downloads, so opening the URL itself never renders them either.
+
+  var WS_MONO = /\.(csv|tsv|json|ya?ml|xml|html|css)$/i;
+
+  function baseName(path) {
+    var parts = String(path).split("/");
+    return parts[parts.length - 1] || "file.txt";
+  }
+
+  function setStatusText(id, text, kind) {
+    var el = $(id);
+    // A live region: only touch it when the text changes, or screen readers repeat it.
+    if (el.textContent !== text) el.textContent = text;
+    el.setAttribute("data-kind", kind || "");
+  }
+
+  function wsFileInfo(path) {
+    var files = ui.ws.list ? arr(ui.ws.list.files) : [];
+    for (var i = 0; i < files.length; i++) if (isObject(files[i]) && files[i].path === path) return files[i];
+    return null;
+  }
+
+  function refreshWorkspace() {
+    loadWorkspace();
+    if (ui.ws.file) loadWorkspaceFile();
+  }
+
+  function loadWorkspace() {
+    var ws = ui.ws;
+    if (ws.busy) return;
+    ws.busy = true;
+    safely("workspace", renderWorkspace);
+    request("GET", "api/workspace").then(function (res) {
+      if (!res.ok) throw httpError(res);
+      if (!isObject(res.data) || !Array.isArray(res.data.files)) throw new RequestError("malformed", res.data === undefined ? "not JSON" : "the file list is missing");
+      ws.list = res.data;
+      ws.loadedAt = new Date();
+      ws.error = null;
+      // A file from the other mode's folder (dry run was switched) is not in this workspace.
+      if (ws.file && ws.file.mode !== ws.list.mode) closeWorkspaceFile();
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      ws.error = err;
+    }).then(function () {
+      ws.busy = false;
+      safely("workspace", renderWorkspace);
+      safely("banners", renderBanners);
+    });
+  }
+
+  function renderWorkspace() {
+    var ws = ui.ws;
+    var list = ws.list;
+    $("ws-refresh").textContent = ws.busy ? "Refreshing…" : "Refresh";
+    var dry = list ? list.mode === "dry_run" : isDryRun(ui.data);
+    $("ws-sub").textContent = "Drafts, notes and research the agent wrote in its own folder. Read-only." +
+      (dry ? " Dry run: this is the dry-run folder, which starts empty with every dry-run session." : "");
+    setStatusText("ws-status", ws.error && !ws.busy ? "Couldn't load the file list (" + errorText(ws.error) + ")." +
+      (list ? " The list below is the one loaded earlier." : " Try Refresh.") : "", ws.error && !ws.busy ? "error" : "");
+    var summary = $("ws-summary");
+    summary.hidden = !list;
+    var el = $("ws-list");
+    if (!list) {
+      replace(el, ws.busy ? h("p", { class: "muted", text: "Loading the file list…" }) : []);
+      el.removeAttribute("data-key");
+      return;
+    }
+    var files = arr(list.files).filter(function (f) { return isObject(f) && typeof f.path === "string" && f.path; });
+    var parts = [plural(num(list.file_count) >= 0 ? list.file_count : files.length, "file"), byteSize(num(list.total_bytes) || 0)];
+    if (list.truncated) parts.push("only the first " + count(files.length) + " are listed");
+    parts.push(ws.busy ? "refreshing…" : "loaded at " + timeFmt.format(ws.loadedAt));
+    summary.textContent = parts.join(" · ");
+    var open = ws.file ? ws.file.path : null;
+    var key = JSON.stringify([files, open, dry]);
+    if (el.getAttribute("data-key") === key) return;
+    el.setAttribute("data-key", key);
+    // Keep keyboard focus on the same file when the list is rebuilt under it.
+    var focused = el.contains(document.activeElement) ? document.activeElement.getAttribute("data-path") : null;
+    if (!files.length) {
+      replace(el, emptyState("div", "No files yet.", "Drafts, notes and research show up here once the agent writes them." +
+        (dry ? " In dry run the folder starts empty with every session." : "")));
+      return;
+    }
+    replace(el, h("table", { class: "ws-files" },
+      h("caption", { class: "visually-hidden", text: "Files in the agent's workspace, by path" }),
+      h("thead", null, h("tr", null, h("th", { scope: "col", text: "File" }), h("th", { scope: "col", class: "num", text: "Size" }),
+        h("th", { scope: "col", text: "Modified" }))),
+      h("tbody", null, files.map(function (f) {
+        var slash = f.path.lastIndexOf("/");
+        var current = f.path === open;
+        return h("tr", { "data-open": current ? "true" : null },
+          h("td", { class: "ws-path" }, h("button", { type: "button", class: "ws-open", "data-path": f.path, "aria-current": current ? "true" : null },
+            slash >= 0 ? h("span", { class: "ws-dir", text: f.path.slice(0, slash + 1) }) : null,
+            h("span", { class: "ws-name", text: f.path.slice(slash + 1) }))),
+          h("td", { class: "num", text: byteSize(num(f.size) || 0) }),
+          h("td", { class: "ws-when" }, f.modified_at ? timeEl(f.modified_at, fmtDateTime(f.modified_at)) : "–"));
+      }))));
+    if (focused !== null) {
+      Array.prototype.forEach.call(el.querySelectorAll("button[data-path]"), function (b) { if (b.getAttribute("data-path") === focused) b.focus(); });
+    }
+  }
+
+  function openWorkspaceFile(path) {
+    var ws = ui.ws;
+    if (!ws.file || ws.file.path !== path) {
+      ws.file = { path: path, mode: ws.list ? ws.list.mode : null, text: null, loadedAt: null };
+    }
+    loadWorkspaceFile();
+    safely("workspace", renderWorkspace);
+    $("ws-file-title").focus();
+  }
+
+  function closeWorkspaceFile() {
+    var ws = ui.ws;
+    ws.file = null;
+    ws.fileSeq++;  // an answer still on its way is dropped
+    ws.fileBusy = false;
+    ws.fileError = null;
+    safely("workspaceFile", renderWorkspaceFile);
+  }
+
+  function loadWorkspaceFile() {
+    var ws = ui.ws;
+    var file = ws.file;
+    if (!file) return;
+    var seq = ++ws.fileSeq;  // only the latest request counts (the owner may open another file meanwhile)
+    ws.fileBusy = true;
+    ws.fileError = null;
+    safely("workspaceFile", renderWorkspaceFile);
+    request("GET", "api/workspace/file?path=" + encodeURIComponent(file.path), null, { accept: "text/plain" }).then(function (res) {
+      if (seq !== ws.fileSeq) return;
+      if (!res.ok) throw httpError(res);
+      if (typeof res.text !== "string") throw new RequestError("malformed", "no text");
+      file.text = res.text;
+      file.loadedAt = new Date();
+    }).catch(function (err) {
+      if (seq !== ws.fileSeq) return;
+      if (!(err instanceof RequestError)) console.error(err);
+      ws.fileError = err;
+    }).then(function () {
+      if (seq !== ws.fileSeq) return;
+      ws.fileBusy = false;
+      safely("workspaceFile", renderWorkspaceFile);
+      safely("banners", renderBanners);
+    });
+  }
+
+  function renderWorkspaceFile() {
+    var ws = ui.ws;
+    var file = ws.file;
+    $("ws-viewer").hidden = !file;
+    if (!file) return;
+    var has = typeof file.text === "string";
+    var info = wsFileInfo(file.path);
+    $("ws-file-title").textContent = file.path;
+    var meta = [];
+    if (info) meta.push(byteSize(num(info.size) || 0), "modified " + fmtDateTime(info.modified_at));
+    if (has) meta.push(ws.fileBusy ? "reloading…" : "loaded at " + timeFmt.format(file.loadedAt));
+    $("ws-file-meta").textContent = meta.join(" · ");
+    $("ws-download").disabled = !has;
+    var status = "";
+    if (ws.fileError && !ws.fileBusy) status = "Couldn't open the file (" + errorText(ws.fileError) + ")." + (has ? " The text below is the one loaded earlier." : "");
+    else if (!has && ws.fileBusy) status = "Loading the file…";
+    else if (has && !file.text) status = "The file is empty.";
+    setStatusText("ws-file-status", status, ws.fileError && !ws.fileBusy ? "error" : "");
+    var pre = $("ws-text");
+    pre.hidden = !has || !file.text;
+    if (!has) return;
+    pre.className = "ws-text" + (WS_MONO.test(file.path) ? " mono" : "");
+    // Unchanged text keeps its scroll position and any selection.
+    if (pre.getAttribute("data-path") !== file.path) {
+      pre.textContent = file.text;
+      pre.setAttribute("data-path", file.path);
+      pre.scrollTop = 0;
+    } else if (pre.textContent !== file.text) {
+      pre.textContent = file.text;
+    }
+  }
+
+  // Saved from the text already loaded (like the diagnostics report), never by opening the file's URL.
+  function downloadWorkspaceFile() {
+    var file = ui.ws.file;
+    if (!file || typeof file.text !== "string") return;
+    var name = baseName(file.path);
+    var url = window.URL.createObjectURL(new Blob([file.text], { type: "text/plain;charset=utf-8" }));
+    var link = h("a", { href: url, download: name, hidden: true });
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(function () { window.URL.revokeObjectURL(url); }, 60000);
+    setStatusText("ws-file-status", "Saved as " + name + " (check your downloads).", "ok");
+  }
+
+  $("ws-refresh").addEventListener("click", refreshWorkspace);
+  $("ws-download").addEventListener("click", downloadWorkspaceFile);
+  $("ws-list").addEventListener("click", function (ev) {
+    var btn = ev.target.closest ? ev.target.closest("button[data-path]") : null;
+    if (btn) openWorkspaceFile(btn.getAttribute("data-path"));
+  });
+
   // ------------------------------------------------------------------ tabs
 
-  var TABS = ["overview", "ledger", "projects", "activity", "approvals", "inbox", "upgrades", "mind", "system", "diagnostics"];
+  var TABS = ["overview", "ledger", "projects", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
   var MIND_TABS = ["strategy", "lessons", "identity", "journal"];
 
   // Arrow keys, Home and End move between tabs; focus follows the selection.
@@ -3412,6 +3619,7 @@
     });
     if (focus) $("tab-" + name).focus();
     if (name === "overview" && ui.charts.flow) { ui.charts.flow.resize(); ui.charts.balance.resize(); }
+    if (name === "workspace") refreshWorkspace();
   }
 
   function selectMind(name, focus) {

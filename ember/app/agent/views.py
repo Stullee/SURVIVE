@@ -1,18 +1,29 @@
-"""Dashboard data for the agent's sections: Now, Projects, Activity, Mind, and the owner queues."""
+"""Dashboard data for the agent's sections: Now, Projects, Activity, Mind, Workspace, and the owner queues."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from . import store
+from .sandbox import Entry, Jail, SandboxError
 
 if TYPE_CHECKING:
     from .service import Agent
 
 ACTIVITY_CYCLES = 10
+
+
+class WorkspaceFileError(ValueError):
+    """A workspace file the owner can't open; the message is safe to show."""
+
+    def __init__(self, message: str, status: int = 400) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 def _usd(micros: int | None) -> float:
@@ -285,3 +296,84 @@ def cycle_detail(agent: Agent, cycle_id: int) -> dict[str, Any] | None:
             for t in tool_rows
         ],
     }
+
+
+# --- workspace ---
+
+
+def workspace(agent: Agent) -> dict[str, Any]:
+    """The files in the agent's workspace, walked folder by folder through the jail (links are never listed)."""
+    jail = agent.roots()[0]
+    limit = jail.limits.max_files
+    files: list[Entry] = []
+    folders = [""]
+    visited = 0
+    truncated = False
+    while folders:
+        if visited >= limit or len(files) > limit:
+            truncated = True
+            break
+        visited += 1
+        try:
+            entries = jail.listing(folders.pop())
+        except SandboxError:
+            continue  # swapped for a link, or deeper than the agent can reach
+        for entry in entries:
+            if entry.is_dir:
+                folders.append(entry.path)
+            elif _openable(jail, entry.path):
+                files.append(entry)
+    files.sort(key=lambda e: e.path)
+    if len(files) > limit:
+        files, truncated = files[:limit], True
+    return {
+        "mode": agent.mode,
+        "files": [
+            {"path": e.path, "size": e.size, "modified_at": to_iso(datetime.fromtimestamp(e.modified, UTC))}
+            for e in files
+        ],
+        "file_count": len(files),
+        "total_bytes": sum(e.size for e in files),
+        "truncated": truncated,
+    }
+
+
+def _openable(jail: Jail, path: str) -> bool:
+    """Only files the jail would read: plain names, text extensions."""
+    try:
+        jail.parts(path)
+    except SandboxError:
+        return False
+    return True
+
+
+def workspace_file(agent: Agent, path: str) -> tuple[str, str]:
+    """(file name, text) of one workspace file, read through the jail."""
+    jail = agent.roots()[0]
+    try:
+        parts = jail.parts(path)
+        entry = _find(jail, parts)
+        if entry is None:
+            raise WorkspaceFileError(f"{'/'.join(parts)} doesn't exist", 404)
+        if entry.is_dir:
+            raise WorkspaceFileError(f"{entry.path} is a folder, not a file")
+        if entry.size > jail.limits.max_file_bytes:
+            raise WorkspaceFileError(
+                f"{entry.path} is larger than {jail.limits.max_file_bytes // 1024} KB, so it can't be opened here"
+            )
+        return parts[-1], jail.read(entry.path)
+    except SandboxError as exc:
+        raise WorkspaceFileError(str(exc)) from None
+
+
+def _find(jail: Jail, parts: list[str]) -> Entry | None:
+    """The entry at ``parts``, looked up folder by folder in the jail's listings."""
+    entry = None
+    for depth in range(1, len(parts) + 1):
+        if entry is not None and not entry.is_dir:
+            return None
+        wanted = "/".join(parts[:depth])
+        entry = next((e for e in jail.listing("/".join(parts[: depth - 1])) if e.path == wanted), None)
+        if entry is None:
+            return None
+    return entry

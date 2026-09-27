@@ -9,12 +9,14 @@ from __future__ import annotations
 import contextlib
 import html
 from typing import Annotated, Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Path, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from . import diagnostics
 from .agent import owner as owner_side
+from .agent.views import WorkspaceFileError
 from .db import utcnow
 from .economy.ledger import OWNER_KINDS
 from .economy.life import KILLED_KEY
@@ -299,6 +301,46 @@ def cycle(request: Request, cycle_id: Annotated[int, Path(ge=1, le=2**62)]) -> J
     if detail is None:
         return JSONResponse({"error": "no such wake cycle"}, status_code=404)
     return JSONResponse(detail)
+
+
+@router.get("/api/workspace")
+def workspace(request: Request) -> JSONResponse:
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    return JSONResponse(agent.workspace())
+
+
+@router.get("/api/workspace/file")
+def workspace_file(request: Request, path: str = "") -> Response:
+    """One file the agent wrote, as plain text that browsers always download and never render.
+
+    The dashboard shares Home Assistant's origin, so agent-written HTML or SVG must never be
+    rendered here: the file is an attachment in a sandbox without any sources, and not sniffed.
+    """
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    try:
+        name, text = agent.workspace_file(path)
+    except WorkspaceFileError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=exc.status)
+    return PlainTextResponse(
+        text,
+        headers={
+            "content-disposition": _attachment(name),
+            "content-security-policy": "sandbox; default-src 'none'",
+            "x-content-type-options": "nosniff",
+            "cache-control": "no-store",
+        },
+    )
+
+
+def _attachment(name: str) -> str:
+    """A Content-Disposition value with a plain ASCII name and the exact one (RFC 6266, RFC 5987)."""
+    clean = "".join(c for c in name if c.isprintable() and c not in "\"'\\/;%").strip() or "file.txt"
+    fallback = clean.encode("ascii", "replace").decode("ascii").replace("?", "_")
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(clean, safe='')}"
 
 
 @router.get("/api/diagnostics")

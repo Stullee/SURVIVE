@@ -82,6 +82,7 @@
     <button type="button" role="tab" class="tab" id="tab-inbox" aria-controls="panel-inbox" aria-selected="false">Inbox <span class="badge" id="badge-inbox" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-upgrades" aria-controls="panel-upgrades" aria-selected="false">Upgrades <span class="badge" id="badge-upgrades" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-mind" aria-controls="panel-mind" aria-selected="false">Mind</button>
+    <button type="button" role="tab" class="tab" id="tab-workspace" aria-controls="panel-workspace" aria-selected="false">Workspace</button>
     <button type="button" role="tab" class="tab" id="tab-system" aria-controls="panel-system" aria-selected="false">System <span class="badge badge-alert" id="badge-system" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-diagnostics" aria-controls="panel-diagnostics" aria-selected="false">Diagnostics</button>
   </nav>
@@ -220,6 +221,7 @@
         </div>
         <p class="form-status" id="inbox-status" role="status"></p>
         <ol class="chat" id="inbox"></ol>
+        <p class="card-note" id="inbox-dry-note" hidden>Dry run: replies come from Ember's built-in fake model, which doesn't understand your messages. With dry run off, Claude reads and answers them.</p>
         <form class="composer" id="composer" novalidate>
           <div class="composer-field">
             <label class="visually-hidden" for="composer-text" id="composer-label">Message to the agent</label>
@@ -248,6 +250,33 @@
         </div>
         <p class="muted small" id="mind-note">Read-only. The agent keeps these notes itself.</p>
         <div id="mind-body" class="mind-body" role="tabpanel" aria-labelledby="mind-tab-strategy" tabindex="0"></div>
+      </article>
+    </section>
+
+    <section class="panel" id="panel-workspace" role="tabpanel" aria-labelledby="tab-workspace" hidden>
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <h2>Files</h2>
+            <p class="card-sub" id="ws-sub">Drafts, notes and research the agent wrote in its own folder. Read-only.</p>
+          </div>
+          <button type="button" class="btn" id="ws-refresh">Refresh</button>
+        </div>
+        <p class="form-status" id="ws-status" role="status"></p>
+        <p class="muted small ws-summary" id="ws-summary" hidden></p>
+        <div class="table-wrap ws-list" id="ws-list"></div>
+      </article>
+      <article class="card" id="ws-viewer" aria-labelledby="ws-file-title" hidden>
+        <div class="card-head">
+          <div>
+            <h2 class="ws-file-title" id="ws-file-title" tabindex="-1"></h2>
+            <p class="muted small" id="ws-file-meta"></p>
+          </div>
+          <button type="button" class="btn" id="ws-download" disabled>Download</button>
+        </div>
+        <p class="card-note">Written by the agent. Check it before you use it.</p>
+        <p class="form-status" id="ws-file-status" role="status"></p>
+        <pre class="ws-text" id="ws-text" tabindex="0" hidden></pre>
       </article>
     </section>
 

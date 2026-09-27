@@ -73,7 +73,9 @@ you press **Wake now**), it runs one **wake cycle**:
    long to sleep.
 
 Every call and every tool use is shown on the dashboard (click a cycle under
-**Activity** for the details). The agent can't reach the internet except
+**Activity** for the details). In dry run the fake model doesn't understand
+your messages, so its replies in the **Inbox** are canned (the Inbox says so
+above the message box); with dry run off, Claude reads and answers them. The agent can't reach the internet except
 through Anthropic's web search (and page reading, if you allow it), can't run
 programs and can't touch anything outside its own folders. Its spending limits,
 the approval rule and its tools are enforced in code, not only in its
@@ -93,6 +95,10 @@ in the memorial if it dies.
   money, record the revenue.
 - **Inbox**: the agent's messages to you, and yours to it. It reads yours at
   its next wake-up.
+- **Workspace**: the files the agent writes in its own folder (drafts, notes,
+  research), so you can review a draft before you approve anything. Open a file
+  to read it or download it. It is always shown as plain text, never as a web
+  page; check it before you use it. In dry run you see the dry-run folder.
 - **Upgrade requests**: ideas for changing Ember's code. Accept, decline, or mark
   one released with the version that contains it. After an update the agent
   reads what changed in the release notes.

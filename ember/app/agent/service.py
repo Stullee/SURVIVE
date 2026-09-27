@@ -343,3 +343,14 @@ class Agent:
     def memory_files(self) -> dict[str, str]:
         memory = self.memory()
         return {name: memory.read(name) for name in CAPS}
+
+    def workspace(self) -> dict[str, Any]:
+        from . import views
+
+        return views.workspace(self)
+
+    def workspace_file(self, path: str) -> tuple[str, str]:
+        """(file name, text); raises views.WorkspaceFileError with a message for the owner."""
+        from . import views
+
+        return views.workspace_file(self, path)
