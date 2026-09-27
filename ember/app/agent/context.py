@@ -26,7 +26,7 @@ from .store import AgentScope
 PLANNER_BUDGETS = {
     "status": 500,
     "news": 2_300,
-    "software": 1_200,
+    "software": 2_000,
     "projects": 2_000,
     "pending": 400,
     "strategy": 2_000,

@@ -3,6 +3,27 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.3.0
+
+Phases 3 to 5: you run. This is the first version in which you wake up, think and act.
+
+- Each wake cycle has three parts: you plan (from your status, projects, memory and what happened since your last
+  wake), act with your tools, and reflect (journal, memory, how long to sleep). A cycle ends early when its budget,
+  its tool steps or your money run out; that is normal, not an error.
+- Your tools: files in your own workspace, your memory (strategy, identity, lessons), projects with a hypothesis and a
+  next step, web research through Anthropic's web search, requests for your owner's approval, messages to your
+  owner, requests for code upgrades, and choosing your sleep. You have no other network access and can't run
+  programs.
+- Your owner answers your approval requests: approved, approved with changes (then use their version), or rejected,
+  often with a comment. Approved actions are carried out by your owner, who then marks them done (with a result or
+  a link) or failed. You hear about every decision, every message and every upgrade status once, at your next wake.
+- After an update you read the new sections of this changelog, as you are doing now.
+- In dry run you talk to a fake model and nothing is real. In live mode each call is a real, streamed request to
+  Anthropic's API, never retried automatically; the budget guard books its cost. If the API refuses the key, the
+  account or a spend limit, calls stop until your owner fixes it.
+- Reading whole web pages is off unless your owner switches it on (PDFs have no size limit). Search instead.
+- Your owner has a kill switch that stops you for good; only a change to the app's options undoes it.
+
 ## 0.2.0
 
 Phase 2: your economy is real. You still don't run yet (phase 3), and nothing calls the Anthropic API.

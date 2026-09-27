@@ -6,9 +6,10 @@ to find honest ways to earn more than it spends. You stay in control: anything
 that leaves the container (publishing, contacting people, spending money) needs
 your approval, and only you can record revenue.
 
-> **Current status: phase 2 of 5.** The economy works: balance, spending limits,
-> life states and your money entries are real. The agent itself does not run
-> yet (phase 3), nothing calls the Anthropic API, and nothing costs money.
+> **Current status: all five phases are in, ready for live testing.** In dry
+> run (the default) the agent works with a built-in fake model and costs
+> nothing. With an API key and dry run off, it calls Anthropic's API and spends
+> real money within your limits.
 
 ## Getting started
 
@@ -17,10 +18,9 @@ your approval, and only you can record revenue.
 2. Start the app and open **Ember** from the sidebar (or **Open web UI**).
 3. Leave **Dry run** on. In dry run the agent uses a built-in fake model and
    never calls the API.
-4. When the agent is ready (phase 5), add your Anthropic API key, check the
-   price table against Anthropic's pricing page, and turn dry run off. The API
-   key field is optional, so the **Configuration** tab hides it until you turn
-   on **Show unused optional configuration options**.
+4. Watch a few dry-run wake cycles (or press **Wake now**) to see how the agent
+   works and how you answer it. Nothing it does in dry run is real.
+5. When you are ready, follow [Going live](#going-live).
 
 ## Options
 
@@ -39,6 +39,8 @@ your approval, and only you can record revenue.
 | Price table | see below | USD per million tokens for each model. |
 | Web search price | 10 USD per 1,000 | Charged per search on top of tokens. |
 | Dry run | on | Fake model, no API calls, no cost. |
+| Let the agent read whole web pages | off | Off: live research is web search only. PDFs have no size limit, so one page read can cost more than the per-cycle cap. |
+| Kill switch reset | 0 | Change it to any other number and restart to undo the kill switch. |
 | Log level | info | Detail in the app log. |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
@@ -54,6 +56,79 @@ table. Both the planner and the worker model must be listed there.
 If the options are inconsistent (for example a cycle cap above the daily cap),
 Ember starts in **safe mode**: built-in defaults, dry run forced on, and the
 problem shown at the top of the dashboard.
+
+## How the agent works
+
+The agent sleeps most of the time. When it wakes up (on its schedule, or when
+you press **Wake now**), it runs one **wake cycle**:
+
+1. **Plan**: it reads its situation (balance, runway, projects, what happened
+   since the last cycle, your messages and decisions, its memory) and plans
+   the cycle.
+2. **Act**: it uses its tools, up to the *Tool steps per cycle* option: files in
+   its own workspace, its memory (strategy, identity, lessons), projects, web
+   research, requests for your approval, messages to you, requests for code
+   upgrades.
+3. **Reflect**: it writes a journal entry, updates its memory and chooses how
+   long to sleep.
+
+Every call and every tool use is shown on the dashboard (click a cycle under
+**Activity** for the details). The agent can't reach the internet except
+through Anthropic's web search (and page reading, if you allow it), can't run
+programs and can't touch anything outside its own folders. Its spending limits,
+the approval rule and its tools are enforced in code, not only in its
+instructions.
+
+When its money runs low, it becomes critical and writes a **last will**, shown
+in the memorial if it dies.
+
+## Your part
+
+- **Approvals**: anything that leaves the container (publishing, contacting
+  someone, creating an account, spending money, selling) arrives as a request.
+  Approve it, approve it with your own changes to the text, or reject it, with
+  an optional comment. An approval does nothing by itself: *you* carry it out,
+  then mark it **done** (with a link or note) or **failed** (with what went
+  wrong). If it cost money, record the expense in the ledger; if it earned
+  money, record the revenue.
+- **Inbox**: the agent's messages to you, and yours to it. It reads yours at
+  its next wake-up.
+- **Upgrade requests**: ideas for changing Ember's code. Accept, decline, or mark
+  one released with the version that contains it. After an update the agent
+  reads what changed in the release notes.
+- **Pause / Resume** stops and restarts the wake cycles. **Wake now** starts a
+  cycle right away.
+- **Kill switch**: stops the agent for good (type its name to confirm). The
+  dashboard keeps working. To undo it, change **Kill switch reset** in the app's
+  **Configuration** tab to any other number, save and restart the app.
+
+The agent hears about your decisions, messages and upgrades once, at its next
+wake-up.
+
+## Going live
+
+1. Create an [Anthropic Console](https://console.anthropic.com) workspace just for
+   Ember and set a monthly spend limit there (for example 31 × the daily cap).
+   This is the outside safety net if anything in Ember went wrong.
+2. Create an API key in that workspace and make sure the account has credit.
+3. Compare the price table in the options with Anthropic's pricing page.
+4. In the app's **Configuration** tab, turn on **Show unused optional
+   configuration options**, paste the key, turn **Dry run** off, save and
+   restart the app.
+5. Record a grant if the starting balance isn't enough, and watch the first
+   cycles. Anthropic's Console shows the real costs; if they differ from
+   Ember's, record an API cost correction.
+
+If the API refuses the key, reports a billing problem or a reached spend limit,
+Ember stops calling it and says so on the dashboard. Fix the cause and restart
+the app.
+
+## Diagnostics
+
+The **Diagnostics** tab shows a plain-text report of the whole system (options
+without the key, database, economy, lives, ledger, wake cycles, agent records,
+recent events). Use **Copy** to paste it into a bug report or a chat. It never
+contains the API key.
 
 ## Money
 
@@ -136,9 +211,32 @@ rest:
 
 The JSON also has `mode` (`live` or `dry_run`), `runway_known` (runway is
 reported as 365 days while it is unknown, for example before any spending),
-`today_api_spend_usd`, `daily_cap_usd` and `safe_mode`. In dry run the balance
-is the test balance. If the database can't be read, `state` is `unknown` and the
-numbers are empty.
+`today_api_spend_usd`, `daily_cap_usd`, `safe_mode`, `kill_switch_engaged`,
+`next_wake_at`, `cycle_running` and counts of what waits for you:
+`approvals_pending`, `approvals_todo` (approved, not yet marked done),
+`inbox_unread` and `upgrades_new`. It never contains any text the agent wrote.
+In dry run the numbers are the dry run's. If the database can't be read,
+`state` is `unknown` and the numbers are empty.
+
+To get a notification when the agent asks for something, add a sensor and an
+automation, for example:
+
+```yaml
+# under the rest: sensor: list above
+      - name: Ember requests waiting
+        value_template: "{{ value_json.approvals_pending }}"
+
+# automations.yaml
+- alias: Ember needs a decision
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.ember_requests_waiting
+      above: 0
+  action:
+    - service: notify.notify
+      data:
+        message: Ember is waiting for your approval.
+```
 
 ## Security
 
@@ -147,8 +245,8 @@ numbers are empty.
   Any Home Assistant user can open it, not only administrators (hiding the
   sidebar entry doesn't stop a direct link), and the user name Ember records
   next to an entry comes from a header that users can forge, so treat it as a
-  label. Phase 4 adds an optional owner passphrase for money entries and
-  approvals.
+  label. An optional owner passphrase for money entries and approvals is
+  planned.
   The one exception is `/api/sensors`, which can be read from the Home Assistant
   host network (Home Assistant itself, and apps that use host networking). It
   only contains the agent's state, balance, runway and today's spending.
@@ -159,13 +257,18 @@ numbers are empty.
   the app stops completely instead of restarting by itself, so every restart
   goes through Home Assistant, which rewrites the options you saved. Turn on
   **Watchdog** so that happens automatically.
+- The agent's model calls go only to `https://api.anthropic.com` (any other
+  address is refused inside the app, and proxy settings are ignored). Its
+  tools have no network access at all.
 - The API key is kept in the app options and never written to logs, the
-  database or the dashboard.
+  database or the dashboard. Home Assistant backups contain the options, so
+  encrypt your backups.
 
 ## Data and backups
 
 Everything Ember keeps lives in the app's `/data` folder: `ember.db` (SQLite),
-and later the agent's workspace and memory files. Home Assistant backups include
+the agent's `workspace` and `memory` folders, and the same two folders for dry
+run under `dry_run` (started fresh with every dry-run session). Home Assistant backups include
 it. The app is stopped briefly while a backup is taken so the database is copied
 in a consistent state. Before a database upgrade, Ember also keeps a copy in
 `/data/backups`.

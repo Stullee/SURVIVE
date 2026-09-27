@@ -12,13 +12,13 @@ everything that leaves the container, and only the owner can record revenue.
 |---|---|---|
 | 1 | Skeleton: app manifest, Dockerfile, Ingress dashboard with preview data, SQLite + migrations, docker-compose | **done** |
 | 2 | Economy: ledger, cost accounting, budget guard, runway, life states, money entry, chart | **done** |
-| 3 | Agent in dry run: wake cycle, fake model, local tools, memory, projects, activity | in progress |
-| 4 | Owner loop: approvals, inbox, upgrade requests, controls, changelog awareness | |
-| 5 | Go live: real Anthropic client, web search/fetch, prompt caching, final security and cost review | |
+| 3 | Agent in dry run: wake cycle, fake model, local tools, memory, projects, activity | **done** |
+| 4 | Owner loop: approvals, inbox, upgrade requests, controls, changelog awareness | **done** |
+| 5 | Go live: real Anthropic client, web search/fetch, prompt caching, final security and cost review | **done, in live testing** |
 
-The economy is real from phase 2 on; sections that arrive in later phases are
-shown as empty placeholders. Nothing calls the Anthropic API yet and nothing
-costs money.
+Dry run (the default) runs the whole agent with a built-in fake model at no
+cost. With an API key and dry run off it calls the Anthropic API and spends real
+money within the caps. Findings from live testing come next.
 
 ## Install in Home Assistant
 
@@ -36,7 +36,7 @@ Requirements: a Home Assistant installation with apps (Home Assistant OS) on amd
 
 All options, their defaults and the default price table are documented in
 [`ember/DOCS.md`](ember/DOCS.md), which Home Assistant also shows on the app's
-**Documentation** tab. Keep **Dry run** on until phase 5.
+**Documentation** tab, including the steps for going live.
 
 The default prices come from Anthropic's pricing page as of 2026-09-27
 (Sonnet 5: $2 / $10 per million input / output tokens, web search $10 per
@@ -69,9 +69,13 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   `hassio_api: false`; the s6 run script deletes it before Python starts. And
   whenever the Python process exits, the whole container stops instead of
   restarting in place, so a restart always goes through the Supervisor, which
-  rewrites `/data/options.json` from the options you saved. The remaining
-  guarantee is on later phases: the agent's tools must never be able to write
-  outside its workspace or control processes.
+  rewrites `/data/options.json` from the options you saved.
+- **The agent's reach.** Its file tools work inside its own folders only
+  (`ember/app/agent/sandbox.py`: no links, no absolute paths, size quotas). Its
+  tool handlers run with sockets, subprocesses and native libraries blocked by
+  an audit hook (`ember/app/agent/netguard.py`); in dry run the whole wake cycle
+  runs that way. The live transport only reaches `https://api.anthropic.com`
+  and ignores proxy variables (`ember/app/economy/anthropic_transport.py`).
 - **CSRF.** State-changing requests must carry an `X-Ember-Request: 1` header,
   which cross-site pages can't send.
 - **Strict CSP.** No inline scripts or styles; Chart.js is vendored, nothing is
@@ -134,8 +138,8 @@ GitHub Actions runs the same checks and builds the image for both architectures
 1. Bump `version` in `ember/config.yaml` (semantic versioning, e.g. `0.2.0`).
 2. Add a section at the top of `ember/CHANGELOG.md` whose heading is exactly
    `## 0.2.0` (Home Assistant matches this heading to show release notes). Write
-   it for the agent too: from phase 4 on, Ember reads new changelog entries after
-   an upgrade to learn what changed about itself.
+   it for the agent too: Ember reads new changelog entries at its first wake-up
+   after an upgrade to learn what changed about itself.
 3. Database changes go in a new migration, `ember/app/migrations/000N_name.sql`
    (numbered without gaps, never edit a released one). Ember backs up the
    database to `/data/backups` before applying it.

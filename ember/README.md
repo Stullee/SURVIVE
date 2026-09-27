@@ -10,4 +10,4 @@ of money and die, and that is an acceptable outcome.
 Dashboard through Ingress, hard spending caps enforced in code, dry-run mode
 with a fake model so you can try everything without spending money.
 
-**Status: phase 1 of 5 (skeleton with preview data; the agent does not run yet).**
+**Status: all five phases in, live testing (dry run is the default).**

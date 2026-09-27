@@ -37,7 +37,7 @@ class CallProfile:
 
 # The largest requests the agent builds (measured in tests/test_agent_requests.py, which keeps them in step):
 # the planning call that opens a wake cycle, and the last will. The agent never sends a bigger one.
-PLANNER_OPENING = CallProfile(input_tokens=8_800, max_tokens=1_200)
+PLANNER_OPENING = CallProfile(input_tokens=9_300, max_tokens=1_200)
 LAST_WILL = CallProfile(input_tokens=5_500, max_tokens=1_000)
 
 
