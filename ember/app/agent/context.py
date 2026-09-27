@@ -35,8 +35,10 @@ PLANNER_BUDGETS = {
     "journal": 600,
     "workspace": 400,
 }
-BRIEF_BUDGET = 5_000
-WILL_BUDGET = 4_500
+OWNER_BUDGET = 1_800  # the owner's decisions and messages, in the brief and the will context
+# The owner's section (and its heading) comes on top, so it never squeezes the rest.
+BRIEF_BUDGET = 5_000 + OWNER_BUDGET + 100
+WILL_BUDGET = 4_500 + OWNER_BUDGET + 100
 
 
 def json_bytes(text: str) -> int:
@@ -185,11 +187,23 @@ def news_text(s: Snapshot) -> str:
         lines.append(f"Last cycle #{c['id']} ended {c['status']}" + (f" ({c['note']})" if c["note"] else "") + ".")
     if s.last_journal is not None:
         lines.append(f"Your last journal summary: {s.last_journal['summary']}")
-    lines.extend(s.news.approval_lines())
-    for m in s.owner_messages:
-        lines.append(f"Message from your owner ({m['created_at']}): {json.dumps(m['text'], ensure_ascii=False)}")
-    lines.extend(s.news.upgrade_lines())
+    lines.extend(owner_lines(s))
     return "\n".join(lines) or "Nothing new."
+
+
+def owner_lines(s: Snapshot) -> list[str]:
+    """What the owner decided or wrote since the last plan: the same lines for the planner, the brief and the will."""
+    messages = [
+        f"Message from your owner ({m['created_at']}): {json.dumps(m['text'], ensure_ascii=False)}"
+        for m in s.owner_messages
+    ]
+    return [*s.news.approval_lines(), *messages, *s.news.upgrade_lines()]
+
+
+def owner_section(s: Snapshot) -> list[tuple[str, str]]:
+    """The FROM YOUR OWNER section, or nothing when the owner has been quiet."""
+    lines = owner_lines(s)
+    return [("FROM YOUR OWNER", cut("\n".join(lines), OWNER_BUDGET))] if lines else []
 
 
 def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> str:
@@ -222,6 +236,7 @@ def brief(s: Snapshot, dry_run: bool, plan: dict[str, Any], focus: sqlite3.Row |
     parts = [
         ("STATUS", status_text(s, dry_run)),
         ("PLAN", f"Goal: {plan.get('goal', '')}\n{steps}"),
+        *owner_section(s),
         ("FOCUS", focus_text),
         ("LESSONS", _newest_lines(s.memory.get("lessons", ""), 800)),
         ("WORKSPACE", "\n".join(s.workspace[:20]) or "Empty."),
@@ -235,6 +250,7 @@ def will_context(s: Snapshot, dry_run: bool) -> str:
     closed = "\n".join(f"- {j['summary']}" for j in reversed(s.journal)) or "No journal yet."
     parts = [
         ("STATUS", status_text(s, dry_run)),
+        *owner_section(s),
         ("PROJECTS", project_lines(s)),
         ("RECENT JOURNAL", closed),
         ("LESSONS", _newest_lines(s.memory.get("lessons", ""), 1_200)),

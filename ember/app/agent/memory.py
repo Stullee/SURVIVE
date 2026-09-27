@@ -3,13 +3,15 @@
 They live in the memory folder (a jail, like the workspace) and every version
 is kept in ``memory_versions``, so the owner can see how the agent's thinking
 changed. Each file has a size cap; appending to a full lessons file drops its
-oldest lines, the other files must be rewritten shorter. The constitution is
-not a memory file and can't be reached from here.
+oldest lines, the other files must be rewritten shorter. Appended lines that are
+already in the file are skipped. The constitution is not a memory file and can't
+be reached from here.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 
 from .. import events
@@ -21,6 +23,7 @@ log = logging.getLogger(__name__)
 
 CAPS = {"strategy": 2_000, "identity": 800, "lessons": 4_000}
 MAX_APPEND_LINES = 5
+_PREFIX = re.compile(r"^[-\s]*(?:\[#c\d+\]\s*)?")
 SEEDS = {
     "strategy": (
         "# Strategy\n\n"
@@ -81,7 +84,7 @@ class Memory:
         text = content.strip()
         if not text:
             raise MemoryError_("the content is empty")
-        dropped = 0
+        dropped = skipped = 0
         if mode == "replace":
             new = text + "\n"
             if len(new.encode("utf-8")) > cap:
@@ -91,7 +94,17 @@ class Memory:
             if len(lines) > MAX_APPEND_LINES:
                 raise MemoryError_(f"append at most {MAX_APPEND_LINES} lines at a time")
             current = self.read(name)
-            added = "".join(f"- [#c{cycle_id}] {line}\n" for line in lines)
+            known = {_key(line) for line in current.splitlines()}
+            fresh = []
+            for line in lines:
+                key = _key(line)
+                if key not in known:
+                    known.add(key)
+                    fresh.append(line)
+            if not fresh:  # nothing to write, and no new version
+                return f"already noted: every line is already in {path}; nothing was added"
+            skipped = len(lines) - len(fresh)
+            added = "".join(f"- [#c{cycle_id}] {line}\n" for line in fresh)
             new = (current if current.endswith("\n") or not current else current + "\n") + added
             if len(new.encode("utf-8")) > cap:
                 if name != "lessons":
@@ -100,7 +113,8 @@ class Memory:
         self.jail.write(path, new)
         self._version(conn, name, cycle_id, "agent", new, now)
         size = len(new.encode("utf-8"))
-        note = f", {dropped} oldest line(s) dropped" if dropped else ""
+        note = f", {skipped} line(s) already noted" if skipped else ""
+        note += f", {dropped} oldest line(s) dropped" if dropped else ""
         return f"{path}: {'replaced' if mode == 'replace' else 'appended'}{note} ({size:,} of {cap:,} bytes)"
 
     def _latest(self, conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
@@ -117,6 +131,11 @@ class Memory:
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (self.scope.mode, self.scope.session, name, cycle_id, now, source, sha256(content), content[:8000]),
         )
+
+
+def _key(line: str) -> str:
+    """A line as compared for duplicates: without its "- [#cN] " prefix, case or extra spaces."""
+    return " ".join(_PREFIX.sub("", line.strip()).split()).casefold()
 
 
 def _drop_oldest(text: str, cap: int) -> tuple[str, int]:
