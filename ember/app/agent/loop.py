@@ -322,7 +322,8 @@ class CycleRunner:
             self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)
             status = "failed" if act.end_reason.startswith("failed") else "refused"
             return CycleEnd(status, act.end_reason.removeprefix(f"{status}: ") or None)
-        reflected = self._reflect(cycle_id, ctx, brief, act)
+        # A journal written during the work is the reflection: the separate reflect call would only be refused.
+        reflected = ctx.state.journal_written or self._reflect(cycle_id, ctx, brief, act)
         status = "completed"
         note = act.end_reason if act.end_reason not in ("", "done") else None
         if act.end_reason.startswith("refused"):

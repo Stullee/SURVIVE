@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 CAPS = {"strategy": 2_000, "identity": 800, "lessons": 4_000}
 MAX_APPEND_LINES = 5
 _PREFIX = re.compile(r"^[-\s]*(?:\[#c\d+\]\s*)?")
+_OWN_TAGS = re.compile(r"^(?:\[#c\d+\]\s*)+")  # cycle tags the model wrote itself: the code adds the real one
 SEEDS = {
     "strategy": (
         "# Strategy\n\n"
@@ -90,7 +91,8 @@ class Memory:
             if len(new.encode("utf-8")) > cap:
                 raise MemoryError_(f"{path} can hold at most {cap:,} bytes; write it shorter")
         else:
-            lines = [line.strip().lstrip("-").strip() for line in text.splitlines() if line.strip()]
+            lines = [_OWN_TAGS.sub("", line.strip().lstrip("-").strip()) for line in text.splitlines()]
+            lines = [line.strip() for line in lines if line.strip()]
             if len(lines) > MAX_APPEND_LINES:
                 raise MemoryError_(f"append at most {MAX_APPEND_LINES} lines at a time")
             current = self.read(name)

@@ -19,7 +19,7 @@ import logging
 import re
 import secrets
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ..db import Database
@@ -51,6 +51,7 @@ class Field:
     enum: tuple[str, ...] = ()
     minimum: int | None = None
     maximum: int | None = None
+    cut: bool = False  # too long: cut to max_len with a note instead of refusing (for notes, not content)
 
 
 @dataclass(frozen=True)
@@ -63,8 +64,8 @@ class Spec:
     act: bool = True  # allowed in the act phase
 
 
-def _s(description: str, max_len: int, required: bool = True, enum: tuple[str, ...] = ()) -> Field:
-    return Field("string", description, required, max_len, enum)
+def _s(description: str, max_len: int, required: bool = True, enum: tuple[str, ...] = (), cut: bool = False) -> Field:
+    return Field("string", description, required, max_len, enum, cut=cut)
 
 
 def _i(description: str, required: bool = True, minimum: int | None = None, maximum: int | None = None) -> Field:
@@ -125,9 +126,13 @@ SPECS: dict[str, Spec] = {
             f"Start a project: a small, testable way to earn money honestly. At most {MAX_OPEN_PROJECTS} open "
             "projects.",
             {
-                "title": _s("Short title.", 80),
-                "hypothesis": _s("What you believe and how you will know (who pays, for what, how much).", 400),
-                "next_step": _s("The next concrete step.", 200),
+                "title": _s("Short title.", 80, cut=True),
+                "hypothesis": _s(
+                    "What you believe and how you will know (who pays, for what, how much).", 400, cut=True
+                ),
+                "next_step": _s(
+                    "The next concrete step (a pointer; put long text in a workspace file).", 200, cut=True
+                ),
                 "status": _s("idea or active.", 10, enum=("idea", "active")),
             },
             per_cycle=2,
@@ -140,9 +145,14 @@ SPECS: dict[str, Spec] = {
             {
                 "project_id": _i("The project's number."),
                 "status": _s("New status.", 10, required=False, enum=PROJECT_STATUSES),
-                "next_step": _s("The next concrete step.", 200, required=False),
-                "hypothesis": _s("A sharper hypothesis.", 400, required=False),
-                "note": _s("A short note to add (what happened, what you learned).", 300, required=False),
+                "next_step": _s(
+                    "The next concrete step (a pointer; put long text in a workspace file).",
+                    200,
+                    required=False,
+                    cut=True,
+                ),
+                "hypothesis": _s("A sharper hypothesis.", 400, required=False, cut=True),
+                "note": _s("A short note to add (what happened, what you learned).", 300, required=False, cut=True),
             },
             per_cycle=8,
             reflect=True,
@@ -187,18 +197,18 @@ SPECS: dict[str, Spec] = {
             "set_sleep",
             "Choose how long to sleep after this cycle (it is clamped to the allowed range). Sleeping longer "
             "saves money.",
-            {"minutes": _i("Minutes until the next wake-up.", minimum=1), "reason": _s("Why.", 200)},
+            {"minutes": _i("Minutes until the next wake-up.", minimum=1), "reason": _s("Why.", 200, cut=True)},
             per_cycle=5,
             reflect=True,
         ),
         Spec(
             "write_journal",
-            "Write this cycle's journal entry: a one-line summary and a candid entry (what you did, what worked, "
-            "what didn't).",
-            {"summary": _s("One line.", 240), "entry": _s("The entry.", 2_000)},
+            "Write this cycle's journal entry once, as the last thing you do: a one-line summary and a candid entry "
+            "(what you did, what worked, what didn't). Written during your work, it ends the cycle without a "
+            "separate reflection.",
+            {"summary": _s("One line.", 240, cut=True), "entry": _s("The entry.", 2_000)},
             per_cycle=1,
             reflect=True,
-            act=False,
         ),
         Spec(
             "research",
@@ -231,6 +241,12 @@ def _definition(spec: Spec) -> dict[str, Any]:
         prop: dict[str, Any] = {"type": f.type, "description": f.description}
         if f.enum:
             prop["enum"] = list(f.enum)
+        elif f.max_len:  # the model sees the limit before it writes, not only in a refusal
+            prop["maxLength"] = f.max_len
+        if f.minimum is not None:
+            prop["minimum"] = f.minimum
+        if f.maximum is not None:
+            prop["maximum"] = f.maximum
         properties[name] = prop
     return {
         "name": spec.name,
@@ -320,14 +336,15 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
             raise ToolError(f"{name} is for the reflect phase at the end of the cycle")
         if ctx.state.counts.get(name, 0) >= spec.per_cycle:
             raise ToolError(f"{name} can be used at most {spec.per_cycle} times per cycle")
-        args = validate(spec, raw_input)
+        cut_notes: list[str] = []
+        args = validate(spec, raw_input, cut_notes)
         handler = HANDLERS[name]
         if name == "research":
-            outcome = handler(ctx, args)
+            outcome = _noted(handler(ctx, args), cut_notes)
         else:
             # Tool handlers never need the network, in live mode too (only the model calls do).
             with ctx.db.transaction() as conn, netguard.sealed():
-                outcome = handler(ctx, args, conn)
+                outcome = _noted(handler(ctx, args, conn), cut_notes)
                 if outcome.ok:
                     ctx.state.counts[name] = ctx.state.counts.get(name, 0) + 1
                 store.finish_tool_call(
@@ -369,7 +386,8 @@ def skip(
     return Outcome(False, f"Not executed: {why}.", why)
 
 
-def validate(spec: Spec, raw: Any) -> dict[str, Any]:
+def validate(spec: Spec, raw: Any, notes: list[str] | None = None) -> dict[str, Any]:
+    """The checked arguments; a too-long ``cut`` field is shortened and described in ``notes``."""
     if not isinstance(raw, dict):
         raise ToolError("the input must be an object")
     unknown = sorted(set(raw) - set(spec.fields))
@@ -388,7 +406,11 @@ def validate(spec: Spec, raw: Any) -> dict[str, Any]:
             if _BAD_CHARS.search(value):
                 raise ToolError(f"{name} contains control or direction characters")
             if f.max_len and len(value) > f.max_len:
-                raise ToolError(f"{name} is longer than {f.max_len:,} characters")
+                if not f.cut:
+                    raise ToolError(f"{name} is longer than {f.max_len:,} characters")
+                if notes is not None:
+                    notes.append(f"{name} was cut to {f.max_len:,} of its {len(value):,} characters")
+                value = value[: f.max_len - 1].rstrip() + "…"
             if f.enum and value not in f.enum:
                 raise ToolError(f"{name} must be one of {', '.join(f.enum)}")
             if f.required and not value.strip():
@@ -402,6 +424,13 @@ def validate(spec: Spec, raw: Any) -> dict[str, Any]:
                 raise ToolError(f"{name} must be at most {f.maximum}")
         args[name] = value
     return args
+
+
+def _noted(outcome: Outcome, notes: list[str]) -> Outcome:
+    """Say what was cut, so the model learns the limit without a refused call and a retry."""
+    if not notes or not outcome.ok:
+        return outcome
+    return replace(outcome, text=f"{outcome.text} (Saved, but {'; '.join(notes)}.)")
 
 
 def _clip(outcome: Outcome) -> Outcome:

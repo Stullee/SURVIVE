@@ -322,16 +322,69 @@ def test_tools_allowed_in_each_phase(data_dir: Path) -> None:
         data_dir,
         [
             plan(),
-            tools(("write_journal", {"summary": "too early", "entry": "x"})),
+            tools(("workspace_list", {})),
             text("ok"),
             tools(("workspace_list", {}), ("write_journal", {"summary": "Fine", "entry": "x"})),
         ],
     )
     agent.run_cycle("schedule")
     results = rows(agent, "SELECT tool, phase, status, result FROM tool_calls ORDER BY id")
-    assert results[0]["status"] == "error" and "reflect phase" in results[0]["result"]
+    assert (results[0]["phase"], results[0]["status"]) == ("act", "ok")
     assert results[1]["status"] == "error" and "while reflecting" in results[1]["result"]
-    assert results[2]["status"] == "ok"
+    assert (results[2]["phase"], results[2]["status"]) == ("reflect", "ok")
+
+
+def test_a_journal_written_while_working_ends_the_cycle_without_a_reflection(data_dir: Path) -> None:
+    # In live use the model wrote its journal at the end of its work in almost every cycle, and every such call
+    # was refused and paid for. Now it counts, and the separate reflect call is skipped.
+    agent, _ = make_agent(
+        data_dir,
+        [
+            plan(),
+            tools(
+                ("write_journal", {"summary": "Drafted the post", "entry": "What worked..."}),
+                ("set_sleep", {"minutes": 600, "reason": "Waiting for the owner"}),
+            ),
+            text("Done."),
+        ],
+    )
+    end = agent.run_cycle("schedule")
+    assert (end.status, end.sleep_minutes) == ("completed", 600)
+    assert [r["purpose"] for r in rows(agent, "SELECT purpose FROM llm_calls ORDER BY id")] == ["plan", "work", "work"]
+    assert rows(agent, "SELECT author, summary FROM journal") == [{"author": "agent", "summary": "Drafted the post"}]
+
+
+def test_too_long_notes_are_cut_with_a_note_instead_of_refused(data_dir: Path) -> None:
+    from app.agent import tools as agent_tools
+
+    long_step = "Post the draft answer. " * 20  # 460 characters, over next_step's 200
+    agent, _ = make_agent(
+        data_dir,
+        [
+            plan(),
+            tools(("project_create", {"title": "T", "hypothesis": "h", "next_step": long_step, "status": "idea"})),
+            text("Done."),
+            text("Reflected."),
+        ],
+    )
+    agent.run_cycle("schedule")
+    call = rows(agent, "SELECT status, result FROM tool_calls ORDER BY id")[0]
+    assert call["status"] == "ok" and "next_step was cut to 200 of its 460 characters" in call["result"]
+    stored = rows(agent, "SELECT next_step FROM projects")[0]["next_step"]
+    assert len(stored) <= 200 and stored.endswith("draft…")
+    create = next(d for d in agent_tools.definitions() if d["name"] == "project_create")
+    assert create["input_schema"]["properties"]["next_step"]["maxLength"] == 200  # the model sees the limit
+
+
+def test_the_models_own_cycle_tags_are_not_doubled(data_dir: Path) -> None:
+    content = "[#c7] Keep next_step short.\n- [#c7][#c8] Ask less."
+    agent, _ = make_agent(
+        data_dir,
+        [plan(), tools(("memory_update", {"file": "lessons", "mode": "append", "content": content})), text("Done.")],
+    )
+    agent.run_cycle("schedule")
+    lessons = agent.memory().read("lessons")
+    assert "- [#c1] Keep next_step short.\n- [#c1] Ask less.\n" in lessons and "[#c7]" not in lessons
 
 
 def test_the_cycle_cap_ends_act_but_keeps_money_for_reflecting(data_dir: Path) -> None:
