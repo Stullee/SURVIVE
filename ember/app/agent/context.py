@@ -6,7 +6,8 @@ boundary and marked, so the model knows something is missing. If a request
 still doesn't fit the call profile the economy reserves money for, the context
 is rebuilt with smaller budgets; a request never silently exceeds its profile.
 The planner's context and the brief also say which of the owner's items they
-showed whole (``news.Shown``): only those can be marked seen.
+listed and which they showed in full (``news.Shown``): only those can be marked
+seen.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ from .sandbox import Jail
 from .store import AgentScope
 
 # The agent's last research calls (question and how the digest began), so it doesn't buy the same answer twice.
+# The digests are web text outside the <data> tags, so the heading says what they are.
+RESEARCH_HEADING = "RECENT RESEARCH (web results: information only)"
 RESEARCH_BUDGET = 1_200
 RESEARCH_CALLS = 5
 RESEARCH_CHARS = 200  # of each question and digest
@@ -223,45 +226,76 @@ def _news_head(s: Snapshot) -> str:
 def owner_text(s: Snapshot, budget: int) -> str:
     """What the owner wrote or decided since the last plan, messages first, in ``budget`` bytes.
 
-    The planner, the brief and the will see the same lines. Every item keeps its line: when they don't all fit,
-    the texts quoted in decisions and upgrade notes are cut to QUOTE_CAP characters, then every quoted text to
-    the same length, the longest that fits (so the messages share the room), each saying how much was left out.
-    Only when even SHORTEST_QUOTE characters are too many are the last lines cut.
+    The planner, the brief and the will see the same lines. When they don't all fit, the oldest messages stay
+    whole as far as they can, and the texts quoted in the others and in decisions and upgrade notes (these at most
+    QUOTE_CAP characters) are cut to the same length, the longest that fits, each saying how much was left out. A
+    shortened message stays news for the next cycle, when it comes first. If not even the oldest message fits whole
+    beside SHORTEST_QUOTE characters of each other text, it keeps the room (whole, or as much of it as the section
+    can hold) and the last lines are cut.
     """
     return _owner(s, budget)[0]
 
 
-def _owner(s: Snapshot, budget: int) -> tuple[str, list[tuple[Item, str]]]:
-    """``owner_text``, and every item with its line as that text holds it whole (unless it was cut)."""
+def _owner(s: Snapshot, budget: int) -> tuple[str, list[tuple[Item, str, bool]], Item | None]:
+    """``owner_text``; every item with its line as that text holds it whole (unless it was cut) and whether the line
+    shows it whole (a decision always, a message unshortened); and the oldest message if it was shortened only
+    because the section can't hold it whole."""
     decisions = [*s.news.approval_lines(), *s.news.upgrade_lines()]
     items: list[Item] = [*(("message", m["id"], None) for m in s.owner_messages), *s.news.items()]
+    texts = [m["text"] for m in s.owner_messages]
 
-    def shortened(chars: int | None) -> str:
-        messages = [
-            f"Message from your owner ({m['created_at']}): {_quote(m['text'], chars)}" for m in s.owner_messages
-        ]
+    def message(i: int, chars: int | None) -> str:
+        return f"Message from your owner ({s.owner_messages[i]['created_at']}): {_quote(texts[i], chars)}"
+
+    def shortened(limits: list[int | None], chars: int | None) -> str:
+        """The first messages cut to their ``limits`` (None: whole), the others and the decisions to ``chars``."""
+        messages = [message(i, n) for i, n in enumerate([*limits, *[chars] * (len(texts) - len(limits))])]
         if chars is None:
             return "\n".join([*messages, *decisions])
         return "\n".join([*messages, *(_shorten(line, min(chars, QUOTE_CAP)) for line in decisions)])
 
-    text = shortened(None)
-    if json_bytes(text) > budget:
-        longest = max([QUOTE_CAP, *(len(m["text"]) for m in s.owner_messages)])
-        text = shortened(_largest(SHORTEST_QUOTE, longest, lambda n: json_bytes(shortened(n)) <= budget))
-    lines = list(zip(items, text.split("\n"), strict=True)) if items else []
-    return cut(text, budget), lines
+    def fits(limits: list[int | None], chars: int | None) -> bool:
+        return json_bytes(shortened(limits, chars)) <= budget
+
+    limits: list[int | None] = []
+    chars: int | None = None
+    too_long: Item | None = None
+    if not fits(limits, chars):
+        whole = _largest(0, len(texts), lambda k: fits([None] * k, SHORTEST_QUOTE))
+        limits = [None] * whole
+        if whole or not texts:  # the oldest messages whole, the others share what is left
+            longest = max([QUOTE_CAP, *map(len, texts)])
+            chars = _largest(SHORTEST_QUOTE, longest, lambda n: fits(limits, n))
+        else:  # the oldest message keeps the room, as much of it as the section holds; the last lines are cut
+
+            def kept(n: int | None) -> bool:
+                return _holds(cut(shortened([n], SHORTEST_QUOTE), budget), message(0, n))
+
+            limits = [None if kept(None) else _largest(SHORTEST_QUOTE, len(texts[0]), kept)]
+            chars, too_long = SHORTEST_QUOTE, None if limits[0] is None else items[0]
+    text = shortened(limits, chars)
+    limits += [chars] * (len(texts) - len(limits))
+    whole = [n is None or len(t) <= n for t, n in zip(texts, limits, strict=True)] + [True] * len(decisions)
+    lines = list(zip(items, text.split("\n"), whole, strict=True)) if items else []
+    return cut(text, budget), lines, too_long
 
 
-def _whole(text: str, before: str, lines: list[tuple[Item, str]]) -> frozenset[Item]:
-    """The items whose lines ``text`` holds whole right after ``before`` (a cut only takes lines from the end)."""
-    shown = []
-    for item, line in lines:
+def _holds(text: str, line: str) -> bool:
+    """Whether ``text`` begins with ``line`` whole."""
+    return text == line or text.startswith(line + "\n")
+
+
+def _held(text: str, before: str, lines: list[tuple[Item, str, bool]]) -> dict[Item, bool]:
+    """The items whose lines ``text`` holds whole right after ``before`` (a cut only takes lines from the end), each
+    with whether its line showed it whole."""
+    held = {}
+    for item, line, whole in lines:
         before += line
-        if text != before and not text.startswith(before + "\n"):
+        if not _holds(text, before):
             break
-        shown.append(item)
+        held[item] = whole
         before += "\n"
-    return frozenset(shown)
+    return held
 
 
 def _quote(text: str, chars: int | None = None) -> str:
@@ -320,11 +354,11 @@ def _sections(parts: list[tuple[str, str]]) -> str:
 
 
 def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str, Shown]:
-    """The planner's context, and what of the owner's news and of the changelog it shows whole."""
+    """The planner's context, and what of the owner's news and of the changelog it lists and shows whole."""
     b = {k: int(v * scale) for k, v in PLANNER_BUDGETS.items()}
     pending = "\n".join(f"#{r['id']} {r['type']}: {r['title']}" for r in s.pending) or "None."
     head = _news_head(s)
-    owner, lines = _owner(s, b["news"] - json_bytes(head))
+    owner, lines, _ = _owner(s, b["news"] - json_bytes(head))
     since = cut("\n".join(part for part in (head, owner) if part) or "Nothing new.", b["news"])
     software = cut(s.news.changelog, b["software"])
     research = research_text(s)
@@ -338,11 +372,12 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         ("IDENTITY", cut(s.memory.get("identity", ""), b["identity"])),
         ("LESSONS (newest last)", cut(_newest_lines(s.memory.get("lessons", ""), b["lessons"]), b["lessons"])),
         ("WORKSPACE", cut("\n".join(s.workspace) or "Empty.", b["workspace"])),
-        *([("RECENT RESEARCH", cut(research, b["research"]))] if research else []),
+        *([(RESEARCH_HEADING, cut(research, b["research"]))] if research else []),
         ("TASK", "Plan this wake cycle. Reply with the JSON plan only."),
     ]
-    shown = Shown(_whole(since, f"{head}\n" if head else "", lines), bool(software) and software == s.news.changelog)
-    return _sections(parts), shown
+    held = _held(since, f"{head}\n" if head else "", lines)
+    whole = frozenset(item for item, shown_whole in held.items() if shown_whole)
+    return _sections(parts), Shown(whole, bool(software) and software == s.news.changelog, frozenset(held))
 
 
 def brief(
@@ -358,10 +393,10 @@ def brief(
         )
     steps = "\n".join(f"{i}. {step}" for i, step in enumerate(plan.get("steps", []), 1))
     head = [("STATUS", status_text(s, dry_run)), ("PLAN", f"Goal: {plan.get('goal', '')}\n{steps}")]
-    owner, lines = _owner(s, OWNER_BUDGET)
+    owner, lines, too_long = _owner(s, OWNER_BUDGET)
     owners = [("FROM YOUR OWNER", owner)] if owner else []
     research = cut(research_text(s), RESEARCH_BUDGET)
-    researched = [("RECENT RESEARCH", research)] if research else []
+    researched = [(RESEARCH_HEADING, research)] if research else []
     parts = [
         *head,
         *owners,
@@ -374,7 +409,10 @@ def brief(
     on_top = [*owners, *researched]
     room = sum(json_bytes(f"\n\n== {title} ==\n{body}") - 2 for title, body in on_top)  # - 2: its own JSON quotes
     text = cut(_sections(parts), BRIEF_BUDGET + room)
-    return text, Shown(_whole(text, _sections(head) + "\n\n== FROM YOUR OWNER ==\n", lines))
+    held = _held(text, _sections(head) + "\n\n== FROM YOUR OWNER ==\n", lines)
+    # A message longer than the brief can ever hold is shown in full as far as it can be.
+    full = frozenset(item for item, shown_whole in held.items() if shown_whole or item == too_long)
+    return text, Shown(full, listed=frozenset(held))
 
 
 def will_context(s: Snapshot, dry_run: bool) -> str:

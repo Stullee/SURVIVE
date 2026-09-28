@@ -208,24 +208,29 @@ def test_a_long_payload_leaves_room_for_the_owners_question(data_dir: Path) -> N
         assert section(first_text(request), "FROM YOUR OWNER") == f"{line}\n{decided}"
 
 
-def test_long_messages_share_the_owners_section(data_dir: Path) -> None:
-    agent, transport = make_agent(data_dir, [plan(steps=["read my owner's notes"]), text("Read."), text("Done.")])
+def test_a_message_longer_than_the_section_gets_its_room_and_the_others_follow(data_dir: Path) -> None:
+    cycle = [plan(steps=["read my owner's notes"]), text("Read."), text("Done.")]
+    agent, transport = make_agent(data_dir, cycle * 3)
     who = owner(agent)
-    for letter in "abc":
+    for letter in "abc":  # 3,800 bytes each: none fits the section whole
         assert who.send_message({"text": f"{letter} " + "ä" * 1_900}, "Stefan").status == 201
-    agent.run_cycle("schedule")
-    planned, work, _ = transport.sent
     messages = rows(agent, "SELECT created_at, text FROM messages WHERE sender = 'owner' ORDER BY id")
-    brief = first_text(work)
-    owners = section(brief, "FROM YOUR OWNER") or ""
-    chars = chars_shown(owners, messages[0]["text"])  # the characters shown of each message
-    assert owners == "\n".join(
-        f"Message from your owner ({m['created_at']}): {shortened(m['text'], chars)}" for m in messages
-    )
-    assert context.OWNER_BUDGET - 30 < context.json_bytes(owners) <= context.OWNER_BUDGET
-    assert "== LIMITS ==\nAt most" in brief and "bytes cut]" not in brief
-    news = (section(first_text(planned), "SINCE YOUR LAST WAKE") or "").splitlines()
-    assert len(news) == 3 and all('more characters; your owner has the full text) "…ä' in line for line in news)
+    for number, m in enumerate(messages):
+        agent.run_cycle("schedule")
+        planned, work, _ = transport.sent[-3:]
+        head = f"Message from your owner ({m['created_at']}): "
+        # The oldest message gets the room (three times what it had when they all shared it); the others wait.
+        first, *rest = (section(first_text(work), "FROM YOUR OWNER") or "").split("\n")
+        assert (
+            first == head + shortened(m["text"], chars_shown(first, m["text"]))
+            and chars_shown(first, m["text"]) > 1_000
+        )
+        assert context.json_bytes("\n".join([first, *rest])) <= context.OWNER_BUDGET
+        assert [bool(re.fullmatch(r"…\[\d+ bytes cut\]", line)) for line in rest] == [True] * (number < 2)
+        since = (section(first_text(planned), "SINCE YOUR LAST WAKE") or "").split("\n")
+        news_ = [line for line in since if line.startswith("Message from")]  # the planner has less room
+        assert news_ == [head + shortened(m["text"], chars_shown(news_[0], m["text"]))]
+        assert seen_cycles(agent) == [1, 2, 3][: number + 1] + [None] * (2 - number)
 
 
 @pytest.mark.parametrize("letter", ["a", "ä", "你", "😀"])
@@ -248,7 +253,8 @@ def test_the_owners_section_keeps_its_budget_and_comes_on_top_of_the_brief(lette
     assert loud.replace(f"\n\n== FROM YOUR OWNER ==\n{owners}", "") == quiet  # the rest is as in a quiet cycle
 
 
-def test_the_last_lines_are_cut_only_when_nothing_else_helps() -> None:
+@pytest.mark.parametrize("letter", ["a", "😀"])
+def test_the_oldest_message_keeps_its_room_and_the_last_lines_are_cut(letter: str) -> None:
     decided = [
         {
             "id": i,
@@ -261,11 +267,19 @@ def test_the_last_lines_are_cut_only_when_nothing_else_helps() -> None:
         }
         for i in range(1, 11)
     ]
-    message = "😀" * 2_000
-    lines = context.owner_text(snapshot_with([message] * 8, decided=decided), context.OWNER_BUDGET).splitlines()
+    message = letter * 2_000
+    snap = snapshot_with([message] * 8, decided=decided)
+    lines = context.owner_text(snap, context.OWNER_BUDGET).splitlines()
     assert context.json_bytes("\n".join(lines)) <= context.OWNER_BUDGET
-    assert all(line.endswith(shortened(message, context.SHORTEST_QUOTE)) for line in lines[:8])
-    assert re.fullmatch(r"…\[\d+ bytes cut\]", lines[-1]) and not any("Message" in line for line in lines[8:])
+    head = "Message from your owner (2026-09-28T08:00:00Z): "
+    if letter == "a":  # plain text: the oldest message fits whole
+        assert lines[0] == f'{head}"{message}"' and len(lines) == 3
+    else:  # as much of it as the section holds
+        assert lines[0] == head + shortened(message, chars_shown(lines[0], message)) and len(lines) == 2
+    assert all(line == head + shortened(message, context.SHORTEST_QUOTE) for line in lines[1:-1])  # as far as fit
+    assert re.fullmatch(r"…\[\d+ bytes cut\]", lines[-1])
+    _, shown = context.brief(snap, False, {"goal": "g", "steps": ["s"]}, None, 12)
+    assert shown.items == {("message", 1, None)}  # a shortened preview doesn't count: the rest stays news
 
 
 @pytest.mark.parametrize("letter", ["a", "ä", "你", "😀"])
@@ -329,13 +343,12 @@ def seen_cycles(agent: Any) -> list[int | None]:
 
 
 @pytest.mark.parametrize("scale", loop.PLANNER_SCALES)
-def test_a_long_message_and_payload_are_shown_and_marked_at_every_planner_scale(
+def test_a_long_message_then_a_long_payload_are_shown_and_marked_at_every_planner_scale(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch, scale: float
 ) -> None:
     monkeypatch.setattr(loop, "PLANNER_SCALES", (scale,))
-    agent, transport = make_agent(
-        data_dir, [*cycle_with_approval(), plan(steps=["Answer my owner"]), text("Answered."), JOURNAL]
-    )
+    cycle = [plan(steps=["Answer my owner"]), text("Answered."), JOURNAL]
+    agent, transport = make_agent(data_dir, [*cycle_with_approval(), *cycle, *cycle])
     agent.run_cycle("schedule")
     approval_id = rows(agent, "SELECT id FROM approvals")[0]["id"]
     who = owner(agent)
@@ -344,50 +357,101 @@ def test_a_long_message_and_payload_are_shown_and_marked_at_every_planner_scale(
     assert who.decide(approval_id, decision, "Stefan").status == 200
     message = f"{('I read your guide twice. ' * 80)[: 1_999 - len(QUESTION)]} {QUESTION}"
     assert len(message) == 2_000 and who.send_message({"text": message}, "Stefan").status == 201
-    sent_before = len(transport.sent)
     agent.run_cycle("schedule")
 
-    planned, work, _ = transport.sent[sent_before:]
+    planned, work, _ = transport.sent[-3:]
     since = owner_lines(section(first_text(planned), "SINCE YOUR LAST WAKE") or "")
     owners = owner_lines(section(first_text(work), "FROM YOUR OWNER") or "")
     assert context.json_bytes("\n".join(since)) <= context.PLANNER_BUDGETS["news"] * scale
-    for message_line, decided in (since[-2:], owners):
-        assert message_line.startswith("Message from your owner (") and message_line.endswith(f' {QUESTION}"')
+    assert owners == [message_line(agent, message)]  # whole; the decision didn't fit beside it
+    assert since[-1].startswith("Message from your owner (") and since[-1].endswith(f' {QUESTION}"')
+    assert seen_cycles(agent) == [None, 2]
+
+    agent.run_cycle("schedule")  # the decision was left out: it is news for the next cycle
+    planned, work, _ = transport.sent[-3:]
+    since = owner_lines(section(first_text(planned), "SINCE YOUR LAST WAKE") or "")
+    owners = owner_lines(section(first_text(work), "FROM YOUR OWNER") or "")
+    for decided in (since[-1], *owners):
         assert decided.startswith(f'Request #{approval_id} (publish) "Post the guide": approved with changes.')
         assert decided.endswith("Your owner will carry it out and report back.")
-    assert seen_cycles(agent) == [2, 2]
+    assert seen_cycles(agent) == [3, 2]
 
 
-def test_only_the_items_both_prompts_showed_are_marked_seen(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(context.PLANNER_BUDGETS, "news", 1_200)  # the plan has room for fewer than the brief
+def test_what_the_plan_listed_and_the_brief_showed_in_full_is_marked_seen(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(context.PLANNER_BUDGETS, "news", 800)  # the plan has room for fewer than the brief
     agent, transport = make_agent(
         data_dir, [plan(steps=["Read my owner's notes"]), text("Read."), text("Done."), plan(steps=[], sleep=600)]
     )
     who = owner(agent)
-    for number in range(1, 9):
-        assert who.send_message({"text": f"Note {number}: " + "😀" * 1_990}, "Stefan").status == 201
+    notes = [f"Note {number}: " + "x" * 300 for number in range(1, 7)]
+    for note in notes:
+        assert who.send_message({"text": note}, "Stefan").status == 201
     agent.run_cycle("schedule")
 
     planned, work, _ = transport.sent
-    since = owner_lines(section(first_text(planned), "SINCE YOUR LAST WAKE") or "")
+    created = [r["created_at"] for r in rows(agent, "SELECT created_at FROM messages ORDER BY id")]
     owners = owner_lines(section(first_text(work), "FROM YOUR OWNER") or "")
-    assert 0 < len(since) < len(owners) == 8  # the brief shows all eight, the plan only the first ones
-    assert all(f'"Note {n}: ' in line for n, line in enumerate(since, 1))
-    assert seen_cycles(agent) == [1] * len(since) + [None] * (8 - len(since))
+    assert owners == [f"Message from your owner ({c}): {json.dumps(n)}" for c, n in zip(created, notes, strict=True)]
+    since = owner_lines(section(first_text(planned), "SINCE YOUR LAST WAKE") or "")
+    assert since[0] == owners[0] and 1 < len(since) < 6  # the oldest whole, previews of the next, the rest cut
+    assert all("more characters; your owner has the full text" in line for line in since[1:])
+    assert seen_cycles(agent) == [1] * len(since) + [None] * (6 - len(since))  # the brief showed them whole
+    listed = len(since)
 
-    agent.run_cycle("schedule")  # the rest is news for the next plan
-    news_ = owner_lines(section(first_text(transport.sent[-1]), "SINCE YOUR LAST WAKE") or "")
-    assert news_[0].startswith("Last cycle #1") and f'"Note {len(since) + 1}: ' in news_[2]
+    agent.run_cycle("schedule")  # a plan with nothing to do marks only what it showed whole
+    head, *since = owner_lines(section(first_text(transport.sent[-1]), "SINCE YOUR LAST WAKE") or "")
+    assert head.startswith("Last cycle #1") and since[0].startswith("Your last journal summary")
+    whole = [line.endswith(json.dumps(note)) for line, note in zip(since[1:], notes[listed:], strict=False)]
+    assert whole[0] and not all(whole)
+    assert seen_cycles(agent) == [1] * listed + [2] * sum(whole) + [None] * (6 - listed - sum(whole))
+
+
+def test_a_shortened_message_stays_news_until_a_cycle_shows_it_whole(data_dir: Path) -> None:
+    cycle = [plan(steps=["Answer my owner"]), text("Answered."), JOURNAL]
+    agent, transport = make_agent(data_dir, cycle * 2)
+    who = owner(agent)
+    for letter in "AB":  # each fits the section whole, not both together
+        assert who.send_message({"text": letter * 1_499 + "?"}, "Stefan").status == 201
+    messages = rows(agent, "SELECT created_at, text FROM messages ORDER BY id")
+    whole = [f"Message from your owner ({m['created_at']}): {json.dumps(m['text'])}" for m in messages]
+    agent.run_cycle("schedule")
+    first, second = (section(first_text(transport.sent[1]), "FROM YOUR OWNER") or "").split("\n")
+    assert first == whole[0] and second.endswith(
+        shortened(messages[1]["text"], chars_shown(second, messages[1]["text"]))
+    )
+    assert seen_cycles(agent) == [1, None]  # the middle of the second wasn't shown yet
+    agent.run_cycle("schedule")
+    assert section(first_text(transport.sent[-2]), "FROM YOUR OWNER") == whole[1]
+    assert seen_cycles(agent) == [1, 2]
+
+
+def test_a_plan_with_less_room_lists_a_long_message_but_leaves_it_to_the_brief() -> None:
+    message = f"{('I read your guide twice. ' * 80)[: 1_999 - len(QUESTION)]} {QUESTION}"
+    snap = snapshot_with([message])
+    snap.last_journal = {"summary": "s" * 240}  # type: ignore[assignment]  # the plan's news share it
+    planner, planned = context.planner_context(snap, False)
+    _, briefed = context.brief(snap, False, {"goal": "g", "steps": ["s"]}, None, 12)
+    item = ("message", 1, None)
+    assert "more characters; your owner has the full text" in (section(planner, "SINCE YOUR LAST WAKE") or "")
+    assert (planned.listed, planned.items) == ({item}, set())  # a plan with nothing to do leaves it news
+    assert briefed.items == {item}  # a work step marks it: the brief showed it whole
 
 
 def test_a_question_at_the_end_of_a_long_message_stays_readable() -> None:
-    messages = [f"{letter} " + "ä" * 1_900 + f" {QUESTION}" for letter in "abc"]
-    for budget in (context.OWNER_BUDGET, context.PLANNER_BUDGETS["news"] // 2):  # the brief; a plan at half scale
-        lines = context.owner_text(snapshot_with(messages), budget).splitlines()
-        assert len(lines) == 3 and context.json_bytes("\n".join(lines)) <= budget
-        for message, line in zip(messages, lines, strict=True):
-            head = "Message from your owner (2026-09-28T08:00:00Z): "
-            assert line == head + shortened(message, chars_shown(line, message))  # its start and its end
+    messages = [f"{letter} " + "x" * 1_500 + f" {QUESTION}" for letter in "abc"]
+    head = "Message from your owner (2026-09-28T08:00:00Z): "
+    # The brief: the oldest whole, previews of the others; a plan at half scale: as much of the oldest as fits.
+    for budget, count in ((context.OWNER_BUDGET, 3), (context.PLANNER_BUDGETS["news"] // 2, 1)):
+        text_ = context.owner_text(snapshot_with(messages), budget)
+        lines = owner_lines(text_)
+        assert len(lines) == count and context.json_bytes(text_) <= budget
+        for number, (message, line) in enumerate(zip(messages, lines, strict=False)):
+            if number == 0 and count == 3:
+                assert line == f"{head}{json.dumps(message)}"
+            else:
+                assert line == head + shortened(message, chars_shown(line, message))  # its start and its end
             assert line.startswith(f'{head}"{message[:4]}') and line.endswith(f' {QUESTION}"')
 
 

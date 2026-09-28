@@ -298,7 +298,7 @@ class CycleRunner:
         )
         if not plan.steps:
             with self.db.transaction() as conn:
-                # No brief follows: the plan was all the agent needed to see of what the owner sent.
+                # No brief follows: what the plan showed in full was all the agent needed to see of it.
                 news.mark_seen(conn, cycle_id, planned.items)
                 store.write_journal(
                     conn,
@@ -312,7 +312,7 @@ class CycleRunner:
             return CycleEnd("idle", "nothing to do", sleep_minutes=plan.sleep_minutes)
 
         brief, briefed = context.brief(snap, self.dry_run, plan.to_json(), focus, self.settings.max_tool_steps)
-        act = self._act(cycle_id, ctx, brief, planned.items & briefed.items)
+        act = self._act(cycle_id, ctx, brief, planned.listed & briefed.items)
         if act.end_reason == "refusal":
             return CycleEnd("stopped", "the model refused to continue")
         if not act.steps:
@@ -361,7 +361,8 @@ class CycleRunner:
         return max(self.settings.min_sleep_minutes, min(self.settings.max_sleep_minutes, minutes))
 
     def _act(self, cycle_id: int, ctx: tools.ToolContext, brief: str, seen: frozenset[news.Item]) -> _Act:
-        """The work steps; ``seen`` (the owner's items the plan and the brief showed) is marked once one is answered."""
+        """The work steps; ``seen`` (the owner's items the plan listed and the brief showed in full) is marked once one
+        is answered."""
         act = _Act()
         max_steps = self.settings.max_tool_steps
         self._progress(cycle_id, phase="act", max_steps=max_steps, step=0)

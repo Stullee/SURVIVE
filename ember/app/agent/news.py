@@ -3,8 +3,10 @@
 Built only from database columns and the bundled CHANGELOG.md; everything the
 owner or the agent wrote is JSON-quoted, so no text can pose as a heading of the
 planner's context. An item is marked seen (``mark_seen``) only once the agent has
-worked with it: shown whole in the plan that succeeded, and in the brief of a work
-step that was answered. What a prompt left out or cut, and what a cycle that ended
+worked with it: listed by the plan that succeeded and shown in full in the brief of
+a work step that was answered, or shown in full by a plan with nothing to do. A
+message counts as shown in full only unshortened, unless it is longer than the brief
+can ever hold. What a prompt left out, cut or shortened, and what a cycle that ended
 before showed, stays news for the next cycle.
 """
 
@@ -140,10 +142,13 @@ class News:
 
 @dataclass(frozen=True)
 class Shown:
-    """What one prompt showed: the owner's items whose lines it held whole, and whether it held the whole changelog."""
+    """What one prompt showed of the owner's news: the items it showed in full (a message unshortened or, in the
+    brief, as much as it can hold of one longer than that), whether it held the whole changelog, and the items whose
+    lines it held whole, their quoted texts perhaps shortened (``listed``)."""
 
     items: frozenset[Item] = frozenset()
     changelog: bool = False
+    listed: frozenset[Item] = frozenset()
 
 
 def collect(conn: sqlite3.Connection, db: Database, scope: AgentScope, running_version: str) -> News:

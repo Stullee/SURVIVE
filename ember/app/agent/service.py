@@ -20,11 +20,12 @@ from .. import events, paths
 from ..config import LoadedSettings
 from ..db import Database
 from ..economy.clock import from_iso, to_iso
+from ..economy.costs import micros_to_usd
 from ..economy.metering import MeteredModel, OfflineTransport, Transport, usd_cap_to_micros
-from ..economy.pricing import working_cycle_cost
+from ..economy.pricing import opening_cost, working_cycle_cost
 from ..economy.service import Economy
 from . import store
-from .loop import CycleEnd, CycleRunner
+from .loop import NO_STEP, CycleEnd, CycleRunner
 from .memory import CAPS, Memory
 from .sandbox import Jail
 from .store import AgentScope
@@ -191,6 +192,9 @@ class Agent:
             return Decision(False, reason="The last will is due; retrying later", wait_until=retry)
         if self.wake_requested:
             return Decision(True, "owner", "woken by the owner")
+        no_room = self._no_room_for_work()
+        if no_room:
+            return Decision(False, reason=no_room)
         wake = self._meta_time("next_wake_at")
         if wake is None:
             wake = now + FIRST_WAKE_DELAY
@@ -202,11 +206,14 @@ class Agent:
             )
         if self._crash_loop():
             return Decision(False, reason="The last cycles were all interrupted; press Wake now to try again")
-        # A cycle that can plan but not afford one work step and its reflection would only pay for the plan.
-        needed = working_cycle_cost(self.settings, self.db, self.mode) or 0
+        # A cycle that can plan but not afford one work step and its reflection would only pay for the plan. A daily
+        # cap below that worst case gets a cycle with all of it: the loop checks what each step really costs.
+        daily = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
+        working = working_cycle_cost(self.settings, self.db, self.mode) or 0
+        needed = max(opening_cost(self.settings, self.db, self.mode) or 0, min(working, daily))
         scope = self.economy.life.scope()
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
-        if usd_cap_to_micros(self.settings.daily_spend_cap_usd) - today < needed:
+        if daily - today < needed:
             tomorrow = self._next_local_midnight(now) + timedelta(minutes=5)
             self._set_time("next_wake_at", tomorrow)
             self.db.set_meta(self._key("next_wake_reason"), "waiting for the daily cap to reset")
@@ -215,6 +222,27 @@ class Agent:
 
     def _gave_up_will(self, life_id: int | None) -> bool:
         return life_id is not None and self.db.get_meta(self._key("will_given_up")) == str(life_id)
+
+    def _no_room_for_work(self) -> str | None:
+        """Why scheduled wakes wait for the owner: the last cycle paid for its plan but had no money left for a work
+        step, and the cycle spend cap is below what a working cycle can cost, so the next one would likely do the same.
+        """
+        working = working_cycle_cost(self.settings, self.db, self.mode)
+        cap = self.settings.cycle_spend_cap_usd
+        if working is None or usd_cap_to_micros(cap) >= working:
+            return None
+        with self.db.connection() as conn:
+            last = conn.execute(
+                "SELECT status, note FROM cycles WHERE simulated = ? AND session = ? AND status <> 'running'"
+                " ORDER BY id DESC LIMIT 1",
+                (1 if self.mode == "dry_run" else 0, self.economy.life.session()),
+            ).fetchone()
+        if last is None or (last["status"], last["note"]) != ("refused", NO_STEP):
+            return None
+        return (
+            f"The last cycle had no money left for a work step after its plan: the cycle spend cap (${cap:.2f}) is"
+            f" below what a working cycle can cost (up to ${micros_to_usd(working):.2f}). Raise it, or press Wake now"
+        )
 
     def _crash_loop(self) -> bool:
         with self.db.connection() as conn:
@@ -296,6 +324,11 @@ class Agent:
                 self._set_time("will_retry_at", now + timedelta(minutes=minutes))
             return
         if end.status == "interrupted":
+            return
+        no_room = self._no_room_for_work()
+        if no_room:  # no scheduled wake until the owner wakes the agent or raises the cap (decide)
+            self._set_time("next_wake_at", None)
+            self.db.set_meta(self._key("next_wake_reason"), no_room)
             return
         if end.status in ("completed", "idle"):
             minutes = end.sleep_minutes or self.settings.wake_interval_minutes

@@ -16,7 +16,7 @@ from app.economy.metering import rough_token_count
 from app.economy.pricing import LAST_WILL, PLANNER_OPENING, REFLECT, WORK
 
 SETTINGS = Settings(agent_name="X" * 40)
-HEADINGS = {"news": "SINCE YOUR LAST WAKE", "research": "RECENT RESEARCH", "lessons": "LESSONS (newest last)"}
+HEADINGS = {"news": "SINCE YOUR LAST WAKE", "research": context.RESEARCH_HEADING, "lessons": "LESSONS (newest last)"}
 
 
 def filler(budget: int) -> str:
@@ -94,7 +94,7 @@ def overflowing_snapshot() -> context.Snapshot:
 def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     snap = overflowing_snapshot()
     planner, _ = context.planner_context(snap, dry_run=True)
-    assert "== RECENT RESEARCH ==" in planner and "== FROM YOUR OWNER ==" not in planner
+    assert f"== {context.RESEARCH_HEADING} ==" in planner and "== FROM YOUR OWNER ==" not in planner
     assert rough_token_count(prompts.plan_request(SETTINGS, planner)) <= PLANNER_OPENING.input_tokens
     plan = {"goal": "ä" * 300, "steps": ["ä" * 200] * 6}
     focus = {"id": 1_000, "title": "ä" * 80, "status": "active", "hypothesis": "ä" * 400, "next_step": "ä" * 200}

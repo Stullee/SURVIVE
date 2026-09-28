@@ -13,6 +13,7 @@ import pytest
 from app.agent import loop, store
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
+from app.economy.costs import micros_to_usd
 from app.economy.metering import Completed, NotSent
 from app.economy.pricing import opening_cost, working_cycle_cost
 from tests.economy_helpers import ScriptedTransport, make_economy
@@ -294,16 +295,65 @@ def test_the_daily_cap_defers_the_next_wake_to_tomorrow(data_dir: Path) -> None:
     assert decision.wait_until is not None and decision.wait_until > agent.clock.now() + timedelta(hours=1)
 
 
-@pytest.mark.parametrize(("cap", "runs"), [(0.1, False), (0.2, True)])
-def test_a_wake_needs_room_for_a_work_step_and_the_reflection(data_dir: Path, cap: float, runs: bool) -> None:
-    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=cap, cycle_spend_cap_usd=cap)
-    agent, _ = make_agent(data_dir, [], settings)
-    opening, working = (cost(settings, agent.db, "dry_run") or 0 for cost in (opening_cost, working_cycle_cost))
+@pytest.mark.parametrize("short", [1, 0])
+def test_a_wake_needs_room_for_a_work_step_and_the_reflection(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, short: int
+) -> None:
+    agent, _ = make_agent(data_dir, [])  # a daily cap of 5 USD
+    opening, working = (cost(ROOMY, agent.db, "dry_run") or 0 for cost in (opening_cost, working_cycle_cost))
     assert opening < 100_000 < working < 200_000  # 0.10 USD pays for the plan alone, 0.20 USD for some work too
+    left = working - short  # micro-USD left of today's cap
+    monkeypatch.setattr(agent.economy.books, "cap_spend_on", lambda scope, day: 5_000_000 - left)
     agent.decide()  # schedules the first wake-up
     agent.clock.advance(minutes=3)
     decision = agent.decide()
-    assert decision.run is runs and ("daily cap" in decision.reason) is not runs
+    assert decision.run is (short == 0) and (decision.reason == "Waiting for the daily cap to reset") is (short == 1)
+
+
+def test_a_daily_cap_below_a_working_cycle_gets_a_cycle_with_all_of_it(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=0.1, cycle_spend_cap_usd=0.1)
+    agent, _ = make_agent(data_dir, [], settings)
+    assert (working_cycle_cost(settings, agent.db, "dry_run") or 0) > 100_000  # a real cycle may still cost less
+    agent.decide()
+    agent.clock.advance(minutes=3)
+    assert agent.decide().run  # nothing spent today: all of the cap is there
+    monkeypatch.setattr(agent.economy.books, "cap_spend_on", lambda scope, day: 1)
+    decision = agent.decide()
+    assert not decision.run and decision.reason == "Waiting for the daily cap to reset"
+    assert decision.wait_until is not None and decision.wait_until > agent.clock.now() + timedelta(hours=1)
+
+
+def test_a_cycle_cap_without_room_for_a_work_step_holds_the_scheduled_wakes(data_dir: Path) -> None:
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=0.04)
+    agent, _ = make_agent(data_dir, [plan(), plan(steps=[], sleep=600)], settings)
+    assert agent.run_cycle("schedule").note == loop.NO_STEP  # the plan was paid for, no step was affordable
+    working = micros_to_usd(working_cycle_cost(settings, agent.db, "dry_run") or 0)
+    reason = (
+        "The last cycle had no money left for a work step after its plan: the cycle spend cap ($0.04) is below what"
+        f" a working cycle can cost (up to ${working:.2f}). Raise it, or press Wake now"
+    )
+    fields = agent.agent_fields()
+    assert (fields["next_wake_at"], fields["next_wake_reason"]) == (None, reason)
+    agent.clock.advance(days=2)
+    decision = agent.decide()
+    assert (decision.run, decision.reason, decision.wait_until) == (False, reason, None)  # no more plans to pay for
+    assert agent.request_wake()[0] == 202 and agent.decide().trigger == "owner"  # the owner can still try
+    assert agent.run_cycle("owner").status == "idle"
+    assert agent.agent_fields()["next_wake_reason"] == agent.decide().reason == "Ember chose 600 min"
+
+
+def test_no_room_for_a_work_step_under_a_roomy_cycle_cap_backs_off_as_usual(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=1, cycle_spend_cap_usd=0.25)
+    agent, _ = make_agent(data_dir, [plan()], settings)
+    monkeypatch.setattr(agent.economy.books, "cap_spend_on", lambda scope, day: 960_000)  # 0.04 USD left today
+    assert agent.run_cycle("owner").note == loop.NO_STEP
+    assert (
+        agent.agent_fields()["next_wake_reason"] == "after a refused cycle, backing off"
+    )  # the day's cap, not the cycle's
 
 
 def test_a_cycle_that_can_not_afford_a_work_step_does_not_reflect(data_dir: Path) -> None:
