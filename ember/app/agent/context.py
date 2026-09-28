@@ -10,7 +10,9 @@ is rebuilt with smaller budgets; a request never silently exceeds its profile.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,10 +37,15 @@ PLANNER_BUDGETS = {
     "journal": 600,
     "workspace": 400,
 }
-OWNER_BUDGET = 1_800  # the owner's decisions and messages, in the brief and the will context
-# The owner's section (and its heading) comes on top, so it never squeezes the rest.
-BRIEF_BUDGET = 5_000 + OWNER_BUDGET + 100
-WILL_BUDGET = 4_500 + OWNER_BUDGET + 100
+# The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
+# room for one whole message of plain text at the owner's limit of 2,000 characters.
+OWNER_BUDGET = 2_300
+QUOTE_CAP = 300  # characters of each text quoted in a decision or upgrade line, when the owner's news is shortened
+SHORTEST_QUOTE = 40  # no quoted text is shortened below this; if that isn't enough, the last lines are cut
+# The owner's section (and its heading) comes on top of the brief's budget, so it never squeezes the rest.
+BRIEF_BUDGET = 5_000
+WILL_BUDGET = 4_500 + OWNER_BUDGET + 100  # the largest will context: the LAST_WILL profile is measured on it
+_QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')  # a JSON string: how the owner's and the agent's texts are quoted
 
 
 def json_bytes(text: str) -> int:
@@ -56,11 +63,21 @@ def cut(text: str, budget: int) -> str:
         if json_bytes(candidate) > budget - 40:
             break
         kept.append(line)
-    if not kept:  # one long line: cut it by characters
-        chars = max(0, budget // 2 - 40)
-        kept = [text[:chars]]
+    if not kept:  # one long line: as many characters as fit, whatever their size
+        kept = [text[: _largest(0, len(text), lambda n: json_bytes(text[:n]) <= budget - 40)]]
     removed = len(text.encode("utf-8")) - len("\n".join(kept).encode("utf-8"))
     return "\n".join(kept) + f"\n…[{removed} bytes cut]"
+
+
+def _largest(low: int, high: int, ok: Callable[[int], bool]) -> int:
+    """The largest n from ``low`` to ``high`` for which ``ok(n)`` holds, or ``low`` (``ok`` turns false as n grows)."""
+    while low < high:
+        middle = (low + high + 1) // 2
+        if ok(middle):
+            low = middle
+        else:
+            high = middle - 1
+    return low
 
 
 def fits(request: dict[str, Any], input_tokens: int) -> bool:
@@ -180,30 +197,68 @@ def project_lines(s: Snapshot) -> str:
     return "\n".join(lines)
 
 
-def news_text(s: Snapshot) -> str:
+def news_text(s: Snapshot, budget: int) -> str:
     lines = []
     if s.last_cycle is not None:
         c = s.last_cycle
         lines.append(f"Last cycle #{c['id']} ended {c['status']}" + (f" ({c['note']})" if c["note"] else "") + ".")
     if s.last_journal is not None:
         lines.append(f"Your last journal summary: {s.last_journal['summary']}")
-    lines.extend(owner_lines(s))
-    return "\n".join(lines) or "Nothing new."
+    head = "\n".join(lines)
+    owner = owner_text(s, budget - json_bytes(head))
+    return "\n".join(part for part in (head, owner) if part) or "Nothing new."
 
 
-def owner_lines(s: Snapshot) -> list[str]:
-    """What the owner decided or wrote since the last plan: the same lines for the planner, the brief and the will."""
-    messages = [
-        f"Message from your owner ({m['created_at']}): {json.dumps(m['text'], ensure_ascii=False)}"
-        for m in s.owner_messages
-    ]
-    return [*s.news.approval_lines(), *messages, *s.news.upgrade_lines()]
+def owner_text(s: Snapshot, budget: int) -> str:
+    """What the owner wrote or decided since the last plan, messages first, in ``budget`` bytes.
+
+    The planner, the brief and the will see the same lines. Every item keeps its line: when they don't all fit,
+    the texts quoted in decisions and upgrade notes are cut to QUOTE_CAP characters, then every quoted text to
+    the same length, the longest that fits (so the messages share the room), each saying how much was left out.
+    Only when even SHORTEST_QUOTE characters are too many are the last lines cut.
+    """
+    decisions = [*s.news.approval_lines(), *s.news.upgrade_lines()]
+
+    def shortened(chars: int | None) -> str:
+        messages = [
+            f"Message from your owner ({m['created_at']}): {_quote(m['text'], chars)}" for m in s.owner_messages
+        ]
+        if chars is None:
+            return "\n".join([*messages, *decisions])
+        return "\n".join([*messages, *(_shorten(line, min(chars, QUOTE_CAP)) for line in decisions)])
+
+    text = shortened(None)
+    if json_bytes(text) <= budget:
+        return text
+    longest = max([QUOTE_CAP, *(len(m["text"]) for m in s.owner_messages)])
+    chars = _largest(SHORTEST_QUOTE, longest, lambda n: json_bytes(shortened(n)) <= budget)
+    return cut(shortened(chars), budget)
+
+
+def _quote(text: str, chars: int | None = None) -> str:
+    """``text`` JSON-quoted (so it can't pose as a heading), cut to ``chars`` characters with a note."""
+    if chars is None or len(text) <= chars:
+        return json.dumps(text, ensure_ascii=False)
+    quoted = json.dumps(text[:chars] + "…", ensure_ascii=False)
+    return f"{quoted} ({len(text) - chars:,} more characters; your owner has the full text)"
+
+
+def _shorten(line: str, chars: int) -> str:
+    """A line of news with every text quoted in it cut to ``chars`` characters."""
+
+    def one(match: re.Match[str]) -> str:
+        try:
+            return _quote(json.loads(match[0]), chars)
+        except ValueError:  # not a quoted text after all: leave it
+            return match[0]
+
+    return _QUOTED.sub(one, line)
 
 
 def owner_section(s: Snapshot) -> list[tuple[str, str]]:
     """The FROM YOUR OWNER section, or nothing when the owner has been quiet."""
-    lines = owner_lines(s)
-    return [("FROM YOUR OWNER", cut("\n".join(lines), OWNER_BUDGET))] if lines else []
+    text = owner_text(s, OWNER_BUDGET)
+    return [("FROM YOUR OWNER", text)] if text else []
 
 
 def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> str:
@@ -211,7 +266,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> str:
     pending = "\n".join(f"#{r['id']} {r['type']}: {r['title']}" for r in s.pending) or "None."
     parts = [
         ("STATUS", cut(status_text(s, dry_run), b["status"])),
-        ("SINCE YOUR LAST WAKE", cut(news_text(s), b["news"])),
+        ("SINCE YOUR LAST WAKE", cut(news_text(s, b["news"]), b["news"])),
         *([("YOUR SOFTWARE", cut(s.news.changelog, b["software"]))] if s.news.changelog else []),
         ("OPEN PROJECTS", cut(project_lines(s), b["projects"])),
         ("WAITING FOR YOUR OWNER", cut(pending, b["pending"])),
@@ -233,17 +288,19 @@ def brief(s: Snapshot, dry_run: bool, plan: dict[str, Any], focus: sqlite3.Row |
             f"Notes: {focus['notes'][-600:] or '-'}"
         )
     steps = "\n".join(f"{i}. {step}" for i, step in enumerate(plan.get("steps", []), 1))
+    owner = owner_section(s)
     parts = [
         ("STATUS", status_text(s, dry_run)),
         ("PLAN", f"Goal: {plan.get('goal', '')}\n{steps}"),
-        *owner_section(s),
+        *owner,
         ("FOCUS", focus_text),
         ("LESSONS", _newest_lines(s.memory.get("lessons", ""), 800)),
         ("WORKSPACE", "\n".join(s.workspace[:20]) or "Empty."),
         ("LIMITS", f"At most {max_steps} steps this cycle and 4 tool calls per step. Stop when the goal is reached."),
     ]
     text = "\n\n".join(f"== {title} ==\n{body}" for title, body in parts)
-    return cut(text, BRIEF_BUDGET)
+    room = sum(json_bytes(f"\n\n== {title} ==\n{body}") - 2 for title, body in owner)  # - 2: its own JSON quotes
+    return cut(text, BRIEF_BUDGET + room)
 
 
 def will_context(s: Snapshot, dry_run: bool) -> str:
