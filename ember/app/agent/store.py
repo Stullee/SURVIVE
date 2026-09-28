@@ -1,4 +1,4 @@
-"""The agent's records in SQLite: projects, tool calls, journal, queue items.
+"""The agent's records in SQLite: projects, tool calls, journal, queue items, the owner's standing instructions.
 
 Everything is scoped to a mode and a session (see migration 0003), so a dry run
 never mixes with the live agent. Functions that change something take the
@@ -322,6 +322,21 @@ def queue(conn: sqlite3.Connection, table: str, scope: AgentScope, limit: int = 
         raise ValueError("unknown table")
     where, params = scope.where()
     return conn.execute(f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC LIMIT ?", (*params, limit)).fetchall()
+
+
+def standing_instructions(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | None:
+    """The owner's current standing instructions (the newest row; its text is empty once they were cleared)."""
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT * FROM standing_instructions WHERE {where} ORDER BY id DESC LIMIT 1", params
+    ).fetchone()
+
+
+def instructions_json(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    """The standing instructions as the dashboard shows them: None while there are none."""
+    if row is None or not row["text"]:
+        return None
+    return {"text": row["text"], "updated_at": row["created_at"], "entered_by": row["entered_by"]}
 
 
 def unseen(conn: sqlite3.Connection, table: str, scope: AgentScope, limit: int = 10) -> list[sqlite3.Row]:
