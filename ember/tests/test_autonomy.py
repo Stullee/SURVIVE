@@ -111,7 +111,7 @@ def test_the_owner_sets_changes_and_clears_the_instructions(data_dir: Path) -> N
     ("body", "field", "error"),
     [
         ({"text": "x" * (INSTRUCTIONS_MAX + 1)}, "text", "keep text under 1,500 characters"),
-        ({"text": "ring\\u0007"}, "text", "text contains control characters"),
+        ({"text": "ring\u0007"}, "text", "text contains control characters"),
         ({"text": 42}, "text", "text must be text"),
         ({}, "text", "send the instructions as text (empty to clear them)"),
         ({"text": "ok", "extra": 1}, "extra", "unknown field 'extra'"),
