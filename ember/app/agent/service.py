@@ -7,6 +7,7 @@ from the injected clock, so tests drive the agent's day with a fake clock.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -29,7 +30,7 @@ from ..integrations import executor as email_executor
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox, select_mailbox
-from . import store
+from . import netguard, store
 from .loop import NO_STEP, CycleEnd, CycleRunner
 from .memory import CAPS, Memory
 from .sandbox import Jail
@@ -43,6 +44,7 @@ CRASH_LOOP = 3
 MAX_WILL_ATTEMPTS = 3
 WAKE_NOW_MIN_GAP = timedelta(seconds=60)
 SLEEP_REASON_CHARS = 200  # of the agent's reason for its sleep, in the next wake's reason
+SHOP_RETRY = timedelta(minutes=etsy_publisher.SYNC_MINUTES)  # after a failed check of the Etsy shop
 
 
 def cycles_enabled_by_env() -> bool:
@@ -117,6 +119,7 @@ class Agent:
             etsy.TaxonomyFile(paths.etsy_dir() / "categories.json"),
         )
         self.publisher = Publisher(db, self.clock, self.settings, self.scope, self.etsy.shop, lambda: self.roots()[0])
+        self._shop_failed_at: datetime | None = None  # the last check of the shop that failed (sync_shop)
 
     # --- where things live ---
 
@@ -446,6 +449,27 @@ class Agent:
             return []
         done = self.executor.run() if self.mailbox is not None else []
         return done + self.publisher.run()
+
+    def sync_shop(self) -> None:
+        """Read the Etsy shop's listings and orders (at most hourly) and its categories (daily) while Ember runs, not
+        only when the agent wakes: Etsy's API terms allow showing listings for 6 hours after they were read, its
+        other content for a day. The scheduler calls this every round (between checks it only looks at the time of
+        the last one); after a failure (raised, or kept for the dashboard) the next try waits an hour."""
+        now = self.clock.now()
+        if self.executor_blocked() or not self.publisher.due():
+            return
+        if self._shop_failed_at and now - self._shop_failed_at < SHOP_RETRY:
+            return
+        shop = self.etsy.shop()
+        if shop is None:
+            return
+        self._shop_failed_at = now  # until the check worked
+        error = self.publisher.sync()  # first: failing categories must not keep the listings' numbers old
+        # The fake shop of a dry run needs no network; the owner's is reached by Ember's code only.
+        with netguard.sealed() if shop.simulated else contextlib.nullcontext():
+            self.etsy.refresh_categories(shop)
+        if error is None:
+            self._shop_failed_at = None
 
     # --- dashboard ---
 

@@ -184,6 +184,9 @@ FETCH_TOOL = {
     "name": "web_fetch",
     "max_uses": 1,
     "max_content_tokens": FETCH_MAX_CONTENT_TOKENS,
+    # Etsy's API terms forbid programs reading its website: the research tool refuses its pages, and so does the
+    # server (the API refuses blocked_domains together with allowed_domains, so a page read never has both).
+    "blocked_domains": list(tools.ETSY_DOMAINS),
 }
 
 

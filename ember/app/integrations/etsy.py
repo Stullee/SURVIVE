@@ -14,6 +14,9 @@ diagnostics, and are refreshed before they expire.
 
 Ember's code talks to https://api.etsy.com only (an allowlist, like the model's); the owner's browser opens
 etsy.com for the connection. In dry run a fake shop takes the listings, so the owner can try the whole flow.
+
+Etsy's API terms (0.8.1): the dashboard and the docs show Etsy's trademark notice (``NOTICE``), research never reads
+Etsy's website (only searches it), and the shop is read every hour while Ember runs, its categories daily.
 """
 
 from __future__ import annotations
@@ -61,6 +64,11 @@ QUANTITY = 999  # a digital download never sells out
 FILE_KINDS = frozenset({".pdf", ".docx", ".xlsx", ".pptx", ".png", ".jpg"})
 PHOTO_KINDS = frozenset({".png", ".jpg"})
 DISCLOSURE = "This digital product was designed with the help of AI and reviewed by the seller before listing."
+# Etsy's API terms require this notice, word for word and prominently, wherever the application shows Etsy.
+NOTICE = (
+    "The term 'Etsy' is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or certified"
+    " by Etsy, Inc."
+)
 # Etsy's rules: tags hold letters, digits, spaces, '-', "'" and ™©®; in a title % : & + may each appear once; a
 # downloadable file's name has at most 70 characters.
 _TAG = re.compile(r"^(?:[^\W_]|[ \-'™©®])+$")
@@ -568,10 +576,10 @@ def config_problems(settings: Settings) -> list[str]:
 
 
 class TaxonomyFile:
-    """Etsy's categories, cached (the live shop fetches them at a sync, at most weekly); the tools search this copy,
-    so they never need the network."""
+    """Etsy's categories, cached (the live shop fetches them at a sync, at most daily: Etsy's API terms allow keeping
+    its content for a day); the tools search this copy, so they never need the network."""
 
-    MAX_AGE = timedelta(days=7)
+    MAX_AGE = timedelta(days=1)
 
     def __init__(self, path: Path) -> None:
         self.path = path

@@ -3070,6 +3070,10 @@
     $("etsy-card").hidden = !e;
     if (!e) { replace($("etsy-facts"), []); replace($("etsy-listings"), []); replace($("etsy-orders"), []); return; }
     var fake = e.mode === "fake";
+    // Etsy's trademark notice, which its API terms require wherever Ember shows Etsy (in dry run too).
+    var notice = e.notice ? String(e.notice) : "";
+    $("etsy-notice").hidden = !notice;
+    $("etsy-notice").textContent = notice;
     var reason = e.reason ? String(e.reason) : null;
     if (!reason && e.status === "not_configured") reason = "Not set up: see the Documentation tab, 'Etsy'.";
     if (!reason && e.status === "disabled") reason = "Off: see the Documentation tab, 'Etsy', to set it up.";
@@ -3082,7 +3086,8 @@
         h("span", { class: "muted small", text: " (renewed while Ember uses it)" }))] : null,
       h("dt", { text: "Listings today" }), h("dd", { text: count(e.created_today) + " (limit: " + count(e.daily_limit) + " a day)" +
         (num(e.waiting) ? "; " + plural(num(e.waiting), "approved listing") + " waiting" : "") }),
-      h("dt", { text: "Last check" }), h("dd", null, e.last_sync_at ? timeEl(e.last_sync_at, fmtDateTime(e.last_sync_at) + " (" + relTime(e.last_sync_at) + ")") : "Never"),
+      // When the shop's listings and orders were last read (every hour while Ember runs): how fresh the numbers are.
+      e.last_sync_at ? [h("dt", { text: "Numbers from" }), h("dd", null, timeEl(e.last_sync_at, fmtDateTime(e.last_sync_at) + " (" + relTime(e.last_sync_at) + ")"))] : null,
       e.last_error ? [h("dt", { text: "Last error" }), h("dd", { class: "fact-error" }, h("span", { "aria-hidden": "true", text: "✕ " }), String(e.last_error))] : null,
     ]);
     replace($("etsy-connect"), fake ? [] : [etsyConnectArea(e)]);

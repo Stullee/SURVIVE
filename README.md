@@ -55,6 +55,13 @@ kept out of the database and logs, only api.etsy.com). Views, favorites and
 orders come back into the agent's plans and daily reviews; the owner records the
 revenue.
 
+0.8.1 follows Etsy's API Terms of Use: research never reads Etsy's pages (it
+still searches them); the shop's listings and orders are read every hour while
+the app runs, not only when the agent wakes, and its categories daily; and the
+dashboard and the docs show Etsy's trademark notice:
+
+> The term 'Etsy' is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or certified by Etsy, Inc.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

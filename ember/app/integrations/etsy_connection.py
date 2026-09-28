@@ -137,6 +137,7 @@ class EtsyConnection:
             "daily_limit": self.settings.etsy_listings_per_day,
             "last_sync_at": self.db.get_meta(etsy_publisher.meta_key(self.mode, "last_sync_at")),
             "last_error": self.db.get_meta(etsy_publisher.meta_key(self.mode, "last_error")) or None,
+            "notice": etsy.NOTICE,  # Etsy's trademark notice, which its API terms require wherever Etsy is shown
         }
         if self._fake is not None:
             shop = self._fake.info()
@@ -159,7 +160,7 @@ class EtsyConnection:
         return self.taxonomy.load()[0]
 
     def refresh_categories(self, shop: Shop) -> None:
-        """Fetch the live shop's categories when the cached copy is missing or a week old."""
+        """Fetch the live shop's categories when the cached copy is missing or a day old."""
         if shop.simulated or not self.taxonomy.stale(self.clock.now()):
             return
         nodes = shop.taxonomy()

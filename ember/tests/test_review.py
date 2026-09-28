@@ -217,11 +217,16 @@ def test_the_dry_run_agent_carries_out_its_stop(data_dir: Path) -> None:
 def test_chaos_reviews_never_break_a_cycle(data_dir: Path, seed: int) -> None:
     fake = FakeTransport(scenario="chaos", seed=seed)
     agent, _ = run(data_dir, fake, cycles=2)
+    due_days = set()
     for _ in range(4):
         agent.clock.advance(days=1)
+        # Due once a cycle of an earlier day completed. Under chaos every cycle of a day may fail, and each cycle's
+        # nonce makes the fake's answers differ from run to run, so the days are counted, not assumed.
+        if rows(agent, "SELECT id FROM cycles WHERE status = 'completed'"):
+            due_days.add(agent.clock.today().isoformat())
         for _ in range(2):
             assert agent.run_cycle("schedule").status in ("completed", "idle", "failed", "refused", "stopped")
-    assert rows(agent, "SELECT COUNT(*) AS n FROM reviews")[0]["n"] >= 4
+    assert {r["day"] for r in rows(agent, "SELECT day FROM reviews")} == due_days  # tried on every day it was due
     no_invalid(fake)
 
 

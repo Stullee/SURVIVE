@@ -1,5 +1,5 @@
 """Etsy (0.8.0): the listing checks, the one-time connection, the live client against a mocked Etsy, the publisher
-with the dry run's fake shop, and what the agent and the owner see of it."""
+with the dry run's fake shop, and what the agent and the owner see of it; and Etsy's API terms (0.8.1)."""
 
 from __future__ import annotations
 
@@ -18,26 +18,29 @@ from fastapi.testclient import TestClient
 
 httpx2 = pytest.importorskip("httpx2")
 
-from app.agent import tools  # noqa: E402
-from app.agent.fake_llm import FakeTransport, request_kind  # noqa: E402
+from app import paths  # noqa: E402
+from app.agent import prompts, tools  # noqa: E402
+from app.agent.fake_llm import FakeTransport, request_kind, validate_request  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.economy.clock import Clock, to_iso  # noqa: E402
-from app.integrations import etsy  # noqa: E402
+from app.integrations import etsy, etsy_publisher  # noqa: E402
 from app.integrations.etsy import (  # noqa: E402
     DISCLOSURE,
     EtsyError,
     FakeShop,
     Listing,
     NotSent,
+    TaxonomyFile,
     TokenFile,
     Tokens,
     Unclear,
     Upload,
 )
+from app.integrations.etsy_connection import EtsyConnection  # noqa: E402
 from app.integrations.etsy_live import LiveShop, _Allowlist, connect  # noqa: E402
 from app.logging_setup import redact  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
+from tests.test_agent import make_agent, rows  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
 
@@ -699,3 +702,173 @@ def test_the_rebuilt_approvals_keep_every_rule(data_dir: Path) -> None:
             " 't', 'd', 'p', 'h', 'c', 'b', 'shopify', '{}')",
             (scope.mode, scope.session, scope.life_id),
         )
+
+
+# --- Etsy's API terms (0.8.1) ------------------------------------------------------------------------------------
+
+NOTICE = (
+    "The term 'Etsy' is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or certified"
+    " by Etsy, Inc."
+)
+
+
+def test_the_trademark_notice_comes_with_the_shop_in_both_modes(data_dir: Path) -> None:
+    assert etsy.NOTICE == NOTICE  # word for word, as Etsy's terms give it
+    agent, _ = make_agent(data_dir, [])
+    assert agent.integrations()["etsy"]["notice"] == NOTICE  # the dry run's fake shop
+    live = EtsyConnection(
+        agent.db, agent.clock, LIVE, "live", 0, TokenFile(data_dir / "t.json"), TaxonomyFile(data_dir / "c.json")
+    )
+    assert live.describe()["notice"] == NOTICE  # a live shop, connected or not
+
+
+def test_the_dashboard_shows_the_notice_and_how_fresh_the_numbers_are() -> None:
+    script = (paths.WEB_DIR / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    start = script.index("function renderEtsy(d)")
+    render = script[start : script.index("\n  }\n", start)]
+    assert "e.notice" in render and '$("etsy-notice")' in render
+    assert "e.last_sync_at ? [" in render and '"Numbers from"' in render and "timeEl(e.last_sync_at" in render
+    assert 'class="card-note" id="etsy-notice"' in (paths.WEB_DIR / "index.html").read_text(encoding="utf-8")
+
+
+def research_context(agent: Any, calls: list[tuple[str | None, str | None]]) -> tools.ToolContext:
+    """The research tool's context; its model call is a stand-in that records the page or the site it was given."""
+    return tools.ToolContext(
+        db=agent.db,
+        clock=agent.clock,
+        scope=agent.scope(),
+        cycle_id=0,
+        workspace=agent.roots()[0],
+        memory=agent.memory(),
+        min_sleep=30,
+        max_sleep=1440,
+        state=tools.CycleTools(),
+        research=lambda question, url, cycle_id, site: calls.append((url, site)) or tools.Outcome(True, "ok", "ok"),
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.etsy.com/listing/1/x",
+        "https://etsy.com/",
+        "https://shop.etsy.com/a",
+        "https://etsy.me/abc",
+        "https://WWW.Etsy.com/listing/1",
+        "https://www.etsy.com./listing/1",
+    ],
+)
+def test_research_never_reads_etsys_pages(data_dir: Path, url: str) -> None:
+    agent, _ = make_agent(data_dir, [])
+    calls: list[tuple[str | None, str | None]] = []
+    ctx = research_context(agent, calls)
+    ctx.state.seen_urls.add(url)  # even a page its own search found
+    with pytest.raises(tools.ToolError, match=r"Etsy's pages can't be read by a program \(Etsy's API terms forbid"):
+        tools.HANDLERS["research"](ctx, {"question": "What sells?", "url": url})
+    assert calls == []
+
+
+def test_other_pages_are_read_and_etsy_is_searched(data_dir: Path) -> None:
+    agent, _ = make_agent(data_dir, [])
+    calls: list[tuple[str | None, str | None]] = []
+    ctx = research_context(agent, calls)
+    for url in ("https://example.com/pricing", "https://notetsy.com/planners"):
+        ctx.state.seen_urls.add(url)
+        tools.HANDLERS["research"](ctx, {"question": "q", "url": url})
+    for url in ("https://notetsy.com/other", "https://[etsy.com"):  # refused because no search found them
+        with pytest.raises(tools.ToolError, match="appeared in your research results"):
+            tools.HANDLERS["research"](ctx, {"question": "q", "url": url})
+    tools.HANDLERS["research"](ctx, {"question": "What sells?", "site": "etsy.com"})  # a search engine's results
+    assert calls == [("https://example.com/pricing", None), ("https://notetsy.com/planners", None), (None, "etsy.com")]
+
+
+def test_the_page_reader_is_barred_from_etsy_on_the_server_too() -> None:
+    request = prompts.research_request(Settings(), "q", "https://example.com/page")
+    [fetch] = request["tools"]
+    assert fetch["name"] == "web_fetch" and fetch["blocked_domains"] == ["etsy.com", "etsy.me"]
+    assert "allowed_domains" not in fetch and validate_request(request) is None  # one list or the other, not both
+    [search] = prompts.research_request(Settings(), "q", None, "etsy.com")["tools"]
+    assert search["allowed_domains"] == ["etsy.com"] and "blocked_domains" not in search
+
+
+def test_the_shop_is_read_every_hour_while_the_agent_sleeps(data_dir: Path) -> None:
+    agent, _, request = proposed(data_dir)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    assert agent.execute_approved() == [(request, "active")]
+    key = etsy_publisher.meta_key(agent.mode, "last_sync_at")
+    synced = agent.db.get_meta(key)  # by the first cycle, before the listing existed
+    cycles = len(rows(agent, "SELECT id FROM cycles"))
+    agent.clock.advance(minutes=30)
+    agent.sync_shop()
+    assert agent.db.get_meta(key) == synced  # not again within the hour
+    assert rows(agent, "SELECT views FROM etsy_listings")[0]["views"] is None
+    agent.clock.advance(minutes=31)
+    agent.sync_shop()
+    assert agent.db.get_meta(key) == to_iso(agent.clock.now())
+    assert rows(agent, "SELECT views FROM etsy_listings")[0]["views"] > 0
+    assert len(rows(agent, "SELECT id FROM cycles")) == cycles  # without a wake cycle
+    assert agent.integrations()["etsy"]["last_sync_at"] == to_iso(agent.clock.now())  # the dashboard's "Numbers from"
+
+
+def test_the_shop_is_read_only_while_the_agent_could_run(data_dir: Path) -> None:
+    agent, _ = make_agent(data_dir, [])
+    key = etsy_publisher.meta_key(agent.mode, "last_sync_at")
+    agent.economy.set_paused(True)
+    assert agent.executor_blocked() == "The agent is paused"
+    agent.sync_shop()
+    assert agent.db.get_meta(key) is None
+    agent.economy.set_paused(False)
+    agent.sync_shop()
+    assert agent.db.get_meta(key) == to_iso(agent.clock.now()) and rows(agent, "SELECT id FROM cycles") == []
+
+
+def test_a_failed_check_of_the_shop_waits_an_hour(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, _ = make_agent(data_dir, [])
+    tries: list[str] = []
+    monkeypatch.setattr(agent.publisher, "sync", lambda: tries.append("sync") or "HTTP 503")
+    agent.sync_shop()
+    agent.clock.advance(minutes=59)
+    agent.sync_shop()  # a failing Etsy isn't asked again every minute
+    assert tries == ["sync"]
+    agent.clock.advance(minutes=2)
+
+    def unreachable(shop: Any) -> None:
+        raise NotSent("Etsy couldn't be reached (ConnectError)")
+
+    monkeypatch.setattr(agent.etsy, "refresh_categories", unreachable)
+    with pytest.raises(NotSent):
+        agent.sync_shop()  # the scheduler logs it
+    agent.clock.advance(minutes=59)
+    agent.sync_shop()
+    assert tries == ["sync", "sync"]
+
+
+def test_failing_categories_dont_keep_the_listings_numbers_old(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, _ = make_agent(data_dir, [])
+
+    def unreachable(shop: Any) -> None:
+        raise NotSent("Etsy couldn't be reached (ConnectError)")
+
+    monkeypatch.setattr(agent.etsy, "refresh_categories", unreachable)
+    with pytest.raises(NotSent):
+        agent.sync_shop()
+    assert agent.db.get_meta(etsy_publisher.meta_key(agent.mode, "last_sync_at")) == to_iso(agent.clock.now())
+
+
+def test_a_round_between_checks_leaves_the_shop_alone(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, _ = make_agent(data_dir, [])
+    agent.sync_shop()
+    monkeypatch.setattr(agent.etsy, "shop", lambda: pytest.fail("the shop was looked at between checks"))
+    for _ in range(59):  # the scheduler's rounds, a minute apart
+        agent.clock.advance(minutes=1)
+        agent.sync_shop()
+
+
+def test_etsys_categories_are_fetched_again_after_a_day(tmp_path: Path) -> None:
+    cache = TaxonomyFile(tmp_path / "categories.json")
+    now = Clock().now()
+    assert cache.stale(now)  # none yet
+    cache.save([(1, "Paper")], to_iso(now - timedelta(hours=23)))
+    assert not cache.stale(now)
+    cache.save([(1, "Paper")], to_iso(now - timedelta(hours=25)))
+    assert cache.stale(now)

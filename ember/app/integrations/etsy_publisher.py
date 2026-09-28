@@ -13,8 +13,9 @@ current mode and session, oldest first:
    Etsy for the owner to finish. Nothing is ever created twice: a row still 'running' after a restart becomes
    'unclear'.
 
-``sync`` (at the start of a wake cycle, at most every SYNC_MINUTES) records each listing's state, views and
-favorites, and the orders that hold Ember's listings: dates, totals and which listings, never who bought.
+``sync`` (in the scheduler's rounds, so while the agent sleeps too, and at the start of a wake cycle; at most every
+SYNC_MINUTES, well within the 6 hours Etsy's API terms allow for listing content) records each listing's state, views
+and favorites, and the orders that hold Ember's listings: dates, totals and which listings, never who bought.
 """
 
 from __future__ import annotations
@@ -273,6 +274,11 @@ class Publisher:
 
     # --- how the listings do ---
 
+    def due(self) -> bool:
+        """Whether the shop should be read again: never read yet, or last read SYNC_MINUTES ago."""
+        last = self.db.get_meta(meta_key(self.scope().mode, "last_sync_at"))
+        return not last or self.clock.now() - from_iso(last) >= timedelta(minutes=SYNC_MINUTES)
+
     def sync(self, force: bool = False) -> str | None:
         """Bring back the listings' state, views and favorites, and the orders with Ember's listings. Returns an
         error text (also kept for the dashboard), or None."""
@@ -282,8 +288,7 @@ class Publisher:
         try:
             scope = self.scope()
             now = self.clock.now()
-            last = self.db.get_meta(meta_key(scope.mode, "last_sync_at"))
-            if not force and last and now - from_iso(last) < timedelta(minutes=SYNC_MINUTES):
+            if not force and not self.due():
                 return None
             where, params = scope.where()
             with self.db.connection() as conn:

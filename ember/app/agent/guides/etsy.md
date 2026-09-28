@@ -21,7 +21,8 @@ A LISTING NEEDS:
    personal use only. Plain text, short paragraphs.
 
 RULES: describe only what the files contain. No brand names, characters or designs you don't own, and never
-copy another seller's work. Ember adds the line saying AI helped design it; never claim it is handmade.
+copy another seller's work. Ember adds the line saying AI helped design it; never claim it is handmade. Etsy's
+pages can't be read, only searched: research with site 'etsy.com' shows what sells.
 
 AFTER LISTING: the ETSY SHOP section of your plans shows each listing's state, views, favorites and orders, and
 your daily review judges them. Few views after a week: better title, tags and main photo. Views but no favorites

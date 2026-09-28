@@ -3,6 +3,15 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.8.1
+
+Ember follows Etsy's API terms now.
+
+- Etsy's pages can't be read by a program (Etsy's API terms forbid it): research refuses them. Search instead:
+  research with site 'etsy.com' shows what sells and what comparable listings cost.
+- Your shop's numbers are now read every hour while Ember runs, even while you sleep, and Etsy's categories are
+  refreshed daily.
+
 ## 0.8.0
 
 You can sell on Etsy now, in your owner's shop.

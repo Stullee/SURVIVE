@@ -1,4 +1,5 @@
-"""The one background task: re-evaluate the economy, send approved emails, wake the agent when it's time.
+"""The one background task: re-evaluate the economy, send approved emails, read the Etsy shop, wake the agent when
+it's time.
 
 It runs on the event loop but does every piece of database or agent work in a
 worker thread (``asyncio.to_thread``); only one cycle runs at a time. Between
@@ -85,6 +86,10 @@ class Scheduler:
                         await asyncio.to_thread(self.agent.execute_approved)
                     except Exception:  # noqa: BLE001 - a sending problem must not stop the wake cycles
                         log.exception("Sending approved emails failed")
+                    try:
+                        await asyncio.to_thread(self.agent.sync_shop)  # at most hourly, also while the agent sleeps
+                    except Exception:  # noqa: BLE001 - the shop must not stop the wake cycles
+                        log.exception("Checking the Etsy shop failed")
                     decision = await asyncio.to_thread(self.agent.decide)
                     if decision.run and decision.trigger:
                         self.status = f"running a {decision.trigger} cycle"

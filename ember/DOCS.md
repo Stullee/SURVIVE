@@ -39,7 +39,7 @@ your approval, and only you can record revenue.
 | Price table | see below | USD per million tokens for each model. |
 | Web search price | 10 USD per 1,000 | Charged per search on top of tokens. |
 | Dry run | on | Fake model, no API calls, no cost. |
-| Let the agent read whole web pages | off | Off: live research is web search only. On: it can also read pages from its search results (about $0.01–0.02 each). PDFs and other documents are always refused, because they have no size limit. |
+| Let the agent read whole web pages | off | Off: live research is web search only. On: it can also read pages from its search results (about $0.01–0.02 each). PDFs and other documents are always refused, because they have no size limit, and so are Etsy's pages, because Etsy's API terms forbid programs reading its site (searching it is fine). |
 | Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, like **Wake now** (at most one wake-up a minute; during a cycle, right after it; not while the agent is paused). Off: it reads your message at its next scheduled wake-up. |
 | Worker effort | default | How thoroughly the model works in each step. `medium` or `low` write shorter answers and use fewer tool calls, which costs less but may do a worse job. Not used for Haiku. |
 | Kill switch reset | 0 | Change it to any other number and restart to undo the kill switch. |
@@ -421,6 +421,8 @@ complete listing, you approve it, and Ember's own code creates it through your
 own Etsy app. In dry run a fake shop (*EmberTestShop*) takes the listings, so
 you can try the whole flow first.
 
+> The term 'Etsy' is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or certified by Etsy, Inc.
+
 ### Setting it up
 
 1. You need an Etsy shop (Etsy's rules make it yours, in your name).
@@ -469,13 +471,20 @@ can also remove the app's access at Etsy).
 
 ### What Ember sees
 
-At the start of every wake cycle (at most once an hour) Ember reads how its own
-listings do: their state, views (Etsy counts them once a day) and favorites, and
-the orders that hold them: date, total and which listing, never who bought. The
+Every hour while the app runs, also while the agent sleeps between wake cycles
+(not while it is paused, stopped or dead), Ember reads how its own listings do:
+their state, views (Etsy counts them once a day) and favorites, and the orders
+that hold them: date, total and which listing, never who bought. Etsy's
+categories are fetched again every day. Etsy's API terms allow showing its
+listings for 6 hours after they were read and its other content for a day. The
 agent sees these numbers in every plan and in its daily review. **System →
-Etsy** lists the listings and orders; **Record as revenue** opens the revenue
-form filled in from an order (an order can't be recorded twice). Revenue still
-counts only when you record it.
+Etsy** lists the listings and orders and says when the numbers were read;
+**Record as revenue** opens the revenue form filled in from an order (an order
+can't be recorded twice). Revenue still counts only when you record it.
+
+The agent can search Etsy through web search to see what sells, but its
+research never reads Etsy's pages: Etsy's API terms forbid programs reading its
+site.
 
 ## Reddit
 

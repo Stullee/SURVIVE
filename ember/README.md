@@ -17,4 +17,6 @@ Ember lists the products you approve there itself. Optionally Ember gets its own
 mailbox: it reads its mail on its own and sends an email only after you approve
 it.
 
+> The term 'Etsy' is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or certified by Etsy, Inc.
+
 **Status: all five phases in, live testing (dry run is the default).**

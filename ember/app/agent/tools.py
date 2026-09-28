@@ -78,6 +78,9 @@ REDDIT_NOTE = (
 )
 _SITE = re.compile(r"^(?=.{4,60}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 _DOCUMENT = re.compile(r"\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|epub|zip)$", re.IGNORECASE)
+# Etsy's website and its short links, with their subdomains: Etsy's API terms forbid programs reading them. Searching
+# them (site 'etsy.com') stays allowed: that reads a search engine's results, not Etsy's pages.
+ETSY_DOMAINS = ("etsy.com", "etsy.me")
 _BAD_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]")
 
 
@@ -933,6 +936,11 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
             raise ToolError("reading whole pages is switched off by your owner; search instead")
         if not url.startswith("https://") or any(c.isspace() for c in url):
             raise ToolError("the url must start with https:// and contain no spaces")
+        if _on_etsy(url):
+            raise ToolError(
+                "Etsy's pages can't be read by a program (Etsy's API terms forbid it); search instead, for example"
+                " with site 'etsy.com'"
+            )
         if url not in ctx.state.seen_urls:
             # Otherwise a URL could carry data out of the container (in its path or query) without approval.
             raise ToolError("you can only read pages that appeared in your research results this cycle")
@@ -942,6 +950,15 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     if ctx.research is None:
         raise ToolError("research isn't available right now")
     return ctx.research(args["question"].strip(), url, ctx.cycle_id, None if url else site)
+
+
+def _on_etsy(url: str) -> bool:
+    """Whether ``url`` is a page of Etsy's website or one of its short links (see ETSY_DOMAINS)."""
+    try:
+        host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    except ValueError:  # not an address anyone could read: refused as not found in the research results
+        return False
+    return any(host == domain or host.endswith(f".{domain}") for domain in ETSY_DOMAINS)
 
 
 # --- making files (0.6.0) ---
