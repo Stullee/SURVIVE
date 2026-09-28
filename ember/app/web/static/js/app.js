@@ -45,6 +45,8 @@
     ws: { list: null, loadedAt: null, busy: false, error: null, file: null, fileBusy: false, fileError: null, fileSeq: 0 },
     refocus: null,       // after the owner's own action: the card status line to focus once the list is re-rendered
     sending: false,      // an inbox message is on its way
+    // The standing instructions' editor: open while the owner edits (polls never touch it then), and whether a save is on its way.
+    instructions: { editing: false, saving: false },
     markingRead: false,
     killBusy: false,
   };
@@ -512,7 +514,8 @@
     banners: "Banners", system: "System status", transitions: "Life-state history", events: "System log",
     header: "Header", controls: "Controls", kpis: "Key numbers", badges: "Tab badges", memorial: "Memorial",
     now: "Now", lives: "Previous lives", charts: "Charts", table: "Table", ledger: "Ledger", forms: "Forms",
-    projects: "Projects", activity: "Activity", approvals: "Approvals", inbox: "Inbox", upgrades: "Upgrades", mind: "Mind",
+    projects: "Projects", activity: "Activity", approvals: "Approvals", inbox: "Inbox", instructions: "Standing instructions",
+    upgrades: "Upgrades", mind: "Mind",
     cycleDetail: "Cycle details", diagnostics: "Diagnostics", email: "Email", workspace: "Workspace", workspaceFile: "Workspace file",
   };
 
@@ -593,6 +596,9 @@
     // Owner queues: patched card by card, so an open decision form keeps what the owner typed.
     section("approvals", [d.approvals, projectTitles(d), coming, agent.name, emailLimits(d), minute], null, function () {
       return renderApprovals(arr(d.approvals), projectTitles(d), emailLimits(d));
+    });
+    section("instructions", [d.instructions, agent.name, coming, !!agent.unavailable, minute], ["instructions-view"], function () {
+      renderInstructions(isObject(d.instructions) ? d.instructions : null, agent);
     });
     section("inbox", [d.inbox, d.badges, agent.name, coming, d.mode, minute], ["inbox"], function () { renderInbox(arr(d.inbox), agent.name, badgeCounts(d).unread, isDryRun(d)); });
     section("upgrades", [d.upgrades, coming, agent.name, minute], null, function () { return renderUpgrades(arr(d.upgrades)); });
@@ -2427,6 +2433,143 @@
     return spec;
   }
 
+  // ---- Standing instructions (top of the Inbox)
+
+  var INSTRUCTIONS_MAX = 1500;
+  // Offered while there are none, never saved by itself: the owner saves it (changed or not) with Save.
+  var INSTRUCTIONS_SUGGESTION = "Work on your own. Ask me only to approve something that leaves the container, or for money. " +
+    "Keep 2-3 experiments going; when one waits for me, work on another. Spend your daily budget on experiments rather " +
+    "than sleeping to save it.";
+
+  function currentInstructions() {
+    var instr = ui.data && isObject(ui.data.instructions) ? ui.data.instructions : null;
+    return instr && typeof instr.text === "string" && instr.text ? instr : null;
+  }
+
+  function renderInstructions(instr, agent) {
+    var name = agent.name || "Ember";
+    var text = instr && typeof instr.text === "string" ? instr.text : "";
+    var sub = $("instructions-sub");
+    if (text) {
+      replace(sub, ["Set by " + (instr.entered_by ? String(instr.entered_by) : "you") + " · ", timeEl(instr.updated_at)]);
+      replace($("instructions-view"), h("p", { class: "instructions-text", text: text }));
+    } else {
+      sub.textContent = "None yet.";
+      replace($("instructions-view"), h("div", { class: "instructions-empty" },
+        h("p", { class: "muted", text: "A suggestion to start from (nothing is saved until you press Save):" }),
+        h("p", { class: "instructions-text instructions-suggestion", text: INSTRUCTIONS_SUGGESTION })));
+    }
+    $("instructions-note").textContent = name + " reads these in every plan. Use them for lasting guidance; use messages for one-off things.";
+    $("instructions-label").textContent = "Standing instructions for " + name;
+    syncInstructionsEdit(agent);
+  }
+
+  function syncInstructionsEdit(agent) {
+    var edit = $("instructions-edit");
+    var later = laterTitle();
+    var editing = ui.instructions.editing;
+    edit.hidden = editing;
+    edit.setAttribute("aria-expanded", editing ? "true" : "false");
+    edit.textContent = currentInstructions() ? "Edit" : "Write instructions";
+    edit.disabled = !!later || !!(agent && agent.unavailable);
+    if (later) edit.title = later;
+    else if (agent && agent.unavailable) edit.title = "The agent is not available";
+    else edit.removeAttribute("title");
+    $("instructions-view").hidden = editing;
+  }
+
+  function instructionsCount() {
+    var n = $("instructions-text").value.trim().length;
+    var el = $("instructions-count");
+    el.textContent = intFmt.format(n) + " / 1,500 characters";
+    el.setAttribute("data-over", n > INSTRUCTIONS_MAX ? "true" : "false");
+  }
+
+  function instructionsError(text) {
+    var err = $("instructions-error");
+    err.textContent = text || "";
+    err.hidden = !text;
+    if (text) $("instructions-text").setAttribute("aria-invalid", "true");
+    else $("instructions-text").removeAttribute("aria-invalid");
+  }
+
+  function setInstructionsStatus(text, kind) {
+    $("instructions-status").textContent = text;
+    $("instructions-status").setAttribute("data-kind", kind || "");
+  }
+
+  function openInstructions() {
+    if (ui.instructions.editing || laterTitle()) return;
+    var current = currentInstructions();
+    ui.instructions.editing = true;
+    $("instructions-form").hidden = false;
+    var box = $("instructions-text");
+    box.value = current ? current.text : INSTRUCTIONS_SUGGESTION;
+    box.placeholder = INSTRUCTIONS_SUGGESTION;
+    instructionsError("");
+    instructionsCount();
+    setInstructionsStatus(current ? "" : "Filled in with the suggestion: change it as you like. Nothing is saved until you press Save.", "");
+    syncInstructionsEdit(ui.data ? ui.data.agent || standInAgent(ui.data) : null);
+    box.focus();
+  }
+
+  function closeInstructions() {
+    ui.instructions.editing = false;
+    $("instructions-form").hidden = true;
+    instructionsError("");
+    ui.rendered.instructions = null;  // show what changed while the editor was open
+    if (ui.data) {
+      var agent = ui.data.agent || standInAgent(ui.data);
+      safely("instructions", function () { renderInstructions(currentInstructions(), agent); });
+    }
+    $("instructions-edit").focus();
+  }
+
+  function saveInstructions() {
+    if (ui.instructions.saving || !ui.instructions.editing || laterTitle()) return;
+    var box = $("instructions-text");
+    var text = box.value.trim();
+    instructionsError("");
+    if (text.length > INSTRUCTIONS_MAX) {
+      instructionsError("Keep the instructions under 1,500 characters (they have " + intFmt.format(text.length) + ").");
+      box.focus();
+      return;
+    }
+    ui.instructions.saving = true;
+    var save = $("instructions-save");
+    save.disabled = true;
+    save.textContent = "Saving…";
+    setInstructionsStatus("Saving…", "");
+    request("POST", "api/instructions", { text: text }).then(function (res) {
+      var data = isObject(res.data) ? res.data : {};
+      if (res.ok) {
+        if (ui.data) ui.data.instructions = isObject(data.instructions) ? data.instructions : null;
+        closeInstructions();
+        setInstructionsStatus(data.changed === false ? "Nothing changed: these are already the instructions."
+          : text ? "Saved. " + agentName() + " follows them from its next plan on."
+          : "Cleared. " + agentName() + " has no standing instructions now.", "ok");
+        refresh();
+        return;
+      }
+      if (res.status === 422 && data.field === "text" && typeof data.error === "string" && data.error) {
+        instructionsError(endSentence(sentence(data.error)));
+        setInstructionsStatus("Nothing was saved.", "error");
+        box.focus();
+        return;
+      }
+      ownerFailure(res, {}, function (msg) { setInstructionsStatus(msg, "error"); }, null);
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setInstructionsStatus((err.kind === "timeout" ? "Ember did not answer in time" : "Couldn't reach Ember") +
+        ", so the instructions may or may not have been saved. Check them after the next update.", "error");
+      refresh();
+    }).then(function () {
+      ui.instructions.saving = false;
+      save.textContent = "Save";
+      save.disabled = false;
+    });
+  }
+
   // ---- Inbox
 
   function renderInbox(messages, agentName, unread, dry) {
@@ -2514,7 +2657,10 @@
       if (res.status === 201 || res.ok) {
         box.value = "";
         composerCount();
-        setComposerStatus("Sent. " + agentName() + " reads it on its next wake.", "ok");
+        // With the wake_on_message option the message wakes the agent (unless it woke less than a minute ago, ...).
+        var woken = isObject(res.data) && res.data.woken === true;
+        if (woken) ui.fastPollUntil = Date.now() + WAKE_FAST_POLL_MS;
+        setComposerStatus("Sent. " + agentName() + (woken ? " is waking up to read it." : " reads it on its next wake."), "ok");
         refresh();
         return;
       }
@@ -3547,6 +3693,19 @@
     if ($("composer-status").getAttribute("data-kind") === "ok") setComposerStatus("", "");
   });
   $("inbox-mark-read").addEventListener("click", markAllRead);
+
+  // ------------------------------------------------------------------ standing instructions
+
+  $("instructions-edit").addEventListener("click", openInstructions);
+  $("instructions-cancel").addEventListener("click", function () { setInstructionsStatus("", ""); closeInstructions(); });
+  $("instructions-form").addEventListener("submit", function (ev) { ev.preventDefault(); saveInstructions(); });
+  $("instructions-text").addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); saveInstructions(); }
+  });
+  $("instructions-text").addEventListener("input", function () {
+    instructionsError("");
+    instructionsCount();
+  });
 
   // ------------------------------------------------------------------ diagnostics
 
