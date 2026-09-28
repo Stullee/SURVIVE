@@ -28,7 +28,8 @@ _OWN_TAGS = re.compile(r"^(?:\[#c\d+\]\s*)+")  # cycle tags the model wrote itse
 SEEDS = {
     "strategy": (
         "# Strategy\n\n"
-        "No strategy yet. Start small: find one honest way to be useful that someone might pay for,\n"
+        "No strategy yet. Write your strategy here; it is the one you see when planning.\n"
+        "Start small: find one honest way to be useful that someone might pay for,\n"
         "test it cheaply, and write down what you learn.\n"
     ),
     "identity": "# Identity\n\nI am an AI agent. I work honestly and in the open, with my owner's approval.\n",
