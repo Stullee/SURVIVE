@@ -70,6 +70,12 @@ configuration:
     description: >-
       On: the agent uses a built-in fake model and never calls the Anthropic
       API, so nothing costs money. Turn off only when you are ready.
+  wake_on_message:
+    name: Wake Ember when you write
+    description: >-
+      On: a message you send in the Inbox wakes the agent to read it, like
+      Wake now (at most one wake-up a minute). Off: it reads your message at
+      its next scheduled wake-up.
   worker_effort:
     name: Worker effort
     description: >-
