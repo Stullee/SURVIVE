@@ -27,6 +27,11 @@ run off, Claude does). That reply is the cycle's only message to the owner. The 
 acknowledged in the plan's assessment, the reply and the journal. Only those two sections are read, never
 tool results, and their quoted parts are parsed as JSON.
 
+It also tries the rest of what the agent can do. With unread mail in the ``MAIL`` section it plans to read
+it: it opens the newest unread email and, if that one asks a question (a subject with "?", not a reply or a
+newsletter), proposes an answer with ``propose_email`` (a dry-run draft, as its text says). Some research is
+limited to Reddit (``site="reddit.com"``), and some approval requests are Reddit posts (``propose_reddit_post``).
+
 Scenarios (the ``scenario`` argument; the app takes it from ``EMBER_FAKE_SCENARIO`` and the delay from
 ``EMBER_FAKE_DELAY_MS``):
 
@@ -113,7 +118,30 @@ CHAOS: dict[str, tuple[str, ...]] = {
     "will": ("cut_off", "empty"),
 }
 _OPEN_STATUSES = ("idea", "active", "waiting")
+_SEARCH_FIELDS = frozenset(
+    {"type", "name", "max_uses", "allowed_domains", "blocked_domains", "user_location", "cache_control"}
+)
+_FETCH_FIELDS = frozenset(
+    {
+        "type",
+        "name",
+        "max_uses",
+        "allowed_domains",
+        "blocked_domains",
+        "citations",
+        "max_content_tokens",
+        "cache_control",
+    }
+)
+_DOMAIN = re.compile(r"^(?!https?:)[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s]*)?$")
 NEWS_SECTION = "SINCE YOUR LAST WAKE"  # the planner context's news
+MAIL_SECTION = "MAIL"  # the unread emails, in the planner context and the brief
+MAIL_STEP = "Read my new email and answer real questions with propose_email"
+REDDIT = "reddit.com"
+SUBREDDIT = "SideProject"
+DRY_RUN_EMAIL = (
+    "This reply was drafted by Ember's built-in fake model in a dry run, so it doesn't really answer your question."
+)
 OWNER_SECTION = "FROM YOUR OWNER"  # the act brief's news (the same lines)
 ANSWER_STEP = "Answer my owner's message"
 QUOTE_CHARS = 120
@@ -367,6 +395,9 @@ def validate_request(request: Mapping[str, Any], canonical: str | None = None) -
             problem = _text_problem(block)
             if problem:
                 return f"system.{index}: {problem}"
+    problem = _server_tool_problem(request.get("tools"))
+    if problem:
+        return problem
     messages = request.get("messages")
     if not isinstance(messages, list) or not messages:
         return "messages: at least one message is required"
@@ -425,6 +456,35 @@ def validate_request(request: Mapping[str, Any], canonical: str | None = None) -
         tail = content[-1] if isinstance(content, list) and content else None
         if not (isinstance(tail, Mapping) and tail.get("type") == "server_tool_use"):
             return "This model does not support assistant message prefill; the conversation must end with a user turn."
+    return None
+
+
+def _server_tool_problem(tools: Any) -> str | None:
+    """The web tools' fields as the API checks them: known fields only, and domain lists without a scheme."""
+    for index, tool in enumerate(tools if isinstance(tools, list) else []):
+        if not isinstance(tool, Mapping):
+            return f"tools.{index}: must be an object"
+        kind = str(tool.get("type") or "")
+        known = (
+            _SEARCH_FIELDS
+            if kind.startswith("web_search_")
+            else _FETCH_FIELDS
+            if kind.startswith("web_fetch_")
+            else None
+        )
+        if known is None:
+            continue
+        extra = sorted(set(tool) - known)
+        if extra:
+            return f"tools.{index}.{extra[0]}: Extra inputs are not permitted"
+        if tool.get("allowed_domains") is not None and tool.get("blocked_domains") is not None:
+            return f"tools.{index}: use either allowed_domains or blocked_domains, not both"
+        for name in ("allowed_domains", "blocked_domains"):
+            domains = tool.get(name)
+            if domains is None:
+                continue
+            if not isinstance(domains, list) or not domains or not all(_DOMAIN.match(str(d)) for d in domains):
+                return f"tools.{index}.{name}: must be a list of domains without a scheme, like example.com"
     return None
 
 
@@ -627,6 +687,40 @@ def _decision(line: str) -> Decision | None:
     if not isinstance(title, str) or decided is None:
         return None
     return Decision(upgrade is not None, int(head[1]), title, decided[1], decided[2] or "")
+
+
+_MAIL_LINE = re.compile(r'^#(\d+) from ("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")$')
+
+
+@dataclass(frozen=True)
+class MailLine:
+    """An unread email as the MAIL section lists it: ``#3 from "sender" "subject"``."""
+
+    id: int
+    sender: str
+    subject: str
+
+    @property
+    def question(self) -> bool:
+        """Someone asking something: a subject with "?" that isn't a reply, from an address that isn't a newsletter."""
+        reply = self.subject.lower().startswith(("re:", "aw:", "fwd:"))
+        return "?" in self.subject and not reply and not re.search(r"news|noreply|no-reply", self.sender, re.I)
+
+
+def unread_mail(text: str) -> list[MailLine]:
+    """The unread emails a MAIL section lists, newest first (its quoted parts read as JSON)."""
+    found = []
+    for line in (section(text, MAIL_SECTION) or "").split("\n"):
+        match = _MAIL_LINE.match(line)
+        if match is None:
+            continue
+        try:
+            sender, subject = json.loads(match[2]), json.loads(match[3])
+        except ValueError:
+            continue
+        if isinstance(sender, str) and isinstance(subject, str):
+            found.append(MailLine(int(match[1]), sender, subject))
+    return found
 
 
 def _json_text(raw: str) -> str | None:
@@ -1012,7 +1106,8 @@ class FakeTransport:
             steps.append("Ask my owner to approve publishing a short listing, disclosed as written by an AI")
         if not news.messages and rng.random() < 0.25 and len(steps) < 5:
             steps.append("Send my owner a short progress message")
-        steps = answer + [s[:200] for s in steps[:5]]  # answering the owner comes first
+        reading = [MAIL_STEP] if unread_mail(context) else []  # people who wrote come right after the owner
+        steps = answer + reading + [s[:200] for s in steps[: 5 - len(reading)]]  # answering the owner comes first
         where = (
             f"{len(open_)} open project(s); the most promising is #{focus.id} {focus.title}."
             if focus
@@ -1081,6 +1176,8 @@ class FakeTransport:
         answering = any(_ANSWER in line for line in lines)
         steps = "\n".join(line for line in lines if _ANSWER not in line)
         wanted = {
+            "mail_read": "new email" in steps,
+            "mail_reply": "new email" in steps,
             "research": "research" in steps,
             "write": "write" in steps,
             "update": "update" in steps,
@@ -1100,14 +1197,17 @@ class FakeTransport:
         if self.scenario == "drain":
             sequence = ["research", "write", "research", "append", "research", "append", "update"]
         else:
-            sequence = [s for s in ("research", "write", "reread", "update", "approval", "message") if wanted.get(s)]
+            stages = ("mail_read", "mail_reply", "research", "write", "reread", "update", "approval", "message")
+            sequence = [s for s in stages if wanted.get(s)]
             if self.scenario == "injection" and wanted["write"]:
                 sequence.insert(sequence.index("write") + 1, "reread")
+            if "approval" in sequence and crng.random() < 0.35:  # sometimes a Reddit post instead
+                sequence[sequence.index("approval")] = "reddit"
         sequence.append("sleep")
         turns = [["reply"]] if reply else []
         if not only_answering:
             turns.append(["survey"] if conv.focus else ["survey", "create"])
-        pairable = {"update", "approval", "message", "sleep"}
+        pairable = {"update", "approval", "reddit", "message", "sleep"}
         for stage in sequence:
             last = turns[-1]
             if stage in pairable and len(last) == 1 and last[0] in pairable and crng.random() < 0.4:
@@ -1146,7 +1246,38 @@ class FakeTransport:
             args = {"question": idea.question}
             if rng.random() < 0.2:
                 args["url"] = f"{SIMULATED_SITE}/guides/{slug(idea.title)}"
+            elif rng.random() < 0.25:
+                args.update(question=f"What do people on Reddit say about this? {idea.question}", site=REDDIT)
             return "research", args
+        if stage == "mail_read":
+            unread = unread_mail(conv.brief)
+            return ("email_read", {"email_id": unread[0].id}) if unread else None
+        if stage == "mail_reply":
+            opened = {
+                c.input.get("email_id")
+                for c in conv.of("act")
+                if c.name == "email_read" and isinstance(c.input, Mapping) and c.result and not c.error
+            }
+            ask = next((m for m in unread_mail(conv.brief) if m.id in opened and m.question), None)
+            if ask is None:
+                return None
+            return "propose_email", {
+                "reply_to_email_id": ask.id,
+                "subject": ask.subject if ask.subject.lower().startswith("re:") else f"Re: {ask.subject}",
+                "body": email_reply(name, ask.subject),
+                "reason": f"{_quote(ask.sender, 80)} asked me a question by email; this answers it (a reply, not a "
+                "cold email).",
+            }
+        if stage == "reddit":
+            return "propose_reddit_post", {
+                "subreddit": SUBREDDIT,
+                "kind": "post",
+                "title": f"I'm an AI agent testing an idea: {idea.title}. Would it help you?",
+                "body": f"Hi! I'm {name}, an AI agent, and my owner lets me test small ideas. This one: {idea.offer} "
+                f"for {idea.audience}, at about {idea.price}.\n\nWould you use it? What would make it worth paying "
+                "for? Honest answers help me more than upvotes.",
+                "reason": f"A cheap test of demand for {idea.title}: the replies show whether anyone wants it.",
+            }
         if stage == "write":
             return "workspace_write", {"path": path, "mode": "overwrite", "content": self._document(conv, idea, rng)}
         if stage == "append":
@@ -1343,7 +1474,7 @@ class FakeTransport:
             ),
             0,
         )
-        idea = next((i for i in IDEAS if i.question == question or i.title.lower() in question.lower()), None)
+        idea = next((i for i in IDEAS if i.question in question or i.title.lower() in question.lower()), None)
         continuing = messages[-1].get("role") == "assistant"
         if continuing:  # after pause_turn: run the pending server tool call
             use = messages[-1]["content"][-1]
@@ -1384,7 +1515,10 @@ class FakeTransport:
             }
             text = _text("The search failed, so nothing useful was found.")
             return _Draft([result, text] if continuing else [use, result, text], note="chaos: search_error")
-        results = _search_results(question, idea, rng, injection)
+        search = next((t for t in request.get("tools") or [] if "search" in str(t.get("type"))), {})
+        domains = search.get("allowed_domains") if isinstance(search, Mapping) else None
+        site = str(domains[0]) if isinstance(domains, list) and domains else None
+        results = _search_results(question, idea, rng, injection, site)
         result = {
             "type": "web_search_tool_result",
             "tool_use_id": use["id"],
@@ -1399,7 +1533,7 @@ class FakeTransport:
                 for r in results
             ],
         }
-        digest = _text(_digest(question, [(r["url"], r["snippet"]) for r in results], injection))
+        digest = _text(_digest(question, [(r["url"], r["snippet"]) for r in results], injection, site))
         digest["citations"] = [
             {
                 "type": "web_search_result_location",
@@ -1445,10 +1579,16 @@ _STAGE_TOOLS = {
     "reread": "workspace_read",
     "update": "project_update",
     "approval": "request_approval",
+    "reddit": "propose_reddit_post",
+    "mail_read": "email_read",
+    "mail_reply": "propose_email",
     "message": "message_owner",
     "sleep": "set_sleep",
 }
 _INTROS = {
+    "mail_read": "Someone wrote to me; I'll read it first.",
+    "mail_reply": "That's a real question, so I'll draft an answer for my owner to approve.",
+    "reddit": "A short Reddit post could test demand; my owner would post it themselves.",
     "survey": "First I'll look at what is already in my workspace.",
     "reply": "My owner wrote to me, so I'll answer first.",
     "research": "Before writing anything, I'll check what already exists and what it costs.",
@@ -1597,6 +1737,15 @@ def owner_reply(news: OwnerNews) -> str:
     return "\n\n".join(parts)
 
 
+def email_reply(agent: str, subject: str) -> str:
+    """The fake's answer to an email that asks something: polite, honest about being an AI and a dry-run draft."""
+    return (
+        f'Hello,\n\nthank you for your email ("{_quote(subject, 80)}"). I\'m {agent}, an AI agent working for my '
+        "owner, who reads every email before it is sent. I have noted your question and will write again when I "
+        f"know more.\n\n{DRY_RUN_EMAIL}\n\nBest regards,\n{agent}"
+    )
+
+
 def acknowledge(decision: Decision, to_owner: bool = False) -> str:
     """One sentence on the owner's decision, e.g. "My owner approved request #3 "Post" with changes; …"."""
     who, whose = ("You", "your") if to_owner else ("My owner", "their")
@@ -1664,6 +1813,10 @@ def _describe(call: _Call) -> str:
         if DRY_RUN_REPLY in str(args.get("text"))
         else "sent my owner a short message",
         "set_sleep": f"asked to sleep {args.get('minutes')} min",
+        "email_inbox": "looked at my mailbox",
+        "email_read": f"read email #{args.get('email_id')}",
+        "propose_email": "asked my owner to approve an answer by email (Ember's code sends it only if they do)",
+        "propose_reddit_post": "asked my owner to approve a Reddit post (they would post it themselves)",
     }.get(call.name, f"used {call.name}")
 
 
@@ -1678,7 +1831,9 @@ def _report(conv: _Conversation, extra: str = "") -> str:
     return f"{text} {extra}".strip()
 
 
-def _search_results(question: str, idea: Idea | None, rng: random.Random, injection: bool) -> list[dict[str, str]]:
+def _search_results(
+    question: str, idea: Idea | None, rng: random.Random, injection: bool, site: str | None = None
+) -> list[dict[str, str]]:
     topic = idea.title if idea else " ".join(question.split()[:6]).rstrip("?")
     offer = idea.offer if idea else "offers like this"
     price = idea.price if idea else "a wide range of prices"
@@ -1693,11 +1848,12 @@ def _search_results(question: str, idea: Idea | None, rng: random.Random, inject
     rng.shuffle(candidates)
     picked = candidates[: rng.randint(2, 3)]
     results = []
+    where = f"{slug(site)}/" if site else ""  # a search limited to a site finds pages there only
     for kind, snippet in picked:
         results.append(
             {
-                "url": f"{SIMULATED_SITE}/{slug(kind)}/{slug(topic)}-{_hex(rng, 4)}",
-                "title": f"[simulated] {kind}: {topic}",
+                "url": f"{SIMULATED_SITE}/{where}{slug(kind)}/{slug(topic)}-{_hex(rng, 4)}",
+                "title": f"[simulated] {kind}{f' on {site}' if site else ''}: {topic}",
                 "snippet": f"[simulated] {snippet}",
                 "page_age": rng.choice(["January 12, 2026", "March 3, 2026", "June 21, 2026", "August 30, 2026"]),
             }
@@ -1708,10 +1864,10 @@ def _search_results(question: str, idea: Idea | None, rng: random.Random, inject
     return results
 
 
-def _digest(question: str, sources: list[tuple[str, str]], injection: bool) -> str:
+def _digest(question: str, sources: list[tuple[str, str]], injection: bool, site: str | None = None) -> str:
     lines = [
         "Simulated research (dry run: no web page was read; these results are made up for testing).",
-        f"Question: {question[:200]}",
+        f"Question: {question[:200]}" + (f" (only {site} was searched)" if site else ""),
         *(f"- {snippet} ({url})" for url, snippet in sources),
     ]
     if injection:

@@ -43,6 +43,14 @@ def _json_bytes(text: str) -> int:
     return len(_q(text).encode("utf-8"))
 
 
+def _column(row: sqlite3.Row, name: str) -> object:
+    """A column that rows built by hand (tests, older callers) may not have."""
+    try:
+        return row[name]
+    except (IndexError, KeyError):
+        return None
+
+
 def parse_version(text: str) -> tuple[int, int, int] | None:
     match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", text.strip())
     return (int(match[1]), int(match[2]), int(match[3])) if match else None
@@ -107,9 +115,13 @@ class News:
     def approval_lines(self) -> list[str]:
         lines = []
         for r in self.decided:
+            email = _column(r, "executor") == "email"
             head = f"Request #{r['id']} ({r['type']}) {_q(r['title'])}: {r['status'].replace('_', ' ')}"
             if r["status"] == "approved_with_changes":
-                head += f". Use the owner's version, not yours: {_q(r['final_payload'])}"
+                if email:
+                    head += f". Your owner changed the email's text; this is what is sent: {_q(r['final_payload'])}"
+                else:
+                    head += f". Use the owner's version, not yours: {_q(r['final_payload'])}"
             if r["decision_comment"]:
                 head += f". Owner's comment: {_q(r['decision_comment'])}"
             if r["status"] in ("done", "failed"):
@@ -118,7 +130,11 @@ class News:
                 if r["result_link"]:
                     head += f". Link: {_q(r['result_link'])}"
             elif r["status"] in ("approved", "approved_with_changes"):
-                head += ". Your owner will carry it out and report back"
+                head += (
+                    ". Ember's code sends it and you'll hear the result"
+                    if email
+                    else ". Your owner will carry it out and report back"
+                )
             lines.append(head + ".")
         return lines
 

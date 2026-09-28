@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.3.2"
+version: "0.4.0"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -56,6 +56,14 @@ options:
   # Change this number (and restart) to re-enable an agent stopped with the kill switch.
   kill_switch_reset: 0
   log_level: info
+  # Ember's own mailbox (see the Documentation tab). The address, the app password and your name are
+  # optional options: turn on "Show unused optional configuration options" to fill them in.
+  email_enabled: false
+  email_imap_host: imap.mailbox.org
+  email_imap_port: 993
+  email_smtp_host: smtp.mailbox.org
+  email_smtp_port: 465
+  email_daily_limit: 3
 
 schema:
   anthropic_api_key: password?
@@ -81,3 +89,12 @@ schema:
   web_fetch: bool
   kill_switch_reset: int(0,1000000)
   log_level: list(debug|info|warning|error)
+  email_enabled: bool
+  email_address: str?
+  email_password: password?
+  email_imap_host: str
+  email_imap_port: int(1,65535)
+  email_smtp_host: str
+  email_smtp_port: int(1,65535)
+  email_owner_name: str?
+  email_daily_limit: int(0,20)

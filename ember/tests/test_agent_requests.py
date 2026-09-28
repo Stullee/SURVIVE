@@ -25,15 +25,19 @@ def filler(budget: int) -> str:
 
 
 def biggest_planner_context() -> str:
-    # Every section at its budget, RECENT RESEARCH included.
+    # Every section at its budget, RECENT RESEARCH and MAIL included.
     parts = [f"== {HEADINGS.get(k, k.upper())} ==\n{filler(v)}" for k, v in context.PLANNER_BUDGETS.items()]
     return "\n\n".join([*parts, "== TASK ==\nPlan this wake cycle. Reply with the JSON plan only."])
 
 
 def first_step_and_reflection(brief: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """The first work step, and the reflection after it with the room the loop keeps for one step's growth."""
+    """The first work step, and the reflection after it with the room the loop keeps for one step's growth (with the
+    most tools: a mailbox's too)."""
     grown = [{"role": "assistant", "content": [{"type": "text", "text": "x" * loop.STEP_GROWTH_BYTES}]}]
-    return prompts.work_request(SETTINGS, brief, []), prompts.reflect_request(SETTINGS, brief, grown, [])
+    return (
+        prompts.work_request(SETTINGS, brief, [], mail=True),
+        prompts.reflect_request(SETTINGS, brief, grown, [], mail=True),
+    )
 
 
 def test_profiles_cover_the_biggest_requests_without_much_slack() -> None:
@@ -88,6 +92,9 @@ def overflowing_snapshot() -> context.Snapshot:
             running_version="10.10.10",
         ),
         research=[{"cycle_id": 10_000 + i, **research} for i in range(context.RESEARCH_CALLS)],  # type: ignore[misc]
+        mail=context.MailView(
+            "ä" * 60 + "@example.org", 10**6, tuple((10**9 + i, "ä" * 320, "ä" * 300) for i in range(3))
+        ),
     )
 
 
@@ -95,11 +102,12 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     snap = overflowing_snapshot()
     planner, _ = context.planner_context(snap, dry_run=True)
     assert f"== {context.RESEARCH_HEADING} ==" in planner and "== FROM YOUR OWNER ==" not in planner
+    assert "\n== MAIL ==\n" in planner
     assert rough_token_count(prompts.plan_request(SETTINGS, planner)) <= PLANNER_OPENING.input_tokens
     plan = {"goal": "ä" * 300, "steps": ["ä" * 200] * 6}
     focus = {"id": 1_000, "title": "ä" * 80, "status": "active", "hypothesis": "ä" * 400, "next_step": "ä" * 200}
     brief, _ = context.brief(snap, True, plan, {**focus, "notes": "ä" * 2_000}, 100)  # type: ignore[arg-type]
-    assert "== FROM YOUR OWNER ==" in brief and brief.endswith("bytes cut]")
+    assert "== FROM YOUR OWNER ==" in brief and "\n== MAIL ==\n" in brief and brief.endswith("bytes cut]")
     # The owner's and the research sections' room comes on top, even when the research itself is cut at the end.
     assert context.BRIEF_BUDGET < context.json_bytes(brief) <= context.BRIEF_MAX
     for request, profile in zip(first_step_and_reflection(brief), (WORK, REFLECT), strict=True):
@@ -111,10 +119,13 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     [
         prompts.plan_request(SETTINGS, "context"),
         prompts.work_request(SETTINGS, "brief", []),
+        prompts.work_request(SETTINGS, "brief", [], mail=True),
         prompts.work_request(SETTINGS, "brief", [], final=True),
         prompts.reflect_request(SETTINGS, "brief", [], []),
+        prompts.reflect_request(SETTINGS, "brief", [], [], mail=True),
         prompts.will_request(SETTINGS, "context"),
         prompts.research_request(SETTINGS, "question", None),
+        prompts.research_request(SETTINGS, "question", None, "reddit.com"),
         prompts.research_request(SETTINGS, "question", "https://example.com/page"),
     ],
 )
@@ -142,7 +153,10 @@ def test_the_constitution_is_the_owners_text_with_the_name_filled_in() -> None:
 
 
 def test_tool_definitions_match_the_validation() -> None:
-    for definition in tools.definitions():
+    assert {d["name"] for d in tools.definitions(mail=True)} - {d["name"] for d in tools.definitions()} == set(
+        tools.MAIL_TOOLS
+    )
+    for definition in tools.definitions(mail=True):
         spec = tools.SPECS[definition["name"]]
         schema = definition["input_schema"]
         assert schema["additionalProperties"] is False

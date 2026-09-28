@@ -84,3 +84,37 @@ configuration:
   log_level:
     name: Log level
     description: How much detail goes to the app log.
+  email_enabled:
+    name: Ember's mailbox
+    description: >-
+      On: Ember reads its own mailbox and may propose emails; each one is sent
+      by Ember only after you approve it. Needs the address, app password and
+      your name below.
+  email_address:
+    name: Mailbox address
+    description: The address of the mailbox you created for Ember, for example ember-yourname@mailbox.org.
+  email_password:
+    name: Mailbox app password
+    description: >-
+      An app password limited to IMAP and SMTP (not your main password).
+      Stored by Home Assistant; Ember never logs or displays it.
+  email_imap_host:
+    name: IMAP server
+    description: Where Ember reads its mail (always over TLS).
+  email_imap_port:
+    name: IMAP port
+    description: Usually 993 (TLS).
+  email_smtp_host:
+    name: SMTP server
+    description: Where Ember sends the emails you approved.
+  email_smtp_port:
+    name: SMTP port
+    description: 465 (TLS) or 587 (STARTTLS); other ports are refused.
+  email_owner_name:
+    name: Your name for emails
+    description: >-
+      Named in the sender and in the footer of every email Ember sends
+      ("Ember (AI agent of <your name>)").
+  email_daily_limit:
+    name: Emails per day
+    description: The most emails Ember sends in one day (0 to 20). Approved emails beyond it wait for the next day.

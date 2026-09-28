@@ -21,6 +21,7 @@ from .db import utcnow
 from .economy.ledger import OWNER_KINDS
 from .economy.life import KILLED_KEY
 from .economy.service import Economy, Reply
+from .integrations import executor as email_executor
 from .logging_setup import printable
 from .paths import WEB_DIR
 from .security import ingress_base_href
@@ -123,9 +124,21 @@ def dashboard(request: Request) -> dict[str, Any]:
         payload.update(
             {"agent": None, "economy": None, "ledger": None, "memorial": None, "lives": [], "transitions": []}
         )
+    payload["integrations"] = _integrations(state)
     payload["system"] = state.system_info()
     payload["events"] = state.recent_events()
     return payload
+
+
+def _integrations(state: AppState) -> dict[str, Any]:
+    """Ember's integrations as the dashboard shows them (never a password)."""
+    if state.agent is not None:
+        return state.agent.integrations()
+    settings = state.loaded.settings
+    email = email_executor.integration(None, None, settings, "dry_run" if settings.dry_run else "live", None, None)
+    if email["status"] == "ok":  # it would work, but without the agent there is no mailbox
+        email.update(status="error", reason="The agent is not running, see the system log")
+    return {"email": email}
 
 
 @router.get("/api/sensors")
@@ -259,6 +272,7 @@ def decide_approval(request: Request, approval_id: ItemId, body: Annotated[Any, 
     if actions is None:
         return NO_AGENT
     reply = actions.decide(approval_id, body, _owner(request))
+    _poke_executor(request, reply)
     return _reply(reply)
 
 
@@ -267,7 +281,16 @@ def close_approval(request: Request, approval_id: ItemId, body: Annotated[Any, B
     actions = _owner_actions(request)
     if actions is None:
         return NO_AGENT
-    return _reply(actions.close(approval_id, body, _owner(request)))
+    reply = actions.close(approval_id, body, _owner(request))
+    _poke_executor(request, reply)
+    return _reply(reply)
+
+
+def _poke_executor(request: Request, reply: Reply) -> None:
+    """An approved email is sent by the scheduler's next round: start it now rather than within the minute."""
+    approval = reply.body.get("approval") if reply.status == 200 else None
+    if isinstance(approval, dict) and approval.get("executor"):
+        _poke(request)
 
 
 @router.post("/api/inbox")

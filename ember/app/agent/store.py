@@ -262,9 +262,11 @@ def count_rows(conn: sqlite3.Connection, table: str, scope: AgentScope, conditio
 
 
 def insert_approval(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, now: str, **fields: Any) -> int:
+    """A request for the owner; with ``executor`` and ``action`` (canonical JSON), one Ember's code carries out."""
     cursor = conn.execute(
         "INSERT INTO approvals (mode, session, life_id, cycle_id, project_id, created_at, type, title, description,"
-        " payload, payload_sha256, expected_cost, expected_benefit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " payload, payload_sha256, expected_cost, expected_benefit, executor, action)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             scope.mode,
             scope.session,
@@ -279,6 +281,8 @@ def insert_approval(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, 
             sha256(fields["payload"]),
             fields["expected_cost"],
             fields["expected_benefit"],
+            fields.get("executor"),
+            fields.get("action"),
         ),
     )
     return int(cursor.lastrowid)

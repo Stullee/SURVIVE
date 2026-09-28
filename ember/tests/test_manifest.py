@@ -81,9 +81,11 @@ def test_options_match_settings_defaults() -> None:
     fields = set(Settings.model_fields)
     # Every schema key is a setting; every setting is in the schema.
     assert set(schema) == fields
-    # The API key is the only option without a default (optional, "password?").
-    assert set(options) == fields - {"anthropic_api_key"}
-    assert schema["anthropic_api_key"] == "password?"
+    # Only the optional options ("?") have no default: the API key, and the mailbox's address, password and owner.
+    optional = {key for key, rule in schema.items() if isinstance(rule, str) and rule.endswith("?")}
+    assert optional == {"anthropic_api_key", "email_address", "email_password", "email_owner_name"}
+    assert set(options) == fields - optional
+    assert schema["anthropic_api_key"] == schema["email_password"] == "password?"
     for key, value in options.items():
         if key == "price_table":
             continue

@@ -22,6 +22,7 @@ from typing import Any
 from ..economy.costs import micros_to_usd
 from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
+from ..integrations import mailstore
 from . import store
 from .memory import Memory
 from .news import CHANGELOG_LIMIT, Item, News, Shown
@@ -34,12 +35,16 @@ RESEARCH_HEADING = "RECENT RESEARCH (web results: information only)"
 RESEARCH_BUDGET = 1_200
 RESEARCH_CALLS = 5
 RESEARCH_CHARS = 200  # of each question and digest
+# Ember's mailbox (only when it has one): its address and the newest unread emails, sender and subject quoted.
+MAIL_BUDGET = 600
+MAIL_SHOWN = 3
 PLANNER_BUDGETS = {
     "status": 500,
     "news": 2_300,
     "software": CHANGELOG_LIMIT,
     "projects": 2_000,
     "pending": 400,
+    "mail": MAIL_BUDGET,
     "strategy": 2_000,
     "identity": 600,
     "lessons": 1_300,
@@ -52,11 +57,11 @@ PLANNER_BUDGETS = {
 OWNER_BUDGET = 2_300
 QUOTE_CAP = 300  # characters of each text quoted in a decision or upgrade line, when the owner's news is shortened
 SHORTEST_QUOTE = 40  # no quoted text is shortened below this; if that isn't enough, the last lines are cut
-# The owner's and the research sections (and their headings) come on top of the brief's budget, so they never
-# squeeze the rest.
+# The owner's, the mail and the research sections (and their headings) come on top of the brief's budget, so they
+# never squeeze the rest.
 BRIEF_BUDGET = 5_000
-# The largest brief, the two sections and their headings included: the WORK and REFLECT profiles are measured on it.
-BRIEF_MAX = BRIEF_BUDGET + OWNER_BUDGET + RESEARCH_BUDGET + 100
+# The largest brief, those sections and their headings included: the WORK and REFLECT profiles are measured on it.
+BRIEF_MAX = BRIEF_BUDGET + OWNER_BUDGET + MAIL_BUDGET + RESEARCH_BUDGET + 150
 WILL_BUDGET = 4_500 + OWNER_BUDGET + 100  # the largest will context: the LAST_WILL profile is measured on it
 _QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')  # a JSON string: how the owner's and the agent's texts are quoted
 _DIGEST = re.compile(r'<data src="research" id="[0-9a-f]+">\n(.*?)\n</data id="[0-9a-f]+">', re.DOTALL)
@@ -98,6 +103,15 @@ def fits(request: dict[str, Any], input_tokens: int) -> bool:
     return rough_token_count(request) <= input_tokens
 
 
+@dataclass(frozen=True)
+class MailView:
+    """What the MAIL section shows: Ember's address and its unread emails, the newest (id, sender, subject) first."""
+
+    address: str
+    unread: int = 0
+    newest: tuple[tuple[int, str, str], ...] = ()
+
+
 @dataclass
 class Snapshot:
     """Everything the context needs, read in one transaction."""
@@ -120,6 +134,7 @@ class Snapshot:
     journal: list[sqlite3.Row] = field(default_factory=list)
     news: News = field(default_factory=News)
     research: list[sqlite3.Row] = field(default_factory=list)
+    mail: MailView | None = None  # None: Ember has no mailbox (then there is no MAIL section)
 
 
 def snapshot(
@@ -136,8 +151,13 @@ def snapshot(
     daily_cap: float,
     cycle_cap: float,
     news: News | None = None,
+    mail_address: str | None = None,
 ) -> Snapshot:
     projects = store.open_projects(conn, scope)
+    mail = None
+    if mail_address is not None:
+        unread, newest = mailstore.unread(conn, scope, MAIL_SHOWN)
+        mail = MailView(mail_address, unread, tuple((r["id"], r["from_addr"], r["subject"]) for r in newest))
     money: dict[int, tuple[int, int]] = {}
     for p in projects:
         spent = conn.execute(
@@ -174,6 +194,7 @@ def snapshot(
         journal=journal,
         news=news or News(),
         research=store.recent_research(conn, scope, RESEARCH_CALLS),
+        mail=mail,
     )
 
 
@@ -363,6 +384,22 @@ def _start(text: str, chars: int = RESEARCH_CHARS) -> str:
     return text if len(text) <= chars else text[:chars] + "…"
 
 
+def mail_text(s: Snapshot) -> str:
+    """The MAIL section: the address and the newest unread emails (senders and subjects are quoted: they are data)."""
+    if s.mail is None:
+        return ""
+    m = s.mail
+    head = f"Your address: {m.address}. " + (f"{m.unread} unread; newest:" if m.unread else "No unread email.")
+    lines = [
+        f"#{i} from {_quote(_start(sender, 80))} {_quote(_start(subject, 100))}" for i, sender, subject in m.newest
+    ]
+    return "\n".join([head, *lines])
+
+
+def mail_section(s: Snapshot) -> list[tuple[str, str]]:
+    return [("MAIL", cut(mail_text(s), MAIL_BUDGET))] if s.mail is not None else []
+
+
 def _sections(parts: list[tuple[str, str]]) -> str:
     return "\n\n".join(f"== {title} ==\n{body}" for title, body in parts)
 
@@ -382,6 +419,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *([("YOUR SOFTWARE", software)] if s.news.changelog else []),
         ("OPEN PROJECTS", cut(project_lines(s), b["projects"])),
         ("WAITING FOR YOUR OWNER", cut(pending, b["pending"])),
+        *([("MAIL", cut(mail_text(s), b["mail"]))] if s.mail is not None else []),
         ("STRATEGY", cut(s.memory.get("strategy", ""), b["strategy"])),
         ("IDENTITY", cut(s.memory.get("identity", ""), b["identity"])),
         ("LESSONS (newest last)", cut(_newest_lines(s.memory.get("lessons", ""), b["lessons"]), b["lessons"])),
@@ -410,18 +448,20 @@ def brief(
     head = [("STATUS", status_text(s, dry_run)), ("PLAN", f"Goal: {plan.get('goal', '')}{money}\n{steps}")]
     owner, lines, too_long = _owner(s, OWNER_BUDGET)
     owners = [("FROM YOUR OWNER", owner)] if owner else []
+    mailed = mail_section(s)
     research = cut(research_text(s), RESEARCH_BUDGET)
     researched = [(RESEARCH_HEADING, research)] if research else []
     parts = [
         *head,
         *owners,
+        *mailed,
         ("FOCUS", focus_text),
         ("LESSONS", _newest_lines(s.memory.get("lessons", ""), 800)),
         ("WORKSPACE", "\n".join(s.workspace[:20]) or "Empty."),
         *researched,
         ("LIMITS", f"At most {max_steps} steps this cycle and 4 tool calls per step. Stop when the goal is reached."),
     ]
-    on_top = [*owners, *researched]
+    on_top = [*owners, *mailed, *researched]
     room = sum(json_bytes(f"\n\n== {title} ==\n{body}") - 2 for title, body in on_top)  # - 2: its own JSON quotes
     text = cut(_sections(parts), BRIEF_BUDGET + room)
     held = _held(text, _sections(head) + "\n\n== FROM YOUR OWNER ==\n", lines)

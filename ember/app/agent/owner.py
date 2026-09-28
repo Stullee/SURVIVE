@@ -5,6 +5,11 @@ it (a test checks), so the agent can't decide its own requests. Every change is
 a compare-and-set on the row's current status (approvals also on a version
 number), so two browser tabs can't both decide the same item, and the database
 refuses status changes that aren't allowed (migration 0004).
+
+An approved email is sent by Ember's code (app/integrations/executor.py), not
+by the owner: approving it with changes edits its text only, and while it waits
+the owner can only cancel it (mark it failed); once Ember started sending it,
+Ember closes it with the result.
 """
 
 from __future__ import annotations
@@ -18,9 +23,12 @@ from ..db import Database
 from ..economy.clock import Clock, to_iso
 from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
+from ..integrations import executor
+from ..integrations.mail import BODY_MAX
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
+CANCELLED = "Cancelled by the owner before it was sent"
 DECISIONS = {"approve": "approved", "approve_with_changes": "approved_with_changes", "reject": "rejected"}
 OUTCOMES = ("done", "failed")
 UPGRADE_STATUSES = ("accepted", "declined", "released")
@@ -103,7 +111,16 @@ class Owner:
                 if row["status"] != "pending":
                     raise OwnerError("id", f"this request is already {row['status']}", 409)
                 status = DECISIONS[decision]
-                if status == "approved_with_changes" and final == row["payload"]:
+                unchanged = row["payload"]
+                if row["executor"] == "email" and final is not None:
+                    # For an email the owner's version is the text Ember sends (recipient and subject stay).
+                    if len(final) > BODY_MAX:
+                        raise OwnerError("final_payload", f"keep the email's text under {BODY_MAX:,} characters")
+                    try:
+                        unchanged = executor.parse_action(row["action"])["body"]
+                    except ValueError:
+                        raise OwnerError("id", "this email request is broken; reject it", 409) from None
+                if status == "approved_with_changes" and final == unchanged:
                     status, final = "approved", None
                 conn.execute(
                     "UPDATE approvals SET status = ?, decided_at = ?, decided_by = ?, decision_comment = ?,"
@@ -124,7 +141,7 @@ class Owner:
             outcome = data.get("outcome")
             if outcome not in OUTCOMES:
                 raise OwnerError("outcome", "choose done or failed")
-            note = _text(data, "result_note", 2_000, required=outcome == "failed")
+            note = _text(data, "result_note", 2_000)
             link = _text(data, "result_link", 2_048)
             if link is not None and (not re.match(r"^https?://[^\s@/]+(/\S*)?$", link)):
                 raise OwnerError("result_link", "use a plain http(s) link without spaces or user names")
@@ -133,10 +150,19 @@ class Owner:
                 self._check_version(row, data)
                 if row["status"] not in ("approved", "approved_with_changes"):
                     raise OwnerError("id", f"only an approved request can be closed (it is {row['status']})", 409)
+                if row["executor"] == "email":
+                    # In the same transaction as the executor's check: either this cancels it or Ember sends it.
+                    if conn.execute("SELECT 1 FROM email_actions WHERE approval_id = ?", (approval_id,)).fetchone():
+                        raise OwnerError("id", "Ember is already sending this email; it reports the result", 409)
+                    if outcome == "done":
+                        raise OwnerError("outcome", "Ember sends approved emails itself; to stop this one, cancel it")
+                    note = note or CANCELLED
+                elif outcome == "failed" and note is None:
+                    raise OwnerError("result_note", "please fill in result note")
                 conn.execute(
-                    "UPDATE approvals SET status = ?, closed_at = ?, result_note = ?, result_link = ?,"
+                    "UPDATE approvals SET status = ?, closed_at = ?, closed_by = ?, result_note = ?, result_link = ?,"
                     " version = version + 1, seen_cycle_id = NULL WHERE id = ? AND version = ?",
-                    (outcome, self._now(), note, link, approval_id, row["version"]),
+                    (outcome, self._now(), who, note, link, approval_id, row["version"]),
                 )
                 events.record(self.db, "info", "owner", f"{who or 'The owner'} marked request #{approval_id} {outcome}")
                 return Reply(200, {"approval": self._approval_json(self._approval(conn, approval_id))})

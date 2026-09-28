@@ -24,6 +24,9 @@ from ..economy.costs import micros_to_usd
 from ..economy.metering import MeteredModel, OfflineTransport, Transport, usd_cap_to_micros
 from ..economy.pricing import opening_cost, working_cycle_cost
 from ..economy.service import Economy
+from ..integrations import executor as email_executor
+from ..integrations import mailstore
+from ..integrations.mail import Mailbox, select_mailbox
 from . import store
 from .loop import NO_STEP, CycleEnd, CycleRunner
 from .memory import CAPS, Memory
@@ -92,6 +95,12 @@ class Agent:
         self.last_wake_request: datetime | None = None
         self.running_cycle = False
         self._lock = threading.Lock()  # one cycle at a time in this process
+        # Ember's mailbox: the fake one in dry run (its inbox grows with the session's wake cycles), the
+        # configured one live, or none. Only Ember's code holds it; the tools get its address.
+        self.mailbox: Mailbox | None = select_mailbox(
+            self.mode, self.settings, economy.life.session(), self._dry_run_wakes
+        )
+        self.executor = email_executor.Executor(db, self.clock, self.settings, self.scope, self.mailbox)
 
     # --- where things live ---
 
@@ -108,6 +117,14 @@ class Agent:
 
     def _key(self, name: str) -> str:
         return f"agent.{self.mode}.{name}"
+
+    def _dry_run_wakes(self) -> int:
+        """How many wake cycles this dry-run session has opened (the fake mailbox's clock)."""
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM cycles WHERE simulated = 1 AND session = ?", (self.economy.life.session(),)
+            ).fetchone()
+        return int(row[0])
 
     def _meta_time(self, name: str) -> datetime | None:
         value = self.db.get_meta(self._key(name))
@@ -126,6 +143,8 @@ class Agent:
         now = self.clock.now()
         with self.db.transaction() as conn:
             store.interrupt_open_tool_calls(conn, to_iso(now))
+        if self.economy.health.lock_held:  # (another process holding the data folder may be sending right now)
+            self.executor.recover()  # an email that was being sent may have gone out: it is never sent again
         if self.mode == "dry_run":
             self._rotate_dry_run_folders()
         workspace, memory_root = self.roots()
@@ -292,6 +311,7 @@ class Agent:
                 workspace,
                 Memory(self.db, memory_root, scope),
                 self.stop,
+                self.mailbox,
             )
             end = runner.run(trigger)
             self._after(trigger, end)
@@ -347,7 +367,31 @@ class Agent:
         self._set_time("next_wake_at", now + timedelta(minutes=minutes))
         self.db.set_meta(self._key("next_wake_reason"), reason)
 
+    # --- approved actions Ember carries out itself ---
+
+    def executor_blocked(self) -> str | None:
+        """Why approved emails aren't sent now (None if they may be): only while the agent itself could run."""
+        if not self.cycles_enabled:
+            return "Wake cycles are switched off (EMBER_SCHEDULER=off)"
+        if not self.economy.health.lock_held:
+            return "Another Ember process is using the data folder"
+        state = self.economy.life.evaluate().state
+        return None if state in ("alive", "critical") else f"The agent is {state}"
+
+    def execute_approved(self) -> list[tuple[int, str]]:
+        """Send the approved emails that are due (the scheduler calls this before every decision)."""
+        if self.mailbox is None or self.executor_blocked():
+            return []
+        return self.executor.run()
+
     # --- dashboard ---
+
+    def integrations(self) -> dict[str, Any]:
+        return {
+            "email": email_executor.integration(
+                self.db, self.clock, self.settings, self.mode, self.scope(), self.mailbox
+            )
+        }
 
     def agent_fields(self) -> dict[str, Any]:
         blocked = self.blocked_reason()
@@ -370,10 +414,19 @@ class Agent:
     def sensor_fields(self) -> dict[str, Any]:
         from . import views
 
+        scope = self.scope()
         with self.db.connection() as conn:
-            counts = views.badges(conn, self.scope())
+            counts = views.badges(conn, scope)
+            email_unread = mailstore.unread(conn, scope, 0)[0] if self.mailbox is not None else 0
+            email_waiting = email_executor.waiting(conn, scope)
         wake = self._meta_time("next_wake_at") if self.blocked_reason() is None else None
-        return {**counts, "next_wake_at": to_iso(wake) if wake else None, "cycle_running": self.running_cycle}
+        return {
+            **counts,
+            "email_unread": email_unread,
+            "email_waiting": email_waiting,
+            "next_wake_at": to_iso(wake) if wake else None,
+            "cycle_running": self.running_cycle,
+        }
 
     def cycle_detail(self, cycle_id: int) -> dict[str, Any] | None:
         from . import views

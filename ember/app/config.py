@@ -117,15 +117,35 @@ class Settings(BaseModel):
     web_fetch: bool = False
     kill_switch_reset: int = Field(default=0, ge=0, le=1_000_000)
     log_level: Literal["debug", "info", "warning", "error"] = "info"
+    # Ember's own mailbox (0.4.0). Only types and ranges are checked here: a mailbox that is switched on but
+    # incomplete or wrong is reported by the integration (app/integrations/mail.py), never by safe mode.
+    email_enabled: bool = False
+    email_address: str = ""
+    email_password: SecretStr = SecretStr("")
+    email_imap_host: str = "imap.mailbox.org"
+    email_imap_port: int = Field(default=993, ge=1, le=65_535)
+    email_smtp_host: str = "smtp.mailbox.org"
+    email_smtp_port: int = Field(default=465, ge=1, le=65_535)
+    email_owner_name: str = ""
+    email_daily_limit: int = Field(default=3, ge=0, le=20)
 
-    @field_validator("anthropic_api_key", mode="before")
+    @field_validator("anthropic_api_key", "email_password", mode="before")
     @classmethod
     def _strip_key(cls, value: Any) -> Any:
         # A key pasted with a stray space or newline would otherwise look "set"
         # but fail every API call.
         return value.strip() if isinstance(value, str) else value
 
-    @field_validator("agent_name", "planner_model", "worker_model", mode="before")
+    @field_validator(
+        "agent_name",
+        "planner_model",
+        "worker_model",
+        "email_address",
+        "email_imap_host",
+        "email_smtp_host",
+        "email_owner_name",
+        mode="before",
+    )
     @classmethod
     def _strip(cls, value: Any) -> Any:
         return value.strip() if isinstance(value, str) else value
@@ -185,10 +205,15 @@ class Settings(BaseModel):
     def api_key_set(self) -> bool:
         return bool(self.anthropic_api_key.get_secret_value().strip())
 
+    @property
+    def email_password_set(self) -> bool:
+        return bool(self.email_password.get_secret_value().strip())
+
     def public_dict(self) -> dict[str, Any]:
-        """Options safe to show in the dashboard. The API key is replaced by a flag."""
-        data = self.model_dump(mode="json", exclude={"anthropic_api_key"})
+        """Options safe to show in the dashboard. The API key and the email password are replaced by flags."""
+        data = self.model_dump(mode="json", exclude={"anthropic_api_key", "email_password"})
         data["anthropic_api_key_set"] = self.api_key_set
+        data["email_password_set"] = self.email_password_set
         return data
 
 

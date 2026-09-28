@@ -7,7 +7,9 @@ API returned it, and every ``tool_use`` is answered by a ``tool_result`` in
 the next message, in order (the fake model checks this in tests).
 
 In dry run the whole cycle runs with the network and other programs blocked
-(``netguard.sealed``).
+(``netguard.sealed``). A cycle starts by fetching new mail when Ember has a
+mailbox (the fake one in dry run, sealed too); in live mode that happens before
+anything is sealed, and only Ember's own code talks to the mail server.
 """
 
 from __future__ import annotations
@@ -29,6 +31,8 @@ from ..economy.estimate import Unpriceable
 from ..economy.metering import CallFailed, CallRefused, CallResult, MeteredModel
 from ..economy.pricing import LAST_WILL, PLANNER_OPENING
 from ..economy.service import Economy
+from ..integrations import mailstore
+from ..integrations.mail import Mailbox
 from ..version import app_version
 from . import context, netguard, news, prompts, store, tools
 from .memory import Memory
@@ -113,6 +117,7 @@ class CycleRunner:
         workspace: Jail,
         memory: Memory,
         stop: threading.Event | None = None,
+        mailbox: Mailbox | None = None,
     ) -> None:
         self.db = db
         self.settings = settings
@@ -124,6 +129,8 @@ class CycleRunner:
         self.memory = memory
         self.stop = stop or threading.Event()
         self.dry_run = scope.mode == "dry_run"
+        self.mailbox = mailbox
+        self.mail = mailbox is not None  # the email tools and the MAIL section, for every cycle of this run
 
     # --- the cycle ---
 
@@ -145,10 +152,13 @@ class CycleRunner:
             state=state,
             # A fetched PDF has no size limit, so reading pages costs real money only if the owner allows it.
             allow_fetch=self.dry_run or self.settings.web_fetch,
+            mail=tools.MailAccess(self.mailbox.address, self.settings.email_daily_limit) if self.mailbox else None,
         )
         ctx.research = self._research_fn(ctx)
         end = CycleEnd("failed", "the cycle ended unexpectedly")
         try:
+            if trigger != "last_will":
+                self._fetch_mail(cycle_id)
             with netguard.sealed() if self.dry_run else contextlib.nullcontext():
                 end = self._last_will(cycle_id) if trigger == "last_will" else self._plan_act_reflect(cycle_id, ctx)
         except Stopping:
@@ -210,6 +220,18 @@ class CycleRunner:
             {"cycle_id": cycle_id},
         )
 
+    def _fetch_mail(self, cycle_id: int) -> None:
+        """New mail before the plan (errors are recorded and shown, and never stop the cycle)."""
+        if self.mailbox is None or self.stop.is_set():
+            return
+        self._progress(cycle_id, current_action="Checking the mailbox")
+        try:
+            # The fake mailbox of a dry run needs no network, so it is sealed; the real one is Ember's own code.
+            with netguard.sealed() if self.mailbox.simulated else contextlib.nullcontext():
+                mailstore.fetch(self.db, self.clock, self.scope, self.mailbox)
+        except Exception:  # noqa: BLE001 - mail must never end a cycle
+            log.exception("Checking the mailbox failed")
+
     def _progress(self, cycle_id: int, **columns: Any) -> None:
         with self.db.transaction() as conn:
             store.update_cycle(conn, cycle_id, **columns)
@@ -238,6 +260,7 @@ class CycleRunner:
                 daily_cap=self.settings.daily_spend_cap_usd,
                 cycle_cap=self.settings.cycle_spend_cap_usd,
                 news=fresh,
+                mail_address=self.mailbox.address if self.mailbox else None,
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> CallResult:
@@ -381,7 +404,7 @@ class CycleRunner:
                 act.end_reason = "the conversation got too long"
                 break
             final = step == max_steps
-            request = prompts.work_request(self.settings, brief, turns, final=final)
+            request = prompts.work_request(self.settings, brief, turns, final=final, mail=self.mail)
             if not self._affordable(cycle_id, request, brief, turns):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
                 break
@@ -475,7 +498,7 @@ class CycleRunner:
         grown = [*turns, {"role": "assistant", "content": [{"type": "text", "text": "x" * STEP_GROWTH_BYTES}]}]
         try:
             step_cost = self.meter.quote(request)
-            reflect_cost = self.meter.quote(prompts.reflect_request(self.settings, brief, grown, []))
+            reflect_cost = self.meter.quote(prompts.reflect_request(self.settings, brief, grown, [], mail=self.mail))
         except Unpriceable:
             return False
         return step_cost + reflect_cost <= self.meter.headroom(cycle_id)
@@ -518,7 +541,7 @@ class CycleRunner:
             # which answer the tool calls before it, and let the reflect prompt replace the rest.
             kept = [b for b in turns.pop()["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
             pending = [*kept, *pending]
-        request = prompts.reflect_request(self.settings, brief, turns, pending)
+        request = prompts.reflect_request(self.settings, brief, turns, pending, mail=self.mail)
         try:
             if self.meter.quote(request) > self.meter.headroom(cycle_id, "reflect"):
                 return False
@@ -549,8 +572,8 @@ class CycleRunner:
     # --- research (a metered sub-call with Anthropic's web tools) ---
 
     def _research_fn(self, ctx: tools.ToolContext) -> tools.ResearchFn:
-        def research(question: str, url: str | None, cycle_id: int) -> tools.Outcome:
-            request = prompts.research_request(self.settings, question, url)
+        def research(question: str, url: str | None, cycle_id: int, site: str | None = None) -> tools.Outcome:
+            request = prompts.research_request(self.settings, question, url, site)
             try:
                 quote = self.meter.quote(request)
             except Unpriceable as exc:

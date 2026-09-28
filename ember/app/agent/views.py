@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
+from ..integrations import executor, mailstore, reddit
 from . import store
 from .sandbox import Entry, Jail, Missing, SandboxError
 
@@ -67,6 +68,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         ]
         approvals = [
             {
+                **_carried_out(agent, conn, scope, r),
                 "id": r["id"],
                 "created_at": r["created_at"],
                 "type": r["type"],
@@ -132,6 +134,31 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "inbox": inbox,
         "upgrades": upgrades,
         "last_will": {"text": will["text"], "cut_off": bool(will["cut_off"])} if will else None,
+    }
+
+
+def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope, r: sqlite3.Row) -> dict[str, Any]:
+    """How an approval is carried out: by Ember's code (an email), the owner's click (Reddit) or the owner."""
+    action = None
+    if r["action"]:
+        try:
+            parsed = json.loads(r["action"])
+        except ValueError:
+            parsed = None
+        action = parsed if isinstance(parsed, dict) else None
+    first_contact = False
+    reddit_url = None
+    if r["executor"] == "email" and action is not None:
+        first_contact = not mailstore.has_written(conn, scope, str(action.get("to") or ""))
+    if r["executor"] == "reddit_link" and action is not None:
+        reddit_url = reddit.prefilled_url(action, r["final_payload"] or None)  # the owner's text, if they changed it
+    return {
+        "executor": r["executor"],
+        "action": action,
+        "first_contact": first_contact,
+        "execution": executor.execution(conn, r, scope, agent.clock, agent.settings.email_daily_limit),
+        "reddit_url": reddit_url,
+        "closed_by": r["closed_by"],
     }
 
 

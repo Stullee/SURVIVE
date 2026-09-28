@@ -3,8 +3,10 @@
 It collects what is needed to understand the app's behaviour from outside: the
 version and options, the database, the economy (balances, caps, guard state),
 lives, the ledger, the scheduler, recent wake cycles with every model call and
-tool call, the latest research digests, the agent's records, and recent warnings
-and errors. Secrets never appear: the options are the public ones, every cell is
+tool call, the latest research digests, the agent's records, its integrations
+(the mailbox's status and sends), and recent warnings and errors. Secrets never
+appear: the options are the public ones (the API key and the mail password only
+as "set" flags), every cell is
 redacted before it is cut (so no part of a secret is left), and the whole text
 goes through the same redaction as the logs. The wake cycles get a share of the
 size cap, so they can't crowd out the sections after them.
@@ -53,6 +55,9 @@ TABLES = (
     "messages",
     "upgrades",
     "memory_versions",
+    "emails",
+    "email_actions",
+    "email_suppressions",
     "events",
 )
 
@@ -69,6 +74,7 @@ def report(state: AppState) -> str:
         ("WAKE CYCLES (latest 8, with every call and tool)", lambda: _cycles(state)),
         ("RESEARCH (latest 3 digests)", lambda: _research(state)),
         ("AGENT RECORDS", lambda: _agent(state)),
+        ("INTEGRATIONS", lambda: _integrations(state)),
         ("META", lambda: _meta(state)),
         ("EVENTS (latest 80)", lambda: _events(state)),
     ]
@@ -296,6 +302,7 @@ def _scheduler(state: AppState) -> str:
             "transport": type(agent.transport).__name__,
             "transport_simulated": getattr(agent.transport, "simulated", None),
             "api_blocked": getattr(agent.transport, "blocked", None),
+            "email_sending_blocked": agent.executor_blocked(),
         }
         decision = agent.decide()
         data["decision_now"] = {
@@ -415,6 +422,36 @@ def _agent(state: AppState) -> str:
         out.append(f"-- workspace: {used.files} files, {used.folders} folders, {used.size} B\n" + "\n".join(lines))
     except Exception as exc:  # noqa: BLE001
         out.append(f"-- workspace: unreadable ({exc})")
+    return "\n".join(out)
+
+
+def _integrations(state: AppState) -> str:
+    """The mailbox's status (never its password) and what happened to the latest sends. Other people's addresses,
+    subjects and email texts are not listed: this report gets pasted into chats and bug reports."""
+    agent = getattr(state, "agent", None)
+    if agent is None:
+        return "agent not running"
+    scope = agent.scope()
+    where, params = scope.where()
+    joined, _ = scope.where("a")
+    out = [f"-- email\n{_json(agent.integrations()['email'])}"]
+    with state.db.connection() as conn:
+        emails = conn.execute(
+            "SELECT id, direction, received_at, length(body) AS body_chars, body_cut, approval_id,"
+            f" read_by_agent_at IS NOT NULL AS read FROM emails WHERE {where} ORDER BY id DESC LIMIT 15",
+            params,
+        ).fetchall()
+        sends = conn.execute(
+            "SELECT x.id, x.approval_id, x.status, x.started_at, x.finished_at, x.result, x.error FROM email_actions x"
+            f" JOIN approvals a ON a.id = x.approval_id WHERE {joined} ORDER BY x.id DESC LIMIT 15",
+            params,
+        ).fetchall()
+        suppressed = conn.execute(f"SELECT COUNT(*) FROM email_suppressions WHERE {where}", params).fetchone()[0]
+    columns = ["id", "direction", "received_at", "body_chars", "body_cut", "approval_id", "read"]
+    out.append("-- emails (latest 15)\n" + _rows(emails, columns))
+    columns = ["id", "approval_id", "status", "started_at", "finished_at", "result", "error"]
+    out.append("-- sends (latest 15)\n" + _rows(sends, columns))
+    out.append(f"-- addresses that asked not to get emails: {suppressed}")
     return "\n".join(out)
 
 

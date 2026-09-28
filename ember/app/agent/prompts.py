@@ -129,8 +129,11 @@ def plan_request(settings: Settings, context: str) -> dict[str, Any]:
     }
 
 
-def work_request(settings: Settings, brief: str, turns: list[dict[str, Any]], *, final: bool = False) -> dict[str, Any]:
-    """One step of the act loop. The prefix (system, tools, brief) stays byte-identical, so it is cached."""
+def work_request(
+    settings: Settings, brief: str, turns: list[dict[str, Any]], *, final: bool = False, mail: bool = False
+) -> dict[str, Any]:
+    """One step of the act loop. The prefix (system, tools, brief) stays byte-identical, so it is cached; ``mail``
+    (whether Ember has a mailbox) is the same for every cycle of a mode and configuration."""
     return {
         "model": settings.worker_model,
         "max_tokens": WORK_MAX_TOKENS,
@@ -140,7 +143,7 @@ def work_request(settings: Settings, brief: str, turns: list[dict[str, Any]], *,
             _text(knowledge()),
             _text(OPERATING_RULES, cache_control={"type": "ephemeral"}),
         ],
-        "tools": tools.definitions(),
+        "tools": tools.definitions(mail),
         "tool_choice": {"type": "none"} if final else {"type": "auto"},
         "cache_control": {"type": "ephemeral"},
         "messages": [{"role": "user", "content": [_text(brief)]}, *turns],
@@ -148,13 +151,18 @@ def work_request(settings: Settings, brief: str, turns: list[dict[str, Any]], *,
 
 
 def reflect_request(
-    settings: Settings, brief: str, turns: list[dict[str, Any]], pending_results: list[dict[str, Any]]
+    settings: Settings,
+    brief: str,
+    turns: list[dict[str, Any]],
+    pending_results: list[dict[str, Any]],
+    *,
+    mail: bool = False,
 ) -> dict[str, Any]:
     """The final turn of the same conversation (so the cached prefix is reused).
 
     Roles must alternate: when there was no act turn at all, the reflect prompt joins the brief's turn.
     """
-    request = work_request(settings, brief, turns)
+    request = work_request(settings, brief, turns, mail=mail)
     messages = request["messages"]
     if messages[-1]["role"] == "user":
         messages[-1] = {"role": "user", "content": [*messages[-1]["content"], *pending_results, _text(REFLECT_PROMPT)]}
@@ -173,16 +181,22 @@ def will_request(settings: Settings, context: str) -> dict[str, Any]:
     }
 
 
-def research_request(settings: Settings, question: str, url: str | None) -> dict[str, Any]:
+def research_request(settings: Settings, question: str, url: str | None, site: str | None = None) -> dict[str, Any]:
+    """A search (limited to ``site``, a bare domain, if given) or the reading of ``url``."""
     ask = f"Question: {question}"
+    tool: dict[str, Any] = SEARCH_TOOL
     if url:
         ask += f"\nRead this page: {url}"
+        tool = FETCH_TOOL
+    elif site:
+        ask += f"\nSearch only this site: {site}"
+        tool = {**SEARCH_TOOL, "allowed_domains": [site]}
     return {
         "model": settings.worker_model,
         "max_tokens": RESEARCH_MAX_TOKENS,
         "thinking": THINKING,
         "cache_control": {"type": "ephemeral"},
         "system": [_text(RESEARCH_RULES)],
-        "tools": [FETCH_TOOL if url else SEARCH_TOOL],
+        "tools": [tool],
         "messages": [{"role": "user", "content": [_text(ask)]}],
     }

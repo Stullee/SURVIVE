@@ -81,6 +81,7 @@ def create_app(loaded: LoadedSettings | None = None, *, dev_mode: bool | None = 
     loaded = loaded or load_settings()
     dev_mode = dev_mode_enabled() if dev_mode is None else dev_mode
     register_secret(loaded.settings.anthropic_api_key.get_secret_value())
+    register_secret(loaded.settings.email_password.get_secret_value())
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

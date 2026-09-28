@@ -1,9 +1,10 @@
-"""The one background task: re-evaluate the economy, wake the agent when it's time.
+"""The one background task: re-evaluate the economy, send approved emails, wake the agent when it's time.
 
 It runs on the event loop but does every piece of database or agent work in a
 worker thread (``asyncio.to_thread``); only one cycle runs at a time. Between
-rounds it sleeps until the next wake-up, a poke (Wake now, a grant, resume) or
-at most a minute, so the life state stays current even without cycles.
+rounds it sleeps until the next wake-up, a poke (Wake now, a grant, resume, the
+owner's decision on an email) or at most a minute, so the life state stays
+current even without cycles.
 """
 
 from __future__ import annotations
@@ -76,6 +77,10 @@ class Scheduler:
                     await asyncio.to_thread(self.db.prune_events, KEEP_EVENTS)
                     self._last_prune = time.monotonic()
                 if self.agent is not None and not self._stopping:
+                    try:
+                        await asyncio.to_thread(self.agent.execute_approved)
+                    except Exception:  # noqa: BLE001 - a sending problem must not stop the wake cycles
+                        log.exception("Sending approved emails failed")
                     decision = await asyncio.to_thread(self.agent.decide)
                     if decision.run and decision.trigger:
                         self.status = f"running a {decision.trigger} cycle"

@@ -914,14 +914,13 @@ def test_flaky_fails_every_fourth_call() -> None:
 def test_chaos_produces_every_kind_of_misbehaviour() -> None:
     sims = corpus()["chaos"]
     notes = {note for sim in sims for _, _, note in sim.fake.trace}
-    # The corpus asks few distinct research questions, so which research chaos it draws hangs on every prompt's
-    # bytes: ask some more directly.
-    # The same holds for the reflect chaos: ask for reflections directly too.
+    # The corpus asks few distinct research questions and reflects once a cycle, so which research and reflect chaos
+    # it draws hangs on every prompt's bytes (the tool definitions included): ask some more directly.
     asked = []
     for seed in range(30):
         fake = FakeTransport(seed=seed, scenario="chaos", clock=Clock())
         asked.append(fake.send(prompts.research_request(SETTINGS, "Which printable planners sell best?", None)))
-        fake.send(prompts.reflect_request(SETTINGS, f"== PLAN ==\nGoal: test {seed}", [], []))
+        fake.send(prompts.reflect_request(SETTINGS, f"A brief for cycle {seed}.", [], []))
         notes |= {note for _, _, note in fake.trace}
     assert {f"chaos: {c}" for kinds in CHAOS.values() for c in kinds} <= notes
     inputs = [(name, args, ok) for sim in sims for _, name, args, ok in sim.tool_log]
