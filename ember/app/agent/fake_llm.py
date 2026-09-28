@@ -24,8 +24,9 @@ planner's ``SINCE YOUR LAST WAKE`` section put "Answer my owner's message" first
 in the act brief's ``FROM YOUR OWNER`` section, the first act turn is a ``message_owner`` reply that quotes
 the latest one and says plainly that it comes from the dry-run fake model, which can't answer it (with dry
 run off, Claude does). That reply is the cycle's only message to the owner. The owner's decisions are
-acknowledged in the plan's assessment, the reply and the journal. Only those two sections are read, never
-tool results, and their quoted parts are parsed as JSON.
+acknowledged in the plan's assessment, the reply and the journal, and the owner's standing instructions
+(``YOUR OWNER'S STANDING INSTRUCTIONS``) are quoted in the plan's assessment. Only those sections are read,
+never tool results, and their quoted parts are parsed as JSON.
 
 It also tries the rest of what the agent can do. With unread mail in the ``MAIL`` section it plans to read
 it: it opens the newest unread email and, if that one asks a question (a subject with "?", not a reply or a
@@ -135,6 +136,7 @@ _FETCH_FIELDS = frozenset(
 )
 _DOMAIN = re.compile(r"^(?!https?:)[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s]*)?$")
 NEWS_SECTION = "SINCE YOUR LAST WAKE"  # the planner context's news
+INSTRUCTIONS_SECTION = "YOUR OWNER'S STANDING INSTRUCTIONS"  # in the planner context and the brief, JSON-quoted
 MAIL_SECTION = "MAIL"  # the unread emails, in the planner context and the brief
 MAIL_STEP = "Read my new email and answer real questions with propose_email"
 REDDIT = "reddit.com"
@@ -145,6 +147,7 @@ DRY_RUN_EMAIL = (
 OWNER_SECTION = "FROM YOUR OWNER"  # the act brief's news (the same lines)
 ANSWER_STEP = "Answer my owner's message"
 QUOTE_CHARS = 120
+INSTRUCTIONS_CHARS = 80  # of the standing instructions, quoted in a plan's assessment
 DRY_RUN_REPLY = (
     "This reply comes from Ember's built-in fake model in dry run: it can't really understand or answer your "
     "message. With dry run off, Claude reads and answers your messages."
@@ -601,7 +604,7 @@ _MESSAGE_LINE = re.compile(r"Message from your owner \(([^()\n]*)\): ")
 _REQUEST_HEAD = re.compile(r"Request #(\d+) \([a-z_]+\) ")
 _UPGRADE_HEAD = re.compile(r"Upgrade request #(\d+) ")
 _DECIDED = re.compile(r': ([a-z]+(?: [a-z]+)*?)(?: in version "(\d+\.\d+\.\d+)")?(?:\.|$)')
-_UNSAFE = re.compile(r"[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]")  # what tools refuse, and every line break
+_UNSAFE = re.compile(r"[\x00-\x1f\x7f‪-‮⁦-⁩]")  # what tools refuse, and every line break
 _JSON = json.JSONDecoder()
 _ANSWER = "answer my owner"  # in a plan step or goal: the cycle answers the owner
 
@@ -721,6 +724,16 @@ def unread_mail(text: str) -> list[MailLine]:
         if isinstance(sender, str) and isinstance(subject, str):
             found.append(MailLine(int(match[1]), sender, subject))
     return found
+
+
+def standing_instructions(text: str) -> str | None:
+    """The owner's standing instructions a context shows (their start, when they were shortened), or None."""
+    body = (section(text, INSTRUCTIONS_SECTION) or "").strip()
+    try:
+        value, _ = _JSON.raw_decode(body)
+    except ValueError:
+        return None
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _json_text(raw: str) -> str | None:
@@ -1065,7 +1078,7 @@ class FakeTransport:
         open_ = [p for p in parse_projects(context) if p.status in _OPEN_STATUSES]
         focus = next((p for p in open_ if p.status == "active"), open_[0] if open_ else None)
         news = owner_news(context, NEWS_SECTION)
-        heard = _heard(news)
+        heard = _following(standing_instructions(context)) + _heard(news)
         answer = [ANSWER_STEP if len(news.messages) == 1 else "Answer my owner's messages"] if news.messages else []
         if self.scenario == "idle":
             rest, goal = (
@@ -1761,6 +1774,13 @@ def acknowledge(decision: Decision, to_owner: bool = False) -> str:
         "released": f"{who} released {what}" + (f" in version {decision.version}." if decision.version else "."),
     }
     return sentences.get(decision.status, f"{what[0].upper()}{what[1:]}: {decision.status}.")
+
+
+def _following(instructions: str | None) -> str:
+    """What a plan's assessment says about the owner's standing instructions ("" if there are none)."""
+    if not instructions:
+        return ""
+    return f'My owner\'s standing instructions say "{_quote(instructions, INSTRUCTIONS_CHARS)}"; I follow them. '
 
 
 def _heard(news: OwnerNews) -> str:
