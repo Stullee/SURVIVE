@@ -38,6 +38,7 @@ TEXT_CHARS = 800  # plans, notes, message texts and tool inputs: enough to see w
 RESULT_CHARS = 300
 DIGEST_CHARS = 600
 WIDE_COLUMNS = dict.fromkeys(("note", "notes", "text", "input"), TEXT_CHARS) | {"result": RESULT_CHARS}
+TAIL_COLUMNS = frozenset({"notes"})  # a project's notes are a log: the newest are at the end, so a cut keeps the end
 WORKSPACE_ENTRIES = 100
 TABLES = (
     "ledger",
@@ -93,20 +94,24 @@ def _rows(rows: list[Any], columns: list[str]) -> str:
         return "(none)"
     lines = [" | ".join(columns)]
     for row in rows:
-        lines.append(" | ".join(_cell(row[c], WIDE_COLUMNS.get(c, CELL_CHARS)) for c in columns))
+        lines.append(
+            " | ".join(_cell(row[c], WIDE_COLUMNS.get(c, CELL_CHARS), tail=c in TAIL_COLUMNS) for c in columns)
+        )
     return "\n".join(lines)
 
 
-def _cell(value: Any, chars: int = CELL_CHARS) -> str:
+def _cell(value: Any, chars: int = CELL_CHARS, *, tail: bool = False) -> str:
     if value is None:
         return "-"
-    return _cut(str(value).replace("\n", " ⏎ "), chars)
+    return _cut(str(value).replace("\n", " ⏎ "), chars, tail=tail)
 
 
-def _cut(text: str, chars: int) -> str:
-    """At most ``chars`` characters, redacted first so a cut can't leave part of a secret behind."""
+def _cut(text: str, chars: int, *, tail: bool = False) -> str:
+    """At most ``chars`` characters (the last ones with ``tail``), redacted first so no part of a secret is left."""
     text = redact(text)
-    return text if len(text) <= chars else text[: chars - 1] + "…"
+    if len(text) <= chars:
+        return text
+    return "…" + text[1 - chars :] if tail else text[: chars - 1] + "…"
 
 
 def _block(text: str, indent: str = "    ") -> str:

@@ -177,15 +177,24 @@ def snapshot(
     )
 
 
-def _safe_listing(workspace: Jail, shown: int = 40) -> list[str]:
-    """The WORKSPACE lines: the files in every folder with their sizes, the first ``shown`` and how many more."""
+def _safe_listing(workspace: Jail, shown: int = 19, budget: int = 900) -> list[str]:
+    """The WORKSPACE lines: the files in every folder with their sizes, then how many more if some are left out.
+
+    At most ``shown`` files and ``budget`` bytes in all, so the count is within the brief's 20 lines and the brief
+    keeps room for its LIMITS, even with a long plan and focus.
+    """
     try:
         files = workspace.walk(workspace.limits.max_files).files
     except Exception:  # noqa: BLE001 - the context must still be built
         return []
-    lines = [f"{e.path} ({e.size:,} B)" for e in files[:shown]]
-    if len(files) > shown:
-        lines.append(f"… and {len(files) - shown} more files")
+    lines: list[str] = []
+    for e in files[:shown]:
+        line = f"{e.path} ({e.size:,} B)"
+        if json_bytes("\n".join([*lines, line])) > budget - 30:  # - 30: room for the count
+            break
+        lines.append(line)
+    if len(files) > len(lines):
+        lines.append(f"… and {len(files) - len(lines)} more files")
     return lines
 
 

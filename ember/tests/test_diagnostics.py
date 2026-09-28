@@ -159,3 +159,14 @@ def test_the_report_stays_under_its_cap_and_redacted(
 )
 def test_plans_are_indented_json_with_long_texts_cut(raw: str | None, shown: str) -> None:
     assert diagnostics._plan(raw) == shown
+
+
+def test_project_notes_keep_their_newest_end() -> None:
+    """The agent appends to a project's notes: a long log is cut at its start, a message text at its end."""
+    newest = "[#c9] Tried a price and learned from it. " + "More detail. " * 12
+    notes = "".join(f"[#c{n}]{newest[5:]}\n" for n in range(1, 10))
+    row = diagnostics._rows([{"id": 1, "notes": notes, "text": notes}], ["id", "notes", "text"]).splitlines()[1]
+    _, shown, message = row.split(" | ")
+    assert len(notes) > diagnostics.TEXT_CHARS == len(shown) == len(message)
+    assert shown.startswith("…") and shown.endswith(f"{newest} ⏎ ") and "[#c1]" not in shown
+    assert message.startswith("[#c1] ") and message.endswith("…")

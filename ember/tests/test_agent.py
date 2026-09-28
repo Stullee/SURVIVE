@@ -12,9 +12,11 @@ from typing import Any
 import pytest
 
 from app.agent import context, loop, store
+from app.agent.sandbox import Jail
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
 from app.economy.costs import micros_to_usd
+from app.economy.life import LifeStatus
 from app.economy.metering import Completed, NotSent
 from app.economy.pricing import opening_cost, working_cycle_cost
 from tests.economy_helpers import ScriptedTransport, make_economy
@@ -181,8 +183,35 @@ def test_the_agent_sees_the_files_in_every_folder(data_dir: Path) -> None:
     )
     for n in range(40):
         workspace.write(f"notes/n{n:02}.md", "x")
-    shown = context._safe_listing(workspace)
-    assert len(shown) == 41 and shown[39] == "notes/n38.md (1 B)" and shown[40] == "… and 3 more files"
+    shown = context._safe_listing(workspace)  # all 20 lines reach the brief, the count of the rest among them
+    assert len(shown) == 20 and shown[18] == "notes/n17.md (1 B)" and shown[19] == "… and 24 more files"
+
+
+def test_long_paths_leave_the_brief_its_count_of_files_and_its_limits(tmp_path: Path) -> None:
+    """Long paths with a plan, focus and lessons at their limits: the brief still says how many files it left out."""
+    workspace = Jail(tmp_path / "workspace")
+    for n in range(25):
+        workspace.write(f"projects/printable-meal-planning-templates/week-{n:02}-shopping-list.md", "x" * 2_000)
+    lines = context._safe_listing(workspace)
+    assert 5 < len(lines) < 20 and lines[-1] == f"… and {26 - len(lines)} more files"
+    snap = context.Snapshot(
+        status=LifeStatus(mode="dry_run", life_id=1, state="alive", reason=""),
+        local_time="Monday 2026-09-28 10:00 CEST",
+        version="0.4.0",
+        agent_name="Ember",
+        today_spend=0,
+        daily_cap=5.0,
+        cycle_cap=1.0,
+        memory={"lessons": "\n".join(f"- [#c{n}] Check demand with one cheap listing first." for n in range(40))},
+        workspace=lines,
+    )
+    focus = {"id": 1, "title": "t" * 80, "status": "active", "hypothesis": "h" * 400, "next_step": "n" * 200}
+    big_plan = {"goal": "g" * 300, "steps": ["s" * 200] * 6}
+    brief = context.brief(snap, True, big_plan, focus | {"notes": "N" * 2_000}, 15)  # type: ignore[arg-type]
+    assert brief.endswith(
+        f"\n{lines[-2]}\n{lines[-1]}\n\n== LIMITS ==\n"
+        "At most 15 steps this cycle and 4 tool calls per step. Stop when the goal is reached."
+    )
 
 
 @pytest.mark.parametrize("path", ["drafts\n/post.md", "post.md\n", "drafts/post.md\r", " post.md", "drafts /post.md"])

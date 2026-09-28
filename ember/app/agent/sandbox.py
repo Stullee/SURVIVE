@@ -4,18 +4,19 @@ The agent names files by a short relative path of plain name components. Every
 operation walks from the root folder's directory descriptor, one component at a
 time, opening each with ``O_NOFOLLOW`` (and ``O_DIRECTORY`` for folders), so a
 symlink anywhere on the path is refused, even one swapped in after an earlier
-check. A file must be a regular file with a single hard link (a hard link to a
+check. A file must be a regular file with no other hard link (a hard link to a
 file outside the workspace, such as the database, is refused), and FIFOs or
 devices are never opened for reading. Writes go to a temporary file created
 with ``O_EXCL`` next to the target, are flushed to disk, and replace the old
 file atomically, so a crash never leaves a half-written file. Size, file-count
 and total quotas are checked before a write. A name is used exactly as given
 (nothing is trimmed, no control characters), so no other name on disk can pass
-for a valid one.
+for a valid one, and listings leave any other name out.
 
 The agent works while the owner reads: listings skip an entry deleted between
-reading its folder and looking at it, and a path that doesn't exist (or stops
-existing while it is used) raises ``Missing``.
+reading its folder and looking at it, a file replaced while it is opened reads
+as either version, and a path that doesn't exist (or stops existing while it is
+used) raises ``Missing``.
 
 Roots: the live agent works in /data/workspace and /data/memory; a dry run in
 /data/dry_run/workspace and /data/dry_run/memory, which start empty with every
@@ -156,7 +157,8 @@ class Jail:
             raise SandboxError("links are not allowed in the workspace")
         if not stat.S_ISREG(info.st_mode):
             raise SandboxError(f"{name} is not a regular file")
-        if info.st_nlink != 1:
+        # No links left (0): replaced or deleted just now. Opening the name then finds the new file or nothing.
+        if info.st_nlink > 1:
             raise SandboxError(f"{name} has other hard links and can't be used")
         return info
 
@@ -204,7 +206,7 @@ class Jail:
 
         A folder comes right before what it holds. Like listing(), the walk goes folder by folder through
         descriptors opened without following links, as deep as a path can go (MAX_DEPTH), and leaves out links,
-        temporary files and entries deleted while it looks.
+        names the jail refuses (temporary files among them) and entries deleted while it looks.
         """
         entries: list[Entry] = []
         with contextlib.closing(self._tree()) as tree:
@@ -292,7 +294,10 @@ class Jail:
         with self._folder(folders) as folder:
             if self._file_info(folder, name) is None:
                 raise Missing(f"{path} doesn't exist")
-            os.unlink(name, dir_fd=folder)
+            try:
+                os.unlink(name, dir_fd=folder)
+            except FileNotFoundError:
+                raise Missing(f"{path} doesn't exist") from None
             os.fsync(folder)
         # Remove folders left empty, deepest first.
         for depth in range(len(folders), 0, -1):
@@ -319,9 +324,13 @@ class Jail:
 
 
 def _children(folder: int, prefix: str) -> list[Entry]:
-    """The folders and regular files in ``folder`` (named below ``prefix``), sorted as walk() lists them."""
+    """The folders and regular files in ``folder`` (named below ``prefix``), sorted as walk() lists them.
+
+    Only names the jail accepts: never temporary files, and no name put there from outside (with a line break,
+    say) reaches a listing, the brief or the owner's view.
+    """
     with os.scandir(folder) as scan:
-        names = [child.name for child in scan if not child.name.startswith(TEMP_PREFIX)]
+        names = [child.name for child in scan if NAME.fullmatch(child.name)]
     entries = []
     for name in names:
         try:
