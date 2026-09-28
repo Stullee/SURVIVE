@@ -508,7 +508,7 @@ class CycleRunner:
             if not self._affordable(cycle_id, request, brief, turns):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
                 break
-            self._progress(cycle_id, step=step, current_action=f"Working (step {step} of {max_steps})")
+            self._progress(cycle_id, step=step, current_action=f"Working (tool step {step}, at most {max_steps})")
             try:
                 result = self._call(cycle_id, "work", request)
             except CallRefused as exc:

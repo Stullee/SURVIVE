@@ -1041,7 +1041,9 @@
       var state = i < current ? "done" : i === current ? "current" : "next";
       var label = PHASES[phase] || sentence(String(phase).replace(/_/g, " "));
       if (state === "current" && num(now.max_steps) > 0 && (phase === "act" || num(now.step) > 0)) {
-        label += ", step " + count(now.step) + " of " + count(now.max_steps);
+        // The worker's model calls, capped by the option "Tool steps per cycle": not the steps of the plan below.
+        label += num(now.step) > 0 ? ", tool step " + count(now.step) + " (at most " + count(now.max_steps) + ")"
+          : " (at most " + count(now.max_steps) + " tool steps)";
       }
       return h("li", { "data-state": state, "aria-current": state === "current" ? "step" : null },
         h("span", { class: "phase-icon", "aria-hidden": "true", text: state === "done" ? "✓" : state === "current" ? "●" : "○" }),

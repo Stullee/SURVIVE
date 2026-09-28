@@ -62,6 +62,9 @@ dashboard and the docs show Etsy's trademark notice:
 
 > The term 'Etsy' is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or certified by Etsy, Inc.
 
+0.8.2 labels the working phase's counter as tool steps ("tool step 3 (at most
+15)"), so it isn't mistaken for the steps of the plan shown below it.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

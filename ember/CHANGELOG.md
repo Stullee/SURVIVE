@@ -3,6 +3,11 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.8.2
+
+Nothing changes for you: while you work, your owner's dashboard now says "tool step 3 (at most 15)" instead of
+"step 3 of 15", so your tool calls aren't mistaken for the steps of your plan.
+
 ## 0.8.1
 
 Ember follows Etsy's API terms now.

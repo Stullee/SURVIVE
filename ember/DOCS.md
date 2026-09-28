@@ -33,7 +33,7 @@ your approval, and only you can record revenue.
 | Spending cap per wake cycle | 0.25 USD | Hard limit per cycle. Must not exceed the daily cap. |
 | Default sleep | 240 min | Time between wake cycles when the agent doesn't choose. |
 | Shortest / longest sleep | 30 / 1440 min | Bounds for the sleep time the agent chooses. |
-| Tool steps per cycle | 15 | Maximum tool calls in one cycle. |
+| Tool steps per cycle | 15 | Maximum tool calls in one cycle. While the agent works, the overview counts them ("tool step 3 (at most 15)"); they aren't the steps of its plan. |
 | Planner model | claude-sonnet-5 | Plans each cycle: Ember's business decisions. See [Choosing models](#choosing-models). |
 | Worker model | claude-sonnet-5 | Carries out the plan and writes the journal. |
 | Price table | see below | USD per million tokens for each model. |
