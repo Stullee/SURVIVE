@@ -157,8 +157,11 @@ class Owner:
 
     def send_message(self, body: Any, who: str | None) -> Reply:
         def run() -> Reply:
-            data = _body(body, {"text"})
+            data = _body(body, {"text", "read_up_to"})
             text = _text(data, "text", 2_000, required=True)
+            seen = data.get("read_up_to")  # the newest agent message the dashboard showed (0: none)
+            if seen is not None and (not isinstance(seen, int) or isinstance(seen, bool) or seen < 0):
+                raise OwnerError("read_up_to", "read_up_to must be a message number")
             now = self._now()
             where, params = self.scope.where()
             with self.db.transaction() as conn:
@@ -168,11 +171,13 @@ class Owner:
                     (self.scope.mode, self.scope.session, self.scope.life_id, now, text, who),
                 )
                 message_id = int(cursor.lastrowid)
-                # A reply reads what the agent wrote before (message_owner refuses while too many are unread).
+                # A reply reads what the agent wrote before (message_owner refuses while too many are unread),
+                # up to what the owner was shown: one written meanwhile stays unread.
+                up_to = message_id - 1 if seen is None else min(seen, message_id - 1)
                 conn.execute(
                     f"UPDATE messages SET read_at = ? WHERE {where} AND sender = 'agent' AND read_at IS NULL"
-                    " AND id < ?",
-                    (now, *params, message_id),
+                    " AND id <= ?",
+                    (now, *params, up_to),
                 )
             events.record(self.db, "info", "owner", f"{who or 'The owner'} sent a message to the agent")
             return Reply(201, {"id": message_id})

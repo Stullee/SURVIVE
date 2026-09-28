@@ -182,6 +182,37 @@ def test_a_reply_reads_the_agents_earlier_messages(data_dir: Path) -> None:
     assert agent.dashboard()["badges"]["inbox_unread"] == 1  # the new one is unread until the next reply
 
 
+def test_a_reply_reads_only_what_the_owner_was_shown(data_dir: Path) -> None:
+    agent, _ = make_agent(
+        data_dir,
+        [
+            plan(steps=["ask"]),
+            tools(("message_owner", {"text": "Question 1?"})),
+            text("Asked."),
+            tools(("write_journal", {"summary": "Asked my owner", "entry": "."})),
+        ],
+    )
+    agent.run_cycle("schedule")
+    shown = max(m["id"] for m in agent.dashboard()["inbox"] if m["sender"] == "agent")  # the dashboard's last poll
+    with agent.db.transaction() as conn:  # a running cycle writes before the next poll
+        cycle_id = rows(agent, "SELECT id FROM cycles")[0]["id"]
+        store.insert_message(conn, agent.scope(), cycle_id, "May I publish?", "2026-09-27T10:00:00Z")
+    who = owner(agent)
+    for bad in (True, -1, "1", 1.5):
+        refused = who.send_message({"text": "Yes.", "read_up_to": bad}, None)
+        assert refused.status == 422 and refused.body["field"] == "read_up_to", bad
+    assert rows(agent, "SELECT COUNT(*) AS n FROM messages WHERE sender = 'owner'") == [{"n": 0}]
+
+    unread = "SELECT text FROM messages WHERE sender = 'agent' AND read_at IS NULL ORDER BY id"
+    assert who.send_message({"text": "Answer to question 1.", "read_up_to": shown}, None).status == 201
+    assert rows(agent, unread) == [{"text": "May I publish?"}]
+    assert agent.dashboard()["badges"]["inbox_unread"] == 1
+    assert who.send_message({"text": "One more thing.", "read_up_to": 0}, None).status == 201  # it showed none
+    assert rows(agent, unread) == [{"text": "May I publish?"}]
+    assert who.send_message({"text": "Yes, publish.", "read_up_to": 2**70}, None).status == 201
+    assert rows(agent, unread) == [] and agent.dashboard()["badges"]["inbox_unread"] == 0
+
+
 def test_only_a_released_upgrade_has_a_version(data_dir: Path) -> None:
     upgrade = {
         "title": "Let me read RSS feeds",
