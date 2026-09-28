@@ -208,7 +208,7 @@ def test_a_0_3_database_keeps_its_approvals_through_the_migration(tmp_path: Path
             " 'Write to a shop', 'd', 'Hello', 'h', 'none', 'b', 'approved')"
         )
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [5, 6]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [5, 6, 7]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         row = conn.execute("SELECT executor, action, closed_by, status FROM approvals").fetchone()
@@ -326,12 +326,12 @@ def test_html_mail_loses_everything_a_reader_would_not_see() -> None:
         '<div style="max-height:0;overflow:hidden">HIDDEN-9</div>'
         '<div style="display:none"><p><b>HIDDEN-10</b></p><img src="x" alt="HIDDEN-11"></div>'
         "<!-- HIDDEN-12 -->"
-        '<p>Visible\u200b two with a <a href="https://shop.example/buy?id=1">link</a> &amp; more.</p>'
+        '<p>Visible​ two with a <a href="https://shop.example/buy?id=1">link</a> &amp; more.</p>'
         '<span style="font-size:0.5em">small but visible</span>'
         "</body></html>"
     )
     text = mail.html_to_text(html)
-    assert "HIDDEN" not in text and "steal" not in text and "\u200b" not in text
+    assert "HIDDEN" not in text and "steal" not in text and "​" not in text
     assert text == "Visible one.\n\nVisible two with a link [shop.example] & more.\n\nsmall but visible"
 
 
@@ -344,7 +344,7 @@ def test_a_message_is_decoded_cleaned_and_capped() -> None:
     msg = EmailMessage()
     msg["From"] = "=?utf-8?q?M=C3=BCller?= <mueller@example.org>"
     msg["To"] = "ember@mail.example"
-    msg["Subject"] = "=?utf-8?q?Gr=C3=BC=C3=9Fe?= \u202eevil"
+    msg["Subject"] = "=?utf-8?q?Gr=C3=BC=C3=9Fe?= ‮evil"
     msg["Date"] = "Mon, 28 Sep 2026 08:00:00 +0200"
     msg["Message-ID"] = "<abc@example.org>"
     msg.set_content("Plain text wins.\n" + "x" * 9_000)
@@ -387,7 +387,7 @@ def test_only_plain_addresses_are_accepted(address: str, valid: bool) -> None:
         ({"subject": "Hi\nthere"}, "one line"),
         ({"subject": "x" * 151}, "1 to 150"),
         ({"body": "x" * 5_001}, "1 to 5,000"),
-        ({"body": "Hi \u202e there"}, "control or direction"),
+        ({"body": "Hi ‮ there"}, "control or direction"),
         ({"in_reply_to": "<a@b>\r\nBcc: eve@example.org"}, "message id"),
     ],
 )
