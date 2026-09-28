@@ -133,6 +133,16 @@ def count_tool_uses(conn: sqlite3.Connection, cycle_id: int, tool: str) -> int:
     return int(row[0])
 
 
+def recent_research(conn: sqlite3.Connection, scope: AgentScope, limit: int = 5) -> list[sqlite3.Row]:
+    """The last research calls that worked, newest first: cycle_id, input and result as the tool stored them."""
+    return conn.execute(
+        "SELECT t.cycle_id, t.input, t.result FROM tool_calls t JOIN cycles c ON c.id = t.cycle_id"
+        " WHERE c.session = ? AND c.simulated = ? AND t.tool = 'research' AND t.status = 'ok'"
+        " ORDER BY t.id DESC LIMIT ?",
+        (scope.session, 1 if scope.simulated else 0, limit),
+    ).fetchall()
+
+
 # --- texts ---
 
 

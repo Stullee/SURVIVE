@@ -909,12 +909,20 @@ def test_flaky_fails_every_fourth_call() -> None:
 def test_chaos_produces_every_kind_of_misbehaviour() -> None:
     sims = corpus()["chaos"]
     notes = {note for sim in sims for _, _, note in sim.fake.trace}
+    # The corpus asks few distinct research questions, so which research chaos it draws hangs on every prompt's
+    # bytes: ask some more directly.
+    asked = []
+    for seed in range(20):
+        fake = FakeTransport(seed=seed, scenario="chaos", clock=Clock())
+        asked.append(fake.send(prompts.research_request(SETTINGS, "Which printable planners sell best?", None)))
+        notes |= {note for _, _, note in fake.trace}
     assert {f"chaos: {c}" for kinds in CHAOS.values() for c in kinds} <= notes
     inputs = [(name, args, ok) for sim in sims for _, name, args, ok in sim.tool_log]
     assert any(".." in json.dumps(args) and not ok for _, args, ok in inputs)
     assert any(name == "workspace_write" and len(str(args.get("content"))) > 6_000 for name, args, _ in inputs)
     assert any(name not in tools.SPECS for name, _, _ in inputs)
     responses = [(kind, o.response) for sim in sims for kind, _, o in sim.log if isinstance(o, Completed)]
+    responses += [("research", o.response) for o in asked if isinstance(o, Completed)]
     stops = Counter((kind, r["stop_reason"]) for kind, r in responses)
     assert stops[("work", "max_tokens")] and stops[("work", "refusal")] and stops[("research", "pause_turn")]
     assert any(kind == "work" and not r["content"] and r["stop_reason"] == "end_turn" for kind, r in responses)
@@ -1067,7 +1075,7 @@ def test_the_owners_decisions_are_acknowledged() -> None:
     lines = decision_lines()
     assert lines[0].startswith('Request #3 (publish) "Post the guide": approved with changes. Use the owner\'s')
     assert lines[3] == (
-        'Upgrade request #1 "Let me read RSS feeds": released in version 0.4.0. Owner\'s note: "Try it.".'
+        'Upgrade request #1 "Let me read RSS feeds": released in version "0.4.0". Owner\'s note: "Try it.".'
     )
     plan = plan_for(planner_context(TEA, 5, news=lines))
     assert ACKNOWLEDGED[0] in plan["assessment"] and ACKNOWLEDGED[1] in plan["assessment"]

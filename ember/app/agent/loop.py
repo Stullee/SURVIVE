@@ -44,6 +44,8 @@ RETRY_DELAY_SECONDS = 5.0
 NUDGE = "Continue with the plan, or reply with a short report of what you did."
 CUT_OFF = "Your reply was cut off at the length limit. Continue in shorter parts, or use a tool."
 STEP_GROWTH_BYTES = 20_000  # what one step can add: up to 4 tool results and the model's own reply
+PLANNER_SCALES = (1.0, 0.75, 0.5, 0.3)  # the planner's context budgets, until the request fits its profile
+NO_STEP = "not enough money left in this cycle for a work step and the reflection"
 
 
 class Stopping(Exception):
@@ -65,6 +67,7 @@ class CycleEnd:
     note: str | None = None
     rerun: bool = False  # decide again at once (e.g. starvation made the last will due)
     sleep_minutes: int | None = None
+    sleep_reason: str | None = None  # the agent's own words for sleep_minutes (set_sleep), if it gave any
     cycle_id: int | None = None
     skipped: bool = False  # the cycle never opened
 
@@ -93,6 +96,7 @@ class _Act:
     pending: list[dict[str, Any]] = field(default_factory=list)  # tool_result blocks not sent yet
     report: str = ""
     end_reason: str = ""
+    steps: int = 0  # work calls the model answered
 
 
 class CycleRunner:
@@ -154,7 +158,7 @@ class CycleRunner:
             end = CycleEnd("failed", f"internal error ({type(exc).__name__})")
         end.cycle_id = cycle_id
         if end.sleep_minutes is None:
-            end.sleep_minutes = state.sleep_minutes
+            end.sleep_minutes, end.sleep_reason = state.sleep_minutes, state.sleep_reason or None
         self._close(cycle_id, end, state)
         return end
 
@@ -253,8 +257,9 @@ class CycleRunner:
         snap = self._snapshot()
         self._progress(cycle_id, phase="plan", current_action="Planning this cycle")
         request = None
-        for scale in (1.0, 0.75, 0.5, 0.3):
-            request = prompts.plan_request(self.settings, context.planner_context(snap, self.dry_run, scale))
+        for scale in PLANNER_SCALES:
+            planner, planned = context.planner_context(snap, self.dry_run, scale)
+            request = prompts.plan_request(self.settings, planner)
             if context.fits(request, PLANNER_OPENING.input_tokens):
                 break
         else:
@@ -276,8 +281,8 @@ class CycleRunner:
         plan = self._parse_plan(text)
         if plan is None:
             return CycleEnd("failed", "the plan wasn't valid JSON")
-        with self.db.transaction() as conn:
-            news.mark_seen(conn, self.db, self.scope, cycle_id, snap.news, [m["id"] for m in snap.owner_messages])
+        if planned.changelog:
+            news.mark_changelog_seen(self.db, self.scope, snap.news)
         focus = None
         with self.db.connection() as conn:
             if plan.focus_project_id is not None:
@@ -293,6 +298,8 @@ class CycleRunner:
         )
         if not plan.steps:
             with self.db.transaction() as conn:
+                # No brief follows: the plan was all the agent needed to see of what the owner sent.
+                news.mark_seen(conn, cycle_id, planned.items)
                 store.write_journal(
                     conn,
                     self.scope,
@@ -304,10 +311,16 @@ class CycleRunner:
                 )
             return CycleEnd("idle", "nothing to do", sleep_minutes=plan.sleep_minutes)
 
-        act = self._act(cycle_id, ctx, snap, plan, focus)
+        brief, briefed = context.brief(snap, self.dry_run, plan.to_json(), focus, self.settings.max_tool_steps)
+        act = self._act(cycle_id, ctx, brief, planned.items & briefed.items)
         if act.end_reason == "refusal":
             return CycleEnd("stopped", "the model refused to continue")
-        reflected = self._reflect(cycle_id, ctx, snap, plan, focus, act)
+        if not act.steps:
+            # Nothing ran, so there is nothing to reflect on: the system's journal entry says why (_write_report).
+            self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)
+            status = "failed" if act.end_reason.startswith("failed") else "refused"
+            return CycleEnd(status, act.end_reason.removeprefix(f"{status}: ") or None)
+        reflected = self._reflect(cycle_id, ctx, brief, act)
         status = "completed"
         note = act.end_reason if act.end_reason not in ("", "done") else None
         if act.end_reason.startswith("refused"):
@@ -316,7 +329,9 @@ class CycleRunner:
             status = "failed"
         if not reflected and status == "completed":
             note = note or "no money left for reflecting"
-        return CycleEnd(status, note, sleep_minutes=ctx.state.sleep_minutes or plan.sleep_minutes)
+        if ctx.state.sleep_minutes:  # set_sleep, the last call winning (the reflection's after the act phase's)
+            return CycleEnd(status, note, sleep_minutes=ctx.state.sleep_minutes, sleep_reason=ctx.state.sleep_reason)
+        return CycleEnd(status, note, sleep_minutes=plan.sleep_minutes)
 
     def _parse_plan(self, text: str) -> Plan | None:
         data: Any = None
@@ -345,10 +360,10 @@ class CycleRunner:
     def _clamp_sleep(self, minutes: int) -> int:
         return max(self.settings.min_sleep_minutes, min(self.settings.max_sleep_minutes, minutes))
 
-    def _act(self, cycle_id: int, ctx: tools.ToolContext, snap: context.Snapshot, plan: Plan, focus: Any) -> _Act:
+    def _act(self, cycle_id: int, ctx: tools.ToolContext, brief: str, seen: frozenset[news.Item]) -> _Act:
+        """The work steps; ``seen`` (the owner's items the plan and the brief showed) is marked once one is answered."""
         act = _Act()
         max_steps = self.settings.max_tool_steps
-        brief = context.brief(snap, self.dry_run, plan.to_json(), focus, max_steps)
         self._progress(cycle_id, phase="act", max_steps=max_steps, step=0)
         nudged = 0
         for step in range(1, max_steps + 1):
@@ -363,7 +378,7 @@ class CycleRunner:
             final = step == max_steps
             request = prompts.work_request(self.settings, brief, turns, final=final)
             if not self._affordable(cycle_id, request, brief, turns):
-                act.end_reason = "the budget left in this cycle is kept for reflecting"
+                act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
                 break
             self._progress(cycle_id, step=step, current_action=f"Working (step {step} of {max_steps})")
             try:
@@ -376,6 +391,10 @@ class CycleRunner:
             except CallFailed as exc:
                 act.end_reason = f"failed: {exc.result.error or exc.result.status}"
                 break
+            act.steps += 1
+            if act.steps == 1:  # the brief reached the model
+                with self.db.transaction() as conn:
+                    news.mark_seen(conn, cycle_id, seen)
             act.turns = turns
             act.pending = []
             response = result.response or {}
@@ -485,11 +504,8 @@ class CycleRunner:
             block["is_error"] = True
         return block
 
-    def _reflect(
-        self, cycle_id: int, ctx: tools.ToolContext, snap: context.Snapshot, plan: Plan, focus: Any, act: _Act
-    ) -> bool:
+    def _reflect(self, cycle_id: int, ctx: tools.ToolContext, brief: str, act: _Act) -> bool:
         self._check_stop()
-        brief = context.brief(snap, self.dry_run, plan.to_json(), focus, self.settings.max_tool_steps)
         turns = list(act.turns)
         pending = list(act.pending)
         if turns and turns[-1]["role"] == "user":

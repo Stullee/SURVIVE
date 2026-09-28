@@ -7,6 +7,7 @@ from the injected clock, so tests drive the agent's day with a fake clock.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -20,7 +21,7 @@ from ..config import LoadedSettings
 from ..db import Database
 from ..economy.clock import from_iso, to_iso
 from ..economy.metering import MeteredModel, OfflineTransport, Transport, usd_cap_to_micros
-from ..economy.pricing import opening_cost
+from ..economy.pricing import working_cycle_cost
 from ..economy.service import Economy
 from . import store
 from .loop import CycleEnd, CycleRunner
@@ -35,6 +36,7 @@ BOOT_GRACE = timedelta(seconds=60)
 CRASH_LOOP = 3
 MAX_WILL_ATTEMPTS = 3
 WAKE_NOW_MIN_GAP = timedelta(seconds=60)
+SLEEP_REASON_CHARS = 200  # of the agent's reason for its sleep, in the next wake's reason
 
 
 def cycles_enabled_by_env() -> bool:
@@ -200,10 +202,11 @@ class Agent:
             )
         if self._crash_loop():
             return Decision(False, reason="The last cycles were all interrupted; press Wake now to try again")
-        opening = opening_cost(self.settings, self.db, self.mode) or 0
+        # A cycle that can plan but not afford one work step and its reflection would only pay for the plan.
+        needed = working_cycle_cost(self.settings, self.db, self.mode) or 0
         scope = self.economy.life.scope()
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
-        if usd_cap_to_micros(self.settings.daily_spend_cap_usd) - today < opening:
+        if usd_cap_to_micros(self.settings.daily_spend_cap_usd) - today < needed:
             tomorrow = self._next_local_midnight(now) + timedelta(minutes=5)
             self._set_time("next_wake_at", tomorrow)
             self.db.set_meta(self._key("next_wake_reason"), "waiting for the daily cap to reset")
@@ -299,6 +302,10 @@ class Agent:
             minutes = max(self.settings.min_sleep_minutes, min(self.settings.max_sleep_minutes, minutes))
             self.db.set_meta(self._key("failures"), "0")
             reason = "scheduled"
+            if end.sleep_minutes:
+                reason = f"{self.settings.agent_name} chose {minutes} min"
+                if end.sleep_reason:  # the agent's words, quoted (the dashboard shows them as text)
+                    reason += f": {json.dumps(end.sleep_reason[:SLEEP_REASON_CHARS], ensure_ascii=False)}"
         else:
             failures += 1
             self.db.set_meta(self._key("failures"), str(failures))

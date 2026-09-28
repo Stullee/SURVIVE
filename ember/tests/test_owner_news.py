@@ -9,7 +9,8 @@ from typing import Any
 
 import pytest
 
-from app.agent import context
+from app import paths
+from app.agent import context, loop, news
 from app.agent.news import News
 from app.config import Settings
 from app.economy.life import LifeStatus
@@ -38,15 +39,26 @@ def message_line(agent: Any, text_: str) -> str:
 
 
 def shortened(text_: str, chars: int) -> str:
-    """How a quoted text looks when it's cut to ``chars`` characters."""
+    """How a quoted text looks when it's cut to ``chars`` characters: its start and its end, the note between."""
+    tail = chars * 2 // 5
     return (
-        f"{json.dumps(text_[:chars] + '…', ensure_ascii=False)} ({len(text_) - chars:,} more characters; your owner "
-        "has the full text)"
+        f"{json.dumps(text_[: chars - tail] + '…', ensure_ascii=False)} ({len(text_) - chars:,} more characters; "
+        f"your owner has the full text) {json.dumps('…' + text_[len(text_) - tail :], ensure_ascii=False)}"
     )
 
 
+def chars_shown(line: str, text_: str) -> int:
+    """How many characters of ``text_`` the first shortened quote in ``line`` shows."""
+    left_out = re.search(r"\(([\d,]+) more characters;", line)
+    assert left_out is not None, line
+    return len(text_) - int(left_out[1].replace(",", ""))
+
+
 def snapshot_with(
-    messages: list[str], workspace: list[str] | None = None, decided: list[dict[str, Any]] | None = None
+    messages: list[str],
+    workspace: list[str] | None = None,
+    decided: list[dict[str, Any]] | None = None,
+    research: list[dict[str, Any]] | None = None,
 ) -> context.Snapshot:
     """Just what the owner's section and the brief read, with dicts for rows."""
     return context.Snapshot(
@@ -57,9 +69,13 @@ def snapshot_with(
         today_spend=0,
         daily_cap=5.0,
         cycle_cap=1.0,
-        owner_messages=[{"created_at": "2026-09-28T08:00:00Z", "text": m} for m in messages],  # type: ignore[arg-type]
+        owner_messages=[
+            {"id": i, "created_at": "2026-09-28T08:00:00Z", "text": m}  # type: ignore[misc]
+            for i, m in enumerate(messages, 1)
+        ],
         workspace=workspace or [],
         news=News(decided=decided or []),  # type: ignore[arg-type]
+        research=research or [],  # type: ignore[arg-type]
     )
 
 
@@ -202,14 +218,14 @@ def test_long_messages_share_the_owners_section(data_dir: Path) -> None:
     messages = rows(agent, "SELECT created_at, text FROM messages WHERE sender = 'owner' ORDER BY id")
     brief = first_text(work)
     owners = section(brief, "FROM YOUR OWNER") or ""
-    chars = len(owners.split('"')[1]) - 1  # the characters shown of each message
+    chars = chars_shown(owners, messages[0]["text"])  # the characters shown of each message
     assert owners == "\n".join(
         f"Message from your owner ({m['created_at']}): {shortened(m['text'], chars)}" for m in messages
     )
     assert context.OWNER_BUDGET - 30 < context.json_bytes(owners) <= context.OWNER_BUDGET
     assert "== LIMITS ==\nAt most" in brief and "bytes cut]" not in brief
     news = (section(first_text(planned), "SINCE YOUR LAST WAKE") or "").splitlines()
-    assert len(news) == 3 and all(line.endswith("more characters; your owner has the full text)") for line in news)
+    assert len(news) == 3 and all('more characters; your owner has the full text) "…ä' in line for line in news)
 
 
 @pytest.mark.parametrize("letter", ["a", "ä", "你", "😀"])
@@ -220,13 +236,14 @@ def test_the_owners_section_keeps_its_budget_and_comes_on_top_of_the_brief(lette
     if letter == "a":  # plain text: the whole message fits
         assert owners == f'{head}"{message}"'
     else:
-        assert owners == head + shortened(message, len(owners.split('"')[1]) - 1)
+        assert owners == head + shortened(message, chars_shown(owners, message))
         assert context.OWNER_BUDGET - 10 < context.json_bytes(owners) <= context.OWNER_BUDGET
 
     big_plan = {"goal": "g" * 300, "steps": ["s" * 200] * 6}
     workspace = [f"drafts/{'w' * 140}-{i}.md (1,234 B)" for i in range(20)]
-    quiet = context.brief(snapshot_with([], workspace), False, big_plan, None, 12)
-    loud = context.brief(snapshot_with([message], workspace), False, big_plan, None, 12)
+    quiet, _ = context.brief(snapshot_with([], workspace), False, big_plan, None, 12)
+    loud, shown = context.brief(snapshot_with([message], workspace), False, big_plan, None, 12)
+    assert shown.items == {("message", 1, None)}
     assert re.search(r"…\[\d+ bytes cut\]$", quiet) and context.json_bytes(quiet) <= context.BRIEF_BUDGET
     assert loud.replace(f"\n\n== FROM YOUR OWNER ==\n{owners}", "") == quiet  # the rest is as in a quiet cycle
 
@@ -235,6 +252,7 @@ def test_the_last_lines_are_cut_only_when_nothing_else_helps() -> None:
     decided = [
         {
             "id": i,
+            "version": 1,
             "type": "publish",
             "title": f"Post {i}",
             "status": "approved_with_changes",
@@ -293,3 +311,125 @@ def test_the_agent_hears_already_noted_as_a_tool_result(data_dir: Path) -> None:
     assert results[0]["status"] == "ok" and "appended" in results[0]["result"]
     assert results[1]["status"] == "ok" and results[1]["result"].startswith("already noted")
     assert agent.memory().read("lessons").count("Ask people first.") == 1
+
+
+# --- only what the agent was shown is marked seen ---
+
+
+def owner_lines(text_: str) -> list[str]:
+    """The whole lines of a section (a cut leaves a marker line instead of the rest)."""
+    return [line for line in text_.splitlines() if not re.fullmatch(r"…\[\d+ bytes cut\]", line)]
+
+
+def seen_cycles(agent: Any) -> list[int | None]:
+    """When the owner's decisions, then their messages, were marked seen."""
+    decided = rows(agent, "SELECT seen_cycle_id FROM approvals WHERE status <> 'pending' ORDER BY id")
+    messages = rows(agent, "SELECT seen_cycle_id FROM messages WHERE sender = 'owner' ORDER BY id")
+    return [r["seen_cycle_id"] for r in [*decided, *messages]]
+
+
+@pytest.mark.parametrize("scale", loop.PLANNER_SCALES)
+def test_a_long_message_and_payload_are_shown_and_marked_at_every_planner_scale(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, scale: float
+) -> None:
+    monkeypatch.setattr(loop, "PLANNER_SCALES", (scale,))
+    agent, transport = make_agent(
+        data_dir, [*cycle_with_approval(), plan(steps=["Answer my owner"]), text("Answered."), JOURNAL]
+    )
+    agent.run_cycle("schedule")
+    approval_id = rows(agent, "SELECT id FROM approvals")[0]["id"]
+    who = owner(agent)
+    payload = ("Hier ist die neue Fassung, von einer KI geschrieben. " * 160)[:8_000]
+    decision = {"decision": "approve_with_changes", "final_payload": payload, "comment": "Kürzer."}
+    assert who.decide(approval_id, decision, "Stefan").status == 200
+    message = f"{('I read your guide twice. ' * 80)[: 1_999 - len(QUESTION)]} {QUESTION}"
+    assert len(message) == 2_000 and who.send_message({"text": message}, "Stefan").status == 201
+    sent_before = len(transport.sent)
+    agent.run_cycle("schedule")
+
+    planned, work, _ = transport.sent[sent_before:]
+    since = owner_lines(section(first_text(planned), "SINCE YOUR LAST WAKE") or "")
+    owners = owner_lines(section(first_text(work), "FROM YOUR OWNER") or "")
+    assert context.json_bytes("\n".join(since)) <= context.PLANNER_BUDGETS["news"] * scale
+    for message_line, decided in (since[-2:], owners):
+        assert message_line.startswith("Message from your owner (") and message_line.endswith(f' {QUESTION}"')
+        assert decided.startswith(f'Request #{approval_id} (publish) "Post the guide": approved with changes.')
+        assert decided.endswith("Your owner will carry it out and report back.")
+    assert seen_cycles(agent) == [2, 2]
+
+
+def test_only_the_items_both_prompts_showed_are_marked_seen(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(context.PLANNER_BUDGETS, "news", 1_200)  # the plan has room for fewer than the brief
+    agent, transport = make_agent(
+        data_dir, [plan(steps=["Read my owner's notes"]), text("Read."), text("Done."), plan(steps=[], sleep=600)]
+    )
+    who = owner(agent)
+    for number in range(1, 9):
+        assert who.send_message({"text": f"Note {number}: " + "😀" * 1_990}, "Stefan").status == 201
+    agent.run_cycle("schedule")
+
+    planned, work, _ = transport.sent
+    since = owner_lines(section(first_text(planned), "SINCE YOUR LAST WAKE") or "")
+    owners = owner_lines(section(first_text(work), "FROM YOUR OWNER") or "")
+    assert 0 < len(since) < len(owners) == 8  # the brief shows all eight, the plan only the first ones
+    assert all(f'"Note {n}: ' in line for n, line in enumerate(since, 1))
+    assert seen_cycles(agent) == [1] * len(since) + [None] * (8 - len(since))
+
+    agent.run_cycle("schedule")  # the rest is news for the next plan
+    news_ = owner_lines(section(first_text(transport.sent[-1]), "SINCE YOUR LAST WAKE") or "")
+    assert news_[0].startswith("Last cycle #1") and f'"Note {len(since) + 1}: ' in news_[2]
+
+
+def test_a_question_at_the_end_of_a_long_message_stays_readable() -> None:
+    messages = [f"{letter} " + "ä" * 1_900 + f" {QUESTION}" for letter in "abc"]
+    for budget in (context.OWNER_BUDGET, context.PLANNER_BUDGETS["news"] // 2):  # the brief; a plan at half scale
+        lines = context.owner_text(snapshot_with(messages), budget).splitlines()
+        assert len(lines) == 3 and context.json_bytes("\n".join(lines)) <= budget
+        for message, line in zip(messages, lines, strict=True):
+            head = "Message from your owner (2026-09-28T08:00:00Z): "
+            assert line == head + shortened(message, chars_shown(line, message))  # its start and its end
+            assert line.startswith(f'{head}"{message[:4]}') and line.endswith(f' {QUESTION}"')
+
+
+def test_a_cut_changelog_is_not_marked_read(data_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text("## 0.4.0\n\n" + "\n".join(f"- Change {i}: you can do more." for i in range(40)), encoding="utf-8")
+    monkeypatch.setattr(paths, "CHANGELOG_PATH", path)
+    monkeypatch.setattr("app.agent.loop.app_version", lambda: "0.4.0")
+    monkeypatch.setitem(context.PLANNER_BUDGETS, "software", 400)
+    agent, transport = make_agent(data_dir, [plan(steps=[], sleep=600)] * 3)
+    agent.db.set_meta(news.changelog_key("dry_run"), "0.3.0")
+    agent.run_cycle("schedule")
+    software = section(first_text(transport.sent[-1]), "YOUR SOFTWARE") or ""
+    assert software.startswith("Your software was upgraded from 0.3.0 to 0.4.0") and software.endswith("bytes cut]")
+    assert agent.db.get_meta(news.changelog_key("dry_run")) == "0.3.0"  # not read whole: shown again
+
+    monkeypatch.setitem(context.PLANNER_BUDGETS, "software", news.CHANGELOG_LIMIT)
+    agent.run_cycle("schedule")
+    assert section(first_text(transport.sent[-1]), "YOUR SOFTWARE") == news.changelog_news(path, "0.3.0", "0.4.0")
+    assert agent.db.get_meta(news.changelog_key("dry_run")) == "0.4.0"
+    agent.run_cycle("schedule")
+    assert "YOUR SOFTWARE" not in first_text(transport.sent[-1])
+
+
+def test_a_long_changelog_keeps_its_newest_lines_and_fits_the_planner_whole(tmp_path: Path) -> None:
+    path = tmp_path / "CHANGELOG.md"
+    versions = [
+        f"## 0.{minor}.0\n\n" + "\n".join(f"- Änderung {i} in 0.{minor}." for i in range(60)) for minor in (9, 8)
+    ]
+    path.write_text("\n\n".join(versions), encoding="utf-8")
+    text_ = news.changelog_news(path, "0.7.0", "0.9.0")
+    assert text_.startswith("Your software was upgraded from 0.7.0 to 0.9.0. What changed:\n\n## 0.9.0\n")
+    assert text_.endswith(" in 0.8.\n…(older changes cut)") and "Änderung 59 in 0.9." in text_
+    assert news.CHANGELOG_LIMIT - 40 < context.json_bytes(text_) <= news.CHANGELOG_LIMIT
+    snap = snapshot_with([])
+    snap.news = News(changelog=text_, running_version="0.9.0")
+    planner, shown = context.planner_context(snap, False)
+    assert section(planner, "YOUR SOFTWARE") == text_ and shown.changelog
+    assert not context.planner_context(snap, False, 0.5)[1].changelog
+
+
+def test_an_upgrade_names_its_version_quoted() -> None:
+    upgrade = {"id": 2, "title": "RSS", "status": "released", "released_version": "0.4.0", "owner_note": None}
+    lines = News(upgrades=[upgrade]).upgrade_lines()  # type: ignore[list-item]
+    assert lines == ['Upgrade request #2 "RSS": released in version "0.4.0".']

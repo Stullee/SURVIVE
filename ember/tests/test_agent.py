@@ -10,9 +10,11 @@ from typing import Any
 
 import pytest
 
+from app.agent import loop, store
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
 from app.economy.metering import Completed, NotSent
+from app.economy.pricing import opening_cost, working_cycle_cost
 from tests.economy_helpers import ScriptedTransport, make_economy
 
 _ids = itertools.count(1)
@@ -290,6 +292,63 @@ def test_the_daily_cap_defers_the_next_wake_to_tomorrow(data_dir: Path) -> None:
     decision = agent.decide()
     assert not decision.run and "daily cap" in decision.reason
     assert decision.wait_until is not None and decision.wait_until > agent.clock.now() + timedelta(hours=1)
+
+
+@pytest.mark.parametrize(("cap", "runs"), [(0.1, False), (0.2, True)])
+def test_a_wake_needs_room_for_a_work_step_and_the_reflection(data_dir: Path, cap: float, runs: bool) -> None:
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=cap, cycle_spend_cap_usd=cap)
+    agent, _ = make_agent(data_dir, [], settings)
+    opening, working = (cost(settings, agent.db, "dry_run") or 0 for cost in (opening_cost, working_cycle_cost))
+    assert opening < 100_000 < working < 200_000  # 0.10 USD pays for the plan alone, 0.20 USD for some work too
+    agent.decide()  # schedules the first wake-up
+    agent.clock.advance(minutes=3)
+    decision = agent.decide()
+    assert decision.run is runs and ("daily cap" in decision.reason) is not runs
+
+
+def test_a_cycle_that_can_not_afford_a_work_step_does_not_reflect(data_dir: Path) -> None:
+    # With the scripted transport a work step and the reflection are each quoted at 0.0225 USD: after the plan
+    # (0.0028), 0.04 has no room for both.
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=0.04)
+    agent, transport = make_agent(data_dir, [plan(), text("unused")], settings)
+    with agent.db.transaction() as conn:
+        store.insert_message(conn, agent.scope(), None, "Are you there?", "2026-09-01T11:00:00Z")
+    end = agent.run_cycle("schedule")
+    assert (end.status, end.note) == ("refused", loop.NO_STEP)
+    assert [r["purpose"] for r in rows(agent, "SELECT purpose FROM llm_calls")] == ["plan"]
+    assert rows(agent, "SELECT author, summary FROM journal") == [
+        {"author": "system", "summary": f"Cycle ended refused: {loop.NO_STEP}"}
+    ]
+    assert rows(agent, "SELECT act_end_reason FROM cycles") == [{"act_end_reason": loop.NO_STEP}]
+    # The brief never reached the model: the owner's message is still news.
+    assert rows(agent, "SELECT seen_cycle_id FROM messages") == [{"seen_cycle_id": None}]
+
+
+def test_the_next_wake_says_how_long_the_agent_chose_to_sleep_and_why(data_dir: Path) -> None:
+    agent, _ = make_agent(
+        data_dir,
+        [
+            plan(sleep=120),
+            tools(("set_sleep", {"minutes": 90, "reason": "Early guess."})),
+            text("Done."),
+            tools(
+                ("write_journal", {"summary": "Looked", "entry": "."}),
+                ("set_sleep", {"minutes": 480, "reason": 'Nothing "urgent".'}),
+            ),
+            plan(steps=[], sleep=600),
+            NotSent("down"),
+        ],
+    )
+    end = agent.run_cycle("schedule")
+    assert (end.sleep_minutes, end.sleep_reason) == (480, 'Nothing "urgent".')  # the reflection's call wins
+    assert agent.agent_fields()["next_wake_reason"] == 'Ember chose 480 min: "Nothing \\"urgent\\"."'
+    assert agent._meta_time("next_wake_at") == agent.clock.now() + timedelta(minutes=480)
+    agent.clock.advance(minutes=481)
+    assert agent.run_cycle("schedule").status == "idle"  # the plan's sleep: chosen, without words
+    assert agent.agent_fields()["next_wake_reason"] == "Ember chose 600 min"
+    agent.clock.advance(minutes=601)
+    assert agent.run_cycle("schedule").status == "failed"
+    assert agent.agent_fields()["next_wake_reason"] == "after a failed cycle, backing off"
 
 
 def test_failures_back_off_and_a_crash_loop_waits_for_the_owner(data_dir: Path) -> None:

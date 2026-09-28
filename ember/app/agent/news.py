@@ -2,8 +2,10 @@
 
 Built only from database columns and the bundled CHANGELOG.md; everything the
 owner or the agent wrote is JSON-quoted, so no text can pose as a heading of the
-planner's context. The items shown are marked seen only after a plan succeeded
-(``mark_seen``), so a failed or refused cycle doesn't lose news.
+planner's context. An item is marked seen (``mark_seen``) only once the agent has
+worked with it: shown whole in the plan that succeeded, and in the brief of a work
+step that was answered. What a prompt left out or cut, and what a cycle that ended
+before showed, stays news for the next cycle.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -18,8 +21,12 @@ from .. import paths
 from ..db import Database
 from .store import AgentScope
 
-CHANGELOG_LIMIT = 6_000
+# Bytes (JSON-escaped): the planner's YOUR SOFTWARE section holds this much uncut, and only then counts it as read.
+CHANGELOG_LIMIT = 2_000
 _HEADING = re.compile(r"^## (\d+)\.(\d+)\.(\d+)\s*$")
+# An owner item as the agent is shown it: ("message", id, None), ("approval", id, version) or ("upgrade", id,
+# status). A decision the owner changes again (a new version or status) is news again.
+Item = tuple[str, int, int | str | None]
 
 
 def changelog_key(mode: str) -> str:
@@ -28,6 +35,10 @@ def changelog_key(mode: str) -> str:
 
 def _q(text: str | None) -> str:
     return json.dumps(text or "", ensure_ascii=False)
+
+
+def _json_bytes(text: str) -> int:
+    return len(_q(text).encode("utf-8"))
 
 
 def parse_version(text: str) -> tuple[int, int, int] | None:
@@ -76,8 +87,11 @@ def changelog_news(changelog: Path, seen: str | None, running: str) -> str:
     for version, body in sorted(wanted, reverse=True):
         parts.append(f"## {_fmt(version)}\n{body}")
     text = "\n\n".join(parts)
-    if len(text) > CHANGELOG_LIMIT:
-        text = text[:CHANGELOG_LIMIT].rsplit("\n", 1)[0] + "\n…(older changes cut)"
+    if _json_bytes(text) > CHANGELOG_LIMIT:
+        lines, note = text.split("\n"), "\n…(older changes cut)"
+        while lines and _json_bytes("\n".join(lines) + note) > CHANGELOG_LIMIT:
+            lines.pop()
+        text = "\n".join(lines).rstrip() + note
     return text
 
 
@@ -111,11 +125,25 @@ class News:
         for r in self.upgrades:
             line = f"Upgrade request #{r['id']} {_q(r['title'])}: {r['status']}"
             if r["released_version"]:
-                line += f" in version {r['released_version']}"
+                line += f" in version {_q(r['released_version'])}"
             if r["owner_note"]:
                 line += f". Owner's note: {_q(r['owner_note'])}"
             lines.append(line + ".")
         return lines
+
+    def items(self) -> list[Item]:
+        """The items of ``approval_lines()`` and ``upgrade_lines()``, in the same order."""
+        return [("approval", r["id"], r["version"]) for r in self.decided] + [
+            ("upgrade", r["id"], r["status"]) for r in self.upgrades
+        ]
+
+
+@dataclass(frozen=True)
+class Shown:
+    """What one prompt showed: the owner's items whose lines it held whole, and whether it held the whole changelog."""
+
+    items: frozenset[Item] = frozenset()
+    changelog: bool = False
 
 
 def collect(conn: sqlite3.Connection, db: Database, scope: AgentScope, running_version: str) -> News:
@@ -132,26 +160,29 @@ def collect(conn: sqlite3.Connection, db: Database, scope: AgentScope, running_v
     return News(decided, upgrades, changelog_news(paths.CHANGELOG_PATH, seen, running_version), running_version)
 
 
-def mark_seen(
-    conn: sqlite3.Connection, db: Database, scope: AgentScope, cycle_id: int, news: News, message_ids: list[int]
-) -> None:
-    """After a successful plan: the items shown won't be shown again.
+def mark_seen(conn: sqlite3.Connection, cycle_id: int, items: Iterable[Item]) -> None:
+    """The owner's items the agent has worked with won't be shown again.
 
     An item the owner changed again meanwhile (decided, then closed) stays unseen.
     """
-    for r in news.decided:
-        conn.execute(
-            "UPDATE approvals SET seen_cycle_id = ? WHERE id = ? AND version = ? AND seen_cycle_id IS NULL",
-            (cycle_id, r["id"], r["version"]),
-        )
-    for r in news.upgrades:
-        conn.execute(
-            "UPDATE upgrades SET seen_cycle_id = ? WHERE id = ? AND status = ? AND seen_cycle_id IS NULL",
-            (cycle_id, r["id"], r["status"]),
-        )
-    for message_id in message_ids:
-        conn.execute(
-            "UPDATE messages SET seen_cycle_id = ? WHERE id = ? AND seen_cycle_id IS NULL", (cycle_id, message_id)
-        )
-    if parse_version(news.running_version) is not None:
+    for kind, item_id, version in items:
+        if kind == "message":
+            conn.execute(
+                "UPDATE messages SET seen_cycle_id = ? WHERE id = ? AND seen_cycle_id IS NULL", (cycle_id, item_id)
+            )
+        elif kind == "approval":
+            conn.execute(
+                "UPDATE approvals SET seen_cycle_id = ? WHERE id = ? AND version = ? AND seen_cycle_id IS NULL",
+                (cycle_id, item_id, version),
+            )
+        elif kind == "upgrade":
+            conn.execute(
+                "UPDATE upgrades SET seen_cycle_id = ? WHERE id = ? AND status = ? AND seen_cycle_id IS NULL",
+                (cycle_id, item_id, version),
+            )
+
+
+def mark_changelog_seen(db: Database, scope: AgentScope, news: News) -> None:
+    """After a plan that showed the whole changelog: it isn't shown again until the next version."""
+    if news.changelog and parse_version(news.running_version) is not None:
         db.set_meta(changelog_key(scope.mode), news.running_version)

@@ -148,7 +148,7 @@ def test_upgrade_requests_and_inbox(data_dir: Path) -> None:
     assert who.send_message({"text": "bad \x07 bell"}, None).body["field"] == "text"
     agent.run_cycle("schedule")
     planned = sent_text(transport.sent[-1])
-    assert "released in version 0.4.0" in planned and "next week" in planned
+    assert 'released in version \\"0.4.0\\"' in planned and "next week" in planned
 
 
 def test_the_kill_switch_and_its_reset(data_dir: Path) -> None:

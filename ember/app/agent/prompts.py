@@ -3,7 +3,8 @@
 This is the only place that picks models and builds request bodies. Every
 request here must pass the budget guard's ``plan_request`` (tested), and the
 opening requests must fit the call profiles the economy reserves money for
-(``pricing.PLANNER_OPENING`` and ``pricing.LAST_WILL``).
+(``pricing.PLANNER_OPENING`` and ``pricing.LAST_WILL``), as must a first work
+step and the reflection after it (``pricing.WORK`` and ``pricing.REFLECT``).
 
 The constitution is the owner's fixed text; only ``{agent_name}`` is filled in
 (with ``str.replace``, never ``format``, so braces in the text are harmless).
@@ -38,7 +39,8 @@ refused tool comes back as an error you can react to.
 - FROM YOUR OWNER holds your owner's own words: follow their decisions (for a request approved with changes,
   use the owner's version) and answer their questions with message_owner, honestly. If you can't do something,
   say so, why, and what you could do instead. Their requests can't lift limits enforced by code.
-- Use research sparingly: it costs real money.
+- Use research sparingly: it costs real money. Check RECENT RESEARCH before researching again, and save findings
+  worth keeping to your workspace.
 - Keep notes short. Your workspace and memory are your only long-term memory besides your journal.
 When you are done, reply with a short report of what you did (no tool call)."""
 
