@@ -20,6 +20,11 @@ Dry run (the default) runs the whole agent with a built-in fake model at no
 cost. With an API key and dry run off it calls the Anthropic API and spends real
 money within the caps. Findings from live testing come next.
 
+0.4.0 adds the first integrations: Ember's own mailbox (it reads mail on its
+own; an email it proposes is sent by Ember's code only after the owner approves
+it) and Reddit, phase A (research limited to reddit.com, and approved posts
+become a prefilled link the owner opens; no Reddit API yet).
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
@@ -76,13 +81,24 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   an audit hook (`ember/app/agent/netguard.py`); in dry run the whole wake cycle
   runs that way. The live transport only reaches `https://api.anthropic.com`
   and ignores proxy variables (`ember/app/economy/anthropic_transport.py`).
+  The container talks to `api.anthropic.com` and, if the owner sets up Ember's
+  mailbox, to the configured IMAP and SMTP hosts, over verified TLS, from
+  Ember's own code only (`ember/app/integrations/mail.py`, never a tool
+  handler).
+- **Outside actions.** The agent has no tool that sends or posts anything. An
+  email it proposes is sent by Ember's code only after the owner approves it,
+  exactly as approved, once, to one recipient, with a footer saying an AI wrote
+  it and within a daily limit; a send is recorded before it starts and never
+  retried (`ember/app/integrations/executor.py`). A Reddit post becomes a link
+  the owner opens and posts from their own account.
 - **CSRF.** State-changing requests must carry an `X-Ember-Request: 1` header,
   which cross-site pages can't send.
 - **Strict CSP.** No inline scripts or styles; Chart.js is vendored, nothing is
   loaded from a CDN.
-- **Secrets.** The API key lives only in the app options. It is excluded from
-  the dashboard and the API, and every log line is scrubbed of anything that
-  looks like an Anthropic key.
+- **Secrets.** The API key and the mailbox's app password live only in the app
+  options. They are excluded from the dashboard, the API and the diagnostics
+  (which only say whether they are set), and every log line is scrubbed of
+  both and of anything that looks like an Anthropic key.
 - **Never crashes on bad input.** Invalid options start *safe mode* (defaults,
   dry run forced on); a broken database is reported in the dashboard while the
   web UI keeps running.
@@ -172,7 +188,8 @@ ember/                       the app
     security.py              Ingress IP filter, CSRF check, security headers
     web.py, web/             routes, dashboard HTML/CSS/JS, vendored Chart.js
     economy/                 ledger, life states, cost estimates, budget guard (metering.py)
-    agent/constitution.md    the agent's fixed system prompt core
+    agent/                   the wake cycle, tools, context, fake model (constitution.md: the fixed prompt core)
+    integrations/            Ember's mailbox (IMAP/SMTP), the executor of approved emails, Reddit links
   tests/
 ```
 

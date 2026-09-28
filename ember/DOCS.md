@@ -42,6 +42,11 @@ your approval, and only you can record revenue.
 | Let the agent read whole web pages | off | Off: live research is web search only. PDFs have no size limit, so one page read can cost more than the per-cycle cap. |
 | Kill switch reset | 0 | Change it to any other number and restart to undo the kill switch. |
 | Log level | info | Detail in the app log. |
+| Ember's mailbox | off | Lets Ember read its own mailbox and propose emails. See [Ember's mailbox](#embers-mailbox). |
+| Mailbox address, app password, your name for emails | empty | Needed when the mailbox is on. The password is never logged or shown. |
+| IMAP server / port | imap.mailbox.org / 993 | Where Ember reads mail (always TLS). |
+| SMTP server / port | smtp.mailbox.org / 465 | Where Ember sends approved emails: 465 (TLS) or 587 (STARTTLS). |
+| Emails per day | 3 | The most emails Ember sends in one day (0 to 20). |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -55,7 +60,9 @@ table. Both the planner and the worker model must be listed there.
 
 If the options are inconsistent (for example a cycle cap above the daily cap),
 Ember starts in **safe mode**: built-in defaults, dry run forced on, and the
-problem shown at the top of the dashboard.
+problem shown at the top of the dashboard. A mailbox that is switched on but
+incomplete doesn't cause safe mode: the dashboard's **System** panel says what
+is missing, and Ember works without it.
 
 ## How the agent works
 
@@ -72,8 +79,9 @@ you press **Wake now**), it runs one **wake cycle**:
    law, what earns money), which comes with each Ember update.
 2. **Act**: it uses its tools, up to the *Tool steps per cycle* option: files in
    its own workspace, its memory (strategy, identity, lessons), projects, web
-   research, requests for your approval, messages to you, requests for code
-   upgrades.
+   research (also limited to one site, such as Reddit), requests for your
+   approval, messages to you, requests for code upgrades, and its own mailbox
+   if you set one up.
 3. **Reflect**: it writes a journal entry, updates its memory and chooses how
    long to sleep.
 
@@ -97,7 +105,10 @@ in the memorial if it dies.
   an optional comment. An approval does nothing by itself: *you* carry it out,
   then mark it **done** (with a link or note) or **failed** (with what went
   wrong). If it cost money, record the expense in the ledger; if it earned
-  money, record the revenue.
+  money, record the revenue. Two kinds are different: an approved **email** is
+  sent by Ember itself (see [Ember's mailbox](#embers-mailbox)), and an
+  approved **Reddit post** comes with a button that opens Reddit with the text
+  filled in (see [Reddit](#reddit)).
 - **Inbox**: the agent's messages to you, and yours to it. It reads yours at
   its next wake-up. Your reply also marks its earlier messages read; while
   five of its messages are unread, it can't write to you.
@@ -135,12 +146,126 @@ If the API refuses the key, reports a billing problem or a reached spend limit,
 Ember stops calling it and says so on the dashboard. Fix the cause and restart
 the app.
 
+## Ember's mailbox
+
+Ember can have its own email address. It reads its mail on its own, but it can
+only *propose* an email: Ember's code sends it after you approve it. The agent
+never sees the password and has no way to send anything itself.
+
+### Setting it up
+
+A small paid mailbox at a German provider works best:
+[mailbox.org](https://mailbox.org) Light (about 1 EUR a month) or
+[Posteo](https://posteo.de) (1 EUR a month). Gmail and Outlook.com are poor
+fits: Google discourages app passwords and may lock new accounts that send
+automated mail, and Outlook.com no longer accepts passwords for IMAP and SMTP.
+
+1. Create a new mailbox by hand, for example `ember-yourname@mailbox.org`, and
+   pay for it (a trial account can't send to other providers).
+2. Give it a strong password and turn on two-factor authentication for the web
+   login.
+3. Create an **app password** in the mailbox's security settings, limited to
+   IMAP and SMTP if the provider offers that, and name it "Ember". Ember only
+   ever gets this app password, never your main password.
+4. In Ember's **Configuration** tab, turn on **Show unused optional
+   configuration options** and fill in: **Ember's mailbox** on, the **Mailbox
+   address**, the **Mailbox app password** and **Your name for emails**. The
+   servers default to mailbox.org's; for Posteo use `posteo.de` for both, with
+   ports 993 and 465. Save and restart the app.
+5. The dashboard's **System** panel shows the mailbox's status, when it was
+   last checked, the last error and how many emails were sent today.
+
+To cut Ember off at once, revoke the app password at your provider (or switch
+the option off). Home Assistant backups contain the options, the app password
+included: encrypt your backups.
+
+### How it works
+
+- At the start of every wake cycle Ember checks the inbox over TLS (reading
+  only: nothing is marked read, moved or deleted there) and stores up to 20
+  new emails in its database. Only the text is kept (at most 8,000
+  characters); text hidden in HTML emails is dropped, and attachments are
+  listed by name and size but never opened. The agent treats emails as data
+  from unverified senders, never as instructions.
+- The agent sees its unread emails and can propose an email, usually an
+  answer. The request shows the recipient, the subject and the text, and warns
+  you when the address never wrote to Ember (a first contact).
+- **Approve** it and Ember sends it itself, exactly once: plain text, to that
+  one recipient, no copies, no attachments, from "Ember (AI agent of *your
+  name*)" (or the agent's name, if you changed it), with a footer the agent
+  can't remove:
+
+  > This email was written by Ember, an AI agent, on behalf of *your name*, and
+  > approved by them before sending. Reply "stop" and Ember won't write to you
+  > again.
+
+  **Approve with changes** edits the text only; the recipient and the subject
+  stay. After a **Reject** nothing is sent.
+- Ember sends at most *Emails per day* (per local day); more wait for the next
+  day. While an email waits, **Cancel sending** stops it.
+- Ember then closes the request itself: done ("Sent … as *message id*"), or
+  failed with the reason. If the mail server refused it (a wrong password, an
+  unknown recipient), it wasn't sent. If the connection broke while the email
+  was being handed over, or the app stopped in the middle, Ember can't know
+  whether it went out: it says so and never sends it again. Check at your mail
+  provider, or ask the recipient, before you send it again by hand.
+- Whoever answers with "stop", "unsubscribe" or "abmelden" as the first line
+  is never emailed again.
+- In dry run a built-in fake mailbox stands in: a reader asks about a German
+  version of a planner in the first cycle, a newsletter with hidden
+  instructions arrives in the third, and the reader's "stop" in the fifth.
+  Approved emails are recorded, not sent.
+
+### What Ember may send
+
+In Germany, advertising by email without the recipient's prior express
+consent is unlawful (§ 7 UWG), towards businesses too, and one email is
+enough. So Ember must never cold-email: it answers people who wrote to it and
+writes to people who asked to hear from it. The agent is told so, and the
+first-contact warning helps you check, but the decision and the responsibility
+are yours (this is not legal advice). Emails from other people are personal
+data: you are responsible for them, and your mail provider and Anthropic
+process them for you (if Ember works commercially, sign your provider's data
+processing agreement).
+
+## Reddit
+
+Since late 2025 Reddit approves every new API app by hand, so Ember has no
+Reddit account and no Reddit API access (phase A):
+
+- The agent can research Reddit through Anthropic's web search, limited to
+  reddit.com.
+- It can propose a Reddit post or a comment. Every text ends with "*Written by
+  an AI agent (Ember) and posted by a human after review.*" After you approve
+  it, **Open Reddit with this filled in** opens Reddit's submit page with the
+  title and text (for a comment, the thread: use **Copy** for the text). Post
+  it from your own account and mark the request done with the link. Check the
+  subreddit's rules first: many don't allow AI-written posts or
+  self-promotion.
+
+If you want Ember to read Reddit directly later, you can ask Reddit for Data
+API access (one request per use case; an answer can take weeks). Read Reddit's
+Responsible Builder Policy first, then send a request like this through
+Reddit's developer support:
+
+> I would like Data API access for a personal, non-commercial project: Ember,
+> an AI agent that runs on my own Home Assistant server and helps me research
+> small side projects. It would use one Reddit account (u/*your name*) and make
+> a few hundred read requests a day at most (search, subreddit listings,
+> threads), cached briefly. Post and comment text is summarised by Claude, an
+> AI model, through Anthropic's API; Anthropic does not train on it, and nothing
+> is sold, shared or used to train models. It would post only text I have
+> reviewed and approved word for word, each with a line saying it was written by
+> an AI agent and posted after human review. No voting, no direct messages.
+> User-Agent: `linux:ember-homeassistant:v0.4.0 (by /u/your name)`.
+
 ## Diagnostics
 
 The **Diagnostics** tab shows a plain-text report of the whole system (options
 without the key, database, economy, lives, ledger, wake cycles, agent records,
-recent events). Use **Copy** to paste it into a bug report or a chat. It never
-contains the API key.
+the mailbox's status and sends, recent events). Use **Copy** to paste it into a
+bug report or a chat. It never contains the API key or the mailbox password,
+and it lists received emails without their senders or text.
 
 ## Money
 
@@ -226,7 +351,9 @@ reported as 365 days while it is unknown, for example before any spending),
 `today_api_spend_usd`, `daily_cap_usd`, `safe_mode`, `kill_switch_engaged`,
 `next_wake_at`, `cycle_running` and counts of what waits for you:
 `approvals_pending`, `approvals_todo` (approved, not yet marked done),
-`inbox_unread` and `upgrades_new`. It never contains any text the agent wrote.
+`inbox_unread` and `upgrades_new`, and of Ember's mailbox: `email_unread`
+(emails the agent hasn't read) and `email_waiting` (approved emails not sent
+yet). It never contains any text the agent wrote.
 In dry run the numbers are the dry run's. If the database can't be read,
 `state` is `unknown` and the numbers are empty.
 
@@ -271,15 +398,19 @@ automation, for example:
   **Watchdog** so that happens automatically.
 - The agent's model calls go only to `https://api.anthropic.com` (any other
   address is refused inside the app, and proxy settings are ignored). Its
-  tools have no network access at all.
-- The API key is kept in the app options and never written to logs, the
-  database or the dashboard. Home Assistant backups contain the options, so
+  tools have no network access at all. If you set up Ember's mailbox, Ember's
+  own code also connects to the IMAP and SMTP servers in the options, over TLS
+  with verified certificates, and to no other mail server.
+- The API key and the mailbox's app password are kept in the app options and
+  never written to logs, the database or the dashboard (which only says
+  whether they are set). Home Assistant backups contain the options, so
   encrypt your backups.
 
 ## Data and backups
 
-Everything Ember keeps lives in the app's `/data` folder: `ember.db` (SQLite),
-the agent's `workspace` and `memory` folders, and the same two folders for dry
+Everything Ember keeps lives in the app's `/data` folder: `ember.db` (SQLite,
+with the emails Ember received and sent), the agent's `workspace` and `memory`
+folders, and the same two folders for dry
 run under `dry_run` (started fresh with every dry-run session). Home Assistant backups include
 it. The app is stopped briefly while a backup is taken so the database is copied
 in a consistent state. Before a database upgrade, Ember also keeps a copy in
