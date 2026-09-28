@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.4.0"
+version: "0.5.0"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -53,6 +53,7 @@ options:
   web_search_usd_per_1000: 10
   dry_run: true
   web_fetch: false
+  wake_on_message: true
   worker_effort: default
   # Change this number (and restart) to re-enable an agent stopped with the kill switch.
   kill_switch_reset: 0
@@ -88,6 +89,7 @@ schema:
   web_search_usd_per_1000: float(0.000001,1000)
   dry_run: bool
   web_fetch: bool
+  wake_on_message: bool
   worker_effort: list(default|high|medium|low)
   kill_switch_reset: int(0,1000000)
   log_level: list(debug|info|warning|error)
