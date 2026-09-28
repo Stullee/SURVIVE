@@ -916,10 +916,12 @@ def test_chaos_produces_every_kind_of_misbehaviour() -> None:
     notes = {note for sim in sims for _, _, note in sim.fake.trace}
     # The corpus asks few distinct research questions, so which research chaos it draws hangs on every prompt's
     # bytes: ask some more directly.
+    # The same holds for the reflect chaos: ask for reflections directly too.
     asked = []
-    for seed in range(20):
+    for seed in range(30):
         fake = FakeTransport(seed=seed, scenario="chaos", clock=Clock())
         asked.append(fake.send(prompts.research_request(SETTINGS, "Which printable planners sell best?", None)))
+        fake.send(prompts.reflect_request(SETTINGS, f"== PLAN ==\nGoal: test {seed}", [], []))
         notes |= {note for _, _, note in fake.trace}
     assert {f"chaos: {c}" for kinds in CHAOS.values() for c in kinds} <= notes
     inputs = [(name, args, ok) for sim in sims for _, name, args, ok in sim.tool_log]
