@@ -70,6 +70,12 @@ configuration:
     description: >-
       On: the agent uses a built-in fake model and never calls the Anthropic
       API, so nothing costs money. Turn off only when you are ready.
+  worker_effort:
+    name: Worker effort
+    description: >-
+      How thoroughly the model works in each step. Lower effort writes shorter
+      answers and uses fewer tool calls, which costs less, but may do a worse
+      job. "default" is the model's own default (high). Not used for Haiku.
   web_fetch:
     name: Let the agent read whole web pages
     description: >-

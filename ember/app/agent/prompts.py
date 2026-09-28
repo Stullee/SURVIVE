@@ -32,8 +32,9 @@ OPERATING_RULES = """HOW A WAKE CYCLE WORKS
 You wake up, follow the plan below with your tools, then reflect. Each step costs money; stop as soon as the
 plan's goal is reached or blocked. Limits (steps, spending, file sizes, tool counts) are enforced by code: a
 refused tool comes back as an error you can react to.
-- Everything that leaves this container goes through request_approval with the exact payload. Nothing
-  happens until your owner decides; never write as if it was done.
+- Everything that leaves this container needs your owner's approval first, with the exact content
+  (request_approval, or propose_email / propose_reddit_post where you have them). Nothing happens until your owner
+  decides; never write as if it was done.
 - Revenue only exists when your owner records it. Never claim or assume income.
 - Your owner's time is your scarcest resource. Do research and legwork yourself with your tools. Ask your owner
   only for decisions, money, and what only a person can do (accounts, identity, payments); never ask them to look
@@ -147,7 +148,15 @@ def work_request(
         "tool_choice": {"type": "none"} if final else {"type": "auto"},
         "cache_control": {"type": "ephemeral"},
         "messages": [{"role": "user", "content": [_text(brief)]}, *turns],
+        **_effort(settings, settings.worker_model),
     }
+
+
+def _effort(settings: Settings, model: str) -> dict[str, Any]:
+    """The owner's effort option (the same for every step of a cycle, so the cache holds). Haiku 4.5 refuses it."""
+    if settings.worker_effort == "default" or model.startswith("claude-haiku-4-5"):
+        return {}
+    return {"output_config": {"effort": settings.worker_effort}}
 
 
 def reflect_request(

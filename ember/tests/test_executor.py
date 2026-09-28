@@ -545,3 +545,14 @@ def test_the_executor_module_sends_only_through_a_mailbox() -> None:
     source = Path(executor.__file__).read_text(encoding="utf-8")
     assert "smtplib" not in source and "imaplib" not in source and "socket" not in source
     assert LoadedSettings(Settings()).settings.email_daily_limit == 3
+
+
+def test_approved_emails_are_not_the_owners_to_do(data_dir: Path) -> None:
+    # Ember sends them itself, so the "approved, to carry out" badge doesn't count them.
+    agent, _ = make_agent(data_dir, proposing(REPLY), ROOMY.model_copy(update={"email_daily_limit": 0}))
+    agent.run_cycle("schedule")
+    [approval_id] = ids(agent)
+    assert agent.dashboard()["badges"]["approvals_pending"] == 1
+    approve(agent, approval_id)
+    badges = agent.dashboard()["badges"]
+    assert (badges["approvals_pending"], badges["approvals_todo"]) == (0, 0)

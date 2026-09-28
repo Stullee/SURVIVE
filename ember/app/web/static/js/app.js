@@ -2447,8 +2447,9 @@
           h("span", { class: "who" }, who, " · ", timeEl(m.created_at),
             isUnread(m) ? [" ", h("span", { class: "chip", "data-tone": "accent" }, h("span", { "aria-hidden": "true", text: "●" }), "Unread")] : null,
             m.simulated ? [" ", testTag()] : null),
-          h("span", { class: "msg-text", text: asText(m.text) }),
-          fromOwner ? seenLine(!!m.seen_by_agent) : null);
+          h("span", { class: "msg-text", "data-removed": m.removed ? "true" : null, text: asText(m.text) }),
+          fromOwner ? seenLine(!!m.seen_by_agent) : null,
+          fromOwner && !m.removed ? removeButton(num(m.id)) : null);
       }));
     }
     var later = laterTitle();
@@ -2495,6 +2496,12 @@
     composerError("");
     if (!text) { composerError("Write a message first."); box.focus(); return; }
     if (text.length > 2000) { composerError("Keep the message under 2,000 characters (it has " + intFmt.format(text.length) + ")."); box.focus(); return; }
+    if (SECRET_HINT.test(text) && ui.secretWarned !== text) {
+      ui.secretWarned = text;
+      composerError("This looks like it contains a password. " + agentName() + " can't log in anywhere, and messages are stored and sent to Anthropic. Remove it, or press Send again to send it anyway.");
+      box.focus();
+      return;
+    }
     ui.sending = true;
     var send = $("composer-send");
     send.disabled = true;
@@ -2530,6 +2537,41 @@
       send.disabled = !!laterTitle();
     });
   }
+
+  // Removing the text of one of the owner's own messages (a password sent by mistake): two clicks, no dialog.
+  function removeButton(id) {
+    var btn = h("button", { type: "button", class: "link-button", "data-remove": String(id), text: "Remove text" });
+    btn.addEventListener("click", function () {
+      if (btn.getAttribute("data-armed") !== "true") {
+        btn.setAttribute("data-armed", "true");
+        btn.textContent = "Click again to remove this message's text for good";
+        window.setTimeout(function () { btn.removeAttribute("data-armed"); btn.textContent = "Remove text"; }, 6000);
+        return;
+      }
+      btn.disabled = true;
+      var status = $("inbox-status");
+      status.setAttribute("data-kind", "");
+      status.textContent = "Removing…";
+      request("POST", "api/inbox/" + id + "/remove", {}).then(function (res) {
+        if (!res.ok) {
+          ownerFailure(res, {}, function (msg) { status.textContent = msg; status.setAttribute("data-kind", "error"); }, null);
+          btn.disabled = false;
+          return;
+        }
+        status.textContent = "The message's text was removed.";
+        status.setAttribute("data-kind", "ok");
+        refresh();
+      }).catch(function (err) {
+        status.textContent = "Couldn't remove the text (" + errorText(err) + ").";
+        status.setAttribute("data-kind", "error");
+        btn.disabled = false;
+      });
+    });
+    return h("p", { class: "remove-line" }, btn);
+  }
+
+  // Looks like a login: the words, or a generated password such as abcdef-123abc-XyZabc.
+  var SECRET_HINT = /(pass(wor[dt])?|kennwort|zugangsdaten|\bpwd?\b|app.?password)|\b[A-Za-z0-9]{5,}-[A-Za-z0-9]{5,}-[A-Za-z0-9]{5,}\b/i;
 
   function markAllRead() {
     if (ui.markingRead || !ui.data) return;

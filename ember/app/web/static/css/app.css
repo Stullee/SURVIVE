@@ -768,3 +768,9 @@ body[data-stale="true"] .live { display: none; }
 @media (forced-colors: active) {
   .meter-fill, .live-dot, .swatch { forced-color-adjust: none; }
 }
+
+/* Inbox: removing the text of the owner's own message */
+.remove-line { margin: 0.25rem 0 0; }
+.link-button { background: none; border: 0; padding: 0; color: var(--text-2); text-decoration: underline; cursor: pointer; font: inherit; font-size: 0.85em; }
+.link-button[data-armed="true"] { color: var(--critical-text); font-weight: 600; }
+.msg-text[data-removed="true"] { font-style: italic; opacity: 0.75; }

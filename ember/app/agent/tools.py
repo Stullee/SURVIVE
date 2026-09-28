@@ -25,6 +25,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
@@ -59,6 +60,7 @@ REDDIT_NOTE = (
     "mark it done with the link. Check the subreddit's rules on AI-written content and self-promotion first."
 )
 _SITE = re.compile(r"^(?=.{4,60}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+_DOCUMENT = re.compile(r"\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|epub|zip)$", re.IGNORECASE)
 _BAD_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f‪-‮⁦-⁩]")
 
 
@@ -242,7 +244,8 @@ SPECS: dict[str, Spec] = {
             {
                 "question": _s("What you want to find out.", 500),
                 "url": _s(
-                    "Read this page instead of searching: only a URL from your research results in this cycle.",
+                    "Read this page instead of searching: only a URL from your research results in this cycle, "
+                    "and no PDFs or other documents.",
                     250,
                     required=False,
                 ),
@@ -723,6 +726,9 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         if url not in ctx.state.seen_urls:
             # Otherwise a URL could carry data out of the container (in its path or query) without approval.
             raise ToolError("you can only read pages that appeared in your research results this cycle")
+        if _DOCUMENT.search(urlsplit(url).path):
+            # The page reader's size limit doesn't apply to PDFs and other documents: one can cost dollars.
+            raise ToolError("documents such as PDFs can't be read (they can cost dollars each); look for a web page")
     if ctx.research is None:
         raise ToolError("research isn't available right now")
     return ctx.research(args["question"].strip(), url, ctx.cycle_id, None if url else site)

@@ -28,6 +28,7 @@ from ..integrations.mail import BODY_MAX
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
+REMOVED_TEXT = "[removed by the owner]"  # the only text a message may be changed to (migration 0006)
 CANCELLED = "Cancelled by the owner before it was sent"
 DECISIONS = {"approve": "approved", "approve_with_changes": "approved_with_changes", "reject": "rejected"}
 OUTCOMES = ("done", "failed")
@@ -207,6 +208,30 @@ class Owner:
                 )
             events.record(self.db, "info", "owner", f"{who or 'The owner'} sent a message to the agent")
             return Reply(201, {"id": message_id})
+
+        return _reply(run)
+
+    def remove_message(self, message_id: int, who: str | None) -> Reply:
+        """Blank the text of one of the owner's own messages (a password sent by mistake); the row stays."""
+
+        def run() -> Reply:
+            where, params = self.scope.where()
+            with self.db.transaction() as conn:
+                row = conn.execute(
+                    f"SELECT sender, removed_at FROM messages WHERE id = ? AND {where}", (message_id, *params)
+                ).fetchone()
+                if row is None:
+                    raise OwnerError("id", "no such message", 404)
+                if row["sender"] != "owner":
+                    raise OwnerError("id", "only your own messages can be removed", 409)
+                if row["removed_at"] is not None:
+                    raise OwnerError("id", "this message's text is already removed", 409)
+                conn.execute(
+                    "UPDATE messages SET text = ?, removed_at = ?, removed_by = ? WHERE id = ?",
+                    (REMOVED_TEXT, self._now(), who, message_id),
+                )
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} removed the text of message #{message_id}")
+            return Reply(200, {"id": message_id, "removed": True})
 
         return _reply(run)
 

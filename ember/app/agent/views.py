@@ -35,7 +35,13 @@ def badges(conn: sqlite3.Connection, scope: store.AgentScope) -> dict[str, int]:
     """What waits for the owner (also in the Home Assistant sensor, so counts only, no text)."""
     return {
         "approvals_pending": store.count_rows(conn, "approvals", scope, "status = 'pending'"),
-        "approvals_todo": store.count_rows(conn, "approvals", scope, "status IN ('approved', 'approved_with_changes')"),
+        # Approved emails are sent by Ember itself, so they aren't the owner's to do.
+        "approvals_todo": store.count_rows(
+            conn,
+            "approvals",
+            scope,
+            "status IN ('approved', 'approved_with_changes') AND (executor IS NULL OR executor <> 'email')",
+        ),
         "inbox_unread": store.count_rows(conn, "messages", scope, "sender = 'agent' AND read_at IS NULL"),
         "upgrades_new": store.count_rows(conn, "upgrades", scope, "status = 'new'"),
     }
@@ -100,6 +106,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "text": r["text"],
                 "read_at": r["read_at"],
                 "entered_by": r["entered_by"],
+                "removed": r["removed_at"] is not None,
                 "seen_by_agent": r["seen_cycle_id"] is not None,
                 "simulated": r["mode"] == "dry_run",
             }

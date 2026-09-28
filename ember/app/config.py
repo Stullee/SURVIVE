@@ -115,6 +115,8 @@ class Settings(BaseModel):
     web_search_usd_per_1000: float = Field(default=10.0, ge=MIN_PRICE, le=1_000)
     dry_run: bool = True
     web_fetch: bool = False
+    # Effort for the work steps and the reflection ("default" sends none, which means high). Not sent to Haiku 4.5.
+    worker_effort: Literal["default", "high", "medium", "low"] = "default"
     kill_switch_reset: int = Field(default=0, ge=0, le=1_000_000)
     log_level: Literal["debug", "info", "warning", "error"] = "info"
     # Ember's own mailbox (0.4.0). Only types and ranges are checked here: a mailbox that is switched on but

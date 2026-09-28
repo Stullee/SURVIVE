@@ -301,6 +301,14 @@ def send_message(request: Request, body: Annotated[Any, Body()] = None) -> JSONR
     return _reply(actions.send_message(body, _owner(request)))
 
 
+@router.post("/api/inbox/{message_id}/remove")
+def remove_message(request: Request, message_id: ItemId) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.remove_message(message_id, _owner(request)))
+
+
 @router.post("/api/inbox/read")
 def mark_read(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
     actions = _owner_actions(request)
