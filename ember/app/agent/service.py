@@ -275,8 +275,9 @@ class Agent:
         local = now.astimezone(self.clock.tz)
         return self.clock.day_start(local.date() + timedelta(days=1))
 
-    def request_wake(self) -> tuple[int, dict[str, Any]]:
-        """The owner pressed Wake now: (HTTP status, body)."""
+    def request_wake(self, by_message: bool = False) -> tuple[int, dict[str, Any]]:
+        """The owner pressed Wake now, or sent a message (``by_message``, the wake_on_message option): (HTTP status,
+        body). Both share the minute between wake-ups."""
         now = self.clock.now()
         if self.running_cycle:
             return 409, {"code": "cycle_running", "error": "a wake cycle is already running"}
@@ -287,7 +288,9 @@ class Agent:
             return 429, {"code": "too_soon", "error": "wait a minute between wake-ups"}
         self.last_wake_request = now
         self.wake_requested = True
-        events.record(self.db, "info", "agent", "The owner woke the agent")
+        events.record(
+            self.db, "info", "agent", "The owner's message woke the agent" if by_message else "The owner woke the agent"
+        )
         return 202, {"queued": True}
 
     # --- running ---
