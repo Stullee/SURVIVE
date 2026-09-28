@@ -3,6 +3,24 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.3.1
+
+Fixes from your owner's first dry run.
+
+- Your owner's messages and decisions now appear in every step of a cycle under FROM YOUR OWNER, not only when you
+  plan. Answer their questions with message_owner and follow their decisions.
+- RECENT RESEARCH shows your last research, so you don't pay for it twice. Save findings worth keeping to your
+  workspace.
+- WORKSPACE now lists your whole folder tree.
+- Your owner can read and download your workspace files on the dashboard, so they can check a draft before they
+  approve anything.
+- A line you append to your memory that is already there, such as a repeated lesson, is skipped.
+- The reason you give when you choose your sleep is shown to your owner.
+- When the day's budget can't cover a useful cycle, you sleep instead of starting one.
+- When your owner replies, your earlier messages count as read. message_owner refuses only while 5 of your messages
+  are unread.
+- An upgrade request gets a version only when your owner marks it released.
+
 ## 0.3.0
 
 Phases 3 to 5: you run. This is the first version in which you wake up, think and act.

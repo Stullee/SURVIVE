@@ -159,13 +159,21 @@ class Owner:
         def run() -> Reply:
             data = _body(body, {"text"})
             text = _text(data, "text", 2_000, required=True)
+            now = self._now()
+            where, params = self.scope.where()
             with self.db.transaction() as conn:
                 cursor = conn.execute(
                     "INSERT INTO messages (mode, session, life_id, created_at, sender, cycle_id, text, entered_by)"
                     " VALUES (?, ?, ?, ?, 'owner', NULL, ?, ?)",
-                    (self.scope.mode, self.scope.session, self.scope.life_id, self._now(), text, who),
+                    (self.scope.mode, self.scope.session, self.scope.life_id, now, text, who),
                 )
                 message_id = int(cursor.lastrowid)
+                # A reply reads what the agent wrote before (message_owner refuses while too many are unread).
+                conn.execute(
+                    f"UPDATE messages SET read_at = ? WHERE {where} AND sender = 'agent' AND read_at IS NULL"
+                    " AND id < ?",
+                    (now, *params, message_id),
+                )
             events.record(self.db, "info", "owner", f"{who or 'The owner'} sent a message to the agent")
             return Reply(201, {"id": message_id})
 
@@ -198,6 +206,8 @@ class Owner:
                 raise OwnerError("status", "choose accepted, declined or released")
             note = _text(data, "note", 2_000)
             version = _text(data, "version", 20)
+            if status != "released" and version is not None:
+                raise OwnerError("version", "only a released request has a version")
             if status == "released" and (version is None or not _VERSION.match(version)):
                 raise OwnerError("version", "say in which version it was released, like 0.4.0")
             where, params = self.scope.where()
@@ -209,7 +219,7 @@ class Owner:
                     raise OwnerError("status", f"this request is already {row['status']}", 409)
                 conn.execute(
                     "UPDATE upgrades SET status = ?, decided_at = ?, owner_note = COALESCE(?, owner_note),"
-                    " released_version = COALESCE(?, released_version), seen_cycle_id = NULL WHERE id = ?",
+                    " released_version = ?, seen_cycle_id = NULL WHERE id = ?",
                     (status, self._now(), note, version, upgrade_id),
                 )
             actor = who or "The owner"

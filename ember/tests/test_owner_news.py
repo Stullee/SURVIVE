@@ -115,7 +115,7 @@ def test_the_owners_question_reaches_the_brief_of_every_step(data_dir: Path) -> 
 
     # Once planned with, the message is not shown again.
     agent.run_cycle("schedule")
-    assert all("FROM YOUR OWNER" not in first_text(r) for r in transport.sent[4:])
+    assert all("== FROM YOUR OWNER ==" not in first_text(r) for r in transport.sent[4:])
     assert QUESTION not in json.dumps(transport.sent[4:], ensure_ascii=False)
 
 
@@ -166,7 +166,8 @@ def test_a_quiet_owner_adds_no_section(data_dir: Path) -> None:
     agent, transport = make_agent(data_dir, [plan(steps=["look around"]), text("Looked."), text("Reflected.")])
     agent.run_cycle("schedule")
     assert len(transport.sent) == 3
-    assert all("FROM YOUR OWNER" not in first_text(r) for r in transport.sent)
+    # The section, not the name: the release notes of the first wake mention it.
+    assert all("== FROM YOUR OWNER ==" not in first_text(r) for r in transport.sent)
 
 
 def test_a_message_at_the_owners_limit_reaches_every_step_whole(data_dir: Path) -> None:

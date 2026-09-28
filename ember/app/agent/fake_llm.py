@@ -598,11 +598,12 @@ def owner_news(text: str, title: str) -> OwnerNews:
     """The owner's messages and decisions in one section (``SINCE YOUR LAST WAKE`` or ``FROM YOUR OWNER``).
 
     Only lines in the exact shapes the context writes count, and their quoted parts are JSON, read with
-    ``json``. A section cut to its budget (``…[N bytes cut]``) simply has fewer lines.
+    ``json``. A section cut to its budget (``…[N bytes cut]``) simply has fewer lines. Lines end only
+    at line feeds: JSON escapes those, but leaves U+2028, U+2029 and U+0085 in the owner's words raw.
     """
     messages: list[OwnerMessage] = []
     decisions: list[Decision] = []
-    for line in (section(text, title) or "").splitlines():
+    for line in (section(text, title) or "").split("\n"):
         match = _MESSAGE_LINE.match(line)
         if match:
             messages.append(OwnerMessage(match[1], _json_text(line[match.end() :])))

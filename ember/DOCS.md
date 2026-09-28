@@ -75,11 +75,11 @@ you press **Wake now**), it runs one **wake cycle**:
 Every call and every tool use is shown on the dashboard (click a cycle under
 **Activity** for the details). In dry run the fake model doesn't understand
 your messages, so its replies in the **Inbox** are canned (the Inbox says so
-above the message box); with dry run off, Claude reads and answers them. The agent can't reach the internet except
-through Anthropic's web search (and page reading, if you allow it), can't run
-programs and can't touch anything outside its own folders. Its spending limits,
-the approval rule and its tools are enforced in code, not only in its
-instructions.
+above the message box); with dry run off, Claude reads and answers them. The
+agent can't reach the internet except through Anthropic's web search (and page
+reading, if you allow it), can't run programs and can't touch anything outside
+its own folders. Its spending limits, the approval rule and its tools are
+enforced in code, not only in its instructions.
 
 When its money runs low, it becomes critical and writes a **last will**, shown
 in the memorial if it dies.
@@ -94,7 +94,8 @@ in the memorial if it dies.
   wrong). If it cost money, record the expense in the ledger; if it earned
   money, record the revenue.
 - **Inbox**: the agent's messages to you, and yours to it. It reads yours at
-  its next wake-up.
+  its next wake-up. Your reply also marks its earlier messages read; while
+  five of its messages are unread, it can't write to you.
 - **Workspace**: the files the agent writes in its own folder (drafts, notes,
   research), so you can review a draft before you approve anything. Open a file
   to read it or download it. It is always shown as plain text, never as a web

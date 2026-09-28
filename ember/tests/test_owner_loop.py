@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import paths
-from app.agent import news
+from app.agent import news, store
 from app.agent.owner import Owner, apply_kill_switch_reset, kill
 from app.agent.service import Agent
 from app.economy.life import KILLED_KEY
@@ -149,6 +150,79 @@ def test_upgrade_requests_and_inbox(data_dir: Path) -> None:
     agent.run_cycle("schedule")
     planned = sent_text(transport.sent[-1])
     assert 'released in version \\"0.4.0\\"' in planned and "next week" in planned
+
+
+def test_a_reply_reads_the_agents_earlier_messages(data_dir: Path) -> None:
+    def cycle(*texts: str) -> list[Any]:
+        calls = [("message_owner", {"text": t}) for t in texts]
+        journal = ("write_journal", {"summary": "Wrote to my owner", "entry": "."})
+        return [plan(steps=["report"]), tools(*calls), text("Done."), tools(journal)]
+
+    agent, _ = make_agent(data_dir, [*cycle("Update 1.", "Update 2."), *cycle("Update 6."), *cycle("Thanks!")])
+    agent.run_cycle("schedule")
+    scope, cycle_id = agent.scope(), rows(agent, "SELECT id FROM cycles")[0]["id"]
+    with agent.db.transaction() as conn:
+        for n in (3, 4, 5):
+            store.insert_message(conn, scope, cycle_id, f"Update {n}.", "2026-09-27T10:00:00Z")
+        other = replace(scope, session=scope.session + 1)  # another dry-run session's message stays unread
+        store.insert_message(conn, other, cycle_id, "Elsewhere.", "2026-09-27T10:00:00Z")
+    agent.run_cycle("schedule")
+    last = "SELECT status, result FROM tool_calls WHERE tool = 'message_owner' ORDER BY id DESC LIMIT 1"
+    refused = rows(agent, last)[0]
+    assert refused["status"] == "error" and "hasn't read your last 5 messages" in refused["result"]
+
+    # The owner reads and replies, but never clicks "Mark all read".
+    assert owner(agent).send_message({"text": "Thanks, go on with #1."}, "Stefan").status == 201
+    unread = rows(agent, "SELECT text FROM messages WHERE read_at IS NULL ORDER BY id")
+    assert [m["text"] for m in unread] == ["Elsewhere.", "Thanks, go on with #1."]  # never the owner's own
+    assert agent.dashboard()["badges"]["inbox_unread"] == 0
+
+    agent.run_cycle("schedule")
+    assert rows(agent, last)[0]["status"] == "ok"
+    assert agent.dashboard()["badges"]["inbox_unread"] == 1  # the new one is unread until the next reply
+
+
+def test_only_a_released_upgrade_has_a_version(data_dir: Path) -> None:
+    upgrade = {
+        "title": "Let me read RSS feeds",
+        "problem": "I can't follow news.",
+        "proposed_change": "An RSS tool.",
+        "expected_benefit": "Better ideas.",
+        "priority": "low",
+    }
+    agent, _ = make_agent(
+        data_dir,
+        [
+            plan(steps=["ask"]),
+            tools(("request_upgrade", upgrade)),
+            text("Done."),
+            tools(("write_journal", {"summary": "Asked for RSS", "entry": "."})),
+        ],
+    )
+    agent.run_cycle("schedule")
+    first, cycle_id = rows(agent, "SELECT id, cycle_id FROM upgrades")[0].values()
+    with agent.db.transaction() as conn:
+        second = store.insert_upgrade(conn, agent.scope(), cycle_id, "2026-09-27T10:00:00Z", **upgrade)
+    who = owner(agent)
+    for status in ("accepted", "declined"):
+        for version in ("0.4.0", "soon", 4):
+            refused = who.update_upgrade(first, {"status": status, "version": version}, None)
+            assert refused.status == 422 and refused.body["field"] == "version", (status, version)
+    new = rows(agent, f"SELECT status, released_version FROM upgrades WHERE id = {first}")
+    assert new == [{"status": "new", "released_version": None}]
+    assert who.update_upgrade(first, {"status": "accepted", "note": "next week"}, None).status == 200
+    assert who.update_upgrade(first, {"status": "released", "version": "0.4"}, None).body["field"] == "version"
+    assert who.update_upgrade(first, {"status": "released", "version": "0.4.0"}, None).status == 200
+
+    # A version an earlier Ember stored for a request that wasn't released goes once the request is decided.
+    assert who.update_upgrade(second, {"status": "accepted"}, None).status == 200
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE upgrades SET released_version = 'soon' WHERE id = ?", (second,))
+    assert who.update_upgrade(second, {"status": "declined"}, None).status == 200
+    assert rows(agent, "SELECT status, released_version FROM upgrades ORDER BY id") == [
+        {"status": "released", "released_version": "0.4.0"},
+        {"status": "declined", "released_version": None},
+    ]
 
 
 def test_the_kill_switch_and_its_reset(data_dir: Path) -> None:
