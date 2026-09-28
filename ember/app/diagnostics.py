@@ -3,9 +3,11 @@
 It collects what is needed to understand the app's behaviour from outside: the
 version and options, the database, the economy (balances, caps, guard state),
 lives, the ledger, the scheduler, recent wake cycles with every model call and
-tool call, the agent's records, and recent warnings and errors. Secrets never
-appear: the options are the public ones, and the whole text goes through the
-same redaction as the logs.
+tool call, the latest research digests, the agent's records, and recent warnings
+and errors. Secrets never appear: the options are the public ones, every cell is
+redacted before it is cut (so no part of a secret is left), and the whole text
+goes through the same redaction as the logs. The wake cycles get a share of the
+size cap, so they can't crowd out the sections after them.
 """
 
 from __future__ import annotations
@@ -14,10 +16,13 @@ import json
 import os
 import platform
 import sys
+import textwrap
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from .db import utcnow
+from .economy.clock import to_iso
 from .economy.costs import micros_to_usd
 from .economy.ledger import Scope
 from .logging_setup import redact
@@ -27,6 +32,13 @@ if TYPE_CHECKING:
     from .state import AppState
 
 MAX_REPORT_CHARS = 400_000
+CYCLES_CHARS = 200_000  # the wake cycles' share, so the sections after them always fit under the cap
+CELL_CHARS = 160
+TEXT_CHARS = 800  # plans, notes, message texts and tool inputs: enough to see what was actually written
+RESULT_CHARS = 300
+DIGEST_CHARS = 600
+WIDE_COLUMNS = dict.fromkeys(("note", "notes", "text", "input"), TEXT_CHARS) | {"result": RESULT_CHARS}
+WORKSPACE_ENTRIES = 100
 TABLES = (
     "ledger",
     "llm_calls",
@@ -54,6 +66,7 @@ def report(state: AppState) -> str:
         ("LEDGER (latest 40)", lambda: _ledger(state)),
         ("SCHEDULER", lambda: _scheduler(state)),
         ("WAKE CYCLES (latest 8, with every call and tool)", lambda: _cycles(state)),
+        ("RESEARCH (latest 3 digests)", lambda: _research(state)),
         ("AGENT RECORDS", lambda: _agent(state)),
         ("META", lambda: _meta(state)),
         ("EVENTS (latest 80)", lambda: _events(state)),
@@ -80,15 +93,46 @@ def _rows(rows: list[Any], columns: list[str]) -> str:
         return "(none)"
     lines = [" | ".join(columns)]
     for row in rows:
-        lines.append(" | ".join(_cell(row[c]) for c in columns))
+        lines.append(" | ".join(_cell(row[c], WIDE_COLUMNS.get(c, CELL_CHARS)) for c in columns))
     return "\n".join(lines)
 
 
-def _cell(value: Any) -> str:
+def _cell(value: Any, chars: int = CELL_CHARS) -> str:
     if value is None:
         return "-"
-    text = str(value).replace("\n", " ⏎ ")
-    return text if len(text) <= 160 else text[:157] + "…"
+    return _cut(str(value).replace("\n", " ⏎ "), chars)
+
+
+def _cut(text: str, chars: int) -> str:
+    """At most ``chars`` characters, redacted first so a cut can't leave part of a secret behind."""
+    text = redact(text)
+    return text if len(text) <= chars else text[: chars - 1] + "…"
+
+
+def _block(text: str, indent: str = "    ") -> str:
+    """Text on its own lines, indented under its heading."""
+    return textwrap.indent(text, indent, lambda line: True)
+
+
+def _plan(raw: str | None) -> str:
+    """A cycle's plan as indented JSON, each text in it cut to TEXT_CHARS."""
+    if not raw:
+        return "    plan: -"
+    try:
+        plan = json.loads(raw)
+    except ValueError:
+        return f"    plan: {_cell(raw, TEXT_CHARS)}"
+    return "    plan:\n" + _block(json.dumps(_cut_texts(plan), indent=1, ensure_ascii=False), "      ")
+
+
+def _cut_texts(value: Any) -> Any:
+    if isinstance(value, str):
+        return _cut(value, TEXT_CHARS)
+    if isinstance(value, list):
+        return [_cut_texts(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _cut_texts(v) for k, v in value.items()}
+    return value
 
 
 def _system(state: AppState) -> str:
@@ -162,6 +206,8 @@ def _economy(state: AppState) -> str:
             "window_spend_usd": micros_to_usd(status.runway.window_spend),
             "active_days": status.runway.active_days,
         },
+        "today_local": economy.clock.today().isoformat(),
+        "tz": str(economy.clock.tz),
         "today_cap_spend_usd": micros_to_usd(books.cap_spend_on(scope, economy.clock.today())),
         "today_net_api_usd": micros_to_usd(books.api_spend_on(scope, economy.clock.today())),
         "caps": {"daily_usd": economy.settings.daily_spend_cap_usd, "cycle_usd": economy.settings.cycle_spend_cap_usd},
@@ -258,44 +304,73 @@ def _scheduler(state: AppState) -> str:
 
 def _cycles(state: AppState) -> str:
     out = []
+    size = 0
     with state.db.connection() as conn:
         cycles = conn.execute("SELECT * FROM cycles ORDER BY id DESC LIMIT 8").fetchall()
-        for c in cycles:
-            out.append(
-                f"### cycle #{c['id']} {c['status']} trigger={c['trigger']} simulated={c['simulated']} "
-                f"session={c['session']} started={c['started_at']} ended={c['ended_at']} cap={c['cap_micros']}"
-                f"\n    note={_cell(c['note'])} phase={c['phase']} step={c['step']}/{c['max_steps']} "
-                f"act_end={_cell(c['act_end_reason'])} sleep={c['sleep_minutes']}"
-                f"\n    plan={_cell(c['plan'])}"
-            )
-            calls = conn.execute("SELECT * FROM llm_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
-            out.append(
-                _rows(
-                    calls,
-                    [
-                        "id",
-                        "purpose",
-                        "model",
-                        "status",
-                        "estimate_micros",
-                        "cost_micros",
-                        "floor_micros",
-                        "billing_uncertain",
-                        "input_tokens",
-                        "output_tokens",
-                        "cache_write_5m_tokens",
-                        "cache_read_tokens",
-                        "web_search_requests",
-                        "stop_reason",
-                        "guard_reason",
-                        "error",
-                        "request_id",
-                    ],
-                )
-            )
-            tools = conn.execute("SELECT * FROM tool_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
-            out.append(_rows(tools, ["id", "llm_call_id", "seq", "phase", "tool", "status", "summary", "input"]))
+        for index, c in enumerate(cycles):
+            text = _cycle(conn, c)
+            if out and size + len(text) > CYCLES_CHARS:  # the newest cycle is always shown
+                out.append(f"(… {len(cycles) - index} older cycles left out: the report has a size cap)")
+                break
+            out.append(text)
+            size += len(text) + 1
     return "\n".join(out) or "(no cycles yet)"
+
+
+def _cycle(conn: Any, c: Any) -> str:
+    """One wake cycle: its row, the plan, every model call and every tool call."""
+    calls = conn.execute("SELECT * FROM llm_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
+    tools = conn.execute("SELECT * FROM tool_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
+    return "\n".join(
+        [
+            f"### cycle #{c['id']} {c['status']} trigger={c['trigger']} simulated={c['simulated']} "
+            f"session={c['session']} started={c['started_at']} ended={c['ended_at']} cap={c['cap_micros']}"
+            f"\n    note={_cell(c['note'], TEXT_CHARS)} phase={c['phase']} step={c['step']}/{c['max_steps']} "
+            f"act_end={_cell(c['act_end_reason'])} sleep={c['sleep_minutes']} project={_cell(c['project_id'])}",
+            _plan(c["plan"]),
+            _rows(
+                calls,
+                [
+                    "id",
+                    "purpose",
+                    "model",
+                    "status",
+                    "estimate_micros",
+                    "cost_micros",
+                    "floor_micros",
+                    "billing_uncertain",
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_write_5m_tokens",
+                    "cache_read_tokens",
+                    "web_search_requests",
+                    "stop_reason",
+                    "guard_reason",
+                    "error",
+                    "request_id",
+                ],
+            ),
+            _rows(tools, ["id", "llm_call_id", "seq", "phase", "tool", "status", "summary", "input", "result"]),
+        ]
+    )
+
+
+def _research(state: AppState) -> str:
+    """What the latest research calls brought back, as the agent read it (web content, so data only)."""
+    with state.db.connection() as conn:
+        rows = conn.execute(
+            "SELECT id, cycle_id, input, result FROM tool_calls WHERE tool = 'research' AND status = 'ok'"
+            " ORDER BY id DESC LIMIT 3"
+        ).fetchall()
+    out = []
+    for r in rows:
+        try:
+            question = json.loads(r["input"]).get("question")
+        except (ValueError, AttributeError):
+            question = None
+        out.append(f"tool call #{r['id']} in cycle #{r['cycle_id']}: {_cell(question, TEXT_CHARS)}")
+        out.append(_block(_cut(r["result"] or "", DIGEST_CHARS)))
+    return "\n".join(out) or "(none)"
 
 
 def _agent(state: AppState) -> str:
@@ -307,27 +382,47 @@ def _agent(state: AppState) -> str:
     out = [f"scope: mode={scope.mode} session={scope.session} life={scope.life_id}"]
     with state.db.connection() as conn:
         for table, columns in (
-            ("projects", ["id", "status", "title", "next_step", "updated_at"]),
+            ("projects", ["id", "status", "title", "next_step", "updated_at", "notes"]),
             ("journal", ["cycle_id", "author", "summary"]),
             ("approvals", ["id", "status", "type", "title", "version", "decided_at", "closed_at", "seen_cycle_id"]),
-            ("messages", ["id", "sender", "read_at", "seen_cycle_id", "text"]),
+            ("messages", ["id", "sender", "seen", "text"]),
             ("upgrades", ["id", "status", "priority", "title", "released_version", "seen_cycle_id"]),
         ):
             rows = conn.execute(
                 f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC LIMIT 15",
                 params,  # noqa: S608 - fixed names
             ).fetchall()
+            if table == "messages":
+                rows = [{**dict(r), "seen": _seen(r)} for r in rows]
             out.append(f"-- {table}\n" + _rows(rows, columns))
     for name, text in agent.memory_files().items():
         out.append(f"-- memory/{name}.md ({len(text.encode())} B)\n{text[:1500]}")
     workspace, _ = agent.roots()
     try:
-        files, total = workspace.usage()
-        listing = "\n".join(f"  {e.path}{'/' if e.is_dir else f' ({e.size} B)'}" for e in workspace.listing()[:50])
-        out.append(f"-- workspace: {files} files, {total} B\n{listing}")
+        used = workspace.usage()
+        tree = workspace.walk(WORKSPACE_ENTRIES)
+        lines = [
+            f"  {_cell(e.path)}/" if e.is_dir else f"  {_cell(e.path)} ({e.size} B, {_time(e.modified)})"
+            for e in tree.entries
+        ]
+        if tree.truncated:
+            lines.append(f"  … only the first {WORKSPACE_ENTRIES} entries are shown")
+        out.append(f"-- workspace: {used.files} files, {used.folders} folders, {used.size} B\n" + "\n".join(lines))
     except Exception as exc:  # noqa: BLE001
         out.append(f"-- workspace: unreadable ({exc})")
     return "\n".join(out)
+
+
+def _seen(message: Any) -> str:
+    """Whether a message reached the other side: the owner reads the agent's, the agent sees the owner's in a cycle."""
+    if message["sender"] == "agent":
+        return f"read by owner {message['read_at']}" if message["read_at"] else "not read by owner yet"
+    seen = message["seen_cycle_id"]
+    return f"seen by agent in cycle #{seen}" if seen is not None else "not seen by agent yet"
+
+
+def _time(timestamp: float) -> str:
+    return to_iso(datetime.fromtimestamp(timestamp, UTC))
 
 
 def _meta(state: AppState) -> str:

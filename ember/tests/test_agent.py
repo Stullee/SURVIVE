@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from app.agent import loop, store
+from app.agent import context, loop, store
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
 from app.economy.costs import micros_to_usd
@@ -133,6 +134,77 @@ def test_a_full_cycle(data_dir: Path) -> None:
     view = agent.dashboard()
     assert view["now"]["status"] == "completed" and view["projects"][0]["title"] == "Niche guide"
     assert view["activity"][0]["calls"] == 4 and view["mind"]["journal"][0]["summary"] == "Started a guide"
+
+
+def test_the_cycle_that_starts_a_project_counts_toward_it(data_dir: Path) -> None:
+    project = {"title": "Niche guide", "hypothesis": "People pay 5 EUR", "next_step": "outline", "status": "active"}
+    other = {**project, "title": "Second idea"}
+    agent, transport = make_agent(
+        data_dir,
+        [
+            plan(focus=None),
+            tools(("project_create", project), ("project_create", other)),
+            text("Started."),
+            text("Reflected."),
+            plan(steps=[], focus=2),
+        ],
+    )
+    agent.run_cycle("schedule")
+    cycle = rows(agent, "SELECT id, project_id FROM cycles")[0]
+    assert cycle["project_id"] == 1  # the first project it started; the plan had no focus
+    cost = rows(agent, "SELECT SUM(cost_micros) AS total FROM llm_calls")[0]["total"]
+    assert cost > 0
+    spent = {p["title"]: (p["spent_usd"], p["cycles"]) for p in agent.dashboard()["projects"]}
+    assert spent == {"Niche guide": (micros_to_usd(cost), 1), "Second idea": (0, 0)}
+    agent.run_cycle("schedule")  # the next plan sees what the project cost
+    planner = transport.sent[-1]["messages"][0]["content"][0]["text"]
+    assert f"#1 [active] Niche guide · next: outline · spent ${micros_to_usd(cost):.2f} · earned $0.00" in planner
+    assert rows(agent, "SELECT project_id FROM cycles ORDER BY id") == [{"project_id": 1}, {"project_id": 2}]
+
+
+def test_the_agent_sees_the_files_in_every_folder(data_dir: Path) -> None:
+    agent, transport = make_agent(
+        data_dir, [plan(), tools(("workspace_list", {})), text("Looked."), text("Reflected.")]
+    )
+    workspace, _ = agent.roots()
+    workspace.write("projects/meal-plans.md", "# Meal plans\n")
+    workspace.write("projects/drafts/week-1.md", "Monday: soup\n")
+    workspace.write("ideas.md", "x" * 1_500)
+    agent.run_cycle("schedule")
+    lines = "== WORKSPACE ==\nideas.md (1,500 B)\nprojects/drafts/week-1.md (13 B)\nprojects/meal-plans.md (13 B)\n"
+    planner, brief = (r["messages"][0]["content"][0]["text"] for r in transport.sent[:2])
+    assert lines in planner and lines in brief
+    listed = rows(agent, "SELECT result FROM tool_calls WHERE tool = 'workspace_list'")[0]["result"]
+    assert listed == (
+        "ideas.md  1,500 B\nprojects/drafts/week-1.md  13 B\nprojects/meal-plans.md  13 B\n"
+        "Using 1.5 KB of 5 MB and 5/300 entries (3 files, 2 folders)"
+    )
+    for n in range(40):
+        workspace.write(f"notes/n{n:02}.md", "x")
+    shown = context._safe_listing(workspace)
+    assert len(shown) == 41 and shown[39] == "notes/n38.md (1 B)" and shown[40] == "… and 3 more files"
+
+
+@pytest.mark.parametrize("path", ["drafts\n/post.md", "post.md\n", "drafts/post.md\r", " post.md", "drafts /post.md"])
+def test_a_path_with_a_line_break_or_space_is_refused_and_nothing_is_created(data_dir: Path, path: str) -> None:
+    agent, transport = make_agent(
+        data_dir,
+        [
+            plan(),
+            tools(
+                ("workspace_write", {"path": path, "mode": "create", "content": "hello"}),
+                ("workspace_read", {"path": path}),
+            ),
+            text("Done."),
+            text("Reflected."),
+        ],
+    )
+    agent.run_cycle("schedule")
+    results = transport.sent[2]["messages"][-1]["content"]
+    assert all(r["is_error"] for r in results)
+    assert all("control character" in r["content"] or "is not allowed" in r["content"] for r in results)
+    workspace, _ = agent.roots()
+    assert os.listdir(workspace.root) == []  # not even a folder
 
 
 def test_an_empty_plan_is_an_idle_cycle(data_dir: Path) -> None:

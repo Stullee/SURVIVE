@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -225,6 +226,57 @@ def test_too_big_files_are_refused(ingress_client: TestClient) -> None:
     assert len(read(ingress_client, "full.md").content) == jail.limits.max_file_bytes
     sizes = {f["path"]: f["size"] for f in ingress_client.get("api/workspace").json()["files"]}
     assert sizes == {"full.md": 65536, "huge.md": 65537}
+
+
+def test_a_name_on_disk_is_never_shown_or_opened_as_another(ingress_client: TestClient) -> None:
+    """Only names the agent could write are listed, and each opens exactly itself (nothing is trimmed)."""
+    jail = workspace(ingress_client)
+    jail.write("notes.md", "the real notes")
+    (jail.root / " notes.md").write_text(SECRET)
+    (jail.root / "notes.md\n").write_text(SECRET)
+    os.mkdir(jail.root / "drafts\n")
+    (jail.root / "drafts\n" / "post.md").write_text(SECRET)
+    assert [f["path"] for f in ingress_client.get("api/workspace").json()["files"]] == ["notes.md"]
+    for path in (" notes.md", "notes.md\n", "drafts\n/post.md", "notes.md "):
+        response = read(ingress_client, path)
+        assert response.status_code == 400, repr(path)
+        assert SECRET not in response.text
+    assert read(ingress_client, "notes.md").text == "the real notes"
+
+
+def test_the_owner_lists_and_opens_while_the_agent_writes_and_deletes(ingress_client: TestClient) -> None:
+    """A file (or its folder) deleted between listing and reading is a 404; one replaced meanwhile still opens."""
+    jail = workspace(ingress_client)
+    jail.write("keep.md", "stays")
+    done = threading.Event()
+
+    def agent_at_work() -> None:
+        for n in range(20_000):  # bounded, though it stops as soon as the owner is done
+            if done.is_set():
+                return
+            jail.write("drafts/post.md", f"draft {n}")
+            jail.write("keep.md", f"stays, version {n}")  # replaced, never missing
+            jail.delete("drafts/post.md")  # the empty folder goes too
+
+    thread = threading.Thread(target=agent_at_work)
+    thread.start()
+    statuses = []
+    try:
+        for _ in range(150):
+            listed = ingress_client.get("api/workspace")
+            assert listed.status_code == 200
+            assert "keep.md" in [f["path"] for f in listed.json()["files"]]
+            kept = read(ingress_client, "keep.md")
+            assert kept.status_code == 200 and kept.text.startswith("stays"), kept.text
+            response = read(ingress_client, "drafts/post.md")
+            statuses.append(response.status_code)
+            assert response.status_code in (200, 404), response.text
+            if response.status_code == 200:
+                assert response.text.startswith("draft ")
+    finally:
+        done.set()
+        thread.join()
+    assert 404 in statuses  # the race was really run
 
 
 def test_fifos_and_devices_are_never_opened(ingress_client: TestClient) -> None:

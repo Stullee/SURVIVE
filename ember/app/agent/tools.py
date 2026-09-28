@@ -79,7 +79,8 @@ SPECS: dict[str, Spec] = {
     for spec in (
         Spec(
             "workspace_list",
-            "List the files in your workspace (or in one folder of it), with sizes and the space used.",
+            "List the files in your whole workspace, in every folder (or in one folder of it), with sizes and the "
+            "space used.",
             {"path": _s("Folder to list, e.g. 'notes'. Leave empty for the whole workspace.", 200, required=False)},
             per_cycle=5,
         ),
@@ -421,13 +422,16 @@ def wrap(ctx: ToolContext, source: str, text: str) -> str:
 
 
 def _workspace_list(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
-    entries = ctx.workspace.listing(args.get("path", ""))
-    files, total = ctx.workspace.usage()
+    limits = ctx.workspace.limits
+    path = args.get("path")
+    # Without a path, the files in every folder (their paths name the folders).
+    entries = ctx.workspace.listing(path) if path else ctx.workspace.walk(limits.max_files).files
+    used = ctx.workspace.usage()
     lines = [f"{e.path}/" if e.is_dir else f"{e.path}  {e.size:,} B" for e in entries[:100]]
     more = f"\n… {len(entries) - 100} more" if len(entries) > 100 else ""
-    limits = ctx.workspace.limits
     usage = (
-        f"Using {total / 1024:.1f} KB of {limits.max_total_bytes // (1024 * 1024)} MB, {files}/{limits.max_files} files"
+        f"Using {used.size / 1024:.1f} KB of {limits.max_total_bytes // (1024 * 1024)} MB and "
+        f"{used.files + used.folders}/{limits.max_files} entries ({used.files} files, {used.folders} folders)"
     )
     body = "\n".join(lines) if lines else "(empty)"
     return Outcome(True, f"{body}{more}\n{usage}", f"{len(entries)} entries")
@@ -453,7 +457,7 @@ def _workspace_write(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
     if not content:
         raise ToolError("content is required unless mode is delete")
     size = ctx.workspace.write(path, content, append=mode == "append", create_only=mode == "create")
-    files, total = ctx.workspace.usage()
+    total = ctx.workspace.usage().size
     return Outcome(
         True,
         f"Wrote {path} ({size:,} bytes). Using {total / (1024 * 1024):.2f} of "
@@ -485,6 +489,10 @@ def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     )
     if ctx.state.focus_project_id is None:
         ctx.state.focus_project_id = project_id
+    cycle = conn.execute("SELECT project_id FROM cycles WHERE id = ?", (ctx.cycle_id,)).fetchone()
+    if cycle is not None and cycle["project_id"] is None:
+        # A cycle's cost counts toward its project: without a focus from the plan, that is the one it started.
+        store.update_cycle(conn, ctx.cycle_id, project_id=project_id)
     return Outcome(True, f"Created project #{project_id}.", f"created #{project_id} {args['title'][:60]}", project_id)
 
 

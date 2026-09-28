@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from . import store
-from .sandbox import Entry, Jail, SandboxError
+from .sandbox import Entry, Jail, Missing, SandboxError
 
 if TYPE_CHECKING:
     from .service import Agent
@@ -304,28 +304,8 @@ def cycle_detail(agent: Agent, cycle_id: int) -> dict[str, Any] | None:
 def workspace(agent: Agent) -> dict[str, Any]:
     """The files in the agent's workspace, walked folder by folder through the jail (links are never listed)."""
     jail = agent.roots()[0]
-    limit = jail.limits.max_files
-    files: list[Entry] = []
-    folders = [""]
-    visited = 0
-    truncated = False
-    while folders:
-        if visited >= limit or len(files) > limit:
-            truncated = True
-            break
-        visited += 1
-        try:
-            entries = jail.listing(folders.pop())
-        except SandboxError:
-            continue  # swapped for a link, or deeper than the agent can reach
-        for entry in entries:
-            if entry.is_dir:
-                folders.append(entry.path)
-            elif _openable(jail, entry.path):
-                files.append(entry)
-    files.sort(key=lambda e: e.path)
-    if len(files) > limit:
-        files, truncated = files[:limit], True
+    tree = jail.walk(jail.limits.max_files)
+    files = [e for e in tree.files if _openable(jail, e.path)]
     return {
         "mode": agent.mode,
         "files": [
@@ -334,7 +314,7 @@ def workspace(agent: Agent) -> dict[str, Any]:
         ],
         "file_count": len(files),
         "total_bytes": sum(e.size for e in files),
-        "truncated": truncated,
+        "truncated": tree.truncated,
     }
 
 
@@ -362,6 +342,8 @@ def workspace_file(agent: Agent, path: str) -> tuple[str, str]:
                 f"{entry.path} is larger than {jail.limits.max_file_bytes // 1024} KB, so it can't be opened here"
             )
         return parts[-1], jail.read(entry.path)
+    except Missing as exc:  # the agent deleted it (or its folder) while the owner looked
+        raise WorkspaceFileError(str(exc), 404) from None
     except SandboxError as exc:
         raise WorkspaceFileError(str(exc)) from None
 

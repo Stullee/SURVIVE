@@ -154,7 +154,7 @@ def snapshot(
         (scope.session, 1 if scope.simulated else 0),
     ).fetchone()
     journal = store.journal(conn, scope, 5)
-    files = [f"{e.path}/" if e.is_dir else f"{e.path} ({e.size:,} B)" for e in _safe_listing(workspace)]
+    files = _safe_listing(workspace)
     return Snapshot(
         status=status,
         local_time=local_time,
@@ -177,11 +177,16 @@ def snapshot(
     )
 
 
-def _safe_listing(workspace: Jail) -> list[Any]:
+def _safe_listing(workspace: Jail, shown: int = 40) -> list[str]:
+    """The WORKSPACE lines: the files in every folder with their sizes, the first ``shown`` and how many more."""
     try:
-        return workspace.listing()[:40]
+        files = workspace.walk(workspace.limits.max_files).files
     except Exception:  # noqa: BLE001 - the context must still be built
         return []
+    lines = [f"{e.path} ({e.size:,} B)" for e in files[:shown]]
+    if len(files) > shown:
+        lines.append(f"… and {len(files) - shown} more files")
+    return lines
 
 
 def status_text(s: Snapshot, dry_run: bool) -> str:

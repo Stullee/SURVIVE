@@ -9,7 +9,13 @@ file outside the workspace, such as the database, is refused), and FIFOs or
 devices are never opened for reading. Writes go to a temporary file created
 with ``O_EXCL`` next to the target, are flushed to disk, and replace the old
 file atomically, so a crash never leaves a half-written file. Size, file-count
-and total quotas are checked before a write.
+and total quotas are checked before a write. A name is used exactly as given
+(nothing is trimmed, no control characters), so no other name on disk can pass
+for a valid one.
+
+The agent works while the owner reads: listings skip an entry deleted between
+reading its folder and looking at it, and a path that doesn't exist (or stops
+existing while it is used) raises ``Missing``.
 
 Roots: the live agent works in /data/workspace and /data/memory; a dry run in
 /data/dry_run/workspace and /data/dry_run/memory, which start empty with every
@@ -27,8 +33,10 @@ import stat
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
-NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")  # used with fullmatch: "$" also matches before a "\n"
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 TEXT_EXTENSIONS = frozenset({".md", ".txt", ".csv", ".tsv", ".json", ".yaml", ".yml", ".html", ".css", ".xml"})
 MAX_PATH_BYTES = 200
 MAX_DEPTH = 4
@@ -38,6 +46,10 @@ _DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 class SandboxError(ValueError):
     """A refused path or write; the message is shown to the agent."""
+
+
+class Missing(SandboxError):
+    """A file or folder that doesn't exist (or was deleted while it was used)."""
 
 
 @dataclass(frozen=True)
@@ -55,6 +67,26 @@ class Entry:
     modified: float = 0.0
 
 
+@dataclass(frozen=True)
+class Tree:
+    """What walk() found, sorted by path, and whether it stopped at its limit."""
+
+    entries: list[Entry]
+    truncated: bool = False
+
+    @property
+    def files(self) -> list[Entry]:
+        return [e for e in self.entries if not e.is_dir]
+
+
+class Usage(NamedTuple):
+    """What the whole root holds; files and folders both count toward ``Limits.max_files``."""
+
+    files: int
+    folders: int
+    size: int  # bytes in the files
+
+
 class Jail:
     """File access below one root folder."""
 
@@ -70,13 +102,14 @@ class Jail:
             raise SandboxError("the workspace folder is not usable")
 
     def parts(self, path: str, *, want_file: bool = True) -> list[str]:
-        """Validate a relative path and return its components."""
+        """Validate a relative path and return its components, exactly as given (nothing is trimmed)."""
         if not isinstance(path, str):
             raise SandboxError("the path must be text")
-        text = path.strip()
-        if text.startswith(("/", "~")):
+        if _CONTROL.search(path):
+            raise SandboxError("the path contains a control character, such as a line break")
+        if path.startswith(("/", "~")):
             raise SandboxError("use a path inside the workspace, like notes/ideas.md (no leading '/')")
-        text = text.rstrip("/")
+        text = path.rstrip("/")
         if not text:
             if want_file:
                 raise SandboxError("give a file name, for example notes.md")
@@ -87,7 +120,7 @@ class Jail:
         if len(parts) > MAX_DEPTH:
             raise SandboxError(f"at most {MAX_DEPTH} folder levels")
         for part in parts:
-            if not NAME.match(part) or part in (".", ".."):
+            if not NAME.fullmatch(part) or part in (".", ".."):
                 raise SandboxError(
                     f"{part!r} is not allowed: use letters, digits, '.', '_' and '-', starting with a letter or digit"
                 )
@@ -106,7 +139,7 @@ class Jail:
                     fds.append(_open_dir(part, fds[-1]))
                 except FileNotFoundError:
                     if not create:
-                        raise SandboxError(f"{'/'.join(parts[: index + 1])} doesn't exist") from None
+                        raise Missing(f"{'/'.join(parts[: index + 1])} doesn't exist") from None
                     os.mkdir(part, 0o755, dir_fd=fds[-1])
                     fds.append(_open_dir(part, fds[-1]))
             yield fds[-1]
@@ -133,14 +166,17 @@ class Jail:
         *folders, name = self.parts(path)
         with self._folder(folders) as folder:
             if self._file_info(folder, name) is None:
-                raise SandboxError(f"{path.strip()} doesn't exist")
+                raise Missing(f"{path} doesn't exist")
             try:
                 fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=folder)
+            except FileNotFoundError:
+                raise Missing(f"{path} doesn't exist") from None
             except OSError as exc:
                 raise SandboxError(_os_problem(exc)) from None
             with os.fdopen(fd, "rb") as handle:
                 info = os.fstat(handle.fileno())
-                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                # No links left: deleted or replaced since it was opened, and still the text it had then.
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
                     raise SandboxError("not a plain file")
                 data = handle.read(self.limits.max_file_bytes + 1)
         return data[: self.limits.max_file_bytes].decode("utf-8", errors="replace")
@@ -153,41 +189,49 @@ class Jail:
         return True
 
     def listing(self, path: str = "") -> list[Entry]:
+        """The files and folders in one folder (the root by default)."""
         parts = self.parts(path, want_file=False)
         try:
             with self._folder(parts) as folder:
-                prefix = "/".join(parts)
-                entries = []
-                with os.scandir(folder) as scan:
-                    for child in sorted(scan, key=lambda e: e.name):
-                        if child.name.startswith(TEMP_PREFIX) or child.is_symlink():
-                            continue
-                        info = child.stat(follow_symlinks=False)
-                        relative = f"{prefix}/{child.name}" if prefix else child.name
-                        if stat.S_ISDIR(info.st_mode):
-                            entries.append(Entry(relative, 0, True, info.st_mtime))
-                        elif stat.S_ISREG(info.st_mode):
-                            entries.append(Entry(relative, info.st_size, False, info.st_mtime))
-                return entries
+                return _children(folder, "/".join(parts))
         except SandboxError:
             if parts:
                 raise
             return []
 
-    def usage(self) -> tuple[int, int]:
-        """(files, bytes) in the whole root."""
-        files = total = 0
-        if not self.root.exists():
-            return 0, 0
-        for dirpath, dirnames, filenames in os.walk(self.root, followlinks=False):
-            dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
-            files += len(dirnames)  # folders count toward the entry limit too
-            for name in filenames:
-                info = os.lstat(os.path.join(dirpath, name))
-                if stat.S_ISREG(info.st_mode):
+    def walk(self, limit: int) -> Tree:
+        """Every file and folder below the root, at most ``limit`` of them, sorted by path.
+
+        A folder comes right before what it holds. Like listing(), the walk goes folder by folder through
+        descriptors opened without following links, as deep as a path can go (MAX_DEPTH), and leaves out links,
+        temporary files and entries deleted while it looks.
+        """
+        entries: list[Entry] = []
+        with contextlib.closing(self._tree()) as tree:
+            for entry in tree:
+                if len(entries) >= limit:
+                    return Tree(entries, truncated=True)
+                entries.append(entry)
+        return Tree(entries)
+
+    def _tree(self) -> Iterator[Entry]:
+        try:
+            with self._folder([]) as root:
+                yield from _below(root, "", 1)
+        except SandboxError:  # no usable root folder: nothing to list
+            return
+
+    def usage(self) -> Usage:
+        """Files, folders and bytes in the whole root."""
+        files = folders = size = 0
+        with contextlib.closing(self._tree()) as tree:
+            for entry in tree:
+                if entry.is_dir:
+                    folders += 1
+                else:
                     files += 1
-                    total += info.st_size
-        return files, total
+                    size += entry.size
+        return Usage(files, folders, size)
 
     # --- writing ---
 
@@ -198,24 +242,24 @@ class Jail:
         *folders, name = self.parts(path)
         missing = self._missing_folders(folders)
         if missing:
-            entries, _ = self.usage()
-            if entries + missing + 1 > self.limits.max_files:
+            used = self.usage()
+            if used.files + used.folders + missing + 1 > self.limits.max_files:
                 raise SandboxError(f"the workspace holds at most {self.limits.max_files} entries; delete some first")
         with self._folder(folders, create=True) as folder:
             info = self._file_info(folder, name)
             if info is not None and create_only:
-                raise SandboxError(f"{path.strip()} already exists")
+                raise SandboxError(f"{path} already exists")
             old = b""
             if info is not None and append:
                 old = self.read(path).encode("utf-8")
             data = old + content.encode("utf-8")
             if len(data) > self.limits.max_file_bytes:
                 raise SandboxError(f"a file can hold at most {self.limits.max_file_bytes // 1024} KB")
-            files, total = self.usage()
+            used = self.usage()
             previous = info.st_size if info is not None else 0
-            if info is None and files + 1 > self.limits.max_files:
+            if info is None and used.files + used.folders + 1 > self.limits.max_files:
                 raise SandboxError(f"the workspace holds at most {self.limits.max_files} files; delete some first")
-            if total - previous + len(data) > self.limits.max_total_bytes:
+            if used.size - previous + len(data) > self.limits.max_total_bytes:
                 raise SandboxError(f"the workspace holds at most {self.limits.max_total_bytes // (1024 * 1024)} MB")
             temp = f"{TEMP_PREFIX}{secrets.token_hex(6)}"
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -247,7 +291,7 @@ class Jail:
         *folders, name = self.parts(path)
         with self._folder(folders) as folder:
             if self._file_info(folder, name) is None:
-                raise SandboxError(f"{path.strip()} doesn't exist")
+                raise Missing(f"{path} doesn't exist")
             os.unlink(name, dir_fd=folder)
             os.fsync(folder)
         # Remove folders left empty, deepest first.
@@ -274,6 +318,41 @@ class Jail:
         return removed
 
 
+def _children(folder: int, prefix: str) -> list[Entry]:
+    """The folders and regular files in ``folder`` (named below ``prefix``), sorted as walk() lists them."""
+    with os.scandir(folder) as scan:
+        names = [child.name for child in scan if not child.name.startswith(TEMP_PREFIX)]
+    entries = []
+    for name in names:
+        try:
+            info = os.stat(name, dir_fd=folder, follow_symlinks=False)
+        except FileNotFoundError:
+            continue  # deleted since the folder was read: the agent works while the owner looks
+        relative = f"{prefix}/{name}" if prefix else name
+        if stat.S_ISDIR(info.st_mode):
+            entries.append(Entry(relative, 0, True, info.st_mtime))
+        elif stat.S_ISREG(info.st_mode):  # never links, FIFOs or devices
+            entries.append(Entry(relative, info.st_size, False, info.st_mtime))
+    # A folder sorts as "name/": walked depth first, every path then comes in order.
+    return sorted(entries, key=lambda e: e.path + "/" if e.is_dir else e.path)
+
+
+def _below(folder: int, prefix: str, depth: int) -> Iterator[Entry]:
+    """The entries in ``folder`` (``depth`` parts long) and, depth first, everything below them."""
+    for entry in _children(folder, prefix):
+        yield entry
+        if not entry.is_dir or depth >= MAX_DEPTH:
+            continue
+        try:
+            child = _open_dir(entry.path.rpartition("/")[2], folder)
+        except (OSError, SandboxError):
+            continue  # deleted, or swapped for a link or a file, since it was listed
+        try:
+            yield from _below(child, entry.path, depth + 1)
+        finally:
+            os.close(child)
+
+
 def _open_dir(name: str, parent: int | None = None) -> int:
     try:
         return os.open(name, _DIR_FLAGS, dir_fd=parent) if parent is not None else os.open(name, _DIR_FLAGS)
@@ -292,6 +371,4 @@ def _open_dir(name: str, parent: int | None = None) -> int:
 def _os_problem(exc: OSError) -> str:
     if exc.errno == errno.ELOOP:
         return "links are not allowed in the workspace"
-    if exc.errno == errno.ENOENT:
-        return "that file doesn't exist"
     return "the file can't be opened"
