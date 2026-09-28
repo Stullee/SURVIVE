@@ -37,7 +37,7 @@ from urllib.parse import urlsplit
 from .. import paths
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import mail, mailstore, reddit
+from ..integrations import etsy, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
@@ -63,8 +63,9 @@ MAX_ACTION_CHARS = 12_000  # the approvals table's limit for an action
 LOOK_PIXELS = 1_000  # the longer side of a picture the agent looks at: about 1,000-1,300 input tokens
 # Making files takes a moment: these run sealed, but outside the database transaction the other tools share.
 MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image"})
-GUIDES = ("documents", "spreadsheets", "listing_photos", "workshop")
+GUIDES = ("documents", "spreadsheets", "listing_photos", "workshop", "etsy")
 WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
+ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing"})  # offered only with an Etsy shop
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "propose_email"})
 FIRST_CONTACT = (
@@ -413,18 +414,59 @@ SPECS: dict[str, Spec] = {
             },
             per_cycle=2,
         ),
+        Spec(
+            "etsy_categories",
+            "Find the Etsy category for a listing: a few words (e.g. 'planner', 'digital prints'); you get up to "
+            "10 categories with their numbers. Free.",
+            {"search": _s("Words to look for in the category names.", 100)},
+            per_cycle=4,
+        ),
+        Spec(
+            "propose_etsy_listing",
+            "Ask your owner to approve a listing in their Etsy shop. After approval Ember's code creates it with "
+            "its photos and the files buyers download, and publishes it (Etsy charges USD 0.20 a listing). A line "
+            "saying AI helped design it is added to every description. Read guide 'etsy' first.",
+            {
+                "title": _s("The title: what it is and for whom, the words buyers search for first.", etsy.TITLE_CHARS),
+                "description": _s(
+                    "What buyers get and how to use it: pages, formats, sizes, printing. Plain text.",
+                    etsy.DESCRIPTION_CHARS,
+                ),
+                "price": _s("The price in the shop's currency, like 4.90.", 12),
+                "tags": _s(
+                    f"Up to {etsy.MAX_TAGS} search tags, separated by commas, each at most {etsy.TAG_CHARS} "
+                    "characters.",
+                    400,
+                ),
+                "category_id": _i("The category's number, from etsy_categories."),
+                "files": _s(
+                    f"The files buyers download: workspace paths separated by commas (PDF, Word, Excel, PowerPoint, "
+                    f"PNG or JPG; at most {etsy.MAX_FILES}, 20 MB each).",
+                    600,
+                ),
+                "photos": _s(
+                    f"The listing photos: .png or .jpg paths separated by commas, the main photo first (1 to "
+                    f"{etsy.MAX_PHOTOS}).",
+                    600,
+                ),
+                "reason": _s("Why this listing now, and what you expect from it.", 300),
+            },
+            per_cycle=1,
+        ),
     )
 }
 
 
-def definitions(mail: bool = False, workshop: bool = True) -> list[dict[str, Any]]:
+def definitions(mail: bool = False, workshop: bool = True, etsy: bool = False) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds, and in
     every cycle of a mode and configuration (the email tools only with a mailbox, the workshop only when the
-    owner's options allow runs)."""
+    owner's options allow runs, the Etsy tools only with a shop)."""
     return [
         _definition(spec)
         for spec in SPECS.values()
-        if (mail or spec.name not in MAIL_TOOLS) and (workshop or spec.name not in WORKSHOP_TOOLS)
+        if (mail or spec.name not in MAIL_TOOLS)
+        and (workshop or spec.name not in WORKSHOP_TOOLS)
+        and (etsy or spec.name not in ETSY_TOOLS)
     ]
 
 
@@ -495,6 +537,17 @@ class MailAccess:
     daily_limit: int
 
 
+@dataclass(frozen=True)
+class EtsyAccess:
+    """What the tools know of the Etsy shop: its name, currency, daily limit and categories, never a token or a
+    way to reach Etsy."""
+
+    shop_name: str
+    currency: str
+    daily_limit: int
+    categories: tuple[tuple[int, str], ...]
+
+
 @dataclass
 class ToolContext:
     db: Database
@@ -510,6 +563,7 @@ class ToolContext:
     workshop: WorkshopFn | None = None
     allow_fetch: bool = True  # the owner's web_fetch option (live mode)
     mail: MailAccess | None = None  # Ember's mailbox, when it has one
+    etsy: EtsyAccess | None = None  # the Etsy shop, when there is one
     nonce: str = field(default_factory=lambda: secrets.token_hex(3))
 
     def now(self) -> str:
@@ -532,7 +586,12 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
         )
     try:
         spec = SPECS.get(name)
-        if spec is None or (name in MAIL_TOOLS and ctx.mail is None) or (name in WORKSHOP_TOOLS and not ctx.workshop):
+        if (
+            spec is None
+            or (name in MAIL_TOOLS and ctx.mail is None)
+            or (name in WORKSHOP_TOOLS and not ctx.workshop)
+            or (name in ETSY_TOOLS and ctx.etsy is None)
+        ):
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
             raise ToolError(
@@ -1112,6 +1171,86 @@ def _propose_email(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     return Outcome(True, text, f"#{made} email to {_cut(to, 60)}")
 
 
+def _etsy_categories(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    shop = _shop(ctx)
+    if not shop.categories:
+        raise ToolError("Etsy's category list isn't loaded yet; it is fetched at the start of the next wake cycle")
+    found = etsy.search_categories(shop.categories, args["search"])
+    if not found:
+        return Outcome(True, f"No category holds all of: {args['search']}. Try fewer or broader words.", "none")
+    lines = "\n".join(f"{i}: {path}" for i, path in found)
+    return Outcome(True, f"Categories (number: path):\n{lines}", f"{len(found)} categories")
+
+
+def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    shop = _shop(ctx)
+    category = dict(shop.categories).get(args["category_id"])
+    if category is None:
+        raise ToolError(f"category {args['category_id']} isn't an Etsy category; find one with etsy_categories")
+    try:
+        listing = etsy.Listing(
+            title=etsy.check_title(args["title"]),
+            description=etsy.check_description(args["description"]),
+            price=etsy.check_price(args["price"]),
+            currency=shop.currency,
+            tags=etsy.check_tags(args["tags"]),
+            taxonomy_id=args["category_id"],
+            category=category,
+            files=_uploads(ctx, args["files"], etsy.FILE_KINDS, etsy.MAX_FILES, "the files buyers download"),
+            photos=_uploads(ctx, args["photos"], etsy.PHOTO_KINDS, etsy.MAX_PHOTOS, "the photos"),
+        )
+    except etsy.EtsyError as exc:
+        raise ToolError(str(exc)) from None
+    reason = args["reason"].strip()
+    made = _new_request(
+        ctx,
+        conn,
+        etsy.payload(listing),
+        listing.to_action(),
+        type="sell",
+        title=_cut(f"Etsy listing: {listing.title}", 120),
+        description=reason,
+        expected_cost="Etsy's listing fee (USD 0.20), and Etsy's fees on each sale",
+        expected_benefit=reason,
+        executor="etsy_listing",
+    )
+    if isinstance(made, str):
+        return Outcome(True, made, "duplicate listing")
+    text = (
+        f"Approval request #{made} is waiting for your owner. Nothing is on Etsy yet. If they approve it, Ember's "
+        f"code creates the listing in {shop.shop_name} (at most {shop.daily_limit} a day) and you hear the result."
+    )
+    return Outcome(True, text, f"#{made} Etsy listing: {_cut(listing.title, 60)}")
+
+
+def _shop(ctx: ToolContext) -> EtsyAccess:
+    if ctx.etsy is None:
+        raise ToolError("there is no Etsy shop")
+    return ctx.etsy
+
+
+def _uploads(ctx: ToolContext, paths: str, kinds: frozenset[str], limit: int, what: str) -> tuple[etsy.Upload, ...]:
+    """The workspace files a listing uses, each with its SHA-256: Ember's code uploads exactly these."""
+    names = [p.strip() for p in paths.split(",") if p.strip()]
+    if not names:
+        raise ToolError(f"name {what}")
+    if len(names) > limit:
+        raise ToolError(f"at most {limit} for {what}")
+    if len(set(names)) != len(names):
+        raise ToolError(f"{what} name the same file twice")
+    found = []
+    for name in names:
+        try:
+            data = ctx.workspace.read_bytes(name)
+        except SandboxError as exc:
+            raise ToolError(str(exc)) from None
+        try:
+            found.append(etsy.upload(name, data, kinds, what))
+        except etsy.EtsyError as exc:
+            raise ToolError(str(exc)) from None
+    return tuple(found)
+
+
 def _propose_reddit_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     try:
         action = reddit.action(args["kind"], args["subreddit"], args.get("title"), args["body"], args.get("thread_url"))
@@ -1156,6 +1295,8 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "write_journal": _write_journal,
     "research": _research,
     "workshop": _workshop,
+    "etsy_categories": _etsy_categories,
+    "propose_etsy_listing": _propose_etsy_listing,
     "make_document": _make_document,
     "make_spreadsheet": _make_spreadsheet,
     "make_image": _make_image,

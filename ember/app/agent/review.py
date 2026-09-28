@@ -129,6 +129,7 @@ def scorecard(
         _header(first, today, dry_run),
         _money(conn, scope, books, ledger_scope, status, since),
         _last_review(conn, scope, today),
+        _etsy(conn, scope, since),
         _project_lines(conn, projects, clock, since),
         _decisions(conn, scope, since),
         _cycles(conn, scope, since),
@@ -326,6 +327,39 @@ def _decisions(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
         said = d["result_note"] if d["status"] in ("done", "failed") else d["decision_comment"]
         quote = f': "{_one_line(said, 200)}"' if said else ""
         lines.append(f'- #{d["id"]} {d["status"].replace("_", " ")} ({d["type"]}) "{_one_line(d["title"], 80)}"{quote}')
+    return "\n".join(lines)
+
+
+def _etsy(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
+    """The Etsy listings Ember made and how they did: the clearest demand signal there is."""
+    where, params = scope.where()
+    rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC LIMIT 8", params).fetchall()
+    if not rows:
+        return ""
+    sold: dict[int, int] = {}
+    orders = conn.execute(
+        f"SELECT total_cents, currency, items FROM etsy_orders WHERE {where} AND ordered_at >= ?", (*params, since)
+    ).fetchall()
+    for order in orders:
+        for item in json.loads(order["items"] or "[]"):
+            sold[item.get("listing_id")] = sold.get(item.get("listing_id"), 0) + int(item.get("quantity") or 1)
+    totals: dict[str, int] = {}
+    for order in orders:
+        totals[order["currency"]] = totals.get(order["currency"], 0) + int(order["total_cents"])
+    lines = ["ETSY LISTINGS YOU MADE"]
+    for r in rows:
+        if r["listing_id"] and r["status"] in ("active", "draft"):
+            views = r["views"] if r["views"] is not None else "?"
+            favorites = r["favorites"] if r["favorites"] is not None else "?"
+            lines.append(
+                f"- #{r['listing_id']} [{r['state'] or r['status']}] {_one_line(r['title'], 80)} · since"
+                f" {r['started_at'][:10]} · {views} views · {favorites} favorites · {sold.get(r['listing_id'], 0)} sold"
+                " in the period"
+            )
+        else:
+            lines.append(f"- request #{r['approval_id']} [{r['status']}] {_one_line(r['title'], 80)}")
+    money = ", ".join(f"{cents / 100:.2f} {currency}" for currency, cents in totals.items()) or "nothing"
+    lines.append(f"Orders in the period: {len(orders)} ({money}); revenue counts once your owner records it.")
     return "\n".join(lines)
 
 

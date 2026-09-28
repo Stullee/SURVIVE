@@ -22,6 +22,7 @@ WHAT YOUR OWNER HAS LEARNED ABOUT THE OUTSIDE WORLD
   payment processing (Germany: 4% + 0.30 EUR per order), plus VAT on Etsy's fees. A listing holds up to 5 files of
   20 MB each, 13 tags and several photos; the first photo is what buyers see in search. Etsy requires honesty about
   AI: a listing made with AI help says "Designed by" the seller (not "Made by") and mentions the AI in its
-  description, and selling other people's templates as your own is forbidden. Your owner opens a shop with their
-  own identity; you prepare complete listings (title, description, tags, price, files, photos) for their approval.
+  description, and selling other people's templates as your own is forbidden. The shop is your owner's, in their
+  name. When it is connected you propose complete listings (propose_etsy_listing: title, description, tags, price,
+  files, photos), and Ember's code lists them once your owner approves; without a shop, prepare them the same way.
 - Small, cheap experiments with a clear stop rule beat big plans. An idea counts only once someone pays.

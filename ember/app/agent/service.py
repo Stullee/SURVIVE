@@ -24,8 +24,10 @@ from ..economy.costs import micros_to_usd
 from ..economy.metering import MeteredModel, OfflineTransport, Transport, usd_cap_to_micros
 from ..economy.pricing import opening_cost, working_cycle_cost
 from ..economy.service import Economy
+from ..integrations import etsy, etsy_publisher, mailstore
 from ..integrations import executor as email_executor
-from ..integrations import mailstore
+from ..integrations.etsy_connection import EtsyConnection
+from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox, select_mailbox
 from . import store
 from .loop import NO_STEP, CycleEnd, CycleRunner
@@ -104,6 +106,17 @@ class Agent:
             self.mode, self.settings, economy.life.session(), self._dry_run_wakes
         )
         self.executor = email_executor.Executor(db, self.clock, self.settings, self.scope, self.mailbox)
+        # The Etsy shop: the fake one in dry run, the owner's once connected. Only Ember's code reaches it.
+        self.etsy = EtsyConnection(
+            db,
+            self.clock,
+            self.settings,
+            self.mode,
+            economy.life.session(),
+            etsy.TokenFile(paths.etsy_dir() / "tokens.json"),
+            etsy.TaxonomyFile(paths.etsy_dir() / "categories.json"),
+        )
+        self.publisher = Publisher(db, self.clock, self.settings, self.scope, self.etsy.shop, lambda: self.roots()[0])
 
     # --- where things live ---
 
@@ -148,6 +161,7 @@ class Agent:
             store.interrupt_open_tool_calls(conn, to_iso(now))
         if self.economy.health.lock_held:  # (another process holding the data folder may be sending right now)
             self.executor.recover()  # an email that was being sent may have gone out: it is never sent again
+            self.publisher.recover()  # a listing that was being created may exist: it is never created again
         if self.mode == "dry_run":
             self._rotate_dry_run_folders()
         workspace, memory_root = self.roots()
@@ -357,6 +371,8 @@ class Agent:
                 Memory(self.db, memory_root, scope),
                 self.stop,
                 self.mailbox,
+                self.etsy,
+                self.publisher,
             )
             end = runner.run(trigger)
             self._after(trigger, end)
@@ -424,18 +440,28 @@ class Agent:
         return None if state in ("alive", "critical") else f"The agent is {state}"
 
     def execute_approved(self) -> list[tuple[int, str]]:
-        """Send the approved emails that are due (the scheduler calls this before every decision)."""
-        if self.mailbox is None or self.executor_blocked():
+        """Send the approved emails and create the approved Etsy listings that are due (the scheduler calls this
+        before every decision)."""
+        if self.executor_blocked():
             return []
-        return self.executor.run()
+        done = self.executor.run() if self.mailbox is not None else []
+        return done + self.publisher.run()
 
     # --- dashboard ---
 
     def integrations(self) -> dict[str, Any]:
-        return {
-            "email": email_executor.integration(
-                self.db, self.clock, self.settings, self.mode, self.scope(), self.mailbox
+        scope = self.scope()
+        shop = self.etsy.describe()
+        with self.db.connection() as conn:
+            shop.update(
+                listings=etsy_publisher.listings_json(conn, scope),
+                orders=etsy_publisher.orders_json(conn, scope),
+                created_today=etsy_publisher.created_today(conn, self.clock, scope),
+                waiting=etsy_publisher.waiting(conn, scope),
             )
+        return {
+            "email": email_executor.integration(self.db, self.clock, self.settings, self.mode, scope, self.mailbox),
+            "etsy": shop,
         }
 
     def agent_fields(self) -> dict[str, Any]:

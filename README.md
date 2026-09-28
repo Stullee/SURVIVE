@@ -48,6 +48,13 @@ sources, the owner's decisions and comments, its cycles and products), decides
 for each project to continue, change or stop, and carries it out; the next
 review checks that it did.
 
+0.8.0 connects Etsy: the agent proposes complete listings (words, photos, the
+files buyers download), and after the owner approves one, Ember's code creates
+it in the owner's shop through the owner's own Etsy app (OAuth with PKCE, tokens
+kept out of the database and logs, only api.etsy.com). Views, favorites and
+orders come back into the agent's plans and daily reviews; the owner records the
+revenue.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

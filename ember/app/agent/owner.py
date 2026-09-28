@@ -23,7 +23,7 @@ from ..db import Database
 from ..economy.clock import Clock, to_iso
 from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
-from ..integrations import executor
+from ..integrations import etsy, executor
 from ..integrations.mail import BODY_MAX
 from . import store
 from .store import AgentScope
@@ -32,6 +32,7 @@ KILL_RESET_KEY = "control.kill_reset"
 REMOVED_TEXT = "[removed by the owner]"  # the only text a message may be changed to (migration 0006)
 INSTRUCTIONS_MAX = 1_500  # characters of the standing instructions (migration 0007)
 CANCELLED = "Cancelled by the owner before it was sent"
+LISTING_CANCELLED = "Cancelled by the owner before it was listed"
 DECISIONS = {"approve": "approved", "approve_with_changes": "approved_with_changes", "reject": "rejected"}
 OUTCOMES = ("done", "failed")
 UPGRADE_STATUSES = ("accepted", "declined", "released")
@@ -123,6 +124,14 @@ class Owner:
                         unchanged = executor.parse_action(row["action"])["body"]
                     except ValueError:
                         raise OwnerError("id", "this email request is broken; reject it", 409) from None
+                if row["executor"] == "etsy_listing" and final is not None:
+                    # For a listing the owner's version holds its words and price; photos, files and category stay.
+                    try:
+                        listing = etsy.listing_from_action(row["action"])
+                        final = etsy.editable(etsy.with_changes(listing, final))
+                    except etsy.EtsyError as exc:
+                        raise OwnerError("final_payload", str(exc)) from None
+                    unchanged = etsy.editable(listing)
                 if status == "approved_with_changes" and final == unchanged:
                     status, final = "approved", None
                 conn.execute(
@@ -160,6 +169,12 @@ class Owner:
                     if outcome == "done":
                         raise OwnerError("outcome", "Ember sends approved emails itself; to stop this one, cancel it")
                     note = note or CANCELLED
+                elif row["executor"] == "etsy_listing":
+                    if conn.execute("SELECT 1 FROM etsy_listings WHERE approval_id = ?", (approval_id,)).fetchone():
+                        raise OwnerError("id", "Ember is already creating this listing; it reports the result", 409)
+                    if outcome == "done":
+                        raise OwnerError("outcome", "Ember creates approved listings itself; to stop one, cancel it")
+                    note = note or LISTING_CANCELLED
                 elif outcome == "failed" and note is None:
                     raise OwnerError("result_note", "please fill in result note")
                 conn.execute(

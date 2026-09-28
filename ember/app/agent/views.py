@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
-from ..integrations import executor, mailstore, reddit
+from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
 from . import review, store
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
@@ -166,12 +166,21 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
         first_contact = not mailstore.has_written(conn, scope, str(action.get("to") or ""))
     if r["executor"] == "reddit_link" and action is not None:
         reddit_url = reddit.prefilled_url(action, r["final_payload"] or None)  # the owner's text, if they changed it
+    editable = None
+    execution = executor.execution(conn, r, scope, agent.clock, agent.settings.email_daily_limit)
+    if r["executor"] == "etsy_listing" and action is not None:
+        execution = etsy_publisher.execution(conn, r, scope, agent.clock, agent.settings.etsy_listings_per_day)
+        try:
+            editable = etsy.editable(etsy.listing_from_action(action))
+        except etsy.EtsyError:
+            editable = None
     return {
         "executor": r["executor"],
         "action": action,
         "first_contact": first_contact,
-        "execution": executor.execution(conn, r, scope, agent.clock, agent.settings.email_daily_limit),
+        "execution": execution,
         "reddit_url": reddit_url,
+        "editable": editable,
         "closed_by": r["closed_by"],
     }
 

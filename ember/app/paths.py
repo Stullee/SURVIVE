@@ -37,3 +37,8 @@ def db_path() -> Path:
 
 def backups_dir() -> Path:
     return data_dir() / "backups"
+
+
+def etsy_dir() -> Path:
+    """The Etsy connection's tokens (mode 0600) and the cached category list."""
+    return data_dir() / "etsy"

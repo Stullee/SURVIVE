@@ -12,7 +12,8 @@ with a fake model so you can try everything without spending money. Ember makes
 finished products itself: PDF documents with an editable Word copy, Excel
 spreadsheets and listing photos. For anything else it has a workshop: code
 written and run in Anthropic's sandbox, and a script that proves useful becomes
-an upgrade request, so Ember grows new abilities. Optionally Ember gets its own
+an upgrade request, so Ember grows new abilities. With your Etsy shop connected,
+Ember lists the products you approve there itself. Optionally Ember gets its own
 mailbox: it reads its mail on its own and sends an email only after you approve
 it.
 

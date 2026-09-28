@@ -106,6 +106,7 @@ PLANNER_BUDGETS = {
     "research": RESEARCH_BUDGET,
     "workshop": 800,
     "review": 1_400,
+    "etsy": 1_600,
 }
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
 # room for one whole message of plain text at the owner's limit of 2,000 characters.
@@ -193,6 +194,7 @@ class Snapshot:
     instructions: str = ""  # the owner's standing instructions ("" while there are none)
     proven: list[tuple[str, str]] = field(default_factory=list)  # workshop scripts worth building in: (path, why)
     review: str = ""  # today's daily review, as the planner sees it ("" before it is made)
+    etsy: str = ""  # the ETSY SHOP section ("" without a shop)
 
 
 def snapshot(
@@ -211,6 +213,7 @@ def snapshot(
     news: News | None = None,
     mail_address: str | None = None,
     today: date | None = None,
+    etsy: str = "",
 ) -> Snapshot:
     """What the planner, the brief and the will see; ``today`` (the owner's local date) finds the day's review."""
     projects = store.open_projects(conn, scope)
@@ -260,6 +263,7 @@ def snapshot(
         instructions=standing["text"] if standing else "",
         proven=store.proven_scripts(conn, scope),
         review=review.planner_text(conn, todays_review) if todays_review is not None else "",
+        etsy=etsy,
     )
 
 
@@ -569,6 +573,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         ("OPEN PROJECTS", cut(project_lines(s), b["projects"])),
         ("WAITING FOR YOUR OWNER", cut(pending, b["pending"])),
         *([("MAIL", cut(mail_text(s), b["mail"]))] if s.mail is not None else []),
+        *([("ETSY SHOP", cut(s.etsy, b["etsy"]))] if s.etsy else []),
         ("STRATEGY", _strategy(s, b["strategy"])),
         ("IDENTITY", cut(s.memory.get("identity", ""), b["identity"])),
         ("LESSONS (newest last)", _lessons(s, b["lessons"])),

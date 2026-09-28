@@ -161,3 +161,32 @@ configuration:
   email_daily_limit:
     name: Emails per day
     description: The most emails Ember sends in one day (0 to 20). Approved emails beyond it wait for the next day.
+  etsy_enabled:
+    name: Etsy shop
+    description: >-
+      On: Ember can propose listings for your Etsy shop, and after you approve
+      one, Ember's code creates it through your own Etsy app. Needs the
+      keystring and shared secret below and a one-time connection in the
+      dashboard (System, Etsy). See the Documentation tab.
+  etsy_keystring:
+    name: Etsy app keystring
+    description: >-
+      The keystring of the app you registered at etsy.com/developers for your
+      shop.
+  etsy_shared_secret:
+    name: Etsy app shared secret
+    description: >-
+      The shared secret of that app. Stored by Home Assistant; Ember never
+      logs or displays it.
+  etsy_redirect_uri:
+    name: Etsy redirect URI
+    description: >-
+      The callback URL registered for your Etsy app, exactly as there. It
+      doesn't need to open anything: you copy the address Etsy sends you to
+      back into the dashboard.
+  etsy_listings_per_day:
+    name: Etsy listings per day
+    description: >-
+      The most listings Ember creates in one day (0 to 20). Each costs Etsy's
+      listing fee (USD 0.20); approved listings beyond it wait for the next
+      day.

@@ -143,8 +143,16 @@ class Settings(BaseModel):
     email_smtp_port: int = Field(default=465, ge=1, le=65_535)
     email_owner_name: str = ""
     email_daily_limit: int = Field(default=3, ge=0, le=20)
+    # Etsy (0.8.0): Ember's code lists approved products in the owner's Etsy shop, through the owner's own Etsy app
+    # (its keystring and shared secret) and a one-time connection made in the dashboard. Like the mailbox, a
+    # connection that is switched on but incomplete is reported by the integration, never by safe mode.
+    etsy_enabled: bool = False
+    etsy_keystring: str = Field(default="", max_length=100)
+    etsy_shared_secret: SecretStr = SecretStr("")
+    etsy_redirect_uri: str = Field(default="https://localhost/ember-etsy", min_length=1, max_length=300)
+    etsy_listings_per_day: int = Field(default=3, ge=0, le=20)
 
-    @field_validator("anthropic_api_key", "email_password", mode="before")
+    @field_validator("anthropic_api_key", "email_password", "etsy_shared_secret", mode="before")
     @classmethod
     def _strip_key(cls, value: Any) -> Any:
         # A key pasted with a stray space or newline would otherwise look "set"
@@ -160,6 +168,8 @@ class Settings(BaseModel):
         "email_imap_host",
         "email_smtp_host",
         "email_owner_name",
+        "etsy_keystring",
+        "etsy_redirect_uri",
         mode="before",
     )
     @classmethod
@@ -227,10 +237,11 @@ class Settings(BaseModel):
         return bool(self.email_password.get_secret_value().strip())
 
     def public_dict(self) -> dict[str, Any]:
-        """Options safe to show in the dashboard. The API key and the email password are replaced by flags."""
-        data = self.model_dump(mode="json", exclude={"anthropic_api_key", "email_password"})
+        """Options safe to show in the dashboard. The API key and the passwords are replaced by flags."""
+        data = self.model_dump(mode="json", exclude={"anthropic_api_key", "email_password", "etsy_shared_secret"})
         data["anthropic_api_key_set"] = self.api_key_set
         data["email_password_set"] = self.email_password_set
+        data["etsy_shared_secret_set"] = bool(self.etsy_shared_secret.get_secret_value().strip())
         return data
 
 

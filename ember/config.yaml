@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.7.1"
+version: "0.8.0"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -78,6 +78,10 @@ options:
   email_smtp_host: smtp.mailbox.org
   email_smtp_port: 465
   email_daily_limit: 3
+  # Etsy (see the Documentation tab): your Etsy app's keystring and shared secret are optional options too.
+  etsy_enabled: false
+  etsy_redirect_uri: https://localhost/ember-etsy
+  etsy_listings_per_day: 3
 
 schema:
   anthropic_api_key: password?
@@ -119,3 +123,8 @@ schema:
   email_smtp_port: int(1,65535)
   email_owner_name: str?
   email_daily_limit: int(0,20)
+  etsy_enabled: bool
+  etsy_keystring: str?
+  etsy_shared_secret: password?
+  etsy_redirect_uri: str(1,300)
+  etsy_listings_per_day: int(0,20)

@@ -37,11 +37,11 @@ def biggest_planner_context() -> str:
 
 def first_step_and_reflection(brief: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """The first work step, and the reflection after it with the room the loop keeps for one step's growth (with the
-    most tools: a mailbox's too)."""
+    most tools: a mailbox's and a shop's too)."""
     grown = [{"role": "assistant", "content": [{"type": "text", "text": "x" * loop.STEP_GROWTH_BYTES}]}]
     return (
-        prompts.work_request(SETTINGS, brief, [], mail=True),
-        prompts.reflect_request(SETTINGS, brief, grown, [], mail=True),
+        prompts.work_request(SETTINGS, brief, [], mail=True, etsy=True),
+        prompts.reflect_request(SETTINGS, brief, grown, [], mail=True, etsy=True),
     )
 
 
@@ -105,6 +105,7 @@ def overflowing_snapshot() -> context.Snapshot:
             (f"workshop/scripts/{'ä' * 170}-{i}.py", f"its files are in approved request #{10**9 + i}") for i in (1, 2)
         ],
         review="ä" * 3_000,
+        etsy="ä" * 3_000,
     )
 
 
@@ -115,7 +116,7 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     assert "\n== MAIL ==\n" in planner and f"\n== {context.INSTRUCTIONS_HEADING} ==\n" in planner
     assert "Memory check: lessons.md" in planner  # the lessons fill most of their file
     assert "\n== WORKSHOP ==\nWorkshop check: workshop/scripts/" in planner
-    assert "\n== TODAY'S REVIEW ==\nää" in planner
+    assert "\n== TODAY'S REVIEW ==\nää" in planner and "\n== ETSY SHOP ==\nää" in planner
     assert rough_token_count(prompts.plan_request(SETTINGS, planner)) <= PLANNER_OPENING.input_tokens
     plan = {"goal": "ä" * 300, "steps": ["ä" * 200] * 6}
     focus = {"id": 1_000, "title": "ä" * 80, "status": "active", "hypothesis": "ä" * 400, "next_step": "ä" * 200}

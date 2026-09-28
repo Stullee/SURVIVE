@@ -31,7 +31,9 @@ from ..economy.estimate import Unpriceable
 from ..economy.metering import REVIEW, CallFailed, CallRefused, CallResult, MeteredModel
 from ..economy.pricing import LAST_WILL, PLANNER_OPENING, REVIEW_CALL
 from ..economy.service import Economy
-from ..integrations import mailstore
+from ..integrations import etsy_publisher, mailstore
+from ..integrations.etsy_connection import EtsyConnection
+from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox
 from ..version import app_version
 from . import context, netguard, news, prompts, review, store, tools
@@ -122,6 +124,8 @@ class CycleRunner:
         memory: Memory,
         stop: threading.Event | None = None,
         mailbox: Mailbox | None = None,
+        etsy: EtsyConnection | None = None,
+        publisher: Publisher | None = None,
     ) -> None:
         self.db = db
         self.settings = settings
@@ -135,6 +139,9 @@ class CycleRunner:
         self.dry_run = scope.mode == "dry_run"
         self.mailbox = mailbox
         self.mail = mailbox is not None  # the email tools and the MAIL section, for every cycle of this run
+        self.etsy = etsy
+        self.publisher = publisher
+        self.etsy_on = False  # the Etsy tools and the ETSY SHOP section: set once the cycle found a shop
 
     # --- the cycle ---
 
@@ -164,6 +171,7 @@ class CycleRunner:
         try:
             if trigger != "last_will":
                 self._fetch_mail(cycle_id)
+                self._sync_etsy(cycle_id, ctx)
             with netguard.sealed() if self.dry_run else contextlib.nullcontext():
                 end = self._last_will(cycle_id) if trigger == "last_will" else self._plan_act_reflect(cycle_id, ctx)
         except Stopping:
@@ -237,6 +245,31 @@ class CycleRunner:
         except Exception:  # noqa: BLE001 - mail must never end a cycle
             log.exception("Checking the mailbox failed")
 
+    def _sync_etsy(self, cycle_id: int, ctx: tools.ToolContext) -> None:
+        """The shop's numbers before the plan, and what the tools know of it (errors are recorded and shown, and
+        never stop the cycle)."""
+        if self.etsy is None or self.publisher is None:
+            return
+        shop = self.etsy.shop()
+        if shop is None:
+            return
+        if not self.stop.is_set():
+            self._progress(cycle_id, current_action="Checking the Etsy shop")
+            try:
+                # The fake shop of a dry run needs no network; the owner's is reached by Ember's code only.
+                with netguard.sealed() if shop.simulated else contextlib.nullcontext():
+                    self.etsy.refresh_categories(shop)
+                self.publisher.sync()
+            except Exception:  # noqa: BLE001 - the shop must never end a cycle
+                log.exception("Checking the Etsy shop failed")
+        ctx.etsy = tools.EtsyAccess(
+            shop_name=self.etsy.shop_name() or "your shop",
+            currency=self.etsy.currency() or "USD",
+            daily_limit=self.settings.etsy_listings_per_day,
+            categories=tuple(self.etsy.categories()),
+        )
+        self.etsy_on = True
+
     def _progress(self, cycle_id: int, **columns: Any) -> None:
         with self.db.transaction() as conn:
             store.update_cycle(conn, cycle_id, **columns)
@@ -252,6 +285,10 @@ class CycleRunner:
         local = self.clock.now().astimezone(self.clock.tz).strftime("%A %Y-%m-%d %H:%M %Z")
         with self.db.connection() as conn:
             fresh = news.collect(conn, self.db, self.scope, app_version())
+            shop = ""
+            if self.etsy_on and self.etsy is not None:
+                name = self.etsy.shop_name() or "your shop"
+                shop = etsy_publisher.shop_text(conn, self.scope, self.clock, name, self.settings.etsy_listings_per_day)
             return context.snapshot(
                 conn,
                 self.scope,
@@ -267,6 +304,7 @@ class CycleRunner:
                 news=fresh,
                 mail_address=self.mailbox.address if self.mailbox else None,
                 today=self.clock.today(),
+                etsy=shop,
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> CallResult:
@@ -466,7 +504,7 @@ class CycleRunner:
                 act.end_reason = "the conversation got too long"
                 break
             final = step == max_steps
-            request = prompts.work_request(self.settings, brief, turns, final=final, mail=self.mail)
+            request = prompts.work_request(self.settings, brief, turns, final=final, mail=self.mail, etsy=self.etsy_on)
             if not self._affordable(cycle_id, request, brief, turns):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
                 break
@@ -560,7 +598,9 @@ class CycleRunner:
         grown = [*turns, {"role": "assistant", "content": [{"type": "text", "text": "x" * STEP_GROWTH_BYTES}]}]
         try:
             step_cost = self.meter.quote(request)
-            reflect_cost = self.meter.quote(prompts.reflect_request(self.settings, brief, grown, [], mail=self.mail))
+            reflect_cost = self.meter.quote(
+                prompts.reflect_request(self.settings, brief, grown, [], mail=self.mail, etsy=self.etsy_on)
+            )
         except Unpriceable:
             return False
         return step_cost + reflect_cost <= self.meter.headroom(cycle_id)
@@ -606,7 +646,7 @@ class CycleRunner:
             # which answer the tool calls before it, and let the reflect prompt replace the rest.
             kept = [b for b in turns.pop()["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
             pending = [*kept, *pending]
-        request = prompts.reflect_request(self.settings, brief, turns, pending, mail=self.mail)
+        request = prompts.reflect_request(self.settings, brief, turns, pending, mail=self.mail, etsy=self.etsy_on)
         try:
             if self.meter.quote(request) > self.meter.headroom(cycle_id, "reflect"):
                 return False

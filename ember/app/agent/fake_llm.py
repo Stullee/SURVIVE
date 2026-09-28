@@ -649,6 +649,8 @@ _JSON = json.JSONDecoder()
 _ANSWER = "answer my owner"  # in a plan step or goal: the cycle answers the owner
 MAKE_STEP = "Make the draft into a PDF with a Word copy, look at its first page and make a listing photo"
 WORKSHOP_STEP = "Have the workshop make a price chart for the listing photos"
+ETSY_STEP = "Propose an Etsy listing for the finished product"
+_CATEGORY_LINE = re.compile(r"^(\d+): ", re.M)
 REVIEW_STOP_CYCLES = 12  # the fake's daily review stops a project that took this many cycles without earning
 CLOSE_STEP = "Close project #{id}: my review says stop"
 # A project line of the review's scorecard: id, status, title, cycles in all.
@@ -1256,6 +1258,8 @@ class FakeTransport:
             steps.append(MAKE_STEP)
         if cycle % 4 == 3 and not critical:
             steps.append(WORKSHOP_STEP)
+        if cycle % 4 == 0 and not critical and "\n== ETSY SHOP ==\n" in context:
+            steps.append(ETSY_STEP)
         proven = _PROVEN.search(context)
         if proven and not critical:
             steps.insert(0, f"{PROMOTE_STEP} {proven[1]}")
@@ -1350,6 +1354,8 @@ class FakeTransport:
             "workshop": "the workshop make" in steps,
             "promote": "built into ember" in steps,
             "close": "close project #" in steps,
+            "etsy_find": "propose an etsy listing" in steps,
+            "etsy_propose": "propose an etsy listing" in steps,
         }
         wanted["guide"] = wanted["make"] and crng.random() < 0.5
         wanted["look"] = wanted["photo"] = wanted["make"]
@@ -1377,6 +1383,8 @@ class FakeTransport:
                 "make",
                 "look",
                 "photo",
+                "etsy_find",
+                "etsy_propose",
                 "workshop",
                 "update",
                 "promote",
@@ -1526,6 +1534,29 @@ class FakeTransport:
                 "title": idea.title[:80],
                 "subtitle": f"{idea.offer[0].upper()}{idea.offer[1:]}"[:160],
                 "badge": "Instant download",
+            }
+        if stage == "etsy_find":
+            return ("etsy_categories", {"search": "planner"}) if _succeeded(conv, "make_image") else None
+        if stage == "etsy_propose":
+            found = next(
+                (c for c in reversed(conv.calls) if c.name == "etsy_categories" and c.result and not c.error), None
+            )
+            category = _CATEGORY_LINE.search(found.result or "") if found else None
+            if category is None or not _succeeded(conv, "make_image"):
+                return None
+            return "propose_etsy_listing", {
+                "title": f"{idea.title} Printable, A4 and US Letter, Instant Download"[:140],
+                "description": (
+                    f"{idea.offer[0].upper()}{idea.offer[1:]}.\n\nWhat you get: a PDF to print at home (A4 and US "
+                    "Letter) and an editable Word copy.\n\nThis is a digital download: nothing is shipped. "
+                    "For personal use."
+                ),
+                "price": "4.50",
+                "tags": "printable, planner, digital download, instant download, a4 printable, us letter",
+                "category_id": int(category[1]),
+                "files": f"{product}.pdf, {product}.docx",
+                "photos": f"{product}-photo-1.png",
+                "reason": f"The first real test of '{idea.title}': a sale or favorites would show demand.",
             }
         if stage == "update":
             if pid is None:
@@ -1892,6 +1923,8 @@ class FakeTransport:
 
 _STAGE_TOOLS = {
     "close": "project_update",
+    "etsy_find": "etsy_categories",
+    "etsy_propose": "propose_etsy_listing",
     "survey": "workspace_list",
     "reply": "message_owner",
     "create": "project_create",

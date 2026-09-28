@@ -60,6 +60,8 @@ TABLES = (
     "upgrades",
     "workshop_runs",
     "reviews",
+    "etsy_listings",
+    "etsy_orders",
     "memory_versions",
     "emails",
     "email_actions",
@@ -420,6 +422,8 @@ def _agent(state: AppState) -> str:
             ("upgrades", ["id", "status", "priority", "title", "released_version", "seen_cycle_id", "script_path"], 15),
             ("workshop_runs", ["id", "cycle_id", "status", "cost_micros", "script_used", "script_path", "task"], 10),
             ("reviews", ["id", "day", "cycle_id", "status", "verdicts", "focus", "lesson", "note"], 7),
+            ("etsy_listings", ["id", "approval_id", "status", "listing_id", "state", "views", "favorites"], 10),
+            ("etsy_orders", ["receipt_id", "ordered_at", "total", "items"], 10),
         ):
             rows = conn.execute(
                 f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC LIMIT ?",
@@ -486,6 +490,9 @@ def _integrations(state: AppState) -> str:
     columns = ["id", "approval_id", "status", "started_at", "finished_at", "result", "error"]
     out.append("-- sends (latest 15)\n" + _rows(sends, columns))
     out.append(f"-- addresses that asked not to get emails: {suppressed}")
+    # Etsy: the connection's status and Ember's listings (never a token; the orders hold no buyer data).
+    shop = {k: v for k, v in agent.integrations()["etsy"].items() if k not in ("listings", "orders")}
+    out.append(f"-- etsy\n{_json(shop)}")
     return "\n".join(out)
 
 

@@ -37,8 +37,8 @@ You wake up, follow the plan below with your tools, then reflect. Each step cost
 plan's goal is reached or blocked. Limits (steps, spending, file sizes, tool counts) are enforced by code: a
 refused tool comes back as an error you can react to.
 - Everything that leaves this container needs your owner's approval first, with the exact content
-  (request_approval, or propose_email / propose_reddit_post where you have them). Nothing happens until your owner
-  decides; never write as if it was done.
+  (request_approval, or propose_email / propose_reddit_post / propose_etsy_listing where you have them). Nothing
+  happens until your owner decides; never write as if it was done.
 - Revenue only exists when your owner records it. Never claim or assume income.
 - Your owner's time is your scarcest resource. Do research and legwork yourself with your tools, and build the whole
   thing (product, listing, price) before you ask for one concrete action. Ask your owner at most once a day, in one
@@ -239,10 +239,16 @@ def review_request(settings: Settings, scorecard: str) -> dict[str, Any]:
 
 
 def work_request(
-    settings: Settings, brief: str, turns: list[dict[str, Any]], *, final: bool = False, mail: bool = False
+    settings: Settings,
+    brief: str,
+    turns: list[dict[str, Any]],
+    *,
+    final: bool = False,
+    mail: bool = False,
+    etsy: bool = False,
 ) -> dict[str, Any]:
     """One step of the act loop. The prefix (system, tools, brief) stays byte-identical, so it is cached; ``mail``
-    (whether Ember has a mailbox) is the same for every cycle of a mode and configuration."""
+    and ``etsy`` (whether Ember has a mailbox and a shop) are the same for every step of a cycle."""
     return {
         "model": settings.worker_model,
         **_thinking(settings.worker_model, WORK_MAX_TOKENS),
@@ -251,7 +257,7 @@ def work_request(
             _text(knowledge()),
             _text(OPERATING_RULES, cache_control={"type": "ephemeral"}),
         ],
-        "tools": tools.definitions(mail, workshop=workshop_on(settings)),
+        "tools": tools.definitions(mail, workshop=workshop_on(settings), etsy=etsy),
         "tool_choice": {"type": "none"} if final else {"type": "auto"},
         "cache_control": {"type": "ephemeral"},
         "messages": [{"role": "user", "content": [_text(brief)]}, *turns],
@@ -278,12 +284,13 @@ def reflect_request(
     pending_results: list[dict[str, Any]],
     *,
     mail: bool = False,
+    etsy: bool = False,
 ) -> dict[str, Any]:
     """The final turn of the same conversation (so the cached prefix is reused).
 
     Roles must alternate: when there was no act turn at all, the reflect prompt joins the brief's turn.
     """
-    request = work_request(settings, brief, turns, mail=mail)
+    request = work_request(settings, brief, turns, mail=mail, etsy=etsy)
     messages = request["messages"]
     if messages[-1]["role"] == "user":
         messages[-1] = {"role": "user", "content": [*messages[-1]["content"], *pending_results, _text(REFLECT_PROMPT)]}

@@ -192,11 +192,13 @@ def test_only_the_transport_imports_the_sdk() -> None:
     for source in app_dir.rglob("*.py"):
         if source.name == "anthropic_transport.py":
             continue
+        # Etsy's client (0.8.0) is Ember's own code, allowlisted to api.etsy.com: it may use httpx2, never the SDK.
+        forbidden = {"anthropic"} if source.name == "etsy_live.py" else {"anthropic", "httpx2"}
         for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
             names = [a.name for a in node.names] if isinstance(node, ast.Import) else []
             if isinstance(node, ast.ImportFrom) and node.level == 0:
                 names = [node.module or ""]
-            assert not any(n.split(".")[0] in {"anthropic", "httpx2"} for n in names), source
+            assert not any(n.split(".")[0] in forbidden for n in names), source
 
 
 def test_live_mode_uses_the_api_only_with_a_key(data_dir: Any) -> None:

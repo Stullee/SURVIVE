@@ -15,6 +15,7 @@ from fastapi import APIRouter, Body, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from . import diagnostics
+from . import events as event_log
 from .agent import owner as owner_side
 from .agent.views import WorkspaceFileError
 from .db import utcnow
@@ -22,6 +23,7 @@ from .economy.ledger import OWNER_KINDS
 from .economy.life import KILLED_KEY
 from .economy.service import Economy, Reply
 from .integrations import executor as email_executor
+from .integrations.etsy import EtsyError
 from .logging_setup import printable
 from .paths import WEB_DIR
 from .security import ingress_base_href
@@ -252,6 +254,51 @@ def kill(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
     reply = owner_side.kill(state.db, state.economy, state.loaded.settings.agent_name, body, _owner(request))
     _poke(request)
     return _reply(reply)
+
+
+# --- Etsy: connecting the owner's shop (0.8.0) ---
+
+
+@router.post("/api/etsy/connect")
+def etsy_connect(request: Request) -> JSONResponse:
+    """Start connecting: Etsy's page where the owner allows Ember's access (opened in the owner's browser)."""
+    agent = _state(request).agent
+    if agent is None:
+        return JSONResponse({"code": "not_runnable", "error": "the agent is not running"}, status_code=409)
+    try:
+        url = agent.etsy.start()
+    except EtsyError as exc:
+        return JSONResponse({"error": str(exc), "field": "etsy"}, status_code=422)
+    event_log.record(_state(request).db, "info", "etsy", f"{_owner(request) or 'The owner'} started connecting Etsy")
+    return JSONResponse({"authorize_url": url})
+
+
+@router.post("/api/etsy/finish")
+def etsy_finish(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """Finish connecting with the address Etsy sent the owner to."""
+    agent = _state(request).agent
+    if agent is None:
+        return JSONResponse({"code": "not_runnable", "error": "the agent is not running"}, status_code=409)
+    pasted = body.get("address") if isinstance(body, dict) else None
+    if not isinstance(pasted, str) or not pasted.strip() or len(pasted) > 4_000:
+        return JSONResponse({"error": "paste the address Etsy sent you to", "field": "address"}, status_code=422)
+    try:
+        info = agent.etsy.finish(pasted)
+    except EtsyError as exc:
+        return JSONResponse({"error": str(exc), "field": "address"}, status_code=422)
+    event_log.record(_state(request).db, "info", "etsy", f"Connected the Etsy shop {info.name}")
+    _poke(request)
+    return JSONResponse({"shop_name": info.name, "currency": info.currency})
+
+
+@router.post("/api/etsy/disconnect")
+def etsy_disconnect(request: Request) -> JSONResponse:
+    agent = _state(request).agent
+    if agent is None:
+        return JSONResponse({"code": "not_runnable", "error": "the agent is not running"}, status_code=409)
+    agent.etsy.disconnect()
+    event_log.record(_state(request).db, "info", "etsy", f"{_owner(request) or 'The owner'} disconnected the Etsy shop")
+    return JSONResponse({"disconnected": True})
 
 
 def _owner_actions(request: Request) -> owner_side.Owner | None:

@@ -808,3 +808,10 @@ body[data-stale="true"] .live { display: none; }
 .link-button { background: none; border: 0; padding: 0; color: var(--text-2); text-decoration: underline; cursor: pointer; font: inherit; font-size: 0.85em; }
 .link-button[data-armed="true"] { color: var(--critical-text); font-weight: 600; }
 .msg-text[data-removed="true"] { font-style: italic; opacity: 0.75; }
+
+/* Etsy (0.8.0): the listing's photos on its approval card, and the connect steps in System. */
+.etsy-photos { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.etsy-photos img { display: block; width: 120px; height: 90px; object-fit: cover; border-radius: 6px; border: 1px solid var(--grid); }
+.etsy-connect { display: grid; gap: 8px; margin-top: 12px; }
+.etsy-step { display: grid; gap: 6px; }
+.etsy-step input[type="url"] { width: 100%; }

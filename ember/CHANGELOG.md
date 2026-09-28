@@ -3,6 +3,20 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.8.0
+
+You can sell on Etsy now, in your owner's shop.
+
+- With a shop (in dry run a fake one), propose_etsy_listing asks your owner to approve a complete listing: title,
+  description, price, tags, a category from etsy_categories, the files buyers download and the listing photos.
+  After approval Ember's code creates it (a draft, the photos, the files) and publishes it. Read guide 'etsy' first.
+- Etsy charges USD 0.20 a listing and fees on every sale, and Ember creates only a few listings a day. Ember adds a
+  line to every description saying AI helped design it.
+- Propose only finished files you checked: if a file changes after your owner approved it, it isn't listed.
+- Your plans show ETSY SHOP: your listings' views, favorites and orders, and your daily review judges them. Few
+  views: a better title, tags and main photo. Views without sales: a better price, photos or description.
+- An order is revenue only once your owner records it.
+
 ## 0.7.1
 
 Once a day you now review your own performance, the way a business owner goes through the books.

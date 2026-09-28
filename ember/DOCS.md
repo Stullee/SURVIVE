@@ -54,6 +54,10 @@ your approval, and only you can record revenue.
 | Workshop cap per run | 0.50 USD | The most one workshop run may cost. Runs count toward the daily cap, not the cycle cap. |
 | Workshop runs per day | 6 | The most workshop runs in one day (0 switches the workshop off). |
 | Sandbox price | 0.05 USD per hour | What Anthropic charges per hour of sandbox time beyond its free hours. |
+| Etsy shop | off | Lets the agent propose listings for your Etsy shop, which Ember creates after you approve them. See [Etsy](#etsy). |
+| Etsy app keystring, shared secret | empty | From the Etsy app you register for your shop. The secret is never logged or shown. |
+| Etsy redirect URI | https://localhost/ember-etsy | The callback URL registered for that app, exactly as there. |
+| Etsy listings per day | 3 | The most listings Ember creates in one day (0 to 20). |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -286,6 +290,8 @@ returns it with a script, and nothing is sent to Anthropic.
   product to see its pictures (a document's pages, a spreadsheet's first sheet)
   and download the file. Check it before you use it. In dry run you see the
   dry-run folder.
+- **Etsy listings** the agent proposed are approvals too: after you approve
+  one, Ember creates it in your shop (see [Etsy](#etsy)).
 - **Upgrade requests**: ideas for changing Ember's code. Accept, decline, or mark
   one released with the version that contains it. After an update the agent
   reads what changed in the release notes. A request built on a workshop script
@@ -407,6 +413,69 @@ are yours (this is not legal advice). Emails from other people are personal
 data: you are responsible for them, and your mail provider and Anthropic
 process them for you (if Ember works commercially, sign your provider's data
 processing agreement).
+
+## Etsy
+
+Ember can sell the agent's products in your Etsy shop. The agent proposes a
+complete listing, you approve it, and Ember's own code creates it through your
+own Etsy app. In dry run a fake shop (*EmberTestShop*) takes the listings, so
+you can try the whole flow first.
+
+### Setting it up
+
+1. You need an Etsy shop (Etsy's rules make it yours, in your name).
+2. Register an app for it at
+   [etsy.com/developers/register-seller-app](https://www.etsy.com/developers/register-seller-app)
+   (Etsy's Seller API Access: for your own shop only, usually approved within
+   minutes). Note its **keystring** and **shared secret**.
+3. In the app's settings at Etsy (Your apps), add the callback URL
+   `https://localhost/ember-etsy`, or whatever you set as **Etsy redirect
+   URI**; it must match exactly. Nothing needs to answer at that address.
+4. In Ember's **Configuration** tab, turn on **Show unused optional
+   configuration options**, switch **Etsy shop** on, paste the keystring and
+   the shared secret, save and restart the app.
+5. On the dashboard, open **System → Etsy** and press **Connect your Etsy
+   shop**. Open Etsy's page, log in as the shop's owner and allow access. Etsy
+   then sends your browser to the redirect address, which shows an error page:
+   that's expected. Copy the whole address from the address bar, paste it into
+   the dashboard and press **Finish connecting**.
+
+The connection lasts 90 days from the last time Ember used it and renews
+itself; if it lapses, connect again. **Disconnect** deletes Ember's tokens (you
+can also remove the app's access at Etsy).
+
+### How a listing is made
+
+- The agent proposes a listing with `propose_etsy_listing`: title, description,
+  price, up to 13 tags, a category, the files buyers download (at most 5, 20 MB
+  each) and the listing photos (up to 10). The approval card shows the photos,
+  the files and every word.
+- **Approve** and Ember creates it: a draft, its photos and files, then live.
+  Etsy charges its listing fee (USD 0.20) and its fees on each sale; there is
+  no fee for a listing that isn't published. **Approve with changes** lets you
+  change the title, price, tags and description; the photos, files and
+  category stay as proposed. **Reject** tells the agent why, if you add a
+  comment.
+- Ember adds a fixed line to every description saying AI helped design it, as
+  Etsy's rules require.
+- If a file changed after you approved, the listing isn't created. If Etsy
+  refuses something after the draft exists, the listing stays a draft at Etsy
+  and the card links to it, so you can finish it there. Ember never creates a
+  listing twice: if it can't tell whether Etsy created it (a lost connection),
+  it says so and doesn't try again.
+- At most **Etsy listings per day** are created a day; approved listings beyond
+  that wait for the next day. Automatic renewal is off: a listing expires after
+  four months unless you renew it at Etsy.
+
+### What Ember sees
+
+At the start of every wake cycle (at most once an hour) Ember reads how its own
+listings do: their state, views (Etsy counts them once a day) and favorites, and
+the orders that hold them: date, total and which listing, never who bought. The
+agent sees these numbers in every plan and in its daily review. **System →
+Etsy** lists the listings and orders; **Record as revenue** opens the revenue
+form filled in from an order (an order can't be recorded twice). Revenue still
+counts only when you record it.
 
 ## Reddit
 
@@ -581,7 +650,10 @@ automation, for example:
   address is refused inside the app, and proxy settings are ignored). Its
   tools have no network access at all. If you set up Ember's mailbox, Ember's
   own code also connects to the IMAP and SMTP servers in the options, over TLS
-  with verified certificates, and to no other mail server.
+  with verified certificates, and to no other mail server. If you connect
+  Etsy, Ember's code also talks to `https://api.etsy.com`, and nothing else
+  there; its tokens are kept in `/data/etsy/tokens.json`, readable only by
+  Ember, and never appear in the database, the logs or the diagnostics.
 - The agent never writes the bytes of a PDF, Word, Excel or picture file: it
   writes text, and Ember's own code makes the file from it, without any network
   or other programs. Spreadsheets only get formulas with common functions that

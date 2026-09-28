@@ -39,13 +39,13 @@ class CallProfile:
 
 # The largest requests the agent builds (measured in tests/test_agent_requests.py, which keeps them in step):
 # the planning call that opens a wake cycle, and the last will. The agent never sends a bigger one.
-PLANNER_OPENING = CallProfile(input_tokens=14_100, max_tokens=1_200)
+PLANNER_OPENING = CallProfile(input_tokens=15_000, max_tokens=1_200)
 LAST_WILL = CallProfile(input_tokens=6_400, max_tokens=1_000)
 # The first work step with the largest brief, and the reflection after it (with the room the loop keeps for one
 # step's growth), measured the same way: a wake cycle is only worth starting if both fit after its plan. Measured
-# with the most tools (a mailbox's too).
-WORK = CallProfile(input_tokens=19_600, max_tokens=2_000, cache_ttls=("5m",))
-REFLECT = CallProfile(input_tokens=29_900, max_tokens=2_000, cache_ttls=("5m",))
+# with the most tools (a mailbox's and a shop's too).
+WORK = CallProfile(input_tokens=20_800, max_tokens=2_000, cache_ttls=("5m",))
+REFLECT = CallProfile(input_tokens=31_000, max_tokens=2_000, cache_ttls=("5m",))
 # The daily review (0.7.1), measured the same way: the constitution, the knowledge, the review rules and a full
 # scorecard.
 REVIEW_CALL = CallProfile(input_tokens=14_200, max_tokens=1_500)

@@ -572,6 +572,7 @@
     safely("banners", renderBanners);
     section("system", [d.system, d.mode], ["system-facts", "options"], function () { renderSystem(d); });
     section("email", [d.integrations, minute], ["email-facts"], function () { renderEmail(d); });
+    section("etsy", [d.integrations, d.mode, minute], ["etsy-facts", "etsy-listings", "etsy-orders"], function () { renderEtsy(d); });
     section("transitions", [d.transitions], ["transitions"], function () { renderTransitions(arr(d.transitions)); });
     section("events", [d.events], ["events"], function () { renderEvents(arr(d.events)); });
     section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d, agent); });
@@ -2022,14 +2023,16 @@
   // Without a parsed action they are shown like any other request.
   function executorOf(a) {
     if (!isObject(a.action)) return null;
-    return a.executor === "email" || a.executor === "reddit_link" ? a.executor : null;
+    return a.executor === "email" || a.executor === "reddit_link" || a.executor === "etsy_listing" ? a.executor : null;
   }
 
   var APPROVAL_GROUPS = [
     { key: "pending", title: "Waiting for your decision", match: function (s) { return s === "pending"; } },
-    { key: "todo", title: "Approved, to carry out", match: function (s, a) { return isApproved(s) && !(a && executorOf(a) === "email"); } },
+    { key: "todo", title: "Approved, to carry out", match: function (s, a) { return isApproved(s) && !(a && (executorOf(a) === "email" || executorOf(a) === "etsy_listing")); } },
     { key: "sending", label: "Approved emails", title: function () { return "Approved emails, " + agentName() + " sends them"; },
       match: function (s, a) { return isApproved(s) && !!a && executorOf(a) === "email"; } },
+    { key: "listing", label: "Approved listings", title: function () { return "Approved Etsy listings, " + agentName() + " creates them"; },
+      match: function (s, a) { return isApproved(s) && !!a && executorOf(a) === "etsy_listing"; } },
     { key: "closed", title: "Closed", match: function () { return true; } },
   ];
 
@@ -2061,7 +2064,8 @@
 
   // Where an approved email is ("" for other requests). Approved without an execution row yet: waiting.
   function executionStatus(a) {
-    if (executorOf(a) !== "email") return "";
+    var executor = executorOf(a);
+    if (executor !== "email" && executor !== "etsy_listing") return "";
     if (isObject(a.execution) && typeof a.execution.status === "string" && a.execution.status) return a.execution.status;
     return isApproved(a.status) ? "waiting" : "";
   }
@@ -2074,6 +2078,16 @@
     failed: { icon: "✕", label: "Not sent", tone: "critical" },
     unclear: { icon: "!", label: "Unclear whether it was sent", tone: "critical" },
     simulated: { icon: "◌", label: "Dry run: not really sent", tone: "" },
+  };
+
+  var LISTING_EXECUTION = {
+    waiting: { icon: "◔", label: "Waiting to be listed", tone: "accent" },
+    waiting_limit: { icon: "◔", label: "Waiting for tomorrow's listing limit", tone: "warning" },
+    running: { icon: "●", label: "Being created at Etsy", tone: "accent" },
+    active: { icon: "✓", label: "Live on Etsy", tone: "good" },
+    draft: { icon: "!", label: "A draft at Etsy: finish it there", tone: "warning" },
+    failed: { icon: "✕", label: "Not listed", tone: "critical" },
+    unclear: { icon: "!", label: "Unclear whether it was created", tone: "critical" },
   };
 
   function limitText(email) {
@@ -2095,6 +2109,7 @@
     var content;
     if (executor === "email") content = emailDraft(action, final);
     else if (executor === "reddit_link") content = redditDraft(action);
+    else if (executor === "etsy_listing") content = etsyDraft(action, final);
     else {
       content = payload ? h("div", { class: "payload-wrap" },
         final ? h("h4", { class: "small-head", text: "The agent's original" }) : null,
@@ -2107,7 +2122,7 @@
     return [
       h("div", { class: "item-head" },
         h("h3", { text: a.title || "Untitled request" }), plainChip(APPROVAL_TYPES[a.type] || sentence(String(a.type || "other").replace(/_/g, " "))),
-        executor ? plainChip(executor === "email" ? "Email" : "Reddit") : null,
+        executor ? plainChip(executor === "email" ? "Email" : executor === "etsy_listing" ? "Etsy" : "Reddit") : null,
         statusChip, a.simulated ? testTag() : null),
       a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
       executor === "email" && a.first_contact ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
@@ -2115,9 +2130,10 @@
       note ? h("p", { class: "todo-note" }, h("span", { "aria-hidden": "true", text: "☐ " }), note) : null,
       a.status === "pending" && executor === "email" ? h("p", { class: "send-note", text: sendNote(email, name) }) : null,
       a.status === "pending" && executor === "reddit_link" ? h("p", { class: "send-note", text: "After you approve, you post it yourself: this card then offers a button that opens Reddit with it filled in, and Copy buttons." }) : null,
+      a.status === "pending" && executor === "etsy_listing" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this listing in your Etsy shop itself: a draft, its photos and files, then live. Etsy charges USD 0.20 per listing." }) : null,
       executionView(a, email),
       final ? h("div", { class: "final-wrap" },
-        h("h4", { class: "small-head", text: executor === "email" ? "Your version of the body (" + name + " sends this)" : "Your version (the agent must use this)" }),
+        h("h4", { class: "small-head", text: executor === "email" ? "Your version of the body (" + name + " sends this)" : executor === "etsy_listing" ? "Your version (" + name + " lists this)" : "Your version (the agent must use this)" }),
         h("pre", { class: "payload final capped", tabindex: "0", text: final })) : null,
       content,
       h("dl", { class: "item-grid" },
@@ -2163,9 +2179,52 @@
       h("pre", { class: "payload capped", tabindex: "0", "data-copy": "body", text: asText(action.body) }));
   }
 
+  function listingExecutionView(a, st) {
+    var ex = isObject(a.execution) ? a.execution : {};
+    var name = agentName();
+    var detail;
+    if (st === "waiting") detail = [name + " creates it by itself shortly; it checks for approved listings every few minutes."];
+    else if (st === "waiting_limit") detail = [name + " has created its listings for today, so this one waits for tomorrow's limit."];
+    else if (st === "running") detail = ex.started_at ? ["Creating it at Etsy since ", timeEl(ex.started_at), "."] : ["Creating it now."];
+    else if (st === "active") detail = ["Live since ", timeEl(ex.finished_at || ex.started_at), ex.url ? [": ", etsyLink(ex.url, ex.url)] : "."];
+    else if (st === "draft") detail = [ex.result ? endSentence(sentence(ex.result)) : "It stayed a draft at Etsy: finish it there."];
+    else if (st === "failed") detail = [ex.error ? "Not listed: " + endSentence(ex.error) : "Not listed."];
+    else if (st === "unclear") detail = ["It is unclear whether Etsy created it" + (ex.error ? " (" + String(ex.error).replace(/\.$/, "") + ")" : "") + ". " + name +
+      " won't try again; check your listings and drafts at Etsy."];
+    else detail = [ex.error ? String(ex.error) : ""];
+    return h("div", { class: "execution", "data-status": st },
+      h("p", { class: "execution-head" }, chip(LISTING_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
+      h("p", { class: "execution-detail" }, detail));
+  }
+
+  // A listing the agent proposed: its words, and its photos and files as they are in the workspace now (Ember
+  // uploads them only if they are still exactly the ones proposed).
+  function etsyDraft(action, final) {
+    var photos = arr(action.photos);
+    var files = arr(action.files);
+    return h("div", { class: "draft" },
+      h("p", { class: "payload-note" }, h("span", { "aria-hidden": "true", text: "! " }), "Written by the agent; check it before acting."),
+      photos.length ? h("div", { class: "etsy-photos" }, photos.map(function (p, i) {
+        return h("a", { href: wsProductUrl(String(p.path), true), target: "_blank", rel: "noopener", title: String(p.path) },
+          h("img", { src: wsProductUrl(String(p.path), true), alt: (i === 0 ? "Main photo: " : "Photo: ") + String(p.path), loading: "lazy" }));
+      })) : null,
+      h("dl", { class: "draft-grid" },
+        h("dt", { text: "Title" }), h("dd", { text: asText(action.title) || "–" }),
+        h("dt", { text: "Price" }), h("dd", { text: asText(action.price) + " " + asText(action.currency) }),
+        h("dt", { text: "Tags" }), h("dd", { text: arr(action.tags).map(asText).join(", ") || "–" }),
+        h("dt", { text: "Category" }), h("dd", { text: asText(action.category) || "–" }),
+        h("dt", { text: "Files" }), h("dd", null, files.map(function (f, i) {
+          return [i ? ", " : "", h("a", { href: wsProductUrl(String(f.path), false), text: String(f.path) }), " (" + byteSize(num(f.bytes) || 0) + ")"];
+        }))),
+      h("h4", { class: "small-head", text: final ? "The agent's original description" : "Description" }),
+      h("pre", { class: "payload capped", tabindex: "0", text: asText(action.description) }),
+      h("p", { class: "muted small", text: "Ember adds this line at the end: \"This digital product was designed with the help of AI and reviewed by the seller before listing.\"" }));
+  }
+
   function executionView(a, email) {
     var st = executionStatus(a);
     if (!st) return null;
+    if (executorOf(a) === "etsy_listing") return listingExecutionView(a, st);
     var ex = isObject(a.execution) ? a.execution : {};
     var name = agentName();
     var limit = limitText(email);
@@ -2246,6 +2305,10 @@
         var st = executionStatus(a);
         return st === "waiting" || st === "waiting_limit" ? [panelButton(it, "failed", "Cancel sending", true)] : [];
       }
+      if (executor === "etsy_listing") {
+        var ls = executionStatus(a);
+        return ls === "waiting" || ls === "waiting_limit" ? [panelButton(it, "failed", "Cancel listing", true)] : [];
+      }
       var tools = [];
       if (executor === "reddit_link") {
         tools.push(redditLink(a.reddit_url) || h("span", { class: "muted small no-link", text: "No Reddit link (it isn't a www.reddit.com address): copy the text instead." }));
@@ -2266,8 +2329,9 @@
     var name = agentName();
     var executor = executorOf(a);
     if (mode === "approve" || mode === "approve_with_changes" || mode === "reject") {
-      // For an email only the body can be changed; the server stores the edited body as final_payload.
-      var original = executor === "email" ? asText(a.action.body) : asText(a.payload);
+      // For an email only the body can be changed; the server stores the edited body as final_payload. For a
+      // listing: its title, price, tags and description (the server's "editable" text), not its files.
+      var original = executor === "email" ? asText(a.action.body) : executor === "etsy_listing" ? asText(a.editable || a.payload) : asText(a.payload);
       var limit = limitText(email);
       var approveIntro = "After approving, carry it out yourself, then mark it done or failed here. " + name + " sees your decision on its next wake.";
       if (executor === "email") {
@@ -2275,11 +2339,17 @@
           ", with a footer saying an AI agent wrote it.";
       } else if (executor === "reddit_link") {
         approveIntro = "After approving, you post it yourself: this card then offers a button that opens Reddit with it filled in, and Copy buttons. You can still edit it on Reddit before you post.";
+      } else if (executor === "etsy_listing") {
+        approveIntro = name + " then creates this listing in your Etsy shop itself, with the photos and files shown, and publishes it (Etsy charges USD 0.20). You hear the result on this card.";
       }
       var specs = {
         approve: { title: executor === "email" ? "Approve this email" : "Approve this request", submit: "Approve",
           intro: [h("p", { text: approveIntro })], fields: [COMMENT_FIELD] },
-        approve_with_changes: executor === "email"
+        approve_with_changes: executor === "etsy_listing"
+          ? { title: "Approve with your changes to the listing", submit: "Approve with changes",
+            intro: [h("p", { text: "Change the title, price, tags or description: " + name + " lists your version. Keep the Title:, Price: and Tags: lines, then an empty line, then the description. The photos, files and category stay as they are." })],
+            fields: [{ name: "final_payload", label: "The listing (" + name + " lists your version)", rows: 14, value: original, max: 8000, required: true, missing: "Write the listing " + name + " should create." }, COMMENT_FIELD] }
+          : executor === "email"
           ? { title: "Approve with your changes to the body", submit: "Approve with changes",
             intro: [h("p", { text: "Edit the body: " + name + " sends your version. The recipient, the subject and the footer stay as they are. If you leave it as it is, this is recorded as a plain approval." })],
             fields: [{ name: "final_payload", label: "Body (" + name + " sends your version)", rows: 10, value: original, max: 8000, required: true, missing: "Write the body " + name + " should send." }, COMMENT_FIELD] }
@@ -2312,6 +2382,7 @@
           return "Approved. " + name + " sends it itself; this card shows when it's sent.";
         }
         if (executor === "reddit_link") return "Approved. Post it with the button below, then mark it done or failed.";
+        if (executor === "etsy_listing") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " creates the listing itself; this card shows when it's live.";
         if (mode === "approve_with_changes" && st === "approved") return "Approved as it was (the text was unchanged). Carry it out, then mark it done or failed.";
         if (mode === "approve_with_changes") return "Approved with your changes. Carry it out with your version, then mark it done or failed.";
         return "Approved. Carry it out, then mark it done or failed.";
@@ -2319,6 +2390,16 @@
       return spec;
     }
     var failed = mode === "failed";
+    if (executor === "etsy_listing" && failed) {
+      return {
+        mode: mode, title: "Cancel this listing?", submit: "Cancel listing", danger: true, cancelLabel: "Keep it",
+        intro: [h("p", { text: name + " won't create it. The request is marked failed, and " + name + " sees that on its next wake." })],
+        fields: [{ name: "result_note", label: "Why (" + name + " reads it)", rows: 2, max: 2000, required: true, value: "Cancelled before it was listed.", missing: "Say why you cancel it." }],
+        url: url + "close",
+        body: function (v) { return { outcome: "failed", expected_version: version, result_note: v.result_note }; },
+        done: function () { return "Cancelled. " + name + " won't create this listing."; },
+      };
+    }
     if (executor === "email" && failed) {
       // "Cancel sending": closes the waiting email as failed, so the agent's code never sends it.
       return {
@@ -2948,6 +3029,172 @@
     ]);
   }
 
+  // ---- System -> Etsy (0.8.0): the shop, connecting it, what Ember listed and the orders it brought.
+
+  var ETSY_STATUS = {
+    ok: { icon: "✓", label: "Connected", tone: "good" },
+    not_connected: { icon: "○", label: "Not connected", tone: "warning" },
+    not_configured: { icon: "○", label: "Not set up", tone: "warning" },
+    disabled: { icon: "–", label: "Off", tone: "" },
+  };
+
+  var LISTING_STATUS = {
+    running: { icon: "●", label: "Being created", tone: "accent" },
+    active: { icon: "✓", label: "Live", tone: "good" },
+    draft: { icon: "!", label: "Draft at Etsy", tone: "warning" },
+    failed: { icon: "✕", label: "Not listed", tone: "critical" },
+    unclear: { icon: "!", label: "Unclear", tone: "critical" },
+  };
+
+  // A link only to www.etsy.com over https; anything else is shown as text.
+  function etsyLink(value, text) {
+    var url;
+    try { url = new URL(String(value)); } catch (e) { url = null; }
+    if (!url || !/^https:$/.test(url.protocol) || url.hostname !== "www.etsy.com" || url.port || url.username || url.password) {
+      return h("span", { class: "link-text", text: text || String(value || "–") });
+    }
+    var a = document.createElement("a");
+    a.setAttribute("href", url.href);
+    a.setAttribute("rel", "noopener noreferrer");
+    a.setAttribute("target", "_blank");
+    append(a, [text || url.href, h("span", { class: "visually-hidden", text: " (opens in a new tab)" })]);
+    return a;
+  }
+
+  function etsyInfo(d) {
+    return isObject(d.integrations) && isObject(d.integrations.etsy) ? d.integrations.etsy : null;
+  }
+
+  function renderEtsy(d) {
+    var e = etsyInfo(d);
+    $("etsy-card").hidden = !e;
+    if (!e) { replace($("etsy-facts"), []); replace($("etsy-listings"), []); replace($("etsy-orders"), []); return; }
+    var fake = e.mode === "fake";
+    var reason = e.reason ? String(e.reason) : null;
+    if (!reason && e.status === "not_configured") reason = "Not set up: see the Documentation tab, 'Etsy'.";
+    if (!reason && e.status === "disabled") reason = "Off: see the Documentation tab, 'Etsy', to set it up.";
+    replace($("etsy-facts"), [
+      h("dt", { text: "Status" }), h("dd", null, chip(ETSY_STATUS, e.status, sentence(String(e.status || "unknown").replace(/_/g, " ")))),
+      reason && (e.status !== "ok" || fake) ? [h("dt", { text: fake ? "Mode" : "Why" }), h("dd", { class: "pre-line", text: reason })] : null,
+      h("dt", { text: "Shop" }), h("dd", null, e.shop_name ? (fake ? h("span", { text: String(e.shop_name) + " (fake)" }) : etsyLink(e.shop_url, String(e.shop_name))) : "–"),
+      e.connected_at ? [h("dt", { text: "Connected" }), h("dd", null, timeEl(e.connected_at, fmtDateTime(e.connected_at)))] : null,
+      e.refresh_expires_at ? [h("dt", { text: "Connection valid until" }), h("dd", null, timeEl(e.refresh_expires_at, fmtDateTime(e.refresh_expires_at)),
+        h("span", { class: "muted small", text: " (renewed while Ember uses it)" }))] : null,
+      h("dt", { text: "Listings today" }), h("dd", { text: count(e.created_today) + " (limit: " + count(e.daily_limit) + " a day)" +
+        (num(e.waiting) ? "; " + plural(num(e.waiting), "approved listing") + " waiting" : "") }),
+      h("dt", { text: "Last check" }), h("dd", null, e.last_sync_at ? timeEl(e.last_sync_at, fmtDateTime(e.last_sync_at) + " (" + relTime(e.last_sync_at) + ")") : "Never"),
+      e.last_error ? [h("dt", { text: "Last error" }), h("dd", { class: "fact-error" }, h("span", { "aria-hidden": "true", text: "✕ " }), String(e.last_error))] : null,
+    ]);
+    replace($("etsy-connect"), fake ? [] : [etsyConnectArea(e)]);
+    var listings = arr(e.listings);
+    replace($("etsy-listings"), listings.length ? h("div", { class: "table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, ["Listing", "Status", "Views", "Favorites", "Since"].map(function (c) { return h("th", { scope: "col", text: c }); }))),
+      h("tbody", null, listings.map(function (l) {
+        return h("tr", null,
+          h("td", null, l.url && !fake ? etsyLink(l.url, asText(l.title)) : h("span", { text: asText(l.title) }),
+            l.listing_id ? h("span", { class: "muted small", text: " #" + l.listing_id }) : null,
+            l.error ? h("p", { class: "muted small pre-line", text: asText(l.error) }) : null),
+          h("td", null, chip(LISTING_STATUS, l.status, sentence(String(l.status || "?"))), l.state && l.state !== l.status ? h("span", { class: "muted small", text: " (" + asText(l.state) + ")" }) : null),
+          h("td", { class: "num", text: l.views === null || l.views === undefined ? "–" : count(l.views) }),
+          h("td", { class: "num", text: l.favorites === null || l.favorites === undefined ? "–" : count(l.favorites) }),
+          h("td", null, timeEl(l.started_at, fmtDate(l.started_at))));
+      })))) : h("p", { class: "muted", text: "None yet. When you approve a listing the agent proposed, Ember creates it here." }));
+    var orders = arr(e.orders);
+    replace($("etsy-orders"), orders.length ? h("div", { class: "table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, ["Ordered", "Total", "Listings", "Revenue"].map(function (c) { return h("th", { scope: "col", text: c }); }))),
+      h("tbody", null, orders.map(function (o) {
+        return h("tr", null,
+          h("td", null, timeEl(o.ordered_at, fmtDateTime(o.ordered_at))),
+          h("td", { class: "num", text: asText(o.total) }),
+          h("td", { text: arr(o.items).map(function (i) { return asText(i.title) + (num(i.quantity) > 1 ? " × " + i.quantity : ""); }).join("; ") }),
+          h("td", null, o.recorded ? h("span", { class: "muted small", text: "Recorded" }) : recordOrderButton(o, fake)));
+      })))) : h("p", { class: "muted", text: "No orders with Ember's listings yet." }));
+  }
+
+  // Revenue is only ever recorded by the owner: this opens the revenue form filled in from the order (its key
+  // makes sure one order is never recorded twice).
+  function recordOrderButton(o, fake) {
+    var b = h("button", { type: "button", class: "btn btn-small", text: "Record as revenue" });
+    b.addEventListener("click", function () {
+      var cents = num(o.total_cents);
+      openLedgerForm("revenue", isNaN(cents) ? null : (cents / 100).toFixed(2), {
+        currency: o.currency === "EUR" ? "EUR" : "USD",
+        source: "Etsy order " + o.receipt_id,
+        day: String(o.ordered_at || "").slice(0, 10),
+        idKey: String(o.revenue_key || ""),
+        testMoney: fake,
+      });
+    });
+    return b;
+  }
+
+  // Connecting is two steps: Etsy's page (in a new tab), then the address it sends you to, pasted here. The
+  // controls are built once, so a refresh of the dashboard never loses a pasted address.
+  function etsyConnectArea(e) {
+    var c = ui.etsyConnect;
+    if (!c) {
+      c = ui.etsyConnect = { url: null };
+      c.status = h("p", { class: "form-status small", role: "status" });
+      c.start = h("button", { type: "button", class: "btn btn-primary", text: "Connect your Etsy shop" });
+      c.linkBox = h("div", { class: "etsy-step", hidden: true });
+      var addressId = "etsy-address";
+      c.address = h("input", { type: "url", id: addressId, autocomplete: "off", spellcheck: "false", placeholder: "The whole address, with its code and state" });
+      c.finish = h("button", { type: "button", class: "btn btn-primary", text: "Finish connecting" });
+      c.pasteBox = h("div", { class: "etsy-step field", hidden: true },
+        h("label", { for: addressId, text: "2. Paste the address Etsy sent you to" }),
+        h("p", { class: "hint", text: "After you allow access, Etsy opens your redirect address. It may show an error page: that's fine. Copy the whole address from the address bar and paste it here." }),
+        c.address, h("div", { class: "form-actions" }, c.finish));
+      c.disconnect = h("button", { type: "button", class: "btn btn-danger", text: "Disconnect" });
+      c.start.addEventListener("click", function () {
+        c.start.disabled = true;
+        c.status.textContent = "Asking Ember for Etsy's page…";
+        request("POST", "api/etsy/connect", {}).then(function (res) {
+          if (!res.ok) throw httpError(res);
+          c.url = String(res.data.authorize_url || "");
+          replace(c.linkBox, [h("p", null, h("strong", { text: "1. Allow Ember's access at Etsy: " }), etsyLink(c.url, "open Etsy's page")),
+            h("p", { class: "muted small", text: "Log in as the shop's owner and allow access. The page is valid for 15 minutes." })]);
+          c.linkBox.hidden = false;
+          c.pasteBox.hidden = false;
+          c.status.textContent = "";
+        }).catch(function (err) {
+          c.status.textContent = "Couldn't start connecting (" + errorText(err) + ").";
+        }).then(function () { c.start.disabled = false; });
+      });
+      c.finish.addEventListener("click", function () {
+        var address = c.address.value.trim();
+        if (!address) { c.status.textContent = "Paste the address first."; return; }
+        c.finish.disabled = true;
+        c.status.textContent = "Connecting…";
+        request("POST", "api/etsy/finish", { address: address }).then(function (res) {
+          if (!res.ok) throw httpError(res);
+          c.status.textContent = "Connected to " + asText(res.data.shop_name) + ".";
+          c.address.value = "";
+          c.linkBox.hidden = c.pasteBox.hidden = true;
+          refresh();
+        }).catch(function (err) {
+          c.status.textContent = "Not connected: " + errorText(err) + ".";
+        }).then(function () { c.finish.disabled = false; });
+      });
+      c.disconnect.addEventListener("click", function () {
+        if (!window.confirm("Disconnect the Etsy shop? Ember can't create listings until you connect it again. Listings already on Etsy stay there.")) return;
+        request("POST", "api/etsy/disconnect", {}).then(function (res) {
+          if (!res.ok) throw httpError(res);
+          c.status.textContent = "Disconnected.";
+          refresh();
+        }).catch(function (err) { c.status.textContent = "Couldn't disconnect (" + errorText(err) + ")."; });
+      });
+      c.wrap = h("div", { class: "etsy-connect" });
+    }
+    var connected = e.status === "ok";
+    c.start.textContent = connected ? "Connect again" : "Connect your Etsy shop";
+    var canConnect = e.status === "ok" || e.status === "not_connected";
+    replace(c.wrap, [
+      canConnect ? h("div", { class: "form-actions" }, c.start, connected ? c.disconnect : null) : null,
+      c.linkBox, c.pasteBox, c.status,
+    ]);
+    return c.wrap;
+  }
+
   function renderTransitions(list) {
     replace($("transitions"), list.length ? list.map(function (t) {
       return h("li", null,
@@ -3547,9 +3794,21 @@
     if (f === ui.correction) $("ledger-title").focus();
   }
 
-  function openLedgerForm(key, amount) {
+  function openLedgerForm(key, amount, prefill) {
     selectTab("ledger", false);
     openForm(key, true, amount);
+    var f = ui.forms[key];
+    if (!f || !prefill) return;
+    // An Etsy order: its currency, source and day, and a key of its own, so it can't be recorded twice.
+    if (prefill.currency && f.fields.amount && f.fields.amount.currency) {
+      f.fields.amount.currency.value = prefill.currency;
+      f.fields.amount.currency.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    if (prefill.source && f.fields.source) f.fields.source.control.value = prefill.source;
+    if (prefill.day && f.fields.day) f.fields.day.control.value = prefill.day;
+    if (prefill.testMoney && f.fields.test_money && !f.fields.test_money.wrap.hidden) f.fields.test_money.control.checked = true;
+    if (prefill.idKey) f.idKey = prefill.idKey;
+    updatePreview(f);
   }
 
   function openCorrection(entry) {
