@@ -24,7 +24,7 @@ from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
 from . import store
-from .memory import Memory
+from .memory import CAPS, Memory
 from .news import CHANGELOG_LIMIT, Item, News, Shown
 from .sandbox import Jail
 from .store import AgentScope
@@ -38,8 +38,20 @@ RESEARCH_CHARS = 200  # of each question and digest
 # Ember's mailbox (only when it has one): its address and the newest unread emails, sender and subject quoted.
 MAIL_BUDGET = 600
 MAIL_SHOWN = 3
+# The owner's standing instructions (at most 1,500 characters, JSON-quoted), in every plan and work step.
+INSTRUCTIONS_HEADING = "YOUR OWNER'S STANDING INSTRUCTIONS"
+INSTRUCTIONS_BUDGET = 1_700
+# When the lessons file holds more than this share of its cap, or notes outdated since 0.4.0, the planner is asked
+# to rewrite it (the note takes the room of the oldest lessons it shows).
+LESSONS_FULL = 0.7
+# Outdated since 0.4.0: write_journal only in some phase (it works whenever the agent is done), and the length limits
+# of tool fields (tools show them, and cut notes): a line naming a tool or field (snake_case) and a length.
+_PHASE = re.compile(r"\b(?:phase|reflect)", re.IGNORECASE)
+_CODE_NAME = re.compile(r"\b[a-z]+(?:_[a-z]+)+\b")
+_LENGTH = re.compile(r"\b\d[\d,.]*\s*(?:chars?|characters)\b|\blength\b|\btoo long\b|\bmaxlength\b", re.IGNORECASE)
 PLANNER_BUDGETS = {
     "status": 500,
+    "instructions": INSTRUCTIONS_BUDGET,
     "news": 2_300,
     "software": CHANGELOG_LIMIT,
     "projects": 2_000,
@@ -57,11 +69,11 @@ PLANNER_BUDGETS = {
 OWNER_BUDGET = 2_300
 QUOTE_CAP = 300  # characters of each text quoted in a decision or upgrade line, when the owner's news is shortened
 SHORTEST_QUOTE = 40  # no quoted text is shortened below this; if that isn't enough, the last lines are cut
-# The owner's, the mail and the research sections (and their headings) come on top of the brief's budget, so they
-# never squeeze the rest.
+# The owner's (standing instructions and news), the mail and the research sections (and their headings) come on top
+# of the brief's budget, so they never squeeze the rest.
 BRIEF_BUDGET = 5_000
 # The largest brief, those sections and their headings included: the WORK and REFLECT profiles are measured on it.
-BRIEF_MAX = BRIEF_BUDGET + OWNER_BUDGET + MAIL_BUDGET + RESEARCH_BUDGET + 150
+BRIEF_MAX = BRIEF_BUDGET + INSTRUCTIONS_BUDGET + OWNER_BUDGET + MAIL_BUDGET + RESEARCH_BUDGET + 200
 WILL_BUDGET = 4_500 + OWNER_BUDGET + 100  # the largest will context: the LAST_WILL profile is measured on it
 _QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')  # a JSON string: how the owner's and the agent's texts are quoted
 _DIGEST = re.compile(r'<data src="research" id="[0-9a-f]+">\n(.*?)\n</data id="[0-9a-f]+">', re.DOTALL)
@@ -135,6 +147,7 @@ class Snapshot:
     news: News = field(default_factory=News)
     research: list[sqlite3.Row] = field(default_factory=list)
     mail: MailView | None = None  # None: Ember has no mailbox (then there is no MAIL section)
+    instructions: str = ""  # the owner's standing instructions ("" while there are none)
 
 
 def snapshot(
@@ -175,6 +188,7 @@ def snapshot(
     ).fetchone()
     journal = store.journal(conn, scope, 5)
     files = _safe_listing(workspace)
+    standing = store.standing_instructions(conn, scope)
     return Snapshot(
         status=status,
         local_time=local_time,
@@ -195,6 +209,7 @@ def snapshot(
         news=news or News(),
         research=store.recent_research(conn, scope, RESEARCH_CALLS),
         mail=mail,
+        instructions=standing["text"] if standing else "",
     )
 
 
@@ -400,6 +415,58 @@ def mail_section(s: Snapshot) -> list[tuple[str, str]]:
     return [("MAIL", cut(mail_text(s), MAIL_BUDGET))] if s.mail is not None else []
 
 
+def instructions_text(s: Snapshot, budget: int = INSTRUCTIONS_BUDGET) -> str:
+    """The owner's standing instructions, JSON-quoted (so they can't pose as a heading), in ``budget`` bytes; empty
+    while there are none. Instructions that don't fit (many multibyte characters, or a smaller planner) keep their
+    start and their end, like a shortened message."""
+    text = s.instructions.strip()
+    if not text:
+        return ""
+    if json_bytes(_quote(text)) <= budget:
+        return _quote(text)
+    chars = _largest(SHORTEST_QUOTE, len(text), lambda n: json_bytes(_quote(text, n)) <= budget)
+    return cut(_quote(text, chars), budget)
+
+
+def instructions_section(s: Snapshot, budget: int = INSTRUCTIONS_BUDGET) -> list[tuple[str, str]]:
+    text = instructions_text(s, budget)
+    return [(INSTRUCTIONS_HEADING, text)] if text else []
+
+
+def lessons_note(s: Snapshot) -> str:
+    """For the planner only: a request to rewrite the lessons when they fill most of their file or hold notes that are
+    outdated since 0.4.0 (empty otherwise)."""
+    lessons = s.memory.get("lessons", "")
+    size = len(lessons.encode("utf-8"))
+    full = size > CAPS["lessons"] * LESSONS_FULL
+    outdated = any(
+        ("write_journal" in line and _PHASE.search(line)) or (_CODE_NAME.search(line) and _LENGTH.search(line))
+        for line in lessons.splitlines()
+    )
+    if not full and not outdated:
+        return ""
+    why = []
+    if full:
+        why.append(f"holds {size:,} of {CAPS['lessons']:,} bytes")
+    if outdated:
+        why.append(
+            "has outdated notes (since 0.4.0 write_journal works whenever you are done, and tools show their length"
+            " limits)"
+        )
+    return (
+        f"Memory check: lessons.md {' and '.join(why)}. Plan one step that rewrites it (memory_update lessons replace),"
+        " keeping only what still helps you earn money."
+    )
+
+
+def _lessons(s: Snapshot, budget: int) -> str:
+    """The planner's LESSONS: the newest lessons that fit, and the memory check's note after them (in the budget)."""
+    note = lessons_note(s)
+    room = budget - (json_bytes("\n" + note) - 2 if note else 0)
+    lessons = cut(_newest_lines(s.memory.get("lessons", ""), room), room) if room > 0 else ""
+    return "\n".join(part for part in (lessons, note) if part)
+
+
 def _sections(parts: list[tuple[str, str]]) -> str:
     return "\n\n".join(f"== {title} ==\n{body}" for title, body in parts)
 
@@ -415,6 +482,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
     research = research_text(s)
     parts = [
         ("STATUS", cut(status_text(s, dry_run), b["status"])),
+        *instructions_section(s, b["instructions"]),
         ("SINCE YOUR LAST WAKE", since),
         *([("YOUR SOFTWARE", software)] if s.news.changelog else []),
         ("OPEN PROJECTS", cut(project_lines(s), b["projects"])),
@@ -422,7 +490,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *([("MAIL", cut(mail_text(s), b["mail"]))] if s.mail is not None else []),
         ("STRATEGY", cut(s.memory.get("strategy", ""), b["strategy"])),
         ("IDENTITY", cut(s.memory.get("identity", ""), b["identity"])),
-        ("LESSONS (newest last)", cut(_newest_lines(s.memory.get("lessons", ""), b["lessons"]), b["lessons"])),
+        ("LESSONS (newest last)", _lessons(s, b["lessons"])),
         ("WORKSPACE", cut("\n".join(s.workspace) or "Empty.", b["workspace"])),
         *([(RESEARCH_HEADING, cut(research, b["research"]))] if research else []),
         ("TASK", "Plan this wake cycle. Reply with the JSON plan only."),
@@ -435,7 +503,8 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
 def brief(
     s: Snapshot, dry_run: bool, plan: dict[str, Any], focus: sqlite3.Row | None, max_steps: int
 ) -> tuple[str, Shown]:
-    """The act phase's brief (the same for every step and the reflection), and which of the owner's items it shows."""
+    """The act phase's brief (the same for every step and the reflection: built from the cycle's snapshot only), and
+    which of the owner's items it shows."""
     focus_text = "None."
     if focus is not None:
         focus_text = (
@@ -446,6 +515,7 @@ def brief(
     steps = "\n".join(f"{i}. {step}" for i, step in enumerate(plan.get("steps", []), 1))
     money = f"\nPath to money: {plan['money_path']}" if plan.get("money_path") else ""
     head = [("STATUS", status_text(s, dry_run)), ("PLAN", f"Goal: {plan.get('goal', '')}{money}\n{steps}")]
+    standing = instructions_section(s)
     owner, lines, too_long = _owner(s, OWNER_BUDGET)
     owners = [("FROM YOUR OWNER", owner)] if owner else []
     mailed = mail_section(s)
@@ -453,6 +523,7 @@ def brief(
     researched = [(RESEARCH_HEADING, research)] if research else []
     parts = [
         *head,
+        *standing,
         *owners,
         *mailed,
         ("FOCUS", focus_text),
@@ -461,10 +532,10 @@ def brief(
         *researched,
         ("LIMITS", f"At most {max_steps} steps this cycle and 4 tool calls per step. Stop when the goal is reached."),
     ]
-    on_top = [*owners, *mailed, *researched]
+    on_top = [*standing, *owners, *mailed, *researched]
     room = sum(json_bytes(f"\n\n== {title} ==\n{body}") - 2 for title, body in on_top)  # - 2: its own JSON quotes
     text = cut(_sections(parts), BRIEF_BUDGET + room)
-    held = _held(text, _sections(head) + "\n\n== FROM YOUR OWNER ==\n", lines)
+    held = _held(text, _sections([*head, *standing]) + "\n\n== FROM YOUR OWNER ==\n", lines)
     # A message longer than the brief can ever hold is shown in full as far as it can be.
     full = frozenset(item for item, shown_whole in held.items() if shown_whole or item == too_long)
     return text, Shown(full, listed=frozenset(held))
