@@ -148,3 +148,12 @@ def test_tool_definitions_match_the_validation() -> None:
         assert schema["additionalProperties"] is False
         assert set(schema["properties"]) == set(spec.fields)
         assert set(schema["required"]) == {n for n, f in spec.fields.items() if f.required}
+
+
+def test_the_owners_knowledge_is_in_every_plan_and_work_step() -> None:
+    known = prompts.knowledge()
+    assert known.startswith("WHAT YOUR OWNER HAS LEARNED ABOUT THE OUTSIDE WORLD")
+    for request in (prompts.plan_request(SETTINGS, "context"), prompts.work_request(SETTINGS, "brief", [])):
+        assert any(block["text"] == known for block in request["system"])
+    work = prompts.work_request(SETTINGS, "brief", [])["system"]
+    assert "cache_control" in work[-1] and "cache_control" not in work[1]  # cached together with the rules

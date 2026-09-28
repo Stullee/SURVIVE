@@ -16,6 +16,8 @@ ROOT_DIR = APP_DIR.parent
 WEB_DIR = APP_DIR / "web"
 MIGRATIONS_DIR = APP_DIR / "migrations"
 CONSTITUTION_PATH = APP_DIR / "agent" / "constitution.md"
+# Facts the owner collected about the outside world; shipped with each release, shown in every plan and work step.
+KNOWLEDGE_PATH = APP_DIR / "agent" / "knowledge.md"
 MANIFEST_PATH = ROOT_DIR / "config.yaml"
 CHANGELOG_PATH = ROOT_DIR / "CHANGELOG.md"
 

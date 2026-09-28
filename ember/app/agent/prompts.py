@@ -108,6 +108,12 @@ def constitution(settings: Settings) -> str:
     return _constitution_template().replace("{agent_name}", settings.agent_name)
 
 
+@cache
+def knowledge() -> str:
+    """The owner's collected facts about the outside world (knowledge.md), the same for every call of a release."""
+    return paths.KNOWLEDGE_PATH.read_text(encoding="utf-8").strip()
+
+
 def _text(text: str, **extra: Any) -> dict[str, Any]:
     return {"type": "text", "text": text, **extra}
 
@@ -117,7 +123,7 @@ def plan_request(settings: Settings, context: str) -> dict[str, Any]:
         "model": settings.planner_model,
         "max_tokens": PLAN_MAX_TOKENS,
         "thinking": THINKING,
-        "system": [_text(constitution(settings)), _text(PLANNER_RULES)],
+        "system": [_text(constitution(settings)), _text(knowledge()), _text(PLANNER_RULES)],
         "output_config": {"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
         "messages": [{"role": "user", "content": [_text(context)]}],
     }
@@ -129,7 +135,11 @@ def work_request(settings: Settings, brief: str, turns: list[dict[str, Any]], *,
         "model": settings.worker_model,
         "max_tokens": WORK_MAX_TOKENS,
         "thinking": THINKING,
-        "system": [_text(constitution(settings)), _text(OPERATING_RULES, cache_control={"type": "ephemeral"})],
+        "system": [
+            _text(constitution(settings)),
+            _text(knowledge()),
+            _text(OPERATING_RULES, cache_control={"type": "ephemeral"}),
+        ],
         "tools": tools.definitions(),
         "tool_choice": {"type": "none"} if final else {"type": "auto"},
         "cache_control": {"type": "ephemeral"},

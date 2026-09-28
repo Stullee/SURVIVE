@@ -3340,28 +3340,22 @@
     });
   }
 
-  // The Clipboard API needs a secure context, and Home Assistant is often opened over plain http.
-  function copyDiagnostics() {
-    var text = ui.diag.text;
-    if (typeof text !== "string") return;
-    var size = byteSize(reportBytes(text));
-    var done = function () { setDiagStatus("Copied the report (" + size + ") to the clipboard.", "ok"); };
+  // Copies text to the clipboard. The Clipboard API needs a secure context, and Home Assistant is often opened over
+  // plain http: then the element showing the text is selected and copied with execCommand. If that fails too,
+  // fail(true) leaves the text selected for Ctrl+C; fail(false) means nothing could be selected.
+  function copyText(text, el, done, fail) {
     if (window.isSecureContext && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-      navigator.clipboard.writeText(text).then(done, function () { copyBySelection(done); });
+      navigator.clipboard.writeText(text).then(done, function () { copyBySelection(el, done, fail); });
     } else {
-      copyBySelection(done);
+      copyBySelection(el, done, fail);
     }
   }
 
-  function copyBySelection(done) {
-    var pre = $("diag-report");
+  function copyBySelection(el, done, fail) {
     var sel = window.getSelection ? window.getSelection() : null;
-    if (!sel || !document.createRange) {
-      setDiagStatus("This browser can't copy for you. Select the report below and copy it with Ctrl+C (Cmd+C on a Mac).", "error");
-      return;
-    }
+    if (!el || !sel || !document.createRange) { fail(false); return; }
     var range = document.createRange();
-    range.selectNodeContents(pre);
+    range.selectNodeContents(el);
     sel.removeAllRanges();
     sel.addRange(range);
     var ok = false;
@@ -3370,8 +3364,18 @@
       sel.removeAllRanges();
       done();
     } else {
-      setDiagStatus("The browser didn't allow copying. The whole report is selected: press Ctrl+C (Cmd+C on a Mac) to copy it.", "error");
+      fail(true);
     }
+  }
+
+  function copyDiagnostics() {
+    var text = ui.diag.text;
+    if (typeof text !== "string") return;
+    var size = byteSize(reportBytes(text));
+    copyText(text, $("diag-report"), function () { setDiagStatus("Copied the report (" + size + ") to the clipboard.", "ok"); }, function (selected) {
+      setDiagStatus(selected ? "The browser didn't allow copying. The whole report is selected: press Ctrl+C (Cmd+C on a Mac) to copy it."
+        : "This browser can't copy for you. Select the report below and copy it with Ctrl+C (Cmd+C on a Mac).", "error");
+    });
   }
 
   function downloadDiagnostics() {
