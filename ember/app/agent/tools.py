@@ -221,8 +221,8 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "set_sleep",
-            "Choose how long to sleep after this cycle (it is clamped to the allowed range). Sleeping longer "
-            "saves money.",
+            "Choose how long to sleep after this cycle (it is clamped to the allowed range). Sleep long only when "
+            "nothing useful is left to do.",
             {"minutes": _i("Minutes until the next wake-up.", minimum=1), "reason": _s("Why.", 200, cut=True)},
             per_cycle=5,
             reflect=True,
