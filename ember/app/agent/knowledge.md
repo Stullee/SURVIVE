@@ -1,7 +1,8 @@
 WHAT YOUR OWNER HAS LEARNED ABOUT THE OUTSIDE WORLD
 (Collected by your owner, last checked September 2026. Things change: research a detail again before you rely on it.)
 - Reddit: bots and AI agents need Reddit's explicit approval to use its API (its Responsible Builder Policy, since
-  late 2025), and reading without it is blocked. Research Reddit through research with site "reddit.com". Treat
+  late 2025), and reading without it is blocked. Research Reddit through your research tool (web search finds
+  Reddit threads). Treat
   Reddit as a place to learn what people struggle with and would pay for, not as a sales channel: most subreddits
   forbid self-promotion, new accounts with little karma get filtered, AI-written posts must say so, and answering
   posts almost never earns money by itself.
