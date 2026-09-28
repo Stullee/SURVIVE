@@ -244,7 +244,8 @@ def test_the_live_instructions_stay_out_of_a_dry_run(data_dir: Path) -> None:
     assert live.set_instructions({"text": "Live guidance only."}, "Stefan").status == 200
     assert agent.dashboard()["instructions"] is None
     agent.run_cycle("schedule")
-    assert HEADING not in first_text(transport.sent[0])  # each mode and dry-run session has its own (none yet)
+    planned = first_text(transport.sent[0])  # the release notes may name the section, so look for the section itself
+    assert section(planned, HEADING) is None and "Live guidance only." not in planned  # each mode and session its own
 
 
 # --- memory hygiene ---
@@ -296,7 +297,9 @@ def test_a_full_lessons_file_asks_for_a_rewrite() -> None:
 
 @pytest.mark.parametrize("scale", loop.PLANNER_SCALES)
 def test_the_note_is_for_the_planner_only_and_keeps_the_lessons_budget(scale: float) -> None:
-    lessons = "# Lessons\n\n" + "".join(f"- [#c{n}] Lesson number {n}: ask people before building.\n" for n in range(80))
+    lessons = "# Lessons\n\n" + "".join(
+        f"- [#c{n}] Lesson number {n}: ask people before building.\n" for n in range(80)
+    )
     snap = snapshot_with([])
     snap.memory = {"lessons": lessons}
     planner, _ = context.planner_context(snap, False, scale)
@@ -372,7 +375,9 @@ def request_for(agent: Agent, settings: Settings) -> tuple[Any, list[str]]:
     """A stand-in for the HTTP request the route gets: the app state with this agent and a scheduler that counts."""
     pokes: list[str] = []
     state = SimpleNamespace(
-        agent=agent, loaded=SimpleNamespace(settings=settings), scheduler=SimpleNamespace(poke=lambda: pokes.append("x"))
+        agent=agent,
+        loaded=SimpleNamespace(settings=settings),
+        scheduler=SimpleNamespace(poke=lambda: pokes.append("x")),
     )
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(ember=state))), pokes
 
@@ -456,7 +461,7 @@ def test_the_fake_quotes_the_standing_instructions_in_its_plan() -> None:
             made = json.loads(answer.response["content"][0]["text"])  # type: ignore[union-attr]
             quoted = " ".join(words.split())[: fake_llm.INSTRUCTIONS_CHARS]
             assert made["assessment"].startswith("I am ") and len(made["assessment"]) <= 600
-            assert f'My owner\'s standing instructions say "{quoted}' in made["assessment"], (scenario, made)
+            assert f"My owner's standing instructions say \"{quoted}" in made["assessment"], (scenario, made)
     planner, _ = context.planner_context(with_instructions(""), True)
     answer = fake_llm.FakeTransport().send(prompts.plan_request(Settings(), planner))
     assert "standing instructions" not in answer.response["content"][0]["text"]  # type: ignore[union-attr]
