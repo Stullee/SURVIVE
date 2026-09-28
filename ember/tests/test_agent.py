@@ -614,3 +614,32 @@ def test_a_failing_last_will_is_given_up_after_three_tries(data_dir: Path) -> No
         agent.clock.advance(days=1)
     assert agent.decide().trigger != "last_will"
     assert any("Gave up on the last will" in e["message"] for e in agent.db.recent_events(limit=20))
+
+
+def test_every_plan_says_how_it_leads_to_money(data_dir: Path) -> None:
+    from app.agent import prompts
+
+    assert "money_path" in prompts.PLAN_SCHEMA["required"]
+    data = {
+        "assessment": "ok",
+        "goal": "Test one listing",
+        "money_path": "Parents pay 4 EUR per planner; 5 sales in two weeks means continue, none means stop.",
+        "focus_project_id": None,
+        "steps": ["draft the listing"],
+        "sleep_minutes": 120,
+    }
+    agent, transport = make_agent(
+        data_dir, [reply([{"type": "text", "text": json.dumps(data)}], "end_turn"), text("Drafted."), text("Done.")]
+    )
+    agent.run_cycle("schedule")
+    brief = transport.sent[1]["messages"][0]["content"][0]["text"]
+    assert f"Path to money: {data['money_path']}" in brief
+    stored = json.loads(rows(agent, "SELECT plan FROM cycles")[0]["plan"])
+    assert stored["money_path"] == data["money_path"]
+    assert agent.dashboard()["now"]["plan_detail"]["money_path"] == data["money_path"]
+
+
+def test_a_plan_without_a_money_path_still_runs(data_dir: Path) -> None:
+    agent, transport = make_agent(data_dir, [plan(steps=["look around"]), text("Looked."), text("Done.")])
+    assert agent.run_cycle("schedule").status == "completed"
+    assert "Path to money" not in transport.sent[1]["messages"][0]["content"][0]["text"]

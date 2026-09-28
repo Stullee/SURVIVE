@@ -985,6 +985,7 @@ class FakeTransport:
             return {
                 "assessment": f"I am {state} with ${balance}. {len(open_)} open project(s). {heard}{rest}"[:600],
                 "goal": goal,
+                "money_path": "None this cycle: sleeping saves money until there is something worth doing.",
                 "focus_project_id": focus.id if focus else None,
                 "steps": answer,
                 "sleep_minutes": rng.choice([480, 720, 1_440]),
@@ -1027,6 +1028,10 @@ class FakeTransport:
                 f"Move #{focus.id} {focus.title} forward: check demand and write a first draft."
                 if focus
                 else f"Start '{idea.title}' and write a first draft."
+            )[:300],
+            "money_path": (
+                f"People who want '{idea.title}' would pay a few euros for it; a first listing and its sales will "
+                "show whether they do. No sales after the test means stop."
             )[:300],
             "focus_project_id": focus.id if focus else None,
             "steps": steps,

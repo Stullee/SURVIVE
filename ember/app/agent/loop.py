@@ -79,11 +79,13 @@ class Plan:
     focus_project_id: int | None
     steps: list[str]
     sleep_minutes: int | None
+    money_path: str = ""  # how the goal leads to income (or what a learning experiment would show)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "assessment": self.assessment,
             "goal": self.goal,
+            "money_path": self.money_path,
             "focus_project_id": self.focus_project_id,
             "steps": self.steps,
             "sleep_minutes": self.sleep_minutes,
@@ -352,6 +354,7 @@ class CycleRunner:
         return Plan(
             assessment=str(data.get("assessment") or "")[:600],
             goal=str(data.get("goal") or "")[:300],
+            money_path=str(data.get("money_path") or "")[:300],
             focus_project_id=focus if isinstance(focus, int) and not isinstance(focus, bool) else None,
             steps=steps,
             sleep_minutes=self._clamp_sleep(sleep) if isinstance(sleep, int) and not isinstance(sleep, bool) else None,

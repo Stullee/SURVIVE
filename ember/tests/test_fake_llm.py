@@ -758,7 +758,12 @@ def test_the_prompt_cache_is_simulated() -> None:
 def test_short_prompts_and_haiku_minimums_are_not_cached() -> None:
     research = usage_of(FakeTransport().send(prompts.research_request(SETTINGS, "What sells?", None)))
     assert research["cache_creation_input_tokens"] == research["cache_read_input_tokens"] == 0
-    request = prompts.work_request(HAIKU_SETTINGS, "A brief.", [])
+    # Without its tool definitions the worker prompt stays under Haiku's 4,096-token cache minimum.
+    request = {
+        k: v
+        for k, v in prompts.work_request(HAIKU_SETTINGS, "A brief.", []).items()
+        if k not in ("tools", "tool_choice")
+    }
     fake = FakeTransport()
     assert fake_llm.prompt_tokens(request) < 4_096
     for _ in range(2):

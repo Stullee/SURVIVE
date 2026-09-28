@@ -64,7 +64,10 @@ you press **Wake now**), it runs one **wake cycle**:
 
 1. **Plan**: it reads its situation (balance, runway, projects, what happened
    since the last cycle, your messages and decisions, its memory) and plans
-   the cycle.
+   the cycle. Every plan says how its goal leads to money (who would pay, for
+   what, and how it will know); you see this as *Path to money*. It is told to
+   do research and legwork itself and to ask you only for decisions, money and
+   what only a person can do.
 2. **Act**: it uses its tools, up to the *Tool steps per cycle* option: files in
    its own workspace, its memory (strategy, identity, lessons), projects, web
    research, requests for your approval, messages to you, requests for code

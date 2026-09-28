@@ -406,7 +406,8 @@ def brief(
             f"Notes: {focus['notes'][-600:] or '-'}"
         )
     steps = "\n".join(f"{i}. {step}" for i, step in enumerate(plan.get("steps", []), 1))
-    head = [("STATUS", status_text(s, dry_run)), ("PLAN", f"Goal: {plan.get('goal', '')}\n{steps}")]
+    money = f"\nPath to money: {plan['money_path']}" if plan.get("money_path") else ""
+    head = [("STATUS", status_text(s, dry_run)), ("PLAN", f"Goal: {plan.get('goal', '')}{money}\n{steps}")]
     owner, lines, too_long = _owner(s, OWNER_BUDGET)
     owners = [("FROM YOUR OWNER", owner)] if owner else []
     research = cut(research_text(s), RESEARCH_BUDGET)

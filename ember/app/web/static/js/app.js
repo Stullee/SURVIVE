@@ -1044,13 +1044,14 @@
     var goal = plan.goal || plan.plan;
     if (goal) parts.push(h("p", { class: "plan-goal pre-line", text: asText(goal) }));
     if (plan.assessment) parts.push(h("h4", { class: "small-head", text: "Assessment" }), h("p", { class: "pre-line", text: asText(plan.assessment) }));
+    if (plan.money_path) parts.push(h("h4", { class: "small-head", text: "Path to money" }), h("p", { class: "pre-line", text: asText(plan.money_path) }));
     var steps = arr(plan.steps);
     if (steps.length) {
       parts.push(h("h4", { class: "small-head", text: "Steps" }),
         h("ol", { class: "plan-steps" }, steps.map(function (step) { return h("li", { class: "pre-line", text: asText(step) }); })));
     }
     var rest = Object.keys(plan).filter(function (k) {
-      return ["goal", "plan", "assessment", "steps"].indexOf(k) < 0 && plan[k] !== null && plan[k] !== undefined && plan[k] !== "";
+      return ["goal", "plan", "assessment", "money_path", "steps"].indexOf(k) < 0 && plan[k] !== null && plan[k] !== undefined && plan[k] !== "";
     });
     if (rest.length) {
       parts.push(h("pre", { class: "capped mono", tabindex: "0", text: rest.map(function (k) { return k + ": " + asText(plan[k]); }).join("\n") }));

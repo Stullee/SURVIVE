@@ -153,7 +153,13 @@ def _now(agent: Agent, conn: sqlite3.Connection, c: sqlite3.Row) -> dict[str, An
         "pending_usd": _usd(pending),
         "cycle_cap_usd": _usd(c["cap_micros"]),
         "plan": plan.get("goal") if plan else None,
-        "plan_detail": {"assessment": plan.get("assessment", ""), "steps": plan.get("steps", [])} if plan else None,
+        "plan_detail": {
+            "assessment": plan.get("assessment", ""),
+            "money_path": plan.get("money_path", ""),
+            "steps": plan.get("steps", []),
+        }
+        if plan
+        else None,
         "current_action": c["current_action"],
         "act_end_reason": c["act_end_reason"],
     }
