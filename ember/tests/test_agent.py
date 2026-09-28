@@ -207,7 +207,7 @@ def test_long_paths_leave_the_brief_its_count_of_files_and_its_limits(tmp_path: 
     )
     focus = {"id": 1, "title": "t" * 80, "status": "active", "hypothesis": "h" * 400, "next_step": "n" * 200}
     big_plan = {"goal": "g" * 300, "steps": ["s" * 200] * 6}
-    brief = context.brief(snap, True, big_plan, focus | {"notes": "N" * 2_000}, 15)  # type: ignore[arg-type]
+    brief, _ = context.brief(snap, True, big_plan, focus | {"notes": "N" * 2_000}, 15)  # type: ignore[arg-type]
     assert brief.endswith(
         f"\n{lines[-2]}\n{lines[-1]}\n\n== LIMITS ==\n"
         "At most 15 steps this cycle and 4 tool calls per step. Stop when the goal is reached."
