@@ -71,6 +71,10 @@ class Scheduler:
     async def _run(self) -> None:
         while not self._stopping:
             timeout = ROUND_SECONDS
+            if self._poke is not None:
+                # Cleared before the round, not after it: a poke that arrives while the round runs (a message that
+                # comes in while decide() is looking) makes the next round start at once instead of being lost.
+                self._poke.clear()
             try:
                 await asyncio.to_thread(self.economy.tick)
                 if time.monotonic() - self._last_prune > PRUNE_EVERY_SECONDS:
@@ -97,7 +101,6 @@ class Scheduler:
                 log.exception("Scheduler round failed")
             if self._stopping or self._poke is None:
                 break
-            self._poke.clear()
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._poke.wait(), timeout)
         self.status = "stopped"
