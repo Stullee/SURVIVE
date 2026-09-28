@@ -41,14 +41,54 @@ MAIL_SHOWN = 3
 # The owner's standing instructions (at most 1,500 characters, JSON-quoted), in every plan and work step.
 INSTRUCTIONS_HEADING = "YOUR OWNER'S STANDING INSTRUCTIONS"
 INSTRUCTIONS_BUDGET = 1_700
-# When the lessons file holds more than this share of its cap, or notes outdated since 0.4.0, the planner is asked
-# to rewrite it (the note takes the room of the oldest lessons it shows).
+# When the lessons file holds more than this share of its cap, or lessons or strategy hold notes a later version made
+# wrong, the planner is asked to rewrite the file (the note takes the room of the file's text it would show).
 LESSONS_FULL = 0.7
 # Outdated since 0.4.0: write_journal only in some phase (it works whenever the agent is done), and the length limits
 # of tool fields (tools show them, and cut notes): a line naming a tool or field (snake_case) and a length.
 _PHASE = re.compile(r"\b(?:phase|reflect)", re.IGNORECASE)
 _CODE_NAME = re.compile(r"\b[a-z]+(?:_[a-z]+)+\b")
 _LENGTH = re.compile(r"\b\d[\d,.]*\s*(?:chars?|characters)\b|\blength\b|\btoo long\b|\bmaxlength\b", re.IGNORECASE)
+# Outdated since 0.5.0: stopping or saving while the owner decides ("don't draft while waiting", "no spend beyond
+# planning", "sleep long to save money"); waiting is never a reason to stop, and the daily cap is for experiments.
+_WAITING = re.compile(
+    r"\b(?:don'?t|do not|never|no|stop|avoid)\b(?: \w+){0,3} (?:draft|build|mak|creat|writ|work)\w*\b.{0,60}?"
+    r"\b(?:while|until|before)\b.{0,40}?\b(?:wait|block|owner|approv|decision)"
+    r"|\bno spend(?:ing)? beyond\b|\b(?:don'?t|do not|never|avoid) spend(?:ing)?\b.{0,40}?\b(?:beyond|except|outside)\b"
+    r"|\bsleep (?:long|longer|as long as|the max)\w*\b(?!.*\bonly\b)",
+    re.IGNORECASE,
+)
+# Outdated since 0.6.0: the owner building files from Ember's specs (Canva, "owner builds the file"), or Ember only
+# delivering text; Ember makes PDF, Word, Excel files and listing photos itself.
+_HANDOFF = re.compile(
+    r"\bcanva\b|\bowner(?:'s)?(?: [\w,'/]+){0,4} (?:builds?|designs?|formats?|lays? out|makes?|exports?|converts?)"
+    r"(?: \w+){0,2} (?:files?|templates?|pdfs?|designs?|layouts?)\b"
+    r"|\b(?:can'?t|cannot|can not|unable to|no way to) (?:make|create|produce|export|design|build|generate)"
+    r"(?: \w+){0,2} (?:pdfs?|docx|word files?|excel|xlsx|spreadsheets?|images?|pngs?|photos?|files?|templates?"
+    r"|designs?)\b"
+    r"|\bonly (?:\w+ )?text files\b|\bcan (?:actually )?deliver\W+(?:\w+\W+){0,3}text\b",
+    re.IGNORECASE,
+)
+OUTDATED: tuple[tuple[str, str, Callable[[str], bool]], ...] = (
+    (
+        "0.4.0",
+        "write_journal works whenever you are done, and tools show their length limits",
+        lambda line: (
+            ("write_journal" in line and bool(_PHASE.search(line)))
+            or bool(_CODE_NAME.search(line) and _LENGTH.search(line))
+        ),
+    ),
+    (
+        "0.5.0",
+        "waiting for your owner is never a reason to stop, and your daily cap is there to be spent on experiments",
+        lambda line: bool(_WAITING.search(line)),
+    ),
+    (
+        "0.6.0",
+        "you make finished PDF, Word and Excel files and listing photos yourself, so your owner never builds them",
+        lambda line: bool(_HANDOFF.search(line)),
+    ),
+)
 PLANNER_BUDGETS = {
     "status": 500,
     "instructions": INSTRUCTIONS_BUDGET,
@@ -433,29 +473,40 @@ def instructions_section(s: Snapshot, budget: int = INSTRUCTIONS_BUDGET) -> list
     return [(INSTRUCTIONS_HEADING, text)] if text else []
 
 
+def outdated(text: str) -> list[str]:
+    """What changed since the notes in ``text`` were written ("since 0.6.0 you make ..."), oldest change first."""
+    lines = text.splitlines()
+    return [f"since {version} {change}" for version, change, test in OUTDATED if any(test(line) for line in lines)]
+
+
 def lessons_note(s: Snapshot) -> str:
-    """For the planner only: a request to rewrite the lessons when they fill most of their file or hold notes that are
-    outdated since 0.4.0 (empty otherwise)."""
+    """For the planner only: a request to rewrite the lessons when they fill most of their file or hold notes that a
+    later version made wrong (empty otherwise)."""
     lessons = s.memory.get("lessons", "")
     size = len(lessons.encode("utf-8"))
     full = size > CAPS["lessons"] * LESSONS_FULL
-    outdated = any(
-        ("write_journal" in line and _PHASE.search(line)) or (_CODE_NAME.search(line) and _LENGTH.search(line))
-        for line in lessons.splitlines()
-    )
-    if not full and not outdated:
+    changes = outdated(lessons)
+    if not full and not changes:
         return ""
     why = []
     if full:
         why.append(f"holds {size:,} of {CAPS['lessons']:,} bytes")
-    if outdated:
-        why.append(
-            "has outdated notes (since 0.4.0 write_journal works whenever you are done, and tools show their length"
-            " limits)"
-        )
+    if changes:
+        why.append(f"has outdated notes ({'; '.join(changes)})")
     return (
         f"Memory check: lessons.md {' and '.join(why)}. Plan one step that rewrites it (memory_update lessons replace),"
         " keeping only what still helps you earn money."
+    )
+
+
+def strategy_note(s: Snapshot) -> str:
+    """For the planner only: a request to rewrite the strategy when it holds notes a later version made wrong."""
+    changes = outdated(s.memory.get("strategy", ""))
+    if not changes:
+        return ""
+    return (
+        f"Memory check: strategy.md has outdated notes ({'; '.join(changes)}). Plan one step that rewrites it "
+        "(memory_update strategy replace) for how you work now."
     )
 
 
@@ -465,6 +516,16 @@ def _lessons(s: Snapshot, budget: int) -> str:
     room = budget - (json_bytes("\n" + note) - 2 if note else 0)
     lessons = cut(_newest_lines(s.memory.get("lessons", ""), room), room) if room > 0 else ""
     return "\n".join(part for part in (lessons, note) if part)
+
+
+def _strategy(s: Snapshot, budget: int) -> str:
+    """The planner's STRATEGY: as much of it as fits, and the memory check's note after it (in the budget)."""
+    note = strategy_note(s)
+    if not note:
+        return cut(s.memory.get("strategy", ""), budget)
+    room = budget - (json_bytes("\n" + note) - 2)
+    strategy = cut(s.memory.get("strategy", "").rstrip("\n"), room) if room > 0 else ""
+    return "\n".join(part for part in (strategy, note) if part)
 
 
 def _sections(parts: list[tuple[str, str]]) -> str:
@@ -488,7 +549,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         ("OPEN PROJECTS", cut(project_lines(s), b["projects"])),
         ("WAITING FOR YOUR OWNER", cut(pending, b["pending"])),
         *([("MAIL", cut(mail_text(s), b["mail"]))] if s.mail is not None else []),
-        ("STRATEGY", cut(s.memory.get("strategy", ""), b["strategy"])),
+        ("STRATEGY", _strategy(s, b["strategy"])),
         ("IDENTITY", cut(s.memory.get("identity", ""), b["identity"])),
         ("LESSONS (newest last)", _lessons(s, b["lessons"])),
         ("WORKSPACE", cut("\n".join(s.workspace) or "Empty.", b["workspace"])),

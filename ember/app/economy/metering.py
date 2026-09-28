@@ -20,6 +20,7 @@ transport (anthropic_transport.py, the only module that imports the
 
 from __future__ import annotations
 
+import base64
 import copy
 import fcntl
 import json
@@ -125,10 +126,44 @@ class Transport(Protocol):
     def send(self, request: Mapping[str, Any]) -> Outcome: ...
 
 
+# A picture whose size can't be read: more than the API bills for any picture it accepts.
+IMAGE_TOKEN_ALLOWANCE = 5_000
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
 def rough_token_count(request: Mapping[str, Any]) -> int:
-    """A generous prompt size: half a token per UTF-8 byte plus overhead for the request framing."""
-    size = len(json.dumps(request, ensure_ascii=False, default=str).encode("utf-8"))
-    return math.ceil(size / 2) + 600
+    """A generous prompt size: half a token per UTF-8 byte plus overhead for the request framing.
+
+    A base64 picture is billed by its pixels, not its bytes, so it counts as ``picture_tokens`` instead.
+    """
+    pictures: list[int] = []
+    size = len(json.dumps(_without_pictures(request, pictures), ensure_ascii=False, default=str).encode("utf-8"))
+    return math.ceil(size / 2) + 600 + sum(pictures)
+
+
+def picture_tokens(data: str) -> int:
+    """A generous token count for a base64 picture: a quarter more than width x height / 750 (the API's rule)."""
+    try:
+        head = base64.b64decode(data[:32], validate=True)
+    except ValueError:
+        return IMAGE_TOKEN_ALLOWANCE
+    if len(head) < 24 or not head.startswith(_PNG_SIGNATURE) or head[12:16] != b"IHDR":
+        return IMAGE_TOKEN_ALLOWANCE
+    width, height = int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+    return min(IMAGE_TOKEN_ALLOWANCE, math.ceil(width * height / 750 * 1.25) + 100)
+
+
+def _without_pictures(node: Any, found: list[int]) -> Any:
+    if isinstance(node, Mapping):
+        source = node.get("source")
+        if node.get("type") == "image" and isinstance(source, Mapping) and source.get("type") == "base64":
+            data = source.get("data")
+            found.append(picture_tokens(data) if isinstance(data, str) else IMAGE_TOKEN_ALLOWANCE)
+            return {"type": "image"}
+        return {key: _without_pictures(value, found) for key, value in node.items()}
+    if isinstance(node, list | tuple):
+        return [_without_pictures(value, found) for value in node]
+    return node
 
 
 class OfflineTransport:

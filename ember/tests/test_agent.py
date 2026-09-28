@@ -17,7 +17,7 @@ from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
 from app.economy.costs import micros_to_usd
 from app.economy.life import LifeStatus
-from app.economy.metering import Completed, NotSent
+from app.economy.metering import Completed, NotSent, usd_cap_to_micros
 from app.economy.pricing import opening_cost, working_cycle_cost
 from tests.economy_helpers import ScriptedTransport, make_economy
 
@@ -455,7 +455,8 @@ def test_a_wake_needs_room_for_a_work_step_and_the_reflection(
 ) -> None:
     agent, _ = make_agent(data_dir, [])  # a daily cap of 5 USD
     opening, working = (cost(ROOMY, agent.db, "dry_run") or 0 for cost in (opening_cost, working_cycle_cost))
-    assert opening < 100_000 < working < 200_000  # 0.10 USD pays for the plan alone, 0.20 USD for some work too
+    # 0.10 USD pays for the plan alone; the default cycle cap (0.25 USD) pays for some work too.
+    assert opening < 100_000 < working < usd_cap_to_micros(Settings().cycle_spend_cap_usd)
     left = working - short  # micro-USD left of today's cap
     monkeypatch.setattr(agent.economy.books, "cap_spend_on", lambda scope, day: 5_000_000 - left)
     agent.decide()  # schedules the first wake-up

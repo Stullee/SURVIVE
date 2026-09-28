@@ -42,6 +42,10 @@ jobs:
           --build-arg BUILD_VERSION=ci
           --tag local/ember:ci
           --load
+      - name: Make a PDF, Word, Excel and PNG file with the image's libraries
+        run: >-
+          docker run --rm --platform ${{ matrix.platform }} --entrypoint python3 local/ember:ci
+          -m app.products.selftest
       - name: Start in dev mode and check the API
         run: |
           mkdir -p "$RUNNER_TEMP/data"

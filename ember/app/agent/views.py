@@ -12,7 +12,7 @@ from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import executor, mailstore, reddit
 from . import store
-from .sandbox import Entry, Jail, Missing, SandboxError
+from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
 if TYPE_CHECKING:
     from .service import Agent
@@ -344,36 +344,54 @@ def cycle_detail(agent: Agent, cycle_id: int) -> dict[str, Any] | None:
 # --- workspace ---
 
 
+PRODUCT_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".png": "image/png",
+}
+
+
 def workspace(agent: Agent) -> dict[str, Any]:
     """The files in the agent's workspace, walked folder by folder through the jail (links are never listed)."""
     jail = agent.roots()[0]
     tree = jail.walk(jail.limits.max_files)
     files = [e for e in tree.files if _openable(jail, e.path)]
+    text_bytes = sum(e.size for e in files if kind_of(e.path) == "text")
     return {
         "mode": agent.mode,
         "files": [
-            {"path": e.path, "size": e.size, "modified_at": to_iso(datetime.fromtimestamp(e.modified, UTC))}
+            {
+                "path": e.path,
+                "size": e.size,
+                "kind": kind_of(e.path),
+                "modified_at": to_iso(datetime.fromtimestamp(e.modified, UTC)),
+            }
             for e in files
         ],
         "file_count": len(files),
         "total_bytes": sum(e.size for e in files),
+        "text_bytes": text_bytes,
+        "product_bytes": sum(e.size for e in files) - text_bytes,
         "truncated": tree.truncated,
     }
 
 
 def _openable(jail: Jail, path: str) -> bool:
-    """Only files the jail would read: plain names, text extensions."""
+    """Only files the jail would read: plain names, the text and product extensions."""
     try:
-        jail.parts(path)
+        jail.parts(path, kinds="any")
     except SandboxError:
         return False
     return True
 
 
 def workspace_file(agent: Agent, path: str) -> tuple[str, str]:
-    """(file name, text) of one workspace file, read through the jail."""
+    """(file name, text) of one text file in the workspace, read through the jail."""
     jail = agent.roots()[0]
     try:
+        if kind_of(path) == "product":
+            raise WorkspaceFileError(f"{path} is a product file: open it with /api/workspace/product")
         parts = jail.parts(path)
         entry = _find(jail, parts)
         if entry is None:
@@ -386,6 +404,24 @@ def workspace_file(agent: Agent, path: str) -> tuple[str, str]:
             )
         return parts[-1], jail.read(entry.path)
     except Missing as exc:  # the agent deleted it (or its folder) while the owner looked
+        raise WorkspaceFileError(str(exc), 404) from None
+    except SandboxError as exc:
+        raise WorkspaceFileError(str(exc)) from None
+
+
+def workspace_product(agent: Agent, path: str) -> tuple[str, bytes, str]:
+    """(file name, bytes, content type) of one product file (PDF, Word, Excel, PNG), read through the jail."""
+    jail = agent.roots()[0]
+    try:
+        parts = jail.parts(path, kinds="product")
+        entry = _find(jail, parts)
+        if entry is None:
+            raise WorkspaceFileError(f"{'/'.join(parts)} doesn't exist", 404)
+        if entry.is_dir:
+            raise WorkspaceFileError(f"{entry.path} is a folder, not a file")
+        name = parts[-1]
+        return name, jail.read_bytes(entry.path), PRODUCT_TYPES[name[name.rfind(".") :].lower()]
+    except Missing as exc:
         raise WorkspaceFileError(str(exc), 404) from None
     except SandboxError as exc:
         raise WorkspaceFileError(str(exc)) from None

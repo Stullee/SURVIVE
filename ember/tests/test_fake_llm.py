@@ -1066,7 +1066,7 @@ def test_the_first_act_turn_answers_the_owner() -> None:
     # The owner's words are quoted whole when short, on one line, without characters the tool refuses.
     reply = first_calls(brief(plan, None, None, [owner_line(MESSAGE)]))[0][1]["text"]
     assert reply == f'You wrote: "{MESSAGE}"\n\n{DRY_RUN_REPLY}'
-    odd = first_calls(brief(plan, 3, TEA[3], [owner_line("Line one\nLine‮ two\t end")]))[0][1]
+    odd = first_calls(brief(plan, 3, TEA[3], [owner_line("Line one\nLine\u202e two\t end")]))[0][1]
     tools.validate(tools.SPECS["message_owner"], odd)
     assert odd["text"].startswith('You wrote: "Line one Line two end"')
     # The plan says to answer, but the brief lost the owner's words: still an honest reply, no generic update.

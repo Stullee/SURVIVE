@@ -87,7 +87,9 @@ press **Wake now**, or when you write to it), it runs one **wake cycle**:
    its own workspace, its memory (strategy, identity, lessons), projects, web
    research (also limited to one site, such as Reddit), requests for your
    approval, messages to you, requests for code upgrades, and its own mailbox
-   if you set one up.
+   if you set one up. It also makes finished [products](#products) from what it
+   writes: PDF documents with an editable Word copy, Excel spreadsheets and
+   listing photos, and it looks at their pictures to check them.
 3. **Reflect**: it writes a journal entry, updates its memory and chooses how
    long to sleep.
 
@@ -102,6 +104,37 @@ enforced in code, not only in its instructions.
 
 When its money runs low, it becomes critical and writes a **last will**, shown
 in the memorial if it dies.
+
+## Products
+
+Ember doesn't hand you design work: it makes the files itself. The agent writes
+the text and chooses the design; Ember's own code turns that into files in the
+agent's workspace:
+
+- **Documents** (`make_document`): a Markdown file with a few settings (theme,
+  fonts, colours, page size, footer) and layout lines (sidebar, columns, boxes,
+  photo boxes, checklists, tables, writing lines) becomes a PDF, an editable
+  Word copy (`.docx`) and pictures of its first four pages. Good for printables,
+  planners, worksheets, guides, and CV and letter templates. At most 40 pages.
+- **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
+  file with formats, dropdowns, formulas, totals, a chart and a *How to use*
+  sheet, plus a picture of its first sheet. Formulas may only use common
+  functions and cells of the same workbook: no links to other files or the web.
+- **Listing photos** (`make_image`): up to three pages or pictures, fanned out
+  next to a title, a subtitle and a badge, in Etsy's 4:3 size (3000 x 2250) or
+  square or portrait.
+
+The agent can **look** at a picture (a page or a listing photo) before it shows
+you anything, and it reads a short guide for each tool. The PDFs embed their
+fonts (Carlito, Caladea and Poppins, all under the SIL Open Font License); the
+Word copy asks for Calibri, Cambria and Poppins, which the first two replace
+exactly, so it looks the same in Word. Where Poppins isn't installed, Word shows
+another font. Files are limited to 15 MB each and 200 MB together, on top of the
+5 MB for the agent's text files.
+
+Check a product before you sell it. The agent is told to disclose on every
+product and listing that AI helped make it, which marketplaces such as Etsy
+require.
 
 ## Your part
 
@@ -135,9 +168,12 @@ in the memorial if it dies.
   text** blanks one of your own messages for good, for example a password
   sent by mistake; a note that something was removed stays.
 - **Workspace**: the files the agent writes in its own folder (drafts, notes,
-  research), so you can review a draft before you approve anything. Open a file
-  to read it or download it. It is always shown as plain text, never as a web
-  page; check it before you use it. In dry run you see the dry-run folder.
+  research), and the PDF, Word, Excel and picture files Ember made from them, so
+  you can review them before you approve anything. Open a text file to read it
+  or download it; it is always shown as plain text, never as a web page. Open a
+  product to see its pictures (a document's pages, a spreadsheet's first sheet)
+  and download the file. Check it before you use it. In dry run you see the
+  dry-run folder.
 - **Upgrade requests**: ideas for changing Ember's code. Accept, decline, or mark
   one released with the version that contains it. After an update the agent
   reads what changed in the release notes.
@@ -423,6 +459,11 @@ automation, for example:
   tools have no network access at all. If you set up Ember's mailbox, Ember's
   own code also connects to the IMAP and SMTP servers in the options, over TLS
   with verified certificates, and to no other mail server.
+- The agent never writes the bytes of a PDF, Word, Excel or picture file: it
+  writes text, and Ember's own code makes the file from it, without any network
+  or other programs. Spreadsheets only get formulas with common functions that
+  refer to their own cells. The dashboard never opens a product in the browser:
+  it shows the product's PNG pictures and downloads the file.
 - The API key and the mailbox's app password are kept in the app options and
   never written to logs, the database or the dashboard (which only says
   whether they are set). Home Assistant backups contain the options, so

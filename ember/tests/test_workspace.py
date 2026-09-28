@@ -38,19 +38,22 @@ def test_the_list_walks_every_folder_sorted_by_path(ingress_client: TestClient) 
     jail.write("projects/drafts/week-1.md", "Monday: soup\n")
     jail.write("a-first.txt", "x")
     jail.write("notes.md", "é")  # sizes are bytes
+    jail.write_bytes("shop/cv.pdf", b"%PDF-1.7 made by Ember")
     (jail.root / ".tmp-abc123").write_text("half-written")
-    (jail.root / "photo.png").write_bytes(b"\x89PNG")
+    (jail.root / "photo.jpg").write_bytes(b"\xff\xd8\xff")
     (jail.root / ".hidden.md").write_text("not a name the agent can use")
     data = ingress_client.get("api/workspace").json()
     assert data["mode"] == "dry_run"
-    assert [(f["path"], f["size"]) for f in data["files"]] == [
-        ("a-first.txt", 1),
-        ("notes.md", 2),
-        ("projects/drafts/week-1.md", 13),
-        ("projects/printable-meal-planning-templates.md", 13),
+    assert [(f["path"], f["size"], f["kind"]) for f in data["files"]] == [
+        ("a-first.txt", 1, "text"),
+        ("notes.md", 2, "text"),
+        ("projects/drafts/week-1.md", 13, "text"),
+        ("projects/printable-meal-planning-templates.md", 13, "text"),
+        ("shop/cv.pdf", 22, "product"),
     ]
     assert all(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", f["modified_at"]) for f in data["files"])
-    assert data["file_count"] == 4 and data["total_bytes"] == 29 and data["truncated"] is False
+    assert data["file_count"] == 5 and data["total_bytes"] == 51 and data["truncated"] is False
+    assert data["text_bytes"] == 29 and data["product_bytes"] == 22
 
 
 def test_an_empty_workspace(ingress_client: TestClient) -> None:
@@ -59,6 +62,8 @@ def test_an_empty_workspace(ingress_client: TestClient) -> None:
         "files": [],
         "file_count": 0,
         "total_bytes": 0,
+        "text_bytes": 0,
+        "product_bytes": 0,
         "truncated": False,
     }
 
@@ -124,6 +129,88 @@ def test_text_is_utf8(ingress_client: TestClient) -> None:
     workspace(ingress_client).write("notes/hello.md", "Grüße, 你好 👋\n")
     response = read(ingress_client, "notes/hello.md")
     assert response.content == "Grüße, 你好 👋\n".encode()
+
+
+# --- products (PDF, Word, Excel and PNG files Ember's code made) ---------------------
+
+
+def product(client: TestClient, path: str, inline: bool = False):  # noqa: ANN201
+    return client.get("api/workspace/product", params={"path": path, **({"inline": "true"} if inline else {})})
+
+
+@pytest.mark.parametrize(
+    ("name", "content_type"),
+    [
+        ("cv.pdf", "application/pdf"),
+        ("cv.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        ("budget.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        ("cv-page1.png", "image/png"),
+    ],
+)
+def test_a_product_downloads_with_its_type(ingress_client: TestClient, name: str, content_type: str) -> None:
+    workspace(ingress_client).write_bytes(f"shop/{name}", b"made by Ember's code")
+    response = product(ingress_client, f"shop/{name}")
+    assert response.status_code == 200
+    assert response.content == b"made by Ember's code"
+    assert response.headers["content-type"] == content_type
+    assert response.headers["content-disposition"] == f"attachment; filename=\"{name}\"; filename*=UTF-8''{name}"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-security-policy"] == "sandbox; default-src 'none'"
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_only_a_picture_is_shown_inline(ingress_client: TestClient) -> None:
+    jail = workspace(ingress_client)
+    jail.write_bytes("shop/cv-page1.png", b"\x89PNG\r\n\x1a\n")
+    jail.write_bytes("shop/cv.pdf", b"%PDF-1.7")
+    picture = product(ingress_client, "shop/cv-page1.png", inline=True)
+    assert picture.headers["content-disposition"].startswith('inline; filename="cv-page1.png"')
+    assert picture.headers["content-type"] == "image/png"
+    document = product(ingress_client, "shop/cv.pdf", inline=True)
+    assert document.headers["content-disposition"].startswith('attachment; filename="cv.pdf"')
+
+
+@pytest.mark.parametrize(
+    ("path", "status"),
+    [
+        ("notes.md", 400),  # text is read with api/workspace/file
+        ("../ember.db", 400),
+        ("/data/ember.db", 400),
+        ("run.sh", 400),
+        ("photo.jpg", 400),
+        ("", 400),
+        ("missing.pdf", 404),
+        ("shop/missing.png", 404),
+    ],
+)
+def test_bad_product_paths_are_refused(ingress_client: TestClient, path: str, status: int) -> None:
+    jail = workspace(ingress_client)
+    jail.write("notes.md", "a note")
+    jail.write_bytes("shop/cv.pdf", b"%PDF-1.7")
+    response = product(ingress_client, path)
+    assert response.status_code == status
+    assert isinstance(response.json()["error"], str)
+    assert "content-disposition" not in response.headers
+
+
+def test_a_product_is_not_opened_as_text(ingress_client: TestClient) -> None:
+    workspace(ingress_client).write_bytes("shop/cv.pdf", b"%PDF-1.7")
+    response = read(ingress_client, "shop/cv.pdf")
+    assert response.status_code == 400
+    assert response.json() == {"error": "shop/cv.pdf is a product file: open it with /api/workspace/product"}
+
+
+def test_product_links_are_refused(ingress_client: TestClient, data_dir: Path) -> None:
+    jail = workspace(ingress_client)
+    jail.ensure_root()
+    outside = data_dir / "secret.pdf"
+    outside.write_text(SECRET)
+    os.symlink(outside, jail.root / "link.pdf")
+    os.link(outside, jail.root / "copy.pdf")
+    for path in ("link.pdf", "copy.pdf"):
+        response = product(ingress_client, path)
+        assert response.status_code in (400, 404), path  # a link isn't even listed
+        assert SECRET not in response.text
 
 
 @pytest.mark.parametrize(

@@ -732,6 +732,16 @@ a.btn-primary { color: var(--text); }
   max-height: 60vh; overflow: auto; overscroll-behavior: contain;
 }
 .ws-text.mono { line-height: 1.45; }
+.ws-kind { margin-inline-start: 6px; }
+/* A product's pictures: pages side by side (as many as fit), a single picture at full width. */
+.ws-product { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); align-items: start; }
+.ws-product.single { grid-template-columns: minmax(0, 720px); }
+.ws-figure { margin: 0; }
+.ws-figure figcaption { margin-top: 4px; }
+.ws-image {
+  display: block; width: 100%; height: auto; background: #fff;
+  border: 1px solid var(--ring); border-radius: 6px;
+}
 
 /* --- Footer ------------------------------------------------------------- */
 

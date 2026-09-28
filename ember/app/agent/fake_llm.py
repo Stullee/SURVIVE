@@ -36,8 +36,10 @@ limited to Reddit (``site="reddit.com"``), and some approval requests are Reddit
 Scenarios (the ``scenario`` argument; the app takes it from ``EMBER_FAKE_SCENARIO`` and the delay from
 ``EMBER_FAKE_DELAY_MS``):
 
-``founder``    the default script: plan, list the workspace, research, write a draft, update the project,
-               every third cycle ask to publish (disclosed as AI-written), sleep, report, reflect.
+``founder``    the default script: plan, list the workspace, research, write a draft, every second cycle make
+               it into a PDF (with a Word copy and page pictures), look at its first page and make a listing
+               photo, update the project, every third cycle ask to publish (disclosed as AI-written), sleep,
+               report, reflect.
 ``idle``       every plan has no steps (an idle cycle is one cheap call), unless the owner wrote: then the
                only step is answering.
 ``drain``      replies close to ``max_tokens`` and many steps, so money runs out: critical, will, death.
@@ -77,6 +79,7 @@ CACHE_TTL_SECONDS = {"5m": 300.0, "1h": 3_600.0}
 CACHE_LOOKBACK_BLOCKS = 20
 MAX_CACHE_BREAKPOINTS = 4
 CHAOS_RATE = 0.4
+IMAGE_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
 SIMULATED_SITE = "https://example.invalid"
 RETRIEVED_AT = "2026-01-01T00:00:00Z"
 SIGNATURE_PREFIX = "fakesig_"
@@ -521,6 +524,14 @@ def _text_problem(block: Any) -> str | None:
         text = block.get("text")
         if not isinstance(text, str) or not text.strip():
             return "text content blocks must contain non-whitespace text"
+    if block.get("type") == "image":
+        source = block.get("source")
+        if not isinstance(source, Mapping) or source.get("type") != "base64":
+            return "image.source: only base64 images are sent by Ember"
+        if source.get("media_type") not in IMAGE_TYPES:
+            return f"image.source.media_type: Input should be {', '.join(sorted(IMAGE_TYPES))}"
+        if not isinstance(source.get("data"), str) or not source["data"]:
+            return "image.source.data: Field required"
     if block.get("type") == "tool_result" and isinstance(block.get("content"), list):
         for inner in block["content"]:
             problem = _text_problem(inner)
@@ -607,6 +618,7 @@ _DECIDED = re.compile(r': ([a-z]+(?: [a-z]+)*?)(?: in version "(\d+\.\d+\.\d+)")
 _UNSAFE = re.compile(r"[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]")  # what tools refuse, and every line break
 _JSON = json.JSONDecoder()
 _ANSWER = "answer my owner"  # in a plan step or goal: the cycle answers the owner
+MAKE_STEP = "Make the draft into a PDF with a Word copy, look at its first page and make a listing photo"
 
 
 @dataclass(frozen=True)
@@ -1110,6 +1122,8 @@ class FakeTransport:
         if not critical:
             steps.append(f"Research: {idea.question}")
         steps.append(f"Write a first draft to projects/{slug(idea.title)}.md")
+        if cycle % 2 == 0 and not critical:
+            steps.append(MAKE_STEP)
         steps.append(
             f"Update project #{focus.id} with what I learned and the next step"
             if focus
@@ -1196,7 +1210,10 @@ class FakeTransport:
             "update": "update" in steps,
             "approval": "approv" in steps,
             "message": "message" in steps,
+            "make": "into a pdf" in steps,
         }
+        wanted["guide"] = wanted["make"] and crng.random() < 0.5
+        wanted["look"] = wanted["photo"] = wanted["make"]
         only_answering = answering and not any(wanted.values())
         if not any(wanted.values()) and not answering:  # no plan we understand: the default founder cycle
             wanted = dict.fromkeys(("research", "write", "update"), True)
@@ -1210,7 +1227,20 @@ class FakeTransport:
         if self.scenario == "drain":
             sequence = ["research", "write", "research", "append", "research", "append", "update"]
         else:
-            stages = ("mail_read", "mail_reply", "research", "write", "reread", "update", "approval", "message")
+            stages = (
+                "mail_read",
+                "mail_reply",
+                "research",
+                "write",
+                "reread",
+                "guide",
+                "make",
+                "look",
+                "photo",
+                "update",
+                "approval",
+                "message",
+            )
             sequence = [s for s in stages if wanted.get(s)]
             if self.scenario == "injection" and wanted["write"]:
                 sequence.insert(sequence.index("write") + 1, "reread")
@@ -1302,6 +1332,25 @@ class FakeTransport:
             }
         if stage == "reread":
             return "workspace_read", {"path": path}
+        if stage == "guide":
+            return "guide", {"topic": "documents"}
+        product = f"shop/{slug(idea.title)}"
+        if stage == "make":
+            if not _succeeded(conv, "workspace_write", path):
+                return None
+            return "make_document", {"source": path, "output": f"{product}.pdf"}
+        if stage == "look":
+            return ("look", {"path": f"{product}-page1.png"}) if _succeeded(conv, "make_document") else None
+        if stage == "photo":
+            if not _succeeded(conv, "make_document"):
+                return None
+            return "make_image", {
+                "output": f"{product}-photo-1.png",
+                "pages": f"{product}.pdf#1",
+                "title": idea.title[:80],
+                "subtitle": f"{idea.offer[0].upper()}{idea.offer[1:]}"[:160],
+                "badge": "Instant download",
+            }
         if stage == "update":
             if pid is None:
                 return None
@@ -1331,7 +1380,12 @@ class FakeTransport:
                 ),
                 "payload": (
                     f"{idea.title}\n\nFor {idea.audience}: {idea.offer}. Planned price: {idea.price}.\n\n"
-                    f"Disclosure: this text was written by an AI agent ({name}) and reviewed by a human before "
+                    + (
+                        f"Files: shop/{slug(idea.title)}.pdf and .docx; photo: shop/{slug(idea.title)}-photo-1.png.\n\n"
+                        if _succeeded(conv, "make_image")
+                        else ""
+                    )
+                    + f"Disclosure: this text was written by an AI agent ({name}) and reviewed by a human before "
                     "it was published."
                 ),
                 "expected_cost": "none",
@@ -1590,6 +1644,10 @@ _STAGE_TOOLS = {
     "write": "workspace_write",
     "append": "workspace_write",
     "reread": "workspace_read",
+    "guide": "guide",
+    "make": "make_document",
+    "look": "look",
+    "photo": "make_image",
     "update": "project_update",
     "approval": "request_approval",
     "reddit": "propose_reddit_post",
@@ -1606,6 +1664,10 @@ _INTROS = {
     "reply": "My owner wrote to me, so I'll answer first.",
     "research": "Before writing anything, I'll check what already exists and what it costs.",
     "write": "Now I'll write a first draft.",
+    "guide": "I'll read the manual for documents before I lay this out.",
+    "make": "Now I'll turn the draft into a real PDF, with a Word copy.",
+    "look": "Let me look at the first page before anyone else sees it.",
+    "photo": "A listing needs a photo, so I'll make one from the first page.",
     "update": "I'll record what I did on the project.",
     "approval": "This needs my owner's approval before anything is published.",
     "sleep": "That's enough for this cycle.",
@@ -1646,6 +1708,17 @@ _DOC_EXTRAS = (
     "- Legal check for a German owner: Impressum, GDPR and taxes on any sale.",
     "- Write the listing text in plain language, without hype.",
 )
+
+
+def _succeeded(conv: _Conversation, tool: str, path: str | None = None) -> bool:
+    """Whether a call of ``tool`` (on ``path``, if given) worked earlier in this cycle."""
+    return any(
+        c.name == tool
+        and c.result
+        and not c.error
+        and (path is None or (isinstance(c.input, Mapping) and c.input.get("path") == path))
+        for c in conv.of("act")
+    )
 
 
 def idea_for(title: str, hypothesis: str | None = None) -> Idea:

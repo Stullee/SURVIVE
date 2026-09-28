@@ -396,11 +396,39 @@ def workspace_file(request: Request, path: str = "") -> Response:
     )
 
 
-def _attachment(name: str) -> str:
+@router.get("/api/workspace/product")
+def workspace_product(request: Request, path: str = "", inline: bool = False) -> Response:
+    """A PDF, Word, Excel or PNG file Ember's code made in the workspace, with its exact content type.
+
+    Files are downloads; only a PNG may be shown inline (the dashboard's picture previews). The sandbox policy and
+    nosniff keep a browser from ever running anything in them, as for the text files.
+    """
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    try:
+        name, data, content_type = agent.workspace_product(path)
+    except WorkspaceFileError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=exc.status)
+    shown = inline and content_type == "image/png"
+    return Response(
+        data,
+        media_type=content_type,
+        headers={
+            "content-disposition": _attachment(name, inline=shown),
+            "content-security-policy": "sandbox; default-src 'none'",
+            "x-content-type-options": "nosniff",
+            "cache-control": "no-store",
+        },
+    )
+
+
+def _attachment(name: str, inline: bool = False) -> str:
     """A Content-Disposition value with a plain ASCII name and the exact one (RFC 6266, RFC 5987)."""
     clean = "".join(c for c in name if c.isprintable() and c not in "\"'\\/;%").strip() or "file.txt"
     fallback = clean.encode("ascii", "replace").decode("ascii").replace("?", "_")
-    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(clean, safe='')}"
+    kind = "inline" if inline else "attachment"
+    return f"{kind}; filename=\"{fallback}\"; filename*=UTF-8''{quote(clean, safe='')}"
 
 
 @router.get("/api/diagnostics")

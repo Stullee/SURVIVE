@@ -3841,8 +3841,29 @@
   // ------------------------------------------------------------------ workspace
   // The files the agent wrote. Their text is only ever shown with textContent, never rendered (an .html or .svg
   // file stays text), and the server sends them as downloads, so opening the URL itself never renders them either.
+  // Products (PDF, Word, Excel, PNG) are made by Ember's code from the agent's text: they are shown as the PNG
+  // pictures made with them and downloaded as files, never opened in the dashboard.
 
   var WS_MONO = /\.(csv|tsv|json|ya?ml|xml|html|css)$/i;
+  var WS_KINDS = { pdf: "PDF", docx: "Word", xlsx: "Excel", png: "Picture" };
+
+  function wsType(path) {
+    var match = /\.([a-z]+)$/i.exec(String(path));
+    return match ? match[1].toLowerCase() : "";
+  }
+
+  function wsProductUrl(path, inline) {
+    return "api/workspace/product?path=" + encodeURIComponent(path) + (inline ? "&inline=1" : "");
+  }
+
+  // The pictures that show a product: a PNG itself, a document's page pictures, a spreadsheet's table.
+  function wsPictures(path) {
+    var type = wsType(path);
+    if (type === "png") return [path];
+    var base = path.replace(/\.[a-z]+$/i, "");
+    var wanted = type === "xlsx" ? [base + "-preview.png"] : [1, 2, 3, 4].map(function (n) { return base + "-page" + n + ".png"; });
+    return wanted.filter(function (p) { return wsFileInfo(p) !== null; });
+  }
 
   function baseName(path) {
     var parts = String(path).split("/");
@@ -3895,7 +3916,8 @@
     var list = ws.list;
     $("ws-refresh").textContent = ws.busy ? "Refreshing…" : "Refresh";
     var dry = list ? list.mode === "dry_run" : isDryRun(ui.data);
-    $("ws-sub").textContent = "Drafts, notes and research the agent wrote in its own folder. Read-only." +
+    $("ws-sub").textContent = "Drafts, notes and research the agent wrote in its own folder, and the PDF, Word, Excel and " +
+      "picture files Ember made from them. Read-only." +
       (dry ? " Dry run: this is the dry-run folder, which starts empty with every dry-run session." : "");
     setStatusText("ws-status", ws.error && !ws.busy ? "Couldn't load the file list (" + errorText(ws.error) + ")." +
       (list ? " The list below is the one loaded earlier." : " Try Refresh.") : "", ws.error && !ws.busy ? "error" : "");
@@ -3933,7 +3955,8 @@
         return h("tr", { "data-open": current ? "true" : null },
           h("td", { class: "ws-path" }, h("button", { type: "button", class: "ws-open", "data-path": f.path, "aria-current": current ? "true" : null },
             slash >= 0 ? h("span", { class: "ws-dir", text: f.path.slice(0, slash + 1) }) : null,
-            h("span", { class: "ws-name", text: f.path.slice(slash + 1) }))),
+            h("span", { class: "ws-name", text: f.path.slice(slash + 1) })),
+            f.kind === "product" && WS_KINDS[wsType(f.path)] ? h("span", { class: "chip ws-kind", text: WS_KINDS[wsType(f.path)] }) : null),
           h("td", { class: "num", text: byteSize(num(f.size) || 0) }),
           h("td", { class: "ws-when" }, f.modified_at ? timeEl(f.modified_at, fmtDateTime(f.modified_at)) : "–"));
       }))));
@@ -3945,7 +3968,9 @@
   function openWorkspaceFile(path) {
     var ws = ui.ws;
     if (!ws.file || ws.file.path !== path) {
-      ws.file = { path: path, mode: ws.list ? ws.list.mode : null, text: null, loadedAt: null };
+      var info = wsFileInfo(path);
+      ws.file = { path: path, mode: ws.list ? ws.list.mode : null, text: null, loadedAt: null,
+        product: !!(info && info.kind === "product") };
     }
     loadWorkspaceFile();
     safely("workspace", renderWorkspace);
@@ -3965,6 +3990,13 @@
     var ws = ui.ws;
     var file = ws.file;
     if (!file) return;
+    if (file.product) {  // nothing to load: its pictures load as images, the file itself only as a download
+      ws.fileSeq++;
+      ws.fileBusy = false;
+      ws.fileError = null;
+      safely("workspaceFile", renderWorkspaceFile);
+      return;
+    }
     var seq = ++ws.fileSeq;  // only the latest request counts (the owner may open another file meanwhile)
     ws.fileBusy = true;
     ws.fileError = null;
@@ -3996,9 +4028,20 @@
     var info = wsFileInfo(file.path);
     $("ws-file-title").textContent = file.path;
     var meta = [];
+    if (file.product && WS_KINDS[wsType(file.path)]) meta.push(WS_KINDS[wsType(file.path)]);
     if (info) meta.push(byteSize(num(info.size) || 0), "modified " + fmtDateTime(info.modified_at));
     if (has) meta.push(ws.fileBusy ? "reloading…" : "loaded at " + timeFmt.format(file.loadedAt));
     $("ws-file-meta").textContent = meta.join(" · ");
+    $("ws-file-note").textContent = file.product
+      ? "Made by Ember's code from the agent's text. Check it before you use it or sell it."
+      : "Written by the agent. Check it before you use it.";
+    renderWorkspaceProduct(file, info);
+    if (file.product) {
+      $("ws-download").disabled = !info;
+      $("ws-text").hidden = true;
+      setStatusText("ws-file-status", info ? "" : "This file is no longer in the workspace.", info ? "" : "error");
+      return;
+    }
     $("ws-download").disabled = !has;
     var status = "";
     if (ws.fileError && !ws.fileBusy) status = "Couldn't open the file (" + errorText(ws.fileError) + ")." + (has ? " The text below is the one loaded earlier." : "");
@@ -4019,9 +4062,37 @@
     }
   }
 
-  // Saved from the text already loaded (like the diagnostics report), never by opening the file's URL.
+  function renderWorkspaceProduct(file, info) {
+    var el = $("ws-product");
+    var pictures = file.product && info ? wsPictures(file.path) : [];
+    el.hidden = !pictures.length;
+    var key = JSON.stringify(pictures.map(function (p) { var i = wsFileInfo(p); return [p, i ? i.modified_at : null]; }));
+    if (el.getAttribute("data-key") === key) return;
+    el.setAttribute("data-key", key);
+    el.className = "ws-product" + (pictures.length === 1 ? " single" : "");
+    replace(el, pictures.map(function (p, index) {
+      var i = wsFileInfo(p);
+      var label = p === file.path ? baseName(p) : wsType(file.path) === "xlsx" ? "The first sheet of " + baseName(file.path)
+        : "Page " + (index + 1) + " of " + baseName(file.path);
+      // The modification time makes a remade picture load again instead of an old copy.
+      var src = wsProductUrl(p, true) + "&v=" + encodeURIComponent(i ? i.modified_at : "");
+      return h("figure", { class: "ws-figure" }, h("img", { class: "ws-image", src: src, alt: label, loading: "lazy" }),
+        pictures.length > 1 ? h("figcaption", { class: "muted small", text: label }) : null);
+    }));
+  }
+
+  // Text is saved from the text already loaded (like the diagnostics report), never by opening the file's URL;
+  // a product is downloaded from the server, which always sends it as an attachment.
   function downloadWorkspaceFile() {
     var file = ui.ws.file;
+    if (file && file.product) {
+      var link = h("a", { href: wsProductUrl(file.path, false), download: baseName(file.path), hidden: true });
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setStatusText("ws-file-status", "Downloading " + baseName(file.path) + " (check your downloads).", "ok");
+      return;
+    }
     if (!file || typeof file.text !== "string") return;
     var name = baseName(file.path);
     var url = window.URL.createObjectURL(new Blob([file.text], { type: "text/plain;charset=utf-8" }));

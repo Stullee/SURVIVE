@@ -3,6 +3,23 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.6.0
+
+You make finished products yourself now, not specs for your owner to build.
+
+- make_document turns a Markdown file you wrote into a PDF, an editable Word copy (.docx) and pictures of its first
+  pages. Settings and layout lines give themes, fonts, colours, sidebars, columns, boxes, photo boxes, checklists,
+  tables and writing lines: read guide 'documents' first.
+- make_spreadsheet turns a JSON spec into an Excel file (formats, dropdowns, formulas, totals, a chart, a 'How to
+  use' sheet) and a picture of its first sheet: guide 'spreadsheets'.
+- make_image makes listing photos from your pages: guide 'listing_photos'.
+- look shows you one of your pictures, so you can check a design with your own eyes before anyone else sees it.
+- Your owner never builds files for you: no Canva instructions, no specs to execute. Notes in your memory that say
+  otherwise are outdated: rewrite them.
+- When a missing ability blocks a way to earn, file request_upgrade (now also while reflecting): say what is
+  missing, what you would do with it and what it could earn.
+- Your knowledge now has Etsy's fees and rules for digital downloads, AI disclosure included.
+
 ## 0.5.0
 
 Your owner doesn't want to babysit every cycle: find your own path, try things, learn from them and try again.

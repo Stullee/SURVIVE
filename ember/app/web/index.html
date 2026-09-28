@@ -282,7 +282,7 @@
         <div class="card-head">
           <div>
             <h2>Files</h2>
-            <p class="card-sub" id="ws-sub">Drafts, notes and research the agent wrote in its own folder. Read-only.</p>
+            <p class="card-sub" id="ws-sub">Drafts, notes and research the agent wrote in its own folder, and the PDF, Word, Excel and picture files Ember made from them. Read-only.</p>
           </div>
           <button type="button" class="btn" id="ws-refresh">Refresh</button>
         </div>
@@ -298,8 +298,9 @@
           </div>
           <button type="button" class="btn" id="ws-download" disabled>Download</button>
         </div>
-        <p class="card-note">Written by the agent. Check it before you use it.</p>
+        <p class="card-note" id="ws-file-note">Written by the agent. Check it before you use it.</p>
         <p class="form-status" id="ws-file-status" role="status"></p>
+        <div class="ws-product" id="ws-product" hidden></div>
         <pre class="ws-text" id="ws-text" tabindex="0" hidden></pre>
       </article>
     </section>

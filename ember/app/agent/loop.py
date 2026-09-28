@@ -48,6 +48,8 @@ RETRY_DELAY_SECONDS = 5.0
 NUDGE = "Continue with the plan, or reply with a short report of what you did."
 CUT_OFF = "Your reply was cut off at the length limit. Continue in shorter parts, or use a tool."
 STEP_GROWTH_BYTES = 20_000  # what one step can add: up to 4 tool results and the model's own reply
+# A picture the model looks at counts like this much text (about 1,300 tokens, the most a look can cost).
+IMAGE_EQUIVALENT_BYTES = 5_000
 PLANNER_SCALES = (1.0, 0.75, 0.5, 0.3)  # the planner's context budgets, until the request fits its profile
 NO_STEP = "not enough money left in this cycle for a work step and the reflection"
 
@@ -523,10 +525,13 @@ class CycleRunner:
 
     @staticmethod
     def _result_block(use: dict[str, Any], outcome: tools.Outcome) -> dict[str, Any]:
+        content: str | list[dict[str, Any]] = outcome.text or "-"
+        if outcome.image is not None:
+            content = [{"type": "text", "text": outcome.text or "-"}, tools.image_block(outcome.image)]
         block: dict[str, Any] = {
             "type": "tool_result",
             "tool_use_id": use.get("id", ""),
-            "content": outcome.text or "-",
+            "content": content,
         }
         if not outcome.ok:
             block["is_error"] = True
@@ -684,4 +689,19 @@ def _first_object(text: str) -> str | None:
 
 
 def _size(turns: list[dict[str, Any]]) -> int:
-    return len(json.dumps(turns, ensure_ascii=False).encode("utf-8"))
+    """The conversation's size in bytes of JSON, a picture counted as IMAGE_EQUIVALENT_BYTES (not its data)."""
+    pictures = 0
+
+    def without_pictures(node: Any) -> Any:
+        nonlocal pictures
+        if isinstance(node, dict):
+            if node.get("type") == "image":
+                pictures += 1
+                return {}
+            return {key: without_pictures(value) for key, value in node.items()}
+        if isinstance(node, list):
+            return [without_pictures(value) for value in node]
+        return node
+
+    text = json.dumps(without_pictures(turns), ensure_ascii=False)
+    return len(text.encode("utf-8")) + pictures * IMAGE_EQUIVALENT_BYTES

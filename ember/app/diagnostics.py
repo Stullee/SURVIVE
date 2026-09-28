@@ -21,6 +21,7 @@ import sys
 import textwrap
 from collections.abc import Callable
 from datetime import UTC, datetime
+from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
 from .db import utcnow
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from .state import AppState
 
 MAX_REPORT_CHARS = 400_000
+PRODUCT_LIBRARIES = ("fpdf2", "python-docx", "openpyxl", "pypdfium2", "pillow")
 CYCLES_CHARS = 200_000  # the wake cycles' share, so the sections after them always fit under the cap
 CELL_CHARS = 160
 TEXT_CHARS = 800  # plans, notes, message texts and tool inputs: enough to see what was actually written
@@ -160,9 +162,20 @@ def _system(state: AppState) -> str:
             "fake_scenario": os.environ.get("EMBER_FAKE_SCENARIO", "founder"),
             "scheduler_env": os.environ.get("EMBER_SCHEDULER", ""),
             "agent_error": getattr(state, "agent_error", None),
+            "product_libraries": _versions(PRODUCT_LIBRARIES),
         }
     )
     return _json(info)
+
+
+def _versions(names: tuple[str, ...]) -> dict[str, str]:
+    found = {}
+    for name in names:
+        try:
+            found[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            found[name] = "missing"
+    return found
 
 
 def _database(state: AppState) -> str:
@@ -422,7 +435,11 @@ def _agent(state: AppState) -> str:
         ]
         if tree.truncated:
             lines.append(f"  … only the first {WORKSPACE_ENTRIES} entries are shown")
-        out.append(f"-- workspace: {used.files} files, {used.folders} folders, {used.size} B\n" + "\n".join(lines))
+        text_bytes, product_bytes = workspace.sizes()
+        split = f" ({text_bytes} B text, {product_bytes} B PDF, Word, Excel and PNG files)" if product_bytes else ""
+        out.append(
+            f"-- workspace: {used.files} files, {used.folders} folders, {used.size} B{split}\n" + "\n".join(lines)
+        )
     except Exception as exc:  # noqa: BLE001
         out.append(f"-- workspace: unreadable ({exc})")
     return "\n".join(out)

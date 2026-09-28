@@ -21,6 +21,11 @@ used) raises ``Missing``.
 Roots: the live agent works in /data/workspace and /data/memory; a dry run in
 /data/dry_run/workspace and /data/dry_run/memory, which start empty with every
 dry-run session, so fake output never mixes with the live agent's files.
+
+Two kinds of files live in the workspace: text the agent writes (``write``), and
+products (PDF, Word, Excel, PNG) that only Ember's own code makes from it
+(``write_bytes``, called by app.products): the agent can never put bytes of its
+choosing into a file a program would open. Each kind has its own size limits.
 """
 
 from __future__ import annotations
@@ -39,6 +44,8 @@ from typing import NamedTuple
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")  # used with fullmatch: "$" also matches before a "\n"
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 TEXT_EXTENSIONS = frozenset({".md", ".txt", ".csv", ".tsv", ".json", ".yaml", ".yml", ".html", ".css", ".xml"})
+PRODUCT_EXTENSIONS = frozenset({".pdf", ".docx", ".xlsx", ".png"})
+KINDS = {"text": TEXT_EXTENSIONS, "product": PRODUCT_EXTENSIONS, "any": TEXT_EXTENSIONS | PRODUCT_EXTENSIONS}
 MAX_PATH_BYTES = 200
 MAX_DEPTH = 4
 TEMP_PREFIX = ".tmp-"
@@ -55,9 +62,21 @@ class Missing(SandboxError):
 
 @dataclass(frozen=True)
 class Limits:
-    max_file_bytes: int = 64 * 1024
+    max_file_bytes: int = 64 * 1024  # a text file
     max_files: int = 300
-    max_total_bytes: int = 5 * 1024 * 1024
+    max_total_bytes: int = 5 * 1024 * 1024  # all text files
+    max_product_bytes: int = 15 * 1024 * 1024  # one product file
+    max_product_total_bytes: int = 200 * 1024 * 1024  # all product files
+
+
+def kind_of(path: str) -> str | None:
+    """ "text" or "product" by the file's ending, or None."""
+    suffix = Path(path).suffix.lower()
+    if suffix in TEXT_EXTENSIONS:
+        return "text"
+    if suffix in PRODUCT_EXTENSIONS:
+        return "product"
+    return None
 
 
 @dataclass(frozen=True)
@@ -102,8 +121,11 @@ class Jail:
         if self.root.is_symlink() or not self.root.is_dir():
             raise SandboxError("the workspace folder is not usable")
 
-    def parts(self, path: str, *, want_file: bool = True) -> list[str]:
-        """Validate a relative path and return its components, exactly as given (nothing is trimmed)."""
+    def parts(self, path: str, *, want_file: bool = True, kinds: str = "text") -> list[str]:
+        """Validate a relative path and return its components, exactly as given (nothing is trimmed).
+
+        ``kinds`` says which files the caller handles: "text" (the agent's own writing), "product" or "any".
+        """
         if not isinstance(path, str):
             raise SandboxError("the path must be text")
         if _CONTROL.search(path):
@@ -125,8 +147,12 @@ class Jail:
                 raise SandboxError(
                     f"{part!r} is not allowed: use letters, digits, '.', '_' and '-', starting with a letter or digit"
                 )
-        if want_file and Path(parts[-1]).suffix.lower() not in TEXT_EXTENSIONS:
-            raise SandboxError(f"only text files: {', '.join(sorted(TEXT_EXTENSIONS))}")
+        allowed = KINDS[kinds]
+        if want_file and Path(parts[-1]).suffix.lower() not in allowed:
+            if kinds == "text":
+                extra = " (PDF, Word, Excel and PNG files are made with make_document, make_spreadsheet, make_image)"
+                raise SandboxError(f"only text files: {', '.join(sorted(TEXT_EXTENSIONS))}{extra}")
+            raise SandboxError(f"only these files: {', '.join(sorted(allowed))}")
         return parts
 
     @contextlib.contextmanager
@@ -183,6 +209,36 @@ class Jail:
                 data = handle.read(self.limits.max_file_bytes + 1)
         return data[: self.limits.max_file_bytes].decode("utf-8", errors="replace")
 
+    def read_bytes(self, path: str) -> bytes:
+        """A product file's bytes (never a text file's: the agent's text is read with read())."""
+        *folders, name = self.parts(path, kinds="product")
+        with self._folder(folders) as folder:
+            if self._file_info(folder, name) is None:
+                raise Missing(f"{path} doesn't exist")
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=folder)
+            except FileNotFoundError:
+                raise Missing(f"{path} doesn't exist") from None
+            except OSError as exc:
+                raise SandboxError(_os_problem(exc)) from None
+            with os.fdopen(fd, "rb") as handle:
+                info = os.fstat(handle.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
+                    raise SandboxError("not a plain file")
+                if info.st_size > self.limits.max_product_bytes:
+                    raise SandboxError(f"{path} is larger than {self.limits.max_product_bytes // (1024 * 1024)} MB")
+                return handle.read(self.limits.max_product_bytes + 1)[: self.limits.max_product_bytes]
+
+    def size_of(self, path: str, kinds: str = "any") -> int | None:
+        """The size of a file, or None if it doesn't exist."""
+        *folders, name = self.parts(path, kinds=kinds)
+        try:
+            with self._folder(folders) as folder:
+                info = self._file_info(folder, name)
+        except Missing:
+            return None
+        return None if info is None else info.st_size
+
     def exists(self, path: str) -> bool:
         try:
             self.read(path)
@@ -235,6 +291,19 @@ class Jail:
                     size += entry.size
         return Usage(files, folders, size)
 
+    def sizes(self) -> tuple[int, int]:
+        """Bytes in text files and in product files, in the whole root."""
+        text = product = 0
+        with contextlib.closing(self._tree()) as tree:
+            for entry in tree:
+                if entry.is_dir:
+                    continue
+                if kind_of(entry.path) == "product":
+                    product += entry.size
+                else:
+                    text += entry.size
+        return text, product
+
     # --- writing ---
 
     def write(self, path: str, content: str, *, append: bool = False, create_only: bool = False) -> int:
@@ -261,22 +330,37 @@ class Jail:
             previous = info.st_size if info is not None else 0
             if info is None and used.files + used.folders + 1 > self.limits.max_files:
                 raise SandboxError(f"the workspace holds at most {self.limits.max_files} files; delete some first")
-            if used.size - previous + len(data) > self.limits.max_total_bytes:
+            text_bytes, _ = self.sizes()
+            if text_bytes - previous + len(data) > self.limits.max_total_bytes:
                 raise SandboxError(f"the workspace holds at most {self.limits.max_total_bytes // (1024 * 1024)} MB")
-            temp = f"{TEMP_PREFIX}{secrets.token_hex(6)}"
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-            fd = os.open(temp, flags, 0o644, dir_fd=folder)
-            try:
-                with os.fdopen(fd, "wb") as handle:
-                    handle.write(data)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(temp, name, src_dir_fd=folder, dst_dir_fd=folder)
-            except BaseException:
-                with contextlib.suppress(FileNotFoundError):
-                    os.unlink(temp, dir_fd=folder)
-                raise
-            os.fsync(folder)
+            _replace(folder, name, data)
+        return len(data)
+
+    def write_bytes(self, path: str, data: bytes) -> int:
+        """Write a product file atomically (only Ember's own code calls this, never with the agent's bytes)."""
+        if not isinstance(data, bytes | bytearray):
+            raise SandboxError("a product is bytes")
+        *folders, name = self.parts(path, kinds="product")
+        limits = self.limits
+        if len(data) > limits.max_product_bytes:
+            raise SandboxError(f"a product file can hold at most {limits.max_product_bytes // (1024 * 1024)} MB")
+        missing = self._missing_folders(folders)
+        used = self.usage()
+        if missing and used.files + used.folders + missing + 1 > limits.max_files:
+            raise SandboxError(f"the workspace holds at most {limits.max_files} entries; delete some first")
+        with self._folder(folders, create=True) as folder:
+            info = self._file_info(folder, name)
+            used = self.usage()
+            if info is None and used.files + used.folders + 1 > limits.max_files:
+                raise SandboxError(f"the workspace holds at most {limits.max_files} files; delete some first")
+            _, product_bytes = self.sizes()
+            previous = info.st_size if info is not None else 0
+            if product_bytes - previous + len(data) > limits.max_product_total_bytes:
+                raise SandboxError(
+                    f"products take at most {limits.max_product_total_bytes // (1024 * 1024)} MB in the workspace; "
+                    "delete old ones first"
+                )
+            _replace(folder, name, bytes(data))
         return len(data)
 
     def _missing_folders(self, folders: list[str]) -> int:
@@ -290,7 +374,7 @@ class Jail:
         return len(folders)
 
     def delete(self, path: str) -> None:
-        *folders, name = self.parts(path)
+        *folders, name = self.parts(path, kinds="any")
         with self._folder(folders) as folder:
             if self._file_info(folder, name) is None:
                 raise Missing(f"{path} doesn't exist")
@@ -321,6 +405,24 @@ class Jail:
                         os.unlink(os.path.join(dirpath, name))
                         removed += 1
         return removed
+
+
+def _replace(folder: int, name: str, data: bytes) -> None:
+    """Write ``data`` to a temporary file next to ``name``, flush it to disk, and put it in place atomically."""
+    temp = f"{TEMP_PREFIX}{secrets.token_hex(6)}"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open(temp, flags, 0o644, dir_fd=folder)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, name, src_dir_fd=folder, dst_dir_fd=folder)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temp, dir_fd=folder)
+        raise
+    os.fsync(folder)
 
 
 def _children(folder: int, prefix: str) -> list[Entry]:

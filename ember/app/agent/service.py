@@ -497,3 +497,9 @@ class Agent:
         from . import views
 
         return views.workspace_file(self, path)
+
+    def workspace_product(self, path: str) -> tuple[str, bytes, str]:
+        """(file name, bytes, content type) of a PDF, Word, Excel or PNG file; raises views.WorkspaceFileError."""
+        from . import views
+
+        return views.workspace_product(self, path)
