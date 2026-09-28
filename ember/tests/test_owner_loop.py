@@ -351,3 +351,14 @@ def test_owner_routes(ingress_client: TestClient) -> None:
     assert {"approvals_pending", "inbox_unread", "next_wake_at"} <= set(sensors)
     assert post(ingress_client, "api/control/resume").json()["state"] == "killed"  # resume never clears a kill
     assert CSRF["X-Ember-Request"] == "1"
+
+
+def test_a_cycle_cap_too_small_for_a_working_cycle_is_warned_about(data_dir: Path) -> None:
+    from app.config import Settings
+    from tests.economy_helpers import make_economy
+
+    economy = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.05))
+    assert any("below one working cycle" in w for w in economy.warnings())
+    economy.stop()
+    roomy = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.25))
+    assert not any("below one working cycle" in w for w in roomy.warnings())

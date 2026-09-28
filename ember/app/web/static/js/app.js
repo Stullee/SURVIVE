@@ -2302,7 +2302,10 @@
     send.disabled = true;
     send.textContent = "Sending…";
     setComposerStatus("Sending…", "");
-    request("POST", "api/inbox", { text: text }).then(function (res) {
+    // Replying reads the agent's messages, but only those this page has shown (not one written meanwhile).
+    var shown = arr(ui.data && ui.data.inbox).filter(function (m) { return isObject(m) && m.sender === "agent"; }).map(function (m) { return num(m.id); }).filter(function (n) { return n > 0; });
+    var readUpTo = shown.length ? Math.max.apply(null, shown) : 0;
+    request("POST", "api/inbox", { text: text, read_up_to: readUpTo }).then(function (res) {
       if (res.status === 201 || res.ok) {
         box.value = "";
         composerCount();

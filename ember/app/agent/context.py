@@ -44,7 +44,7 @@ PLANNER_BUDGETS = {
     "identity": 600,
     "lessons": 1_300,
     "journal": 600,
-    "workspace": 400,
+    "workspace": 900,
     "research": RESEARCH_BUDGET,
 }
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:

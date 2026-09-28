@@ -46,7 +46,7 @@ def test_the_next_plan_and_brief_see_the_last_research(data_dir: Path) -> None:
         ],
     )
     agent.run_cycle("schedule")
-    assert all("RECENT RESEARCH" not in first_text(r) for r in transport.sent)
+    assert all(f"== {context.RESEARCH_HEADING} ==" not in first_text(r) for r in transport.sent)
     before = len(transport.sent)
     agent.run_cycle("schedule")
 
@@ -91,7 +91,8 @@ def test_research_lines_are_short_quoted_and_keep_their_budget() -> None:
     shown = section(planner, HEADING) or ""
     assert context.json_bytes(shown) <= context.RESEARCH_BUDGET and re.search(r"\n…\[\d+ bytes cut\]$", shown)
     assert shown.startswith(lines[0])  # the newest first
-    assert "RECENT RESEARCH" not in context.planner_context(snapshot_with([]), False)[0]  # none yet: no section
+    none_yet = context.planner_context(snapshot_with([]), False)[0]
+    assert f"== {context.RESEARCH_HEADING} ==" not in none_yet  # none yet: no section
 
 
 def test_the_rules_say_to_look_before_researching_again() -> None:

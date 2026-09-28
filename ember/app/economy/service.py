@@ -33,7 +33,7 @@ from .ledger import (
 )
 from .life import KILLED_KEY, PAUSED_KEY, RUNWAY_CAP_DAYS, Life, LifeStatus, mode_of
 from .metering import MeteredModel, MeterHealth, ProcessLock, Transport, recover_interrupted, usd_cap_to_micros
-from .pricing import opening_cost
+from .pricing import opening_cost, working_cycle_cost
 
 log = logging.getLogger(__name__)
 
@@ -237,6 +237,14 @@ class Economy:
                         f"The {label} (${cap:.2f}) is below one planning call (up to ${micros_to_usd(opening):.2f}),"
                         " so the agent can't start a wake cycle."
                     )
+        working = working_cycle_cost(self.settings, self.db, self.mode)
+        cycle_cap = usd_cap_to_micros(self.settings.cycle_spend_cap_usd)
+        if working is not None and opening is not None and opening <= cycle_cap < working:
+            result.append(
+                f"The cycle spend cap (${self.settings.cycle_spend_cap_usd:.2f}) is below one working cycle (plan, a"
+                f" work step and the reflection: up to ${micros_to_usd(working):.2f}), so a wake cycle may end right"
+                " after its plan."
+            )
         return result
 
     def dashboard(self) -> dict[str, Any]:
