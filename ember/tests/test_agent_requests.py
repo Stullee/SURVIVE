@@ -16,7 +16,12 @@ from app.economy.metering import rough_token_count
 from app.economy.pricing import LAST_WILL, PLANNER_OPENING, REFLECT, WORK
 
 SETTINGS = Settings(agent_name="X" * 40)
-HEADINGS = {"news": "SINCE YOUR LAST WAKE", "research": context.RESEARCH_HEADING, "lessons": "LESSONS (newest last)"}
+HEADINGS = {
+    "instructions": context.INSTRUCTIONS_HEADING,
+    "news": "SINCE YOUR LAST WAKE",
+    "research": context.RESEARCH_HEADING,
+    "lessons": "LESSONS (newest last)",
+}
 
 
 def filler(budget: int) -> str:
@@ -25,7 +30,7 @@ def filler(budget: int) -> str:
 
 
 def biggest_planner_context() -> str:
-    # Every section at its budget, RECENT RESEARCH and MAIL included.
+    # Every section at its budget: the standing instructions, RECENT RESEARCH and MAIL included.
     parts = [f"== {HEADINGS.get(k, k.upper())} ==\n{filler(v)}" for k, v in context.PLANNER_BUDGETS.items()]
     return "\n\n".join([*parts, "== TASK ==\nPlan this wake cycle. Reply with the JSON plan only."])
 
@@ -95,6 +100,7 @@ def overflowing_snapshot() -> context.Snapshot:
         mail=context.MailView(
             "ä" * 60 + "@example.org", 10**6, tuple((10**9 + i, "ä" * 320, "ä" * 300) for i in range(3))
         ),
+        instructions="😀" * 1_500,
     )
 
 
@@ -102,12 +108,14 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     snap = overflowing_snapshot()
     planner, _ = context.planner_context(snap, dry_run=True)
     assert f"== {context.RESEARCH_HEADING} ==" in planner and "== FROM YOUR OWNER ==" not in planner
-    assert "\n== MAIL ==\n" in planner
+    assert "\n== MAIL ==\n" in planner and f"\n== {context.INSTRUCTIONS_HEADING} ==\n" in planner
+    assert "Memory check: lessons.md" in planner  # the lessons fill most of their file
     assert rough_token_count(prompts.plan_request(SETTINGS, planner)) <= PLANNER_OPENING.input_tokens
     plan = {"goal": "ä" * 300, "steps": ["ä" * 200] * 6}
     focus = {"id": 1_000, "title": "ä" * 80, "status": "active", "hypothesis": "ä" * 400, "next_step": "ä" * 200}
     brief, _ = context.brief(snap, True, plan, {**focus, "notes": "ä" * 2_000}, 100)  # type: ignore[arg-type]
     assert "== FROM YOUR OWNER ==" in brief and "\n== MAIL ==\n" in brief and brief.endswith("bytes cut]")
+    assert f"\n== {context.INSTRUCTIONS_HEADING} ==\n" in brief and "Memory check" not in brief
     # The owner's and the research sections' room comes on top, even when the research itself is cut at the end.
     assert context.BRIEF_BUDGET < context.json_bytes(brief) <= context.BRIEF_MAX
     for request, profile in zip(first_step_and_reflection(brief), (WORK, REFLECT), strict=True):
