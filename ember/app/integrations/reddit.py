@@ -53,6 +53,8 @@ def action(kind: str, subreddit: str, title: str | None, body: str, thread_url: 
             raise RedditError("a post needs a title")
         if len(title) > TITLE_CHARS:
             raise RedditError(f"the title is longer than {TITLE_CHARS} characters")
+        if not title.isprintable():
+            raise RedditError("the title must be one line")
         if thread:
             raise RedditError("thread_url is only for comments")
     else:

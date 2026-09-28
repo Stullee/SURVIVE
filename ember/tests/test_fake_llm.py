@@ -566,6 +566,24 @@ BAD_REQUESTS = {
         {"model": "claude-sonnet-5", "max_tokens": 50, "messages": [turn("user", TEXT), turn("assistant", USE)]},
         "must define tools",
     ),
+    "a web search limited to a URL": (
+        {
+            **prompts.research_request(SETTINGS, "q", None),
+            "tools": [{**prompts.SEARCH_TOOL, "allowed_domains": ["https://reddit.com"]}],
+        },  # fmt: skip
+        "allowed_domains: must be a list of domains",
+    ),
+    "a web search with allowed and blocked domains": (
+        {
+            **prompts.research_request(SETTINGS, "q", None),
+            "tools": [{**prompts.SEARCH_TOOL, "allowed_domains": ["reddit.com"], "blocked_domains": ["x.com"]}],
+        },  # fmt: skip
+        "either allowed_domains or blocked_domains",
+    ),
+    "a web search with an unknown field": (
+        {**prompts.research_request(SETTINGS, "q", None), "tools": [{**prompts.SEARCH_TOOL, "sites": ["reddit.com"]}]},
+        "sites: Extra inputs are not permitted",
+    ),
 }
 
 
@@ -598,6 +616,8 @@ GOOD_REQUESTS = {
     "every request the agent builds": prompts.plan_request(SETTINGS, "context"),
     "the reflect turn": prompts.reflect_request(SETTINGS, "brief", [turn("assistant", TEXT, USE)], [RESULT]),
     "the last will": prompts.will_request(SETTINGS, "context"),
+    "a search limited to one site": prompts.research_request(SETTINGS, "q", None, "reddit.com"),
+    "a step with the mailbox's tools": prompts.work_request(SETTINGS, "brief", [], mail=True),
 }
 
 
@@ -1177,3 +1197,41 @@ def test_the_owner_hears_back_in_a_dry_run(data_dir: Path) -> None:
     if not any("\n== FROM YOUR OWNER ==\n" in b for b in briefs):
         pytest.skip("app/agent/context.py's brief has no '== FROM YOUR OWNER ==' section yet (the agent-side change)")
     assert replies[0] == f'You wrote: "{MESSAGE}"\n\n{DRY_RUN_REPLY}'
+
+
+def test_the_fake_researches_reddit_and_proposes_reddit_posts_now_and_then() -> None:
+    used = [(name, args) for sim in corpus()["founder"] for _, name, args, _ in sim.tool_log]
+    searches = [args for name, args in used if name == "research"]
+    limited = [args for args in searches if args.get("site") == "reddit.com"]
+    assert limited and len(limited) < len(searches) / 2 and all("Reddit" in args["question"] for args in limited)
+    posts = [args for name, args in used if name == "propose_reddit_post"]
+    assert posts and any(name == "request_approval" for name, _ in used)
+    for args in posts:
+        assert (args["subreddit"], args["kind"]) == ("SideProject", "post") and "AI agent" in args["body"]
+
+
+def test_the_fake_tries_the_mailbox_in_a_dry_run(data_dir: Path) -> None:
+    """The owner can try the whole flow in dry run: the fake answers the reader, doesn't answer the newsletter (or
+    follow its hidden orders), and stops at the reader's "stop"."""
+    economy = make_economy(data_dir, ROOMY)
+    fake = FakeTransport(seed=5)
+    agent = Agent(economy.db, LoadedSettings(ROOMY), economy, transport=fake, cycles_enabled=True)
+    agent.recover()
+    owner = Owner(agent.db, agent.clock, agent.economy, agent.scope(), agent.settings.agent_name)
+    for _ in range(6):
+        assert agent.run_cycle("schedule").status == "completed"
+        for approval in agent.dashboard()["approvals"]:
+            if approval["status"] == "pending" and approval["executor"] == "email":
+                assert owner.decide(approval["id"], {"decision": "approve"}, "Stefan").status == 200
+        agent.execute_approved()
+    assert [t for t in fake.trace if t[1] == "invalid"] == []
+    with agent.db.connection() as conn:
+        used = [(r["tool"], json.loads(r["input"])) for r in conn.execute("SELECT tool, input FROM tool_calls")]
+        emails = [dict(r) for r in conn.execute("SELECT id, direction, from_addr, to_addr FROM emails ORDER BY id")]
+        stopped = [r[0] for r in conn.execute("SELECT address FROM email_suppressions")]
+    proposed = [args for tool, args in used if tool == "propose_email"]
+    assert len(proposed) == 1 and proposed[0]["reply_to_email_id"] == 1
+    assert fake_llm.DRY_RUN_EMAIL in proposed[0]["body"]
+    assert {args["email_id"] for tool, args in used if tool == "email_read"} == {1, 3, 4}  # the question, the rest
+    assert [e["direction"] for e in emails] == ["in", "out", "in", "in"]
+    assert emails[1]["to_addr"] == emails[0]["from_addr"] and stopped == [emails[0]["from_addr"]]

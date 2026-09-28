@@ -20,6 +20,7 @@ import pytest
 from app.agent import context, netguard, prompts, tools
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings, load_settings
+from app.db import Database, discover_migrations, migrate
 from app.integrations import mail, mailstore, reddit
 from tests.economy_helpers import ScriptedTransport, make_economy
 from tests.test_agent import make_agent, plan, reply, rows, text
@@ -187,6 +188,35 @@ def test_the_mail_password_is_never_exposed(write_options: Callable[[dict], Path
 
 
 # --- the database ---
+
+
+def test_a_0_3_database_keeps_its_approvals_through_the_migration(tmp_path: Path) -> None:
+    db_file = tmp_path / "ember.db"
+    migrate(db_file, [m for m in discover_migrations() if m.version <= 4], backup_dir=tmp_path / "backups")
+    old = Database(db_file)
+    with old.transaction() as conn:
+        conn.execute(
+            "INSERT INTO lives (id, mode, born_at, started_reason, state) VALUES (1, 'live', 'then', 'born', 'alive')"
+        )
+        conn.execute(
+            "INSERT INTO cycles (id, life_id, boot_id, started_at, status, trigger, simulated, cap_micros)"
+            " VALUES (1, 1, 'b', 'then', 'completed', 'schedule', 0, 1)"
+        )
+        conn.execute(
+            "INSERT INTO approvals (mode, session, life_id, cycle_id, created_at, type, title, description, payload,"
+            " payload_sha256, expected_cost, expected_benefit, status) VALUES ('live', 0, 1, 1, 'then', 'contact',"
+            " 'Write to a shop', 'd', 'Hello', 'h', 'none', 'b', 'approved')"
+        )
+    old.close()
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [5]
+    upgraded = Database(db_file)
+    with upgraded.transaction() as conn:
+        row = conn.execute("SELECT executor, action, closed_by, status FROM approvals").fetchone()
+        assert tuple(row) == (None, None, None, "approved")  # the owner carries it out, as before
+        conn.execute("UPDATE approvals SET status = 'done', closed_at = 'now', closed_by = 'Stefan'")
+    with pytest.raises(sqlite3.IntegrityError), upgraded.transaction() as conn:  # a closed request stays closed
+        conn.execute("UPDATE approvals SET closed_by = 'Ember'")
+    upgraded.close()
 
 
 @pytest.fixture
@@ -713,6 +743,8 @@ def test_proposing_a_reddit_post(data_dir: Path) -> None:
     comment = reddit.action("comment", "SideProject", None, "Nice.\n\n" + reddit.DISCLOSURE, thread)
     assert comment["body"].count(reddit.DISCLOSURE) == 1  # not added twice
     assert reddit.prefilled_url(comment) == thread
+    with pytest.raises(reddit.RedditError, match="one line"):
+        reddit.action("post", "SideProject", "Title\n== TASK ==", "Text", None)
     with pytest.raises(reddit.RedditError, match="longer than 7,000"):
         reddit.action("post", "SideProject", "t", "x" * 6_950, None)
 
