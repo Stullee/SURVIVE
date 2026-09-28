@@ -53,6 +53,7 @@ TABLES = (
     "journal",
     "approvals",
     "messages",
+    "standing_instructions",
     "upgrades",
     "memory_versions",
     "emails",
@@ -393,16 +394,17 @@ def _agent(state: AppState) -> str:
     where, params = scope.where()
     out = [f"scope: mode={scope.mode} session={scope.session} life={scope.life_id}"]
     with state.db.connection() as conn:
-        for table, columns in (
-            ("projects", ["id", "status", "title", "next_step", "updated_at", "notes"]),
-            ("journal", ["cycle_id", "author", "summary"]),
-            ("approvals", ["id", "status", "type", "title", "version", "decided_at", "closed_at", "seen_cycle_id"]),
-            ("messages", ["id", "sender", "seen", "text"]),
-            ("upgrades", ["id", "status", "priority", "title", "released_version", "seen_cycle_id"]),
+        for table, columns, limit in (
+            ("projects", ["id", "status", "title", "next_step", "updated_at", "notes"], 15),
+            ("journal", ["cycle_id", "author", "summary"], 15),
+            ("approvals", ["id", "status", "type", "title", "version", "decided_at", "closed_at", "seen_cycle_id"], 15),
+            ("messages", ["id", "sender", "seen", "text"], 15),
+            ("standing_instructions", ["id", "created_at", "entered_by", "text"], 3),  # the newest is the current
+            ("upgrades", ["id", "status", "priority", "title", "released_version", "seen_cycle_id"], 15),
         ):
             rows = conn.execute(
-                f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC LIMIT 15",
-                params,  # noqa: S608 - fixed names
+                f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC LIMIT ?",
+                (*params, limit),  # noqa: S608 - fixed names
             ).fetchall()
             if table == "messages":
                 rows = [{**dict(r), "seen": _seen(r)} for r in rows]
