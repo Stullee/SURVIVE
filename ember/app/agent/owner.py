@@ -1,4 +1,4 @@
-"""The owner's side of the agent's queues: approvals, the inbox, upgrade requests, the kill switch.
+"""The owner's side: approvals, the inbox, standing instructions, upgrade requests, the kill switch.
 
 Only the owner's HTTP endpoints call this module; the agent's tools never import
 it (a test checks), so the agent can't decide its own requests. Every change is
@@ -25,10 +25,12 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import executor
 from ..integrations.mail import BODY_MAX
+from . import store
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
 REMOVED_TEXT = "[removed by the owner]"  # the only text a message may be changed to (migration 0006)
+INSTRUCTIONS_MAX = 1_500  # characters of the standing instructions (migration 0007)
 CANCELLED = "Cancelled by the owner before it was sent"
 DECISIONS = {"approve": "approved", "approve_with_changes": "approved_with_changes", "reject": "rejected"}
 OUTCOMES = ("done", "failed")
@@ -208,6 +210,34 @@ class Owner:
                 )
             events.record(self.db, "info", "owner", f"{who or 'The owner'} sent a message to the agent")
             return Reply(201, {"id": message_id})
+
+        return _reply(run)
+
+    # --- standing instructions ---
+
+    def set_instructions(self, body: Any, who: str | None) -> Reply:
+        """Replace the owner's standing instructions (an empty text clears them); every version is kept."""
+
+        def run() -> Reply:
+            data = _body(body, {"text"})
+            if "text" not in data:
+                raise OwnerError("text", "send the instructions as text (empty to clear them)")
+            text = _text(data, "text", INSTRUCTIONS_MAX) or ""
+            with self.db.transaction() as conn:
+                current = store.standing_instructions(conn, self.scope)
+                if (current["text"] if current else "") == text:  # nothing changed (a second click): no new version
+                    return Reply(200, {"instructions": store.instructions_json(current), "changed": False})
+                conn.execute(
+                    "INSERT INTO standing_instructions (mode, session, created_at, entered_by, text)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (self.scope.mode, self.scope.session, self._now(), who, text),
+                )
+                saved = store.standing_instructions(conn, self.scope)
+            actor = who or "The owner"
+            events.record(
+                self.db, "info", "owner", f"{actor} {'changed' if text else 'cleared'} the standing instructions"
+            )
+            return Reply(200, {"instructions": store.instructions_json(saved), "changed": True})
 
         return _reply(run)
 
