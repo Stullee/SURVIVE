@@ -95,6 +95,7 @@ def dashboard(request: Request) -> dict[str, Any]:
         "approvals": [],
         "inbox": [],
         "upgrades": [],
+        "instructions": None,
         "mind": None,
         "badges": None,
     }
@@ -298,7 +299,36 @@ def send_message(request: Request, body: Annotated[Any, Body()] = None) -> JSONR
     actions = _owner_actions(request)
     if actions is None:
         return NO_AGENT
-    return _reply(actions.send_message(body, _owner(request)))
+    reply = actions.send_message(body, _owner(request))
+    if reply.status == 201:
+        reply.body["woken"] = _wake_for_message(request)
+    return _reply(reply)
+
+
+def _wake_for_message(request: Request) -> bool:
+    """The owner wrote: wake the agent to read it now (the wake_on_message option), like Wake now does, within its
+    minute between wake-ups. True if a wake is on its way; a refused one (a cycle running, too soon, paused, ...) is
+    fine: the message waits for the next wake."""
+    state = _state(request)
+    agent = state.agent
+    if agent is None or not state.loaded.settings.wake_on_message:
+        return False
+    if agent.wake_requested:  # already woken and not started yet: that cycle reads the message
+        return True
+    status, _ = agent.request_wake(by_message=True)
+    if status != 202:
+        return False
+    if state.scheduler is not None:
+        state.scheduler.poke()
+    return True
+
+
+@router.post("/api/instructions")
+def set_instructions(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.set_instructions(body, _owner(request)))
 
 
 @router.post("/api/inbox/{message_id}/remove")
