@@ -128,6 +128,7 @@ CHAOS: dict[str, tuple[str, ...]] = {
     "reflect": ("disallowed_tool", "double_journal", "text_only", "empty"),
     "research": ("pause_turn", "search_error"),
     "workshop": ("svg", "nothing", "pause"),
+    "review": ("prose", "cut_off", "unknown_project"),
     "will": ("cut_off", "empty"),
 }
 _OPEN_STATUSES = ("idea", "active", "waiting")
@@ -369,13 +370,15 @@ def thinking_signature(thinking: str) -> str:
 
 
 def request_kind(request: Mapping[str, Any]) -> str:
-    """plan, workshop, research, reflect, work or will (anything else without tools counts as a will)."""
+    """plan, review, workshop, research, reflect, work or will (anything else without tools counts as a will)."""
     output_config = request.get("output_config")
     fmt = output_config.get("format") if isinstance(output_config, Mapping) else None
     schema = fmt.get("schema") if isinstance(fmt, Mapping) else None
     properties = schema.get("properties") if isinstance(schema, Mapping) else None
     if isinstance(properties, Mapping) and "steps" in properties:
         return "plan"
+    if isinstance(properties, Mapping) and "verdicts" in properties:
+        return "review"
     tools = [t for t in request.get("tools") or [] if isinstance(t, Mapping)]
     if any(str(t.get("type") or "").startswith("code_execution_") for t in tools):
         return "workshop"
@@ -646,6 +649,13 @@ _JSON = json.JSONDecoder()
 _ANSWER = "answer my owner"  # in a plan step or goal: the cycle answers the owner
 MAKE_STEP = "Make the draft into a PDF with a Word copy, look at its first page and make a listing photo"
 WORKSHOP_STEP = "Have the workshop make a price chart for the listing photos"
+REVIEW_STOP_CYCLES = 12  # the fake's daily review stops a project that took this many cycles without earning
+CLOSE_STEP = "Close project #{id}: my review says stop"
+# A project line of the review's scorecard: id, status, title, cycles in all.
+_SCORECARD_PROJECT = re.compile(r"^#(\d+) \[(\w+)[^\]]*\] (.*?) · open .*?cycles in the period \((\d+) in all\)", re.M)
+_NO_REVENUE = "Revenue your owner recorded: $0.00 in these days"
+_REVIEW_STOP = re.compile(r"^- #(\d+)[^\n]*?: stop: ", re.M)
+_CLOSE = re.compile(r"close project #(\d+)")
 PROMOTE_STEP = "Ask for this workshop script to be built into Ember:"
 _PROVEN = re.compile(r"Workshop check: (workshop/scripts/\S+?\.py) has proven itself")
 _KEPT_SCRIPT = re.compile(r"^(workshop/scripts/[A-Za-z0-9._-]+\.py) \(", re.MULTILINE)
@@ -1095,6 +1105,8 @@ class FakeTransport:
             chaos = rng.choice(CHAOS[kind])
         if kind == "plan":
             return self._plan(request, rng, chaos)  # structured output: JSON only, never padded
+        if kind == "review":
+            return self._review(request, rng, chaos)  # the same
         if kind == "research":
             draft = self._research(request, rng, chaos)
         elif kind == "workshop":
@@ -1157,12 +1169,55 @@ class FakeTransport:
         note = "plan: no steps" if not plan["steps"] else f"plan: {len(plan['steps'])} steps"
         return _Draft([_text(json.dumps(plan, ensure_ascii=False))], note=note)
 
+    def _review(self, request: Mapping[str, Any], rng: random.Random, chaos: str | None) -> _Draft:
+        """The daily review: continue what is active or waiting, start an idea, and stop a project that took
+        REVIEW_STOP_CYCLES cycles while nothing was earned."""
+        card = _text_of(request["messages"][-1].get("content"))
+        verdicts = []
+        for m in _SCORECARD_PROJECT.finditer(card):
+            pid, status, cycles = int(m[1]), m[2], int(m[4])
+            if status not in _OPEN_STATUSES:
+                continue
+            if cycles >= REVIEW_STOP_CYCLES and _NO_REVENUE in card:
+                verdict, why = "stop", f"{cycles} cycles and nothing earned: no sign of demand."
+            elif status == "idea":
+                verdict, why = "change", "Still an idea: start it with a first draft, or drop it."
+            else:
+                verdict, why = "continue", "Too early to judge: it needs a finished listing first."
+            verdicts.append({"project_id": pid, "verdict": verdict, "why": why})
+        stops = sum(1 for v in verdicts if v["verdict"] == "stop")
+        review = {
+            "verdicts": verdicts,
+            "working": "Drafts get finished, and each cycle ends with a concrete next step.",
+            "not_working": "Nothing has sold yet: no listing is live, so there is no demand signal.",
+            "owner_feedback": "My owner hasn't decided much yet; I should ask for one concrete action at a time.",
+            "lesson": "A project without a finished listing after a few days teaches me nothing: finish or stop it.",
+            "focus": "Get one finished product and its listing in front of my owner today.",
+        }
+        if chaos == "prose":
+            return _Draft([_text("Overall things are going fine and I will keep going.")], note="chaos: prose")
+        if chaos == "cut_off":
+            whole = json.dumps(review)
+            max_tokens = int(request.get("max_tokens") or 1)
+            return _Draft(
+                [_text(whole[: len(whole) // 2])], "max_tokens", output_tokens=max_tokens, note="chaos: cut_off"
+            )
+        if chaos == "unknown_project":
+            verdicts.append({"project_id": 99_999, "verdict": "stop", "why": "A project that isn't listed."})
+            return _Draft([_text(json.dumps(review))], note="chaos: unknown_project")
+        return _Draft(
+            [_text(json.dumps(review, ensure_ascii=False))], note=f"review: {len(verdicts)} verdicts, {stops} stop"
+        )
+
     def _make_plan(self, context: str, rng: random.Random) -> dict[str, Any]:
         state = (_STATE.search(context) or [None, "alive"])[1]
         balance = (_BALANCE.search(context) or [None, "?"])[1]
         last = _LAST_CYCLE.search(context)
         cycle = int(last[1]) + 1 if last else 1
         open_ = [p for p in parse_projects(context) if p.status in _OPEN_STATUSES]
+        stopped = {int(m[1]) for m in _REVIEW_STOP.finditer(context)} & {p.id for p in open_}
+        close = [CLOSE_STEP.format(id=pid) for pid in sorted(stopped)][:1]  # one project closed a cycle
+        open_ = [p for p in open_ if p.id not in stopped]
         focus = next((p for p in open_ if p.status == "active"), open_[0] if open_ else None)
         news = owner_news(context, NEWS_SECTION)
         heard = _following(standing_instructions(context)) + _heard(news)
@@ -1214,7 +1269,8 @@ class FakeTransport:
         if not news.messages and rng.random() < 0.25 and len(steps) < 5:
             steps.append("Send my owner a short progress message")
         reading = [MAIL_STEP] if unread_mail(context) else []  # people who wrote come right after the owner
-        steps = answer + reading + [s[:200] for s in steps[: 5 - len(reading)]]  # answering the owner comes first
+        # Answering the owner comes first, then closing what the review stopped.
+        steps = answer + close + reading + [s[:200] for s in steps[: 5 - len(reading) - len(close)]]
         where = (
             f"{len(open_)} open project(s); the most promising is #{focus.id} {focus.title}."
             if focus
@@ -1293,6 +1349,7 @@ class FakeTransport:
             "make": "into a pdf" in steps,
             "workshop": "the workshop make" in steps,
             "promote": "built into ember" in steps,
+            "close": "close project #" in steps,
         }
         wanted["guide"] = wanted["make"] and crng.random() < 0.5
         wanted["look"] = wanted["photo"] = wanted["make"]
@@ -1310,6 +1367,7 @@ class FakeTransport:
             sequence = ["research", "write", "research", "append", "research", "append", "update"]
         else:
             stages = (
+                "close",
                 "mail_read",
                 "mail_reply",
                 "research",
@@ -1360,6 +1418,16 @@ class FakeTransport:
         path = f"projects/{slug(idea.title)}.md"
         if stage == "survey":
             return "workspace_list", {}
+        if stage == "close":
+            plan = _PLAN_SECTION.search(conv.brief)
+            closing = _CLOSE.search(plan[1].lower()) if plan else None
+            if closing is None:
+                return None
+            return "project_update", {
+                "project_id": int(closing[1]),
+                "status": "abandoned",
+                "note": "Stopped in my daily review: no sign of demand after many cycles.",
+            }
         if stage == "reply":
             return "message_owner", {"text": owner_reply(owner_news(conv.brief, OWNER_SECTION))}
         if stage == "create":
@@ -1823,6 +1891,7 @@ class FakeTransport:
 
 
 _STAGE_TOOLS = {
+    "close": "project_update",
     "survey": "workspace_list",
     "reply": "message_owner",
     "create": "project_create",

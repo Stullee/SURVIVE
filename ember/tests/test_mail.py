@@ -208,7 +208,7 @@ def test_a_0_3_database_keeps_its_approvals_through_the_migration(tmp_path: Path
             " 'Write to a shop', 'd', 'Hello', 'h', 'none', 'b', 'approved')"
         )
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [5, 6, 7, 8]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [5, 6, 7, 8, 9]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         row = conn.execute("SELECT executor, action, closed_by, status FROM approvals").fetchone()

@@ -194,7 +194,8 @@ def test_dashboard_payload(ingress_client: TestClient) -> None:
     assert data["now"] is None
     for key in ("projects", "activity", "approvals", "inbox", "upgrades"):
         assert data[key] == []
-    assert set(data["mind"]) == {"strategy", "identity", "lessons", "journal"}
+    assert set(data["mind"]) == {"strategy", "identity", "lessons", "journal", "reviews"}
+    assert data["mind"]["reviews"] == []  # none before the second day
     assert data["mind"]["strategy"].startswith("# Strategy")
     assert data["coming_in_phase"] == {}
     assert data["badges"] == {"approvals_pending": 0, "approvals_todo": 0, "inbox_unread": 0, "upgrades_new": 0}

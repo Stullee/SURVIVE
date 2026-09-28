@@ -943,6 +943,8 @@ def test_chaos_produces_every_kind_of_misbehaviour() -> None:
         asked.append(fake.send(prompts.research_request(SETTINGS, "Which printable planners sell best?", None)))
         fake.send(prompts.reflect_request(SETTINGS, f"A brief for cycle {seed}.", [], []))
         fake.send(prompts.workshop_request(SETTINGS, f"Make a price chart, take {seed}.", []))
+        card = f"YOUR NUMBERS\n#1 [active] Planner · open 2 days · 3 cycles in the period (3 in all) · take {seed}"
+        fake.send(prompts.review_request(SETTINGS, card))
         notes |= {note for _, _, note in fake.trace}
     assert {f"chaos: {c}" for kinds in CHAOS.values() for c in kinds} <= notes
     inputs = [(name, args, ok) for sim in sims for _, name, args, ok in sim.tool_log]

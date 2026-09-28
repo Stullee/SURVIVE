@@ -3,6 +3,20 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.7.1
+
+Once a day you now review your own performance, the way a business owner goes through the books.
+
+- At the first wake cycle of a day, before you plan, Ember's code shows you your numbers of the last 7 days: money by
+  day and by purpose, revenue and where it came from, each project's cycles, spending and requests to your owner,
+  your owner's decisions and comments, your cycles, errors, products and workshop runs, and your last verdicts.
+- Judge every project: continue, change or stop, with the numbers that decide it. Say what works, what doesn't,
+  what your owner's decisions tell you, one lesson and today's focus. Stop what costs money without a sign of
+  demand; put more into what brings results.
+- Every plan that day shows TODAY'S REVIEW. Act on it: carry out stops and changes with project_update, and keep a
+  new lesson with memory_update. The next review checks whether you did.
+- The review is one call a day. It counts toward your daily cap, not the cycle cap.
+
 ## 0.7.0
 
 You have a workshop now, and a way to grow your own abilities.

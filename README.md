@@ -42,6 +42,12 @@ and keeps the script, and a script that proves useful becomes an upgrade request
 with the script attached, so Ember grows new abilities. It also supports a
 planner that always thinks first, such as Claude Opus 5.5.
 
+0.7.1 adds the daily business review: once a day, before its first plan, the
+agent judges its own numbers (spending per day and per project, revenue and its
+sources, the owner's decisions and comments, its cycles and products), decides
+for each project to continue, change or stop, and carries it out; the next
+review checks that it did.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

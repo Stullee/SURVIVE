@@ -11,13 +11,14 @@ from typing import TYPE_CHECKING, Any
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import executor, mailstore, reddit
-from . import store
+from . import review, store
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
 if TYPE_CHECKING:
     from .service import Agent
 
 ACTIVITY_CYCLES = 10
+REVIEWS_SHOWN = 14  # the daily reviews of the last two weeks
 
 
 class WorkspaceFileError(ValueError):
@@ -73,6 +74,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
             }
             for j in store.journal(conn, scope, 20)
         ]
+        reviews = [_review(conn, r) for r in review.recent(conn, scope, REVIEWS_SHOWN)]
         approvals = [
             {
                 **_carried_out(agent, conn, scope, r),
@@ -140,7 +142,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "now": now,
         "projects": projects,
         "activity": activity,
-        "mind": {**agent.memory_files(), "journal": journal},
+        "mind": {**agent.memory_files(), "journal": journal, "reviews": reviews},
         "approvals": approvals,
         "inbox": inbox,
         "upgrades": upgrades,
@@ -229,6 +231,36 @@ def _project(conn: sqlite3.Connection, p: sqlite3.Row) -> dict[str, Any]:
         "pending_approvals": int(pending),
         "created_at": p["created_at"],
         "updated_at": p["updated_at"],
+    }
+
+
+def _review(conn: sqlite3.Connection, r: sqlite3.Row) -> dict[str, Any]:
+    verdicts = []
+    for v in json.loads(r["verdicts"] or "[]"):
+        project = conn.execute("SELECT title, status FROM projects WHERE id = ?", (v.get("project_id"),)).fetchone()
+        verdicts.append(
+            {
+                "project_id": v.get("project_id"),
+                "title": project["title"] if project else None,
+                "status": project["status"] if project else None,
+                "verdict": v.get("verdict"),
+                "why": v.get("why"),
+            }
+        )
+    return {
+        "id": r["id"],
+        "day": r["day"],
+        "created_at": r["created_at"],
+        "cycle_id": r["cycle_id"],
+        "status": r["status"],
+        "verdicts": verdicts,
+        "working": r["working"],
+        "not_working": r["not_working"],
+        "owner_feedback": r["owner_feedback"],
+        "lesson": r["lesson"],
+        "focus": r["focus"],
+        "note": r["note"],
+        "scorecard": r["scorecard"],
     }
 
 

@@ -77,8 +77,11 @@ _KNOWN_USAGE_KEYS = frozenset(
 )
 _KNOWN_SERVER_TOOLS = frozenset({"web_search_requests", "web_fetch_requests", "code_execution_requests"})
 # Workshop calls (code execution, 0.7.0) have their own cap per run and count toward the daily cap and the balance,
-# but not toward the cycle cap: one run can cost more than a whole wake cycle may.
+# but not toward the cycle cap: one run can cost more than a whole wake cycle may. The daily review (0.7.1), once a
+# day before the first plan, doesn't count toward the cycle cap either, so the cycle it opens can still do its work.
 WORKSHOP = "workshop"
+REVIEW = "review"
+OUTSIDE_CYCLE_CAP = (WORKSHOP, REVIEW)
 _STANDARD_GEOS = frozenset({"global", "not_available"})
 _SNAPSHOT_SUFFIX = re.compile(r"^-\d{8}$")
 
@@ -481,15 +484,16 @@ class MeteredModel:
             cycle = conn.execute("SELECT cap_micros FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
         if cycle is None:
             return 0
-        spent, reserved = self.books.cycle_spend(cycle_id, include_workshop=False)
+        spent, reserved = self.books.cycle_spend(cycle_id, outside_cap=False)
         pending = self.books.pending(scope)
         daily_cap = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
         today = self.books.cap_spend_on(scope, self.clock.today())
-        own_cap = (
-            usd_cap_to_micros(self.settings.workshop_run_cap_usd)
-            if purpose == WORKSHOP
-            else cycle["cap_micros"] - spent - reserved
-        )
+        if purpose == WORKSHOP:
+            own_cap = usd_cap_to_micros(self.settings.workshop_run_cap_usd)
+        elif purpose == REVIEW:
+            own_cap = daily_cap  # only the daily cap and the balance limit it
+        else:
+            own_cap = cycle["cap_micros"] - spent - reserved
         room = min(own_cap, daily_cap - today - pending, status.balance - pending)
         if purpose != "last_will" and status.last_will_at is None:
             room = min(
@@ -625,8 +629,8 @@ class MeteredModel:
                     f" (this call up to ${micros_to_usd(estimate):.4f})",
                     "cap",
                 ), False
-        else:
-            spent, reserved = self.books.cycle_spend(cycle["id"], include_workshop=False)
+        elif purpose not in OUTSIDE_CYCLE_CAP:
+            spent, reserved = self.books.cycle_spend(cycle["id"], outside_cap=False)
             if spent + reserved + estimate > cycle["cap_micros"]:
                 return (
                     f"the cycle cap of ${micros_to_usd(cycle['cap_micros']):.2f} would be exceeded"

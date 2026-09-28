@@ -17,13 +17,14 @@ import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 from ..economy.costs import micros_to_usd
 from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
-from . import store
+from . import review, store
 from .memory import CAPS, Memory
 from .news import CHANGELOG_LIMIT, Item, News, Shown
 from .sandbox import Jail
@@ -104,6 +105,7 @@ PLANNER_BUDGETS = {
     "workspace": 900,
     "research": RESEARCH_BUDGET,
     "workshop": 800,
+    "review": 1_400,
 }
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
 # room for one whole message of plain text at the owner's limit of 2,000 characters.
@@ -190,6 +192,7 @@ class Snapshot:
     mail: MailView | None = None  # None: Ember has no mailbox (then there is no MAIL section)
     instructions: str = ""  # the owner's standing instructions ("" while there are none)
     proven: list[tuple[str, str]] = field(default_factory=list)  # workshop scripts worth building in: (path, why)
+    review: str = ""  # today's daily review, as the planner sees it ("" before it is made)
 
 
 def snapshot(
@@ -207,8 +210,11 @@ def snapshot(
     cycle_cap: float,
     news: News | None = None,
     mail_address: str | None = None,
+    today: date | None = None,
 ) -> Snapshot:
+    """What the planner, the brief and the will see; ``today`` (the owner's local date) finds the day's review."""
     projects = store.open_projects(conn, scope)
+    todays_review = review.of_day(conn, scope, today) if today is not None else None
     mail = None
     if mail_address is not None:
         unread, newest = mailstore.unread(conn, scope, MAIL_SHOWN)
@@ -253,6 +259,7 @@ def snapshot(
         mail=mail,
         instructions=standing["text"] if standing else "",
         proven=store.proven_scripts(conn, scope),
+        review=review.planner_text(conn, todays_review) if todays_review is not None else "",
     )
 
 
@@ -558,6 +565,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *instructions_section(s, b["instructions"]),
         ("SINCE YOUR LAST WAKE", since),
         *([("YOUR SOFTWARE", software)] if s.news.changelog else []),
+        *([("TODAY'S REVIEW", cut(s.review, b["review"]))] if s.review else []),
         ("OPEN PROJECTS", cut(project_lines(s), b["projects"])),
         ("WAITING FOR YOUR OWNER", cut(pending, b["pending"])),
         *([("MAIL", cut(mail_text(s), b["mail"]))] if s.mail is not None else []),

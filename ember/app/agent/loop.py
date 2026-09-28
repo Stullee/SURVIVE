@@ -28,13 +28,13 @@ from ..db import Database
 from ..economy.clock import Clock, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.estimate import Unpriceable
-from ..economy.metering import CallFailed, CallRefused, CallResult, MeteredModel
-from ..economy.pricing import LAST_WILL, PLANNER_OPENING
+from ..economy.metering import REVIEW, CallFailed, CallRefused, CallResult, MeteredModel
+from ..economy.pricing import LAST_WILL, PLANNER_OPENING, REVIEW_CALL
 from ..economy.service import Economy
 from ..integrations import mailstore
 from ..integrations.mail import Mailbox
 from ..version import app_version
-from . import context, netguard, news, prompts, store, tools
+from . import context, netguard, news, prompts, review, store, tools
 from .memory import Memory
 from .sandbox import Jail
 from .store import AgentScope
@@ -266,6 +266,7 @@ class CycleRunner:
                 cycle_cap=self.settings.cycle_spend_cap_usd,
                 news=fresh,
                 mail_address=self.mailbox.address if self.mailbox else None,
+                today=self.clock.today(),
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> CallResult:
@@ -284,6 +285,10 @@ class CycleRunner:
     # --- plan, act, reflect ---
 
     def _plan_act_reflect(self, cycle_id: int, ctx: tools.ToolContext) -> CycleEnd:
+        with self.db.connection() as conn:
+            review_due = review.due(conn, self.scope, self.clock)
+        if review_due:
+            self._review(cycle_id)
         snap = self._snapshot()
         self._progress(cycle_id, phase="plan", current_action="Planning this cycle")
         request = None
@@ -363,6 +368,58 @@ class CycleRunner:
         if ctx.state.sleep_minutes:  # set_sleep, the last call winning (the reflection's after the act phase's)
             return CycleEnd(status, note, sleep_minutes=ctx.state.sleep_minutes, sleep_reason=ctx.state.sleep_reason)
         return CycleEnd(status, note, sleep_minutes=plan.sleep_minutes)
+
+    def _review(self, cycle_id: int) -> None:
+        """The daily review, before the first plan of the day. It never ends the cycle: a review the budget can't
+        cover now is tried at the next cycle, and a failed one is recorded (at most review.MAX_ATTEMPTS a day)."""
+        self._progress(cycle_id, phase="review", current_action="Reviewing the last 7 days")
+        status = self.economy.life.evaluate()
+        with self.db.connection() as conn:
+            card = review.scorecard(
+                conn,
+                self.scope,
+                self.clock,
+                self.economy.books,
+                self.economy.life.scope(),
+                status,
+                dry_run=self.dry_run,
+            )
+        request = prompts.review_request(self.settings, card.text)
+        if not context.fits(request, REVIEW_CALL.input_tokens):
+            log.warning("The daily review doesn't fit its budget; skipped")
+            return
+        try:
+            quote = self.meter.quote(request)
+        except Unpriceable as exc:
+            log.warning("The daily review can't be priced (%s); skipped", exc)
+            return
+        if quote > self.meter.headroom(cycle_id, REVIEW):
+            log.info("The daily review can't be afforded now; it is tried at the next cycle")
+            return
+        try:
+            result = self._call(cycle_id, REVIEW, request)
+        except CallRefused:
+            return  # the plan meets the same refusal and ends the cycle, or a later cycle tries again
+        except CallFailed as exc:
+            self._save_review(cycle_id, card, None, f"the review call failed: {exc.result.error or exc.result.status}")
+            return
+        response = result.response or {}
+        text = _text_of(response)
+        self._save_text(result.call_id, text, response)
+        stop = response.get("stop_reason")
+        parsed = review.parse(text, card.project_ids) if stop == "end_turn" else None
+        note = None
+        if parsed is None:
+            note = "the review wasn't valid JSON" if stop == "end_turn" else f"the review was cut off ({stop})"
+        self._save_review(cycle_id, card, parsed, note)
+
+    def _save_review(
+        self, cycle_id: int, card: review.Scorecard, parsed: review.Review | None, note: str | None
+    ) -> None:
+        with self.db.transaction() as conn:
+            review.save(conn, self.scope, cycle_id, to_iso(self.clock.now()), self.clock.today(), card, parsed, note)
+        if parsed is None:
+            events.record(self.db, "warning", "agent", f"The daily review failed: {note}")
 
     def _parse_plan(self, text: str) -> Plan | None:
         data: Any = None

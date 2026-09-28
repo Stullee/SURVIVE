@@ -643,6 +643,10 @@ a.btn-primary { color: var(--text); }
 .journal li { border-left: 2px solid var(--grid); padding-left: 12px; display: grid; gap: 4px; min-width: 0; }
 .journal .when { color: var(--text-2); font-size: 0.85rem; }
 .journal-summary { font-weight: 600; white-space: pre-wrap; unicode-bidi: plaintext; }
+.verdicts { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.journal .verdicts li { display: block; border-left: 0; padding-left: 0; unicode-bidi: plaintext; overflow-wrap: anywhere; }
+.review-line { margin: 0; white-space: pre-wrap; unicode-bidi: plaintext; overflow-wrap: anywhere; }
+.review-numbers summary { cursor: pointer; color: var(--muted); }
 .mind-body pre.journal-entry { background: none; padding: 0; }
 
 /* --- System ------------------------------------------------------------- */

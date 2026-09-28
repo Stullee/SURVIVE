@@ -104,7 +104,8 @@ first call may then cost up to about $0.68, so raise **Workshop cap per run** to
 The agent sleeps most of the time. When it wakes up (on its schedule, when you
 press **Wake now**, or when you write to it), it runs one **wake cycle**:
 
-1. **Plan**: it reads its situation (balance, runway, projects, what happened
+1. **Plan**: once a day it first does its [daily review](#the-daily-review).
+   Then it reads its situation (balance, runway, projects, what happened
    since the last cycle, your messages and decisions, its memory) and plans
    the cycle. Every plan says how its goal leads to money (who would pay, for
    what, and how it will know); you see this as *Path to money*. It is told to
@@ -140,6 +141,28 @@ enforced in code, not only in its instructions.
 
 When its money runs low, it becomes critical and writes a **last will**, shown
 in the memorial if it dies.
+
+### The daily review
+
+Once a day, at its first wake cycle of the day (from its second day on),
+before it plans, the agent goes through its own numbers like a business owner
+going through the books. Ember's code puts them together from its records, so
+they can't be argued with: the last 7 days' spending by day and by purpose, the
+revenue you recorded and its sources, each project's cycles, spending and
+requests to you, your decisions and comments, its cycles, errors, finished
+products and workshop runs, and its verdicts from the last review.
+
+The agent then judges every project (**continue**, **change** or **stop**, with
+the numbers that decide it), says what works and what doesn't, what your
+decisions tell it, one lesson and today's focus. Every plan that day shows the
+review, and the agent is told to carry it out: close what it stopped, change
+what it changed, keep the lesson. The next review shows whether it did. You can
+read every review, with the numbers it judged, under **Mind → Daily reviews**.
+
+A review is one call on the planner model (about $0.02–0.05 with
+claude-sonnet-5). It counts toward the daily cap, not the cycle cap, so the
+cycle it opens can still do its work. If the day's budget can't cover it, it is
+tried at the next cycle.
 
 ## Products
 
@@ -458,7 +481,7 @@ adds room under that day's spending cap.
 could cost and refuses it if that could break the per-cycle cap, the daily cap
 (per local calendar day, so up to twice the cap can be spent around midnight),
 or the balance. Workshop runs have their own cap per run instead of the cycle
-cap. A small reserve is always kept so the agent can write its last
+cap, and the daily review counts only toward the daily cap. A small reserve is always kept so the agent can write its last
 will. As an outside safety net, give Ember its own
 [Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
 API key and set a monthly spend limit there.

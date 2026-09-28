@@ -364,8 +364,9 @@
   };
 
   var TRIGGERS = { schedule: "scheduled", owner: "woken by you", last_will: "last will" };
-  var PHASES = { plan: "Plan", act: "Act", reflect: "Reflect", last_will: "Last will" };
-  var PURPOSES = { plan: "Plan", work: "Work", reflect: "Reflect", research: "Research", last_will: "Last will" };
+  var PHASES = { review: "Daily review", plan: "Plan", act: "Act", reflect: "Reflect", last_will: "Last will" };
+  var PURPOSES = { review: "Daily review", plan: "Plan", work: "Work", reflect: "Reflect", research: "Research",
+    workshop: "Workshop", last_will: "Last will" };
 
   function triggerText(trigger) { return TRIGGERS[trigger] || (trigger ? String(trigger).replace(/_/g, " ") : "–"); }
   function purposeText(purpose) { return PURPOSES[purpose] || (purpose ? sentence(String(purpose).replace(/_/g, " ")) : "Model call"); }
@@ -2836,7 +2837,9 @@
       return;
     }
     var body = $("mind-body");
-    if (ui.mind === "journal") {
+    if (ui.mind === "reviews") {
+      renderReviews(body, mind.reviews);
+    } else if (ui.mind === "journal") {
       var entries = arr(mind.journal).slice().sort(function (x, y) { return (new Date(y.created_at).getTime() || 0) - (new Date(x.created_at).getTime() || 0); });
       replace(body, entries.length ? h("ol", { class: "journal" }, entries.map(function (j) {
         var entry = asText(j.entry);
@@ -2851,6 +2854,46 @@
       var text = asText(mind[ui.mind]);
       replace(body, text.trim() ? h("pre", { class: "mind-text", text: text }) : h("p", { class: "muted", text: MIND_EMPTY[ui.mind] || "Nothing written yet." }));
     }
+  }
+
+  var VERDICTS = {
+    "continue": { icon: "→", label: "Continue", tone: "good" },
+    change: { icon: "↻", label: "Change", tone: "warning" },
+    stop: { icon: "■", label: "Stop", tone: "critical" },
+  };
+
+  // Mind → Daily reviews: once a day the agent judges its own numbers (0.7.1); older servers send none.
+  function renderReviews(body, reviews) {
+    var items = arr(reviews);
+    if (!items.length) {
+      replace(body, h("p", { class: "muted", text: "No daily review yet. " + agentName() + " reviews its own numbers " +
+        "once a day, before its first plan, from its second day on." }));
+      return;
+    }
+    replace(body, h("ol", { class: "journal reviews" }, items.map(function (r) {
+      var verdicts = arr(r.verdicts);
+      return h("li", null,
+        h("p", { class: "when" }, "Review of " + fmtDay(r.day) + " · ", timeEl(r.created_at),
+          r.cycle_id !== null && r.cycle_id !== undefined ? " · cycle #" + r.cycle_id : ""),
+        r.status !== "ok" ? h("p", { class: "muted", text: "This review failed: " + asText(r.note || "no answer") + "." }) : null,
+        verdicts.length ? h("ul", { class: "verdicts" }, verdicts.map(function (v) {
+          return h("li", null, chip(VERDICTS, v.verdict, String(v.verdict || "?")), " ",
+            h("strong", { text: "#" + v.project_id + (v.title ? " " + asText(v.title) : "") }),
+            v.why ? ": " + asText(v.why) : "");
+        })) : null,
+        reviewLine("Focus", r.focus),
+        reviewLine("Working", r.working),
+        reviewLine("Not working", r.not_working),
+        reviewLine("What your decisions tell it", r.owner_feedback),
+        reviewLine("Lesson", r.lesson),
+        r.scorecard ? h("details", { class: "review-numbers" }, h("summary", { text: "The numbers it judged" }),
+          h("pre", { class: "mind-text", text: asText(r.scorecard) })) : null);
+    })));
+  }
+
+  function reviewLine(label, text) {
+    text = asText(text);
+    return text ? h("p", { class: "review-line" }, h("strong", { text: label + ": " }), text) : null;
   }
 
   // ---- System
@@ -4169,7 +4212,7 @@
   // ------------------------------------------------------------------ tabs
 
   var TABS = ["overview", "ledger", "projects", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
-  var MIND_TABS = ["strategy", "lessons", "identity", "journal"];
+  var MIND_TABS = ["strategy", "lessons", "identity", "journal", "reviews"];
 
   // Arrow keys, Home and End move between tabs; focus follows the selection.
   function tabKeys(names, index, select) {

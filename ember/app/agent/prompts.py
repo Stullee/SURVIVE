@@ -25,6 +25,7 @@ from . import tools
 THINKING = {"type": "disabled"}
 ADAPTIVE = {"type": "adaptive"}
 PLAN_MAX_TOKENS = 1_200
+REVIEW_MAX_TOKENS = 1_500  # the verdicts on up to 8 projects and five short texts
 WORK_MAX_TOKENS = 2_000
 WILL_MAX_TOKENS = 1_000
 RESEARCH_MAX_TOKENS = 1_200  # a digest cut at 800 lost its end in live use
@@ -90,6 +91,49 @@ REFLECT_PROMPT = (
     "the strategy only if it changed). If something blocked you that a new ability would fix, and you haven't asked "
     "for it yet, file request_upgrade. Optionally call set_sleep."
 )
+
+REVIEW_RULES = """DAILY REVIEW
+Once a day, before you plan, you go through your own numbers the way a business owner goes through the books. The
+numbers below come from Ember's records: they are exact, so never argue with them. Be honest and specific.
+- Judge every project listed: continue, change (say what changes) or stop. Stop what has cost money for days without
+  a sign of demand (no approval, no sale, no reply); put more into what brings results or clear signals.
+- Check your last review's verdicts: if you said stop or change and it didn't happen, say why, and do it now.
+- Read your owner's decisions and comments: what do they tell you about what your owner accepts?
+- Name one lesson worth keeping, and today's focus: what most likely brings in money soonest.
+Reply only with JSON matching the schema:
+- verdicts: one per project listed: project_id, verdict (continue, change or stop) and why (<= 200 characters,
+  with the numbers that decide it)
+- working: what is working (<= 400 characters)
+- not_working: what is not working (<= 400 characters)
+- owner_feedback: what your owner's decisions tell you (<= 400 characters)
+- lesson: one lesson worth keeping (<= 300 characters)
+- focus: today's focus (<= 300 characters)"""
+
+REVIEW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["verdicts", "working", "not_working", "owner_feedback", "lesson", "focus"],
+    "properties": {
+        "verdicts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["project_id", "verdict", "why"],
+                "properties": {
+                    "project_id": {"type": "integer"},
+                    "verdict": {"type": "string", "enum": ["continue", "change", "stop"]},
+                    "why": {"type": "string"},
+                },
+            },
+        },
+        "working": {"type": "string"},
+        "not_working": {"type": "string"},
+        "owner_feedback": {"type": "string"},
+        "lesson": {"type": "string"},
+        "focus": {"type": "string"},
+    },
+}
 
 WILL_RULES = """YOUR LAST WILL
 Your money is nearly gone. Write your last will for your owner in plain text (at most 5,000 characters):
@@ -180,6 +224,17 @@ def plan_request(settings: Settings, context: str) -> dict[str, Any]:
         "system": [_text(constitution(settings)), _text(knowledge()), _text(PLANNER_RULES)],
         "output_config": {"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
         "messages": [{"role": "user", "content": [_text(context)]}],
+    }
+
+
+def review_request(settings: Settings, scorecard: str) -> dict[str, Any]:
+    """The daily review: the planner's model judges the scorecard Ember's code built from its records."""
+    return {
+        "model": settings.planner_model,
+        **_thinking(settings.planner_model, REVIEW_MAX_TOKENS),
+        "system": [_text(constitution(settings)), _text(knowledge()), _text(REVIEW_RULES)],
+        "output_config": {"format": {"type": "json_schema", "schema": REVIEW_SCHEMA}},
+        "messages": [{"role": "user", "content": [_text(scorecard)]}],
     }
 
 

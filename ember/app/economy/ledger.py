@@ -341,10 +341,10 @@ class Books:
                 (mark, *params),
             ).fetchone()
 
-    def cycle_spend(self, cycle_id: int, include_workshop: bool = True) -> tuple[int, int]:
-        """(charged, reserved-and-pending) micros of one cycle; without its workshop calls for the cycle cap, which
-        they don't count toward."""
-        workshop = "" if include_workshop else " AND purpose != 'workshop'"
+    def cycle_spend(self, cycle_id: int, outside_cap: bool = True) -> tuple[int, int]:
+        """(charged, reserved-and-pending) micros of one cycle; for the cycle cap without the calls that don't count
+        toward it (workshop runs and the daily review: ``outside_cap=False``)."""
+        workshop = "" if outside_cap else " AND purpose NOT IN ('workshop', 'review')"
         with self.db.connection() as conn:
             row = conn.execute(
                 "SELECT COALESCE(SUM(CASE WHEN status IN ('ok', 'interrupted') THEN cost_micros ELSE 0 END), 0),"

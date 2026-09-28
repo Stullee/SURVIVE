@@ -59,6 +59,7 @@ TABLES = (
     "standing_instructions",
     "upgrades",
     "workshop_runs",
+    "reviews",
     "memory_versions",
     "emails",
     "email_actions",
@@ -418,6 +419,7 @@ def _agent(state: AppState) -> str:
             ("standing_instructions", ["id", "created_at", "entered_by", "text"], 3),  # the newest is the current
             ("upgrades", ["id", "status", "priority", "title", "released_version", "seen_cycle_id", "script_path"], 15),
             ("workshop_runs", ["id", "cycle_id", "status", "cost_micros", "script_used", "script_path", "task"], 10),
+            ("reviews", ["id", "day", "cycle_id", "status", "verdicts", "focus", "lesson", "note"], 7),
         ):
             rows = conn.execute(
                 f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC LIMIT ?",
