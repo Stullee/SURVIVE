@@ -1,4 +1,5 @@
-"""Dashboard data for the agent's sections: Now, Projects, Activity, Mind, Workspace, and the owner queues."""
+"""Dashboard data for the agent's sections: Now, Projects, Activity, Mind, Workspace, the owner queues and the owner's
+standing instructions."""
 
 from __future__ import annotations
 
@@ -131,6 +132,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         ]
         will = store.last_will(conn, scope.life_id) if scope.life_id else None
         counts = badges(conn, scope)
+        instructions = store.instructions_json(store.standing_instructions(conn, scope))
     return {
         "badges": counts,
         "now": now,
@@ -140,6 +142,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "approvals": approvals,
         "inbox": inbox,
         "upgrades": upgrades,
+        "instructions": instructions,
         "last_will": {"text": will["text"], "cut_off": bool(will["cut_off"])} if will else None,
     }
 
