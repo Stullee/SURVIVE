@@ -40,6 +40,7 @@ your approval, and only you can record revenue.
 | Web search price | 10 USD per 1,000 | Charged per search on top of tokens. |
 | Dry run | on | Fake model, no API calls, no cost. |
 | Let the agent read whole web pages | off | Off: live research is web search only. On: it can also read pages from its search results (about $0.01–0.02 each). PDFs and other documents are always refused, because they have no size limit. |
+| Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, like **Wake now** (at most one wake-up a minute; not while a cycle runs or the agent is paused). Off: it reads your message at its next scheduled wake-up. |
 | Worker effort | default | How thoroughly the model works in each step. `medium` or `low` write shorter answers and use fewer tool calls, which costs less but may do a worse job. Not used for Haiku. |
 | Kill switch reset | 0 | Change it to any other number and restart to undo the kill switch. |
 | Log level | info | Detail in the app log. |
@@ -67,17 +68,21 @@ is missing, and Ember works without it.
 
 ## How the agent works
 
-The agent sleeps most of the time. When it wakes up (on its schedule, or when
-you press **Wake now**), it runs one **wake cycle**:
+The agent sleeps most of the time. When it wakes up (on its schedule, when you
+press **Wake now**, or when you write to it), it runs one **wake cycle**:
 
 1. **Plan**: it reads its situation (balance, runway, projects, what happened
    since the last cycle, your messages and decisions, its memory) and plans
    the cycle. Every plan says how its goal leads to money (who would pay, for
    what, and how it will know); you see this as *Path to money*. It is told to
-   do research and legwork itself and to ask you only for decisions, money and
-   what only a person can do. Every plan and work step also sees a short list
-   of facts about the outside world that you collected (platform rules, German
-   law, what earns money), which comes with each Ember update.
+   do research and legwork itself, to keep two or three experiments going (when
+   one waits for you, it works on another), to build a thing completely before
+   it asks you for one concrete action, to ask you at most once a day and only
+   for decisions, money and what only a person can do, and to spend its daily
+   cap on experiments rather than sleep to save it. Every plan and work step
+   also sees your [standing instructions](#your-part) and a short list of facts
+   about the outside world that you collected (platform rules, German law, what
+   earns money), which comes with each Ember update.
 2. **Act**: it uses its tools, up to the *Tool steps per cycle* option: files in
    its own workspace, its memory (strategy, identity, lessons), projects, web
    research (also limited to one site, such as Reddit), requests for your
@@ -110,7 +115,17 @@ in the memorial if it dies.
   sent by Ember itself (see [Ember's mailbox](#embers-mailbox)), and an
   approved **Reddit post** comes with a button that opens Reddit with the text
   filled in (see [Reddit](#reddit)).
-- **Inbox**: the agent's messages to you, and yours to it. It reads yours at
+- **Standing instructions**, at the top of the **Inbox**: lasting guidance the
+  agent reads in every plan and work step, so you don't have to repeat it in
+  messages (at most 1,500 characters). **Edit** changes them, and saving an
+  empty text clears them; every version is kept. Use them for how you want
+  Ember to work in general, and messages for one-off things. While there are
+  none, the card suggests a start ("Work on your own. Ask me only to approve
+  something that leaves the container, or for money. ..."); it is only saved
+  when you press **Save**.
+- **Inbox**: the agent's messages to you, and yours to it. Your message wakes
+  it to read it right away (see the option **Wake Ember when you write**);
+  otherwise, or if it woke less than a minute ago, it reads your message at
   its next wake-up. Your reply also marks its earlier messages read; while
   five of its messages are unread, it can't write to you. Never send
   passwords: messages are stored and sent to Anthropic, and the agent can't log
