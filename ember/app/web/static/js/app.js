@@ -45,8 +45,9 @@
     ws: { list: null, loadedAt: null, busy: false, error: null, file: null, fileBusy: false, fileError: null, fileSeq: 0 },
     refocus: null,       // after the owner's own action: the card status line to focus once the list is re-rendered
     sending: false,      // an inbox message is on its way
-    // The standing instructions' editor: open while the owner edits (polls never touch it then), and whether a save is on its way.
-    instructions: { editing: false, saving: false },
+    // The standing instructions' editor: open while the owner edits (polls never touch it then), whether a save is on its
+    // way, and the text last warned about as looking like a password (saved as it is if Save is pressed again).
+    instructions: { editing: false, saving: false, secretWarned: null },
     markingRead: false,
     killBusy: false,
   };
@@ -2535,6 +2536,15 @@
       box.focus();
       return;
     }
+    // Unlike a message's text, a saved version can't be removed later, and every plan sends it to Anthropic.
+    if (SECRET_HINT.test(text) && ui.instructions.secretWarned !== text) {
+      ui.instructions.secretWarned = text;
+      instructionsError("This looks like it contains a password. " + agentName() + " can't log in anywhere, and every " +
+        "saved version of the instructions is kept for good and sent to Anthropic with every plan. Remove it, or press " +
+        "Save again to save it anyway.");
+      box.focus();
+      return;
+    }
     ui.instructions.saving = true;
     var save = $("instructions-save");
     save.disabled = true;
@@ -2657,10 +2667,15 @@
       if (res.status === 201 || res.ok) {
         box.value = "";
         composerCount();
-        // With the wake_on_message option the message wakes the agent (unless it woke less than a minute ago, ...).
-        var woken = isObject(res.data) && res.data.woken === true;
-        if (woken) ui.fastPollUntil = Date.now() + WAKE_FAST_POLL_MS;
-        setComposerStatus("Sent. " + agentName() + (woken ? " is waking up to read it." : " reads it on its next wake."), "ok");
+        // With the wake_on_message option the message wakes the agent: now, as soon as the running cycle ends, or once
+        // the minute between wake-ups has passed. Without it (or while paused, ...) it waits for the next wake.
+        var wake = isObject(res.data) && typeof res.data.wake === "string" ? res.data.wake : "";
+        var when = wake === "now" ? " is waking up to read it."
+          : wake === "after_cycle" ? " reads it as soon as the cycle it is working on ends."
+          : wake === "soon" ? " woke up less than a minute ago and wakes again for it in a moment."
+          : " reads it on its next wake.";
+        if (wake === "now" || wake === "soon") ui.fastPollUntil = Date.now() + WAKE_FAST_POLL_MS;
+        setComposerStatus("Sent. " + agentName() + when, "ok");
         refresh();
         return;
       }

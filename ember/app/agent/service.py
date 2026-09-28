@@ -93,6 +93,9 @@ class Agent:
         self.meter: MeteredModel = economy.metered(self.transport)
         self.wake_requested = False
         self.last_wake_request: datetime | None = None
+        # The owner wrote while no wake could start (a cycle running, or the minute between wake-ups): wake for it
+        # once one can, if the message is still unread then.
+        self.message_waiting = False
         self.running_cycle = False
         self._lock = threading.Lock()  # one cycle at a time in this process
         # Ember's mailbox: the fake one in dry run (its inbox grows with the session's wake cycles), the
@@ -209,6 +212,10 @@ class Agent:
             if retry is None or now >= retry or self.wake_requested:
                 return Decision(True, "last_will", "the last will is due")
             return Decision(False, reason="The last will is due; retrying later", wait_until=retry)
+        if self.message_waiting and not self.wake_requested:
+            ready = self._wake_for_waiting_message()
+            if ready is not None:
+                return Decision(False, reason="Waking up to read the owner's message in a moment", wait_until=ready)
         if self.wake_requested:
             return Decision(True, "owner", "woken by the owner")
         no_room = self._no_room_for_work()
@@ -288,10 +295,45 @@ class Agent:
             return 429, {"code": "too_soon", "error": "wait a minute between wake-ups"}
         self.last_wake_request = now
         self.wake_requested = True
+        self.message_waiting = False  # the cycle this wakes reads every message the agent hasn't seen
         events.record(
             self.db, "info", "agent", "The owner's message woke the agent" if by_message else "The owner woke the agent"
         )
         return 202, {"queued": True}
+
+    def wake_for_message(self) -> str | None:
+        """The owner sent a message (with the wake_on_message option): wake the agent to read it.
+
+        "now" if a wake is on its way; "after_cycle" or "soon" while a cycle runs or the agent woke less than a minute
+        ago: it wakes for the message once the cycle has ended and the minute has passed (``decide``); None if it
+        can't run (paused, dead, ...): then it reads the message at its next wake.
+        """
+        if self.wake_requested:  # woken and not started yet: that cycle reads the message
+            return "now"
+        status, body = self.request_wake(by_message=True)
+        if status == 202:
+            return "now"
+        code = body.get("code")
+        if code in ("cycle_running", "too_soon"):
+            self.message_waiting = True
+            return "after_cycle" if code == "cycle_running" else "soon"
+        return None
+
+    def _wake_for_waiting_message(self) -> datetime | None:
+        """For ``decide``: wake for a message that couldn't wake the agent when it came. Returns when that can be while
+        it is still too soon; None once the agent is woken, or when no message is left unread (the cycle that was
+        running read it: no second cycle for it)."""
+        with self.db.connection() as conn:
+            unread = store.unseen(conn, "messages", self.scope(), 1)
+        if not unread:
+            self.message_waiting = False
+            return None
+        status, body = self.request_wake(by_message=True)
+        if status == 429 and self.last_wake_request is not None:
+            return self.last_wake_request + WAKE_NOW_MIN_GAP
+        if body.get("code") != "cycle_running":  # woken (or it can't be: the message waits for the next wake)
+            self.message_waiting = False
+        return None
 
     # --- running ---
 
@@ -400,6 +442,11 @@ class Agent:
         blocked = self.blocked_reason()
         wake = self._meta_time("next_wake_at")
         reason = self.db.get_meta(self._key("next_wake_reason")) or None
+        if self.message_waiting:  # it wakes for the owner's message as soon as it can (decide)
+            now = self.clock.now()
+            soon = max(now, self.last_wake_request + WAKE_NOW_MIN_GAP) if self.last_wake_request else now
+            if wake is None or soon < wake:
+                wake, reason = soon, "to read your message"
         can_wake = blocked is None and not self.running_cycle
         return {
             "next_wake_at": to_iso(wake) if wake and blocked is None else None,

@@ -25,6 +25,12 @@ own; an email it proposes is sent by Ember's code only after the owner approves
 it) and Reddit, phase A (research limited to reddit.com, and approved posts
 become a prefilled link the owner opens; no Reddit API yet).
 
+0.5.0 makes Ember work on its own: the owner's standing instructions (lasting
+guidance written once in the Inbox, read in every plan and work step), rules
+that keep two or three experiments going instead of waiting for the owner and
+ask the owner at most once a day, a prompt to rewrite outdated or overfull
+lessons, and a message from the owner that wakes the agent to answer it.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

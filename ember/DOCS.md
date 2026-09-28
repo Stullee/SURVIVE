@@ -40,7 +40,7 @@ your approval, and only you can record revenue.
 | Web search price | 10 USD per 1,000 | Charged per search on top of tokens. |
 | Dry run | on | Fake model, no API calls, no cost. |
 | Let the agent read whole web pages | off | Off: live research is web search only. On: it can also read pages from its search results (about $0.01–0.02 each). PDFs and other documents are always refused, because they have no size limit. |
-| Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, like **Wake now** (at most one wake-up a minute; not while a cycle runs or the agent is paused). Off: it reads your message at its next scheduled wake-up. |
+| Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, like **Wake now** (at most one wake-up a minute; during a cycle, right after it; not while the agent is paused). Off: it reads your message at its next scheduled wake-up. |
 | Worker effort | default | How thoroughly the model works in each step. `medium` or `low` write shorter answers and use fewer tool calls, which costs less but may do a worse job. Not used for Haiku. |
 | Kill switch reset | 0 | Change it to any other number and restart to undo the kill switch. |
 | Log level | info | Detail in the app log. |
@@ -124,8 +124,10 @@ in the memorial if it dies.
   something that leaves the container, or for money. ..."); it is only saved
   when you press **Save**.
 - **Inbox**: the agent's messages to you, and yours to it. Your message wakes
-  it to read it right away (see the option **Wake Ember when you write**);
-  otherwise, or if it woke less than a minute ago, it reads your message at
+  it to read it right away (see the option **Wake Ember when you write**). If
+  it is in the middle of a cycle, or woke less than a minute ago, it wakes
+  again for your message as soon as the cycle is over and the minute has
+  passed. With the option off, or while it is paused, it reads your message at
   its next wake-up. Your reply also marks its earlier messages read; while
   five of its messages are unread, it can't write to you. Never send
   passwords: messages are stored and sent to Anthropic, and the agent can't log

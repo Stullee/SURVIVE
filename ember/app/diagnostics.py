@@ -299,6 +299,7 @@ def _scheduler(state: AppState) -> str:
         data["agent"] = {
             **agent.agent_fields(),
             "wake_requested": agent.wake_requested,
+            "message_waiting": agent.message_waiting,
             "running_cycle": agent.running_cycle,
             "transport": type(agent.transport).__name__,
             "transport_simulated": getattr(agent.transport, "simulated", None),

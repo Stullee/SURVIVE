@@ -301,26 +301,25 @@ def send_message(request: Request, body: Annotated[Any, Body()] = None) -> JSONR
         return NO_AGENT
     reply = actions.send_message(body, _owner(request))
     if reply.status == 201:
-        reply.body["woken"] = _wake_for_message(request)
+        reply.body["wake"] = _wake_for_message(request)
     return _reply(reply)
 
 
-def _wake_for_message(request: Request) -> bool:
-    """The owner wrote: wake the agent to read it now (the wake_on_message option), like Wake now does, within its
-    minute between wake-ups. True if a wake is on its way; a refused one (a cycle running, too soon, paused, ...) is
-    fine: the message waits for the next wake."""
+def _wake_for_message(request: Request) -> str | None:
+    """The owner wrote: wake the agent to read it (the wake_on_message option), like Wake now does, within its minute
+    between wake-ups. "now" if a wake is on its way; "after_cycle" or "soon" if it follows once the running cycle has
+    ended or the minute has passed; None if none follows (the option is off, the agent is paused, ...): the message
+    waits for the next wake."""
     state = _state(request)
     agent = state.agent
     if agent is None or not state.loaded.settings.wake_on_message:
-        return False
+        return None
     if agent.wake_requested:  # already woken and not started yet: that cycle reads the message
-        return True
-    status, _ = agent.request_wake(by_message=True)
-    if status != 202:
-        return False
-    if state.scheduler is not None:
-        state.scheduler.poke()
-    return True
+        return "now"
+    wake = agent.wake_for_message()
+    if wake in ("now", "soon") and state.scheduler is not None:
+        state.scheduler.poke()  # decide again: run the cycle now, or sleep only until the minute has passed
+    return wake
 
 
 @router.post("/api/instructions")
