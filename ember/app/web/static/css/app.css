@@ -574,6 +574,32 @@ fieldset.field legend { padding: 0; margin-bottom: 4px; }
 .counter[data-over="true"] { color: var(--critical-text); font-weight: 600; }
 .ledger-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 0.9rem; color: var(--text-2); }
 
+/* Requests the agent's code carries out (email) or prepares for the owner (Reddit). */
+.warn-box {
+  margin: 8px 0 4px; padding: 8px 10px; border-radius: 8px; font-size: 0.9rem;
+  background: var(--surface-2); border-left: 4px solid var(--critical); color: var(--text);
+}
+.warn-box > span[aria-hidden] { color: var(--critical-text); font-weight: 700; }
+.send-note { margin: 8px 0 4px; font-size: 0.9rem; color: var(--text-2); }
+.draft { margin-top: 8px; display: grid; gap: 4px; min-width: 0; }
+.draft-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 0; font-size: 0.9rem; }
+.draft-grid dt { color: var(--text-2); }
+.draft-grid dd { margin: 0; min-width: 0; unicode-bidi: plaintext; }
+.execution {
+  margin: 8px 0 4px; padding: 8px 10px; border-radius: 8px; display: grid; gap: 2px;
+  background: var(--surface-2); border-left: 3px solid var(--accent); font-size: 0.9rem;
+}
+.execution[data-status="waiting_limit"] { border-left-color: var(--warning); }
+.execution[data-status="sent"] { border-left-color: var(--good); }
+.execution[data-status="simulated"] { border-left-color: var(--field-border); }
+/* A failed or unclear send is the one thing the owner must not miss. */
+.execution[data-status="failed"], .execution[data-status="unclear"] { border-left: 4px solid var(--critical); }
+.execution[data-status="failed"] .execution-detail, .execution[data-status="unclear"] .execution-detail { color: var(--critical-text); font-weight: 600; }
+a.btn { display: inline-flex; align-items: center; text-decoration: none; }
+a.btn-primary { color: var(--text); }
+.no-link { align-self: center; }
+.fact-error { color: var(--critical-text); font-weight: 600; }
+
 /* --- Inbox -------------------------------------------------------------- */
 
 .chat { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 10px; }
