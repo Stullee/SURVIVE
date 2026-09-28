@@ -624,6 +624,17 @@ a.btn-primary { color: var(--text); }
   border: 1px solid var(--field-border); border-radius: 8px; padding: 8px; resize: vertical;
 }
 
+/* The owner's standing instructions (top of the Inbox): their text, or a suggestion while there are none. */
+#instructions-title:focus { outline: none; }
+.instructions-text { white-space: pre-wrap; unicode-bidi: plaintext; margin: 0; }
+.instructions-empty { display: grid; gap: 4px; }
+.instructions-suggestion {
+  padding: 8px 10px; border-radius: 8px; background: var(--surface-2); color: var(--text-2); font-style: italic;
+}
+.instructions-form { display: grid; gap: 10px; }
+.instructions-note { margin-top: 8px; }
+#instructions-status { margin-top: 8px; }
+
 /* --- Mind --------------------------------------------------------------- */
 
 #mind-note { margin-bottom: 10px; }
