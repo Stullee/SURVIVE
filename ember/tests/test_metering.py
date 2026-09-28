@@ -68,7 +68,9 @@ def test_the_request_that_is_sent_is_the_one_that_was_priced(data_dir: Path) -> 
         (request(speed="fast"), "can't price"),
         (request(tools=[{"type": "web_search_20250305", "name": "web_search"}]), "max_uses"),
         (request(tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": 1}]), "direct"),
-        (request(tools=[{"type": "code_execution_20250825", "name": "code_execution"}]), "not supported"),
+        (request(tools=[{"type": "bash_20250124", "name": "bash"}]), "not supported"),
+        (request(tools=[{"type": "code_execution_20250825", "name": "run"}]), "plain code_execution tool"),
+        (request(container="container_1"), "only used with the code execution tool"),
         (request(tools=[{"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 1}]), "max_content_tokens"),
     ],
 )
@@ -195,7 +197,7 @@ def test_a_transport_crash_is_an_interrupted_call(data_dir: Path) -> None:
 @pytest.mark.parametrize(
     "usage",
     [
-        {"server_tool_use": {"code_execution_requests": 2}},
+        {"server_tool_use": {"tool_search_requests": 2}},
         {"service_tier": "priority"},
         {"inference_geo": "eu"},
         {"brand_new_counter": 5},

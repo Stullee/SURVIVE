@@ -53,6 +53,7 @@ class Usage:
     cache_read_tokens: int = 0
     web_search_requests: int = 0
     web_fetch_requests: int = 0
+    code_execution_requests: int = 0
 
     def __post_init__(self) -> None:
         for name, value in asdict(self).items():
@@ -92,11 +93,18 @@ class Usage:
             cache_read_tokens=count(usage, "cache_read_input_tokens"),
             web_search_requests=count(server, "web_search_requests"),
             web_fetch_requests=count(server, "web_fetch_requests"),
+            code_execution_requests=count(server, "code_execution_requests"),
         )
 
     def plus(self, other: Usage) -> Usage:
         """Sum of two usages (e.g. a response and its pause_turn continuation)."""
         return Usage(**{k: v + getattr(other, k) for k, v in asdict(self).items()})
+
+
+def container_micros(minutes: int, usd_per_hour: float | Decimal) -> int:
+    """What ``minutes`` of a code execution container cost, in micros, rounded up."""
+    total = Decimal(minutes) * dec(usd_per_hour) * MICROS_PER_USD / 60
+    return int(total.to_integral_value(rounding=ROUND_CEILING))
 
 
 def cost_micros(
@@ -105,10 +113,12 @@ def cost_micros(
     web_search_usd_per_1000: float | Decimal,
     multiplier: Decimal = Decimal(1),
 ) -> int:
-    """What Anthropic charges for ``usage``, in micros, rounded up.
+    """What Anthropic charges for ``usage``'s tokens and searches, in micros, rounded up.
 
     ``multiplier`` covers price modifiers that apply to all tokens (for example
-    1.1 for US-only inference). Web fetch has no per-request charge.
+    1.1 for US-only inference). Web fetch has no per-request charge. Code
+    execution is billed by container time, which usage doesn't report: the
+    budget guard adds it (``container_micros``).
     """
     tokens = (
         usage.input_tokens * dec(price.input)

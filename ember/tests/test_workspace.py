@@ -40,7 +40,7 @@ def test_the_list_walks_every_folder_sorted_by_path(ingress_client: TestClient) 
     jail.write("notes.md", "é")  # sizes are bytes
     jail.write_bytes("shop/cv.pdf", b"%PDF-1.7 made by Ember")
     (jail.root / ".tmp-abc123").write_text("half-written")
-    (jail.root / "photo.jpg").write_bytes(b"\xff\xd8\xff")
+    (jail.root / "run.sh").write_bytes(b"#!/bin/sh")
     (jail.root / ".hidden.md").write_text("not a name the agent can use")
     data = ingress_client.get("api/workspace").json()
     assert data["mode"] == "dry_run"
@@ -177,7 +177,7 @@ def test_only_a_picture_is_shown_inline(ingress_client: TestClient) -> None:
         ("../ember.db", 400),
         ("/data/ember.db", 400),
         ("run.sh", 400),
-        ("photo.jpg", 400),
+        ("photo.gif", 400),
         ("", 400),
         ("missing.pdf", 404),
         ("shop/missing.png", 404),

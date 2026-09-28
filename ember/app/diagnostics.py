@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 MAX_REPORT_CHARS = 400_000
 PRODUCT_LIBRARIES = ("fpdf2", "python-docx", "openpyxl", "pypdfium2", "pillow")
+SCRIPT_CHARS = 12_000  # of each workshop script an upgrade request carries
 CYCLES_CHARS = 200_000  # the wake cycles' share, so the sections after them always fit under the cap
 CELL_CHARS = 160
 TEXT_CHARS = 800  # plans, notes, message texts and tool inputs: enough to see what was actually written
@@ -57,6 +58,7 @@ TABLES = (
     "messages",
     "standing_instructions",
     "upgrades",
+    "workshop_runs",
     "memory_versions",
     "emails",
     "email_actions",
@@ -414,7 +416,8 @@ def _agent(state: AppState) -> str:
             ("approvals", ["id", "status", "type", "title", "version", "decided_at", "closed_at", "seen_cycle_id"], 15),
             ("messages", ["id", "sender", "seen", "text"], 15),
             ("standing_instructions", ["id", "created_at", "entered_by", "text"], 3),  # the newest is the current
-            ("upgrades", ["id", "status", "priority", "title", "released_version", "seen_cycle_id"], 15),
+            ("upgrades", ["id", "status", "priority", "title", "released_version", "seen_cycle_id", "script_path"], 15),
+            ("workshop_runs", ["id", "cycle_id", "status", "cost_micros", "script_used", "script_path", "task"], 10),
         ):
             rows = conn.execute(
                 f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC LIMIT ?",
@@ -423,6 +426,15 @@ def _agent(state: AppState) -> str:
             if table == "messages":
                 rows = [{**dict(r), "seen": _seen(r)} for r in rows]
             out.append(f"-- {table}\n" + _rows(rows, columns))
+        # The scripts upgrade requests carry: what the one who builds the upgrade needs (the report is its hand-off).
+        for row in conn.execute(
+            f"SELECT id, script_path, script_text FROM upgrades WHERE {where} AND script_text IS NOT NULL"
+            " ORDER BY id DESC LIMIT 3",
+            params,
+        ):
+            text = row["script_text"]
+            cut = "\n… [script cut]" if len(text) > SCRIPT_CHARS else ""
+            out.append(f"-- upgrade #{row['id']} script {row['script_path']}\n{text[:SCRIPT_CHARS]}{cut}")
     for name, text in agent.memory_files().items():
         out.append(f"-- memory/{name}.md ({len(text.encode())} B)\n{text[:1500]}")
     workspace, _ = agent.roots()

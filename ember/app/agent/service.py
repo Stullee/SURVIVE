@@ -498,6 +498,12 @@ class Agent:
 
         return views.workspace_file(self, path)
 
+    def upgrade_script(self, upgrade_id: int) -> tuple[str, str] | None:
+        """(file name, text) of the workshop script an upgrade request carries, or None."""
+        from . import views
+
+        return views.upgrade_script(self, upgrade_id)
+
     def workspace_product(self, path: str) -> tuple[str, bytes, str]:
         """(file name, bytes, content type) of a PDF, Word, Excel or PNG file; raises views.WorkspaceFileError."""
         from . import views

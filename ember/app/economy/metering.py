@@ -30,6 +30,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from decimal import ROUND_CEILING, ROUND_DOWN, Decimal
 from pathlib import Path
 from typing import Any, Protocol
@@ -38,8 +39,8 @@ from .. import events
 from ..config import ModelPrice, Settings
 from ..db import Database
 from .clock import Clock, from_iso, to_iso
-from .costs import MICROS_PER_USD, Usage, cost_micros, micros_to_usd
-from .estimate import Plan, Unpriceable, plan_request, worst_case_micros
+from .costs import MICROS_PER_USD, Usage, container_micros, cost_micros, micros_to_usd
+from .estimate import CONTAINER_MINIMUM_MINUTES, Plan, Unpriceable, plan_request, worst_case_micros
 from .ledger import Books
 from .life import Life, LifeStatus
 from .pricing import (
@@ -74,7 +75,10 @@ _KNOWN_USAGE_KEYS = frozenset(
         "output_tokens_details",  # e.g. thinking_tokens: already part of output_tokens
     }
 )
-_KNOWN_SERVER_TOOLS = frozenset({"web_search_requests", "web_fetch_requests"})
+_KNOWN_SERVER_TOOLS = frozenset({"web_search_requests", "web_fetch_requests", "code_execution_requests"})
+# Workshop calls (code execution, 0.7.0) have their own cap per run and count toward the daily cap and the balance,
+# but not toward the cycle cap: one run can cost more than a whole wake cycle may.
+WORKSHOP = "workshop"
 _STANDARD_GEOS = frozenset({"global", "not_available"})
 _SNAPSHOT_SUFFIX = re.compile(r"^-\d{8}$")
 
@@ -118,12 +122,25 @@ class Interrupted:
 Outcome = Completed | NotSent | Rejected | Interrupted
 
 
+class FilesError(RuntimeError):
+    """A Files API operation (the workshop's inputs and outputs) failed; the message is safe to show."""
+
+
 class Transport(Protocol):
     simulated: bool
 
     def count_tokens(self, request: Mapping[str, Any]) -> int: ...
 
     def send(self, request: Mapping[str, Any]) -> Outcome: ...
+
+    # The Files API, for the workshop (free, so not metered). Each raises FilesError.
+    def upload_file(self, name: str, data: bytes, mime: str) -> str: ...
+
+    def file_info(self, file_id: str) -> dict[str, Any]: ...
+
+    def download_file(self, file_id: str, limit: int) -> bytes: ...
+
+    def delete_file(self, file_id: str) -> None: ...
 
 
 # A picture whose size can't be read: more than the API bills for any picture it accepts.
@@ -174,6 +191,18 @@ class OfflineTransport:
 
     def count_tokens(self, request: Mapping[str, Any]) -> int:
         return rough_token_count(request)
+
+    def upload_file(self, name: str, data: bytes, mime: str) -> str:
+        raise FilesError("files can't be sent without a model transport")
+
+    def file_info(self, file_id: str) -> dict[str, Any]:
+        raise FilesError("files can't be read without a model transport")
+
+    def download_file(self, file_id: str, limit: int) -> bytes:
+        raise FilesError("files can't be read without a model transport")
+
+    def delete_file(self, file_id: str) -> None:
+        raise FilesError("files can't be deleted without a model transport")
 
     def send(self, request: Mapping[str, Any]) -> Outcome:
         return NotSent("model calls are not available in this version yet")
@@ -231,6 +260,8 @@ class Reservation:
     search_price: Decimal
     geo: Decimal
     estimate: int
+    container_price: Decimal = Decimal(0)  # USD per hour of a code execution container
+    started: datetime | None = None
 
 
 @dataclass
@@ -433,7 +464,13 @@ class MeteredModel:
         price = self.settings.price_for(plan.model)
         if price is None:
             raise Unpriceable(f"model {plan.model!r} has no entry in the price table")
-        return self._estimate(plan, price, Decimal(str(self.settings.web_search_usd_per_1000)), geo_multiplier(self.db))
+        return self._estimate(
+            plan,
+            price,
+            Decimal(str(self.settings.web_search_usd_per_1000)),
+            geo_multiplier(self.db),
+            Decimal(str(self.settings.code_execution_usd_per_hour)),
+        )
 
     def headroom(self, cycle_id: int, purpose: str = "work") -> int:
         """How much the next call of ``purpose`` in this cycle may cost: the tightest of the cycle cap, the daily
@@ -444,11 +481,16 @@ class MeteredModel:
             cycle = conn.execute("SELECT cap_micros FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
         if cycle is None:
             return 0
-        spent, reserved = self.books.cycle_spend(cycle_id)
+        spent, reserved = self.books.cycle_spend(cycle_id, include_workshop=False)
         pending = self.books.pending(scope)
         daily_cap = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
         today = self.books.cap_spend_on(scope, self.clock.today())
-        room = min(cycle["cap_micros"] - spent - reserved, daily_cap - today - pending, status.balance - pending)
+        own_cap = (
+            usd_cap_to_micros(self.settings.workshop_run_cap_usd)
+            if purpose == WORKSHOP
+            else cycle["cap_micros"] - spent - reserved
+        )
+        room = min(own_cap, daily_cap - today - pending, status.balance - pending)
         if purpose != "last_will" and status.last_will_at is None:
             room = min(
                 room, status.balance - pending - (last_will_reserve(self.settings, self.db, self.life.mode) or 0)
@@ -485,6 +527,7 @@ class MeteredModel:
             price: ModelPrice | None = None
             geo = geo_multiplier(self.db)
             search_price = Decimal(str(self.settings.web_search_usd_per_1000))
+            container_price = Decimal(str(self.settings.code_execution_usd_per_hour))
             starving = False
             refusal = self._system_refusal()
             if refusal is None and cycle is None:
@@ -503,7 +546,7 @@ class MeteredModel:
                     refusal = (f"model {plan.model!r} has no entry in the price table", "request")
             if refusal is None:
                 assert plan is not None and price is not None
-                estimate = self._estimate(plan, price, search_price, geo)
+                estimate = self._estimate(plan, price, search_price, geo, container_price)
                 refusal, starving = self._money_refusal(cycle, status, purpose, estimate)
             if refusal is not None:
                 call_id = None
@@ -523,12 +566,26 @@ class MeteredModel:
             else:
                 assert plan is not None and price is not None
                 call_id = self._insert_call(
-                    conn, cycle_id, purpose, plan.model, "pending", now, estimate, plan, price, None, search_price, geo
+                    conn,
+                    cycle_id,
+                    purpose,
+                    plan.model,
+                    "pending",
+                    now,
+                    estimate,
+                    plan,
+                    price,
+                    None,
+                    search_price,
+                    geo,
+                    container_price,
                 )
         if refusal is not None:
             raise CallRefused(refusal[0], refusal[1], call_id, state)
         assert plan is not None and price is not None and call_id is not None
-        return Reservation(call_id, cycle_id, plan.model, plan, price, search_price, geo, estimate)
+        return Reservation(
+            call_id, cycle_id, plan.model, plan, price, search_price, geo, estimate, container_price, now
+        )
 
     def _system_refusal(self) -> tuple[str, str] | None:
         if not self.health.lock_held:
@@ -548,8 +605,10 @@ class MeteredModel:
             return ("the wake cycle belongs to an earlier life", "request")
         return None
 
-    def _estimate(self, plan: Plan, price: ModelPrice, search_price: Decimal, geo: Decimal) -> int:
-        base = worst_case_micros(plan, price, search_price, geo)
+    def _estimate(
+        self, plan: Plan, price: ModelPrice, search_price: Decimal, geo: Decimal, container_price: Decimal
+    ) -> int:
+        base = worst_case_micros(plan, price, search_price, geo, container_price)
         factor = safety_factor(self.db, plan.model, self.life.mode)
         return int((Decimal(base) * factor).to_integral_value(rounding=ROUND_CEILING))
 
@@ -558,13 +617,22 @@ class MeteredModel:
     ) -> tuple[tuple[str, str] | None, bool]:
         """(refusal, is it starvation) for the caps, the balance and the last-will reserve."""
         scope = self.life.scope()
-        spent, reserved = self.books.cycle_spend(cycle["id"])
-        if spent + reserved + estimate > cycle["cap_micros"]:
-            return (
-                f"the cycle cap of ${micros_to_usd(cycle['cap_micros']):.2f} would be exceeded"
-                f" (spent ${micros_to_usd(spent + reserved):.4f}, this call up to ${micros_to_usd(estimate):.4f})",
-                "cap",
-            ), False
+        if purpose == WORKSHOP:
+            run_cap = usd_cap_to_micros(self.settings.workshop_run_cap_usd)
+            if estimate > run_cap:
+                return (
+                    f"a workshop run may cost at most ${micros_to_usd(run_cap):.2f}"
+                    f" (this call up to ${micros_to_usd(estimate):.4f})",
+                    "cap",
+                ), False
+        else:
+            spent, reserved = self.books.cycle_spend(cycle["id"], include_workshop=False)
+            if spent + reserved + estimate > cycle["cap_micros"]:
+                return (
+                    f"the cycle cap of ${micros_to_usd(cycle['cap_micros']):.2f} would be exceeded"
+                    f" (spent ${micros_to_usd(spent + reserved):.4f}, this call up to ${micros_to_usd(estimate):.4f})",
+                    "cap",
+                ), False
         daily_cap = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
         today = self.books.cap_spend_on(scope, self.clock.today())
         pending = self.books.pending(scope)
@@ -613,6 +681,7 @@ class MeteredModel:
         guard_reason: str | None,
         search_price: Decimal | None = None,
         geo: Decimal | None = None,
+        container_price: Decimal | None = None,
     ) -> int:
         snapshot = None
         if price is not None:
@@ -620,6 +689,7 @@ class MeteredModel:
                 {
                     **{k: str(Decimal(str(v))) for k, v in price.model_dump().items() if k != "model"},
                     "web_search_usd_per_1000": str(search_price),
+                    "code_execution_usd_per_hour": str(container_price),
                     "geo_multiplier": str(geo),
                     "safety_factor": str(safety_factor(self.db, price.model, self.life.mode)),
                 }
@@ -743,6 +813,8 @@ class MeteredModel:
             notes.append(f"answered by {response_model} instead of {res.model}")
 
         known = cost_micros(usage, res.price, res.search_price, multiplier)
+        if usage.code_execution_requests or isinstance(response.get("container"), Mapping):
+            known += container_micros(self._container_minutes(res), res.container_price)
         # A multiplier first learned from this answer (US-only inference) isn't an estimation error.
         expected = int((Decimal(res.estimate) * multiplier / res.geo).to_integral_value(rounding=ROUND_CEILING))
         uncertain = bool(notes)
@@ -764,6 +836,12 @@ class MeteredModel:
             us_inference=us_inference,
             expected=expected,
         )
+
+    def _container_minutes(self, res: Reservation) -> int:
+        """Container time to book for a call that ran code: how long the call took, at least the 5 minutes
+        Anthropic bills at least (the first 1,550 hours a month are free, so this is an upper bound)."""
+        elapsed = (self.clock.now() - res.started).total_seconds() if res.started is not None else 0
+        return max(CONTAINER_MINIMUM_MINUTES, math.ceil(elapsed / 60))
 
     def _store(self, res: Reservation, s: _Settlement) -> None:
         now = self.clock.now()

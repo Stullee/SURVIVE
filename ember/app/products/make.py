@@ -182,10 +182,10 @@ def _pictures(jail: Jail, pages: str, height: int) -> list[images.Image.Image]:
                     documents[path] = jail.read_bytes(path)
                 number = int(match.group("page") or 1)
                 shown.extend(images.pdf_pages(documents[path], [number], height=height))
-            elif ref.lower().endswith(".png"):
+            elif ref.lower().endswith((".png", ".jpg")):
                 shown.append(images.open_png(jail.read_bytes(ref)))
             else:
-                raise ProductError(f"{ref!r} is not a page: use 'file.pdf#2' or a .png file in your workspace")
+                raise ProductError(f"{ref!r} is not a page: use 'file.pdf#2' or a .png or .jpg file in your workspace")
         except images.ImageError as exc:
             raise ProductError(f"{ref}: {exc}") from None
     return shown

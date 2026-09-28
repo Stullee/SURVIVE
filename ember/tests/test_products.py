@@ -132,7 +132,7 @@ def test_links_are_only_web_and_mail_links() -> None:
 
 
 def test_control_and_direction_characters_are_dropped() -> None:
-    document = markup.parse("# Title‮\x07\n﻿Text")
+    document = markup.parse("# Title\u202e\x07\n\ufeffText")
     assert markup.plain(document.main[0].runs) == "Title"
 
 
@@ -343,15 +343,18 @@ def test_listing_photos_refuse_what_they_cant_show() -> None:
         images.listing([page] * 4, "T")
 
 
-def test_only_pngs_are_opened_and_thumbnails_are_small() -> None:
+def test_only_pngs_and_jpegs_are_opened_and_thumbnails_are_small() -> None:
     buffer = io.BytesIO()
     Image.new("RGB", (3000, 1500), (1, 2, 3)).save(buffer, "PNG")
     small, width, height = images.thumbnail(buffer.getvalue(), 1_000)
     assert (width, height) == (1_000, 500) and Image.open(io.BytesIO(small)).size == (1_000, 500)
     jpeg = io.BytesIO()
-    Image.new("RGB", (10, 10)).save(jpeg, "JPEG")
+    Image.new("RGB", (10, 10)).save(jpeg, "JPEG")  # the workshop's photos
+    assert images.open_png(jpeg.getvalue()).size == (10, 10)
+    gif = io.BytesIO()
+    Image.new("RGB", (10, 10)).save(gif, "GIF")
     with pytest.raises(images.ImageError):
-        images.open_png(jpeg.getvalue())
+        images.open_png(gif.getvalue())
 
 
 # --- make: what the tools call ----------------------------------------------------

@@ -733,6 +733,15 @@ a.btn-primary { color: var(--text); }
 }
 .ws-text.mono { line-height: 1.45; }
 .ws-kind { margin-inline-start: 6px; }
+/* An upgrade request's workshop script, and the task copied for Claude Code. */
+.upgrade-script { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--ring); border-radius: 8px; background: var(--surface-2); }
+.upgrade-script p { margin: 4px 0; }
+.upgrade-script code { overflow-wrap: anywhere; }
+.upgrade-task {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.8rem; line-height: 1.45;
+  max-height: 40vh; overflow: auto; background: var(--surface); border: 1px solid var(--ring); border-radius: 6px;
+  padding: 8px 10px; margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
 /* A product's pictures: pages side by side (as many as fit), a single picture at full width. */
 .ws-product { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); align-items: start; }
 .ws-product.single { grid-template-columns: minmax(0, 720px); }

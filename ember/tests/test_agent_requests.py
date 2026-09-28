@@ -101,6 +101,9 @@ def overflowing_snapshot() -> context.Snapshot:
             "ä" * 60 + "@example.org", 10**6, tuple((10**9 + i, "ä" * 320, "ä" * 300) for i in range(3))
         ),
         instructions="😀" * 1_500,
+        proven=[
+            (f"workshop/scripts/{'ä' * 170}-{i}.py", f"its files are in approved request #{10**9 + i}") for i in (1, 2)
+        ],
     )
 
 
@@ -110,6 +113,7 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     assert f"== {context.RESEARCH_HEADING} ==" in planner and "== FROM YOUR OWNER ==" not in planner
     assert "\n== MAIL ==\n" in planner and f"\n== {context.INSTRUCTIONS_HEADING} ==\n" in planner
     assert "Memory check: lessons.md" in planner  # the lessons fill most of their file
+    assert "\n== WORKSHOP ==\nWorkshop check: workshop/scripts/" in planner
     assert rough_token_count(prompts.plan_request(SETTINGS, planner)) <= PLANNER_OPENING.input_tokens
     plan = {"goal": "ä" * 300, "steps": ["ä" * 200] * 6}
     focus = {"id": 1_000, "title": "ä" * 80, "status": "active", "hypothesis": "ä" * 400, "next_step": "ä" * 200}

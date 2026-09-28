@@ -354,6 +354,27 @@ def update_upgrade(request: Request, upgrade_id: ItemId, body: Annotated[Any, Bo
     return _reply(actions.update_upgrade(upgrade_id, body, _owner(request)))
 
 
+@router.get("/api/upgrades/{upgrade_id}/script")
+def upgrade_script(request: Request, upgrade_id: ItemId) -> Response:
+    """The workshop script an upgrade request carries, as plain text that always downloads (like workspace files)."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    found = agent.upgrade_script(upgrade_id)
+    if found is None:
+        return JSONResponse({"error": "this upgrade request has no script"}, status_code=404)
+    name, text = found
+    return PlainTextResponse(
+        text,
+        headers={
+            "content-disposition": _attachment(name),
+            "content-security-policy": "sandbox; default-src 'none'",
+            "x-content-type-options": "nosniff",
+            "cache-control": "no-store",
+        },
+    )
+
+
 @router.get("/api/cycles/{cycle_id}")
 def cycle(request: Request, cycle_id: Annotated[int, Path(ge=1, le=2**62)]) -> JSONResponse:
     agent = _state(request).agent
@@ -400,8 +421,8 @@ def workspace_file(request: Request, path: str = "") -> Response:
 def workspace_product(request: Request, path: str = "", inline: bool = False) -> Response:
     """A PDF, Word, Excel or PNG file Ember's code made in the workspace, with its exact content type.
 
-    Files are downloads; only a PNG may be shown inline (the dashboard's picture previews). The sandbox policy and
-    nosniff keep a browser from ever running anything in them, as for the text files.
+    Files are downloads; only a picture (PNG, JPEG) may be shown inline, for the dashboard's previews. The sandbox
+    policy and nosniff keep a browser from ever running anything in them, as for the text files.
     """
     agent = _state(request).agent
     if agent is None:
@@ -410,7 +431,7 @@ def workspace_product(request: Request, path: str = "", inline: bool = False) ->
         name, data, content_type = agent.workspace_product(path)
     except WorkspaceFileError as exc:
         return JSONResponse({"error": str(exc)}, status_code=exc.status)
-    shown = inline and content_type == "image/png"
+    shown = inline and content_type in ("image/png", "image/jpeg")
     return Response(
         data,
         media_type=content_type,

@@ -13,7 +13,7 @@ httpx2 = pytest.importorskip("httpx2")
 pytest.importorskip("anthropic")
 
 from app.economy.anthropic_transport import AnthropicTransport, _allowlist_transport  # noqa: E402
-from app.economy.metering import Completed, Interrupted, NotSent, Rejected  # noqa: E402
+from app.economy.metering import Completed, FilesError, Interrupted, NotSent, Rejected  # noqa: E402
 
 REQUEST = {"model": "claude-sonnet-5", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]}
 START = {
@@ -231,3 +231,56 @@ def test_a_refused_key_blocks_further_calls() -> None:
     busy = transport(Server(error(529, "overloaded_error")))
     busy.send(REQUEST)
     assert busy.blocked is None
+
+
+# --- the Files API: the workshop's inputs and outputs ---
+
+FILE = {
+    "id": "file_1",
+    "type": "file",
+    "filename": "chart.png",
+    "mime_type": "image/png",
+    "size_bytes": 9,
+    "created_at": "2026-09-28T10:00:00Z",
+    "downloadable": True,
+}
+
+
+def test_an_upload_expires_within_the_hour() -> None:
+    server = Server(httpx2.Response(200, json={**FILE, "filename": "prices.csv", "downloadable": False}))
+    assert transport(server).upload_file("prices.csv", b"a,b\n", "text/csv") == "file_1"
+    sent = server.requests[0]
+    assert sent.method == "POST" and sent.url.path == "/v1/files" and sent.url.host == "api.anthropic.com"
+    body = sent.read()
+    assert b'name="expires_in_seconds"\r\n\r\n3600' in body and b'filename="prices.csv"' in body and b"a,b\n" in body
+
+
+def test_a_made_file_is_read_and_downloaded_within_its_limit() -> None:
+    server = Server(
+        httpx2.Response(200, json=FILE),
+        httpx2.Response(200, content=b"PNG bytes", headers={"content-type": "application/octet-stream"}),
+        httpx2.Response(200, content=b"PNG bytes", headers={"content-type": "application/octet-stream"}),
+        httpx2.Response(200, json={"id": "file_1", "type": "file_deleted"}),
+    )
+    files = transport(server)
+    assert files.file_info("file_1") == {"filename": "chart.png", "size_bytes": 9, "mime_type": "image/png"}
+    assert files.download_file("file_1", 100) == b"PNG bytes"
+    with pytest.raises(FilesError, match="larger than"):
+        files.download_file("file_1", 5)
+    files.delete_file("file_1")
+    assert [(r.method, r.url.path) for r in server.requests] == [
+        ("GET", "/v1/files/file_1"),
+        ("GET", "/v1/files/file_1/content"),
+        ("GET", "/v1/files/file_1/content"),
+        ("DELETE", "/v1/files/file_1"),
+    ]
+
+
+def test_a_files_api_error_is_a_files_error() -> None:
+    server = Server(error(404, "not_found_error"), error(404, "not_found_error"), error(404, "not_found_error"))
+    files = transport(server)
+    for call in (lambda: files.file_info("file_x"), lambda: files.delete_file("file_x")):
+        with pytest.raises(FilesError, match="NotFoundError"):
+            call()
+    with pytest.raises(FilesError, match="uploading notes.md failed"):
+        files.upload_file("notes.md", b"x", "text/markdown")

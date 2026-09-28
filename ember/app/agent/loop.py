@@ -38,6 +38,8 @@ from . import context, netguard, news, prompts, store, tools
 from .memory import Memory
 from .sandbox import Jail
 from .store import AgentScope
+from .workshop import Workshop, WorkshopError
+from .workshop import report as workshop_report
 
 log = logging.getLogger(__name__)
 
@@ -157,6 +159,7 @@ class CycleRunner:
             mail=tools.MailAccess(self.mailbox.address, self.settings.email_daily_limit) if self.mailbox else None,
         )
         ctx.research = self._research_fn(ctx)
+        ctx.workshop = self._workshop_fn(ctx) if prompts.workshop_on(self.settings) else None
         end = CycleEnd("failed", "the cycle ended unexpectedly")
         try:
             if trigger != "last_will":
@@ -591,9 +594,7 @@ class CycleRunner:
                 )
             try:
                 result = self._call(cycle_id, "research", request)
-            except CallRefused as exc:
-                if exc.category in ("state", "system"):
-                    raise EndCycle("stopped", f"refused: {exc.reason}") from exc
+            except CallRefused as exc:  # a state or system refusal ends the cycle at its next call
                 return tools.Outcome(False, f"Error: research refused ({exc.reason}).", "refused")
             except CallFailed as exc:
                 return tools.Outcome(
@@ -624,6 +625,23 @@ class CycleRunner:
             )
 
         return research
+
+    # --- the workshop (metered sub-calls with Anthropic's code execution tool) ---
+
+    def _workshop_fn(self, ctx: tools.ToolContext) -> tools.WorkshopFn:
+        shop = Workshop(self.db, self.clock, self.settings, self.meter, self.scope, self.workspace)
+
+        def workshop(task: str, files: list[str], script: str | None, folder: str | None) -> tools.Outcome:
+            try:
+                run = shop.run(ctx.cycle_id, task, files, script, folder)
+            except WorkshopError as exc:
+                return tools.Outcome(False, f"Error: {exc}.", f"refused: {exc}"[:300])
+            except CallRefused as exc:  # the budget guard's state or system refusal: the next call ends the cycle
+                return tools.Outcome(False, f"Error: the workshop was refused ({exc.reason}).", "refused")
+            ok, text, summary = workshop_report(run, lambda source, body: tools.wrap(ctx, source, body))
+            return tools.Outcome(ok, text, summary)
+
+        return workshop
 
     # --- the last will ---
 

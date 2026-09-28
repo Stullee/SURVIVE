@@ -126,6 +126,8 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "decided_at": r["decided_at"],
                 "owner_note": r["owner_note"],
                 "released_version": r["released_version"],
+                "script_path": r["script_path"],
+                "script_bytes": len((r["script_text"] or "").encode("utf-8")),
                 "simulated": r["mode"] == "dry_run",
             }
             for r in store.queue(conn, "upgrades", scope)
@@ -348,7 +350,9 @@ PRODUCT_TYPES = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ".png": "image/png",
+    ".jpg": "image/jpeg",
 }
 
 
@@ -425,6 +429,19 @@ def workspace_product(agent: Agent, path: str) -> tuple[str, bytes, str]:
         raise WorkspaceFileError(str(exc), 404) from None
     except SandboxError as exc:
         raise WorkspaceFileError(str(exc)) from None
+
+
+def upgrade_script(agent: Agent, upgrade_id: int) -> tuple[str, str] | None:
+    """(file name, text) of the workshop script an upgrade request carries, or None."""
+    scope = agent.scope()
+    where, params = scope.where()
+    with agent.db.connection() as conn:
+        row = conn.execute(
+            f"SELECT script_path, script_text FROM upgrades WHERE id = ? AND {where}", (upgrade_id, *params)
+        ).fetchone()
+    if row is None or row["script_text"] is None:
+        return None
+    return str(row["script_path"] or "script.py").rsplit("/", 1)[-1], str(row["script_text"])
 
 
 def _find(jail: Jail, parts: list[str]) -> Entry | None:

@@ -32,7 +32,11 @@ configuration:
     description: Maximum number of tool calls the agent may make in one wake cycle.
   planner_model:
     name: Planner model
-    description: Model that plans each cycle. Must be listed in the price table.
+    description: >-
+      Model that plans each cycle: what to work on and why, Ember's business
+      decisions. claude-opus-5-5 decides better at about twice the price of a
+      plan; it always thinks first, which Ember allows for. Must be listed in
+      the price table.
   worker_model:
     name: Worker model
     description: >-
@@ -82,6 +86,33 @@ configuration:
       How thoroughly the model works in each step. Lower effort writes shorter
       answers and uses fewer tool calls, which costs less, but may do a worse
       job. "default" is the model's own default (high). Not used for Haiku.
+  workshop:
+    name: Workshop (run code in Anthropic's sandbox)
+    description: >-
+      On: when its own tools can't make something (a chart, a PowerPoint
+      file, data work), the agent can have code written and run in Anthropic's
+      code execution sandbox, which has no internet access. Nothing runs on
+      your Home Assistant. The files it makes are checked before they are kept.
+  workshop_model:
+    name: Workshop model
+    description: >-
+      The model that writes the workshop's code. Empty: the worker model.
+      claude-opus-5-5 writes better code at twice the price per token. It
+      needs an entry in the price table.
+  workshop_run_cap_usd:
+    name: Workshop cap per run (USD)
+    description: >-
+      The most one workshop run may cost. Runs count toward the daily cap,
+      not the cycle cap, because one run can cost more than a whole cycle.
+  workshop_runs_per_day:
+    name: Workshop runs per day
+    description: At most this many workshop runs a day (0 switches the workshop off).
+  code_execution_usd_per_hour:
+    name: Sandbox price (USD per hour)
+    description: >-
+      What Anthropic charges per hour of sandbox time beyond its free hours
+      (1,550 a month per organization). Ember books at least 5 minutes per run
+      at this price, so its books never show less than you may pay.
   web_fetch:
     name: Let the agent read whole web pages
     description: >-

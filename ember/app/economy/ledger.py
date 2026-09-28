@@ -341,13 +341,15 @@ class Books:
                 (mark, *params),
             ).fetchone()
 
-    def cycle_spend(self, cycle_id: int) -> tuple[int, int]:
-        """(charged, reserved-and-pending) micros of one cycle."""
+    def cycle_spend(self, cycle_id: int, include_workshop: bool = True) -> tuple[int, int]:
+        """(charged, reserved-and-pending) micros of one cycle; without its workshop calls for the cycle cap, which
+        they don't count toward."""
+        workshop = "" if include_workshop else " AND purpose != 'workshop'"
         with self.db.connection() as conn:
             row = conn.execute(
                 "SELECT COALESCE(SUM(CASE WHEN status IN ('ok', 'interrupted') THEN cost_micros ELSE 0 END), 0),"
                 " COALESCE(SUM(CASE WHEN status = 'pending' THEN estimate_micros ELSE 0 END), 0)"
-                " FROM llm_calls WHERE cycle_id = ?",
+                f" FROM llm_calls WHERE cycle_id = ?{workshop}",
                 (cycle_id,),
             ).fetchone()
         return int(row[0]), int(row[1])

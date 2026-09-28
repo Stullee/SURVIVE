@@ -18,6 +18,9 @@ What the rest of Ember can rely on:
 * Deterministic: an answer is a function of (seed, scenario, request). Only the simulated cache, the
   ``flaky`` call counter and a test script carry state from one call to the next.
 * Standard library only; no sockets, subprocesses or threads, so it runs inside ``netguard.sealed()``.
+* The workshop's Files API is emulated in memory (``upload_file``, ``file_info``, ``download_file``,
+  ``delete_file``), and a workshop call answers like Anthropic's code execution tool: a script, a run, and the
+  files it left in $OUTPUT_DIR (a chart drawn with zlib alone, and the script).
 
 The fake can't understand what its owner writes, but it never ignores it. Messages from the owner in the
 planner's ``SINCE YOUR LAST WAKE`` section put "Answer my owner's message" first in the plan; with messages
@@ -39,7 +42,9 @@ Scenarios (the ``scenario`` argument; the app takes it from ``EMBER_FAKE_SCENARI
 ``founder``    the default script: plan, list the workspace, research, write a draft, every second cycle make
                it into a PDF (with a Word copy and page pictures), look at its first page and make a listing
                photo, update the project, every third cycle ask to publish (disclosed as AI-written), sleep,
-               report, reflect.
+               report, reflect. Every fourth cycle it has a price chart made in the workshop, running its kept
+               script again once it has one, and once the planner says a script proved itself, it asks for it to
+               be built into Ember (request_upgrade with workshop_script).
 ``idle``       every plan has no steps (an idle cycle is one cheap call), unless the owner wrote: then the
                only step is answering.
 ``drain``      replies close to ``max_tokens`` and many steps, so money runs out: critical, will, death.
@@ -60,14 +65,16 @@ import hashlib
 import json
 import random
 import re
+import struct
 import threading
 import time
+import zlib
 from collections import Counter, deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..economy.metering import Completed, Interrupted, NotSent, Outcome, Rejected, rough_token_count
+from ..economy.metering import Completed, FilesError, Interrupted, NotSent, Outcome, Rejected, rough_token_count
 from .prompts import REFLECT_MARKER
 from .tools import SPECS
 
@@ -79,6 +86,7 @@ CACHE_TTL_SECONDS = {"5m": 300.0, "1h": 3_600.0}
 CACHE_LOOKBACK_BLOCKS = 20
 MAX_CACHE_BREAKPOINTS = 4
 CHAOS_RATE = 0.4
+_CODE_FIELDS = frozenset({"type", "name", "cache_control"})
 IMAGE_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
 SIMULATED_SITE = "https://example.invalid"
 RETRIEVED_AT = "2026-01-01T00:00:00Z"
@@ -119,6 +127,7 @@ CHAOS: dict[str, tuple[str, ...]] = {
     ),
     "reflect": ("disallowed_tool", "double_journal", "text_only", "empty"),
     "research": ("pause_turn", "search_error"),
+    "workshop": ("svg", "nothing", "pause"),
     "will": ("cut_off", "empty"),
 }
 _OPEN_STATUSES = ("idea", "active", "waiting")
@@ -360,7 +369,7 @@ def thinking_signature(thinking: str) -> str:
 
 
 def request_kind(request: Mapping[str, Any]) -> str:
-    """plan, research, reflect, work or will (anything else without tools counts as a will)."""
+    """plan, workshop, research, reflect, work or will (anything else without tools counts as a will)."""
     output_config = request.get("output_config")
     fmt = output_config.get("format") if isinstance(output_config, Mapping) else None
     schema = fmt.get("schema") if isinstance(fmt, Mapping) else None
@@ -368,6 +377,8 @@ def request_kind(request: Mapping[str, Any]) -> str:
     if isinstance(properties, Mapping) and "steps" in properties:
         return "plan"
     tools = [t for t in request.get("tools") or [] if isinstance(t, Mapping)]
+    if any(str(t.get("type") or "").startswith("code_execution_") for t in tools):
+        return "workshop"
     if any(str(t.get("type") or "").startswith(("web_search_", "web_fetch_")) for t in tools):
         return "research"
     if any(t.get("type") in (None, "", "custom") for t in tools):
@@ -408,6 +419,12 @@ def validate_request(request: Mapping[str, Any], canonical: str | None = None) -
     if not isinstance(messages, list) or not messages:
         return "messages: at least one message is required"
     has_tools = bool(request.get("tools"))
+    has_code = any(
+        isinstance(tool, Mapping) and str(tool.get("type") or "").startswith("code_execution_")
+        for tool in request.get("tools") or []
+    )
+    if request.get("container") is not None and not has_code:
+        return "container: only with the code execution tool"
     pending: list[str] = []  # tool_use ids the previous assistant turn is waiting for
     for index, message in enumerate(messages):
         where = f"messages.{index}"
@@ -436,6 +453,8 @@ def validate_request(request: Mapping[str, Any], canonical: str | None = None) -
                 return f"{where}.content.{position}: {problem}"
             if block["type"] in ("tool_use", "tool_result") and not has_tools:
                 return "Requests which include tool_use or tool_result blocks must define tools."
+            if block["type"] == "container_upload" and not has_code:
+                return f"{where}.content.{position}: container_upload blocks need the code execution tool"
             if block["type"] == "thinking" and role == "assistant":
                 signature = block.get("signature")
                 if not isinstance(signature, str) or not signature:
@@ -471,6 +490,13 @@ def _server_tool_problem(tools: Any) -> str | None:
         if not isinstance(tool, Mapping):
             return f"tools.{index}: must be an object"
         kind = str(tool.get("type") or "")
+        if kind.startswith("code_execution_"):
+            extra = sorted(set(tool) - _CODE_FIELDS)
+            if extra:
+                return f"tools.{index}.{extra[0]}: Extra inputs are not permitted"
+            if tool.get("name") != "code_execution":
+                return f"tools.{index}.name: must be code_execution"
+            continue
         known = (
             _SEARCH_FIELDS
             if kind.startswith("web_search_")
@@ -619,6 +645,10 @@ _UNSAFE = re.compile(r"[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]")  # what tools
 _JSON = json.JSONDecoder()
 _ANSWER = "answer my owner"  # in a plan step or goal: the cycle answers the owner
 MAKE_STEP = "Make the draft into a PDF with a Word copy, look at its first page and make a listing photo"
+WORKSHOP_STEP = "Have the workshop make a price chart for the listing photos"
+PROMOTE_STEP = "Ask for this workshop script to be built into Ember:"
+_PROVEN = re.compile(r"Workshop check: (workshop/scripts/\S+?\.py) has proven itself")
+_KEPT_SCRIPT = re.compile(r"^(workshop/scripts/[A-Za-z0-9._-]+\.py) \(", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -844,6 +874,7 @@ class _Draft:
     extra_input_tokens: int = 0  # server tool results read by a later sampling
     web_search_requests: int = 0
     web_fetch_requests: int = 0
+    code_execution_requests: int = 0
     output_tokens: int | None = None  # forced, e.g. a reply cut off at max_tokens
     stop_details: dict[str, Any] | None = None
     note: str = ""
@@ -878,9 +909,42 @@ class FakeTransport:
         self.sent: deque[Mapping[str, Any]] = deque(maxlen=200)  # the latest requests, for tests
         self.trace: deque[tuple[int, str, str]] = deque(maxlen=200)  # (call, kind, what the fake did)
         self._cache: dict[str, tuple[float, str]] = {}  # prefix hash -> (expires at, ttl)
+        self.files: dict[str, dict[str, Any]] = {}  # the Files API: id -> filename, data, downloadable
+        self._file_ids = 0
 
     def count_tokens(self, request: Mapping[str, Any]) -> int:
         return rough_token_count(request)
+
+    # --- the Files API, in memory ---
+
+    def _new_file(self, filename: str, data: bytes, downloadable: bool) -> str:
+        self._file_ids += 1
+        file_id = f"file_fake_{self._file_ids:04d}"
+        self.files[file_id] = {"filename": filename, "data": data, "downloadable": downloadable}
+        return file_id
+
+    def upload_file(self, name: str, data: bytes, mime: str) -> str:
+        return self._new_file(name, data, downloadable=False)
+
+    def file_info(self, file_id: str) -> dict[str, Any]:
+        found = self.files.get(file_id)
+        if found is None:
+            raise FilesError(f"file {file_id} not found")
+        return {"filename": found["filename"], "size_bytes": len(found["data"]), "mime_type": ""}
+
+    def download_file(self, file_id: str, limit: int) -> bytes:
+        found = self.files.get(file_id)
+        if found is None:
+            raise FilesError(f"file {file_id} not found")
+        if not found["downloadable"]:
+            raise FilesError("files you upload can't be downloaded")
+        if len(found["data"]) > limit:
+            raise FilesError(f"the file is larger than {limit // (1024 * 1024)} MB")
+        return found["data"]
+
+    def delete_file(self, file_id: str) -> None:
+        if self.files.pop(file_id, None) is None:
+            raise FilesError(f"file {file_id} not found")
 
     def send(self, request: Mapping[str, Any]) -> Outcome:
         self.calls += 1
@@ -897,6 +961,10 @@ class FakeTransport:
             self.trace.append((number, "stopped", "stopped during the delay"))
             return Interrupted("stopped while the simulated model was answering", None, request_id)
         kind = request_kind(request)
+        missing = [i for i in _uploads(request) if i not in self.files]
+        if missing:
+            self.trace.append((number, "invalid", f"unknown file {missing[0]}"))
+            return Rejected(404, f"not_found_error: File {missing[0]} not found.", request_id)
         if self.script:
             turn = self.script.popleft()
             if isinstance(turn, Fail):
@@ -964,6 +1032,8 @@ class FakeTransport:
                 if fetch
                 else {"web_search_requests": draft.web_search_requests}
             )
+        elif kind == "workshop":
+            usage["server_tool_use"] = {"code_execution_requests": draft.code_execution_requests}
         usage["service_tier"] = "standard"
         usage["inference_geo"] = "global"
         usage["output_tokens_details"] = {"thinking_tokens": min(output, tokens_for(thinking)) if thinking else 0}
@@ -979,6 +1049,9 @@ class FakeTransport:
         }
         if draft.stop_details is not None:
             response["stop_details"] = draft.stop_details
+        if kind == "workshop":
+            container = request.get("container") or "container_fake_" + _hex(rng, 20)
+            response["container"] = {"id": container, "expires_at": "2026-01-01T01:00:00Z"}
         return response
 
     def _cache_usage(self, request: Mapping[str, Any], total: int) -> tuple[int, int, int]:
@@ -1024,6 +1097,8 @@ class FakeTransport:
             return self._plan(request, rng, chaos)  # structured output: JSON only, never padded
         if kind == "research":
             draft = self._research(request, rng, chaos)
+        elif kind == "workshop":
+            draft = self._workshop(request, rng, chaos)
         elif kind == "will":
             draft = self._will(request, rng, chaos)
         elif kind == "reflect":
@@ -1124,6 +1199,11 @@ class FakeTransport:
         steps.append(f"Write a first draft to projects/{slug(idea.title)}.md")
         if cycle % 2 == 0 and not critical:
             steps.append(MAKE_STEP)
+        if cycle % 4 == 3 and not critical:
+            steps.append(WORKSHOP_STEP)
+        proven = _PROVEN.search(context)
+        if proven and not critical:
+            steps.insert(0, f"{PROMOTE_STEP} {proven[1]}")
         steps.append(
             f"Update project #{focus.id} with what I learned and the next step"
             if focus
@@ -1211,6 +1291,8 @@ class FakeTransport:
             "approval": "approv" in steps,
             "message": "message" in steps,
             "make": "into a pdf" in steps,
+            "workshop": "the workshop make" in steps,
+            "promote": "built into ember" in steps,
         }
         wanted["guide"] = wanted["make"] and crng.random() < 0.5
         wanted["look"] = wanted["photo"] = wanted["make"]
@@ -1237,7 +1319,9 @@ class FakeTransport:
                 "make",
                 "look",
                 "photo",
+                "workshop",
                 "update",
+                "promote",
                 "approval",
                 "message",
             )
@@ -1334,6 +1418,30 @@ class FakeTransport:
             return "workspace_read", {"path": path}
         if stage == "guide":
             return "guide", {"topic": "documents"}
+        if stage == "workshop":
+            args = {
+                "task": f"Make a bar chart of what similar products cost, for the listing photos of {idea.title}: "
+                "price-chart.png, 1200 x 800 pixels, 4 labelled bars in the product's colours.",
+                "folder": "workshop/out",
+            }
+            kept = _KEPT_SCRIPT.search(conv.brief)
+            if kept:
+                args["script"] = kept[1]
+            return "workshop", args
+        if stage == "promote":
+            plan = _PLAN_SECTION.search(conv.brief)
+            path = re.search(r"(workshop/scripts/\S+?\.py)", plan[1] if plan else "")
+            if path is None:
+                return None
+            return "request_upgrade", {
+                "title": f"Build my {path[1].rsplit('/', 1)[-1].removesuffix('.py')} script into Ember",
+                "problem": "I make price charts for listing photos in the workshop: every run costs money and "
+                "needs the script again.",
+                "proposed_change": f"A built-in tool that does what {path[1]} does, with the prices as input.",
+                "expected_benefit": "Charts for every listing at no cost per run, and never a broken run.",
+                "priority": "medium",
+                "workshop_script": path[1],
+            }
         product = f"shop/{slug(idea.title)}"
         if stage == "make":
             if not _succeeded(conv, "workspace_write", path):
@@ -1527,6 +1635,84 @@ class FakeTransport:
 
     # research
 
+    def _workshop(self, request: Mapping[str, Any], rng: random.Random, chaos: str | None) -> _Draft:
+        """A code execution run: write the script (or take the one handed over), run it, leave the files. With chaos
+        "pause" the run pauses before its command runs (pause_turn); the continuation runs it."""
+        messages = request["messages"]
+        given = [self.files[i] for i in _uploads(request) if i in self.files]
+        kept = next((f for f in given if str(f["filename"]).endswith(".py")), None)
+        script = kept["data"].decode("utf-8", "replace") if kept else WORKSHOP_SCRIPT
+        continuing = messages[-1].get("role") == "assistant"
+        if continuing:  # after pause_turn: the paused command runs now
+            chaos = None
+            run_use = messages[-1]["content"][-1]
+        else:
+            run_use = {
+                "type": "server_tool_use",
+                "id": "srvtoolu_" + _hex(rng, 24),
+                "name": "bash_code_execution",
+                "input": {"command": 'cd work && python script.py && cp * "$OUTPUT_DIR"/ && ls "$OUTPUT_DIR"'},
+            }
+        if chaos == "nothing":
+            outputs: list[str] = []
+            listing = ""
+        elif chaos == "svg":
+            outputs = [self._new_file("logo.svg", b'<svg xmlns="http://www.w3.org/2000/svg"/>', True)]
+            listing = "logo.svg\n"
+        elif chaos != "pause":
+            outputs = [
+                self._new_file("price-chart.png", chart_png(rng), True),
+                self._new_file("script.py", script.encode("utf-8"), True),
+            ]
+            listing = "price-chart.png\nscript.py\n"
+        content: list[dict[str, Any]] = []
+        if not continuing:
+            edit = "srvtoolu_" + _hex(rng, 24)
+            content += [
+                _text(
+                    "I'll take the script handed over and run it." if kept else "I'll write the script, then run it."
+                ),
+                {
+                    "type": "server_tool_use",
+                    "id": edit,
+                    "name": "text_editor_code_execution",
+                    "input": {"command": "create", "path": "work/script.py", "file_text": script},
+                },
+                {
+                    "type": "text_editor_code_execution_tool_result",
+                    "tool_use_id": edit,
+                    "content": {"type": "text_editor_code_execution_create_result", "is_file_update": bool(kept)},
+                },
+                run_use,
+            ]
+        if chaos == "pause":
+            return _Draft(content, "pause_turn", extra_input_tokens=400, code_execution_requests=1, note="chaos: pause")
+        content += [
+            {
+                "type": "bash_code_execution_tool_result",
+                "tool_use_id": run_use["id"],
+                "content": {
+                    "type": "bash_code_execution_result",
+                    "stdout": listing,
+                    "stderr": "",
+                    "return_code": 0,
+                    "content": [{"type": "bash_code_execution_output", "file_id": i} for i in outputs],
+                },
+            },
+            _text(
+                "Made price-chart.png (600 x 400 pixels): a bar chart of the prices in the task, and kept the script "
+                "as script.py. This is the dry-run fake: the numbers are made up."
+                if outputs and chaos is None
+                else "The run left nothing the agent can keep."
+                if not outputs
+                else "Made logo.svg."
+            ),
+        ]
+        note = f"chaos: {chaos}" if chaos else f"workshop: {len(outputs)} files" + (" again" if kept else "")
+        if continuing:
+            note += " (continued)"
+        return _Draft(content, extra_input_tokens=400, code_execution_requests=1, note=note)
+
     def _research(self, request: Mapping[str, Any], rng: random.Random, chaos: str | None) -> _Draft:
         messages = request["messages"]
         question_text = _text_of(messages[0].get("content"))
@@ -1648,6 +1834,8 @@ _STAGE_TOOLS = {
     "make": "make_document",
     "look": "look",
     "photo": "make_image",
+    "workshop": "workshop",
+    "promote": "request_upgrade",
     "update": "project_update",
     "approval": "request_approval",
     "reddit": "propose_reddit_post",
@@ -1668,6 +1856,8 @@ _INTROS = {
     "make": "Now I'll turn the draft into a real PDF, with a Word copy.",
     "look": "Let me look at the first page before anyone else sees it.",
     "photo": "A listing needs a photo, so I'll make one from the first page.",
+    "workshop": "My tools can't draw charts, so I'll have the workshop do it.",
+    "promote": "That workshop script keeps paying off; it should be part of me.",
     "update": "I'll record what I did on the project.",
     "approval": "This needs my owner's approval before anything is published.",
     "sleep": "That's enough for this cycle.",
@@ -1719,6 +1909,48 @@ def _succeeded(conv: _Conversation, tool: str, path: str | None = None) -> bool:
         and (path is None or (isinstance(c.input, Mapping) and c.input.get("path") == path))
         for c in conv.of("act")
     )
+
+
+def _uploads(request: Mapping[str, Any]) -> list[str]:
+    """The file ids a request hands to the code execution container."""
+    found = []
+    for message in request.get("messages") or []:
+        for block in _blocks(message.get("content")) if isinstance(message, Mapping) else []:
+            if block.get("type") == "container_upload" and isinstance(block.get("file_id"), str):
+                found.append(block["file_id"])
+    return found
+
+
+WORKSHOP_SCRIPT = """# A price chart for a listing photo (written by the dry-run fake).
+import matplotlib.pyplot as plt
+
+prices = {"Shop A": 4.5, "Shop B": 6.0, "Shop C": 3.9, "Mine": 4.9}
+plt.figure(figsize=(6, 4), dpi=100)
+plt.bar(list(prices), list(prices.values()), color="#2E7D5B")
+plt.ylabel("EUR")
+plt.title("What similar products cost")
+plt.savefig("price-chart.png")
+"""
+
+
+def chart_png(rng: random.Random, width: int = 600, height: int = 400) -> bytes:
+    """A small bar chart as a PNG, drawn with the standard library only."""
+    bars = [rng.randint(80, 330) for _ in range(4)]
+    rows = []
+    for y in range(height):
+        row = bytearray([0])  # filter: none
+        for x in range(width):
+            bar = (x - 60) // 130
+            inside = 0 <= bar < 4 and (x - 60) % 130 < 90 and height - 40 - bars[bar] <= y < height - 40
+            row += bytes((46, 125, 91) if inside else (250, 250, 247))
+        rows.append(bytes(row))
+    raw = zlib.compress(b"".join(rows), 9)
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", raw) + chunk(b"IEND", b"")
 
 
 def idea_for(title: str, hypothesis: str | None = None) -> Idea:

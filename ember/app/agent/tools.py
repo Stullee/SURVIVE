@@ -17,8 +17,9 @@ Reddit post) carries out once the owner approves them.
 
 The making tools (``make_document``, ``make_spreadsheet``, ``make_image``) turn
 the agent's text into PDF, Word, Excel and PNG files with Ember's own code
-(app.products), so the agent never chooses a file's bytes; ``look`` shows the
-model one of those PNGs.
+(app.products); ``look`` shows the model one of its pictures. ``workshop`` (like
+``research``, a metered model call) has code written and run in Anthropic's
+sandbox; Ember's code checks every file it made before it is kept.
 """
 
 from __future__ import annotations
@@ -62,7 +63,8 @@ MAX_ACTION_CHARS = 12_000  # the approvals table's limit for an action
 LOOK_PIXELS = 1_000  # the longer side of a picture the agent looks at: about 1,000-1,300 input tokens
 # Making files takes a moment: these run sealed, but outside the database transaction the other tools share.
 MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image"})
-GUIDES = ("documents", "spreadsheets", "listing_photos")
+GUIDES = ("documents", "spreadsheets", "listing_photos", "workshop")
+WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "propose_email"})
 FIRST_CONTACT = (
@@ -234,6 +236,11 @@ SPECS: dict[str, Spec] = {
                 "proposed_change": _s("The ability or change you need.", 600),
                 "expected_benefit": _s("What you would do with it and what it could earn.", 600),
                 "priority": _s("low, medium or high.", 10, enum=("low", "medium", "high")),
+                "workshop_script": _s(
+                    "A workshop script to build in (it is sent along), e.g. 'workshop/scripts/price-chart-3.py'.",
+                    200,
+                    required=False,
+                ),
             },
             per_cycle=1,
             reflect=True,
@@ -275,6 +282,25 @@ SPECS: dict[str, Spec] = {
                 ),
             },
             per_cycle=3,
+        ),
+        Spec(
+            "workshop",
+            "Have code written and run for you in your workshop, a sandbox on Anthropic's servers (Python with "
+            "pandas, matplotlib, pillow, reportlab, python-pptx, openpyxl and more; no internet), for what your "
+            "make_ tools can't do: charts, PowerPoint files, data work, pictures drawn by code. The files it makes "
+            "are checked and kept in your workspace, and its script in workshop/scripts/ (run it again with script). "
+            "A run costs cents to dimes: read guide 'workshop' first.",
+            {
+                "task": _s("What to make, precisely: each file (name, size, format) and what is in it.", 3_000),
+                "files": _s(
+                    "Workspace files to hand over, separated by commas (at most 5, 10 MB).", 600, required=False
+                ),
+                "script": _s(
+                    "A kept script to run again, e.g. 'workshop/scripts/price-chart-3.py'.", 200, required=False
+                ),
+                "folder": _s("Where the files go (default workshop/out).", 100, required=False),
+            },
+            per_cycle=2,
         ),
         Spec(
             "make_document",
@@ -320,15 +346,17 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "look",
-            f"Look at a PNG picture in your workspace with your own eyes (a page picture, a spreadsheet picture, a "
-            f"listing photo), shown at most {LOOK_PIXELS:,} pixels wide or high: about 1,000 input tokens each.",
-            {"path": _s("The .png file, e.g. 'shop/cv-page1.png'.", 200)},
+            f"Look at a picture in your workspace with your own eyes (a page picture, a spreadsheet picture, a "
+            f"listing photo, a workshop picture), shown at most {LOOK_PIXELS:,} pixels wide or high: about 1,000 "
+            "input tokens each.",
+            {"path": _s("The .png or .jpg file, e.g. 'shop/cv-page1.png'.", 200)},
             per_cycle=4,
         ),
         Spec(
             "guide",
             "Read the manual of your making tools: documents (the Markdown layout and settings for make_document), "
-            "spreadsheets (the spec for make_spreadsheet) or listing_photos (make_image and what a listing needs).",
+            "spreadsheets (the spec for make_spreadsheet), listing_photos (make_image and what a listing needs) or "
+            "workshop (running code, and growing your own tools).",
             {"topic": _s("Which manual.", 20, enum=GUIDES)},
             per_cycle=3,
         ),
@@ -389,10 +417,15 @@ SPECS: dict[str, Spec] = {
 }
 
 
-def definitions(mail: bool = False) -> list[dict[str, Any]]:
+def definitions(mail: bool = False, workshop: bool = True) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds, and in
-    every cycle of a mode and configuration (the email tools only with a mailbox)."""
-    return [_definition(spec) for spec in SPECS.values() if mail or spec.name not in MAIL_TOOLS]
+    every cycle of a mode and configuration (the email tools only with a mailbox, the workshop only when the
+    owner's options allow runs)."""
+    return [
+        _definition(spec)
+        for spec in SPECS.values()
+        if (mail or spec.name not in MAIL_TOOLS) and (workshop or spec.name not in WORKSHOP_TOOLS)
+    ]
 
 
 def _definition(spec: Spec) -> dict[str, Any]:
@@ -450,6 +483,8 @@ class Outcome:
 
 
 ResearchFn = Callable[[str, "str | None", int, "str | None"], Outcome]
+# task, workspace files, a kept script to run again, the folder for the results
+WorkshopFn = Callable[[str, list[str], "str | None", "str | None"], Outcome]
 
 
 @dataclass(frozen=True)
@@ -472,6 +507,7 @@ class ToolContext:
     max_sleep: int
     state: CycleTools
     research: ResearchFn | None = None
+    workshop: WorkshopFn | None = None
     allow_fetch: bool = True  # the owner's web_fetch option (live mode)
     mail: MailAccess | None = None  # Ember's mailbox, when it has one
     nonce: str = field(default_factory=lambda: secrets.token_hex(3))
@@ -496,7 +532,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
         )
     try:
         spec = SPECS.get(name)
-        if spec is None or (name in MAIL_TOOLS and ctx.mail is None):
+        if spec is None or (name in MAIL_TOOLS and ctx.mail is None) or (name in WORKSHOP_TOOLS and not ctx.workshop):
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
             raise ToolError(
@@ -510,7 +546,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
         cut_notes: list[str] = []
         args = validate(spec, raw_input, cut_notes)
         handler = HANDLERS[name]
-        if name == "research":
+        if name in ("research", "workshop"):  # model calls: network, and no transaction held meanwhile
             outcome = _noted(handler(ctx, args), cut_notes)
         elif name in MAKERS:
             with netguard.sealed():
@@ -673,11 +709,12 @@ def _describe_product(ctx: ToolContext, path: str) -> Outcome:
     if kind == "pdf":
         pages = images.page_count(data)
         what = f"a PDF with {pages} page{'s' if pages != 1 else ''}, {size}"
-    elif kind == "png":
+    elif kind in ("png", "jpg"):
         width, height = images.png_size(data)
-        what = f"a PNG picture, {width} x {height} pixels, {size} (use look to see it)"
+        what = f"a {kind.upper()} picture, {width} x {height} pixels, {size} (use look to see it)"
     else:
-        what = f"{'a Word document' if kind == 'docx' else 'an Excel workbook'}, {size}"
+        names = {"docx": "a Word document", "xlsx": "an Excel workbook", "pptx": "a PowerPoint presentation"}
+        what = f"{names[kind]}, {size}"
     return Outcome(True, f"{path} is {what}. Its source is the text you made it from.", f"about {path}")
 
 
@@ -796,8 +833,15 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
 def _request_upgrade(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     if store.count_rows(conn, "upgrades", ctx.scope, "status = 'new'") >= MAX_NEW_UPGRADES:
         raise ToolError(f"{MAX_NEW_UPGRADES} upgrade requests are already waiting")
-    upgrade_id = store.insert_upgrade(conn, ctx.scope, ctx.cycle_id, ctx.now(), **args)
-    return Outcome(True, f"Upgrade request #{upgrade_id} filed.", f"#{upgrade_id} {args['title'][:60]}")
+    fields = {k: v for k, v in args.items() if k != "workshop_script"}
+    script = args.get("workshop_script")
+    if script is not None:
+        if not script.endswith(".py"):
+            raise ToolError("workshop_script must be a .py script the workshop kept, e.g. 'workshop/scripts/x-3.py'")
+        fields.update(script_path=script, script_text=ctx.workspace.read(script))
+    upgrade_id = store.insert_upgrade(conn, ctx.scope, ctx.cycle_id, ctx.now(), **fields)
+    sent = f" with {script}" if script else ""
+    return Outcome(True, f"Upgrade request #{upgrade_id} filed{sent}.", f"#{upgrade_id} {args['title'][:60]}")
 
 
 def _set_sleep(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -878,10 +922,17 @@ def _make_image(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     return _made(made, "made a listing photo")
 
 
+def _workshop(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
+    if ctx.workshop is None:
+        raise ToolError("the workshop isn't available")
+    files = [path.strip() for path in (args.get("files") or "").split(",") if path.strip()]
+    return ctx.workshop(args["task"].strip(), files, args.get("script"), args.get("folder"))
+
+
 def _look(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     path = args["path"]
-    if not path.lower().endswith(".png"):
-        raise ToolError("look shows .png pictures; make_document and make_spreadsheet make them for your files")
+    if not path.lower().endswith((".png", ".jpg")):
+        raise ToolError("look shows .png and .jpg pictures; make_document and make_spreadsheet make them for you")
     try:
         picture, width, height = images.thumbnail(ctx.workspace.read_bytes(path), LOOK_PIXELS)
     except images.ImageError as exc:
@@ -1104,6 +1155,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "set_sleep": _set_sleep,
     "write_journal": _write_journal,
     "research": _research,
+    "workshop": _workshop,
     "make_document": _make_document,
     "make_spreadsheet": _make_spreadsheet,
     "make_image": _make_image,

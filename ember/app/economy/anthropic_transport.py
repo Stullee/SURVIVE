@@ -27,7 +27,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from .metering import Completed, Interrupted, NotSent, Outcome, Rejected, rough_token_count
+from .metering import Completed, FilesError, Interrupted, NotSent, Outcome, Rejected, rough_token_count
 
 log = logging.getLogger(__name__)
 
@@ -37,9 +37,11 @@ CONNECT_SECONDS = 10.0
 WRITE_SECONDS = 60.0
 READ_SECONDS = 300.0  # the longest silence between two stream events
 TOTAL_SECONDS = 1_800.0  # the longest a whole call may take
-SERVER_TOOL_ALLOWANCE = 1_000  # tokens per web tool definition, which count_tokens can't size
+SERVER_TOOL_ALLOWANCE = 1_000  # tokens per server tool definition, which count_tokens can't size
+FILE_SECONDS = 120.0  # one Files API request (the workshop's inputs and outputs)
+UPLOAD_EXPIRY_SECONDS = 3_600  # the workshop's inputs are gone within the hour, even if deleting them fails
 _COUNT_FIELDS = ("model", "messages", "system", "tools", "tool_choice", "thinking", "output_config", "cache_control")
-_SERVER_TOOL_PREFIXES = ("web_search_", "web_fetch_")
+_SERVER_TOOL_PREFIXES = ("web_search_", "web_fetch_", "code_execution_")
 # Refusals before anything is generated. Other 5xx count as "cost unknown": nothing
 # official says a failed server-side request is never billed.
 _REJECTED_STATUSES = frozenset({400, 401, 402, 403, 404, 409, 413, 422, 429, 529})
@@ -154,6 +156,50 @@ class AnthropicTransport:
         except Exception as exc:  # noqa: BLE001 - a failed count must not stop the call; guess high instead
             log.warning("Token counting failed (%s); using a rough upper bound", type(exc).__name__)
             return rough_token_count(request) + server * SERVER_TOOL_ALLOWANCE
+
+    # --- the Files API: the workshop's inputs and outputs (free, and not metered) ---
+
+    def _files(self) -> Any:
+        return self._client.with_options(max_retries=2, timeout=FILE_SECONDS).files
+
+    def upload_file(self, name: str, data: bytes, mime: str) -> str:
+        """Upload one input for a workshop run; it expires within the hour. Returns the file's id."""
+        try:
+            return str(self._files().upload(file=(name, data, mime), expires_in_seconds=UPLOAD_EXPIRY_SECONDS).id)
+        except Exception as exc:  # noqa: BLE001 - reported to the workshop, which gives up on this run
+            raise FilesError(f"uploading {name} failed ({type(exc).__name__})") from None
+
+    def file_info(self, file_id: str) -> dict[str, Any]:
+        try:
+            meta = self._files().retrieve_metadata(file_id)
+        except Exception as exc:  # noqa: BLE001
+            raise FilesError(f"reading a file's details failed ({type(exc).__name__})") from None
+        return {
+            "filename": str(meta.filename),
+            "size_bytes": int(meta.size_bytes),
+            "mime_type": str(getattr(meta, "mime_type", "") or ""),
+        }
+
+    def download_file(self, file_id: str, limit: int) -> bytes:
+        """A file the sandbox made, refused if it is larger than ``limit`` bytes."""
+        try:
+            with self._files().with_streaming_response.download(file_id) as response:
+                data = bytearray()
+                for chunk in response.iter_bytes():
+                    data.extend(chunk)
+                    if len(data) > limit:
+                        raise FilesError(f"the file is larger than {limit // (1024 * 1024)} MB")
+                return bytes(data)
+        except FilesError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise FilesError(f"downloading a file failed ({type(exc).__name__})") from None
+
+    def delete_file(self, file_id: str) -> None:
+        try:
+            self._files().delete(file_id)
+        except Exception as exc:  # noqa: BLE001
+            raise FilesError(f"deleting a file failed ({type(exc).__name__})") from None
 
     # --- one metered call: one POST /v1/messages, streamed ---
 

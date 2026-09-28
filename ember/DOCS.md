@@ -34,7 +34,7 @@ your approval, and only you can record revenue.
 | Default sleep | 240 min | Time between wake cycles when the agent doesn't choose. |
 | Shortest / longest sleep | 30 / 1440 min | Bounds for the sleep time the agent chooses. |
 | Tool steps per cycle | 15 | Maximum tool calls in one cycle. |
-| Planner model | claude-sonnet-5 | Plans each cycle. |
+| Planner model | claude-sonnet-5 | Plans each cycle: Ember's business decisions. See [Choosing models](#choosing-models). |
 | Worker model | claude-sonnet-5 | Carries out the plan and writes the journal. |
 | Price table | see below | USD per million tokens for each model. |
 | Web search price | 10 USD per 1,000 | Charged per search on top of tokens. |
@@ -49,6 +49,11 @@ your approval, and only you can record revenue.
 | IMAP server / port | imap.mailbox.org / 993 | Where Ember reads mail (always TLS). |
 | SMTP server / port | smtp.mailbox.org / 465 | Where Ember sends approved emails: 465 (TLS) or 587 (STARTTLS). |
 | Emails per day | 3 | The most emails Ember sends in one day (0 to 20). |
+| Workshop | on | Lets the agent have code written and run in Anthropic's sandbox. See [The workshop](#the-workshop). |
+| Workshop model | empty | The model that writes the workshop's code. Empty: the worker model. |
+| Workshop cap per run | 0.50 USD | The most one workshop run may cost. Runs count toward the daily cap, not the cycle cap. |
+| Workshop runs per day | 6 | The most workshop runs in one day (0 switches the workshop off). |
+| Sandbox price | 0.05 USD per hour | What Anthropic charges per hour of sandbox time beyond its free hours. |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -56,15 +61,43 @@ Default prices (USD per million tokens, from Anthropic's pricing page on
 | Model | Input | Output | Cache write 5 min | Cache write 1 h | Cache read |
 |---|---|---|---|---|---|
 | claude-sonnet-5 | 2.00 | 10.00 | 2.50 | 4.00 | 0.20 |
+| claude-opus-5-5 | 4.00 | 20.00 | 5.00 | 8.00 | 0.20 |
 
 To use another model (for example a cheaper worker), add its prices to the
-table. Both the planner and the worker model must be listed there.
+table. The planner, the worker and the workshop model must be listed there.
 
 If the options are inconsistent (for example a cycle cap above the daily cap),
 Ember starts in **safe mode**: built-in defaults, dry run forced on, and the
 problem shown at the top of the dashboard. A mailbox that is switched on but
 incomplete doesn't cause safe mode: the dashboard's **System** panel says what
 is missing, and Ember works without it.
+
+## Choosing models
+
+The planner decides what Ember works on in each cycle and why: that is where a
+smarter model pays off. The worker carries out the plan step by step, many calls
+per cycle, and claude-sonnet-5 does that well at a lower price.
+
+To plan with **Claude Opus 5.5**:
+
+1. Make sure the price table has a row for it (check Anthropic's pricing
+   page first). New installs have it; if you saved your price table before
+   0.7.0, add it: model `claude-opus-5-5`, input 4.00, output 20.00, cache
+   write 5 min 5.00, cache write 1 h 8.00, cache read 0.20.
+2. Set **Planner model** to `claude-opus-5-5` and keep the worker on
+   `claude-sonnet-5`.
+3. Save and restart the app.
+
+Opus 5.5 always thinks before it answers, and Ember leaves room for that in
+every call. A plan then costs about two to three times as much (typically
+$0.06–0.12 instead of $0.03–0.04, at most about $0.16). To keep the daily
+spending about the same, let Ember wake less often: raise **Shortest sleep** to
+120–180 minutes. The dashboard warns you if the cycle cap is too low for one
+planning call.
+
+The **Workshop model** can be `claude-opus-5-5` too, for harder code. A run's
+first call may then cost up to about $0.68, so raise **Workshop cap per run** to
+1.00 (the dashboard says so when the cap is too low for one run).
 
 ## How the agent works
 
@@ -89,7 +122,9 @@ press **Wake now**, or when you write to it), it runs one **wake cycle**:
    approval, messages to you, requests for code upgrades, and its own mailbox
    if you set one up. It also makes finished [products](#products) from what it
    writes: PDF documents with an editable Word copy, Excel spreadsheets and
-   listing photos, and it looks at their pictures to check them.
+   listing photos, and it looks at their pictures to check them. For what
+   those tools can't make (charts, PowerPoint files, data work), it has code
+   written and run in its [workshop](#the-workshop).
 3. **Reflect**: it writes a journal entry, updates its memory and chooses how
    long to sleep.
 
@@ -98,8 +133,9 @@ Every call and every tool use is shown on the dashboard (click a cycle under
 your messages, so its replies in the **Inbox** are canned (the Inbox says so
 above the message box); with dry run off, Claude reads and answers them. The
 agent can't reach the internet except through Anthropic's web search (and page
-reading, if you allow it), can't run programs and can't touch anything outside
-its own folders. Its spending limits, the approval rule and its tools are
+reading, if you allow it), can't run programs on your Home Assistant (its
+workshop runs code only in Anthropic's sandbox) and can't touch anything
+outside its own folders. Its spending limits, the approval rule and its tools are
 enforced in code, not only in its instructions.
 
 When its money runs low, it becomes critical and writes a **last will**, shown
@@ -135,6 +171,59 @@ another font. Files are limited to 15 MB each and 200 MB together, on top of the
 Check a product before you sell it. The agent is told to disclose on every
 product and listing that AI helped make it, which marketplaces such as Etsy
 require.
+
+## The workshop
+
+The workshop is how Ember gets things done that its own tools can't, and how it
+grows new abilities.
+
+**What happens.** The agent describes what it needs (for example "a bar chart of
+these prices, chart.png, 1200 x 800 pixels") and can hand over up to five of its
+files (10 MB together). A separate call to the workshop model, with Anthropic's
+[code execution tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool),
+writes a Python script and runs it in a container on Anthropic's servers
+(Python with pandas, matplotlib, Pillow, ReportLab, python-pptx, openpyxl and
+more; no internet). Nothing runs on your Home Assistant.
+
+**What is kept.** Ember's code downloads the files the run made and checks each
+one before it goes into the agent's workspace (by default `workshop/out`):
+
+- Pictures (PNG, JPEG) are decoded and saved again, so only their pixels are
+  kept, not their metadata (Anthropic's Content Credentials included).
+- PDFs are refused if anything in them can act on its own: JavaScript, launch
+  or submit actions, embedded files, rich media, links that open other files.
+- Word, Excel and PowerPoint files are refused if they hold macros, ActiveX or
+  embedded objects, links to other files or templates, DDE, or actions that
+  start programs. Only web and mail links may point outside the file.
+- Text files must be UTF-8, at most 64 KB. Anything else (SVG, archives,
+  programs, fonts) is refused.
+
+The run's script is kept in `workshop/scripts/`, so the agent can run it again
+instead of paying for it to be written anew. The files handed over are uploaded
+for the run only (they expire within the hour), and every file is deleted from
+Anthropic's storage when the run is over.
+
+**What it costs.** A run is one metered call (up to three if a long run
+pauses): tokens at the workshop model's prices, plus sandbox time. Anthropic's
+first 1,550 sandbox hours a month are free, then $0.05 an hour; Ember books at
+least 5 minutes per call anyway, the most it could cost. A run typically costs
+$0.02–0.15. Before each call Ember reserves the worst case (about $0.35 with
+claude-sonnet-5), so a run needs that much room. Runs have their own **cap per
+run**, count toward the daily cap and the balance but not the cycle cap (one
+run can cost more than a whole cycle may), and **runs per day** limits how
+often the agent uses it. Switch it off with **Workshop** or 0 runs per day.
+
+**How Ember grows.** A script proves itself when the agent runs it again, or
+when its files go into a request you approved. The planner then reminds the
+agent, and it files an **upgrade request** with the script attached. On the
+dashboard, that request shows the script with **Download script** and **Copy as
+a task for Claude Code**: the copied text holds the request and the script, ready
+to paste into [Claude Code](https://claude.com/claude-code) (or to give to any
+developer) to build it into Ember as a proper tool. Built in, it runs on Ember's
+own code, costs nothing and can't break the way a newly written script can.
+
+In dry run the fake model pretends to run code: it "draws" a simple chart and
+returns it with a script, and nothing is sent to Anthropic.
 
 ## Your part
 
@@ -176,7 +265,8 @@ require.
   dry-run folder.
 - **Upgrade requests**: ideas for changing Ember's code. Accept, decline, or mark
   one released with the version that contains it. After an update the agent
-  reads what changed in the release notes.
+  reads what changed in the release notes. A request built on a workshop script
+  comes with the script (see [How Ember grows](#the-workshop)).
 - **Pause / Resume** stops and restarts the wake cycles. **Wake now** starts a
   cycle right away.
 - **Kill switch**: stops the agent for good (type its name to confirm). The
@@ -203,6 +293,15 @@ wake-up.
 If the API refuses the key, reports a billing problem or a reached spend limit,
 Ember stops calling it and says so on the dashboard. Fix the cause and restart
 the app.
+
+**Dry run or live?** The option **Dry run** is the only switch between the two.
+While it is on, the agent talks to a fake model built into the app: nothing is
+sent to Anthropic, nothing is spent, and the dashboard's header says *Dry run:
+API costs are simulated*. With dry run off and a key set, that badge is gone,
+the **System** panel says *Mode: Live (real API calls, real money)*, the fake
+model is never used, and every call appears in your Anthropic Console. (If the
+options are invalid, safe mode turns dry run back on and says so at the top of
+the dashboard.)
 
 ## Ember's mailbox
 
@@ -358,7 +457,8 @@ adds room under that day's spending cap.
 **Spending limits.** Before every API call Ember works out the most the call
 could cost and refuses it if that could break the per-cycle cap, the daily cap
 (per local calendar day, so up to twice the cap can be spent around midnight),
-or the balance. A small reserve is always kept so the agent can write its last
+or the balance. Workshop runs have their own cap per run instead of the cycle
+cap. A small reserve is always kept so the agent can write its last
 will. As an outside safety net, give Ember its own
 [Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
 API key and set a monthly spend limit there.
@@ -463,7 +563,11 @@ automation, for example:
   writes text, and Ember's own code makes the file from it, without any network
   or other programs. Spreadsheets only get formulas with common functions that
   refer to their own cells. The dashboard never opens a product in the browser:
-  it shows the product's PNG pictures and downloads the file.
+  it shows the product's pictures and downloads the file.
+- Workshop code runs only in Anthropic's sandbox (isolated containers without
+  internet), never in the app. The files a run made are checked by Ember's own
+  code before they are kept (see [The workshop](#the-workshop)), and the
+  dashboard offers a workshop script only as a plain-text download.
 - The API key and the mailbox's app password are kept in the app options and
   never written to logs, the database or the dashboard (which only says
   whether they are set). Home Assistant backups contain the options, so

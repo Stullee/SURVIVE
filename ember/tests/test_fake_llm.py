@@ -819,6 +819,7 @@ def test_the_module_imports_nothing_that_could_reach_out() -> None:
     imported = {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     imported |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.level == 0}
     allowed = {"__future__", "collections", "copy", "dataclasses", "hashlib", "json", "random", "re", "threading"}
+    allowed |= {"struct", "zlib"}  # the workshop's chart, drawn in memory
     assert imported <= allowed | {"time", "typing"}
     called = {n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert not called & {"eval", "exec", "open", "__import__", "compile"}
@@ -941,6 +942,7 @@ def test_chaos_produces_every_kind_of_misbehaviour() -> None:
         fake = FakeTransport(seed=seed, scenario="chaos", clock=Clock())
         asked.append(fake.send(prompts.research_request(SETTINGS, "Which printable planners sell best?", None)))
         fake.send(prompts.reflect_request(SETTINGS, f"A brief for cycle {seed}.", [], []))
+        fake.send(prompts.workshop_request(SETTINGS, f"Make a price chart, take {seed}.", []))
         notes |= {note for _, _, note in fake.trace}
     assert {f"chaos: {c}" for kinds in CHAOS.values() for c in kinds} <= notes
     inputs = [(name, args, ok) for sim in sims for _, name, args, ok in sim.tool_log]

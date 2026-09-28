@@ -6,6 +6,7 @@ records a rejected one in its trace as ``(n, "invalid", reason)``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,7 @@ import pytest
 
 from app.agent.fake_llm import SCENARIOS, Fail, FakeTransport, Plan, Raw, Reply, ToolCalls
 from app.agent.service import Agent
-from app.config import LoadedSettings
+from app.config import LoadedSettings, Settings
 from app.economy.metering import Rejected
 from tests.economy_helpers import make_economy
 from tests.test_agent import ROOMY
@@ -37,10 +38,19 @@ def empty(stop: str = "end_turn") -> Raw:
     )
 
 
-def run(data_dir: Path, fake: FakeTransport, cycles: int = 1) -> tuple[Agent, list[Any]]:
-    economy = make_economy(data_dir, ROOMY)
-    agent = Agent(economy.db, LoadedSettings(ROOMY), economy, transport=fake, cycles_enabled=True)
+def run(
+    data_dir: Path,
+    fake: FakeTransport,
+    cycles: int = 1,
+    before: Callable[[Agent], None] | None = None,
+    settings: Settings = ROOMY,
+) -> tuple[Agent, list[Any]]:
+    """Run ``cycles`` cycles against ``fake``; ``before`` prepares the new agent (files, rows) first."""
+    economy = make_economy(data_dir, settings)
+    agent = Agent(economy.db, LoadedSettings(settings), economy, transport=fake, cycles_enabled=True)
     agent.recover()
+    if before is not None:
+        before(agent)
     ends = [agent.run_cycle("schedule") for _ in range(cycles)]
     invalid = [t for t in fake.trace if t[1] == "invalid"]
     assert invalid == [], invalid

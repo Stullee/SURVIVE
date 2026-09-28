@@ -33,7 +33,7 @@ from .ledger import (
 )
 from .life import KILLED_KEY, PAUSED_KEY, RUNWAY_CAP_DAYS, Life, LifeStatus, mode_of
 from .metering import MeteredModel, MeterHealth, ProcessLock, Transport, recover_interrupted, usd_cap_to_micros
-from .pricing import opening_cost, working_cycle_cost
+from .pricing import opening_cost, working_cycle_cost, workshop_run_cost
 
 log = logging.getLogger(__name__)
 
@@ -245,6 +245,19 @@ class Economy:
                 f" work step and the reflection: up to ${micros_to_usd(working):.2f}), so a wake cycle may end right"
                 " after its plan."
             )
+        run = workshop_run_cost(self.settings, self.db, self.mode)
+        if run is not None and self.settings.workshop and self.settings.workshop_runs_per_day:
+            model = self.settings.workshop_model or self.settings.worker_model
+            for label, cap in (
+                ("workshop cap per run", self.settings.workshop_run_cap_usd),
+                ("daily spend cap", self.settings.daily_spend_cap_usd),
+            ):
+                if usd_cap_to_micros(cap) < run:
+                    result.append(
+                        f"The {label} (${cap:.2f}) is below one workshop run with {model} (up to"
+                        f" ${micros_to_usd(run):.2f}), so the workshop can't run."
+                    )
+                    break
         return result
 
     def dashboard(self) -> dict[str, Any]:

@@ -59,18 +59,19 @@ def png(image: Image.Image) -> bytes:
 
 
 def open_png(data: bytes) -> Image.Image:
-    """One of Ember's own PNGs, checked before it is decoded."""
+    """One of Ember's own pictures (PNG or JPEG), checked before it is decoded."""
     return _checked(data).convert("RGB")
 
 
 def png_size(data: bytes) -> tuple[int, int]:
-    """The width and height of one of Ember's PNGs."""
+    """The width and height of one of Ember's pictures (PNG or JPEG)."""
     image = _checked(data)
     return image.width, image.height
 
 
 def thumbnail(data: bytes, longest: int) -> tuple[bytes, int, int]:
-    """A PNG no wider or higher than ``longest`` pixels (for the model to look at), and its size."""
+    """A PNG no wider or higher than ``longest`` pixels (for the model to look at) of a PNG or JPEG, and its
+    size."""
     image = _checked(data).convert("RGB")
     image.thumbnail((longest, longest), Image.Resampling.LANCZOS)
     return png(image), image.width, image.height
@@ -78,8 +79,8 @@ def thumbnail(data: bytes, longest: int) -> tuple[bytes, int, int]:
 
 def _checked(data: bytes) -> Image.Image:
     image = Image.open(io.BytesIO(data))
-    if image.format != "PNG" or image.width * image.height > MAX_PIXELS:
-        raise ImageError("only Ember's own PNG pictures can be shown")
+    if image.format not in ("PNG", "JPEG") or image.width * image.height > MAX_PIXELS:
+        raise ImageError("only Ember's own PNG and JPEG pictures can be shown")
     return image
 
 

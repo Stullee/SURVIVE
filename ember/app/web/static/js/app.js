@@ -2401,8 +2401,63 @@
         h("div", null, h("dt", { text: "Proposed change" }), h("dd", { class: "pre-line", text: asText(u.proposed_change) || "–" })),
         h("div", null, h("dt", { text: "Expected benefit" }), h("dd", { class: "pre-line", text: asText(u.expected_benefit) || "–" }))),
       decided.length ? h("div", { class: "decision" }, decided) : null,
+      upgradeScript(u),
       h("p", { class: "muted small" }, "Requested ", timeEl(u.created_at), " · #" + u.id),
     ];
+  }
+
+  // A workshop script that proved itself: downloadable, and copied with the request as a task for Claude Code, which
+  // builds it into Ember as one of the agent's own tools.
+  function upgradeScript(u) {
+    if (!u.script_path) return null;
+    var url = "api/upgrades/" + encodeURIComponent(String(u.id)) + "/script";
+    var status = h("p", { class: "form-status small", role: "status" });
+    var task = h("pre", { class: "upgrade-task", tabindex: "0", hidden: true });
+    var copy = h("button", { type: "button", class: "btn", text: "Copy as a task for Claude Code" });
+    copy.addEventListener("click", function () {
+      copy.disabled = true;
+      status.textContent = "Loading the script…";
+      request("GET", url, null, { accept: "text/plain" }).then(function (res) {
+        if (!res.ok) throw httpError(res);
+        if (typeof res.text !== "string") throw new RequestError("malformed", "no text");
+        task.textContent = claudeTask(u, res.text);
+        task.hidden = false;
+        copyText(task.textContent, task, function () {
+          status.textContent = "Copied. Paste it into Claude Code, in a session with Ember's repository.";
+        }, function (selected) {
+          status.textContent = selected ? "The task is selected below: press Ctrl+C (Cmd+C on a Mac) to copy it."
+            : "Select the task below and copy it with Ctrl+C (Cmd+C on a Mac).";
+        });
+      }).catch(function (err) {
+        if (!(err instanceof RequestError)) console.error(err);
+        status.textContent = "Couldn't load the script (" + errorText(err) + ").";
+      }).then(function () { copy.disabled = false; });
+    });
+    return h("div", { class: "upgrade-script" },
+      h("p", null, h("strong", { text: "Workshop script: " }), h("code", { text: u.script_path }),
+        " (" + byteSize(num(u.script_bytes) || 0) + ")"),
+      h("p", { class: "muted small", text: "Code " + agentName() + " ran in its workshop and wants built in. Give it to " +
+        "Claude Code with the request, and it can become one of " + agentName() + "'s own tools." }),
+      h("div", { class: "form-actions" }, copy, h("a", { class: "btn", href: url, download: baseName(u.script_path), text: "Download script" })),
+      status, task);
+  }
+
+  function claudeTask(u, script) {
+    return [
+      "Build this into Ember (the Home Assistant app in this repository, folder ember/) as one of the agent's own " +
+        "tools, so it no longer needs its workshop for it. Follow the repository's conventions and tests.",
+      "",
+      "Upgrade request #" + u.id + ": " + asText(u.title),
+      "Problem: " + asText(u.problem),
+      "Proposed change: " + asText(u.proposed_change),
+      "Expected benefit: " + asText(u.expected_benefit),
+      "",
+      "The workshop script that proved itself (" + u.script_path + "), written by a model and run in Anthropic's " +
+        "code execution sandbox:",
+      "```python",
+      script.replace(/\s+$/, ""),
+      "```",
+    ].join("\n");
   }
 
   function upgradePanel(it, mode) {
@@ -3845,7 +3900,7 @@
   // pictures made with them and downloaded as files, never opened in the dashboard.
 
   var WS_MONO = /\.(csv|tsv|json|ya?ml|xml|html|css)$/i;
-  var WS_KINDS = { pdf: "PDF", docx: "Word", xlsx: "Excel", png: "Picture" };
+  var WS_KINDS = { pdf: "PDF", docx: "Word", xlsx: "Excel", pptx: "PowerPoint", png: "Picture", jpg: "Picture" };
 
   function wsType(path) {
     var match = /\.([a-z]+)$/i.exec(String(path));
@@ -3859,7 +3914,7 @@
   // The pictures that show a product: a PNG itself, a document's page pictures, a spreadsheet's table.
   function wsPictures(path) {
     var type = wsType(path);
-    if (type === "png") return [path];
+    if (type === "png" || type === "jpg") return [path];
     var base = path.replace(/\.[a-z]+$/i, "");
     var wanted = type === "xlsx" ? [base + "-preview.png"] : [1, 2, 3, 4].map(function (n) { return base + "-page" + n + ".png"; });
     return wanted.filter(function (p) { return wsFileInfo(p) !== null; });

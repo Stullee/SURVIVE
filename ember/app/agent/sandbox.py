@@ -23,9 +23,10 @@ Roots: the live agent works in /data/workspace and /data/memory; a dry run in
 dry-run session, so fake output never mixes with the live agent's files.
 
 Two kinds of files live in the workspace: text the agent writes (``write``), and
-products (PDF, Word, Excel, PNG) that only Ember's own code makes from it
-(``write_bytes``, called by app.products): the agent can never put bytes of its
-choosing into a file a program would open. Each kind has its own size limits.
+products (PDF, Word, Excel, PowerPoint, PNG, JPEG) that only Ember's own code
+writes (``write_bytes``): made from the agent's text by app.products, or made in
+the workshop and checked by app.products.checks before they are kept. Each kind
+has its own size limits.
 """
 
 from __future__ import annotations
@@ -43,8 +44,9 @@ from typing import NamedTuple
 
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")  # used with fullmatch: "$" also matches before a "\n"
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
-TEXT_EXTENSIONS = frozenset({".md", ".txt", ".csv", ".tsv", ".json", ".yaml", ".yml", ".html", ".css", ".xml"})
-PRODUCT_EXTENSIONS = frozenset({".pdf", ".docx", ".xlsx", ".png"})
+# .py: scripts the workshop wrote and the agent keeps (text only here: nothing in Ember ever runs them).
+TEXT_EXTENSIONS = frozenset({".md", ".txt", ".csv", ".tsv", ".json", ".yaml", ".yml", ".html", ".css", ".xml", ".py"})
+PRODUCT_EXTENSIONS = frozenset({".pdf", ".docx", ".xlsx", ".pptx", ".png", ".jpg"})
 KINDS = {"text": TEXT_EXTENSIONS, "product": PRODUCT_EXTENSIONS, "any": TEXT_EXTENSIONS | PRODUCT_EXTENSIONS}
 MAX_PATH_BYTES = 200
 MAX_DEPTH = 4
@@ -150,7 +152,10 @@ class Jail:
         allowed = KINDS[kinds]
         if want_file and Path(parts[-1]).suffix.lower() not in allowed:
             if kinds == "text":
-                extra = " (PDF, Word, Excel and PNG files are made with make_document, make_spreadsheet, make_image)"
+                extra = (
+                    " (PDF, Word, Excel and picture files are made with make_document, make_spreadsheet, "
+                    "make_image or the workshop)"
+                )
                 raise SandboxError(f"only text files: {', '.join(sorted(TEXT_EXTENSIONS))}{extra}")
             raise SandboxError(f"only these files: {', '.join(sorted(allowed))}")
         return parts

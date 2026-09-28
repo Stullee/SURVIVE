@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.6.0"
+version: "0.7.0"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -50,11 +50,23 @@ options:
       cache_write_5m: 2.5
       cache_write_1h: 4
       cache_read: 0.2
+    - model: claude-opus-5-5
+      input: 4
+      output: 20
+      cache_write_5m: 5
+      cache_write_1h: 8
+      cache_read: 0.2
   web_search_usd_per_1000: 10
   dry_run: true
   web_fetch: false
   wake_on_message: true
   worker_effort: default
+  # The workshop: code the agent has written, run in Anthropic's sandbox (see the Documentation tab). Its model
+  # (workshop_model) is an optional option: empty, the worker model writes the code.
+  workshop: true
+  workshop_run_cap_usd: 0.5
+  workshop_runs_per_day: 6
+  code_execution_usd_per_hour: 0.05
   # Change this number (and restart) to re-enable an agent stopped with the kill switch.
   kill_switch_reset: 0
   log_level: info
@@ -91,6 +103,11 @@ schema:
   web_fetch: bool
   wake_on_message: bool
   worker_effort: list(default|high|medium|low)
+  workshop: bool
+  workshop_model: str?
+  workshop_run_cap_usd: float(0.05,100)
+  workshop_runs_per_day: int(0,50)
+  code_execution_usd_per_hour: float(0,100)
   kill_switch_reset: int(0,1000000)
   log_level: list(debug|info|warning|error)
   email_enabled: bool

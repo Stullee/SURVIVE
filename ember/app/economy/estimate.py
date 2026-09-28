@@ -19,6 +19,14 @@ live call in phase 5): ``max_tokens`` bounds the output of the whole loop. The
 remaining estimation risk (a result larger than its allowance, a cache miss
 inside one loop) is detected after the call: the actual cost is compared with
 the estimate.
+
+Code execution (the workshop, 0.7.0) has no ``max_uses``: every sampling of the
+loop may run code, so a request is priced as 10 samplings with one run each,
+every run adding at most ``CODE_RESULT_ALLOWANCE_TOKENS`` (its output, a file
+view). Its container is billed by time, not tokens: the worst case adds
+``CONTAINER_ALLOWANCE_MINUTES`` at the owner's price per hour, which covers the
+longest call the transport lets run plus the idle minutes before the container
+is put away. A request may name the container of the call it continues.
 """
 
 from __future__ import annotations
@@ -29,10 +37,13 @@ from decimal import ROUND_CEILING, Decimal
 from typing import Any
 
 from ..config import ModelPrice
-from .costs import dec
+from .costs import container_micros, dec
 
 MAX_SERVER_ITERATIONS = 10
 SEARCH_RESULT_ALLOWANCE_TOKENS = 8_000
+CODE_RESULT_ALLOWANCE_TOKENS = 4_000
+CONTAINER_MINIMUM_MINUTES = 5  # Anthropic bills container time with a 5-minute minimum
+CONTAINER_ALLOWANCE_MINUTES = 35  # the transport's 30-minute limit per call, plus 5 idle minutes
 # Sanity bounds: anything larger is a bug in the caller, not a request to price.
 MAX_OUTPUT_TOKENS = 1_000_000
 MAX_INPUT_TOKENS = 10_000_000
@@ -42,7 +53,8 @@ _INLINE_SOURCES = frozenset({"base64", "text", "content"})
 
 # Request fields the estimate understands. Anything else could change the price
 # (fallback models, fast mode, priority tier, US-only inference, MCP servers,
-# code containers, compaction, ...) and is refused.
+# compaction, ...) and is refused. A container is only accepted with the code
+# execution tool, whose container time the estimate includes.
 _ALLOWED_FIELDS = frozenset(
     {
         "model",
@@ -57,9 +69,12 @@ _ALLOWED_FIELDS = frozenset(
         "stop_sequences",
         "cache_control",
         "stream",
+        "container",
     }
 )
 _SEARCH_TOOLS = frozenset({"web_search_20250305", "web_search_20260209"})
+_CODE_TOOLS = frozenset({"code_execution_20250825", "code_execution_20260120", "code_execution_20260521"})
+_CODE_TOOL_NAMES = frozenset({"bash_code_execution", "text_editor_code_execution", "code_execution"})
 _FETCH_TOOLS = frozenset({"web_fetch_20250910", "web_fetch_20260209"})
 # The newer web tools can call code execution behind the scenes (extra, unbounded
 # iterations) unless they are restricted to direct calls.
@@ -83,6 +98,8 @@ class Plan:
     fetch_allowance_tokens: int = 0
     pending_searches: int = 0
     pending_fetches: int = 0
+    code_execution: bool = False
+    pending_code_runs: int = 0
     notes: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
@@ -91,6 +108,11 @@ class Plan:
     @property
     def tool_uses(self) -> int:
         return self.search_uses + self.fetch_uses + self.pending_searches + self.pending_fetches
+
+    @property
+    def code_runs(self) -> int:
+        """Code runs the loop can make: one per sampling, and those a paused turn left to run."""
+        return (MAX_SERVER_ITERATIONS if self.code_execution else 0) + self.pending_code_runs
 
 
 def plan_request(request: Mapping[str, Any], input_tokens: int) -> Plan:
@@ -109,7 +131,11 @@ def plan_request(request: Mapping[str, Any], input_tokens: int) -> Plan:
     _check_sources(request.get("system"))
     _check_sources(request.get("messages"))
 
+    container = request.get("container")
+    if container is not None and (not isinstance(container, str) or not 0 < len(container) <= 200):
+        raise Unpriceable("container must be the id of an earlier call's container")
     search_uses = fetch_uses = fetch_allowance = 0
+    code_execution = False
     tools = request.get("tools") or []
     if not isinstance(tools, list):
         raise Unpriceable("tools must be a list")
@@ -119,6 +145,11 @@ def plan_request(request: Mapping[str, Any], input_tokens: int) -> Plan:
         kind = tool.get("type")
         if kind in (None, "custom"):
             continue  # a tool Ember runs itself: no extra charge from Anthropic
+        if kind in _CODE_TOOLS:
+            if tool.get("name") != "code_execution" or set(tool) - {"type", "name", "cache_control"}:
+                raise Unpriceable(f"{kind} must be the plain code_execution tool")
+            code_execution = True
+            continue
         if kind not in _SEARCH_TOOLS | _FETCH_TOOLS:
             raise Unpriceable(f"tool type {kind!r} is not supported by the budget guard")
         if kind in _DIRECT_ONLY and tool.get("allowed_callers") != ["direct"]:
@@ -135,9 +166,11 @@ def plan_request(request: Mapping[str, Any], input_tokens: int) -> Plan:
             fetch_uses += uses
             fetch_allowance = max(fetch_allowance, content)
 
-    pending_searches, pending_fetches = _unresolved_server_tool_uses(request.get("messages") or [])
+    pending_searches, pending_fetches, pending_code = _unresolved_server_tool_uses(request.get("messages") or [])
     if pending_fetches and not fetch_allowance:
         raise Unpriceable("an unfinished web_fetch continues in this request, but no web_fetch tool bounds it")
+    if container is not None and not code_execution:
+        raise Unpriceable("a container is only used with the code execution tool")
     return Plan(
         model=model,
         input_tokens=input_tokens,
@@ -148,6 +181,8 @@ def plan_request(request: Mapping[str, Any], input_tokens: int) -> Plan:
         fetch_allowance_tokens=fetch_allowance,
         pending_searches=pending_searches,
         pending_fetches=pending_fetches,
+        code_execution=code_execution,
+        pending_code_runs=pending_code,
     )
 
 
@@ -156,6 +191,7 @@ def worst_case_micros(
     price: ModelPrice,
     web_search_usd_per_1000: float | Decimal,
     multiplier: Decimal = Decimal(1),
+    container_usd_per_hour: float | Decimal = 0,
 ) -> int:
     """Upper bound of what ``plan`` can cost, in micros (rounded up)."""
     first_rate = dec(price.input)
@@ -166,14 +202,14 @@ def worst_case_micros(
     prompt = plan.input_tokens
     output = plan.max_output_tokens
     tokens = prompt * first_rate + output * dec(price.output)
-    if plan.tool_uses:
+    if plan.tool_uses or plan.code_runs:
         allowance = max(
             SEARCH_RESULT_ALLOWANCE_TOKENS if plan.search_uses or plan.pending_searches else 0,
             plan.fetch_allowance_tokens,
         )
         # Everything a later sampling can see beyond the prompt: all tool results (they may all
         # arrive at once, in parallel) and all output written so far.
-        grown = plan.tool_uses * allowance + output
+        grown = plan.tool_uses * allowance + plan.code_runs * CODE_RESULT_ALLOWANCE_TOKENS + output
         later = MAX_SERVER_ITERATIONS - 1
         if plan.cache_ttls:
             read, write = dec(price.cache_read), dec(price.cache_write_5m)
@@ -184,6 +220,8 @@ def worst_case_micros(
             tokens += later * (prompt + grown) * first_rate
     searches = (plan.search_uses + plan.pending_searches) * dec(web_search_usd_per_1000) * 1000
     total = tokens * dec(multiplier) + searches
+    if plan.code_runs:
+        total += Decimal(container_micros(CONTAINER_ALLOWANCE_MINUTES, container_usd_per_hour))
     return int(total.to_integral_value(rounding=ROUND_CEILING))
 
 
@@ -218,8 +256,9 @@ def _cache_ttls(request: Mapping[str, Any]) -> set[str]:
     return ttls
 
 
-def _unresolved_server_tool_uses(messages: Iterable[Mapping[str, Any]]) -> tuple[int, int]:
-    """Server tool calls the API started but hasn't run yet; they run at the start of this request.
+def _unresolved_server_tool_uses(messages: Iterable[Mapping[str, Any]]) -> tuple[int, int, int]:
+    """Server tool calls the API started but hasn't run yet: (searches, fetches, code runs). They run at the start
+    of this request.
 
     That happens after ``pause_turn`` (the assistant turn is the last message), and
     when a server tool and a client tool were called in parallel: the answer then
@@ -228,17 +267,17 @@ def _unresolved_server_tool_uses(messages: Iterable[Mapping[str, Any]]) -> tuple
     """
     messages = list(messages)
     if not messages:
-        return 0, 0
+        return 0, 0, 0
     last = messages[-1]
     if last.get("role") == "user" and len(messages) >= 2 and _only_tool_results(last.get("content")):
         last = messages[-2]
     if last.get("role") != "assistant":
-        return 0, 0
+        return 0, 0, 0
     content = last.get("content")
     if not isinstance(content, list):
-        return 0, 0
+        return 0, 0, 0
     answered = {block.get("tool_use_id") for block in content if isinstance(block, Mapping)}
-    searches = fetches = 0
+    searches = fetches = code = 0
     for block in content:
         if not isinstance(block, Mapping) or block.get("type") != "server_tool_use":
             continue
@@ -246,9 +285,11 @@ def _unresolved_server_tool_uses(messages: Iterable[Mapping[str, Any]]) -> tuple
             continue
         if block.get("name") == "web_fetch":
             fetches += 1
+        elif block.get("name") in _CODE_TOOL_NAMES:
+            code += 1
         else:
             searches += 1
-    return searches, fetches
+    return searches, fetches, code
 
 
 def _only_tool_results(content: Any) -> bool:

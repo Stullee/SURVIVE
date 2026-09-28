@@ -103,6 +103,7 @@ PLANNER_BUDGETS = {
     "journal": 600,
     "workspace": 900,
     "research": RESEARCH_BUDGET,
+    "workshop": 800,
 }
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
 # room for one whole message of plain text at the owner's limit of 2,000 characters.
@@ -188,6 +189,7 @@ class Snapshot:
     research: list[sqlite3.Row] = field(default_factory=list)
     mail: MailView | None = None  # None: Ember has no mailbox (then there is no MAIL section)
     instructions: str = ""  # the owner's standing instructions ("" while there are none)
+    proven: list[tuple[str, str]] = field(default_factory=list)  # workshop scripts worth building in: (path, why)
 
 
 def snapshot(
@@ -250,6 +252,7 @@ def snapshot(
         research=store.recent_research(conn, scope, RESEARCH_CALLS),
         mail=mail,
         instructions=standing["text"] if standing else "",
+        proven=store.proven_scripts(conn, scope),
     )
 
 
@@ -528,6 +531,15 @@ def _strategy(s: Snapshot, budget: int) -> str:
     return "\n".join(part for part in (strategy, note) if part)
 
 
+def workshop_text(s: Snapshot) -> str:
+    """For the planner only: the workshop scripts that proved useful, each with a request to have it built in."""
+    return "\n".join(
+        f"Workshop check: {path} has proven itself ({why}). Plan a step to ask for it to be built into Ember: "
+        f"request_upgrade with workshop_script '{path}' (built in, it costs nothing to run and never breaks)."
+        for path, why in s.proven
+    )
+
+
 def _sections(parts: list[tuple[str, str]]) -> str:
     return "\n\n".join(f"== {title} ==\n{body}" for title, body in parts)
 
@@ -554,6 +566,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         ("LESSONS (newest last)", _lessons(s, b["lessons"])),
         ("WORKSPACE", cut("\n".join(s.workspace) or "Empty.", b["workspace"])),
         *([(RESEARCH_HEADING, cut(research, b["research"]))] if research else []),
+        *([("WORKSHOP", cut(workshop_text(s), b["workshop"]))] if s.proven else []),
         ("TASK", "Plan this wake cycle. Reply with the JSON plan only."),
     ]
     held = _held(since, f"{head}\n" if head else "", lines)

@@ -300,7 +300,7 @@ def insert_message(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int | 
 def insert_upgrade(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, now: str, **fields: Any) -> int:
     cursor = conn.execute(
         "INSERT INTO upgrades (mode, session, life_id, cycle_id, created_at, title, problem, proposed_change,"
-        " expected_benefit, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " expected_benefit, priority, script_path, script_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             scope.mode,
             scope.session,
@@ -312,9 +312,99 @@ def insert_upgrade(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, n
             fields["proposed_change"],
             fields["expected_benefit"],
             fields["priority"],
+            fields.get("script_path"),
+            fields.get("script_text"),
         ),
     )
     return int(cursor.lastrowid)
+
+
+# --- the workshop (0.7.0) ---
+
+
+def insert_workshop_run(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, now: str, **fields: Any) -> int:
+    cursor = conn.execute(
+        "INSERT INTO workshop_runs (mode, session, life_id, cycle_id, created_at, task, script_used, script_path,"
+        " inputs, outputs, refused, status, cost_micros, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            scope.mode,
+            scope.session,
+            scope.life_id,
+            cycle_id,
+            now,
+            fields["task"],
+            fields.get("script_used"),
+            fields.get("script_path"),
+            canonical(fields.get("inputs") or []),
+            canonical(fields.get("outputs") or []),
+            canonical(fields.get("refused") or []),
+            fields["status"],
+            int(fields.get("cost_micros") or 0),
+            fields.get("summary") or "",
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def workshop_runs(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> list[sqlite3.Row]:
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT * FROM workshop_runs WHERE {where} ORDER BY id DESC LIMIT ?", (*params, limit)
+    ).fetchall()
+
+
+def proven_scripts(conn: sqlite3.Connection, scope: AgentScope, limit: int = 2) -> list[tuple[str, str]]:
+    """Kept workshop scripts that proved useful and that the agent hasn't yet asked to have built in: (path, why).
+
+    A script proves itself when it was run again (``script`` pointed at it), or when a file it made, or the script
+    itself, is named in a request the owner approved. Asking for it (request_upgrade with workshop_script) ends it.
+    """
+    where, params = scope.where()
+    runs = conn.execute(
+        f"SELECT script_path, script_used, outputs FROM workshop_runs WHERE {where} AND status = 'ok' ORDER BY id",
+        params,
+    ).fetchall()
+    uses: dict[str, int] = {}
+    made: dict[str, set[str]] = {}
+    for run in runs:
+        outputs = {str(o.get("path")) for o in json.loads(run["outputs"] or "[]") if isinstance(o, dict)}
+        if run["script_path"]:
+            uses.setdefault(run["script_path"], 1)
+            made.setdefault(run["script_path"], set()).update(outputs)
+        if run["script_used"] and run["script_used"] in uses:
+            uses[run["script_used"]] += 1
+            made[run["script_used"]].update(outputs)
+    if not uses:
+        return []
+    asked = {
+        row[0]
+        for row in conn.execute(f"SELECT script_path FROM upgrades WHERE {where} AND script_path IS NOT NULL", params)
+    }
+    approved = conn.execute(
+        f"SELECT id, description, COALESCE(final_payload, payload) AS text FROM approvals WHERE {where}"
+        " AND status IN ('approved', 'approved_with_changes', 'done') ORDER BY id DESC LIMIT 200",
+        params,
+    ).fetchall()
+    found: list[tuple[str, str]] = []
+    for path, count in uses.items():
+        if path in asked:
+            continue
+        names = {path, *made.get(path, set())}
+        requests = [r["id"] for r in approved if any(n in f"{r['description']}\n{r['text']}" for n in names)]
+        why = []
+        if count >= 2:
+            why.append(f"run {count} times")
+        if requests:
+            why.append(f"its files are in approved request #{requests[0]}")
+        if why:
+            found.append((path, "; ".join(why)))
+    return found[-limit:]
+
+
+def workshop_runs_since(conn: sqlite3.Connection, scope: AgentScope, since: str) -> int:
+    where, params = scope.where()
+    row = conn.execute(f"SELECT COUNT(*) FROM workshop_runs WHERE {where} AND created_at >= ?", (*params, since))
+    return int(row.fetchone()[0])
 
 
 def queue(conn: sqlite3.Connection, table: str, scope: AgentScope, limit: int = 30) -> list[sqlite3.Row]:

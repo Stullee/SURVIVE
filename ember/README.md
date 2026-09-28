@@ -10,7 +10,10 @@ of money and die, and that is an acceptable outcome.
 Dashboard through Ingress, hard spending caps enforced in code, dry-run mode
 with a fake model so you can try everything without spending money. Ember makes
 finished products itself: PDF documents with an editable Word copy, Excel
-spreadsheets and listing photos. Optionally Ember gets its own mailbox: it reads
-its mail on its own and sends an email only after you approve it.
+spreadsheets and listing photos. For anything else it has a workshop: code
+written and run in Anthropic's sandbox, and a script that proves useful becomes
+an upgrade request, so Ember grows new abilities. Optionally Ember gets its own
+mailbox: it reads its mail on its own and sends an email only after you approve
+it.
 
 **Status: all five phases in, live testing (dry run is the default).**

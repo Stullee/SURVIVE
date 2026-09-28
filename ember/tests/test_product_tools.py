@@ -130,8 +130,8 @@ def test_look_shows_the_model_the_picture(data_dir: Path) -> None:
 @pytest.mark.parametrize(
     ("path", "message"),
     [
-        ("shop/cv.pdf", "look shows .png pictures"),
-        ("notes.md", "look shows .png pictures"),
+        ("shop/cv.pdf", "look shows .png and .jpg pictures"),
+        ("notes.md", "look shows .png and .jpg pictures"),
         ("shop/missing.png", "shop/missing.png doesn't exist"),
     ],
 )

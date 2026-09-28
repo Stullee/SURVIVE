@@ -31,6 +31,17 @@ that keep two or three experiments going instead of waiting for the owner and
 ask the owner at most once a day, a prompt to rewrite outdated or overfull
 lessons, and a message from the owner that wakes the agent to answer it.
 
+0.6.0 lets Ember make finished products itself: PDF documents with an editable
+Word copy, Excel spreadsheets and listing photos, made by Ember's own code from
+the agent's text, which the agent can look at before anyone else sees them.
+
+0.7.0 adds the workshop: for what its own tools can't make, the agent has code
+written and run in Anthropic's code execution sandbox (no internet, nothing runs
+on Home Assistant). Ember's code checks every file a run makes before keeping it
+and keeps the script, and a script that proves useful becomes an upgrade request
+with the script attached, so Ember grows new abilities. It also supports a
+planner that always thinks first, such as Claude Opus 5.5.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
@@ -50,10 +61,12 @@ All options, their defaults and the default price table are documented in
 **Documentation** tab, including the steps for going live.
 
 The default prices come from Anthropic's pricing page as of 2026-09-27
-(Sonnet 5: $2 / $10 per million input / output tokens, web search $10 per
-1,000). **Please verify them** before switching dry run off.
+(Sonnet 5: $2 / $10 per million input / output tokens, Opus 5.5: $4 / $20, web
+search $10 per 1,000). **Please verify them** before switching dry run off.
 
-Both the planner and the worker default to `claude-sonnet-5`. The spec suggested
+Both the planner and the worker default to `claude-sonnet-5`. For better
+business decisions, plan with `claude-opus-5-5` and keep the worker on Sonnet 5
+(see [Choosing models](ember/DOCS.md#choosing-models)). The spec suggested
 Haiku 4.5 as a cheaper worker; to use it (or any other model), add its prices to
 the price table and set `worker_model`. Haiku 4.5 is not deprecated as of
 2026-09-27: Anthropic lists its retirement as "not sooner than 2026-10-15" and

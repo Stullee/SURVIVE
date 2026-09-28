@@ -64,6 +64,7 @@ class ModelPrice(BaseModel):
 # edit them in the app options. Must match the defaults in config.yaml.
 DEFAULT_PRICE_TABLE: tuple[ModelPrice, ...] = (
     ModelPrice(model="claude-sonnet-5", input=2.0, output=10.0, cache_write_5m=2.5, cache_write_1h=4.0, cache_read=0.2),
+    ModelPrice(model="claude-opus-5-5", input=4.0, output=20.0, cache_write_5m=5.0, cache_write_1h=8.0, cache_read=0.2),
 )
 
 # Published prices of models the owner is likely to configure (same source and date).
@@ -119,6 +120,16 @@ class Settings(BaseModel):
     wake_on_message: bool = True
     # Effort for the work steps and the reflection ("default" sends none, which means high). Not sent to Haiku 4.5.
     worker_effort: Literal["default", "high", "medium", "low"] = "default"
+    # The workshop (0.7.0): code the agent has written and run in Anthropic's sandbox. A run has its own cap and
+    # counts toward the daily cap, not the cycle cap (the daily cap still bounds it, whatever this cap says).
+    # Container time costs this much per hour after Anthropic's free hours (1,550 a month per organization); Ember
+    # books it for every run, as an upper bound.
+    workshop: bool = True
+    # The model that writes the workshop's code; empty: the worker model.
+    workshop_model: str = Field(default="", max_length=100)
+    workshop_run_cap_usd: float = Field(default=0.5, ge=0.05, le=100)
+    workshop_runs_per_day: int = Field(default=6, ge=0, le=50)
+    code_execution_usd_per_hour: float = Field(default=0.05, ge=0, le=100)
     kill_switch_reset: int = Field(default=0, ge=0, le=1_000_000)
     log_level: Literal["debug", "info", "warning", "error"] = "info"
     # Ember's own mailbox (0.4.0). Only types and ranges are checked here: a mailbox that is switched on but
@@ -144,6 +155,7 @@ class Settings(BaseModel):
         "agent_name",
         "planner_model",
         "worker_model",
+        "workshop_model",
         "email_address",
         "email_imap_host",
         "email_smtp_host",
@@ -171,9 +183,10 @@ class Settings(BaseModel):
         names = [p.model for p in self.price_table]
         if len(names) != len(set(names)):
             problems.append("price_table lists the same model more than once")
-        for role in ("planner_model", "worker_model"):
-            if self.price_for(getattr(self, role)) is None:
-                problems.append(f"{role} '{getattr(self, role)}' has no entry in price_table")
+        for role in ("planner_model", "worker_model", "workshop_model"):
+            model = getattr(self, role)
+            if (model or role != "workshop_model") and self.price_for(model) is None:
+                problems.append(f"{role} '{model}' has no entry in price_table")
         if problems:
             raise ValueError("; ".join(problems))
         return self

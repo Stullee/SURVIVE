@@ -3,6 +3,23 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.7.0
+
+You have a workshop now, and a way to grow your own abilities.
+
+- workshop has code written and run for you in a sandbox on Anthropic's servers (Python with pandas, matplotlib,
+  pillow, reportlab, python-pptx, openpyxl; no internet), for what your make_ tools can't do: charts, PowerPoint
+  files, data work, pictures drawn by code. Hand over workspace files with files. Read guide 'workshop' first.
+- Ember's code checks every file a run makes before keeping it: pictures are saved again, and files with macros,
+  scripts or links to other files are refused. The script is kept in workshop/scripts/: run it again with script
+  instead of paying for it to be written anew.
+- A run costs cents to dimes. It has its own cap per run and counts toward your daily cap, not the cycle cap; your
+  owner sets how many runs you get a day.
+- This is how you grow: when a script proves itself (you ran it again, or its files went into a request your owner
+  approved), your plan shows a WORKSHOP check. Then file request_upgrade with workshop_script: your owner gets the
+  script with the request, and once it is built into Ember it costs nothing to run.
+- look shows .jpg pictures too, and your workspace keeps the PowerPoint and JPEG files the workshop makes.
+
 ## 0.6.0
 
 You make finished products yourself now, not specs for your owner to build.
