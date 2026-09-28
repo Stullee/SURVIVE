@@ -513,7 +513,7 @@
     header: "Header", controls: "Controls", kpis: "Key numbers", badges: "Tab badges", memorial: "Memorial",
     now: "Now", lives: "Previous lives", charts: "Charts", table: "Table", ledger: "Ledger", forms: "Forms",
     projects: "Projects", activity: "Activity", approvals: "Approvals", inbox: "Inbox", upgrades: "Upgrades", mind: "Mind",
-    cycleDetail: "Cycle details", diagnostics: "Diagnostics", email: "Email", workspace: "Workspace", workspaceFile: "Workspace file",
+    cycleDetail: "Cycle details", diagnostics: "Diagnostics", workspace: "Workspace", workspaceFile: "Workspace file",
   };
 
   // True while the user has keyboard focus or selected text inside the element: rebuilding it would take them away.
@@ -566,7 +566,6 @@
 
     safely("banners", renderBanners);
     section("system", [d.system, d.mode], ["system-facts", "options"], function () { renderSystem(d); });
-    section("email", [d.integrations, minute], ["email-facts"], function () { renderEmail(d); });
     section("transitions", [d.transitions], ["transitions"], function () { renderTransitions(arr(d.transitions)); });
     section("events", [d.events], ["events"], function () { renderEvents(arr(d.events)); });
     section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d, agent); });
@@ -591,9 +590,7 @@
     // Patched item by item, so an open cycle, its loaded details and their scroll positions survive the fast polls.
     section("activity", [d.activity, minute], null, function () { return renderActivity(arr(d.activity)); });
     // Owner queues: patched card by card, so an open decision form keeps what the owner typed.
-    section("approvals", [d.approvals, projectTitles(d), coming, agent.name, emailLimits(d), minute], null, function () {
-      return renderApprovals(arr(d.approvals), projectTitles(d), emailLimits(d));
-    });
+    section("approvals", [d.approvals, projectTitles(d), coming, agent.name, minute], null, function () { return renderApprovals(arr(d.approvals), projectTitles(d)); });
     section("inbox", [d.inbox, d.badges, agent.name, coming, d.mode, minute], ["inbox"], function () { renderInbox(arr(d.inbox), agent.name, badgeCounts(d).unread, isDryRun(d)); });
     section("upgrades", [d.upgrades, coming, agent.name, minute], null, function () { return renderUpgrades(arr(d.upgrades)); });
     section("mind", [d.mind, ui.mind, minute], ["mind-body"], function () { renderMind(d.mind); });
@@ -1748,7 +1745,7 @@
     groups.forEach(function (g) {
       var head = h("h2", { class: "queue-head" });
       var list = h("div", { class: "stack" });
-      var sectionEl = h("section", { class: "queue-group", "data-group": g.key, "aria-label": g.label || g.title, hidden: true }, head, list);
+      var sectionEl = h("section", { class: "queue-group", "data-group": g.key, "aria-label": g.title, hidden: true }, head, list);
       q.groups[g.key] = { spec: g, head: head, list: list, section: sectionEl };
       append(root, sectionEl);
     });
@@ -1789,7 +1786,7 @@
           it.key = key;
         }
       }
-      var group = opts.groups.filter(function (g) { return g.match(row.status, row); })[0] || opts.groups[opts.groups.length - 1];
+      var group = opts.groups.filter(function (g) { return g.match(row.status); })[0] || opts.groups[opts.groups.length - 1];
       placed[group.key].push(it.card);
     });
     Object.keys(q.items).forEach(function (id) {
@@ -1802,7 +1799,7 @@
       Array.prototype.slice.call(grp.list.children).forEach(function (c) { if (cards.indexOf(c) < 0) grp.list.removeChild(c); });
       cards.forEach(function (c, i) { if (grp.list.children[i] !== c) grp.list.insertBefore(c, grp.list.children[i] || null); });
       grp.section.hidden = !cards.length;
-      grp.head.textContent = (typeof g.title === "function" ? g.title() : g.title) + " (" + cards.length + ")";
+      grp.head.textContent = g.title + " (" + cards.length + ")";
     });
     q.empty.hidden = opts.rows.length > 0;
     // After the owner's own action the card may have moved to another group, which drops focus: give it back.
@@ -1870,7 +1867,7 @@
     var title = h("h3", { id: base + "-title", text: spec.title });
     panel.status = h("p", { class: "form-status", role: "status" });
     panel.submit = h("button", { type: "submit", class: spec.danger ? "btn btn-danger-solid" : "btn btn-primary", text: spec.submit });
-    var cancel = h("button", { type: "button", class: "btn btn-ghost", text: spec.cancelLabel || "Cancel" });
+    var cancel = h("button", { type: "button", class: "btn btn-ghost", text: "Cancel" });
     var fields = spec.fields.map(function (f) {
       var id = base + "-" + f.name;
       var control = f.rows
@@ -2008,110 +2005,46 @@
 
   // ---- Approvals
 
-  function isApproved(status) { return status === "approved" || status === "approved_with_changes"; }
-
-  // Requests the agent's code carries out itself after approval ("email") or prepares for the owner ("reddit_link").
-  // Without a parsed action they are shown like any other request.
-  function executorOf(a) {
-    if (!isObject(a.action)) return null;
-    return a.executor === "email" || a.executor === "reddit_link" ? a.executor : null;
-  }
-
   var APPROVAL_GROUPS = [
     { key: "pending", title: "Waiting for your decision", match: function (s) { return s === "pending"; } },
-    { key: "todo", title: "Approved, to carry out", match: function (s, a) { return isApproved(s) && !(a && executorOf(a) === "email"); } },
-    { key: "sending", label: "Approved emails", title: function () { return "Approved emails, " + agentName() + " sends them"; },
-      match: function (s, a) { return isApproved(s) && !!a && executorOf(a) === "email"; } },
+    { key: "todo", title: "Approved, to carry out", match: function (s) { return s === "approved" || s === "approved_with_changes"; } },
     { key: "closed", title: "Closed", match: function () { return true; } },
   ];
 
-  // What the approvals need to know about the email integration (not its fetch times, so polls don't redraw every card).
-  function emailLimits(d) {
-    var e = isObject(d.integrations) && isObject(d.integrations.email) ? d.integrations.email : null;
-    return e ? { daily_limit: e.daily_limit, available: e.available, status: e.status } : null;
-  }
-
-  function renderApprovals(items, titles, email) {
+  function renderApprovals(items, titles) {
     var sorted = items.slice().sort(function (x, y) {
       var o = statusOrder(APPROVAL_STATUS, x.status) - statusOrder(APPROVAL_STATUS, y.status);
       return o || (new Date(y.created_at).getTime() || 0) - (new Date(x.created_at).getTime() || 0) || num(y.id) - num(x.id);
     });
     return renderQueue($("approvals"), {
-      kind: "approval", rows: sorted, groups: APPROVAL_GROUPS, viewKey: [titles, email],
+      kind: "approval", rows: sorted, groups: APPROVAL_GROUPS, viewKey: titles,
       empty: emptyState("div", "No requests.", "Before the agent publishes, contacts someone or spends money, it asks you here."),
-      view: function (a) { return approvalView(a, titles, email); },
-      actionKey: function (a) { return [a.status, a.version, executorOf(a) || "", executionStatus(a), a.reddit_url || ""].join("|"); },
+      view: function (a) { return approvalView(a, titles); },
+      actionKey: function (a) { return a.status + "|" + a.version; },
       actions: approvalActions,
-      panel: function (it, mode) { return approvalPanel(it, mode, email); },
+      panel: approvalPanel,
     });
   }
 
-  var EMAIL_APPROVED = {
-    approved: { icon: "◔", label: "Approved, the agent sends it", tone: "accent" },
-    approved_with_changes: { icon: "◔", label: "Approved with changes, the agent sends it", tone: "accent" },
-  };
-
-  // Where an approved email is ("" for other requests). Approved without an execution row yet: waiting.
-  function executionStatus(a) {
-    if (executorOf(a) !== "email") return "";
-    if (isObject(a.execution) && typeof a.execution.status === "string" && a.execution.status) return a.execution.status;
-    return isApproved(a.status) ? "waiting" : "";
-  }
-
-  var EXECUTION = {
-    waiting: { icon: "◔", label: "Waiting to be sent", tone: "accent" },
-    waiting_limit: { icon: "◔", label: "Waiting for tomorrow's send limit", tone: "warning" },
-    running: { icon: "●", label: "Sending now", tone: "accent" },
-    sent: { icon: "✓", label: "Sent", tone: "good" },
-    failed: { icon: "✕", label: "Not sent", tone: "critical" },
-    unclear: { icon: "!", label: "Unclear whether it was sent", tone: "critical" },
-    simulated: { icon: "◌", label: "Dry run: not really sent", tone: "" },
-  };
-
-  function limitText(email) {
-    var limit = email ? num(email.daily_limit) : NaN;
-    return isNaN(limit) ? null : limit;
-  }
-
-  function approvalView(a, titles, email) {
-    var executor = executorOf(a);
-    var action = executor ? a.action : null;
-    var name = agentName();
-    var todo = isApproved(a.status);
+  function approvalView(a, titles) {
+    var todo = a.status === "approved" || a.status === "approved_with_changes";
     var project = a.project_id !== null && a.project_id !== undefined
       ? (titles[String(a.project_id)] ? titles[String(a.project_id)] + " (#" + a.project_id + ")" : "#" + a.project_id) : null;
     var payload = asText(a.payload);
     var final = a.final_payload ? asText(a.final_payload) : "";
-    var statusChip = executor === "email" && EMAIL_APPROVED[a.status] ? chip(EMAIL_APPROVED, a.status)
-      : chip(APPROVAL_STATUS, a.status, sentence(String(a.status || "unknown").replace(/_/g, " ")));
-    var content;
-    if (executor === "email") content = emailDraft(action, final);
-    else if (executor === "reddit_link") content = redditDraft(action);
-    else {
-      content = payload ? h("div", { class: "payload-wrap" },
-        final ? h("h4", { class: "small-head", text: "The agent's original" }) : null,
-        h("p", { class: "payload-note" }, h("span", { "aria-hidden": "true", text: "! " }), "Written by the agent; check it before acting."),
-        h("pre", { class: "payload capped", tabindex: "0", text: payload })) : null;
-    }
-    var note = null;
-    if (todo && !executor) note = "You approved this; carry it out, then mark it done or failed.";
-    if (todo && executor === "reddit_link") note = "You approved this; post it on Reddit with the button below, then mark it done (with the link to your post) or failed.";
     return [
       h("div", { class: "item-head" },
         h("h3", { text: a.title || "Untitled request" }), plainChip(APPROVAL_TYPES[a.type] || sentence(String(a.type || "other").replace(/_/g, " "))),
-        executor ? plainChip(executor === "email" ? "Email" : "Reddit") : null,
-        statusChip, a.simulated ? testTag() : null),
+        chip(APPROVAL_STATUS, a.status, sentence(String(a.status || "unknown").replace(/_/g, " "))), a.simulated ? testTag() : null),
       a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
-      executor === "email" && a.first_contact ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
-        h("strong", { text: "First email to this address." }), " Cold advertising emails are illegal in Germany (§ 7 UWG). Approve only if this person asked to hear from you.") : null,
-      note ? h("p", { class: "todo-note" }, h("span", { "aria-hidden": "true", text: "☐ " }), note) : null,
-      a.status === "pending" && executor === "email" ? h("p", { class: "send-note", text: sendNote(email, name) }) : null,
-      a.status === "pending" && executor === "reddit_link" ? h("p", { class: "send-note", text: "After you approve, you post it yourself: this card then offers a button that opens Reddit with it filled in, and Copy buttons." }) : null,
-      executionView(a, email),
+      todo ? h("p", { class: "todo-note" }, h("span", { "aria-hidden": "true", text: "☐ " }), "You approved this; carry it out, then mark it done or failed.") : null,
       final ? h("div", { class: "final-wrap" },
-        h("h4", { class: "small-head", text: executor === "email" ? "Your version of the body (" + name + " sends this)" : "Your version (the agent must use this)" }),
+        h("h4", { class: "small-head", text: "Your version (the agent must use this)" }),
         h("pre", { class: "payload final capped", tabindex: "0", text: final })) : null,
-      content,
+      payload ? h("div", { class: "payload-wrap" },
+        final ? h("h4", { class: "small-head", text: "The agent's original" }) : null,
+        h("p", { class: "payload-note" }, h("span", { "aria-hidden": "true", text: "! " }), "Written by the agent; check it before acting."),
+        h("pre", { class: "payload capped", tabindex: "0", text: payload })) : null,
       h("dl", { class: "item-grid" },
         h("div", null, h("dt", { text: "Expected cost" }), h("dd", { text: asText(a.expected_cost) || "–" })),
         h("div", null, h("dt", { text: "Expected benefit" }), h("dd", { text: asText(a.expected_benefit) || "–" })),
@@ -2119,93 +2052,6 @@
       decisionInfo(a),
       h("p", { class: "muted small" }, "Requested ", timeEl(a.created_at), " · #" + a.id),
     ];
-  }
-
-  function sendNote(email, name) {
-    var limit = limitText(email);
-    if (limit === 0) return "After you approve, " + name + " sends this email itself, but its daily send limit is 0: raise email_daily_limit in the app's Configuration tab first.";
-    var text = "After you approve, " + name + " sends this email itself (" + (limit === null ? "within its daily send limit" : "at most " + limit + " a day") + "). " +
-      "It goes out once, as plain text, with a footer saying an AI agent wrote it.";
-    if (email && email.available === false) text += " Email is not working right now, so it waits until it is (see System, Email).";
-    return text;
-  }
-
-  // Everything the agent wrote is text: addresses and URLs are never links.
-  function emailDraft(action, final) {
-    return h("div", { class: "draft" },
-      h("p", { class: "payload-note" }, h("span", { "aria-hidden": "true", text: "! " }), "Written by the agent; check it before acting."),
-      h("dl", { class: "draft-grid" },
-        h("dt", { text: "To" }), h("dd", { class: "link-text", text: asText(action.to) || "–" }),
-        h("dt", { text: "Subject" }), h("dd", { text: asText(action.subject) || "–" }),
-        action.in_reply_to ? [h("dt", { text: "In reply to" }), h("dd", { class: "muted small link-text", text: asText(action.in_reply_to) })] : null),
-      h("h4", { class: "small-head", text: final ? "The agent's original body" : "Body" }),
-      h("pre", { class: "payload capped", tabindex: "0", text: asText(action.body) }));
-  }
-
-  function redditDraft(action) {
-    var comment = action.kind === "comment";
-    return h("div", { class: "draft" },
-      h("p", { class: "payload-note" }, h("span", { "aria-hidden": "true", text: "! " }), "Written by the agent; check it before acting."),
-      h("dl", { class: "draft-grid" },
-        h("dt", { text: "Subreddit" }), h("dd", { text: "r/" + asText(action.subreddit) }),
-        h("dt", { text: "Kind" }), h("dd", { text: comment ? "Comment on a thread" : "New post" }),
-        comment ? [h("dt", { text: "Thread" }), h("dd", { class: "link-text", text: asText(action.thread_url) || "–" })] : null,
-        comment ? null : [h("dt", { text: "Title" }), h("dd", { "data-copy": "title", text: asText(action.title) || "–" })]),
-      h("h4", { class: "small-head", text: comment ? "Comment" : "Body" }),
-      h("pre", { class: "payload capped", tabindex: "0", "data-copy": "body", text: asText(action.body) }));
-  }
-
-  function executionView(a, email) {
-    var st = executionStatus(a);
-    if (!st) return null;
-    var ex = isObject(a.execution) ? a.execution : {};
-    var name = agentName();
-    var limit = limitText(email);
-    var detail;
-    if (st === "waiting") detail = [name + " sends it by itself shortly; it checks for approved emails every few minutes."];
-    else if (st === "waiting_limit") detail = [name + " has sent " + (limit === null ? "its emails" : "its " + plural(limit, "email")) + " for today, so this one waits for tomorrow's send limit."];
-    else if (st === "running") detail = ex.started_at ? ["Sending since ", timeEl(ex.started_at), "."] : ["Sending now."];
-    else if (st === "sent") detail = ["Sent ", timeEl(ex.finished_at || ex.started_at), ex.result ? ". " + endSentence(sentence(ex.result)) : "."];
-    else if (st === "failed") detail = [ex.error ? "Not sent: " + endSentence(ex.error) : "Not sent."];
-    else if (st === "unclear") detail = ["It is unclear whether it was sent" + (ex.error ? " (" + String(ex.error).replace(/\.$/, "") + ")" : "") + ". " + name +
-      " won't send it again; check the Sent folder at your mail provider."];
-    else if (st === "simulated") detail = ["Dry run: not really sent", ex.finished_at ? [" (", timeEl(ex.finished_at), ")"] : null, "."];
-    else detail = [ex.error ? String(ex.error) : ""];
-    return h("div", { class: "execution", "data-status": st },
-      h("p", { class: "execution-head" }, chip(EXECUTION, st, sentence(st.replace(/_/g, " ")))),
-      h("p", { class: "execution-detail" }, detail));
-  }
-
-  // The prefilled Reddit page from the server: a real link only when it is a plain www.reddit.com https address.
-  var REDDIT_RE = /^https:\/\/www\.reddit\.com\//;
-
-  function redditLink(value) {
-    var text = typeof value === "string" ? value : "";
-    if (!REDDIT_RE.test(text) || /\s/.test(text)) return null;
-    var url;
-    try { url = new URL(text); } catch (e) { return null; }
-    if (!/^https:$/.test(url.protocol) || url.hostname !== "www.reddit.com" || url.port || url.username || url.password) return null;
-    var a = document.createElement("a");
-    a.className = "btn btn-primary reddit-open";
-    a.setAttribute("href", url.href);
-    a.setAttribute("rel", "noopener noreferrer");
-    a.setAttribute("target", "_blank");
-    append(a, ["Open Reddit with this filled in", h("span", { class: "visually-hidden", text: " (opens in a new tab)" })]);
-    return a;
-  }
-
-  function copyButton(it, what, label) {
-    var b = h("button", { type: "button", class: "btn", "data-copy-button": what, text: label });
-    b.addEventListener("click", function () {
-      var action = it.row && isObject(it.row.action) ? it.row.action : {};
-      var text = asText(what === "title" ? action.title : action.body);
-      var word = what === "title" ? "title" : action.kind === "comment" ? "comment" : "body";
-      copyText(text, it.view.querySelector('[data-copy="' + what + '"]'), function () { setItemStatus(it, "Copied the " + word + ".", "ok"); }, function (selected) {
-        setItemStatus(it, selected ? "The browser didn't allow copying. The " + word + " is selected: press Ctrl+C (Cmd+C on a Mac) to copy it."
-          : "This browser can't copy for you. Select the " + word + " above and copy it with Ctrl+C (Cmd+C on a Mac).", "error");
-      });
-    });
-    return b;
   }
 
   function decisionInfo(a) {
@@ -2216,8 +2062,7 @@
       if (a.decision_comment) parts.push(h("p", { class: "pre-line" }, h("strong", { text: "Comment: " }), String(a.decision_comment)));
     }
     if (a.closed_at) {
-      parts.push(h("p", null, h("strong", { text: a.status === "failed" ? "Marked failed" : "Marked done" }),
-        a.closed_by ? " by " + String(a.closed_by) : "", " · ", timeEl(a.closed_at)));
+      parts.push(h("p", null, h("strong", { text: a.status === "failed" ? "Marked failed" : "Marked done" }), " · ", timeEl(a.closed_at)));
       if (a.result_note) parts.push(h("p", { class: "pre-line" }, h("strong", { text: "Result: " }), String(a.result_note)));
       if (a.result_link) parts.push(h("p", { class: "result-line" }, h("strong", { text: "Link: " }), ownerLink(a.result_link)));
     }
@@ -2227,57 +2072,31 @@
   }
 
   function approvalActions(it, a) {
-    var executor = executorOf(a);
     if (a.status === "pending") {
-      // A Reddit draft is posted by the owner, who can still edit it on Reddit: no separate "with changes".
-      if (executor === "reddit_link") return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
       return [panelButton(it, "approve", "Approve"), panelButton(it, "approve_with_changes", "Approve with changes"), panelButton(it, "reject", "Reject", true)];
     }
-    if (isApproved(a.status)) {
-      if (executor === "email") {
-        var st = executionStatus(a);
-        return st === "waiting" || st === "waiting_limit" ? [panelButton(it, "failed", "Cancel sending", true)] : [];
-      }
-      var tools = [];
-      if (executor === "reddit_link") {
-        tools.push(redditLink(a.reddit_url) || h("span", { class: "muted small no-link", text: "No Reddit link (it isn't a www.reddit.com address): copy the text instead." }));
-        if (a.action.kind !== "comment") tools.push(copyButton(it, "title", "Copy title"));
-        tools.push(copyButton(it, "body", a.action.kind === "comment" ? "Copy comment" : "Copy body"));
-      }
-      return tools.concat([panelButton(it, "done", "Mark done"), panelButton(it, "failed", "Mark failed")]);
+    if (a.status === "approved" || a.status === "approved_with_changes") {
+      return [panelButton(it, "done", "Mark done"), panelButton(it, "failed", "Mark failed")];
     }
     return [];
   }
 
   var COMMENT_FIELD = { name: "comment", label: "Comment for the agent (optional)", rows: 2, max: 2000 };
 
-  function approvalPanel(it, mode, email) {
+  function approvalPanel(it, mode) {
     var a = it.row;
     var version = a.version;
     var url = "api/approvals/" + encodeURIComponent(String(a.id)) + "/";
     var name = agentName();
-    var executor = executorOf(a);
     if (mode === "approve" || mode === "approve_with_changes" || mode === "reject") {
-      // For an email only the body can be changed; the server stores the edited body as final_payload.
-      var original = executor === "email" ? asText(a.action.body) : asText(a.payload);
-      var limit = limitText(email);
-      var approveIntro = "After approving, carry it out yourself, then mark it done or failed here. " + name + " sees your decision on its next wake.";
-      if (executor === "email") {
-        approveIntro = name + " then sends this email itself, once, exactly as shown" + (limit === null ? "" : " (at most " + limit + " a day)") +
-          ", with a footer saying an AI agent wrote it.";
-      } else if (executor === "reddit_link") {
-        approveIntro = "After approving, you post it yourself: this card then offers a button that opens Reddit with it filled in, and Copy buttons. You can still edit it on Reddit before you post.";
-      }
+      var original = asText(a.payload);
       var specs = {
-        approve: { title: executor === "email" ? "Approve this email" : "Approve this request", submit: "Approve",
-          intro: [h("p", { text: approveIntro })], fields: [COMMENT_FIELD] },
-        approve_with_changes: executor === "email"
-          ? { title: "Approve with your changes to the body", submit: "Approve with changes",
-            intro: [h("p", { text: "Edit the body: " + name + " sends your version. The recipient, the subject and the footer stay as they are. If you leave it as it is, this is recorded as a plain approval." })],
-            fields: [{ name: "final_payload", label: "Body (" + name + " sends your version)", rows: 10, value: original, max: 8000, required: true, missing: "Write the body " + name + " should send." }, COMMENT_FIELD] }
-          : { title: "Approve with your changes", submit: "Approve with changes",
-            intro: [h("p", { text: "Edit the text: " + name + " must use your version. If you leave it as it is, this is recorded as a plain approval." })],
-            fields: [{ name: "final_payload", label: "Your version", rows: 8, value: original, max: 8000, required: true, missing: "Write the version " + name + " must use." }, COMMENT_FIELD] },
+        approve: { title: "Approve this request", submit: "Approve",
+          intro: [h("p", { text: "After approving, carry it out yourself, then mark it done or failed here. " + name + " sees your decision on its next wake." })],
+          fields: [COMMENT_FIELD] },
+        approve_with_changes: { title: "Approve with your changes", submit: "Approve with changes",
+          intro: [h("p", { text: "Edit the text: " + name + " must use your version. If you leave it as it is, this is recorded as a plain approval." })],
+          fields: [{ name: "final_payload", label: "Your version", rows: 8, value: original, max: 8000, required: true, missing: "Write the version " + name + " must use." }, COMMENT_FIELD] },
         reject: { title: "Reject this request?", submit: "Reject", danger: true,
           intro: [h("p", { text: "A rejected request can't be approved later. " + name + " sees your decision on its next wake." })],
           fields: [{ name: "comment", label: "Why (optional, " + name + " reads it)", rows: 2, max: 2000 }] },
@@ -2299,30 +2118,14 @@
       spec.done = function (res, v) {
         var st = isObject(res.data) && isObject(res.data.approval) ? res.data.approval.status : null;
         if (mode === "reject") return "Rejected. " + name + " sees this on its next wake.";
-        if (executor === "email") {
-          if (mode === "approve_with_changes" && st !== "approved") return "Approved with your changes. " + name + " sends your version itself; this card shows when it's sent.";
-          return "Approved. " + name + " sends it itself; this card shows when it's sent.";
-        }
-        if (executor === "reddit_link") return "Approved. Post it with the button below, then mark it done or failed.";
         if (mode === "approve_with_changes" && st === "approved") return "Approved as it was (the text was unchanged). Carry it out, then mark it done or failed.";
         if (mode === "approve_with_changes") return "Approved with your changes. Carry it out with your version, then mark it done or failed.";
         return "Approved. Carry it out, then mark it done or failed.";
       };
       return spec;
     }
-    var failed = mode === "failed";
-    if (executor === "email" && failed) {
-      // "Cancel sending": closes the waiting email as failed, so the agent's code never sends it.
-      return {
-        mode: mode, title: "Cancel sending this email?", submit: "Cancel sending", danger: true, cancelLabel: "Keep it",
-        intro: [h("p", { text: name + " won't send it. The request is marked failed, and " + name + " sees that on its next wake." })],
-        fields: [{ name: "result_note", label: "Why (" + name + " reads it)", rows: 2, max: 2000, required: true, value: "Cancelled before it was sent.", missing: "Say why you cancel it." }],
-        url: url + "close",
-        body: function (v) { return { outcome: "failed", expected_version: version, result_note: v.result_note }; },
-        done: function () { return "Cancelled. " + name + " won't send this email."; },
-      };
-    }
     // Close: done or failed
+    var failed = mode === "failed";
     var extra = null;
     if (a.type === "spend_money" || a.type === "sell") {
       var expense = a.type === "spend_money";
@@ -2336,7 +2139,7 @@
       intro: [h("p", { text: "Tell " + name + " how it went; it reads this on its next wake." })],
       fields: [
         { name: "result_note", label: failed ? "What went wrong" : "What happened (optional)", rows: 3, max: 2000, required: failed, missing: "Say what went wrong." },
-        { name: "result_link", label: executor === "reddit_link" ? "Link to your Reddit post (optional)" : "Link to the result (optional)", inputmode: "url", check: linkProblem,
+        { name: "result_link", label: "Link to the result (optional)", inputmode: "url", check: linkProblem,
           hint: name + " will see this link and can read it; don't paste links containing access tokens." },
       ],
       extra: extra,
@@ -2615,36 +2418,6 @@
         h("span", { class: "muted small", text: " for a Home Assistant REST sensor (see the app's Documentation tab)" })),
     ]);
     replace($("options"), optionsTable(options));
-  }
-
-  var EMAIL_STATUS = {
-    ok: { icon: "✓", label: "Working", tone: "good" },
-    error: { icon: "✕", label: "Error", tone: "critical" },
-    not_configured: { icon: "○", label: "Not set up", tone: "warning" },
-    disabled: { icon: "–", label: "Off", tone: "" },
-  };
-
-  // System → Email: the agent's own mailbox (integrations.email). Missing on older servers: the card stays hidden.
-  function renderEmail(d) {
-    var e = isObject(d.integrations) && isObject(d.integrations.email) ? d.integrations.email : null;
-    $("email-card").hidden = !e;
-    if (!e) { replace($("email-facts"), []); return; }
-    var reason = e.reason ? String(e.reason) : null;
-    if (!reason && e.status === "not_configured") reason = "Not set up: see the Documentation tab, 'Ember's mailbox'.";
-    if (!reason && e.status === "disabled") reason = "Off: see the Documentation tab, 'Ember's mailbox', to set it up.";
-    var showReason = reason && (e.available === false || e.status !== "ok");
-    var mode = e.mode === "fake" ? "Fake mailbox (dry run: nothing is really fetched or sent)" : e.mode === "live" ? "Live (IMAP and SMTP)" : "–";
-    replace($("email-facts"), [
-      h("dt", { text: "Status" }), h("dd", null, chip(EMAIL_STATUS, e.status, sentence(String(e.status || "unknown").replace(/_/g, " "))),
-        e.available === false && e.status === "ok" ? " (not available)" : null),
-      showReason ? [h("dt", { text: "Why" }), h("dd", { class: "pre-line", text: reason })] : null,
-      h("dt", { text: "Address" }), h("dd", { class: "link-text", text: e.address ? String(e.address) : "–" }),
-      h("dt", { text: "Mailbox" }), h("dd", { text: mode }),
-      h("dt", { text: "Last fetch" }), h("dd", null, e.last_fetch_at ? timeEl(e.last_fetch_at, fmtDateTime(e.last_fetch_at) + " (" + relTime(e.last_fetch_at) + ")") : "Never"),
-      e.last_error ? [h("dt", { text: "Last error" }), h("dd", { class: "fact-error" }, h("span", { "aria-hidden": "true", text: "✕ " }), String(e.last_error))] : null,
-      h("dt", { text: "Unread" }), h("dd", { text: plural(e.unread, "unread email") }),
-      h("dt", { text: "Sent today" }), h("dd", { text: count(e.sent_today) + " of " + count(e.daily_limit) + " allowed a day" }),
-    ]);
   }
 
   function renderTransitions(list) {
