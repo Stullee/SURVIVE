@@ -5,17 +5,24 @@ made them, in Anthropic's sandbox, so their bytes are the agent's choice. Before
 
 * a picture is decoded and saved again, so nothing but its pixels survives (no metadata, no trailing data);
 * a PDF is refused if anything in it can act on its own: JavaScript, launch or submit actions, embedded files, rich
-  media, XFA forms, links that open other files (compressed object streams are searched too);
+  media, XFA forms, links that open other files, an action when it opens other than going to a page, links that
+  aren't web or mail links (compressed object streams are searched too, and since 0.12.0 a stream Ember can't decode
+  is refused, as is an encrypted file);
 * a Word, Excel or PowerPoint file is refused if it holds macros, ActiveX or OLE objects, links to other files or
-  templates, DDE, or actions that start programs; only web links may point outside the file;
+  templates, DDE, data connections or web queries, or actions that start programs; only web links may point outside
+  the file, and (0.12.0) every part must be of a kind known to be safe: the formats' own XML, and PNG, JPEG or GIF
+  pictures;
 * text must be UTF-8 and small enough for a text file;
-* anything else (SVG, archives, programs, fonts, ...) is refused.
+* anything else (SVG, archives, programs, fonts, ...) is refused, and so is a file that can't be read whole (0.12.0: a
+  malformed Office file escaped the checks and its run went unrecorded).
 
 ``check`` returns what to save, or raises Refused with the reason, in words the agent can act on.
 """
 
 from __future__ import annotations
 
+import base64
+import bisect
 import io
 import re
 import zipfile
@@ -54,13 +61,41 @@ ACTIVE_PDF = frozenset(
     }
 )
 _PDF_NAME = re.compile(rb"/([^\s/<>\[\]()%{}]{1,127})")
-_PDF_STREAM = re.compile(rb"stream\r?\n")
+_PDF_STREAM = re.compile(rb"(?<!end)stream\r?\n")  # (0.12.0: not the "stream" in "endstream")
 _ESCAPE = re.compile(rb"#([0-9A-Fa-f]{2})")
-# Parts of an Office file that run code, embed other programs' objects or pull in other files.
+# 0.12.0: the encodings a PDF stream may use. Ember decodes these to search what they hold ...
+_DECODED = {
+    "FlateDecode": "flate",
+    "Fl": "flate",
+    "ASCII85Decode": "a85",
+    "A85": "a85",
+    "ASCIIHexDecode": "hex",
+    "AHx": "hex",
+}
+# ... and these picture encodings stay as they are, on pictures only (as the last encoding).
+_PICTURE_FILTERS = frozenset({"DCTDecode", "DCT", "JPXDecode", "JBIG2Decode", "CCITTFaxDecode", "CCF"})
+_FILTER = re.compile(rb"/Filter\s*(\[[^\]]*\]|/[^\s/<>\[\]()%{}]+)")
+_IMAGE = re.compile(rb"/Subtype\s*/Image\b")
+_OBJECT = re.compile(rb"(\d+)\s+(\d+)\s+obj\b")
+_ACTION_TYPE = re.compile(rb"/S\s*/([^\s/<>\[\]()%{}]+)")
+_WEB_LINK = re.compile(rb"(?:https?://|mailto:)", re.IGNORECASE)
+# Parts of an Office file that run code, embed other programs' objects or pull in other files (0.12.0: data
+# connections and web queries too).
 _ACTIVE_PART = re.compile(
-    r"(?:^|/)(?:vbaProject\.bin|vbaData\.xml|activeX|embeddings/|oleObject|externalLinks/|customUI|attachedToolbars)",
+    r"(?:^|/)(?:vbaProject\.bin|vbaData\.xml|activeX|embeddings/|oleObject|externalLinks/|customUI|attachedToolbars"
+    r"|connections\.xml|queryTables/)",
     re.IGNORECASE,
 )
+# 0.12.0: the kinds of parts an Office file may hold: the formats' own XML, a printer's settings, and pictures.
+_SAFE_TYPE = re.compile(
+    r"^(?:application/vnd\.openxmlformats-[a-z.-]+\+xml|application/xml|text/xml|image/(?:png|jpeg|gif)"
+    r"|application/vnd\.openxmlformats-officedocument\.(?:spreadsheetml|wordprocessingml|presentationml)"
+    r"\.printerSettings|application/vnd\.ms-office\.(?:chartstyle|chartcolorstyle)\+xml"
+    r"|application/vnd\.ms-word\.stylesWithEffects\+xml)$",
+    re.IGNORECASE,
+)
+_UNSAFE_TYPE = re.compile(r"macro|vba|activeX|oleObject|connections|queryTable|externalLink|customUI", re.IGNORECASE)
+_TYPES_NS = "{http://schemas.openxmlformats.org/package/2006/content-types}"
 _FIELD_CODES = re.compile(r"\b(?:DDE|DDEAUTO|INCLUDETEXT|INCLUDEPICTURE|IMPORT|LINK)\b")
 _EXCEL_ACTIVE = re.compile(
     r"\||\[\d+\]|\b(?:WEBSERVICE|FILTERXML|CALL|REGISTER|EXEC|RTD|HYPERLINK)\s*\(", re.IGNORECASE
@@ -84,13 +119,18 @@ def check(name: str, data: bytes) -> bytes | str:
             f"{suffix or 'a file without an ending'} files aren't kept; the workshop can make text, PNG and JPEG "
             "pictures, PDF, Word, Excel and PowerPoint files"
         )
-    if suffix in TEXT_EXTENSIONS:
-        return _text(data)
-    if suffix in PICTURES:
-        return _picture(data, PICTURES[suffix])
-    if suffix == ".pdf":
-        return _pdf(data)
-    return _office(data, suffix)
+    try:
+        if suffix in TEXT_EXTENSIONS:
+            return _text(data)
+        if suffix in PICTURES:
+            return _picture(data, PICTURES[suffix])
+        if suffix == ".pdf":
+            return _pdf(data)
+        return _office(data, suffix)
+    except Refused:
+        raise
+    except Exception:  # noqa: BLE001 - 0.12.0: what can't be read whole isn't kept (it escaped, and the run was lost)
+        raise Refused(f"the {suffix} file can't be read whole") from None
 
 
 def _text(data: bytes) -> str:
@@ -129,23 +169,31 @@ def _picture(data: bytes, expected: str) -> bytes:
 def _pdf(data: bytes) -> bytes:
     if not data.startswith(b"%PDF-"):
         raise Refused("the file isn't a PDF")
+    if "Encrypt" in _names(data):
+        raise Refused("the PDF is encrypted, so Ember can't check it")
     found = _active_names(data)
+    starts = [m.end() for m in _OBJECT.finditer(data)]
     unpacked = 0
+    searched = [data]
     for match in _PDF_STREAM.finditer(data):
         end = data.find(b"endstream", match.end())
         if end < 0:
             break
-        decompressor = zlib.decompressobj()
-        try:
-            chunk = decompressor.decompress(data[match.end() : end], MAX_UNPACKED_BYTES - unpacked + 1)
-        except zlib.error:
-            continue  # not Flate-compressed (an image, say): its raw bytes were searched already
+        # The stream's dictionary: from its object's start (the last "N G obj" before it) to the keyword.
+        at = bisect.bisect_right(starts, match.start()) - 1
+        head = data[starts[at] if at >= 0 else 0 : match.start()]
+        chunk = _decoded(head, data[match.end() : end], MAX_UNPACKED_BYTES - unpacked)
+        if chunk is None:
+            continue  # a picture's own encoding, or no encoding (its raw bytes were searched already)
         unpacked += len(chunk)
         if unpacked > MAX_UNPACKED_BYTES:
             raise Refused("the PDF unpacks to too much data")
         found |= _active_names(chunk)
+        searched.append(chunk)
     if found:
         raise Refused(f"the PDF has active content ({', '.join(sorted(found))}), which Ember never keeps")
+    for chunk in searched:
+        _check_actions(chunk, data)
     from . import images  # the PDF renderer, loaded at startup (see app.agent.tools)
 
     try:
@@ -157,13 +205,91 @@ def _pdf(data: bytes) -> bytes:
     return data
 
 
+def _names(data: bytes) -> set[str]:
+    """The PDF names in ``data``, their #xx escapes decoded."""
+    return {
+        _ESCAPE.sub(lambda m: bytes([int(m.group(1), 16)]), m.group(1)).decode("latin-1")
+        for m in _PDF_NAME.finditer(data)
+    }
+
+
 def _active_names(data: bytes) -> set[str]:
-    found = set()
-    for match in _PDF_NAME.finditer(data):
+    return _names(data) & ACTIVE_PDF
+
+
+def _decoded(head: bytes, raw: bytes, room: int) -> bytes | None:
+    """What a stream holds, decoded for the search (0.12.0); None when there is nothing to search: no encoding (its raw
+    bytes are searched with the file), or a picture in its own encoding. Refuses an encoding Ember can't decode (it
+    hid JavaScript from the search) and a stream that doesn't decode."""
+    matches = list(_FILTER.finditer(head))
+    if not matches:
+        return None
+    filters = [f.decode("latin-1") for f in re.findall(rb"/([^\s/<>\[\]()%{}]+)", matches[-1].group(1))]
+    if not filters:
+        return None
+    if filters[-1] in _PICTURE_FILTERS and _IMAGE.search(head) and all(f in _DECODED for f in filters[:-1]):
+        return None
+    unknown = [f for f in filters if f not in _DECODED]
+    if unknown:
+        raise Refused(f"the PDF has a stream encoded with {unknown[0]}, which Ember can't check")
+    data = raw
+    try:
+        for name in filters:
+            kind = _DECODED[name]
+            if kind == "flate":
+                data = zlib.decompressobj().decompress(data, room + 1)
+            elif kind == "a85":
+                text = re.sub(rb"\s", b"", data).split(b"~>")[0]
+                data = base64.a85decode(text, adobe=False)
+            else:
+                text = re.sub(rb"\s", b"", data).split(b">")[0]
+                data = bytes.fromhex((text + b"0" * (len(text) % 2)).decode("ascii"))
+    except (zlib.error, ValueError):
+        raise Refused("a stream of the PDF doesn't decode, so Ember can't check it") from None
+    return data
+
+
+def _check_actions(chunk: bytes, whole: bytes) -> None:
+    """0.12.0: what the PDF does when it opens is only ever going to a page, and its links are web or mail links (an
+    /OpenAction to a web address went unnoticed)."""
+    for match in _PDF_NAME.finditer(chunk):
         name = _ESCAPE.sub(lambda m: bytes([int(m.group(1), 16)]), match.group(1)).decode("latin-1")
-        if name in ACTIVE_PDF:
-            found.add(name)
-    return found
+        rest = chunk[match.end() : match.end() + 2_000].lstrip()
+        if name == "OpenAction" and not _goes_to_a_page(rest, whole):
+            raise Refused("the PDF does something when it opens other than showing a page, which Ember never keeps")
+        if name == "URI" and not _web_link(rest):
+            raise Refused("the PDF has a link that isn't a web or mail link")
+
+
+def _goes_to_a_page(value: bytes, whole: bytes) -> bool:
+    if value.startswith(b"["):  # a destination: a page and how to show it
+        return True
+    if value.startswith(b"<<"):
+        kinds = _ACTION_TYPE.findall(value.split(b">>")[0])
+        return all(k == b"GoTo" for k in kinds)
+    reference = re.match(rb"(\d+)\s+(\d+)\s+R\b", value)
+    if reference is None:
+        return False
+    target = re.search(rb"(?:^|\s)" + reference.group(1) + rb"\s+" + reference.group(2) + rb"\s+obj\b", whole)
+    if target is None:
+        return False  # in an object stream, or missing: can't be checked
+    return _goes_to_a_page(whole[target.end() : target.end() + 2_000].lstrip(), b"")
+
+
+def _web_link(value: bytes) -> bool:
+    """Whether the string after /URI is a web or mail link (literal or hex). /URI followed by a name is an action's
+    type (/S /URI), and by a dictionary the base of the file's links."""
+    if value.startswith((b"/", b"<<")):
+        return True
+    if value.startswith(b"("):
+        return bool(_WEB_LINK.match(value[1:].lstrip()))
+    if value.startswith(b"<") and not value.startswith(b"<<"):
+        text = re.sub(rb"\s", b"", value[1:].split(b">")[0])
+        try:
+            return bool(_WEB_LINK.match(bytes.fromhex((text + b"0" * (len(text) % 2)).decode("ascii"))))
+        except ValueError:
+            return False
+    return False  # an indirect or odd value: not a plain web link
 
 
 def _office(data: bytes, suffix: str) -> bytes:
@@ -201,9 +327,29 @@ def _office(data: bytes, suffix: str) -> bytes:
                 _word_fields(xml, part.filename)
             elif suffix == ".xlsx" and part.filename.startswith("xl/worksheets/"):
                 _excel_formulas(xml, part.filename)
+            elif suffix == ".xlsx" and part.filename == "xl/workbook.xml":
+                _excel_names(xml, part.filename)
             elif suffix == ".pptx" and _PPT_ACTIONS.search(xml):
                 raise Refused(f"{part.filename} has an action that starts a program or macro")
+        _known_parts(parts, _parse(types, "[Content_Types].xml"))
     return data
+
+
+def _known_parts(parts: list[zipfile.ZipInfo], types: object) -> None:
+    """0.12.0: every part is of a kind known to be safe (by its content type: named, or by its file ending)."""
+    named = {
+        n.get("PartName", "").lstrip("/").lower(): n.get("ContentType", "") for n in types.iter(f"{_TYPES_NS}Override")
+    }  # type: ignore[attr-defined]
+    endings = {n.get("Extension", "").lower(): n.get("ContentType", "") for n in types.iter(f"{_TYPES_NS}Default")}  # type: ignore[attr-defined]
+    for part in parts:
+        name = part.filename
+        if name == "[Content_Types].xml" or name.endswith("/"):
+            continue
+        last = name.rsplit("/", 1)[-1]
+        ending = last.rsplit(".", 1)[-1].lower() if "." in last else ""  # ".rels" too
+        kind = named.get(name.lower()) or endings.get(ending, "")
+        if not kind or not _SAFE_TYPE.match(kind) or _UNSAFE_TYPE.search(kind):
+            raise Refused(f"the file holds {name} ({kind or 'of no known kind'}), which Ember doesn't keep")
 
 
 def _parse(xml: bytes | str, where: str):  # noqa: ANN202 - an ElementTree element
@@ -224,9 +370,34 @@ def _relationships(xml: bytes, where: str) -> None:
 
 
 def _word_fields(xml: str, where: str) -> None:
+    """Refuse fields that pull in other files or programs. 0.12.0: a field's code is read whole, however its runs
+    split it ("INCLUDE" and "TEXT" in two runs), with what nested fields put into it."""
     root = _parse(xml, where)
-    codes = [node.text or "" for node in root.iter(f"{_WORD_NS}instrText")]
-    codes += [node.get(f"{_WORD_NS}instr", "") for node in root.iter(f"{_WORD_NS}fldSimple")]
+    codes = [node.get(f"{_WORD_NS}instr", "") for node in root.iter(f"{_WORD_NS}fldSimple")]
+    fields: list[list[str]] = []  # the fields being read, outermost first; each collects its code
+    reading: list[bool] = []  # whether each is still in its code (before its "separate")
+    loose: list[str] = []
+    for node in root.iter():
+        if node.tag == f"{_WORD_NS}fldChar":
+            kind = node.get(f"{_WORD_NS}fldCharType")
+            if kind == "begin":
+                fields.append([])
+                reading.append(True)
+            elif kind == "separate" and fields:
+                reading[-1] = False
+                codes.append("".join(fields[-1]))
+            elif kind == "end" and fields:
+                code = fields.pop()
+                if reading.pop():
+                    codes.append("".join(code))
+        elif node.tag in (f"{_WORD_NS}instrText", f"{_WORD_NS}t"):
+            text = node.text or ""
+            for index, open_code in enumerate(reading):
+                if open_code:
+                    fields[index].append(text)
+            if node.tag == f"{_WORD_NS}instrText" and not fields:
+                loose.append(text)
+    codes += ["".join(loose), *loose]
     for code in codes:
         if _FIELD_CODES.search(code.upper()):
             raise Refused(f"{where} has a field that pulls in other files or programs ({code.strip()[:60]})")
@@ -236,3 +407,10 @@ def _excel_formulas(xml: str, where: str) -> None:
     for node in _parse(xml, where).iter(f"{_EXCEL_NS}f"):
         if _EXCEL_ACTIVE.search(node.text or ""):
             raise Refused(f"{where} has a formula that reaches outside the workbook ({(node.text or '')[:60]})")
+
+
+def _excel_names(xml: str, where: str) -> None:
+    """0.12.0: a defined name is a formula too (WEBSERVICE in a name went unnoticed)."""
+    for node in _parse(xml, where).iter(f"{_EXCEL_NS}definedName"):
+        if _EXCEL_ACTIVE.search(node.text or ""):
+            raise Refused(f"{where} has a name that reaches outside the workbook ({(node.text or '')[:60]})")

@@ -232,12 +232,19 @@ one before it goes into the agent's workspace (by default `workshop/out`):
 - Pictures (PNG, JPEG) are decoded and saved again, so only their pixels are
   kept, not their metadata (Anthropic's Content Credentials included).
 - PDFs are refused if anything in them can act on its own: JavaScript, launch
-  or submit actions, embedded files, rich media, links that open other files.
+  or submit actions, embedded files, rich media, links that open other files,
+  or an action when the file opens other than showing a page. Only web and
+  mail links may point outside the file. Ember decodes the compressed parts to
+  search them, so a PDF whose parts it can't decode, or an encrypted one, is
+  refused too.
 - Word, Excel and PowerPoint files are refused if they hold macros, ActiveX or
-  embedded objects, links to other files or templates, DDE, or actions that
-  start programs. Only web and mail links may point outside the file.
+  embedded objects, links to other files or templates, DDE (also split over
+  several runs), data connections or web queries, formulas or names that reach
+  outside the workbook, or actions that start programs. Only web and mail links
+  may point outside the file, and every part must be of a kind known to be
+  safe (the format's own XML, PNG, JPEG or GIF pictures).
 - Text files must be UTF-8, at most 64 KB. Anything else (SVG, archives,
-  programs, fonts) is refused.
+  programs, fonts), and any file that can't be read whole, is refused.
 
 The run's script is kept in `workshop/scripts/`, so the agent can run it again
 instead of paying for it to be written anew. The files handed over are uploaded
