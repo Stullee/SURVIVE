@@ -30,7 +30,7 @@ from ..integrations import executor as email_executor
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox, select_mailbox
-from . import netguard, store
+from . import netguard, store, ventures
 from .loop import NO_STEP, CycleEnd, CycleRunner
 from .memory import CAPS, Memory
 from .sandbox import Jail
@@ -174,6 +174,11 @@ class Agent:
         scope = self.scope()
         with self.db.transaction() as conn:
             self.memory(scope).ensure(conn, to_iso(now))
+        try:
+            with self.db.transaction() as conn:
+                ventures.seed(conn, scope, to_iso(now))  # the tree's first ideas (0.10.0), once
+        except Exception:  # noqa: BLE001 - the ventures must never keep the agent from starting
+            log.exception("Could not plant the first ventures")
         wake = self._meta_time("next_wake_at")
         if wake is not None and wake < now + BOOT_GRACE:
             # Give the owner a minute to pause after an update or restart.
@@ -527,6 +532,11 @@ class Agent:
             "next_wake_at": to_iso(wake) if wake else None,
             "cycle_running": self.running_cycle,
         }
+
+    def ventures(self) -> dict[str, Any]:
+        from . import views
+
+        return views.ventures_view(self)
 
     def cycle_detail(self, cycle_id: int) -> dict[str, Any] | None:
         from . import views

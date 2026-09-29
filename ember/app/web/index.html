@@ -77,6 +77,7 @@
     <button type="button" role="tab" class="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true">Overview</button>
     <button type="button" role="tab" class="tab" id="tab-ledger" aria-controls="panel-ledger" aria-selected="false">Ledger</button>
     <button type="button" role="tab" class="tab" id="tab-projects" aria-controls="panel-projects" aria-selected="false">Projects</button>
+    <button type="button" role="tab" class="tab" id="tab-ventures" aria-controls="panel-ventures" aria-selected="false">Ventures <span class="badge" id="badge-ventures" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-activity" aria-controls="panel-activity" aria-selected="false">Activity</button>
     <button type="button" role="tab" class="tab" id="tab-approvals" aria-controls="panel-approvals" aria-selected="false">Approvals <span class="badge" id="badge-approvals" hidden></span><span class="badge badge-todo" id="badge-approvals-todo" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-inbox" aria-controls="panel-inbox" aria-selected="false">Inbox <span class="badge" id="badge-inbox" hidden></span></button>
@@ -199,6 +200,51 @@
 
     <section class="panel" id="panel-projects" role="tabpanel" aria-labelledby="tab-projects" hidden>
       <div class="cards" id="projects"></div>
+    </section>
+
+    <section class="panel" id="panel-ventures" role="tabpanel" aria-labelledby="tab-ventures" hidden>
+      <article class="card" id="vt-card">
+        <div class="card-head">
+          <div>
+            <h2 id="vt-title" tabindex="-1">Venture tree</h2>
+            <p class="card-sub" id="vt-sub">&nbsp;</p>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn" id="vt-add" aria-controls="vt-form" aria-expanded="false">Add idea</button>
+            <button type="button" class="btn" id="vt-refresh">Refresh</button>
+          </div>
+        </div>
+        <form class="vt-form" id="vt-form" novalidate hidden>
+          <div class="field">
+            <label for="vt-form-title">Idea</label>
+            <input type="text" id="vt-form-title" autocomplete="off" aria-describedby="vt-form-title-count vt-form-title-error">
+            <p class="counter" id="vt-form-title-count"></p>
+            <p class="field-error" id="vt-form-title-error" hidden></p>
+          </div>
+          <div class="field">
+            <label for="vt-form-pitch">What it is, and who would pay for it</label>
+            <textarea id="vt-form-pitch" rows="3" aria-describedby="vt-form-pitch-hint vt-form-pitch-count vt-form-pitch-error"></textarea>
+            <p class="hint" id="vt-form-pitch-hint">Ember scores it, researches it in a venture cycle and tells you what it would take.</p>
+            <p class="counter" id="vt-form-pitch-count"></p>
+            <p class="field-error" id="vt-form-pitch-error" hidden></p>
+          </div>
+          <div class="field">
+            <label for="vt-form-parent">Branch of</label>
+            <select id="vt-form-parent"></select>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="vt-form-save">Add to the tree</button>
+            <button type="button" class="btn" id="vt-form-cancel">Cancel</button>
+          </div>
+        </form>
+        <p class="form-status" id="vt-status" role="status"></p>
+        <p class="form-status" id="vt-load-status" role="status"></p>
+        <p class="vt-summary" id="vt-summary"></p>
+        <div class="vt-legend" id="vt-legend" aria-hidden="true"></div>
+        <div class="vt-tree" id="vt-tree"></div>
+        <svg id="vt-svg-ns" width="0" height="0" aria-hidden="true" focusable="false" hidden></svg>
+      </article>
+      <div class="queue" id="ventures"></div>
     </section>
 
     <section class="panel" id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" hidden>

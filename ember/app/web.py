@@ -393,6 +393,30 @@ def mark_read(request: Request, body: Annotated[Any, Body()] = None) -> JSONResp
     return _reply(actions.mark_read(body))
 
 
+@router.get("/api/ventures")
+def ventures(request: Request) -> JSONResponse:
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    return JSONResponse(agent.ventures())
+
+
+@router.post("/api/ventures")
+def add_venture(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.add_venture(body, _owner(request)))
+
+
+@router.post("/api/ventures/{venture_id}/decide")
+def decide_venture(request: Request, venture_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.decide_venture(venture_id, body, _owner(request)))
+
+
 @router.post("/api/upgrades/{upgrade_id}")
 def update_upgrade(request: Request, upgrade_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
     actions = _owner_actions(request)

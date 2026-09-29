@@ -22,7 +22,8 @@ from app.economy.pricing import opening_cost, working_cycle_cost
 from tests.economy_helpers import ScriptedTransport, make_economy
 
 _ids = itertools.count(1)
-ROOMY = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
+# No venture cycles (0.10.0): these tests follow the ordinary cycle; tests/test_ventures.py has the venture ones.
+ROOMY = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=0)
 
 
 def reply(content: list[dict[str, Any]], stop: str, output_tokens: int = 100) -> Completed:

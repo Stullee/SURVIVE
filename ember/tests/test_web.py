@@ -198,7 +198,13 @@ def test_dashboard_payload(ingress_client: TestClient) -> None:
     assert data["mind"]["reviews"] == []  # none before the second day
     assert data["mind"]["strategy"].startswith("# Strategy")
     assert data["coming_in_phase"] == {}
-    assert data["badges"] == {"approvals_pending": 0, "approvals_todo": 0, "inbox_unread": 0, "upgrades_new": 0}
+    assert data["badges"] == {
+        "approvals_pending": 0,
+        "approvals_todo": 0,
+        "inbox_unread": 0,
+        "upgrades_new": 0,
+        "ventures_proposed": 0,
+    }
     assert data["agent"]["cycles_enabled"] is False  # tests switch the scheduler off
     assert len(data["economy"]["days"]) == 30
     assert data["agent"]["state"] == "alive"

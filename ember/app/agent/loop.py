@@ -37,9 +37,9 @@ from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox
 from ..version import app_version
-from . import context, netguard, news, prompts, review, store, tools
+from . import context, netguard, news, prompts, review, store, tools, ventures
 from .memory import Memory
-from .sandbox import Jail
+from .sandbox import Jail, SandboxError
 from .store import AgentScope
 from .workshop import Workshop, WorkshopError
 from .workshop import report as workshop_report
@@ -95,6 +95,7 @@ class Plan:
     steps: list[str]
     sleep_minutes: int | None
     money_path: str = ""  # how the goal leads to income (or what a learning experiment would show)
+    focus_venture_id: int | None = None  # 0.10.0
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -102,6 +103,7 @@ class Plan:
             "goal": self.goal,
             "money_path": self.money_path,
             "focus_project_id": self.focus_project_id,
+            "focus_venture_id": self.focus_venture_id,
             "steps": self.steps,
             "sleep_minutes": self.sleep_minutes,
         }
@@ -175,6 +177,8 @@ class CycleRunner:
         end = CycleEnd("failed", "the cycle ended unexpectedly")
         try:
             if trigger != "last_will":
+                ctx.venture = self._venture_cycle(cycle_id)
+                ctx.brainstorm = self._brainstorm_fn(ctx) if ctx.venture else None
                 self._fetch_mail(cycle_id)
                 self._sync_etsy(cycle_id, ctx)
             with netguard.sealed() if self.dry_run else contextlib.nullcontext():
@@ -238,6 +242,17 @@ class CycleRunner:
             {"cycle_id": cycle_id},
         )
 
+    def _venture_cycle(self, cycle_id: int) -> bool:
+        """Whether this is a venture cycle: venture cycles have had less than the owner's share of the day's spending
+        (``ventures.venture_turn``). Recorded on the cycle; an empty venture tree gets its first ideas first."""
+        with self.db.transaction() as conn:
+            ventures.seed(conn, self.scope, to_iso(self.clock.now()))
+            spent, ventured = ventures.day_spend(conn, self.scope, self.clock.today())
+            turn = ventures.venture_turn(self.settings.venture_share, spent, ventured)
+            if turn:
+                store.update_cycle(conn, cycle_id, venture=1)
+        return turn
+
     def _fetch_mail(self, cycle_id: int) -> None:
         """New mail before the plan (errors are recorded and shown, and never stop the cycle)."""
         if self.mailbox is None or self.stop.is_set():
@@ -283,7 +298,7 @@ class CycleRunner:
         if self.stop.is_set():
             raise Stopping
 
-    def _snapshot(self) -> context.Snapshot:
+    def _snapshot(self, venture: bool = False) -> context.Snapshot:
         status = self.economy.life.evaluate()
         scope = self.economy.life.scope()
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
@@ -310,6 +325,8 @@ class CycleRunner:
                 mail_address=self.mailbox.address if self.mailbox else None,
                 today=self.clock.today(),
                 etsy=shop,
+                venture=venture,
+                venture_share=self.settings.venture_share,
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> CallResult:
@@ -332,12 +349,13 @@ class CycleRunner:
             review_due = review.due(conn, self.scope, self.clock)
         if review_due:
             self._review(cycle_id)
-        snap = self._snapshot()
-        self._progress(cycle_id, phase="plan", current_action="Planning this cycle")
+        snap = self._snapshot(ctx.venture)
+        action = "Planning this venture cycle" if ctx.venture else "Planning this cycle"
+        self._progress(cycle_id, phase="plan", current_action=action)
         request = None
         for scale in PLANNER_SCALES:
             planner, planned = context.planner_context(snap, self.dry_run, scale)
-            request = prompts.plan_request(self.settings, planner)
+            request = prompts.plan_request(self.settings, planner, venture=ctx.venture)
             if context.fits(request, PLANNER_OPENING.input_tokens):
                 break
         else:
@@ -362,16 +380,25 @@ class CycleRunner:
         if planned.changelog:
             news.mark_changelog_seen(self.db, self.scope, snap.news)
         focus = None
+        venture_focus = ""
         with self.db.connection() as conn:
             if plan.focus_project_id is not None:
                 focus = store.project(conn, self.scope, plan.focus_project_id)
                 if focus is None or focus["status"] not in store.OPEN_STATUSES:
                     plan.focus_project_id, focus = None, None
+            if plan.focus_venture_id is not None:
+                venture = ventures.get(conn, self.scope, plan.focus_venture_id)
+                if venture is None or venture["stage"] not in ventures.OPEN_STAGES:
+                    plan.focus_venture_id = None
+                else:
+                    venture_focus = self._venture_focus(conn, venture)
         ctx.state.focus_project_id = plan.focus_project_id
+        ctx.state.focus_venture_id = plan.focus_venture_id
         self._progress(
             cycle_id,
             plan=json.dumps(plan.to_json(), ensure_ascii=False),
             project_id=plan.focus_project_id,
+            venture_id=plan.focus_venture_id,
             current_action=plan.goal[:300] or None,
         )
         if not plan.steps:
@@ -389,7 +416,9 @@ class CycleRunner:
                 )
             return CycleEnd("idle", "nothing to do", sleep_minutes=plan.sleep_minutes)
 
-        brief, briefed = context.brief(snap, self.dry_run, plan.to_json(), focus, self.settings.max_tool_steps)
+        brief, briefed = context.brief(
+            snap, self.dry_run, plan.to_json(), focus, self.settings.max_tool_steps, venture_focus=venture_focus
+        )
         act = self._act(cycle_id, ctx, brief, planned.listed & briefed.items)
         if act.end_reason == "refusal":
             return CycleEnd("stopped", "the model refused to continue")
@@ -411,6 +440,15 @@ class CycleRunner:
         if ctx.state.sleep_minutes:  # set_sleep, the last call winning (the reflection's after the act phase's)
             return CycleEnd(status, note, sleep_minutes=ctx.state.sleep_minutes, sleep_reason=ctx.state.sleep_reason)
         return CycleEnd(status, note, sleep_minutes=plan.sleep_minutes)
+
+    def _venture_focus(self, conn: Any, row: Any) -> str:
+        """The brief's FOCUS for the plan's venture: its record, money, projects and knowledge file."""
+        paid = ventures.money(conn, self.scope).get(row["id"], ventures.Money())
+        try:
+            size = self.workspace.size_of(ventures.file_of(row["id"], row["title"]), "text")
+        except SandboxError:
+            size = None
+        return ventures.focus_text(row, paid, size, ventures.projects_of(conn, row["id"]))
 
     def _review(self, cycle_id: int) -> None:
         """The daily review, before the first plan of the day. It never ends the cycle: a review the budget can't
@@ -479,12 +517,14 @@ class CycleRunner:
         steps = data.get("steps")
         steps = [str(s)[:200] for s in steps if isinstance(s, str) and s.strip()][:6] if isinstance(steps, list) else []
         focus = data.get("focus_project_id")
+        venture = data.get("focus_venture_id")
         sleep = data.get("sleep_minutes")
         return Plan(
             assessment=str(data.get("assessment") or "")[:600],
             goal=str(data.get("goal") or "")[:300],
             money_path=str(data.get("money_path") or "")[:300],
             focus_project_id=focus if isinstance(focus, int) and not isinstance(focus, bool) else None,
+            focus_venture_id=venture if isinstance(venture, int) and not isinstance(venture, bool) else None,
             steps=steps,
             sleep_minutes=self._clamp_sleep(sleep) if isinstance(sleep, int) and not isinstance(sleep, bool) else None,
         )
@@ -509,8 +549,10 @@ class CycleRunner:
                 act.end_reason = "the conversation got too long"
                 break
             final = step == max_steps
-            request = prompts.work_request(self.settings, brief, turns, final=final, mail=self.mail, etsy=self.etsy_on)
-            if not self._affordable(cycle_id, request, brief, turns):
+            request = prompts.work_request(
+                self.settings, brief, turns, final=final, mail=self.mail, etsy=self.etsy_on, venture=ctx.venture
+            )
+            if not self._affordable(cycle_id, request, brief, turns, ctx.venture):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
                 break
             self._progress(cycle_id, step=step, current_action=f"Working (tool step {step}, at most {max_steps})")
@@ -598,7 +640,9 @@ class CycleRunner:
             return list(act.turns)
         return [*act.turns, {"role": "user", "content": list(act.pending)}]
 
-    def _affordable(self, cycle_id: int, request: dict[str, Any], brief: str, turns: list[dict[str, Any]]) -> bool:
+    def _affordable(
+        self, cycle_id: int, request: dict[str, Any], brief: str, turns: list[dict[str, Any]], venture: bool = False
+    ) -> bool:
         """Only take a step if a reflect call still fits after it."""
         grown = [*turns, {"role": "assistant", "content": [{"type": "text", "text": "x" * STEP_GROWTH_BYTES}]}]
         longest = "ä" * prompts.ENDED_CHARS  # the reflection is told why the work ended: priced with the longest reason
@@ -606,7 +650,7 @@ class CycleRunner:
             step_cost = self.meter.quote(request)
             reflect_cost = self.meter.quote(
                 prompts.reflect_request(
-                    self.settings, brief, grown, [], mail=self.mail, etsy=self.etsy_on, ended=longest
+                    self.settings, brief, grown, [], mail=self.mail, etsy=self.etsy_on, ended=longest, venture=venture
                 )
             )
         except Unpriceable:
@@ -655,7 +699,14 @@ class CycleRunner:
             kept = [b for b in turns.pop()["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
             pending = [*kept, *pending]
         request = prompts.reflect_request(
-            self.settings, brief, turns, pending, mail=self.mail, etsy=self.etsy_on, ended=act.end_reason
+            self.settings,
+            brief,
+            turns,
+            pending,
+            mail=self.mail,
+            etsy=self.etsy_on,
+            ended=act.end_reason,
+            venture=ctx.venture,
         )
         try:
             if self.meter.quote(request) > self.meter.headroom(cycle_id, "reflect"):
@@ -733,6 +784,125 @@ class CycleRunner:
 
         return research
 
+    # --- brainstorms (0.10.0: a metered call on the planner's model that grows the venture tree) ---
+
+    def _brainstorm_fn(self, ctx: tools.ToolContext) -> tools.BrainstormFn:
+        def brainstorm(theme: str, venture_id: int | None) -> tools.Outcome:
+            with self.db.connection() as conn:
+                tree = ventures.all_ventures(conn, self.scope)
+                parent = ventures.get(conn, self.scope, venture_id) if venture_id is not None else None
+                standing = store.standing_instructions(conn, self.scope)
+            if venture_id is not None and (parent is None or parent["stage"] == "killed"):
+                return tools.Outcome(False, f"Error: there is no venture #{venture_id} to branch from.", "refused")
+            if len(tree) >= ventures.MAX_VENTURES:
+                return tools.Outcome(
+                    False, f"Error: the tree holds {ventures.MAX_VENTURES} ventures, as many as it can.", "refused"
+                )
+            status = self.economy.life.evaluate()
+            earned = self.economy.books.totals(self.economy.life.scope())["revenue"]
+            request = prompts.brainstorm_request(
+                self.settings,
+                _brainstorm_context(status, earned, standing["text"] if standing else "", tree, parent, theme),
+            )
+            try:
+                quote = self.meter.quote(request)
+            except Unpriceable as exc:
+                return tools.Outcome(False, f"Error: a brainstorm can't be priced ({exc}).", "refused: unpriceable")
+            if quote > self.meter.headroom(ctx.cycle_id):
+                return tools.Outcome(
+                    False,
+                    f"Error: a brainstorm could cost up to ${micros_to_usd(quote):.3f}, more than this cycle has left.",
+                    "refused: budget",
+                )
+            try:
+                result = self._call(ctx.cycle_id, "brainstorm", request)
+            except CallRefused as exc:  # a state or system refusal ends the cycle at its next call
+                return tools.Outcome(False, f"Error: the brainstorm was refused ({exc.reason}).", "refused")
+            except CallFailed as exc:
+                return tools.Outcome(
+                    False, f"Error: the brainstorm failed ({exc.result.error or exc.result.status}).", "failed"
+                )
+            response = result.response or {}
+            text = _text_of(response)
+            self._save_text(result.call_id, text, response)
+            cost = f"(cost ${micros_to_usd(result.cost_micros):.4f})"
+            ideas = _ideas(text) if response.get("stop_reason") == "end_turn" else []
+            if not ideas:
+                return tools.Outcome(
+                    False, f"Error: the brainstorm brought no usable ideas {cost}.", "failed: no ideas"
+                )
+            added, known = self._plant(ctx, ideas, parent)
+            self._keep_ideas(ctx, added, known, parent, theme)
+            lines = [
+                f"#{vid} {idea['title']} · {ventures.scores_text({**idea['scores'], 'scores_by': 'brainstorm'})}\n"
+                f"   {idea['pitch']}\n   first question: {idea['first_question'] or '-'}"
+                for vid, idea in added
+            ]
+            if known:
+                lines.append("Already in the tree, so not added again: " + "; ".join(known) + ".")
+            where = f" as branches of #{parent['id']}" if parent else ""
+            head = (
+                f"The brainstorm added {len(added)} ideas to your tree{where} {cost}; all are in {ventures.IDEAS_FILE}."
+            )
+            return tools.Outcome(True, "\n".join([head, *lines]), f"brainstorm: {len(added)} ideas")
+
+        return brainstorm
+
+    def _plant(
+        self, ctx: tools.ToolContext, ideas: list[dict[str, Any]], parent: Any
+    ) -> tuple[list[tuple[int, dict[str, Any]]], list[str]]:
+        """The brainstorm's ideas as new ventures (stage idea, scores guessed); the titles already in the tree."""
+        added: list[tuple[int, dict[str, Any]]] = []
+        known: list[str] = []
+        now = to_iso(self.clock.now())
+        with self.db.transaction() as conn:
+            room = ventures.MAX_VENTURES - ventures.count(conn, self.scope)
+            for idea in ideas[: ventures.BRAINSTORM_IDEAS]:
+                if room <= 0 or ventures.by_title(conn, self.scope, idea["title"]) is not None:
+                    known.append(idea["title"])
+                    continue
+                venture_id = ventures.create(
+                    conn,
+                    self.scope,
+                    title=idea["title"],
+                    pitch=idea["pitch"],
+                    stage="idea",
+                    now=now,
+                    cycle_id=ctx.cycle_id,
+                    next_question=idea["first_question"],
+                    parent_id=parent["id"] if parent is not None else None,
+                    scores=idea["scores"],
+                    scores_by="brainstorm",
+                )
+                room -= 1
+                added.append((venture_id, idea))
+        return added, known
+
+    def _keep_ideas(
+        self, ctx: tools.ToolContext, added: list[tuple[int, dict[str, Any]]], known: list[str], parent: Any, theme: str
+    ) -> None:
+        """Every brainstorm's ideas in one file of the agent's workspace (a full file starts again)."""
+        about = [f"branch of #{parent['id']} {parent['title']}"] if parent is not None else []
+        if theme:
+            about.append(f"theme: {theme}")
+        lines = [
+            f"\n## {self.clock.today().isoformat()}, cycle #{ctx.cycle_id}"
+            + (f" ({'; '.join(about)})" if about else "")
+        ]
+        for venture_id, idea in added:
+            lines.append(f"- #{venture_id} {idea['title']}: {idea['pitch']} First question: {idea['first_question']}")
+        lines.extend(f"- (already in the tree) {title}" for title in known)
+        section = "\n".join(lines) + "\n"
+        try:
+            self.workspace.write(ventures.IDEAS_FILE, section, append=True)
+        except SandboxError:
+            try:
+                self.workspace.write(
+                    ventures.IDEAS_FILE, "# Brainstorms (the older ones are in your venture tree)\n" + section
+                )
+            except SandboxError:
+                log.warning("Could not keep the brainstorm's ideas in %s", ventures.IDEAS_FILE)
+
     # --- the workshop (metered sub-calls with Anthropic's code execution tool) ---
 
     def _workshop_fn(self, ctx: tools.ToolContext) -> tools.WorkshopFn:
@@ -806,6 +976,61 @@ def _sources(response: dict[str, Any]) -> list[str]:
             if isinstance(item, dict) and isinstance(item.get("url"), str) and item["url"] not in urls:
                 urls.append(item["url"][:300])
     return urls
+
+
+def _brainstorm_context(status: Any, earned: int, instructions: str, tree: list[Any], parent: Any, theme: str) -> str:
+    """What a brainstorm is told: the owner's standing instructions, the money, the tree so far and the task."""
+    runway = f"{status.runway.days:.0f} days" if status.runway.days is not None else "unknown"
+    quoted = json.dumps(instructions, ensure_ascii=False) if instructions.strip() else "None."
+    task = "Find ideas in new ground: anything that fits the agent and its owner and isn't in the tree yet."
+    if parent is not None:
+        task = (
+            f"Grow the tree from #{parent['id']} {json.dumps(parent['title'], ensure_ascii=False)} ({parent['stage']}):"
+            " its variants, niches, customers, channels and next steps. Its pitch: "
+            + json.dumps(parent["pitch"], ensure_ascii=False)
+        )
+    if theme:
+        task += f"\nTheme: {json.dumps(theme, ensure_ascii=False)}"
+    return "\n\n".join(
+        [
+            f"THE OWNER'S STANDING INSTRUCTIONS (their words)\n{quoted}",
+            f"MONEY\nBalance ${micros_to_usd(status.balance):.2f}, runway {runway} at the recent spending;"
+            f" revenue so far ${micros_to_usd(earned):.2f}.",
+            "THE VENTURE TREE (don't repeat these ideas; branch from them or go somewhere new)\n"
+            + ventures.tree_text(tree),
+            f"TASK\n{task}",
+        ]
+    )
+
+
+def _ideas(text: str) -> list[dict[str, Any]]:
+    """The brainstorm's ideas: titles, pitches and questions cut to their limits, scores kept only from 1 to 5."""
+    data: Any = None
+    for candidate in (text, _first_object(text)):
+        if not candidate:
+            continue
+        try:
+            data = json.loads(candidate)
+            break
+        except ValueError:
+            continue
+    items = data.get("ideas") if isinstance(data, dict) else None
+    ideas = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        title = " ".join(str(item.get("title") or "").split())[: ventures.LIMITS["title"]]
+        pitch = " ".join(str(item.get("pitch") or "").split())[: ventures.LIMITS["pitch"]]
+        if not title or not pitch:
+            continue
+        scores = {}
+        for name in ventures.SCORE_FIELDS:
+            value = item.get(name)
+            if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 5:
+                scores[name] = value
+        question = " ".join(str(item.get("first_question") or "").split())[: ventures.LIMITS["next_question"]]
+        ideas.append({"title": title, "pitch": pitch, "first_question": question, "scores": scores})
+    return ideas
 
 
 def _first_object(text: str) -> str | None:

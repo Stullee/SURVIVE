@@ -106,6 +106,9 @@ class Settings(BaseModel):
     starting_balance_usd: float = Field(default=20.0, ge=0, le=100_000)
     daily_spend_cap_usd: float = Field(default=1.0, ge=0, le=1_000)
     cycle_spend_cap_usd: float = Field(default=0.25, ge=0, le=1_000)
+    # Ventures (0.10.0): this percent of each day's spending goes to venture cycles, where the agent researches new
+    # ways to earn and brings the owner business cases. 0: no venture cycles.
+    venture_share: int = Field(default=25, ge=0, le=100)
     wake_interval_minutes: int = Field(default=240, ge=5, le=10_080)
     min_sleep_minutes: int = Field(default=30, ge=5, le=10_080)
     max_sleep_minutes: int = Field(default=1_440, ge=5, le=10_080)

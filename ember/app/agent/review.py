@@ -23,6 +23,7 @@ from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.ledger import Books, Scope
 from ..economy.life import LifeStatus
+from . import ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
 
 WINDOW_DAYS = 7
@@ -33,7 +34,7 @@ MAX_SALES = 6  # revenue entries listed in the scorecard
 MAX_ATTEMPTS = 2  # reviews a day, failed ones included
 VERDICTS = ("continue", "change", "stop")
 # The dashboard's and the database's limits for the review's texts.
-LIMITS = {"working": 600, "not_working": 600, "owner_feedback": 600, "lesson": 400, "focus": 400}
+LIMITS = {"working": 600, "not_working": 600, "owner_feedback": 600, "lesson": 400, "focus": 400, "ventures": 600}
 WHY_CHARS = 200
 # Where the money went, by call purpose.
 _PURPOSES = {
@@ -43,6 +44,7 @@ _PURPOSES = {
     "research": "research",
     "workshop": "the workshop",
     "review": "reviews",
+    "brainstorm": "brainstorms",
     "last_will": "the last will",
 }
 _DECIDED = ("approved", "approved_with_changes", "rejected", "withdrawn", "expired")
@@ -75,6 +77,7 @@ class Review:
     owner_feedback: str
     lesson: str
     focus: str
+    ventures: str = ""
 
 
 def due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> bool:
@@ -131,6 +134,7 @@ def scorecard(
         _last_review(conn, scope, today),
         _etsy(conn, scope, since),
         _project_lines(conn, projects, clock, since),
+        _ventures(conn, scope, since),
         _decisions(conn, scope, since),
         _cycles(conn, scope, since),
         _upgrades(conn, scope, since),
@@ -301,6 +305,57 @@ def _project_lines(conn: sqlite3.Connection, projects: list[sqlite3.Row], clock:
     return "\n".join(lines)
 
 
+def _ventures(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
+    """The venture tree: what is being worked on (with its money), the heaviest ideas, and the venture cycles' share
+    of the period's spending."""
+    rows = ventures.all_ventures(conn, scope)
+    if not rows:
+        return "VENTURES\nYour tree is empty."
+    session = (scope.session, 1 if scope.simulated else 0)
+    spent, ventured = conn.execute(
+        "SELECT COALESCE(SUM(c.cost_micros), 0),"
+        " COALESCE(SUM(CASE WHEN y.venture = 1 THEN c.cost_micros ELSE 0 END), 0)"
+        " FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id WHERE y.session = ? AND y.simulated = ? AND c.ts >= ?",
+        (*session, since),
+    ).fetchone()
+    cycles = conn.execute(
+        "SELECT COUNT(*) FROM cycles WHERE session = ? AND simulated = ? AND venture = 1 AND started_at >= ?",
+        (*session, since),
+    ).fetchone()[0]
+    share = f"{100 * int(ventured) / int(spent):.0f}%" if spent else "none"
+    paid = ventures.money(conn, scope)
+    active = [v for v in rows if v["stage"] in ventures.ACTIVE_STAGES]
+    ideas = sorted((v for v in rows if v["stage"] == "idea"), key=lambda v: -(ventures.weight(v) or -1))
+    closed = [v for v in rows if v["stage"] in ("parked", "killed") and v["updated_at"] >= since]
+    lines = [
+        f"VENTURES ({len(rows)} in your tree, {len(ideas)} ideas; {int(cycles)} venture cycles in the period had"
+        f" ${micros_to_usd(int(ventured)):.2f}, {share} of your spending)"
+    ]
+    for v in active:
+        m = paid.get(v["id"], ventures.Money())
+        case = ""
+        if v["stage"] in ventures.EXPLORING:
+            missing = ventures.missing_case(v)
+            case = f" · business case: {'missing ' + ', '.join(missing) if missing else 'complete'}"
+        lines.append(
+            f"#{v['id']} [{v['stage']}] {_one_line(v['title'], 80)} · {ventures.scores_text(v)} · spent"
+            f" ${micros_to_usd(m.spent):.2f} · earned ${micros_to_usd(m.earned):.2f}{case}"
+        )
+    if ideas:
+        best = ", ".join(
+            f"#{v['id']} {_one_line(v['title'], 50)} ({ventures.weight(v) if ventures.weight(v) is not None else '?'})"
+            for v in ideas[:5]
+        )
+        lines.append(f"Heaviest ideas: {best}.")
+    if closed:
+        lines.append(
+            "Parked or killed in the period: "
+            + ", ".join(f"#{v['id']} {_one_line(v['title'], 50)}" for v in closed[:6])
+            + "."
+        )
+    return "\n".join(lines)
+
+
 def _days(now: datetime, since: str) -> str:
     days = max(0, (now - from_iso(since)).days)
     return "less than a day" if days == 0 else f"{days} day{'s' if days != 1 else ''}"
@@ -461,7 +516,8 @@ def save(
     texts = {key: getattr(review, key) if review else "" for key in LIMITS}
     cursor = conn.execute(
         "INSERT INTO reviews (mode, session, life_id, cycle_id, created_at, day, status, scorecard, verdicts, working,"
-        " not_working, owner_feedback, lesson, focus, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " not_working, owner_feedback, lesson, focus, ventures, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+        " ?, ?)",
         (
             scope.mode,
             scope.session,
@@ -477,6 +533,7 @@ def save(
             texts["owner_feedback"],
             texts["lesson"],
             texts["focus"],
+            texts["ventures"],
             (note or "")[:300] or None,
         ),
     )
@@ -505,6 +562,12 @@ def planner_text(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
         lines.append(f"Focus today: {_one_line(row['focus'], 300)}")
     if row["lesson"]:
         lines.append(f"Lesson: {_one_line(row['lesson'], 300)}")
+    try:
+        tree = row["ventures"]
+    except (IndexError, KeyError):  # a row built by hand (in tests) may lack it
+        tree = ""
+    if tree:
+        lines.append(f"Ventures: {_one_line(tree, 400)}")
     lines.append(
         "Act on it: carry out every stop and change (project_update), and keep the lesson with memory_update if it"
         " is new."

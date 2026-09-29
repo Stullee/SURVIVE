@@ -8,7 +8,8 @@ a work step that was answered, or shown in full by a plan with nothing to do. A
 message counts as shown in full only unshortened, unless it is longer than the brief
 can ever hold. What a prompt left out, cut or shortened, and what a cycle that ended
 before showed, stays news for the next cycle. The owner's messages stay in the plans
-after that too, until the agent answers them (0.9.1, ``store.open_messages``).
+after that too, until the agent answers them (0.9.1, ``store.open_messages``). The owner's word on a venture (an idea
+they added, backing, parking, killing, a note: 0.10.0) is news like a decision.
 """
 
 from __future__ import annotations
@@ -23,12 +24,13 @@ from pathlib import Path
 from .. import paths
 from ..db import Database
 from .store import AgentScope
+from .ventures import news_line
 
 # Bytes (JSON-escaped): the planner's YOUR SOFTWARE section holds this much uncut, and only then counts it as read.
 CHANGELOG_LIMIT = 2_000
 _HEADING = re.compile(r"^## (\d+)\.(\d+)\.(\d+)\s*$")
-# An owner item as the agent is shown it: ("message", id, None), ("approval", id, version) or ("upgrade", id,
-# status). A decision the owner changes again (a new version or status) is news again.
+# An owner item as the agent is shown it: ("message", id, None), ("approval", id, version), ("upgrade", id, status) or
+# ("venture", id, owner_version). A decision the owner changes again (a new version or status) is news again.
 Item = tuple[str, int, int | str | None]
 
 
@@ -112,6 +114,7 @@ class News:
     upgrades: list[sqlite3.Row] = field(default_factory=list)
     changelog: str = ""
     running_version: str = ""
+    ventures: list[sqlite3.Row] = field(default_factory=list)  # the owner's word on a venture (0.10.0)
 
     def approval_lines(self) -> list[str]:
         lines = []
@@ -150,10 +153,15 @@ class News:
             lines.append(line + ".")
         return lines
 
+    def venture_lines(self) -> list[str]:
+        return [news_line(r) for r in self.ventures]
+
     def items(self) -> list[Item]:
-        """The items of ``approval_lines()`` and ``upgrade_lines()``, in the same order."""
-        return [("approval", r["id"], r["version"]) for r in self.decided] + [
-            ("upgrade", r["id"], r["status"]) for r in self.upgrades
+        """The items of ``approval_lines()``, ``upgrade_lines()`` and ``venture_lines()``, in the same order."""
+        return [
+            *(("approval", r["id"], r["version"]) for r in self.decided),
+            *(("upgrade", r["id"], r["status"]) for r in self.upgrades),
+            *(("venture", r["id"], r["owner_version"]) for r in self.ventures),
         ]
 
 
@@ -178,8 +186,15 @@ def collect(conn: sqlite3.Connection, db: Database, scope: AgentScope, running_v
         f"SELECT * FROM upgrades WHERE {where} AND status <> 'new' AND seen_cycle_id IS NULL ORDER BY id LIMIT 10",
         params,
     ).fetchall()
+    ventures = conn.execute(
+        f"SELECT * FROM ventures WHERE {where} AND owner_action IS NOT NULL AND seen_cycle_id IS NULL ORDER BY id"
+        " LIMIT 10",
+        params,
+    ).fetchall()
     seen = db.get_meta(changelog_key(scope.mode))
-    return News(decided, upgrades, changelog_news(paths.CHANGELOG_PATH, seen, running_version), running_version)
+    return News(
+        decided, upgrades, changelog_news(paths.CHANGELOG_PATH, seen, running_version), running_version, ventures
+    )
 
 
 def mark_seen(conn: sqlite3.Connection, cycle_id: int, items: Iterable[Item]) -> None:
@@ -200,6 +215,11 @@ def mark_seen(conn: sqlite3.Connection, cycle_id: int, items: Iterable[Item]) ->
         elif kind == "upgrade":
             conn.execute(
                 "UPDATE upgrades SET seen_cycle_id = ? WHERE id = ? AND status = ? AND seen_cycle_id IS NULL",
+                (cycle_id, item_id, version),
+            )
+        elif kind == "venture":
+            conn.execute(
+                "UPDATE ventures SET seen_cycle_id = ? WHERE id = ? AND owner_version = ? AND seen_cycle_id IS NULL",
                 (cycle_id, item_id, version),
             )
 

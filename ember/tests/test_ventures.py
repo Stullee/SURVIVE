@@ -1,0 +1,535 @@
+"""Ventures (0.10.0): the tree of ways to earn, venture cycles with the owner's share, and the owner's word on them."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.agent import context, prompts, tools, ventures
+from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls, request_kind, validate_request
+from app.agent.service import Agent
+from app.config import LoadedSettings, Settings
+from app.economy.clock import to_iso
+from app.economy.life import LifeStatus, Runway
+from tests.economy_helpers import make_economy
+from tests.test_agent import ROOMY, rows
+from tests.test_loop_shapes import run
+from tests.test_owner_api import post
+from tests.test_owner_loop import owner
+
+# Every cycle a venture cycle.
+VENTURING = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=100)
+JOURNAL = ToolCalls([("write_journal", {"summary": "Worked on ventures", "entry": "Researched and scored."})])
+TITLES = [seed[2] for seed in ventures.SEEDS]
+ETSY, PINTEREST, DROPSHIPPING, PRINT, WEBSITE, RECRUITING, COMPANION, FIVERR = range(1, 9)
+
+
+def plan(steps: list[str] | None = None, venture: int | None = None, project: int | None = None) -> Plan:
+    return Plan(
+        {
+            "assessment": "ok",
+            "goal": "Work on my ventures",
+            "money_path": "A business case my owner can back",
+            "focus_project_id": project,
+            "focus_venture_id": venture,
+            "steps": ["research the venture"] if steps is None else steps,
+            "sleep_minutes": 120,
+        }
+    )
+
+
+def tool_results(agent: Agent, tool: str) -> list[dict[str, Any]]:
+    return rows(agent, f"SELECT status, summary, input, result FROM tool_calls WHERE tool = '{tool}' ORDER BY id")
+
+
+def venture(agent: Agent, venture_id: int) -> dict[str, Any]:
+    return rows(agent, f"SELECT * FROM ventures WHERE id = {venture_id}")[0]
+
+
+def planner_texts(fake: FakeTransport) -> list[str]:
+    return [request["messages"][0]["content"][0]["text"] for request in fake.sent if request_kind(request) == "plan"]
+
+
+# --- the tree ---
+
+
+def test_the_tree_starts_once_with_the_ideas_so_far(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
+    tree = rows(agent, "SELECT id, parent_id, stage, title, created_by, owner_action, notes FROM ventures ORDER BY id")
+    assert [v["title"] for v in tree] == TITLES
+    by_title = {v["title"]: v for v in tree}
+    assert by_title["Pinterest for the Etsy shop"]["parent_id"] == ETSY
+    assert by_title["Print on demand in the Etsy shop"]["parent_id"] == DROPSHIPPING
+    assert by_title["Etsy digital products"]["stage"] == "researching"  # no listing is live yet
+    assert by_title["Services on Fiverr"]["stage"] == "parked"
+    assert by_title["Services on Fiverr"]["notes"] == "Your owner put Fiverr on hold."
+    assert {v["created_by"] for v in tree} == {"agent", "owner"}
+    assert all(v["owner_action"] is None for v in tree)  # planted, not news
+    agent.recover()
+    with agent.db.transaction() as conn:
+        assert ventures.seed(conn, agent.scope(), to_iso(agent.clock.now())) == 0
+    assert len(rows(agent, "SELECT id FROM ventures")) == len(ventures.SEEDS)
+
+
+def test_the_etsy_leg_is_live_with_the_projects_that_listed(data_dir: Path) -> None:
+    economy = make_economy(data_dir, VENTURING)
+    agent = Agent(economy.db, LoadedSettings(VENTURING), economy, transport=FakeTransport(), cycles_enabled=True)
+    scope = agent.scope()
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        cycle_id = conn.execute(
+            "INSERT INTO cycles (life_id, boot_id, started_at, status, trigger, simulated, cap_micros, session)"
+            " VALUES (?, 'b', ?, 'running', 'schedule', 1, 0, ?)",
+            (scope.life_id, now, scope.session),
+        ).lastrowid
+        project_id = conn.execute(
+            "INSERT INTO projects (mode, session, life_id, created_cycle_id, created_at, updated_at, title, hypothesis,"
+            " status) VALUES (?, ?, ?, ?, ?, ?, 'CV templates', 'Job seekers pay', 'active')",
+            (scope.mode, scope.session, scope.life_id, cycle_id, now, now),
+        ).lastrowid
+        conn.execute("UPDATE cycles SET project_id = ? WHERE id = ?", (project_id, cycle_id))
+        conn.execute("UPDATE cycles SET status = 'completed', ended_at = ? WHERE id = ?", (now, cycle_id))
+        approval_id = conn.execute(
+            "INSERT INTO approvals (mode, session, life_id, cycle_id, created_at, type, title, description, payload,"
+            " payload_sha256, expected_cost, expected_benefit, executor, action)"
+            " VALUES (?, ?, ?, ?, ?, 'sell', 'Etsy listing: CV', 'd', 'p', 's', 'c', 'b', 'etsy_listing', '{}')",
+            (scope.mode, scope.session, scope.life_id, cycle_id, now),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO etsy_listings (mode, session, approval_id, started_at, finished_at, status, title)"
+            " VALUES (?, ?, ?, ?, ?, 'active', 'CV')",
+            (scope.mode, scope.session, approval_id, now, now),
+        )
+        assert ventures.seed(conn, scope, now) == len(ventures.SEEDS)
+    assert venture(agent, ETSY)["stage"] == "live"
+    assert rows(agent, "SELECT venture_id FROM projects")[0]["venture_id"] == ETSY
+
+
+def test_a_ventures_identity_and_history_are_kept(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
+    with agent.db.connection() as conn:
+        for sql in (
+            "UPDATE ventures SET title = 'Other' WHERE id = 1",
+            "UPDATE ventures SET parent_id = 3 WHERE id = 2",
+            "DELETE FROM ventures WHERE id = 1",
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(sql)
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("UPDATE ventures SET revenue = 6 WHERE id = 1")
+
+
+def test_the_weight_counts_revenue_double_and_turns_the_bad_ones_around() -> None:
+    assert ventures.weight({}) is None
+    assert ventures.weight({"revenue": 5}) == 100
+    assert ventures.weight({"revenue": 1, "risk": 5}) == 0
+    best = {"revenue": 5, "doability": 5, "difficulty": 1, "risk": 1, "speed": 5, "cost": 1}
+    assert ventures.weight(best) == 100
+    assert ventures.weight(dict.fromkeys(ventures.SCORE_FIELDS, 3)) == 50
+    assert ventures.weight({**best, "revenue": 1}) == 71  # 20 of 28 points: revenue counts double
+    assert ventures.scores_text({**best, "scores_by": "brainstorm"}).startswith("weight 100 guessed (revenue 5, ")
+    assert ventures.slug("Ärger-frei: Grants für Vereine!") == "arger-frei-grants-fur-vereine"
+    assert ventures.file_of(12, "  ") == "ventures/12-venture.md"
+
+
+# --- venture cycles ---
+
+
+@pytest.mark.parametrize(
+    ("share", "spent", "ventured", "turn"),
+    [
+        (25, 0, 0, False),  # the day's first cycle is an ordinary one
+        (25, 400, 0, True),
+        (25, 400, 100, False),  # exactly the share
+        (25, 401, 100, True),
+        (0, 400, 0, False),  # switched off
+        (100, 0, 0, True),  # every cycle
+    ],
+)
+def test_a_cycle_is_a_venture_cycle_while_ventures_are_below_their_share(
+    share: int, spent: int, ventured: int, turn: bool
+) -> None:
+    assert ventures.venture_turn(share, spent, ventured) is turn
+
+
+def test_venture_cycles_get_the_owners_share_of_the_days_spending(data_dir: Path) -> None:
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=25)
+    fake = FakeTransport(seed=5, scenario="founder")
+    agent, ends = run(data_dir, fake, cycles=8, settings=settings)
+    assert all(end.status == "completed" for end in ends)
+    cycles = rows(agent, "SELECT id, venture FROM cycles ORDER BY id")
+    spent = ventured = 0
+    for cycle in cycles:  # each cycle followed the rule, with what the day had spent before it
+        assert bool(cycle["venture"]) is ventures.venture_turn(25, spent, ventured), cycle
+        cost = rows(agent, f"SELECT COALESCE(SUM(cost_micros), 0) AS c FROM llm_calls WHERE cycle_id = {cycle['id']}")
+        spent += cost[0]["c"]
+        ventured += cost[0]["c"] if cycle["venture"] else 0
+    assert 2 <= sum(c["venture"] for c in cycles) <= 4
+    assert 0.15 < ventured / spent < 0.35
+    # The fake grows its tree in a venture cycle (brainstorm) and researches the venture it focused on.
+    assert any(r["status"] == "ok" for r in tool_results(agent, "brainstorm"))
+    assert rows(agent, "SELECT COUNT(*) AS n FROM ventures WHERE scores_by = 'brainstorm'")[0]["n"] >= 6
+    focused = rows(agent, "SELECT venture_id FROM cycles WHERE venture = 1 AND venture_id IS NOT NULL")
+    assert focused and agent.ventures()["items"][focused[0]["venture_id"] - 1]["spent_usd"] > 0
+    texts = planner_texts(fake)
+    assert any("This is a venture cycle." in t and "Plan this venture cycle." in t for t in texts)
+    assert any("This is a venture cycle." not in t and "Plan this wake cycle." in t for t in texts)
+
+
+def test_brainstorm_and_more_research_only_in_venture_cycles(data_dir: Path) -> None:
+    research = [("research", {"question": f"Question {i}?"}) for i in range(4)]
+    ordinary = FakeTransport(
+        script=[
+            plan(),
+            ToolCalls([("brainstorm", {}), *research[:3]]),
+            *[Reply("Found it.")] * 3,
+            ToolCalls(research[3:]),  # refused by its limit before any model call
+            Reply("Done."),
+            JOURNAL,
+        ]
+    )
+    agent, _ = run(data_dir, ordinary, settings=ROOMY)
+    assert [r["status"] for r in tool_results(agent, "brainstorm")] == ["error"]
+    assert "there is no tool called 'brainstorm'" in tool_results(agent, "brainstorm")[0]["result"]
+    refused = tool_results(agent, "research")[-1]
+    assert refused["status"] == "error" and "at most 3 times per cycle (8 in a venture cycle)" in refused["result"]
+    work = [r for r in ordinary.sent if request_kind(r) == "work"]
+    assert all("brainstorm" not in {t["name"] for t in r["tools"]} for r in work)
+
+
+def test_a_venture_cycle_researches_up_to_eight_times(data_dir: Path) -> None:
+    four = [("research", {"question": f"Question {i}?"}) for i in range(4)]
+    fake = FakeTransport(
+        script=[
+            plan(venture=DROPSHIPPING),
+            ToolCalls(four),
+            *[Reply("Found it.")] * 4,
+            ToolCalls(four),
+            *[Reply("Found it.")] * 4,
+            ToolCalls([("research", {"question": "One more?"})]),
+            Reply("Done."),
+            JOURNAL,
+        ]
+    )
+    agent, _ = run(data_dir, fake, settings=VENTURING)
+    statuses = [r["status"] for r in tool_results(agent, "research")]
+    assert statuses == ["ok"] * 8 + ["error"]
+    assert "at most 8 times per cycle" in tool_results(agent, "research")[-1]["result"]
+    assert rows(agent, "SELECT venture, venture_id FROM cycles") == [{"venture": 1, "venture_id": DROPSHIPPING}]
+    work = [r for r in fake.sent if request_kind(r) == "work"]
+    assert all("brainstorm" in {t["name"] for t in r["tools"]} for r in work)
+    brief = work[0]["messages"][0]["content"][0]["text"]
+    assert "\n== VENTURE CYCLE ==\nThis is a venture cycle: read guide 'ventures' first" in brief
+    assert "Focus venture: #3 Dropshipping store [idea]" in brief
+    assert "Knowledge file: ventures/3-dropshipping-store.md (not written yet)" in brief
+
+
+def test_the_planner_sees_the_tree_and_the_venture_rules(data_dir: Path) -> None:
+    fake = FakeTransport(script=[plan(steps=[]), plan(steps=[])])
+    agent, _ = run(data_dir, fake, settings=VENTURING)
+    request = next(r for r in fake.sent if request_kind(r) == "plan")
+    assert any(block["text"] == prompts.VENTURE_RULES for block in request["system"])
+    text = request["messages"][0]["content"][0]["text"]
+    tree = context_section(text, "VENTURES")
+    assert tree.startswith("#1 [researching] Etsy digital products · not scored yet")
+    assert "#3 [idea] Dropshipping store · not scored yet" in tree
+    assert "#2 [idea] Pinterest for the Etsy shop (branch of #1) · not scored yet" in tree
+    assert "Parked or killed (don't start them again): #8 Services on Fiverr." in tree
+    assert (
+        "Your owner gives ventures 100% of your spending: $0.00 of today's $0.00 so far. This is a venture cycle."
+        in text
+    )
+
+    ordinary = FakeTransport(script=[plan(steps=[])])
+    economy_agent, _ = run(data_dir / "other", ordinary, settings=Settings(venture_share=25))
+    text = next(r for r in ordinary.sent if request_kind(r) == "plan")["messages"][0]["content"][0]["text"]
+    assert context_section(text, "VENTURES") == (
+        "#1 [researching] Etsy digital products · not scored yet\n6 ideas in the tree."
+    )
+    assert "Plan this wake cycle." in text and "venture cycle" not in context_section(text, "STATUS")
+
+
+def context_section(text: str, title: str) -> str:
+    return text.split(f"== {title} ==\n", 1)[1].split("\n\n== ", 1)[0]
+
+
+# --- the tools ---
+
+
+def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
+    scores = {"revenue": 4, "doability": 3, "difficulty": 3, "risk": 3, "speed": 2, "cost": 2}
+    case = {
+        "demand": "Shops like X sell 200 a month (source).",
+        "economics": "25 EUR price, 12 EUR cost, 29 EUR a month for the shop: 3 sales to break even.",
+        "setup": "Owner: Gewerbe, Shopify account, 3 hours; Ember: product pages.",
+        "first_euro": "About 4 weeks: the store needs ads first.",
+        "risks": "Slow shipping; GPSR duties: pick an EU supplier.",
+        "first_test": "10 products, 50 EUR of ads: 3 sales in two weeks means go.",
+    }
+    fake = FakeTransport(
+        script=[
+            plan(venture=DROPSHIPPING),
+            ToolCalls(
+                [
+                    ("venture_create", {"title": "Dropshipping store", "pitch": "Again.", "stage": "idea"}),
+                    (
+                        "venture_create",
+                        {
+                            "title": "EU supplier finder",
+                            "pitch": "Find suppliers.",
+                            "stage": "idea",
+                            "parent_id": DROPSHIPPING,
+                        },
+                    ),
+                    (
+                        "venture_update",
+                        {
+                            "venture_id": DROPSHIPPING,
+                            "learned": "Shopify costs 29 EUR a month (src).",
+                            "next_question": "Which EU supplier ships in 3 days?",
+                            **scores,
+                        },
+                    ),
+                    ("venture_update", {"venture_id": DROPSHIPPING, "stage": "proposed"}),
+                ]
+            ),
+            ToolCalls(
+                [
+                    ("venture_update", {"venture_id": DROPSHIPPING, "stage": "building"}),
+                    ("venture_update", {"venture_id": DROPSHIPPING, "stage": "proposed", **case}),
+                    ("venture_update", {"venture_id": FIVERR, "stage": "researching"}),
+                    ("venture_update", {"venture_id": WEBSITE, "stage": "parked"}),
+                ]
+            ),
+            ToolCalls(
+                [
+                    ("venture_update", {"venture_id": WEBSITE, "stage": "parked", "note": "Needs months of posts."}),
+                    ("venture_update", {"venture_id": PRINT, "stage": "live"}),
+                    ("venture_update", {"venture_id": DROPSHIPPING, "learned": "A second finding."}),
+                ]
+            ),
+            Reply("Done."),
+            JOURNAL,
+        ]
+    )
+    agent, ends = run(data_dir, fake, settings=VENTURING)
+    assert ends[0].status == "completed"
+    created = tool_results(agent, "venture_create")
+    assert created[0]["status"] == "error" and "venture #3 (idea) already has this title" in created[0]["result"]
+    assert created[1]["status"] == "ok" and "Venture #9 is in your tree (idea, a branch of #3)" in created[1]["result"]
+    assert venture(agent, 9)["parent_id"] == DROPSHIPPING and venture(agent, 9)["created_cycle_id"] == 1
+    updates = tool_results(agent, "venture_update")
+    assert updates[0]["status"] == "ok" and "Now weight 57 (revenue 4, doability 3" in updates[0]["result"]
+    assert updates[1]["status"] == "error"
+    assert "needs demand, economics, setup, first_euro, risks, first_test filled in first" in updates[1]["result"]
+    assert updates[2]["status"] == "error" and "must be one of" in updates[2]["result"]  # only the owner backs
+    assert (
+        updates[3]["status"] == "ok"
+        and "Your owner sees its business case on the Ventures tab." in updates[3]["result"]
+    )
+    assert updates[4]["status"] == "ok"  # a parked venture can be researched again
+    assert updates[5]["status"] == "error" and "say why in note" in updates[5]["result"]
+    assert updates[6]["status"] == "ok" and venture(agent, WEBSITE)["notes"] == "[#c1] Needs months of posts."
+    assert updates[7]["status"] == "error" and "goes live once your owner backed it" in updates[7]["result"]
+    assert updates[8]["status"] == "ok"
+    dropshipping = venture(agent, DROPSHIPPING)
+    assert dropshipping["stage"] == "proposed" and dropshipping["proposed_at"] is not None
+    assert dropshipping["scores_by"] == "research" and ventures.weight(dropshipping) == 57
+    assert {name: dropshipping[name] for name in ventures.CASE_FIELDS} == case
+    workspace, _ = agent.roots()
+    knowledge = workspace.read("ventures/3-dropshipping-store.md")
+    assert knowledge.startswith("# Venture #3: Dropshipping store\nPitch: A web shop selling physical products")
+    assert "\n## What you learned (newest last)\n\n### 20" in knowledge
+    assert "Shopify costs 29 EUR a month (src).\n" in knowledge and knowledge.endswith("A second finding.\n")
+    assert agent.dashboard()["badges"]["ventures_proposed"] == 1
+
+
+def test_a_brainstorm_grows_the_tree_from_a_venture(data_dir: Path) -> None:
+    ideas = [
+        {
+            "title": f"Idea {i}",
+            "pitch": f"Pitch {i}.",
+            "first_question": f"Question {i}?",
+            "revenue": 4,
+            "doability": 4,
+            "difficulty": 2,
+            "risk": 2,
+            "speed": 4,
+            "cost": 9 if i == 2 else 1,
+        }
+        for i in range(1, 6)
+    ]
+    ideas.append({**ideas[0], "title": "print on demand in the etsy shop"})  # already in the tree
+    fake = FakeTransport(
+        script=[
+            plan(venture=DROPSHIPPING),
+            ToolCalls([("brainstorm", {"venture_id": DROPSHIPPING, "theme": "EU suppliers"})]),
+            Reply(json.dumps({"ideas": ideas})),
+            Reply("Done."),
+            JOURNAL,
+        ]
+    )
+    agent, _ = run(data_dir, fake, settings=VENTURING)
+    result = tool_results(agent, "brainstorm")[0]
+    assert result["status"] == "ok", result
+    assert result["result"].startswith("The brainstorm added 5 ideas to your tree as branches of #3 (cost $")
+    assert "Already in the tree, so not added again: print on demand in the etsy shop." in result["result"]
+    added = rows(agent, "SELECT id, parent_id, stage, scores_by, cost, next_question FROM ventures WHERE id > 8")
+    assert [v["parent_id"] for v in added] == [DROPSHIPPING] * 5
+    assert {v["stage"] for v in added} == {"idea"} and {v["scores_by"] for v in added} == {"brainstorm"}
+    assert added[1]["cost"] is None  # a score out of range is left out
+    assert added[0]["next_question"] == "Question 1?"
+    call = next(r for r in fake.sent if request_kind(r) == "brainstorm")
+    assert call["model"] == VENTURING.planner_model and call["system"][0]["text"] == prompts.BRAINSTORM_RULES
+    asked = call["messages"][0]["content"][0]["text"]
+    assert "- #3 Dropshipping store (idea)\n  - #4 Print on demand in the Etsy shop (idea)" in asked
+    assert 'TASK\nGrow the tree from #3 "Dropshipping store" (idea)' in asked and 'Theme: "EU suppliers"' in asked
+    workspace, _ = agent.roots()
+    kept = workspace.read(ventures.IDEAS_FILE)
+    assert "cycle #1 (branch of #3 Dropshipping store; theme: EU suppliers)" in kept
+    assert "- #9 Idea 1: Pitch 1. First question: Question 1?" in kept
+    assert "- (already in the tree) print on demand in the etsy shop" in kept
+    assert validate_request(call) is None
+
+
+# --- the owner's word ---
+
+
+def test_the_owner_adds_ideas_and_decides_and_the_agent_hears_it(data_dir: Path) -> None:
+    fake = FakeTransport(script=[plan(steps=[]), plan(steps=[])])
+    agent, _ = run(data_dir, fake, cycles=0, settings=VENTURING)
+    who = owner(agent)
+    added = who.add_venture({"title": "Grant finder", "pitch": "Grants for clubs.", "parent_id": WEBSITE}, "Stefan")
+    assert added.status == 201 and added.body == {"id": 9}
+    assert who.add_venture({"title": "grant  FINDER", "pitch": "Again."}, None).status == 409
+    assert who.add_venture({"title": "New", "pitch": "x", "parent_id": 99}, None).status == 404
+    assert who.add_venture({"title": "Two\nlines", "pitch": "x"}, None).body["field"] == "title"
+    assert who.add_venture({"title": "No pitch"}, None).body["field"] == "pitch"
+    backed = who.decide_venture(DROPSHIPPING, {"action": "back", "comment": "Go, I make the accounts."}, "Stefan")
+    assert backed.status == 200 and backed.body == {"id": DROPSHIPPING, "stage": "building"}
+    assert who.decide_venture(DROPSHIPPING, {"action": "back"}, None).status == 409  # already building
+    assert who.decide_venture(FIVERR, {"action": "kill"}, None).body["stage"] == "killed"
+    assert (
+        who.decide_venture(FIVERR, {"action": "research", "comment": "Look again"}, None).body["stage"] == "researching"
+    )
+    assert who.decide_venture(COMPANION, {"action": "note"}, None).body["field"] == "comment"
+    assert who.decide_venture(COMPANION, {"action": "park", "expected_version": 5}, None).status == 409
+    assert who.decide_venture(COMPANION, {"action": "dance"}, None).body["field"] == "action"
+    assert who.decide_venture(99, {"action": "park"}, None).status == 404
+    assert venture(agent, DROPSHIPPING)["owner_by"] == "Stefan" and venture(agent, FIVERR)["owner_version"] == 2
+
+    agent.run_cycle("schedule")
+    text = planner_texts(fake)[0]
+    assert (
+        'Your owner added a venture idea (a branch of #5), venture #9 "Grant finder": "Grants for clubs.". Score and'
+        " research it." in text
+    )
+    assert (
+        'Your owner backed venture #3 "Dropshipping store": it is building now. Plan its first test with them.'
+        ' Owner\'s comment: "Go, I make the accounts."' in text
+    )
+    assert 'Your owner wants venture #8 "Services on Fiverr" researched next (it is researching now)' in text
+    assert "#3 [building] Dropshipping store · not scored yet · your owner backed it (" in text
+    seen = rows(agent, "SELECT id, seen_cycle_id FROM ventures WHERE owner_action IS NOT NULL ORDER BY id")
+    assert seen == [
+        {"id": DROPSHIPPING, "seen_cycle_id": 1},
+        {"id": FIVERR, "seen_cycle_id": 1},
+        {"id": 9, "seen_cycle_id": 1},
+    ]
+    agent.run_cycle("schedule")
+    assert "Your owner backed venture" not in planner_texts(fake)[1]  # news once
+
+
+# --- the dashboard ---
+
+
+def test_the_ventures_tab(ingress_client: TestClient) -> None:
+    tree = ingress_client.get("api/ventures").json()
+    assert tree["share"] == 25 and tree["mode"] == "dry_run" and tree["venture_cycles"] == 0
+    assert [c["name"] for c in tree["criteria"]] == list(ventures.SCORE_FIELDS)
+    assert [v["title"] for v in tree["items"]] == TITLES
+    etsy = tree["items"][0]
+    assert etsy["file"] == "ventures/1-etsy-digital-products.md" and etsy["file_bytes"] is None
+    assert etsy["weight"] is None and etsy["missing"] == list(ventures.CASE_FIELDS) and etsy["projects"] == []
+    stamp = ingress_client.get("api/dashboard").json()["ventures_stamp"]
+    assert stamp == tree["stamp"]
+    added = post(ingress_client, "api/ventures", {"title": "Grant finder", "pitch": "Grants for clubs."})
+    assert added.status_code == 201
+    decided = post(ingress_client, f"api/ventures/{added.json()['id']}/decide", {"action": "note", "comment": "Hi"})
+    assert decided.status_code == 200
+    data = ingress_client.get("api/dashboard").json()
+    assert data["ventures_stamp"] != stamp and data["badges"]["ventures_proposed"] == 0
+    item = ingress_client.get("api/ventures").json()["items"][-1]
+    assert item["owner_action"] == "note" and item["owner_comment"] == "Hi" and item["created_by"] == "owner"
+    assert post(ingress_client, "api/ventures/99/decide", {"action": "park"}).status_code == 404
+    html = ingress_client.get("/").text
+    assert 'id="tab-ventures"' in html and 'id="panel-ventures"' in html and 'id="vt-svg-ns"' in html
+
+
+# --- the review and the rules ---
+
+
+def test_the_review_reads_the_tree(data_dir: Path) -> None:
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=25)
+    agent, _ = run(data_dir, FakeTransport(seed=5, scenario="founder"), cycles=3, settings=settings)
+    agent.clock.advance(days=1)
+    agent.run_cycle("schedule")
+    review = rows(agent, "SELECT scorecard, ventures FROM reviews")[0]
+    assert "\nVENTURES (" in review["scorecard"] and " of your spending)" in review["scorecard"]
+    assert "Heaviest ideas: #" in review["scorecard"]
+    assert review["ventures"].startswith("Research the heaviest idea next")
+    with agent.db.connection() as conn:
+        snap_review = context.review.planner_text(conn, conn.execute("SELECT * FROM reviews").fetchone())
+    assert "\nVentures: Research the heaviest idea next" in snap_review
+
+
+def test_the_rules_ask_for_a_path_never_a_no() -> None:
+    assert "If you can't" not in prompts.OPERATING_RULES
+    assert "Never answer\n  an idea of theirs with a no" in prompts.OPERATING_RULES
+    assert "Only your hard rules make a real no" in prompts.OPERATING_RULES
+    assert "Don't limit ideas to your tools today" in prompts.VENTURE_RULES
+    assert "focus_venture_id" in prompts.PLAN_SCHEMA["required"]
+    assert "ventures" in prompts.REVIEW_SCHEMA["required"]
+    assert len(tools.guide_text("ventures")) <= tools.MAX_RESULT_CHARS
+    names = {d["name"] for d in tools.definitions(mail=True, etsy=True, venture=True)}
+    assert {"venture_create", "venture_update", "brainstorm"} <= names
+    assert "brainstorm" not in {d["name"] for d in tools.definitions(mail=True, etsy=True)}
+    request = prompts.brainstorm_request(Settings(), "context")
+    assert request_kind(request) == "brainstorm" and validate_request(request) is None
+
+
+def test_an_idea_turned_down_and_a_strategy_without_ventures_are_rewritten() -> None:
+    declined = "- [#c34] Dropshipping declined (msg #47/48 answered): needs supplier/payment accounts, ad budget."
+    assert context.outdated(declined) == [
+        "since 0.10.0 no idea is turned down: it goes into your venture tree with its path, smallest test and numbers"
+    ]
+    assert context.outdated("- AI girlfriend idea: declined, it breaks my hard rules.") == []
+    assert context.outdated("- Fiverr is on hold per owner.\n- Etsy daily cap: 5 listings/day.") == []
+
+    def snap(strategy: str, share: int) -> context.Snapshot:
+        status = LifeStatus(
+            mode="live", life_id=1, state="alive", reason="", last_will_due=False, runway=Runway(9, None)
+        )
+        return context.Snapshot(
+            status=status,
+            local_time="Wednesday 2026-09-30 10:00 CEST",
+            version="0.10.0",
+            agent_name="Ember",
+            today_spend=0,
+            daily_cap=5,
+            cycle_cap=0.6,
+            memory={"strategy": strategy},
+            venture_share=share,
+        )
+
+    etsy_only = "STRATEGY\n- Focus: Etsy digital templates for German and English job seekers."
+    assert "your owner gives ventures 25% of your spending: plan for them too" in context.strategy_note(
+        snap(etsy_only, 25)
+    )
+    assert context.strategy_note(snap(etsy_only, 0)) == ""
+    assert context.strategy_note(snap(etsy_only + "\n- Ventures: research the heaviest idea.", 25)) == ""

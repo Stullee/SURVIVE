@@ -43,6 +43,10 @@
     diag: { text: null, loadedAt: null, busy: false },
     // The agent's files: the list and the open file are loaded when the tab opens and on Refresh, never polled.
     ws: { list: null, loadedAt: null, busy: false, error: null, file: null, fileBusy: false, fileError: null, fileSeq: 0 },
+    // The venture tree: loaded while its tab is open, again whenever the dashboard's ventures_stamp changes.
+    // files: venture id -> what Ember learned about it (its knowledge file), loaded when the owner opens it.
+    vt: { data: null, byId: {}, stamp: null, loadedAt: null, busy: false, again: false, error: null, selected: null,
+      files: {}, saving: false },
     refocus: null,       // after the owner's own action: the card status line to focus once the list is re-rendered
     sending: false,      // an inbox message is on its way
     // The standing instructions' editor: open while the owner edits (polls never touch it then), whether a save is on its
@@ -366,7 +370,7 @@
   var TRIGGERS = { schedule: "scheduled", owner: "woken by you", last_will: "last will" };
   var PHASES = { review: "Daily review", plan: "Plan", act: "Act", reflect: "Reflect", last_will: "Last will" };
   var PURPOSES = { review: "Daily review", plan: "Plan", work: "Work", reflect: "Reflect", research: "Research",
-    workshop: "Workshop", last_will: "Last will" };
+    workshop: "Workshop", brainstorm: "Brainstorm", last_will: "Last will" };
 
   function triggerText(trigger) { return TRIGGERS[trigger] || (trigger ? String(trigger).replace(/_/g, " ") : "–"); }
   function purposeText(purpose) { return PURPOSES[purpose] || (purpose ? sentence(String(purpose).replace(/_/g, " ")) : "Model call"); }
@@ -517,7 +521,7 @@
     header: "Header", controls: "Controls", kpis: "Key numbers", badges: "Tab badges", memorial: "Memorial",
     now: "Now", lives: "Previous lives", charts: "Charts", table: "Table", ledger: "Ledger", forms: "Forms",
     projects: "Projects", activity: "Activity", approvals: "Approvals", inbox: "Inbox", instructions: "Standing instructions",
-    upgrades: "Upgrades", mind: "Mind",
+    upgrades: "Upgrades", mind: "Mind", ventures: "Ventures",
     cycleDetail: "Cycle details", diagnostics: "Diagnostics", email: "Email", workspace: "Workspace", workspaceFile: "Workspace file",
   };
 
@@ -605,6 +609,8 @@
     });
     section("inbox", [d.inbox, d.badges, agent.name, coming, d.mode, minute], ["inbox"], function () { renderInbox(arr(d.inbox), agent.name, badgeCounts(d).unread, isDryRun(d)); });
     section("upgrades", [d.upgrades, coming, agent.name, minute], null, function () { return renderUpgrades(arr(d.upgrades)); });
+    // The tree is loaded apart: again when it changed (a venture, or a cycle that ended), while its tab is open.
+    if (ui.tab === "ventures" && !ui.vt.busy && d.ventures_stamp !== undefined && d.ventures_stamp !== ui.vt.stamp) loadVentures();
     section("mind", [d.mind, ui.mind, minute], ["mind-body"], function () { renderMind(d.mind); });
 
     ui.refocus = null;  // only for the render right after the owner's action
@@ -873,6 +879,7 @@
       todo: pick("approvals_todo", function () { return rows(d.approvals, function (x) { return x.status === "approved" || x.status === "approved_with_changes"; }); }),
       unread: pick("inbox_unread", function () { return rows(d.inbox, isUnread); }),
       upgrades: pick("upgrades_new", function () { return rows(d.upgrades, function (x) { return x.status === "new"; }); }),
+      ventures: pick("ventures_proposed", function () { return 0; }),
     };
   }
 
@@ -882,6 +889,7 @@
     setBadge("badge-approvals-todo", c.todo, "☐", "approved, to carry out");
     setBadge("badge-inbox", c.unread, "●", "unread");
     setBadge("badge-upgrades", c.upgrades, "◔", "new");
+    setBadge("badge-ventures", c.ventures, "◔", "business cases waiting for your decision");
     var sys = d.system;
     setBadge("badge-system", arr(sys.config_errors).length + (isObject(sys.database) && sys.database.ok === false ? 1 : 0) + (sys.economy_broken ? 1 : 0), "!", "need attention");
   }
@@ -4553,9 +4561,565 @@
     if (btn) openWorkspaceFile(btn.getAttribute("data-path"));
   });
 
+  // ------------------------------------------------------------------ ventures (0.10.0)
+  // The venture tree: every idea Ember or the owner had, branching from the one it grew out of, weighted by its
+  // scores. Drawn as an SVG tree (bigger = heavier), and listed below as cards with the owner's decisions.
+
+  var VENTURE_STAGE = {
+    proposed: { icon: "◔", label: "Business case for you", tone: "warning", order: 0 },
+    building: { icon: "▲", label: "Building", tone: "accent", order: 1 },
+    live: { icon: "●", label: "Live", tone: "good", order: 2 },
+    researching: { icon: "◐", label: "Being researched", tone: "accent", order: 3 },
+    idea: { icon: "○", label: "Idea", tone: "", order: 4 },
+    parked: { icon: "–", label: "Parked", tone: "", order: 5 },
+    killed: { icon: "✕", label: "Killed", tone: "critical", order: 6 },
+  };
+
+  var VENTURE_GROUPS = [
+    { key: "proposed", title: "Business cases for your decision", match: function (s) { return s === "proposed"; } },
+    { key: "building", title: "Building (you backed them)", match: function (s) { return s === "building"; } },
+    { key: "live", title: "Live legs", match: function (s) { return s === "live"; } },
+    { key: "researching", title: "Being researched", match: function (s) { return s === "researching"; } },
+    { key: "idea", title: "Ideas, the heaviest first", match: function (s) { return s === "idea"; } },
+    { key: "closed", title: "Parked and killed", match: function () { return true; } },
+  ];
+
+  var VT_LAYOUT = { col: 250, row: 30, left: 30, top: 26, labelChars: 30, charWidth: 6.6 };
+  // The SVG namespace, from an empty <svg> in the page (a URL literal here would look like a request off Ingress).
+  function svgNamespace() { return $("vt-svg-ns").namespaceURI; }
+
+  function svg(tag, attrs) {
+    var node = document.createElementNS(svgNamespace(), tag);
+    Object.keys(attrs || {}).forEach(function (key) {
+      var value = attrs[key];
+      if (value !== null && value !== undefined && value !== false) node.setAttribute(key, String(value));
+    });
+    for (var i = 2; i < arguments.length; i++) append(node, arguments[i]);
+    return node;
+  }
+
+  function ventureWeight(v) {
+    var w = v && v.weight !== null && v.weight !== undefined ? num(v.weight) : NaN;
+    return isNaN(w) ? null : w;
+  }
+
+  // Stage first (what needs the owner, then legs, then research), then the heaviest, then the oldest.
+  function ventureOrder(x, y) {
+    var wx = ventureWeight(x);
+    var wy = ventureWeight(y);
+    return statusOrder(VENTURE_STAGE, x.stage) - statusOrder(VENTURE_STAGE, y.stage) ||
+      (wy === null ? -1 : wy) - (wx === null ? -1 : wx) || num(x.id) - num(y.id);
+  }
+
+  function loadVentures() {
+    var vt = ui.vt;
+    if (vt.busy) { vt.again = true; return; }
+    vt.busy = true;
+    safely("ventures", renderVentures);
+    request("GET", "api/ventures").then(function (res) {
+      if (!res.ok) throw httpError(res);
+      if (!isObject(res.data) || !Array.isArray(res.data.items)) throw new RequestError("malformed", res.data === undefined ? "not JSON" : "the tree is missing");
+      vt.data = res.data;
+      vt.stamp = res.data.stamp;
+      vt.loadedAt = new Date();
+      vt.error = null;
+      vt.byId = {};
+      res.data.items.forEach(function (v) { if (isObject(v)) vt.byId[String(v.id)] = v; });
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      vt.error = err;
+    }).then(function () {
+      vt.busy = false;
+      safely("ventures", renderVentures);
+      safely("banners", renderBanners);
+      if (vt.again) { vt.again = false; loadVentures(); }
+    });
+  }
+
+  function renderVentures() {
+    var vt = ui.vt;
+    var data = vt.data;
+    var name = agentName();
+    $("vt-refresh").textContent = vt.busy ? "Refreshing…" : "Refresh";
+    setStatusText("vt-load-status", vt.error && !vt.busy ? "Couldn't load the venture tree (" + errorText(vt.error) + ")." +
+      (data ? " What you see is the tree loaded earlier." : " Try Refresh.") : "", vt.error && !vt.busy ? "error" : "");
+    $("vt-sub").textContent = "Every way to earn that " + name + " or you came up with, branching from the idea it grew out of. " +
+      name + " scores each from 1 to 5, researches the heaviest in its venture cycles and brings you business cases.";
+    if (!data) {
+      replace($("vt-tree"), vt.busy ? h("p", { class: "muted", text: "Loading the venture tree…" }) : []);
+      return;
+    }
+    var items = arr(data.items).filter(function (v) { return isObject(v) && v.id !== undefined; });
+    renderVentureSummary(data, items);
+    renderVentureLegend(data);
+    renderVentureTree(items);
+    fillParentSelect(items);
+    var rows = items.map(function (v) { return Object.assign({}, v, { status: v.stage }); }).sort(ventureOrder);
+    return renderQueue($("ventures"), {
+      kind: "venture", rows: rows, groups: VENTURE_GROUPS,
+      empty: emptyState("div", "No ventures yet.", name + " plants the first ideas when it starts; add your own with Add idea."),
+      view: ventureView,
+      viewKey: data.criteria,
+      actionKey: function (v) { return String(v.stage) + "|" + String(v.owner_version); },
+      actions: ventureActions,
+      panel: venturePanel,
+    });
+  }
+
+  function renderVentureSummary(data, items) {
+    var name = agentName();
+    var counts = {};
+    items.forEach(function (v) { counts[v.stage] = (counts[v.stage] || 0) + 1; });
+    var words = { proposed: ["business case for you", "business cases for you"], idea: ["idea", "ideas"] };
+    var tally = Object.keys(VENTURE_STAGE).filter(function (k) { return counts[k]; }).map(function (k) {
+      var word = words[k] ? words[k][counts[k] === 1 ? 0 : 1] : VENTURE_STAGE[k].label.toLowerCase();
+      return counts[k] + " " + word;
+    });
+    var today = isObject(data.today) ? data.today : {};
+    var share = num(data.share);
+    var parts = [];
+    if (share > 0) {
+      parts.push("Ventures get " + share + "% of " + name + "'s spending (the venture_share option): " + usd(today.ventures_usd) +
+        " of today's " + usd(today.spent_usd) + " so far, in " + plural(num(data.venture_cycles) || 0, "venture cycle") + " in all.");
+    } else {
+      parts.push("Venture cycles are off: venture_share is 0 in the app's options. Your ideas still go into the tree.");
+    }
+    parts.push(plural(items.length, "venture") + " in the tree" + (tally.length ? ": " + tally.join(", ") : "") + ".");
+    var legs = items.filter(function (v) { return v.stage === "live" || v.stage === "building"; });
+    if (legs.length) {
+      parts.push("Legs: " + legs.map(function (v) {
+        return v.title + " (spent " + usd(v.spent_usd) + ", earned " + usd(v.earned_usd) + ")";
+      }).join("; ") + ".");
+    }
+    $("vt-summary").textContent = parts.join(" ");
+  }
+
+  function renderVentureLegend(data) {
+    var el = $("vt-legend");
+    if (el.childNodes.length) return;
+    replace(el, [
+      Object.keys(VENTURE_STAGE).map(function (k) {
+        return h("span", { class: "vt-key" }, h("span", { class: "vt-dot", "data-stage": k }), VENTURE_STAGE[k].label);
+      }),
+      h("span", { class: "vt-key muted", text: "Bigger = heavier (the scores, revenue counting double); dashed = first guess" }),
+    ]);
+  }
+
+  // A tidy tree, left to right: every leaf gets a row, a parent sits between its first and last child.
+  function ventureLayout(items) {
+    var byId = {};
+    items.forEach(function (v) { byId[String(v.id)] = v; });
+    var kids = { root: [] };
+    items.forEach(function (v) {
+      var parent = v.parent_id !== null && v.parent_id !== undefined && byId[String(v.parent_id)] ? String(v.parent_id) : "root";
+      (kids[parent] = kids[parent] || []).push(v);
+    });
+    Object.keys(kids).forEach(function (k) { kids[k].sort(ventureOrder); });
+    var pos = {};
+    var leaves = 0;
+    var depth = 1;
+    function place(v, d) {
+      var id = String(v.id);
+      if (pos[id]) return pos[id].y;  // never twice, whatever the data says
+      pos[id] = { x: d * VT_LAYOUT.col, y: 0 };
+      depth = Math.max(depth, d);
+      var children = kids[id] || [];
+      var y;
+      if (!children.length) y = (leaves++) * VT_LAYOUT.row;
+      else {
+        var ys = children.map(function (c) { return place(c, d + 1); });
+        y = (ys[0] + ys[ys.length - 1]) / 2;
+      }
+      pos[id].y = y;
+      return y;
+    }
+    var rootYs = kids.root.map(function (v) { return place(v, 1); });
+    var rootY = rootYs.length ? (rootYs[0] + rootYs[rootYs.length - 1]) / 2 : 0;
+    return { pos: pos, kids: kids, rootY: rootY, leaves: Math.max(leaves, 1), depth: depth };
+  }
+
+  function ventureRadius(v) {
+    var w = ventureWeight(v);
+    return w === null ? 6 : 6 + Math.round(w / 10);
+  }
+
+  function shortTitle(text, chars) {
+    text = String(text || "");
+    return text.length <= chars ? text : text.slice(0, chars - 1).replace(/\s+$/, "") + "…";
+  }
+
+  function renderVentureTree(items) {
+    var el = $("vt-tree");
+    if (!items.length) {
+      replace(el, emptyState("div", "The tree is empty.", "Add an idea, or let " + agentName() + " brainstorm in its next venture cycle."));
+      return;
+    }
+    var L = ventureLayout(items);
+    var top = VT_LAYOUT.top;
+    var left = VT_LAYOUT.left;
+    var width = left + L.depth * VT_LAYOUT.col + 260;
+    var height = top * 2 + (L.leaves - 1) * VT_LAYOUT.row;
+    var root = { x: left, y: top + L.rootY };
+    function at(v) { var p = L.pos[String(v.id)]; return { x: left + p.x, y: top + p.y }; }
+    // An edge leaves its parent where the parent's label ends (see fitEdges), so it never runs through the label.
+    var edges = [];
+    items.forEach(function (v) {
+      if (!L.pos[String(v.id)]) return;
+      var parent = v.parent_id !== null && v.parent_id !== undefined ? ui.vt.byId[String(v.parent_id)] : null;
+      var placed = parent && L.pos[String(parent.id)];
+      var from = placed ? at(parent) : root;
+      var start = placed ? { x: from.x + ventureRadius(parent) + 6 + labelOf(parent).length * VT_LAYOUT.charWidth + 6, y: from.y } : from;
+      var path = svg("path", { class: "vt-edge", "data-stage": v.stage, "data-from": placed ? parent.id : null, d: edgePath(start, at(v)) });
+      path.emberEdge = { from: from, to: at(v), gap: placed ? ventureRadius(parent) + 12 : 0 };
+      edges.push(path);
+    });
+    var nodes = items.filter(function (v) { return L.pos[String(v.id)]; }).map(function (v) {
+      var p = at(v);
+      var r = ventureRadius(v);
+      var w = ventureWeight(v);
+      var stage = (VENTURE_STAGE[v.stage] || { label: String(v.stage) }).label;
+      var label = labelOf(v);
+      var g = svg("g", {
+        class: "vt-node", "data-stage": v.stage, "data-id": v.id, tabindex: "0", role: "button",
+        "data-guess": v.scores_by === "brainstorm" ? "true" : null,
+        "data-selected": String(ui.vt.selected) === String(v.id) ? "true" : null,
+        "aria-label": v.title + ", " + stage + (w === null ? ", not scored yet" : ", weight " + w) + ". Show its card.",
+      },
+      svg("title", null, "#" + v.id + " " + v.title + " · " + stage + (w === null ? "" : " · weight " + w)),
+      svg("circle", { cx: p.x, cy: p.y, r: r }),
+      svg("text", { x: p.x + r + 6, y: p.y + 4 }, label));
+      g.addEventListener("click", function () { showVentureCard(v.id); });
+      g.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); showVentureCard(v.id); }
+      });
+      return g;
+    });
+    var picture = svg("svg", { class: "vt-svg", width: width, height: height, viewBox: "0 0 " + width + " " + height,
+      role: "group", "aria-label": "The venture tree, " + plural(items.length, "venture") },
+      svg("g", { class: "vt-edges" }, edges),
+      svg("g", { class: "vt-root" }, svg("circle", { cx: root.x, cy: root.y, r: 9 }),
+        svg("text", { x: root.x - 4, y: root.y - 14 }, agentName())),
+      svg("g", { class: "vt-nodes" }, nodes));
+    var scrollLeft = el.scrollLeft;
+    var scrollTop = el.scrollTop;
+    replace(el, picture);
+    el.scrollLeft = scrollLeft;
+    el.scrollTop = scrollTop;
+    fitEdges(picture);
+  }
+
+  function edgePath(from, to) {
+    var mid = (from.x + to.x) / 2;
+    return "M" + from.x + " " + from.y + " C" + mid + " " + from.y + " " + mid + " " + to.y + " " + to.x + " " + to.y;
+  }
+
+  function labelOf(v) {
+    var w = ventureWeight(v);
+    return shortTitle(v.title, VT_LAYOUT.labelChars) + (w === null ? "" : " · " + w);
+  }
+
+  // With the picture on the page, labels have their real width: start each edge right after its parent's label.
+  function fitEdges(picture) {
+    var widths = {};
+    Array.prototype.forEach.call(picture.querySelectorAll(".vt-node"), function (g) {
+      var text = g.querySelector("text");
+      var width = text && text.getComputedTextLength ? text.getComputedTextLength() : 0;
+      if (width > 0) widths[g.getAttribute("data-id")] = width;
+    });
+    Array.prototype.forEach.call(picture.querySelectorAll(".vt-edge[data-from]"), function (path) {
+      var width = widths[path.getAttribute("data-from")];
+      var edge = path.emberEdge;
+      if (!width || !edge) return;  // not measurable while the tab is hidden: the estimate stays
+      path.setAttribute("d", edgePath({ x: edge.from.x + edge.gap + width, y: edge.from.y }, edge.to));
+    });
+  }
+
+  // A node of the tree was chosen: mark it, and bring its card into view.
+  function showVentureCard(id) {
+    ui.vt.selected = id;
+    Array.prototype.forEach.call($("vt-tree").querySelectorAll(".vt-node"), function (g) {
+      if (g.getAttribute("data-id") === String(id)) g.setAttribute("data-selected", "true");
+      else g.removeAttribute("data-selected");
+    });
+    var card = $("ventures").querySelector('article[data-id="' + String(id) + '"]');
+    if (!card) return;
+    Array.prototype.forEach.call($("ventures").querySelectorAll("article[data-selected]"), function (c) { c.removeAttribute("data-selected"); });
+    card.setAttribute("data-selected", "true");
+    card.scrollIntoView({ block: "center", behavior: "smooth" });
+    var title = card.querySelector(".vt-card-title");
+    if (title) title.focus({ preventScroll: true });
+  }
+
+  function ventureView(v) {
+    var name = agentName();
+    var data = ui.vt.data || {};
+    var parent = v.parent_id !== null && v.parent_id !== undefined ? ui.vt.byId[String(v.parent_id)] : null;
+    var w = ventureWeight(v);
+    var scores = isObject(v.scores) ? v.scores : {};
+    var theCase = isObject(v.case) ? v.case : {};
+    var caseSpec = arr(data.case);
+    var filled = caseSpec.filter(function (c) { return theCase[c.name]; });
+    var scored = arr(data.criteria).some(function (c) { return scores[c.name]; });
+    var projects = arr(v.projects);
+    return [
+      h("div", { class: "item-head" },
+        h("h3", { class: "vt-card-title", tabindex: "-1", text: v.title || "Untitled venture" }),
+        chip(VENTURE_STAGE, v.stage, sentence(String(v.stage || "unknown"))),
+        plainChip(w === null ? "Not scored yet" : "Weight " + w + (v.scores_by === "brainstorm" ? ", a first guess" : "")),
+        v.created_by === "owner" ? plainChip("Your idea") : null,
+        v.simulated ? testTag() : null),
+      h("p", { class: "muted small", text: "#" + v.id + (parent ? " · branch of #" + parent.id + " " + parent.title : "") }),
+      h("p", { class: "pre-line", text: asText(v.pitch) }),
+      scored ? h("dl", { class: "vt-scores" }, arr(data.criteria).map(function (c) {
+        var value = scores[c.name];
+        return h("div", { title: "1: " + c.low + " · 5: " + c.high },
+          h("dt", { text: c.label }), h("dd", { text: value ? value + "/5" : "–" }));
+      })) : null,
+      v.next_question ? h("p", null, h("strong", { text: "Next question: " }), String(v.next_question)) : null,
+      filled.length ? h("dl", { class: "item-grid" }, caseSpec.map(function (c) {
+        return h("div", null, h("dt", { text: c.label }), h("dd", { class: "pre-line", text: asText(theCase[c.name]) || "–" }));
+      })) : null,
+      filled.length && arr(v.missing).length && (v.stage === "researching" || v.stage === "idea") ?
+        h("p", { class: "muted small", text: "For a business case " + name + " still needs: " + arr(v.missing).join(", ") + "." }) : null,
+      h("dl", { class: "money" },
+        h("div", null, h("dt", { text: "Spent" }), h("dd", { text: usd(v.spent_usd) })),
+        h("div", null, h("dt", { text: "Earned" }), h("dd", { text: usd(v.earned_usd) })),
+        projects.length ? h("div", null, h("dt", { text: "Projects" }), h("dd", { text: projects.map(function (p) {
+          return "#" + p.id + " " + p.title + " (" + p.status + ")";
+        }).join(", ") })) : null),
+      ventureWord(v),
+      v.notes ? h("details", { class: "notes" }, h("summary", { text: "Notes" }), h("pre", { class: "notes-text", text: asText(v.notes) })) : null,
+      ventureKnowledge(v),
+      h("p", { class: "muted small" }, (v.created_by === "owner" ? "Added by " + (v.entered_by || "you") : "Added by " + name) + " ",
+        timeEl(v.created_at), " · updated ", timeEl(v.updated_at)),
+    ];
+  }
+
+  var VENTURE_WORDS = { added: "You added this idea", research: "You asked for research next", back: "You backed it",
+    park: "You parked it", kill: "You killed it", note: "Your note" };
+
+  function ventureWord(v) {
+    if (!v.owner_action) return null;
+    var name = agentName();
+    return h("div", { class: "decision" },
+      h("p", null, h("strong", { text: VENTURE_WORDS[v.owner_action] || sentence(String(v.owner_action)) }), " · ", timeEl(v.owner_at),
+        " · " + (v.seen_by_agent ? name + " has seen it." : name + " sees it on its next wake.")),
+      v.owner_comment ? h("p", { class: "pre-line", text: asText(v.owner_comment) }) : null);
+  }
+
+  // What Ember learned (its knowledge file): loaded when the owner opens it (again on every opening, so it is
+  // current), and kept open across polls. The box updates itself: a card the owner is using isn't redrawn.
+  function ventureKnowledge(v) {
+    if (v.file_bytes === null || v.file_bytes === undefined) {
+      return h("p", { class: "muted small", text: "What " + agentName() + " learns about it goes to " + v.file + " (nothing yet)." });
+    }
+    var box = h("div", { class: "vt-file" });
+    fillKnowledge(box, v, false);
+    return box;
+  }
+
+  function fillKnowledge(box, v, focus) {
+    var state = ui.vt.files[String(v.id)] || {};
+    var toggle = h("button", { type: "button", class: "btn btn-small", "aria-expanded": state.open ? "true" : "false",
+      text: (state.open ? "Hide" : "Show") + " what " + agentName() + " learned (" + byteSize(num(v.file_bytes) || 0) + ")" });
+    toggle.addEventListener("click", function () { toggleKnowledge(box, v); });
+    var body = null;
+    if (state.open) {
+      if (state.busy) body = h("p", { class: "muted small", role: "status", text: "Loading " + v.file + "…" });
+      else if (state.error) body = h("p", { class: "field-error", text: "Couldn't load " + v.file + " (" + errorText(state.error) + ")." });
+      else body = h("pre", { class: "capped vt-knowledge", tabindex: "0", text: state.text || "" });
+    }
+    replace(box, [toggle, body]);
+    if (focus) toggle.focus();
+  }
+
+  function toggleKnowledge(box, v) {
+    var key = String(v.id);
+    var state = ui.vt.files[key] || (ui.vt.files[key] = {});
+    state.open = !state.open;
+    if (state.open) {
+      var seq = state.seq = (state.seq || 0) + 1;
+      state.busy = true;
+      state.error = null;
+      request("GET", "api/workspace/file?path=" + encodeURIComponent(v.file), null, { accept: "text/plain" }).then(function (res) {
+        if (!res.ok) throw httpError(res);
+        if (typeof res.text !== "string") throw new RequestError("malformed", "no text");
+        if (seq === state.seq) state.text = res.text;
+      }).catch(function (err) {
+        if (!(err instanceof RequestError)) console.error(err);
+        if (seq === state.seq) state.error = err;
+      }).then(function () {
+        if (seq !== state.seq) return;
+        state.busy = false;
+        if (box.isConnected) fillKnowledge(box, v, box.contains(document.activeElement));
+      });
+    }
+    fillKnowledge(box, v, true);
+  }
+
+  function ventureActions(it, v) {
+    var s = v.stage;
+    var list = [];
+    if (s === "idea" || s === "researching" || s === "proposed" || s === "parked") list.push(panelButton(it, "back", "Back it"));
+    if (s === "idea" || s === "researching") list.push(panelButton(it, "research", "Research next"));
+    if (s === "proposed") list.push(panelButton(it, "research", "Research more"));
+    if (s === "parked" || s === "killed") list.push(panelButton(it, "research", "Research again"));
+    if (s !== "parked" && s !== "killed") list.push(panelButton(it, "park", "Park"));
+    list.push(panelButton(it, "note", "Note"));
+    if (s !== "killed") list.push(panelButton(it, "kill", "Kill", true));
+    return list;
+  }
+
+  function venturePanel(it, mode) {
+    var name = agentName();
+    var comment = { name: "comment", label: mode === "note" ? "Your note" : "Comment for " + name + " (optional)", rows: 2, max: 1000,
+      required: mode === "note", missing: "Write the note." };
+    var specs = {
+      back: { title: "Back this venture", submit: "Back it",
+        intro: [h("p", { text: "Backing tells " + name + " to build it: it plans the first test and asks you, one step at a time, for what only you can do (accounts, money, setup)." })] },
+      research: { title: "Research this next", submit: "Research next",
+        intro: [h("p", { text: name + " researches it in its next venture cycle, scores it from the evidence and brings you a business case or tells you why not." })] },
+      park: { title: "Park this venture?", submit: "Park",
+        intro: [h("p", { text: name + " stops working on it. It stays in the tree, and you can have it researched again later." })] },
+      kill: { title: "Kill this venture?", submit: "Kill", danger: true,
+        intro: [h("p", { text: name + " stops all work on it. It stays in the tree, dimmed, so it isn't started again." })] },
+      note: { title: "A note for " + name, submit: "Send note",
+        intro: [h("p", { text: name + " reads it with the venture on its next wake." })] },
+    };
+    var done = { back: "Backed.", research: "Asked for research.", park: "Parked.", kill: "Killed.", note: "Note sent." };
+    var spec = specs[mode];
+    spec.mode = mode;
+    spec.fields = [comment];
+    spec.url = "api/ventures/" + encodeURIComponent(String(it.row.id)) + "/decide";
+    spec.body = function (values) {
+      var body = { action: mode };
+      var version = num(it.row.owner_version);
+      if (!isNaN(version)) body.expected_version = version;
+      if (values.comment) body.comment = values.comment;
+      return body;
+    };
+    spec.done = function () {
+      loadVentures();
+      return done[mode] + " " + name + " sees it on its next wake.";
+    };
+    return spec;
+  }
+
+  // ---- Add idea
+
+  function fillParentSelect(items) {
+    var select = $("vt-form-parent");
+    if (isBusy(select)) return;
+    var current = select.value;
+    var options = [h("option", { value: "", text: "The top of the tree" })].concat(items.filter(function (v) {
+      return v.stage !== "killed";
+    }).slice().sort(function (x, y) { return num(x.id) - num(y.id); }).map(function (v) {
+      return h("option", { value: String(v.id), text: "#" + v.id + " " + shortTitle(v.title, 60) });
+    }));
+    replace(select, options);
+    select.value = current && ui.vt.byId[current] ? current : "";
+  }
+
+  function ventureLimit(key, fallback) {
+    var limits = ui.vt.data && isObject(ui.vt.data.limits) ? ui.vt.data.limits : {};
+    var n = num(limits[key]);
+    return isNaN(n) ? fallback : n;
+  }
+
+  function ventureCounter(id, max) {
+    var n = $(id).value.trim().length;
+    var counter = $(id + "-count");
+    counter.textContent = intFmt.format(n) + " / " + intFmt.format(max) + " characters";
+    counter.setAttribute("data-over", n > max ? "true" : "false");
+  }
+
+  function setVentureFieldError(id, message) {
+    var error = $(id + "-error");
+    error.textContent = message || "";
+    error.hidden = !message;
+    if (message) $(id).setAttribute("aria-invalid", "true");
+    else $(id).removeAttribute("aria-invalid");
+  }
+
+  function openVentureForm(open) {
+    $("vt-form").hidden = !open;
+    $("vt-add").setAttribute("aria-expanded", String(open));
+    if (open) {
+      ventureCounter("vt-form-title", ventureLimit("title", 80));
+      ventureCounter("vt-form-pitch", ventureLimit("pitch", 600));
+      $("vt-form-title").focus();
+    } else {
+      $("vt-add").focus();
+    }
+  }
+
+  function submitVentureForm() {
+    if (ui.vt.saving) return;
+    var title = $("vt-form-title").value.trim();
+    var pitch = $("vt-form-pitch").value.trim();
+    var parent = $("vt-form-parent").value;
+    var problems = 0;
+    setVentureFieldError("vt-form-title", "");
+    setVentureFieldError("vt-form-pitch", "");
+    if (!title) { setVentureFieldError("vt-form-title", "Name the idea."); problems++; }
+    else if (title.length > ventureLimit("title", 80)) { setVentureFieldError("vt-form-title", "Keep it under " + ventureLimit("title", 80) + " characters."); problems++; }
+    if (!pitch) { setVentureFieldError("vt-form-pitch", "Say in a sentence what it is and who would pay."); problems++; }
+    else if (pitch.length > ventureLimit("pitch", 600)) { setVentureFieldError("vt-form-pitch", "Keep it under " + ventureLimit("pitch", 600) + " characters."); problems++; }
+    if (problems) {
+      setStatusText("vt-status", problems === 1 ? "Please fix the marked field." : "Please fix the marked fields.", "error");
+      (title && title.length <= ventureLimit("title", 80) ? $("vt-form-pitch") : $("vt-form-title")).focus();
+      return;
+    }
+    var body = { title: title, pitch: pitch };
+    if (parent) body.parent_id = num(parent);
+    ui.vt.saving = true;
+    $("vt-form-save").disabled = true;
+    setStatusText("vt-status", "Saving…", "");
+    request("POST", "api/ventures", body).then(function (res) {
+      if (res.status === 201) {
+        var id = isObject(res.data) ? res.data.id : null;
+        $("vt-form-title").value = "";
+        $("vt-form-pitch").value = "";
+        openVentureForm(false);
+        setStatusText("vt-status", "Added to the tree" + (id ? " as #" + id : "") + ". " + agentName() + " sees it on its next wake.", "ok");
+        ui.vt.selected = id;
+        loadVentures();
+        return;
+      }
+      var data = isObject(res.data) ? res.data : {};
+      var msg = typeof data.error === "string" && data.error ? endSentence(sentence(data.error)) : "";
+      if (res.status === 422 && msg && (data.field === "title" || data.field === "pitch")) {
+        setVentureFieldError("vt-form-" + data.field, msg);
+        setStatusText("vt-status", "Please fix the marked field.", "error");
+        $("vt-form-" + data.field).focus();
+        return;
+      }
+      setStatusText("vt-status", msg ? "Nothing was saved: " + lowerFirst(msg) : "Nothing was saved (" + httpError(res).message + ").", "error");
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("vt-status", "Couldn't reach " + agentName() + ", so it's not clear whether the idea was saved. Refresh the tree before you try again.", "error");
+    }).then(function () {
+      ui.vt.saving = false;
+      $("vt-form-save").disabled = false;
+    });
+  }
+
+  function initVentures() {
+    $("vt-refresh").addEventListener("click", loadVentures);
+    $("vt-add").addEventListener("click", function () { openVentureForm($("vt-form").hidden); });
+    $("vt-form-cancel").addEventListener("click", function () { openVentureForm(false); });
+    $("vt-form").addEventListener("submit", function (ev) { ev.preventDefault(); submitVentureForm(); });
+    $("vt-form").addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") { ev.preventDefault(); openVentureForm(false); }
+      else if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); submitVentureForm(); }
+    });
+    $("vt-form-title").addEventListener("input", function () { setVentureFieldError("vt-form-title", ""); ventureCounter("vt-form-title", ventureLimit("title", 80)); });
+    $("vt-form-pitch").addEventListener("input", function () { setVentureFieldError("vt-form-pitch", ""); ventureCounter("vt-form-pitch", ventureLimit("pitch", 600)); });
+  }
+
   // ------------------------------------------------------------------ tabs
 
-  var TABS = ["overview", "ledger", "projects", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
+  var TABS = ["overview", "ledger", "projects", "ventures", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
   var MIND_TABS = ["strategy", "lessons", "identity", "journal", "reviews"];
 
   // Arrow keys, Home and End move between tabs; focus follows the selection.
@@ -4584,6 +5148,7 @@
     if (focus) $("tab-" + name).focus();
     if (name === "overview" && ui.charts.flow) { ui.charts.flow.resize(); ui.charts.balance.resize(); }
     if (name === "workspace") refreshWorkspace();
+    if (name === "ventures") loadVentures();
   }
 
   function selectMind(name, focus) {
@@ -4655,6 +5220,7 @@
   }
 
   initForms();
+  initVentures();
   selectTab(ui.tab, false);
   selectMind(ui.mind, false);
   refresh();

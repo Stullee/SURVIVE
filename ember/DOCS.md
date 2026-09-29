@@ -31,6 +31,7 @@ your approval, and only you can record revenue.
 | Starting balance | 20 USD | Your first grant, recorded once when the agent is born. |
 | Daily spending cap | 1 USD | Hard limit per day. Calls that could exceed it are refused. |
 | Spending cap per wake cycle | 0.25 USD | Hard limit per cycle. Must not exceed the daily cap. |
+| Share for ventures | 25 % | This share of each day's spending goes to venture cycles, where the agent researches new ways to earn. 0 switches them off. See [Ventures](#ventures). |
 | Default sleep | 240 min | Time between wake cycles when the agent doesn't choose. |
 | Shortest / longest sleep | 30 / 1440 min | Bounds for the sleep time the agent chooses. |
 | Tool steps per cycle | 15 | Maximum tool calls in one cycle. While the agent works, the overview counts them ("tool step 3 (at most 15)"); they aren't the steps of its plan. |
@@ -252,8 +253,72 @@ own code, costs nothing and can't break the way a newly written script can.
 In dry run the fake model pretends to run code: it "draws" a simple chart and
 returns it with a script, and nothing is sent to Anthropic.
 
+## Ventures
+
+Ventures are the agent's ways to earn beyond what it does now: a new market,
+platform or business model, or a channel that brings buyers to what it already
+sells (a Pinterest account for the Etsy shop is a venture of its own). The
+**Ventures** tab shows them as a tree that keeps growing.
+
+**The tree.** Every idea branches from the one it grew out of: a variant, a
+niche, another customer group, a channel, a next step research turned up. The
+tree started with the ideas you and the agent had before 0.10.0 (the Etsy leg,
+Pinterest, dropshipping, print on demand, a website with ads, recruiting, an AI
+chat companion, and Fiverr, parked). Nothing is ever deleted: parked and killed
+ideas stay in the tree, dimmed, so they aren't started again. Click a node to
+see its card.
+
+**The weights.** The agent scores every venture from 1 to 5 on possible
+revenue, doability (how much of it the agent can do, and how little of your
+time it needs), difficulty, risk, speed to the first euro, and the cost to
+start. The weight (0–100, revenue counting double) is the node's size; its
+colour is its stage. A brainstorm's scores are a first guess (dashed); research
+replaces them.
+
+**Venture cycles.** The **Share for ventures** option (25 % by default) is the
+part of each day's spending the agent puts into ventures: a wake cycle is a
+venture cycle while venture cycles have had less than that share of the day's
+spending, so ventures get it whatever else is going on. It comes out of the
+same daily cap, so it doesn't raise what Ember spends; raise the daily cap if
+you want more research. In a venture cycle the agent:
+
+- grows the tree with a **brainstorm**: a separate call on the planner model
+  that finds six new ideas that fit you and the agent (about $0.05–0.15 with
+  claude-opus-5-5), branching from a promising venture or into new ground;
+- researches the heaviest idea (up to 8 web searches instead of 3), keeps what
+  it learns in the venture's knowledge file (`ventures/<number>-<name>.md` in
+  its workspace, which the card opens) and scores it again;
+- decides each venture within about $3: a business case for you, or parked
+  with the reason.
+
+**Business cases.** A venture the agent proposes comes to you with its demand
+(evidence that people pay), economics, setup (money, your hours, accounts,
+new abilities it needs), how soon the first euro could come, the risks and legal
+duties, and the smallest first test. The tab's badge counts the ones waiting.
+On each card:
+
+- **Back it**: the agent builds it: it plans the first test and asks you for
+  what only you can do (accounts, money, setup), one step at a time.
+- **Research next** (or **Research more**, **Research again**): it goes first
+  in the next venture cycle.
+- **Park**, **Kill** or **Note**, each with an optional comment (a note needs
+  one). The agent reads your word on its next wake.
+
+**Add idea** puts your own idea into the tree, optionally as a branch of an
+existing venture: the agent scores and researches it and tells you what it
+would take. The agent never answers an idea with a flat no: it answers with the
+path, the smallest test, the numbers and its recommendation. Only its hard
+rules (spam, gambling, adult content and the like) make a real no, and then it
+offers the closest variant that keeps them.
+
+**Money.** A venture's cost is every model call of the cycles that worked on
+it, and of its projects' cycles; its revenue is what you record for its
+projects. Live legs show both in the tab's summary.
+
 ## Your part
 
+- **Ventures**: back, park or kill the agent's business cases and add your own
+  ideas on the Ventures tab (see [Ventures](#ventures)).
 - **Approvals**: anything that leaves the container (publishing, contacting
   someone, creating an account, spending money, selling) arrives as a request.
   Approve it, approve it with your own changes to the text, or reject it, with

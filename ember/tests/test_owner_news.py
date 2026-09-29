@@ -265,8 +265,9 @@ def test_the_owners_section_keeps_its_budget_and_comes_on_top_of_the_brief(lette
 
     big_plan = {"goal": "g" * 300, "steps": ["s" * 200] * 6}
     workspace = [f"drafts/{'w' * 140}-{i}.md (1,234 B)" for i in range(20)]
-    quiet, _ = context.brief(snapshot_with([], workspace), False, big_plan, None, 12)
-    loud, shown = context.brief(snapshot_with([message], workspace), False, big_plan, None, 12)
+    venture = "\n".join(["v" * 99] * 30)  # a venture cycle's focus (0.10.0), cut to its own budget
+    quiet, _ = context.brief(snapshot_with([], workspace), False, big_plan, None, 12, venture_focus=venture)
+    loud, shown = context.brief(snapshot_with([message], workspace), False, big_plan, None, 12, venture_focus=venture)
     assert shown.items == {("message", 1, None)}
     assert re.search(r"…\[\d+ bytes cut\]$", quiet) and context.json_bytes(quiet) <= context.BRIEF_BUDGET
     assert loud.replace(f"\n\n== FROM YOUR OWNER ==\n{owners}", "") == quiet  # the rest is as in a quiet cycle
@@ -613,7 +614,7 @@ def test_a_0_9_database_keeps_only_the_questions_that_were_never_answered(tmp_pa
         conn.execute(insert, (3, "owner", None, "More photos, please.", 3))  # seen in the cycle cut before its reply
         conn.execute(insert, (4, "owner", None, "Limit is 5 a day now.", None))  # not seen yet
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [12]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [12, 13]
     upgraded = Database(db_file)
     with upgraded.connection() as conn:
         answered = {r["id"]: r["answered_by"] for r in conn.execute("SELECT id, answered_by FROM messages")}

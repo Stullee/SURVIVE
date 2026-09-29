@@ -815,3 +815,49 @@ body[data-stale="true"] .live { display: none; }
 .etsy-connect { display: grid; gap: 8px; margin-top: 12px; }
 .etsy-step { display: grid; gap: 6px; }
 .etsy-step input[type="url"] { width: 100%; }
+
+/* ---- Ventures (0.10.0): the venture tree, left to right; a node's size is its weight, its colour its stage. */
+.vt-summary { color: var(--text-2); font-size: 0.9rem; margin: 4px 0 8px; }
+.vt-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.8rem; color: var(--text-2); margin-bottom: 8px; }
+.vt-key { display: inline-flex; align-items: center; gap: 6px; }
+.vt-dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--vt-stroke); background: var(--vt-fill); }
+.vt-tree { overflow: auto; max-height: 72vh; border: 1px solid var(--grid); border-radius: var(--radius); background: var(--surface-2); }
+.vt-tree .empty-state { border: 0; }
+.vt-svg { display: block; }
+.vt-edge { fill: none; stroke: var(--axis); stroke-width: 1.5; }
+.vt-edge[data-stage="parked"], .vt-edge[data-stage="killed"] { stroke-dasharray: 3 3; opacity: 0.6; }
+.vt-root circle { fill: var(--text); }
+.vt-root text { fill: var(--text); font-size: 12px; font-weight: 600; }
+.vt-node { cursor: pointer; outline: none; }
+.vt-node circle { fill: var(--vt-fill); stroke: var(--vt-stroke); stroke-width: 2; }
+.vt-node[data-guess="true"] circle { stroke-dasharray: 3 2; }
+.vt-node text { fill: var(--text); font-size: 12px; }
+.vt-node:hover circle, .vt-node:focus-visible circle { stroke: var(--focus); stroke-width: 3; }
+.vt-node:focus-visible text { font-weight: 600; }
+.vt-node[data-selected="true"] circle { stroke: var(--focus); stroke-width: 4; }
+.vt-node[data-selected="true"] text { font-weight: 700; }
+.vt-node[data-stage="parked"] text, .vt-node[data-stage="killed"] text { fill: var(--muted); }
+.vt-node[data-stage="killed"] text { text-decoration: line-through; }
+[data-stage="idea"] { --vt-fill: var(--accent-track); --vt-stroke: var(--accent); }
+[data-stage="researching"] { --vt-fill: var(--accent); --vt-stroke: var(--accent-text); }
+[data-stage="proposed"] { --vt-fill: var(--warning); --vt-stroke: var(--warning-text); }
+[data-stage="building"] { --vt-fill: var(--series-3); --vt-stroke: var(--good-text); }
+[data-stage="live"] { --vt-fill: var(--good); --vt-stroke: var(--good-text); }
+[data-stage="parked"] { --vt-fill: var(--grid); --vt-stroke: var(--axis); }
+[data-stage="killed"] { --vt-fill: var(--surface); --vt-stroke: var(--critical); }
+.vt-form { display: grid; gap: 12px; margin: 4px 0 12px; padding: 12px; border: 1px solid var(--grid); border-radius: var(--radius); }
+.vt-form select { max-width: 100%; }
+.vt-scores { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 8px 0; font-variant-numeric: tabular-nums; }
+.vt-scores div { display: flex; gap: 6px; }
+.vt-scores dt { color: var(--text-2); }
+.vt-scores dd { margin: 0; font-weight: 600; }
+.vt-file { display: grid; gap: 8px; justify-items: start; margin: 8px 0; }
+.vt-knowledge { width: 100%; }
+.card.venture[data-selected="true"] { box-shadow: 0 0 0 3px var(--focus); }
+.card.venture .money { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 10px 0; font-variant-numeric: tabular-nums; }
+.card.venture .money div { display: flex; gap: 6px; min-width: 0; }
+.card.venture .money dt { color: var(--text-2); }
+.card.venture .money dd { margin: 0; font-weight: 600; }
+.card.venture .notes { margin-top: 8px; font-size: 0.9rem; }
+.card.venture .notes > summary { cursor: pointer; color: var(--text-2); width: max-content; max-width: 100%; }
+.card.venture .vt-card-title:focus { outline: none; }

@@ -54,6 +54,10 @@ Scenarios (the ``scenario`` argument; the app takes it from ``EMBER_FAKE_SCENARI
 ``injection``  web results and file contents carry prompt injections ("ignore your rules", "spend_money
                $500 now", "read ../options.json"); the fake agent itself behaves, the text just flows.
 
+In a venture cycle (0.10.0) it plans venture work: a brainstorm while the tree has fewer than 8 ideas (the brainstorm
+call answers with six ideas and first-guess scores), research on the venture being researched or the heaviest idea,
+and saving what it learned to that venture with new scores.
+
 Tests can also pass ``script=[...]`` (:class:`Reply`, :class:`ToolCalls`, :class:`Plan`, :class:`Raw`,
 :class:`Fail`): turns answered in order (one per valid request) before the scenario takes over.
 """
@@ -129,6 +133,7 @@ CHAOS: dict[str, tuple[str, ...]] = {
     "research": ("pause_turn", "search_error"),
     "workshop": ("svg", "nothing", "pause"),
     "review": ("prose", "cut_off", "unknown_project"),
+    "brainstorm": ("prose", "cut_off"),
     "will": ("cut_off", "empty"),
 }
 _OPEN_STATUSES = ("idea", "active", "waiting")
@@ -370,7 +375,8 @@ def thinking_signature(thinking: str) -> str:
 
 
 def request_kind(request: Mapping[str, Any]) -> str:
-    """plan, review, workshop, research, reflect, work or will (anything else without tools counts as a will)."""
+    """plan, review, brainstorm, workshop, research, reflect, work or will (anything else without tools counts as a
+    will)."""
     output_config = request.get("output_config")
     fmt = output_config.get("format") if isinstance(output_config, Mapping) else None
     schema = fmt.get("schema") if isinstance(fmt, Mapping) else None
@@ -379,6 +385,8 @@ def request_kind(request: Mapping[str, Any]) -> str:
         return "plan"
     if isinstance(properties, Mapping) and "verdicts" in properties:
         return "review"
+    if isinstance(properties, Mapping) and "ideas" in properties:
+        return "brainstorm"
     tools = [t for t in request.get("tools") or [] if isinstance(t, Mapping)]
     if any(str(t.get("type") or "").startswith("code_execution_") for t in tools):
         return "workshop"
@@ -659,6 +667,37 @@ _NO_REVENUE = "Revenue your owner recorded: $0.00 in these days"
 _REVIEW_STOP = re.compile(r"^- #(\d+)[^\n]*?: stop: ", re.M)
 _CLOSE = re.compile(r"close project #(\d+)")
 PROMOTE_STEP = "Ask for this workshop script to be built into Ember:"
+# Venture cycles (0.10.0): the planner's VENTURES lines, the brief's focus venture, a brainstorm's tree.
+VENTURE_TASK = "Plan this venture cycle"
+VENTURE_SECTION = "VENTURES"
+BRAINSTORM_STEP = "Brainstorm new ventures for my tree"
+BRAINSTORM_BELOW = 8  # the fake brainstorms while its tree has fewer ideas than this
+RESEARCH_VENTURE_STEP = "Research venture #{id}: {title}"
+SAVE_VENTURE_STEP = "Save what I learned to venture #{id} and score it"
+_VENTURE_LINE = re.compile(r"^#(\d+) \[([a-z]+)\] (.+?)(?: \(branch of #\d+\))? · ", re.MULTILINE)
+_FOCUS_VENTURE = re.compile(r"^Focus venture: #(\d+) (.+?)(?: \(branch of #\d+\))? \[([a-z]+)\]", re.MULTILINE)
+_TREE_TITLE = re.compile(r"^\s*- #\d+ (.+?) \([a-z]+(?:, weight \d+)?\)$", re.MULTILINE)
+VENTURE_IDEAS: tuple[tuple[str, str], ...] = (
+    (
+        "Bilingual CV check service",
+        "Job seekers send their CV and get an AI-written review in German or English within a day.",
+    ),
+    ("Printable chore charts for families", "Colourful weekly chore charts with stickers, sold as printables."),
+    ("Local event directory", "A website listing small local events in one German city, earning from ads."),
+    ("Supplier finder for small shops", "Find EU suppliers for a shop's products and send a short report, for a fee."),
+    (
+        "Language exchange matchmaking",
+        "Connect German and English learners for weekly calls, for a small subscription.",
+    ),
+    ("Wedding planning spreadsheets", "An Excel planner for budgets, guests and seating, sold on marketplaces."),
+    ("Newsletter for Etsy sellers", "A weekly newsletter with trends and tips for small Etsy sellers, with sponsors."),
+    ("Recipe cards print on demand", "Recipe card sets printed on demand and shipped by a partner."),
+    ("Pinterest pins for small shops", "Design pins and boards for small shops that want Pinterest visitors."),
+    (
+        "Grant finder for German clubs",
+        "Research grants for German sports and culture clubs and write the applications.",
+    ),
+)
 _PROVEN = re.compile(r"Workshop check: (workshop/scripts/\S+?\.py) has proven itself")
 _KEPT_SCRIPT = re.compile(r"^(workshop/scripts/[A-Za-z0-9._-]+\.py) \(", re.MULTILINE)
 
@@ -1110,6 +1149,8 @@ class FakeTransport:
             return self._plan(request, rng, chaos)  # structured output: JSON only, never padded
         if kind == "review":
             return self._review(request, rng, chaos)  # the same
+        if kind == "brainstorm":
+            return self._brainstorm(request, rng, chaos)  # the same
         if kind == "research":
             draft = self._research(request, rng, chaos)
         elif kind == "workshop":
@@ -1196,6 +1237,7 @@ class FakeTransport:
             "owner_feedback": "My owner hasn't decided much yet; I should ask for one concrete action at a time.",
             "lesson": "A project without a finished listing after a few days teaches me nothing: finish or stop it.",
             "focus": "Get one finished product and its listing in front of my owner today.",
+            "ventures": "Research the heaviest idea next and keep the tree growing; park what research doesn't back.",
         }
         if chaos == "prose":
             return _Draft([_text("Overall things are going fine and I will keep going.")], note="chaos: prose")
@@ -1212,12 +1254,46 @@ class FakeTransport:
             [_text(json.dumps(review, ensure_ascii=False))], note=f"review: {len(verdicts)} verdicts, {stops} stop"
         )
 
+    def _brainstorm(self, request: Mapping[str, Any], rng: random.Random, chaos: str | None) -> _Draft:
+        """Six ideas the tree doesn't have yet (from a small pool, then numbered variants), with random scores."""
+        context = _text_of(request["messages"][-1].get("content"))
+        taken = {m[1].strip().lower() for m in _TREE_TITLE.finditer(context)}
+        pool = [(t, p) for t, p in VENTURE_IDEAS if t.lower() not in taken]
+        rng.shuffle(pool)
+        number = 2
+        while len(pool) < 6:
+            title, pitch = VENTURE_IDEAS[len(pool) % len(VENTURE_IDEAS)]
+            variant = f"{title} {number}"
+            if variant.lower() not in taken:
+                pool.append((variant, pitch))
+            number += 1
+        ideas = [
+            {
+                "title": title,
+                "pitch": pitch,
+                "first_question": f"Who pays for {title.lower()} today, and how much?",
+                **{name: rng.randint(1, 5) for name in ("revenue", "doability", "difficulty", "risk", "speed", "cost")},
+            }
+            for title, pitch in pool[:6]
+        ]
+        answer = json.dumps({"ideas": ideas}, ensure_ascii=False)
+        if chaos == "prose":
+            return _Draft([_text("Here are some thoughts: a newsletter could work, maybe.")], note="chaos: prose")
+        if chaos == "cut_off":
+            max_tokens = int(request.get("max_tokens") or 1)
+            return _Draft(
+                [_text(answer[: len(answer) // 2])], "max_tokens", output_tokens=max_tokens, note="chaos: cut_off"
+            )
+        return _Draft([_text(answer)], note=f"brainstorm: {len(ideas)} ideas")
+
     def _make_plan(self, context: str, rng: random.Random) -> dict[str, Any]:
         state = (_STATE.search(context) or [None, "alive"])[1]
         balance = (_BALANCE.search(context) or [None, "?"])[1]
         last = _LAST_CYCLE.search(context)
         cycle = int(last[1]) + 1 if last else 1
-        open_ = [p for p in parse_projects(context) if p.status in _OPEN_STATUSES]
+        if VENTURE_TASK in context:
+            return self._venture_plan(context, rng, state, balance)
+        open_ = [p for p in parse_projects(section(context, "OPEN PROJECTS") or "") if p.status in _OPEN_STATUSES]
         stopped = {int(m[1]) for m in _REVIEW_STOP.finditer(context)} & {p.id for p in open_}
         close = [CLOSE_STEP.format(id=pid) for pid in sorted(stopped)][:1]  # one project closed a cycle
         open_ = [p for p in open_ if p.id not in stopped]
@@ -1239,6 +1315,7 @@ class FakeTransport:
                 "goal": goal,
                 "money_path": "None this cycle: sleeping saves money until there is something worth doing.",
                 "focus_project_id": focus.id if focus else None,
+                "focus_venture_id": None,
                 "steps": answer,
                 "sleep_minutes": rng.choice([480, 720, 1_440]),
             }
@@ -1297,6 +1374,7 @@ class FakeTransport:
                 "show whether they do. No sales after the test means stop."
             )[:300],
             "focus_project_id": focus.id if focus else None,
+            "focus_venture_id": None,
             "steps": steps,
             "sleep_minutes": 720 if critical else rng.choice([120, 180, 240, 360]),
         }
@@ -1307,6 +1385,38 @@ class FakeTransport:
             plan["steps"] = [(s + " - " + _filler(rng, 200))[:190] for s in (steps + more * 3)[:6]]
             plan["sleep_minutes"] = 5
         return plan
+
+    def _venture_plan(self, context: str, rng: random.Random, state: str, balance: str) -> dict[str, Any]:
+        """A venture cycle: answer the owner, grow the tree while it has few ideas, research one venture."""
+        news = owner_news(context, NEWS_SECTION)
+        answer = [ANSWER_STEP if len(news.messages) == 1 else "Answer my owner's messages"] if news.messages else []
+        tree = [
+            (int(m[1]), m[2], m[3].strip()) for m in _VENTURE_LINE.finditer(section(context, VENTURE_SECTION) or "")
+        ]
+        ideas = [v for v in tree if v[1] == "idea"]
+        focus = next((v for v in tree if v[1] == "researching"), ideas[0] if ideas else None)
+        steps = list(answer)
+        if len(ideas) < BRAINSTORM_BELOW and state != "critical":
+            steps.append(BRAINSTORM_STEP)
+        if focus is not None:
+            steps.append(RESEARCH_VENTURE_STEP.format(id=focus[0], title=focus[2])[:200])
+            steps.append(SAVE_VENTURE_STEP.format(id=focus[0]))
+        about = f"venture #{focus[0]} {focus[2]}" if focus else "new ideas"
+        return {
+            "assessment": (
+                f"I am {state} with ${balance}. A venture cycle: my tree has {len(tree)} ventures, {len(ideas)} of "
+                f"them ideas. {_heard(news)}The heaviest open question is {about}."
+            )[:600],
+            "goal": f"Grow my venture tree and find out more about {about}."[:300],
+            "money_path": (
+                "A venture that passes research becomes a business case my owner can back; its first test shows "
+                "whether anyone pays."
+            ),
+            "focus_project_id": None,
+            "focus_venture_id": focus[0] if focus else None,
+            "steps": steps,
+            "sleep_minutes": rng.choice([60, 120, 180]),
+        }
 
     # work
 
@@ -1357,6 +1467,8 @@ class FakeTransport:
             "close": "close project #" in steps,
             "etsy_find": "propose an etsy listing" in steps,
             "etsy_propose": "propose an etsy listing" in steps,
+            "brainstorm": BRAINSTORM_STEP.lower() in steps,
+            "venture_save": "save what i learned to venture #" in steps,
         }
         wanted["guide"] = wanted["make"] and crng.random() < 0.5
         wanted["look"] = wanted["photo"] = wanted["make"]
@@ -1377,7 +1489,9 @@ class FakeTransport:
                 "close",
                 "mail_read",
                 "mail_reply",
+                "brainstorm",
                 "research",
+                "venture_save",
                 "write",
                 "reread",
                 "guide",
@@ -1400,7 +1514,8 @@ class FakeTransport:
         sequence.append("sleep")
         turns = [["reply"]] if reply else []
         if not only_answering:
-            turns.append(["survey"] if conv.focus else ["survey", "create"])
+            venturing = "\n== VENTURE CYCLE ==\n" in conv.brief  # no project is started in a venture cycle
+            turns.append(["survey"] if conv.focus or venturing else ["survey", "create"])
         pairable = {"update", "approval", "reddit", "message", "sleep"}
         for stage in sequence:
             last = turns[-1]
@@ -1449,6 +1564,23 @@ class FakeTransport:
                 "hypothesis": idea.hypothesis,
                 "next_step": "Research demand and write a first draft",
                 "status": "active",
+            }
+        if stage == "brainstorm":
+            focus = _FOCUS_VENTURE.search(conv.brief)
+            return "brainstorm", ({"venture_id": int(focus[1])} if focus and rng.random() < 0.5 else {})
+        if stage == "venture_save":
+            focus = _FOCUS_VENTURE.search(conv.brief)
+            if focus is None:
+                return None
+            found = next((c.result for c in conv.of("act") if c.name == "research" and c.result and not c.error), "")
+            learned = " ".join(re.sub(r"</?data[^>]*>", " ", found).split())[:600]
+            learned = learned or f"Nothing new found about {focus[2]} yet."
+            return "venture_update", {
+                "venture_id": int(focus[1]),
+                "learned": f"Dry-run research (simulated web results): {learned}"[:2_000],
+                "stage": "researching",
+                **{name: rng.randint(1, 5) for name in ("revenue", "doability", "difficulty", "risk", "speed", "cost")},
+                "next_question": f"Who exactly would pay for {focus[2]}, and how much?"[:300],
             }
         if stage == "research":
             args = {"question": idea.question}
@@ -1626,6 +1758,9 @@ class FakeTransport:
         return _Draft(content, "tool_use", note=note or "tools: " + ", ".join(name for name, _ in calls))
 
     def _idea_of(self, conv: _Conversation, crng: random.Random) -> Idea:
+        venture = _FOCUS_VENTURE.search(conv.brief)
+        if venture is not None:
+            return idea_for(venture[2].strip())
         focus = conv.focus
         if focus is not None:
             hypothesis = _HYPOTHESIS.search(conv.brief)
@@ -1928,6 +2063,8 @@ class FakeTransport:
 
 _STAGE_TOOLS = {
     "close": "project_update",
+    "brainstorm": "brainstorm",
+    "venture_save": "venture_update",
     "etsy_find": "etsy_categories",
     "etsy_propose": "propose_etsy_listing",
     "survey": "workspace_list",
@@ -1957,6 +2094,8 @@ _INTROS = {
     "reddit": "A short Reddit post could test demand; my owner would post it themselves.",
     "survey": "First I'll look at what is already in my workspace.",
     "reply": "My owner wrote to me, so I'll answer first.",
+    "brainstorm": "My tree needs more ideas, so I'll brainstorm first.",
+    "venture_save": "I'll keep what I learned with the venture and score it.",
     "research": "Before writing anything, I'll check what already exists and what it costs.",
     "write": "Now I'll write a first draft.",
     "guide": "I'll read the manual for documents before I lay this out.",
@@ -2245,6 +2384,9 @@ def _describe(call: _Call) -> str:
         if DRY_RUN_REPLY in str(args.get("text"))
         else "sent my owner a short message",
         "set_sleep": f"asked to sleep {args.get('minutes')} min",
+        "brainstorm": "brainstormed new ventures for my tree",
+        "venture_update": f"saved what I learned to venture #{args.get('venture_id')}",
+        "venture_create": f"added the venture {args.get('title')} to my tree",
         "email_inbox": "looked at my mailbox",
         "email_read": f"read email #{args.get('email_id')}",
         "propose_email": "asked my owner to approve an answer by email (Ember's code sends it only if they do)",

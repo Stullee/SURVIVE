@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from app.agent import context, loop, prompts, tools
+from app.agent import context, loop, prompts, tools, ventures
 from app.agent.news import CHANGELOG_LIMIT, News
 from app.config import Settings
 from app.economy.estimate import plan_request
@@ -37,17 +37,17 @@ def biggest_planner_context() -> str:
 
 def first_step_and_reflection(brief: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """The first work step, and the reflection after it with the room the loop keeps for one step's growth (with the
-    most tools: a mailbox's and a shop's too)."""
+    most tools: a mailbox's, a shop's and a venture cycle's too)."""
     grown = [{"role": "assistant", "content": [{"type": "text", "text": "x" * loop.STEP_GROWTH_BYTES}]}]
     longest = "ä" * prompts.ENDED_CHARS  # why the work ended, at its longest
     return (
-        prompts.work_request(SETTINGS, brief, [], mail=True, etsy=True),
-        prompts.reflect_request(SETTINGS, brief, grown, [], mail=True, etsy=True, ended=longest),
+        prompts.work_request(SETTINGS, brief, [], mail=True, etsy=True, venture=True),
+        prompts.reflect_request(SETTINGS, brief, grown, [], mail=True, etsy=True, ended=longest, venture=True),
     )
 
 
 def test_profiles_cover_the_biggest_requests_without_much_slack() -> None:
-    planner = rough_token_count(prompts.plan_request(SETTINGS, biggest_planner_context()))
+    planner = rough_token_count(prompts.plan_request(SETTINGS, biggest_planner_context(), venture=True))
     will = rough_token_count(prompts.will_request(SETTINGS, filler(context.WILL_BUDGET)))
     assert planner <= PLANNER_OPENING.input_tokens <= planner * 1.15
     assert will <= LAST_WILL.input_tokens <= will * 1.15
@@ -75,6 +75,7 @@ def overflowing_snapshot() -> context.Snapshot:
         "decision_comment": "ä" * 2_000,
     }
     project = {"status": "active", "title": "ä" * 80, "next_step": "ä" * 200, "hypothesis": "ä" * 400}
+    venture = biggest_venture()
     return context.Snapshot(
         status=LifeStatus(
             mode="live", life_id=1, state="critical", reason="", last_will_due=True, runway=Runway(1, None)
@@ -107,7 +108,35 @@ def overflowing_snapshot() -> context.Snapshot:
         ],
         review="ä" * 3_000,
         etsy="ä" * 3_000,
+        ventures=[  # type: ignore[misc]
+            {**venture, "id": 1_000 + i, "stage": ("researching", "idea", "proposed", "live")[i % 4]} for i in range(60)
+        ],
+        venture_money={1_000 + i: ventures.Money(10**12, 10**12) for i in range(60)},
+        venture=True,
+        venture_share=100,
+        venture_day=(10**12, 10**12),
     )
+
+
+def biggest_venture() -> dict[str, Any]:
+    """A venture with every text at its limit and the owner's longest comment."""
+    return {
+        "id": 10**9,
+        "parent_id": 10**9 - 1,
+        "stage": "researching",
+        "title": "ä" * 80,
+        "pitch": "ä" * 600,
+        "next_question": "ä" * 300,
+        "notes": "ä" * 2_000,
+        **{name: "ä" * limit for name, _, limit in ventures.CASE},
+        **dict.fromkeys(ventures.SCORE_FIELDS, 3),
+        "scores_by": "research",
+        "owner_action": "note",
+        "owner_comment": "ä" * 1_000,
+        "owner_at": "2026-09-30T08:00:00Z",
+        "created_by": "owner",
+        "created_at": "2026-09-30T08:00:00Z",
+    }
 
 
 def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
@@ -118,10 +147,14 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     assert "Memory check: lessons.md" in planner  # the lessons fill most of their file
     assert "\n== WORKSHOP ==\nWorkshop check: workshop/scripts/" in planner
     assert "\n== TODAY'S REVIEW ==\nää" in planner and "\n== ETSY SHOP ==\nää" in planner
-    assert rough_token_count(prompts.plan_request(SETTINGS, planner)) <= PLANNER_OPENING.input_tokens
+    assert "\n== VENTURES ==\n#1000 [researching] ää" in planner
+    assert rough_token_count(prompts.plan_request(SETTINGS, planner, venture=True)) <= PLANNER_OPENING.input_tokens
     plan = {"goal": "ä" * 300, "steps": ["ä" * 200] * 6}
     focus = {"id": 1_000, "title": "ä" * 80, "status": "active", "hypothesis": "ä" * 400, "next_step": "ä" * 200}
-    brief, _ = context.brief(snap, True, plan, {**focus, "notes": "ä" * 2_000}, 100)  # type: ignore[arg-type]
+    projects = [{"id": 10**9 + i, "title": "ä" * 80, "status": "active"} for i in range(8)]
+    venture = ventures.focus_text(biggest_venture(), ventures.Money(10**12, 10**12), 10**9, projects)  # type: ignore[arg-type]
+    brief, _ = context.brief(snap, True, plan, {**focus, "notes": "ä" * 2_000}, 100, venture_focus=venture)  # type: ignore[arg-type]
+    assert "\n== VENTURE CYCLE ==\n" in brief and "Focus venture: #1000000000 ää" in brief
     assert "== FROM YOUR OWNER ==" in brief and "\n== MAIL ==\n" in brief and brief.endswith("bytes cut]")
     assert f"\n== {context.INSTRUCTIONS_HEADING} ==\n" in brief and "Memory check" not in brief
     # The owner's and the research sections' room comes on top, even when the research itself is cut at the end.

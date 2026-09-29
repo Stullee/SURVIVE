@@ -24,7 +24,7 @@ from ..economy.costs import micros_to_usd
 from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
-from . import review, store
+from . import review, store, ventures
 from .memory import CAPS, Memory
 from .news import CHANGELOG_LIMIT, Item, News, Shown
 from .sandbox import Jail
@@ -70,6 +70,15 @@ _HANDOFF = re.compile(
     r"|\bonly (?:\w+ )?text files\b|\bcan (?:actually )?deliver\W+(?:\w+\W+){0,3}text\b",
     re.IGNORECASE,
 )
+# Outdated since 0.10.0: an idea turned down ("dropshipping declined", "won't pursue this idea"); an idea goes into the
+# venture tree with its path, its smallest test and the numbers, and only a hard rule is a real no (a line that names
+# one stays).
+_DECLINED = re.compile(
+    r"\b(?:dropship\w*|drop-ship\w*|ventures?|(?:business |owner'?s |their )?ideas?)\b.{0,80}?"
+    r"\b(?:declin\w*|refus\w*|won'?t (?:do|pursue|build|try)|not (?:pursu\w*|worth)\w*|ruled out|rejected by me)\b"
+    r"|\b(?:declin\w*|refus\w*|won'?t pursue|not pursu\w*|ruled out)\b.{0,40}?\b(?:dropship\w*|ventures?|ideas?)\b",
+    re.IGNORECASE,
+)
 OUTDATED: tuple[tuple[str, str, Callable[[str], bool]], ...] = (
     (
         "0.4.0",
@@ -89,6 +98,11 @@ OUTDATED: tuple[tuple[str, str, Callable[[str], bool]], ...] = (
         "you make finished PDF, Word and Excel files and listing photos yourself, so your owner never builds them",
         lambda line: bool(_HANDOFF.search(line)),
     ),
+    (
+        "0.10.0",
+        "no idea is turned down: it goes into your venture tree with its path, smallest test and numbers",
+        lambda line: bool(_DECLINED.search(line)) and "hard rule" not in line.lower(),
+    ),
 )
 PLANNER_BUDGETS = {
     "status": 500,
@@ -107,6 +121,7 @@ PLANNER_BUDGETS = {
     "workshop": 800,
     "review": 1_400,
     "etsy": 1_600,
+    "ventures": 2_600,
 }
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
 # room for one whole message of plain text at the owner's limit of 2,000 characters.
@@ -114,8 +129,14 @@ OWNER_BUDGET = 2_300
 QUOTE_CAP = 300  # characters of each text quoted in a decision or upgrade line, when the owner's news is shortened
 SHORTEST_QUOTE = 40  # no quoted text is shortened below this; if that isn't enough, the last lines are cut
 # The owner's (standing instructions and news), the mail and the research sections (and their headings) come on top
-# of the brief's budget, so they never squeeze the rest.
-BRIEF_BUDGET = 5_000
+# of the brief's budget, so they never squeeze the rest. (6,500 since 0.10.0: a venture's focus is longer.)
+BRIEF_BUDGET = 6_500
+VENTURE_FOCUS_BUDGET = 1_900  # a venture's FOCUS in the brief
+VENTURE_BRIEF = (
+    "This is a venture cycle: read guide 'ventures' first, research up to 8 times, grow the tree with brainstorm, "
+    "save what you learn with venture_update (learned, with sources) and rescore the venture from the evidence. "
+    "Products and listings for a leg you already run wait for an ordinary cycle."
+)
 # The largest brief, those sections and their headings included: the WORK and REFLECT profiles are measured on it.
 BRIEF_MAX = BRIEF_BUDGET + INSTRUCTIONS_BUDGET + OWNER_BUDGET + MAIL_BUDGET + RESEARCH_BUDGET + 200
 WILL_BUDGET = 4_500 + OWNER_BUDGET + 100  # the largest will context: the LAST_WILL profile is measured on it
@@ -195,6 +216,11 @@ class Snapshot:
     proven: list[tuple[str, str]] = field(default_factory=list)  # workshop scripts worth building in: (path, why)
     review: str = ""  # today's daily review, as the planner sees it ("" before it is made)
     etsy: str = ""  # the ETSY SHOP section ("" without a shop)
+    ventures: list[sqlite3.Row] = field(default_factory=list)  # the venture tree (0.10.0)
+    venture_money: dict[int, ventures.Money] = field(default_factory=dict)
+    venture: bool = False  # a venture cycle
+    venture_share: int = 0  # the owner's share of the spending for ventures, in percent
+    venture_day: tuple[int, int] = (0, 0)  # today's spending, and the venture cycles' part of it
 
 
 def snapshot(
@@ -214,8 +240,11 @@ def snapshot(
     mail_address: str | None = None,
     today: date | None = None,
     etsy: str = "",
+    venture: bool = False,
+    venture_share: int = 0,
 ) -> Snapshot:
-    """What the planner, the brief and the will see; ``today`` (the owner's local date) finds the day's review."""
+    """What the planner, the brief and the will see; ``today`` (the owner's local date) finds the day's review and
+    the day's spending on ventures."""
     projects = store.open_projects(conn, scope)
     todays_review = review.of_day(conn, scope, today) if today is not None else None
     mail = None
@@ -264,6 +293,11 @@ def snapshot(
         proven=store.proven_scripts(conn, scope),
         review=review.planner_text(conn, todays_review) if todays_review is not None else "",
         etsy=etsy,
+        ventures=ventures.all_ventures(conn, scope),
+        venture_money=ventures.money(conn, scope),
+        venture=venture,
+        venture_share=venture_share,
+        venture_day=ventures.day_spend(conn, scope, today) if today is not None else (0, 0),
     )
 
 
@@ -298,6 +332,12 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
         f"Spent today ${micros_to_usd(s.today_spend):.2f} of ${s.daily_cap:.2f}."
         f" This cycle may spend up to ${s.cycle_cap:.2f}.",
     ]
+    if s.venture_share:
+        spent, ventured = s.venture_day
+        lines.append(
+            f"Your owner gives ventures {s.venture_share}% of your spending: ${micros_to_usd(ventured):.2f} of today's"
+            f" ${micros_to_usd(spent):.2f} so far." + (" This is a venture cycle." if s.venture else "")
+        )
     if st.last_will_due:
         lines.append("Your money is nearly gone: your last will is due.")
     return "\n".join(lines)
@@ -344,7 +384,7 @@ def _owner(s: Snapshot, budget: int) -> tuple[str, list[tuple[Item, str, bool]],
     """``owner_text``; every item with its line as that text holds it whole (unless it was cut) and whether the line
     shows it whole (a decision always, a message unshortened); and the oldest message if it was shortened only
     because the section can't hold it whole."""
-    decisions = [*s.news.approval_lines(), *s.news.upgrade_lines()]
+    decisions = [*s.news.approval_lines(), *s.news.upgrade_lines(), *s.news.venture_lines()]
     items: list[Item] = [*(("message", m["id"], None) for m in s.owner_messages), *s.news.items()]
     texts = [m["text"] for m in s.owner_messages]
 
@@ -520,8 +560,12 @@ def lessons_note(s: Snapshot) -> str:
 
 
 def strategy_note(s: Snapshot) -> str:
-    """For the planner only: a request to rewrite the strategy when it holds notes a later version made wrong."""
-    changes = outdated(s.memory.get("strategy", ""))
+    """For the planner only: a request to rewrite the strategy when it holds notes a later version made wrong, or
+    leaves out the ventures its owner gives a share of the spending to (0.10.0)."""
+    strategy = s.memory.get("strategy", "")
+    changes = outdated(strategy)
+    if s.venture_share and "venture" not in strategy.lower():
+        changes.append(f"since 0.10.0 your owner gives ventures {s.venture_share}% of your spending: plan for them too")
     if not changes:
         return ""
     return (
@@ -577,6 +621,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *([("YOUR SOFTWARE", software)] if s.news.changelog else []),
         *([("TODAY'S REVIEW", cut(s.review, b["review"]))] if s.review else []),
         ("OPEN PROJECTS", cut(project_lines(s), b["projects"])),
+        ("VENTURES", cut(ventures.planner_lines(s.ventures, s.venture_money, s.venture), b["ventures"])),
         ("WAITING FOR YOUR OWNER", cut(pending, b["pending"])),
         *([("MAIL", cut(mail_text(s), b["mail"]))] if s.mail is not None else []),
         *([("ETSY SHOP", cut(s.etsy, b["etsy"]))] if s.etsy else []),
@@ -586,7 +631,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         ("WORKSPACE", cut("\n".join(s.workspace) or "Empty.", b["workspace"])),
         *([(RESEARCH_HEADING, cut(research, b["research"]))] if research else []),
         *([("WORKSHOP", cut(workshop_text(s), b["workshop"]))] if s.proven else []),
-        ("TASK", "Plan this wake cycle. Reply with the JSON plan only."),
+        ("TASK", f"Plan this {'venture' if s.venture else 'wake'} cycle. Reply with the JSON plan only."),
     ]
     held = _held(since, f"{head}\n" if head else "", lines)
     whole = frozenset(item for item, shown_whole in held.items() if shown_whole)
@@ -594,17 +639,23 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
 
 
 def brief(
-    s: Snapshot, dry_run: bool, plan: dict[str, Any], focus: sqlite3.Row | None, max_steps: int
+    s: Snapshot,
+    dry_run: bool,
+    plan: dict[str, Any],
+    focus: sqlite3.Row | None,
+    max_steps: int,
+    venture_focus: str = "",
 ) -> tuple[str, Shown]:
     """The act phase's brief (the same for every step and the reflection: built from the cycle's snapshot only), and
-    which of the owner's items it shows."""
-    focus_text = "None."
+    which of the owner's items it shows. ``venture_focus``: the plan's venture as ``ventures.focus_text`` shows it."""
+    focus_parts = [cut(venture_focus, VENTURE_FOCUS_BUDGET)] if venture_focus else []
     if focus is not None:
-        focus_text = (
+        focus_parts.append(
             f"Focus project: #{focus['id']} {focus['title']} [{focus['status']}]\n"
             f"Hypothesis: {focus['hypothesis']}\nNext step: {focus['next_step'] or '-'}\n"
             f"Notes: {focus['notes'][-600:] or '-'}"
         )
+    focus_text = "\n\n".join(focus_parts) or "None."
     steps = "\n".join(f"{i}. {step}" for i, step in enumerate(plan.get("steps", []), 1))
     money = f"\nPath to money: {plan['money_path']}" if plan.get("money_path") else ""
     head = [("STATUS", status_text(s, dry_run)), ("PLAN", f"Goal: {plan.get('goal', '')}{money}\n{steps}")]
@@ -619,6 +670,7 @@ def brief(
         *standing,
         *owners,
         *mailed,
+        *([("VENTURE CYCLE", VENTURE_BRIEF)] if s.venture else []),
         ("FOCUS", focus_text),
         ("LESSONS", _newest_lines(s.memory.get("lessons", ""), 800)),
         ("WORKSPACE", "\n".join(s.workspace[:20]) or "Empty."),

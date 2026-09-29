@@ -18,6 +18,12 @@ configuration:
   cycle_spend_cap_usd:
     name: Spending cap per wake cycle (USD)
     description: Hard limit on API spending in one wake cycle. Must not exceed the daily cap.
+  venture_share:
+    name: Share for ventures (%)
+    description: >-
+      This percent of each day's spending goes to venture cycles, where the
+      agent researches new ways to earn beyond what it does now and brings you
+      business cases on the Ventures tab. 0 switches venture cycles off.
   wake_interval_minutes:
     name: Default sleep between wake cycles (minutes)
     description: Used when the agent does not choose its own sleep time.

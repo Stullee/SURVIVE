@@ -1,4 +1,4 @@
-"""The owner's side: approvals, the inbox, standing instructions, upgrade requests, the kill switch.
+"""The owner's side: approvals, the inbox, standing instructions, upgrade requests, ventures, the kill switch.
 
 Only the owner's HTTP endpoints call this module; the agent's tools never import
 it (a test checks), so the agent can't decide its own requests. Every change is
@@ -25,7 +25,7 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import etsy, executor
 from ..integrations.mail import BODY_MAX
-from . import store
+from . import store, ventures
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
@@ -37,6 +37,15 @@ CHANGE_CANCELLED = "Cancelled by the owner before the listing was changed"
 DECISIONS = {"approve": "approved", "approve_with_changes": "approved_with_changes", "reject": "rejected"}
 OUTCOMES = ("done", "failed")
 UPGRADE_STATUSES = ("accepted", "declined", "released")
+# The owner's word on a venture (0.10.0): the stages it may come from, and the stage it goes to (None: unchanged).
+VENTURE_ACTIONS: dict[str, tuple[tuple[str, ...], str | None]] = {
+    "research": (("idea", "researching", "proposed", "parked", "killed"), "researching"),
+    "back": (("idea", "researching", "proposed", "parked"), "building"),
+    "park": (("idea", "researching", "proposed", "building", "live"), "parked"),
+    "kill": (("idea", "researching", "proposed", "building", "live", "parked"), "killed"),
+    "note": (ventures.STAGES, None),
+}
+VENTURE_COMMENT_MAX = 1_000
 _BAD_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _VERSION = re.compile(r"^\d{1,4}\.\d{1,4}\.\d{1,4}$")
 
@@ -341,6 +350,78 @@ class Owner:
             actor = who or "The owner"
             events.record(self.db, "info", "owner", f"{actor} marked upgrade request #{upgrade_id} {status}")
             return Reply(200, {"id": upgrade_id, "status": status})
+
+        return _reply(run)
+
+    # --- ventures (0.10.0) ---
+
+    def add_venture(self, body: Any, who: str | None) -> Reply:
+        """An idea of the owner's for the agent's venture tree (news for the agent until a plan showed it)."""
+
+        def run() -> Reply:
+            data = _body(body, {"title", "pitch", "parent_id"})
+            title = _text(data, "title", ventures.LIMITS["title"], required=True) or ""
+            if "\n" in title or "\r" in title:
+                raise OwnerError("title", "keep the title on one line")
+            pitch = _text(data, "pitch", ventures.LIMITS["pitch"], required=True) or ""
+            parent_id = data.get("parent_id")
+            if parent_id is not None and (
+                not isinstance(parent_id, int) or isinstance(parent_id, bool) or parent_id < 1
+            ):
+                raise OwnerError("parent_id", "parent_id must be a venture number")
+            with self.db.transaction() as conn:
+                if parent_id is not None and ventures.get(conn, self.scope, parent_id) is None:
+                    raise OwnerError("parent_id", "there is no such venture to branch from", 404)
+                if ventures.count(conn, self.scope) >= ventures.MAX_VENTURES:
+                    raise OwnerError(
+                        "title", f"the tree holds {ventures.MAX_VENTURES} ventures, as many as it can", 409
+                    )
+                same = ventures.by_title(conn, self.scope, title)
+                if same is not None:
+                    raise OwnerError("title", f"venture #{same['id']} already has this title", 409)
+                venture_id = ventures.create(
+                    conn,
+                    self.scope,
+                    title=" ".join(title.split()),
+                    pitch=pitch,
+                    stage="idea",
+                    now=self._now(),
+                    parent_id=parent_id,
+                    created_by="owner",
+                    entered_by=who,
+                )
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} added venture idea #{venture_id}")
+            return Reply(201, {"id": venture_id})
+
+        return _reply(run)
+
+    def decide_venture(self, venture_id: int, body: Any, who: str | None) -> Reply:
+        """Back, park, kill or have researched next one of the agent's ventures, or leave a note on it."""
+
+        def run() -> Reply:
+            data = _body(body, {"action", "comment", "expected_version"})
+            action = data.get("action")
+            if action not in VENTURE_ACTIONS:
+                raise OwnerError("action", "choose research, back, park, kill or note")
+            comment = _text(data, "comment", VENTURE_COMMENT_MAX, required=action == "note")
+            expected = data.get("expected_version")
+            if expected is not None and (not isinstance(expected, int) or isinstance(expected, bool)):
+                raise OwnerError("expected_version", "expected_version must be a number")
+            allowed, stage = VENTURE_ACTIONS[action]
+            with self.db.transaction() as conn:
+                row = ventures.get(conn, self.scope, venture_id)
+                if row is None:
+                    raise OwnerError("id", "no such venture", 404)
+                if expected is not None and expected != row["owner_version"]:
+                    raise OwnerError("expected_version", "this venture changed meanwhile", 409)
+                if row["stage"] not in allowed:
+                    raise OwnerError("action", f"this venture is {row['stage']}", 409)
+                ventures.owner_word(conn, venture_id, self._now(), action, comment, who, stage)
+                after = ventures.get(conn, self.scope, venture_id)
+            done = {"research": "asked for research on", "back": "backed", "park": "parked", "kill": "killed"}
+            what = done.get(action, "left a note on")
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} {what} venture #{venture_id}")
+            return Reply(200, {"id": venture_id, "stage": after["stage"] if after else stage})
 
         return _reply(run)
 

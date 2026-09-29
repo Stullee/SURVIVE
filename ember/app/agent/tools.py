@@ -41,7 +41,7 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
-from . import netguard, store
+from . import netguard, store, ventures
 from .memory import Memory, MemoryError_
 from .sandbox import Jail, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
@@ -65,12 +65,16 @@ CATEGORIES_SHOWN = 10  # etsy_categories' answer, shortest paths first
 DEPARTMENT = " (a whole department: too broad for a listing)"
 # Making files takes a moment: these run sealed, but outside the database transaction the other tools share.
 MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image"})
-GUIDES = ("documents", "spreadsheets", "listing_photos", "workshop", "etsy")
+GUIDES = ("documents", "spreadsheets", "listing_photos", "workshop", "etsy", "ventures")
 WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
 # Offered only with an Etsy shop.
 ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing", "propose_etsy_edit"})
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "propose_email"})
+# Offered only in venture cycles (0.10.0).
+VENTURE_TOOLS = frozenset({"brainstorm"})
+# Model calls of their own: they need the network, and no database transaction is held meanwhile.
+CALLING_TOOLS = frozenset({"research", "workshop", "brainstorm"})
 FIRST_CONTACT = (
     "First email to this address: Ember has never received mail from it. Cold advertising emails are illegal in "
     "Germany (§ 7 UWG)."
@@ -185,6 +189,7 @@ SPECS: dict[str, Spec] = {
                     "The next concrete step (a pointer; put long text in a workspace file).", 200, cut=True
                 ),
                 "status": _s("idea or active.", 10, enum=("idea", "active")),
+                "venture_id": _i("The venture it belongs to (its leg), if any.", required=False),
             },
             per_cycle=2,
             reflect=True,
@@ -204,9 +209,99 @@ SPECS: dict[str, Spec] = {
                 ),
                 "hypothesis": _s("A sharper hypothesis.", 400, required=False, cut=True),
                 "note": _s("A short note to add (what happened, what you learned).", 300, required=False, cut=True),
+                "venture_id": _i("Link it to this venture (its leg).", required=False),
             },
             per_cycle=8,
             reflect=True,
+        ),
+        Spec(
+            "venture_create",
+            "Add a venture to your tree: a new way to earn beyond what you do now (a market, a platform, a business "
+            "model, or a channel that brings buyers to what you sell), or a leg you already run (stage live). Branch "
+            "it from the venture it grew out of. Its knowledge file keeps what you learn. Ideas are unlimited; at "
+            f"most {ventures.MAX_ACTIVE} ventures are worked on at once. Free.",
+            {
+                "title": _s("A short name.", 80, cut=True),
+                "pitch": _s("What it is, who pays for what, and why it could work.", 600, cut=True),
+                "stage": _s(
+                    "idea, researching, or live for a way you already earn.", 12, enum=ventures.AGENT_START_STAGES
+                ),
+                "next_question": _s("The first question your research must answer.", 300, required=False, cut=True),
+                "parent_id": _i(
+                    "The venture it branches from (a variant, niche, channel or next step).", required=False
+                ),
+            },
+            per_cycle=3,
+            reflect=True,
+        ),
+        Spec(
+            "venture_update",
+            "Update a venture. learned: what you found out, with sources, saved to its knowledge file. Scores from 1 "
+            "to 5 weigh it in your tree: rescore it from the evidence. The six business case fields (demand to "
+            "first_test): stage proposed puts it before your owner on the Ventures tab and needs all six, from "
+            "research. Only your owner backs a venture (building) or kills it; park one with a note saying why. Free.",
+            {
+                "venture_id": _i("The venture's number."),
+                "learned": _s("What you found out, with sources (saved with the date).", 2_000, required=False),
+                **{
+                    score.name: _i(
+                        f"{score.label}: 1 {score.low}, 5 {score.high}.", required=False, minimum=1, maximum=5
+                    )
+                    for score in ventures.SCORES
+                },
+                "stage": _s("New stage.", 12, required=False, enum=ventures.AGENT_STAGES),
+                "pitch": _s("A sharper pitch.", 600, required=False, cut=True),
+                "next_question": _s("The next question your research must answer.", 300, required=False, cut=True),
+                "demand": _s(
+                    "Evidence people pay for it: searches, competitors, their prices and sales.",
+                    400,
+                    required=False,
+                    cut=True,
+                ),
+                "economics": _s(
+                    "Price, cost per sale, margin, monthly costs and break-even, in euros.",
+                    400,
+                    required=False,
+                    cut=True,
+                ),
+                "setup": _s(
+                    "What it takes to start and who does what: money, your owner's hours and accounts, abilities "
+                    "Ember needs.",
+                    400,
+                    required=False,
+                    cut=True,
+                ),
+                "first_euro": _s("How soon the first euro could come in, and why.", 200, required=False, cut=True),
+                "risks": _s(
+                    "What could go wrong, legal duties in Germany, and how to handle them.",
+                    400,
+                    required=False,
+                    cut=True,
+                ),
+                "first_test": _s(
+                    "The smallest first test: what it costs, and the result that decides go or stop.",
+                    400,
+                    required=False,
+                    cut=True,
+                ),
+                "note": _s(
+                    "A short note: why you parked it, what changed.", ventures.NOTE_CHARS, required=False, cut=True
+                ),
+            },
+            per_cycle=10,
+            reflect=True,
+        ),
+        Spec(
+            "brainstorm",
+            "Grow your venture tree: a separate, creative call on your planner's model (about 5 to 15 cents) finds "
+            f"{ventures.BRAINSTORM_IDEAS} new ways to earn that fit your owner (Germany, their time and money) and "
+            "what you can do or could learn to do, and adds them to the tree as ideas with first-guess scores. Branch "
+            "from a venture (its variants, niches, channels, next steps) or give a theme; leave both out for anything.",
+            {
+                "venture_id": _i("Branch the new ideas from this venture.", required=False),
+                "theme": _s("A market, a customer group, a problem or a skill to think about.", 300, required=False),
+            },
+            per_cycle=1,
         ),
         Spec(
             "request_approval",
@@ -371,8 +466,9 @@ SPECS: dict[str, Spec] = {
         Spec(
             "guide",
             "Read the manual of your making tools: documents (the Markdown layout and settings for make_document), "
-            "spreadsheets (the spec for make_spreadsheet), listing_photos (make_image and what a listing needs) or "
-            "workshop (running code, and growing your own tools).",
+            "spreadsheets (the spec for make_spreadsheet), listing_photos (make_image and what a listing needs), "
+            "workshop (running code, and growing your own tools), etsy, or ventures (researching, scoring and making "
+            "the business case of a venture, and what selling needs in Germany).",
             {"topic": _s("Which manual.", 20, enum=GUIDES)},
             per_cycle=3,
         ),
@@ -511,16 +607,19 @@ SPECS: dict[str, Spec] = {
 }
 
 
-def definitions(mail: bool = False, workshop: bool = True, etsy: bool = False) -> list[dict[str, Any]]:
+def definitions(
+    mail: bool = False, workshop: bool = True, etsy: bool = False, venture: bool = False
+) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds, and in
     every cycle of a mode and configuration (the email tools only with a mailbox, the workshop only when the
-    owner's options allow runs, the Etsy tools only with a shop)."""
+    owner's options allow runs, the Etsy tools only with a shop, brainstorm only in a venture cycle)."""
     return [
         _definition(spec)
         for spec in SPECS.values()
         if (mail or spec.name not in MAIL_TOOLS)
         and (workshop or spec.name not in WORKSHOP_TOOLS)
         and (etsy or spec.name not in ETSY_TOOLS)
+        and (venture or spec.name not in VENTURE_TOOLS)
     ]
 
 
@@ -564,6 +663,7 @@ class CycleTools:
     sleep_reason: str = ""
     seen_urls: set[str] = field(default_factory=set)  # URLs from this cycle's research results
     focus_project_id: int | None = None
+    focus_venture_id: int | None = None
     journal_written: bool = False
     strikes: int = 0
     counts: dict[str, int] = field(default_factory=dict)
@@ -581,6 +681,7 @@ class Outcome:
 ResearchFn = Callable[[str, "str | None", int, "str | None"], Outcome]
 # task, workspace files, a kept script to run again, the folder for the results
 WorkshopFn = Callable[[str, list[str], "str | None", "str | None"], Outcome]
+BrainstormFn = Callable[[str, "int | None"], Outcome]  # the theme ("" for anything), the venture to branch from
 
 
 @dataclass(frozen=True)
@@ -618,6 +719,8 @@ class ToolContext:
     allow_fetch: bool = True  # the owner's web_fetch option (live mode)
     mail: MailAccess | None = None  # Ember's mailbox, when it has one
     etsy: EtsyAccess | None = None  # the Etsy shop, when there is one
+    venture: bool = False  # a venture cycle (0.10.0): brainstorm, and more research
+    brainstorm: BrainstormFn | None = None
     nonce: str = field(default_factory=lambda: secrets.token_hex(3))
 
     def now(self) -> str:
@@ -645,21 +748,24 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
             or (name in MAIL_TOOLS and ctx.mail is None)
             or (name in WORKSHOP_TOOLS and not ctx.workshop)
             or (name in ETSY_TOOLS and ctx.etsy is None)
+            or (name in VENTURE_TOOLS and not ctx.venture)
         ):
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
             raise ToolError(
-                f"{name} can't be used while reflecting; only journal, memory, projects, sleep, messages and "
-                "upgrade requests"
+                f"{name} can't be used while reflecting; only journal, memory, projects, ventures, sleep, messages "
+                "and upgrade requests"
             )
         if phase == "act" and not spec.act:
             raise ToolError(f"{name} is for the reflect phase at the end of the cycle")
-        if ctx.state.counts.get(name, 0) >= spec.per_cycle:
-            raise ToolError(f"{name} can be used at most {spec.per_cycle} times per cycle")
+        limit = per_cycle(ctx, spec)
+        if ctx.state.counts.get(name, 0) >= limit:
+            more = f" ({ventures.RESEARCH_CALLS} in a venture cycle)" if name == "research" and not ctx.venture else ""
+            raise ToolError(f"{name} can be used at most {limit} times per cycle{more}")
         cut_notes: list[str] = []
         args = validate(spec, raw_input, cut_notes)
         handler = HANDLERS[name]
-        if name in ("research", "workshop"):  # model calls: network, and no transaction held meanwhile
+        if name in CALLING_TOOLS:  # model calls: network, and no transaction held meanwhile
             outcome = _noted(handler(ctx, args), cut_notes)
         elif name in MAKERS:
             with netguard.sealed():
@@ -688,6 +794,13 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
     with ctx.db.transaction() as conn:
         store.finish_tool_call(conn, call_id, "ok" if outcome.ok else "error", outcome.summary, outcome.text, ctx.now())
     return _clip(outcome)
+
+
+def per_cycle(ctx: ToolContext, spec: Spec) -> int:
+    """How often a tool may be used in this cycle: a venture cycle researches more."""
+    if spec.name == "research" and ctx.venture:
+        return ventures.RESEARCH_CALLS
+    return spec.per_cycle
 
 
 def skip(
@@ -860,6 +973,9 @@ def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         raise ToolError(f"you already have {MAX_OPEN_PROJECTS} open projects; close one first")
     if any(p["title"].strip().lower() == args["title"].strip().lower() for p in open_):
         raise ToolError("an open project already has this title")
+    venture_id = args.get("venture_id")
+    if venture_id is not None:
+        _open_venture(conn, ctx.scope, venture_id)
     project_id = store.create_project(
         conn,
         ctx.scope,
@@ -869,6 +985,7 @@ def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         next_step=args["next_step"].strip(),
         status=args["status"],
         now=ctx.now(),
+        venture_id=venture_id,
     )
     if ctx.state.focus_project_id is None:
         ctx.state.focus_project_id = project_id
@@ -899,10 +1016,16 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         stamp = f"[#c{ctx.cycle_id}] {args['note'].strip()}"
         notes = (row["notes"] + "\n" + stamp).strip()
         changes["notes"] = notes[-2000:]
+    venture_id = args.get("venture_id")
+    if venture_id is not None and venture_id != row["venture_id"]:
+        _open_venture(conn, ctx.scope, venture_id)
+        changes["venture_id"] = venture_id
     if not changes:
         raise ToolError("nothing to change")
     store.update_project(conn, row["id"], ctx.now(), **changes)
     transition = f"{row['status']} → {changes['status']}" if "status" in changes else "updated"
+    if "venture_id" in changes:
+        transition += f", part of venture #{venture_id}"
     return Outcome(True, f"Project #{row['id']}: {transition}.", f"#{row['id']} {transition}", row["id"])
 
 
@@ -913,6 +1036,114 @@ def _has_owner_revenue(conn: Any, scope: AgentScope, project_id: int) -> bool:
         (project_id,),
     ).fetchone()
     return row is not None
+
+
+def _open_venture(conn: Any, scope: AgentScope, venture_id: int) -> Any:
+    row = ventures.get(conn, scope, venture_id)
+    if row is None:
+        raise ToolError(f"there is no venture #{venture_id}")
+    if row["stage"] == "killed":
+        raise ToolError(f"your owner killed venture #{venture_id}")
+    return row
+
+
+# --- ventures (0.10.0) ---
+
+
+def _venture_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    title = " ".join(args["title"].split())
+    if not title:
+        raise ToolError("the title is empty")
+    if ventures.count(conn, ctx.scope) >= ventures.MAX_VENTURES:
+        raise ToolError(f"your tree holds {ventures.MAX_VENTURES} ventures, as many as it can")
+    stage = args["stage"]
+    if (
+        stage in ventures.ACTIVE_STAGES
+        and ventures.count(conn, ctx.scope, ventures.ACTIVE_STAGES) >= ventures.MAX_ACTIVE
+    ):
+        raise ToolError(f"{ventures.MAX_ACTIVE} ventures are being worked on already: add it as an idea, or park one")
+    same = ventures.by_title(conn, ctx.scope, title)
+    if same is not None:
+        raise ToolError(f"venture #{same['id']} ({same['stage']}) already has this title: update it instead")
+    parent_id = args.get("parent_id")
+    if parent_id is not None and ventures.get(conn, ctx.scope, parent_id) is None:
+        raise ToolError(f"there is no venture #{parent_id} to branch from")
+    venture_id = ventures.create(
+        conn,
+        ctx.scope,
+        title=title,
+        pitch=args["pitch"].strip(),
+        stage=stage,
+        now=ctx.now(),
+        cycle_id=ctx.cycle_id,
+        next_question=(args.get("next_question") or "").strip(),
+        parent_id=parent_id,
+    )
+    file = ventures.file_of(venture_id, title)
+    branch = f", a branch of #{parent_id}" if parent_id is not None else ""
+    return Outcome(
+        True,
+        f"Venture #{venture_id} is in your tree ({stage}{branch}). Score it and save what you learn with "
+        f"venture_update: your findings go to {file}.",
+        f"venture #{venture_id} {title[:60]}",
+    )
+
+
+def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    row = _open_venture(conn, ctx.scope, args["venture_id"])
+    vid, current = row["id"], row["stage"]
+    changes: dict[str, Any] = {}
+    for name in ("pitch", "next_question", *ventures.CASE_FIELDS):
+        value = (args.get(name) or "").strip()
+        if value and value != row[name]:
+            changes[name] = value
+    scores = {name: args[name] for name in ventures.SCORE_FIELDS if args.get(name) is not None}
+    if scores:
+        changes.update(scores)
+        changes["scores_by"] = "research"
+    stage = args.get("stage")
+    if stage and stage != current:
+        busy = ventures.count(conn, ctx.scope, ventures.ACTIVE_STAGES)
+        if stage in ventures.ACTIVE_STAGES and current not in ventures.ACTIVE_STAGES and busy >= ventures.MAX_ACTIVE:
+            raise ToolError(f"{ventures.MAX_ACTIVE} ventures are being worked on already: park or propose one first")
+        if stage == "live" and current != "building":
+            raise ToolError("a venture goes live once your owner backed it (building) and it launched")
+        if current in ("building", "live") and stage != "parked" and stage != "live":
+            raise ToolError(f"venture #{vid} is {current}: your owner backed it; park it with a note if it should stop")
+        if stage == "parked" and not (args.get("note") or "").strip():
+            raise ToolError("say why in note when you park a venture")
+        if stage == "proposed":
+            missing = ventures.missing_case({**dict(row), **changes})
+            if missing:
+                raise ToolError(f"a business case needs {', '.join(missing)} filled in first, from your research")
+            changes["proposed_at"] = ctx.now()
+        changes["stage"] = stage
+    if args.get("note"):
+        changes["notes"] = ventures.add_note(row["notes"], ctx.cycle_id, args["note"])
+    learned = (args.get("learned") or "").strip()
+    if not changes and not learned:
+        raise ToolError("nothing to change")
+    if changes:
+        ventures.update(conn, vid, ctx.now(), **changes)
+    saved = ""
+    if learned:
+        path = ventures.file_of(vid, row["title"])
+        head = "" if ctx.workspace.exists(path) else ventures.knowledge_head(row)
+        size = ctx.workspace.write(
+            path, f"{head}\n### {ctx.clock.today().isoformat()}, cycle #{ctx.cycle_id}\n{learned}\n", append=True
+        )
+        saved = f" What you learned is in {path} ({size:,} B)."
+    transition = f"{current} → {changes['stage']}" if "stage" in changes else "updated"
+    after = " Your owner sees its business case on the Ventures tab." if changes.get("stage") == "proposed" else ""
+    if scores:
+        after += f" Now {ventures.scores_text({**dict(row), **changes})}."
+    return Outcome(True, f"Venture #{vid}: {transition}.{saved}{after}", f"venture #{vid} {transition}")
+
+
+def _brainstorm(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
+    if ctx.brainstorm is None:
+        raise ToolError("brainstorming isn't available right now")
+    return ctx.brainstorm(" ".join((args.get("theme") or "").split()), args.get("venture_id"))
 
 
 def _request_approval(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -1472,6 +1703,9 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "memory_update": _memory_update,
     "project_create": _project_create,
     "project_update": _project_update,
+    "venture_create": _venture_create,
+    "venture_update": _venture_update,
+    "brainstorm": _brainstorm,
     "request_approval": _request_approval,
     "message_owner": _message_owner,
     "request_upgrade": _request_upgrade,

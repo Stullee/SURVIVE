@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
+from .agent import ventures
 from .db import utcnow
 from .economy.clock import to_iso
 from .economy.costs import micros_to_usd
@@ -53,6 +54,7 @@ TABLES = (
     "life_transitions",
     "tool_calls",
     "projects",
+    "ventures",
     "journal",
     "approvals",
     "messages",
@@ -359,7 +361,8 @@ def _cycle(conn: Any, c: Any) -> str:
             f"### cycle #{c['id']} {c['status']} trigger={c['trigger']} simulated={c['simulated']} "
             f"session={c['session']} started={c['started_at']} ended={c['ended_at']} cap={c['cap_micros']}"
             f"\n    note={_cell(c['note'], TEXT_CHARS)} phase={c['phase']} step={c['step']}/{c['max_steps']} "
-            f"act_end={_cell(c['act_end_reason'])} sleep={c['sleep_minutes']} project={_cell(c['project_id'])}",
+            f"act_end={_cell(c['act_end_reason'])} sleep={c['sleep_minutes']} project={_cell(c['project_id'])}"
+            + (f" venture_cycle venture={_cell(c['venture_id'])}" if c["venture"] else ""),
             _plan(c["plan"]),
             _rows(
                 calls,
@@ -406,6 +409,19 @@ def _research(state: AppState) -> str:
     return "\n".join(out) or "(none)"
 
 
+def _venture(row: Any) -> dict[str, Any]:
+    """A venture as the report shows it: its weight and scores, what its business case lacks, the owner's word."""
+    scores = ",".join(f"{name[:3]}{row[name]}" for name in ventures.SCORE_FIELDS if row[name])
+    owner = f"{row['owner_action']} v{row['owner_version']}" if row["owner_action"] else "-"
+    return {
+        **dict(row),
+        "weight": ventures.weight(row) if ventures.weight(row) is not None else "-",
+        "scores": (scores + (" (guess)" if row["scores_by"] == "brainstorm" else "")) or "-",
+        "missing": ",".join(ventures.missing_case(row)) or "-",
+        "owner": owner,
+    }
+
+
 def _agent(state: AppState) -> str:
     agent = getattr(state, "agent", None)
     if agent is None:
@@ -415,7 +431,12 @@ def _agent(state: AppState) -> str:
     out = [f"scope: mode={scope.mode} session={scope.session} life={scope.life_id}"]
     with state.db.connection() as conn:
         for table, columns, limit in (
-            ("projects", ["id", "status", "title", "next_step", "updated_at", "notes"], 15),
+            ("projects", ["id", "status", "venture_id", "title", "next_step", "updated_at", "notes"], 15),
+            (
+                "ventures",
+                ["id", "parent_id", "stage", "title", "weight", "scores", "missing", "owner", "seen_cycle_id"],
+                40,
+            ),
             ("journal", ["cycle_id", "author", "summary"], 15),
             ("approvals", ["id", "status", "type", "title", "version", "decided_at", "closed_at", "seen_cycle_id"], 15),
             ("messages", ["id", "sender", "seen", "text"], 15),
@@ -433,6 +454,8 @@ def _agent(state: AppState) -> str:
             ).fetchall()
             if table == "messages":
                 rows = [{**dict(r), "seen": _seen(r)} for r in rows]
+            if table == "ventures":
+                rows = [_venture(r) for r in rows]
             out.append(f"-- {table}\n" + _rows(rows, columns))
         # The scripts upgrade requests carry: what the one who builds the upgrade needs (the report is its hand-off).
         for row in conn.execute(

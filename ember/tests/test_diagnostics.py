@@ -92,7 +92,7 @@ def test_a_cycle_is_easy_to_read(ingress_client: TestClient) -> None:
         "2 | agent | not read by owner yet | No, I can't generate images: I will write text templates.",
         f"1 | owner | seen by agent in cycle #1, not answered yet | {QUESTION}",
     ]
-    assert "1 | active | Printable meal-planning templates | outline | " in records
+    assert "1 | active | - | Printable meal-planning templates | outline | " in records
     workspace = records.split("-- workspace: ", 1)[1].splitlines()
     assert workspace[0] == f"1 files, 1 folders, {len(DRAFT)} B"
     assert workspace[1] == "  projects/"

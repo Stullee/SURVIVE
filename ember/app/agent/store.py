@@ -47,7 +47,18 @@ def sha256(text: str) -> str:
 
 def update_cycle(conn: sqlite3.Connection, cycle_id: int, **columns: Any) -> None:
     """Progress of a running cycle (phase, step, current action, plan...). Ignored once it has ended."""
-    allowed = {"phase", "step", "max_steps", "current_action", "plan", "project_id", "act_end_reason", "sleep_minutes"}
+    allowed = {
+        "phase",
+        "step",
+        "max_steps",
+        "current_action",
+        "plan",
+        "project_id",
+        "act_end_reason",
+        "sleep_minutes",
+        "venture",
+        "venture_id",
+    }
     unknown = set(columns) - allowed
     if unknown:
         raise ValueError(f"unknown cycle columns {sorted(unknown)}")
@@ -187,17 +198,30 @@ def create_project(
     next_step: str,
     status: str,
     now: str,
+    venture_id: int | None = None,
 ) -> int:
     cursor = conn.execute(
         "INSERT INTO projects (mode, session, life_id, created_cycle_id, created_at, updated_at, title, hypothesis,"
-        " status, next_step) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (scope.mode, scope.session, scope.life_id, cycle_id, now, now, title, hypothesis, status, next_step),
+        " status, next_step, venture_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            scope.mode,
+            scope.session,
+            scope.life_id,
+            cycle_id,
+            now,
+            now,
+            title,
+            hypothesis,
+            status,
+            next_step,
+            venture_id,
+        ),
     )
     return int(cursor.lastrowid)
 
 
 def update_project(conn: sqlite3.Connection, project_id: int, now: str, **columns: Any) -> None:
-    allowed = {"status", "next_step", "hypothesis", "notes"}
+    allowed = {"status", "next_step", "hypothesis", "notes", "venture_id"}
     if set(columns) - allowed:
         raise ValueError("unknown project columns")
     sets = ", ".join(f"{name} = ?" for name in columns)

@@ -3,6 +3,23 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.10.0
+
+Your owner now invests a share of your spending (STATUS says how much) in ventures: new ways to earn beyond what you do.
+
+- VENTURES is your tree of them, growing from the ideas you and your owner had so far (your Etsy leg, Pinterest,
+  dropshipping, print on demand, a website with ads, recruiting, an AI chat companion, Fiverr parked). Link your Etsy
+  projects to your Etsy leg (project_update venture_id).
+- Ember's code makes a cycle a venture cycle while ventures have had less than their share of the day's spending.
+  There you work on ventures only, research up to 8 times, and brainstorm grows the tree (six ideas with first-guess
+  scores, from your planner's model). Read guide 'ventures' first.
+- venture_create and venture_update: scores from 1 to 5 (revenue, doability, difficulty, risk, speed, cost) weigh a
+  venture; learned saves your findings to its knowledge file; the six business case fields make it ready for your
+  owner (stage proposed). Your owner backs, parks or kills it, adds ideas and comments on the Ventures tab.
+- Never answer an idea of your owner's with a no: give the path (what it takes from you, your owner and Ember's code),
+  the smallest test, the numbers and your recommendation, and put it in the tree. Only your hard rules make a real no.
+  Rewrite lessons and strategy for this ("dropshipping declined" is outdated).
+
 ## 0.9.1
 
 Your owner's messages now wait for your answer.

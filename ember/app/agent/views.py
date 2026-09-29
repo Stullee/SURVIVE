@@ -1,5 +1,5 @@
-"""Dashboard data for the agent's sections: Now, Projects, Activity, Mind, Workspace, the owner queues and the owner's
-standing instructions."""
+"""Dashboard data for the agent's sections: Now, Projects, Ventures, Activity, Mind, Workspace, the owner queues and the
+owner's standing instructions."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
-from . import review, store
+from . import review, store, ventures
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
 if TYPE_CHECKING:
@@ -46,6 +46,7 @@ def badges(conn: sqlite3.Connection, scope: store.AgentScope) -> dict[str, int]:
         ),
         "inbox_unread": store.count_rows(conn, "messages", scope, "sender = 'agent' AND read_at IS NULL"),
         "upgrades_new": store.count_rows(conn, "upgrades", scope, "status = 'new'"),
+        "ventures_proposed": ventures.count(conn, scope, ("proposed",)),  # business cases waiting for the owner
     }
 
 
@@ -138,6 +139,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         will = store.last_will(conn, scope.life_id) if scope.life_id else None
         counts = badges(conn, scope)
         instructions = store.instructions_json(store.standing_instructions(conn, scope))
+        stamp = _ventures_stamp(conn, scope, simulated)
     return {
         "badges": counts,
         "now": now,
@@ -149,6 +151,103 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "upgrades": upgrades,
         "instructions": instructions,
         "last_will": {"text": will["text"], "cut_off": bool(will["cut_off"])} if will else None,
+        # The venture tree is loaded apart (api/ventures) while its tab is open: this changes whenever it does.
+        "ventures_stamp": stamp,
+    }
+
+
+def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated: int) -> str:
+    """Changes when the tree or its money may have: a venture changed, or a wake cycle ended."""
+    where, params = scope.where()
+    tree = conn.execute(
+        f"SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM ventures WHERE {where}", params
+    ).fetchone()
+    cycle = conn.execute(
+        "SELECT COALESCE(MAX(id), 0) FROM cycles WHERE simulated = ? AND session = ? AND status <> 'running'",
+        (simulated, scope.session),
+    ).fetchone()
+    return f"{int(tree[0])}|{tree[1]}|{int(cycle[0])}"
+
+
+def ventures_view(agent: Agent) -> dict[str, Any]:
+    """The Ventures tab: the whole tree with every venture's scores, business case, money and the owner's word, the
+    criteria that weigh them, and today's share of the spending."""
+    scope = agent.scope()
+    simulated = 1 if agent.mode == "dry_run" else 0
+    workspace, _ = agent.roots()
+    with agent.db.connection() as conn:
+        rows = ventures.all_ventures(conn, scope)
+        paid = ventures.money(conn, scope)
+        spent, ventured = ventures.day_spend(conn, scope, agent.clock.today())
+        linked: dict[int, list[dict[str, Any]]] = {}
+        where, params = scope.where()
+        for p in conn.execute(
+            f"SELECT id, title, status, venture_id FROM projects WHERE {where} AND venture_id IS NOT NULL ORDER BY id",
+            params,
+        ):
+            linked.setdefault(int(p["venture_id"]), []).append(
+                {"id": p["id"], "title": p["title"], "status": p["status"]}
+            )
+        cycles = conn.execute(
+            "SELECT COUNT(*) FROM cycles WHERE simulated = ? AND session = ? AND venture = 1",
+            (simulated, scope.session),
+        ).fetchone()[0]
+        stamp = _ventures_stamp(conn, scope, simulated)
+    items = []
+    for v in rows:
+        m = paid.get(v["id"], ventures.Money())
+        file = ventures.file_of(v["id"], v["title"])
+        try:
+            size = workspace.size_of(file, "text")
+        except SandboxError:
+            size = None
+        items.append(
+            {
+                "id": v["id"],
+                "parent_id": v["parent_id"],
+                "title": v["title"],
+                "pitch": v["pitch"],
+                "stage": v["stage"],
+                "created_by": v["created_by"],
+                "entered_by": v["entered_by"],
+                "created_at": v["created_at"],
+                "updated_at": v["updated_at"],
+                "scores": {name: v[name] for name in ventures.SCORE_FIELDS},
+                "scores_by": v["scores_by"],
+                "weight": ventures.weight(v),
+                "case": {name: v[name] for name in ventures.CASE_FIELDS},
+                "missing": ventures.missing_case(v),
+                "next_question": v["next_question"],
+                "notes": v["notes"],
+                "proposed_at": v["proposed_at"],
+                "file": file,
+                "file_bytes": size,
+                "spent_usd": _usd(m.spent),
+                "earned_usd": _usd(m.earned),
+                "projects": linked.get(v["id"], []),
+                "owner_action": v["owner_action"],
+                "owner_comment": v["owner_comment"],
+                "owner_at": v["owner_at"],
+                "owner_by": v["owner_by"],
+                "owner_version": v["owner_version"],
+                "seen_by_agent": v["seen_cycle_id"] is not None,
+                "simulated": v["mode"] == "dry_run",
+            }
+        )
+    return {
+        "mode": agent.mode,
+        "share": agent.settings.venture_share,
+        "today": {"spent_usd": _usd(spent), "ventures_usd": _usd(ventured)},
+        "venture_cycles": int(cycles),
+        "decide_usd": ventures.DECIDE_USD,
+        "criteria": [
+            {"name": c.name, "label": c.label, "good": c.good, "factor": c.factor, "low": c.low, "high": c.high}
+            for c in ventures.SCORES
+        ],
+        "case": [{"name": name, "label": label} for name, label, _ in ventures.CASE],
+        "limits": {"title": ventures.LIMITS["title"], "pitch": ventures.LIMITS["pitch"], "comment": 1_000},
+        "items": items,
+        "stamp": stamp,
     }
 
 

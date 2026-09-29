@@ -13,7 +13,9 @@ finished products itself: PDF documents with an editable Word copy, Excel
 spreadsheets and listing photos. For anything else it has a workshop: code
 written and run in Anthropic's sandbox, and a script that proves useful becomes
 an upgrade request, so Ember grows new abilities. With your Etsy shop connected,
-Ember lists the products you approve there itself. Optionally Ember gets its own
+Ember lists the products you approve there itself. A share of its spending goes
+to ventures: a growing tree of new ways to earn, which Ember brainstorms,
+scores and researches, bringing you business cases to back, park or kill. Optionally Ember gets its own
 mailbox: it reads its mail on its own and sends an email only after you approve
 it.
 
