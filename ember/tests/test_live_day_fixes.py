@@ -16,7 +16,10 @@ from tests.test_agent import make_agent, plan, rows, text
 from tests.test_agent import tools as tool_calls
 from tests.test_owner_api import post
 
-SECRET = "EmberTheHelper - miwkoh-9febso-vetHyz"
+# An obviously fake login with the shape of a generated password (three groups of six, one digit, one capital),
+# which the dashboard's login warning looks for. Never put a real one here: this repository is public.
+PASSWORD = "aaaaaa-0bbbbb-ccccCc"
+SECRET = f"example-user - {PASSWORD}"
 
 
 def owner(agent: Agent) -> Owner:
@@ -66,11 +69,11 @@ def test_the_agents_messages_cant_be_removed(data_dir: Path) -> None:
 
 def test_a_removed_password_is_gone_from_the_diagnostics(ingress_client: TestClient) -> None:
     assert post(ingress_client, "api/inbox", {"text": f"login {SECRET}"}).status_code == 201
-    assert "miwkoh-9febso-vetHyz" in ingress_client.get("api/diagnostics").text
+    assert PASSWORD in ingress_client.get("api/diagnostics").text
     message_id = ingress_client.get("api/dashboard").json()["inbox"][0]["id"]
     assert post(ingress_client, f"api/inbox/{message_id}/remove", {}).json() == {"id": message_id, "removed": True}
     report = ingress_client.get("api/diagnostics").text
-    assert "miwkoh-9febso-vetHyz" not in report and REMOVED_TEXT in report
+    assert PASSWORD not in report and REMOVED_TEXT in report
     assert post(ingress_client, f"api/inbox/{message_id}/remove", {}, headers={}).status_code == 403  # CSRF
 
 

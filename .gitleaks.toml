@@ -1,0 +1,27 @@
+# Secret scanning for this public repository, with gitleaks (https://github.com/gitleaks/gitleaks):
+# CI scans every commit (.github/workflows/ci.yml), and the pre-commit hook (.pre-commit-config.yaml)
+# scans what you are about to commit. See README.md, "Secret scanning".
+
+title = "Ember"
+
+# gitleaks' own rules: API keys, tokens, private keys and the like.
+[extend]
+useDefault = true
+
+# A generated password: three groups of six letters and digits, as Apple's strong passwords are
+# (e.g. xxxxxx-xxxxxx-xxxxxx with one digit and one capital). No default rule has this shape, and
+# GitHub's push protection doesn't know it; one was committed in a test by mistake in 0.4.0.
+[[rules]]
+id = "generated-password-6-6-6"
+description = "A generated password (three groups of six letters and digits)"
+regex = '''\b[A-Za-z0-9]{6}-[A-Za-z0-9]{6}-[A-Za-z0-9]{6}\b'''
+
+# Obviously fake examples of the shape, for the tests and the dashboard's login warning.
+# Add one here only if it is plainly not a real password.
+[[rules.allowlists]]
+description = "Fake examples"
+regexTarget = "match"
+regexes = [
+  '''^aaaaaa-0bbbbb-ccccCc$''',
+  '''^abcdef-123abc-XyZabc$''',
+]

@@ -1,0 +1,8 @@
+# Local hooks (https://pre-commit.com), run before every commit once installed:
+#   pip install pre-commit && pre-commit install
+# gitleaks refuses a commit that holds a secret, with the rules in .gitleaks.toml. See README.md, "Secret scanning".
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks

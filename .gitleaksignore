@@ -1,0 +1,9 @@
+# Findings gitleaks may ignore: commit:file:rule:line (no secret in here).
+#
+# 0.4.0 committed a real password in a test by mistake (0.11.2 replaced it with a fake one).
+# It is still in the history of this public repository: it has to be changed where it is used
+# (rotated), and purging the history (git filter-repo) is optional after that. These three lines
+# let the scan pass over that one old commit; anything new still fails it.
+0f4732f73fb2e0267b2b972a3742894f6667dda8:ember/tests/test_live_day_fixes.py:generated-password-6-6-6:19
+0f4732f73fb2e0267b2b972a3742894f6667dda8:ember/tests/test_live_day_fixes.py:generated-password-6-6-6:69
+0f4732f73fb2e0267b2b972a3742894f6667dda8:ember/tests/test_live_day_fixes.py:generated-password-6-6-6:73

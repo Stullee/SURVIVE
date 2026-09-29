@@ -204,6 +204,24 @@ ruff check app tests && ruff format --check app tests
 GitHub Actions runs the same checks and builds the image for both architectures
 (`.github/workflows/ci.yml`).
 
+### Secret scanning
+
+This repository is public, and everything ever committed stays in its history.
+[gitleaks](https://github.com/gitleaks/gitleaks) scans every commit in CI (the
+"Secret scan" job) with gitleaks' own rules plus one in `.gitleaks.toml` for
+generated passwords (three groups of six letters and digits, as Apple's are),
+which neither gitleaks nor GitHub's push protection knows. CI only finds a secret
+after it was pushed; to stop it before the commit, install the hook:
+
+```bash
+pip install pre-commit && pre-commit install    # runs gitleaks on every commit
+```
+
+Test data that needs the shape of a secret uses an obviously fake value, listed
+in the rule's allowlist. `.gitleaksignore` lists the findings in old commits that
+the scan skips (by commit, file and line, never the value): the password
+committed in 0.4.0, which has to be changed where it is used.
+
 ## Releasing a new version
 
 1. Bump `version` in `ember/config.yaml` (semantic versioning, e.g. `0.2.0`).
