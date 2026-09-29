@@ -616,7 +616,7 @@ def test_a_0_9_database_keeps_only_the_questions_that_were_never_answered(tmp_pa
         conn.execute(insert, (3, "owner", None, "More photos, please.", 3))  # seen in the cycle cut before its reply
         conn.execute(insert, (4, "owner", None, "Limit is 5 a day now.", None))  # not seen yet
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
     upgraded = Database(db_file)
     with upgraded.connection() as conn:
         answered = {r["id"]: r["answered_by"] for r in conn.execute("SELECT id, answered_by FROM messages")}

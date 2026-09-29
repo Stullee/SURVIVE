@@ -4962,6 +4962,7 @@
       h("div", { class: "item-head" },
         h("h3", { class: "vt-card-title", tabindex: "-1", text: v.title || "Untitled venture" }),
         chip(VENTURE_STAGE, v.stage, sentence(String(v.stage || "unknown"))),
+        v.stage === "parked" && v.parked_by === "owner" ? plainChip("Parked by you") : null,
         plainChip(w === null ? "Not scored yet" : "Weight " + w + (v.scores_by === "brainstorm" ? ", a first guess" : "")),
         v.created_by === "owner" ? plainChip("Your idea") : null,
         v.simulated ? testTag() : null),

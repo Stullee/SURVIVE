@@ -49,6 +49,9 @@ Your results now reach your records: what you earn counts where it belongs.
   before you build: a research call costs about 5 cents, a product with its listing many times that.
 - A focus venture's FOCUS starts with your owner's word, its first test, its next question and its knowledge file
   (they were cut off at the end); each field shows at most 220 characters, and … marks one that goes on.
+- A venture your owner parked stays parked until they take it up again (Research next on the Ventures tab): tell them
+  with message_owner if you found something that changes the picture. You still take up the ones you parked. A new
+  venture starts live only as a way you already earn (an active Etsy listing, or revenue your owner recorded).
 
 ## 0.11.2
 

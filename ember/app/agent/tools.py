@@ -1171,6 +1171,17 @@ def project_net(conn: Any, scope: AgentScope, project_id: int) -> tuple[int, int
     return int(earned), int(cost)
 
 
+def _earning(conn: Any, scope: AgentScope) -> bool:
+    """Whether Ember already earns somewhere (0.12.0): an active Etsy listing, or revenue its owner recorded (the
+    live scope counts real money only). What a venture created as live needs."""
+    where, params = scope.where()
+    if conn.execute(f"SELECT 1 FROM etsy_listings WHERE {where} AND status = 'active' LIMIT 1", params).fetchone():
+        return True
+    simulated = "" if scope.simulated else " AND simulated = 0"
+    revenue = conn.execute(f"SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type = 'revenue'{simulated}")
+    return int(revenue.fetchone()[0]) > 0
+
+
 def _open_venture(conn: Any, scope: AgentScope, venture_id: int) -> Any:
     row = ventures.get(conn, scope, venture_id)
     if row is None:
@@ -1201,6 +1212,11 @@ def _venture_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     parent_id = args.get("parent_id")
     if parent_id is not None and ventures.get(conn, ctx.scope, parent_id) is None:
         raise ToolError(f"there is no venture #{parent_id} to branch from")
+    if stage == "live" and not _earning(conn, ctx.scope):  # 0.12.0: it skipped the owner's backing
+        raise ToolError(
+            "a venture starts live only as a way you already earn (an active Etsy listing, or revenue your owner "
+            "recorded): add it as an idea, or researching"
+        )
     venture_id = ventures.create(
         conn,
         ctx.scope,
@@ -1249,8 +1265,14 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
             raise ToolError("a venture goes live once your owner backed it (building) and it launched")
         if current in ("building", "live") and stage != "parked" and stage != "live":
             raise ToolError(f"venture #{vid} is {current}: your owner backed it; park it with a note if it should stop")
+        if current == "parked" and row["parked_by"] == "owner":  # 0.12.0: the agent revived the owner's parked ideas
+            raise ToolError(
+                f"your owner parked venture #{vid}: only they take it up again (Research next on the Ventures tab). "
+                "If you found something that changes the picture, tell them with message_owner"
+            )
         if stage == "parked" and not (args.get("note") or "").strip():
             raise ToolError("say why in note when you park a venture")
+        changes["parked_by"] = "agent" if stage == "parked" else None
         if stage == "proposed":
             gaps = ventures.proposal_gaps({**dict(row), **changes}, current)
             if gaps:

@@ -320,7 +320,10 @@ euros. The tab's badge counts the ones waiting. On each card:
 - **Research next** (or **Research more**, **Research again**): it goes first
   in the next venture cycle.
 - **Park**, **Kill** or **Note**, each with an optional comment (a note needs
-  one). The agent reads your word on its next wake.
+  one). The agent reads your word on its next wake. A venture you park stays
+  parked until you take it up again (**Research again** or **Back it**): the
+  agent can't, and its card says **Parked by you**. The agent can take up the
+  ventures it parked itself.
 
 **Add idea** puts your own idea into the tree, optionally as a branch of an
 existing venture: the agent scores and researches it and tells you what it

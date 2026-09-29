@@ -410,6 +410,7 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
                     ("venture_update", {"venture_id": DROPSHIPPING, "learned": "A second finding."}),
                 ]
             ),
+            ToolCalls([("venture_update", {"venture_id": WEBSITE, "stage": "researching"})]),  # its own park
             Reply("Done."),
             JOURNAL,
         ]
@@ -437,11 +438,15 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
         updates[4]["status"] == "ok"
         and "Your owner sees its business case on the Ventures tab." in updates[4]["result"]
     )
-    assert updates[5]["status"] == "ok"  # a parked venture can be researched again
+    assert updates[5]["status"] == "error"  # 0.12.0: Fiverr is parked by the owner (put on hold before ventures)
+    assert "your owner parked venture #8: only they take it up again" in updates[5]["result"]
     assert updates[6]["status"] == "error" and "say why in note" in updates[6]["result"]
     assert updates[7]["status"] == "ok" and venture(agent, WEBSITE)["notes"] == "[#c1] Needs months of posts."
     assert updates[8]["status"] == "error" and "goes live once your owner backed it" in updates[8]["result"]
     assert updates[9]["status"] == "ok"
+    assert updates[10]["status"] == "ok"  # a venture the agent parked, it can research again
+    assert (venture(agent, WEBSITE)["stage"], venture(agent, WEBSITE)["parked_by"]) == ("researching", None)
+    assert (venture(agent, FIVERR)["stage"], venture(agent, FIVERR)["parked_by"]) == ("parked", "owner")
     dropshipping = venture(agent, DROPSHIPPING)
     assert dropshipping["stage"] == "proposed" and dropshipping["proposed_at"] is not None
     assert dropshipping["scores_by"] == "research" and ventures.weight(dropshipping) == 57
@@ -509,6 +514,57 @@ def test_research_counts_for_the_venture_it_names_once_it_finds_pages(data_dir: 
         assert ventures.researched(ventures.get(conn, agent.scope(), PRINT)) == 1
         assert ventures.researched(ventures.get(conn, agent.scope(), DROPSHIPPING)) == 0
         assert [ventures.researched(v) for v in ventures.all_ventures(conn, agent.scope())][2:4] == [0, 1]
+
+
+def test_only_the_owner_takes_a_venture_out_of_their_park(data_dir: Path) -> None:
+    fake = FakeTransport(
+        script=[
+            plan(steps=[]),
+            plan(venture=FIVERR),
+            ToolCalls(
+                [
+                    ("venture_update", {"venture_id": COMPANION, "stage": "researching"}),  # the owner parked it
+                    ("venture_update", {"venture_id": COMPANION, "learned": "Still no niche.", "note": "Why?"}),
+                    ("venture_update", {"venture_id": FIVERR, "stage": "proposed"}),  # taken up by the owner
+                    ("venture_update", {"venture_id": RECRUITING, "stage": "parked", "note": "Needs a licence?"}),
+                ]
+            ),
+            ToolCalls([("venture_update", {"venture_id": RECRUITING, "stage": "researching"})]),
+            Reply("Done."),
+            JOURNAL,
+        ]
+    )
+    agent, _ = run(data_dir, fake, settings=VENTURING)
+    assert venture(agent, FIVERR)["parked_by"] == "owner"  # planted parked: the owner put it on hold
+    now = to_iso(agent.clock.now())
+    with pytest.raises(sqlite3.IntegrityError, match="only the owner takes a venture out"), agent.db.transaction() as c:
+        ventures.update(c, FIVERR, now, stage="researching")
+    who = owner(agent)
+    assert who.decide_venture(COMPANION, {"action": "park", "comment": "Not now."}, "Stefan").status == 200
+    assert who.decide_venture(COMPANION, {"action": "note", "comment": "Really not now."}, "Stefan").status == 200
+    assert who.decide_venture(FIVERR, {"action": "research"}, "Stefan").status == 200
+    assert (venture(agent, COMPANION)["parked_by"], venture(agent, FIVERR)["parked_by"]) == ("owner", None)
+    assert agent.run_cycle("schedule").status == "completed"
+    updates = tool_results(agent, "venture_update")
+    assert [u["status"] for u in updates] == ["error", "ok", "error", "ok", "ok"]
+    assert "your owner parked venture #7: only they take it up again" in updates[0]["result"]
+    assert "the researching stage first" not in updates[2]["result"]  # Fiverr is researching again: the owner's word
+    assert venture(agent, COMPANION)["stage"] == "parked" and venture(agent, RECRUITING)["stage"] == "researching"
+    assert agent.ventures()["items"][COMPANION - 1]["parked_by"] == "owner"
+
+
+def test_a_venture_starts_live_only_where_ember_already_earns(data_dir: Path) -> None:
+    live = ("venture_create", {"title": "Etsy shop in English", "pitch": "The shop's English leg.", "stage": "live"})
+    fake = FakeTransport(script=[plan(steps=["add a leg"]), ToolCalls([live]), Reply("Done."), JOURNAL])
+    fake.script.extend([plan(steps=["add a leg"]), ToolCalls([live]), Reply("Done."), JOURNAL])
+    agent, _ = run(data_dir, fake, settings=ROOMY)
+    refused = tool_results(agent, "venture_create")[0]
+    assert refused["status"] == "error" and "starts live only as a way you already earn" in refused["result"]
+    sale = {"amount": "4.50", "source": "Etsy order 1", "idempotency_key": "a" * 32}
+    assert agent.economy.record("revenue", sale, "Stefan").status == 201
+    agent.run_cycle("schedule")
+    assert tool_results(agent, "venture_create")[1]["status"] == "ok"
+    assert rows(agent, "SELECT stage FROM ventures WHERE title = 'Etsy shop in English'") == [{"stage": "live"}]
 
 
 def test_a_business_case_needs_research_scores_and_a_source_or_euros() -> None:

@@ -293,7 +293,7 @@ def create(
 
 
 _COLUMNS = frozenset(
-    {"stage", "pitch", "next_question", "notes", "proposed_at", "scores_by", *CASE_FIELDS, *SCORE_FIELDS}
+    {"stage", "pitch", "next_question", "notes", "proposed_at", "scores_by", "parked_by", *CASE_FIELDS, *SCORE_FIELDS}
 )
 
 
@@ -336,13 +336,15 @@ def owner_word(
     who: str | None,
     stage: str | None = None,
 ) -> None:
-    """The owner's decision or note on a venture: news for the agent again (a new owner_version), until shown."""
+    """The owner's decision or note on a venture: news for the agent again (a new owner_version), until shown. A
+    venture the owner parks is theirs to take up again (``parked_by``, 0.12.0)."""
     if action not in OWNER_ACTIONS:
         raise ValueError("unknown owner action")
     conn.execute(
         "UPDATE ventures SET stage = COALESCE(?, stage), owner_action = ?, owner_comment = ?, owner_at = ?,"
-        " owner_by = ?, owner_version = owner_version + 1, seen_cycle_id = NULL, updated_at = ? WHERE id = ?",
-        (stage, action, comment, now, who, now, venture_id),
+        " owner_by = ?, owner_version = owner_version + 1, seen_cycle_id = NULL, updated_at = ?,"
+        " parked_by = CASE WHEN ? IS NULL THEN parked_by WHEN ? = 'parked' THEN 'owner' END WHERE id = ?",
+        (stage, action, comment, now, who, now, stage, stage, venture_id),
     )
 
 
@@ -702,6 +704,8 @@ def seed(conn: sqlite3.Connection, scope: AgentScope, now: str) -> int:
         )
         if note:
             update(conn, ids[key], now, notes=note)
+        if stage == "parked":  # the owner's ideas were put on hold by them (0.12.0)
+            update(conn, ids[key], now, parked_by="owner" if by == "owner" else "agent")
     # The projects whose cycles proposed or changed Etsy listings belong to the Etsy leg (open ones: a closed
     # project is final).
     conn.execute(
