@@ -17,6 +17,7 @@ from app.config import LoadedSettings, Settings
 from app.economy.clock import to_iso
 from tests.economy_helpers import make_economy
 from tests.test_agent import ROOMY, rows
+from tests.test_agent_requests import biggest_venture
 from tests.test_loop_shapes import run
 from tests.test_owner_api import post
 from tests.test_owner_loop import owner
@@ -247,6 +248,42 @@ def test_a_venture_cycle_researches_up_to_eight_times(data_dir: Path) -> None:
     assert "\n== VENTURE CYCLE ==\nThis is a venture cycle: read guide 'ventures' first" in brief
     assert "Focus venture: #3 Dropshipping store [idea]" in brief
     assert "Knowledge file: ventures/3-dropshipping-store.md (not written yet)" in brief
+
+
+def test_the_venture_focus_keeps_what_matters_most_when_it_is_cut() -> None:
+    # 0.12.0: the focus was cut from the end, and lost the owner's comment and the first test.
+    row = {**biggest_venture(), "researched": 1}
+    projects = [{"id": 10**9 + i, "title": "ä" * 80, "status": "active"} for i in range(8)]
+    text = ventures.focus_text(row, ventures.Money(10**12, 10**12), 10**9, projects)  # type: ignore[arg-type]
+    assert all(len(line) <= 400 for line in text.split("\n"))  # every field at most 220 characters
+    lines = context.cut(text, context.VENTURE_FOCUS_BUDGET).split("\n")
+    assert lines[0].startswith("Focus venture: #1000000000 ää") and lines[0].endswith(
+        "[researching] · spent $1000000.00 · earned $1000000.00"
+    )
+    assert lines[1] == f'Owner: your owner\'s note (2026-09-30): "{"ä" * 219}…"'
+    assert lines[2:5] == [
+        f"First test: {'ä' * 219}…",
+        f"Next question: {'ä' * 219}…",
+        f"Knowledge file: {ventures.file_of(10**9, 'ä' * 80)} (1,000,000,000 B)",
+    ]
+    ordered = [line.split(":")[0] for line in text.split("\n")]
+    assert ordered == [
+        "Focus venture",
+        "Owner",
+        "First test",
+        "Next question",
+        "Knowledge file",
+        "Scores",
+        "Research for it",
+        "Pitch",
+        "Demand",
+        "Economics",
+        "Setup",
+        "First euro",
+        "Risks",
+        "Projects",
+        "Notes",
+    ]
 
 
 def test_the_planner_sees_the_tree_and_the_venture_rules(data_dir: Path) -> None:

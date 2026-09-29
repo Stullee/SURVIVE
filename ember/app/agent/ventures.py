@@ -97,6 +97,7 @@ BRAINSTORM_IDEAS = 6  # ideas one brainstorm adds to the tree
 NOTE_CHARS = 300
 OWNER_ACTIONS = ("added", "research", "back", "park", "kill", "note")
 IDEAS_SHOWN = 8  # the heaviest ideas the planner sees in a venture cycle (the rest are counted)
+FOCUS_CHARS = 220  # each field of a venture's FOCUS in the brief, the owner's comment included (0.12.0)
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -449,8 +450,9 @@ def usd(micros: int) -> str:
     return f"${micros_to_usd(micros):.2f}"
 
 
-def owner_said(row: Mapping[str, Any]) -> str:
-    """The owner's latest word on the venture, as one short clause ("" if none)."""
+def owner_said(row: Mapping[str, Any], limit: int = 160) -> str:
+    """The owner's latest word on the venture, as one short clause ("" if none), their comment at most ``limit``
+    characters."""
     action = row["owner_action"]
     if not action:
         return ""
@@ -462,7 +464,7 @@ def owner_said(row: Mapping[str, Any]) -> str:
         "kill": "your owner killed it",
         "note": "your owner's note",
     }[action]
-    comment = f": {_q(_one_line(row['owner_comment'], 160))}" if row["owner_comment"] else ""
+    comment = f": {_q(_one_line(row['owner_comment'], limit))}" if row["owner_comment"] else ""
     return f"{words} ({str(row['owner_at'])[:10]}){comment}"
 
 
@@ -534,31 +536,37 @@ def tree_text(rows: list[sqlite3.Row], limit: int = 120) -> str:
 
 
 def focus_text(row: Mapping[str, Any], paid: Money, file_size: int | None, projects: list[sqlite3.Row]) -> str:
-    """The brief's FOCUS for a venture: everything the agent knows of it, and its knowledge file."""
+    """The brief's FOCUS for a venture: everything the agent knows of it, the most important first, as the brief cuts
+    it from the end (0.12.0: it lost the owner's comment and the first test): the owner's word, the first test, the
+    next question and the knowledge file, then the scores, the pitch and the rest of the business case, each field at
+    most FOCUS_CHARS characters."""
     file = file_of(row["id"], row["title"])
     kept = f"{file} ({file_size:,} B)" if file_size is not None else f"{file} (not written yet)"
     branch = f" (branch of #{row['parent_id']})" if row["parent_id"] else ""
     lines = [
         f"Focus venture: #{row['id']} {row['title']}{branch} [{row['stage']}] · spent {usd(paid.spent)} · earned "
-        f"{usd(paid.earned)}",
-        f"Pitch: {_one_line(row['pitch'], 600)}",
-        f"Next question: {_one_line(row['next_question'], 300) or '-'}",
-        f"Scores: {scores_text(row)}",
-        f"Research for it: {researched(row)} call{'s' if researched(row) != 1 else ''} that found something (scores"
-        f" need {RESEARCH_TO_SCORE}, a business case {RESEARCH_TO_PROPOSE})",
+        f"{usd(paid.earned)}"
     ]
-    for name, label, limit in CASE:
-        lines.append(f"{label}: {_one_line(row[name], limit) or '-'}")
-    said = owner_said(row)
+    said = owner_said(row, FOCUS_CHARS)
     if said:
         lines.append(f"Owner: {said}")
-    if projects:
-        lines.append(
-            "Projects: " + ", ".join(f"#{p['id']} {_one_line(p['title'], 40)} [{p['status']}]" for p in projects)
-        )
+    count = researched(row)
+    lines += [
+        f"First test: {_one_line(row['first_test'], FOCUS_CHARS) or '-'}",
+        f"Next question: {_one_line(row['next_question'], FOCUS_CHARS) or '-'}",
+        f"Knowledge file: {kept}",
+        f"Scores: {scores_text(row)}",
+        f"Research for it: {count} call{'s' if count != 1 else ''} that found something (scores need "
+        f"{RESEARCH_TO_SCORE}, a business case {RESEARCH_TO_PROPOSE})",
+        f"Pitch: {_one_line(row['pitch'], FOCUS_CHARS)}",
+    ]
+    lines += [f"{label}: {_one_line(row[name], FOCUS_CHARS) or '-'}" for name, label, _ in CASE if name != "first_test"]
+    if projects:  # the newest three
+        shown = ", ".join(f"#{p['id']} {_one_line(p['title'], 40)} [{p['status']}]" for p in projects[-3:])
+        more = f" and {len(projects) - 3} older" if len(projects) > 3 else ""
+        lines.append(f"Projects: {shown}{more}")
     if row["notes"]:
-        lines.append(f"Notes: {_one_line(row['notes'][-400:], 400)}")
-    lines.append(f"Knowledge file: {kept}")
+        lines.append(f"Notes: {_one_line(row['notes'][-FOCUS_CHARS:], FOCUS_CHARS)}")  # the newest
     return "\n".join(lines)
 
 

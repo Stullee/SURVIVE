@@ -47,6 +47,8 @@ Your results now reach your records: what you earn counts where it belongs.
   the researching stage, two such calls, all six scores and a business case with a source link or euros.
 - A no backed by data, with the numbers and the closest test, is a result: park the venture with them. Research
   before you build: a research call costs about 5 cents, a product with its listing many times that.
+- A focus venture's FOCUS starts with your owner's word, its first test, its next question and its knowledge file
+  (they were cut off at the end); each field shows at most 220 characters, and … marks one that goes on.
 
 ## 0.11.2
 
