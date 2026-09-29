@@ -6,10 +6,14 @@ stored so every later estimate includes them:
 * US-only inference (a workspace setting in the Anthropic Console) costs 1.1x
   on token prices. Ember never asks for it, but when a response reports it,
   estimates and costs use the multiplier from then on.
-* If a call ever costs more than its worst-case estimate, the estimate for that
-  model is scaled up (the safety factor), so the same mistake can't repeat. The
-  factor is kept per mode: an overrun of the fake model in a dry run says
-  nothing about the real API.
+* If a call ever costs more than its worst-case estimate, the estimates for
+  that model and purpose are scaled up (the safety factor), so the same mistake
+  can't repeat. The factor is kept per mode (an overrun of the fake model in a
+  dry run says nothing about the real API) and, since 0.12.0, per purpose: one
+  research call's overrun raised every estimate of its model, planning
+  included, until scheduled wake-ups stopped. A factor comes down by 0.05 after
+  every 25 calls in a row that cost no more than the unscaled estimate, and
+  the owner can reset them all.
 """
 
 from __future__ import annotations
@@ -23,8 +27,12 @@ from .estimate import Plan, worst_case_micros
 
 US_INFERENCE_MULTIPLIER = Decimal("1.1")
 MAX_SAFETY_FACTOR = Decimal(4)
+SAFETY_DECAY = Decimal("0.05")  # taken off a raised factor ...
+SAFETY_DECAY_AFTER = 25  # ... after this many accurate calls in a row
 _GEO_KEY = "economy.inference_geo_us"
-_SAFETY_PREFIX = "economy.safety."
+_SAFETY_PREFIX = "economy.safety."  # until 0.12.0: one factor per mode and model (no longer read)
+_FACTOR_PREFIX = "economy.factor."  # 0.12.0: economy.factor.<mode>.<purpose>.<model>
+_ACCURATE_PREFIX = "economy.factor_ok."  # the accurate calls in a row since the factor last changed
 
 
 @dataclass(frozen=True)
@@ -91,22 +99,72 @@ def mark_us_inference(db: Database) -> bool:
     return True
 
 
-def _safety_key(model: str, mode: str) -> str:
-    return f"{_SAFETY_PREFIX}{mode}.{model}"
+def _safety_key(model: str, mode: str, purpose: str) -> str:
+    return f"{_FACTOR_PREFIX}{mode}.{purpose}.{model}"
 
 
-def safety_factor(db: Database, model: str, mode: str = "live") -> Decimal:
-    value = _decimal(db.get_meta(_safety_key(model, mode)), Decimal(1))
+def _accurate_key(model: str, mode: str, purpose: str) -> str:
+    return f"{_ACCURATE_PREFIX}{mode}.{purpose}.{model}"
+
+
+def safety_factor(db: Database, model: str, mode: str = "live", purpose: str = "work") -> Decimal:
+    """How much the worst-case estimates of ``model``'s ``purpose`` calls are scaled up (1: not at all)."""
+    value = _decimal(db.get_meta(_safety_key(model, mode, purpose)), Decimal(1))
     return min(MAX_SAFETY_FACTOR, max(Decimal(1), value))
 
 
-def raise_safety_factor(db: Database, model: str, actual: int, estimate: int, mode: str = "live") -> Decimal:
-    """After a call cost more than estimated, scale that model's estimates up (10% margin)."""
-    current = safety_factor(db, model, mode)
+def raise_safety_factor(
+    db: Database, model: str, actual: int, estimate: int, mode: str = "live", purpose: str = "work"
+) -> Decimal:
+    """After a call cost more than estimated, scale that model's estimates for that purpose up (10% margin)."""
+    current = safety_factor(db, model, mode, purpose)
     needed = (Decimal(actual) / Decimal(max(estimate, 1)) * current * Decimal("1.1")).quantize(Decimal("0.01"))
     factor = min(MAX_SAFETY_FACTOR, max(current, needed))
-    db.set_meta(_safety_key(model, mode), str(factor))
+    db.set_meta(_safety_key(model, mode, purpose), str(factor))
+    db.set_meta(_accurate_key(model, mode, purpose), "0")
     return factor
+
+
+def note_accurate_call(db: Database, model: str, mode: str = "live", purpose: str = "work") -> Decimal | None:
+    """A call that cost no more than its unscaled estimate (0.12.0): after SAFETY_DECAY_AFTER of them in a row, a
+    raised factor comes down by SAFETY_DECAY, never below 1. Returns the lowered factor, or None."""
+    current = safety_factor(db, model, mode, purpose)
+    if current <= 1:
+        return None
+    key = _accurate_key(model, mode, purpose)
+    count = int(_decimal(db.get_meta(key), Decimal(0))) + 1
+    if count < SAFETY_DECAY_AFTER:
+        db.set_meta(key, str(count))
+        return None
+    lowered = max(Decimal(1), current - SAFETY_DECAY)
+    db.set_meta(_safety_key(model, mode, purpose), str(lowered))
+    db.set_meta(key, "0")
+    return lowered
+
+
+def raised_safety_factors(db: Database, mode: str) -> list[tuple[str, str, Decimal]]:
+    """The factors above 1 in ``mode``: (purpose, model, factor), the highest first (0.12.0, for the dashboard)."""
+    prefix = f"{_FACTOR_PREFIX}{mode}."
+    with db.connection() as conn:
+        rows = conn.execute("SELECT key, value FROM meta WHERE substr(key, 1, ?) = ?", (len(prefix), prefix)).fetchall()
+    found = []
+    for row in rows:
+        purpose, _, model = row["key"][len(prefix) :].partition(".")
+        factor = min(MAX_SAFETY_FACTOR, _decimal(row["value"], Decimal(1)))
+        if model and factor > 1:
+            found.append((purpose, model, factor))
+    return sorted(found, key=lambda f: (-f[2], f[0], f[1]))
+
+
+def reset_safety_factors(db: Database, mode: str) -> int:
+    """The owner's reset (0.12.0): every estimate in ``mode`` unscaled again, the factors from before 0.12.0 included.
+    Returns how many raised factors there were."""
+    raised = len(raised_safety_factors(db, mode))
+    with db.transaction() as conn:
+        for prefix in (_FACTOR_PREFIX, _ACCURATE_PREFIX, _SAFETY_PREFIX):
+            start = f"{prefix}{mode}."
+            conn.execute("DELETE FROM meta WHERE substr(key, 1, ?) = ?", (len(start), start))
+    return raised
 
 
 def profile_cost(
@@ -116,9 +174,10 @@ def profile_cost(
     profile: CallProfile,
     mode: str = "live",
     *,
+    purpose: str = "work",
     code_execution: bool = False,
 ) -> int | None:
-    """Worst-case micros of one ``profile`` call on ``model``; None if the model has no price."""
+    """Worst-case micros of one ``profile`` call on ``model`` for ``purpose``; None if the model has no price."""
     price = settings.price_for(model)
     if price is None:
         return None
@@ -132,13 +191,14 @@ def profile_cost(
     estimate = worst_case_micros(
         plan, price, settings.web_search_usd_per_1000, geo_multiplier(db), settings.code_execution_usd_per_hour
     )
-    return int((Decimal(estimate) * safety_factor(db, model, mode)).to_integral_value(rounding=ROUND_CEILING))
+    factor = safety_factor(db, model, mode, purpose)
+    return int((Decimal(estimate) * factor).to_integral_value(rounding=ROUND_CEILING))
 
 
 def opening_cost(settings: Settings, db: Database, mode: str = "live") -> int | None:
     """What the planning call that opens a wake cycle can cost at most."""
     model = settings.planner_model
-    return profile_cost(settings, db, model, with_room(PLANNER_OPENING, model), mode)
+    return profile_cost(settings, db, model, with_room(PLANNER_OPENING, model), mode, purpose="plan")
 
 
 def working_cycle_cost(settings: Settings, db: Database, mode: str = "live") -> int | None:
@@ -146,8 +206,8 @@ def working_cycle_cost(settings: Settings, db: Database, mode: str = "live") -> 
     worker = settings.worker_model
     costs = [
         opening_cost(settings, db, mode),
-        profile_cost(settings, db, worker, with_room(WORK, worker), mode),
-        profile_cost(settings, db, worker, with_room(REFLECT, worker), mode),
+        profile_cost(settings, db, worker, with_room(WORK, worker), mode, purpose="work"),
+        profile_cost(settings, db, worker, with_room(REFLECT, worker), mode, purpose="reflect"),
     ]
     return None if None in costs else sum(c for c in costs if c is not None)
 
@@ -155,9 +215,11 @@ def working_cycle_cost(settings: Settings, db: Database, mode: str = "live") -> 
 def workshop_run_cost(settings: Settings, db: Database, mode: str = "live") -> int | None:
     """What the first call of a workshop run can cost at most, on the workshop's model (the worker's if none is set)."""
     model = settings.workshop_model or settings.worker_model
-    return profile_cost(settings, db, model, with_room(WORKSHOP_RUN, model), mode, code_execution=True)
+    run = with_room(WORKSHOP_RUN, model)
+    return profile_cost(settings, db, model, run, mode, purpose="workshop", code_execution=True)
 
 
 def last_will_reserve(settings: Settings, db: Database, mode: str = "live") -> int | None:
     """Money held back so the agent can always write its last will."""
-    return profile_cost(settings, db, settings.worker_model, with_room(LAST_WILL, settings.worker_model), mode)
+    worker = settings.worker_model
+    return profile_cost(settings, db, worker, with_room(LAST_WILL, worker), mode, purpose="last_will")

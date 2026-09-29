@@ -238,6 +238,17 @@ def correct_entry(
     return _reply(economy.correct(entry_id, body, _owner(request)))
 
 
+@router.post("/api/economy/estimates/reset")
+def reset_estimates(request: Request) -> JSONResponse:
+    """0.12.0: the owner puts every scaled-up cost estimate back to 1."""
+    economy = _economy(request)
+    if economy is None:
+        return UNAVAILABLE
+    reply = economy.reset_estimates(_owner(request))
+    _poke(request)  # scheduled wakes held for want of room may run again
+    return _reply(reply)
+
+
 @router.post("/api/control/pause")
 def pause(request: Request) -> JSONResponse:
     return _control(request, paused=True)

@@ -808,7 +808,13 @@ could cost and refuses it if that could break the per-cycle cap, the daily cap
 (per local calendar day, so up to twice the cap can be spent around midnight),
 or the balance. Workshop runs have their own cap per run instead of the cycle
 cap, and the daily review counts only toward the daily cap. A small reserve is always kept so the agent can write its last
-will. As an outside safety net, give Ember its own
+will. If a call ever costs more than that worst case, the cycle stops and Ember
+scales up the estimates for that kind of call (planning, a work step, the
+reflection, research, ...) on that model, so it can't happen again; the other
+kinds keep theirs. A scaled-up estimate comes down by 0.05 after every 25
+calls in a row that didn't need it. The dashboard lists them with **Reset
+estimates**, for when you know why it happened (a price you corrected, say).
+As an outside safety net, give Ember its own
 [Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
 API key and set a monthly spend limit there.
 

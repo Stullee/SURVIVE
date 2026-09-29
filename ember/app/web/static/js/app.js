@@ -744,6 +744,14 @@
     if (warnings.length) {
       list.push({ kind: "warning", icon: "!", title: warnings.length === 1 ? String(warnings[0]) : "Please check:", items: warnings.length === 1 ? null : warnings });
     }
+    // 0.12.0: estimates scaled up after a call cost more than estimated; they come down again, or the owner resets them.
+    var factors = arr(agent.estimate_factors);
+    if (factors.length) {
+      list.push({ kind: "info", icon: "i", title: "Some cost estimates are scaled up because a call once cost more than estimated. " +
+        "Each comes down by 0.05 after 25 calls that didn't need it; reset them if you know why it happened.",
+        items: factors.map(function (f) { return sentence(String(f.purpose).replace(/_/g, " ")) + " calls on " + f.model + ": ×" + Number(f.factor).toFixed(2); }),
+        action: { label: "Reset estimates", post: "api/economy/estimates/reset" } });
+    }
     if (agent.state === "killed" || agent.killed) {
       list.push({ kind: "warning", icon: "■", title: "Stopped with the kill switch. To let " + name + " run again: Settings → Apps → Ember → Configuration → " +
         "change 'Kill switch reset' to any other number → Save → Restart the app." });
@@ -762,7 +770,18 @@
     var action = null;
     if (spec.action) {
       action = h("button", { type: "button", class: "btn banner-action", text: spec.action.label });
-      action.addEventListener("click", function () { openLedgerForm(spec.action.form); });
+      action.addEventListener("click", function () {
+        if (!spec.action.post) { openLedgerForm(spec.action.form); return; }
+        var btn = this;
+        btn.disabled = true;
+        request("POST", spec.action.post, {}).then(function (res) {
+          if (!res.ok) throw httpError(res);
+        }).catch(function (err) {
+          if (!(err instanceof RequestError)) console.error(err);
+          btn.disabled = false;
+          btn.textContent = spec.action.label + " (failed: " + errorText(err) + ")";
+        }).then(refresh);
+      });
     }
     return h("div", { class: "banner", "data-kind": spec.kind, role: spec.kind === "error" ? "alert" : null },
       h("span", { class: "banner-icon", "aria-hidden": "true", text: spec.icon }),

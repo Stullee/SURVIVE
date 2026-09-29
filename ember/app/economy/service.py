@@ -34,7 +34,13 @@ from .ledger import (
 )
 from .life import KILLED_KEY, PAUSED_KEY, RUNWAY_CAP_DAYS, Life, LifeStatus, mode_of
 from .metering import MeteredModel, MeterHealth, ProcessLock, Transport, recover_interrupted, usd_cap_to_micros
-from .pricing import opening_cost, working_cycle_cost, workshop_run_cost
+from .pricing import (
+    opening_cost,
+    raised_safety_factors,
+    reset_safety_factors,
+    working_cycle_cost,
+    workshop_run_cost,
+)
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +136,15 @@ class Economy:
         except EntryError as exc:
             return Reply(422, {"error": str(exc), "field": exc.field})
         return self._write(prepared, confirm_state, confirm_large)
+
+    def reset_estimates(self, entered_by: str | None = None) -> Reply:
+        """The owner's reset of the safety factors (0.12.0): every estimate of this mode unscaled again."""
+        raised = reset_safety_factors(self.db, self.mode)
+        who = entered_by or "The owner"
+        events.record(
+            self.db, "info", "economy", f"{who} reset the cost estimates: {raised} scaled-up estimate(s) back to 1"
+        )
+        return Reply(200, {"reset": raised})
 
     def correct(self, entry_id: int, body: Any, entered_by: str | None = None) -> Reply:
         try:
@@ -317,6 +332,11 @@ class Economy:
             "last_will_due": status.last_will_due,
             "revive": revive,
             "warnings": self.warnings(),
+            # 0.12.0: the estimates scaled up after a call cost more than estimated (per purpose and model)
+            "estimate_factors": [
+                {"purpose": purpose, "model": model, "factor": float(factor)}
+                for purpose, model, factor in raised_safety_factors(self.db, self.mode)
+            ],
         }
         totals = self.books.totals(scope)
         live_totals = self.books.totals(Scope("live"))

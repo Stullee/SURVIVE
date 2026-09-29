@@ -49,6 +49,7 @@ from .pricing import (
     geo_multiplier,
     last_will_reserve,
     mark_us_inference,
+    note_accurate_call,
     raise_safety_factor,
     safety_factor,
 )
@@ -468,8 +469,9 @@ class MeteredModel:
             raise CallFailed(result)
         return result
 
-    def quote(self, request: Mapping[str, Any]) -> int:
-        """The worst case the guard would reserve for ``request`` now (reads only). Raises Unpriceable."""
+    def quote(self, request: Mapping[str, Any], purpose: str = "work") -> int:
+        """The worst case the guard would reserve for ``request`` as a ``purpose`` call now (reads only). Raises
+        Unpriceable."""
         try:
             input_tokens = self.transport.count_tokens(request)
         except Exception:  # noqa: BLE001 - same fallback as reserve()
@@ -484,6 +486,7 @@ class MeteredModel:
             Decimal(str(self.settings.web_search_usd_per_1000)),
             geo_multiplier(self.db),
             Decimal(str(self.settings.code_execution_usd_per_hour)),
+            purpose,
         )
 
     def headroom(self, cycle_id: int, purpose: str = "work", keep: int = 0) -> int:
@@ -563,7 +566,7 @@ class MeteredModel:
                     refusal = (f"model {plan.model!r} has no entry in the price table", "request")
             if refusal is None:
                 assert plan is not None and price is not None
-                estimate = self._estimate(plan, price, search_price, geo, container_price)
+                estimate = self._estimate(plan, price, search_price, geo, container_price, purpose)
                 refusal, starving = self._money_refusal(cycle, status, purpose, estimate)
             if refusal is not None:
                 call_id = None
@@ -623,10 +626,16 @@ class MeteredModel:
         return None
 
     def _estimate(
-        self, plan: Plan, price: ModelPrice, search_price: Decimal, geo: Decimal, container_price: Decimal
+        self,
+        plan: Plan,
+        price: ModelPrice,
+        search_price: Decimal,
+        geo: Decimal,
+        container_price: Decimal,
+        purpose: str,
     ) -> int:
         base = worst_case_micros(plan, price, search_price, geo, container_price)
-        factor = safety_factor(self.db, plan.model, self.life.mode)
+        factor = safety_factor(self.db, plan.model, self.life.mode, purpose)
         return int((Decimal(base) * factor).to_integral_value(rounding=ROUND_CEILING))
 
     def _money_refusal(
@@ -708,7 +717,7 @@ class MeteredModel:
                     "web_search_usd_per_1000": str(search_price),
                     "code_execution_usd_per_hour": str(container_price),
                     "geo_multiplier": str(geo),
-                    "safety_factor": str(safety_factor(self.db, price.model, self.life.mode)),
+                    "safety_factor": str(safety_factor(self.db, price.model, self.life.mode, purpose)),
                 }
             )
         cursor = conn.execute(
@@ -865,7 +874,9 @@ class MeteredModel:
     def _store(self, res: Reservation, s: _Settlement) -> None:
         now = self.clock.now()
         with self.db.transaction() as conn:
-            row = conn.execute("SELECT local_day, status FROM llm_calls WHERE id = ?", (res.call_id,)).fetchone()
+            row = conn.execute(
+                "SELECT local_day, status, purpose FROM llm_calls WHERE id = ?", (res.call_id,)
+            ).fetchone()
             if row is None or row["status"] != "pending":
                 raise RuntimeError(f"call #{res.call_id} is not pending")
             error = s.error or ("; ".join(s.notes) if s.notes else None)
@@ -929,8 +940,9 @@ class MeteredModel:
                     f"Call #{res.call_id} was charged at its worst case because its bill is uncertain: "
                     + "; ".join(s.notes),
                 )
+            purpose = row["purpose"]
             if s.overrun:
-                factor = raise_safety_factor(self.db, res.model, s.floor, s.expected, self.life.mode)
+                factor = raise_safety_factor(self.db, res.model, s.floor, s.expected, self.life.mode, purpose)
                 conn.execute(
                     "UPDATE cycles SET status = 'stopped', ended_at = ?, note = ? WHERE id = ? AND status = 'running'",
                     (to_iso(now), "a call cost more than its worst-case estimate", res.cycle_id),
@@ -940,9 +952,22 @@ class MeteredModel:
                     "error",
                     "economy",
                     f"Call #{res.call_id} cost ${micros_to_usd(s.floor):.4f}, more than its worst-case estimate"
-                    f" ${micros_to_usd(s.expected):.4f}. The wake cycle was stopped and estimates for {res.model}"
-                    f" are now scaled by {factor}.",
+                    f" ${micros_to_usd(s.expected):.4f}. The wake cycle was stopped and estimates for {purpose}"
+                    f" calls on {res.model} are now scaled by {factor}.",
                 )
+            elif s.status == "ok" and not s.uncertain:
+                # 0.12.0: a raised factor comes down again after calls that didn't need it.
+                factor = safety_factor(self.db, res.model, self.life.mode, purpose)
+                if s.floor * factor <= s.expected:
+                    lowered = note_accurate_call(self.db, res.model, self.life.mode, purpose)
+                    if lowered is not None:
+                        events.record(
+                            self.db,
+                            "info",
+                            "economy",
+                            f"Estimates for {purpose} calls on {res.model} are now scaled by {lowered}: the last"
+                            " calls cost no more than their unscaled estimate.",
+                        )
             self.life.evaluate_and_persist()
 
 

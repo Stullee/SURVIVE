@@ -40,7 +40,7 @@ from ..config import ModelPrice
 from .costs import container_micros, dec
 
 MAX_SERVER_ITERATIONS = 10
-SEARCH_RESULT_ALLOWANCE_TOKENS = 8_000
+SEARCH_RESULT_ALLOWANCE_TOKENS = 16_000  # 0.12.0: 8,000 was exceeded live, and its overrun raised every estimate
 CODE_RESULT_ALLOWANCE_TOKENS = 4_000
 CONTAINER_MINIMUM_MINUTES = 5  # Anthropic bills container time with a 5-minute minimum
 CONTAINER_ALLOWANCE_MINUTES = 35  # the transport's 30-minute limit per call, plus 5 idle minutes

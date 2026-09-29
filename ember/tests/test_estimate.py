@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from app.config import DEFAULT_PRICE_TABLE
-from app.economy.estimate import Unpriceable, plan_request, worst_case_micros
+from app.economy.estimate import SEARCH_RESULT_ALLOWANCE_TOKENS, Unpriceable, plan_request, worst_case_micros
 
 PRICE = DEFAULT_PRICE_TABLE[0]  # claude-sonnet-5: 2 / 10, cache write 2.5 / 4, read 0.2
 
@@ -34,15 +34,17 @@ def test_cache_writes_are_priced_at_the_highest_ttl() -> None:
 
 def test_server_tool_loops_without_caching() -> None:
     plan = plan_request(base(tools=[search(2)]), input_tokens=1_000)
-    # Up to 10 samplings; each later one re-reads the prompt, every result (8,000 tokens each) and the output.
-    later = 9 * (1_000 + 2 * 8_000 + 1_000)
+    # Up to 10 samplings; each later one re-reads the prompt, every result (16,000 tokens each since 0.12.0) and the
+    # output.
+    assert SEARCH_RESULT_ALLOWANCE_TOKENS == 16_000
+    later = 9 * (1_000 + 2 * 16_000 + 1_000)
     assert worst_case_micros(plan, PRICE, 10) == (1_000 + later) * 2 + 1_000 * 10 + 2 * 10_000
 
 
 def test_server_tool_loops_with_caching() -> None:
     body = base(tools=[search(1)], system=[{"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}}])
     plan = plan_request(body, input_tokens=1_000)
-    grown = 8_000 + 1_000
+    grown = 16_000 + 1_000
     tokens = 1_000 * 2.5 + 9 * (1_000 + grown) * 0.2 + grown * 2.5 + 1_000 * (2.5 - 0.2)
     assert worst_case_micros(plan, PRICE, 10) == round(tokens) + 1_000 * 10 + 10_000
 

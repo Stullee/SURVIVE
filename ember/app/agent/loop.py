@@ -528,7 +528,7 @@ class CycleRunner:
             log.warning("The daily review doesn't fit its budget; skipped")
             return
         try:
-            quote = self.meter.quote(request)
+            quote = self.meter.quote(request, REVIEW)
         except Unpriceable as exc:
             log.warning("The daily review can't be priced (%s); skipped", exc)
             return
@@ -571,7 +571,7 @@ class CycleRunner:
             context_text = library.study_context(document, parts, known, secrets.token_hex(3))
             request = prompts.study_request(self.settings, context_text)
             try:
-                quote = self.meter.quote(request)
+                quote = self.meter.quote(request, STUDY)
             except Unpriceable as exc:
                 log.warning("A study of the library can't be priced (%s); skipped", exc)
                 return
@@ -796,7 +796,7 @@ class CycleRunner:
         grown = [*turns, {"role": "assistant", "content": [{"type": "text", "text": "x" * STEP_GROWTH_BYTES}]}]
         longest = "ä" * prompts.ENDED_CHARS  # the reflection is told why the work ended: priced with the longest reason
         try:
-            step_cost = self.meter.quote(request)
+            step_cost = self.meter.quote(request, "work")
             reflect_cost = self.meter.quote(
                 prompts.reflect_request(
                     self.settings,
@@ -808,7 +808,8 @@ class CycleRunner:
                     ended=longest,
                     venture=venture,
                     library=self.library_on,
-                )
+                ),
+                "reflect",
             )
         except Unpriceable:
             return False
@@ -873,7 +874,7 @@ class CycleRunner:
         # 0.12.0: why the work ended is kept first, also when the reflection can't be paid for.
         self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)
         try:
-            if self.meter.quote(request) > self.meter.headroom(cycle_id, "reflect"):
+            if self.meter.quote(request, "reflect") > self.meter.headroom(cycle_id, "reflect"):
                 return False
         except Unpriceable:
             return False
@@ -914,7 +915,7 @@ class CycleRunner:
         ) -> tools.Outcome:
             request = prompts.research_request(self.settings, question, url, site)
             try:
-                quote = self.meter.quote(request)
+                quote = self.meter.quote(request, "research")
             except Unpriceable as exc:
                 return tools.Outcome(False, f"Error: research can't be priced ({exc}).", "refused: unpriceable")
             if quote > self.meter.headroom(cycle_id, keep=ctx.state.reflect_reserve):
@@ -1009,7 +1010,7 @@ class CycleRunner:
                 _brainstorm_context(status, earned, standing["text"] if standing else "", tree, parent, theme),
             )
             try:
-                quote = self.meter.quote(request)
+                quote = self.meter.quote(request, "brainstorm")
             except Unpriceable as exc:
                 return tools.Outcome(False, f"Error: a brainstorm can't be priced ({exc}).", "refused: unpriceable")
             if quote > self.meter.headroom(ctx.cycle_id, keep=ctx.state.reflect_reserve):

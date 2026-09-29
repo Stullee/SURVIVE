@@ -168,7 +168,7 @@ def test_counting_drops_server_tools_and_falls_back_when_it_fails() -> None:
     counted = transport(server).count_tokens({**REQUEST, "tools": tools, "tool_choice": {"type": "auto"}})
     sent = json.loads(server.requests[0].content)
     assert [t["name"] for t in sent["tools"]] == ["note"] and "max_tokens" not in sent
-    assert counted == 1050 + 200 + 1000
+    assert counted == 1050 + 200 + 3000  # 3,000 tokens for the server tool (0.12.0: 1,000 was too few)
     failing = Server(error(429, "rate_limit_error"), error(429, "rate_limit_error"), error(429, "rate_limit_error"))
     assert transport(failing).count_tokens(REQUEST) > 600  # a rough upper bound instead of an error
 

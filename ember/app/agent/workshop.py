@@ -197,7 +197,7 @@ class Workshop:
         done: list[Any] = []
         for attempt in range(1 + MAX_CONTINUATIONS):
             try:
-                quote = self.meter.quote(request)
+                quote = self.meter.quote(request, WORKSHOP)
             except Unpriceable as exc:
                 run.failure = f"the run can't be priced ({exc})"
                 break

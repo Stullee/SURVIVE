@@ -383,7 +383,7 @@ class PausingMeter:
     def __init__(self) -> None:
         self.calls = 0
 
-    def quote(self, request: dict[str, Any]) -> int:
+    def quote(self, request: dict[str, Any], purpose: str = "work") -> int:
         return 100_000
 
     def headroom(self, cycle_id: int, purpose: str, keep: int = 0) -> int:
