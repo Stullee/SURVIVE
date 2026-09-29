@@ -50,6 +50,9 @@ from .store import OPEN_STATUSES, AgentScope
 log = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 4_000
+# One workspace_write's text: what fits in one work reply (WORK_MAX_TOKENS) with room to spare. JSON specs and German
+# text take about 1.7 characters a token there: at 4,000 (until 0.11.1) a long write was cut off again and again.
+WRITE_CHARS = 2_500
 READ_DEFAULT_CHARS = 3_000
 READ_MAX_CHARS = 6_000
 MAX_OPEN_PROJECTS = 8
@@ -160,14 +163,14 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "workspace_write",
-            "Create, overwrite, append to or delete a text file in your workspace (at most 4,000 characters per "
-            "call, so append longer files in parts; 64 KB per file; 5 MB in total). Allowed endings: .md .txt .csv "
-            ".tsv .json .yaml .yml .html .css .xml. PDF, Word, Excel and PNG files are made with the make_ tools; "
-            "delete works for them too.",
+            f"Create, overwrite, append to or delete a text file in your workspace (at most {WRITE_CHARS:,} characters "
+            "per call: write a longer file in parts, create then append, one part per reply; 64 KB per file; 5 MB in "
+            "total). Allowed endings: .md .txt .csv .tsv .json .yaml .yml .html .css .xml. PDF, Word, Excel and PNG "
+            "files are made with the make_ tools; delete works for them too.",
             {
                 "path": _s("File path inside the workspace, e.g. 'drafts/post.md'.", 200),
                 "mode": _s("What to do.", 10, enum=("create", "overwrite", "append", "delete")),
-                "content": _s("The text (not needed for delete).", 4_000, required=False),
+                "content": _s("The text (not needed for delete).", WRITE_CHARS, required=False),
             },
             per_cycle=10,
         ),

@@ -790,6 +790,20 @@ def test_the_owners_version_of_a_change_is_made(data_dir: Path) -> None:
     assert refused.status == 422 and "no words or price" in refused.body["error"]
 
 
+def test_the_plan_names_the_listings_with_too_few_photos(data_dir: Path) -> None:
+    # 0.11.1: the plans never saw a photo count, so the owner asked three times for more photos.
+    agent, listing_id = listed(data_dir)  # the fake listing has one photo
+    with agent.db.connection() as conn:
+        shop = etsy_publisher.shop_text(conn, agent.scope(), agent.clock, "EmberTestShop", 3)
+    assert f"\nFewer than 5 photos: #{listing_id} (1). Etsy shows up to 10: make more and give the whole set" in shop
+    assert shop.index("Fewer than 5 photos") < shop.index("Orders in the last 7 days")  # the tail is cut first
+    request = a_change(agent, shop_context(agent), listing_id, photos=", ".join(f"shop/p{i}.png" for i in range(5)))
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
+    assert agent.execute_approved() == [(request, "done")]
+    with agent.db.connection() as conn:
+        assert "Fewer than" not in etsy_publisher.shop_text(conn, agent.scope(), agent.clock, "EmberTestShop", 3)
+
+
 def test_an_unchanged_owners_version_is_a_plain_approval_of_the_change(data_dir: Path) -> None:
     agent, listing_id = listed(data_dir)
     request = a_change(agent, shop_context(agent), listing_id, title="Weekly Planner, A4")

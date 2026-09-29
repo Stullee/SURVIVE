@@ -79,8 +79,9 @@ When you are done, reply with a short report of what you did (no tool call)."""
 PLANNER_RULES = """PLANNING
 Decide what this wake cycle should achieve, following your owner's standing instructions. Take into account what
 your owner wrote or decided since your last wake. Each message of theirs listed there waits for your answer until you
-give it: make answering them (one message_owner answers several) the first step of this cycle. Plan work you do
-yourself with your tools, never your owner's research or legwork.
+give it: make answering them (one message_owner answers several) the first step of this cycle; an answer that
+promises work for later also puts it on your roadmap (milestone_create). Plan work you do yourself with your
+tools, never your owner's research or legwork.
 - Keep 2-3 experiments in flight at different stages. Waiting on your owner is never a reason to do nothing: when a
   project waits, work on another; with no open project, start one now.
 - Build first, then ask: make the whole thing ready (the finished files, the listing photos and text, the price),
@@ -104,7 +105,7 @@ Reply only with JSON matching the schema:
 - focus_project_id: the open project to work on, or null
 - focus_venture_id: the venture to work on (in a venture cycle, the one to research or build), or null
 - focus_milestone_id: the milestone on your roadmap this cycle works toward, or null
-- steps: at most 6 short concrete steps; an empty list means there is nothing worth doing now
+- steps: at most 6 short concrete steps (each <= 200 characters); an empty list means there is nothing worth doing now
 - sleep_minutes: how long to sleep after this cycle"""
 
 VENTURE_RULES = """VENTURE CYCLE
@@ -112,8 +113,8 @@ This cycle belongs to your ventures: your owner invests a share of your spending
 testing new ways to earn beyond what you do now, so that several legs carry you one day. Aim every venture cycle at a
 venture that can become profitable, and think like a founder who assumes it can be done: how could this work, and
 what is the smallest honest test?
-- Answer your owner's messages first, as always. Then work on ventures only: products and listings for a leg you
-  already run belong to ordinary cycles.
+- Answer your owner's messages first, as always, and make the quick fixes they ask for. Then work on ventures only:
+  other products and listings for a leg you already run belong to ordinary cycles.
 - Grow the tree: with fewer than 5 ideas waiting, or ideas that all look alike, plan brainstorm, branching from a
   promising venture or into new ground (services, websites, matchmaking, tools, content, marketing channels, physical
   products). Don't limit ideas to your tools today: abilities can be added, and your owner can set things up.
@@ -132,11 +133,12 @@ REFLECT_PROMPT = (
     f"{REFLECT_MARKER} Your work steps for this cycle are over ({{ended}}), and nothing else runs after this reply: "
     "making files, looking at pictures, research, brainstorms and proposals are refused now. Only journal, memory, "
     "projects, ventures, the roadmap, messages to your owner, sleep and upgrade requests work. This is your last "
-    "reply: make every tool call in it (at most 4), write_journal among them, with a candid entry (what you did, what "
-    "worked, what didn't, and what the next cycle should do first). Update your projects, ventures, roadmap and "
-    "memory if something changed (save what you learned about a venture; close a milestone whose measure is met; "
-    "append lessons; replace the strategy only if it changed). If something blocked you that a new ability would "
-    "fix, and you haven't asked for it yet, file request_upgrade. Optionally call set_sleep."
+    "reply, and its length is limited: make every tool call in it (at most 4), write_journal first, with a short, "
+    "candid entry (what you did, what worked, what didn't, and what the next cycle should do first). Update your "
+    "projects, ventures, roadmap and memory if something changed (save what you learned about a venture; close a "
+    "milestone whose measure is met; append lessons; replace the strategy only if it changed). If something blocked "
+    "you that a new ability would fix, and you haven't asked for it yet, file request_upgrade. Optionally call "
+    "set_sleep."
 )
 # Why the work steps ended (loop's end reasons), as the reflection reads it; any other reason is shown as it is.
 WORK_ENDED = {

@@ -3119,7 +3119,7 @@
       h("dt", { text: "Mailbox" }), h("dd", { text: mode }),
       h("dt", { text: "Last fetch" }), h("dd", null, e.last_fetch_at ? timeEl(e.last_fetch_at, fmtDateTime(e.last_fetch_at) + " (" + relTime(e.last_fetch_at) + ")") : "Never"),
       e.last_error ? [h("dt", { text: "Last error" }), h("dd", { class: "fact-error" }, h("span", { "aria-hidden": "true", text: "✕ " }), String(e.last_error))] : null,
-      h("dt", { text: "Unread" }), h("dd", { text: plural(e.unread, "unread email") }),
+      h("dt", { text: "Not opened by the agent" }), h("dd", { text: plural(e.unread, "email") }),
       h("dt", { text: "Sent today" }), h("dd", { text: count(e.sent_today) + " (limit: " + count(e.daily_limit) + " a day)" }),
     ]);
   }

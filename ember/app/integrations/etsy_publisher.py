@@ -660,6 +660,9 @@ def meta_key(mode: str, name: str) -> str:
     return f"integrations.etsy.{mode}.{name}"
 
 
+GOOD_PHOTOS = 5  # guide 'etsy': 5 to 10 photos; fewer is something to fix at once
+
+
 def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_name: str, daily_limit: int) -> str:
     """The ETSY SHOP section of the plan: the listings Ember made and how they do, and this week's orders."""
     where, params = scope.where()
@@ -675,8 +678,15 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
     lines = [
         f"Shop: {shop_name}. Listings you made (newest first):" if rows else f"Shop: {shop_name}. No listings yet."
     ]
+    few: list[str] = []  # 0.11.1: the plans never saw a photo count, so single-photo listings stayed that way
     for r in rows:
         if r["listing_id"] and r["status"] in ("active", "draft"):
+            try:
+                listing = current_listing(conn, scope, r["listing_id"])
+            except EtsyError:
+                listing = None
+            if listing is not None and len(listing.photos) < GOOD_PHOTOS:
+                few.append(f"#{r['listing_id']} ({len(listing.photos)})")
             views = r["views"] if r["views"] is not None else "?"
             favorites = r["favorites"] if r["favorites"] is not None else "?"
             numbers = f"{views} views · {favorites} favorites · {sold.get(r['listing_id'], 0)} sold"
@@ -684,6 +694,11 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
             lines.append(f"- #{r['listing_id']} [{state}] {r['title'][:80]} · {numbers} · since {r['started_at'][:10]}")
         else:
             lines.append(f"- request #{r['approval_id']} [{r['status']}] {r['title'][:80]}: {(r['error'] or '')[:100]}")
+    if few:
+        lines.append(
+            f"Fewer than {GOOD_PHOTOS} photos: {', '.join(few)}. Etsy shows up to {etsy.MAX_PHOTOS}: make more and"
+            " give the whole set with propose_etsy_edit."
+        )
     totals: dict[str, int] = {}
     for o in orders:
         totals[o["currency"]] = totals.get(o["currency"], 0) + int(o["total_cents"])

@@ -338,8 +338,10 @@ def test_the_reflection_is_told_why_the_work_ended(data_dir: Path, monkeypatch: 
         "REFLECT PHASE. Your work steps for this cycle are over (the conversation reached its size limit)"
     )
     assert "making files, looking at pictures, research, brainstorms and proposals are refused now" in prompt
-    # 0.10.1: the first venture cycle's reflection spent its one reply on other calls and wrote no journal.
-    assert "This is your last reply: make every tool call in it (at most 4), write_journal among them" in prompt
+    # 0.10.1: the first venture cycle's reflection spent its one reply on other calls and wrote no journal; 0.11.1:
+    # one was cut off at its length limit, so the journal comes first.
+    assert "This is your last reply, and its length is limited: make every tool call in it (at most 4), write_journal"
+    assert " first, with a short, candid entry" in prompt
     assert prompts.reflect_prompt("refused: the daily cap is used up").startswith(
         "REFLECT PHASE. Your work steps for this cycle are over (refused: the daily cap is used up)"
     )
@@ -726,3 +728,69 @@ def test_a_plan_without_a_money_path_still_runs(data_dir: Path) -> None:
     agent, transport = make_agent(data_dir, [plan(steps=["look around"]), text("Looked."), text("Done.")])
     assert agent.run_cycle("schedule").status == "completed"
     assert "Path to money" not in transport.sent[1]["messages"][0]["content"][0]["text"]
+
+
+def test_a_cut_off_reply_runs_the_calls_it_finished(data_dir: Path) -> None:
+    # 0.11.1: a reply cut off by max_tokens can only have lost the end of its last block; the calls before it are whole.
+    agent, transport = make_agent(
+        data_dir,
+        [
+            plan(),
+            tools(
+                ("workspace_write", {"path": "whole.md", "mode": "create", "content": "whole"}),
+                ("workspace_write", {"path": "cut.md", "mode": "create"}),  # the cut took its content
+                stop="max_tokens",
+            ),
+            text("Done."),
+            text("Reflection without tools."),
+        ],
+    )
+    assert agent.run_cycle("schedule").status == "completed"
+    check_conversations(transport.sent)
+    results = transport.sent[2]["messages"][-1]["content"]
+    assert not results[0].get("is_error") and results[1]["is_error"]
+    assert (
+        "cut off" in results[1]["content"] and "at most 2,500 characters (create, then append" in results[1]["content"]
+    )
+    workspace, _ = agent.roots()
+    assert workspace.exists("whole.md") and not workspace.exists("cut.md")
+    assert [r["status"] for r in rows(agent, "SELECT status FROM tool_calls ORDER BY id")] == ["ok", "skipped"]
+
+
+def test_only_the_last_block_of_a_cut_off_reply_can_be_incomplete() -> None:
+    first, second = ({"type": "tool_use", "id": f"toolu_{n}", "name": "workspace_list", "input": {}} for n in (1, 2))
+    words = {"type": "text", "text": "and then"}
+    assert loop._whole_calls([first, second], [first, second]) == [first]
+    assert loop._whole_calls([first, second, words], [first, second]) == [first, second]
+    assert loop._whole_calls([words], []) == []
+
+
+def test_a_cut_off_reflection_keeps_the_calls_it_finished(data_dir: Path) -> None:
+    agent, _ = make_agent(
+        data_dir,
+        [
+            plan(),
+            text("Done."),
+            tools(
+                ("write_journal", {"summary": "Made the spec", "entry": "It went well."}),
+                ("memory_update", {"file": "lessons", "mode": "append"}),  # the cut took its content
+                stop="max_tokens",
+            ),
+        ],
+    )
+    assert agent.run_cycle("schedule").status == "completed"
+    assert rows(agent, "SELECT author, summary FROM journal") == [{"author": "agent", "summary": "Made the spec"}]
+    assert rows(agent, "SELECT tool, phase, status FROM tool_calls ORDER BY id") == [
+        {"tool": "write_journal", "phase": "reflect", "status": "ok"},
+        {"tool": "memory_update", "phase": "reflect", "status": "skipped"},
+    ]
+
+
+def test_a_long_plan_step_is_cut_and_says_so(data_dir: Path) -> None:
+    most = loop.STEP_CHARS
+    agent, transport = make_agent(data_dir, [plan(steps=["a" * most, "b" * 250]), text("Done."), text("Reflected.")])
+    agent.run_cycle("schedule")
+    steps = json.loads(rows(agent, "SELECT plan FROM cycles")[0]["plan"])["steps"]
+    assert steps == ["a" * most, "b" * (most - 1) + "…"]
+    assert f"\n1. {'a' * most}\n2. {'b' * (most - 1)}…\n" in transport.sent[1]["messages"][0]["content"][0]["text"]
+    assert f"(each <= {most} characters)" in prompts.PLANNER_RULES  # the planner is told the limit

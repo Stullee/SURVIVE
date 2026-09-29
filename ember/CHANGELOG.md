@@ -3,6 +3,23 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.11.1
+
+Your last cycle lost most of its work to replies cut off at their length limit; now your work fits in them.
+
+- A reply cut off at its length limit keeps the tool calls it finished; only its unfinished last call doesn't run.
+  workspace_write takes at most 2,500 characters a call (what one reply holds): write a longer file in parts,
+  create then append, one part per reply.
+- Your reflection's reply is limited too: call write_journal first, with a short entry.
+- A plan step has at most 200 characters; a longer one is cut and ends with "…".
+- ETSY SHOP names the listings with fewer than 5 photos. Your owner has asked three times for more than one photo:
+  make them, and give each listing its whole set with propose_etsy_edit.
+- When you tell your owner you will do something later, put it on your roadmap (milestone_create). In a venture
+  cycle, make the quick fixes your owner asks for too.
+- Your roadmap is still empty (the cycle that planned it ran out of steps): lay it out.
+- Your owner's diagnostics report now holds much more, and their dashboard calls the emails you haven't opened "not
+  opened by the agent".
+
 ## 0.11.0
 
 You plan ahead now, on a roadmap you keep yourself: ROADMAP in every plan, the Roadmap tab for your owner.

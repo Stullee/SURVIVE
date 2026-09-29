@@ -4,7 +4,9 @@ It collects what is needed to understand the app's behaviour from outside: the
 version and options, the database, the economy (balances, caps, guard state),
 lives, the ledger, the scheduler, recent wake cycles with every model call and
 tool call, the latest research digests, the agent's records, its integrations
-(the mailbox's status and sends), and recent warnings and errors. Secrets never
+(the mailbox's status, its emails' senders and subjects, and the sends), and recent warnings and errors. Since
+0.11.1 it holds as much as it can: texts whole (tool inputs and results, the model's replies, journal entries, the
+approvals' payloads, the memory and the workspace's text files) and what the next plan would see. Secrets never
 appear: the options are the public ones (the API key and the mail password only
 as "set" flags), every cell is
 redacted before it is cut (so no part of a secret is left), and the whole text
@@ -25,27 +27,62 @@ from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
 from .agent import ventures
+from .agent.sandbox import kind_of
 from .db import utcnow
 from .economy.clock import to_iso
 from .economy.costs import micros_to_usd
 from .economy.ledger import Scope
+from .integrations import etsy_publisher
 from .logging_setup import redact
 from .version import app_version, build_id
 
 if TYPE_CHECKING:
     from .state import AppState
 
-MAX_REPORT_CHARS = 400_000
+MAX_REPORT_CHARS = 2_000_000
 PRODUCT_LIBRARIES = ("fpdf2", "python-docx", "openpyxl", "pypdfium2", "pillow")
 SCRIPT_CHARS = 12_000  # of each workshop script an upgrade request carries
-CYCLES_CHARS = 200_000  # the wake cycles' share, so the sections after them always fit under the cap
-CELL_CHARS = 160
-TEXT_CHARS = 800  # plans, notes, message texts and tool inputs: enough to see what was actually written
-RESULT_CHARS = 300
-DIGEST_CHARS = 600
-WIDE_COLUMNS = dict.fromkeys(("note", "notes", "text", "input", "owner", "measure"), TEXT_CHARS) | {
-    "result": RESULT_CHARS
-}
+CYCLES_CHARS = 1_000_000  # the wake cycles' share, so the sections after them always fit under the cap
+CELL_CHARS = 400
+# Texts whole (0.11.1), as long as the database keeps them: plans, notes and messages; tool inputs (20,000) and results
+# (8,000); the model's replies (16,000); research digests (the loop keeps 2,000 characters).
+TEXT_CHARS = 8_000
+INPUT_CHARS = 20_000
+RESULT_CHARS = 8_000
+REPLY_CHARS = 16_000
+DIGEST_CHARS = 2_100
+WIDE_COLUMNS = dict.fromkeys(
+    (
+        "note",
+        "notes",
+        "text",
+        "input",
+        "owner",
+        "measure",
+        "entry",
+        "description",
+        "payload",
+        "final_payload",
+        "decision_comment",
+        "pitch",
+        "verdicts",
+        "scorecard",
+        "working",
+        "not_working",
+        "owner_feedback",
+        "lesson",
+        "focus",
+        "ventures",
+        "roadmap",
+    ),
+    TEXT_CHARS,
+) | {"input": INPUT_CHARS, "result": RESULT_CHARS}
+CYCLES_SHOWN = 12
+LEDGER_SHOWN = 100
+DIGESTS_SHOWN = 10
+EVENTS_SHOWN = 200
+WORKSPACE_TEXT_CHARS = 200_000  # the contents of the workspace's text files, the newest first
+WORKSPACE_FILE_CHARS = 20_000
 TAIL_COLUMNS = frozenset({"notes"})  # a project's notes are a log: the newest are at the end, so a cut keeps the end
 WORKSPACE_ENTRIES = 100
 TABLES = (
@@ -76,6 +113,10 @@ TABLES = (
 )
 
 
+PLANNER_TITLE = "PLANNER CONTEXT (what the next plan would see, built now)"
+CYCLES_TITLE = f"WAKE CYCLES (latest {CYCLES_SHOWN}, with every call, reply and tool)"
+
+
 def report(state: AppState) -> str:
     sections: list[tuple[str, Callable[[], str]]] = [
         ("SYSTEM", lambda: _system(state)),
@@ -83,14 +124,15 @@ def report(state: AppState) -> str:
         ("DATABASE", lambda: _database(state)),
         ("ECONOMY", lambda: _economy(state)),
         ("LIVES AND STATE CHANGES", lambda: _lives(state)),
-        ("LEDGER (latest 40)", lambda: _ledger(state)),
+        (f"LEDGER (latest {LEDGER_SHOWN})", lambda: _ledger(state)),
         ("SCHEDULER", lambda: _scheduler(state)),
-        ("WAKE CYCLES (latest 8, with every call and tool)", lambda: _cycles(state)),
-        ("RESEARCH (latest 3 digests)", lambda: _research(state)),
+        (PLANNER_TITLE, lambda: _planner_preview(state)),
+        (CYCLES_TITLE, lambda: _cycles(state)),
+        (f"RESEARCH (latest {DIGESTS_SHOWN} digests)", lambda: _research(state)),
         ("AGENT RECORDS", lambda: _agent(state)),
         ("INTEGRATIONS", lambda: _integrations(state)),
         ("META", lambda: _meta(state)),
-        ("EVENTS (latest 80)", lambda: _events(state)),
+        (f"EVENTS (latest {EVENTS_SHOWN})", lambda: _events(state)),
     ]
     out = [f"Ember diagnostics, generated {utcnow()} (UTC)", "=" * 72]
     for title, build in sections:
@@ -289,7 +331,7 @@ def _lives(state: AppState) -> str:
 
 def _ledger(state: AppState) -> str:
     with state.db.connection() as conn:
-        rows = conn.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT 40").fetchall()
+        rows = conn.execute("SELECT * FROM ledger ORDER BY id DESC LIMIT ?", (LEDGER_SHOWN,)).fetchall()
     return _rows(
         rows,
         [
@@ -330,6 +372,14 @@ def _scheduler(state: AppState) -> str:
             "api_blocked": getattr(agent.transport, "blocked", None),
             "email_sending_blocked": agent.executor_blocked(),
         }
+        with state.db.connection() as conn:
+            spent, ventured = ventures.day_spend(conn, agent.scope(), agent.clock.today())
+        data["next_cycle"] = {  # which kind of cycle the next one is (0.11.1: the report didn't say)
+            "venture": ventures.venture_turn(agent.settings.venture_share, spent, ventured),
+            "venture_share_pct": agent.settings.venture_share,
+            "spent_today_usd": micros_to_usd(spent),
+            "venture_cycles_today_usd": micros_to_usd(ventured),
+        }
         decision = agent.decide()
         data["decision_now"] = {
             "run": decision.run,
@@ -340,11 +390,19 @@ def _scheduler(state: AppState) -> str:
     return _json(data)
 
 
+def _planner_preview(state: AppState) -> str:
+    """The planner's context as the next wake cycle would build it now: what the agent will see, section by section."""
+    agent = getattr(state, "agent", None)
+    if agent is None:
+        return "agent not running"
+    return agent.planner_preview()
+
+
 def _cycles(state: AppState) -> str:
     out = []
     size = 0
     with state.db.connection() as conn:
-        cycles = conn.execute("SELECT * FROM cycles ORDER BY id DESC LIMIT 8").fetchall()
+        cycles = conn.execute("SELECT * FROM cycles ORDER BY id DESC LIMIT ?", (CYCLES_SHOWN,)).fetchall()
         for index, c in enumerate(cycles):
             text = _cycle(conn, c)
             if out and size + len(text) > CYCLES_CHARS:  # the newest cycle is always shown
@@ -356,9 +414,20 @@ def _cycles(state: AppState) -> str:
 
 
 def _cycle(conn: Any, c: Any) -> str:
-    """One wake cycle: its row, the plan, every model call and every tool call."""
+    """One wake cycle: its row, the plan, every model call, what the model wrote besides its tool calls, and every tool
+    call."""
     calls = conn.execute("SELECT * FROM llm_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
     tools = conn.execute("SELECT * FROM tool_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
+    texts = conn.execute(
+        "SELECT t.llm_call_id, l.purpose, t.text, t.stop_details FROM call_texts t JOIN llm_calls l ON l.id ="
+        " t.llm_call_id WHERE l.cycle_id = ? ORDER BY t.llm_call_id",
+        (c["id"],),
+    ).fetchall()
+    replies = [
+        f"    reply of call #{t['llm_call_id']} ({t['purpose']}): {_cell(t['text'], REPLY_CHARS)}"
+        + (f" | stop_details: {_cell(t['stop_details'])}" if t["stop_details"] else "")
+        for t in texts
+    ]
     return "\n".join(
         [
             f"### cycle #{c['id']} {c['status']} trigger={c['trigger']} simulated={c['simulated']} "
@@ -390,6 +459,7 @@ def _cycle(conn: Any, c: Any) -> str:
                     "request_id",
                 ],
             ),
+            "\n".join(replies) or "    replies: -",
             _rows(tools, ["id", "llm_call_id", "seq", "phase", "tool", "status", "summary", "input", "result"]),
         ]
     )
@@ -400,7 +470,8 @@ def _research(state: AppState) -> str:
     with state.db.connection() as conn:
         rows = conn.execute(
             "SELECT id, cycle_id, input, result FROM tool_calls WHERE tool = 'research' AND status = 'ok'"
-            " ORDER BY id DESC LIMIT 3"
+            " ORDER BY id DESC LIMIT ?",
+            (DIGESTS_SHOWN,),
         ).fetchall()
     out = []
     for r in rows:
@@ -452,7 +523,20 @@ def _agent(state: AppState) -> str:
             ("projects", ["id", "status", "venture_id", "title", "next_step", "updated_at", "notes"], 15),
             (
                 "ventures",
-                ["id", "parent_id", "stage", "title", "weight", "scores", "missing", "owner", "seen_cycle_id"],
+                [
+                    "id",
+                    "parent_id",
+                    "stage",
+                    "title",
+                    "weight",
+                    "scores",
+                    "missing",
+                    "owner",
+                    "seen_cycle_id",
+                    "pitch",
+                    *ventures.CASE_FIELDS,
+                    "next_question",
+                ],
                 40,
             ),
             (
@@ -460,14 +544,68 @@ def _agent(state: AppState) -> str:
                 ["id", "parent_id", "status", "due", "moves", "title", "measure", "links", "result", "owner"],
                 30,
             ),
-            ("journal", ["cycle_id", "author", "summary"], 15),
-            ("approvals", ["id", "status", "type", "title", "version", "decided_at", "closed_at", "seen_cycle_id"], 15),
+            ("journal", ["cycle_id", "author", "summary", "entry"], 30),
+            (
+                "approvals",
+                [
+                    "id",
+                    "status",
+                    "type",
+                    "title",
+                    "version",
+                    "decided_at",
+                    "closed_at",
+                    "seen_cycle_id",
+                    "decision_comment",
+                    "result_note",
+                    "description",
+                    "payload",
+                    "final_payload",
+                ],
+                15,
+            ),
             ("messages", ["id", "sender", "seen", "text"], 15),
             ("standing_instructions", ["id", "created_at", "entered_by", "text"], 3),  # the newest is the current
             ("upgrades", ["id", "status", "priority", "title", "released_version", "seen_cycle_id", "script_path"], 15),
             ("workshop_runs", ["id", "cycle_id", "status", "cost_micros", "script_used", "script_path", "task"], 10),
-            ("reviews", ["id", "day", "cycle_id", "status", "verdicts", "focus", "lesson", "note"], 7),
-            ("etsy_listings", ["id", "approval_id", "status", "listing_id", "state", "views", "favorites"], 10),
+            (
+                "reviews",
+                [
+                    "id",
+                    "day",
+                    "cycle_id",
+                    "status",
+                    "verdicts",
+                    "focus",
+                    "lesson",
+                    "note",
+                    "working",
+                    "not_working",
+                    "owner_feedback",
+                    "ventures",
+                    "roadmap",
+                ],
+                7,
+            ),
+            (
+                "etsy_listings",
+                [
+                    "id",
+                    "approval_id",
+                    "status",
+                    "listing_id",
+                    "state",
+                    "views",
+                    "favorites",
+                    "title",
+                    "price",
+                    "category",
+                    "photos",
+                    "files",
+                    "error",
+                ],
+                10,
+            ),
             ("etsy_edits", ["id", "approval_id", "listing_id", "status", "result", "error"], 10),
             ("etsy_orders", ["receipt_id", "ordered_at", "total", "items"], 10),
         ):
@@ -481,6 +619,8 @@ def _agent(state: AppState) -> str:
                 rows = [_venture(r) for r in rows]
             if table == "milestones":
                 rows = [_milestone(r) for r in rows]
+            if table == "etsy_listings":
+                rows = [_listing(conn, scope, r) for r in rows]
             out.append(f"-- {table}\n" + _rows(rows, columns))
         # The scripts upgrade requests carry: what the one who builds the upgrade needs (the report is its hand-off).
         for row in conn.execute(
@@ -492,7 +632,7 @@ def _agent(state: AppState) -> str:
             cut = "\n… [script cut]" if len(text) > SCRIPT_CHARS else ""
             out.append(f"-- upgrade #{row['id']} script {row['script_path']}\n{text[:SCRIPT_CHARS]}{cut}")
     for name, text in agent.memory_files().items():
-        out.append(f"-- memory/{name}.md ({len(text.encode())} B)\n{text[:1500]}")
+        out.append(f"-- memory/{name}.md ({len(text.encode())} B)\n{text}")
     workspace, _ = agent.roots()
     try:
         used = workspace.usage()
@@ -508,14 +648,52 @@ def _agent(state: AppState) -> str:
         out.append(
             f"-- workspace: {used.files} files, {used.folders} folders, {used.size} B{split}\n" + "\n".join(lines)
         )
+        out.append(_workspace_texts(workspace, tree.entries))
     except Exception as exc:  # noqa: BLE001
         out.append(f"-- workspace: unreadable ({exc})")
     return "\n".join(out)
 
 
+def _listing(conn: Any, scope: Any, row: Any) -> dict[str, Any]:
+    """A listing as the report shows it: with its words and how many photos and files Ember gave it (0.11.1)."""
+    shown = {**dict(row), "price": None, "category": None, "photos": None, "files": None}
+    if row["listing_id"]:
+        try:
+            listing = etsy_publisher.current_listing(conn, scope, row["listing_id"])
+        except Exception:  # noqa: BLE001 - a record that can't be read leaves the columns empty
+            listing = None
+        if listing is not None:
+            shown.update(
+                title=listing.title,
+                price=f"{listing.price} {listing.currency}",
+                category=f"{listing.category} (#{listing.taxonomy_id})",
+                photos=len(listing.photos),
+                files=len(listing.files),
+            )
+    return shown
+
+
+def _workspace_texts(workspace: Any, entries: list[Any]) -> str:
+    """The workspace's text files, the newest first, each whole up to WORKSPACE_FILE_CHARS."""
+    files = sorted((e for e in entries if not e.is_dir and kind_of(e.path) == "text"), key=lambda e: -e.modified)
+    parts: list[str] = []
+    used = 0
+    for index, entry in enumerate(files):
+        try:
+            body = _cut(workspace.read(entry.path), WORKSPACE_FILE_CHARS)
+        except Exception as exc:  # noqa: BLE001
+            body = f"(unreadable: {exc})"
+        if parts and used + len(body) > WORKSPACE_TEXT_CHARS:
+            parts.append(f"(… {len(files) - index} older text files left out: the report has a size cap)")
+            break
+        parts.append(f"--- {entry.path} ({entry.size} B, {_time(entry.modified)})\n{body}")
+        used += len(body)
+    return "-- workspace text files (the newest first)\n" + ("\n".join(parts) or "(none)")
+
+
 def _integrations(state: AppState) -> str:
-    """The mailbox's status (never its password) and what happened to the latest sends. Other people's addresses,
-    subjects and email texts are not listed: this report gets pasted into chats and bug reports."""
+    """The mailbox's status (never its password), its emails' senders and subjects (0.11.1: the owner asked for as
+    much as possible; the texts stay out: they can hold login links and codes) and what happened to the latest sends."""
     agent = getattr(state, "agent", None)
     if agent is None:
         return "agent not running"
@@ -525,8 +703,9 @@ def _integrations(state: AppState) -> str:
     out = [f"-- email\n{_json(agent.integrations()['email'])}"]
     with state.db.connection() as conn:
         emails = conn.execute(
-            "SELECT id, direction, received_at, length(body) AS body_chars, body_cut, approval_id,"
-            f" read_by_agent_at IS NOT NULL AS read FROM emails WHERE {where} ORDER BY id DESC LIMIT 15",
+            "SELECT id, direction, received_at, from_addr, to_addr, subject, length(body) AS body_chars, body_cut,"
+            " approval_id, read_by_agent_at AS opened_by_agent FROM emails"
+            f" WHERE {where} ORDER BY id DESC LIMIT 15",
             params,
         ).fetchall()
         sends = conn.execute(
@@ -535,7 +714,18 @@ def _integrations(state: AppState) -> str:
             params,
         ).fetchall()
         suppressed = conn.execute(f"SELECT COUNT(*) FROM email_suppressions WHERE {where}", params).fetchone()[0]
-    columns = ["id", "direction", "received_at", "body_chars", "body_cut", "approval_id", "read"]
+    columns = [
+        "id",
+        "direction",
+        "received_at",
+        "from_addr",
+        "to_addr",
+        "subject",
+        "body_chars",
+        "body_cut",
+        "approval_id",
+        "opened_by_agent",
+    ]
     out.append("-- emails (latest 15)\n" + _rows(emails, columns))
     columns = ["id", "approval_id", "status", "started_at", "finished_at", "result", "error"]
     out.append("-- sends (latest 15)\n" + _rows(sends, columns))
@@ -568,7 +758,7 @@ def _meta(state: AppState) -> str:
 
 
 def _events(state: AppState) -> str:
-    rows = state.db.recent_events(limit=80, min_level="info")
+    rows = state.db.recent_events(limit=EVENTS_SHOWN, min_level="info")
     lines = []
     for e in rows:
         lines.append(f"{e['ts']} {e['level'].upper():7} {e['kind']}: {e['message']}")

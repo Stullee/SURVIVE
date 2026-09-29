@@ -54,6 +54,14 @@ MAX_EMPTY_NUDGES = 1
 RETRY_DELAY_SECONDS = 5.0
 NUDGE = "Continue with the plan, or reply with a short report of what you did."
 CUT_OFF = "Your reply was cut off at the length limit. Continue in shorter parts, or use a tool."
+# Why a call of a reply cut off by max_tokens didn't run (only the reply's last block can be incomplete): 0.11.1 says
+# how to fit, as "write in smaller parts" didn't (a cycle repeated the same too-long write five times).
+CUT_CALL = (
+    "your reply was cut off at its length limit before this call was complete, so nothing changed. Write a long"
+    f" file in parts of at most {tools.WRITE_CHARS:,} characters (create, then append, one part per reply) and keep"
+    " other texts shorter"
+)
+STEP_CHARS = 200  # a plan step's length (prompts.PLANNER_RULES tells the planner)
 STEP_GROWTH_BYTES = 20_000  # what one step can add: up to 4 tool results and the model's own reply
 # A picture the model looks at counts like text in proportion to its pixels: the largest a look shows (LOOK_PIXELS
 # square, about 1,300 tokens) like this much, a 1000 x 750 listing photo like 3,750 bytes and a wide spreadsheet picture
@@ -153,6 +161,20 @@ class CycleRunner:
         self.etsy_on = False  # the Etsy tools and the ETSY SHOP section: set once the cycle found a shop
 
     # --- the cycle ---
+
+    def planner_preview(self, venture: bool) -> str:
+        """The planner's context as a wake cycle would build it now (the diagnostics report shows it): nothing is
+        fetched, synced, marked or spent."""
+        self.etsy_on = self.etsy is not None and self.publisher is not None and self.etsy.shop() is not None
+        snap = self._snapshot(venture)
+        planner = ""
+        for scale in PLANNER_SCALES:
+            planner, _ = context.planner_context(snap, self.dry_run, scale)
+            if context.fits(
+                prompts.plan_request(self.settings, planner, venture=venture), PLANNER_OPENING.input_tokens
+            ):
+                break
+        return planner
 
     def run(self, trigger: str) -> CycleEnd:
         try:
@@ -532,7 +554,7 @@ class CycleRunner:
         if not isinstance(data, dict):
             return None
         steps = data.get("steps")
-        steps = [str(s)[:200] for s in steps if isinstance(s, str) and s.strip()][:6] if isinstance(steps, list) else []
+        steps = [_step(s) for s in steps if isinstance(s, str) and s.strip()][:6] if isinstance(steps, list) else []
         focus = data.get("focus_project_id")
         venture = data.get("focus_venture_id")
         milestone = data.get("focus_milestone_id")
@@ -617,21 +639,18 @@ class CycleRunner:
                 if step == max_steps:
                     act.end_reason = "step limit reached"
                 continue
-            if uses:  # e.g. cut off by max_tokens: never run a tool call that may be incomplete
-                act.pending = [
+            if uses:  # never run a tool call that may be incomplete: cut off by max_tokens, only the last one is
+                whole = _whole_calls(content, uses) if stop == "max_tokens" else []
+                why = CUT_CALL if stop == "max_tokens" else f"the reply ended ({stop}) before it could run"
+                act.pending = self._run_tools(ctx, whole, result.call_id, "act") if whole else []
+                act.pending += [
                     self._result_block(
                         u,
                         tools.skip(
-                            ctx,
-                            u.get("name", "?"),
-                            u.get("input"),
-                            u.get("id", ""),
-                            result.call_id,
-                            "act",
-                            "reply cut off; write in smaller parts",
+                            ctx, u.get("name", "?"), u.get("input"), u.get("id", ""), result.call_id, "act", why
                         ),
                     )
-                    for u in uses
+                    for u in uses[len(whole) :]
                 ]
             if stop == "refusal":
                 act.end_reason = "refusal"
@@ -743,9 +762,18 @@ class CycleRunner:
         text = _text_of(response)
         if text:
             self._save_text(result.call_id, text, response)
-        uses = [b for b in (response.get("content") or []) if isinstance(b, dict) and b.get("type") == "tool_use"]
+        content = response.get("content") or []
+        uses = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
         if response.get("stop_reason") == "tool_use":
             self._run_tools(ctx, uses, result.call_id, "reflect")
+        elif response.get("stop_reason") == "max_tokens" and uses:  # 0.11.1: its whole calls used to be lost too
+            whole = _whole_calls(content, uses)
+            if whole:
+                self._run_tools(ctx, whole, result.call_id, "reflect")
+            for u in uses[len(whole) :]:
+                tools.skip(
+                    ctx, u.get("name", "?"), u.get("input"), u.get("id", ""), result.call_id, "reflect", CUT_CALL
+                )
         if not ctx.state.journal_written and text.strip():
             with self.db.transaction() as conn:
                 first = text.strip().splitlines()[0][:240]
@@ -981,6 +1009,18 @@ class CycleRunner:
         details = response.get("stop_details") if isinstance(response.get("stop_details"), dict) else None
         with self.db.transaction() as conn:
             store.save_call_text(conn, call_id, text, details)
+
+
+def _step(text: str) -> str:
+    """A plan step as the brief shows it: at most STEP_CHARS characters, a longer one cut with "…" (0.11.1: steps were
+    cut silently, often the first one, which answers the owner)."""
+    return text if len(text) <= STEP_CHARS else text[: STEP_CHARS - 1].rstrip() + "…"
+
+
+def _whole_calls(content: list[Any], uses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The tool calls of a reply cut off by max_tokens that are whole: all but one that is the reply's last block (the
+    only block the cut can have left incomplete)."""
+    return uses[:-1] if uses and content and content[-1] is uses[-1] else uses
 
 
 def _text_of(response: dict[str, Any]) -> str:

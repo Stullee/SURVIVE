@@ -646,11 +646,17 @@ Reddit's developer support:
 
 ## Diagnostics
 
-The **Diagnostics** tab shows a plain-text report of the whole system (options
-without the key, database, economy, lives, ledger, wake cycles, agent records,
-the mailbox's status and sends, recent events). Use **Copy** to paste it into a
-bug report or a chat. It never contains the API key or the mailbox password,
-and it lists received emails without their senders or text.
+The **Diagnostics** tab shows a plain-text report of the whole system: options
+without the key, database, economy, lives, ledger, scheduler, what the agent's
+next plan would see, the latest wake cycles with every model call, what the
+model wrote and every tool call (texts whole), research digests, the agent's
+records (journal entries, approvals with their texts, ventures, the roadmap,
+listings, memory and the workspace's text files), the mailbox (its status, each
+email's sender, recipient and subject, and the sends) and recent events. Use
+**Copy** to paste it into a bug report or a chat. It never contains the API
+key, the mailbox password or Etsy's secret and tokens, and never an email's
+text; it does hold your messages, the agent's work and your emails' senders and
+subjects, so read it before you share it publicly.
 
 ## Money
 

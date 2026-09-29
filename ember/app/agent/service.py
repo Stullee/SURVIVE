@@ -543,6 +543,31 @@ class Agent:
 
         return views.roadmap_view(self)
 
+    def planner_preview(self) -> str:
+        """What the next wake cycle's plan would see, built now for the diagnostics report (the daily review, new mail
+        and the shop's latest numbers come in when the cycle runs)."""
+        scope = self.scope()
+        workspace, memory_root = self.roots()
+        runner = CycleRunner(
+            self.db,
+            self.settings,
+            self.clock,
+            self.economy,
+            self.meter,
+            scope,
+            workspace,
+            Memory(self.db, memory_root, scope),
+            self.stop,
+            self.mailbox,
+            self.etsy,
+            self.publisher,
+        )
+        with self.db.connection() as conn:
+            spent, ventured = ventures.day_spend(conn, scope, self.clock.today())
+        venture = ventures.venture_turn(self.settings.venture_share, spent, ventured)
+        kind = "a venture cycle" if venture else "an ordinary cycle"
+        return f"(the next cycle is {kind})\n{runner.planner_preview(venture)}"
+
     def cycle_detail(self, cycle_id: int) -> dict[str, Any] | None:
         from . import views
 
