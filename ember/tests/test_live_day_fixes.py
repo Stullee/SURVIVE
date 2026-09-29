@@ -178,7 +178,7 @@ def test_documents_are_never_fetched(data_dir: Path, url: str) -> None:
         min_sleep=30,
         max_sleep=1440,
         state=tools.CycleTools(),
-        research=lambda question, u, cycle_id, site: calls.append(u) or tools.Outcome(True, "digest", "ok"),
+        research=lambda question, u, cycle_id, site, venture_id: calls.append(u) or tools.Outcome(True, "digest", "ok"),
     )
     ctx.state.seen_urls.add(url)
     with pytest.raises(tools.ToolError, match="PDFs can't be read"):
@@ -249,6 +249,7 @@ def test_a_message_from_before_the_update_can_be_removed(tmp_path: Path) -> None
         21,
         22,
         23,
+        24,
     ]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:

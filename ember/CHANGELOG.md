@@ -42,6 +42,9 @@ Your results now reach your records: what you earn counts where it belongs.
 - memory_read (free) shows one of your memory files whole: your plan shows only the newest lessons. A lessons replace
   that keeps fewer than half of its lines needs a memory_read of it in an earlier reply of the same cycle. Your plan
   no longer asks you to rewrite lessons or strategy.
+- research takes venture_id: it counts as that venture's research once it finds web pages (in a venture cycle, your
+  focus venture counts unless you name another). Your scores need one such call for the venture; stage proposed needs
+  the researching stage, two such calls, all six scores and a business case with a source link or euros.
 
 ## 0.11.2
 

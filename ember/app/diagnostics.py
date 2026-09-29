@@ -633,8 +633,9 @@ def _research(state: AppState, full: bool) -> str:
     return "\n".join(out) or "(none)"
 
 
-def _venture(row: Any) -> dict[str, Any]:
-    """A venture as the report shows it: its weight and scores, what its business case lacks, the owner's word."""
+def _venture(row: Any, researched: int = 0) -> dict[str, Any]:
+    """A venture as the report shows it: its weight and scores, the research calls for it that found something
+    (0.12.0), what its business case lacks, the owner's word."""
     scores = ",".join(f"{name[:3]}{row[name]}" for name in ventures.SCORE_FIELDS if row[name])
     owner = "-"
     if row["owner_action"]:  # the owner's word and comment (0.10.1: the report showed no comment)
@@ -645,6 +646,7 @@ def _venture(row: Any) -> dict[str, Any]:
         **dict(row),
         "weight": ventures.weight(row) if ventures.weight(row) is not None else "-",
         "scores": (scores + (" (guess)" if row["scores_by"] == "brainstorm" else "")) or "-",
+        "research": researched,
         "missing": ",".join(ventures.missing_case(row)) or "-",
         "owner": owner,
     }
@@ -693,6 +695,7 @@ def _agent(state: AppState, full: bool = True) -> str:
                     "title",
                     "weight",
                     "scores",
+                    "research",
                     "missing",
                     "owner",
                     "seen_cycle_id",
@@ -798,7 +801,12 @@ def _agent(state: AppState, full: bool = True) -> str:
             if table == "messages":
                 rows = [{**dict(r), "seen": _seen(r)} for r in rows]
             if table == "ventures":
-                rows = [_venture(r) for r in rows]
+                found = dict(
+                    conn.execute(
+                        "SELECT venture_id, COUNT(*) FROM venture_research WHERE sources > 0 GROUP BY venture_id"
+                    ).fetchall()
+                )
+                rows = [_venture(r, found.get(r["id"], 0)) for r in rows]
             if table == "milestones":
                 rows = [_milestone(r) for r in rows]
             if table == "etsy_listings":

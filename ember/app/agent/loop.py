@@ -909,7 +909,9 @@ class CycleRunner:
     # --- research (a metered sub-call with Anthropic's web tools) ---
 
     def _research_fn(self, ctx: tools.ToolContext) -> tools.ResearchFn:
-        def research(question: str, url: str | None, cycle_id: int, site: str | None = None) -> tools.Outcome:
+        def research(
+            question: str, url: str | None, cycle_id: int, site: str | None = None, venture_id: int | None = None
+        ) -> tools.Outcome:
             request = prompts.research_request(self.settings, question, url, site)
             try:
                 quote = self.meter.quote(request)
@@ -958,8 +960,30 @@ class CycleRunner:
             self._save_text(result.call_id, digest, response)
             body = tools.wrap(ctx, "research", digest)
             source_text = ("\nSources:\n" + "\n".join(f"- {u}" for u in sources[:5])) if sources else ""
+            counted = ""
+            if venture_id is not None:  # 0.12.0: research bound to a venture
+                with self.db.transaction() as conn:
+                    found = ventures.add_research(
+                        conn,
+                        venture_id,
+                        cycle_id,
+                        result.call_id,
+                        question,
+                        url,
+                        len(sources),
+                        cost,
+                        to_iso(self.clock.now()),
+                    )
+                counted = (
+                    f"\nResearch for venture #{venture_id}: {found} call{'s' if found != 1 else ''} that found "
+                    "something."
+                    if sources
+                    else f"\nIt found no web page, so it doesn't count as research for venture #{venture_id}."
+                )
             return tools.Outcome(
-                True, f"{body}{source_text}\n(cost ${micros_to_usd(cost):.4f})", f"research: {question[:80]}"
+                True,
+                f"{body}{source_text}{counted}\n(cost ${micros_to_usd(cost):.4f})",
+                f"research: {question[:80]}",
             )
 
         return research

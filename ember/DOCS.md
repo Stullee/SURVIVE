@@ -285,7 +285,10 @@ revenue, doability (how much of it the agent can do, and how little of your
 time it needs), difficulty, risk, speed to the first euro, and the cost to
 start. The weight (0–100, revenue counting double) is the node's size; its
 colour is its stage. A brainstorm's scores are a first guess (dashed); research
-replaces them.
+replaces them. The agent's own scores count only after research: Ember's code
+records each research call made for a venture (in a venture cycle, the one it
+focuses on), and the agent can score a venture once one of them found web pages.
+The card's **Research** line counts them.
 
 **Venture cycles.** The **Share for ventures** option (25 % by default) is the
 part of each day's spending the agent puts into ventures: a wake cycle is a
@@ -306,8 +309,11 @@ you want more research. In a venture cycle the agent:
 **Business cases.** A venture the agent proposes comes to you with its demand
 (evidence that people pay), economics, setup (money, your hours, accounts,
 new abilities it needs), how soon the first euro could come, the risks and legal
-duties, and the smallest first test. The tab's badge counts the ones waiting.
-On each card:
+duties, and the smallest first test. Ember's code (and its database) lets the
+agent propose one only after it was researched: from the researching stage,
+with at least two research calls for it that found web pages, all six scores
+from research and a business case that names a source link or an amount in
+euros. The tab's badge counts the ones waiting. On each card:
 
 - **Back it**: the agent builds it: it plans the first test and asks you for
   what only you can do (accounts, money, setup), one step at a time.

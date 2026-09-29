@@ -4954,6 +4954,10 @@
     var filled = caseSpec.filter(function (c) { return theCase[c.name]; });
     var scored = arr(data.criteria).some(function (c) { return scores[c.name]; });
     var projects = arr(v.projects);
+    var researched = Number(v.researched) || 0;
+    var toPropose = Number(data.research_to_propose) || 2;
+    var needs = (researched < toPropose ? ["research that found something (" + researched + " of " + toPropose + " calls)"] : [])
+      .concat(arr(v.missing));
     return [
       h("div", { class: "item-head" },
         h("h3", { class: "vt-card-title", tabindex: "-1", text: v.title || "Untitled venture" }),
@@ -4972,9 +4976,12 @@
       filled.length ? h("dl", { class: "item-grid" }, caseSpec.map(function (c) {
         return h("div", null, h("dt", { text: c.label }), h("dd", { class: "pre-line", text: asText(theCase[c.name]) || "–" }));
       })) : null,
-      filled.length && arr(v.missing).length && (v.stage === "researching" || v.stage === "idea") ?
-        h("p", { class: "muted small", text: "For a business case " + name + " still needs: " + arr(v.missing).join(", ") + "." }) : null,
+      filled.length && needs.length && (v.stage === "researching" || v.stage === "idea") ?
+        h("p", { class: "muted small", text: "For a business case " + name + " still needs: " + needs.join(", ") + "." }) : null,
       h("dl", { class: "money" },
+        h("div", { title: "Research calls for this venture that found web pages: its scores need one, a business case " + toPropose + "." },
+          h("dt", { text: "Research" }),
+          h("dd", { text: researched ? researched + " call" + (researched === 1 ? "" : "s") + " with web results" : "None yet" })),
         h("div", null, h("dt", { text: "Spent" }), h("dd", { text: usd(v.spent_usd) })),
         h("div", null, h("dt", { text: "Earned" }), h("dd", { text: usd(v.earned_usd) })),
         projects.length ? h("div", null, h("dt", { text: "Projects" }), h("dd", { text: projects.map(function (p) {

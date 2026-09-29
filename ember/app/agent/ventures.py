@@ -81,6 +81,12 @@ MAX_ACTIVE = 8  # ventures being worked on at once (ideas don't count: the tree 
 MAX_VENTURES = 400  # in the whole tree, parked and killed ones included
 DECIDE_USD = 3.0  # decide a venture that isn't backed yet (propose or park) after about this much spent on it
 RESEARCH_CALLS = 8  # research calls in a venture cycle (3 in any other)
+# 0.12.0: research calls made for a venture that found something (venture_research), before its scores count as
+# research, and before its business case can be proposed.
+RESEARCH_TO_SCORE = 1
+RESEARCH_TO_PROPOSE = 2
+# A business case names a source or an amount: a link, or euros ("12 EUR", "€12", "12,50 €").
+_EVIDENCE = re.compile(r"https?://\S|€\s?\d|\d\s?(?:€|eur\b|euros?\b)|\beur(?:os?)?\s?\d", re.IGNORECASE)
 # What research and brainstorms may take of a venture cycle's cap (0.10.1): the rest pays for the plan, the work steps
 # and the reflection. The first venture cycle planned six research calls and a brainstorm into its $0.60 and stopped
 # after four; the brainstorm never ran.
@@ -146,6 +152,34 @@ def missing_case(values: Mapping[str, Any] | sqlite3.Row) -> list[str]:
     return [name for name in CASE_FIELDS if not str(_value(values, name) or "").strip()]
 
 
+def researched(values: Mapping[str, Any] | sqlite3.Row) -> int:
+    """How many research calls for the venture found something (0.12.0), as ``get`` and ``all_ventures`` count."""
+    return int(_value(values, "researched") or 0)
+
+
+def proposal_gaps(values: Mapping[str, Any] | sqlite3.Row, stage: str) -> list[str]:
+    """What a venture at ``stage`` still needs before it is proposed (0.12.0), with ``values`` its fields after the
+    update: the researching stage, research that found something, all six scores from research and a complete
+    business case that names a source or an amount in euros. Empty when it can be proposed."""
+    gaps = []
+    if stage != "researching":
+        gaps.append("the researching stage first")
+    count = researched(values)
+    if count < RESEARCH_TO_PROPOSE:
+        gaps.append(f"{RESEARCH_TO_PROPOSE} research calls for it that found something (it has {count})")
+    unscored = [name for name in SCORE_FIELDS if _value(values, name) is None]
+    if unscored:
+        gaps.append(f"scores for {', '.join(unscored)}")
+    elif _value(values, "scores_by") != "research":
+        gaps.append("its scores from research (rescore it)")
+    missing = missing_case(values)
+    if missing:
+        gaps.append(f"{', '.join(missing)} filled in")
+    elif not any(_EVIDENCE.search(str(_value(values, name) or "")) for name in CASE_FIELDS):
+        gaps.append("a source link or an amount in euros in its business case")
+    return gaps
+
+
 def weight(values: Mapping[str, Any] | sqlite3.Row) -> int | None:
     """0 to 100 from the scores given (revenue counting double; the others as far as they are judged), or None
     while none is."""
@@ -172,15 +206,25 @@ def scores_text(values: Mapping[str, Any] | sqlite3.Row) -> str:
 # --- records ---
 
 
+# A venture's rows carry how many research calls for it found something (``researched``).
+_RESEARCHED = (
+    "(SELECT COUNT(*) FROM venture_research r WHERE r.venture_id = ventures.id AND r.sources > 0) AS researched"
+)
+
+
 def get(conn: sqlite3.Connection, scope: AgentScope, venture_id: int) -> sqlite3.Row | None:
     where, params = scope.where()
-    return conn.execute(f"SELECT * FROM ventures WHERE id = ? AND {where}", (venture_id, *params)).fetchone()
+    return conn.execute(
+        f"SELECT *, {_RESEARCHED} FROM ventures WHERE id = ? AND {where}", (venture_id, *params)
+    ).fetchone()
 
 
 def all_ventures(conn: sqlite3.Connection, scope: AgentScope, limit: int = MAX_VENTURES) -> list[sqlite3.Row]:
     """The whole tree (the oldest first, so a parent comes before its branches)."""
     where, params = scope.where()
-    return conn.execute(f"SELECT * FROM ventures WHERE {where} ORDER BY id LIMIT ?", (*params, limit)).fetchall()
+    return conn.execute(
+        f"SELECT *, {_RESEARCHED} FROM ventures WHERE {where} ORDER BY id LIMIT ?", (*params, limit)
+    ).fetchall()
 
 
 def count(conn: sqlite3.Connection, scope: AgentScope, stages: tuple[str, ...] = STAGES) -> int:
@@ -258,6 +302,28 @@ def update(conn: sqlite3.Connection, venture_id: int, now: str, **columns: Any) 
         raise ValueError("unknown venture columns")
     sets = ", ".join(f"{name} = ?" for name in columns)
     conn.execute(f"UPDATE ventures SET {sets}, updated_at = ? WHERE id = ?", (*columns.values(), now, venture_id))
+
+
+def add_research(
+    conn: sqlite3.Connection,
+    venture_id: int,
+    cycle_id: int,
+    llm_call_id: int | None,
+    question: str,
+    url: str | None,
+    sources: int,
+    cost_micros: int,
+    now: str,
+) -> int:
+    """Record a research call made for a venture (0.12.0, by Ember's code); returns how many of the venture's research
+    calls found something."""
+    conn.execute(
+        "INSERT INTO venture_research (venture_id, cycle_id, llm_call_id, question, url, sources, cost_micros,"
+        " created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (venture_id, cycle_id, llm_call_id, question[:500], url, sources, cost_micros, now),
+    )
+    row = conn.execute("SELECT COUNT(*) FROM venture_research WHERE venture_id = ? AND sources > 0", (venture_id,))
+    return int(row.fetchone()[0])
 
 
 def owner_word(
@@ -425,7 +491,11 @@ def planner_lines(rows: list[sqlite3.Row], paid: dict[int, Money], full: bool) -
         if full and v["stage"] in EXPLORING:
             missing = missing_case(v)
             case = f"missing {', '.join(missing)}" if missing else "complete"
-            lines.append(f"   next question: {_one_line(v['next_question'], 160) or '-'} · business case: {case}")
+            count = researched(v)
+            lines.append(
+                f"   next question: {_one_line(v['next_question'], 160) or '-'} · research: {count} call"
+                f"{'s' if count != 1 else ''} · business case: {case}"
+            )
     shown = ideas[:IDEAS_SHOWN] if full else []
     for v in shown:
         lines.append(_head(v, paid.get(v["id"], Money())))
@@ -474,6 +544,8 @@ def focus_text(row: Mapping[str, Any], paid: Money, file_size: int | None, proje
         f"Pitch: {_one_line(row['pitch'], 600)}",
         f"Next question: {_one_line(row['next_question'], 300) or '-'}",
         f"Scores: {scores_text(row)}",
+        f"Research for it: {researched(row)} call{'s' if researched(row) != 1 else ''} that found something (scores"
+        f" need {RESEARCH_TO_SCORE}, a business case {RESEARCH_TO_PROPOSE})",
     ]
     for name, label, limit in CASE:
         lines.append(f"{label}: {_one_line(row[name], limit) or '-'}")
@@ -496,7 +568,7 @@ def news_line(row: Mapping[str, Any]) -> str:
     action = row["owner_action"]
     if action == "added":
         branch = f" (a branch of #{row['parent_id']})" if row["parent_id"] else ""
-        line = f"Your owner added a venture idea{branch}, {name}: {_q(row['pitch'])}. Score and research it"
+        line = f"Your owner added a venture idea{branch}, {name}: {_q(row['pitch'])}. Research and score it"
     elif action == "research":
         line = f"Your owner wants {name} researched next (it is {row['stage']} now)"
     elif action == "back":

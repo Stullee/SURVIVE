@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.agent import context, prompts, tools, ventures
-from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls, request_kind, validate_request
+from app.agent.fake_llm import FakeTransport, Plan, Raw, Reply, ToolCalls, request_kind, validate_request
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
 from app.economy.clock import to_iso
@@ -38,6 +38,27 @@ def plan(steps: list[str] | None = None, venture: int | None = None, project: in
             "focus_venture_id": venture,
             "steps": ["research the venture"] if steps is None else steps,
             "sleep_minutes": 120,
+        }
+    )
+
+
+def found(*urls: str) -> Raw:
+    """A research call's answer that found these web pages (none: it found nothing)."""
+    results = [{"type": "web_search_result", "url": url, "title": "A page"} for url in urls]
+    return Raw(
+        {
+            "id": "msg_research",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-5",
+            "content": [
+                {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {"query": "q"}},
+                {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1", "content": results},
+                {"type": "text", "text": "Shops sell this for 25 EUR."},
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {"input_tokens": 900, "output_tokens": 100, "server_tool_use": {"web_search_requests": 1}},
         }
     )
 
@@ -300,16 +321,20 @@ def context_section(text: str, title: str) -> str:
 # --- the tools ---
 
 
+SCORES = {"revenue": 4, "doability": 3, "difficulty": 3, "risk": 3, "speed": 2, "cost": 2}
+CASE = {
+    "demand": "Shops like X sell 200 a month (source).",
+    "economics": "25 EUR price, 12 EUR cost, 29 EUR a month for the shop: 3 sales to break even.",
+    "setup": "Owner: Gewerbe, Shopify account, 3 hours; Ember: product pages.",
+    "first_euro": "About 4 weeks: the store needs ads first.",
+    "risks": "Slow shipping; GPSR duties: pick an EU supplier.",
+    "first_test": "10 products, 50 EUR of ads: 3 sales in two weeks means go.",
+}
+RESEARCH = ("research", {"question": "What do dropshipping stores earn?"})
+
+
 def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
-    scores = {"revenue": 4, "doability": 3, "difficulty": 3, "risk": 3, "speed": 2, "cost": 2}
-    case = {
-        "demand": "Shops like X sell 200 a month (source).",
-        "economics": "25 EUR price, 12 EUR cost, 29 EUR a month for the shop: 3 sales to break even.",
-        "setup": "Owner: Gewerbe, Shopify account, 3 hours; Ember: product pages.",
-        "first_euro": "About 4 weeks: the store needs ads first.",
-        "risks": "Slow shipping; GPSR duties: pick an EU supplier.",
-        "first_test": "10 products, 50 EUR of ads: 3 sales in two weeks means go.",
-    }
+    learned = {"learned": "Shopify costs 29 EUR a month (src).", "next_question": "Which EU supplier ships in 3 days?"}
     fake = FakeTransport(
         script=[
             plan(venture=DROPSHIPPING),
@@ -325,28 +350,24 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
                             "parent_id": DROPSHIPPING,
                         },
                     ),
-                    (
-                        "venture_update",
-                        {
-                            "venture_id": DROPSHIPPING,
-                            "learned": "Shopify costs 29 EUR a month (src).",
-                            "next_question": "Which EU supplier ships in 3 days?",
-                            **scores,
-                        },
-                    ),
+                    ("venture_update", {"venture_id": DROPSHIPPING, **learned, **SCORES}),  # no research yet
                     ("venture_update", {"venture_id": DROPSHIPPING, "stage": "proposed"}),
                 ]
             ),
+            ToolCalls([RESEARCH, RESEARCH]),  # in a venture cycle, research counts for the focus venture
+            found("https://example.invalid/a"),
+            found("https://example.invalid/b"),
             ToolCalls(
                 [
+                    ("venture_update", {"venture_id": DROPSHIPPING, **learned, **SCORES, "stage": "researching"}),
                     ("venture_update", {"venture_id": DROPSHIPPING, "stage": "building"}),
-                    ("venture_update", {"venture_id": DROPSHIPPING, "stage": "proposed", **case}),
+                    ("venture_update", {"venture_id": DROPSHIPPING, "stage": "proposed", **CASE}),
                     ("venture_update", {"venture_id": FIVERR, "stage": "researching"}),
-                    ("venture_update", {"venture_id": WEBSITE, "stage": "parked"}),
                 ]
             ),
             ToolCalls(
                 [
+                    ("venture_update", {"venture_id": WEBSITE, "stage": "parked"}),
                     ("venture_update", {"venture_id": WEBSITE, "stage": "parked", "note": "Needs months of posts."}),
                     ("venture_update", {"venture_id": PRINT, "stage": "live"}),
                     ("venture_update", {"venture_id": DROPSHIPPING, "learned": "A second finding."}),
@@ -363,29 +384,130 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
     assert created[1]["status"] == "ok" and "Venture #9 is in your tree (idea, a branch of #3)" in created[1]["result"]
     assert venture(agent, 9)["parent_id"] == DROPSHIPPING and venture(agent, 9)["created_cycle_id"] == 1
     updates = tool_results(agent, "venture_update")
-    assert updates[0]["status"] == "ok" and "Now weight 57 (revenue 4, doability 3" in updates[0]["result"]
-    assert updates[1]["status"] == "error"
-    assert "needs demand, economics, setup, first_euro, risks, first_test filled in first" in updates[1]["result"]
-    assert updates[2]["status"] == "error" and "must be one of" in updates[2]["result"]  # only the owner backs
-    assert (
-        updates[3]["status"] == "ok"
-        and "Your owner sees its business case on the Ventures tab." in updates[3]["result"]
+    assert updates[0]["status"] == "error"
+    assert "scores come from research: research venture #3 first (research with venture_id 3" in updates[0]["result"]
+    assert updates[1]["status"] == "error" and updates[1]["result"] == (
+        "Error: venture #3 can't be proposed yet: a business case needs the researching stage first; 2 research "
+        "calls for it that found something (it has 0); scores for revenue, doability, difficulty, risk, speed, cost; "
+        "demand, economics, setup, first_euro, risks, first_test filled in."
     )
-    assert updates[4]["status"] == "ok"  # a parked venture can be researched again
-    assert updates[5]["status"] == "error" and "say why in note" in updates[5]["result"]
-    assert updates[6]["status"] == "ok" and venture(agent, WEBSITE)["notes"] == "[#c1] Needs months of posts."
-    assert updates[7]["status"] == "error" and "goes live once your owner backed it" in updates[7]["result"]
-    assert updates[8]["status"] == "ok"
+    research = tool_results(agent, "research")
+    assert [r["status"] for r in research] == ["ok", "ok"]
+    assert "\nResearch for venture #3: 2 calls that found something.\n" in research[1]["result"]
+    assert updates[2]["status"] == "ok" and "Now weight 57 (revenue 4, doability 3" in updates[2]["result"]
+    assert updates[3]["status"] == "error" and "must be one of" in updates[3]["result"]  # only the owner backs
+    assert (
+        updates[4]["status"] == "ok"
+        and "Your owner sees its business case on the Ventures tab." in updates[4]["result"]
+    )
+    assert updates[5]["status"] == "ok"  # a parked venture can be researched again
+    assert updates[6]["status"] == "error" and "say why in note" in updates[6]["result"]
+    assert updates[7]["status"] == "ok" and venture(agent, WEBSITE)["notes"] == "[#c1] Needs months of posts."
+    assert updates[8]["status"] == "error" and "goes live once your owner backed it" in updates[8]["result"]
+    assert updates[9]["status"] == "ok"
     dropshipping = venture(agent, DROPSHIPPING)
     assert dropshipping["stage"] == "proposed" and dropshipping["proposed_at"] is not None
     assert dropshipping["scores_by"] == "research" and ventures.weight(dropshipping) == 57
-    assert {name: dropshipping[name] for name in ventures.CASE_FIELDS} == case
+    assert {name: dropshipping[name] for name in ventures.CASE_FIELDS} == CASE
+    recorded = rows(agent, "SELECT venture_id, cycle_id, question, url, sources FROM venture_research ORDER BY id")
+    assert (
+        recorded
+        == [{"venture_id": DROPSHIPPING, "cycle_id": 1, "question": RESEARCH[1]["question"], "url": None, "sources": 1}]
+        * 2
+    )
     workspace, _ = agent.roots()
     knowledge = workspace.read("ventures/3-dropshipping-store.md")
     assert knowledge.startswith("# Venture #3: Dropshipping store\nPitch: A web shop selling physical products")
     assert "\n## What you learned (newest last)\n\n### 20" in knowledge
     assert "Shopify costs 29 EUR a month (src).\n" in knowledge and knowledge.endswith("A second finding.\n")
     assert agent.dashboard()["badges"]["ventures_proposed"] == 1
+    shown = next(v for v in agent.ventures()["items"] if v["id"] == DROPSHIPPING)
+    assert shown["researched"] == 2 and agent.ventures()["research_to_propose"] == 2
+
+
+def test_research_counts_for_the_venture_it_names_once_it_finds_pages(data_dir: Path) -> None:
+    def research(venture_id: int | None = None) -> tuple[str, dict[str, Any]]:
+        return ("research", {**RESEARCH[1], **({"venture_id": venture_id} if venture_id else {})})
+
+    fake = FakeTransport(
+        script=[
+            plan(steps=["research"]),  # the day's first cycle is an ordinary one: no focus venture
+            ToolCalls([research()]),
+            found("https://example.invalid/any"),
+            Reply("Done."),
+            JOURNAL,
+            plan(venture=DROPSHIPPING),  # a venture cycle
+            ToolCalls([research(), research(PRINT), research(FIVERR), research(99)]),
+            found(),  # found no web page
+            found("https://example.invalid/print"),
+            ToolCalls([("venture_update", {"venture_id": PRINT, **SCORES})]),  # scored from its research
+            Reply("Done."),
+            JOURNAL,
+        ]
+    )
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=50)
+    agent, ends = run(data_dir, fake, settings=settings)
+    assert owner(agent).decide_venture(FIVERR, {"action": "kill"}, "Stefan").status == 200
+    ends.append(agent.run_cycle("schedule"))
+    assert [e.status for e in ends] == ["completed", "completed"] and [t for t in fake.trace if t[1] == "invalid"] == []
+    assert rows(agent, "SELECT venture, venture_id FROM cycles ORDER BY id") == [
+        {"venture": 0, "venture_id": None},
+        {"venture": 1, "venture_id": DROPSHIPPING},
+    ]
+    calls = tool_results(agent, "research")
+    assert [r["status"] for r in calls] == ["ok", "ok", "ok", "error", "error"]
+    assert "Research for venture" not in calls[0]["result"]  # it named none, and had no focus venture
+    assert "\nIt found no web page, so it doesn't count as research for venture #3.\n(cost $" in calls[1]["result"]
+    assert "\nResearch for venture #4: 1 call that found something.\n" in calls[2]["result"]
+    assert "your owner killed venture #8" in calls[3]["result"]
+    assert "there is no venture #99" in calls[4]["result"]
+    counted = rows(agent, "SELECT venture_id, cycle_id, sources FROM venture_research ORDER BY id")
+    assert counted == [
+        {"venture_id": DROPSHIPPING, "cycle_id": 2, "sources": 0},
+        {"venture_id": PRINT, "cycle_id": 2, "sources": 1},
+    ]
+    assert [u["status"] for u in tool_results(agent, "venture_update")] == ["ok"]
+    assert venture(agent, PRINT)["scores_by"] == "research"
+    with agent.db.connection() as conn:
+        assert ventures.researched(ventures.get(conn, agent.scope(), PRINT)) == 1
+        assert ventures.researched(ventures.get(conn, agent.scope(), DROPSHIPPING)) == 0
+        assert [ventures.researched(v) for v in ventures.all_ventures(conn, agent.scope())][2:4] == [0, 1]
+
+
+def test_a_business_case_needs_research_scores_and_a_source_or_euros() -> None:
+    row = {**dict.fromkeys(ventures.CASE_FIELDS, "x"), **SCORES, "scores_by": "research", "researched": 2}
+    assert ventures.proposal_gaps(row, "researching") == ["a source link or an amount in euros in its business case"]
+    for evidence in ("https://example.invalid/a", "25 EUR", "€25", "12,50 €", "EUR 9", "about 40 euros", "5 Euro"):
+        assert ventures.proposal_gaps({**row, "economics": evidence}, "researching") == [], evidence
+    for words in ("cheap", "25 USD", "Europe-wide", "a euro-zone shop"):
+        assert ventures.proposal_gaps({**row, "economics": words}, "researching") != [], words
+    guessed = {**row, "demand": "25 EUR", "scores_by": "brainstorm", "researched": 1, "cost": None}
+    assert ventures.proposal_gaps(guessed, "idea") == [
+        "the researching stage first",
+        "2 research calls for it that found something (it has 1)",
+        "scores for cost",
+    ]
+    assert "its scores from research (rescore it)" in ventures.proposal_gaps({**guessed, "cost": 2}, "researching")
+
+
+def test_the_database_refuses_scores_and_cases_without_research(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
+    now = to_iso(agent.clock.now())
+    with pytest.raises(sqlite3.IntegrityError, match="scores from research need research"), agent.db.transaction() as c:
+        ventures.update(c, DROPSHIPPING, now, revenue=4, scores_by="research")
+    with pytest.raises(sqlite3.IntegrityError, match="two research calls"), agent.db.transaction() as c:
+        ventures.update(c, DROPSHIPPING, now, stage="proposed")
+    with pytest.raises(sqlite3.IntegrityError, match="has no research yet"), agent.db.transaction() as c:
+        ventures.create(c, agent.scope(), title="New", pitch="p", stage="proposed", now=now)
+    with agent.db.transaction() as conn:
+        ventures.update(conn, DROPSHIPPING, now, revenue=4, scores_by="brainstorm")  # a guess is fine
+        for sources in (0, 3, 1):
+            ventures.add_research(conn, DROPSHIPPING, 1, None, "q", None, sources, 10, now)
+        ventures.update(conn, DROPSHIPPING, now, revenue=5, scores_by="research", stage="proposed")
+    with pytest.raises(sqlite3.IntegrityError, match="never changed"), agent.db.transaction() as conn:
+        conn.execute("UPDATE venture_research SET sources = 9")
+    with pytest.raises(sqlite3.IntegrityError, match="cannot be deleted"), agent.db.transaction() as conn:
+        conn.execute("DELETE FROM venture_research")
 
 
 def test_a_brainstorm_grows_the_tree_from_a_venture(data_dir: Path) -> None:
@@ -465,8 +587,8 @@ def test_the_owner_adds_ideas_and_decides_and_the_agent_hears_it(data_dir: Path)
     agent.run_cycle("schedule")
     text = planner_texts(fake)[0]
     assert (
-        'Your owner added a venture idea (a branch of #5), venture #9 "Grant finder": "Grants for clubs.". Score and'
-        " research it." in text
+        'Your owner added a venture idea (a branch of #5), venture #9 "Grant finder": "Grants for clubs.". Research'
+        " and score it." in text
     )
     assert (
         'Your owner backed venture #3 "Dropshipping store": it is building now. Plan its first test with them.'

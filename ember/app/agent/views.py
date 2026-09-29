@@ -425,6 +425,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                 "updated_at": v["updated_at"],
                 "scores": {name: v[name] for name in ventures.SCORE_FIELDS},
                 "scores_by": v["scores_by"],
+                "researched": ventures.researched(v),  # research calls for it that found something (0.12.0)
                 "weight": ventures.weight(v),
                 "case": {name: v[name] for name in ventures.CASE_FIELDS},
                 "missing": ventures.missing_case(v),
@@ -451,6 +452,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         "today": {"spent_usd": _usd(spent), "ventures_usd": _usd(ventured)},
         "venture_cycles": int(cycles),
         "decide_usd": ventures.DECIDE_USD,
+        "research_to_propose": ventures.RESEARCH_TO_PROPOSE,
         "criteria": [
             {"name": c.name, "label": c.label, "good": c.good, "factor": c.factor, "low": c.low, "high": c.high}
             for c in ventures.SCORES

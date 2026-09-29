@@ -1674,11 +1674,18 @@ class FakeTransport:
             found = next((c.result for c in conv.of("act") if c.name == "research" and c.result and not c.error), "")
             learned = " ".join(re.sub(r"</?data[^>]*>", " ", found).split())[:600]
             learned = learned or f"Nothing new found about {focus[2]} yet."
+            scores = {
+                name: rng.randint(1, 5) for name in ("revenue", "doability", "difficulty", "risk", "speed", "cost")
+            }
+            # 0.12.0: scores come from research that found something (in a venture cycle it counts for the focus).
+            scored = any(
+                c.name == "research" and not c.error and "\nSources:\n" in (c.result or "") for c in conv.of("act")
+            )
             return "venture_update", {
                 "venture_id": int(focus[1]),
                 "learned": f"Dry-run research (simulated web results): {learned}"[:2_000],
                 "stage": "researching",
-                **{name: rng.randint(1, 5) for name in ("revenue", "doability", "difficulty", "risk", "speed", "cost")},
+                **(scores if scored else {}),
                 "next_question": f"Who exactly would pay for {focus[2]}, and how much?"[:300],
             }
         if stage == "research":

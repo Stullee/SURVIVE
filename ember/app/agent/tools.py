@@ -259,9 +259,11 @@ SPECS: dict[str, Spec] = {
         Spec(
             "venture_update",
             "Update a venture. learned: what you found out, with sources, saved to its knowledge file. Scores from 1 "
-            "to 5 weigh it in your tree: rescore it from the evidence. The six business case fields (demand to "
-            "first_test): stage proposed puts it before your owner on the Ventures tab and needs all six, from "
-            "research. Only your owner backs a venture (building) or kills it; park one with a note saying why. Free.",
+            "to 5 weigh it in your tree: rescore it from the evidence once research for it found web pages. The six "
+            "business case fields (demand to first_test): stage proposed puts it before your owner on the Ventures "
+            "tab and needs the researching stage, 2 such research calls, all six scores and all six fields, with a "
+            "source link or euros. Only your owner backs a venture (building) or kills it; park one with a note "
+            "saying why. Free.",
             {
                 "venture_id": _i("The venture's number."),
                 "learned": _s("What you found out, with sources (saved with the date).", 2_000, required=False),
@@ -465,6 +467,10 @@ SPECS: dict[str, Spec] = {
                 "site": _s(
                     "Search only this site, a bare domain like 'etsy.com' (not used when reading a url).",
                     60,
+                    required=False,
+                ),
+                "venture_id": _i(
+                    "The venture it researches (in a venture cycle, the focus venture unless you name another).",
                     required=False,
                 ),
             },
@@ -763,7 +769,8 @@ class Outcome:
     image: bytes | None = None  # a PNG the model sees with the text (the look tool)
 
 
-ResearchFn = Callable[[str, "str | None", int, "str | None"], Outcome]
+# question, a page to read, cycle, the site searched, the venture it is for (0.12.0)
+ResearchFn = Callable[[str, "str | None", int, "str | None", "int | None"], Outcome]
 # task, workspace files, a kept script to run again, the folder for the results
 WorkshopFn = Callable[[str, list[str], "str | None", "str | None"], Outcome]
 BrainstormFn = Callable[[str, "int | None"], Outcome]  # the theme ("" for anything), the venture to branch from
@@ -1225,6 +1232,12 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
             changes[name] = value
     scores = {name: args[name] for name in ventures.SCORE_FIELDS if args.get(name) is not None}
     if scores:
+        # 0.12.0: scores were labelled research without any research.
+        if ventures.researched(row) < ventures.RESEARCH_TO_SCORE:
+            raise ToolError(
+                f"scores come from research: research venture #{vid} first (research with venture_id {vid}; it "
+                "counts once it finds something), then score it. Save the rest without scores"
+            )
         changes.update(scores)
         changes["scores_by"] = "research"
     stage = args.get("stage")
@@ -1239,9 +1252,9 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         if stage == "parked" and not (args.get("note") or "").strip():
             raise ToolError("say why in note when you park a venture")
         if stage == "proposed":
-            missing = ventures.missing_case({**dict(row), **changes})
-            if missing:
-                raise ToolError(f"a business case needs {', '.join(missing)} filled in first, from your research")
+            gaps = ventures.proposal_gaps({**dict(row), **changes}, current)
+            if gaps:
+                raise ToolError(f"venture #{vid} can't be proposed yet: a business case needs {'; '.join(gaps)}")
             changes["proposed_at"] = ctx.now()
         changes["stage"] = stage
     if args.get("note"):
@@ -1686,9 +1699,21 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         if _DOCUMENT.search(urlsplit(url).path):
             # The page reader's size limit doesn't apply to PDFs and other documents: one can cost dollars.
             raise ToolError("documents such as PDFs can't be read (they can cost dollars each); look for a web page")
+    question = args["question"].strip()
+    if not question:
+        raise ToolError("the question is empty")
+    # 0.12.0: research counts for a venture (in a venture cycle, the focus venture unless it names another).
+    venture_id = args.get("venture_id")
+    if venture_id is not None:
+        with ctx.db.connection() as conn:
+            _open_venture(conn, ctx.scope, venture_id)
+    elif ctx.venture and ctx.state.focus_venture_id is not None:
+        with ctx.db.connection() as conn:
+            focus = ventures.get(conn, ctx.scope, ctx.state.focus_venture_id)
+        venture_id = focus["id"] if focus is not None and focus["stage"] != "killed" else None
     if ctx.research is None:
         raise ToolError("research isn't available right now")
-    return ctx.research(args["question"].strip(), url, ctx.cycle_id, None if url else site)
+    return ctx.research(question, url, ctx.cycle_id, None if url else site, venture_id)
 
 
 def _on_etsy(url: str) -> bool:
