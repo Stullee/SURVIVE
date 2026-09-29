@@ -781,6 +781,9 @@ class Outcome:
     summary: str
     project_id: int | None = None
     image: bytes | None = None  # a PNG the model sees with the text (the look tool)
+    # 0.12.0: a paid call (research, brainstorm, workshop) was sent: it counts toward the tool's per-cycle limit even
+    # when it failed, or retries of failing calls went on spending past the limit.
+    paid: bool = False
 
 
 # question, a page to read, cycle, the site searched, the venture it is for (0.12.0)
@@ -889,7 +892,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
                     conn, call_id, "ok" if outcome.ok else "error", outcome.summary, outcome.text, ctx.now()
                 )
             return _clip(outcome, RESULT_CHARS.get(name, MAX_RESULT_CHARS))
-        if outcome.ok:
+        if outcome.ok or outcome.paid:
             ctx.state.counts[name] = ctx.state.counts.get(name, 0) + 1
     except (ToolError, make.ProductError) as exc:
         outcome = Outcome(False, f"Error: {_unstop(str(exc))}.", f"refused: {exc}"[:300])

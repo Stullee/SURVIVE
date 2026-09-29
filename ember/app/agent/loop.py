@@ -956,9 +956,10 @@ class CycleRunner:
                         f"Error: {blocked[1]} blocks Anthropic's web tools, so your research can't search or read it:"
                         " search without a site, or limit it to another site.",
                         "failed: site blocks the web tools",
+                        paid=True,
                     )
                 return tools.Outcome(
-                    False, f"Error: research failed ({exc.result.error or exc.result.status}).", "failed"
+                    False, f"Error: research failed ({exc.result.error or exc.result.status}).", "failed", paid=True
                 )
             response = result.response or {}
             cost = result.cost_micros
@@ -1045,7 +1046,10 @@ class CycleRunner:
                 return tools.Outcome(False, f"Error: the brainstorm was refused ({exc.reason}).", "refused")
             except CallFailed as exc:
                 return tools.Outcome(
-                    False, f"Error: the brainstorm failed ({exc.result.error or exc.result.status}).", "failed"
+                    False,
+                    f"Error: the brainstorm failed ({exc.result.error or exc.result.status}).",
+                    "failed",
+                    paid=True,
                 )
             response = result.response or {}
             text = _text_of(response)
@@ -1054,7 +1058,7 @@ class CycleRunner:
             ideas = _ideas(text) if response.get("stop_reason") == "end_turn" else []
             if not ideas:
                 return tools.Outcome(
-                    False, f"Error: the brainstorm brought no usable ideas {cost}.", "failed: no ideas"
+                    False, f"Error: the brainstorm brought no usable ideas {cost}.", "failed: no ideas", paid=True
                 )
             added, known = self._plant(ctx, ideas, parent)
             self._keep_ideas(ctx, added, known, parent, theme)
@@ -1141,7 +1145,7 @@ class CycleRunner:
             except CallRefused as exc:  # the budget guard's state or system refusal: the next call ends the cycle
                 return tools.Outcome(False, f"Error: the workshop was refused ({exc.reason}).", "refused")
             ok, text, summary = workshop_report(run, lambda source, body: tools.wrap(ctx, source, body))
-            return tools.Outcome(ok, text, summary)
+            return tools.Outcome(ok, text, summary, paid=run.calls > 0)
 
         return workshop
 

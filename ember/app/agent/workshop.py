@@ -85,6 +85,7 @@ class Run:
     answer: str = ""
     cost: int = 0
     failure: str | None = None
+    calls: int = 0  # 0.12.0: metered calls sent (a failed one too): a run that sent one counts toward the limits
 
 
 class Workshop:
@@ -220,9 +221,11 @@ class Workshop:
                 run.failure = f"the budget guard refused the run ({exc.reason})"
                 break
             except CallFailed as exc:
+                run.calls += 1
                 run.cost += exc.result.cost_micros
                 run.failure = f"the run failed ({exc.result.error or exc.result.status})"
                 break
+            run.calls += 1
             run.cost += result.cost_micros
             response = result.response or {}
             responses.append(response)

@@ -58,6 +58,8 @@ Your results now reach your records: what you earn counts where it belongs.
   spend_money 3, other 4). withdraw_request takes back one that is outdated, with its reason. A request your owner
   doesn't decide expires (contact and publish after 7 days, spend_money after 14, the rest after 30): WAITING FOR
   YOUR OWNER shows when, and FROM YOUR OWNER tells you when one expired.
+- A research call, brainstorm or workshop run that was sent counts toward its limit per cycle even when it failed
+  (it may have cost money): don't retry a failing one in the same cycle.
 
 ## 0.11.2
 
