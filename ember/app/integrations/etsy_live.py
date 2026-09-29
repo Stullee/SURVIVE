@@ -26,6 +26,7 @@ from .etsy import (
     API_HOST,
     API_URL,
     CATEGORY_JOIN,
+    DEAD_ORDERS,
     OAUTH_ENDPOINT,
     QUANTITY,
     REFRESH_EARLY,
@@ -57,7 +58,6 @@ OFFICE = {
 }
 PAGE = 100  # items per page Etsy returns at most
 RECEIPT_PAUSE = 1.1  # seconds between pages of orders: Etsy allows about one a second per shop there
-DEAD_ORDERS = frozenset({"canceled", "fully refunded"})
 _REFRESH_LOCK = threading.Lock()
 
 
@@ -354,7 +354,13 @@ class LiveShop:
             data = self._call(
                 "GET",
                 f"/v3/application/shops/{self._shop_id()}/receipts",
-                params={"min_created": str(int(since.timestamp())), "limit": str(PAGE), "offset": str(offset)},
+                # By change, not by creation (0.12.0): a refund or cancellation changes a receipt, and its stored
+                # order has to learn it.
+                params={
+                    "min_last_modified": str(int(since.timestamp())),
+                    "limit": str(PAGE),
+                    "offset": str(offset),
+                },
             )
             results = data.get("results", []) if isinstance(data, dict) else []
             for receipt in results:
@@ -421,13 +427,14 @@ class LiveShop:
 
 
 def _order(receipt: Any) -> Order | None:
-    """A paid order, or None (unpaid, cancelled or fully refunded orders don't count)."""
+    """An order with its status: paid ones count; cancelled and refunded ones update what was stored (0.12.0: they
+    were dropped, so an order refunded after the sync stayed counted)."""
     if not isinstance(receipt, dict) or not isinstance(receipt.get("receipt_id"), int):
         return None
-    if receipt.get("is_paid") is False or str(receipt.get("status") or "").lower() in DEAD_ORDERS:
-        return None
+    status = str(receipt.get("status") or "").lower()[:30]
+    if receipt.get("is_paid") is False and status not in DEAD_ORDERS:
+        status = "unpaid"
     total = receipt.get("grandtotal") if isinstance(receipt.get("grandtotal"), dict) else {}
-    amount, divisor = _int(total.get("amount")) or 0, _int(total.get("divisor")) or 100
     created = receipt.get("created_timestamp") or receipt.get("create_timestamp") or 0
     items = []
     for t in receipt.get("transactions") or []:
@@ -437,15 +444,31 @@ def _order(receipt: Any) -> Order | None:
                     "listing_id": t["listing_id"],
                     "title": str(t.get("title") or "")[:140],
                     "quantity": _int(t.get("quantity")) or 1,
+                    "price_cents": _cents(t.get("price")) or 0,
                 }
             )
+    refunds = [r for r in receipt.get("refunds") or [] if isinstance(r, dict)]
     return Order(
         receipt_id=receipt["receipt_id"],
         ordered_at=to_iso(datetime.fromtimestamp(int(created), tz=UTC)),
-        total_cents=round(amount * 100 / divisor) if divisor else amount,
+        total_cents=_cents(total) or 0,
         currency=str(total.get("currency_code") or "USD")[:3].upper(),
         items=items,
+        status=status or "paid",
+        items_cents=_cents(receipt.get("total_price")) or sum(i["price_cents"] * i["quantity"] for i in items),
+        discount_cents=_cents(receipt.get("discount_amt")) or 0,
+        refunded_cents=sum(_cents(r.get("amount")) or 0 for r in refunds),
     )
+
+
+def _cents(money: Any) -> int | None:
+    """Etsy's money ({"amount": 490, "divisor": 100, "currency_code": "EUR"}) in cents."""
+    if not isinstance(money, dict):
+        return None
+    amount, divisor = _int(money.get("amount")), _int(money.get("divisor")) or 100
+    if amount is None:
+        return None
+    return round(amount * 100 / divisor) if divisor else amount
 
 
 def _int(value: Any) -> int | None:

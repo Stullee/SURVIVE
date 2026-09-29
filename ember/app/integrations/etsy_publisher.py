@@ -578,23 +578,31 @@ class Publisher:
                     items = [i for i in order.items if i.get("listing_id") in ours]
                     if not items:
                         continue  # the owner's own products: not Ember's business
-                    total = f"{order.total_cents / 100:.2f} {order.currency}"
-                    conn.execute(
-                        "INSERT INTO etsy_orders (mode, session, receipt_id, ordered_at, total, total_cents, currency,"
-                        " items, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                        " ON CONFLICT (mode, session, receipt_id) DO UPDATE SET synced_at = excluded.synced_at",
-                        (
-                            scope.mode,
-                            scope.session,
-                            order.receipt_id,
-                            order.ordered_at,
-                            total,
-                            order.total_cents,
-                            order.currency[:3],
-                            json.dumps(items, ensure_ascii=False)[:4000],
-                            stamp,
-                        ),
+                    # 0.12.0: only Ember's lines, net of tax, shipping, the coupon and refunds (the whole receipt was
+                    # stored), with the order's status, which later syncs keep current.
+                    net = etsy.order_net(order, items)
+                    values = (
+                        f"{net / 100:.2f} {order.currency}",
+                        net,
+                        json.dumps(items, ensure_ascii=False)[:4000],
+                        order.status,
+                        stamp,
                     )
+                    if order.paid:
+                        conn.execute(
+                            "INSERT INTO etsy_orders (mode, session, receipt_id, ordered_at, currency, total,"
+                            " total_cents, items, status, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                            " ON CONFLICT (mode, session, receipt_id) DO UPDATE SET total = excluded.total,"
+                            " total_cents = excluded.total_cents, items = excluded.items, status = excluded.status,"
+                            " synced_at = excluded.synced_at",
+                            (scope.mode, scope.session, order.receipt_id, order.ordered_at, order.currency, *values),
+                        )
+                    else:  # cancelled, refunded or not paid (yet): only an order already stored learns it
+                        conn.execute(
+                            "UPDATE etsy_orders SET total = ?, total_cents = ?, items = ?, status = ?, synced_at = ?"
+                            f" WHERE {where} AND receipt_id = ?",
+                            (*values, *params, order.receipt_id),
+                        )
             self.db.set_meta(meta_key(scope.mode, "last_sync_at"), stamp)
             self.db.set_meta(meta_key(scope.mode, "last_error"), "")
             return None
@@ -669,10 +677,12 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
     rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC LIMIT 10", params).fetchall()
     week = to_iso(clock.now() - timedelta(days=7))
     orders = conn.execute(
-        f"SELECT total_cents, currency, items FROM etsy_orders WHERE {where} AND ordered_at >= ?", (*params, week)
+        f"SELECT total_cents, currency, items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}"
+        " AND ordered_at >= ?",
+        (*params, week),
     ).fetchall()
     sold: dict[int, int] = {}
-    for order in conn.execute(f"SELECT items FROM etsy_orders WHERE {where}", params):
+    for order in conn.execute(f"SELECT items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}", params):
         for item in json.loads(order["items"] or "[]"):
             sold[item.get("listing_id")] = sold.get(item.get("listing_id"), 0) + int(item.get("quantity") or 1)
     lines = [
@@ -757,9 +767,10 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
     out = []
     for r in rows:
         key = revenue_key(r["receipt_id"])
-        recorded = conn.execute("SELECT 1 FROM ledger WHERE idempotency_key = ?", (key,)).fetchone() is not None
+        entry = conn.execute("SELECT id FROM ledger WHERE idempotency_key = ?", (key,)).fetchone()
         items = json.loads(r["items"] or "[]")
         project_id, venture_id = order_project(conn, scope, items)
+        status = r["status"]
         out.append(
             {
                 "receipt_id": r["receipt_id"],
@@ -769,9 +780,18 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
                 "currency": r["currency"],
                 "items": items,
                 "revenue_key": key,
-                "recorded": recorded,
+                "recorded": entry is not None,
+                "entry_id": entry["id"] if entry else None,  # to correct if the order was refunded since
                 "project_id": project_id,  # what the revenue form suggests (0.12.0)
                 "venture_id": venture_id,
+                # 0.12.0: the order's status; an order from before has none, and its total is the whole receipt's.
+                "status": status,
+                "whole_receipt": status is None,
+                "recordable": entry is None
+                and status is not None
+                and status not in etsy.DEAD_ORDERS
+                and r["currency"] in ("EUR", "USD")
+                and r["total_cents"] > 0,
             }
         )
     return out

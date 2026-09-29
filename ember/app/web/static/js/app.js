@@ -3209,14 +3209,30 @@
       })))) : h("p", { class: "muted", text: "None yet. When you approve a listing the agent proposed, Ember creates it here." }));
     var orders = arr(e.orders);
     replace($("etsy-orders"), orders.length ? h("div", { class: "table-wrap" }, h("table", null,
-      h("thead", null, h("tr", null, ["Ordered", "Total", "Listings", "Revenue"].map(function (c) { return h("th", { scope: "col", text: c }); }))),
+      h("thead", null, h("tr", null, ["Ordered", "Ember's lines", "Listings", "Status", "Revenue"].map(function (c) { return h("th", { scope: "col", text: c }); }))),
       h("tbody", null, orders.map(function (o) {
         return h("tr", null,
           h("td", null, timeEl(o.ordered_at, fmtDateTime(o.ordered_at))),
-          h("td", { class: "num", text: asText(o.total) }),
+          // 0.12.0: only Ember's lines, net of tax, shipping, the coupon and refunds (before, the whole receipt).
+          h("td", { class: "num", text: asText(o.total) + (o.whole_receipt ? " (whole receipt)" : "") }),
           h("td", { text: arr(o.items).map(function (i) { return asText(i.title) + (num(i.quantity) > 1 ? " × " + i.quantity : ""); }).join("; ") }),
-          h("td", null, o.recorded ? h("span", { class: "muted small", text: "Recorded" }) : recordOrderButton(o, fake)));
+          h("td", { text: o.status ? asText(o.status) : "–" }),
+          h("td", null, orderRevenueCell(o, fake)));
       })))) : h("p", { class: "muted", text: "No orders with Ember's listings yet." }));
+  }
+
+  // What the owner can do about an order's revenue: record it (only a paid order in EUR or USD, whose net is known),
+  // or see why not; an order refunded after it was recorded asks for a correction of that entry.
+  function orderRevenueCell(o, fake) {
+    var refunded = o.status === "fully refunded" || o.status === "canceled";
+    if (o.recorded) {
+      return h("span", { class: "muted small", text: refunded ? "Recorded, then " + o.status + ": correct entry #" + o.entry_id : "Recorded" });
+    }
+    if (o.recordable) return recordOrderButton(o, fake);
+    if (refunded) return h("span", { class: "muted small", text: "Nothing to record" });
+    if (o.whole_receipt) return h("span", { class: "muted small", text: "From before 0.12.0: check Ember's share in Etsy" });
+    if (o.currency !== "EUR" && o.currency !== "USD") return h("span", { class: "muted small", text: "In " + asText(o.currency) + ": convert it and record it yourself" });
+    return h("span", { class: "muted small", text: "Not paid yet" });
   }
 
   // Revenue is only ever recorded by the owner: this opens the revenue form filled in from the order (its key
@@ -3226,7 +3242,7 @@
     b.addEventListener("click", function () {
       var cents = num(o.total_cents);
       openLedgerForm("revenue", isNaN(cents) ? null : (cents / 100).toFixed(2), {
-        currency: o.currency === "EUR" ? "EUR" : "USD",
+        currency: o.currency,  // only EUR and USD orders get this button
         source: "Etsy order " + o.receipt_id,
         day: String(o.ordered_at || "").slice(0, 10),
         idKey: String(o.revenue_key || ""),

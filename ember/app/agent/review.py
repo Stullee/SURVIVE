@@ -23,6 +23,7 @@ from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.ledger import Books, Scope
 from ..economy.life import LifeStatus
+from ..integrations import etsy
 from ..version import app_version
 from . import roadmap, ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
@@ -404,7 +405,9 @@ def _etsy(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
         return ""
     sold: dict[int, int] = {}
     orders = conn.execute(
-        f"SELECT total_cents, currency, items FROM etsy_orders WHERE {where} AND ordered_at >= ?", (*params, since)
+        f"SELECT total_cents, currency, items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}"
+        " AND ordered_at >= ?",
+        (*params, since),
     ).fetchall()
     for order in orders:
         for item in json.loads(order["items"] or "[]"):

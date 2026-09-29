@@ -606,13 +606,20 @@ can also remove the app's access at Etsy).
 Every hour while the app runs, also while the agent sleeps between wake cycles
 (not while it is paused, stopped or dead), Ember reads how its own listings do:
 their state, views (Etsy counts them once a day) and favorites, and the orders
-that hold them: date, total and which listing, never who bought. Etsy's
+that hold them: date, status, Ember's lines and which listing, never who bought.
+An order's amount is only Ember's lines: their price times quantity, less their
+share of a coupon and of any refund; tax, shipping and your own products in the
+same receipt don't count, and Etsy's fees are booked on their own. Every sync
+reads the receipts that changed lately, so an order refunded or cancelled after
+it was read is updated, and it stops counting. Etsy's
 categories are fetched again every day. Etsy's API terms allow showing its
 listings for 6 hours after they were read and its other content for a day. The
 agent sees these numbers in every plan and in its daily review. **System →
 Etsy** lists the listings and orders and says when the numbers were read;
-**Record as revenue** opens the revenue form filled in from an order (an order
-can't be recorded twice). Revenue still counts only when you record it.
+**Record as revenue** opens the revenue form filled in from a paid order in EUR
+or USD (an order can't be recorded twice; convert another currency yourself).
+If an order you recorded is refunded later, the list asks you to correct that
+entry. Revenue still counts only when you record it.
 
 The agent can search Etsy through web search to see what sells, but its
 research never reads Etsy's pages: Etsy's API terms forbid programs reading its

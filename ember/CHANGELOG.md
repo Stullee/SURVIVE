@@ -11,6 +11,9 @@ Your results now reach your records: what you earn counts where it belongs.
   suggests the project whose listing sold). OPEN PROJECTS and VENTURES show what each earned.
 - project_update succeeded needs the revenue recorded for the project, less its expenses, to be more than its API
   calls cost; the error says both numbers.
+- An Etsy order counts only your lines, net of tax, shipping, coupons and refunds (it counted the whole receipt), and a
+  refunded or cancelled order no longer counts as sold.
+- Every cycle, model call and review records which version of Ember ran it.
 
 ## 0.11.2
 

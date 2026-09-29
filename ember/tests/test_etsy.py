@@ -436,10 +436,14 @@ def test_listings_orders_and_categories_are_read(tmp_path: Path) -> None:
         3,
         "https://www.etsy.com/listing/555",
     )
-    [order] = shop.orders(Clock().now() - timedelta(days=30))
-    assert (order.receipt_id, order.total_cents, order.currency) == (91, 450, "EUR")
-    assert order.items == [{"listing_id": 555, "title": "Planner", "quantity": 1}]  # never who bought
+    order, cancelled, unpaid = shop.orders(Clock().now() - timedelta(days=30))
+    assert (order.receipt_id, order.total_cents, order.currency, order.status) == (91, 450, "EUR", "paid")
+    assert order.items == [{"listing_id": 555, "title": "Planner", "quantity": 1, "price_cents": 0}]  # never who bought
     assert "someone@example.org" not in json.dumps(order.__dict__)
+    # 0.12.0: cancelled and unpaid receipts come too (a stored order learns it), and by change, not by creation.
+    assert (cancelled.status, cancelled.paid, unpaid.status, unpaid.paid) == ("canceled", False, "unpaid", False)
+    receipts_request = next(r for r in server.requests if r.url.path.endswith("/receipts"))
+    assert "min_last_modified" in receipts_request.url.params and "min_created" not in receipts_request.url.params
     assert shop.taxonomy() == [(1, "Paper"), (2, "Paper > Calendars & Planners"), (3, "Art")]
     assert "authorization" not in server.requests[-1].headers  # the categories need only the app key
 
@@ -1008,7 +1012,12 @@ def test_only_orders_with_embers_listings_are_kept_and_the_owner_records_them(da
         return [
             *real_orders(since),
             etsy.Order(
-                71, "2026-09-02T10:00:00Z", 450, "EUR", [{"listing_id": 900_000_001, "title": "P", "quantity": 1}]
+                71,
+                "2026-09-02T10:00:00Z",
+                450,
+                "EUR",
+                [{"listing_id": 900_000_001, "title": "P", "quantity": 1, "price_cents": 450}],
+                items_cents=450,
             ),
             etsy.Order(
                 72, "2026-09-02T11:00:00Z", 999, "EUR", [{"listing_id": 1, "title": "The owner's own", "quantity": 1}]
@@ -1021,6 +1030,62 @@ def test_only_orders_with_embers_listings_are_kept_and_the_owner_records_them(da
     assert [(o["receipt_id"], o["total"], o["recorded"]) for o in kept] == [(71, "4.50 EUR", False)]
     owner_entry(agent.economy, "revenue", "4.50", idempotency_key=kept[0]["revenue_key"], test_money=True)
     assert agent.integrations()["etsy"]["orders"][0]["recorded"] is True
+
+
+def test_an_order_counts_only_embers_lines_and_follows_its_refunds(data_dir: Path) -> None:
+    """0.12.0: the whole receipt was stored (tax, shipping and the owner's own products), a refund after the sync
+    was never seen, and a pound order was offered as dollars."""
+    agent, _, request = proposed(data_dir)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    agent.execute_approved()
+    shop = agent.etsy.shop()
+    ours = 900_000_001
+    receipt = {"status": "paid", "refunded": 0}
+
+    def orders(since: Any) -> list[etsy.Order]:
+        lines = [
+            {"listing_id": ours, "title": "Planner", "quantity": 1, "price_cents": 490},
+            {"listing_id": 1, "title": "The owner's own", "quantity": 1, "price_cents": 1_000},
+        ]
+        return [
+            etsy.Order(
+                81,
+                "2026-09-02T10:00:00Z",
+                1_830,  # with tax and shipping
+                "EUR",
+                lines,
+                status=receipt["status"],
+                items_cents=1_490,
+                discount_cents=149,  # a 10% coupon: Ember's share is 49 cents
+                refunded_cents=receipt["refunded"],
+            ),
+            etsy.Order(82, "2026-09-03T10:00:00Z", 600, "GBP", [{**lines[0], "price_cents": 600}], items_cents=600),
+        ]
+
+    def shown() -> dict[int, dict[str, Any]]:
+        assert agent.publisher.sync(force=True) is None
+        return {o["receipt_id"]: o for o in agent.integrations()["etsy"]["orders"]}
+
+    def sold() -> str:
+        with agent.db.connection() as conn:
+            return etsy_publisher.shop_text(conn, agent.scope(), agent.clock, "Shop", 3)
+
+    shop.orders = orders  # type: ignore[method-assign]
+    first = shown()
+    assert (first[81]["total"], first[81]["status"], first[81]["recordable"]) == ("4.41 EUR", "paid", True)
+    assert [i["listing_id"] for i in first[81]["items"]] == [ours]  # only Ember's line
+    assert (first[82]["total"], first[82]["recordable"]) == ("6.00 GBP", False)  # never prefilled as dollars
+    assert "2 sold" in sold()
+
+    entry = owner_entry(agent.economy, "revenue", "4.41", idempotency_key=first[81]["revenue_key"], test_money=True)
+    receipt.update(status="partially refunded", refunded=745)  # half the receipt: Ember's share is 2.45
+    partly = shown()[81]
+    assert (partly["total"], partly["status"], partly["recorded"]) == ("1.96 EUR", "partially refunded", True)
+    receipt.update(status="fully refunded", refunded=1_830)
+    refunded = shown()[81]
+    assert (refunded["total"], refunded["status"], refunded["recordable"]) == ("0.00 EUR", "fully refunded", False)
+    assert refunded["entry_id"] == entry["entry"]["id"]  # the dashboard asks for a correction of that entry
+    assert "1 sold" in sold()  # a refunded order no longer counts
 
 
 # --- what the agent and the owner see --------------------------------------------------------------------------
@@ -1166,7 +1231,7 @@ def test_a_0_8_shop_keeps_its_listings_through_the_0_9_migration(tmp_path: Path)
             " title) VALUES ('live', 0, 3, 'then', 'now', 'active', 4584845289, 'CV')"
         )
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [11, 12, 13, 14, 15, 16, 17]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [11, 12, 13, 14, 15, 16, 17, 18]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         assert tuple(conn.execute("SELECT id, executor, status, version FROM approvals").fetchone()) == (

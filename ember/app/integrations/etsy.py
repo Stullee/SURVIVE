@@ -509,9 +509,36 @@ class RemoteListing:
 class Order:
     receipt_id: int
     ordered_at: str
-    total_cents: int
+    total_cents: int  # what the buyer paid for the whole receipt: tax, shipping and the owner's products included
     currency: str
-    items: list[dict[str, Any]] = field(default_factory=list)  # listing_id, title, quantity
+    items: list[dict[str, Any]] = field(default_factory=list)  # listing_id, title, quantity, price_cents (a unit's)
+    # 0.12.0: what Ember's share of a receipt is worth needs its status, the items' price before the coupon
+    # (items_cents: every line's price times quantity), the coupon and what was refunded.
+    status: str = "paid"
+    items_cents: int = 0
+    discount_cents: int = 0
+    refunded_cents: int = 0
+
+    @property
+    def paid(self) -> bool:
+        return self.status in PAID_ORDERS
+
+
+PAID_ORDERS = frozenset({"paid", "completed", "partially refunded"})
+DEAD_ORDERS = frozenset({"canceled", "fully refunded"})
+COUNTED_ORDERS = "COALESCE(status, 'paid') NOT IN ('canceled', 'fully refunded')"  # SQL, on etsy_orders
+
+
+def order_net(order: Order, lines: list[dict[str, Any]]) -> int:
+    """What Ember's ``lines`` of a receipt earned, in cents (0.12.0: the whole receipt was stored): their price times
+    quantity, less their share of the coupon and of the refunds. Tax, shipping and the owner's own products don't
+    count; Etsy's fees are booked on their own."""
+    if order.status in DEAD_ORDERS:
+        return 0
+    gross = sum(int(i.get("price_cents") or 0) * int(i.get("quantity") or 1) for i in lines)
+    whole = order.items_cents or gross
+    share = gross / whole if whole else 1.0
+    return max(0, gross - round((order.discount_cents + order.refunded_cents) * share))
 
 
 class Shop(Protocol):
@@ -714,13 +741,16 @@ class FakeShop:
                 continue
             ordered = from_iso(item["live_since"]) + timedelta(days=1, hours=listing_id % 7)
             if since <= ordered <= self.clock.now():
+                price = item["price_cents"]
+                line = {"listing_id": listing_id, "title": item["title"], "quantity": 1, "price_cents": price}
                 found.append(
                     Order(
                         receipt_id=3_000_000_000 + listing_id,
                         ordered_at=to_iso(ordered),
                         total_cents=item["price_cents"],
                         currency="EUR",
-                        items=[{"listing_id": listing_id, "title": item["title"], "quantity": 1}],
+                        items=[line],
+                        items_cents=price,
                     )
                 )
         return found

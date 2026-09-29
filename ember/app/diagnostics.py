@@ -770,7 +770,7 @@ def _agent(state: AppState, full: bool = True) -> str:
                 10,
             ),
             ("etsy_edits", ["id", "approval_id", "listing_id", "status", "result", "error"], 10),
-            ("etsy_orders", ["receipt_id", "ordered_at", "total", "items"], 10),
+            ("etsy_orders", ["receipt_id", "ordered_at", "status", "total", "items"], 10),
         ):
             rows = conn.execute(
                 f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC LIMIT ?",
