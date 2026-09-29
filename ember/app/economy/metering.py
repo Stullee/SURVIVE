@@ -469,14 +469,14 @@ class MeteredModel:
             raise CallFailed(result)
         return result
 
-    def quote(self, request: Mapping[str, Any], purpose: str = "work") -> int:
-        """The worst case the guard would reserve for ``request`` as a ``purpose`` call now (reads only). Raises
-        Unpriceable."""
+    def quote(self, request: Mapping[str, Any], purpose: str = "work", extra_tokens: int = 0) -> int:
+        """The worst case the guard would reserve for ``request`` as a ``purpose`` call now (reads only), with
+        ``extra_tokens`` more of prompt (what the conversation may still grow by). Raises Unpriceable."""
         try:
             input_tokens = self.transport.count_tokens(request)
         except Exception:  # noqa: BLE001 - same fallback as reserve()
             input_tokens = rough_token_count(request)
-        plan = plan_request(request, input_tokens)
+        plan = plan_request(request, input_tokens + max(extra_tokens, 0))
         price = self.settings.price_for(plan.model)
         if price is None:
             raise Unpriceable(f"model {plan.model!r} has no entry in the price table")

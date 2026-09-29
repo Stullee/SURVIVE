@@ -758,6 +758,10 @@ class CycleTools:
     # reply is the one whose tool calls run now (a file read in the same reply was not seen yet).
     read_memory: dict[str, int] = field(default_factory=dict)
     reply: int = 0
+    # 0.12.0: the conversation's size before the latest step, and the largest step so far, in rough tokens (what the
+    # reflection's price leaves room for).
+    conversation_tokens: int = 0
+    largest_step_tokens: int = 0
 
 
 @dataclass(frozen=True)

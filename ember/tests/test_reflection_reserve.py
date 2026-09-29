@@ -3,6 +3,7 @@ for its reflection, and the cycle then ended without reflecting."""
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from app.agent import loop, tools
@@ -72,3 +73,15 @@ def test_why_the_work_ended_is_kept_when_the_reflection_cant_be_paid(data_dir: P
     agent, _ = make_agent(data_dir, [plan()], settings)
     assert agent.run_cycle("schedule").note == loop.NO_STEP
     assert rows(agent, "SELECT act_end_reason FROM cycles")[0]["act_end_reason"] == loop.NO_STEP
+
+
+def test_the_reflection_leaves_room_for_the_largest_step_so_far() -> None:
+    # 0.12.0: a fixed 20,000 bytes of "x" counted as about 19,000 tokens live, while real steps added 400 to 3,700.
+    state = tools.CycleTools()
+    assert loop._step_growth(state, []) == loop.STEP_GROWTH_TOKENS  # nothing measured yet: the minimum
+    small = [{"role": "assistant", "content": [{"type": "text", "text": "a" * 2_000}]}]
+    assert loop._step_growth(state, small) == loop.STEP_GROWTH_TOKENS  # a step of about 1,000 tokens
+    big = [*small, {"role": "user", "content": [{"type": "text", "text": "b" * 20_000}]}]
+    grown = loop._step_growth(state, big)  # a step of about 10,000 tokens: room for 1.5 times it
+    assert grown == math.ceil(state.largest_step_tokens * 1.5) and 15_000 <= grown <= 15_100
+    assert loop._step_growth(state, [*big, *small]) == grown  # the largest step so far counts

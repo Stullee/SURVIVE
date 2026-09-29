@@ -72,7 +72,12 @@ CUT_CALL = (
     " other texts shorter"
 )
 STEP_CHARS = 200  # a plan step's length (prompts.PLANNER_RULES tells the planner)
-STEP_GROWTH_BYTES = 20_000  # what one step can add: up to 4 tool results and the model's own reply
+STEP_GROWTH_BYTES = 20_000  # the most one step can add (4 tool results and a reply): the REFLECT profile's room
+# 0.12.0: what the next step may add, as the reflection after it is priced: the largest step of this cycle so far, 1.5
+# times, and at least STEP_GROWTH_TOKENS. A fixed 20,000 bytes of "x" counted as about 19,000 tokens live, while real
+# steps added 400 to 3,700: cycles stopped with a third of their money left.
+STEP_GROWTH_TOKENS = 4_000
+STEP_GROWTH_FACTOR = 1.5
 # A picture the model looks at counts like text in proportion to its pixels: the largest a look shows (LOOK_PIXELS
 # square, about 1,300 tokens) like this much, a 1000 x 750 listing photo like 3,750 bytes and a wide spreadsheet picture
 # (1000 x 180) like 900. A picture whose size can't be read counts as the largest.
@@ -793,7 +798,11 @@ class CycleRunner:
         """Only take a step if a reflect call still fits after it; what that costs is kept in the cycle's state, for
         the step's calls of their own (research, brainstorms, workshop runs) to leave (0.12.0)."""
         venture = ctx.venture
-        grown = [*turns, {"role": "assistant", "content": [{"type": "text", "text": "x" * STEP_GROWTH_BYTES}]}]
+        growth = _step_growth(ctx.state, turns)
+        # The reflection as _reflect sends it: a trailing user turn's tool results come with its prompt.
+        past, pending = list(turns), []
+        if past and past[-1]["role"] == "user":
+            pending = [b for b in past.pop()["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
         longest = "ä" * prompts.ENDED_CHARS  # the reflection is told why the work ended: priced with the longest reason
         try:
             step_cost = self.meter.quote(request, "work")
@@ -801,8 +810,8 @@ class CycleRunner:
                 prompts.reflect_request(
                     self.settings,
                     brief,
-                    grown,
-                    [],
+                    past,
+                    pending,
                     mail=self.mail,
                     etsy=self.etsy_on,
                     ended=longest,
@@ -810,6 +819,7 @@ class CycleRunner:
                     library=self.library_on,
                 ),
                 "reflect",
+                extra_tokens=growth,
             )
         except Unpriceable:
             return False
@@ -1303,6 +1313,17 @@ def _rejected(error: str | None) -> bool:
 def _first_object(text: str) -> str | None:
     match = re.search(r"\{.*\}", text, re.DOTALL)
     return match.group(0) if match else None
+
+
+def _step_growth(state: tools.CycleTools, turns: list[dict[str, Any]]) -> int:
+    """What the next step may add to the conversation, in tokens (0.12.0): 1.5 times the largest step of this cycle so
+    far (measured like the rough token count: half a token a byte, a picture by its pixels), at least
+    STEP_GROWTH_TOKENS. ``turns`` is the conversation before the next step."""
+    size = math.ceil(_size(turns) / 2)
+    if state.conversation_tokens:
+        state.largest_step_tokens = max(state.largest_step_tokens, size - state.conversation_tokens)
+    state.conversation_tokens = size
+    return max(STEP_GROWTH_TOKENS, math.ceil(state.largest_step_tokens * STEP_GROWTH_FACTOR))
 
 
 def _size(turns: list[dict[str, Any]]) -> int:

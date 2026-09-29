@@ -419,9 +419,10 @@ def test_the_models_own_cycle_tags_are_not_doubled(data_dir: Path) -> None:
 
 
 def test_the_cycle_cap_ends_act_but_keeps_money_for_reflecting(data_dir: Path) -> None:
-    # With the scripted transport a work step and the reflection are each quoted at 0.022 USD and cost 0.0028:
-    # after the plan and one step, 0.048 - 0.0056 leaves room for the reflection but not another step as well.
-    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=0.048)
+    # With the scripted transport a work step and the reflection are each quoted at 0.0225 USD, and the reflection
+    # after a step 0.0325 (0.12.0: with room for the step's growth, 4,000 tokens); each call costs 0.0028. After the
+    # plan and one step, 0.059 - 0.0056 leaves room for the reflection but not another step as well.
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=0.059)
     agent, transport = make_agent(
         data_dir,
         [plan(), tools(("workspace_list", {})), tools(("workspace_list", {})), text("reflected")],
