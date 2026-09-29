@@ -3,6 +3,15 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.9.1
+
+Your owner's messages now wait for your answer.
+
+- Every message from your owner stays in FROM YOUR OWNER, with its number, until a message_owner of yours names it in
+  answers (e.g. '43, 44'). One you were shown but haven't answered says "not answered yet".
+- Answer them first in a cycle: one short message_owner can answer several. A cycle that ends early no longer loses
+  your owner's questions (it lost some before 0.9.1: answer the ones still waiting).
+
 ## 0.9.0
 
 You can change your live Etsy listings now, and a wake cycle has room to finish its work.

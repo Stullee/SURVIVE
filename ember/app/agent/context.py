@@ -250,7 +250,7 @@ def snapshot(
         cycle_cap=cycle_cap,
         projects=projects,
         project_money=money,
-        owner_messages=store.unseen(conn, "messages", scope, 8),
+        owner_messages=store.open_messages(conn, scope, 8),
         pending=[r for r in store.queue(conn, "approvals", scope, 20) if r["status"] == "pending"],
         last_cycle=last_cycle,
         last_journal=journal[0] if journal else None,
@@ -349,7 +349,13 @@ def _owner(s: Snapshot, budget: int) -> tuple[str, list[tuple[Item, str, bool]],
     texts = [m["text"] for m in s.owner_messages]
 
     def message(i: int, chars: int | None) -> str:
-        return f"Message from your owner ({s.owner_messages[i]['created_at']}): {_quote(texts[i], chars)}"
+        m = s.owner_messages[i]
+        try:
+            shown = m["seen_cycle_id"] is not None
+        except (IndexError, KeyError):  # a row built by hand (in tests) may lack it
+            shown = False
+        waiting = ", not answered yet" if shown else ""  # shown before, and still waiting for an answer (0.9.1)
+        return f"Message #{m['id']} from your owner ({m['created_at']}{waiting}): {_quote(texts[i], chars)}"
 
     def shortened(limits: list[int | None], chars: int | None) -> str:
         """The first messages cut to their ``limits`` (None: whole), the others and the decisions to ``chars``."""

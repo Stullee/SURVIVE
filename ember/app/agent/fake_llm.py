@@ -640,7 +640,7 @@ _CREATE_STEP = re.compile(r"Create a project: (.+)")
 _QUESTION = re.compile(r"^Question: (.+)$", re.MULTILINE)
 _READ_PAGE = re.compile(r"^Read this page: (\S+)", re.MULTILINE)
 _SUSPICIOUS = re.compile(r"ignore|spend_money|options\.json|api key|admin mode|system notice", re.IGNORECASE)
-_MESSAGE_LINE = re.compile(r"Message from your owner \(([^()\n]*)\): ")
+_MESSAGE_LINE = re.compile(r"Message #(\d+) from your owner \(([^()\n]*)\): ")
 _REQUEST_HEAD = re.compile(r"Request #(\d+) \([a-z_]+\) ")
 _UPGRADE_HEAD = re.compile(r"Upgrade request #(\d+) ")
 _DECIDED = re.compile(r': ([a-z]+(?: [a-z]+)*?)(?: in version "(\d+\.\d+\.\d+)")?(?:\.|$)')
@@ -684,8 +684,9 @@ def parse_focus(text: str) -> Project | None:
 
 @dataclass(frozen=True)
 class OwnerMessage:
-    created_at: str
+    created_at: str  # and ", not answered yet" when the agent was shown it before (0.9.1)
     text: str | None  # None if the line was cut where the text can't be read
+    id: int = 0
 
 
 @dataclass(frozen=True)
@@ -723,7 +724,7 @@ def owner_news(text: str, title: str) -> OwnerNews:
     for line in (section(text, title) or "").split("\n"):
         match = _MESSAGE_LINE.match(line)
         if match:
-            messages.append(OwnerMessage(match[1], _json_text(line[match.end() :])))
+            messages.append(OwnerMessage(match[2], _json_text(line[match.end() :]), int(match[1])))
             continue
         decision = _decision(line)
         if decision is not None:
@@ -1437,7 +1438,11 @@ class FakeTransport:
                 "note": "Stopped in my daily review: no sign of demand after many cycles.",
             }
         if stage == "reply":
-            return "message_owner", {"text": owner_reply(owner_news(conv.brief, OWNER_SECTION))}
+            news = owner_news(conv.brief, OWNER_SECTION)
+            args = {"text": owner_reply(news)}
+            if news.messages:  # the messages it answers leave FROM YOUR OWNER (0.9.1)
+                args["answers"] = ", ".join(str(m.id) for m in news.messages)
+            return "message_owner", args
         if stage == "create":
             return "project_create", {
                 "title": idea.title,

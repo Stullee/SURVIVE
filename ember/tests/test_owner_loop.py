@@ -73,7 +73,9 @@ def test_a_decision_reaches_the_next_plan_once(data_dir: Path) -> None:
     assert all(r["seen_cycle_id"] for r in seen)
 
     agent.run_cycle("schedule")
-    assert "Hi there" not in sent_text(transport.sent[-1]) and "Good morning" not in sent_text(transport.sent[-1])
+    third = sent_text(transport.sent[-1])
+    assert "Hi there" not in third  # a decision is news once
+    assert ', not answered yet): \\"Good morning!\\"' in third  # a message waits for an answer (0.9.1)
 
 
 def test_decisions_are_checked(data_dir: Path) -> None:

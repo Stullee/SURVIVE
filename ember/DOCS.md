@@ -282,7 +282,10 @@ returns it with a script, and nothing is sent to Anthropic.
   passwords: messages are stored and sent to Anthropic, and the agent can't log
   in anywhere (the page warns you when a message looks like a login). **Remove
   text** blanks one of your own messages for good, for example a password
-  sent by mistake; a note that something was removed stays.
+  sent by mistake; a note that something was removed stays. Each of your
+  messages stays in the agent's plans until one of its messages answers it,
+  so a cycle that ends early can't lose your question; under your message the
+  Inbox says whether it was answered yet.
 - **Workspace**: the files the agent writes in its own folder (drafts, notes,
   research), and the PDF, Word, Excel and picture files Ember made from them, so
   you can review them before you approve anything. Open a text file to read it

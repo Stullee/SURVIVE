@@ -503,7 +503,10 @@ def _seen(message: Any) -> str:
     if message["sender"] == "agent":
         return f"read by owner {message['read_at']}" if message["read_at"] else "not read by owner yet"
     seen = message["seen_cycle_id"]
-    return f"seen by agent in cycle #{seen}" if seen is not None else "not seen by agent yet"
+    if seen is None:
+        return "not seen by agent yet"
+    answer = message["answered_by"]
+    return f"seen by agent in cycle #{seen}, " + (f"answered by #{answer}" if answer else "not answered yet")
 
 
 def _time(timestamp: float) -> str:

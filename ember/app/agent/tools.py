@@ -227,8 +227,17 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "message_owner",
-            "Send your owner a short message for their inbox (they read it when they have time).",
-            {"text": _s("The message.", 2_000)},
+            "Send your owner a short message for their inbox (they read it when they have time). Name the messages "
+            "of theirs it answers: each stays in FROM YOUR OWNER until one of yours answers it.",
+            {
+                "text": _s("The message.", 2_000),
+                "answers": _s(
+                    "The numbers of your owner's messages it answers or acknowledges, separated by commas, e.g. "
+                    "'43, 44' (from FROM YOUR OWNER).",
+                    200,
+                    required=False,
+                ),
+            },
             per_cycle=2,
             reflect=True,
         ),
@@ -931,7 +940,23 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     if unread >= MAX_UNREAD_MESSAGES:
         raise ToolError(f"your owner hasn't read your last {MAX_UNREAD_MESSAGES} messages yet")
     message_id = store.insert_message(conn, ctx.scope, ctx.cycle_id, args["text"].strip(), ctx.now())
-    return Outcome(True, f"Message #{message_id} is in your owner's inbox.", f"message #{message_id}")
+    named = list(dict.fromkeys(int(n) for n in re.findall(r"\d{1,9}", args.get("answers") or "")))[:20]
+    answered = store.mark_answered(conn, ctx.scope, named, message_id)
+    text = f"Message #{message_id} is in your owner's inbox."
+    if answered:
+        text += f" It answers {_numbers(answered)}: they leave FROM YOUR OWNER."
+    wrong = [n for n in named if n not in answered]
+    if wrong:
+        text += f" Not an open message from your owner that you were shown, so still as it was: {_numbers(wrong)}."
+    waiting = [r["id"] for r in store.open_messages(conn, ctx.scope) if r["seen_cycle_id"] is not None]
+    if waiting:
+        text += f" Still waiting for your answer: {_numbers(waiting)}."
+    summary = f"message #{message_id}" + (f", answers {_numbers(answered)}" if answered else "")
+    return Outcome(True, text, summary)
+
+
+def _numbers(ids: list[int]) -> str:
+    return ", ".join(f"#{i}" for i in ids)
 
 
 def _request_upgrade(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:

@@ -111,6 +111,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "entered_by": r["entered_by"],
                 "removed": r["removed_at"] is not None,
                 "seen_by_agent": r["seen_cycle_id"] is not None,
+                "answered_by": r["answered_by"],  # the agent's message that answered this one of the owner's
                 "simulated": r["mode"] == "dry_run",
             }
             for r in store.queue(conn, "messages", scope)

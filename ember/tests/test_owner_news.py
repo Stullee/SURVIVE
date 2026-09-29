@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from app import paths
-from app.agent import context, loop, news
+from app.agent import context, loop, news, store, views
 from app.agent.news import News
 from app.config import Settings
 from app.economy.life import LifeStatus
@@ -31,11 +32,21 @@ def section(text_: str, title: str) -> str | None:
     return match.group(1) if match else None
 
 
-def message_line(agent: Any, text_: str) -> str:
-    created = rows(agent, "SELECT created_at FROM messages WHERE sender = 'owner' ORDER BY id DESC")[0]["created_at"]
-    line = f"Message from your owner ({created}): {json.dumps(text_, ensure_ascii=False)}"
-    assert re.fullmatch(r'Message from your owner \(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\): ".*"', line)
+def message_line(agent: Any, text_: str, waiting: bool = False) -> str:
+    """The line of the owner's newest message (``waiting``: shown before and not answered yet)."""
+    newest = rows(agent, "SELECT id, created_at FROM messages WHERE sender = 'owner' ORDER BY id DESC")[0]
+    note = ", not answered yet" if waiting else ""
+    quoted = json.dumps(text_, ensure_ascii=False)
+    line = f"Message #{newest['id']} from your owner ({newest['created_at']}{note}): {quoted}"
+    assert re.fullmatch(
+        r'Message #\d+ from your owner \(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ(, not answered yet)?\): ".*"', line
+    )
     return line
+
+
+def head_of(number: int, waiting: bool = False) -> str:
+    """How the line of message ``number`` of snapshot_with begins."""
+    return f"Message #{number} from your owner (2026-09-28T08:00:00Z{', not answered yet' if waiting else ''}): "
 
 
 def shortened(text_: str, chars: int) -> str:
@@ -84,7 +95,12 @@ def test_the_owners_question_reaches_the_brief_of_every_step(data_dir: Path) -> 
         data_dir,
         [
             plan(steps=["Answer my owner's question with message_owner"]),
-            tools(("message_owner", {"text": "No, I can't make images; I could write the prompts for you."})),
+            tools(
+                (
+                    "message_owner",
+                    {"text": "No, I can't make images; I could write the prompts for you.", "answers": "1"},
+                )
+            ),
             text("Answered my owner."),
             JOURNAL,
             plan(steps=["look around"]),
@@ -113,7 +129,8 @@ def test_the_owners_question_reaches_the_brief_of_every_step(data_dir: Path) -> 
     assert steps[-1]["messages"][-1]["content"][-1]["text"].startswith("REFLECT PHASE")
     assert rows(agent, "SELECT text FROM messages WHERE sender = 'agent'")[0]["text"].startswith("No, I can't")
 
-    # Once planned with, the message is not shown again.
+    # Once answered, the message is not shown again.
+    assert rows(agent, "SELECT answered_by FROM messages WHERE sender = 'owner'")[0]["answered_by"] == 2
     agent.run_cycle("schedule")
     assert all("== FROM YOUR OWNER ==" not in first_text(r) for r in transport.sent[4:])
     assert QUESTION not in json.dumps(transport.sent[4:], ensure_ascii=False)
@@ -215,21 +232,22 @@ def test_a_message_longer_than_the_section_gets_its_room_and_the_others_follow(d
     who = owner(agent)
     for letter in "abc":  # 3,800 bytes each: none fits the section whole
         assert who.send_message({"text": f"{letter} " + "ä" * 1_900}, "Stefan").status == 201
-    messages = rows(agent, "SELECT created_at, text FROM messages WHERE sender = 'owner' ORDER BY id")
+    messages = rows(agent, "SELECT id, created_at, text FROM messages WHERE sender = 'owner' ORDER BY id")
     for number, m in enumerate(messages):
         agent.run_cycle("schedule")
         planned, work, _ = transport.sent[-3:]
-        head = f"Message from your owner ({m['created_at']}): "
-        # The oldest message gets the room (three times what it had when they all shared it); the others wait.
+        head = f"Message #{m['id']} from your owner ({m['created_at']}): "
+        # The oldest new message gets the room (three times what it had when they all shared it); the others wait,
+        # the ones not answered yet too (0.9.1).
         first, *rest = (section(first_text(work), "FROM YOUR OWNER") or "").split("\n")
         assert (
             first == head + shortened(m["text"], chars_shown(first, m["text"]))
             and chars_shown(first, m["text"]) > 1_000
         )
         assert context.json_bytes("\n".join([first, *rest])) <= context.OWNER_BUDGET
-        assert [bool(re.fullmatch(r"…\[\d+ bytes cut\]", line)) for line in rest] == [True] * (number < 2)
+        assert [bool(re.fullmatch(r"…\[\d+ bytes cut\]", line)) for line in rest] == [True]
         since = (section(first_text(planned), "SINCE YOUR LAST WAKE") or "").split("\n")
-        news_ = [line for line in since if line.startswith("Message from")]  # the planner has less room
+        news_ = [line for line in since if line.startswith("Message #")]  # the planner has less room
         assert news_ == [head + shortened(m["text"], chars_shown(news_[0], m["text"]))]
         assert seen_cycles(agent) == [1, 2, 3][: number + 1] + [None] * (2 - number)
 
@@ -238,7 +256,7 @@ def test_a_message_longer_than_the_section_gets_its_room_and_the_others_follow(d
 def test_the_owners_section_keeps_its_budget_and_comes_on_top_of_the_brief(letter: str) -> None:
     message = letter * 2_000
     owners = context.owner_text(snapshot_with([message]), context.OWNER_BUDGET)
-    head = "Message from your owner (2026-09-28T08:00:00Z): "
+    head = head_of(1)
     if letter == "a":  # plain text: the whole message fits
         assert owners == f'{head}"{message}"'
     else:
@@ -272,12 +290,15 @@ def test_the_oldest_message_keeps_its_room_and_the_last_lines_are_cut(letter: st
     snap = snapshot_with([message] * 8, decided=decided)
     lines = context.owner_text(snap, context.OWNER_BUDGET).splitlines()
     assert context.json_bytes("\n".join(lines)) <= context.OWNER_BUDGET
-    head = "Message from your owner (2026-09-28T08:00:00Z): "
+    head = head_of(1)
     if letter == "a":  # plain text: the oldest message fits whole
         assert lines[0] == f'{head}"{message}"' and len(lines) == 3
     else:  # as much of it as the section holds
         assert lines[0] == head + shortened(message, chars_shown(lines[0], message)) and len(lines) == 2
-    assert all(line == head + shortened(message, context.SHORTEST_QUOTE) for line in lines[1:-1])  # as far as fit
+    assert all(  # as far as they fit
+        line == head_of(number) + shortened(message, context.SHORTEST_QUOTE)
+        for number, line in enumerate(lines[1:-1], 2)
+    )
     assert re.fullmatch(r"…\[\d+ bytes cut\]", lines[-1])
     _, shown = context.brief(snap, False, {"goal": "g", "steps": ["s"]}, None, 12)
     assert shown.items == {("message", 1, None)}  # a shortened preview doesn't count: the rest stays news
@@ -348,7 +369,8 @@ def test_a_long_message_then_a_long_payload_are_shown_and_marked_at_every_planne
     data_dir: Path, monkeypatch: pytest.MonkeyPatch, scale: float
 ) -> None:
     monkeypatch.setattr(loop, "PLANNER_SCALES", (scale,))
-    cycle = [plan(steps=["Answer my owner"]), text("Answered."), JOURNAL]
+    answer = tools(("message_owner", {"text": "Yes, in German too.", "answers": "2"}))
+    cycle = [plan(steps=["Answer my owner"]), answer, text("Answered."), JOURNAL]
     agent, transport = make_agent(data_dir, [*cycle_with_approval(), *cycle, *cycle])
     agent.run_cycle("schedule")
     approval_id = rows(agent, "SELECT id FROM approvals")[0]["id"]
@@ -360,16 +382,16 @@ def test_a_long_message_then_a_long_payload_are_shown_and_marked_at_every_planne
     assert len(message) == 2_000 and who.send_message({"text": message}, "Stefan").status == 201
     agent.run_cycle("schedule")
 
-    planned, work, _ = transport.sent[-3:]
+    planned, work, _, _ = transport.sent[-4:]
     since = owner_lines(section(first_text(planned), "SINCE YOUR LAST WAKE") or "")
     owners = owner_lines(section(first_text(work), "FROM YOUR OWNER") or "")
     assert context.json_bytes("\n".join(since)) <= context.PLANNER_BUDGETS["news"] * scale
     assert owners == [message_line(agent, message)]  # whole; the decision didn't fit beside it
-    assert since[-1].startswith("Message from your owner (") and since[-1].endswith(f' {QUESTION}"')
+    assert since[-1].startswith("Message #2 from your owner (") and since[-1].endswith(f' {QUESTION}"')
     assert seen_cycles(agent) == [None, 2]
 
-    agent.run_cycle("schedule")  # the decision was left out: it is news for the next cycle
-    planned, work, _ = transport.sent[-3:]
+    agent.run_cycle("schedule")  # the decision was left out: it is news for the next cycle; the message was answered
+    planned, work, _, _ = transport.sent[-4:]
     since = owner_lines(section(first_text(planned), "SINCE YOUR LAST WAKE") or "")
     owners = owner_lines(section(first_text(work), "FROM YOUR OWNER") or "")
     for decided in (since[-1], *owners):
@@ -392,9 +414,12 @@ def test_what_the_plan_listed_and_the_brief_showed_in_full_is_marked_seen(
     agent.run_cycle("schedule")
 
     planned, work, _ = transport.sent
-    created = [r["created_at"] for r in rows(agent, "SELECT created_at FROM messages ORDER BY id")]
+    made = rows(agent, "SELECT id, created_at FROM messages ORDER BY id")
     owners = owner_lines(section(first_text(work), "FROM YOUR OWNER") or "")
-    assert owners == [f"Message from your owner ({c}): {json.dumps(n)}" for c, n in zip(created, notes, strict=True)]
+    assert owners == [
+        f"Message #{m['id']} from your owner ({m['created_at']}): {json.dumps(n)}"
+        for m, n in zip(made, notes, strict=True)
+    ]
     since = owner_lines(section(first_text(planned), "SINCE YOUR LAST WAKE") or "")
     assert since[0] == owners[0] and 1 < len(since) < 6  # the oldest whole, previews of the next, the rest cut
     assert all("more characters; your owner has the full text" in line for line in since[1:])
@@ -415,8 +440,8 @@ def test_a_shortened_message_stays_news_until_a_cycle_shows_it_whole(data_dir: P
     who = owner(agent)
     for letter in "AB":  # each fits the section whole, not both together
         assert who.send_message({"text": letter * 1_499 + "?"}, "Stefan").status == 201
-    messages = rows(agent, "SELECT created_at, text FROM messages ORDER BY id")
-    whole = [f"Message from your owner ({m['created_at']}): {json.dumps(m['text'])}" for m in messages]
+    messages = rows(agent, "SELECT id, created_at, text FROM messages ORDER BY id")
+    whole = [f"Message #{m['id']} from your owner ({m['created_at']}): {json.dumps(m['text'])}" for m in messages]
     agent.run_cycle("schedule")
     first, second = (section(first_text(transport.sent[1]), "FROM YOUR OWNER") or "").split("\n")
     assert first == whole[0] and second.endswith(
@@ -424,7 +449,10 @@ def test_a_shortened_message_stays_news_until_a_cycle_shows_it_whole(data_dir: P
     )
     assert seen_cycles(agent) == [1, None]  # the middle of the second wasn't shown yet
     agent.run_cycle("schedule")
-    assert section(first_text(transport.sent[-2]), "FROM YOUR OWNER") == whole[1]
+    new, waiting = (section(first_text(transport.sent[-2]), "FROM YOUR OWNER") or "").split("\n")
+    assert new == whole[1]  # the new one first, whole; the first follows: it wasn't answered (0.9.1)
+    first = messages[0]
+    assert waiting.startswith(f"Message #{first['id']} from your owner ({first['created_at']}, not answered yet): ")
     assert seen_cycles(agent) == [1, 2]
 
 
@@ -442,13 +470,13 @@ def test_a_plan_with_less_room_lists_a_long_message_but_leaves_it_to_the_brief()
 
 def test_a_question_at_the_end_of_a_long_message_stays_readable() -> None:
     messages = [f"{letter} " + "x" * 1_500 + f" {QUESTION}" for letter in "abc"]
-    head = "Message from your owner (2026-09-28T08:00:00Z): "
     # The brief: the oldest whole, previews of the others; a plan at half scale: as much of the oldest as fits.
     for budget, count in ((context.OWNER_BUDGET, 3), (context.PLANNER_BUDGETS["news"] // 2, 1)):
         text_ = context.owner_text(snapshot_with(messages), budget)
         lines = owner_lines(text_)
         assert len(lines) == count and context.json_bytes(text_) <= budget
         for number, (message, line) in enumerate(zip(messages, lines, strict=False)):
+            head = head_of(number + 1)
             if number == 0 and count == 3:
                 assert line == f"{head}{json.dumps(message)}"
             else:
@@ -498,3 +526,111 @@ def test_an_upgrade_names_its_version_quoted() -> None:
     upgrade = {"id": 2, "title": "RSS", "status": "released", "released_version": "0.4.0", "owner_note": None}
     lines = News(upgrades=[upgrade]).upgrade_lines()  # type: ignore[list-item]
     assert lines == ['Upgrade request #2 "RSS": released in version "0.4.0".']
+
+
+# --- a message stays in the plans until the agent answers it (0.9.1) ---
+
+
+def test_an_unanswered_message_stays_until_an_answer_names_it(data_dir: Path) -> None:
+    # In live use a cycle ended before its reply, and the owner's questions were never shown again.
+    busy = [plan(steps=["Answer my owner", "Build the planner"]), text("Built the planner."), JOURNAL]
+    answer = tools(("message_owner", {"text": "No images: I make PDF and Word files.", "answers": "#1, 99"}))
+    quiet = [plan(steps=["look around"]), text("Looked."), text("Reflected.")]
+    agent, transport = make_agent(
+        data_dir, [*busy, plan(steps=["Answer my owner"]), answer, text("Done."), JOURNAL, *quiet]
+    )
+    assert owner(agent).send_message({"text": QUESTION}, "Stefan").status == 201
+    agent.run_cycle("schedule")  # shown, not answered
+    assert rows(agent, "SELECT seen_cycle_id, answered_by FROM messages") == [{"seen_cycle_id": 1, "answered_by": None}]
+
+    agent.run_cycle("schedule")  # shown again, as waiting for an answer, and answered
+    planned, work, *_ = transport.sent[3:7]
+    line = message_line(agent, QUESTION, waiting=True)
+    assert line in (section(first_text(planned), "SINCE YOUR LAST WAKE") or "").splitlines()
+    assert section(first_text(work), "FROM YOUR OWNER") == line
+    result = rows(agent, "SELECT result FROM tool_calls WHERE tool = 'message_owner'")[0]["result"]
+    assert result == (
+        "Message #2 is in your owner's inbox. It answers #1: they leave FROM YOUR OWNER. Not an open message from your "
+        "owner that you were shown, so still as it was: #99."
+    )
+    assert rows(agent, "SELECT id, answered_by FROM messages ORDER BY id") == [
+        {"id": 1, "answered_by": 2},
+        {"id": 2, "answered_by": None},
+    ]
+    agent.run_cycle("schedule")  # answered: gone
+    assert all("== FROM YOUR OWNER ==" not in first_text(r) for r in transport.sent[7:])
+
+    inbox = {m["id"]: m for m in views.dashboard(agent)["inbox"]}
+    assert (inbox[1]["answered_by"], inbox[2]["answered_by"]) == (2, None)
+    with pytest.raises(sqlite3.IntegrityError, match="an answer is final"), agent.db.transaction() as conn:
+        conn.execute("UPDATE messages SET answered_by = NULL WHERE id = 1")
+
+
+def test_only_open_messages_the_agent_was_shown_can_be_answered(data_dir: Path) -> None:
+    agent, _ = make_agent(data_dir, [plan(steps=[], sleep=600)])
+    who = owner(agent)
+    scope = agent.scope()
+    assert who.send_message({"text": "First"}, "Stefan").status == 201
+    agent.run_cycle("schedule")  # a plan with nothing to do showed it whole: seen
+    assert who.send_message({"text": "Second"}, "Stefan").status == 201
+    with agent.db.transaction() as conn:
+        reply = store.insert_message(conn, scope, 1, "My answer.", "2026-09-01T12:00:00Z")  # the agent's, cycle #1
+        # #2 wasn't shown yet, #3 is the agent's own, #404 doesn't exist.
+        assert store.mark_answered(conn, scope, [1, 2, reply, 404], reply) == [1]
+        assert store.mark_answered(conn, scope, [1], reply) == []  # answered once, for good
+        assert [r["id"] for r in store.open_messages(conn, scope)] == [2]
+        conn.execute(
+            "UPDATE messages SET removed_at = 'now', removed_by = 'Stefan', text = '[removed by the owner]'"
+            " WHERE id = 2"
+        )
+        assert [r["id"] for r in store.open_messages(conn, scope)] == [2]  # removed: shown once all the same
+        conn.execute("UPDATE messages SET seen_cycle_id = 1 WHERE id = 2")
+        assert store.open_messages(conn, scope) == []  # then it needs no answer
+
+
+def test_a_0_9_database_keeps_only_the_questions_that_were_never_answered(tmp_path: Path) -> None:
+    from app.db import Database, discover_migrations, migrate  # noqa: PLC0415
+
+    db_file = tmp_path / "ember.db"
+    migrate(db_file, [m for m in discover_migrations() if m.version <= 11], backup_dir=tmp_path / "backups")
+    old = Database(db_file)
+    with old.transaction() as conn:
+        conn.execute(
+            "INSERT INTO lives (id, mode, born_at, started_reason, state) VALUES (1, 'live', 'then', 'born', 'alive')"
+        )
+        for cycle in (1, 2, 3):
+            conn.execute(
+                "INSERT INTO cycles (id, life_id, boot_id, started_at, status, trigger, simulated, cap_micros)"
+                " VALUES (?, 1, 'b', 'then', 'completed', 'schedule', 0, 1)",
+                (cycle,),
+            )
+        insert = (
+            "INSERT INTO messages (id, mode, session, life_id, created_at, sender, cycle_id, text, seen_cycle_id)"
+            " VALUES (?, 'live', 0, 1, 'then', ?, ?, ?, ?)"
+        )
+        conn.execute(insert, (1, "owner", None, "AdSense?", 1))  # seen in cycle 1, answered in cycle 2
+        conn.execute(insert, (2, "agent", 2, "Here is my answer.", None))
+        conn.execute(insert, (3, "owner", None, "More photos, please.", 3))  # seen in the cycle cut before its reply
+        conn.execute(insert, (4, "owner", None, "Limit is 5 a day now.", None))  # not seen yet
+    old.close()
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [12]
+    upgraded = Database(db_file)
+    with upgraded.connection() as conn:
+        answered = {r["id"]: r["answered_by"] for r in conn.execute("SELECT id, answered_by FROM messages")}
+        assert answered == {1: 2, 2: None, 3: None, 4: None}
+        scope = store.AgentScope(mode="live", session=0, life_id=1)
+        assert [r["id"] for r in store.open_messages(conn, scope)] == [4, 3]  # the new one first
+    upgraded.close()
+
+
+def test_the_dry_runs_fake_answers_and_names_the_message(data_dir: Path) -> None:
+    from app.agent.fake_llm import FakeTransport  # noqa: PLC0415
+    from tests.test_loop_shapes import run  # noqa: PLC0415
+
+    def asked(agent: Any) -> None:
+        assert owner(agent).send_message({"text": QUESTION}, "Stefan").status == 201
+
+    agent, _ = run(data_dir, FakeTransport(seed=1), before=asked)
+    [question] = rows(agent, "SELECT answered_by FROM messages WHERE sender = 'owner'")
+    reply = rows(agent, "SELECT id FROM messages WHERE sender = 'agent' ORDER BY id")[0]["id"]
+    assert question["answered_by"] == reply

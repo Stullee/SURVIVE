@@ -1152,7 +1152,7 @@ def test_a_0_8_shop_keeps_its_listings_through_the_0_9_migration(tmp_path: Path)
             " title) VALUES ('live', 0, 3, 'then', 'now', 'active', 4584845289, 'CV')"
         )
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [11]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [11, 12]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         assert tuple(conn.execute("SELECT id, executor, status, version FROM approvals").fetchone()) == (

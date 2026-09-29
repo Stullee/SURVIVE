@@ -74,6 +74,10 @@ cycle), tells the reflection why the work ended, refuses Etsy's whole top-level
 departments as a listing's category, and keeps the AI note out of the footer of
 CVs and letters that buyers send on.
 
+0.9.1 keeps each of the owner's messages in the agent's plans until one of its
+messages answers it (a cycle that ended before its reply used to lose the
+owner's questions); the Inbox shows which ones are answered.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

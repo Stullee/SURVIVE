@@ -429,6 +429,34 @@ def instructions_json(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return {"text": row["text"], "updated_at": row["created_at"], "entered_by": row["entered_by"]}
 
 
+def open_messages(conn: sqlite3.Connection, scope: AgentScope, limit: int = 8) -> list[sqlite3.Row]:
+    """The owner's messages the agent hasn't answered yet (0.9.1): the new ones first, then the ones it was shown
+    without answering them, each oldest first, so a new message gets the room to be read whole. A message whose text
+    the owner removed stays only until the agent has seen it."""
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT * FROM messages WHERE {where} AND sender = 'owner' AND answered_by IS NULL"
+        " AND (removed_at IS NULL OR seen_cycle_id IS NULL) ORDER BY seen_cycle_id IS NOT NULL, id LIMIT ?",
+        (*params, limit),
+    ).fetchall()
+
+
+def mark_answered(conn: sqlite3.Connection, scope: AgentScope, ids: list[int], answer_id: int) -> list[int]:
+    """Record the agent's message ``answer_id`` as the answer to the owner's messages ``ids`` it was shown; returns
+    the ones marked (the others aren't open messages of the owner's that the agent has seen)."""
+    where, params = scope.where()
+    marked = []
+    for message_id in ids:
+        cursor = conn.execute(
+            f"UPDATE messages SET answered_by = ? WHERE id = ? AND {where} AND sender = 'owner'"
+            " AND answered_by IS NULL AND seen_cycle_id IS NOT NULL",
+            (answer_id, message_id, *params),
+        )
+        if cursor.rowcount:
+            marked.append(message_id)
+    return marked
+
+
 def unseen(conn: sqlite3.Connection, table: str, scope: AgentScope, limit: int = 10) -> list[sqlite3.Row]:
     """Queue items the agent hasn't been shown since they changed (phase 4 adds the owner's decisions)."""
     if table not in {"approvals", "messages", "upgrades"}:

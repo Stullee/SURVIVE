@@ -1743,6 +1743,15 @@
     return a;
   }
 
+  // Whether the agent answered one of the owner's messages it has seen: it stays in the agent's plans until then.
+  function answeredLine(m, messages) {
+    var answer = m.answered_by ? messages.filter(function (x) { return num(x.id) === num(m.answered_by); })[0] : null;
+    return h("p", { class: "seen", "data-seen": m.answered_by ? "yes" : "no" },
+      h("span", { "aria-hidden": "true", text: m.answered_by ? "✓ " : "◌ " }),
+      m.answered_by ? ["Answered by " + agentName(), answer ? [" ", timeEl(answer.created_at)] : null]
+        : "Not answered yet: " + agentName() + " keeps it in its plans until it answers");
+  }
+
   function seenLine(seen) {
     return h("p", { class: "seen", "data-seen": seen ? "yes" : "no" },
       h("span", { "aria-hidden": "true", text: seen ? "✓ " : "◌ " }), (seen ? "Seen by " : "Not yet seen by ") + agentName());
@@ -2809,6 +2818,7 @@
             m.simulated ? [" ", testTag()] : null),
           h("span", { class: "msg-text", "data-removed": m.removed ? "true" : null, text: asText(m.text) }),
           fromOwner ? seenLine(!!m.seen_by_agent) : null,
+          fromOwner && m.seen_by_agent && !m.removed ? answeredLine(m, sorted) : null,
           fromOwner && !m.removed ? removeButton(num(m.id)) : null);
       }));
     }

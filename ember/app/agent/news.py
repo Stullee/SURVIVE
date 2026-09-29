@@ -7,7 +7,8 @@ worked with it: listed by the plan that succeeded and shown in full in the brief
 a work step that was answered, or shown in full by a plan with nothing to do. A
 message counts as shown in full only unshortened, unless it is longer than the brief
 can ever hold. What a prompt left out, cut or shortened, and what a cycle that ended
-before showed, stays news for the next cycle.
+before showed, stays news for the next cycle. The owner's messages stay in the plans
+after that too, until the agent answers them (0.9.1, ``store.open_messages``).
 """
 
 from __future__ import annotations
