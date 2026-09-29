@@ -158,6 +158,9 @@ class Settings(BaseModel):
     etsy_shared_secret: SecretStr = SecretStr("")
     etsy_redirect_uri: str = Field(default="https://localhost/ember-etsy", min_length=1, max_length=300)
     etsy_listings_per_day: int = Field(default=3, ge=0, le=20)
+    # 0.12.0: keep a daily history of the listings' views and favorites (observations). Off until the owner has
+    # confirmed that Etsy's API terms allow keeping it; the shop's own counts are kept either way.
+    etsy_stats_history: bool = False
 
     @field_validator("owner_user_ids", mode="before")
     @classmethod

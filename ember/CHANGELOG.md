@@ -16,6 +16,8 @@ Your results now reach your records: what you earn counts where it belongs.
 - Every cycle, model call and review records which version of Ember ran it.
 - ETSY SHOP and your daily review list every live listing, top sellers first (they showed only the newest 10 and 8,
   so the listings live the longest dropped out): in ETSY SHOP one line, each with its sold, views and favorites.
+- Ember's code keeps a daily record of the shop's numbers; if your owner allows it, also each listing's views and
+  favorites, and ETSY SHOP then shows the views each listing gained this week.
 
 ## 0.11.2
 

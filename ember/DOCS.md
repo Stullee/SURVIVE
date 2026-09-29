@@ -64,6 +64,7 @@ your approval, and only you can record revenue.
 | Etsy app keystring, shared secret | empty | From the Etsy app you register for your shop. The secret is never logged or shown. |
 | Etsy redirect URI | https://localhost/ember-etsy | The callback URL registered for that app, exactly as there. |
 | Etsy listings per day | 3 | The most listings Ember creates in one day (0 to 20). |
+| Keep a history of the listings' numbers | off | A daily record of each listing's views and favorites, so the plans see how each changed. Turn it on only once you have confirmed that Etsy's API terms allow it (see [What Ember sees](#what-ember-sees)). |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -620,6 +621,16 @@ Etsy** lists the listings and orders and says when the numbers were read;
 or USD (an order can't be recorded twice; convert another currency yourself).
 If an order you recorded is refunded later, the list asks you to correct that
 entry. Revenue still counts only when you record it.
+
+Every day Ember's code also keeps a record of how the shop does (the first
+sync of the day writes it, and it never changes): the number of live listings,
+orders and units sold, from Ember's own records. With **Keep a history of the
+listings' numbers** on, it also keeps each live listing's views and favorites,
+and the plans show how many views each listing gained in the last week. That
+option is off until you turn it on, because Etsy's API terms limit how long its
+content may be kept (its listings for 6 hours, other content for a day, as
+Ember read them in 0.8.1): whether a history of your own listings' numbers is
+allowed is yours to confirm with Etsy's terms before you turn it on.
 
 The agent can search Etsy through web search to see what sells, but its
 research never reads Etsy's pages: Etsy's API terms forbid programs reading its

@@ -35,7 +35,7 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from .. import events
@@ -603,6 +603,7 @@ class Publisher:
                             f" WHERE {where} AND receipt_id = ?",
                             (*values, *params, order.receipt_id),
                         )
+                observe(conn, scope, self.clock.today().isoformat(), stamp, self.settings.etsy_stats_history)
             self.db.set_meta(meta_key(scope.mode, "last_sync_at"), stamp)
             self.db.set_meta(meta_key(scope.mode, "last_error"), "")
             return None
@@ -697,8 +698,11 @@ def live_rows(rows: list[sqlite3.Row], sold: dict[int, int]) -> list[sqlite3.Row
     )
 
 
-def live_line(rows: list[sqlite3.Row], sold: dict[int, int], what: str = "sold") -> str | None:
-    """One line for every live listing: its number, its title's start and its numbers."""
+def live_line(
+    rows: list[sqlite3.Row], sold: dict[int, int], what: str = "sold", week: dict[int, int] | None = None
+) -> str | None:
+    """One line for every live listing: its number, its title's start and its numbers, with the views it gained this
+    week where the history has them (``week``: its views a week ago)."""
     live = live_rows(rows, sold)
     if not live:
         return None
@@ -707,9 +711,51 @@ def live_line(rows: list[sqlite3.Row], sold: dict[int, int], what: str = "sold")
         title = " ".join((r["title"] or "").split())
         title = title if len(title) <= 24 else title[:23].rstrip() + "…"
         views = r["views"] if r["views"] is not None else "?"
+        before = (week or {}).get(r["listing_id"])
+        gained = f"(+{r['views'] - before})" if before is not None and r["views"] is not None else ""
         favorites = r["favorites"] if r["favorites"] is not None else "?"
-        entries.append(f"#{r['listing_id']} {title} {sold.get(r['listing_id'], 0)}s {views}v {favorites}f")
-    return f"All {len(live)} live listings, top sellers first ({what} s, views v, favorites f): " + " · ".join(entries)
+        entries.append(f"#{r['listing_id']} {title} {sold.get(r['listing_id'], 0)}s {views}v{gained} {favorites}f")
+    legend = f"{what} s, views v (gained this week), favorites f" if week else f"{what} s, views v, favorites f"
+    return f"All {len(live)} live listings, top sellers first ({legend}): " + " · ".join(entries)
+
+
+def observe(conn: sqlite3.Connection, scope: AgentScope, day: str, now: str, listing_history: bool) -> int:
+    """The day's observations (0.12.0), written by the first sync of the owner's day: the shop's counts from Ember's
+    own records and, while the owner allows the history, each live listing's views and favorites. A day's first value
+    stays. Returns how many were new."""
+    where, params = scope.where()
+    rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where}", params).fetchall()
+    sold = sold_counts(conn, scope)
+    live = live_rows(rows, sold)
+    orders = conn.execute(
+        f"SELECT COUNT(*) FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}", params
+    ).fetchone()[0]
+    values = [("shop", 0, "listings_live", len(live)), ("shop", 0, "orders", orders)]
+    values.append(("shop", 0, "units_sold", sum(sold.values())))
+    if listing_history:
+        for r in live:
+            values.extend(("listing", r["listing_id"], m, r[m]) for m in ("views", "favorites") if r[m] is not None)
+    added = 0
+    for subject, subject_id, metric, value in values:
+        added += conn.execute(
+            "INSERT INTO observations (mode, session, day, observed_at, subject, subject_id, metric, value)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+            (scope.mode, scope.session, day, now, subject, subject_id, metric, int(value)),
+        ).rowcount
+    return added
+
+
+def week_ago(conn: sqlite3.Connection, scope: AgentScope, today: date, metric: str = "views") -> dict[int, int]:
+    """Each listing's ``metric`` at the start of the last 7 days: the first value observed since then."""
+    where, params = scope.where()
+    first: dict[int, int] = {}
+    for r in conn.execute(
+        f"SELECT subject_id, value FROM observations WHERE {where} AND subject = 'listing' AND metric = ?"
+        " AND day >= ? ORDER BY day",
+        (*params, metric, (today - timedelta(days=7)).isoformat()),
+    ):
+        first.setdefault(int(r["subject_id"]), int(r["value"]))
+    return first
 
 
 def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_name: str, daily_limit: int) -> str:
@@ -725,7 +771,7 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
     ).fetchall()
     sold = sold_counts(conn, scope)
     lines = [f"Shop: {shop_name}." + ("" if rows else " No listings yet.")]
-    summary = live_line(rows, sold)
+    summary = live_line(rows, sold, week=week_ago(conn, scope, clock.today()))
     if summary:
         lines.append(summary)
     few: list[str] = []  # 0.11.1: the plans never saw a photo count, so single-photo listings stayed that way

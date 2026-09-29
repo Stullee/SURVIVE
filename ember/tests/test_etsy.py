@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import sqlite3
 import stat
 from datetime import timedelta
@@ -1076,7 +1077,7 @@ def test_an_order_counts_only_embers_lines_and_follows_its_refunds(data_dir: Pat
     assert (first[81]["total"], first[81]["status"], first[81]["recordable"]) == ("4.41 EUR", "paid", True)
     assert [i["listing_id"] for i in first[81]["items"]] == [ours]  # only Ember's line
     assert (first[82]["total"], first[82]["recordable"]) == ("6.00 GBP", False)  # never prefilled as dollars
-    assert f"#{ours} Printable chore charts… 2s " in sold()
+    assert re.search(rf"#{ours} [^·]* 2s ", sold())
 
     entry = owner_entry(agent.economy, "revenue", "4.41", idempotency_key=first[81]["revenue_key"], test_money=True)
     receipt.update(status="partially refunded", refunded=745)  # half the receipt: Ember's share is 2.45
@@ -1086,7 +1087,7 @@ def test_an_order_counts_only_embers_lines_and_follows_its_refunds(data_dir: Pat
     refunded = shown()[81]
     assert (refunded["total"], refunded["status"], refunded["recordable"]) == ("0.00 EUR", "fully refunded", False)
     assert refunded["entry_id"] == entry["entry"]["id"]  # the dashboard asks for a correction of that entry
-    assert f"#{ours} Printable chore charts… 1s " in sold()  # a refunded order no longer counts
+    assert re.search(rf"#{ours} [^·]* 1s ", sold())  # a refunded order no longer counts
 
 
 # --- what the agent and the owner see --------------------------------------------------------------------------
@@ -1232,7 +1233,7 @@ def test_a_0_8_shop_keeps_its_listings_through_the_0_9_migration(tmp_path: Path)
             " title) VALUES ('live', 0, 3, 'then', 'now', 'active', 4584845289, 'CV')"
         )
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [11, 12, 13, 14, 15, 16, 17, 18]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [11, 12, 13, 14, 15, 16, 17, 18, 19]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         assert tuple(conn.execute("SELECT id, executor, status, version FROM approvals").fetchone()) == (
@@ -1462,3 +1463,37 @@ def test_the_plan_and_the_review_see_every_live_listing_top_sellers_first(data_d
     assert order[1:] == sorted(order[1:], key=lambda n: (-((n - 5_000) % 3), n))  # then the most favorited
     listed = [line for line in review_text.splitlines() if line.startswith("- #")]
     assert len(listed) == 15 and listed[0].startswith("- #5001 Planner 1 ·") and "2 sold in the period" in listed[0]
+
+
+def test_the_shop_is_observed_once_a_day_and_its_listings_only_when_allowed(data_dir: Path) -> None:
+    """0.12.0 (FIX NOW 4): every sync overwrote a listing's views and favorites, so nothing showed a trend. The shop's
+    own counts are kept every day; the listings' numbers only while the owner allows the history (Etsy's terms)."""
+    agent, _, request = proposed(data_dir)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    agent.execute_approved()
+    agent.clock.advance(days=1)  # the day's first sync counts: today's came before the listing went live
+    assert agent.publisher.sync(force=True) is None and agent.publisher.sync(force=True) is None  # twice in a day
+    today = agent.clock.today().isoformat()
+    observed = rows(agent, f"SELECT subject, metric, value FROM observations WHERE day = '{today}' ORDER BY id")
+    assert [(o["subject"], o["metric"], o["value"]) for o in observed] == [
+        ("shop", "listings_live", 1),
+        ("shop", "orders", 0),
+        ("shop", "units_sold", 0),
+    ]
+    agent.publisher.settings = agent.settings.model_copy(update={"etsy_stats_history": True})
+    for _ in range(4):  # a week of syncs, every other day
+        agent.clock.advance(days=2)
+        assert agent.publisher.sync(force=True) is None
+    listing = rows(
+        agent, "SELECT day, value FROM observations WHERE subject = 'listing' AND metric = 'views' ORDER BY day"
+    )
+    assert len(listing) == 4 and len({o["day"] for o in listing}) == 4  # one a day
+    assert listing[-1]["value"] >= listing[0]["value"]
+    with agent.db.connection() as conn:
+        shop = etsy_publisher.shop_text(conn, agent.scope(), agent.clock, "Shop", 3)
+    gained = listing[-1]["value"] - listing[0]["value"]  # since the first day of the last 7 observed
+    assert f"v(+{gained})" in shop and "views v (gained this week)" in shop
+    with pytest.raises(sqlite3.IntegrityError, match="never changes"), agent.db.transaction() as conn:
+        conn.execute("UPDATE observations SET value = 0")
+    with pytest.raises(sqlite3.IntegrityError, match="kept"), agent.db.transaction() as conn:
+        conn.execute("DELETE FROM observations")

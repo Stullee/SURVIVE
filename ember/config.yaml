@@ -86,6 +86,9 @@ options:
   etsy_enabled: false
   etsy_redirect_uri: https://localhost/ember-etsy
   etsy_listings_per_day: 3
+  # A daily history of your listings' views and favorites. Turn it on once you have confirmed that Etsy's API terms
+  # allow keeping it (see the Documentation tab).
+  etsy_stats_history: false
 
 schema:
   anthropic_api_key: password?
@@ -135,3 +138,4 @@ schema:
   etsy_shared_secret: password?
   etsy_redirect_uri: str(1,300)
   etsy_listings_per_day: int(0,20)
+  etsy_stats_history: bool

@@ -203,3 +203,10 @@ configuration:
       The most listings Ember creates in one day (0 to 20). Each costs Etsy's
       listing fee (USD 0.20); approved listings beyond it wait for the next
       day.
+  etsy_stats_history:
+    name: Keep a history of the listings' numbers
+    description: >-
+      On: every day Ember keeps your listings' views and favorites, so its plans
+      see how each one changed. Etsy's API terms limit how long its content may
+      be kept: turn this on only once you have confirmed that they allow this
+      history of your own listings.
