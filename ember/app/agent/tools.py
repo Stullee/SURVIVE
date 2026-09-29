@@ -88,6 +88,13 @@ _DOCUMENT = re.compile(r"\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|epub|zip)$",
 # Etsy's website and its short links, with their subdomains: Etsy's API terms forbid programs reading them. Searching
 # them (site 'etsy.com') stays allowed: that reads a search engine's results, not Etsy's pages.
 ETSY_DOMAINS = ("etsy.com", "etsy.me")
+# Sites that block Anthropic's web tools: the API refuses a search limited to them ("not accessible to our user
+# agent", seen live in 0.10.0), and their pages can't be read. (0.10.1)
+UNREACHABLE_DOMAINS = ("reddit.com", "redd.it")
+UNREACHABLE = (
+    "Reddit blocks Anthropic's web tools, so your research can't search or read reddit.com: search without a site "
+    "(forums, Q&A and review sites often discuss the same questions), or limit it to another site"
+)
 _BAD_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]")
 
 
@@ -387,7 +394,7 @@ SPECS: dict[str, Spec] = {
                     required=False,
                 ),
                 "site": _s(
-                    "Search only this site, a bare domain like 'reddit.com' (not used when reading a url).",
+                    "Search only this site, a bare domain like 'etsy.com' (not used when reading a url).",
                     60,
                     required=False,
                 ),
@@ -508,9 +515,9 @@ SPECS: dict[str, Spec] = {
         Spec(
             "propose_reddit_post",
             "Propose a Reddit post or comment. Your owner posts it from their own account after approving it "
-            "(Ember has no Reddit access); a line saying an AI wrote it is added at the end. First check the "
-            "subreddit's rules on AI content and self-promotion (research with site 'reddit.com'), and never post "
-            "the same text in several places.",
+            "(Ember has no Reddit access); a line saying an AI wrote it is added at the end. The subreddit's rules on "
+            "AI content and self-promotion must allow it: your research can't read Reddit, so your owner checks them "
+            "when posting. Never post the same text in several places.",
             {
                 "subreddit": _s("The subreddit's name, e.g. 'SideProject'.", 24),
                 "kind": _s("A new post or a comment in a thread.", 10, enum=reddit.KINDS),
@@ -1228,7 +1235,9 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     if site is not None:
         site = site.strip().lower()
         if not _SITE.match(site):
-            raise ToolError("site must be a bare domain like reddit.com (no https://, no path)")
+            raise ToolError("site must be a bare domain like etsy.com (no https://, no path)")
+        if _on(site, UNREACHABLE_DOMAINS):
+            raise ToolError(UNREACHABLE)
     if url is not None:
         if not ctx.allow_fetch:
             raise ToolError("reading whole pages is switched off by your owner; search instead")
@@ -1239,6 +1248,8 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
                 "Etsy's pages can't be read by a program (Etsy's API terms forbid it); search instead, for example"
                 " with site 'etsy.com'"
             )
+        if _on(_host(url), UNREACHABLE_DOMAINS):
+            raise ToolError(UNREACHABLE)
         if url not in ctx.state.seen_urls:
             # Otherwise a URL could carry data out of the container (in its path or query) without approval.
             raise ToolError("you can only read pages that appeared in your research results this cycle")
@@ -1252,11 +1263,19 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
 
 def _on_etsy(url: str) -> bool:
     """Whether ``url`` is a page of Etsy's website or one of its short links (see ETSY_DOMAINS)."""
+    return _on(_host(url), ETSY_DOMAINS)
+
+
+def _host(url: str) -> str:
     try:
-        host = (urlsplit(url).hostname or "").lower().rstrip(".")
+        return (urlsplit(url).hostname or "").lower().rstrip(".")
     except ValueError:  # not an address anyone could read: refused as not found in the research results
-        return False
-    return any(host == domain or host.endswith(f".{domain}") for domain in ETSY_DOMAINS)
+        return ""
+
+
+def _on(host: str, domains: tuple[str, ...]) -> bool:
+    """Whether ``host`` is one of ``domains`` or a subdomain of one."""
+    return bool(host) and any(host == domain or host.endswith(f".{domain}") for domain in domains)
 
 
 # --- making files (0.6.0) ---

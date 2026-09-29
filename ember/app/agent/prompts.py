@@ -110,8 +110,10 @@ what is the smallest honest test?
 - Grow the tree: with fewer than 5 ideas waiting, or ideas that all look alike, plan brainstorm, branching from a
   promising venture or into new ground (services, websites, matchmaking, tools, content, marketing channels, physical
   products). Don't limit ideas to your tools today: abilities can be added, and your owner can set things up.
-- Research the heaviest ideas first (weight), one venture a cycle (focus_venture_id): answer its next question with up
-  to 8 research calls, save what you learn (venture_update learned) and rescore it from the evidence.
+- Money: STATUS says how many research calls and brainstorms this cycle can pay for. Plan no more than that. A
+  brainstorm you plan comes first; research fills what is left; what doesn't fit waits for the next venture cycle.
+- Research the heaviest ideas first (weight), one venture a cycle (focus_venture_id): answer its next question with the
+  research calls this cycle can pay for, save what you learn (venture_update learned) and rescore it from the evidence.
 - Decide every venture that isn't backed within about $3: its business case (stage proposed, all six fields from
   research), or parked with why. For a backed venture (building), plan its first test: projects, requests to your
   owner, upgrade requests.
@@ -121,12 +123,13 @@ what is the smallest honest test?
 # and its refused calls took the place of the journal). {ended} is filled in by reflect_prompt.
 REFLECT_PROMPT = (
     f"{REFLECT_MARKER} Your work steps for this cycle are over ({{ended}}), and nothing else runs after this reply: "
-    "making files, looking at pictures, research and proposals are refused now. Only journal, memory, projects, "
-    "ventures, messages to your owner, sleep and upgrade requests work. Call write_journal once with a candid entry "
-    "(what you did, what worked, what didn't, and what the next cycle should do first). Update your projects, "
-    "ventures and memory if something changed (save what you learned about a venture; append lessons; replace the "
-    "strategy only if it changed). If something blocked you that a new ability would fix, and you haven't asked for "
-    "it yet, file request_upgrade. Optionally call set_sleep."
+    "making files, looking at pictures, research, brainstorms and proposals are refused now. Only journal, memory, "
+    "projects, ventures, messages to your owner, sleep and upgrade requests work. This is your last reply: make every "
+    "tool call in it (at most 4), write_journal among them, with a candid entry (what you did, what worked, what "
+    "didn't, and what the next cycle should do first). Update your projects, ventures and memory if something changed "
+    "(save what you learned about a venture; append lessons; replace the strategy only if it changed). If something "
+    "blocked you that a new ability would fix, and you haven't asked for it yet, file request_upgrade. Optionally "
+    "call set_sleep."
 )
 # Why the work steps ended (loop's end reasons), as the reflection reads it; any other reason is shown as it is.
 WORK_ENDED = {

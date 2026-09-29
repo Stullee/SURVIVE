@@ -337,7 +337,9 @@ def test_the_reflection_is_told_why_the_work_ended(data_dir: Path, monkeypatch: 
     assert prompt.startswith(
         "REFLECT PHASE. Your work steps for this cycle are over (the conversation reached its size limit)"
     )
-    assert "making files, looking at pictures, research and proposals are refused now" in prompt
+    assert "making files, looking at pictures, research, brainstorms and proposals are refused now" in prompt
+    # 0.10.1: the first venture cycle's reflection spent its one reply on other calls and wrote no journal.
+    assert "This is your last reply: make every tool call in it (at most 4), write_journal among them" in prompt
     assert prompts.reflect_prompt("refused: the daily cap is used up").startswith(
         "REFLECT PHASE. Your work steps for this cycle are over (refused: the daily cap is used up)"
     )

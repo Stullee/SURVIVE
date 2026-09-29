@@ -244,6 +244,11 @@ def test_the_planner_sees_the_tree_and_the_venture_rules(data_dir: Path) -> None
         "Your owner gives ventures 100% of your spending: $0.00 of today's $0.00 so far. This is a venture cycle."
         in text
     )
+    assert (
+        "A research call costs about $0.05 and a brainstorm about $0.10 (lately): this cycle's $1.00 pays for about"
+        " $0.35 of them after planning, the work steps and the reflection, so about 7 research calls, or a brainstorm"
+        " and 5." in context_section(text, "STATUS")
+    )
 
     ordinary = FakeTransport(script=[plan(steps=[])])
     economy_agent, _ = run(data_dir / "other", ordinary, settings=Settings(venture_share=25))
@@ -251,7 +256,42 @@ def test_the_planner_sees_the_tree_and_the_venture_rules(data_dir: Path) -> None
     assert context_section(text, "VENTURES") == (
         "#1 [researching] Etsy digital products · not scored yet\n6 ideas in the tree."
     )
-    assert "Plan this wake cycle." in text and "venture cycle" not in context_section(text, "STATUS")
+    status = context_section(text, "STATUS")
+    assert "Plan this wake cycle." in text and "venture cycle" not in status and "research call" not in status
+
+
+@pytest.mark.parametrize(
+    ("cap", "research", "brainstorm", "calls", "after"),
+    [
+        (0.60, 50_000, 100_000, 4, 2),
+        (1.00, 50_000, 100_000, 7, 5),
+        (0.60, 150_000, 300_000, 1, 0),
+        (5, 50_000, 0, 8, 8),
+    ],
+)
+def test_a_venture_cycle_is_told_how_much_research_it_can_pay_for(
+    cap: float, research: int, brainstorm: int, calls: int, after: int
+) -> None:
+    text = ventures.room_text(cap, {"research": research, "brainstorm": brainstorm})
+    assert text.endswith(f"so about {calls} research calls, or a brainstorm and {after}.")
+    assert f"this cycle's ${cap:.2f} pays for about ${cap * ventures.ROOM_SHARE:.2f} of them" in text
+
+
+def test_research_costs_are_what_the_recent_calls_cost(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
+    with agent.db.connection() as conn:
+        assert ventures.call_costs(conn, agent.scope()) == ventures.USUAL_COSTS
+    fake = FakeTransport(
+        script=[plan(), ToolCalls([("research", {"question": "Who sells this?"})]), Reply("Found it."), JOURNAL]
+    )
+    agent, _ = run(data_dir, fake, settings=VENTURING)
+    [paid] = rows(agent, "SELECT cost_micros FROM llm_calls WHERE purpose = 'research'")
+    assert paid["cost_micros"] > 0
+    with agent.db.connection() as conn:
+        assert ventures.call_costs(conn, agent.scope()) == {
+            "research": paid["cost_micros"],
+            "brainstorm": ventures.USUAL_COSTS["brainstorm"],
+        }
 
 
 def context_section(text: str, title: str) -> str:

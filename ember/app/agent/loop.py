@@ -330,12 +330,13 @@ class CycleRunner:
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> CallResult:
-        """One metered call; a failure that cost nothing (no connection, overloaded) is retried once."""
+        """One metered call; a failure that cost nothing (no connection, overloaded) is retried once, but never a
+        request the API rejected as it is (0.10.1: a search limited to a blocked site was sent twice)."""
         self._check_stop()
         try:
             return self.meter.call(cycle_id, purpose, request)
         except CallFailed as exc:
-            if exc.result.status != "failed" or exc.result.cost_micros:
+            if exc.result.status != "failed" or exc.result.cost_micros or _rejected(exc.result.error):
                 raise
             log.info("Call #%d failed without cost (%s); retrying once", exc.result.call_id, exc.result.error)
             if self.stop.wait(RETRY_DELAY_SECONDS):
@@ -755,6 +756,14 @@ class CycleRunner:
             except CallRefused as exc:  # a state or system refusal ends the cycle at its next call
                 return tools.Outcome(False, f"Error: research refused ({exc.reason}).", "refused")
             except CallFailed as exc:
+                blocked = _BLOCKED_SITES.search(exc.result.error or "")
+                if blocked:
+                    return tools.Outcome(
+                        False,
+                        f"Error: {blocked[1]} blocks Anthropic's web tools, so your research can't search or read it:"
+                        " search without a site, or limit it to another site.",
+                        "failed: site blocks the web tools",
+                    )
                 return tools.Outcome(
                     False, f"Error: research failed ({exc.result.error or exc.result.status}).", "failed"
                 )
@@ -1031,6 +1040,16 @@ def _ideas(text: str) -> list[dict[str, Any]]:
         question = " ".join(str(item.get("first_question") or "").split())[: ventures.LIMITS["next_question"]]
         ideas.append({"title": title, "pitch": pitch, "first_question": question, "scores": scores})
     return ideas
+
+
+# An error the API gives for a request that fails as it is (a retry can't help); 408, 409 and 429 can pass later.
+_REJECTED = re.compile(r"^HTTP 4(?!08|09|29)\d\d\b")
+# The API's words for a site that blocks Anthropic's web tools, e.g. "... not accessible to our user agent: ['x.com']".
+_BLOCKED_SITES = re.compile(r"not accessible to our user agent: \[['\"]?([^'\"\]]+)")
+
+
+def _rejected(error: str | None) -> bool:
+    return bool(_REJECTED.match(error or ""))
 
 
 def _first_object(text: str) -> str | None:

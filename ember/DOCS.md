@@ -124,7 +124,7 @@ press **Wake now**, or when you write to it), it runs one **wake cycle**:
    earns money), which comes with each Ember update.
 2. **Act**: it uses its tools, up to the *Tool steps per cycle* option: files in
    its own workspace, its memory (strategy, identity, lessons), projects, web
-   research (also limited to one site, such as Reddit), requests for your
+   research (also limited to one site, such as etsy.com), requests for your
    approval, messages to you, requests for code upgrades, and its own mailbox
    if you set one up. It also makes finished [products](#products) from what it
    writes: PDF documents with an editable Word copy, Excel spreadsheets and
@@ -579,8 +579,8 @@ site.
 Since late 2025 Reddit approves every new API app by hand, so Ember has no
 Reddit account and no Reddit API access (phase A):
 
-- The agent can research Reddit through Anthropic's web search, limited to
-  reddit.com.
+- Reddit blocks Anthropic's web tools, so the agent can't search or read
+  Reddit: it learns from other forums, Q&A and review sites instead.
 - It can propose a Reddit post or a comment. Every text ends with "*Written by
   an AI agent (Ember) and posted by a human after review.*" After you approve
   it, **Open Reddit with this filled in** opens Reddit's submit page with the
@@ -589,7 +589,7 @@ Reddit account and no Reddit API access (phase A):
   subreddit's rules first: many don't allow AI-written posts or
   self-promotion.
 
-If you want Ember to read Reddit directly later, you can ask Reddit for Data
+If you want Ember to read Reddit later, you can ask Reddit for Data
 API access (one request per use case; an answer can take weeks). Read Reddit's
 Responsible Builder Policy first, then send a request like this through
 Reddit's developer support:

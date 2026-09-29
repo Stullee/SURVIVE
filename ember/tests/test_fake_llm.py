@@ -1203,11 +1203,12 @@ def test_the_owner_hears_back_in_a_dry_run(data_dir: Path) -> None:
     assert replies[0] == f'You wrote: "{MESSAGE}"\n\n{DRY_RUN_REPLY}'
 
 
-def test_the_fake_researches_reddit_and_proposes_reddit_posts_now_and_then() -> None:
+def test_the_fake_researches_one_site_and_proposes_reddit_posts_now_and_then() -> None:
     used = [(name, args) for sim in corpus()["founder"] for _, name, args, _ in sim.tool_log]
     searches = [args for name, args in used if name == "research"]
-    limited = [args for args in searches if args.get("site") == "reddit.com"]
-    assert limited and len(limited) < len(searches) / 2 and all("Reddit" in args["question"] for args in limited)
+    limited = [args for args in searches if args.get("site") == "etsy.com"]  # Reddit blocks the web tools (0.10.1)
+    assert limited and len(limited) < len(searches) / 2 and all("Etsy" in args["question"] for args in limited)
+    assert not any(args.get("site") == "reddit.com" for args in searches)
     posts = [args for name, args in used if name == "propose_reddit_post"]
     assert posts and any(name == "request_approval" for name, _ in used)
     for args in posts:

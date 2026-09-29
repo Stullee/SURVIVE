@@ -43,7 +43,7 @@ CELL_CHARS = 160
 TEXT_CHARS = 800  # plans, notes, message texts and tool inputs: enough to see what was actually written
 RESULT_CHARS = 300
 DIGEST_CHARS = 600
-WIDE_COLUMNS = dict.fromkeys(("note", "notes", "text", "input"), TEXT_CHARS) | {"result": RESULT_CHARS}
+WIDE_COLUMNS = dict.fromkeys(("note", "notes", "text", "input", "owner"), TEXT_CHARS) | {"result": RESULT_CHARS}
 TAIL_COLUMNS = frozenset({"notes"})  # a project's notes are a log: the newest are at the end, so a cut keeps the end
 WORKSPACE_ENTRIES = 100
 TABLES = (
@@ -412,7 +412,11 @@ def _research(state: AppState) -> str:
 def _venture(row: Any) -> dict[str, Any]:
     """A venture as the report shows it: its weight and scores, what its business case lacks, the owner's word."""
     scores = ",".join(f"{name[:3]}{row[name]}" for name in ventures.SCORE_FIELDS if row[name])
-    owner = f"{row['owner_action']} v{row['owner_version']}" if row["owner_action"] else "-"
+    owner = "-"
+    if row["owner_action"]:  # the owner's word and comment (0.10.1: the report showed no comment)
+        owner = f"{row['owner_action']} v{row['owner_version']}"
+        if row["owner_comment"]:
+            owner += f": {row['owner_comment']}"
     return {
         **dict(row),
         "weight": ventures.weight(row) if ventures.weight(row) is not None else "-",

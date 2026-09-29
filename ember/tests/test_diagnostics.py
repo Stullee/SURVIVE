@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import diagnostics, logging_setup
+from app.agent import ventures
 from app.agent.store import canonical
 from tests.economy_helpers import ScriptedTransport
 from tests.test_agent import plan, reply, text, tools
@@ -170,3 +171,23 @@ def test_project_notes_keep_their_newest_end() -> None:
     assert len(notes) > diagnostics.TEXT_CHARS == len(shown) == len(message)
     assert shown.startswith("…") and shown.endswith(f"{newest} ⏎ ") and "[#c1]" not in shown
     assert message.startswith("[#c1] ") and message.endswith("…")
+
+
+def test_a_ventures_line_shows_the_owners_comment_whole() -> None:
+    """0.10.1: the report showed the owner's word on a venture ("note v1") without what they wrote."""
+    comment = "Research what dropshipping stores pay for ads and returns. " * 12
+    row = {
+        **dict.fromkeys(ventures.CASE_FIELDS),
+        **dict.fromkeys(ventures.SCORE_FIELDS),
+        "revenue": 2,
+        "scores_by": "research",
+        "owner_action": "note",
+        "owner_version": 1,
+        "owner_comment": comment,
+    }
+    shown = diagnostics._venture(row)
+    assert shown["owner"] == f"note v1: {comment}" and shown["scores"] == "rev2" and shown["missing"].count(",") == 5
+    line = diagnostics._rows([shown], ["owner"]).splitlines()[1]
+    assert line.rstrip() == f"note v1: {comment}".rstrip() and len(line) > diagnostics.CELL_CHARS
+    silent = diagnostics._venture({**row, "owner_action": None, "owner_comment": None})
+    assert silent["owner"] == "-"

@@ -34,7 +34,8 @@ never tool results, and their quoted parts are parsed as JSON.
 It also tries the rest of what the agent can do. With unread mail in the ``MAIL`` section it plans to read
 it: it opens the newest unread email and, if that one asks a question (a subject with "?", not a reply or a
 newsletter), proposes an answer with ``propose_email`` (a dry-run draft, as its text says). Some research is
-limited to Reddit (``site="reddit.com"``), and some approval requests are Reddit posts (``propose_reddit_post``).
+limited to Etsy's search results (``site="etsy.com"``), and some approval requests are Reddit posts
+(``propose_reddit_post``).
 
 Scenarios (the ``scenario`` argument; the app takes it from ``EMBER_FAKE_SCENARIO`` and the delay from
 ``EMBER_FAKE_DELAY_MS``):
@@ -157,7 +158,7 @@ NEWS_SECTION = "SINCE YOUR LAST WAKE"  # the planner context's news
 INSTRUCTIONS_SECTION = "YOUR OWNER'S STANDING INSTRUCTIONS"  # in the planner context and the brief, JSON-quoted
 MAIL_SECTION = "MAIL"  # the unread emails, in the planner context and the brief
 MAIL_STEP = "Read my new email and answer real questions with propose_email"
-REDDIT = "reddit.com"
+SEARCHED_SITE = "etsy.com"  # some research is limited to it (Reddit blocks Anthropic's web tools: 0.10.1)
 SUBREDDIT = "SideProject"
 DRY_RUN_EMAIL = (
     "This reply was drafted by Ember's built-in fake model in a dry run, so it doesn't really answer your question."
@@ -1587,7 +1588,9 @@ class FakeTransport:
             if rng.random() < 0.2:
                 args["url"] = f"{SIMULATED_SITE}/guides/{slug(idea.title)}"
             elif rng.random() < 0.25:
-                args.update(question=f"What do people on Reddit say about this? {idea.question}", site=REDDIT)
+                args.update(
+                    question=f"What do Etsy's search results show about this? {idea.question}", site=SEARCHED_SITE
+                )
             return "research", args
         if stage == "mail_read":
             unread = unread_mail(conv.brief)

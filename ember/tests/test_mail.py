@@ -21,6 +21,7 @@ from app.agent import context, netguard, prompts, tools
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings, load_settings
 from app.db import Database, discover_migrations, migrate
+from app.economy.metering import Rejected
 from app.integrations import mail, mailstore, reddit
 from tests.economy_helpers import ScriptedTransport, make_economy
 from tests.test_agent import make_agent, plan, reply, rows, text
@@ -684,25 +685,43 @@ def test_the_tools_can_not_send_anything() -> None:
 
 
 def test_research_can_be_limited_to_one_site(data_dir: Path) -> None:
-    found = reply([{"type": "text", "text": "People on Reddit like bundles."}], "end_turn")
+    found = reply([{"type": "text", "text": "Etsy's results show bundles."}], "end_turn")
     agent, transport = mail_cycle(
         data_dir,
-        calls(("research", {"question": "Planner bundles?", "site": "reddit.com"})),
+        calls(("research", {"question": "Planner bundles?", "site": "etsy.com"})),
         found,
         calls(
-            ("research", {"question": "q", "site": "https://reddit.com/r/x"}),
-            ("research", {"question": "q", "site": "reddit"}),
+            ("research", {"question": "q", "site": "https://etsy.com/c/x"}),
+            ("research", {"question": "q", "site": "etsy"}),
+            ("research", {"question": "q", "site": "old.reddit.com"}),  # Reddit blocks the web tools (0.10.1)
         ),
     )
     search = [r for r in transport.sent if r.get("tools") and r["tools"][0].get("name") == "web_search"]
     assert len(search) == 1
-    assert search[0]["tools"][0]["allowed_domains"] == ["reddit.com"]
-    assert "Search only this site: reddit.com" in search[0]["messages"][0]["content"][0]["text"]
+    assert search[0]["tools"][0]["allowed_domains"] == ["etsy.com"]
+    assert "Search only this site: etsy.com" in search[0]["messages"][0]["content"][0]["text"]
     results = tool_results(agent, "research")
     assert results[0]["status"] == "ok" and "bundles" in results[0]["result"]
-    assert all(r["status"] == "error" and "bare domain" in r["result"] for r in results[1:])
-    fetching = prompts.research_request(Settings(), "q", "https://example.org/page", "reddit.com")
+    assert all(r["status"] == "error" and "bare domain" in r["result"] for r in results[1:3])
+    assert results[3]["status"] == "error" and "Reddit blocks Anthropic's web tools" in results[3]["result"]
+    fetching = prompts.research_request(Settings(), "q", "https://example.org/page", "etsy.com")
     assert "allowed_domains" not in fetching["tools"][0]  # a page read ignores the site
+
+
+def test_research_says_which_site_blocks_the_web_tools(data_dir: Path) -> None:
+    # 0.10.1: the API refuses a search limited to such a site; the research says so, and isn't sent again.
+    blocked = Rejected(
+        400,
+        "invalid_request_error | The following domains are not accessible to our user agent: ['forum.example']."
+        " Read more: https://support.anthropic.com/",
+    )
+    agent, transport = mail_cycle(data_dir, calls(("research", {"question": "q", "site": "forum.example"})), blocked)
+    [result] = tool_results(agent, "research")
+    assert result["status"] == "error" and result["summary"] == "failed: site blocks the web tools"
+    assert result["result"].startswith(
+        "Error: forum.example blocks Anthropic's web tools, so your research can't search or read it"
+    )
+    assert len([r for r in transport.sent if r.get("tools") and r["tools"][0].get("name") == "web_search"]) == 1
 
 
 def test_proposing_a_reddit_post(data_dir: Path) -> None:

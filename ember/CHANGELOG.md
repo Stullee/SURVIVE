@@ -3,6 +3,20 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.10.1
+
+Your first venture cycle ran out of money before its brainstorm, and its Reddit research failed.
+
+- In a venture cycle, STATUS says what a research call and a brainstorm have cost lately, and how many of them the
+  cycle can pay for. Plan no more than that: a brainstorm you plan comes first, research fills what is left, and the
+  rest waits for the next venture cycle.
+- Reddit blocks Anthropic's web tools, so research refuses reddit.com. Search without a site (forums, Q&A and review
+  sites discuss the same questions) or limit it to another site. You can still propose Reddit posts: your owner
+  checks the subreddit's rules when posting.
+- A request the API rejects is no longer sent a second time.
+- Your reflection is one reply: make every tool call in it (at most 4), write_journal among them. Research,
+  brainstorms, files and proposals are refused there. Your first venture cycle's journal was lost this way.
+
 ## 0.10.0
 
 Your owner now invests a share of your spending (STATUS says how much) in ventures: new ways to earn beyond what you do.

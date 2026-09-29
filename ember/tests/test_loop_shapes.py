@@ -73,15 +73,26 @@ def test_empty_replies_after_tool_results(data_dir: Path) -> None:
 
 def test_no_reflection_when_the_first_work_call_failed(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.agent.loop.RETRY_DELAY_SECONDS", 0)
-    refused = Fail(Rejected(400, "invalid_request_error | nope"))
-    fake = FakeTransport(script=[Plan(PLAN), refused, refused, JOURNAL])  # the free failure is retried once
+    overloaded = Fail(Rejected(529, "overloaded_error | busy"))
+    fake = FakeTransport(script=[Plan(PLAN), overloaded, overloaded, JOURNAL])  # the free failure is retried once
     agent, ends = run(data_dir, fake)
     with agent.db.connection() as conn:
         purposes = [r[0] for r in conn.execute("SELECT purpose FROM llm_calls ORDER BY id")]
         journal = conn.execute("SELECT author, summary FROM journal").fetchall()
     assert purposes == ["plan", "work", "work"]  # nothing ran, so there is nothing to reflect on
-    assert ends[0].status == "failed" and ends[0].note and "nope" in ends[0].note
+    assert ends[0].status == "failed" and ends[0].note and "busy" in ends[0].note
     assert [tuple(r) for r in journal] == [("system", f"Cycle ended failed: {ends[0].note}")]
+
+
+def test_a_request_the_api_rejects_is_not_sent_again(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 0.10.1: a search limited to a site that blocks Anthropic's web tools was sent twice; it can never pass as it is.
+    monkeypatch.setattr("app.agent.loop.RETRY_DELAY_SECONDS", 0)
+    refused = Fail(Rejected(400, "invalid_request_error | nope"))
+    agent, ends = run(data_dir, FakeTransport(script=[Plan(PLAN), refused, JOURNAL]))
+    with agent.db.connection() as conn:
+        purposes = [r[0] for r in conn.execute("SELECT purpose FROM llm_calls ORDER BY id")]
+    assert purposes == ["plan", "work"]
+    assert ends[0].status == "failed" and ends[0].note and "nope" in ends[0].note
 
 
 def test_reflecting_when_the_first_reply_was_empty(data_dir: Path) -> None:

@@ -81,6 +81,12 @@ MAX_ACTIVE = 8  # ventures being worked on at once (ideas don't count: the tree 
 MAX_VENTURES = 400  # in the whole tree, parked and killed ones included
 DECIDE_USD = 3.0  # decide a venture that isn't backed yet (propose or park) after about this much spent on it
 RESEARCH_CALLS = 8  # research calls in a venture cycle (3 in any other)
+# What research and brainstorms may take of a venture cycle's cap (0.10.1): the rest pays for the plan, the work steps
+# and the reflection. The first venture cycle planned six research calls and a brainstorm into its $0.60 and stopped
+# after four; the brainstorm never ran.
+ROOM_SHARE = 0.35
+USUAL_COSTS = {"research": 50_000, "brainstorm": 100_000}  # micros, until Ember has made such calls itself
+COSTS_OVER = 20  # the recent calls an average is taken of
 BRAINSTORM_IDEAS = 6  # ideas one brainstorm adds to the tree
 NOTE_CHARS = 300
 OWNER_ACTIONS = ("added", "research", "back", "park", "kill", "note")
@@ -319,6 +325,35 @@ def day_spend(conn: sqlite3.Connection, scope: AgentScope, day: date) -> tuple[i
         (day.isoformat(), scope.session, 1 if scope.simulated else 0),
     ).fetchone()
     return int(row[0]), int(row[1])
+
+
+def call_costs(conn: sqlite3.Connection, scope: AgentScope) -> dict[str, int]:
+    """What a research call and a brainstorm have cost lately, in micros (USUAL_COSTS for what hasn't run yet)."""
+    found = dict(USUAL_COSTS)
+    for purpose in USUAL_COSTS:
+        row = conn.execute(
+            "SELECT AVG(cost_micros) FROM (SELECT c.cost_micros FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id"
+            " WHERE y.session = ? AND y.simulated = ? AND c.purpose = ? AND c.status = 'ok'"
+            " ORDER BY c.id DESC LIMIT ?)",
+            (scope.session, 1 if scope.simulated else 0, purpose, COSTS_OVER),
+        ).fetchone()
+        if row[0] is not None and row[0] > 0:
+            found[purpose] = int(row[0])
+    return found
+
+
+def room_text(cycle_cap: float, costs: dict[str, int]) -> str:
+    """For a venture cycle's STATUS: what its research and brainstorms can cost, and how many of them that is."""
+    room = round(cycle_cap * ROOM_SHARE * 1_000_000)
+    research = max(costs.get("research") or USUAL_COSTS["research"], 1)
+    brainstorm = max(costs.get("brainstorm") or USUAL_COSTS["brainstorm"], 1)
+    calls = min(RESEARCH_CALLS, room // research)
+    after = min(RESEARCH_CALLS, max(0, room - brainstorm) // research)
+    return (
+        f"A research call costs about {usd(research)} and a brainstorm about {usd(brainstorm)} (lately): this"
+        f" cycle's ${cycle_cap:.2f} pays for about {usd(room)} of them after planning, the work steps and the"
+        f" reflection, so about {calls} research calls, or a brainstorm and {after}."
+    )
 
 
 def venture_turn(share: int, spent: int, ventured: int) -> bool:

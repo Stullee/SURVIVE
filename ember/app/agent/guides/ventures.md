@@ -17,8 +17,8 @@ if needed, and how little of your owner's time it takes), difficulty, risk (lega
 to the first euro, 5 days), cost (1 free to start, 5 hundreds of euros).
 
 RESEARCH, ONE VENTURE A CYCLE
-1. Take its next question: who does this already, what they charge, what buyers say, how people find them (search
-   with site "reddit.com" for real problems and prices).
+1. Take its next question: who does this already, what they charge, what buyers say, how people find them (forums,
+   Q&A and review sites show real problems and prices; Reddit can't be searched).
 2. Save it with venture_update learned, with sources, and rescore. Set the next question: the biggest unknown left.
 3. Within about $3, decide: a business case (stage proposed) or parked, with why in the note.
 

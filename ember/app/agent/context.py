@@ -105,7 +105,7 @@ OUTDATED: tuple[tuple[str, str, Callable[[str], bool]], ...] = (
     ),
 )
 PLANNER_BUDGETS = {
-    "status": 500,
+    "status": 700,  # (0.10.1: with a venture cycle's research room)
     "instructions": INSTRUCTIONS_BUDGET,
     "news": 2_300,
     "software": CHANGELOG_LIMIT,
@@ -133,9 +133,10 @@ SHORTEST_QUOTE = 40  # no quoted text is shortened below this; if that isn't eno
 BRIEF_BUDGET = 6_500
 VENTURE_FOCUS_BUDGET = 1_900  # a venture's FOCUS in the brief
 VENTURE_BRIEF = (
-    "This is a venture cycle: read guide 'ventures' first, research up to 8 times, grow the tree with brainstorm, "
-    "save what you learn with venture_update (learned, with sources) and rescore the venture from the evidence. "
-    "Products and listings for a leg you already run wait for an ordinary cycle."
+    "This is a venture cycle: read guide 'ventures' first, research as often as this cycle can pay for (STATUS), "
+    "grow the tree with brainstorm (first, if you plan one), save what you learn with venture_update (learned, with "
+    "sources) and rescore the venture from the evidence. Products and listings for a leg you already run wait for an "
+    "ordinary cycle."
 )
 # The largest brief, those sections and their headings included: the WORK and REFLECT profiles are measured on it.
 BRIEF_MAX = BRIEF_BUDGET + INSTRUCTIONS_BUDGET + OWNER_BUDGET + MAIL_BUDGET + RESEARCH_BUDGET + 200
@@ -221,6 +222,7 @@ class Snapshot:
     venture: bool = False  # a venture cycle
     venture_share: int = 0  # the owner's share of the spending for ventures, in percent
     venture_day: tuple[int, int] = (0, 0)  # today's spending, and the venture cycles' part of it
+    call_costs: dict[str, int] = field(default_factory=dict)  # what research and brainstorms cost lately (0.10.1)
 
 
 def snapshot(
@@ -298,6 +300,7 @@ def snapshot(
         venture=venture,
         venture_share=venture_share,
         venture_day=ventures.day_spend(conn, scope, today) if today is not None else (0, 0),
+        call_costs=ventures.call_costs(conn, scope) if venture else {},
     )
 
 
@@ -338,6 +341,8 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
             f"Your owner gives ventures {s.venture_share}% of your spending: ${micros_to_usd(ventured):.2f} of today's"
             f" ${micros_to_usd(spent):.2f} so far." + (" This is a venture cycle." if s.venture else "")
         )
+        if s.venture:
+            lines.append(ventures.room_text(s.cycle_cap, s.call_costs))
     if st.last_will_due:
         lines.append("Your money is nearly gone: your last will is due.")
     return "\n".join(lines)
