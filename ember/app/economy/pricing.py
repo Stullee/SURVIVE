@@ -41,7 +41,7 @@ class CallProfile:
 # the planning call that opens a wake cycle (a venture cycle's, with its rules and the VENTURES section: 0.10.0, and
 # the ROADMAP: 0.11.0; the owner's LIBRARY: 0.12.0), and
 # the last will. The agent never sends a bigger one.
-PLANNER_OPENING = CallProfile(input_tokens=19_300, max_tokens=1_200)
+PLANNER_OPENING = CallProfile(input_tokens=19_400, max_tokens=1_200)
 LAST_WILL = CallProfile(input_tokens=6_400, max_tokens=1_000)
 # The first work step with the largest brief, and the reflection after it (with the room the loop keeps for one
 # step's growth), measured the same way: a wake cycle is only worth starting if both fit after its plan. Measured

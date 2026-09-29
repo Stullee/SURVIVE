@@ -93,6 +93,12 @@ configuration:
       On: a message you send in the Inbox wakes the agent to read it, like
       Wake now (at most one wake-up a minute). Off: it reads your message at
       its next scheduled wake-up.
+  wake_on_decision:
+    name: Wake Ember when you decide
+    description: >-
+      On: your decision on one of its requests (approve, reject, done), on a
+      venture or on a milestone wakes the agent to act on it, like a message
+      does. Off: it sees your decision at its next scheduled wake-up.
   worker_effort:
     name: Worker effort
     description: >-

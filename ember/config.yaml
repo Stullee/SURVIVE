@@ -62,6 +62,7 @@ options:
   dry_run: true
   web_fetch: false
   wake_on_message: true
+  wake_on_decision: true
   worker_effort: default
   # The workshop: code the agent has written, run in Anthropic's sandbox (see the Documentation tab). Its model
   # (workshop_model) is an optional option: empty, the worker model writes the code.
@@ -116,6 +117,7 @@ schema:
   dry_run: bool
   web_fetch: bool
   wake_on_message: bool
+  wake_on_decision: bool
   worker_effort: list(default|high|medium|low)
   workshop: bool
   workshop_model: str?

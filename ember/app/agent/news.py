@@ -213,6 +213,20 @@ def collect(conn: sqlite3.Connection, db: Database, scope: AgentScope, running_v
     )
 
 
+def decided_unseen(conn: sqlite3.Connection, scope: AgentScope) -> bool:
+    """0.12.0: whether the owner decided something the agent hasn't seen yet (a request decided or closed, their word
+    on a venture or a milestone): what their decision wakes the agent for."""
+    where, params = scope.where()
+    return any(
+        conn.execute(f"SELECT 1 FROM {table} WHERE {where} AND {condition} LIMIT 1", params).fetchone()
+        for table, condition in (
+            ("approvals", "status <> 'pending' AND seen_cycle_id IS NULL"),
+            ("ventures", "owner_action IS NOT NULL AND seen_cycle_id IS NULL"),
+            ("milestones", "owner_action IS NOT NULL AND seen_cycle_id IS NULL"),
+        )
+    )
+
+
 def mark_seen(conn: sqlite3.Connection, cycle_id: int, items: Iterable[Item]) -> None:
     """The owner's items the agent has worked with won't be shown again.
 

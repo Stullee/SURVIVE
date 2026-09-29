@@ -120,6 +120,7 @@ def overflowing_snapshot() -> context.Snapshot:
         venture=True,
         venture_share=100,
         venture_day=(10**12, 10**12),
+        decision_wakes=True,
         today=today,
         roadmap=[  # type: ignore[misc]
             {**milestone, "id": 1_000 + i, "due": (today + timedelta(days=i * 7 - 5)).isoformat()}
@@ -204,6 +205,7 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     assert "\n== ROADMAP ==\nToday: Wednesday 2026-09-30. 20 open milestones: 1 overdue, 1 this week," in planner
     assert "Roadmap check: 1 milestone is overdue (#1000)" in planner
     assert "\n== YOUR OWNER'S LIBRARY ==\n500 documents from your owner (5,000,000 characters)" in planner
+    assert f"\n== WAITING FOR YOUR OWNER ==\n{context.WAITING_NOTE}\n#1000 create_account" in planner
     assert rough_token_count(prompts.plan_request(SETTINGS, planner, venture=True)) <= PLANNER_OPENING.input_tokens
     plan = {"goal": "ä" * 300, "steps": ["ä" * 200] * 6}
     focus = {"id": 1_000, "title": "ä" * 80, "status": "active", "hypothesis": "ä" * 400, "next_step": "ä" * 200}

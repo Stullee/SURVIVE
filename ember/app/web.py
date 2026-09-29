@@ -349,6 +349,7 @@ def decide_approval(request: Request, approval_id: ItemId, body: Annotated[Any, 
         return NO_AGENT
     reply = actions.decide(approval_id, body, _owner(request))
     _poke_executor(request, reply)
+    _wake_for_decision(request, reply)
     return _reply(reply)
 
 
@@ -359,6 +360,7 @@ def close_approval(request: Request, approval_id: ItemId, body: Annotated[Any, B
         return NO_AGENT
     reply = actions.close(approval_id, body, _owner(request))
     _poke_executor(request, reply)
+    _wake_for_decision(request, reply)
     return _reply(reply)
 
 
@@ -395,6 +397,20 @@ def _wake_for_message(request: Request) -> str | None:
     if wake in ("now", "soon") and state.scheduler is not None:
         state.scheduler.poke()  # decide again: run the cycle now, or sleep only until the minute has passed
     return wake
+
+
+def _wake_for_decision(request: Request, reply: Any) -> None:
+    """0.12.0: the owner decided on one of the agent's requests, ventures or milestones: wake it to act on it (the
+    wake_on_decision option), like a message wakes it (the reply says when, as ``wake``: see ``_wake_for_message``)."""
+    state = _state(request)
+    agent = state.agent
+    if reply.status != 200 or agent is None or not state.loaded.settings.wake_on_decision:
+        return
+    wake = agent.wake_for_decision()
+    if wake in ("now", "soon") and state.scheduler is not None:
+        state.scheduler.poke()
+    if isinstance(reply.body, dict):
+        reply.body["wake"] = wake
 
 
 @router.post("/api/instructions")
@@ -446,7 +462,9 @@ def decide_venture(request: Request, venture_id: ItemId, body: Annotated[Any, Bo
     actions = _owner_actions(request)
     if actions is None:
         return NO_AGENT
-    return _reply(actions.decide_venture(venture_id, body, _owner(request)))
+    reply = actions.decide_venture(venture_id, body, _owner(request))
+    _wake_for_decision(request, reply)
+    return _reply(reply)
 
 
 @router.get("/api/roadmap")
@@ -470,7 +488,9 @@ def decide_milestone(request: Request, milestone_id: ItemId, body: Annotated[Any
     actions = _owner_actions(request)
     if actions is None:
         return NO_AGENT
-    return _reply(actions.decide_milestone(milestone_id, body, _owner(request)))
+    reply = actions.decide_milestone(milestone_id, body, _owner(request))
+    _wake_for_decision(request, reply)
+    return _reply(reply)
 
 
 @router.get("/api/library")

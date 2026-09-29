@@ -110,7 +110,7 @@ PLANNER_BUDGETS = {
     "news": 2_300,
     "software": CHANGELOG_LIMIT,
     "projects": 2_000,
-    "pending": 400,
+    "pending": 500,  # 0.12.0: with the note that the owner's decision wakes the agent
     "mail": MAIL_BUDGET,
     "strategy": 2_000,
     "identity": 600,
@@ -125,6 +125,8 @@ PLANNER_BUDGETS = {
     "roadmap": 1_800,  # 0.11.0
     "library": 1_200,  # 0.12.0: the owner's library, when it holds documents
 }
+# 0.12.0: while requests wait for the owner, the plan is told that waiting isn't its job.
+WAITING_NOTE = "Your owner's decision on these wakes you: don't wait for it, work on something else meanwhile."
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
 # room for one whole message of plain text at the owner's limit of 2,000 characters.
 OWNER_BUDGET = 2_300
@@ -235,6 +237,7 @@ class Snapshot:
     roadmap: list[sqlite3.Row] = field(default_factory=list)  # the open milestones, the first due first (0.11.0)
     roadmap_closed: list[sqlite3.Row] = field(default_factory=list)  # closed in the last roadmap.CLOSED_DAYS days
     library: library.Shelf | None = None  # the owner's library (0.12.0): None while it is empty
+    decision_wakes: bool = False  # the owner's decisions wake the agent (0.12.0, the wake_on_decision option)
 
 
 def snapshot(
@@ -257,6 +260,7 @@ def snapshot(
     venture: bool = False,
     venture_share: int = 0,
     shelf: library.Shelf | None = None,
+    decision_wakes: bool = False,
 ) -> Snapshot:
     """What the planner, the brief and the will see; ``today`` (the owner's local date) finds the day's review and
     the day's spending on ventures."""
@@ -318,6 +322,7 @@ def snapshot(
         roadmap=roadmap.open_milestones(conn, scope),
         roadmap_closed=_closed_lately(conn, scope, today),
         library=shelf,
+        decision_wakes=decision_wakes,
     )
 
 
@@ -642,6 +647,8 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
     """The planner's context, and what of the owner's news and of the changelog it lists and shows whole."""
     b = {k: int(v * scale) for k, v in PLANNER_BUDGETS.items()}
     pending = "\n".join(f"#{r['id']} {r['type']}: {r['title']}" for r in s.pending) or "None."
+    if s.pending and s.decision_wakes:  # first, so a cut never takes it (0.12.0: it slept 12 hours for a decision)
+        pending = f"{WAITING_NOTE}\n{pending}"
     head = _news_head(s)
     owner, lines, _ = _owner(s, b["news"] - json_bytes(head))
     since = cut("\n".join(part for part in (head, owner) if part) or "Nothing new.", b["news"])

@@ -913,6 +913,16 @@
 
   function isUnread(m) { return isObject(m) && m.sender === "agent" && !m.read_at; }
 
+  // 0.12.0: the owner's decision wakes the agent (the wake_on_decision option); when it acts on it, as the reply says.
+  function decisionWake(res, name) {
+    var wake = res && isObject(res.data) && typeof res.data.wake === "string" ? res.data.wake : "";
+    if (wake === "now" || wake === "soon") ui.fastPollUntil = Date.now() + WAKE_FAST_POLL_MS;
+    return wake === "now" ? name + " is waking up to act on it."
+      : wake === "after_cycle" ? name + " acts on it as soon as the cycle it is working on ends."
+      : wake === "soon" ? name + " woke up less than a minute ago and wakes again for it in a moment."
+      : name + " sees it on its next wake.";
+  }
+
   function byDate(key) {
     return function (x, y) { return new Date(x[key]).getTime() - new Date(y[key]).getTime(); };
   }
@@ -2471,7 +2481,7 @@
       };
       spec.done = function (res, v) {
         var st = isObject(res.data) && isObject(res.data.approval) ? res.data.approval.status : null;
-        if (mode === "reject") return "Rejected. " + name + " sees this on its next wake.";
+        if (mode === "reject") return "Rejected. " + decisionWake(res, name);
         if (executor === "email") {
           if (mode === "approve_with_changes" && st !== "approved") return "Approved with your changes. " + name + " sends your version itself; this card shows when it's sent.";
           return "Approved. " + name + " sends it itself; this card shows when it's sent.";
@@ -2542,7 +2552,7 @@
         if (v.result_link) body.result_link = v.result_link;
         return body;
       },
-      done: function () { return (failed ? "Marked failed. " : "Marked done. ") + name + " sees this on its next wake."; },
+      done: function (res) { return (failed ? "Marked failed. " : "Marked done. ") + decisionWake(res, name); },
     };
   }
 
@@ -5080,9 +5090,9 @@
       if (values.comment) body.comment = values.comment;
       return body;
     };
-    spec.done = function () {
+    spec.done = function (res) {
       loadVentures();
-      return done[mode] + " " + name + " sees it on its next wake.";
+      return done[mode] + " " + decisionWake(res, name);
     };
     return spec;
   }
@@ -5653,7 +5663,7 @@
         accept: "It is due " + fmtDay(it.row.proposed_due) + " now.",
         reject: "It stays due " + fmtDay(it.row.due) + ".",
       }[mode];
-      return said + " " + name + " sees it on its next wake.";
+      return said + " " + decisionWake(res, name);
     };
     return spec;
   }

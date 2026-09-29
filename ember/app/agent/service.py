@@ -30,7 +30,7 @@ from ..integrations import executor as email_executor
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox, select_mailbox
-from . import netguard, store, ventures
+from . import netguard, news, store, ventures
 from .loop import NO_STEP, CycleEnd, CycleRunner
 from .memory import CAPS, Memory
 from .sandbox import Jail, SandboxError, kind_of
@@ -97,9 +97,10 @@ class Agent:
         self.meter: MeteredModel = economy.metered(self.transport)
         self.wake_requested = False
         self.last_wake_request: datetime | None = None
-        # The owner wrote while no wake could start (a cycle running, or the minute between wake-ups): wake for it
-        # once one can, if the message is still unread then.
+        # The owner wrote (or, 0.12.0, decided) while no wake could start (a cycle running, or the minute between
+        # wake-ups): wake for it once one can, if the agent hasn't seen it by then. waiting_for: which of the two.
         self.message_waiting = False
+        self.waiting_for = "message"
         self.running_cycle = False
         self._lock = threading.Lock()  # one cycle at a time in this process
         # Ember's mailbox: the fake one in dry run (its inbox grows with the session's wake cycles), the
@@ -237,7 +238,8 @@ class Agent:
         if self.message_waiting and not self.wake_requested:
             ready = self._wake_for_waiting_message()
             if ready is not None:
-                return Decision(False, reason="Waking up to read the owner's message in a moment", wait_until=ready)
+                why = "read the owner's message" if self.waiting_for == "message" else "act on the owner's decision"
+                return Decision(False, reason=f"Waking up to {why} in a moment", wait_until=ready)
         if self.wake_requested:
             return Decision(True, "owner", "woken by the owner")
         no_room = self._no_room_for_work()
@@ -304,9 +306,10 @@ class Agent:
         local = now.astimezone(self.clock.tz)
         return self.clock.day_start(local.date() + timedelta(days=1))
 
-    def request_wake(self, by_message: bool = False) -> tuple[int, dict[str, Any]]:
-        """The owner pressed Wake now, or sent a message (``by_message``, the wake_on_message option): (HTTP status,
-        body). Both share the minute between wake-ups."""
+    def request_wake(self, by_message: bool = False, by_decision: bool = False) -> tuple[int, dict[str, Any]]:
+        """The owner pressed Wake now, sent a message (``by_message``, the wake_on_message option) or decided on one of
+        the agent's requests or proposals (``by_decision``, the wake_on_decision option): (HTTP status, body). All
+        share the minute between wake-ups."""
         now = self.clock.now()
         if self.running_cycle:
             return 409, {"code": "cycle_running", "error": "a wake cycle is already running"}
@@ -318,9 +321,9 @@ class Agent:
         self.last_wake_request = now
         self.wake_requested = True
         self.message_waiting = False  # the cycle this wakes reads every message the agent hasn't seen
-        events.record(
-            self.db, "info", "agent", "The owner's message woke the agent" if by_message else "The owner woke the agent"
-        )
+        woke = "message" if by_message else "decision" if by_decision else ""
+        said = f"The owner's {woke} woke the agent" if woke else "The owner woke the agent"
+        events.record(self.db, "info", "agent", said)
         return 202, {"queued": True}
 
     def wake_for_message(self) -> str | None:
@@ -330,27 +333,40 @@ class Agent:
         ago: it wakes for the message once the cycle has ended and the minute has passed (``decide``); None if it
         can't run (paused, dead, ...): then it reads the message at its next wake.
         """
-        if self.wake_requested:  # woken and not started yet: that cycle reads the message
+        return self._wake_for_owner("message")
+
+    def wake_for_decision(self) -> str | None:
+        """0.12.0: the owner decided on one of the agent's requests, ventures or milestones (with the wake_on_decision
+        option): wake the agent to act on it, like a message (the same answers). It slept up to 12 hours with a
+        decision it could have acted on."""
+        return self._wake_for_owner("decision")
+
+    def _wake_for_owner(self, what: str) -> str | None:
+        if self.wake_requested:  # woken and not started yet: that cycle sees it
             return "now"
-        status, body = self.request_wake(by_message=True)
+        status, body = self.request_wake(by_message=what == "message", by_decision=what == "decision")
         if status == 202:
             return "now"
         code = body.get("code")
         if code in ("cycle_running", "too_soon"):
+            if not self.message_waiting or what == "message":  # a message waiting says so first
+                self.waiting_for = what
             self.message_waiting = True
             return "after_cycle" if code == "cycle_running" else "soon"
         return None
 
     def _wake_for_waiting_message(self) -> datetime | None:
-        """For ``decide``: wake for a message that couldn't wake the agent when it came. Returns when that can be while
-        it is still too soon; None once the agent is woken, or when no message is left unread (the cycle that was
-        running read it: no second cycle for it)."""
+        """For ``decide``: wake for a message or decision that couldn't wake the agent when it came. Returns when that
+        can be while it is still too soon; None once the agent is woken, or when the agent has seen all of the owner's
+        news (the cycle that was running saw it: no second cycle for it)."""
         with self.db.connection() as conn:
-            unread = store.unseen(conn, "messages", self.scope(), 1)
+            unread = store.unseen(conn, "messages", self.scope(), 1) or news.decided_unseen(conn, self.scope())
         if not unread:
             self.message_waiting = False
             return None
-        status, body = self.request_wake(by_message=True)
+        status, body = self.request_wake(
+            by_message=self.waiting_for == "message", by_decision=self.waiting_for == "decision"
+        )
         if status == 429 and self.last_wake_request is not None:
             return self.last_wake_request + WAKE_NOW_MIN_GAP
         if body.get("code") != "cycle_running":  # woken (or it can't be: the message waits for the next wake)
@@ -490,6 +506,17 @@ class Agent:
                 reason = f"{self.settings.agent_name} chose {minutes} min"
                 if end.sleep_reason:  # the agent's words, quoted (the dashboard shows them as text)
                     reason += f": {json.dumps(end.sleep_reason[:SLEEP_REASON_CHARS], ensure_ascii=False)}"
+                # 0.12.0: waiting for the owner is no reason to sleep long (it slept 12 hours for an approval): while
+                # its requests wait, it wakes by the default interval at the latest, to work on something else.
+                cap = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes)
+                with self.db.connection() as conn:
+                    waiting = store.count_rows(conn, "approvals", self.scope(), "status = 'pending'")
+                if waiting and minutes > cap:
+                    minutes = cap
+                    reason += (
+                        f"; cut to {cap} min: {waiting} request{'s wait' if waiting != 1 else ' waits'} for your"
+                        " decision, and it works on something else meanwhile"
+                    )
         else:
             failures += 1
             self.db.set_meta(self._key("failures"), str(failures))
@@ -563,7 +590,8 @@ class Agent:
             now = self.clock.now()
             soon = max(now, self.last_wake_request + WAKE_NOW_MIN_GAP) if self.last_wake_request else now
             if wake is None or soon < wake:
-                wake, reason = soon, "to read your message"
+                why = "to read your message" if self.waiting_for == "message" else "to act on your decision"
+                wake, reason = soon, why
         can_wake = blocked is None and not self.running_cycle
         return {
             "next_wake_at": to_iso(wake) if wake and blocked is None else None,

@@ -126,6 +126,8 @@ class Settings(BaseModel):
     web_fetch: bool = False
     # A message from the owner wakes the agent to read it (like Wake now, within its minute between wake-ups).
     wake_on_message: bool = True
+    # 0.12.0: the owner's decision on a request, venture or milestone wakes the agent to act on it, like a message.
+    wake_on_decision: bool = True
     # Effort for the work steps and the reflection ("default" sends none, which means high). Not sent to Haiku 4.5.
     worker_effort: Literal["default", "high", "medium", "low"] = "default"
     # The workshop (0.7.0): code the agent has written and run in Anthropic's sandbox. A run has its own cap and

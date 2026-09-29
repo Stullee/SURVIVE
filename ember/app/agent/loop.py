@@ -365,6 +365,7 @@ class CycleRunner:
                 venture=venture,
                 venture_share=self.settings.venture_share,
                 shelf=library.shelf(conn, self.scope),
+                decision_wakes=self.settings.wake_on_decision,
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> CallResult:
