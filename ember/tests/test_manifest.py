@@ -145,6 +145,16 @@ def test_changelog_matches_version() -> None:
     assert read_version(APP_DIR / "config.yaml") == MANIFEST["version"]
 
 
+def test_the_reddit_request_states_the_commercial_purpose() -> None:
+    """0.12.0: DOCS had the owner ask Reddit for access as "a personal, non-commercial project" for an agent whose
+    purpose is to earn money; honesty comes first, toward platforms too."""
+    docs = " ".join((APP_DIR / "DOCS.md").read_text(encoding="utf-8").split())
+    template = docs[docs.index("> I would like Data API access") :][:1_400].replace(" > ", " ")
+    assert "for a small commercial project" in template and "non-commercial" not in template
+    assert "written by an AI agent and posted after human review" in template
+    assert f"ember-homeassistant:v{MANIFEST['version']}" in template
+
+
 def test_supervisor_finds_exactly_one_app_manifest() -> None:
     """The Supervisor scans the whole repository for config.yaml/.yml/.json files."""
     found = []

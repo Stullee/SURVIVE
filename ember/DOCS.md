@@ -728,18 +728,24 @@ Reddit account and no Reddit API access (phase A):
 If you want Ember to read Reddit later, you can ask Reddit for Data
 API access (one request per use case; an answer can take weeks). Read Reddit's
 Responsible Builder Policy first, then send a request like this through
-Reddit's developer support:
+Reddit's developer support. Say plainly that Ember's purpose is to earn money:
+it is a commercial use, even at a small scale, and Reddit may answer with
+commercial terms. Asking for it as a personal, non-commercial project would
+misstate it, and Ember's first rule is honesty.
 
-> I would like Data API access for a personal, non-commercial project: Ember,
-> an AI agent that runs on my own Home Assistant server and helps me research
-> small side projects. It would use one Reddit account (u/*your name*) and make
-> a few hundred read requests a day at most (search, subreddit listings,
-> threads), cached briefly. Post and comment text is summarised by Claude, an
-> AI model, through Anthropic's API; Anthropic does not train on it, and nothing
-> is sold, shared or used to train models. It would post only text I have
-> reviewed and approved word for word, each with a line saying it was written by
-> an AI agent and posted after human review. No voting, no direct messages.
-> User-Agent: `linux:ember-homeassistant:v0.4.0 (by /u/your name)`.
+> I would like Data API access for a small commercial project: Ember, an AI
+> agent that runs on my own Home Assistant server and helps me run a small
+> online business (digital products in my Etsy shop) and find new ones. It
+> would use one Reddit account (u/*your name*) and make a few hundred read
+> requests a day at most (search, subreddit listings, threads), cached briefly,
+> to learn what people need and what they would pay for. Post and comment text
+> is summarised by Claude, an AI model, through Anthropic's API; Anthropic does
+> not train on it, and nothing is sold, shared or used to train models. It
+> would post only text I have reviewed and approved word for word, posted by me
+> from my account, each with a line saying it was written by an AI agent and
+> posted after human review; a post may mention my products only where a
+> subreddit's rules allow it. No voting, no direct messages, no automated
+> posting. User-Agent: `linux:ember-homeassistant:v0.12.0 (by /u/your name)`.
 
 ## Diagnostics
 
