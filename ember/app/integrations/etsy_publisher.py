@@ -758,6 +758,8 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
     for r in rows:
         key = revenue_key(r["receipt_id"])
         recorded = conn.execute("SELECT 1 FROM ledger WHERE idempotency_key = ?", (key,)).fetchone() is not None
+        items = json.loads(r["items"] or "[]")
+        project_id, venture_id = order_project(conn, scope, items)
         out.append(
             {
                 "receipt_id": r["receipt_id"],
@@ -765,12 +767,32 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
                 "total": r["total"],
                 "total_cents": r["total_cents"],
                 "currency": r["currency"],
-                "items": json.loads(r["items"] or "[]"),
+                "items": items,
                 "revenue_key": key,
                 "recorded": recorded,
+                "project_id": project_id,  # what the revenue form suggests (0.12.0)
+                "venture_id": venture_id,
             }
         )
     return out
+
+
+def order_project(conn: sqlite3.Connection, scope: AgentScope, items: list[Any]) -> tuple[int | None, int | None]:
+    """The project an order's revenue belongs to, and its venture (0.12.0): the first of its listings Ember made, the
+    request the owner approved for it, and that request's project (or its cycle's)."""
+    for item in items:
+        listing_id = item.get("listing_id") if isinstance(item, dict) else None
+        if not isinstance(listing_id, int):
+            continue
+        row = conn.execute(
+            "SELECT p.id AS project_id, p.venture_id FROM etsy_listings l JOIN approvals a ON a.id = l.approval_id"
+            " LEFT JOIN cycles y ON y.id = a.cycle_id JOIN projects p ON p.id = COALESCE(a.project_id, y.project_id)"
+            " WHERE l.listing_id = ? AND l.mode = ? AND l.session = ? ORDER BY l.id DESC LIMIT 1",
+            (listing_id, scope.mode, scope.session),
+        ).fetchone()
+        if row is not None:
+            return row["project_id"], row["venture_id"]
+    return None, None
 
 
 def revenue_key(receipt_id: int) -> str:

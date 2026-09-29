@@ -119,7 +119,7 @@ def test_entry_validation(data_dir: Path, kind: str, body: dict, field: str) -> 
     assert (reply.status, reply.body["field"]) == (422, field), reply.body
 
 
-@pytest.mark.parametrize("bad_key", [None, "", "abc", "A" * 32, "g" * 32, uuid.uuid4().hex + "0"])
+@pytest.mark.parametrize("bad_key", [None, "", "abc", "A" * 32, "g" * 32, "a" * 33])  # one character too many
 def test_idempotency_key_format(data_dir: Path, bad_key: object) -> None:
     economy = make_economy(data_dir)
     reply = economy.record("grant", {"amount": "5", "idempotency_key": bad_key})

@@ -1431,6 +1431,8 @@
       meta.push("recorded " + (sameDay ? shortTimeFmt.format(recorded) : fmtDateTime(e.ts)));
       meta.push(e.entered_by ? "by " + e.entered_by : e.created_by === "owner" ? "by you" : e.created_by === "system" ? "by the system" : "by " + e.created_by);
       if (e.llm_call_id !== null && e.llm_call_id !== undefined) meta.push("call #" + e.llm_call_id);
+      if (e.project_id) meta.push("for project #" + e.project_id);
+      else if (e.venture_id) meta.push("for venture #" + e.venture_id);
       var correct = null;
       if (e.can_correct) {
         correct = h("button", { type: "button", class: "btn btn-small", "data-correct": String(e.id),
@@ -3229,6 +3231,8 @@
         day: String(o.ordered_at || "").slice(0, 10),
         idKey: String(o.revenue_key || ""),
         testMoney: fake,
+        projectId: o.project_id || null,  // the project whose listing sold (0.12.0)
+        ventureId: o.venture_id || null,
       });
     });
     return b;
@@ -3378,6 +3382,7 @@
       fields: [
         { name: "amount", kind: "amount", currency: true },
         { name: "source", kind: "text", label: "Source", hint: "Where the money came from, for example Ko-fi.", required: true, missing: "Say where the money came from." },
+        { name: "attribution", kind: "attribution" },
         { name: "day", kind: "day" },
         { name: "note", kind: "note", label: "Note (optional)" },
         { name: "test_money", kind: "test_money" },
@@ -3401,6 +3406,7 @@
       fields: [
         { name: "amount", kind: "amount", currency: true },
         { name: "note", kind: "note", label: "What it was for", required: true, missing: "Say what it was for." },
+        { name: "attribution", kind: "attribution" },
         { name: "day", kind: "day" },
         { name: "test_money", kind: "test_money" },
       ],
@@ -3522,6 +3528,15 @@
         h("p", { class: "hint", id: ids.hint, text: "Test money only counts in dry run. Untick it to record real money, which also counts once the agent runs live." }),
         err);
       f.targets[fs.name] = { error: err, control: field.control };
+    } else if (fs.kind === "attribution") {
+      // 0.12.0: the project or venture the money belongs to, so it shows as what that project or venture earned.
+      field.control = h("select", { id: ids.id, "aria-describedby": ids.hint + " " + ids.error, "data-field": fs.name });
+      wrap = h("div", { class: "field" },
+        h("label", { for: ids.id, text: "For (optional)" }), field.control,
+        h("p", { class: "hint", id: ids.hint, text: "The project or venture this money belongs to. A project's venture counts it too." }),
+        err);
+      f.targets.project_id = f.targets.venture_id = { error: err, control: field.control };
+      fillAttribution(field, "");
     } else if (fs.kind === "amount") {
       field.control = h("input", { type: "text", id: ids.id, inputmode: "decimal", autocomplete: "off", spellcheck: "false",
         "aria-describedby": described, "data-field": fs.name });
@@ -3564,6 +3579,26 @@
     field.wrap = Array.isArray(wrap) ? wrap[0] : wrap;
     f.fields[fs.name] = field;
     return wrap;
+  }
+
+  function fillAttribution(field, chosen) {
+    var d = ui.data || {};
+    var options = [h("option", { value: "", text: "Nothing in particular" })];
+    var projects = arr(d.projects).filter(function (p) { return p && p.id; });
+    if (projects.length) {
+      options.push(h("optgroup", { label: "Projects" }, projects.map(function (p) {
+        return h("option", { value: "p:" + p.id, text: "#" + p.id + " " + asText(p.title) + " (" + asText(p.status) + ")" });
+      })));
+    }
+    var ventures = arr(d.venture_choices).filter(function (v) { return v && v.id; });
+    if (ventures.length) {
+      options.push(h("optgroup", { label: "Ventures" }, ventures.map(function (v) {
+        return h("option", { value: "v:" + v.id, text: "#" + v.id + " " + asText(v.title) + " (" + asText(v.stage) + ")" });
+      })));
+    }
+    replace(field.control, options);
+    field.control.value = chosen || "";
+    if (field.control.value !== (chosen || "")) field.control.value = "";  // gone meanwhile
   }
 
   function readValues(f) {
@@ -3651,6 +3686,10 @@
       if (v.currency === "EUR") body.fx_rate = v.fx_rate.replace(",", ".");
     }
     if (f.fields.test_money && v.test_money !== null) body.test_money = v.test_money;
+    if (f.fields.attribution && v.attribution) {
+      var chosen = /^([pv]):(\d+)$/.exec(v.attribution);
+      if (chosen) body[chosen[1] === "p" ? "project_id" : "venture_id"] = Number(chosen[2]);
+    }
     body.idempotency_key = f.idKey;
     // The server checks the confirmation against the state it names, so it can't cover a worse outcome.
     if (f.flags.confirm_state_change) body.confirm_state_change = f.flags.confirm_state_change;
@@ -3852,7 +3891,7 @@
     Object.keys(f.fields).forEach(function (name) {
       var field = f.fields[name];
       var kind = field.spec.kind;
-      if (kind === "amount" || kind === "note" || kind === "text") field.control.value = "";
+      if (kind === "amount" || kind === "note" || kind === "text" || kind === "attribution") field.control.value = "";
       if (kind === "direction") field.radios.forEach(function (r) { r.checked = false; });
     });
     updatePreview(f);
@@ -3882,6 +3921,7 @@
     var f = ui.forms[key];
     if (!f) return;
     if (f.intro) f.intro.textContent = introText(f.spec);  // the agent's name may have loaded since
+    if (f.fields.attribution) fillAttribution(f.fields.attribution, f.fields.attribution.control.value);
     if (amount) {
       f.fields.amount.control.value = amount;
       if (f.fields.amount.currency) f.fields.amount.currency.value = "USD";
@@ -3914,6 +3954,9 @@
     if (prefill.day && f.fields.day) f.fields.day.control.value = prefill.day;
     if (prefill.testMoney && f.fields.test_money && !f.fields.test_money.wrap.hidden) f.fields.test_money.control.checked = true;
     if (prefill.idKey) f.idKey = prefill.idKey;
+    if (f.fields.attribution && (prefill.projectId || prefill.ventureId)) {
+      fillAttribution(f.fields.attribution, prefill.projectId ? "p:" + prefill.projectId : "v:" + prefill.ventureId);
+    }
     updatePreview(f);
   }
 

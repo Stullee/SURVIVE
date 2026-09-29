@@ -302,11 +302,12 @@ def money(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, Money]:
         " WHERE y.session = ? AND y.simulated = ? AND COALESCE(y.venture_id, p.venture_id) IS NOT NULL GROUP BY vid",
         (scope.session, 1 if scope.simulated else 0),
     ).fetchall()
-    where, params = scope.where("p")
+    # Revenue named for the venture, or for one of its projects (0.12.0: the owner names them when recording it).
     earned = conn.execute(
-        "SELECT p.venture_id, COALESCE(SUM(l.amount_micros), 0) FROM ledger l JOIN projects p ON p.id = l.project_id"
-        f" WHERE l.type = 'revenue' AND p.venture_id IS NOT NULL AND {where} GROUP BY p.venture_id",
-        params,
+        "SELECT COALESCE(l.venture_id, p.venture_id) AS vid, COALESCE(SUM(l.amount_micros), 0) FROM ledger l"
+        " LEFT JOIN projects p ON p.id = l.project_id JOIN ventures v ON v.id = COALESCE(l.venture_id, p.venture_id)"
+        " WHERE l.type = 'revenue' AND v.mode = ? AND v.session = ? GROUP BY vid",
+        (scope.mode, scope.session),
     ).fetchall()
     found: dict[int, Money] = {int(r[0]): Money(spent=int(r[1])) for r in spent}
     for r in earned:

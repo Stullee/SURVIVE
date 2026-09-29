@@ -707,6 +707,14 @@ On the dashboard you can record:
 - **Correct** on an earlier grant, revenue or expense reduces it (up to its full
   amount, which voids it).
 
+Revenue and expenses can name **what they belong to**: one of the agent's
+projects (its venture counts it too) or a venture. That is how a project or
+venture shows what it earned, and how a project can succeed: the agent can
+close one as succeeded only when the revenue you recorded for it, less its
+expenses, is more than its API calls cost. **Record as revenue** on an Etsy
+order suggests the project whose listing sold. A correction belongs where the
+entry it corrects belongs.
+
 Amounts are typed like `12.50` or `12,50` (at most two decimals). Entries can be
 in USD or EUR; for EUR you enter the exchange rate and the original amount is
 kept. You can date an entry up to a year back. Ember asks for confirmation when

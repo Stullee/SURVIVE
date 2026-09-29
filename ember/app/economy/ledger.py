@@ -46,7 +46,7 @@ _MONEY_IN = (
 )
 _ENTRY_COLUMNS = (
     "id, ts, occurred_on, type, amount_micros, simulated, source, note, llm_call_id, corrects_id,"
-    " orig_amount, orig_currency, fx_rate, created_by, entered_by"
+    " orig_amount, orig_currency, fx_rate, created_by, entered_by, project_id, venture_id"
 )
 
 _AMOUNT = re.compile(r"^[0-9]{1,6}([.,][0-9]{1,2})?$")
@@ -76,6 +76,8 @@ FIELDS = frozenset(
         "idempotency_key",
         "confirm_state_change",
         "confirm_large",
+        "project_id",
+        "venture_id",
     }
 )
 CORRECTION_FIELDS = frozenset({"amount", "note", "idempotency_key", "confirm_state_change", "confirm_large"})
@@ -87,12 +89,13 @@ class OwnerKind:
     directions: dict[str, int] | None  # None: always positive
     required: tuple[str, ...]
     test_money: bool
+    attributable: bool = False  # may name the project or venture it belongs to (0.12.0)
 
 
 OWNER_KINDS: dict[str, OwnerKind] = {
     "grant": OwnerKind("owner_grant", None, (), True),
-    "revenue": OwnerKind("revenue", None, ("source",), True),
-    "expense": OwnerKind("expense", None, ("note",), True),
+    "revenue": OwnerKind("revenue", None, ("source",), True, attributable=True),
+    "expense": OwnerKind("expense", None, ("note",), True, attributable=True),
     "adjustment": OwnerKind("adjustment", {"add": 1, "subtract": -1}, ("note",), True),
     "api-correction": OwnerKind("api_cost_correction", {"increase": 1, "decrease": -1}, ("note",), False),
 }
@@ -148,6 +151,8 @@ class PreparedEntry:
     orig_currency: str | None = None
     fx_rate: str | None = None
     entered_by: str | None = None
+    project_id: int | None = None  # the project and venture it belongs to (revenue and expenses, 0.12.0)
+    venture_id: int | None = None
 
     @property
     def balance_effect(self) -> int:
@@ -468,6 +473,8 @@ class Books:
             "fx_rate": row["fx_rate"],
             "created_by": row["created_by"],
             "entered_by": row["entered_by"],
+            "project_id": row["project_id"],
+            "venture_id": row["venture_id"],
             "can_correct": correctable and remaining > 0,
         }
 
@@ -539,6 +546,7 @@ class Books:
                 raise EntryError("test_money", "test money only exists in dry run")
 
         day, day_given = self._day(body.get("day"))
+        project_id, venture_id = self._attribution(body, spec, mode)
         micros = sign * dollars_to_micros(amount)
         if spec.type == "api_cost_correction" and micros < 0:
             # A refund corrects a day's recorded cost; it can't turn a day's API spend negative.
@@ -562,7 +570,40 @@ class Books:
             orig_currency=orig_currency,
             fx_rate=fx_text,
             entered_by=entered_by,
+            project_id=project_id,
+            venture_id=venture_id,
         )
+
+    def _attribution(self, body: dict[str, Any], spec: OwnerKind, mode: str) -> tuple[int | None, int | None]:
+        """The project and venture a revenue or expense belongs to (0.12.0): a project brings its venture along."""
+        ids: dict[str, int | None] = {}
+        for name in ("project_id", "venture_id"):
+            value = body.get(name)
+            if value in (None, ""):
+                ids[name] = None
+            elif isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise EntryError(name, f"{name} must be the number of a {name[:-3]}")
+            elif not spec.attributable:
+                raise EntryError(name, "only revenue and expenses belong to a project or venture")
+            else:
+                ids[name] = value
+        project_id, venture_id = ids["project_id"], ids["venture_id"]
+        with self.db.connection() as conn:
+            if project_id is not None:
+                project = conn.execute(
+                    "SELECT venture_id FROM projects WHERE id = ? AND mode = ?", (project_id, mode)
+                ).fetchone()
+                if project is None:
+                    raise EntryError("project_id", f"there is no project #{project_id}")
+                if venture_id is None:
+                    venture_id = project["venture_id"]
+                elif project["venture_id"] not in (None, venture_id):
+                    raise EntryError("venture_id", f"project #{project_id} belongs to venture #{project['venture_id']}")
+            if venture_id is not None and ids["venture_id"] is not None:
+                found = conn.execute("SELECT 1 FROM ventures WHERE id = ? AND mode = ?", (venture_id, mode)).fetchone()
+                if found is None:
+                    raise EntryError("venture_id", f"there is no venture #{venture_id}")
+        return project_id, venture_id
 
     def prepare_correction(
         self, target_id: int, body: Any, scope: Scope, entered_by: str | None = None
@@ -576,8 +617,8 @@ class Books:
         where, params = scope.where()
         with self.db.connection() as conn:
             target = conn.execute(
-                "SELECT id, type, amount_micros, simulated, occurred_on, corrects_id FROM ledger"
-                f" WHERE id = ? AND {where}",
+                "SELECT id, type, amount_micros, simulated, occurred_on, corrects_id, project_id, venture_id"
+                f" FROM ledger WHERE id = ? AND {where}",
                 (target_id, *params),
             ).fetchone()
             corrected = self._corrections(conn, [target_id]).get(target_id, 0)
@@ -604,6 +645,8 @@ class Books:
             idempotency_key=_key(body),
             corrects_id=target["id"],
             entered_by=entered_by,
+            project_id=target["project_id"],  # a correction belongs where the entry it corrects belongs
+            venture_id=target["venture_id"],
         )
 
     def _key_used(self, key: str) -> bool:
@@ -642,7 +685,7 @@ class Books:
         with self.db.connection() as conn:
             row = conn.execute(
                 "SELECT id, type, amount_micros, simulated, source, note, occurred_on, corrects_id, orig_amount,"
-                " orig_currency, fx_rate FROM ledger WHERE idempotency_key = ?",
+                " orig_currency, fx_rate, project_id, venture_id FROM ledger WHERE idempotency_key = ?",
                 (prepared.idempotency_key,),
             ).fetchone()
         if row is None:
@@ -657,6 +700,8 @@ class Books:
             and row["orig_amount"] == prepared.orig_amount
             and row["orig_currency"] == prepared.orig_currency
             and row["fx_rate"] == prepared.fx_rate
+            and row["project_id"] == prepared.project_id
+            and row["venture_id"] == prepared.venture_id
             # Without an explicit day, a retry after midnight is still the same entry.
             and (not prepared.day_given or row["occurred_on"] == prepared.occurred_on)
         )
@@ -668,8 +713,8 @@ class Books:
         """Store an owner entry; call inside a transaction."""
         cursor = conn.execute(
             "INSERT INTO ledger (ts, occurred_on, type, amount_micros, simulated, source, note, corrects_id,"
-            " orig_amount, orig_currency, fx_rate, created_by, entered_by, idempotency_key)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'owner', ?, ?)",
+            " orig_amount, orig_currency, fx_rate, created_by, entered_by, idempotency_key, project_id, venture_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'owner', ?, ?, ?, ?)",
             (
                 to_iso(self.clock.now()),
                 prepared.occurred_on,
@@ -684,6 +729,8 @@ class Books:
                 prepared.fx_rate,
                 prepared.entered_by,
                 prepared.idempotency_key,
+                prepared.project_id,
+                prepared.venture_id,
             ),
         )
         return int(cursor.lastrowid)

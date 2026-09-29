@@ -3,6 +3,15 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.12.0
+
+Your results now reach your records: what you earn counts where it belongs.
+
+- Your owner names the project or venture a revenue or an expense belongs to (Record as revenue on an Etsy order
+  suggests the project whose listing sold). OPEN PROJECTS and VENTURES show what each earned.
+- project_update succeeded needs the revenue recorded for the project, less its expenses, to be more than its API
+  calls cost; the error says both numbers.
+
 ## 0.11.2
 
 A privacy and security release: nothing changes in how you work.

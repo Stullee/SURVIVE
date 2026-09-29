@@ -60,6 +60,13 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         ).fetchone()
         now = _now(agent, conn, latest) if latest else None
         projects = [_project(conn, p) for p in store.all_projects(conn, scope)]
+        where, params = scope.where()
+        venture_choices = [  # what revenue and expenses can belong to, besides projects (0.12.0)
+            {"id": v["id"], "title": v["title"], "stage": v["stage"]}
+            for v in conn.execute(
+                f"SELECT id, title, stage FROM ventures WHERE {where} AND stage <> 'killed' ORDER BY id", params
+            )
+        ]
         cycles = conn.execute(
             "SELECT * FROM cycles WHERE simulated = ? AND session = ? ORDER BY id DESC LIMIT ?",
             (simulated, scope.session, ACTIVITY_CYCLES),
@@ -149,6 +156,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "badges": counts,
         "now": now,
         "projects": projects,
+        "venture_choices": venture_choices,
         "activity": activity,
         "mind": {**agent.memory_files(), "journal": journal, "reviews": reviews},
         "approvals": approvals,
@@ -435,6 +443,7 @@ def _project(conn: sqlite3.Connection, p: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": p["id"],
         "title": p["title"],
+        "venture_id": p["venture_id"],
         "hypothesis": p["hypothesis"],
         "status": p["status"],
         "next_step": p["next_step"],

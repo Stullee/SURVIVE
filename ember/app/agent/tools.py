@@ -38,6 +38,7 @@ from urllib.parse import urlsplit
 from .. import paths
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
+from ..economy.costs import micros_to_usd
 from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
@@ -1049,8 +1050,16 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     changes: dict[str, Any] = {}
     status = args.get("status")
     if status and status != row["status"]:
-        if status == "succeeded" and not _has_owner_revenue(conn, ctx.scope, row["id"]):
-            raise ToolError("a project can only succeed once your owner has recorded revenue for it")
+        if status == "succeeded":
+            earned, cost = project_net(conn, ctx.scope, row["id"])
+            if earned <= 0:
+                raise ToolError("a project can only succeed once your owner has recorded revenue for it")
+            if earned <= cost:
+                raise ToolError(
+                    f"a project succeeds when it earned more than it cost: #{row['id']} earned "
+                    f"${micros_to_usd(earned):.2f} (revenue less its expenses) and cost ${micros_to_usd(cost):.2f} "
+                    "in API calls so far"
+                )
         changes["status"] = status
     if args.get("next_step"):
         changes["next_step"] = args["next_step"].strip()
@@ -1073,13 +1082,22 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     return Outcome(True, f"Project #{row['id']}: {transition}.", f"#{row['id']} {transition}", row["id"])
 
 
-def _has_owner_revenue(conn: Any, scope: AgentScope, project_id: int) -> bool:
-    simulated = "(simulated = 0 OR simulated = 1)" if scope.simulated else "simulated = 0"
-    row = conn.execute(
-        f"SELECT 1 FROM ledger WHERE type = 'revenue' AND project_id = ? AND amount_micros > 0 AND {simulated} LIMIT 1",
+def project_net(conn: Any, scope: AgentScope, project_id: int) -> tuple[int, int]:
+    """(what a project earned, what its API calls cost) in micros (0.12.0). Earned: the revenue the owner recorded for
+    it less its expenses, corrections included (Etsy's fees are expenses); cost: every call of the cycles that worked
+    on it. The live scope counts real money only."""
+    simulated = "" if scope.simulated else " AND simulated = 0"
+    earned = conn.execute(
+        "SELECT COALESCE(SUM(CASE type WHEN 'revenue' THEN amount_micros ELSE -amount_micros END), 0) FROM ledger"
+        f" WHERE type IN ('revenue', 'expense') AND project_id = ?{simulated}",
         (project_id,),
-    ).fetchone()
-    return row is not None
+    ).fetchone()[0]
+    cost = conn.execute(
+        "SELECT COALESCE(SUM(c.cost_micros), 0) FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id"
+        " WHERE y.project_id = ? AND c.status IN ('ok', 'interrupted') AND y.simulated = ?",
+        (project_id, 1 if scope.simulated else 0),
+    ).fetchone()[0]
+    return int(earned), int(cost)
 
 
 def _open_venture(conn: Any, scope: AgentScope, venture_id: int) -> Any:
