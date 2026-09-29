@@ -98,6 +98,9 @@ def test_options_match_settings_defaults() -> None:
     for key, value in options.items():
         if key == "price_table":
             continue
+        if key == "owner_user_ids":  # a list in the options, a tuple in the (frozen) settings
+            assert tuple(value) == defaults.owner_user_ids == ()
+            continue
         assert value == getattr(defaults, key), key
     assert [{k: float(v) if k != "model" else v for k, v in row.items()} for row in options["price_table"]] == [
         p.model_dump() for p in DEFAULT_PRICE_TABLE

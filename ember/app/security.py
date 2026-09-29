@@ -12,6 +12,13 @@ the host. The sensor JSON therefore only ever contains non-sensitive numbers.
 State-changing requests must also carry the ``X-Ember-Request`` header, which a
 cross-site form or image tag can't add; that blocks cross-site request forgery.
 
+Ember answers only its owner (0.11.2). Ingress lets every Home Assistant user who
+can open the panel through (its admins, and anyone who opens an Ingress session
+on purpose), and the Supervisor names that user in the first ``X-Remote-User-Id``
+header, which a browser can't set. Once the ``owner_user_ids`` option names the
+owner, every other user gets 403 for everything but the static files, the
+watchdog's health check and the REST sensor's numbers.
+
 In local development (``EMBER_DEV_MODE``) there is no Ingress proxy, so any
 client may connect, but only with a ``localhost`` Host header: that stops a
 DNS-rebinding web page from talking to a developer's instance.
@@ -20,9 +27,10 @@ DNS-rebinding web page from talking to a developer's instance.
 from __future__ import annotations
 
 import ipaddress
+import json
 import logging
 import re
-from collections.abc import Awaitable, Callable, MutableMapping
+from collections.abc import Awaitable, Callable, Iterable, MutableMapping
 from typing import Any
 
 from .logging_setup import printable
@@ -40,6 +48,12 @@ HOST_NETWORK_GATEWAY_IP = ipaddress.ip_address("172.30.32.1")
 HOST_NETWORK_READ_PATHS = frozenset({"/api/sensors"})
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 CSRF_HEADER = "x-ember-request"
+USER_ID_HEADER = "x-remote-user-id"  # set by the Supervisor's Ingress proxy: its first value is the signed-in user
+OPEN_PATHS = frozenset({"/api/health", "/api/sensors"})  # no user behind them, and nothing private in them
+NOT_OWNER = (
+    "This Ember answers only its owner: the Home Assistant users in its owner_user_ids option (the app's Configuration"
+    " tab)."
+)
 DEV_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "[::1]"})
 
 _INGRESS_PATH = re.compile(r"/api/hassio_ingress/[A-Za-z0-9_\-]{1,128}")
@@ -76,8 +90,17 @@ def is_local_host_header(value: str | None) -> bool:
 
 
 class AccessPolicy:
-    def __init__(self, dev_mode: bool = False) -> None:
+    def __init__(self, dev_mode: bool = False, owner_ids: Iterable[str] = ()) -> None:
         self.dev_mode = dev_mode
+        self.owner_ids = frozenset(owner_ids)
+
+    def is_owner(self, user_id: str | None) -> bool:
+        """Whether a request comes from Ember's owner: a user named in owner_user_ids, or anyone while the option is
+        empty (the dashboard warns) or in local development (no Ingress, no users)."""
+        return self.dev_mode or not self.owner_ids or user_id in self.owner_ids
+
+    def owner_allows(self, path: str, user_id: str | None) -> bool:
+        return path.startswith("/static/") or path in OPEN_PATHS or self.is_owner(user_id)
 
     def allows(self, client_host: str | None, path: str, method: str) -> bool:
         if self.dev_mode:
@@ -96,6 +119,7 @@ class SecurityMiddleware:
         self.app = app
         self.policy = policy
         self._reported: set[str] = set()
+        self._strangers: set[str] = set()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "websocket":
@@ -120,6 +144,14 @@ class SecurityMiddleware:
             return
         if method not in SAFE_METHODS and _header(scope, CSRF_HEADER) != "1":
             await _plain(send, 403, b"Missing X-Ember-Request header")
+            return
+        user_id = (_header(scope, USER_ID_HEADER) or "").strip() or None
+        if not self.policy.owner_allows(path, user_id):
+            self._report_stranger(user_id, path)
+            if path.startswith("/api/"):
+                await _json(send, 403, {"code": "not_owner", "error": NOT_OWNER})
+            else:
+                await _plain(send, 403, f"{NOT_OWNER}\nYour user ID: {printable(user_id or '(none)', 100)}".encode())
             return
 
         async def send_with_headers(message: Message) -> None:
@@ -148,6 +180,17 @@ class SecurityMiddleware:
             printable(path, 100),
         )
 
+    def _report_stranger(self, user_id: str | None, path: str) -> None:
+        key = user_id or "(none)"
+        if key in self._strangers or len(self._strangers) > 100:
+            return
+        self._strangers.add(key)
+        log.warning(
+            "Refused a request to %s from Home Assistant user %s: not in owner_user_ids",
+            printable(path, 100),
+            printable(key, 100),
+        )
+
 
 def _header(scope: Scope, name: str) -> str | None:
     wanted = name.encode("latin-1")
@@ -155,6 +198,18 @@ def _header(scope: Scope, name: str) -> str | None:
         if key.lower() == wanted:
             return value.decode("latin-1")
     return None
+
+
+async def _json(send: Send, status: int, data: dict[str, Any]) -> None:
+    body = json.dumps(data).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
 
 
 async def _plain(send: Send, status: int, body: bytes) -> None:

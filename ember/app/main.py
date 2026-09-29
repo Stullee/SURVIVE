@@ -108,7 +108,9 @@ def create_app(loaded: LoadedSettings | None = None, *, dev_mode: bool | None = 
     )
     # The middleware added last runs first: SecurityMiddleware wraps CatchAllMiddleware.
     app.add_middleware(CatchAllMiddleware)
-    app.add_middleware(SecurityMiddleware, policy=AccessPolicy(dev_mode=dev_mode))
+    app.add_middleware(
+        SecurityMiddleware, policy=AccessPolicy(dev_mode=dev_mode, owner_ids=loaded.settings.owner_user_ids)
+    )
     app.include_router(router)
     app.mount("/static", StaticFiles(directory=paths.WEB_DIR / "static"), name="static")
     return app

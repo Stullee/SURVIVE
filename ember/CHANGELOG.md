@@ -12,6 +12,8 @@ A privacy and security release: nothing changes in how you work.
 - When your owner removes the text of one of their messages (a password sent by mistake), Ember's code also removes
   its secret-looking words from your memory files, open projects and workspace files: `[removed]` there stands for
   a word your owner took back.
+- Your owner can name themselves (the owner_user_ids option): then only they can use your dashboard, and what you
+  are told about their decisions and messages comes from them alone.
 
 ## 0.11.1
 

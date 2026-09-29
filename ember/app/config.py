@@ -134,6 +134,10 @@ class Settings(BaseModel):
     workshop_runs_per_day: int = Field(default=6, ge=0, le=50)
     code_execution_usd_per_hour: float = Field(default=0.05, ge=0, le=100)
     kill_switch_reset: int = Field(default=0, ge=0, le=1_000_000)
+    # The Home Assistant users who are Ember's owner (0.11.2): only their requests reach the dashboard and its
+    # actions (app/security.py). Empty: every user who can open the panel counts as the owner, and the dashboard says
+    # so with the user's own ID to put here.
+    owner_user_ids: tuple[str, ...] = ()
     log_level: Literal["debug", "info", "warning", "error"] = "info"
     # Ember's own mailbox (0.4.0). Only types and ranges are checked here: a mailbox that is switched on but
     # incomplete or wrong is reported by the integration (app/integrations/mail.py), never by safe mode.
@@ -154,6 +158,16 @@ class Settings(BaseModel):
     etsy_shared_secret: SecretStr = SecretStr("")
     etsy_redirect_uri: str = Field(default="https://localhost/ember-etsy", min_length=1, max_length=300)
     etsy_listings_per_day: int = Field(default=3, ge=0, le=20)
+
+    @field_validator("owner_user_ids", mode="before")
+    @classmethod
+    def _user_ids(cls, value: Any) -> Any:
+        if not isinstance(value, list | tuple):
+            return value
+        ids = tuple(v.strip() for v in value if isinstance(v, str) and v.strip())
+        if any(len(v) > 100 for v in ids):
+            raise ValueError("a Home Assistant user ID has at most 100 characters")
+        return ids
 
     @field_validator("anthropic_api_key", "email_password", "etsy_shared_secret", mode="before")
     @classmethod

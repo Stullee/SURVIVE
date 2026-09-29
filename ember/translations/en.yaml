@@ -130,6 +130,13 @@ configuration:
     description: >-
       The kill switch on the dashboard stops the agent for good. To let it run
       again, change this number to any other value and restart the app.
+  owner_user_ids:
+    name: Owner user IDs
+    description: >-
+      The Home Assistant user IDs of Ember's owner: only these users can use
+      Ember's dashboard, its actions and its diagnostics. Empty: everyone who can
+      open the panel counts as the owner, and the dashboard shows your ID to put
+      here. Restart the app after changing it.
   log_level:
     name: Log level
     description: How much detail goes to the app log.

@@ -26,7 +26,7 @@ from .integrations import executor as email_executor
 from .integrations.etsy import EtsyError
 from .logging_setup import printable
 from .paths import WEB_DIR
-from .security import ingress_base_href
+from .security import USER_ID_HEADER, ingress_base_href
 from .state import AppState
 from .version import app_version, build_id
 
@@ -48,18 +48,46 @@ def _economy(request: Request) -> Economy | None:
 
 
 def _owner(request: Request) -> str | None:
-    """The Home Assistant user behind an Ingress request, as the Supervisor's proxy reports it.
+    """The Home Assistant user behind an Ingress request, for the audit trail: their name and their user ID.
 
-    Only a label for the audit trail, never an authorization: the headers can be
-    forged by any Home Assistant user. They arrive as UTF-8 bytes that the server
-    decodes as Latin-1, so non-ASCII names are decoded again here.
+    The Supervisor's proxy names the signed-in user in the first ``X-Remote-User-Id`` header, which a browser can't
+    set: that ID is what counts (SecurityMiddleware checks it against owner_user_ids, 0.11.2). The display name is
+    only a label, which users can change, so the ID stays next to it: "Stefan (8f14…)". The names arrive as UTF-8
+    bytes that the server decodes as Latin-1, so non-ASCII names are decoded again here.
     """
+    name = _display_name(request)
+    user_id = _user_id(request)
+    if user_id is None:
+        return name
+    shown = f"{name[: 57 - len(user_id)].rstrip()} ({user_id})" if name else user_id  # the columns hold 60
+    return shown[:60]
+
+
+def _display_name(request: Request) -> str | None:
     name = request.headers.get("x-remote-user-display-name") or request.headers.get("x-remote-user-name")
     if not name:
         return None
     with contextlib.suppress(UnicodeEncodeError, UnicodeDecodeError):
         name = name.encode("latin-1").decode("utf-8")
     return printable(name, 60)
+
+
+def _user_id(request: Request) -> str | None:
+    """The signed-in Home Assistant user's ID: the first X-Remote-User-Id header (the Supervisor's own)."""
+    values = request.headers.getlist(USER_ID_HEADER)
+    return printable(values[0].strip(), 40) if values and values[0].strip() else None
+
+
+def _owner_status(request: Request) -> dict[str, Any]:
+    """Who Ember answers (0.11.2): whether owner_user_ids names the owner, and who is asking, so the dashboard can
+    say which ID to put there."""
+    state = _state(request)
+    return {
+        "ids_set": bool(state.loaded.settings.owner_user_ids),
+        "dev_mode": state.dev_mode,
+        "user_id": _user_id(request),
+        "user_name": _display_name(request),
+    }
 
 
 def _reply(reply: Reply) -> JSONResponse:
@@ -128,7 +156,7 @@ def dashboard(request: Request) -> dict[str, Any]:
             {"agent": None, "economy": None, "ledger": None, "memorial": None, "lives": [], "transitions": []}
         )
     payload["integrations"] = _integrations(state)
-    payload["system"] = state.system_info()
+    payload["system"] = {**state.system_info(), "owner": _owner_status(request)}
     payload["events"] = state.recent_events()
     return payload
 

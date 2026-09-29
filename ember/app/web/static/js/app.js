@@ -729,6 +729,12 @@
     if (arr(sys.price_warnings).length) {
       list.push({ kind: "warning", icon: "!", title: "Some prices in the app options look too low, so costs would be under-counted. Check the price table in the app's Configuration tab.", items: sys.price_warnings });
     }
+    // 0.11.2: until owner_user_ids names the owner, every Home Assistant user who can open the panel counts as one.
+    var owner = isObject(sys.owner) ? sys.owner : null;
+    if (owner && !owner.ids_set && !owner.dev_mode) {
+      list.push({ kind: "warning", icon: "!", title: "Everyone who can open " + name + " in Home Assistant counts as its owner: they can grant money, approve emails and use the kill switch. To let only you in, put your Home Assistant user ID in the app's owner_user_ids option (Configuration tab) and restart the app.",
+        items: owner.user_id ? ["Your user ID: " + String(owner.user_id)] : [] });
+    }
     // economy_broken is also among the agent's warnings; it already has its own banner.
     var warnings = arr(agent.warnings).filter(function (w) { return !(sys.economy_broken && String(w).indexOf(String(sys.economy_broken)) >= 0); });
     if (warnings.length) {

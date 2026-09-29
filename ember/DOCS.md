@@ -16,6 +16,10 @@ your approval, and only you can record revenue.
 1. On the app's **Info** tab, turn on **Watchdog** (Home Assistant then restarts
    Ember if it ever crashes) and **Show in sidebar**.
 2. Start the app and open **Ember** from the sidebar (or **Open web UI**).
+   Until you name yourself as the owner, everyone who can open the panel counts
+   as one: a banner on the dashboard shows your Home Assistant user ID. Put it in
+   **Owner user IDs** on the **Configuration** tab and restart the app (see
+   [Security](#security)).
 3. Leave **Dry run** on. In dry run the agent uses a built-in fake model and
    never calls the API.
 4. Watch a few dry-run wake cycles (or press **Wake now**) to see how the agent
@@ -44,6 +48,7 @@ your approval, and only you can record revenue.
 | Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, like **Wake now** (at most one wake-up a minute; during a cycle, right after it; not while the agent is paused). Off: it reads your message at its next scheduled wake-up. |
 | Worker effort | default | How thoroughly the model works in each step. `medium` or `low` write shorter answers and use fewer tool calls, which costs less but may do a worse job. Not used for Haiku. |
 | Kill switch reset | 0 | Change it to any other number and restart to undo the kill switch. |
+| Owner user IDs | empty | The Home Assistant users who are Ember's owner: only they can use the dashboard and its actions. Empty: everyone who can open the panel. The dashboard shows your ID while this is empty. See [Security](#security). |
 | Log level | info | Detail in the app log. |
 | Ember's mailbox | off | Lets Ember read its own mailbox and propose emails. See [Ember's mailbox](#embers-mailbox). |
 | Mailbox address, app password, your name for emails | empty | Needed when the mailbox is on. The password is never logged or shown. |
@@ -797,11 +802,18 @@ automation, for example:
 
 - The dashboard is only reachable through Home Assistant Ingress, so only
   logged-in Home Assistant users can open it. Direct connections are refused.
-  Any Home Assistant user can open it, not only administrators (hiding the
-  sidebar entry doesn't stop a direct link), and the user name Ember records
-  next to an entry comes from a header that users can forge, so treat it as a
-  label. An optional owner passphrase for money entries and approvals is
-  planned.
+  The panel is shown to administrators, but any Home Assistant user who opens
+  an Ingress session on purpose gets through too, so set **Owner user IDs**:
+  then Ember answers only the users named there, and every other user gets
+  "This Ember answers only its owner" for everything (the dashboard, its
+  actions, the diagnostics, emails and workspace files). Home Assistant's
+  Supervisor names the signed-in user in the first `X-Remote-User-Id` header,
+  which a browser can't set, so the check can't be talked around. Find your ID
+  in the dashboard's banner while the option is empty, or under **Settings →
+  People → Users** (with advanced mode on). Every refused user is logged once.
+  Ember records who did what (a grant, a decision, a removed message) as the
+  user's display name with their user ID, for example `Stefan (8f14…)`: names
+  can be changed, the ID can't.
   The one exception is `/api/sensors`, which can be read from the Home Assistant
   host network (Home Assistant itself, and apps that use host networking). It
   only contains the agent's state, balance, runway and today's spending.
