@@ -33,8 +33,8 @@ your approval, and only you can record revenue.
 | Anthropic API key | empty | Only needed when dry run is off. Never logged or shown. |
 | Agent name | Ember | What the agent calls itself. |
 | Starting balance | 20 USD | Your first grant, recorded once when the agent is born. |
-| Daily spending cap | 1 USD | Hard limit per day. Calls that could exceed it are refused. |
-| Spending cap per wake cycle | 0.25 USD | Hard limit per cycle. Must not exceed the daily cap. |
+| Daily spending cap | 1.50 USD | Hard limit per day. Calls that could exceed it are refused. |
+| Spending cap per wake cycle | 0.50 USD | Hard limit per cycle. Must not exceed the daily cap. A working cycle (its plan, a work step and the reflection) can cost up to about 0.25 USD with the default models; the dashboard warns you below 1.5 times that, when most cycles would end after a step or two. |
 | Share for ventures | 25 % | This share of each day's spending goes to venture cycles, where the agent researches new ways to earn. 0 switches them off. See [Ventures](#ventures). |
 | Default sleep | 240 min | Time between wake cycles when the agent doesn't choose. |
 | Shortest / longest sleep | 30 / 1440 min | Bounds for the sleep time the agent chooses. |
@@ -103,8 +103,9 @@ Opus 5.5 always thinks before it answers, and Ember leaves room for that in
 every call. A plan then costs about two to three times as much (typically
 $0.06–0.12 instead of $0.03–0.04, at most about $0.16). To keep the daily
 spending about the same, let Ember wake less often: raise **Shortest sleep** to
-120–180 minutes. The dashboard warns you if the cycle cap is too low for one
-planning call.
+120–180 minutes. A working cycle can then cost up to about $0.38, so set the
+cycle cap to 0.60 or more: the dashboard warns you if the cycle cap is too low
+for one planning call, for one working cycle, or for 1.5 working cycles.
 
 The **Workshop model** can be `claude-opus-5-5` too, for harder code. A run's
 first call may then cost up to about $0.68, so raise **Workshop cap per run** to

@@ -34,8 +34,8 @@ watchdog: "http://[HOST]:[PORT:8099]/api/health"
 options:
   agent_name: Ember
   starting_balance_usd: 20
-  daily_spend_cap_usd: 1
-  cycle_spend_cap_usd: 0.25
+  daily_spend_cap_usd: 1.5
+  cycle_spend_cap_usd: 0.5
   venture_share: 25
   wake_interval_minutes: 240
   min_sleep_minutes: 30

@@ -10,6 +10,7 @@ budget guard (API costs); nothing else writes money.
 from __future__ import annotations
 
 import logging
+import math
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -37,6 +38,9 @@ from .pricing import opening_cost, working_cycle_cost, workshop_run_cost
 
 log = logging.getLogger(__name__)
 
+# 0.12.0 (FIX NOW 19): a cycle cap below this many working cycles gets a warning: most cycles would end after a step
+# or two (every quote is a worst case, and the reflection's reserve is held back from the start).
+ROOMY_CYCLE = 1.5
 TYPE_LABELS = {
     "owner_grant": "a grant",
     "revenue": "revenue",
@@ -244,6 +248,13 @@ class Economy:
                 f"The cycle spend cap (${self.settings.cycle_spend_cap_usd:.2f}) is below one working cycle (plan, a"
                 f" work step and the reflection: up to ${micros_to_usd(working):.2f}), so a wake cycle may end right"
                 " after its plan."
+            )
+        elif working is not None and working <= cycle_cap < working * ROOMY_CYCLE:  # 0.12.0 (FIX NOW 19)
+            result.append(
+                f"The cycle spend cap (${self.settings.cycle_spend_cap_usd:.2f}) leaves little room for work: a working"
+                f" cycle (plan, a work step and the reflection) can cost up to ${micros_to_usd(working):.2f}, and below"
+                f" {ROOMY_CYCLE} times that (${micros_to_usd(math.ceil(working * ROOMY_CYCLE / 10_000) * 10_000):.2f})"
+                " most cycles end after a step or two."
             )
         run = workshop_run_cost(self.settings, self.db, self.mode)
         if run is not None and self.settings.workshop and self.settings.workshop_runs_per_day:

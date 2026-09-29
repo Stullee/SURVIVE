@@ -365,3 +365,29 @@ def test_a_cycle_cap_too_small_for_a_working_cycle_is_warned_about(data_dir: Pat
     economy.stop()
     roomy = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.25))
     assert not any("below one working cycle" in w for w in roomy.warnings())
+
+
+def test_the_default_caps_leave_room_and_a_tight_cycle_cap_is_warned_about(data_dir: Path) -> None:
+    """0.12.0 (FIX NOW 19): the default cycle cap ($0.25) fit a working cycle by $0.0001, so any addition to the
+    prompts or any rise of the safety factor stopped the scheduled wake-ups."""
+    from app.config import Settings
+    from app.economy.metering import usd_cap_to_micros
+    from app.economy.pricing import working_cycle_cost
+    from app.economy.service import ROOMY_CYCLE
+    from tests.economy_helpers import make_economy
+
+    defaults = make_economy(data_dir, Settings())
+    working = working_cycle_cost(Settings(), defaults.db) or 0
+    assert working * ROOMY_CYCLE <= usd_cap_to_micros(Settings().cycle_spend_cap_usd)
+    assert usd_cap_to_micros(Settings().daily_spend_cap_usd) >= 3 * usd_cap_to_micros(Settings().cycle_spend_cap_usd)
+    assert not any("cycle spend cap" in w for w in defaults.warnings())
+    defaults.stop()
+    tight = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.30))
+    [warning] = [w for w in tight.warnings() if "cycle spend cap" in w]
+    assert warning == (
+        "The cycle spend cap ($0.30) leaves little room for work: a working cycle (plan, a work step and the"
+        " reflection) can cost up to $0.25, and below 1.5 times that ($0.38) most cycles end after a step or two."
+    )
+    tight.stop()
+    short = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.2))
+    assert [w for w in short.warnings() if "cycle spend cap" in w][0].endswith("may end right after its plan.")

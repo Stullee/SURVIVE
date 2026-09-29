@@ -104,8 +104,10 @@ class Settings(BaseModel):
     anthropic_api_key: SecretStr = SecretStr("")
     agent_name: str = Field(default="Ember", min_length=1, max_length=40)
     starting_balance_usd: float = Field(default=20.0, ge=0, le=100_000)
-    daily_spend_cap_usd: float = Field(default=1.0, ge=0, le=1_000)
-    cycle_spend_cap_usd: float = Field(default=0.25, ge=0, le=1_000)
+    # 0.12.0: the defaults leave room (a working cycle can cost up to about $0.25; the cycle cap was exactly that, so
+    # any addition to the prompts or a higher safety factor stopped scheduled wake-ups).
+    daily_spend_cap_usd: float = Field(default=1.5, ge=0, le=1_000)
+    cycle_spend_cap_usd: float = Field(default=0.5, ge=0, le=1_000)
     # Ventures (0.10.0): this percent of each day's spending goes to venture cycles, where the agent researches new
     # ways to earn and brings the owner business cases. 0: no venture cycles.
     venture_share: int = Field(default=25, ge=0, le=100)
