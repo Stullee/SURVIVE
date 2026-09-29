@@ -32,7 +32,7 @@ from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
 from . import privacy
-from .agent import ventures
+from .agent import library, ventures
 from .agent.context import RESEARCH_HEADING
 from .agent.sandbox import kind_of
 from .db import utcnow
@@ -784,6 +784,12 @@ def _agent(state: AppState, full: bool = True) -> str:
             ),
             ("etsy_edits", ["id", "approval_id", "listing_id", "status", "result", "error"], 10),
             ("etsy_orders", ["receipt_id", "ordered_at", "status", "total", "items"], 10),
+            # The owner's library (0.12.0): titles, sizes and how far the study got; never the texts.
+            (
+                "library_documents",
+                ["id", "study", "studied", "chars", "learnings", "cost", "title", "study_note", "removed_at"],
+                20,
+            ),
         ):
             rows = conn.execute(
                 f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC LIMIT ?",
@@ -799,7 +805,27 @@ def _agent(state: AppState, full: bool = True) -> str:
                 rows = [_listing(conn, scope, r) for r in rows]
             if table == "approvals":
                 rows = [_approval(r, full) for r in rows]
+            if table == "library_documents":
+                counts = library.learning_counts(conn, scope)
+                rows = [
+                    {
+                        **dict(r),
+                        "studied": f"{r['studied_parts']}/{r['parts']}",
+                        "learnings": counts.get(int(r["id"]), 0),
+                        "cost": f"${micros_to_usd(r['study_micros']):.4f}",
+                    }
+                    for r in rows
+                ]
             out.append(f"-- {table}\n" + _rows(rows, columns))
+        if full:  # what the study learned: Ember's words, but drawn from the owner's documents (full report only)
+            learned = conn.execute(
+                f"SELECT document_id, part, topic, text FROM learnings WHERE {where} ORDER BY id DESC LIMIT 20", params
+            ).fetchall()
+            if learned:
+                out.append(
+                    "-- learnings (the newest 20)\n"
+                    + _rows([dict(r) for r in learned], ["document_id", "part", "topic", "text"])
+                )
         # The scripts upgrade requests carry: what the one who builds the upgrade needs (the report is its hand-off).
         for row in conn.execute(
             f"SELECT id, script_path, script_text FROM upgrades WHERE {where} AND script_text IS NOT NULL"

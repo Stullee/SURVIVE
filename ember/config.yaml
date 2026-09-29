@@ -37,6 +37,7 @@ options:
   daily_spend_cap_usd: 1.5
   cycle_spend_cap_usd: 0.5
   venture_share: 25
+  library_study_usd_per_day: 0.5
   wake_interval_minutes: 240
   min_sleep_minutes: 30
   max_sleep_minutes: 1440
@@ -97,6 +98,7 @@ schema:
   daily_spend_cap_usd: float(0,1000)
   cycle_spend_cap_usd: float(0,1000)
   venture_share: int(0,100)
+  library_study_usd_per_day: float(0,100)
   wake_interval_minutes: int(5,10080)
   min_sleep_minutes: int(5,10080)
   max_sleep_minutes: int(5,10080)

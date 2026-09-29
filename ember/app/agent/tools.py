@@ -43,7 +43,7 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
-from . import netguard, roadmap, store, ventures
+from . import library, netguard, roadmap, store, ventures
 from .memory import Memory, MemoryError_
 from .sandbox import Jail, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
@@ -78,6 +78,8 @@ ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "propose_email"})
 # Offered only in venture cycles (0.10.0).
 VENTURE_TOOLS = frozenset({"brainstorm"})
+# Offered only while the owner's library holds documents (0.12.0).
+LIBRARY_TOOLS = frozenset({"knowledge_search", "library_read"})
 # Model calls of their own: they need the network, and no database transaction is held meanwhile.
 CALLING_TOOLS = frozenset({"research", "workshop", "brainstorm"})
 FIRST_CONTACT = (
@@ -314,6 +316,22 @@ SPECS: dict[str, Spec] = {
                 "theme": _s("A market, a customer group, a problem or a skill to think about.", 300, required=False),
             },
             per_cycle=1,
+        ),
+        Spec(
+            "knowledge_search",
+            "Search what you learned from your owner's library (the documents they gave you) and its texts. Free.",
+            {"query": _s("Words to look for, e.g. 'etsy tags long-tail'.", 200)},
+            per_cycle=10,
+            reflect=True,
+        ),
+        Spec(
+            "library_read",
+            "Read your owner's library: without document_id, the list of documents; with it, a part of one. Free.",
+            {
+                "document_id": _i("The document's number.", required=False),
+                "part": _i("Which part, from 1.", required=False, minimum=1),
+            },
+            per_cycle=10,
         ),
         Spec(
             "milestone_create",
@@ -654,11 +672,12 @@ SPECS: dict[str, Spec] = {
 
 
 def definitions(
-    mail: bool = False, workshop: bool = True, etsy: bool = False, venture: bool = False
+    mail: bool = False, workshop: bool = True, etsy: bool = False, venture: bool = False, library: bool = False
 ) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds, and in
     every cycle of a mode and configuration (the email tools only with a mailbox, the workshop only when the
-    owner's options allow runs, the Etsy tools only with a shop, brainstorm only in a venture cycle)."""
+    owner's options allow runs, the Etsy tools only with a shop, brainstorm only in a venture cycle, the library's
+    only while it holds documents)."""
     return [
         _definition(spec)
         for spec in SPECS.values()
@@ -666,6 +685,7 @@ def definitions(
         and (workshop or spec.name not in WORKSHOP_TOOLS)
         and (etsy or spec.name not in ETSY_TOOLS)
         and (venture or spec.name not in VENTURE_TOOLS)
+        and (library or spec.name not in LIBRARY_TOOLS)
     ]
 
 
@@ -766,6 +786,7 @@ class ToolContext:
     mail: MailAccess | None = None  # Ember's mailbox, when it has one
     etsy: EtsyAccess | None = None  # the Etsy shop, when there is one
     venture: bool = False  # a venture cycle (0.10.0): brainstorm, and more research
+    library: bool = False  # the owner's library holds documents (0.12.0): its tools
     brainstorm: BrainstormFn | None = None
     nonce: str = field(default_factory=lambda: secrets.token_hex(3))
 
@@ -795,6 +816,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
             or (name in WORKSHOP_TOOLS and not ctx.workshop)
             or (name in ETSY_TOOLS and ctx.etsy is None)
             or (name in VENTURE_TOOLS and not ctx.venture)
+            or (name in LIBRARY_TOOLS and not ctx.library)
         ):
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
@@ -1443,6 +1465,82 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     return Outcome(True, f"Milestone #{mid}: {what}.{after}", f"milestone #{mid} {what}"[:300])
 
 
+def _knowledge_search(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.12.0: what the agent learned from its owner's library that matches, then the best passages of the texts."""
+    query = " ".join(args["query"].split())
+    words = library.terms(query)
+    if not words:
+        raise ToolError("query: give words to look for (not only short or common ones)")
+    found = library.search_learnings(conn, ctx.scope, words, limit=10)
+    passages = library.search_parts(conn, ctx.scope, words, limit=3)
+    quoted = json.dumps(query, ensure_ascii=False)
+    if not found and not passages:
+        return Outcome(
+            True,
+            f"Nothing in your owner's library matches {quoted}. Try other words, or library_read for its documents.",
+            f"nothing for {query[:60]}",
+        )
+    text = []
+    if found:
+        lines = "\n".join(library.learning_line(r) for r in found)
+        text.append(f"What you learned ({len(found)}, the best match first):\n{wrap(ctx, 'library', lines)}")
+    if passages:
+        lines = "\n".join(
+            f"#{p.document_id}.{p.part} {json.dumps(p.title, ensure_ascii=False)} (part {p.part} of {p.parts}): "
+            f"{p.snippet}"
+            for p in passages
+        )
+        text.append(f"Passages:\n{wrap(ctx, 'library', lines)}")
+    text.append("#3.2 is document 3, part 2: library_read shows a whole part.")
+    return Outcome(True, "\n".join(text), f"{len(found)} learnings, {len(passages)} passages for {query[:60]}")
+
+
+def _library_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.12.0: the owner's library: its documents, or one part of one."""
+    document_id = args.get("document_id")
+    if document_id is None:
+        rows = library.documents(conn, ctx.scope)
+        counts = library.learning_counts(conn, ctx.scope)
+        lines = []
+        for r in rows[:40]:
+            state = {"done": f"{counts.get(r['id'], 0)} learnings", "waiting": "not studied yet"}.get(
+                r["study"], "not studied"
+            )
+            links = "".join(
+                f" · {name} #{r[f'{name}_id']}" for name in ("venture", "project") if r[f"{name}_id"] is not None
+            )
+            note = f" · your owner's note: {json.dumps(r['note'], ensure_ascii=False)}" if r["note"] else ""
+            lines.append(
+                f"#{r['id']} {json.dumps(r['title'], ensure_ascii=False)} · {r['parts']} part"
+                f"{'s' if r['parts'] != 1 else ''}, {r['chars']:,} characters · {state}{links}{note}"
+            )
+        if len(rows) > 40:
+            lines.append(f"(and {len(rows) - 40} older documents)")
+        return Outcome(
+            True,
+            "Your owner's library, the newest first:\n" + "\n".join(lines)
+            if rows
+            else "Your owner's library is empty.",
+            f"{len(rows)} documents",
+        )
+    row = library.get(conn, ctx.scope, document_id)
+    if row is None or row["removed_at"] is not None:
+        raise ToolError(f"there is no document #{document_id} in your owner's library")
+    part = args.get("part") or 1
+    if part > row["parts"]:
+        raise ToolError(f"document #{document_id} has {row['parts']} part{'s' if row['parts'] != 1 else ''}")
+    body = library.part_text(conn, document_id, part) or ""
+    head = f"Document #{document_id} {json.dumps(row['title'], ensure_ascii=False)}, part {part} of {row['parts']}"
+    if row["source"]:
+        head += f" (source: {json.dumps(row['source'], ensure_ascii=False)})"
+    if row["note"]:
+        head += f"\nYour owner's note on it: {json.dumps(row['note'], ensure_ascii=False)}"
+    after = f"\nNext: part {part + 1}." if part < row["parts"] else ""
+    return Outcome(
+        True, f"{head}\n{wrap(ctx, 'library', body)}{after}", f"#{document_id} part {part} of {row['parts']}"
+    )
+
+
 def _request_approval(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     existing = store.pending_approval_by_payload(conn, ctx.scope, store.sha256(args["payload"]))
     if existing is not None:
@@ -2023,6 +2121,8 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "set_sleep": _set_sleep,
     "write_journal": _write_journal,
     "research": _research,
+    "knowledge_search": _knowledge_search,
+    "library_read": _library_read,
     "workshop": _workshop,
     "etsy_categories": _etsy_categories,
     "propose_etsy_listing": _propose_etsy_listing,

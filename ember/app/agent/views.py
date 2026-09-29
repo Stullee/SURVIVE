@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
-from . import review, roadmap, store, ventures
+from . import library, review, roadmap, store, ventures
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
 if TYPE_CHECKING:
@@ -152,6 +152,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         overdue = sum(1 for m in open_milestones if m["due"] < today.isoformat())  # dates are YYYY-MM-DD
         proposals = sum(1 for m in open_milestones if m["proposed_due"])  # the agent's dates for the owner's (0.12.0)
         roadmap_stamp = _roadmap_stamp(conn, scope, simulated, today.isoformat())
+        library_stamp = _library_stamp(conn, scope)
     return {
         "badges": counts,
         "now": now,
@@ -169,6 +170,8 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         # So is the roadmap (api/roadmap); its tab shows how many milestones are overdue and how many proposed dates
         # wait for the owner.
         "roadmap": {"stamp": roadmap_stamp, "overdue": overdue, "proposals": proposals},
+        # And the library (api/library, 0.12.0): this changes whenever a document or its study does.
+        "library": {"stamp": library_stamp},
     }
 
 
@@ -183,6 +186,98 @@ def _roadmap_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated:
         (simulated, scope.session),
     ).fetchone()
     return f"{int(row[0])}|{row[1]}|{int(cycle[0])}|{today}"
+
+
+def _library_stamp(conn: sqlite3.Connection, scope: store.AgentScope) -> str:
+    where, params = scope.where()
+    row = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(studied_parts), 0), COALESCE(SUM(study_failures), 0),"
+        f" COALESCE(MAX(removed_at), ''), (SELECT COUNT(*) FROM learnings WHERE {where})"
+        f" FROM library_documents WHERE {where}",
+        (*params, *params),
+    ).fetchone()
+    return "|".join(str(v) for v in tuple(row))
+
+
+def library_view(agent: Agent) -> dict[str, Any]:
+    """The Library tab (0.12.0): the owner's documents, the newest first, with how far their study got and what it
+    cost, and today's study budget. The texts and learnings load per document (``library_document``)."""
+    scope = agent.scope()
+    with agent.db.connection() as conn:
+        rows = library.documents(conn, scope)
+        counts = library.learning_counts(conn, scope)
+        spent = library.study_spent(conn, scope, agent.clock.today())
+        where, params = scope.where()
+        titles = {
+            table: {int(r[0]): r[1] for r in conn.execute(f"SELECT id, title FROM {table} WHERE {where}", params)}
+            for table in ("ventures", "projects")
+        }
+        stamp = _library_stamp(conn, scope)
+    items = [
+        {
+            "id": r["id"],
+            "title": r["title"],
+            "source": r["source"],
+            "note": r["note"],
+            "venture_id": r["venture_id"],
+            "venture_title": titles["ventures"].get(r["venture_id"]) if r["venture_id"] else None,
+            "project_id": r["project_id"],
+            "project_title": titles["projects"].get(r["project_id"]) if r["project_id"] else None,
+            "file_name": r["file_name"],
+            "chars": r["chars"],
+            "parts": r["parts"],
+            "added_at": r["added_at"],
+            "added_by": r["added_by"],
+            "study": r["study"],
+            "studied_parts": r["studied_parts"],
+            "study_note": r["study_note"],
+            "study_usd": _usd(r["study_micros"]),
+            "summary": r["summary"],
+            "studied_at": r["studied_at"],
+            "learnings": counts.get(int(r["id"]), 0),
+            "simulated": r["mode"] == "dry_run",
+        }
+        for r in rows
+    ]
+    return {
+        "mode": agent.mode,
+        "items": items,
+        "stamp": stamp,
+        "totals": {
+            "documents": len(rows),
+            "chars": sum(int(r["chars"]) for r in rows),
+            "learnings": sum(counts.get(int(r["id"]), 0) for r in rows),
+        },
+        "study": {"budget_usd": agent.settings.library_study_usd_per_day, "spent_today_usd": _usd(spent)},
+        "limits": {
+            **library.LIMITS,
+            "document_chars": library.DOCUMENT_CHARS,
+            "library_chars": library.LIBRARY_CHARS,
+            "documents": library.MAX_DOCUMENTS,
+            "file_bytes": library.FILE_BYTES,
+            "file_types": list(library.FILE_TYPES),
+        },
+    }
+
+
+def library_document(agent: Agent, document_id: int) -> dict[str, Any] | None:
+    """One document of the library with its text and what Ember learned from it (None: no such document)."""
+    scope = agent.scope()
+    with agent.db.connection() as conn:
+        row = library.get(conn, scope, document_id)
+        if row is None or row["removed_at"] is not None:
+            return None
+        text = library.full_text(conn, document_id)
+        learned = library.learnings_of(conn, document_id)
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "text": text,
+        "learnings": [
+            {"id": r["id"], "part": r["part"], "topic": r["topic"], "text": r["text"], "created_at": r["created_at"]}
+            for r in learned
+        ],
+    }
 
 
 def roadmap_view(agent: Agent) -> dict[str, Any]:

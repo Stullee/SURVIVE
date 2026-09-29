@@ -605,6 +605,16 @@ class Agent:
 
         return views.roadmap_view(self)
 
+    def library(self) -> dict[str, Any]:
+        from . import views
+
+        return views.library_view(self)
+
+    def library_document(self, document_id: int) -> dict[str, Any] | None:
+        from . import views
+
+        return views.library_document(self, document_id)
+
     def planner_preview(self) -> str:
         """What the next wake cycle's plan would see, built now for the diagnostics report (the daily review, new mail
         and the shop's latest numbers come in when the cycle runs)."""

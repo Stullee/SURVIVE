@@ -36,6 +36,7 @@ your approval, and only you can record revenue.
 | Daily spending cap | 1.50 USD | Hard limit per day. Calls that could exceed it are refused. |
 | Spending cap per wake cycle | 0.50 USD | Hard limit per cycle. Must not exceed the daily cap. A working cycle (its plan, a work step and the reflection) can cost up to about 0.25 USD with the default models; the dashboard warns you below 1.5 times that, when most cycles would end after a step or two. |
 | Share for ventures | 25 % | This share of each day's spending goes to venture cycles, where the agent researches new ways to earn. 0 switches them off. See [Ventures](#ventures). |
+| Daily study budget for the library | 0.50 USD | What the agent may spend a day studying the documents you add on the Library tab. It counts toward the daily cap, not the cycle cap. 0: nothing is studied, but the documents can still be searched and read. See [Library](#library). |
 | Default sleep | 240 min | Time between wake cycles when the agent doesn't choose. |
 | Shortest / longest sleep | 30 / 1440 min | Bounds for the sleep time the agent chooses. |
 | Tool steps per cycle | 15 | Maximum tool calls in one cycle. While the agent works, the overview counts them ("tool step 3 (at most 15)"); they aren't the steps of its plan. |
@@ -370,8 +371,42 @@ the open milestones leading to it) off the plan. Of the 20 open places on the
 roadmap, the agent fills 16 at most: the last 4 are kept for yours. The agent
 reads your word on its next wake.
 
+## Library
+
+The **Library** tab is where you hand the agent reference material you find:
+Etsy's own guides to listings, titles, tags and keywords, an SEO guide, notes of
+your own. The agent can't fetch Etsy's pages itself (Etsy's API terms forbid
+programs reading its site), but you can: open the page, select its text, copy
+it and paste it into **Add**. You can also upload files: text, Markdown, a saved
+web page (HTML), PDF or Word (.docx), up to 8 MB each; each file becomes a
+document. Give a document a source (its link), the venture or project it is
+for, and a note on what to use it for, if you like.
+
+**Studied once, kept for good.** At the start of its next wake cycles, before
+it plans, the agent studies each new document: it reads it a few thousand
+words at a time and keeps what is worth knowing, as a short summary and
+specific learnings (a rule, a number, a how-to step, a mistake to avoid), each
+naming the part of the document it comes from. The text never has to be read
+or analysed again. Studying costs a few cents for a typical page (a long guide
+of 100 pages about $0.30 with the default models); the **Daily study budget**
+option limits it (0.50 USD a day by default, counted toward the daily cap), and
+a long document is studied over several cycles or days. Each card shows how far
+the study got, what it cost and, when you open it, what the agent learned.
+
+**Used where it matters.** Each plan sees what was newly learned; each work
+step gets the learnings that match what the cycle is doing (picked by Ember's
+code, from the documents for the plan's venture or project first); and the
+agent can search the learnings and the texts, or read a document, with free
+tools. Documents are your reference, shown to the agent as information: it
+doesn't take orders from them, and it doesn't copy their text into what it
+publishes. **Remove** takes a document's text out (what was learned from it is
+no longer shown); a study that failed three times stops until you press
+**Study again**.
+
 ## Your part
 
+- **Library**: add pages and files worth knowing; the agent studies each once
+  and keeps what it learned (see [Library](#library)).
 - **Ventures**: back, park or kill the agent's business cases and add your own
   ideas on the Ventures tab (see [Ventures](#ventures)).
 - **Roadmap**: add milestones you want reached by a date, leave notes, drop

@@ -533,7 +533,7 @@ def test_a_cycle_cap_without_room_for_a_work_step_holds_the_scheduled_wakes(data
 def test_no_room_for_a_work_step_under_a_roomy_cycle_cap_backs_off_as_usual(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=1, cycle_spend_cap_usd=0.25)
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=1, cycle_spend_cap_usd=0.5)
     agent, _ = make_agent(data_dir, [plan()], settings)
     monkeypatch.setattr(agent.economy.books, "cap_spend_on", lambda scope, day: 960_000)  # 0.04 USD left today
     assert agent.run_cycle("owner").note == loop.NO_STEP

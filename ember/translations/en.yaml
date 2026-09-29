@@ -24,6 +24,13 @@ configuration:
       This percent of each day's spending goes to venture cycles, where the
       agent researches new ways to earn beyond what it does now and brings you
       business cases on the Ventures tab. 0 switches venture cycles off.
+  library_study_usd_per_day:
+    name: Daily study budget for the library (USD)
+    description: >-
+      What the agent may spend a day studying the documents you add on the
+      Library tab: it reads each one once and keeps what it learned. Counts
+      toward the daily cap, not the cycle cap. 0: nothing is studied; the
+      documents can still be searched and read.
   wake_interval_minutes:
     name: Default sleep between wake cycles (minutes)
     description: Used when the agent does not choose its own sleep time.

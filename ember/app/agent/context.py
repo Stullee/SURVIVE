@@ -24,7 +24,7 @@ from ..economy.costs import micros_to_usd
 from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
-from . import review, roadmap, store, ventures
+from . import library, review, roadmap, store, ventures
 from .memory import CAPS, Memory
 from .news import CHANGELOG_LIMIT, Item, News, Shown
 from .sandbox import Jail
@@ -123,6 +123,7 @@ PLANNER_BUDGETS = {
     "etsy": 1_600,
     "ventures": 2_600,
     "roadmap": 1_800,  # 0.11.0
+    "library": 1_200,  # 0.12.0: the owner's library, when it holds documents
 }
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
 # room for one whole message of plain text at the owner's limit of 2,000 characters.
@@ -134,6 +135,9 @@ SHORTEST_QUOTE = 40  # no quoted text is shortened below this; if that isn't eno
 # (6,500 since 0.10.0: a venture's focus is longer. A milestone's (0.11.0) is short: a brief with a venture's, a
 # project's and a milestone's focus at their longest loses its end, as a brief over its budget always does.)
 BRIEF_BUDGET = 6_500
+# 0.12.0: the learnings from the owner's library that match the plan (Ember's code picks them), on top of the brief.
+KNOWLEDGE_HEADING = "WHAT YOU LEARNED (from your owner's library)"
+KNOWLEDGE_BUDGET = 1_800
 VENTURE_FOCUS_BUDGET = 1_900  # a venture's FOCUS in the brief
 MILESTONE_FOCUS_BUDGET = 700  # a milestone's FOCUS in the brief (0.11.0)
 VENTURE_BRIEF = (
@@ -143,7 +147,7 @@ VENTURE_BRIEF = (
     "ordinary cycle."
 )
 # The largest brief, those sections and their headings included: the WORK and REFLECT profiles are measured on it.
-BRIEF_MAX = BRIEF_BUDGET + INSTRUCTIONS_BUDGET + OWNER_BUDGET + MAIL_BUDGET + RESEARCH_BUDGET + 200
+BRIEF_MAX = BRIEF_BUDGET + INSTRUCTIONS_BUDGET + OWNER_BUDGET + MAIL_BUDGET + RESEARCH_BUDGET + KNOWLEDGE_BUDGET + 260
 WILL_BUDGET = 4_500 + OWNER_BUDGET + 100  # the largest will context: the LAST_WILL profile is measured on it
 _QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')  # a JSON string: how the owner's and the agent's texts are quoted
 _DIGEST = re.compile(r'<data src="research" id="[0-9a-f]+">\n(.*?)\n</data id="[0-9a-f]+">', re.DOTALL)
@@ -230,6 +234,7 @@ class Snapshot:
     today: date | None = None  # the owner's local date (the roadmap's horizons are counted from it)
     roadmap: list[sqlite3.Row] = field(default_factory=list)  # the open milestones, the first due first (0.11.0)
     roadmap_closed: list[sqlite3.Row] = field(default_factory=list)  # closed in the last roadmap.CLOSED_DAYS days
+    library: library.Shelf | None = None  # the owner's library (0.12.0): None while it is empty
 
 
 def snapshot(
@@ -251,6 +256,7 @@ def snapshot(
     etsy: str = "",
     venture: bool = False,
     venture_share: int = 0,
+    shelf: library.Shelf | None = None,
 ) -> Snapshot:
     """What the planner, the brief and the will see; ``today`` (the owner's local date) finds the day's review and
     the day's spending on ventures."""
@@ -311,6 +317,7 @@ def snapshot(
         today=today,
         roadmap=roadmap.open_milestones(conn, scope),
         roadmap_closed=_closed_lately(conn, scope, today),
+        library=shelf,
     )
 
 
@@ -658,6 +665,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         ("WORKSPACE", cut("\n".join(s.workspace) or "Empty.", b["workspace"])),
         *([(RESEARCH_HEADING, cut(research, b["research"]))] if research else []),
         *([("WORKSHOP", cut(workshop_text(s), b["workshop"]))] if s.proven else []),
+        *([("YOUR OWNER'S LIBRARY", cut(library.planner_text(s.library), b["library"]))] if s.library else []),
         ("TASK", f"Plan this {'venture' if s.venture else 'wake'} cycle. Reply with the JSON plan only."),
     ]
     held = _held(since, f"{head}\n" if head else "", lines)
@@ -673,10 +681,12 @@ def brief(
     max_steps: int,
     venture_focus: str = "",
     milestone_focus: str = "",
+    knowledge: str = "",
 ) -> tuple[str, Shown]:
     """The act phase's brief (the same for every step and the reflection: built from the cycle's snapshot only), and
     which of the owner's items it shows. ``venture_focus`` and ``milestone_focus``: the plan's venture and milestone
-    as ``ventures.focus_text`` and ``roadmap.focus_text`` show them."""
+    as ``ventures.focus_text`` and ``roadmap.focus_text`` show them; ``knowledge``: the learnings from the owner's
+    library that match the plan (0.12.0)."""
     focus_parts = [cut(milestone_focus, MILESTONE_FOCUS_BUDGET)] if milestone_focus else []
     if venture_focus:
         focus_parts.append(cut(venture_focus, VENTURE_FOCUS_BUDGET))
@@ -696,19 +706,21 @@ def brief(
     mailed = mail_section(s)
     research = cut(research_text(s), RESEARCH_BUDGET)
     researched = [(RESEARCH_HEADING, research)] if research else []
+    learned = [(KNOWLEDGE_HEADING, cut(knowledge, KNOWLEDGE_BUDGET))] if knowledge else []
     parts = [
         *head,
         *standing,
         *owners,
         *mailed,
         *([("VENTURE CYCLE", VENTURE_BRIEF)] if s.venture else []),
+        *learned,  # before the FOCUS: a brief over its budget loses its end, and this section's room is its own
         ("FOCUS", focus_text),
         ("LESSONS", _newest_lines(s.memory.get("lessons", ""), 800)),
         ("WORKSPACE", "\n".join(s.workspace[:20]) or "Empty."),
         *researched,
         ("LIMITS", f"At most {max_steps} steps this cycle and 4 tool calls per step. Stop when the goal is reached."),
     ]
-    on_top = [*standing, *owners, *mailed, *researched]
+    on_top = [*standing, *owners, *mailed, *researched, *learned]
     room = sum(json_bytes(f"\n\n== {title} ==\n{body}") - 2 for title, body in on_top)  # - 2: its own JSON quotes
     text = cut(_sections(parts), BRIEF_BUDGET + room)
     held = _held(text, _sections([*head, *standing]) + "\n\n== FROM YOUR OWNER ==\n", lines)

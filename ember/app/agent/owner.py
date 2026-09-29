@@ -15,6 +15,8 @@ Ember closes it with the result.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 import sqlite3
 from datetime import timedelta
@@ -27,7 +29,7 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import etsy, executor
 from ..integrations.mail import BODY_MAX
-from . import roadmap, store, ventures
+from . import library, roadmap, store, ventures
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
@@ -483,6 +485,116 @@ class Owner:
                 )
             events.record(self.db, "info", "owner", f"{who or 'The owner'} added milestone #{milestone_id}")
             return Reply(201, {"id": milestone_id})
+
+        return _reply(run)
+
+    # --- the library (0.12.0) ---
+
+    def add_document(self, body: Any, who: str | None) -> Reply:
+        """A document for the library: pasted text, or a file (its contents base64-encoded) that Ember's code turns
+        into text. Ember studies it at its next wake cycles, within the daily study budget."""
+
+        def run() -> Reply:
+            data = _body(
+                body, {"title", "source", "note", "venture_id", "project_id", "text", "file_name", "file_data"}
+            )
+            pasted, encoded = data.get("text"), data.get("file_data")
+            if (pasted in (None, "")) == (encoded in (None, "")):
+                raise OwnerError("text", "paste the text or choose a file")
+            file_name = None
+            if encoded not in (None, ""):
+                name = data.get("file_name")
+                if not isinstance(name, str) or not name.strip() or len(name) > 255:
+                    raise OwnerError("file_name", "name the file (at most 255 characters)")
+                if not isinstance(encoded, str) or len(encoded) > library.FILE_BYTES * 4 // 3 + 4:
+                    raise OwnerError("file_data", f"a file can have at most {library.FILE_BYTES // 1_000_000} MB")
+                try:
+                    raw = base64.b64decode(encoded, validate=True)
+                except binascii.Error as exc:
+                    raise OwnerError("file_data", "the file didn't arrive whole (it isn't base64)") from exc
+                try:
+                    text, title = library.from_file(name.strip(), raw)
+                except library.LibraryError as exc:
+                    raise OwnerError("file_data", str(exc), exc.status) from exc
+                file_name = name.strip()
+            else:
+                if not isinstance(pasted, str):
+                    raise OwnerError("text", "text must be text")
+                if len(pasted) > library.DOCUMENT_CHARS * 2:  # far over the limit even before its spaces go
+                    raise OwnerError("text", f"a document can have at most {library.DOCUMENT_CHARS:,} characters")
+                text = library.plain(pasted)
+                title = next((line for line in text.split("\n") if line.strip()), "")
+            given = _text(data, "title", library.LIMITS["title"])
+            title = " ".join((given or title or "Untitled").split())[: library.LIMITS["title"]]
+            source = _text(data, "source", library.LIMITS["source"]) or ""
+            note = _text(data, "note", library.LIMITS["note"]) or ""
+            with self.db.transaction() as conn:
+                venture_id = self._link(conn, "ventures", "venture_id", data.get("venture_id"))
+                project_id = self._link(conn, "projects", "project_id", data.get("project_id"))
+                try:
+                    document_id = library.add(
+                        conn,
+                        self.scope,
+                        title=title,
+                        text=text,
+                        now=self._now(),
+                        source=" ".join(source.split()),
+                        note=note,
+                        venture_id=venture_id,
+                        project_id=project_id,
+                        file_name=file_name,
+                        who=who,
+                    )
+                except library.LibraryError as exc:
+                    raise OwnerError(exc.field, str(exc), exc.status) from exc
+                row = library.get(conn, self.scope, document_id)
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} added library document #{document_id}")
+            return Reply(201, {"id": document_id, "title": title, "chars": row["chars"], "parts": row["parts"]})
+
+        return _reply(run)
+
+    def _link(self, conn: sqlite3.Connection, table: str, field: str, value: Any) -> int | None:
+        """A venture or project of this scope the document is for (None: none)."""
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise OwnerError(field, f"{field} must be a number")
+        where, params = self.scope.where()
+        if conn.execute(f"SELECT 1 FROM {table} WHERE id = ? AND {where}", (value, *params)).fetchone() is None:
+            raise OwnerError(field, f"there is no {table[:-1]} #{value}", 404)
+        return value
+
+    def remove_document(self, document_id: int, who: str | None) -> Reply:
+        """Take a document out of the library: its text goes, its learnings are no longer shown."""
+
+        def run() -> Reply:
+            with self.db.transaction() as conn:
+                row = library.get(conn, self.scope, document_id)
+                if row is None:
+                    raise OwnerError("id", "no such document", 404)
+                if row["removed_at"] is not None:
+                    raise OwnerError("id", "this document was removed already", 409)
+                library.remove(conn, document_id, self._now(), who)
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} removed library document #{document_id}")
+            return Reply(200, {"id": document_id, "removed": True})
+
+        return _reply(run)
+
+    def study_document_again(self, document_id: int, who: str | None) -> Reply:
+        """Another try at a document whose study failed: it goes on from where it stopped."""
+
+        def run() -> Reply:
+            with self.db.transaction() as conn:
+                row = library.get(conn, self.scope, document_id)
+                if row is None or row["removed_at"] is not None:
+                    raise OwnerError("id", "no such document", 404)
+                if row["study"] != "failed":
+                    raise OwnerError("id", f"its study is {row['study']}, not failed", 409)
+                library.study_again(conn, document_id)
+            events.record(
+                self.db, "info", "owner", f"{who or 'The owner'} asked to study library document #{document_id} again"
+            )
+            return Reply(200, {"id": document_id, "study": "waiting"})
 
         return _reply(run)
 

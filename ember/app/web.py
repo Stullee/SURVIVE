@@ -473,6 +473,49 @@ def decide_milestone(request: Request, milestone_id: ItemId, body: Annotated[Any
     return _reply(actions.decide_milestone(milestone_id, body, _owner(request)))
 
 
+@router.get("/api/library")
+def library_view(request: Request) -> JSONResponse:
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    return JSONResponse(agent.library())
+
+
+@router.get("/api/library/{document_id}")
+def library_document(request: Request, document_id: ItemId) -> JSONResponse:
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    document = agent.library_document(document_id)
+    if document is None:
+        return JSONResponse({"error": "no such document", "field": "id"}, status_code=404)
+    return JSONResponse(document)
+
+
+@router.post("/api/library")
+def add_document(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.add_document(body, _owner(request)))
+
+
+@router.post("/api/library/{document_id}/remove")
+def remove_document(request: Request, document_id: ItemId) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.remove_document(document_id, _owner(request)))
+
+
+@router.post("/api/library/{document_id}/study")
+def study_document_again(request: Request, document_id: ItemId) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.study_document_again(document_id, _owner(request)))
+
+
 @router.post("/api/upgrades/{upgrade_id}")
 def update_upgrade(request: Request, upgrade_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
     actions = _owner_actions(request)

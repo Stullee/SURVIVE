@@ -140,6 +140,7 @@ CHAOS: dict[str, tuple[str, ...]] = {
     "workshop": ("svg", "nothing", "pause"),
     "review": ("prose", "cut_off", "unknown_project"),
     "brainstorm": ("prose", "cut_off"),
+    "study": ("prose", "cut_off"),
     "will": ("cut_off", "empty"),
 }
 _OPEN_STATUSES = ("idea", "active", "waiting")
@@ -381,8 +382,8 @@ def thinking_signature(thinking: str) -> str:
 
 
 def request_kind(request: Mapping[str, Any]) -> str:
-    """plan, review, brainstorm, workshop, research, reflect, work or will (anything else without tools counts as a
-    will)."""
+    """plan, review, brainstorm, study, workshop, research, reflect, work or will (anything else without tools counts
+    as a will)."""
     output_config = request.get("output_config")
     fmt = output_config.get("format") if isinstance(output_config, Mapping) else None
     schema = fmt.get("schema") if isinstance(fmt, Mapping) else None
@@ -393,6 +394,8 @@ def request_kind(request: Mapping[str, Any]) -> str:
         return "review"
     if isinstance(properties, Mapping) and "ideas" in properties:
         return "brainstorm"
+    if isinstance(properties, Mapping) and "learnings" in properties:
+        return "study"
     tools = [t for t in request.get("tools") or [] if isinstance(t, Mapping)]
     if any(str(t.get("type") or "").startswith("code_execution_") for t in tools):
         return "workshop"
@@ -682,6 +685,9 @@ RESEARCH_VENTURE_STEP = "Research venture #{id}: {title}"
 SAVE_VENTURE_STEP = "Save what I learned to venture #{id} and score it"
 _VENTURE_LINE = re.compile(r"^#(\d+) \[([a-z]+)\] (.+?)(?: \(branch of #\d+\))? · ", re.MULTILINE)
 _FOCUS_VENTURE = re.compile(r"^Focus venture: #(\d+) (.+?)(?: \(branch of #\d+\))? \[([a-z]+)\]", re.MULTILINE)
+_STUDY_TITLE = re.compile(r'^Document #\d+ ("(?:[^"\\]|\\.)*")', re.MULTILINE)
+_STUDY_PART = re.compile(r"^\[Part (\d+)\]\n(.*?)(?=\n\n\[Part \d+\]\n|\n</data id=)", re.MULTILINE | re.DOTALL)
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _TREE_TITLE = re.compile(r"^\s*- #\d+ (.+?) \([a-z]+(?:, weight \d+)?\)$", re.MULTILINE)
 # The roadmap (0.11.0): the planner's ROADMAP lines, and what the brief's PLAN asks of it.
 ROADMAP_SECTION = "ROADMAP"
@@ -1193,6 +1199,8 @@ class FakeTransport:
             return self._review(request, rng, chaos)  # the same
         if kind == "brainstorm":
             return self._brainstorm(request, rng, chaos)  # the same
+        if kind == "study":
+            return self._study(request, chaos)  # the same
         if kind == "research":
             draft = self._research(request, rng, chaos)
         elif kind == "workshop":
@@ -1296,6 +1304,35 @@ class FakeTransport:
         return _Draft(
             [_text(json.dumps(review, ensure_ascii=False))], note=f"review: {len(verdicts)} verdicts, {stops} stop"
         )
+
+    def _study(self, request: Mapping[str, Any], chaos: str | None) -> _Draft:
+        """A study of the owner's library (0.12.0): a learning from each part (its first sentence with a number, or
+        its first sentence), marked as the dry run's, and a summary."""
+        context = _text_of(request["messages"][-1].get("content"))
+        found = _STUDY_TITLE.search(context)
+        title = json.loads(found[1]) if found else "the document"
+        learnings = []
+        for part in _STUDY_PART.finditer(context):
+            sentences = [" ".join(x.split()) for x in _SENTENCE_END.split(part[2]) if x.strip()]
+            if not sentences:
+                continue
+            chosen = next((x for x in sentences if any(c.isdigit() for c in x)), sentences[0])
+            words = [w.lower() for w in re.findall(r"[^\W\d_]+", chosen)][:2]
+            learnings.append(
+                {"part": int(part[1]), "topic": " ".join(words) or "general", "text": f"Dry run: {chosen[:250]}"}
+            )
+        answer = json.dumps(
+            {"summary": f"Dry run: the fake model's summary of {title}.", "learnings": learnings[:12]},
+            ensure_ascii=False,
+        )
+        if chaos == "prose":
+            return _Draft([_text("I read it; it has some useful tips.")], note="chaos: prose")
+        if chaos == "cut_off":
+            max_tokens = int(request.get("max_tokens") or 1)
+            return _Draft(
+                [_text(answer[: len(answer) // 2])], "max_tokens", output_tokens=max_tokens, note="chaos: cut_off"
+            )
+        return _Draft([_text(answer)], note=f"study: {len(learnings[:12])} learnings")
 
     def _brainstorm(self, request: Mapping[str, Any], rng: random.Random, chaos: str | None) -> _Draft:
         """Six ideas the tree doesn't have yet (from a small pool, then numbered variants), with random scores."""

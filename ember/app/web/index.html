@@ -79,6 +79,7 @@
     <button type="button" role="tab" class="tab" id="tab-projects" aria-controls="panel-projects" aria-selected="false">Projects</button>
     <button type="button" role="tab" class="tab" id="tab-ventures" aria-controls="panel-ventures" aria-selected="false">Ventures <span class="badge" id="badge-ventures" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-roadmap" aria-controls="panel-roadmap" aria-selected="false">Roadmap <span class="badge badge-alert" id="badge-roadmap" hidden></span><span class="badge" id="badge-roadmap-proposals" hidden></span></button>
+    <button type="button" role="tab" class="tab" id="tab-library" aria-controls="panel-library" aria-selected="false">Library</button>
     <button type="button" role="tab" class="tab" id="tab-activity" aria-controls="panel-activity" aria-selected="false">Activity</button>
     <button type="button" role="tab" class="tab" id="tab-approvals" aria-controls="panel-approvals" aria-selected="false">Approvals <span class="badge" id="badge-approvals" hidden></span><span class="badge badge-todo" id="badge-approvals-todo" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-inbox" aria-controls="panel-inbox" aria-selected="false">Inbox <span class="badge" id="badge-inbox" hidden></span></button>
@@ -296,6 +297,65 @@
         <div class="rm-tip" id="rm-tip" hidden></div>
       </article>
       <div class="queue" id="roadmap"></div>
+    </section>
+
+    <section class="panel" id="panel-library" role="tabpanel" aria-labelledby="tab-library" hidden>
+      <article class="card" id="lib-card">
+        <div class="card-head">
+          <div>
+            <h2 id="lib-title" tabindex="-1">Library</h2>
+            <p class="card-sub" id="lib-sub">&nbsp;</p>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn" id="lib-add" aria-controls="lib-form" aria-expanded="false">Add</button>
+            <button type="button" class="btn" id="lib-refresh">Refresh</button>
+          </div>
+        </div>
+        <form class="vt-form" id="lib-form" novalidate hidden>
+          <div class="field">
+            <label for="lib-form-text">Text</label>
+            <textarea id="lib-form-text" rows="8" aria-describedby="lib-form-text-hint lib-form-text-count lib-form-text-error"></textarea>
+            <p class="hint" id="lib-form-text-hint">Paste a page you found: select its text in your browser, copy it and paste it here. Or choose files below.</p>
+            <p class="counter" id="lib-form-text-count"></p>
+            <p class="field-error" id="lib-form-text-error" hidden></p>
+          </div>
+          <div class="field">
+            <label for="lib-form-files">Or files</label>
+            <input type="file" id="lib-form-files" multiple accept=".txt,.md,.markdown,.csv,.tsv,.html,.htm,.pdf,.docx" aria-describedby="lib-form-files-hint lib-form-files-error">
+            <p class="hint" id="lib-form-files-hint">Text, Markdown, a saved web page (HTML), PDF or Word (.docx), up to 8 MB each. Each file becomes a document of its own.</p>
+            <p class="field-error" id="lib-form-files-error" hidden></p>
+          </div>
+          <div class="field">
+            <label for="lib-form-title">Title</label>
+            <input type="text" id="lib-form-title" autocomplete="off" aria-describedby="lib-form-title-hint lib-form-title-error">
+            <p class="hint" id="lib-form-title-hint">Optional. Without one, the text's first line, the page's title or the file's name.</p>
+            <p class="field-error" id="lib-form-title-error" hidden></p>
+          </div>
+          <div class="field">
+            <label for="lib-form-source">Source</label>
+            <input type="text" id="lib-form-source" autocomplete="off" aria-describedby="lib-form-source-hint lib-form-source-error">
+            <p class="hint" id="lib-form-source-hint">Optional: the page's link, or where it is from.</p>
+            <p class="field-error" id="lib-form-source-error" hidden></p>
+          </div>
+          <div class="field">
+            <label for="lib-form-for">For</label>
+            <select id="lib-form-for"></select>
+          </div>
+          <div class="field">
+            <label for="lib-form-note">A note for the agent</label>
+            <textarea id="lib-form-note" rows="2" aria-describedby="lib-form-note-hint lib-form-note-error"></textarea>
+            <p class="hint" id="lib-form-note-hint">Optional: what it is for, or what to look out for in it.</p>
+            <p class="field-error" id="lib-form-note-error" hidden></p>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="lib-form-save">Add to the library</button>
+            <button type="button" class="btn" id="lib-form-cancel">Cancel</button>
+          </div>
+        </form>
+        <p class="form-status" id="lib-status" role="status"></p>
+        <p class="form-status" id="lib-load-status" role="status"></p>
+      </article>
+      <div class="queue" id="library"></div>
     </section>
 
     <section class="panel" id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" hidden>

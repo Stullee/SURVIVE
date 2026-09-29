@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from app.agent import context, loop, prompts, roadmap, tools, ventures
+from app.agent import context, library, loop, prompts, roadmap, tools, ventures
 from app.agent.news import CHANGELOG_LIMIT, News
 from app.config import Settings
 from app.economy.estimate import plan_request
@@ -38,12 +38,14 @@ def biggest_planner_context() -> str:
 
 def first_step_and_reflection(brief: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """The first work step, and the reflection after it with the room the loop keeps for one step's growth (with the
-    most tools: a mailbox's, a shop's and a venture cycle's too)."""
+    most tools: a mailbox's, a shop's, a venture cycle's and the library's too)."""
     grown = [{"role": "assistant", "content": [{"type": "text", "text": "x" * loop.STEP_GROWTH_BYTES}]}]
     longest = "ä" * prompts.ENDED_CHARS  # why the work ended, at its longest
     return (
-        prompts.work_request(SETTINGS, brief, [], mail=True, etsy=True, venture=True),
-        prompts.reflect_request(SETTINGS, brief, grown, [], mail=True, etsy=True, ended=longest, venture=True),
+        prompts.work_request(SETTINGS, brief, [], mail=True, etsy=True, venture=True, library=True),
+        prompts.reflect_request(
+            SETTINGS, brief, grown, [], mail=True, etsy=True, ended=longest, venture=True, library=True
+        ),
     )
 
 
@@ -124,7 +126,25 @@ def overflowing_snapshot() -> context.Snapshot:
             for i in range(roadmap.MAX_OPEN)
         ],
         roadmap_closed=[{**milestone, "id": 2_000 + i, "status": "missed"} for i in range(12)],  # type: ignore[misc]
+        library=library.Shelf(  # 0.12.0: a full library, with its newly studied documents at their longest
+            documents=library.MAX_DOCUMENTS,
+            chars=library.LIBRARY_CHARS,
+            learnings=10**6,
+            studied=10**5,
+            waiting=10**5,
+            failed=10**5,
+            new=[
+                library.Studied(10**9 + i, "ä" * 200, "ä" * 600, ("ä" * 40,) * 10, tuple(range(60)))
+                for i in range(library.NEW_SHOWN)
+            ],
+        ),
     )
+
+
+def biggest_knowledge() -> str:
+    """The brief's learnings from the library (0.12.0), as many as Ember's code picks, each at its longest."""
+    row = {"topic": "ä" * 40, "text": "ä" * 300, "document_id": 10**9, "part": 10**5, "document_title": "ä" * 200}
+    return "\n".join(library.learning_line(row) for _ in range(6))
 
 
 def biggest_milestone() -> dict[str, Any]:
@@ -183,6 +203,7 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     assert "\n== VENTURES ==\n#1000 [researching] ää" in planner
     assert "\n== ROADMAP ==\nToday: Wednesday 2026-09-30. 20 open milestones: 1 overdue, 1 this week," in planner
     assert "Roadmap check: 1 milestone is overdue (#1000)" in planner
+    assert "\n== YOUR OWNER'S LIBRARY ==\n500 documents from your owner (5,000,000 characters)" in planner
     assert rough_token_count(prompts.plan_request(SETTINGS, planner, venture=True)) <= PLANNER_OPENING.input_tokens
     plan = {"goal": "ä" * 300, "steps": ["ä" * 200] * 6}
     focus = {"id": 1_000, "title": "ä" * 80, "status": "active", "hypothesis": "ä" * 400, "next_step": "ä" * 200}
@@ -190,8 +211,16 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     venture = ventures.focus_text(biggest_venture(), ventures.Money(10**12, 10**12), 10**9, projects)  # type: ignore[arg-type]
     goal = roadmap.focus_text(biggest_milestone(), date(2026, 9, 30), biggest_milestone())
     brief, _ = context.brief(  # type: ignore[arg-type]
-        snap, True, plan, {**focus, "notes": "ä" * 2_000}, 100, venture_focus=venture, milestone_focus=goal
+        snap,
+        True,
+        plan,
+        {**focus, "notes": "ä" * 2_000},
+        100,
+        venture_focus=venture,
+        milestone_focus=goal,
+        knowledge=biggest_knowledge(),
     )
+    assert f"\n== {context.KNOWLEDGE_HEADING} ==\n[ää" in brief
     assert "\n== VENTURE CYCLE ==\n" in brief and "Focus venture: #1000000000 ää" in brief
     assert '\n== FOCUS ==\nFocus milestone: #1000000000 "ää' in brief
     assert "== FROM YOUR OWNER ==" in brief and "\n== MAIL ==\n" in brief and brief.endswith("bytes cut]")

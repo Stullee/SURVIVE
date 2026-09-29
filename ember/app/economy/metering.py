@@ -82,7 +82,8 @@ _KNOWN_SERVER_TOOLS = frozenset({"web_search_requests", "web_fetch_requests", "c
 # day before the first plan, doesn't count toward the cycle cap either, so the cycle it opens can still do its work.
 WORKSHOP = "workshop"
 REVIEW = "review"
-OUTSIDE_CYCLE_CAP = (WORKSHOP, REVIEW)
+STUDY = "study"  # 0.12.0: Ember studying its owner's library, within the owner's daily study budget
+OUTSIDE_CYCLE_CAP = (WORKSHOP, REVIEW, STUDY)
 _STANDARD_GEOS = frozenset({"global", "not_available"})
 _SNAPSHOT_SUFFIX = re.compile(r"^-\d{8}$")
 
@@ -500,8 +501,8 @@ class MeteredModel:
         today = self.books.cap_spend_on(scope, self.clock.today())
         if purpose == WORKSHOP:
             own_cap = usd_cap_to_micros(self.settings.workshop_run_cap_usd)
-        elif purpose == REVIEW:
-            own_cap = daily_cap  # only the daily cap and the balance limit it
+        elif purpose in (REVIEW, STUDY):
+            own_cap = daily_cap  # only the daily cap and the balance limit it (a study also its own budget: loop.py)
         else:
             own_cap = cycle["cap_micros"] - spent - reserved
         room = min(own_cap, daily_cap - today - pending, status.balance - pending)

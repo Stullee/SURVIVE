@@ -111,6 +111,9 @@ class Settings(BaseModel):
     # Ventures (0.10.0): this percent of each day's spending goes to venture cycles, where the agent researches new
     # ways to earn and brings the owner business cases. 0: no venture cycles.
     venture_share: int = Field(default=25, ge=0, le=100)
+    # The library (0.12.0): what Ember may spend a day studying the documents its owner adds (it counts toward the
+    # daily cap, not the cycle cap). 0: nothing is studied; the documents can still be searched and read.
+    library_study_usd_per_day: float = Field(default=0.5, ge=0, le=100)
     wake_interval_minutes: int = Field(default=240, ge=5, le=10_080)
     min_sleep_minutes: int = Field(default=30, ge=5, le=10_080)
     max_sleep_minutes: int = Field(default=1_440, ge=5, le=10_080)

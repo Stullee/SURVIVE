@@ -348,8 +348,8 @@ class Books:
 
     def cycle_spend(self, cycle_id: int, outside_cap: bool = True) -> tuple[int, int]:
         """(charged, reserved-and-pending) micros of one cycle; for the cycle cap without the calls that don't count
-        toward it (workshop runs and the daily review: ``outside_cap=False``)."""
-        workshop = "" if outside_cap else " AND purpose NOT IN ('workshop', 'review')"
+        toward it (workshop runs, the daily review and the library's study: ``outside_cap=False``)."""
+        workshop = "" if outside_cap else " AND purpose NOT IN ('workshop', 'review', 'study')"
         with self.db.connection() as conn:
             row = conn.execute(
                 "SELECT COALESCE(SUM(CASE WHEN status IN ('ok', 'interrupted') THEN cost_micros ELSE 0 END), 0),"

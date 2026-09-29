@@ -49,6 +49,9 @@
       files: {}, saving: false },
     // The roadmap (0.11.0): loaded while its tab is open, again whenever the dashboard's roadmap stamp changes.
     rm: { data: null, byId: {}, stamp: null, busy: false, again: false, error: null, selected: null, saving: false },
+    // The library (0.12.0): loaded while its tab is open, again whenever the dashboard's library stamp changes.
+    // docs: document id -> its text and learnings, loaded when the owner opens them.
+    lib: { data: null, stamp: null, busy: false, again: false, error: null, saving: false, docs: {} },
     refocus: null,       // after the owner's own action: the card status line to focus once the list is re-rendered
     sending: false,      // an inbox message is on its way
     // The standing instructions' editor: open while the owner edits (polls never touch it then), whether a save is on its
@@ -370,9 +373,9 @@
   };
 
   var TRIGGERS = { schedule: "scheduled", owner: "woken by you", last_will: "last will" };
-  var PHASES = { review: "Daily review", plan: "Plan", act: "Act", reflect: "Reflect", last_will: "Last will" };
+  var PHASES = { review: "Daily review", study: "Studying the library", plan: "Plan", act: "Act", reflect: "Reflect", last_will: "Last will" };
   var PURPOSES = { review: "Daily review", plan: "Plan", work: "Work", reflect: "Reflect", research: "Research",
-    workshop: "Workshop", brainstorm: "Brainstorm", last_will: "Last will" };
+    workshop: "Workshop", brainstorm: "Brainstorm", study: "Library study", last_will: "Last will" };
 
   function triggerText(trigger) { return TRIGGERS[trigger] || (trigger ? String(trigger).replace(/_/g, " ") : "–"); }
   function purposeText(purpose) { return PURPOSES[purpose] || (purpose ? sentence(String(purpose).replace(/_/g, " ")) : "Model call"); }
@@ -523,7 +526,7 @@
     header: "Header", controls: "Controls", kpis: "Key numbers", badges: "Tab badges", memorial: "Memorial",
     now: "Now", lives: "Previous lives", charts: "Charts", table: "Table", ledger: "Ledger", forms: "Forms",
     projects: "Projects", activity: "Activity", approvals: "Approvals", inbox: "Inbox", instructions: "Standing instructions",
-    upgrades: "Upgrades", mind: "Mind", ventures: "Ventures", roadmap: "Roadmap",
+    upgrades: "Upgrades", mind: "Mind", ventures: "Ventures", roadmap: "Roadmap", library: "Library",
     cycleDetail: "Cycle details", diagnostics: "Diagnostics", email: "Email", workspace: "Workspace", workspaceFile: "Workspace file",
   };
 
@@ -614,6 +617,7 @@
     // The tree is loaded apart: again when it changed (a venture, or a cycle that ended), while its tab is open.
     if (ui.tab === "ventures" && !ui.vt.busy && d.ventures_stamp !== undefined && d.ventures_stamp !== ui.vt.stamp) loadVentures();
     if (ui.tab === "roadmap" && !ui.rm.busy && isObject(d.roadmap) && d.roadmap.stamp !== ui.rm.stamp) loadRoadmap();
+    if (ui.tab === "library" && !ui.lib.busy && isObject(d.library) && d.library.stamp !== ui.lib.stamp) loadLibrary();
     section("mind", [d.mind, ui.mind, minute], ["mind-body"], function () { renderMind(d.mind); });
 
     ui.refocus = null;  // only for the render right after the owner's action
@@ -5788,9 +5792,312 @@
     });
   }
 
+  // ------------------------------------------------------------------ library (0.12.0)
+  // Reference material the owner hands the agent (pasted text, or files) and what the agent learned from it: it
+  // studies each document once, within the daily study budget, and keeps the learnings, shown on the document's card.
+
+  var LIBRARY_GROUPS = [
+    { key: "waiting", title: "Waiting to be studied", match: function (s) { return s === "waiting"; } },
+    { key: "failed", title: "Study stopped", match: function (s) { return s === "failed"; } },
+    { key: "done", title: "Studied", match: function () { return true; } },
+  ];
+  var STUDY_LABELS = { waiting: "Waiting to be studied", done: "Studied", failed: "Study stopped" };
+
+  function libraryLimit(key, fallback) {
+    var limits = ui.lib.data && isObject(ui.lib.data.limits) ? ui.lib.data.limits : {};
+    var v = num(limits[key]);
+    return isNaN(v) ? fallback : v;
+  }
+
+  function loadLibrary() {
+    var lib = ui.lib;
+    if (lib.busy) { lib.again = true; return; }
+    lib.busy = true;
+    safely("library", renderLibrary);
+    request("GET", "api/library").then(function (res) {
+      if (!res.ok) throw httpError(res);
+      if (!isObject(res.data) || !Array.isArray(res.data.items)) throw new RequestError("malformed", res.data === undefined ? "not JSON" : "the library is missing");
+      lib.data = res.data;
+      lib.stamp = res.data.stamp;
+      lib.error = null;
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      lib.error = err;
+    }).then(function () {
+      lib.busy = false;
+      safely("library", renderLibrary);
+      if (lib.again) { lib.again = false; loadLibrary(); }
+    });
+  }
+
+  function librarySummary(data) {
+    var name = agentName();
+    var t = isObject(data.totals) ? data.totals : {};
+    var st = isObject(data.study) ? data.study : {};
+    var budget = num(st.budget_usd);
+    var parts = [
+      plural(num(t.documents) || 0, "document") + " (" + intFmt.format(num(t.chars) || 0) + " of " +
+        intFmt.format(libraryLimit("library_chars", 5000000)) + " characters)",
+      plural(num(t.learnings) || 0, "learning"),
+      budget > 0 ? "study budget " + usd(budget) + " a day, " + usd(num(st.spent_today_usd) || 0) + " spent today"
+        : "studying is off (the daily study budget in the app's options is 0)",
+    ];
+    return "Pages and files you give " + name + ". It studies each one once and keeps what it learned, so nothing has to " +
+      "be read twice; its work steps get the learnings that fit what they do. " + parts.join(" · ") + ".";
+  }
+
+  function renderLibrary() {
+    var lib = ui.lib;
+    var data = lib.data;
+    var name = agentName();
+    $("lib-refresh").textContent = lib.busy ? "Refreshing…" : "Refresh";
+    if (lib.error && !lib.busy) {
+      setStatusText("lib-load-status", "Couldn't load the library (" + errorText(lib.error) + ")." +
+        (data ? " What you see is the library loaded earlier." : " Try Refresh."), "error");
+    } else {
+      setStatusText("lib-load-status", lib.busy && !data ? "Loading the library…" : "", "");
+    }
+    $("lib-sub").textContent = data ? librarySummary(data) : "Pages and files you give " + name + ": it studies each one once and keeps what it learned.";
+    if (!data) return;
+    var rows = arr(data.items).filter(function (d) { return isObject(d) && d.id !== undefined; })
+      .map(function (d) { return Object.assign({}, d, { status: d.study }); });
+    return renderQueue($("library"), {
+      kind: "document", rows: rows, groups: LIBRARY_GROUPS,
+      empty: emptyState("div", "The library is empty.", "Add pages you find, like Etsy's guides to listings, titles and tags: " +
+        name + " studies each one once and keeps what it learned."),
+      view: documentView,
+      actionKey: function (d) { return String(d.study); },
+      actions: documentActions,
+      panel: documentPanel,
+    });
+  }
+
+  function documentView(d) {
+    var name = agentName();
+    var study;
+    if (d.study === "done") study = plural(num(d.learnings) || 0, "learning") + (num(d.study_usd) > 0 ? " · cost " + usd(d.study_usd) : "");
+    else if (d.study === "failed") study = "Stopped after " + plural(num(d.studied_parts) || 0, "part") + " of " + (num(d.parts) || 0) + (d.study_note ? ": " + asText(d.study_note) : ".");
+    else if (num(d.studied_parts) > 0) study = "Studied " + d.studied_parts + " of " + plural(num(d.parts) || 0, "part") + " so far (" + plural(num(d.learnings) || 0, "learning") + ")";
+    else study = name + " studies it in its next wake cycles, within the daily study budget.";
+    var serves = [];
+    if (d.venture_id) serves.push("Venture #" + d.venture_id + (d.venture_title ? " " + asText(d.venture_title) : ""));
+    if (d.project_id) serves.push("Project #" + d.project_id + (d.project_title ? " " + asText(d.project_title) : ""));
+    var source = String(d.source || "");
+    var sourceNode = /^https?:\/\/\S+$/i.test(source) ? h("a", { href: source, target: "_blank", rel: "noopener noreferrer", text: source }) : source;
+    return [
+      h("div", { class: "item-head" },
+        h("h3", { text: d.title || "Untitled document" }),
+        plainChip(STUDY_LABELS[d.study] || sentence(String(d.study))),
+        d.simulated ? testTag() : null),
+      h("p", { class: "muted small", text: "#" + d.id + " · " + intFmt.format(num(d.chars) || 0) + " characters, " +
+        plural(num(d.parts) || 0, "part") + (d.file_name ? " · from " + asText(d.file_name) : "") }),
+      h("dl", { class: "item-grid" },
+        source ? h("div", null, h("dt", { text: "Source" }), h("dd", null, sourceNode)) : null,
+        serves.length ? h("div", null, h("dt", { text: "For" }), h("dd", { text: serves.join(" · ") })) : null,
+        d.note ? h("div", null, h("dt", { text: "Your note" }), h("dd", { class: "pre-line", text: asText(d.note) })) : null,
+        h("div", null, h("dt", { text: "Study" }), h("dd", { text: study })),
+        d.summary ? h("div", null, h("dt", { text: "Summary" }), h("dd", { class: "pre-line", text: asText(d.summary) })) : null),
+      documentBox(d),
+      h("p", { class: "muted small" }, "Added by " + (d.added_by || "you") + " ", timeEl(d.added_at)),
+    ];
+  }
+
+  // The document's learnings and text: loaded when the owner opens them (again on every opening, so they are
+  // current), and kept open across polls, like a venture's knowledge file.
+  function documentBox(d) {
+    var box = h("div", { class: "vt-file" });
+    fillDocument(box, d, false);
+    return box;
+  }
+
+  function fillDocument(box, d, focus) {
+    var state = ui.lib.docs[String(d.id)] || {};
+    var name = agentName();
+    var label = num(d.learnings) > 0 ? "what " + name + " learned (" + d.learnings + ") and the text" : "the text";
+    var toggle = h("button", { type: "button", class: "btn btn-small", "aria-expanded": state.open ? "true" : "false",
+      text: (state.open ? "Hide " : "Show ") + label });
+    toggle.addEventListener("click", function () { toggleDocument(box, d); });
+    var body = null;
+    if (state.open) {
+      if (state.busy) body = h("p", { class: "muted small", role: "status", text: "Loading…" });
+      else if (state.error) body = h("p", { class: "field-error", text: "Couldn't load it (" + errorText(state.error) + ")." });
+      else if (isObject(state.data)) {
+        var learned = arr(state.data.learnings).filter(isObject);
+        body = [
+          learned.length ? h("ul", { class: "lib-learnings" }, learned.map(function (l) {
+            return h("li", null, h("strong", { text: asText(l.topic) + ": " }), asText(l.text), h("span", { class: "muted small", text: " (part " + l.part + ")" }));
+          })) : null,
+          h("details", { class: "notes" }, h("summary", { text: "The text" }), h("pre", { class: "capped notes-text", tabindex: "0", text: asText(state.data.text) })),
+        ];
+      }
+    }
+    replace(box, [toggle, body]);
+    if (focus) toggle.focus();
+  }
+
+  function toggleDocument(box, d) {
+    var key = String(d.id);
+    var state = ui.lib.docs[key] || (ui.lib.docs[key] = {});
+    state.open = !state.open;
+    if (state.open) {
+      var seq = state.seq = (state.seq || 0) + 1;
+      state.busy = true;
+      state.error = null;
+      request("GET", "api/library/" + encodeURIComponent(key)).then(function (res) {
+        if (!res.ok) throw httpError(res);
+        if (!isObject(res.data)) throw new RequestError("malformed", "not JSON");
+        if (seq === state.seq) state.data = res.data;
+      }).catch(function (err) {
+        if (!(err instanceof RequestError)) console.error(err);
+        if (seq === state.seq) state.error = err;
+      }).then(function () {
+        if (seq !== state.seq) return;
+        state.busy = false;
+        if (box.isConnected) fillDocument(box, d, box.contains(document.activeElement));
+      });
+    }
+    fillDocument(box, d, true);
+  }
+
+  function documentActions(it, d) {
+    var list = [];
+    if (d.study === "failed") list.push(panelButton(it, "study", "Study again"));
+    list.push(panelButton(it, "remove", "Remove", true));
+    return list;
+  }
+
+  function documentPanel(it, mode) {
+    var name = agentName();
+    var specs = {
+      remove: { title: "Remove this document?", submit: "Remove", danger: true,
+        intro: [h("p", { text: "Its text goes, and " + name + " no longer sees what it learned from it." })] },
+      study: { title: "Study it again?", submit: "Study again",
+        intro: [h("p", { text: name + " goes on from the part where it stopped, in its next wake cycles, within the daily study budget." })] },
+    };
+    var spec = specs[mode];
+    spec.mode = mode;
+    spec.fields = [];
+    spec.url = "api/library/" + encodeURIComponent(String(it.row.id)) + "/" + (mode === "remove" ? "remove" : "study");
+    spec.body = function () { return {}; };
+    spec.done = function () {
+      loadLibrary();
+      return mode === "remove" ? "Removed." : name + " studies it again in its next wake cycles.";
+    };
+    return spec;
+  }
+
+  // ---- Add to the library
+
+  var LIB_FIELDS = ["text", "files", "title", "source", "note"];
+
+  function setLibraryFieldError(field, message) { setMilestoneFieldError("lib-form-" + field, message); }
+
+  function openLibraryForm(open) {
+    $("lib-form").hidden = !open;
+    $("lib-add").setAttribute("aria-expanded", String(open));
+    if (open) {
+      fillAttribution({ control: $("lib-form-for") }, $("lib-form-for").value);
+      milestoneCounter("lib-form-text", libraryLimit("document_chars", 300000));
+      $("lib-form-text").focus();
+    } else {
+      $("lib-add").focus();
+    }
+  }
+
+  function readFileBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        var url = String(reader.result || "");
+        resolve(url.slice(url.indexOf(",") + 1));
+      };
+      reader.onerror = function () { reject(reader.error || new Error("the file can't be read")); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function submitLibraryForm() {
+    if (ui.lib.saving) return;
+    var name = agentName();
+    var text = $("lib-form-text").value;
+    var files = Array.prototype.slice.call($("lib-form-files").files || []);
+    var common = { title: $("lib-form-title").value.trim(), source: $("lib-form-source").value.trim(), note: $("lib-form-note").value.trim() };
+    var target = $("lib-form-for").value;
+    LIB_FIELDS.forEach(function (k) { setLibraryFieldError(k, ""); });
+    var problems = [];
+    if (!text.trim() && !files.length) problems.push(["text", "Paste the text, or choose files below."]);
+    if (text.trim() && files.length) problems.push(["files", "Add the pasted text and the files one after the other."]);
+    if (text.length > libraryLimit("document_chars", 300000) * 2) problems.push(["text", "That is too long for one document: split it."]);
+    var tooBig = files.filter(function (f) { return f.size > libraryLimit("file_bytes", 8000000); });
+    if (tooBig.length) problems.push(["files", tooBig.map(function (f) { return f.name; }).join(", ") + ": larger than " + byteSize(libraryLimit("file_bytes", 8000000)) + "."]);
+    if (common.title.length > libraryLimit("title", 200)) problems.push(["title", "Keep it under " + libraryLimit("title", 200) + " characters."]);
+    if (common.source.length > libraryLimit("source", 500)) problems.push(["source", "Keep it under " + libraryLimit("source", 500) + " characters."]);
+    if (common.note.length > libraryLimit("note", 1000)) problems.push(["note", "Keep it under " + libraryLimit("note", 1000) + " characters."]);
+    if (problems.length) {
+      problems.forEach(function (p) { setLibraryFieldError(p[0], p[1]); });
+      setStatusText("lib-status", problems.length === 1 ? "Please fix the marked field." : "Please fix the marked fields.", "error");
+      $("lib-form-" + problems[0][0]).focus();
+      return;
+    }
+    var base = {};
+    if (common.source) base.source = common.source;
+    if (common.note) base.note = common.note;
+    if (target.indexOf("v:") === 0) base.venture_id = num(target.slice(2));
+    if (target.indexOf("p:") === 0) base.project_id = num(target.slice(2));
+    var jobs = files.length ? files.map(function (f) { return { file: f }; }) : [{ text: text }];
+    var added = [];
+    var failed = [];
+    ui.lib.saving = true;
+    $("lib-form-save").disabled = true;
+    var chain = Promise.resolve();
+    jobs.forEach(function (job, index) {
+      chain = chain.then(function () {
+        setStatusText("lib-status", jobs.length > 1 ? "Adding " + (index + 1) + " of " + jobs.length + "…" : "Saving…", "");
+        var ready = job.file ? readFileBase64(job.file).then(function (data) {
+          return Object.assign({}, base, { file_name: job.file.name, file_data: data }, jobs.length === 1 && common.title ? { title: common.title } : {});
+        }) : Promise.resolve(Object.assign({}, base, { text: job.text }, common.title ? { title: common.title } : {}));
+        return ready.then(function (body) { return request("POST", "api/library", body); }).then(function (res) {
+          var data = isObject(res.data) ? res.data : {};
+          if (res.status === 201) { added.push("#" + data.id + " " + asText(data.title)); return; }
+          var msg = typeof data.error === "string" && data.error ? endSentence(sentence(data.error)) : httpError(res).message;
+          failed.push((job.file ? job.file.name + ": " : "") + msg);
+        });
+      }).catch(function (err) {
+        if (!(err instanceof RequestError)) console.error(err);
+        failed.push((job.file ? job.file.name + ": " : "") + "couldn't reach " + name + " (" + errorText(err) + ")");
+      });
+    });
+    chain.then(function () {
+      ui.lib.saving = false;
+      $("lib-form-save").disabled = false;
+      if (added.length) {  // the For choice stays: the next document is often for the same venture
+        ["text", "files", "title", "source", "note"].forEach(function (k) { $("lib-form-" + k).value = ""; });
+        if (!failed.length) openLibraryForm(false);
+        loadLibrary();
+      }
+      var parts = [];
+      if (added.length) parts.push("Added " + added.join(", ") + ". " + name + " studies " + (added.length === 1 ? "it" : "them") + " in its next wake cycles.");
+      if (failed.length) parts.push("Not added: " + failed.join("; ") + (/[.!?]$/.test(failed[failed.length - 1]) ? "" : "."));
+      setStatusText("lib-status", parts.join(" "), failed.length ? "error" : "ok");
+    });
+  }
+
+  function initLibrary() {
+    $("lib-refresh").addEventListener("click", loadLibrary);
+    $("lib-add").addEventListener("click", function () { openLibraryForm($("lib-form").hidden); });
+    $("lib-form-cancel").addEventListener("click", function () { openLibraryForm(false); });
+    $("lib-form").addEventListener("submit", function (ev) { ev.preventDefault(); submitLibraryForm(); });
+    $("lib-form").addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") { ev.preventDefault(); openLibraryForm(false); }
+      else if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); submitLibraryForm(); }
+    });
+    $("lib-form-text").addEventListener("input", function () { setLibraryFieldError("text", ""); milestoneCounter("lib-form-text", libraryLimit("document_chars", 300000)); });
+    $("lib-form-files").addEventListener("change", function () { setLibraryFieldError("files", ""); });
+  }
+
   // ------------------------------------------------------------------ tabs
 
-  var TABS = ["overview", "ledger", "projects", "ventures", "roadmap", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
+  var TABS = ["overview", "ledger", "projects", "ventures", "roadmap", "library", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
   var MIND_TABS = ["strategy", "lessons", "identity", "journal", "reviews"];
 
   // Arrow keys, Home and End move between tabs; focus follows the selection.
@@ -5821,6 +6128,7 @@
     if (name === "workspace") refreshWorkspace();
     if (name === "ventures") loadVentures();
     if (name === "roadmap") loadRoadmap();
+    if (name === "library") loadLibrary();
   }
 
   function selectMind(name, focus) {
@@ -5894,6 +6202,7 @@
   initForms();
   initVentures();
   initRoadmap();
+  initLibrary();
   selectTab(ui.tab, false);
   selectMind(ui.mind, false);
   refresh();

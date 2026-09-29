@@ -19,6 +19,7 @@ import json
 import logging
 import math
 import re
+import secrets
 import threading
 from dataclasses import dataclass, field
 from typing import Any
@@ -29,7 +30,16 @@ from ..db import Database
 from ..economy.clock import Clock, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.estimate import Unpriceable
-from ..economy.metering import REVIEW, CallFailed, CallRefused, CallResult, MeteredModel, picture_size
+from ..economy.metering import (
+    REVIEW,
+    STUDY,
+    CallFailed,
+    CallRefused,
+    CallResult,
+    MeteredModel,
+    picture_size,
+    usd_cap_to_micros,
+)
 from ..economy.pricing import LAST_WILL, PLANNER_OPENING, REVIEW_CALL
 from ..economy.service import Economy
 from ..integrations import etsy_publisher, mailstore
@@ -37,7 +47,7 @@ from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox
 from ..version import app_version
-from . import context, netguard, news, prompts, review, roadmap, store, tools, ventures
+from . import context, library, netguard, news, prompts, review, roadmap, store, tools, ventures
 from .memory import Memory
 from .sandbox import Jail, SandboxError
 from .store import AgentScope
@@ -159,6 +169,7 @@ class CycleRunner:
         self.etsy = etsy
         self.publisher = publisher
         self.etsy_on = False  # the Etsy tools and the ETSY SHOP section: set once the cycle found a shop
+        self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
 
     # --- the cycle ---
 
@@ -203,6 +214,8 @@ class CycleRunner:
             if trigger != "last_will":
                 ctx.venture = self._venture_cycle(cycle_id)
                 ctx.brainstorm = self._brainstorm_fn(ctx) if ctx.venture else None
+                with self.db.connection() as conn:
+                    self.library_on = ctx.library = library.totals(conn, self.scope)[0] > 0
                 self._fetch_mail(cycle_id)
                 self._sync_etsy(cycle_id, ctx)
             with netguard.sealed() if self.dry_run else contextlib.nullcontext():
@@ -351,6 +364,7 @@ class CycleRunner:
                 etsy=shop,
                 venture=venture,
                 venture_share=self.settings.venture_share,
+                shelf=library.shelf(conn, self.scope),
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> CallResult:
@@ -374,6 +388,8 @@ class CycleRunner:
             review_due = review.due(conn, self.scope, self.clock)
         if review_due:
             self._review(cycle_id)
+        if self.library_on:
+            self._study(cycle_id)
         snap = self._snapshot(ctx.venture)
         action = "Planning this venture cycle" if ctx.venture else "Planning this cycle"
         self._progress(cycle_id, phase="plan", current_action=action)
@@ -402,6 +418,10 @@ class CycleRunner:
         plan = self._parse_plan(text)
         if plan is None:
             return CycleEnd("failed", "the plan wasn't valid JSON")
+        if snap.library is not None and snap.library.new:
+            shown = [i for item in snap.library.new if library.studied_line(item) in planner for i in item.ids]
+            with self.db.transaction() as conn:
+                library.mark_seen(conn, cycle_id, shown)  # the documents this plan listed as newly studied
         if planned.changelog:
             news.mark_changelog_seen(self.db, self.scope, snap.news)
         focus = None
@@ -457,6 +477,7 @@ class CycleRunner:
             self.settings.max_tool_steps,
             venture_focus=venture_focus,
             milestone_focus=milestone_focus,
+            knowledge=self._knowledge(plan),
         )
         act = self._act(cycle_id, ctx, brief, planned.listed & briefed.items)
         if act.end_reason == "refusal":
@@ -533,6 +554,87 @@ class CycleRunner:
             note = "the review wasn't valid JSON" if stop == "end_turn" else f"the review was cut off ({stop})"
         self._save_review(cycle_id, card, parsed, note)
 
+    def _study(self, cycle_id: int) -> None:
+        """0.12.0: study the owner's library before the plan: the next parts of the documents waiting, a few calls a
+        cycle, within the owner's daily study budget (counted toward the daily cap, not the cycle cap). What is
+        learned is kept, so a text is read once. It never ends the cycle: what the money can't cover now waits."""
+        budget = usd_cap_to_micros(self.settings.library_study_usd_per_day)
+        for _ in range(library.STUDY_CALLS if budget > 0 else 0):
+            self._check_stop()
+            with self.db.connection() as conn:
+                document = library.next_to_study(conn, self.scope)
+                if document is None:
+                    return
+                parts = library.next_parts(conn, document)
+                known = library.learnings_of(conn, document["id"])
+                spent = library.study_spent(conn, self.scope, self.clock.today())
+            if not parts:  # its text is gone: nothing left to read
+                return
+            context_text = library.study_context(document, parts, known, secrets.token_hex(3))
+            request = prompts.study_request(self.settings, context_text)
+            try:
+                quote = self.meter.quote(request)
+            except Unpriceable as exc:
+                log.warning("A study of the library can't be priced (%s); skipped", exc)
+                return
+            if quote > min(self.meter.headroom(cycle_id, STUDY), budget - spent):
+                log.info("The library's study waits: today's study budget or the money left can't cover it")
+                return
+            first, last = parts[0]["part"], parts[-1]["part"]
+            self._progress(
+                cycle_id,
+                phase="study",
+                current_action=f"Studying {document['title'][:120]} (part {first}-{last} of {document['parts']})",
+            )
+            try:
+                result = self._call(cycle_id, STUDY, request)
+            except CallRefused:
+                return
+            except CallFailed as exc:
+                self._study_failed(document, f"the call failed: {exc.result.error or exc.result.status}", exc.result)
+                return
+            response = result.response or {}
+            text = _text_of(response)
+            self._save_text(result.call_id, text, response)
+            stop = response.get("stop_reason")
+            parsed = library.parse_study(text, first, last) if stop == "end_turn" else None
+            if parsed is None:
+                why = "the answer wasn't valid JSON" if stop == "end_turn" else f"the answer was cut off ({stop})"
+                self._study_failed(document, why, result)
+                return
+            with self.db.transaction() as conn:
+                library.save_study(
+                    conn,
+                    self.scope,
+                    document,
+                    parsed,
+                    last,
+                    cost=result.cost_micros,
+                    now=to_iso(self.clock.now()),
+                    cycle_id=cycle_id,
+                    llm_call_id=result.call_id,
+                )
+
+    def _study_failed(self, document: Any, why: str, result: CallResult) -> None:
+        with self.db.transaction() as conn:
+            stopped = library.study_failed(conn, document["id"], why, result.cost_micros)
+        if stopped:
+            events.record(
+                self.db,
+                "warning",
+                "agent",
+                f"The study of library document #{document['id']} stopped after {library.STUDY_FAILURES} tries: {why}",
+            )
+
+    def _knowledge(self, plan: Plan) -> str:
+        """0.12.0: the learnings from the owner's library that match the plan, picked by Ember's code, for the brief."""
+        if not self.library_on:
+            return ""
+        query = " ".join([plan.goal, plan.money_path, *plan.steps])
+        with self.db.connection() as conn:
+            rows = library.relevant(conn, self.scope, query, plan.focus_venture_id, plan.focus_project_id)
+        return "\n".join(library.learning_line(r) for r in rows)
+
     def _save_review(
         self, cycle_id: int, card: review.Scorecard, parsed: review.Review | None, note: str | None
     ) -> None:
@@ -591,7 +693,14 @@ class CycleRunner:
                 break
             final = step == max_steps
             request = prompts.work_request(
-                self.settings, brief, turns, final=final, mail=self.mail, etsy=self.etsy_on, venture=ctx.venture
+                self.settings,
+                brief,
+                turns,
+                final=final,
+                mail=self.mail,
+                etsy=self.etsy_on,
+                venture=ctx.venture,
+                library=self.library_on,
             )
             if not self._affordable(cycle_id, request, brief, turns, ctx.venture):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
@@ -688,7 +797,15 @@ class CycleRunner:
             step_cost = self.meter.quote(request)
             reflect_cost = self.meter.quote(
                 prompts.reflect_request(
-                    self.settings, brief, grown, [], mail=self.mail, etsy=self.etsy_on, ended=longest, venture=venture
+                    self.settings,
+                    brief,
+                    grown,
+                    [],
+                    mail=self.mail,
+                    etsy=self.etsy_on,
+                    ended=longest,
+                    venture=venture,
+                    library=self.library_on,
                 )
             )
         except Unpriceable:
@@ -745,6 +862,7 @@ class CycleRunner:
             etsy=self.etsy_on,
             ended=act.end_reason,
             venture=ctx.venture,
+            library=self.library_on,
         )
         try:
             if self.meter.quote(request) > self.meter.headroom(cycle_id, "reflect"):

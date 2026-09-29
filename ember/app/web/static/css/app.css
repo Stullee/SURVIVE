@@ -907,3 +907,7 @@ body[data-stale="true"] .live { display: none; }
 .card.milestone[data-selected="true"] { box-shadow: 0 0 0 3px var(--focus); }
 .card.milestone .notes { margin-top: 8px; font-size: 0.9rem; }
 .card.milestone .notes > summary { cursor: pointer; color: var(--text-2); width: max-content; max-width: 100%; }
+
+/* The library (0.12.0): what the agent learned from a document. */
+.lib-learnings { margin: 0.5rem 0; padding-left: 1.2rem; }
+.lib-learnings li { margin: 0.3rem 0; }

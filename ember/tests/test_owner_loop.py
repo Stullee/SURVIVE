@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
@@ -360,10 +361,10 @@ def test_a_cycle_cap_too_small_for_a_working_cycle_is_warned_about(data_dir: Pat
     from app.config import Settings
     from tests.economy_helpers import make_economy
 
-    economy = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.05))
+    economy = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.1))
     assert any("below one working cycle" in w for w in economy.warnings())
     economy.stop()
-    roomy = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.25))
+    roomy = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.5))
     assert not any("below one working cycle" in w for w in roomy.warnings())
 
 
@@ -384,9 +385,11 @@ def test_the_default_caps_leave_room_and_a_tight_cycle_cap_is_warned_about(data_
     defaults.stop()
     tight = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.30))
     [warning] = [w for w in tight.warnings() if "cycle spend cap" in w]
+    roomy = math.ceil(working * ROOMY_CYCLE / 10_000) / 100
     assert warning == (
         "The cycle spend cap ($0.30) leaves little room for work: a working cycle (plan, a work step and the"
-        " reflection) can cost up to $0.25, and below 1.5 times that ($0.38) most cycles end after a step or two."
+        f" reflection) can cost up to ${working / 1e6:.2f}, and below 1.5 times that (${roomy:.2f}) most cycles end"
+        " after a step or two."
     )
     tight.stop()
     short = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.2))
