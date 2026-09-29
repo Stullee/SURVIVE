@@ -324,10 +324,13 @@ euros. The tab's badge counts the ones waiting. On each card:
 
 **Add idea** puts your own idea into the tree, optionally as a branch of an
 existing venture: the agent scores and researches it and tells you what it
-would take. The agent never answers an idea with a flat no: it answers with the
-path, the smallest test, the numbers and its recommendation. Only its hard
-rules (spam, gambling, adult content and the like) make a real no, and then it
-offers the closest variant that keeps them.
+would take. The agent answers an idea with the path, the smallest test, the
+numbers and its recommendation. A no is a result when data backs it: it comes
+with the numbers and the closest test, and the venture is parked with them. Its
+hard rules (spam, gambling, adult content and the like) are a no without a
+test, and then it offers the closest variant that keeps them. It researches
+before it builds: a research call costs about 5 cents, a product with its
+listing many times that.
 
 **Money.** A venture's cost is every model call of the cycles that worked on
 it, and of its projects' cycles; its revenue is what you record for its

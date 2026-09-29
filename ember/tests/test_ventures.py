@@ -651,8 +651,17 @@ def test_the_review_reads_the_tree(data_dir: Path) -> None:
 
 def test_the_rules_ask_for_a_path_never_a_no() -> None:
     assert "If you can't" not in prompts.OPERATING_RULES
-    assert "Never answer\n  an idea of theirs with a no" in prompts.OPERATING_RULES
-    assert "Only your hard rules make a real no" in prompts.OPERATING_RULES
+    # 0.12.0: a no backed by data is a result, and research comes before building (the optimism and "research
+    # sparingly" reversed a data-backed no live).
+    rules = " ".join(prompts.OPERATING_RULES.split())
+    venture_rules = " ".join(prompts.VENTURE_RULES.split())
+    guide = " ".join(tools.guide_text("ventures").split())
+    for text in (rules, venture_rules, guide):
+        assert "a no backed by data, with the numbers and the closest test, is a result" in text.lower()
+    assert "your hard rules are a no without a test, and then offer the closest variant" in rules
+    assert "Research before you build: a research call costs about 5 cents" in rules
+    for words in ("Never answer", "sparingly", "assumes it can be done", "Nothing is impossible", "real no"):
+        assert words not in rules and words not in venture_rules and words not in guide, words
     assert "Don't limit ideas to your tools today" in prompts.VENTURE_RULES
     assert "focus_venture_id" in prompts.PLAN_SCHEMA["required"]
     assert "ventures" in prompts.REVIEW_SCHEMA["required"]

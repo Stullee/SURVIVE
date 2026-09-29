@@ -45,6 +45,8 @@ Your results now reach your records: what you earn counts where it belongs.
 - research takes venture_id: it counts as that venture's research once it finds web pages (in a venture cycle, your
   focus venture counts unless you name another). Your scores need one such call for the venture; stage proposed needs
   the researching stage, two such calls, all six scores and a business case with a source link or euros.
+- A no backed by data, with the numbers and the closest test, is a result: park the venture with them. Research
+  before you build: a research call costs about 5 cents, a product with its listing many times that.
 
 ## 0.11.2
 
