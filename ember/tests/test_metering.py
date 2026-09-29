@@ -322,3 +322,21 @@ def test_only_two_modules_write_money() -> None:
         str(p.relative_to(app_dir)) for p in app_dir.rglob("*.py") if "INSERT INTO ledger" in p.read_text("utf-8")
     )
     assert writers == ["economy/ledger.py", "economy/metering.py"]
+
+
+def test_an_uncertain_charge_counts_what_it_is_known_to_cost_toward_the_caps(data_dir: Path) -> None:
+    # 0.12.0: a 5xx before any reply was charged at the worst case against the caps and the venture share.
+    economy = make_economy(data_dir, GENEROUS)
+    scope = economy.life.scope()
+    before = economy.books.balance(scope)
+    model, _ = metered(economy, ScriptedTransport(outcomes=[Interrupted("HTTP 502: bad gateway")]))
+    cycle = model.open_cycle("test")
+    with pytest.raises(CallFailed) as failed:
+        model.call(cycle, "work", request(max_tokens=1_000))
+    result = failed.value.result
+    assert result.cost_micros == 12_000 and result.billing_uncertain  # the worst case: 1,000 in and 1,000 out
+    assert economy.books.balance(scope) == before - 12_000  # the balance keeps the worst case
+    assert economy.books.cycle_spend(cycle) == (12_000, 0)  # and so do the cycle's reports
+    # the caps count what it is known to cost: its prompt, 1,000 tokens at $2 per million
+    assert economy.books.cycle_spend(cycle, outside_cap=False) == (2_000, 0)
+    assert economy.books.cap_spend_on(scope, economy.clock.today()) == 2_000

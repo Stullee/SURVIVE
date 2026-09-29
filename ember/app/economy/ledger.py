@@ -291,16 +291,27 @@ class Books:
     def cap_spend_on(self, scope: Scope, day: date) -> int:
         """API spend that counts toward the daily cap: charges and cost increases, never refunds.
 
-        A refund of earlier overcharges (a negative correction) is money back, not room to spend more today.
+        A refund of earlier overcharges (a negative correction) is money back, not room to spend more today. A call
+        whose bill is uncertain (a 5xx before any reply) counts with what it is known to cost, not the worst case it
+        was charged (0.12.0): the balance keeps the worst case until the owner corrects it.
         """
         where, params = scope.where()
+        joined, joined_params = scope.where("l")
         with self.db.connection() as conn:
             row = conn.execute(
                 "SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE (type = 'api_cost'"
                 f" OR (type = 'api_cost_correction' AND amount_micros > 0)) AND occurred_on = ? AND {where}",
                 (day.isoformat(), *params),
             ).fetchone()
-        return int(row[0])
+            excess = conn.execute(
+                "SELECT COALESCE(SUM(c.cost_micros - c.floor_micros), 0) FROM ledger l"
+                " JOIN llm_calls c ON c.id = l.llm_call_id"
+                f" WHERE l.type = 'api_cost' AND c.billing_uncertain = 1 AND l.occurred_on = ? AND {joined}"
+                " AND NOT EXISTS (SELECT 1 FROM ledger k WHERE k.type = 'api_cost_correction'"
+                " AND k.llm_call_id = c.id)",
+                (day.isoformat(), *joined_params),
+            ).fetchone()
+        return int(row[0]) - int(excess[0])
 
     def api_spend_between(self, scope: Scope, start: datetime, end: datetime, after_id: int = 0) -> int:
         """API spend recorded in [start, end] (and after ledger row ``after_id``)."""
@@ -348,11 +359,13 @@ class Books:
 
     def cycle_spend(self, cycle_id: int, outside_cap: bool = True) -> tuple[int, int]:
         """(charged, reserved-and-pending) micros of one cycle; for the cycle cap without the calls that don't count
-        toward it (workshop runs, the daily review and the library's study: ``outside_cap=False``)."""
+        toward it (workshop runs, the daily review and the library's study: ``outside_cap=False``), and then with
+        what an uncertain call is known to cost rather than its worst case (0.12.0, as ``cap_spend_on``)."""
         workshop = "" if outside_cap else " AND purpose NOT IN ('workshop', 'review', 'study')"
+        charged = "cost_micros" if outside_cap else "floor_micros"
         with self.db.connection() as conn:
             row = conn.execute(
-                "SELECT COALESCE(SUM(CASE WHEN status IN ('ok', 'interrupted') THEN cost_micros ELSE 0 END), 0),"
+                f"SELECT COALESCE(SUM(CASE WHEN status IN ('ok', 'interrupted') THEN {charged} ELSE 0 END), 0),"
                 " COALESCE(SUM(CASE WHEN status = 'pending' THEN estimate_micros ELSE 0 END), 0)"
                 f" FROM llm_calls WHERE cycle_id = ?{workshop}",
                 (cycle_id,),

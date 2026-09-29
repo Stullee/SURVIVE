@@ -820,6 +820,9 @@ reflection, research, ...) on that model, so it can't happen again; the other
 kinds keep theirs. A scaled-up estimate comes down by 0.05 after every 25
 calls in a row that didn't need it. The dashboard lists them with **Reset
 estimates**, for when you know why it happened (a price you corrected, say).
+A call whose bill is uncertain (the API failed before any reply) is charged to
+the balance at its worst case until you correct it, but counts toward the caps
+only with what it is known to cost.
 As an outside safety net, give Ember its own
 [Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
 API key and set a monthly spend limit there.

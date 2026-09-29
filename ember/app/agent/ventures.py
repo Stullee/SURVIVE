@@ -386,8 +386,8 @@ def money(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, Money]:
 
 def day_spend(conn: sqlite3.Connection, scope: AgentScope, day: date) -> tuple[int, int]:
     """(all, venture cycles') spending on the owner's local ``day``, in micros: every model call of the scope's
-    cycles, finished or still reserved at its estimate."""
-    amount = "CASE WHEN c.status = 'pending' THEN c.estimate_micros ELSE c.cost_micros END"
+    cycles, finished (an uncertain one at what it is known to cost, 0.12.0) or still reserved at its estimate."""
+    amount = "CASE WHEN c.status = 'pending' THEN c.estimate_micros ELSE c.floor_micros END"
     row = conn.execute(
         f"SELECT COALESCE(SUM({amount}), 0), COALESCE(SUM(CASE WHEN y.venture = 1 THEN {amount} ELSE 0 END), 0)"
         " FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id"
