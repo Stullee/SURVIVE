@@ -58,17 +58,31 @@ class SandboxError(ValueError):
     """A refused path or write; the message is shown to the agent."""
 
 
+class QuotaError(SandboxError):
+    """0.12.0: a write refused because the workspace (or the file) is full: a limit, not a bad path, so it is never a
+    strike against the agent."""
+
+
 class Missing(SandboxError):
     """A file or folder that doesn't exist (or was deleted while it was used)."""
 
 
 @dataclass(frozen=True)
 class Limits:
+    """0.12.0: files count, folders have their own bound (300 entries, folders included, stopped production at about 21
+    products, each a PDF, a Word copy, photos and the folders they sit in)."""
+
     max_file_bytes: int = 64 * 1024  # a text file
-    max_files: int = 300
-    max_total_bytes: int = 5 * 1024 * 1024  # all text files
+    max_files: int = 5_000
+    max_folders: int = 1_000
+    max_total_bytes: int = 50 * 1024 * 1024  # all text files
     max_product_bytes: int = 15 * 1024 * 1024  # one product file
-    max_product_total_bytes: int = 200 * 1024 * 1024  # all product files
+    max_product_total_bytes: int = 2 * 1024 * 1024 * 1024  # all product files
+
+    @property
+    def max_entries(self) -> int:
+        """Everything the workspace can hold, files and folders: what a walk of the whole of it may meet."""
+        return self.max_files + self.max_folders
 
 
 def kind_of(path: str) -> str | None:
@@ -102,7 +116,7 @@ class Tree:
 
 
 class Usage(NamedTuple):
-    """What the whole root holds; files and folders both count toward ``Limits.max_files``."""
+    """What the whole root holds: files count toward ``Limits.max_files``, folders toward ``Limits.max_folders``."""
 
     files: int
     folders: int
@@ -316,11 +330,7 @@ class Jail:
         if not isinstance(content, str):
             raise SandboxError("the content must be text")
         *folders, name = self.parts(path)
-        missing = self._missing_folders(folders)
-        if missing:
-            used = self.usage()
-            if used.files + used.folders + missing + 1 > self.limits.max_files:
-                raise SandboxError(f"the workspace holds at most {self.limits.max_files} entries; delete some first")
+        self._room_for_folders(folders)
         with self._folder(folders, create=True) as folder:
             info = self._file_info(folder, name)
             if info is not None and create_only:
@@ -330,14 +340,16 @@ class Jail:
                 old = self.read(path).encode("utf-8")
             data = old + content.encode("utf-8")
             if len(data) > self.limits.max_file_bytes:
-                raise SandboxError(f"a file can hold at most {self.limits.max_file_bytes // 1024} KB")
-            used = self.usage()
+                raise QuotaError(f"a file can hold at most {self.limits.max_file_bytes // 1024} KB")
             previous = info.st_size if info is not None else 0
-            if info is None and used.files + used.folders + 1 > self.limits.max_files:
-                raise SandboxError(f"the workspace holds at most {self.limits.max_files} files; delete some first")
+            if info is None:
+                self._room_for_a_file()
             text_bytes, _ = self.sizes()
             if text_bytes - previous + len(data) > self.limits.max_total_bytes:
-                raise SandboxError(f"the workspace holds at most {self.limits.max_total_bytes // (1024 * 1024)} MB")
+                raise QuotaError(
+                    f"text files take at most {self.limits.max_total_bytes // (1024 * 1024)} MB in the workspace; "
+                    "delete old ones first"
+                )
             _replace(folder, name, data)
         return len(data)
 
@@ -348,28 +360,35 @@ class Jail:
         *folders, name = self.parts(path, kinds="product")
         limits = self.limits
         if len(data) > limits.max_product_bytes:
-            raise SandboxError(f"a product file can hold at most {limits.max_product_bytes // (1024 * 1024)} MB")
-        missing = self._missing_folders(folders)
-        used = self.usage()
-        if missing and used.files + used.folders + missing + 1 > limits.max_files:
-            raise SandboxError(f"the workspace holds at most {limits.max_files} entries; delete some first")
+            raise QuotaError(f"a product file can hold at most {limits.max_product_bytes // (1024 * 1024)} MB")
+        self._room_for_folders(folders)
         with self._folder(folders, create=True) as folder:
             info = self._file_info(folder, name)
-            used = self.usage()
-            if info is None and used.files + used.folders + 1 > limits.max_files:
-                raise SandboxError(f"the workspace holds at most {limits.max_files} files; delete some first")
+            if info is None:
+                self._room_for_a_file()
             _, product_bytes = self.sizes()
             previous = info.st_size if info is not None else 0
             if product_bytes - previous + len(data) > limits.max_product_total_bytes:
-                raise SandboxError(
+                raise QuotaError(
                     f"products take at most {limits.max_product_total_bytes // (1024 * 1024)} MB in the workspace; "
                     "delete old ones first"
                 )
             _replace(folder, name, bytes(data))
         return len(data)
 
+    def _room_for_folders(self, folders: list[str]) -> None:
+        """Refuse a path whose new folders would be more than the workspace may hold."""
+        missing = self._missing_folders(folders)
+        if missing and self.usage().folders + missing > self.limits.max_folders:
+            raise QuotaError(f"the workspace holds at most {self.limits.max_folders:,} folders; use the ones you have")
+
+    def _room_for_a_file(self) -> None:
+        """Refuse a new file when the workspace holds as many as it may (folders don't count, 0.12.0)."""
+        if self.usage().files + 1 > self.limits.max_files:
+            raise QuotaError(f"the workspace holds at most {self.limits.max_files:,} files; delete some first")
+
     def _missing_folders(self, folders: list[str]) -> int:
-        """How many folders of the path don't exist yet (they count toward the entry limit)."""
+        """How many folders of the path don't exist yet (they count toward the folder limit)."""
         for depth in range(len(folders), -1, -1):
             try:
                 with self._folder(folders[:depth]):

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agent.sandbox import Jail, Limits, Missing, SandboxError
+from app.agent.sandbox import Jail, Limits, Missing, QuotaError, SandboxError
 
 
 @pytest.fixture
@@ -192,17 +192,27 @@ def test_walk_lists_every_folder_in_path_order(jail: Jail, tmp_path: Path) -> No
     assert Jail(tmp_path / "linked").walk(10).entries == [] and Jail(tmp_path / "linked").usage() == (0, 0, 0)
 
 
-def test_usage_counts_files_and_folders_apart(jail: Jail) -> None:
+def test_usage_counts_files_and_folders_apart(tmp_path: Path) -> None:
+    # 0.12.0: folders no longer count toward the files (300 entries, folders included, stopped production at about
+    # 21 products); they have a bound of their own, and a full workspace is a quota, not a bad path.
+    jail = Jail(tmp_path / "workspace", Limits(max_files=5, max_folders=2))
     assert jail.usage() == (0, 0, 0)
     jail.write("ideas/plan.md", "12345")
     used = jail.usage()
     assert (used.files, used.folders, used.size) == (1, 1, 5)
-    for index in range(3):
-        jail.write(f"f{index}.md", "x")  # 4 files and 1 folder: the limit of 5 entries
-    with pytest.raises(SandboxError, match="at most 5 files"):
-        jail.write("f3.md", "x")
-    with pytest.raises(SandboxError, match="at most 5 entries"):
-        jail.write("more/f3.md", "x")
+    for index in range(4):
+        jail.write(f"ideas/more/f{index}.md", "x")  # 5 files in 2 folders: every file counts, no folder does
+    with pytest.raises(QuotaError, match="at most 5 files"):
+        jail.write("f4.md", "x")
+    with pytest.raises(QuotaError, match="at most 5 files"):
+        jail.write_bytes("ideas/a.pdf", b"%PDF")
+    with pytest.raises(QuotaError, match="at most 2 folders"):
+        jail.write("other/f5.md", "x")
+    jail.write("ideas/plan.md", "replaced")  # replacing a file needs no room
+    jail.delete("ideas/more/f0.md")
+    jail.write("ideas/more/f5.md", "x")
+    assert Limits().max_files == 5_000 and Limits().max_entries == 6_000
+    assert Limits().max_product_total_bytes == 2 * 1024**3
 
 
 def test_entries_deleted_while_listing_are_skipped(tmp_path: Path) -> None:

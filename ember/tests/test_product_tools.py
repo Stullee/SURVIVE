@@ -171,7 +171,7 @@ def test_reading_a_product_says_what_it_is(data_dir: Path) -> None:
     assert "a PNG picture, 827 x 1170 pixels" in read(ctx, {"path": "shop/d-page1.png"}, None).text
     assert "a Word document" in read(ctx, {"path": "shop/d.docx"}, None).text
     listed = tools.HANDLERS["workspace_list"](ctx, {}, None).text
-    assert "Using 0.0 KB of 5 MB and 6/300 entries (5 files, 1 folders); PDF, Word, Excel and PNG files use" in listed
+    assert "Using 0.0 KB of 50 MB and 5 of 5,000 files (in 1 folder); PDF, Word, Excel and PNG files use" in listed
 
 
 def test_text_tools_refuse_products_with_a_pointer() -> None:

@@ -724,7 +724,7 @@ PRODUCT_TYPES = {
 def workspace(agent: Agent) -> dict[str, Any]:
     """The files in the agent's workspace, walked folder by folder through the jail (links are never listed)."""
     jail = agent.roots()[0]
-    tree = jail.walk(jail.limits.max_files)
+    tree = jail.walk(jail.limits.max_entries)
     files = [e for e in tree.files if _openable(jail, e.path)]
     text_bytes = sum(e.size for e in files if kind_of(e.path) == "text")
     return {

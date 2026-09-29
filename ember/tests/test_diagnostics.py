@@ -82,7 +82,7 @@ def test_a_cycle_is_easy_to_read(ingress_client: TestClient) -> None:
     tool_rows = {line.split(" | ")[4]: line.split(" | ") for line in cycles.splitlines() if line[:1].isdigit()}
     # 0.11.1: texts whole, and what the model wrote besides its tool calls.
     assert tool_rows["workspace_write"][7] == canonical(DRAFT_CALL)
-    assert tool_rows["workspace_list"][8] == "(empty) ⏎ Using 0.0 KB of 5 MB and 0/300 entries (0 files, 0 folders)"
+    assert tool_rows["workspace_list"][8] == "(empty) ⏎ Using 0.0 KB of 50 MB and 0 of 5,000 files (in 0 folders)"
     digest = tool_rows["research"][8]
     assert digest.startswith('<data src="research" id="') and "Planner 11: 13 EUR" in digest and "(cost $" in digest
     assert re.search(r"\n    reply of call #\d+ \(work\): Drafted\.\n", cycles)

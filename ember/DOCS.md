@@ -205,8 +205,9 @@ you anything, and it reads a short guide for each tool. The PDFs embed their
 fonts (Carlito, Caladea and Poppins, all under the SIL Open Font License); the
 Word copy asks for Calibri, Cambria and Poppins, which the first two replace
 exactly, so it looks the same in Word. Where Poppins isn't installed, Word shows
-another font. Files are limited to 15 MB each and 200 MB together, on top of the
-5 MB for the agent's text files.
+another font. Files are limited to 15 MB each and 2 GB together, on top of the
+50 MB for the agent's text files; the workspace holds up to 5,000 files (in up
+to 1,000 folders). The agent's STATUS shows how much of that it uses.
 
 Check a product before you sell it. The agent is told to disclose on every
 product and listing that AI helped make it, which marketplaces such as Etsy

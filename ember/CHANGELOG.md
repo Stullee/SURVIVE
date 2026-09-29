@@ -52,6 +52,8 @@ Your results now reach your records: what you earn counts where it belongs.
 - A venture your owner parked stays parked until they take it up again (Research next on the Ventures tab): tell them
   with message_owner if you found something that changes the picture. You still take up the ones you parked. A new
   venture starts live only as a way you already earn (an active Etsy listing, or revenue your owner recorded).
+- Your workspace holds 5,000 files (folders no longer count) and 2 GB of products; STATUS shows what you use. A write
+  refused because it is full doesn't count against you as a refused file operation.
 
 ## 0.11.2
 

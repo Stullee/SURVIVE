@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from app.agent import context, loop, prompts, store
-from app.agent.sandbox import Jail
+from app.agent.sandbox import Jail, Limits
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
 from app.economy.costs import micros_to_usd
@@ -180,7 +180,7 @@ def test_the_agent_sees_the_files_in_every_folder(data_dir: Path) -> None:
     listed = rows(agent, "SELECT result FROM tool_calls WHERE tool = 'workspace_list'")[0]["result"]
     assert listed == (
         "ideas.md  1,500 B\nprojects/drafts/week-1.md  13 B\nprojects/meal-plans.md  13 B\n"
-        "Using 1.5 KB of 5 MB and 5/300 entries (3 files, 2 folders)"
+        "Using 1.5 KB of 50 MB and 3 of 5,000 files (in 2 folders)"
     )
     for n in range(40):
         workspace.write(f"notes/n{n:02}.md", "x")
@@ -795,3 +795,22 @@ def test_a_long_plan_step_is_cut_and_says_so(data_dir: Path) -> None:
     assert steps == ["a" * most, "b" * (most - 1) + "…"]
     assert f"\n1. {'a' * most}\n2. {'b' * (most - 1)}…\n" in transport.sent[1]["messages"][0]["content"][0]["text"]
     assert f"(each <= {most} characters)" in prompts.PLANNER_RULES  # the planner is told the limit
+
+
+def test_a_full_workspace_is_no_strike(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 0.12.0: quota refusals counted as strikes, so a full workspace ended the work after three writes.
+    roots = Agent.roots
+
+    def small(agent: Agent) -> tuple[Jail, Jail]:
+        workspace, memory = roots(agent)
+        return Jail(workspace.root, Limits(max_files=1)), memory
+
+    monkeypatch.setattr(Agent, "roots", small)
+    writes = [tools(("workspace_write", {"path": f"f{n}.md", "mode": "overwrite", "content": "x"})) for n in range(5)]
+    bad = tools(("workspace_write", {"path": "../x.md", "mode": "overwrite", "content": "x"}))
+    agent, _ = make_agent(data_dir, [plan(), *writes, bad, text("done"), text("reflected")])
+    assert agent.run_cycle("schedule").status == "completed"
+    results = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'workspace_write' ORDER BY id")
+    assert [r["status"] for r in results] == ["ok", "error", "error", "error", "error", "error"]
+    assert "the workspace holds at most 1 files; delete some first" in results[1]["result"]
+    assert rows(agent, "SELECT act_end_reason FROM cycles")[0]["act_end_reason"] == "done"  # four refusals, no end

@@ -454,7 +454,7 @@ class Agent:
                         (hypothesis[:400], next_step[:200], notes[-2000:], row["id"]),
                     )
                     changed += 1
-        for entry in workspace.walk(workspace.limits.max_files).entries:
+        for entry in workspace.walk(workspace.limits.max_entries).entries:
             if entry.is_dir or kind_of(entry.path) != "text":
                 continue
             try:

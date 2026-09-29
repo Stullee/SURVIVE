@@ -71,12 +71,12 @@ def test_an_empty_workspace(ingress_client: TestClient) -> None:
 def test_the_list_stops_at_the_file_limit(ingress_client: TestClient) -> None:
     jail = workspace(ingress_client)
     jail.ensure_root()
-    for n in range(jail.limits.max_files + 5):  # more than the agent could write, put there from outside
-        (jail.root / f"f{n:03}.md").write_text("x")
+    for n in range(jail.limits.max_entries + 5):  # more than the agent could write, put there from outside
+        (jail.root / f"f{n:04}.md").write_text("x")
     data = ingress_client.get("api/workspace").json()
     assert data["truncated"] is True
-    assert data["file_count"] == len(data["files"]) == jail.limits.max_files
-    assert data["files"][0]["path"] == "f000.md" and data["files"][-1]["path"] == "f299.md"
+    assert data["file_count"] == len(data["files"]) == jail.limits.max_entries
+    assert data["files"][0]["path"] == "f0000.md" and data["files"][-1]["path"] == "f5999.md"
 
 
 def test_links_are_not_listed(ingress_client: TestClient, data_dir: Path) -> None:

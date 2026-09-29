@@ -45,7 +45,7 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 from ..products import images, make
 from . import library, netguard, roadmap, store, ventures
 from .memory import CAPS, Memory, MemoryError_
-from .sandbox import Jail, SandboxError, kind_of
+from .sandbox import Jail, QuotaError, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
 
 log = logging.getLogger(__name__)
@@ -884,7 +884,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
     except (ToolError, make.ProductError) as exc:
         outcome = Outcome(False, f"Error: {_unstop(str(exc))}.", f"refused: {exc}"[:300])
     except (SandboxError, MemoryError_) as exc:
-        if isinstance(exc, SandboxError):
+        if isinstance(exc, SandboxError) and not isinstance(exc, QuotaError):  # 0.12.0: a full workspace isn't a strike
             ctx.state.strikes += 1
         outcome = Outcome(False, f"Error: {exc}.", f"refused: {exc}"[:300])
     except Exception as exc:  # noqa: BLE001 - a tool bug must not end the cycle or crash the app
@@ -995,19 +995,19 @@ def _workspace_list(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     limits = ctx.workspace.limits
     path = args.get("path")
     # Without a path, the files in every folder (their paths name the folders).
-    entries = ctx.workspace.listing(path) if path else ctx.workspace.walk(limits.max_files).files
+    entries = ctx.workspace.listing(path) if path else ctx.workspace.walk(limits.max_entries).files
     used = ctx.workspace.usage()
     text_bytes, product_bytes = ctx.workspace.sizes()
     lines = [f"{e.path}/" if e.is_dir else f"{e.path}  {e.size:,} B" for e in entries[:100]]
     more = f"\n… {len(entries) - 100} more" if len(entries) > 100 else ""
     usage = (
         f"Using {text_bytes / 1024:.1f} KB of {limits.max_total_bytes // (1024 * 1024)} MB and "
-        f"{used.files + used.folders}/{limits.max_files} entries ({used.files} files, {used.folders} folders)"
+        f"{used.files:,} of {limits.max_files:,} files (in {used.folders} folder{'s' if used.folders != 1 else ''})"
     )
     if product_bytes:
         usage += (
             f"; PDF, Word, Excel and PNG files use {product_bytes / (1024 * 1024):.1f} of "
-            f"{limits.max_product_total_bytes // (1024 * 1024)} MB"
+            f"{limits.max_product_total_bytes // (1024 * 1024):,} MB"
         )
     body = "\n".join(lines) if lines else "(empty)"
     return Outcome(True, f"{body}{more}\n{usage}", f"{len(entries)} entries")

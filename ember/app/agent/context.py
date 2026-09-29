@@ -160,6 +160,7 @@ class Snapshot:
     last_journal: sqlite3.Row | None = None
     memory: dict[str, str] = field(default_factory=dict)
     workspace: list[str] = field(default_factory=list)
+    workspace_usage: str = ""  # 0.12.0: what the workspace holds of its limits, for STATUS
     journal: list[sqlite3.Row] = field(default_factory=list)
     news: News = field(default_factory=News)
     research: list[sqlite3.Row] = field(default_factory=list)
@@ -245,6 +246,7 @@ def snapshot(
         last_journal=journal[0] if journal else None,
         memory=memory.read_all(),
         workspace=files,
+        workspace_usage=_usage_line(workspace),
         journal=journal,
         news=news or News(),
         research=store.recent_research(conn, scope, RESEARCH_CALLS),
@@ -285,7 +287,7 @@ def _safe_listing(workspace: Jail, shown: int = 19, budget: int = 900) -> list[s
     keeps room for its LIMITS, even with a long plan and focus.
     """
     try:
-        files = workspace.walk(workspace.limits.max_files).files
+        files = workspace.walk(workspace.limits.max_entries).files
     except Exception:  # noqa: BLE001 - the context must still be built
         return []
     lines: list[str] = []
@@ -299,6 +301,21 @@ def _safe_listing(workspace: Jail, shown: int = 19, budget: int = 900) -> list[s
     return lines
 
 
+def _usage_line(workspace: Jail) -> str:
+    """What the workspace holds of its limits (0.12.0: its old limit stopped production without warning)."""
+    try:
+        used = workspace.usage()
+        text, product = workspace.sizes()
+    except Exception:  # noqa: BLE001 - the context must still be built
+        return ""
+    limits, mb = workspace.limits, 1024 * 1024
+    return (
+        f"Workspace: {used.files:,} of {limits.max_files:,} files; text {text / mb:.1f} of"
+        f" {limits.max_total_bytes // mb:,} MB, products {product / mb:.1f} of"
+        f" {limits.max_product_total_bytes // mb:,} MB."
+    )
+
+
 def status_text(s: Snapshot, dry_run: bool) -> str:
     st = s.status
     runway = f"{st.runway.days:.1f} days" if st.runway.days is not None else (st.runway.note or "unknown")
@@ -309,6 +326,8 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
         f"Spent today ${micros_to_usd(s.today_spend):.2f} of ${s.daily_cap:.2f}."
         f" This cycle may spend up to ${s.cycle_cap:.2f}.",
     ]
+    if s.workspace_usage:
+        lines.append(s.workspace_usage)
     if s.venture_share:
         spent, ventured = s.venture_day
         lines.append(
