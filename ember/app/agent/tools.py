@@ -31,6 +31,7 @@ import re
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -41,7 +42,7 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
-from . import netguard, store, ventures
+from . import netguard, roadmap, store, ventures
 from .memory import Memory, MemoryError_
 from .sandbox import Jail, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
@@ -309,6 +310,39 @@ SPECS: dict[str, Spec] = {
                 "theme": _s("A market, a customer group, a problem or a skill to think about.", 300, required=False),
             },
             per_cycle=1,
+        ),
+        Spec(
+            "milestone_create",
+            "Put a milestone on your roadmap: what you will reach by a date, with a measure you can check ('3 listings "
+            "live'). Goals for the next months, milestones leading to them (parent_id), this week's steps. Title and "
+            f"measure are final; a date can move. At most {roadmap.MAX_OPEN} open. Free.",
+            {
+                "title": _s("What you will reach.", roadmap.LIMITS["title"]),
+                "measure": _s("How you will know: a number or a fact you can check.", roadmap.LIMITS["measure"]),
+                "due": _s("YYYY-MM-DD, at most a year ahead.", 10),
+                "parent_id": _i("The milestone it leads to (due no earlier).", required=False),
+                "venture_id": _i("The venture it serves.", required=False),
+                "project_id": _i("The project it serves.", required=False),
+            },
+            per_cycle=6,
+            reflect=True,
+        ),
+        Spec(
+            "milestone_update",
+            "Close a milestone (done: result gives the evidence; missed: why, and what now; dropped: why, never your "
+            "owner's), move its date (due, with why in note), link it or add a note. Closed is final. Free.",
+            {
+                "milestone_id": _i("Its number."),
+                "status": _s("done, missed or dropped.", 8, required=False, enum=roadmap.CLOSED),
+                "result": _s("The evidence, or why and what now.", roadmap.LIMITS["result"], required=False),
+                "due": _s("A new date, YYYY-MM-DD.", 10, required=False),
+                "note": _s("Progress, or why the date moved.", roadmap.NOTE_CHARS, required=False, cut=True),
+                "parent_id": _i("Link it to this milestone.", required=False),
+                "venture_id": _i("Link it to this venture.", required=False),
+                "project_id": _i("Link it to this project.", required=False),
+            },
+            per_cycle=10,
+            reflect=True,
         ),
         Spec(
             "request_approval",
@@ -760,8 +794,8 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
             raise ToolError(
-                f"{name} can't be used while reflecting; only journal, memory, projects, ventures, sleep, messages "
-                "and upgrade requests"
+                f"{name} can't be used while reflecting; only journal, memory, projects, ventures, the roadmap, sleep, "
+                "messages and upgrade requests"
             )
         if phase == "act" and not spec.act:
             raise ToolError(f"{name} is for the reflect phase at the end of the cycle")
@@ -1151,6 +1185,172 @@ def _brainstorm(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     if ctx.brainstorm is None:
         raise ToolError("brainstorming isn't available right now")
     return ctx.brainstorm(" ".join((args.get("theme") or "").split()), args.get("venture_id"))
+
+
+# --- the roadmap (0.11.0) ---
+
+
+def _due_date(text: str, today: date) -> date:
+    """A milestone's date: written YYYY-MM-DD, from today to a year ahead."""
+    day = roadmap.parse_day(text)
+    if day is None:
+        raise ToolError(f"due must be a date written YYYY-MM-DD, e.g. {(today + timedelta(days=7)).isoformat()}")
+    if day < today:
+        raise ToolError(f"due must be today ({today.isoformat()}) or later")
+    last = today + timedelta(days=roadmap.AHEAD_DAYS)
+    if day > last:
+        raise ToolError(f"due can be at most a year ahead ({last.isoformat()})")
+    return day
+
+
+def _open_milestone(conn: Any, scope: AgentScope, milestone_id: int) -> Any:
+    row = roadmap.get(conn, scope, milestone_id)
+    if row is None:
+        raise ToolError(f"there is no milestone #{milestone_id}")
+    if row["status"] != "open":
+        raise ToolError(f"milestone #{milestone_id} is {row['status']}, which is final")
+    return row
+
+
+def _open_project(conn: Any, scope: AgentScope, project_id: int) -> Any:
+    row = store.project(conn, scope, project_id)
+    if row is None:
+        raise ToolError(f"there is no project #{project_id}")
+    if row["status"] not in OPEN_STATUSES:
+        raise ToolError(f"project #{project_id} is {row['status']}")
+    return row
+
+
+def _parent(conn: Any, scope: AgentScope, parent_id: int, due: date, milestone_id: int | None = None) -> Any:
+    """The open milestone a milestone due on ``due`` may lead to (never itself or one that leads to it)."""
+    parent = _open_milestone(conn, scope, parent_id)
+    if milestone_id is not None and roadmap.leads_to(conn, milestone_id, parent_id):
+        raise ToolError(f"milestone #{parent_id} leads to #{milestone_id} already")
+    if due.isoformat() > parent["due"]:
+        raise ToolError(
+            f"milestone #{parent_id} is due {parent['due']}: a milestone leading to it is due by then at the latest"
+        )
+    return parent
+
+
+def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    title = " ".join(args["title"].split())
+    measure = " ".join(args["measure"].split())
+    if not title or not measure:
+        raise ToolError("the title and the measure can't be empty")
+    today = ctx.clock.today()
+    due = _due_date(args["due"], today)
+    if roadmap.count(conn, ctx.scope, "open") >= roadmap.MAX_OPEN:
+        raise ToolError(f"{roadmap.MAX_OPEN} milestones are open already: close or drop one first")
+    if roadmap.count(conn, ctx.scope) >= roadmap.MAX_MILESTONES:
+        raise ToolError(f"your roadmap holds {roadmap.MAX_MILESTONES:,} milestones, as many as it can")
+    same = roadmap.open_by_title(conn, ctx.scope, title)
+    if same is not None:
+        raise ToolError(f"open milestone #{same['id']} already has this title")
+    parent_id = args.get("parent_id")
+    if parent_id is not None:
+        _parent(conn, ctx.scope, parent_id, due)
+    if args.get("venture_id") is not None:
+        _open_venture(conn, ctx.scope, args["venture_id"])
+    if args.get("project_id") is not None:
+        _open_project(conn, ctx.scope, args["project_id"])
+    milestone_id = roadmap.create(
+        conn,
+        ctx.scope,
+        title=title,
+        measure=measure,
+        due=due.isoformat(),
+        now=ctx.now(),
+        cycle_id=ctx.cycle_id,
+        parent_id=parent_id,
+        venture_id=args.get("venture_id"),
+        project_id=args.get("project_id"),
+    )
+    leads = f", leading to #{parent_id}" if parent_id is not None else ""
+    return Outcome(
+        True,
+        f"Milestone #{milestone_id} is on your roadmap{leads}, due {due.isoformat()} ({roadmap.when(due, today)}). "
+        "When its measure is met, close it with milestone_update (done, with the evidence).",
+        f"milestone #{milestone_id} {title[:60]}, due {due.isoformat()}",
+    )
+
+
+def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    row = _open_milestone(conn, ctx.scope, args["milestone_id"])
+    mid = row["id"]
+    today = ctx.clock.today()
+    status = args.get("status")
+    result = " ".join((args.get("result") or "").split())
+    note = (args.get("note") or "").strip()
+    changes: dict[str, Any] = {}
+    if status and args.get("due"):
+        raise ToolError("close a milestone or move its date, not both")
+    if result and not status:
+        raise ToolError("result is for closing a milestone: set status too")
+    due = roadmap.parse_day(row["due"]) or today
+    if args.get("due"):
+        due = _due_date(args["due"], today)
+        if due.isoformat() != row["due"]:
+            if not note:
+                raise ToolError("say in note why the date moves")
+            later = [k for k in roadmap.children(conn, mid) if k["status"] == "open" and k["due"] > due.isoformat()]
+            if later:
+                raise ToolError(
+                    f"milestone #{later[0]['id']} leads to it and is due {later[0]['due']}: move that first"
+                )
+            changes.update(due=due.isoformat(), moves=int(row["moves"]) + 1)
+    parent_id = args.get("parent_id")
+    if parent_id is not None and parent_id != row["parent_id"]:
+        _parent(conn, ctx.scope, parent_id, due, mid)
+        changes["parent_id"] = parent_id
+    elif row["parent_id"] is not None and "due" in changes:
+        parent = roadmap.get(conn, ctx.scope, row["parent_id"])
+        if parent is not None and parent["status"] == "open" and changes["due"] > parent["due"]:
+            raise ToolError(
+                f"it leads to milestone #{parent['id']}, due {parent['due']}: move that first, or link it elsewhere"
+            )
+    for name, check in (("venture_id", _open_venture), ("project_id", _open_project)):
+        value = args.get(name)
+        if value is not None and value != row[name]:
+            check(conn, ctx.scope, value)
+            changes[name] = value
+    if status:
+        if not result:
+            raise ToolError(
+                {
+                    "done": "say in result what shows its measure is met",
+                    "missed": "say in result why it was missed, and what now",
+                    "dropped": "say in result why it no longer matters",
+                }[status]
+            )
+        if status == "dropped" and row["created_by"] == "owner":
+            raise ToolError(
+                "your owner put this milestone on your roadmap: only they can drop it (ask them), or close it done "
+                "or missed"
+            )
+        changes.update(
+            status=status, result=result[: roadmap.LIMITS["result"]], closed_at=ctx.now(), closed_cycle_id=ctx.cycle_id
+        )
+    if note:
+        changes["notes"] = roadmap.add_note(row["notes"], ctx.cycle_id, note)
+    if not changes:
+        raise ToolError("nothing to change")
+    roadmap.update(conn, mid, ctx.now(), **changes)
+    if status:
+        what = status
+        waiting = [k["id"] for k in roadmap.children(conn, mid) if k["status"] == "open"]
+        after = (
+            f" Milestones leading to it are still open ({_numbers(waiting)}): close them, or link them to another."
+            if waiting
+            else ""
+        )
+    elif "due" in changes:
+        moves = changes["moves"]
+        what = f"moved to {changes['due']} ({roadmap.when(due, today)}; moved {moves} time{'s' if moves != 1 else ''})"
+        after = ""
+    else:
+        what, after = "updated", ""
+    return Outcome(True, f"Milestone #{mid}: {what}.{after}", f"milestone #{mid} {what}"[:300])
 
 
 def _request_approval(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -1725,6 +1925,8 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "venture_create": _venture_create,
     "venture_update": _venture_update,
     "brainstorm": _brainstorm,
+    "milestone_create": _milestone_create,
+    "milestone_update": _milestone_update,
     "request_approval": _request_approval,
     "message_owner": _message_owner,
     "request_upgrade": _request_upgrade,

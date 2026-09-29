@@ -23,7 +23,7 @@ from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.ledger import Books, Scope
 from ..economy.life import LifeStatus
-from . import ventures
+from . import roadmap, ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
 
 WINDOW_DAYS = 7
@@ -34,7 +34,15 @@ MAX_SALES = 6  # revenue entries listed in the scorecard
 MAX_ATTEMPTS = 2  # reviews a day, failed ones included
 VERDICTS = ("continue", "change", "stop")
 # The dashboard's and the database's limits for the review's texts.
-LIMITS = {"working": 600, "not_working": 600, "owner_feedback": 600, "lesson": 400, "focus": 400, "ventures": 600}
+LIMITS = {
+    "working": 600,
+    "not_working": 600,
+    "owner_feedback": 600,
+    "lesson": 400,
+    "focus": 400,
+    "ventures": 600,
+    "roadmap": 600,  # 0.11.0
+}
 WHY_CHARS = 200
 # Where the money went, by call purpose.
 _PURPOSES = {
@@ -78,6 +86,7 @@ class Review:
     lesson: str
     focus: str
     ventures: str = ""
+    roadmap: str = ""
 
 
 def due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> bool:
@@ -134,6 +143,7 @@ def scorecard(
         _last_review(conn, scope, today),
         _etsy(conn, scope, since),
         _project_lines(conn, projects, clock, since),
+        roadmap.review_text(conn, scope, today, since),
         _ventures(conn, scope, since),
         _decisions(conn, scope, since),
         _cycles(conn, scope, since),
@@ -516,8 +526,8 @@ def save(
     texts = {key: getattr(review, key) if review else "" for key in LIMITS}
     cursor = conn.execute(
         "INSERT INTO reviews (mode, session, life_id, cycle_id, created_at, day, status, scorecard, verdicts, working,"
-        " not_working, owner_feedback, lesson, focus, ventures, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-        " ?, ?)",
+        " not_working, owner_feedback, lesson, focus, ventures, roadmap, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+        " ?, ?, ?, ?, ?, ?)",
         (
             scope.mode,
             scope.session,
@@ -534,6 +544,7 @@ def save(
             texts["lesson"],
             texts["focus"],
             texts["ventures"],
+            texts["roadmap"],
             (note or "")[:300] or None,
         ),
     )
@@ -562,12 +573,13 @@ def planner_text(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
         lines.append(f"Focus today: {_one_line(row['focus'], 300)}")
     if row["lesson"]:
         lines.append(f"Lesson: {_one_line(row['lesson'], 300)}")
-    try:
-        tree = row["ventures"]
-    except (IndexError, KeyError):  # a row built by hand (in tests) may lack it
-        tree = ""
-    if tree:
-        lines.append(f"Ventures: {_one_line(tree, 400)}")
+    for label, key in (("Ventures", "ventures"), ("Roadmap", "roadmap")):
+        try:
+            said = row[key]
+        except (IndexError, KeyError):  # a row built by hand (in tests) may lack it
+            said = ""
+        if said:
+            lines.append(f"{label}: {_one_line(said, 400)}")
     lines.append(
         "Act on it: carry out every stop and change (project_update), and keep the lesson with memory_update if it"
         " is new."

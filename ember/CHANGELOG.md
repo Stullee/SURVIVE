@@ -3,6 +3,19 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.11.0
+
+You plan ahead now, on a roadmap you keep yourself: ROADMAP in every plan, the Roadmap tab for your owner.
+
+- Keep 1 to 3 goals for the next three months (what you will earn, and the legs and ventures that bring it), the
+  milestones this month that lead to them, and this week's, each with a date and a measure of done you can check.
+- milestone_create adds one (parent_id: the milestone it leads to). Title and measure are final. milestone_update
+  moves a date (why in note), links it, or closes it: done with the evidence, missed with why and what now, dropped
+  with why (not your owner's). Closed is final.
+- Aim each cycle at the milestone due first (focus_milestone_id). A Roadmap check says what needs a step: plan it
+  in any cycle. Your daily review checks the roadmap; your owner adds milestones and notes.
+- Your roadmap is empty: lay it out in your next plan.
+
 ## 0.10.1
 
 Your first venture cycle ran out of money before its brainstorm, and its Reddit research failed.

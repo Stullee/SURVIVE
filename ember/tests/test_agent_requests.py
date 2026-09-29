@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
 
-from app.agent import context, loop, prompts, tools, ventures
+from app.agent import context, loop, prompts, roadmap, tools, ventures
 from app.agent.news import CHANGELOG_LIMIT, News
 from app.config import Settings
 from app.economy.estimate import plan_request
@@ -76,6 +77,8 @@ def overflowing_snapshot() -> context.Snapshot:
     }
     project = {"status": "active", "title": "ä" * 80, "next_step": "ä" * 200, "hypothesis": "ä" * 400}
     venture = biggest_venture()
+    milestone = biggest_milestone()
+    today = date(2026, 9, 30)
     return context.Snapshot(
         status=LifeStatus(
             mode="live", life_id=1, state="critical", reason="", last_will_due=True, runway=Runway(1, None)
@@ -115,7 +118,35 @@ def overflowing_snapshot() -> context.Snapshot:
         venture=True,
         venture_share=100,
         venture_day=(10**12, 10**12),
+        today=today,
+        roadmap=[  # type: ignore[misc]
+            {**milestone, "id": 1_000 + i, "due": (today + timedelta(days=i * 7 - 5)).isoformat()}
+            for i in range(roadmap.MAX_OPEN)
+        ],
+        roadmap_closed=[{**milestone, "id": 2_000 + i, "status": "missed"} for i in range(12)],  # type: ignore[misc]
     )
+
+
+def biggest_milestone() -> dict[str, Any]:
+    """A milestone with every text at its limit, moved often, with the owner's longest note."""
+    return {
+        "id": 10**9,
+        "parent_id": 10**9 - 1,
+        "venture_id": 10**9,
+        "project_id": 10**9,
+        "title": "ä" * 100,
+        "measure": "ä" * 300,
+        "first_due": "2026-09-01",
+        "due": "2026-09-20",
+        "moves": 99,
+        "status": "open",
+        "result": "ä" * 600,
+        "closed_at": "2026-09-29T08:00:00Z",
+        "notes": "ä" * 2_000,
+        "created_by": "owner",
+        "owner_action": "note",
+        "owner_comment": "ä" * 1_000,
+    }
 
 
 def biggest_venture() -> dict[str, Any]:
@@ -148,13 +179,19 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     assert "\n== WORKSHOP ==\nWorkshop check: workshop/scripts/" in planner
     assert "\n== TODAY'S REVIEW ==\nää" in planner and "\n== ETSY SHOP ==\nää" in planner
     assert "\n== VENTURES ==\n#1000 [researching] ää" in planner
+    assert "\n== ROADMAP ==\nToday: Wednesday 2026-09-30. 20 open milestones: 1 overdue, 1 this week," in planner
+    assert "Roadmap check: 1 milestone is overdue (#1000)" in planner
     assert rough_token_count(prompts.plan_request(SETTINGS, planner, venture=True)) <= PLANNER_OPENING.input_tokens
     plan = {"goal": "ä" * 300, "steps": ["ä" * 200] * 6}
     focus = {"id": 1_000, "title": "ä" * 80, "status": "active", "hypothesis": "ä" * 400, "next_step": "ä" * 200}
     projects = [{"id": 10**9 + i, "title": "ä" * 80, "status": "active"} for i in range(8)]
     venture = ventures.focus_text(biggest_venture(), ventures.Money(10**12, 10**12), 10**9, projects)  # type: ignore[arg-type]
-    brief, _ = context.brief(snap, True, plan, {**focus, "notes": "ä" * 2_000}, 100, venture_focus=venture)  # type: ignore[arg-type]
+    goal = roadmap.focus_text(biggest_milestone(), date(2026, 9, 30), biggest_milestone())
+    brief, _ = context.brief(  # type: ignore[arg-type]
+        snap, True, plan, {**focus, "notes": "ä" * 2_000}, 100, venture_focus=venture, milestone_focus=goal
+    )
     assert "\n== VENTURE CYCLE ==\n" in brief and "Focus venture: #1000000000 ää" in brief
+    assert '\n== FOCUS ==\nFocus milestone: #1000000000 "ää' in brief
     assert "== FROM YOUR OWNER ==" in brief and "\n== MAIL ==\n" in brief and brief.endswith("bytes cut]")
     assert f"\n== {context.INSTRUCTIONS_HEADING} ==\n" in brief and "Memory check" not in brief
     # The owner's and the research sections' room comes on top, even when the research itself is cut at the end.

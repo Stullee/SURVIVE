@@ -191,3 +191,33 @@ def test_a_ventures_line_shows_the_owners_comment_whole() -> None:
     assert line.rstrip() == f"note v1: {comment}".rstrip() and len(line) > diagnostics.CELL_CHARS
     silent = diagnostics._venture({**row, "owner_action": None, "owner_comment": None})
     assert silent["owner"] == "-"
+
+
+def test_a_milestones_line_shows_its_links_its_moves_and_the_owners_word() -> None:
+    """0.11.0: the roadmap in the report, with how often a date moved and what the owner said."""
+    row = {
+        "id": 4,
+        "parent_id": 1,
+        "status": "open",
+        "first_due": "2026-10-01",
+        "due": "2026-10-08",
+        "moves": 1,
+        "title": "First sale",
+        "measure": "Revenue recorded " * 12,
+        "venture_id": 1,
+        "project_id": None,
+        "result": "",
+        "owner_action": "note",
+        "owner_version": 2,
+        "owner_comment": "Push it",
+    }
+    shown = diagnostics._milestone(row)
+    assert (shown["due"], shown["links"], shown["owner"]) == (
+        "2026-10-08 (first 2026-10-01)",
+        "v#1",
+        "note v2: Push it",
+    )
+    line = diagnostics._rows([shown], ["due", "measure"]).splitlines()[1]
+    assert line.rstrip().endswith(row["measure"].rstrip())  # a measure is shown whole
+    plain = diagnostics._milestone({**row, "moves": 0, "venture_id": None, "owner_action": None, "owner_comment": None})
+    assert (plain["due"], plain["links"], plain["owner"]) == ("2026-10-08", "-", "-")

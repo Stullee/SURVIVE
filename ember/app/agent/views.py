@@ -1,5 +1,5 @@
-"""Dashboard data for the agent's sections: Now, Projects, Ventures, Activity, Mind, Workspace, the owner queues and the
-owner's standing instructions."""
+"""Dashboard data for the agent's sections: Now, Projects, Ventures, Roadmap, Activity, Mind, Workspace, the owner
+queues and the owner's standing instructions."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
-from . import review, store, ventures
+from . import review, roadmap, store, ventures
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
 if TYPE_CHECKING:
@@ -140,6 +140,11 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         counts = badges(conn, scope)
         instructions = store.instructions_json(store.standing_instructions(conn, scope))
         stamp = _ventures_stamp(conn, scope, simulated)
+        today = agent.clock.today()
+        overdue = sum(
+            1 for m in roadmap.open_milestones(conn, scope) if m["due"] < today.isoformat()
+        )  # dates are YYYY-MM-DD
+        roadmap_stamp = _roadmap_stamp(conn, scope, simulated, today.isoformat())
     return {
         "badges": counts,
         "now": now,
@@ -153,6 +158,100 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "last_will": {"text": will["text"], "cut_off": bool(will["cut_off"])} if will else None,
         # The venture tree is loaded apart (api/ventures) while its tab is open: this changes whenever it does.
         "ventures_stamp": stamp,
+        # So is the roadmap (api/roadmap); its tab shows how many milestones are overdue.
+        "roadmap": {"stamp": roadmap_stamp, "overdue": overdue},
+    }
+
+
+def _roadmap_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated: int, today: str) -> str:
+    """Changes when the roadmap or its effort may have: a milestone changed, a wake cycle ended, or a new day began."""
+    where, params = scope.where()
+    row = conn.execute(
+        f"SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM milestones WHERE {where}", params
+    ).fetchone()
+    cycle = conn.execute(
+        "SELECT COALESCE(MAX(id), 0) FROM cycles WHERE simulated = ? AND session = ? AND status <> 'running'",
+        (simulated, scope.session),
+    ).fetchone()
+    return f"{int(row[0])}|{row[1]}|{int(cycle[0])}|{today}"
+
+
+def roadmap_view(agent: Agent) -> dict[str, Any]:
+    """The Roadmap tab: every milestone (the newest 300) with its dates, horizon, links, effort, result and the
+    owner's word, counted from the owner's today."""
+    scope = agent.scope()
+    simulated = 1 if agent.mode == "dry_run" else 0
+    today = agent.clock.today()
+    with agent.db.connection() as conn:
+        rows = roadmap.all_milestones(conn, scope)
+        effort = roadmap.effort(conn, scope)
+        where, params = scope.where()
+        ventured = {
+            int(r["id"]): r["title"]
+            for r in conn.execute(f"SELECT id, title FROM ventures WHERE {where}", params).fetchall()
+        }
+        projects = {
+            int(r["id"]): r["title"]
+            for r in conn.execute(f"SELECT id, title FROM projects WHERE {where}", params).fetchall()
+        }
+        stamp = _roadmap_stamp(conn, scope, simulated, today.isoformat())
+        total = roadmap.count(conn, scope)
+    items = []
+    for m in rows:
+        due = roadmap.parse_day(m["due"]) or today
+        cycles, spent = effort.get(m["id"], (0, 0))
+        items.append(
+            {
+                "id": m["id"],
+                "parent_id": m["parent_id"],
+                "venture_id": m["venture_id"],
+                "venture_title": ventured.get(m["venture_id"]) if m["venture_id"] else None,
+                "project_id": m["project_id"],
+                "project_title": projects.get(m["project_id"]) if m["project_id"] else None,
+                "title": m["title"],
+                "measure": m["measure"],
+                "first_due": m["first_due"],
+                "due": m["due"],
+                "moves": m["moves"],
+                "status": m["status"],
+                "horizon": roadmap.horizon(due, today) if m["status"] == "open" else m["status"],
+                "days": (due - today).days,
+                "result": m["result"],
+                "closed_at": m["closed_at"],
+                "notes": m["notes"],
+                "created_by": m["created_by"],
+                "entered_by": m["entered_by"],
+                "created_at": m["created_at"],
+                "updated_at": m["updated_at"],
+                "cycles": cycles,
+                "spent_usd": _usd(spent),
+                "owner_action": m["owner_action"],
+                "owner_comment": m["owner_comment"],
+                "owner_at": m["owner_at"],
+                "owner_by": m["owner_by"],
+                "owner_version": m["owner_version"],
+                "seen_by_agent": m["seen_cycle_id"] is not None,
+                "simulated": m["mode"] == "dry_run",
+            }
+        )
+    return {
+        "mode": agent.mode,
+        "today": today.isoformat(),
+        "horizons": [
+            {"key": roadmap.OVERDUE[0], "label": roadmap.OVERDUE[1]},
+            *({"key": key, "label": label, "days": last} for key, label, last in roadmap.HORIZONS),
+            {"key": roadmap.LATER[0], "label": roadmap.LATER[1]},
+        ],
+        "limits": {
+            "title": roadmap.LIMITS["title"],
+            "measure": roadmap.LIMITS["measure"],
+            "comment": roadmap.LIMITS["comment"],
+            "ahead_days": roadmap.AHEAD_DAYS,
+            "open": roadmap.MAX_OPEN,
+        },
+        "items": items,
+        "total": total,
+        "stamp": stamp,
     }
 
 
@@ -374,6 +473,8 @@ def _review(conn: sqlite3.Connection, r: sqlite3.Row) -> dict[str, Any]:
         "owner_feedback": r["owner_feedback"],
         "lesson": r["lesson"],
         "focus": r["focus"],
+        "ventures": r["ventures"],
+        "roadmap": r["roadmap"],
         "note": r["note"],
         "scorecard": r["scorecard"],
     }

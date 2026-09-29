@@ -59,6 +59,10 @@ In a venture cycle (0.10.0) it plans venture work: a brainstorm while the tree h
 call answers with six ideas and first-guess scores), research on the venture being researched or the heaviest idea,
 and saving what it learned to that venture with new scores.
 
+It keeps a roadmap (0.11.0): when the planner's ROADMAP says it is empty, it lays one out (a goal three months ahead,
+a milestone this month that leads to it and one this week), aims each cycle at the first milestone listed, and an
+overdue milestone is moved a week once, then closed done or missed.
+
 Tests can also pass ``script=[...]`` (:class:`Reply`, :class:`ToolCalls`, :class:`Plan`, :class:`Raw`,
 :class:`Fail`): turns answered in order (one per valid request) before the scenario takes over.
 """
@@ -77,6 +81,7 @@ import zlib
 from collections import Counter, deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Any
 
 from ..economy.metering import Completed, FilesError, Interrupted, NotSent, Outcome, Rejected, rough_token_count
@@ -678,6 +683,16 @@ SAVE_VENTURE_STEP = "Save what I learned to venture #{id} and score it"
 _VENTURE_LINE = re.compile(r"^#(\d+) \[([a-z]+)\] (.+?)(?: \(branch of #\d+\))? · ", re.MULTILINE)
 _FOCUS_VENTURE = re.compile(r"^Focus venture: #(\d+) (.+?)(?: \(branch of #\d+\))? \[([a-z]+)\]", re.MULTILINE)
 _TREE_TITLE = re.compile(r"^\s*- #\d+ (.+?) \([a-z]+(?:, weight \d+)?\)$", re.MULTILINE)
+# The roadmap (0.11.0): the planner's ROADMAP lines, and what the brief's PLAN asks of it.
+ROADMAP_SECTION = "ROADMAP"
+ROADMAP_STEP = "Lay out my roadmap: a goal for the next three months, this month's milestone and this week's"
+MOVE_MILESTONE_STEP = "Move overdue milestone #{id} a week"
+CLOSE_MILESTONE_STEP = "Close overdue milestone #{id}"
+_EMPTY_ROADMAP = "Roadmap check: your roadmap is empty"
+_MILESTONE_LINE = re.compile(r'^#(\d+) "(?:[^"\\]|\\.)*" · due \w+ (\d{4}-\d{2}-\d{2}) \(([^)]*)\)(.*)$', re.MULTILINE)
+_MILESTONE_MADE = re.compile(r"Milestone #(\d+) is on your roadmap")
+_OVERDUE_STEP = re.compile(r"(move|close) overdue milestone #(\d+)")
+_TODAY = re.compile(r"^Time: [A-Za-z]+ (\d{4}-\d{2}-\d{2}) ", re.MULTILINE)
 VENTURE_IDEAS: tuple[tuple[str, str], ...] = (
     (
         "Bilingual CV check service",
@@ -829,6 +844,30 @@ def standing_instructions(text: str) -> str | None:
     except ValueError:
         return None
     return value if isinstance(value, str) and value.strip() else None
+
+
+def roadmap_plan(text: str) -> tuple[list[str], int | None]:
+    """What the planner's ROADMAP asks of a cycle: the steps (lay it out when it is empty; move an overdue milestone a
+    week once, then close it) and the milestone to aim at (the first one listed: overdue, or due first)."""
+    roadmap = section(text, ROADMAP_SECTION) or ""
+    if _EMPTY_ROADMAP in roadmap:
+        return [ROADMAP_STEP], None
+    lines = list(_MILESTONE_LINE.finditer(roadmap))
+    focus = int(lines[0][1]) if lines else None
+    late = next((m for m in lines if m[3].endswith("late")), None)
+    if late is None:
+        return [], focus
+    step = CLOSE_MILESTONE_STEP if " · moved " in late[4] else MOVE_MILESTONE_STEP
+    return [step.format(id=late[1])], int(late[1])
+
+
+def today_of(text: str) -> date | None:
+    """The owner's date in a context's or a brief's STATUS."""
+    found = _TODAY.search(text)
+    try:
+        return date.fromisoformat(found[1]) if found else None
+    except ValueError:
+        return None
 
 
 def _json_text(raw: str) -> str | None:
@@ -1239,6 +1278,7 @@ class FakeTransport:
             "lesson": "A project without a finished listing after a few days teaches me nothing: finish or stop it.",
             "focus": "Get one finished product and its listing in front of my owner today.",
             "ventures": "Research the heaviest idea next and keep the tree growing; park what research doesn't back.",
+            "roadmap": "Close what is overdue honestly and keep one small milestone due this week.",
         }
         if chaos == "prose":
             return _Draft([_text("Overall things are going fine and I will keep going.")], note="chaos: prose")
@@ -1317,6 +1357,7 @@ class FakeTransport:
                 "money_path": "None this cycle: sleeping saves money until there is something worth doing.",
                 "focus_project_id": focus.id if focus else None,
                 "focus_venture_id": None,
+                "focus_milestone_id": None,
                 "steps": answer,
                 "sleep_minutes": rng.choice([480, 720, 1_440]),
             }
@@ -1352,8 +1393,11 @@ class FakeTransport:
         if not news.messages and rng.random() < 0.25 and len(steps) < 5:
             steps.append("Send my owner a short progress message")
         reading = [MAIL_STEP] if unread_mail(context) else []  # people who wrote come right after the owner
-        # Answering the owner comes first, then closing what the review stopped.
-        steps = answer + close + reading + [s[:200] for s in steps[: 5 - len(reading) - len(close)]]
+        ahead, milestone = roadmap_plan(context) if not critical else ([], None)
+        # Answering the owner comes first, then closing what the review stopped, then the roadmap's needs.
+        steps = (
+            answer + close + ahead + reading + [s[:200] for s in steps[: 5 - len(reading) - len(close) - len(ahead)]]
+        )
         where = (
             f"{len(open_)} open project(s); the most promising is #{focus.id} {focus.title}."
             if focus
@@ -1376,6 +1420,7 @@ class FakeTransport:
             )[:300],
             "focus_project_id": focus.id if focus else None,
             "focus_venture_id": None,
+            "focus_milestone_id": milestone,
             "steps": steps,
             "sleep_minutes": 720 if critical else rng.choice([120, 180, 240, 360]),
         }
@@ -1396,7 +1441,8 @@ class FakeTransport:
         ]
         ideas = [v for v in tree if v[1] == "idea"]
         focus = next((v for v in tree if v[1] == "researching"), ideas[0] if ideas else None)
-        steps = list(answer)
+        ahead, milestone = roadmap_plan(context) if state != "critical" else ([], None)
+        steps = [*answer, *ahead]
         if len(ideas) < BRAINSTORM_BELOW and state != "critical":
             steps.append(BRAINSTORM_STEP)
         if focus is not None:
@@ -1415,6 +1461,7 @@ class FakeTransport:
             ),
             "focus_project_id": None,
             "focus_venture_id": focus[0] if focus else None,
+            "focus_milestone_id": milestone,
             "steps": steps,
             "sleep_minutes": rng.choice([60, 120, 180]),
         }
@@ -1470,6 +1517,10 @@ class FakeTransport:
             "etsy_propose": "propose an etsy listing" in steps,
             "brainstorm": BRAINSTORM_STEP.lower() in steps,
             "venture_save": "save what i learned to venture #" in steps,
+            "milestone_close": "overdue milestone #" in steps,
+            "roadmap_goal": "lay out my roadmap" in steps,
+            "roadmap_month": "lay out my roadmap" in steps,
+            "roadmap_week": "lay out my roadmap" in steps,
         }
         wanted["guide"] = wanted["make"] and crng.random() < 0.5
         wanted["look"] = wanted["photo"] = wanted["make"]
@@ -1488,6 +1539,10 @@ class FakeTransport:
         else:
             stages = (
                 "close",
+                "milestone_close",
+                "roadmap_goal",
+                "roadmap_month",
+                "roadmap_week",
                 "mail_read",
                 "mail_reply",
                 "brainstorm",
@@ -1566,6 +1621,10 @@ class FakeTransport:
                 "next_step": "Research demand and write a first draft",
                 "status": "active",
             }
+        if stage in ("roadmap_goal", "roadmap_month", "roadmap_week"):
+            return self._milestone(stage, conv, idea)
+        if stage == "milestone_close":
+            return self._close_milestone(conv, rng)
         if stage == "brainstorm":
             focus = _FOCUS_VENTURE.search(conv.brief)
             return "brainstorm", ({"venture_id": int(focus[1])} if focus and rng.random() < 0.5 else {})
@@ -1752,6 +1811,68 @@ class FakeTransport:
             minutes = 1 if self.scenario == "drain" else rng.choice([120, 180, 240, 360])
             return "set_sleep", {"minutes": minutes, "reason": "The next step needs my owner or new information."}
         raise ValueError(f"unknown stage {stage}")
+
+    def _milestone(self, stage: str, conv: _Conversation, idea: Idea) -> tuple[str, dict] | None:
+        """One milestone of a new roadmap: a goal about three months ahead, then this month's (leading to it), then
+        this week's (leading to that)."""
+        today = today_of(conv.brief)
+        if today is None:
+            return None
+        made = [
+            int(found[1])
+            for c in conv.of("act")
+            if c.name == "milestone_create" and c.result and not c.error
+            for found in [_MILESTONE_MADE.search(c.result)]
+            if found
+        ]
+        if stage == "roadmap_goal":
+            args: dict[str, Any] = {
+                "title": "Two legs that earn: 30 EUR a month in all",
+                "measure": "Revenue my owner recorded reaches 30 EUR in one month, from two different legs",
+                "due": (today + timedelta(days=84)).isoformat(),
+            }
+        elif stage == "roadmap_month":
+            args = {
+                "title": f"First sale: {idea.title}"[:100],
+                "measure": "My owner records the first revenue for it",
+                "due": (today + timedelta(days=25)).isoformat(),
+            }
+            if conv.project_id is not None:
+                args["project_id"] = conv.project_id
+        else:
+            args = {
+                "title": f"Listing ready for my owner: {idea.title}"[:100],
+                "measure": "The PDF, the photos and the listing text are finished and proposed to my owner",
+                "due": (today + timedelta(days=5)).isoformat(),
+            }
+        if stage != "roadmap_goal" and made:
+            args["parent_id"] = made[-1]
+        return "milestone_create", args
+
+    def _close_milestone(self, conv: _Conversation, rng: random.Random) -> tuple[str, dict] | None:
+        """The plan's overdue milestone: moved a week the first time, closed done or missed after that."""
+        plan = _PLAN_SECTION.search(conv.brief)
+        step = _OVERDUE_STEP.search(plan[1].lower()) if plan else None
+        today = today_of(conv.brief)
+        if step is None or today is None:
+            return None
+        milestone_id = int(step[2])
+        if step[1] == "move":
+            return "milestone_update", {
+                "milestone_id": milestone_id,
+                "due": (today + timedelta(days=7)).isoformat(),
+                "note": "Dry run: the fake model moves an overdue milestone a week, once.",
+            }
+        done = rng.random() < 0.5
+        return "milestone_update", {
+            "milestone_id": milestone_id,
+            "status": "done" if done else "missed",
+            "result": (
+                "Dry run: the fake model can't check the measure, so it calls this one done to show the flow."
+                if done
+                else "Dry run: missed after a week's delay. Next: a smaller milestone for this week."
+            ),
+        }
 
     def _tool_turn(
         self, calls: list[tuple[str, Any]], rng: random.Random, intro: str | None = None, note: str = ""
@@ -2066,6 +2187,10 @@ class FakeTransport:
 
 _STAGE_TOOLS = {
     "close": "project_update",
+    "milestone_close": "milestone_update",
+    "roadmap_goal": "milestone_create",
+    "roadmap_month": "milestone_create",
+    "roadmap_week": "milestone_create",
     "brainstorm": "brainstorm",
     "venture_save": "venture_update",
     "etsy_find": "etsy_categories",
@@ -2092,6 +2217,8 @@ _STAGE_TOOLS = {
     "sleep": "set_sleep",
 }
 _INTROS = {
+    "roadmap_goal": "My roadmap is empty, so I'll plan ahead first: a goal, then the steps toward it.",
+    "milestone_close": "One of my milestones is overdue; I'll deal with it honestly first.",
     "mail_read": "Someone wrote to me; I'll read it first.",
     "mail_reply": "That's a real question, so I'll draft an answer for my owner to approve.",
     "reddit": "A short Reddit post could test demand; my owner would post it themselves.",

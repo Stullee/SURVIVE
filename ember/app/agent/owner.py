@@ -1,4 +1,5 @@
-"""The owner's side: approvals, the inbox, standing instructions, upgrade requests, ventures, the kill switch.
+"""The owner's side: approvals, the inbox, standing instructions, upgrade requests, ventures, the roadmap, the kill
+switch.
 
 Only the owner's HTTP endpoints call this module; the agent's tools never import
 it (a test checks), so the agent can't decide its own requests. Every change is
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from datetime import timedelta
 from typing import Any
 
 from .. import events
@@ -25,7 +27,7 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import etsy, executor
 from ..integrations.mail import BODY_MAX
-from . import store, ventures
+from . import roadmap, store, ventures
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
@@ -422,6 +424,90 @@ class Owner:
             what = done.get(action, "left a note on")
             events.record(self.db, "info", "owner", f"{who or 'The owner'} {what} venture #{venture_id}")
             return Reply(200, {"id": venture_id, "stage": after["stage"] if after else stage})
+
+        return _reply(run)
+
+    # --- the roadmap (0.11.0) ---
+
+    def add_milestone(self, body: Any, who: str | None) -> Reply:
+        """A milestone of the owner's on the agent's roadmap (news for the agent until a plan showed it)."""
+
+        def run() -> Reply:
+            data = _body(body, {"title", "measure", "due", "parent_id"})
+            title = _text(data, "title", roadmap.LIMITS["title"], required=True) or ""
+            measure = _text(data, "measure", roadmap.LIMITS["measure"], required=True) or ""
+            for name, value in (("title", title), ("measure", measure)):
+                if "\n" in value or "\r" in value:
+                    raise OwnerError(name, f"keep the {name} on one line")
+            today = self.clock.today()
+            due = roadmap.parse_day(data.get("due"))
+            if due is None:
+                raise OwnerError("due", "give the date as YYYY-MM-DD")
+            last = today + timedelta(days=roadmap.AHEAD_DAYS)
+            if due < today or due > last:
+                raise OwnerError("due", f"choose a date from today to {last.isoformat()}")
+            parent_id = data.get("parent_id")
+            if parent_id is not None and (
+                not isinstance(parent_id, int) or isinstance(parent_id, bool) or parent_id < 1
+            ):
+                raise OwnerError("parent_id", "parent_id must be a milestone number")
+            with self.db.transaction() as conn:
+                if parent_id is not None:
+                    parent = roadmap.get(conn, self.scope, parent_id)
+                    if parent is None or parent["status"] != "open":
+                        raise OwnerError("parent_id", "there is no such open milestone", 404)
+                    if due.isoformat() > parent["due"]:
+                        raise OwnerError(
+                            "due", f"the milestone it leads to is due {parent['due']}: choose that or earlier"
+                        )
+                if roadmap.count(conn, self.scope, "open") >= roadmap.MAX_OPEN:
+                    raise OwnerError("title", f"{roadmap.MAX_OPEN} milestones are open already", 409)
+                if roadmap.count(conn, self.scope) >= roadmap.MAX_MILESTONES:
+                    raise OwnerError("title", "the roadmap holds as many milestones as it can", 409)
+                same = roadmap.open_by_title(conn, self.scope, title)
+                if same is not None:
+                    raise OwnerError("title", f"open milestone #{same['id']} already has this title", 409)
+                milestone_id = roadmap.create(
+                    conn,
+                    self.scope,
+                    title=" ".join(title.split()),
+                    measure=" ".join(measure.split()),
+                    due=due.isoformat(),
+                    now=self._now(),
+                    parent_id=parent_id,
+                    created_by="owner",
+                    entered_by=who,
+                )
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} added milestone #{milestone_id}")
+            return Reply(201, {"id": milestone_id})
+
+        return _reply(run)
+
+    def decide_milestone(self, milestone_id: int, body: Any, who: str | None) -> Reply:
+        """Leave a note on a milestone, or drop an open one."""
+
+        def run() -> Reply:
+            data = _body(body, {"action", "comment", "expected_version"})
+            action = data.get("action")
+            if action not in ("note", "drop"):
+                raise OwnerError("action", "choose note or drop")
+            comment = _text(data, "comment", roadmap.LIMITS["comment"], required=action == "note")
+            expected = data.get("expected_version")
+            if expected is not None and (not isinstance(expected, int) or isinstance(expected, bool)):
+                raise OwnerError("expected_version", "expected_version must be a number")
+            with self.db.transaction() as conn:
+                row = roadmap.get(conn, self.scope, milestone_id)
+                if row is None:
+                    raise OwnerError("id", "no such milestone", 404)
+                if expected is not None and expected != row["owner_version"]:
+                    raise OwnerError("expected_version", "this milestone changed meanwhile", 409)
+                if action == "drop" and row["status"] != "open":
+                    raise OwnerError("action", f"this milestone is {row['status']} already", 409)
+                roadmap.owner_word(conn, milestone_id, self._now(), action, comment, who)
+                after = roadmap.get(conn, self.scope, milestone_id)
+            what = "dropped" if action == "drop" else "left a note on"
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} {what} milestone #{milestone_id}")
+            return Reply(200, {"id": milestone_id, "status": after["status"] if after else None})
 
         return _reply(run)
 

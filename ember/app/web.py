@@ -417,6 +417,30 @@ def decide_venture(request: Request, venture_id: ItemId, body: Annotated[Any, Bo
     return _reply(actions.decide_venture(venture_id, body, _owner(request)))
 
 
+@router.get("/api/roadmap")
+def roadmap(request: Request) -> JSONResponse:
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    return JSONResponse(agent.roadmap())
+
+
+@router.post("/api/roadmap")
+def add_milestone(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.add_milestone(body, _owner(request)))
+
+
+@router.post("/api/roadmap/{milestone_id}/decide")
+def decide_milestone(request: Request, milestone_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.decide_milestone(milestone_id, body, _owner(request)))
+
+
 @router.post("/api/upgrades/{upgrade_id}")
 def update_upgrade(request: Request, upgrade_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
     actions = _owner_actions(request)

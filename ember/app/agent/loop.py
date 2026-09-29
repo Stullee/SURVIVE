@@ -37,7 +37,7 @@ from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox
 from ..version import app_version
-from . import context, netguard, news, prompts, review, store, tools, ventures
+from . import context, netguard, news, prompts, review, roadmap, store, tools, ventures
 from .memory import Memory
 from .sandbox import Jail, SandboxError
 from .store import AgentScope
@@ -96,6 +96,7 @@ class Plan:
     sleep_minutes: int | None
     money_path: str = ""  # how the goal leads to income (or what a learning experiment would show)
     focus_venture_id: int | None = None  # 0.10.0
+    focus_milestone_id: int | None = None  # 0.11.0
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -104,6 +105,7 @@ class Plan:
             "money_path": self.money_path,
             "focus_project_id": self.focus_project_id,
             "focus_venture_id": self.focus_venture_id,
+            "focus_milestone_id": self.focus_milestone_id,
             "steps": self.steps,
             "sleep_minutes": self.sleep_minutes,
         }
@@ -381,7 +383,7 @@ class CycleRunner:
         if planned.changelog:
             news.mark_changelog_seen(self.db, self.scope, snap.news)
         focus = None
-        venture_focus = ""
+        venture_focus = milestone_focus = ""
         with self.db.connection() as conn:
             if plan.focus_project_id is not None:
                 focus = store.project(conn, self.scope, plan.focus_project_id)
@@ -393,6 +395,13 @@ class CycleRunner:
                     plan.focus_venture_id = None
                 else:
                     venture_focus = self._venture_focus(conn, venture)
+            if plan.focus_milestone_id is not None:
+                milestone = roadmap.get(conn, self.scope, plan.focus_milestone_id)
+                if milestone is None or milestone["status"] != "open":
+                    plan.focus_milestone_id = None
+                else:
+                    parent = roadmap.get(conn, self.scope, milestone["parent_id"]) if milestone["parent_id"] else None
+                    milestone_focus = roadmap.focus_text(milestone, self.clock.today(), parent)
         ctx.state.focus_project_id = plan.focus_project_id
         ctx.state.focus_venture_id = plan.focus_venture_id
         self._progress(
@@ -400,6 +409,7 @@ class CycleRunner:
             plan=json.dumps(plan.to_json(), ensure_ascii=False),
             project_id=plan.focus_project_id,
             venture_id=plan.focus_venture_id,
+            milestone_id=plan.focus_milestone_id,
             current_action=plan.goal[:300] or None,
         )
         if not plan.steps:
@@ -418,7 +428,13 @@ class CycleRunner:
             return CycleEnd("idle", "nothing to do", sleep_minutes=plan.sleep_minutes)
 
         brief, briefed = context.brief(
-            snap, self.dry_run, plan.to_json(), focus, self.settings.max_tool_steps, venture_focus=venture_focus
+            snap,
+            self.dry_run,
+            plan.to_json(),
+            focus,
+            self.settings.max_tool_steps,
+            venture_focus=venture_focus,
+            milestone_focus=milestone_focus,
         )
         act = self._act(cycle_id, ctx, brief, planned.listed & briefed.items)
         if act.end_reason == "refusal":
@@ -519,6 +535,7 @@ class CycleRunner:
         steps = [str(s)[:200] for s in steps if isinstance(s, str) and s.strip()][:6] if isinstance(steps, list) else []
         focus = data.get("focus_project_id")
         venture = data.get("focus_venture_id")
+        milestone = data.get("focus_milestone_id")
         sleep = data.get("sleep_minutes")
         return Plan(
             assessment=str(data.get("assessment") or "")[:600],
@@ -526,6 +543,7 @@ class CycleRunner:
             money_path=str(data.get("money_path") or "")[:300],
             focus_project_id=focus if isinstance(focus, int) and not isinstance(focus, bool) else None,
             focus_venture_id=venture if isinstance(venture, int) and not isinstance(venture, bool) else None,
+            focus_milestone_id=milestone if isinstance(milestone, int) and not isinstance(milestone, bool) else None,
             steps=steps,
             sleep_minutes=self._clamp_sleep(sleep) if isinstance(sleep, int) and not isinstance(sleep, bool) else None,
         )

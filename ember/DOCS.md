@@ -121,7 +121,8 @@ press **Wake now**, or when you write to it), it runs one **wake cycle**:
    cap on experiments rather than sleep to save it. Every plan and work step
    also sees your [standing instructions](#your-part) and a short list of facts
    about the outside world that you collected (platform rules, German law, what
-   earns money), which comes with each Ember update.
+   earns money), which comes with each Ember update. Every plan also sees its
+   [roadmap](#roadmap) and aims the cycle at the milestone due first.
 2. **Act**: it uses its tools, up to the *Tool steps per cycle* option: files in
    its own workspace, its memory (strategy, identity, lessons), projects, web
    research (also limited to one site, such as etsy.com), requests for your
@@ -159,7 +160,9 @@ products and workshop runs, and its verdicts from the last review.
 
 The agent then judges every project (**continue**, **change** or **stop**, with
 the numbers that decide it), says what works and what doesn't, what your
-decisions tell it, one lesson and today's focus. Every plan that day shows the
+decisions tell it, one lesson and today's focus, and it checks its venture tree
+and its roadmap (what is overdue, what is due this week, whether it still
+reaches three months ahead). Every plan that day shows the
 review, and the agent is told to carry it out: close what it stopped, change
 what it changed, keep the lesson. The next review shows whether it did. You can
 read every review, with the numbers it judged, under **Mind → Daily reviews**.
@@ -315,10 +318,46 @@ offers the closest variant that keeps them.
 it, and of its projects' cycles; its revenue is what you record for its
 projects. Live legs show both in the tab's summary.
 
+## Roadmap
+
+The **Roadmap** tab shows where the agent is heading: goals for the next three
+months, the milestones this month that lead to them, and this week's steps.
+Each milestone has a due date and a *measure of done*, a number or a fact the
+agent can check ("10 pins that link to the shop", "business case for venture
+#3 proposed"), and can serve a venture or a project.
+
+**Planning ahead.** The agent lays the roadmap out itself and keeps it filled:
+every plan sees it by horizon (overdue, this week, this month, the next three
+months, later) and aims the cycle at the milestone due first, which the cycle's
+work step sees with its measure. Ember's code flags an empty roadmap, overdue
+milestones, a week with nothing due and a roadmap that ends within the month,
+and asks the agent to fix that in its next plan. The daily review checks the
+roadmap too.
+
+**Honest by design.** What a milestone promises (its title and its measure)
+can't be changed once it is written. Its date can move, with the reason, and
+every move is counted: the card and the timeline show where it was first due.
+A milestone ends **done** (with the evidence), **missed** (why, and what now)
+or **dropped** (why), and is final then.
+
+**The timeline.** A row per milestone, under the goal it leads to: a bar from
+when it was planned to its date, a mark on its date (open ◆, overdue ▲, done ●,
+missed ✕, dropped –), a hollow ◇ where it was first due if its date moved, and a
+line for today. Hover or focus a row for its measure; click it for its card.
+The cards below are grouped by horizon. The tab's badge counts overdue
+milestones.
+
+**Your part.** **Add milestone** puts a milestone of yours on the roadmap
+(optionally leading to another one); the agent plans toward it, and only you
+can drop it. **Note** leaves a comment on any milestone, and **Drop** takes an
+open one off the plan. The agent reads your word on its next wake.
+
 ## Your part
 
 - **Ventures**: back, park or kill the agent's business cases and add your own
   ideas on the Ventures tab (see [Ventures](#ventures)).
+- **Roadmap**: add milestones you want reached by a date, leave notes, drop
+  what no longer matters (see [Roadmap](#roadmap)).
 - **Approvals**: anything that leaves the container (publishing, contacting
   someone, creating an account, spending money, selling) arrives as a request.
   Approve it, approve it with your own changes to the text, or reject it, with

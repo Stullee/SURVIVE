@@ -78,6 +78,7 @@
     <button type="button" role="tab" class="tab" id="tab-ledger" aria-controls="panel-ledger" aria-selected="false">Ledger</button>
     <button type="button" role="tab" class="tab" id="tab-projects" aria-controls="panel-projects" aria-selected="false">Projects</button>
     <button type="button" role="tab" class="tab" id="tab-ventures" aria-controls="panel-ventures" aria-selected="false">Ventures <span class="badge" id="badge-ventures" hidden></span></button>
+    <button type="button" role="tab" class="tab" id="tab-roadmap" aria-controls="panel-roadmap" aria-selected="false">Roadmap <span class="badge badge-alert" id="badge-roadmap" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-activity" aria-controls="panel-activity" aria-selected="false">Activity</button>
     <button type="button" role="tab" class="tab" id="tab-approvals" aria-controls="panel-approvals" aria-selected="false">Approvals <span class="badge" id="badge-approvals" hidden></span><span class="badge badge-todo" id="badge-approvals-todo" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-inbox" aria-controls="panel-inbox" aria-selected="false">Inbox <span class="badge" id="badge-inbox" hidden></span></button>
@@ -245,6 +246,56 @@
         <svg id="vt-svg-ns" width="0" height="0" aria-hidden="true" focusable="false" hidden></svg>
       </article>
       <div class="queue" id="ventures"></div>
+    </section>
+
+    <section class="panel" id="panel-roadmap" role="tabpanel" aria-labelledby="tab-roadmap" hidden>
+      <article class="card" id="rm-card">
+        <div class="card-head">
+          <div>
+            <h2 id="rm-title" tabindex="-1">Roadmap</h2>
+            <p class="card-sub" id="rm-sub">&nbsp;</p>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn" id="rm-add" aria-controls="rm-form" aria-expanded="false">Add milestone</button>
+            <button type="button" class="btn" id="rm-refresh">Refresh</button>
+          </div>
+        </div>
+        <form class="vt-form" id="rm-form" novalidate hidden>
+          <div class="field">
+            <label for="rm-form-title">Milestone</label>
+            <input type="text" id="rm-form-title" autocomplete="off" aria-describedby="rm-form-title-count rm-form-title-error">
+            <p class="counter" id="rm-form-title-count"></p>
+            <p class="field-error" id="rm-form-title-error" hidden></p>
+          </div>
+          <div class="field">
+            <label for="rm-form-measure">Done when</label>
+            <textarea id="rm-form-measure" rows="2" aria-describedby="rm-form-measure-hint rm-form-measure-count rm-form-measure-error"></textarea>
+            <p class="hint" id="rm-form-measure-hint">A number or a fact Ember can check, like "10 pins that link to the shop".</p>
+            <p class="counter" id="rm-form-measure-count"></p>
+            <p class="field-error" id="rm-form-measure-error" hidden></p>
+          </div>
+          <div class="field">
+            <label for="rm-form-due">Due</label>
+            <input type="date" id="rm-form-due" aria-describedby="rm-form-due-error">
+            <p class="field-error" id="rm-form-due-error" hidden></p>
+          </div>
+          <div class="field">
+            <label for="rm-form-parent">Leads to</label>
+            <select id="rm-form-parent"></select>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="rm-form-save">Add to the roadmap</button>
+            <button type="button" class="btn" id="rm-form-cancel">Cancel</button>
+          </div>
+        </form>
+        <p class="form-status" id="rm-status" role="status"></p>
+        <p class="form-status" id="rm-load-status" role="status"></p>
+        <p class="rm-summary" id="rm-summary"></p>
+        <div class="rm-legend" id="rm-legend" aria-hidden="true"></div>
+        <div class="rm-chart" id="rm-chart"></div>
+        <div class="rm-tip" id="rm-tip" hidden></div>
+      </article>
+      <div class="queue" id="roadmap"></div>
     </section>
 
     <section class="panel" id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" hidden>

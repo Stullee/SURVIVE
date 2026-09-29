@@ -538,6 +538,11 @@ class Agent:
 
         return views.ventures_view(self)
 
+    def roadmap(self) -> dict[str, Any]:
+        from . import views
+
+        return views.roadmap_view(self)
+
     def cycle_detail(self, cycle_id: int) -> dict[str, Any] | None:
         from . import views
 

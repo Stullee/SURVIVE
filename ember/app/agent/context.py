@@ -17,14 +17,14 @@ import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from ..economy.costs import micros_to_usd
 from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
-from . import review, store, ventures
+from . import review, roadmap, store, ventures
 from .memory import CAPS, Memory
 from .news import CHANGELOG_LIMIT, Item, News, Shown
 from .sandbox import Jail
@@ -122,6 +122,7 @@ PLANNER_BUDGETS = {
     "review": 1_400,
     "etsy": 1_600,
     "ventures": 2_600,
+    "roadmap": 1_800,  # 0.11.0
 }
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
 # room for one whole message of plain text at the owner's limit of 2,000 characters.
@@ -129,9 +130,12 @@ OWNER_BUDGET = 2_300
 QUOTE_CAP = 300  # characters of each text quoted in a decision or upgrade line, when the owner's news is shortened
 SHORTEST_QUOTE = 40  # no quoted text is shortened below this; if that isn't enough, the last lines are cut
 # The owner's (standing instructions and news), the mail and the research sections (and their headings) come on top
-# of the brief's budget, so they never squeeze the rest. (6,500 since 0.10.0: a venture's focus is longer.)
+# of the brief's budget, so they never squeeze the rest.
+# (6,500 since 0.10.0: a venture's focus is longer. A milestone's (0.11.0) is short: a brief with a venture's, a
+# project's and a milestone's focus at their longest loses its end, as a brief over its budget always does.)
 BRIEF_BUDGET = 6_500
 VENTURE_FOCUS_BUDGET = 1_900  # a venture's FOCUS in the brief
+MILESTONE_FOCUS_BUDGET = 700  # a milestone's FOCUS in the brief (0.11.0)
 VENTURE_BRIEF = (
     "This is a venture cycle: read guide 'ventures' first, research as often as this cycle can pay for (STATUS), "
     "grow the tree with brainstorm (first, if you plan one), save what you learn with venture_update (learned, with "
@@ -223,6 +227,9 @@ class Snapshot:
     venture_share: int = 0  # the owner's share of the spending for ventures, in percent
     venture_day: tuple[int, int] = (0, 0)  # today's spending, and the venture cycles' part of it
     call_costs: dict[str, int] = field(default_factory=dict)  # what research and brainstorms cost lately (0.10.1)
+    today: date | None = None  # the owner's local date (the roadmap's horizons are counted from it)
+    roadmap: list[sqlite3.Row] = field(default_factory=list)  # the open milestones, the first due first (0.11.0)
+    roadmap_closed: list[sqlite3.Row] = field(default_factory=list)  # closed in the last roadmap.CLOSED_DAYS days
 
 
 def snapshot(
@@ -301,7 +308,21 @@ def snapshot(
         venture_share=venture_share,
         venture_day=ventures.day_spend(conn, scope, today) if today is not None else (0, 0),
         call_costs=ventures.call_costs(conn, scope) if venture else {},
+        today=today,
+        roadmap=roadmap.open_milestones(conn, scope),
+        roadmap_closed=_closed_lately(conn, scope, today),
     )
+
+
+def _closed_lately(conn: sqlite3.Connection, scope: AgentScope, today: date | None) -> list[sqlite3.Row]:
+    if today is None:
+        return []
+    return roadmap.closed_since(conn, scope, (today - timedelta(days=roadmap.CLOSED_DAYS)).isoformat())
+
+
+def roadmap_text(s: Snapshot) -> str:
+    """The planner's ROADMAP (0.11.0), counted from the owner's today."""
+    return roadmap.planner_text(s.roadmap, s.roadmap_closed, s.today or date.today())
 
 
 def _safe_listing(workspace: Jail, shown: int = 19, budget: int = 900) -> list[str]:
@@ -625,6 +646,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         ("SINCE YOUR LAST WAKE", since),
         *([("YOUR SOFTWARE", software)] if s.news.changelog else []),
         *([("TODAY'S REVIEW", cut(s.review, b["review"]))] if s.review else []),
+        ("ROADMAP", cut(roadmap_text(s), b["roadmap"])),
         ("OPEN PROJECTS", cut(project_lines(s), b["projects"])),
         ("VENTURES", cut(ventures.planner_lines(s.ventures, s.venture_money, s.venture), b["ventures"])),
         ("WAITING FOR YOUR OWNER", cut(pending, b["pending"])),
@@ -650,10 +672,14 @@ def brief(
     focus: sqlite3.Row | None,
     max_steps: int,
     venture_focus: str = "",
+    milestone_focus: str = "",
 ) -> tuple[str, Shown]:
     """The act phase's brief (the same for every step and the reflection: built from the cycle's snapshot only), and
-    which of the owner's items it shows. ``venture_focus``: the plan's venture as ``ventures.focus_text`` shows it."""
-    focus_parts = [cut(venture_focus, VENTURE_FOCUS_BUDGET)] if venture_focus else []
+    which of the owner's items it shows. ``venture_focus`` and ``milestone_focus``: the plan's venture and milestone
+    as ``ventures.focus_text`` and ``roadmap.focus_text`` show them."""
+    focus_parts = [cut(milestone_focus, MILESTONE_FOCUS_BUDGET)] if milestone_focus else []
+    if venture_focus:
+        focus_parts.append(cut(venture_focus, VENTURE_FOCUS_BUDGET))
     if focus is not None:
         focus_parts.append(
             f"Focus project: #{focus['id']} {focus['title']} [{focus['status']}]\n"

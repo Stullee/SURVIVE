@@ -147,7 +147,7 @@ def test_a_message_from_before_the_update_can_be_removed(tmp_path: Path) -> None
             f" VALUES (12, 'live', 0, 1, 'then', 'owner', NULL, 'login {SECRET}')"
         )
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [5, 6, 7, 8, 9, 10, 11, 12, 13]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         conn.execute(

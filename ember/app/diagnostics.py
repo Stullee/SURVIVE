@@ -43,7 +43,9 @@ CELL_CHARS = 160
 TEXT_CHARS = 800  # plans, notes, message texts and tool inputs: enough to see what was actually written
 RESULT_CHARS = 300
 DIGEST_CHARS = 600
-WIDE_COLUMNS = dict.fromkeys(("note", "notes", "text", "input", "owner"), TEXT_CHARS) | {"result": RESULT_CHARS}
+WIDE_COLUMNS = dict.fromkeys(("note", "notes", "text", "input", "owner", "measure"), TEXT_CHARS) | {
+    "result": RESULT_CHARS
+}
 TAIL_COLUMNS = frozenset({"notes"})  # a project's notes are a log: the newest are at the end, so a cut keeps the end
 WORKSPACE_ENTRIES = 100
 TABLES = (
@@ -55,6 +57,7 @@ TABLES = (
     "tool_calls",
     "projects",
     "ventures",
+    "milestones",
     "journal",
     "approvals",
     "messages",
@@ -362,7 +365,8 @@ def _cycle(conn: Any, c: Any) -> str:
             f"session={c['session']} started={c['started_at']} ended={c['ended_at']} cap={c['cap_micros']}"
             f"\n    note={_cell(c['note'], TEXT_CHARS)} phase={c['phase']} step={c['step']}/{c['max_steps']} "
             f"act_end={_cell(c['act_end_reason'])} sleep={c['sleep_minutes']} project={_cell(c['project_id'])}"
-            + (f" venture_cycle venture={_cell(c['venture_id'])}" if c["venture"] else ""),
+            + (f" venture_cycle venture={_cell(c['venture_id'])}" if c["venture"] else "")
+            + (f" milestone={_cell(c['milestone_id'])}" if c["milestone_id"] else ""),
             _plan(c["plan"]),
             _rows(
                 calls,
@@ -426,6 +430,16 @@ def _venture(row: Any) -> dict[str, Any]:
     }
 
 
+def _milestone(row: Any) -> dict[str, Any]:
+    """A milestone as the report shows it: its links in one column, and the owner's word with their comment."""
+    links = [f"{name[0]}#{row[f'{name}_id']}" for name in ("venture", "project") if row[f"{name}_id"]]
+    owner = f"{row['owner_action']} v{row['owner_version']}" if row["owner_action"] else "-"
+    if row["owner_comment"]:
+        owner += f": {row['owner_comment']}"
+    first = f" (first {row['first_due']})" if row["moves"] else ""
+    return {**dict(row), "due": f"{row['due']}{first}", "links": ",".join(links) or "-", "owner": owner}
+
+
 def _agent(state: AppState) -> str:
     agent = getattr(state, "agent", None)
     if agent is None:
@@ -440,6 +454,11 @@ def _agent(state: AppState) -> str:
                 "ventures",
                 ["id", "parent_id", "stage", "title", "weight", "scores", "missing", "owner", "seen_cycle_id"],
                 40,
+            ),
+            (
+                "milestones",
+                ["id", "parent_id", "status", "due", "moves", "title", "measure", "links", "result", "owner"],
+                30,
             ),
             ("journal", ["cycle_id", "author", "summary"], 15),
             ("approvals", ["id", "status", "type", "title", "version", "decided_at", "closed_at", "seen_cycle_id"], 15),
@@ -460,6 +479,8 @@ def _agent(state: AppState) -> str:
                 rows = [{**dict(r), "seen": _seen(r)} for r in rows]
             if table == "ventures":
                 rows = [_venture(r) for r in rows]
+            if table == "milestones":
+                rows = [_milestone(r) for r in rows]
             out.append(f"-- {table}\n" + _rows(rows, columns))
         # The scripts upgrade requests carry: what the one who builds the upgrade needs (the report is its hand-off).
         for row in conn.execute(

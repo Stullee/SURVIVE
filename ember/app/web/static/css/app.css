@@ -861,3 +861,49 @@ body[data-stale="true"] .live { display: none; }
 .card.venture .notes { margin-top: 8px; font-size: 0.9rem; }
 .card.venture .notes > summary { cursor: pointer; color: var(--text-2); width: max-content; max-width: 100%; }
 .card.venture .vt-card-title:focus { outline: none; }
+
+/* The roadmap (0.11.0): a timeline of milestones, a row each, under the goal it leads to. The state has its own
+   shape as well as its color (open: diamond, overdue: triangle, done: disc, missed: cross, dropped: dash). */
+#rm-card { position: relative; }
+.rm-summary { color: var(--text-2); font-size: 0.9rem; margin: 4px 0 8px; }
+.rm-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.8rem; color: var(--text-2); margin-bottom: 8px; }
+.rm-key { display: inline-flex; align-items: center; gap: 6px; }
+.rm-key svg { display: block; overflow: visible; }
+.rm-chart { overflow-x: auto; border: 1px solid var(--grid); border-radius: var(--radius); background: var(--surface); }
+.rm-chart .empty-state { border: 0; }
+.rm-loading { padding: 16px; margin: 0; }
+.rm-svg { display: block; }
+.rm-axis, .rm-now { pointer-events: none; }
+.rm-grid { stroke: var(--grid); stroke-width: 1; }
+.rm-month { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.rm-today { stroke: var(--text-2); stroke-width: 1.5; }
+.rm-today-label { fill: var(--text-2); font-size: 11px; font-weight: 600; }
+.rm-row { cursor: pointer; outline: none; }
+.rm-hit { fill: transparent; }
+.rm-row:hover .rm-hit, .rm-row:focus-visible .rm-hit { fill: var(--surface-2); }
+.rm-row[data-selected="true"] .rm-hit { fill: var(--surface-2); stroke: var(--focus); stroke-width: 1; }
+.rm-row:focus-visible .rm-label { font-weight: 600; }
+.rm-label { fill: var(--text); font-size: 12px; }
+.rm-glyph { fill: var(--text-2); font-size: 11px; }
+.rm-row[data-state="done"] .rm-label, .rm-row[data-state="missed"] .rm-label, .rm-row[data-state="dropped"] .rm-label { fill: var(--muted); }
+.rm-row[data-state="dropped"] .rm-label { text-decoration: line-through; }
+.rm-bar { fill: var(--rm-color); opacity: 0.28; }
+.rm-mark { fill: var(--rm-color); stroke: var(--surface); stroke-width: 2; }
+.rm-row[data-state="missed"] .rm-mark, .rm-row[data-state="dropped"] .rm-mark,
+.rm-key[data-state="missed"] .rm-mark, .rm-key[data-state="dropped"] .rm-mark { fill: none; stroke: var(--rm-color); stroke-width: 3; stroke-linecap: round; }
+.rm-first { fill: var(--surface); stroke: var(--rm-color); stroke-width: 1.5; }
+.rm-slip { stroke: var(--rm-color); stroke-width: 1.5; opacity: 0.5; }
+.rm-row[data-state="open"], .rm-key[data-state="open"] { --rm-color: var(--accent); }
+.rm-row[data-state="overdue"], .rm-key[data-state="overdue"] { --rm-color: var(--critical); }
+.rm-row[data-state="done"], .rm-key[data-state="done"] { --rm-color: var(--good); }
+.rm-row[data-state="missed"], .rm-key[data-state="missed"] { --rm-color: var(--serious); }
+.rm-row[data-state="dropped"], .rm-key[data-state="dropped"] { --rm-color: var(--muted); }
+.rm-tip { position: absolute; z-index: 5; max-width: min(340px, calc(100% - 16px)); padding: 8px 10px; border: 1px solid var(--grid);
+  border-radius: 8px; background: var(--surface); color: var(--text); box-shadow: 0 4px 16px var(--ring); font-size: 0.85rem; pointer-events: none; }
+.rm-tip p { margin: 2px 0; }
+.rm-tip-title { font-weight: 600; }
+.rm-tip-state { color: var(--text-2); }
+.card.milestone .rm-card-title:focus { outline: none; }
+.card.milestone[data-selected="true"] { box-shadow: 0 0 0 3px var(--focus); }
+.card.milestone .notes { margin-top: 8px; font-size: 0.9rem; }
+.card.milestone .notes > summary { cursor: pointer; color: var(--text-2); width: max-content; max-width: 100%; }

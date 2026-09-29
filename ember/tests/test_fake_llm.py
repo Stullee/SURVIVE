@@ -820,6 +820,7 @@ def test_the_module_imports_nothing_that_could_reach_out() -> None:
     imported |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.level == 0}
     allowed = {"__future__", "collections", "copy", "dataclasses", "hashlib", "json", "random", "re", "threading"}
     allowed |= {"struct", "zlib"}  # the workshop's chart, drawn in memory
+    allowed |= {"datetime"}  # the roadmap's dates (0.11.0)
     assert imported <= allowed | {"time", "typing"}
     called = {n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert not called & {"eval", "exec", "open", "__import__", "compile"}

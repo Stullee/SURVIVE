@@ -47,6 +47,8 @@
     // files: venture id -> what Ember learned about it (its knowledge file), loaded when the owner opens it.
     vt: { data: null, byId: {}, stamp: null, loadedAt: null, busy: false, again: false, error: null, selected: null,
       files: {}, saving: false },
+    // The roadmap (0.11.0): loaded while its tab is open, again whenever the dashboard's roadmap stamp changes.
+    rm: { data: null, byId: {}, stamp: null, busy: false, again: false, error: null, selected: null, saving: false },
     refocus: null,       // after the owner's own action: the card status line to focus once the list is re-rendered
     sending: false,      // an inbox message is on its way
     // The standing instructions' editor: open while the owner edits (polls never touch it then), whether a save is on its
@@ -521,7 +523,7 @@
     header: "Header", controls: "Controls", kpis: "Key numbers", badges: "Tab badges", memorial: "Memorial",
     now: "Now", lives: "Previous lives", charts: "Charts", table: "Table", ledger: "Ledger", forms: "Forms",
     projects: "Projects", activity: "Activity", approvals: "Approvals", inbox: "Inbox", instructions: "Standing instructions",
-    upgrades: "Upgrades", mind: "Mind", ventures: "Ventures",
+    upgrades: "Upgrades", mind: "Mind", ventures: "Ventures", roadmap: "Roadmap",
     cycleDetail: "Cycle details", diagnostics: "Diagnostics", email: "Email", workspace: "Workspace", workspaceFile: "Workspace file",
   };
 
@@ -611,6 +613,7 @@
     section("upgrades", [d.upgrades, coming, agent.name, minute], null, function () { return renderUpgrades(arr(d.upgrades)); });
     // The tree is loaded apart: again when it changed (a venture, or a cycle that ended), while its tab is open.
     if (ui.tab === "ventures" && !ui.vt.busy && d.ventures_stamp !== undefined && d.ventures_stamp !== ui.vt.stamp) loadVentures();
+    if (ui.tab === "roadmap" && !ui.rm.busy && isObject(d.roadmap) && d.roadmap.stamp !== ui.rm.stamp) loadRoadmap();
     section("mind", [d.mind, ui.mind, minute], ["mind-body"], function () { renderMind(d.mind); });
 
     ui.refocus = null;  // only for the render right after the owner's action
@@ -880,6 +883,7 @@
       unread: pick("inbox_unread", function () { return rows(d.inbox, isUnread); }),
       upgrades: pick("upgrades_new", function () { return rows(d.upgrades, function (x) { return x.status === "new"; }); }),
       ventures: pick("ventures_proposed", function () { return 0; }),
+      overdue: isObject(d.roadmap) && !isNaN(num(d.roadmap.overdue)) ? num(d.roadmap.overdue) : 0,
     };
   }
 
@@ -890,6 +894,7 @@
     setBadge("badge-inbox", c.unread, "●", "unread");
     setBadge("badge-upgrades", c.upgrades, "◔", "new");
     setBadge("badge-ventures", c.ventures, "◔", "business cases waiting for your decision");
+    setBadge("badge-roadmap", c.overdue, "▲", "overdue milestones");
     var sys = d.system;
     setBadge("badge-system", arr(sys.config_errors).length + (isObject(sys.database) && sys.database.ok === false ? 1 : 0) + (sys.economy_broken ? 1 : 0), "!", "need attention");
   }
@@ -3054,6 +3059,8 @@
         reviewLine("Working", r.working),
         reviewLine("Not working", r.not_working),
         reviewLine("What your decisions tell it", r.owner_feedback),
+        reviewLine("Ventures", r.ventures),
+        reviewLine("Roadmap", r.roadmap),
         reviewLine("Lesson", r.lesson),
         r.scorecard ? h("details", { class: "review-numbers" }, h("summary", { text: "The numbers it judged" }),
           h("pre", { class: "mind-text", text: asText(r.scorecard) })) : null);
@@ -5117,9 +5124,559 @@
     $("vt-form-pitch").addEventListener("input", function () { setVentureFieldError("vt-form-pitch", ""); ventureCounter("vt-form-pitch", ventureLimit("pitch", 600)); });
   }
 
+  // ------------------------------------------------------------------ roadmap (0.11.0)
+  // Where Ember is heading: goals for the next months, the milestones that lead to them and this week's steps, each
+  // with a date and a measure of done. Drawn as a timeline (a row per milestone, under the goal it leads to; today
+  // marked) and listed below as cards by horizon. The owner adds milestones, leaves notes and drops them.
+
+  var MILESTONE_STATE = {
+    overdue: { icon: "▲", label: "Overdue", tone: "critical", order: 0 },
+    week: { icon: "◆", label: "Due this week", tone: "warning", order: 1 },
+    month: { icon: "◆", label: "This month", tone: "accent", order: 2 },
+    quarter: { icon: "◆", label: "Next three months", tone: "", order: 3 },
+    later: { icon: "◆", label: "Later", tone: "", order: 4 },
+    done: { icon: "●", label: "Done", tone: "good", order: 5 },
+    missed: { icon: "✕", label: "Missed", tone: "", order: 6 },
+    dropped: { icon: "–", label: "Dropped", tone: "", order: 7 },
+  };
+
+  var ROADMAP_GROUPS = [
+    { key: "overdue", title: "Overdue", match: function (s) { return s === "overdue"; } },
+    { key: "week", title: "Due this week", match: function (s) { return s === "week"; } },
+    { key: "month", title: "This month", match: function (s) { return s === "month"; } },
+    { key: "quarter", title: "Next three months", match: function (s) { return s === "quarter"; } },
+    { key: "later", title: "Later", match: function (s) { return s === "later"; } },
+    { key: "closed", title: "Done, missed and dropped", match: function () { return true; } },
+  ];
+
+  // The timeline's marks: the state (open, overdue, done, missed, dropped) has its own shape and color, and the row
+  // its label, so no state is told by color alone.
+  var MARK_STATES = [
+    { key: "open", label: "Open" }, { key: "overdue", label: "Overdue" }, { key: "done", label: "Done" },
+    { key: "missed", label: "Missed" }, { key: "dropped", label: "Dropped" },
+  ];
+  var RM = { row: 30, axis: 38, pad: 12, label: 250, narrowLabel: 150, minPlot: 360, before: 21, after: 91, charWidth: 6.6 };
+  var monthFmt = new Intl.DateTimeFormat(undefined, { month: "short", timeZone: "UTC" });
+
+  // Calendar days as whole numbers (days since 1970-01-01), so dates compare and space out exactly.
+  function dayOf(y, m, d) { return Math.round(Date.UTC(y, m, d) / 86400000); }
+  function dayNumber(iso) {
+    var p = String(iso || "").split("-");
+    return p.length === 3 ? dayOf(Number(p[0]), Number(p[1]) - 1, Number(p[2])) : NaN;
+  }
+  function stampDay(iso) {  // a timestamp's day on the owner's calendar
+    var t = new Date(iso);
+    return iso && validDate(t) ? dayOf(t.getFullYear(), t.getMonth(), t.getDate()) : NaN;
+  }
+  function dayParts(n) { var d = new Date(n * 86400000); return { y: d.getUTCFullYear(), m: d.getUTCMonth() }; }
+
+  function markState(m) {
+    if (m.status !== "open") return m.status;
+    return m.horizon === "overdue" ? "overdue" : "open";
+  }
+
+  function whenText(days) {
+    var d = num(days);
+    if (isNaN(d)) return "";
+    if (d === 0) return "today";
+    if (d === 1) return "tomorrow";
+    return d > 0 ? "in " + d + " days" : plural(-d, "day") + " late";
+  }
+
+  function loadRoadmap() {
+    var rm = ui.rm;
+    if (rm.busy) { rm.again = true; return; }
+    rm.busy = true;
+    safely("roadmap", renderRoadmap);
+    request("GET", "api/roadmap").then(function (res) {
+      if (!res.ok) throw httpError(res);
+      if (!isObject(res.data) || !Array.isArray(res.data.items)) throw new RequestError("malformed", res.data === undefined ? "not JSON" : "the roadmap is missing");
+      rm.data = res.data;
+      rm.stamp = res.data.stamp;
+      rm.error = null;
+      rm.byId = {};
+      res.data.items.forEach(function (m) { if (isObject(m)) rm.byId[String(m.id)] = m; });
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      rm.error = err;
+    }).then(function () {
+      rm.busy = false;
+      safely("roadmap", renderRoadmap);
+      if (rm.again) { rm.again = false; loadRoadmap(); }
+    });
+  }
+
+  function renderRoadmap() {
+    var rm = ui.rm;
+    var data = rm.data;
+    var name = agentName();
+    $("rm-refresh").textContent = rm.busy ? "Refreshing…" : "Refresh";
+    setStatusText("rm-load-status", rm.error && !rm.busy ? "Couldn't load the roadmap (" + errorText(rm.error) + ")." +
+      (data ? " What you see is the roadmap loaded earlier." : " Try Refresh.") : "", rm.error && !rm.busy ? "error" : "");
+    $("rm-sub").textContent = "Where " + name + " is heading: goals for the next months, the milestones that lead to them and " +
+      "this week's steps, each with a date and a measure of done. " + name + " plans every cycle toward the one due first.";
+    if (!data) {
+      replace($("rm-chart"), rm.busy ? h("p", { class: "muted rm-loading", text: "Loading the roadmap…" }) : []);
+      return;
+    }
+    var items = arr(data.items).filter(function (m) { return isObject(m) && m.id !== undefined; });
+    renderRoadmapSummary(data, items);
+    renderRoadmapLegend();
+    renderRoadmapChart(data, items);
+    fillMilestoneParents(items);
+    var rows = items.map(function (m) { return Object.assign({}, m, { status: m.horizon, state: m.status }); }).sort(milestoneOrder);
+    return renderQueue($("roadmap"), {
+      kind: "milestone", rows: rows, groups: ROADMAP_GROUPS,
+      empty: emptyState("div", "No milestones yet.", name + " lays out its roadmap in its next wake cycle; add your own with Add milestone."),
+      view: milestoneView,
+      viewKey: data.today,
+      actionKey: function (m) { return String(m.state) + "|" + String(m.owner_version); },
+      actions: milestoneActions,
+      panel: milestonePanel,
+    });
+  }
+
+  // Open ones by date, the first due first; closed ones the latest first.
+  function milestoneOrder(x, y) {
+    var closedX = x.state !== "open";
+    var closedY = y.state !== "open";
+    if (closedX !== closedY) return closedX ? 1 : -1;
+    if (closedX) return String(y.closed_at || "").localeCompare(String(x.closed_at || "")) || num(y.id) - num(x.id);
+    return dayNumber(x.due) - dayNumber(y.due) || num(x.id) - num(y.id);
+  }
+
+  function renderRoadmapSummary(data, items) {
+    var open = items.filter(function (m) { return m.status === "open"; });
+    var counts = {};
+    items.forEach(function (m) { counts[m.horizon] = (counts[m.horizon] || 0) + 1; });
+    var parts = [];
+    if (open.length) {
+      var tally = ["overdue", "week", "month", "quarter", "later"].filter(function (k) { return counts[k]; }).map(function (k) {
+        return counts[k] + " " + MILESTONE_STATE[k].label.toLowerCase();
+      });
+      parts.push(plural(open.length, "open milestone") + ": " + tally.join(", ") + ".");
+    } else {
+      parts.push("No open milestones.");
+    }
+    var ended = ["done", "missed", "dropped"].filter(function (k) { return counts[k]; }).map(function (k) { return counts[k] + " " + k; });
+    if (ended.length) parts.push("Closed: " + ended.join(", ") + ".");
+    var moved = open.filter(function (m) { return num(m.moves) > 0; }).length;
+    if (moved) parts.push(plural(moved, "open milestone") + " moved from " + (moved === 1 ? "its" : "their") + " first date.");
+    $("rm-summary").textContent = parts.join(" ");
+  }
+
+  function renderRoadmapLegend() {
+    var el = $("rm-legend");
+    if (el.childNodes.length) return;
+    var keys = MARK_STATES.map(function (s) {
+      return h("span", { class: "rm-key", "data-state": s.key }, legendMark(markPath(s.key, 7, 7)), s.label);
+    });
+    keys.push(h("span", { class: "rm-key", "data-state": "open" }, legendMark(diamondPath(7, 7, 4.5), "rm-first"), "First date, when it moved"));
+    keys.push(h("span", { class: "rm-key" }, svg("svg", { width: 14, height: 14, "aria-hidden": "true" },
+      svg("line", { class: "rm-today", x1: 7, x2: 7, y1: 0, y2: 14 })), "Today"));
+    replace(el, keys);
+  }
+
+  function legendMark(d, cls) {
+    return svg("svg", { width: 14, height: 14, viewBox: "0 0 14 14", "aria-hidden": "true" }, svg("path", { class: cls || "rm-mark", d: d }));
+  }
+
+  function diamondPath(cx, cy, r) {
+    return "M" + cx + " " + (cy - r) + " L" + (cx + r) + " " + cy + " L" + cx + " " + (cy + r) + " L" + (cx - r) + " " + cy + " Z";
+  }
+
+  // Open: a diamond. Overdue: a triangle. Done: a disc. Missed: a cross. Dropped: a dash.
+  function markPath(state, cx, cy) {
+    if (state === "overdue") return "M" + cx + " " + (cy - 6.5) + " L" + (cx + 6.5) + " " + (cy + 5) + " L" + (cx - 6.5) + " " + (cy + 5) + " Z";
+    if (state === "done") return "M" + (cx - 5.5) + " " + cy + " a5.5 5.5 0 1 0 11 0 a5.5 5.5 0 1 0 -11 0 Z";
+    if (state === "missed") return "M" + (cx - 4.5) + " " + (cy - 4.5) + " L" + (cx + 4.5) + " " + (cy + 4.5) + " M" + (cx + 4.5) + " " + (cy - 4.5) + " L" + (cx - 4.5) + " " + (cy + 4.5);
+    if (state === "dropped") return "M" + (cx - 5) + " " + cy + " L" + (cx + 5) + " " + cy;
+    return diamondPath(cx, cy, 6.5);
+  }
+
+  // The rows: every milestone under the one it leads to (each goal followed by its steps), by date.
+  function roadmapRows(items, start) {
+    var shown = items.filter(function (m) { return m.status === "open" || stampDay(m.closed_at) >= start; });
+    var byId = {};
+    shown.forEach(function (m) { byId[String(m.id)] = m; });
+    var kids = {};
+    var roots = [];
+    shown.forEach(function (m) {
+      var parent = m.parent_id !== null && m.parent_id !== undefined && byId[String(m.parent_id)] ? String(m.parent_id) : null;
+      if (parent) (kids[parent] = kids[parent] || []).push(m);
+      else roots.push(m);
+    });
+    var order = function (x, y) { return dayNumber(x.due) - dayNumber(y.due) || num(x.id) - num(y.id); };
+    // The plan first: open goals by date; what ended lately below them.
+    var closedLast = function (x, y) {
+      var cx = x.status !== "open";
+      var cy = y.status !== "open";
+      return cx !== cy ? (cx ? 1 : -1) : order(x, y);
+    };
+    var rows = [];
+    var seen = {};
+    function walk(list, depth) {
+      list.slice().sort(depth ? order : closedLast).forEach(function (m) {
+        if (seen[String(m.id)]) return;
+        seen[String(m.id)] = true;
+        rows.push({ m: m, depth: depth });
+        walk(kids[String(m.id)] || [], depth + 1);
+      });
+    }
+    walk(roots, 0);
+    return rows;
+  }
+
+  function renderRoadmapChart(data, items) {
+    var el = $("rm-chart");
+    hideMilestoneTip();
+    var name = agentName();
+    var today = dayNumber(data.today);
+    var open = items.filter(function (m) { return m.status === "open"; });
+    if (isNaN(today) || !items.length) {
+      replace(el, emptyState("div", "Nothing planned yet.", name + " lays out its roadmap itself: a goal for the next three months, " +
+        "this month's milestones toward it and this week's steps."));
+      return;
+    }
+    var lastDue = open.reduce(function (last, m) { var d = dayNumber(m.due); return isNaN(d) ? last : Math.max(last, d); }, today);
+    var start = today - RM.before;
+    var end = Math.max(today + RM.after, lastDue + 7);
+    var rows = roadmapRows(items, start);
+    if (!rows.length) {
+      replace(el, emptyState("div", "Nothing open or closed lately.", "Older milestones are in the list below."));
+      return;
+    }
+    var width = el.clientWidth || 720;
+    var labelW = width < 640 ? RM.narrowLabel : RM.label;
+    var plotW = Math.max(RM.minPlot, width - labelW - RM.pad * 3);
+    var totalW = RM.pad + labelW + plotW + RM.pad * 2;
+    var height = RM.axis + rows.length * RM.row + RM.pad;
+    var x0 = RM.pad + labelW + RM.pad;
+    function x(day) { return x0 + (Math.min(Math.max(day, start), end) - start) / (end - start) * plotW; }
+    function inside(day) { return !isNaN(day) && day >= start && day <= end; }
+
+    var grid = [];
+    var first = true;
+    for (var n = dayOf(dayParts(start).y, dayParts(start).m + 1, 1); n <= end; n = dayOf(dayParts(n).y, dayParts(n).m + 1, 1)) {
+      var gx = x(n);
+      var parts = dayParts(n);
+      grid.push(svg("line", { class: "rm-grid", x1: gx, x2: gx, y1: RM.axis - 8, y2: height - RM.pad }));
+      grid.push(svg("text", { class: "rm-month", x: gx + 4, y: RM.axis - 12 },
+        monthFmt.format(new Date(n * 86400000)) + (first || parts.m === 0 ? " " + parts.y : "")));
+      first = false;
+    }
+    var tx = x(today);
+    var now = [
+      svg("line", { class: "rm-today", x1: tx, x2: tx, y1: RM.axis - 26, y2: height - RM.pad }),
+      svg("text", { class: "rm-today-label", x: tx, y: 11, "text-anchor": "middle" }, "Today"),
+    ];
+
+    var marks = rows.map(function (r, i) {
+      var m = r.m;
+      var state = markState(m);
+      var y = RM.axis + i * RM.row + RM.row / 2;
+      var due = dayNumber(m.due);
+      var planned = stampDay(m.created_at);
+      var until = m.status === "open" ? due : stampDay(m.closed_at);
+      var indent = Math.min(r.depth, 4) * 12;
+      var chars = Math.max(6, Math.floor((labelW - indent - 18) / RM.charWidth));
+      var label = MILESTONE_STATE[m.horizon] || MILESTONE_STATE[m.status] || { label: String(m.status) };
+      var parts = [
+        svg("rect", { class: "rm-hit", x: 0, y: y - RM.row / 2, width: totalW, height: RM.row }),
+        svg("text", { class: "rm-glyph", x: RM.pad + indent, y: y + 4 }, (MILESTONE_STATE[m.horizon] || MILESTONE_STATE[m.status] || { icon: "" }).icon),
+        svg("text", { class: "rm-label", x: RM.pad + indent + 14, y: y + 4 }, shortTitle(m.title, chars)),
+      ];
+      // From when it was planned to its date (to when it ended, once closed).
+      if (!isNaN(planned) && !isNaN(until) && Math.max(planned, until) >= start) {
+        var a = x(Math.min(planned, until));
+        var b = x(Math.max(planned, until));
+        if (b - a >= 2) parts.push(svg("rect", { class: "rm-bar", x: a, y: y - 3, width: b - a, height: 6, rx: 3 }));
+      }
+      // Where it was first due, when its date moved.
+      var firstDue = dayNumber(m.first_due);
+      if (num(m.moves) > 0 && inside(firstDue) && firstDue !== due && inside(due)) {
+        parts.push(svg("line", { class: "rm-slip", x1: x(firstDue), x2: x(due), y1: y, y2: y }));
+        parts.push(svg("path", { class: "rm-first", d: diamondPath(x(firstDue), y, 4.5) }));
+      }
+      if (inside(due)) parts.push(svg("path", { class: "rm-mark", d: markPath(state, x(due), y) }));
+      var g = svg("g", {
+        class: "rm-row", "data-state": state, "data-id": m.id, tabindex: "0", role: "button",
+        "data-selected": String(ui.rm.selected) === String(m.id) ? "true" : null,
+        "aria-label": "#" + m.id + " " + m.title + ", " + label.label + ", due " + fmtDay(m.due) +
+          (m.status === "open" ? " (" + whenText(m.days) + ")" : "") + ". Show its card.",
+      }, parts);
+      g.addEventListener("pointerenter", function () { showMilestoneTip(m, g); });
+      g.addEventListener("pointerleave", hideMilestoneTip);
+      g.addEventListener("focus", function () { showMilestoneTip(m, g); });
+      g.addEventListener("blur", hideMilestoneTip);
+      g.addEventListener("click", function () { showMilestoneCard(m.id); });
+      g.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); showMilestoneCard(m.id); }
+        else if (ev.key === "Escape") hideMilestoneTip();
+      });
+      return g;
+    });
+    var picture = svg("svg", { class: "rm-svg", width: totalW, height: height, viewBox: "0 0 " + totalW + " " + height,
+      role: "group", "aria-label": "Roadmap timeline, " + plural(rows.length, "milestone") + ", today " + fmtDay(data.today) },
+      svg("g", { class: "rm-axis" }, grid), svg("g", { class: "rm-rows" }, marks), svg("g", { class: "rm-now" }, now));
+    var scrollLeft = el.scrollLeft;
+    replace(el, picture);
+    el.scrollLeft = scrollLeft;
+  }
+
+  function showMilestoneTip(m, row) {
+    var tip = $("rm-tip");
+    var state = MILESTONE_STATE[m.horizon] || MILESTONE_STATE[m.status] || { icon: "", label: String(m.status) };
+    var due = "Due " + fmtDay(m.due) + (m.status === "open" ? " (" + whenText(m.days) + ")" : "");
+    var ended = { done: "Done", missed: "Missed", dropped: "Dropped" }[m.status];
+    replace(tip, [
+      h("p", { class: "rm-tip-title", text: m.title }),
+      h("p", { class: "rm-tip-state" }, h("span", { "aria-hidden": "true", text: state.icon + " " }), state.label + " · " + due),
+      num(m.moves) > 0 ? h("p", { class: "muted", text: "Moved " + plural(m.moves, "time") + "; first due " + fmtDay(m.first_due) }) : null,
+      h("p", null, h("strong", { text: "Done when: " }), asText(m.measure)),
+      ended && m.result ? h("p", null, h("strong", { text: ended + ": " }), asText(m.result)) : null,
+    ]);
+    tip.hidden = false;
+    var card = $("rm-card").getBoundingClientRect();
+    var mark = row.querySelector(".rm-mark") || row;
+    var at = mark.getBoundingClientRect();
+    var left = Math.min(Math.max(8, at.left - card.left - 16), Math.max(8, card.width - tip.offsetWidth - 8));
+    tip.style.left = left + "px";
+    tip.style.top = (at.bottom - card.top + 8) + "px";
+  }
+
+  function hideMilestoneTip() { var tip = $("rm-tip"); if (tip) tip.hidden = true; }
+
+  function showMilestoneCard(id) {
+    ui.rm.selected = id;
+    hideMilestoneTip();
+    Array.prototype.forEach.call($("rm-chart").querySelectorAll(".rm-row"), function (g) {
+      if (g.getAttribute("data-id") === String(id)) g.setAttribute("data-selected", "true");
+      else g.removeAttribute("data-selected");
+    });
+    var card = $("roadmap").querySelector('article[data-id="' + String(id) + '"]');
+    if (!card) return;
+    Array.prototype.forEach.call($("roadmap").querySelectorAll("article[data-selected]"), function (c) { c.removeAttribute("data-selected"); });
+    card.setAttribute("data-selected", "true");
+    card.scrollIntoView({ block: "center", behavior: "smooth" });
+    var title = card.querySelector(".rm-card-title");
+    if (title) title.focus({ preventScroll: true });
+  }
+
+  var MILESTONE_RESULT = { done: "Evidence", missed: "Why, and what now", dropped: "Why it was dropped" };
+
+  function milestoneView(m) {
+    var name = agentName();
+    var parent = m.parent_id !== null && m.parent_id !== undefined ? ui.rm.byId[String(m.parent_id)] : null;
+    var closed = m.state !== "open";
+    var due = fmtDay(m.due) + (closed ? "" : " (" + whenText(m.days) + ")");
+    if (num(m.moves) > 0) due += " · moved " + plural(m.moves, "time") + ", first due " + fmtDay(m.first_due);
+    return [
+      h("div", { class: "item-head" },
+        h("h3", { class: "rm-card-title", tabindex: "-1", text: m.title || "Untitled milestone" }),
+        chip(MILESTONE_STATE, m.horizon, sentence(String(m.horizon || "unknown"))),
+        m.created_by === "owner" ? plainChip("Your milestone") : null,
+        m.simulated ? testTag() : null),
+      h("p", { class: "muted small", text: "#" + m.id + (parent ? " · leads to #" + parent.id + " " + parent.title : "") }),
+      h("dl", { class: "item-grid" },
+        h("div", null, h("dt", { text: "Due" }), h("dd", { text: due })),
+        h("div", null, h("dt", { text: "Done when" }), h("dd", { class: "pre-line", text: asText(m.measure) })),
+        closed ? h("div", null, h("dt", { text: MILESTONE_RESULT[m.state] || "Result" }),
+          h("dd", { class: "pre-line", text: asText(m.result) || "–" })) : null,
+        m.venture_id ? h("div", null, h("dt", { text: "Venture" }),
+          h("dd", { text: "#" + m.venture_id + (m.venture_title ? " " + m.venture_title : "") })) : null,
+        m.project_id ? h("div", null, h("dt", { text: "Project" }),
+          h("dd", { text: "#" + m.project_id + (m.project_title ? " " + m.project_title : "") })) : null,
+        num(m.cycles) > 0 ? h("div", null, h("dt", { text: "Worked on" }),
+          h("dd", { text: plural(m.cycles, "wake cycle") + " · " + usd(m.spent_usd) })) : null),
+      milestoneWord(m),
+      m.notes ? h("details", { class: "notes" }, h("summary", { text: "Notes" }), h("pre", { class: "notes-text", text: asText(m.notes) })) : null,
+      h("p", { class: "muted small" }, (m.created_by === "owner" ? "Added by " + (m.entered_by || "you") : "Planned by " + name) + " ",
+        timeEl(m.created_at), closed && m.closed_at ? [" · closed ", timeEl(m.closed_at)] : [" · updated ", timeEl(m.updated_at)]),
+    ];
+  }
+
+  var MILESTONE_WORDS = { added: "You added this milestone", note: "Your note", drop: "You dropped it" };
+
+  function milestoneWord(m) {
+    if (!m.owner_action) return null;
+    var name = agentName();
+    return h("div", { class: "decision" },
+      h("p", null, h("strong", { text: MILESTONE_WORDS[m.owner_action] || sentence(String(m.owner_action)) }), " · ", timeEl(m.owner_at),
+        " · " + (m.seen_by_agent ? name + " has seen it." : name + " sees it on its next wake.")),
+      m.owner_comment ? h("p", { class: "pre-line", text: asText(m.owner_comment) }) : null);
+  }
+
+  function milestoneActions(it, m) {
+    var list = [panelButton(it, "note", "Note")];
+    if (m.state === "open") list.push(panelButton(it, "drop", "Drop", true));
+    return list;
+  }
+
+  function milestonePanel(it, mode) {
+    var name = agentName();
+    var specs = {
+      note: { title: "A note for " + name, submit: "Send note",
+        intro: [h("p", { text: name + " reads it with the milestone on its next wake." })] },
+      drop: { title: "Drop this milestone?", submit: "Drop", danger: true,
+        intro: [h("p", { text: name + " stops working toward it. It stays on the roadmap, marked dropped." })] },
+    };
+    var spec = specs[mode];
+    spec.mode = mode;
+    spec.fields = [{ name: "comment", label: mode === "note" ? "Your note" : "Why (optional)", rows: 2, max: roadmapLimit("comment", 1000),
+      required: mode === "note", missing: "Write the note." }];
+    spec.url = "api/roadmap/" + encodeURIComponent(String(it.row.id)) + "/decide";
+    spec.body = function (values) {
+      var body = { action: mode };
+      var version = num(it.row.owner_version);
+      if (!isNaN(version)) body.expected_version = version;
+      if (values.comment) body.comment = values.comment;
+      return body;
+    };
+    spec.done = function () {
+      loadRoadmap();
+      return (mode === "note" ? "Note sent." : "Dropped.") + " " + name + " sees it on its next wake.";
+    };
+    return spec;
+  }
+
+  // ---- Add milestone
+
+  function roadmapLimit(key, fallback) {
+    var limits = ui.rm.data && isObject(ui.rm.data.limits) ? ui.rm.data.limits : {};
+    var n = num(limits[key]);
+    return isNaN(n) ? fallback : n;
+  }
+
+  function isoOf(dayN) { return new Date(dayN * 86400000).toISOString().slice(0, 10); }
+
+  function fillMilestoneParents(items) {
+    var select = $("rm-form-parent");
+    if (isBusy(select)) return;
+    var current = select.value;
+    var open = items.filter(function (m) { return m.status === "open"; }).sort(function (x, y) {
+      return dayNumber(x.due) - dayNumber(y.due) || num(x.id) - num(y.id);
+    });
+    replace(select, [h("option", { value: "", text: "Nothing (a goal of its own)" })].concat(open.map(function (m) {
+      return h("option", { value: String(m.id), text: "#" + m.id + " " + shortTitle(m.title, 50) + " (due " + m.due + ")" });
+    })));
+    select.value = current && ui.rm.byId[current] && ui.rm.byId[current].status === "open" ? current : "";
+    var today = dayNumber(ui.rm.data && ui.rm.data.today);
+    if (!isNaN(today)) {
+      $("rm-form-due").min = isoOf(today);
+      $("rm-form-due").max = isoOf(today + roadmapLimit("ahead_days", 366));
+    }
+  }
+
+  function setMilestoneFieldError(id, message) {
+    var error = $(id + "-error");
+    error.textContent = message || "";
+    error.hidden = !message;
+    if (message) $(id).setAttribute("aria-invalid", "true");
+    else $(id).removeAttribute("aria-invalid");
+  }
+
+  function milestoneCounter(id, max) {
+    var n = $(id).value.trim().length;
+    var counter = $(id + "-count");
+    counter.textContent = intFmt.format(n) + " / " + intFmt.format(max) + " characters";
+    counter.setAttribute("data-over", n > max ? "true" : "false");
+  }
+
+  function openMilestoneForm(open) {
+    $("rm-form").hidden = !open;
+    $("rm-add").setAttribute("aria-expanded", String(open));
+    if (open) {
+      milestoneCounter("rm-form-title", roadmapLimit("title", 100));
+      milestoneCounter("rm-form-measure", roadmapLimit("measure", 300));
+      $("rm-form-title").focus();
+    } else {
+      $("rm-add").focus();
+    }
+  }
+
+  function submitMilestoneForm() {
+    if (ui.rm.saving) return;
+    var fields = { title: $("rm-form-title").value.trim(), measure: $("rm-form-measure").value.trim(), due: $("rm-form-due").value };
+    var parent = $("rm-form-parent").value;
+    var problems = [];
+    ["title", "measure", "due"].forEach(function (k) { setMilestoneFieldError("rm-form-" + k, ""); });
+    var limits = { title: roadmapLimit("title", 100), measure: roadmapLimit("measure", 300) };
+    if (!fields.title) problems.push(["title", "Name the milestone."]);
+    else if (fields.title.length > limits.title) problems.push(["title", "Keep it under " + limits.title + " characters."]);
+    if (!fields.measure) problems.push(["measure", "Say how " + agentName() + " will know it is reached."]);
+    else if (fields.measure.length > limits.measure) problems.push(["measure", "Keep it under " + limits.measure + " characters."]);
+    var due = dayNumber(fields.due);
+    var today = dayNumber(ui.rm.data && ui.rm.data.today);
+    if (isNaN(due)) problems.push(["due", "Pick the date it is due."]);
+    else if (!isNaN(today) && (due < today || due > today + roadmapLimit("ahead_days", 366))) {
+      problems.push(["due", "Pick a date from today to a year ahead."]);
+    }
+    if (problems.length) {
+      problems.forEach(function (p) { setMilestoneFieldError("rm-form-" + p[0], p[1]); });
+      setStatusText("rm-status", problems.length === 1 ? "Please fix the marked field." : "Please fix the marked fields.", "error");
+      $("rm-form-" + problems[0][0]).focus();
+      return;
+    }
+    var body = { title: fields.title, measure: fields.measure, due: fields.due };
+    if (parent) body.parent_id = num(parent);
+    ui.rm.saving = true;
+    $("rm-form-save").disabled = true;
+    setStatusText("rm-status", "Saving…", "");
+    request("POST", "api/roadmap", body).then(function (res) {
+      if (res.status === 201) {
+        var id = isObject(res.data) ? res.data.id : null;
+        ["title", "measure", "due"].forEach(function (k) { $("rm-form-" + k).value = ""; });
+        openMilestoneForm(false);
+        setStatusText("rm-status", "Added to the roadmap" + (id ? " as #" + id : "") + ". " + agentName() + " sees it on its next wake.", "ok");
+        ui.rm.selected = id;
+        loadRoadmap();
+        return;
+      }
+      var data = isObject(res.data) ? res.data : {};
+      var msg = typeof data.error === "string" && data.error ? endSentence(sentence(data.error)) : "";
+      var field = data.field === "parent_id" ? "parent" : data.field;
+      if ((res.status === 422 || res.status === 409) && msg && ["title", "measure", "due"].indexOf(field) >= 0) {
+        setMilestoneFieldError("rm-form-" + field, msg);
+        setStatusText("rm-status", "Please fix the marked field.", "error");
+        $("rm-form-" + field).focus();
+        return;
+      }
+      setStatusText("rm-status", msg ? "Nothing was saved: " + lowerFirst(msg) : "Nothing was saved (" + httpError(res).message + ").", "error");
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("rm-status", "Couldn't reach " + agentName() + ", so it's not clear whether the milestone was saved. Refresh the roadmap before you try again.", "error");
+    }).then(function () {
+      ui.rm.saving = false;
+      $("rm-form-save").disabled = false;
+    });
+  }
+
+  function initRoadmap() {
+    $("rm-refresh").addEventListener("click", loadRoadmap);
+    $("rm-add").addEventListener("click", function () { openMilestoneForm($("rm-form").hidden); });
+    $("rm-form-cancel").addEventListener("click", function () { openMilestoneForm(false); });
+    $("rm-form").addEventListener("submit", function (ev) { ev.preventDefault(); submitMilestoneForm(); });
+    $("rm-form").addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") { ev.preventDefault(); openMilestoneForm(false); }
+      else if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); submitMilestoneForm(); }
+    });
+    $("rm-form-title").addEventListener("input", function () { setMilestoneFieldError("rm-form-title", ""); milestoneCounter("rm-form-title", roadmapLimit("title", 100)); });
+    $("rm-form-measure").addEventListener("input", function () { setMilestoneFieldError("rm-form-measure", ""); milestoneCounter("rm-form-measure", roadmapLimit("measure", 300)); });
+    $("rm-form-due").addEventListener("input", function () { setMilestoneFieldError("rm-form-due", ""); });
+    // The timeline fits the page's width: drawn again when the window changes size.
+    var pending = null;
+    window.addEventListener("resize", function () {
+      window.clearTimeout(pending);
+      pending = window.setTimeout(function () {
+        if (ui.tab === "roadmap" && ui.rm.data) safely("roadmap", function () { renderRoadmapChart(ui.rm.data, arr(ui.rm.data.items)); });
+      }, 150);
+    });
+  }
+
   // ------------------------------------------------------------------ tabs
 
-  var TABS = ["overview", "ledger", "projects", "ventures", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
+  var TABS = ["overview", "ledger", "projects", "ventures", "roadmap", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
   var MIND_TABS = ["strategy", "lessons", "identity", "journal", "reviews"];
 
   // Arrow keys, Home and End move between tabs; focus follows the selection.
@@ -5149,6 +5706,7 @@
     if (name === "overview" && ui.charts.flow) { ui.charts.flow.resize(); ui.charts.balance.resize(); }
     if (name === "workspace") refreshWorkspace();
     if (name === "ventures") loadVentures();
+    if (name === "roadmap") loadRoadmap();
   }
 
   function selectMind(name, focus) {
@@ -5221,6 +5779,7 @@
 
   initForms();
   initVentures();
+  initRoadmap();
   selectTab(ui.tab, false);
   selectMind(ui.mind, false);
   refresh();
