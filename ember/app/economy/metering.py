@@ -38,6 +38,7 @@ from typing import Any, Protocol
 from .. import events
 from ..config import ModelPrice, Settings
 from ..db import Database
+from ..version import app_version
 from .clock import Clock, from_iso, to_iso
 from .costs import MICROS_PER_USD, Usage, container_micros, cost_micros, micros_to_usd
 from .estimate import CONTAINER_MINIMUM_MINUTES, Plan, Unpriceable, plan_request, worst_case_micros
@@ -415,7 +416,7 @@ class MeteredModel:
                 cycle_id = int(
                     conn.execute(
                         "INSERT INTO cycles (life_id, boot_id, started_at, status, trigger, simulated, cap_micros,"
-                        " session) VALUES (?, ?, ?, 'running', ?, ?, ?, ?)",
+                        " session, app_version) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?)",
                         (
                             status.life_id,
                             self.boot_id,
@@ -424,6 +425,7 @@ class MeteredModel:
                             1 if self.simulated else 0,
                             usd_cap_to_micros(self.settings.cycle_spend_cap_usd),
                             self.life.session(),
+                            app_version()[:40],
                         ),
                     ).lastrowid
                 )
@@ -708,7 +710,8 @@ class MeteredModel:
             )
         cursor = conn.execute(
             "INSERT INTO llm_calls (boot_id, cycle_id, purpose, model, simulated, status, ts, local_day,"
-            " estimate_micros, guard_reason, price_snapshot, plan) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " estimate_micros, guard_reason, price_snapshot, plan, app_version)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 self.boot_id,
                 cycle_id,
@@ -722,6 +725,7 @@ class MeteredModel:
                 guard_reason,
                 snapshot,
                 json.dumps(plan.to_json()) if plan is not None else None,
+                app_version()[:40],
             ),
         )
         return int(cursor.lastrowid)

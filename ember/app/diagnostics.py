@@ -553,6 +553,7 @@ def _cycle(conn: Any, c: Any, full: bool = True) -> str:
         [
             f"### cycle #{c['id']} {c['status']} trigger={c['trigger']} simulated={c['simulated']} "
             f"session={c['session']} started={c['started_at']} ended={c['ended_at']} cap={c['cap_micros']}"
+            f" version={c['app_version'] or '-'}"
             f"\n    note={_cell(c['note'], TEXT_CHARS)} phase={c['phase']} step={c['step']}/{c['max_steps']} "
             f"act_end={_cell(c['act_end_reason'])} sleep={c['sleep_minutes']} project={_cell(c['project_id'])}"
             + (f" venture_cycle venture={_cell(c['venture_id'])}" if c["venture"] else "")
@@ -735,6 +736,7 @@ def _agent(state: AppState, full: bool = True) -> str:
                     "id",
                     "day",
                     "cycle_id",
+                    "app_version",
                     "status",
                     "verdicts",
                     "focus",

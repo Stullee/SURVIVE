@@ -23,6 +23,7 @@ from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.ledger import Books, Scope
 from ..economy.life import LifeStatus
+from ..version import app_version
 from . import roadmap, ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
 
@@ -526,8 +527,8 @@ def save(
     texts = {key: getattr(review, key) if review else "" for key in LIMITS}
     cursor = conn.execute(
         "INSERT INTO reviews (mode, session, life_id, cycle_id, created_at, day, status, scorecard, verdicts, working,"
-        " not_working, owner_feedback, lesson, focus, ventures, roadmap, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-        " ?, ?, ?, ?, ?, ?)",
+        " not_working, owner_feedback, lesson, focus, ventures, roadmap, note, app_version) VALUES (?, ?, ?, ?, ?, ?,"
+        " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             scope.mode,
             scope.session,
@@ -546,6 +547,7 @@ def save(
             texts["ventures"],
             texts["roadmap"],
             (note or "")[:300] or None,
+            app_version()[:40],
         ),
     )
     return int(cursor.lastrowid)

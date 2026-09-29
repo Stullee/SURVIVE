@@ -506,6 +506,7 @@ def _activity(conn: sqlite3.Connection, c: sqlite3.Row) -> dict[str, Any]:
         "cycle_id": c["id"],
         "trigger": c["trigger"],
         "status": c["status"],
+        "app_version": c["app_version"],  # which release ran it (0.12.0)
         "note": c["note"],
         "started_at": c["started_at"],
         "ended_at": c["ended_at"],
