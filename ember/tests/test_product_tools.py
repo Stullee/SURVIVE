@@ -201,8 +201,24 @@ def test_pictures_count_by_pixels_not_bytes() -> None:
     empty = {"messages": [{"role": "user", "content": [{"type": "image"}]}]}
     assert rough_token_count(request) == rough_token_count(empty) + picture_tokens(data)
     assert picture_tokens("bm90IGEgcGljdHVyZQ==") == 5_000  # unknown: the generous allowance
-    turns = [{"role": "user", "content": [block]}]
-    assert loop._size(turns) == loop._size([{"role": "user", "content": [{}]}]) + loop.IMAGE_EQUIVALENT_BYTES
+
+
+def test_the_conversation_counts_a_picture_by_its_pixels() -> None:
+    """A look's picture counts like text in proportion to its pixels, so a wide spreadsheet picture doesn't use up
+    the room of a whole page (0.9.0: every look counted as the largest, and four ended the cycle)."""
+
+    def size(data: str) -> int:
+        block = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}}
+        return loop._size([{"role": "user", "content": [block]}]) - loop._size([{"role": "user", "content": [{}]}])
+
+    largest = tools.LOOK_PIXELS
+    assert size(base64.b64encode(png(largest, largest)).decode()) == loop.IMAGE_EQUIVALENT_BYTES
+    assert size(base64.b64encode(png(1000, 750)).decode()) == 3_750
+    assert size(base64.b64encode(png(1000, 180)).decode()) == 900
+    assert size("bm90IGEgcGljdHVyZQ==") == loop.IMAGE_EQUIVALENT_BYTES  # unreadable: counted as the largest
+    # Eight listing photos and a dozen tool results fit, with room for the model's replies.
+    assert loop.MAX_CONVERSATION_BYTES > 8 * 3_750 + 12 * 2_000
+    assert tools.SPECS["look"].per_cycle >= 5  # a listing needs 5 to 10 photos, each looked at
 
 
 def test_the_fake_checks_pictures_like_the_api() -> None:

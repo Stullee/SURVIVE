@@ -2025,16 +2025,19 @@
   // Without a parsed action they are shown like any other request.
   function executorOf(a) {
     if (!isObject(a.action)) return null;
-    return a.executor === "email" || a.executor === "reddit_link" || a.executor === "etsy_listing" ? a.executor : null;
+    return a.executor === "email" || a.executor === "reddit_link" || a.executor === "etsy_listing" || a.executor === "etsy_edit" ? a.executor : null;
   }
+
+  // A new Etsy listing, or a change to a live one: Ember's code makes both after approval.
+  function isEtsy(a) { var e = executorOf(a); return e === "etsy_listing" || e === "etsy_edit"; }
 
   var APPROVAL_GROUPS = [
     { key: "pending", title: "Waiting for your decision", match: function (s) { return s === "pending"; } },
-    { key: "todo", title: "Approved, to carry out", match: function (s, a) { return isApproved(s) && !(a && (executorOf(a) === "email" || executorOf(a) === "etsy_listing")); } },
+    { key: "todo", title: "Approved, to carry out", match: function (s, a) { return isApproved(s) && !(a && (executorOf(a) === "email" || isEtsy(a))); } },
     { key: "sending", label: "Approved emails", title: function () { return "Approved emails, " + agentName() + " sends them"; },
       match: function (s, a) { return isApproved(s) && !!a && executorOf(a) === "email"; } },
-    { key: "listing", label: "Approved listings", title: function () { return "Approved Etsy listings, " + agentName() + " creates them"; },
-      match: function (s, a) { return isApproved(s) && !!a && executorOf(a) === "etsy_listing"; } },
+    { key: "listing", label: "Approved listings and changes", title: function () { return "Approved Etsy listings and changes, " + agentName() + " makes them"; },
+      match: function (s, a) { return isApproved(s) && !!a && isEtsy(a); } },
     { key: "closed", title: "Closed", match: function () { return true; } },
   ];
 
@@ -2067,7 +2070,7 @@
   // Where an approved email is ("" for other requests). Approved without an execution row yet: waiting.
   function executionStatus(a) {
     var executor = executorOf(a);
-    if (executor !== "email" && executor !== "etsy_listing") return "";
+    if (executor !== "email" && executor !== "etsy_listing" && executor !== "etsy_edit") return "";
     if (isObject(a.execution) && typeof a.execution.status === "string" && a.execution.status) return a.execution.status;
     return isApproved(a.status) ? "waiting" : "";
   }
@@ -2092,6 +2095,15 @@
     unclear: { icon: "!", label: "Unclear whether it was created", tone: "critical" },
   };
 
+  var CHANGE_EXECUTION = {
+    waiting: { icon: "◔", label: "Waiting to be made", tone: "accent" },
+    running: { icon: "●", label: "Being made at Etsy", tone: "accent" },
+    done: { icon: "✓", label: "Changed at Etsy", tone: "good" },
+    partial: { icon: "!", label: "Partly changed: check it at Etsy", tone: "warning" },
+    failed: { icon: "✕", label: "Not changed", tone: "critical" },
+    unclear: { icon: "!", label: "Unclear whether it was changed", tone: "critical" },
+  };
+
   function limitText(email) {
     var limit = email ? num(email.daily_limit) : NaN;
     return isNaN(limit) ? null : limit;
@@ -2112,6 +2124,7 @@
     if (executor === "email") content = emailDraft(action, final);
     else if (executor === "reddit_link") content = redditDraft(action);
     else if (executor === "etsy_listing") content = etsyDraft(action, final);
+    else if (executor === "etsy_edit") content = etsyChangeDraft(action, payload, final);
     else {
       content = payload ? h("div", { class: "payload-wrap" },
         final ? h("h4", { class: "small-head", text: "The agent's original" }) : null,
@@ -2124,7 +2137,7 @@
     return [
       h("div", { class: "item-head" },
         h("h3", { text: a.title || "Untitled request" }), plainChip(APPROVAL_TYPES[a.type] || sentence(String(a.type || "other").replace(/_/g, " "))),
-        executor ? plainChip(executor === "email" ? "Email" : executor === "etsy_listing" ? "Etsy" : "Reddit") : null,
+        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : "Reddit") : null,
         statusChip, a.simulated ? testTag() : null),
       a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
       executor === "email" && a.first_contact ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
@@ -2133,9 +2146,10 @@
       a.status === "pending" && executor === "email" ? h("p", { class: "send-note", text: sendNote(email, name) }) : null,
       a.status === "pending" && executor === "reddit_link" ? h("p", { class: "send-note", text: "After you approve, you post it yourself: this card then offers a button that opens Reddit with it filled in, and Copy buttons." }) : null,
       a.status === "pending" && executor === "etsy_listing" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this listing in your Etsy shop itself: a draft, its photos and files, then live. Etsy charges USD 0.20 per listing." }) : null,
+      a.status === "pending" && executor === "etsy_edit" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this change to the live listing itself. Etsy charges nothing for it." }) : null,
       executionView(a, email),
       final ? h("div", { class: "final-wrap" },
-        h("h4", { class: "small-head", text: executor === "email" ? "Your version of the body (" + name + " sends this)" : executor === "etsy_listing" ? "Your version (" + name + " lists this)" : "Your version (the agent must use this)" }),
+        h("h4", { class: "small-head", text: executor === "email" ? "Your version of the body (" + name + " sends this)" : executor === "etsy_listing" ? "Your version (" + name + " lists this)" : executor === "etsy_edit" ? "Your version (" + name + " makes this change)" : "Your version (the agent must use this)" }),
         h("pre", { class: "payload final capped", tabindex: "0", text: final })) : null,
       content,
       h("dl", { class: "item-grid" },
@@ -2223,10 +2237,44 @@
       h("p", { class: "muted small", text: "Ember adds this line at the end: \"This digital product was designed with the help of AI and reviewed by the seller before listing.\"" }));
   }
 
+  function changeExecutionView(a, st) {
+    var ex = isObject(a.execution) ? a.execution : {};
+    var name = agentName();
+    var detail;
+    if (st === "waiting") detail = [name + " makes it by itself shortly; it checks for approved changes every few minutes."];
+    else if (st === "running") detail = ex.started_at ? ["Changing it at Etsy since ", timeEl(ex.started_at), "."] : ["Changing it now."];
+    else if (st === "done") detail = ["Changed ", timeEl(ex.finished_at || ex.started_at), ex.url ? [": ", etsyLink(ex.url, ex.url)] : "."];
+    else if (ex.result) detail = [endSentence(sentence(ex.result))];
+    else detail = [ex.error ? "Not changed: " + endSentence(ex.error) : "Not changed."];
+    return h("div", { class: "execution", "data-status": st },
+      h("p", { class: "execution-head" }, chip(CHANGE_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
+      h("p", { class: "execution-detail" }, detail));
+  }
+
+  // A change to a live listing the agent proposed: the new photos (as they are in the workspace now; Ember uploads
+  // them only if they are still exactly the ones proposed) and the change as the owner approves it, old values next
+  // to the new ones.
+  function etsyChangeDraft(action, payload, final) {
+    var photos = arr(action.photos);
+    var files = arr(action.files);
+    return h("div", { class: "draft" },
+      h("p", { class: "payload-note" }, h("span", { "aria-hidden": "true", text: "! " }), "Written by the agent; check it before acting."),
+      photos.length ? h("div", { class: "etsy-photos" }, photos.map(function (p, i) {
+        return h("a", { href: wsProductUrl(String(p.path), true), target: "_blank", rel: "noopener", title: String(p.path) },
+          h("img", { src: wsProductUrl(String(p.path), true), alt: (i === 0 ? "New main photo: " : "New photo: ") + String(p.path), loading: "lazy" }));
+      })) : null,
+      files.length ? h("p", { class: "muted small" }, "New files: ", files.map(function (f, i) {
+        return [i ? ", " : "", h("a", { href: wsProductUrl(String(f.path), false), text: String(f.path) }), " (" + byteSize(num(f.bytes) || 0) + ")"];
+      })) : null,
+      h("h4", { class: "small-head", text: final ? "The agent's original change" : "The change" }),
+      h("pre", { class: "payload capped", tabindex: "0", text: payload }));
+  }
+
   function executionView(a, email) {
     var st = executionStatus(a);
     if (!st) return null;
     if (executorOf(a) === "etsy_listing") return listingExecutionView(a, st);
+    if (executorOf(a) === "etsy_edit") return changeExecutionView(a, st);
     var ex = isObject(a.execution) ? a.execution : {};
     var name = agentName();
     var limit = limitText(email);
@@ -2300,6 +2348,8 @@
     if (a.status === "pending") {
       // A Reddit draft is posted by the owner, who can still edit it on Reddit: no separate "with changes".
       if (executor === "reddit_link") return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
+      // A change of photos, files or category only has no words to change.
+      if (executor === "etsy_edit" && !a.editable) return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
       return [panelButton(it, "approve", "Approve"), panelButton(it, "approve_with_changes", "Approve with changes"), panelButton(it, "reject", "Reject", true)];
     }
     if (isApproved(a.status)) {
@@ -2311,6 +2361,7 @@
         var ls = executionStatus(a);
         return ls === "waiting" || ls === "waiting_limit" ? [panelButton(it, "failed", "Cancel listing", true)] : [];
       }
+      if (executor === "etsy_edit") return executionStatus(a) === "waiting" ? [panelButton(it, "failed", "Cancel change", true)] : [];
       var tools = [];
       if (executor === "reddit_link") {
         tools.push(redditLink(a.reddit_url) || h("span", { class: "muted small no-link", text: "No Reddit link (it isn't a www.reddit.com address): copy the text instead." }));
@@ -2333,7 +2384,7 @@
     if (mode === "approve" || mode === "approve_with_changes" || mode === "reject") {
       // For an email only the body can be changed; the server stores the edited body as final_payload. For a
       // listing: its title, price, tags and description (the server's "editable" text), not its files.
-      var original = executor === "email" ? asText(a.action.body) : executor === "etsy_listing" ? asText(a.editable || a.payload) : asText(a.payload);
+      var original = executor === "email" ? asText(a.action.body) : isEtsy(a) ? asText(a.editable || a.payload) : asText(a.payload);
       var limit = limitText(email);
       var approveIntro = "After approving, carry it out yourself, then mark it done or failed here. " + name + " sees your decision on its next wake.";
       if (executor === "email") {
@@ -2343,6 +2394,8 @@
         approveIntro = "After approving, you post it yourself: this card then offers a button that opens Reddit with it filled in, and Copy buttons. You can still edit it on Reddit before you post.";
       } else if (executor === "etsy_listing") {
         approveIntro = name + " then creates this listing in your Etsy shop itself, with the photos and files shown, and publishes it (Etsy charges USD 0.20). You hear the result on this card.";
+      } else if (executor === "etsy_edit") {
+        approveIntro = name + " then changes the live listing at Etsy itself, exactly as shown (Etsy charges nothing for it). You hear the result on this card.";
       }
       var specs = {
         approve: { title: executor === "email" ? "Approve this email" : "Approve this request", submit: "Approve",
@@ -2351,6 +2404,10 @@
           ? { title: "Approve with your changes to the listing", submit: "Approve with changes",
             intro: [h("p", { text: "Change the title, price, tags or description: " + name + " lists your version. Keep the Title:, Price: and Tags: lines, then an empty line, then the description. The photos, files and category stay as they are." })],
             fields: [{ name: "final_payload", label: "The listing (" + name + " lists your version)", rows: 14, value: original, max: 8000, required: true, missing: "Write the listing " + name + " should create." }, COMMENT_FIELD] }
+          : executor === "etsy_edit"
+          ? { title: "Approve with your changes to the change", submit: "Approve with changes",
+            intro: [h("p", { text: "Change the new words or price: " + name + " uses your version. Keep the head lines (Title:, Price:, Tags:) that are there and, if there is one, the empty line before the description. New photos, files and a new category stay as they are." })],
+            fields: [{ name: "final_payload", label: "The change (" + name + " makes your version)", rows: 12, value: original, max: 8000, required: true, missing: "Write the change " + name + " should make." }, COMMENT_FIELD] }
           : executor === "email"
           ? { title: "Approve with your changes to the body", submit: "Approve with changes",
             intro: [h("p", { text: "Edit the body: " + name + " sends your version. The recipient, the subject and the footer stay as they are. If you leave it as it is, this is recorded as a plain approval." })],
@@ -2385,6 +2442,7 @@
         }
         if (executor === "reddit_link") return "Approved. Post it with the button below, then mark it done or failed.";
         if (executor === "etsy_listing") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " creates the listing itself; this card shows when it's live.";
+        if (executor === "etsy_edit") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " changes the listing itself; this card shows when it's done.";
         if (mode === "approve_with_changes" && st === "approved") return "Approved as it was (the text was unchanged). Carry it out, then mark it done or failed.";
         if (mode === "approve_with_changes") return "Approved with your changes. Carry it out with your version, then mark it done or failed.";
         return "Approved. Carry it out, then mark it done or failed.";
@@ -2400,6 +2458,16 @@
         url: url + "close",
         body: function (v) { return { outcome: "failed", expected_version: version, result_note: v.result_note }; },
         done: function () { return "Cancelled. " + name + " won't create this listing."; },
+      };
+    }
+    if (executor === "etsy_edit" && failed) {
+      return {
+        mode: mode, title: "Cancel this change?", submit: "Cancel change", danger: true, cancelLabel: "Keep it",
+        intro: [h("p", { text: name + " won't make it. The request is marked failed, and " + name + " sees that on its next wake." })],
+        fields: [{ name: "result_note", label: "Why (" + name + " reads it)", rows: 2, max: 2000, required: true, value: "Cancelled before the listing was changed.", missing: "Say why you cancel it." }],
+        url: url + "close",
+        body: function (v) { return { outcome: "failed", expected_version: version, result_note: v.result_note }; },
+        done: function () { return "Cancelled. " + name + " won't change the listing."; },
       };
     }
     if (executor === "email" && failed) {

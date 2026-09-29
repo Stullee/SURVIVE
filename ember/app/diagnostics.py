@@ -61,6 +61,7 @@ TABLES = (
     "workshop_runs",
     "reviews",
     "etsy_listings",
+    "etsy_edits",
     "etsy_orders",
     "memory_versions",
     "emails",
@@ -423,6 +424,7 @@ def _agent(state: AppState) -> str:
             ("workshop_runs", ["id", "cycle_id", "status", "cost_micros", "script_used", "script_path", "task"], 10),
             ("reviews", ["id", "day", "cycle_id", "status", "verdicts", "focus", "lesson", "note"], 7),
             ("etsy_listings", ["id", "approval_id", "status", "listing_id", "state", "views", "favorites"], 10),
+            ("etsy_edits", ["id", "approval_id", "listing_id", "status", "result", "error"], 10),
             ("etsy_orders", ["receipt_id", "ordered_at", "total", "items"], 10),
         ):
             rows = conn.execute(

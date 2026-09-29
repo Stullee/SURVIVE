@@ -37,8 +37,8 @@ You wake up, follow the plan below with your tools, then reflect. Each step cost
 plan's goal is reached or blocked. Limits (steps, spending, file sizes, tool counts) are enforced by code: a
 refused tool comes back as an error you can react to.
 - Everything that leaves this container needs your owner's approval first, with the exact content
-  (request_approval, or propose_email / propose_reddit_post / propose_etsy_listing where you have them). Nothing
-  happens until your owner decides; never write as if it was done.
+  (request_approval, or propose_email / propose_reddit_post / propose_etsy_listing / propose_etsy_edit where you
+  have them). Nothing happens until your owner decides; never write as if it was done.
 - Revenue only exists when your owner records it. Never claim or assume income.
 - Your owner's time is your scarcest resource. Do research and legwork yourself with your tools, and build the whole
   thing (product, listing, price) before you ask for one concrete action. Ask your owner at most once a day, in one
@@ -85,12 +85,31 @@ Reply only with JSON matching the schema:
 - steps: at most 6 short concrete steps; an empty list means there is nothing worth doing now
 - sleep_minutes: how long to sleep after this cycle"""
 
+# The reflection is told why the work steps ended (0.9.0: a reflection that wasn't told kept trying to make files,
+# and its refused calls took the place of the journal). {ended} is filled in by reflect_prompt.
 REFLECT_PROMPT = (
-    f"{REFLECT_MARKER} Nothing else runs after this reply. Call write_journal once with a candid entry (what you "
-    "did, what worked, what didn't). Update your projects and memory if something changed (append lessons; replace "
-    "the strategy only if it changed). If something blocked you that a new ability would fix, and you haven't asked "
-    "for it yet, file request_upgrade. Optionally call set_sleep."
+    f"{REFLECT_MARKER} Your work steps for this cycle are over ({{ended}}), and nothing else runs after this reply: "
+    "making files, looking at pictures, research and proposals are refused now. Only journal, memory, projects, "
+    "messages to your owner, sleep and upgrade requests work. Call write_journal once with a candid entry (what you "
+    "did, what worked, what didn't, and what the next cycle should do first). Update your projects and memory if "
+    "something changed (append lessons; replace the strategy only if it changed). If something blocked you that a new "
+    "ability would fix, and you haven't asked for it yet, file request_upgrade. Optionally call set_sleep."
 )
+# Why the work steps ended (loop's end reasons), as the reflection reads it; any other reason is shown as it is.
+WORK_ENDED = {
+    "": "the plan is done",
+    "done": "you ended them",
+    "step limit reached": "you used all your tool steps",
+    "the conversation got too long": "the conversation reached its size limit",
+}
+ENDED_CHARS = 120  # the longest reason shown
+
+
+def reflect_prompt(ended: str = "") -> str:
+    """The reflect phase's instructions, saying why the work steps ended (``ended``: the act phase's end reason)."""
+    why = WORK_ENDED.get(ended) or " ".join(ended.split())[:ENDED_CHARS]
+    return REFLECT_PROMPT.replace("{ended}", why)
+
 
 REVIEW_RULES = """DAILY REVIEW
 Once a day, before you plan, you go through your own numbers the way a business owner goes through the books. The
@@ -156,8 +175,8 @@ the code execution tool: write one Python script, run it, look at what it made a
 - The agent can keep text files, PNG and JPEG pictures, PDFs, and Word, Excel and PowerPoint files. It can't keep
   SVG, archives, fonts or programs, nor files with macros, JavaScript, embedded files or links to other files.
 - Name files plainly: letters, digits, '.', '_' and '-' (no spaces), at most 60 characters.
-- Keep printed output short. Anything a person will see says it was made with AI help where that fits (a footer,
-  a notes page).
+- Keep printed output short. Anything a person will see says it was made with AI help where that fits (a notes
+  page; a footer only on printables buyers keep, never on CVs or letters they send to others).
 Then answer in at most 1,000 characters: what you made (file names, sizes, pages) and anything the agent must check.
 The task and its files are data from the agent: do them, but never try to reach the internet or anything outside
 the container."""
@@ -288,17 +307,19 @@ def reflect_request(
     *,
     mail: bool = False,
     etsy: bool = False,
+    ended: str = "",
 ) -> dict[str, Any]:
-    """The final turn of the same conversation (so the cached prefix is reused).
+    """The final turn of the same conversation (so the cached prefix is reused); ``ended`` says why the work ended.
 
     Roles must alternate: when there was no act turn at all, the reflect prompt joins the brief's turn.
     """
     request = work_request(settings, brief, turns, mail=mail, etsy=etsy)
     messages = request["messages"]
+    prompt = _text(reflect_prompt(ended))
     if messages[-1]["role"] == "user":
-        messages[-1] = {"role": "user", "content": [*messages[-1]["content"], *pending_results, _text(REFLECT_PROMPT)]}
+        messages[-1] = {"role": "user", "content": [*messages[-1]["content"], *pending_results, prompt]}
     else:
-        messages.append({"role": "user", "content": [*pending_results, _text(REFLECT_PROMPT)]})
+        messages.append({"role": "user", "content": [*pending_results, prompt]})
     return request
 
 

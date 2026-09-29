@@ -38,6 +38,9 @@ DESIGN THAT SELLS
 - Printables: one purpose per page; checklists, tables with empty rows and writing lines leave room to write.
 - CV and letter templates: realistic sample text the buyer replaces, a sidebar for contact and skills, a photo box
   where photos are customary (Germany), and a matching cover letter in the same style.
-- Offer what buyers search for: A4 and Letter versions, and say which programs open the files (Word, Google Docs,
-  Pages open .docx; any viewer prints the PDF).
-- Say in the product (a footer or a notes page) that it was made with AI help.
+- Offer what buyers search for: A4 and Letter versions (a document has one page size: make the Letter copy from a
+  copy of the source with 'page: Letter'), and say which programs open the files (Word, Google Docs, Pages open
+  .docx; any viewer prints the PDF). Describe only the sizes and files you made.
+- Say in the product that it was made with AI help: on a notes page, or in a footer of printables buyers keep
+  (planners, worksheets). Never in the footer of what buyers send or give to others (CVs, cover letters, letters,
+  invitations): they would send your note with their application. The listing says it for those.

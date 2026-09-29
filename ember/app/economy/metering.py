@@ -163,14 +163,22 @@ def rough_token_count(request: Mapping[str, Any]) -> int:
 
 def picture_tokens(data: str) -> int:
     """A generous token count for a base64 picture: a quarter more than width x height / 750 (the API's rule)."""
+    size = picture_size(data)
+    if size is None:
+        return IMAGE_TOKEN_ALLOWANCE
+    width, height = size
+    return min(IMAGE_TOKEN_ALLOWANCE, math.ceil(width * height / 750 * 1.25) + 100)
+
+
+def picture_size(data: str) -> tuple[int, int] | None:
+    """(width, height) of a base64 PNG, read from its header; None for anything else."""
     try:
         head = base64.b64decode(data[:32], validate=True)
     except ValueError:
-        return IMAGE_TOKEN_ALLOWANCE
+        return None
     if len(head) < 24 or not head.startswith(_PNG_SIGNATURE) or head[12:16] != b"IHDR":
-        return IMAGE_TOKEN_ALLOWANCE
-    width, height = int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
-    return min(IMAGE_TOKEN_ALLOWANCE, math.ceil(width * height / 750 * 1.25) + 100)
+        return None
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
 
 
 def _without_pictures(node: Any, found: list[int]) -> Any:

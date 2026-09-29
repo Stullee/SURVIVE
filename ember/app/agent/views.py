@@ -174,6 +174,12 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
             editable = etsy.editable(etsy.listing_from_action(action))
         except etsy.EtsyError:
             editable = None
+    if r["executor"] == "etsy_edit" and action is not None:
+        execution = etsy_publisher.edit_execution(conn, r)
+        try:
+            editable = etsy.edit_editable(etsy.edit_from_action(action))  # None: no words or price change
+        except etsy.EtsyError:
+            editable = None
     return {
         "executor": r["executor"],
         "action": action,

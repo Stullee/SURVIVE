@@ -469,6 +469,26 @@ can also remove the app's access at Etsy).
   that wait for the next day. Automatic renewal is off: a listing expires after
   four months unless you renew it at Etsy.
 
+### Changing a live listing
+
+- The agent reads its live listings as it listed them or last changed them
+  (`etsy_listing`) and proposes a change with `propose_etsy_edit`: a new title,
+  description, price, tags or category, or a new set of photos or of the files
+  buyers download. The approval card shows each change next to what it
+  replaces, and the new photos.
+- **Approve** and Ember makes the change at Etsy: the listing's own fields,
+  then the price, then the photos and files (the new ones are uploaded before
+  the old ones are deleted, so the listing is never without them). Etsy charges
+  nothing for changes, and there is no daily limit. **Approve with changes**
+  lets you change the new words and price; a change of only photos, files or
+  the category can only be approved or rejected. **Cancel change** stops an
+  approved change before Ember makes it.
+- If a file changed after you approved, nothing is changed. If Etsy refuses a
+  part, the card says what changed and what didn't and links to the listing's
+  editor at Etsy. Ember never makes a change twice.
+- Ember knows only its own changes: what you change at Etsy yourself isn't in
+  its records, so tell the agent when you do.
+
 ### What Ember sees
 
 Every hour while the app runs, also while the agent sleeps between wake cycles

@@ -39,9 +39,10 @@ def first_step_and_reflection(brief: str) -> tuple[dict[str, Any], dict[str, Any
     """The first work step, and the reflection after it with the room the loop keeps for one step's growth (with the
     most tools: a mailbox's and a shop's too)."""
     grown = [{"role": "assistant", "content": [{"type": "text", "text": "x" * loop.STEP_GROWTH_BYTES}]}]
+    longest = "ä" * prompts.ENDED_CHARS  # why the work ended, at its longest
     return (
         prompts.work_request(SETTINGS, brief, [], mail=True, etsy=True),
-        prompts.reflect_request(SETTINGS, brief, grown, [], mail=True, etsy=True),
+        prompts.reflect_request(SETTINGS, brief, grown, [], mail=True, etsy=True, ended=longest),
     )
 
 

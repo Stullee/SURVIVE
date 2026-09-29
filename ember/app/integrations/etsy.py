@@ -30,8 +30,9 @@ import re
 import secrets
 import tempfile
 import threading
+import unicodedata
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
@@ -270,6 +271,215 @@ def with_changes(listing: Listing, text: str) -> Listing:
     )
 
 
+# --- what a change to a live listing is (0.9.0) ----------------------------------------------------------------------
+
+# The parts of a listing a change can set, in the order Ember's code makes them: the listing's own fields (one
+# request), its price (Etsy keeps it in the listing's inventory), the photos, and the files buyers download.
+EDIT_PARTS = ("title", "description", "tags", "category", "price", "photos", "files")
+LISTING_PARTS = frozenset({"title", "description", "tags", "category"})
+_WORDS = ("title", "price", "tags")  # the head lines of the words the owner may change
+
+
+@dataclass(frozen=True)
+class Edit:
+    """A checked change to one of Ember's live listings: only what changes (None stays as it is). Photos and files
+    replace all of the listing's; the description gets Ember's AI line, like a new listing's."""
+
+    listing_id: int
+    currency: str
+    title: str | None = None
+    description: str | None = None
+    price: str | None = None
+    tags: tuple[str, ...] | None = None
+    taxonomy_id: int | None = None
+    category: str | None = None
+    photos: tuple[Upload, ...] | None = None
+    files: tuple[Upload, ...] | None = None
+
+    def parts(self) -> list[str]:
+        """What changes, in EDIT_PARTS order."""
+        present = {
+            "title": self.title,
+            "description": self.description,
+            "tags": self.tags,
+            "category": self.taxonomy_id,
+            "price": self.price,
+            "photos": self.photos,
+            "files": self.files,
+        }
+        return [part for part in EDIT_PARTS if present[part] is not None]
+
+    def to_action(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"listing_id": self.listing_id, "currency": self.currency}
+        for name in ("title", "description", "price", "taxonomy_id", "category"):
+            if getattr(self, name) is not None:
+                data[name] = getattr(self, name)
+        if self.tags is not None:
+            data["tags"] = list(self.tags)
+        for name in ("photos", "files"):
+            uploads = getattr(self, name)
+            if uploads is not None:
+                data[name] = [asdict(u) for u in uploads]
+        return data
+
+    def listing_fields(self) -> dict[str, str]:
+        """The listing's own fields that change, as Etsy's updateListing takes them."""
+        fields: dict[str, str] = {}
+        if self.title is not None:
+            fields["title"] = self.title
+        if self.description is not None:
+            fields["description"] = with_disclosure(self.description)
+        if self.tags is not None:
+            fields["tags"] = ",".join(self.tags)
+        if self.taxonomy_id is not None:
+            fields["taxonomy_id"] = str(self.taxonomy_id)
+        return fields
+
+
+def listing_text(listing_id: int, listing: Listing) -> str:
+    """One of Ember's live listings in full, for the agent."""
+
+    def names(uploads: tuple[Upload, ...]) -> str:
+        return ", ".join(u.path for u in uploads) or "none"
+
+    return "\n".join(
+        [
+            f"Listing #{listing_id}: {listing_url(listing_id)}",
+            f"Title: {listing.title}",
+            f"Price: {listing.price} {listing.currency}",
+            f"Tags ({len(listing.tags)}): {', '.join(listing.tags)}",
+            f"Category: {listing.category} (#{listing.taxonomy_id})",
+            f"Photos ({len(listing.photos)}, the main one first): {names(listing.photos)}",
+            f"Files buyers download: {names(listing.files)}",
+            "Description (Ember adds the line about AI after it):",
+            listing.description,
+        ]
+    )
+
+
+def listing_line(listing_id: int, listing: Listing) -> str:
+    """One of Ember's live listings in a line, for the agent."""
+    photos = f"{len(listing.photos)} photo{'' if len(listing.photos) == 1 else 's'}"
+    files = f"{len(listing.files)} file{'' if len(listing.files) == 1 else 's'}"
+    return (
+        f"- #{listing_id} {listing.title[:70]} · {listing.price} {listing.currency} · category #{listing.taxonomy_id}"
+        f" · {photos}, {files}"
+    )
+
+
+def edit_from_action(raw: str | dict[str, Any]) -> Edit:
+    data = json.loads(raw) if isinstance(raw, str) else raw
+    if not isinstance(data, dict):
+        raise EtsyError("the change isn't readable")
+    try:
+
+        def uploads(name: str) -> tuple[Upload, ...] | None:
+            if data.get(name) is None:
+                return None
+            return tuple(Upload(str(u["path"]), str(u["sha256"]), int(u["bytes"])) for u in data[name])
+
+        return Edit(
+            listing_id=int(data["listing_id"]),
+            currency=str(data["currency"]),
+            title=None if data.get("title") is None else str(data["title"]),
+            description=None if data.get("description") is None else str(data["description"]),
+            price=None if data.get("price") is None else str(data["price"]),
+            tags=None if data.get("tags") is None else tuple(str(t) for t in data["tags"]),
+            taxonomy_id=None if data.get("taxonomy_id") is None else int(data["taxonomy_id"]),
+            category=None if data.get("category") is None else str(data["category"]),
+            photos=uploads("photos"),
+            files=uploads("files"),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise EtsyError(f"the change isn't readable ({type(exc).__name__})") from None
+
+
+def edited(listing: Listing, edit: Edit, parts: frozenset[str] | set[str] | None = None) -> Listing:
+    """``listing`` with the ``parts`` of ``edit`` made (all of them when None)."""
+    made = set(edit.parts()) if parts is None else set(parts) & set(edit.parts())
+    changes: dict[str, Any] = {}
+    for name in ("title", "description", "price", "tags", "photos", "files"):
+        if name in made:
+            changes[name] = getattr(edit, name)
+    if "category" in made:
+        changes["taxonomy_id"], changes["category"] = edit.taxonomy_id, edit.category
+    return replace(listing, **changes)
+
+
+def edit_payload(edit: Edit, now: Listing) -> str:
+    """The change as the owner reads and approves it: each part next to what it replaces (``now``: the listing as it
+    is), the new description in full."""
+
+    def sized(uploads: tuple[Upload, ...]) -> str:
+        return "; ".join(f"{u.path} ({_size(u.bytes)})" for u in uploads)
+
+    def names(uploads: tuple[Upload, ...]) -> str:
+        return ", ".join(u.path for u in uploads) or "none"
+
+    lines = [f"Listing #{edit.listing_id}: {now.title}"]
+    if edit.title is not None:
+        lines.append(f"Title: {edit.title}\n  (was: {now.title})")
+    if edit.tags is not None:
+        lines.append(f"Tags: {', '.join(edit.tags)}\n  (were: {', '.join(now.tags)})")
+    if edit.taxonomy_id is not None:
+        lines.append(f"Category: {edit.category} (#{edit.taxonomy_id})\n  (was: {now.category} (#{now.taxonomy_id}))")
+    if edit.price is not None:
+        lines.append(f"Price: {edit.price} {edit.currency} (was: {now.price} {now.currency})")
+    if edit.photos is not None:
+        lines.append(f"Photos, the main one first: {sized(edit.photos)}\n  (they replace: {names(now.photos)})")
+    if edit.files is not None:
+        lines.append(f"Files buyers download: {sized(edit.files)}\n  (they replace: {names(now.files)})")
+    if edit.description is not None:
+        lines += ["", "New description:", with_disclosure(edit.description)]
+    return "\n".join(lines)
+
+
+def edit_editable(edit: Edit) -> str | None:
+    """The words and price of a change the owner may change when approving (None: nothing but photos, files or the
+    category changes). The head lines (Title:, Price:, Tags:) that change, then an empty line and the description."""
+    head = []
+    if edit.title is not None:
+        head.append(f"Title: {edit.title}")
+    if edit.price is not None:
+        head.append(f"Price: {edit.price}")
+    if edit.tags is not None:
+        head.append(f"Tags: {', '.join(edit.tags)}")
+    if edit.description is None:
+        return "\n".join(head) or None
+    return "\n".join([*head, "", edit.description]) if head else edit.description
+
+
+def edit_with_changes(edit: Edit, text: str) -> Edit:
+    """``edit`` with the owner's version of its words and price (see ``edit_editable``). Raises EtsyError."""
+    wanted = [name for name in _WORDS if getattr(edit, name) is not None]
+    if not wanted and edit.description is None:
+        raise EtsyError("this change has no words or price to change; approve or reject it")
+    text = text.replace("\r\n", "\n").strip()
+    head, body = "", text
+    if wanted:
+        head, sep, body = text.partition("\n\n")
+        if edit.description is not None and not sep:
+            raise EtsyError("keep the head lines, then an empty line, then the description")
+        if edit.description is None and body.strip():
+            raise EtsyError("this change keeps the description; change only the head lines")
+    fields: dict[str, str] = {}
+    for line in head.split("\n") if head else []:
+        name, colon, value = line.partition(":")
+        key = name.strip().lower()
+        if not colon or key not in wanted or key in fields:
+            raise EtsyError(f"the first lines must be {', '.join(n.title() + ':' for n in wanted)} each once")
+        fields[key] = value.strip()
+    if set(fields) != set(wanted):
+        raise EtsyError(f"the first lines must be {', '.join(n.title() + ':' for n in wanted)} each once")
+    return replace(
+        edit,
+        title=check_title(fields["title"]) if "title" in fields else edit.title,
+        price=check_price(fields["price"].removesuffix(edit.currency).strip()) if "price" in fields else edit.price,
+        tags=check_tags(fields["tags"]) if "tags" in fields else edit.tags,
+        description=check_description(body) if edit.description is not None else None,
+    )
+
+
 def _size(n: int) -> str:
     return f"{n / (1024 * 1024):.1f} MB" if n >= 1024 * 1024 else f"{max(1, round(n / 1024))} KB"
 
@@ -323,6 +533,20 @@ class Shop(Protocol):
 
     def orders(self, since: datetime) -> list[Order]: ...
 
+    # Changing a live listing (0.9.0).
+
+    def update_listing(self, listing_id: int, fields: dict[str, str]) -> None: ...  # Edit.listing_fields()
+
+    def set_price(self, listing_id: int, price: str) -> None: ...
+
+    def photo_ids(self, listing_id: int) -> list[int]: ...  # in their order, the main photo first
+
+    def delete_photo(self, listing_id: int, photo_id: int) -> None: ...
+
+    def file_ids(self, listing_id: int) -> list[int]: ...  # in their order
+
+    def delete_file(self, listing_id: int, file_id: int) -> None: ...
+
 
 def listing_url(listing_id: int) -> str:
     return f"https://www.etsy.com/listing/{listing_id}"
@@ -333,6 +557,7 @@ def edit_url(listing_id: int) -> str:
     return f"https://www.etsy.com/your/shops/me/listing-editor/edit/{listing_id}"
 
 
+CATEGORY_JOIN = " > "  # between the names in a category's path: "Paper & Party Supplies > Paper > Stationery"
 # Categories (Etsy's seller taxonomy) for the fake shop, and the live shop's fallback when the list can't be read.
 FAKE_CATEGORIES: tuple[tuple[int, str], ...] = (
     (1, "Paper & Party Supplies > Paper > Calendars & Planners"),
@@ -347,10 +572,21 @@ FAKE_CATEGORIES: tuple[tuple[int, str], ...] = (
 def search_categories(
     nodes: list[tuple[int, str]] | tuple[tuple[int, str], ...], search: str, limit: int = 10
 ) -> list[tuple[int, str]]:
-    """The categories whose path holds every word of ``search``, shortest paths first."""
-    words = [w for w in re.split(r"\W+", search.lower()) if w]
-    found = [(i, p) for i, p in nodes if all(w in p.lower() for w in words)]
+    """The categories whose path holds every word of ``search`` (in any case, with or without accents: 'resume'
+    finds 'Résumé'), shortest paths first."""
+    words = [w for w in re.split(r"\W+", _folded(search)) if w]
+    found = [(i, p) for i, p in nodes if all(w in _folded(p) for w in words)]
     return sorted(found, key=lambda item: (len(item[1]), item[1]))[:limit]
+
+
+def _folded(text: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
+
+
+def department(path: str) -> bool:
+    """Whether a category is a whole top-level department of Etsy's (such as 'Accessories'): too broad for a listing,
+    which buyers look for in the categories below it."""
+    return CATEGORY_JOIN not in path
 
 
 class FakeShop:
@@ -394,11 +630,59 @@ class FakeShop:
             return listing_id
 
     def upload_photo(self, listing_id: int, name: str, data: bytes, rank: int) -> None:
-        self._listing(listing_id)["photos"] += 1
-        self._on_change(self.state)
+        self._add(listing_id, "photos", rank, MAX_PHOTOS)
 
     def upload_file(self, listing_id: int, name: str, data: bytes, rank: int) -> None:
-        self._listing(listing_id)["files"] += 1
+        self._add(listing_id, "files", rank, MAX_FILES)
+
+    def update_listing(self, listing_id: int, fields: dict[str, str]) -> None:
+        item = self._listing(listing_id)
+        if "title" in fields:
+            item["title"] = fields["title"]
+        self._on_change(self.state)
+
+    def set_price(self, listing_id: int, price: str) -> None:
+        self._listing(listing_id)["price_cents"] = int(Decimal(price) * 100)
+        self._on_change(self.state)
+
+    def photo_ids(self, listing_id: int) -> list[int]:
+        return list(self._ids(listing_id, "photos"))
+
+    def delete_photo(self, listing_id: int, photo_id: int) -> None:
+        self._remove(listing_id, "photos", photo_id)
+
+    def file_ids(self, listing_id: int) -> list[int]:
+        return list(self._ids(listing_id, "files"))
+
+    def delete_file(self, listing_id: int, file_id: int) -> None:
+        self._remove(listing_id, "files", file_id)
+
+    def _ids(self, listing_id: int, kind: str) -> list[int]:
+        """A listing's photo or file numbers, in their order (older states kept only a count)."""
+        item = self._listing(listing_id)
+        key = f"{kind[:-1]}_ids"
+        if key not in item:
+            item[key] = [listing_id * 100 + i for i in range(1, int(item[kind]) + 1)]
+        return item[key]
+
+    def _add(self, listing_id: int, kind: str, rank: int, most: int) -> None:
+        ids = self._ids(listing_id, kind)
+        if len(ids) >= most:
+            raise NotSent(f"a listing holds at most {most} {kind}")
+        media_id = int(self.state.get("next_media_id", 1))  # its own count: listing numbers stay as they were
+        self.state["next_media_id"] = media_id + 1
+        ids.insert(max(0, min(rank - 1, len(ids))), media_id)
+        self._listing(listing_id)[kind] = len(ids)
+        self._on_change(self.state)
+
+    def _remove(self, listing_id: int, kind: str, item_id: int) -> None:
+        ids = self._ids(listing_id, kind)
+        if item_id not in ids:
+            raise NotSent(f"the listing has no such {kind[:-1]}")
+        if len(ids) == 1 and self._listing(listing_id)["state"] == "active":
+            raise NotSent(f"a live digital listing keeps at least one {kind[:-1]}")
+        ids.remove(item_id)
+        self._listing(listing_id)[kind] = len(ids)
         self._on_change(self.state)
 
     def activate(self, listing_id: int) -> str:

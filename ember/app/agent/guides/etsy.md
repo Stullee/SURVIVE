@@ -28,3 +28,8 @@ AFTER LISTING: the ETSY SHOP section of your plans shows each listing's state, v
 your daily review judges them. Few views after a week: better title, tags and main photo. Views but no favorites
 or sales: better photos, price or description. Sales: make more like it. An order counts as revenue only when your
 owner records it.
+
+CHANGING A LIVE LISTING (free at Etsy): etsy_listing shows it as Ember listed it or last changed it;
+propose_etsy_edit asks your owner to approve a change and gives only what changes. New photos or files replace the
+whole set (the main photo first), so give all of them. One change per listing at a time. Fix at once what is wrong:
+a category that doesn't fit, a description promising what the files don't hold, fewer than 5 photos.

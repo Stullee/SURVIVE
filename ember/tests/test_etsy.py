@@ -595,6 +595,394 @@ def test_the_owner_can_cancel_before_it_is_created(data_dir: Path) -> None:
     assert agent.execute_approved() == [] and listing_rows(agent) == []
 
 
+# --- changing a live listing (0.9.0) ----------------------------------------------------------------------------
+
+
+def listed(data_dir: Path) -> tuple[Any, int]:
+    """A dry-run agent with one live listing in the fake shop, and the listing's number."""
+    agent, _, request = proposed(data_dir)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    assert agent.execute_approved() == [(request, "active")]
+    return agent, 900_000_001
+
+
+def shop_context(agent: Any) -> tools.ToolContext:
+    """The tools' context in the agent's last cycle, with its shop (and one department among the categories)."""
+    ctx = tools.ToolContext(
+        db=agent.db,
+        clock=agent.clock,
+        scope=agent.scope(),
+        cycle_id=rows(agent, "SELECT MAX(id) AS id FROM cycles")[0]["id"],
+        workspace=agent.roots()[0],
+        memory=agent.memory(),
+        min_sleep=30,
+        max_sleep=1440,
+        state=tools.CycleTools(),
+    )
+    categories = (*etsy.FAKE_CATEGORIES, (99, "Accessories"))
+    ctx.etsy = tools.EtsyAccess(shop_name="EmberTestShop", currency="EUR", daily_limit=3, categories=categories)
+    return ctx
+
+
+def call(ctx: tools.ToolContext, name: str, args: dict[str, Any]) -> tools.Outcome:
+    """A tool as the model calls it while working: checked, recorded and limited per cycle."""
+    llm_call = rows_of(ctx, "SELECT MAX(id) AS id FROM llm_calls")[0]["id"]
+    return tools.run(ctx, name, args, f"toolu_{name}", llm_call, "act")
+
+
+def rows_of(ctx: tools.ToolContext, sql: str) -> list[dict[str, Any]]:
+    with ctx.db.connection() as conn:
+        return [dict(r) for r in conn.execute(sql)]
+
+
+def a_change(agent: Any, ctx: tools.ToolContext, listing_id: int, **args: Any) -> int:
+    """A proposed change (its request number); the photos and files it names are made first."""
+    for name in ("photos", "files"):
+        for path in [p.strip() for p in str(args.get(name) or "").split(",") if p.strip()]:
+            agent.roots()[0].write_bytes(path, f"{path} data".encode())
+    made = call(ctx, "propose_etsy_edit", {"listing_id": listing_id, "reason": "Fix the listing.", **args})
+    assert made.ok, made.text
+    return rows_of(ctx, "SELECT MAX(id) AS id FROM approvals WHERE executor = 'etsy_edit'")[0]["id"]
+
+
+def test_a_live_listing_is_read_and_a_change_proposed(data_dir: Path) -> None:
+    agent, listing_id = listed(data_dir)
+    ctx = shop_context(agent)
+    before = etsy.listing_from_action(
+        rows(agent, "SELECT action FROM approvals WHERE executor = 'etsy_listing'")[0]["action"]
+    )
+    short = call(ctx, "etsy_listing", {})
+    assert short.text.startswith("Your live listings (newest first):\n- #900000001 ")
+    assert f"· 4.50 EUR · category #{before.taxonomy_id} · 1 photo, 2 files" in short.text
+    full = call(ctx, "etsy_listing", {"listing_id": listing_id}).text
+    assert f"Title: {before.title}\nPrice: 4.50 EUR\n" in full and full.endswith(f"after it):\n{before.description}")
+    assert "isn't one of your live listings" in call(ctx, "etsy_listing", {"listing_id": 5}).text
+    agent.roots()[0].write_bytes("shop/new-1.png", b"\x89PNG one")
+    agent.roots()[0].write_bytes("shop/x.pdf", b"%PDF-1.7 x")
+    refusals = {
+        "isn't one of your live listings": {"listing_id": 5, "price": "3.90"},
+        "nothing changes": {"listing_id": listing_id, "price": "4.50", "category_id": before.taxonomy_id},
+        "a whole department of Etsy's": {"listing_id": listing_id, "category_id": 99},
+        "must be .jpg, .png files": {"listing_id": listing_id, "photos": "shop/new-1.png, shop/x.pdf"},
+    }
+    for error, args in refusals.items():
+        refused = call(ctx, "propose_etsy_edit", {**args, "reason": "r"})
+        assert not refused.ok and error in refused.text, (error, refused.text)
+    request = a_change(
+        agent,
+        ctx,
+        listing_id,
+        price="3.90",
+        category_id=2,
+        photos="shop/new-1.png, shop/new-2.png",
+        description="A better description.",
+    )
+    made = rows(agent, "SELECT result FROM tool_calls WHERE tool = 'propose_etsy_edit' AND status = 'ok'")[0]
+    assert (
+        f"#{request} is waiting for your owner: it changes the description, category, price, photos of"
+        in (made["result"])
+    )
+    approval = rows(agent, f"SELECT type, executor, expected_cost, title, payload FROM approvals WHERE id = {request}")[
+        0
+    ]
+    assert (approval["type"], approval["executor"]) == ("sell", "etsy_edit")
+    assert approval["title"] == f"Change Etsy listing: {before.title}"[:120]
+    assert "charges nothing" in approval["expected_cost"]
+    payload = approval["payload"]
+    assert payload.startswith(f"Listing #900000001: {before.title}\n")
+    assert "Price: 3.90 EUR (was: 4.50 EUR)" in payload
+    assert f"Category: {etsy.FAKE_CATEGORIES[1][1]} (#2)\n  (was: {before.category} (#{before.taxonomy_id}))" in payload
+    assert "Photos, the main one first: shop/new-1.png (1 KB); shop/new-2.png (1 KB)\n  (they replace: " in payload
+    assert payload.endswith(f"New description:\nA better description.\n\n{DISCLOSURE}")
+    again = call(ctx, "propose_etsy_edit", {"listing_id": listing_id, "title": "Another title", "reason": "r"})
+    assert not again.ok and f"request #{request} already changes #900000001" in again.text
+    assert "Request #" in call(ctx, "etsy_listing", {"listing_id": listing_id}).text  # it says a change waits
+    with agent.db.connection() as conn:
+        shop = etsy_publisher.shop_text(conn, agent.scope(), agent.clock, "EmberTestShop", 3)
+    assert shop.endswith(
+        "\nChange a live listing (free at Etsy): etsy_listing shows it, propose_etsy_edit asks your owner.\n"
+        f"Changes not made yet: request #{request} for #900000001 (your owner decides)."
+    )
+
+
+def test_an_approved_change_is_made_and_never_twice(data_dir: Path) -> None:
+    agent, listing_id = listed(data_dir)
+    ctx = shop_context(agent)
+    request = a_change(
+        agent,
+        ctx,
+        listing_id,
+        title="Weekly Planner, A4",
+        description="Only A4: one PDF and its Word copy.",
+        tags="weekly planner, a4 planner",
+        category_id=2,
+        price="3.90",
+        photos="shop/p1.png, shop/p2.png, shop/p3.png",
+        files="shop/planner-a4.pdf",
+    )
+    assert agent.execute_approved() == []  # not approved yet
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
+    item = agent.etsy.shop().state["listings"]["900000001"]
+    old_photos = list(item.get("photo_ids") or [])
+    assert agent.execute_approved() == [(request, "done")]
+    item = agent.etsy.shop().state["listings"]["900000001"]
+    assert item["title"] == "Weekly Planner, A4" and item["price_cents"] == 390
+    assert item["photos"] == 3 and item["files"] == 1 and not set(old_photos) & set(item["photo_ids"])
+    closed = rows(agent, f"SELECT status, closed_by, result_note, result_link FROM approvals WHERE id = {request}")[0]
+    assert closed["status"] == "done" and closed["closed_by"] == "Ember"
+    assert closed["result_note"] == (
+        "Changed in the dry run's fake shop (title, description, tags, category, price, photos, files); nothing"
+        " reached Etsy."
+    )
+    assert closed["result_link"] == "https://www.etsy.com/listing/900000001"
+    [change] = rows(agent, "SELECT status, listing_id, listing FROM etsy_edits")
+    assert (change["status"], change["listing_id"]) == ("done", listing_id)
+    now = etsy.listing_from_action(change["listing"])
+    assert (now.title, now.price, now.taxonomy_id, now.tags) == (
+        "Weekly Planner, A4",
+        "3.90",
+        2,
+        ("weekly planner", "a4 planner"),
+    )
+    assert [p.path for p in now.photos] == ["shop/p1.png", "shop/p2.png", "shop/p3.png"]
+    assert rows(agent, "SELECT title FROM etsy_listings")[0]["title"] == "Weekly Planner, A4"
+    assert (
+        "Price: 3.90 EUR" in call(ctx, "etsy_listing", {"listing_id": listing_id}).text
+    )  # the next change starts here
+    assert agent.execute_approved() == []  # never twice
+    shown = views_approval(agent, request)
+    assert shown["execution"]["status"] == "done"
+    assert shown["editable"] == (
+        "Title: Weekly Planner, A4\nPrice: 3.90\nTags: weekly planner, a4 planner\n\n"
+        "Only A4: one PDF and its Word copy."
+    )
+
+
+def views_approval(agent: Any, approval_id: int) -> dict[str, Any]:
+    """An approval as the dashboard gets it."""
+    from app.agent import views  # noqa: PLC0415
+
+    with agent.db.connection() as conn:
+        row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
+        return views._carried_out(agent, conn, agent.scope(), row)
+
+
+def test_the_owners_version_of_a_change_is_made(data_dir: Path) -> None:
+    agent, listing_id = listed(data_dir)
+    ctx = shop_context(agent)
+    request = a_change(agent, ctx, listing_id, price="3.90", description="A better description.")
+    who = owner(agent)
+    assert views_approval(agent, request)["editable"] == "Price: 3.90\n\nA better description."
+    for wrong in ("Title: x\n\nText", "Price: 3.50", "Price: 3.50\nPrice: 3\n\nText"):
+        refused = who.decide(request, {"decision": "approve_with_changes", "final_payload": wrong}, "Owner")
+        assert refused.status == 422 and refused.body["field"] == "final_payload", wrong
+    decided = who.decide(
+        request, {"decision": "approve_with_changes", "final_payload": "Price: 3.50 EUR\n\nMy own words."}, "Owner"
+    )
+    assert decided.status == 200 and decided.body["approval"]["final_payload"] == "Price: 3.50\n\nMy own words."
+    assert agent.execute_approved() == [(request, "done")]
+    now = etsy.listing_from_action(rows(agent, "SELECT listing FROM etsy_edits")[0]["listing"])
+    assert (now.price, now.description) == ("3.50", "My own words.")
+    # A change of photos only has no words to change: approved as it is, or rejected.
+    photos = a_change(agent, ctx, listing_id, photos="shop/only-photo.png")
+    assert views_approval(agent, photos)["editable"] is None
+    refused = who.decide(photos, {"decision": "approve_with_changes", "final_payload": "Price: 1"}, "Owner")
+    assert refused.status == 422 and "no words or price" in refused.body["error"]
+
+
+def test_an_unchanged_owners_version_is_a_plain_approval_of_the_change(data_dir: Path) -> None:
+    agent, listing_id = listed(data_dir)
+    request = a_change(agent, shop_context(agent), listing_id, title="Weekly Planner, A4")
+    decided = owner(agent).decide(
+        request, {"decision": "approve_with_changes", "final_payload": "Title: Weekly Planner, A4"}, "Owner"
+    )
+    assert decided.body["approval"]["status"] == "approved" and decided.body["approval"]["final_payload"] is None
+
+
+def test_a_change_etsy_refuses_halfway_is_partial(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, listing_id = listed(data_dir)
+    ctx = shop_context(agent)
+    request = a_change(agent, ctx, listing_id, title="Weekly Planner, A4", price="3.90")
+    monkeypatch.setattr(FakeShop, "set_price", lambda self, i, price: (_ for _ in ()).throw(NotSent("HTTP 400: no")))
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    assert agent.execute_approved() == [(request, "partial")]
+    [change] = rows(agent, "SELECT status, listing, result FROM etsy_edits")
+    assert change["result"].startswith("Partly changed: title changed; price not, Etsy refused it (HTTP 400: no).")
+    now = etsy.listing_from_action(change["listing"])
+    assert (now.title, now.price) == ("Weekly Planner, A4", "4.50")  # what changed, and only that
+    closed = rows(agent, f"SELECT status, result_link FROM approvals WHERE id = {request}")[0]
+    assert closed == {"status": "failed", "result_link": etsy.edit_url(listing_id)}
+
+
+def test_photos_etsy_refuses_halfway_are_reported(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, listing_id = listed(data_dir)
+    ctx = shop_context(agent)
+    request = a_change(agent, ctx, listing_id, photos="shop/p1.png, shop/p2.png")
+    upload = FakeShop.upload_photo
+
+    def second_fails(self: FakeShop, listing: int, name: str, data: bytes, rank: int) -> None:
+        if rank == 2:
+            raise NotSent("HTTP 400: too small")
+        upload(self, listing, name, data, rank)
+
+    monkeypatch.setattr(FakeShop, "upload_photo", second_fails)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    assert agent.execute_approved() == [(request, "partial")]
+    [change] = rows(agent, "SELECT listing, result FROM etsy_edits")
+    assert "Its photos were left half replaced." in change["result"] and change["listing"] is None
+    assert agent.etsy.shop().state["listings"]["900000001"]["photos"] == 2  # the new first one and the old one
+
+
+def test_a_change_etsy_refuses_changes_nothing(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, listing_id = listed(data_dir)
+    ctx = shop_context(agent)
+    request = a_change(agent, ctx, listing_id, title="Weekly Planner, A4")
+    monkeypatch.setattr(FakeShop, "update_listing", lambda self, i, fields: (_ for _ in ()).throw(NotSent("HTTP 403")))
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    assert agent.execute_approved() == [(request, "failed")]
+    [change] = rows(agent, "SELECT status, listing, result FROM etsy_edits")
+    assert change == {"status": "failed", "listing": None, "result": "Not changed: Etsy refused it (HTTP 403)."}
+    assert "Weekly Planner, A4" not in call(ctx, "etsy_listing", {"listing_id": listing_id}).text
+
+
+def test_a_file_changed_after_the_change_was_approved_is_never_uploaded(data_dir: Path) -> None:
+    agent, listing_id = listed(data_dir)
+    request = a_change(agent, shop_context(agent), listing_id, files="shop/new.pdf")
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    agent.roots()[0].write_bytes("shop/new.pdf", b"%PDF-1.7 another file")
+    assert agent.execute_approved() == [(request, "failed")]
+    [change] = rows(agent, "SELECT status, error FROM etsy_edits")
+    assert change["status"] == "failed" and "shop/new.pdf changed after you approved it" in change["error"]
+    assert agent.etsy.shop().state["listings"]["900000001"]["files"] == 2  # untouched
+
+
+def test_a_crash_while_changing_is_unclear_and_never_repeated(data_dir: Path) -> None:
+    agent, listing_id = listed(data_dir)
+    request = a_change(agent, shop_context(agent), listing_id, title="Weekly Planner, A4")
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    scope = agent.scope()
+    with agent.db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO etsy_edits (mode, session, approval_id, listing_id, started_at, status)"
+            " VALUES (?, ?, ?, ?, '2026-09-01T10:00:00Z', 'running')",
+            (scope.mode, scope.session, request, listing_id),
+        )
+    assert agent.publisher.recover() == 1
+    [change] = rows(agent, "SELECT status, result FROM etsy_edits")
+    assert change["status"] == "unclear" and "Ember won't try again" in change["result"]
+    assert agent.execute_approved() == []
+
+
+def test_the_owner_can_cancel_a_change_before_it_is_made(data_dir: Path) -> None:
+    agent, listing_id = listed(data_dir)
+    request = a_change(agent, shop_context(agent), listing_id, title="Weekly Planner, A4")
+    who = owner(agent)
+    who.decide(request, {"decision": "approve"}, "Owner")
+    done = who.close(request, {"outcome": "done"}, "Owner")
+    assert done.status == 422 and "makes approved changes itself" in done.body["error"]
+    assert who.close(request, {"outcome": "failed"}, "Owner").status == 200
+    assert rows(agent, f"SELECT result_note FROM approvals WHERE id = {request}")[0]["result_note"] == (
+        "Cancelled by the owner before the listing was changed"
+    )
+    assert agent.execute_approved() == [] and rows(agent, "SELECT id FROM etsy_edits") == []
+
+
+def test_new_photos_come_first_and_the_old_ones_go_without_ever_leaving_none() -> None:
+    log: list[str] = []
+    count = [10]
+
+    def upload(name: str, data: bytes, rank: int) -> None:
+        assert count[0] < etsy.MAX_PHOTOS
+        count[0] += 1
+        log.append(f"+{name}@{rank}")
+
+    def delete(item: int) -> None:
+        assert count[0] > 1
+        count[0] -= 1
+        log.append(f"-{item}")
+
+    items = [(f"n{i}", b"x") for i in range(1, 11)]
+    etsy_publisher._replace(list(range(1, 11)), upload, delete, items, etsy.MAX_PHOTOS, [])
+    assert log[:4] == ["-10", "+n1@1", "-9", "+n2@2"] and count[0] == 10 and len(log) == 20
+    log.clear()
+    count[0] = 2
+    etsy_publisher._replace([7, 8], upload, delete, items[:1], etsy.MAX_PHOTOS, [])
+    assert log == ["+n1@1", "-7", "-8"] and count[0] == 1
+
+
+def test_the_dashboard_shows_changes_and_can_cancel_them() -> None:
+    # Checked by hand in a browser too (0.9.0): the change's photos and text, "Approve with changes" filled with the
+    # new words, then "Waiting to be made" with "Cancel change".
+    script = (paths.WEB_DIR / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    assert '|| a.executor === "etsy_edit" ? a.executor : null' in script  # carried out by Ember's code
+    assert "var CHANGE_EXECUTION = {" in script and "function etsyChangeDraft(action, payload, final)" in script
+    assert 'panelButton(it, "failed", "Cancel change", true)' in script
+    assert 'executor === "etsy_edit" && !a.editable' in script  # photos, files or category only: no "with changes"
+
+
+def test_a_live_listing_is_changed_through_etsys_api(tmp_path: Path) -> None:
+    inventory = {
+        "products": [
+            {
+                "product_id": 1,
+                "sku": "",
+                "property_values": [],
+                "offerings": [{"offering_id": 2, "quantity": 999, "is_enabled": True, "price": {"amount": 450}}],
+            }
+        ]
+    }
+    shop, server = live_shop(
+        tmp_path,
+        {
+            ("PATCH", "/v3/application/shops/777/listings/555"): {"listing_id": 555},
+            ("GET", "/v3/application/listings/555/inventory"): inventory,
+            ("PUT", "/v3/application/listings/555/inventory"): inventory,
+            ("GET", "/v3/application/listings/555/images"): {
+                "results": [{"listing_image_id": 32, "rank": 2}, {"listing_image_id": 31, "rank": 1}]
+            },
+            ("DELETE", "/v3/application/shops/777/listings/555/images/31"): httpx2.Response(204),
+            ("GET", "/v3/application/shops/777/listings/555/files"): {"results": [{"listing_file_id": 41, "rank": 1}]},
+            ("DELETE", "/v3/application/shops/777/listings/555/files/41"): httpx2.Response(204),
+        },
+    )
+    edit = etsy.Edit(listing_id=555, currency="EUR", title="New title", description="New text.", tags=("a", "b"))
+    shop.update_listing(555, edit.listing_fields())
+    assert server.form(0) == {
+        "title": "New title",
+        "description": f"New text.\n\n{DISCLOSURE}",
+        "tags": "a,b",
+    }
+    shop.set_price(555, "3.90")
+    put = server.requests[-1]
+    assert put.method == "PUT" and json.loads(put.content) == {
+        "products": [
+            {"sku": "", "property_values": [], "offerings": [{"price": 3.9, "quantity": 999, "is_enabled": True}]}
+        ],
+        "price_on_property": [],
+        "quantity_on_property": [],
+        "sku_on_property": [],
+    }
+    assert shop.photo_ids(555) == [31, 32] and shop.file_ids(555) == [41]  # in their order
+    shop.delete_photo(555, 31)
+    shop.delete_file(555, 41)
+    assert [r.method for r in server.requests[-2:]] == ["DELETE", "DELETE"]
+    assert all(r.headers["authorization"] == "Bearer 12345.acc3ss-t0ken-value" for r in server.requests)
+
+
+def test_a_price_with_variations_is_left_to_the_owner(tmp_path: Path) -> None:
+    offering = {"quantity": 1, "is_enabled": True}
+    variations = {
+        "products": [
+            {"property_values": [{"property_id": 1}], "offerings": [offering]},
+            {"property_values": [{"property_id": 2}], "offerings": [offering]},
+        ]
+    }
+    shop, server = live_shop(tmp_path, {("GET", "/v3/application/listings/555/inventory"): variations})
+    with pytest.raises(NotSent, match="the listing has variations: change its price at Etsy"):
+        shop.set_price(555, "3.90")
+    assert [r.method for r in server.requests] == ["GET"]  # nothing was changed
+
+
 def test_only_orders_with_embers_listings_are_kept_and_the_owner_records_them(data_dir: Path) -> None:
     agent, _, request = proposed(data_dir)
     owner(agent).decide(request, {"decision": "approve"}, "Owner")
@@ -663,9 +1051,43 @@ def test_a_proposal_is_checked_before_it_reaches_the_owner(data_dir: Path) -> No
     assert "category 999 isn't an Etsy category" in results[0]["result"]
     assert "shop/missing.pdf" in results[1]["result"] and "must be .jpg, .png files" in results[2]["result"]
     assert "Nothing is on Etsy yet" in results[3]["result"]
+    assert f"in the category {etsy.FAKE_CATEGORIES[0][1]} (#1)" in results[3]["result"]  # the agent sees its pick
     approval = rows(agent, "SELECT type, executor, expected_cost, payload FROM approvals")[0]
     assert (approval["type"], approval["executor"]) == ("sell", "etsy_listing")
     assert "USD 0.20" in approval["expected_cost"] and approval["payload"].startswith("Title: Planner\nPrice: 4.50 EUR")
+
+
+def test_categories_are_found_without_accents_and_departments_are_refused(data_dir: Path) -> None:
+    # 0.9.0: in live use the agent found no category for 'resume', guessed 1 (Etsy's department 'Accessories') and
+    # the listing went live there; the reply never said which category it had picked.
+    agent, _ = make_agent(data_dir, [])
+    ctx = research_context(agent, [])
+    templates = "Paper & Party Supplies > Paper > Stationery > Design & Templates > Templates"
+    nodes = [
+        (1, "Accessories"),
+        (1874, templates),
+        (9001, f"{templates} > Résumé Templates"),
+        *[(100 + i, f"Paper & Party Supplies > Paper > Party Papers > Kind {i:02}") for i in range(12)],
+    ]
+    ctx.etsy = tools.EtsyAccess(shop_name="Shop", currency="EUR", daily_limit=3, categories=tuple(nodes))
+
+    def search(words: str) -> str:
+        return tools.HANDLERS["etsy_categories"](ctx, {"search": words}, None).text
+
+    assert search("resume") == f"Categories (number: path):\n9001: {templates} > Résumé Templates"
+    assert search("RÉSUMÉ templates").endswith("Résumé Templates")
+    assert search("accessories") == "Categories (number: path):\n1: Accessories" + tools.DEPARTMENT
+    many = search("paper")
+    assert many.count("\n") == tools.CATEGORIES_SHOWN + 1 and "1874: " not in many  # shortest paths first
+    assert many.endswith("...and 4 more with longer paths (more specific): add a word to see them.")
+    assert "\n1874: " in search("paper templates")
+    with pytest.raises(tools.ToolError, match="category 1 is Accessories, a whole department of Etsy's"):
+        tools._category(ctx.etsy, 1)
+    with pytest.raises(tools.ToolError, match="category 5 isn't an Etsy category"):
+        tools._category(ctx.etsy, 5)
+    assert tools._category(ctx.etsy, 1874) == templates
+    assert etsy.department("Accessories") and not etsy.department(templates)
+    assert not any(etsy.department(path) for _, path in etsy.FAKE_CATEGORIES)  # the dry run's are all specific
 
 
 def test_the_owner_connects_only_a_live_shop(ingress_client: TestClient) -> None:
@@ -702,6 +1124,53 @@ def test_the_rebuilt_approvals_keep_every_rule(data_dir: Path) -> None:
             " 't', 'd', 'p', 'h', 'c', 'b', 'shopify', '{}')",
             (scope.mode, scope.session, scope.life_id),
         )
+
+
+def test_a_0_8_shop_keeps_its_listings_through_the_0_9_migration(tmp_path: Path) -> None:
+    # 0.9.0 rebuilds the approvals table again (for 'etsy_edit'), under the listings that point at it.
+    from app.db import Database, discover_migrations, migrate  # noqa: PLC0415
+
+    db_file = tmp_path / "ember.db"
+    migrate(db_file, [m for m in discover_migrations() if m.version <= 10], backup_dir=tmp_path / "backups")
+    old = Database(db_file)
+    with old.transaction() as conn:
+        conn.execute(
+            "INSERT INTO lives (id, mode, born_at, started_reason, state) VALUES (1, 'live', 'then', 'born', 'alive')"
+        )
+        conn.execute(
+            "INSERT INTO cycles (id, life_id, boot_id, started_at, status, trigger, simulated, cap_micros)"
+            " VALUES (1, 1, 'b', 'then', 'completed', 'schedule', 0, 1)"
+        )
+        conn.execute(
+            "INSERT INTO approvals (id, mode, session, life_id, cycle_id, created_at, type, title, description,"
+            " payload, payload_sha256, expected_cost, expected_benefit, status, closed_at, closed_by, version,"
+            " executor, action) VALUES (3, 'live', 0, 1, 1, 'then', 'sell', 'Etsy listing: CV', 'd', 'p', 'h',"
+            " 'USD 0.20', 'b', 'done', 'now', 'Ember', 2, 'etsy_listing', '{}')"
+        )
+        conn.execute(
+            "INSERT INTO etsy_listings (mode, session, approval_id, started_at, finished_at, status, listing_id,"
+            " title) VALUES ('live', 0, 3, 'then', 'now', 'active', 4584845289, 'CV')"
+        )
+    old.close()
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [11]
+    upgraded = Database(db_file)
+    with upgraded.transaction() as conn:
+        assert tuple(conn.execute("SELECT id, executor, status, version FROM approvals").fetchone()) == (
+            3,
+            "etsy_listing",
+            "done",
+            2,
+        )
+        assert conn.execute("SELECT approval_id, listing_id FROM etsy_listings").fetchone()[1] == 4584845289
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        conn.execute(
+            "INSERT INTO approvals (mode, session, life_id, cycle_id, created_at, type, title, description, payload,"
+            " payload_sha256, expected_cost, expected_benefit, executor, action) VALUES ('live', 0, 1, 1, 'now',"
+            " 'sell', 'Change', 'd', 'p2', 'h2', 'none', 'b', 'etsy_edit', '{\"listing_id\": 4584845289}')"
+        )
+    with pytest.raises(sqlite3.IntegrityError), upgraded.transaction() as conn:  # a closed request stays closed
+        conn.execute("UPDATE approvals SET closed_by = 'Owner' WHERE id = 3")
+    upgraded.close()
 
 
 # --- Etsy's API terms (0.8.1) ------------------------------------------------------------------------------------

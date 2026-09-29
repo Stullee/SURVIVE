@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from app.agent import context, loop, store
+from app.agent import context, loop, prompts, store
 from app.agent.sandbox import Jail
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
@@ -313,8 +313,34 @@ def test_the_step_limit_answers_pending_calls_in_the_reflection(data_dir: Path) 
     assert transport.sent[2]["tool_choice"] == {"type": "none"}  # the last step can't call tools
     reflect = transport.sent[3]["messages"][-1]["content"]
     assert reflect[0]["type"] == "tool_result" and reflect[-1]["text"].startswith("REFLECT PHASE")
+    assert "(you used all your tool steps)" in reflect[-1]["text"]
     cycle = rows(agent, "SELECT act_end_reason FROM cycles")[0]
     assert cycle["act_end_reason"] == "step limit reached"
+
+
+def test_the_reflection_is_told_why_the_work_ended(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # In live use two reflections after a conversation that got too long tried to make files, and one of them wrote
+    # no journal: they weren't told that the work was over, nor why.
+    monkeypatch.setattr("app.agent.loop.MAX_CONVERSATION_BYTES", 100)  # one step fills it
+    agent, transport = make_agent(
+        data_dir,
+        [
+            plan(),
+            tools(("workspace_list", {})),
+            tools(("write_journal", {"summary": "Listed", "entry": "The conversation got too long."})),
+        ],
+    )
+    end = agent.run_cycle("schedule")
+    assert (end.status, end.note) == ("completed", "the conversation got too long")
+    prompt = transport.sent[2]["messages"][-1]["content"][-1]["text"]
+    assert prompt.startswith(
+        "REFLECT PHASE. Your work steps for this cycle are over (the conversation reached its size limit)"
+    )
+    assert "making files, looking at pictures, research and proposals are refused now" in prompt
+    assert prompts.reflect_prompt("refused: the daily cap is used up").startswith(
+        "REFLECT PHASE. Your work steps for this cycle are over (refused: the daily cap is used up)"
+    )
+    assert "(the plan is done)" in prompts.reflect_prompt() and "{ended}" not in prompts.reflect_prompt("x" * 500)
 
 
 def test_tools_allowed_in_each_phase(data_dir: Path) -> None:

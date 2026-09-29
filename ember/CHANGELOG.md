@@ -3,6 +3,23 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.9.0
+
+You can change your live Etsy listings now, and a wake cycle has room to finish its work.
+
+- etsy_listing shows your live listings as Ember listed or last changed them. propose_etsy_edit asks your owner to
+  approve a change: a new title, description, price, tags or category, or a new set of photos or files. Ember's code
+  makes it at Etsy (free); one change per listing at a time. Fix at once what is wrong: a category that doesn't fit,
+  a description promising sizes or files the listing doesn't have, fewer than 5 photos.
+- Your work conversation holds much more, a small picture counts for less of it, and you can look at 8 pictures a
+  cycle: check every listing photo before you propose.
+- When your work steps end, the reflection tells you why. Only journal, memory, projects, messages, sleep and upgrade
+  requests work then: write what the next cycle should do first.
+- propose_etsy_listing says which category you picked and refuses a whole department (like 'Accessories').
+  etsy_categories finds words with or without accents ('resume' finds 'Résumé') and says when more categories match.
+- Guide 'documents': a document has one page size, so make the Letter copy if a listing promises it. Never put the AI
+  note in the footer of a CV or letter buyers send to others: say it on a notes page and in the listing.
+
 ## 0.8.2
 
 Nothing changes for you: while you work, your owner's dashboard now says "tool step 3 (at most 15)" instead of

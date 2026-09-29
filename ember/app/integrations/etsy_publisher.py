@@ -13,6 +13,14 @@ current mode and session, oldest first:
    Etsy for the owner to finish. Nothing is ever created twice: a row still 'running' after a restart becomes
    'unclear'.
 
+Approved changes to live listings (0.9.0, executor 'etsy_edit') follow in the same run, oldest first, without a
+daily limit (Etsy charges nothing for them). The files and photos are checked the same way, and an 'etsy_edits' row is
+committed as 'running' before anything is sent. Then: the listing's own fields (title, description, tags and
+category, one request), its price (in its inventory), its photos and its files, each new set uploaded before the old
+one is deleted, so the listing never is without them. A refusal before anything changed is 'failed', after something
+changed 'partial'; anything unclear is 'unclear'. The row keeps the listing as it is afterwards (as far as Ember
+knows), for the agent's etsy_listing and the next change. Nothing is ever changed twice.
+
 ``sync`` (in the scheduler's rounds, so while the agent sleeps too, and at the start of a wake cycle; at most every
 SYNC_MINUTES, well within the 6 hours Etsy's API terms allow for listing content) records each listing's state, views
 and favorites, and the orders that hold Ember's listings: dates, totals and which listings, never who bought.
@@ -38,16 +46,18 @@ from ..config import Settings
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from . import etsy
-from .etsy import EtsyError, Listing, NotSent, Shop, Unclear
+from .etsy import Edit, EtsyError, Listing, NotSent, Shop, Unclear, Upload
 
 log = logging.getLogger(__name__)
 
 CLOSED_BY = "Ember"
 APPROVED = ("approved", "approved_with_changes")
+_APPROVED_SQL = ", ".join(f"'{status}'" for status in APPROVED)
 COUNTED = ("running", "active", "draft", "unclear")  # what uses up the daily limit
 SYNC_MINUTES = 60
 ORDER_DAYS = 30  # how far back the sync looks for orders
 INTERRUPTED = "the app stopped while creating the listing"
+CHANGE_INTERRUPTED = "the app stopped while changing the listing"
 CHANGED = "{path} changed after you approved it (its SHA-256 differs); ask for a new request"
 
 
@@ -103,6 +113,83 @@ def approved_listing(row: sqlite3.Row) -> Listing:
     return listing
 
 
+def approved_edit(row: sqlite3.Row) -> Edit:
+    """The change to make: the agent's, with the owner's words and price if they approved it with changes."""
+    edit = etsy.edit_from_action(row["action"])
+    if row["status"] == "approved_with_changes" and row["final_payload"]:
+        edit = etsy.edit_with_changes(edit, row["final_payload"])
+    return edit
+
+
+def current_listing(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> Listing | None:
+    """One of Ember's live listings as Ember listed it or last changed it (changes the owner made at Etsy aren't
+    known); None when Ember didn't list it (live) in this mode and session."""
+    where, params = scope.where()
+    row = conn.execute(
+        f"SELECT approval_id FROM etsy_listings WHERE {where} AND listing_id = ? AND status = 'active'",
+        (*params, listing_id),
+    ).fetchone()
+    if row is None:
+        return None
+    changed = conn.execute(
+        f"SELECT listing FROM etsy_edits WHERE {where} AND listing_id = ? AND listing IS NOT NULL ORDER BY id DESC"
+        " LIMIT 1",
+        (*params, listing_id),
+    ).fetchone()
+    if changed is not None:
+        return etsy.listing_from_action(changed["listing"])
+    approval = conn.execute("SELECT * FROM approvals WHERE id = ?", (row["approval_id"],)).fetchone()
+    return approved_listing(approval)
+
+
+def live_listings(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> list[tuple[int, Listing]]:
+    """Ember's live listings (newest first), each as Ember listed it or last changed it."""
+    where, params = scope.where()
+    rows = conn.execute(
+        f"SELECT listing_id FROM etsy_listings WHERE {where} AND status = 'active' AND listing_id IS NOT NULL"
+        " ORDER BY id DESC LIMIT ?",
+        (*params, limit),
+    ).fetchall()
+    found = []
+    for row in rows:
+        try:
+            listing = current_listing(conn, scope, row["listing_id"])
+        except EtsyError:
+            continue
+        if listing is not None:
+            found.append((int(row["listing_id"]), listing))
+    return found
+
+
+def open_edit(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> int | None:
+    """A change to this listing that waits for the owner or for Ember's code (its request number), or None."""
+    where, params = scope.where()
+    row = conn.execute(
+        f"SELECT id FROM approvals WHERE {where} AND executor = 'etsy_edit' AND status IN ('pending', {_APPROVED_SQL})"
+        " AND json_extract(action, '$.listing_id') = ? ORDER BY id LIMIT 1",
+        (*params, listing_id),
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def edit_execution(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any] | None:
+    """What happened to an approved change, for the dashboard (None before approval)."""
+    edit = conn.execute("SELECT * FROM etsy_edits WHERE approval_id = ?", (row["id"],)).fetchone()
+    if edit is not None:
+        return {
+            "status": edit["status"],
+            "started_at": edit["started_at"],
+            "finished_at": edit["finished_at"],
+            "result": edit["result"],
+            "error": edit["error"],
+            "listing_id": edit["listing_id"],
+            "url": etsy.listing_url(edit["listing_id"]),
+        }
+    if row["status"] not in APPROVED:
+        return None
+    return {"status": "waiting", "started_at": None, "finished_at": None, "result": None, "error": None}
+
+
 class Publisher:
     def __init__(
         self,
@@ -129,26 +216,31 @@ class Publisher:
             return []
         try:
             scope = self.scope()
-            where, params = scope.where()
-            with self.db.connection() as conn:
-                ids = [
-                    r[0]
-                    for r in conn.execute(
-                        f"SELECT id FROM approvals WHERE {where} AND executor = 'etsy_listing' AND status IN {APPROVED}"
-                        " AND NOT EXISTS (SELECT 1 FROM etsy_listings x WHERE x.approval_id = approvals.id)"
-                        " ORDER BY id",
-                        params,
-                    )
-                ]
             done = []
-            for approval_id in ids:
+            for approval_id in self._approved(scope, "etsy_listing", "etsy_listings"):
                 outcome = self._one(shop, scope, approval_id)
                 done.append((approval_id, outcome))
                 if outcome == "waiting_limit":
                     break  # the rest waits for tomorrow too, in order
+            for approval_id in self._approved(scope, "etsy_edit", "etsy_edits"):  # changes have no daily limit
+                done.append((approval_id, self._change(shop, scope, approval_id)))
             return done
         finally:
             self._lock.release()
+
+    def _approved(self, scope: AgentScope, executor: str, table: str) -> list[int]:
+        """The approved requests of ``executor`` that Ember's code hasn't started (no row in ``table``), oldest
+        first."""
+        where, params = scope.where()
+        with self.db.connection() as conn:
+            return [
+                r[0]
+                for r in conn.execute(
+                    f"SELECT id FROM approvals WHERE {where} AND executor = ? AND status IN {APPROVED}"
+                    f" AND NOT EXISTS (SELECT 1 FROM {table} x WHERE x.approval_id = approvals.id) ORDER BY id",
+                    (*params, executor),
+                )
+            ]
 
     def _one(self, shop: Shop, scope: AgentScope, approval_id: int) -> str:
         stamp = to_iso(self.clock.now())
@@ -209,18 +301,21 @@ class Publisher:
 
     def _read(self, listing: Listing) -> tuple[list[tuple[str, bytes]], list[tuple[str, bytes]]]:
         """The photos and files, exactly as approved (their SHA-256)."""
+        return self._uploads(listing.photos), self._uploads(listing.files)
+
+    def _uploads(self, uploads: tuple[Upload, ...]) -> list[tuple[str, bytes]]:
+        """(file name, data) of each upload, exactly as approved (its SHA-256)."""
         jail = self.workspace()
-        read: list[list[tuple[str, bytes]]] = [[], []]
-        for group, uploads in enumerate((listing.photos, listing.files)):
-            for u in uploads:
-                try:
-                    data = jail.read_bytes(u.path)
-                except SandboxError as exc:
-                    raise EtsyError(f"{u.path} can't be read: {exc}") from None
-                if hashlib.sha256(data).hexdigest() != u.sha256:
-                    raise EtsyError(CHANGED.format(path=u.path))
-                read[group].append((u.path.rsplit("/", 1)[-1], data))
-        return read[0], read[1]
+        read: list[tuple[str, bytes]] = []
+        for u in uploads:
+            try:
+                data = jail.read_bytes(u.path)
+            except SandboxError as exc:
+                raise EtsyError(f"{u.path} can't be read: {exc}") from None
+            if hashlib.sha256(data).hexdigest() != u.sha256:
+                raise EtsyError(CHANGED.format(path=u.path))
+            read.append((u.path.rsplit("/", 1)[-1], data))
+        return read
 
     def _after(self, approval_id: int, status: str, listing_id: int | None, note: str, error: str | None = None) -> str:
         with self.db.transaction() as conn:
@@ -267,10 +362,173 @@ class Publisher:
         """Rows left 'running' by a crash: unclear, never retried."""
         with self.db.transaction() as conn:
             rows = conn.execute("SELECT approval_id, listing_id FROM etsy_listings WHERE status = 'running'").fetchall()
+            changes = conn.execute("SELECT approval_id, listing_id FROM etsy_edits WHERE status = 'running'").fetchall()
         for row in rows:
             note = f"It is unclear whether the listing was finished ({INTERRUPTED}). Ember won't try again; check Etsy."
             self._after(row["approval_id"], "unclear", row["listing_id"], note, INTERRUPTED)
-        return len(rows)
+        for row in changes:
+            note = (
+                f"It is unclear how much of the change was made ({CHANGE_INTERRUPTED}). Ember won't try again; check"
+                f" the listing at Etsy: {etsy.edit_url(row['listing_id'])}"
+            )
+            self._changed(row["approval_id"], "unclear", None, None, note, CHANGE_INTERRUPTED)
+        return len(rows) + len(changes)
+
+    # --- approved changes to live listings (0.9.0) ---
+
+    def _change(self, shop: Shop, scope: AgentScope, approval_id: int) -> str:
+        stamp = to_iso(self.clock.now())
+        where, params = scope.where()
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                f"SELECT * FROM approvals WHERE id = ? AND {where} AND executor = 'etsy_edit'", (approval_id, *params)
+            ).fetchone()
+            started = conn.execute("SELECT 1 FROM etsy_edits WHERE approval_id = ?", (approval_id,)).fetchone()
+            if row is None or row["status"] not in APPROVED or started is not None:
+                return "skipped"  # cancelled or decided meanwhile
+            try:
+                listing_id = int(json.loads(row["action"])["listing_id"])
+            except (ValueError, KeyError, TypeError):
+                listing_id = 0
+            try:
+                edit = approved_edit(row)
+                before = current_listing(conn, scope, edit.listing_id)
+                if before is None:
+                    raise EtsyError(f"#{edit.listing_id} isn't one of the listings Ember made (live)")
+                photos, files = self._uploads(edit.photos or ()), self._uploads(edit.files or ())
+            except EtsyError as exc:
+                self._start_change(conn, scope, approval_id, listing_id, stamp)
+                return self._change_failed(conn, approval_id, str(exc))
+            self._start_change(conn, scope, approval_id, edit.listing_id, stamp)
+        # Committed: from here on this change is never made a second time, whatever happens.
+        return self._make(shop, scope, approval_id, edit, before, photos, files)
+
+    def _make(
+        self,
+        shop: Shop,
+        scope: AgentScope,
+        approval_id: int,
+        edit: Edit,
+        before: Listing,
+        photos: list[tuple[str, bytes]],
+        files: list[tuple[str, bytes]],
+    ) -> str:
+        """The change at Etsy, part by part; what was made is recorded, whatever happens."""
+        listing_id = edit.listing_id
+        steps: list[tuple[set[str], Callable[[list[str]], None]]] = []
+        fields = edit.listing_fields()
+        if fields:
+            steps.append((set(edit.parts()) & etsy.LISTING_PARTS, lambda _: shop.update_listing(listing_id, fields)))
+        if edit.price is not None:
+            price = edit.price
+            steps.append(({"price"}, lambda _: shop.set_price(listing_id, price)))
+        if edit.photos is not None:
+
+            def new_photos(progress: list[str]) -> None:
+                _replace(
+                    shop.photo_ids(listing_id),
+                    lambda name, data, rank: shop.upload_photo(listing_id, name, data, rank),
+                    lambda photo_id: shop.delete_photo(listing_id, photo_id),
+                    photos,
+                    etsy.MAX_PHOTOS,
+                    progress,
+                )
+
+            steps.append(({"photos"}, new_photos))
+        if edit.files is not None:
+
+            def new_files(progress: list[str]) -> None:
+                _replace(
+                    shop.file_ids(listing_id),
+                    lambda name, data, rank: shop.upload_file(listing_id, name, data, rank),
+                    lambda file_id: shop.delete_file(listing_id, file_id),
+                    files,
+                    etsy.MAX_FILES,
+                    progress,
+                )
+
+            steps.append(({"files"}, new_files))
+        made: set[str] = set()
+        progress: list[str] = []  # uploads and deletions of the photos or files being replaced
+        halfway: set[str] = set()  # parts left half replaced
+        status, error = "done", None
+        try:
+            with _guard(shop):
+                for parts, step in steps:
+                    progress.clear()
+                    try:
+                        step(progress)
+                    except Exception:
+                        if progress:
+                            halfway.update(parts)
+                        raise
+                    made.update(parts)
+        except NotSent as exc:
+            status, error = ("partial" if made or halfway else "failed"), str(exc)
+        except Exception as exc:  # noqa: BLE001 - Unclear, or anything else: something may have changed
+            status = "unclear"
+            error = str(exc) if isinstance(exc, EtsyError) else type(exc).__name__
+            if not isinstance(exc, EtsyError):
+                log.exception("Changing Etsy listing %d (request #%d) failed", listing_id, approval_id)
+        after = etsy.edited(before, edit, made) if made else None
+        note = _change_note(shop, edit, status, made, halfway, error)
+        title = edit.title if "title" in made else None
+        return self._changed(approval_id, status, after, title, note, error, scope)
+
+    def _start_change(
+        self, conn: sqlite3.Connection, scope: AgentScope, approval_id: int, listing_id: int, stamp: str
+    ) -> None:
+        conn.execute(
+            "INSERT INTO etsy_edits (mode, session, approval_id, listing_id, started_at, status)"
+            " VALUES (?, ?, ?, ?, ?, 'running')",
+            (scope.mode, scope.session, approval_id, listing_id, stamp),
+        )
+
+    def _change_failed(self, conn: sqlite3.Connection, approval_id: int, reason: str) -> str:
+        note = f"Not changed: {reason}"
+        conn.execute(
+            "UPDATE etsy_edits SET status = 'failed', finished_at = ?, error = ? WHERE approval_id = ?",
+            (to_iso(self.clock.now()), reason[:500], approval_id),
+        )
+        self._close(conn, approval_id, "failed", note, None)
+        return "failed"
+
+    def _changed(
+        self,
+        approval_id: int,
+        status: str,
+        after: Listing | None,
+        title: str | None,
+        note: str,
+        error: str | None,
+        scope: AgentScope | None = None,
+    ) -> str:
+        with self.db.transaction() as conn:
+            row = conn.execute("SELECT * FROM etsy_edits WHERE approval_id = ?", (approval_id,)).fetchone()
+            conn.execute(
+                "UPDATE etsy_edits SET status = ?, finished_at = ?, listing = ?, result = ?, error = ?"
+                " WHERE approval_id = ?",
+                (
+                    status,
+                    to_iso(self.clock.now()),
+                    json.dumps(after.to_action(), ensure_ascii=False) if after else None,
+                    note[:500],
+                    (error or "")[:500] or None,
+                    approval_id,
+                ),
+            )
+            if title is not None and scope is not None:
+                where, params = scope.where()
+                conn.execute(
+                    f"UPDATE etsy_listings SET title = ? WHERE {where} AND listing_id = ?",
+                    (title[:140], *params, row["listing_id"]),
+                )
+            listing_id = row["listing_id"]
+            link = etsy.listing_url(listing_id) if status == "done" else etsy.edit_url(listing_id)
+            self._close(conn, approval_id, "done" if status == "done" else "failed", note, link)
+        level = "info" if status == "done" else "warning"
+        events.record(self.db, level, "etsy", f"Request #{approval_id}: {note}"[:300])
+        return status
 
     # --- how the listings do ---
 
@@ -344,6 +602,54 @@ class Publisher:
             self._lock.release()
 
 
+def _replace(
+    old_ids: list[int],
+    upload: Callable[[str, bytes, int], None],
+    delete: Callable[[int], None],
+    items: list[tuple[str, bytes]],
+    most: int,
+    progress: list[str],
+) -> None:
+    """Put ``items`` first (ranks 1, 2, ...) and delete the old ones, one old one earlier only where Etsy's limit
+    (``most``) needs the room: a live digital listing never is without a photo or a file."""
+    old = list(old_ids)
+    for rank, (name, data) in enumerate(items, 1):
+        while old and len(old) + rank - 1 >= most:
+            delete(old.pop())
+            progress.append("deleted")
+        upload(name, data, rank)
+        progress.append("uploaded")
+    for item_id in old:
+        delete(item_id)
+        progress.append("deleted")
+
+
+def _change_note(shop: Shop, edit: Edit, status: str, made: set[str], halfway: set[str], error: str | None) -> str:
+    """What happened to an approved change, for the owner and the agent."""
+
+    def words(parts: set[str] | list[str]) -> str:
+        return ", ".join(p for p in etsy.EDIT_PARTS if p in parts) or "nothing"
+
+    url = etsy.listing_url(edit.listing_id)
+    if status == "done":
+        if shop.simulated:
+            return f"Changed in the dry run's fake shop ({words(made)}); nothing reached Etsy."
+        return f"Changed at Etsy: {words(made)}. {url}"
+    rest = [p for p in edit.parts() if p not in made]
+    half = f" Its {words(halfway)} were left half replaced." if halfway else ""
+    if status == "failed":
+        return f"Not changed: Etsy refused it ({error})."
+    if status == "partial":
+        return (
+            f"Partly changed: {words(made)} changed; {words(rest)} not, Etsy refused it ({error}).{half} Check it at"
+            f" Etsy: {etsy.edit_url(edit.listing_id)}"
+        )
+    return (
+        f"It is unclear whether Etsy made all of the change ({error}). Changed for sure: {words(made)}.{half} Ember"
+        f" won't try again; check the listing at Etsy: {etsy.edit_url(edit.listing_id)}"
+    )
+
+
 def _guard(shop: Shop) -> contextlib.AbstractContextManager[Any]:
     """The fake shop of a dry run needs no network, so it runs sealed; the owner's is reached by Ember's code only.
     (A new guard for every use: a sealed block can't be entered twice.)"""
@@ -388,6 +694,19 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
     )
     left = max(0, daily_limit - created_today(conn, clock, scope))
     lines.append(f"Listings Ember can still create today: {left} of {daily_limit}.")
+    if any(r["listing_id"] and r["status"] == "active" for r in rows):
+        lines.append("Change a live listing (free at Etsy): etsy_listing shows it, propose_etsy_edit asks your owner.")
+    waiting = conn.execute(
+        f"SELECT id, status, json_extract(action, '$.listing_id') AS listing_id FROM approvals WHERE {where}"
+        f" AND executor = 'etsy_edit' AND status IN ('pending', {_APPROVED_SQL}) ORDER BY id",
+        params,
+    ).fetchall()
+    if waiting:
+        where_now = {"pending": "your owner decides"}
+        changes = [
+            f"request #{w['id']} for #{w['listing_id']} ({where_now.get(w['status'], 'approved')})" for w in waiting
+        ]
+        lines.append(f"Changes not made yet: {'; '.join(changes)}.")
     return "\n".join(lines)
 
 

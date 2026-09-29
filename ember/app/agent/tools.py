@@ -37,7 +37,7 @@ from urllib.parse import urlsplit
 from .. import paths
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import etsy, mail, mailstore, reddit
+from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
@@ -61,11 +61,14 @@ INBOX_CHARS = 3_500
 EMAIL_READ_CHARS = 3_000
 MAX_ACTION_CHARS = 12_000  # the approvals table's limit for an action
 LOOK_PIXELS = 1_000  # the longer side of a picture the agent looks at: about 1,000-1,300 input tokens
+CATEGORIES_SHOWN = 10  # etsy_categories' answer, shortest paths first
+DEPARTMENT = " (a whole department: too broad for a listing)"
 # Making files takes a moment: these run sealed, but outside the database transaction the other tools share.
 MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image"})
 GUIDES = ("documents", "spreadsheets", "listing_photos", "workshop", "etsy")
 WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
-ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing"})  # offered only with an Etsy shop
+# Offered only with an Etsy shop.
+ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing", "propose_etsy_edit"})
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "propose_email"})
 FIRST_CONTACT = (
@@ -354,7 +357,7 @@ SPECS: dict[str, Spec] = {
             f"listing photo, a workshop picture), shown at most {LOOK_PIXELS:,} pixels wide or high: about 1,000 "
             "input tokens each.",
             {"path": _s("The .png or .jpg file, e.g. 'shop/cv-page1.png'.", 200)},
-            per_cycle=4,
+            per_cycle=8,  # a listing's 5 to 10 photos, each checked (4 until 0.9.0)
         ),
         Spec(
             "guide",
@@ -455,6 +458,45 @@ SPECS: dict[str, Spec] = {
                 "reason": _s("Why this listing now, and what you expect from it.", 300),
             },
             per_cycle=1,
+        ),
+        Spec(
+            "etsy_listing",
+            "Read your live Etsy listings as Ember listed them or last changed them (what your owner changed at Etsy "
+            "isn't known): without listing_id a short list, with one its title, price, tags, category, photos, files "
+            "and description in full. Free.",
+            {"listing_id": _i("The listing's number; leave it out for the list.", required=False, minimum=1)},
+            per_cycle=6,
+        ),
+        Spec(
+            "propose_etsy_edit",
+            "Ask your owner to approve a change to one of your live Etsy listings. Give only what changes: a new "
+            "title, description, price, tags or category, or a new set of photos or of files, which replaces all "
+            "the listing has. After approval Ember's code makes the change at Etsy (free) and you hear the result. "
+            "Read the listing with etsy_listing first.",
+            {
+                "listing_id": _i("The listing's number.", minimum=1),
+                "title": _s("The new title.", etsy.TITLE_CHARS, required=False),
+                "description": _s("The new description, in full. Plain text.", etsy.DESCRIPTION_CHARS, required=False),
+                "price": _s("The new price in the shop's currency, like 4.90.", 12, required=False),
+                "tags": _s(
+                    f"All its tags from now on (up to {etsy.MAX_TAGS}), separated by commas.", 400, required=False
+                ),
+                "category_id": _i("The new category's number, from etsy_categories.", required=False),
+                "photos": _s(
+                    f"All its photos from now on: .png or .jpg paths separated by commas, the main photo first (1 to "
+                    f"{etsy.MAX_PHOTOS}).",
+                    600,
+                    required=False,
+                ),
+                "files": _s(
+                    f"All the files buyers download from now on: workspace paths separated by commas (at most "
+                    f"{etsy.MAX_FILES}).",
+                    600,
+                    required=False,
+                ),
+                "reason": _s("Why this change, and what you expect from it.", 300),
+            },
+            per_cycle=3,
         ),
     )
 }
@@ -1192,18 +1234,34 @@ def _etsy_categories(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
     shop = _shop(ctx)
     if not shop.categories:
         raise ToolError("Etsy's category list isn't loaded yet; it is fetched at the start of the next wake cycle")
-    found = etsy.search_categories(shop.categories, args["search"])
+    found = etsy.search_categories(shop.categories, args["search"], limit=len(shop.categories))
     if not found:
         return Outcome(True, f"No category holds all of: {args['search']}. Try fewer or broader words.", "none")
-    lines = "\n".join(f"{i}: {path}" for i, path in found)
-    return Outcome(True, f"Categories (number: path):\n{lines}", f"{len(found)} categories")
+    shown = found[:CATEGORIES_SHOWN]
+    lines = "\n".join(f"{i}: {path}" + (DEPARTMENT if etsy.department(path) else "") for i, path in shown)
+    text = f"Categories (number: path):\n{lines}"
+    if len(found) > len(shown):
+        text += f"\n...and {len(found) - len(shown)} more with longer paths (more specific): add a word to see them."
+    return Outcome(True, text, f"{len(found)} categories")
+
+
+def _category(shop: EtsyAccess, category_id: int) -> str:
+    """The path of the category a listing goes in; numbers that aren't Etsy categories, and whole top-level
+    departments (a listing proposed in 'Accessories' went live there, 0.9.0), are refused."""
+    path = dict(shop.categories).get(category_id)
+    if path is None:
+        raise ToolError(f"category {category_id} isn't an Etsy category; find one with etsy_categories")
+    if etsy.department(path):
+        raise ToolError(
+            f"category {category_id} is {path}, a whole department of Etsy's; find the specific category buyers look "
+            "in with etsy_categories"
+        )
+    return path
 
 
 def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     shop = _shop(ctx)
-    category = dict(shop.categories).get(args["category_id"])
-    if category is None:
-        raise ToolError(f"category {args['category_id']} isn't an Etsy category; find one with etsy_categories")
+    category = _category(shop, args["category_id"])
     try:
         listing = etsy.Listing(
             title=etsy.check_title(args["title"]),
@@ -1234,10 +1292,94 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
     if isinstance(made, str):
         return Outcome(True, made, "duplicate listing")
     text = (
-        f"Approval request #{made} is waiting for your owner. Nothing is on Etsy yet. If they approve it, Ember's "
-        f"code creates the listing in {shop.shop_name} (at most {shop.daily_limit} a day) and you hear the result."
+        f"Approval request #{made} is waiting for your owner, in the category {category} (#{listing.taxonomy_id}). "
+        f"Nothing is on Etsy yet. If they approve it, Ember's code creates the listing in {shop.shop_name} (at most "
+        f"{shop.daily_limit} a day) and you hear the result."
     )
     return Outcome(True, text, f"#{made} Etsy listing: {_cut(listing.title, 60)}")
+
+
+def _etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    _shop(ctx)
+    listing_id = args.get("listing_id")
+    try:
+        if listing_id is None:
+            found = etsy_publisher.live_listings(conn, ctx.scope)
+            if not found:
+                return Outcome(True, "You have no live listings yet.", "none")
+            lines = "\n".join(etsy.listing_line(i, listing) for i, listing in found)
+            return Outcome(True, f"Your live listings (newest first):\n{lines}", f"{len(found)} listings")
+        listing = etsy_publisher.current_listing(conn, ctx.scope, listing_id)
+    except etsy.EtsyError as exc:
+        raise ToolError(f"Ember's record of #{listing_id} isn't readable ({exc})") from None
+    if listing is None:
+        raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
+    text = etsy.listing_text(listing_id, listing)
+    waiting = etsy_publisher.open_edit(conn, ctx.scope, listing_id)
+    if waiting is not None:
+        text += f"\n\nRequest #{waiting} changes it and hasn't been made yet."
+    return Outcome(True, text, f"read #{listing_id}")
+
+
+def _propose_etsy_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    shop = _shop(ctx)
+    listing_id = args["listing_id"]
+    try:
+        now = etsy_publisher.current_listing(conn, ctx.scope, listing_id)
+    except etsy.EtsyError as exc:
+        raise ToolError(f"Ember's record of #{listing_id} isn't readable ({exc})") from None
+    if now is None:
+        raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
+    waiting = etsy_publisher.open_edit(conn, ctx.scope, listing_id)
+    if waiting is not None:
+        raise ToolError(f"request #{waiting} already changes #{listing_id}; you hear its result first")
+    changes: dict[str, Any] = {}
+    try:
+        if args.get("title") is not None:
+            changes["title"] = etsy.check_title(args["title"])
+        if args.get("description") is not None:
+            changes["description"] = etsy.check_description(args["description"])
+        if args.get("price") is not None:
+            changes["price"] = etsy.check_price(args["price"])
+        if args.get("tags") is not None:
+            changes["tags"] = etsy.check_tags(args["tags"])
+        if args.get("photos") is not None:
+            changes["photos"] = _uploads(ctx, args["photos"], etsy.PHOTO_KINDS, etsy.MAX_PHOTOS, "the photos")
+        if args.get("files") is not None:
+            changes["files"] = _uploads(
+                ctx, args["files"], etsy.FILE_KINDS, etsy.MAX_FILES, "the files buyers download"
+            )
+    except etsy.EtsyError as exc:
+        raise ToolError(str(exc)) from None
+    if args.get("category_id") is not None and args["category_id"] != now.taxonomy_id:
+        changes["taxonomy_id"], changes["category"] = args["category_id"], _category(shop, args["category_id"])
+    for name in [n for n in ("title", "description", "price", "tags", "photos", "files") if n in changes]:
+        if changes[name] == getattr(now, name):
+            del changes[name]  # the same as now: no change
+    if not changes:
+        raise ToolError("nothing changes: give a part that differs from the listing now (etsy_listing shows it)")
+    edit = etsy.Edit(listing_id=listing_id, currency=now.currency, **changes)
+    reason = args["reason"].strip()
+    made = _new_request(
+        ctx,
+        conn,
+        etsy.edit_payload(edit, now),
+        edit.to_action(),
+        type="sell",
+        title=_cut(f"Change Etsy listing: {now.title}", 120),
+        description=reason,
+        expected_cost="none: Etsy charges nothing for changing a listing",
+        expected_benefit=reason,
+        executor="etsy_edit",
+    )
+    if isinstance(made, str):
+        return Outcome(True, made, "duplicate change")
+    parts = ", ".join(edit.parts())
+    text = (
+        f"Approval request #{made} is waiting for your owner: it changes the {parts} of #{listing_id}. Nothing has "
+        "changed at Etsy yet. If they approve it, Ember's code makes the change and you hear the result."
+    )
+    return Outcome(True, text, f"#{made} change of #{listing_id}: {parts}")
 
 
 def _shop(ctx: ToolContext) -> EtsyAccess:
@@ -1314,6 +1456,8 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "workshop": _workshop,
     "etsy_categories": _etsy_categories,
     "propose_etsy_listing": _propose_etsy_listing,
+    "etsy_listing": _etsy_listing,
+    "propose_etsy_edit": _propose_etsy_edit,
     "make_document": _make_document,
     "make_spreadsheet": _make_spreadsheet,
     "make_image": _make_image,

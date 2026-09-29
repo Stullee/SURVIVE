@@ -14,6 +14,7 @@ import logging
 import threading
 import time
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import httpx2
@@ -24,6 +25,7 @@ from ..logging_setup import register_secret
 from .etsy import (
     API_HOST,
     API_URL,
+    CATEGORY_JOIN,
     OAUTH_ENDPOINT,
     QUANTITY,
     REFRESH_EARLY,
@@ -268,7 +270,7 @@ class LiveShop:
                 if not isinstance(node, dict) or not isinstance(node.get("id"), int):
                     continue
                 here = [*path, str(node.get("name") or "?")]
-                found.append((node["id"], " > ".join(here)))
+                found.append((node["id"], CATEGORY_JOIN.join(here)))
                 walk(node.get("children"), here)
 
         walk(data.get("results") if isinstance(data, dict) else None, [])
@@ -365,6 +367,58 @@ class LiveShop:
             time.sleep(RECEIPT_PAUSE)
         return found
 
+    # --- changing a live listing (0.9.0) ---
+
+    def update_listing(self, listing_id: int, fields: dict[str, str]) -> None:
+        self._call("PATCH", f"/v3/application/shops/{self._shop_id()}/listings/{listing_id}", changes=True, data=fields)
+
+    def set_price(self, listing_id: int, price: str) -> None:
+        """A listing's price lives in its inventory: a digital listing has one product with one offering, which gets
+        the new price (a listing with variations is left to the owner, at Etsy)."""
+        path = f"/v3/application/listings/{listing_id}/inventory"
+        data = self._call("GET", path)
+        products = data.get("products") if isinstance(data, dict) else None
+        product = products[0] if isinstance(products, list) and len(products) == 1 else None
+        offerings = product.get("offerings") if isinstance(product, dict) else None
+        if (
+            not isinstance(product, dict)
+            or product.get("property_values")
+            or not isinstance(offerings, list)
+            or len(offerings) != 1
+            or not isinstance(offerings[0], dict)
+        ):
+            raise NotSent("the listing has variations: change its price at Etsy")
+        old = offerings[0]
+        offering: dict[str, Any] = {
+            "price": float(Decimal(price)),
+            "quantity": _int(old.get("quantity")) or QUANTITY,
+            "is_enabled": old.get("is_enabled") is not False,
+        }
+        if _int(old.get("readiness_state_id")) is not None:
+            offering["readiness_state_id"] = old["readiness_state_id"]
+        body = {
+            "products": [{"sku": str(product.get("sku") or ""), "property_values": [], "offerings": [offering]}],
+            "price_on_property": [],
+            "quantity_on_property": [],
+            "sku_on_property": [],
+        }
+        self._call("PUT", path, changes=True, json=body)
+
+    def photo_ids(self, listing_id: int) -> list[int]:
+        return _ranked(self._call("GET", f"/v3/application/listings/{listing_id}/images"), "listing_image_id")
+
+    def delete_photo(self, listing_id: int, photo_id: int) -> None:
+        path = f"/v3/application/shops/{self._shop_id()}/listings/{listing_id}/images/{photo_id}"
+        self._call("DELETE", path, changes=True)
+
+    def file_ids(self, listing_id: int) -> list[int]:
+        path = f"/v3/application/shops/{self._shop_id()}/listings/{listing_id}/files"
+        return _ranked(self._call("GET", path), "listing_file_id")
+
+    def delete_file(self, listing_id: int, file_id: int) -> None:
+        path = f"/v3/application/shops/{self._shop_id()}/listings/{listing_id}/files/{file_id}"
+        self._call("DELETE", path, changes=True)
+
 
 def _order(receipt: Any) -> Order | None:
     """A paid order, or None (unpaid, cancelled or fully refunded orders don't count)."""
@@ -396,6 +450,17 @@ def _order(receipt: Any) -> Order | None:
 
 def _int(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _ranked(data: Any, key: str) -> list[int]:
+    """The numbers (``key``) of a listing's photos or files, in their order."""
+    results = data.get("results") if isinstance(data, dict) else None
+    items = (
+        [r for r in results if isinstance(r, dict) and _int(r.get(key)) is not None]
+        if isinstance(results, list)
+        else []
+    )
+    return [r[key] for r in sorted(items, key=lambda r: _int(r.get("rank")) or 0)]
 
 
 def _suffix(name: str) -> str:

@@ -65,6 +65,15 @@ dashboard and the docs show Etsy's trademark notice:
 0.8.2 labels the working phase's counter as tool steps ("tool step 3 (at most
 15)"), so it isn't mistaken for the steps of the plan shown below it.
 
+0.9.0 lets the agent change its live Etsy listings, each change approved by the
+owner (words, price, category, photos, the files buyers download), made by
+Ember's code without ever leaving a listing without photos or files. It also
+gives a wake cycle room to finish its work (the work conversation was cut after
+5 to 10 tool steps; pictures now count by their size, and it can look at 8 a
+cycle), tells the reflection why the work ended, refuses Etsy's whole top-level
+departments as a listing's category, and keeps the AI note out of the footer of
+CVs and letters that buyers send on.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

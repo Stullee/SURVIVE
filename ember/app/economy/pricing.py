@@ -44,8 +44,8 @@ LAST_WILL = CallProfile(input_tokens=6_400, max_tokens=1_000)
 # The first work step with the largest brief, and the reflection after it (with the room the loop keeps for one
 # step's growth), measured the same way: a wake cycle is only worth starting if both fit after its plan. Measured
 # with the most tools (a mailbox's and a shop's too).
-WORK = CallProfile(input_tokens=20_800, max_tokens=2_000, cache_ttls=("5m",))
-REFLECT = CallProfile(input_tokens=31_000, max_tokens=2_000, cache_ttls=("5m",))
+WORK = CallProfile(input_tokens=21_800, max_tokens=2_000, cache_ttls=("5m",))
+REFLECT = CallProfile(input_tokens=32_300, max_tokens=2_000, cache_ttls=("5m",))
 # The daily review (0.7.1), measured the same way: the constitution, the knowledge, the review rules and a full
 # scorecard.
 REVIEW_CALL = CallProfile(input_tokens=14_200, max_tokens=1_500)

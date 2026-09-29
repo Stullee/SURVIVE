@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import re
 import threading
 from dataclasses import dataclass, field
@@ -28,7 +29,7 @@ from ..db import Database
 from ..economy.clock import Clock, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.estimate import Unpriceable
-from ..economy.metering import REVIEW, CallFailed, CallRefused, CallResult, MeteredModel
+from ..economy.metering import REVIEW, CallFailed, CallRefused, CallResult, MeteredModel, picture_size
 from ..economy.pricing import LAST_WILL, PLANNER_OPENING, REVIEW_CALL
 from ..economy.service import Economy
 from ..integrations import etsy_publisher, mailstore
@@ -46,13 +47,17 @@ from .workshop import report as workshop_report
 log = logging.getLogger(__name__)
 
 MAX_TOOL_CALLS_PER_TURN = 4
-MAX_CONVERSATION_BYTES = 24_000
+# The work conversation's size limit (bytes of JSON, pictures counted as below). At 24,000 (until 0.9.0) it ended every
+# cycle that made a product and looked at its pictures after 5 to 10 tool steps. Money is checked before each step.
+MAX_CONVERSATION_BYTES = 64_000
 MAX_EMPTY_NUDGES = 1
 RETRY_DELAY_SECONDS = 5.0
 NUDGE = "Continue with the plan, or reply with a short report of what you did."
 CUT_OFF = "Your reply was cut off at the length limit. Continue in shorter parts, or use a tool."
 STEP_GROWTH_BYTES = 20_000  # what one step can add: up to 4 tool results and the model's own reply
-# A picture the model looks at counts like this much text (about 1,300 tokens, the most a look can cost).
+# A picture the model looks at counts like text in proportion to its pixels: the largest a look shows (LOOK_PIXELS
+# square, about 1,300 tokens) like this much, a 1000 x 750 listing photo like 3,750 bytes and a wide spreadsheet picture
+# (1000 x 180) like 900. A picture whose size can't be read counts as the largest.
 IMAGE_EQUIVALENT_BYTES = 5_000
 PLANNER_SCALES = (1.0, 0.75, 0.5, 0.3)  # the planner's context budgets, until the request fits its profile
 NO_STEP = "not enough money left in this cycle for a work step and the reflection"
@@ -596,10 +601,13 @@ class CycleRunner:
     def _affordable(self, cycle_id: int, request: dict[str, Any], brief: str, turns: list[dict[str, Any]]) -> bool:
         """Only take a step if a reflect call still fits after it."""
         grown = [*turns, {"role": "assistant", "content": [{"type": "text", "text": "x" * STEP_GROWTH_BYTES}]}]
+        longest = "ä" * prompts.ENDED_CHARS  # the reflection is told why the work ended: priced with the longest reason
         try:
             step_cost = self.meter.quote(request)
             reflect_cost = self.meter.quote(
-                prompts.reflect_request(self.settings, brief, grown, [], mail=self.mail, etsy=self.etsy_on)
+                prompts.reflect_request(
+                    self.settings, brief, grown, [], mail=self.mail, etsy=self.etsy_on, ended=longest
+                )
             )
         except Unpriceable:
             return False
@@ -646,7 +654,9 @@ class CycleRunner:
             # which answer the tool calls before it, and let the reflect prompt replace the rest.
             kept = [b for b in turns.pop()["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
             pending = [*kept, *pending]
-        request = prompts.reflect_request(self.settings, brief, turns, pending, mail=self.mail, etsy=self.etsy_on)
+        request = prompts.reflect_request(
+            self.settings, brief, turns, pending, mail=self.mail, etsy=self.etsy_on, ended=act.end_reason
+        )
         try:
             if self.meter.quote(request) > self.meter.headroom(cycle_id, "reflect"):
                 return False
@@ -804,14 +814,14 @@ def _first_object(text: str) -> str | None:
 
 
 def _size(turns: list[dict[str, Any]]) -> int:
-    """The conversation's size in bytes of JSON, a picture counted as IMAGE_EQUIVALENT_BYTES (not its data)."""
+    """The conversation's size in bytes of JSON, a picture counted by its pixels (``_picture_bytes``), not its data."""
     pictures = 0
 
     def without_pictures(node: Any) -> Any:
         nonlocal pictures
         if isinstance(node, dict):
             if node.get("type") == "image":
-                pictures += 1
+                pictures += _picture_bytes(node)
                 return {}
             return {key: without_pictures(value) for key, value in node.items()}
         if isinstance(node, list):
@@ -819,4 +829,15 @@ def _size(turns: list[dict[str, Any]]) -> int:
         return node
 
     text = json.dumps(without_pictures(turns), ensure_ascii=False)
-    return len(text.encode("utf-8")) + pictures * IMAGE_EQUIVALENT_BYTES
+    return len(text.encode("utf-8")) + pictures
+
+
+def _picture_bytes(block: dict[str, Any]) -> int:
+    """How much text a picture counts as: IMAGE_EQUIVALENT_BYTES for the largest a look shows, less for fewer pixels."""
+    source = block.get("source")
+    data = source.get("data") if isinstance(source, dict) else None
+    size = picture_size(data) if isinstance(data, str) else None
+    if size is None:
+        return IMAGE_EQUIVALENT_BYTES
+    width, height = size
+    return min(IMAGE_EQUIVALENT_BYTES, math.ceil(width * height * IMAGE_EQUIVALENT_BYTES / tools.LOOK_PIXELS**2))
