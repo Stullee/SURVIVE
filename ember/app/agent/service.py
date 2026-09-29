@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from .. import events, paths
+from .. import events, paths, privacy
 from ..config import LoadedSettings
 from ..db import Database
 from ..economy.clock import from_iso, to_iso
@@ -33,7 +33,7 @@ from ..integrations.mail import Mailbox, select_mailbox
 from . import netguard, store, ventures
 from .loop import NO_STEP, CycleEnd, CycleRunner
 from .memory import CAPS, Memory
-from .sandbox import Jail
+from .sandbox import Jail, SandboxError, kind_of
 from .store import AgentScope
 
 log = logging.getLogger(__name__)
@@ -384,10 +384,72 @@ class Agent:
             )
             end = runner.run(trigger)
             self._after(trigger, end)
+            self._scrub_quietly()  # what this cycle wrote after the owner removed a message
             return end
         finally:
             self.running_cycle = False
             self._lock.release()
+
+    # --- the words the owner removed (0.11.2) ---
+
+    def scrub_removed(self) -> bool:
+        """Replace the words the owner removed (privacy.register) in what the agent keeps and reads again: its memory
+        files, its open projects and its workspace's text files. Runs now unless a cycle is running, and at the end
+        of every cycle otherwise (so it never races a cycle's own writes). The history (journal, replies, tool calls)
+        can't change: what shows it redacts it. Returns whether it ran now."""
+        if not self._lock.acquire(blocking=False):
+            return False
+        try:
+            self._scrub_quietly()
+        finally:
+            self._lock.release()
+        return True
+
+    def _scrub_quietly(self) -> None:
+        try:
+            changed = self._scrub()
+        except Exception:  # noqa: BLE001 - a failed scrub must not end a cycle; the next one tries again
+            log.exception("Scrubbing the words the owner removed failed")
+            return
+        if changed:
+            events.record(self.db, "info", "owner", f"Removed the words of a removed message from {changed} texts")
+
+    def _scrub(self) -> int:
+        with self.db.connection() as conn:
+            redactor = privacy.load(conn)
+        if not redactor:
+            return 0
+        scope = self.scope()
+        workspace, memory_root = self.roots()
+        now = to_iso(self.clock.now())
+        where, params = scope.where()
+        with self.db.transaction() as conn:
+            changed = Memory(self.db, memory_root, scope).scrub(conn, redactor.apply, now)
+            open_projects = conn.execute(
+                f"SELECT id, hypothesis, next_step, notes FROM projects WHERE {where}"
+                " AND status NOT IN ('succeeded', 'failed', 'abandoned')",
+                params,
+            ).fetchall()
+            for row in open_projects:
+                hypothesis, next_step, notes = (redactor.apply(row[k]) for k in ("hypothesis", "next_step", "notes"))
+                if (hypothesis, next_step, notes) != (row["hypothesis"], row["next_step"], row["notes"]):
+                    conn.execute(  # within the columns' limits; notes are a log, so their newest end is kept
+                        "UPDATE projects SET hypothesis = ?, next_step = ?, notes = ? WHERE id = ?",
+                        (hypothesis[:400], next_step[:200], notes[-2000:], row["id"]),
+                    )
+                    changed += 1
+        for entry in workspace.walk(workspace.limits.max_files).entries:
+            if entry.is_dir or kind_of(entry.path) != "text":
+                continue
+            try:
+                text = workspace.read(entry.path)
+                clean = redactor.apply(text)
+                if clean != text:
+                    workspace.write(entry.path, clean)
+                    changed += 1
+            except SandboxError:  # gone or unreadable meanwhile
+                continue
+        return changed
 
     def _after(self, trigger: str, end: CycleEnd) -> None:
         now = self.clock.now()

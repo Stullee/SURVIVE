@@ -382,7 +382,11 @@ def remove_message(request: Request, message_id: ItemId) -> JSONResponse:
     actions = _owner_actions(request)
     if actions is None:
         return NO_AGENT
-    return _reply(actions.remove_message(message_id, _owner(request)))
+    reply = actions.remove_message(message_id, _owner(request))
+    agent = _state(request).agent
+    if reply.status == 200 and agent is not None:
+        agent.scrub_removed()  # its words out of the agent's memory, projects and files (now, or when a cycle ends)
+    return _reply(reply)
 
 
 @router.post("/api/inbox/read")
@@ -548,6 +552,7 @@ def _attachment(name: str, inline: bool = False) -> str:
 
 
 @router.get("/api/diagnostics")
-def diagnostics_report(request: Request) -> PlainTextResponse:
-    """A text report of the whole system for troubleshooting (never contains secrets)."""
-    return PlainTextResponse(diagnostics.report(_state(request)))
+def diagnostics_report(request: Request, full: bool = False) -> PlainTextResponse:
+    """A text report of the whole system for troubleshooting (never contains secrets): shareable, or with other
+    people's text (emails, web pages) when ``full``."""
+    return PlainTextResponse(diagnostics.report(_state(request), full=full), headers={"cache-control": "no-store"})

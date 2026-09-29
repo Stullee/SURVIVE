@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
+from collections.abc import Callable
 
 from .. import events
 from ..db import Database
@@ -119,6 +120,19 @@ class Memory:
         note = f", {skipped} line(s) already noted" if skipped else ""
         note += f", {dropped} oldest line(s) dropped" if dropped else ""
         return f"{path}: {'replaced' if mode == 'replace' else 'appended'}{note} ({size:,} of {cap:,} bytes)"
+
+    def scrub(self, conn: sqlite3.Connection, clean: Callable[[str], str], now: str) -> int:
+        """Rewrite the files that ``clean`` changes (the words the owner removed, 0.11.2), each as a new version;
+        returns how many changed."""
+        changed = 0
+        for name in CAPS:
+            text = self.read(name)
+            new = clean(text)
+            if new != text:
+                self.jail.write(self.filename(name), new)
+                self._version(conn, name, None, "external", new, now)
+                changed += 1
+        return changed
 
     def _latest(self, conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
         where, params = self.scope.where()

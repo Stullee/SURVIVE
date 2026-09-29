@@ -20,7 +20,7 @@ import sqlite3
 from datetime import timedelta
 from typing import Any
 
-from .. import events
+from .. import events, privacy
 from ..db import Database
 from ..economy.clock import Clock, to_iso
 from ..economy.life import KILLED_KEY
@@ -283,13 +283,15 @@ class Owner:
         return _reply(run)
 
     def remove_message(self, message_id: int, who: str | None) -> Reply:
-        """Blank the text of one of the owner's own messages (a password sent by mistake); the row stays."""
+        """Blank the text of one of the owner's own messages (a password sent by mistake); the row stays. Its
+        secret-looking words are registered (as salted hashes) so their copies are found elsewhere (0.11.2): the
+        caller has the agent scrub them (Agent.scrub_removed)."""
 
         def run() -> Reply:
             where, params = self.scope.where()
             with self.db.transaction() as conn:
                 row = conn.execute(
-                    f"SELECT sender, removed_at FROM messages WHERE id = ? AND {where}", (message_id, *params)
+                    f"SELECT sender, removed_at, text FROM messages WHERE id = ? AND {where}", (message_id, *params)
                 ).fetchone()
                 if row is None:
                     raise OwnerError("id", "no such message", 404)
@@ -297,6 +299,7 @@ class Owner:
                     raise OwnerError("id", "only your own messages can be removed", 409)
                 if row["removed_at"] is not None:
                     raise OwnerError("id", "this message's text is already removed", 409)
+                privacy.register(conn, message_id, row["text"], self._now())
                 conn.execute(
                     "UPDATE messages SET text = ?, removed_at = ?, removed_by = ? WHERE id = ?",
                     (REMOVED_TEXT, self._now(), who, message_id),

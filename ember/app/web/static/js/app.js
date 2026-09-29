@@ -40,7 +40,7 @@
     controlTimer: null,
     cycles: {},          // cycle id -> the Activity item built for it (patched in place on each poll)
     nowPlanKey: null,
-    diag: { text: null, loadedAt: null, busy: false },
+    diag: { text: null, loadedAt: null, busy: false, full: false },
     // The agent's files: the list and the open file are loaded when the tab opens and on Refresh, never polled.
     ws: { list: null, loadedAt: null, busy: false, error: null, file: null, fileBusy: false, fileError: null, fileSeq: 0 },
     // The venture tree: loaded while its tab is open, again whenever the dashboard's ventures_stamp changes.
@@ -4187,11 +4187,11 @@
     el.setAttribute("data-kind", kind || "");
   }
 
-  function diagnosticsFileName(when) {
+  function diagnosticsFileName(when, full) {
     var d = when || new Date();
     var two = function (n) { return String(n).padStart(2, "0"); };
     return "ember-diagnostics-" + d.getFullYear() + "-" + two(d.getMonth() + 1) + "-" + two(d.getDate()) +
-      "-" + two(d.getHours()) + two(d.getMinutes()) + two(d.getSeconds()) + ".txt";
+      "-" + two(d.getHours()) + two(d.getMinutes()) + two(d.getSeconds()) + (full ? "-private" : "") + ".txt";
   }
 
   function reportBytes(text) {
@@ -4214,7 +4214,8 @@
       report.setAttribute("data-loaded", stamp);
     }
     var lines = diag.text.replace(/\n$/, "").split("\n").length;
-    replace($("diag-meta"), [byteSize(reportBytes(diag.text)) + " · " + plural(lines, "line") + " · ",
+    replace($("diag-meta"), [(diag.full ? "Private (with other people's text)" : "Shareable") + " · " +
+      byteSize(reportBytes(diag.text)) + " · " + plural(lines, "line") + " · ",
       timeEl(diag.loadedAt.toISOString(), "loaded at " + timeFmt.format(diag.loadedAt))]);
   }
 
@@ -4224,10 +4225,13 @@
     diag.busy = true;
     setDiagStatus("Loading the report…", "");
     safely("diagnostics", showDiagnostics);
-    request("GET", "api/diagnostics", null, { accept: "text/plain", timeout: DIAGNOSTICS_TIMEOUT_MS }).then(function (res) {
+    // Shareable unless the owner asks for other people's text too (0.11.2).
+    var full = $("diag-full").checked;
+    request("GET", "api/diagnostics" + (full ? "?full=1" : ""), null, { accept: "text/plain", timeout: DIAGNOSTICS_TIMEOUT_MS }).then(function (res) {
       if (!res.ok) throw httpError(res);
       if (typeof res.text !== "string" || !res.text.trim()) throw new RequestError("malformed", "the report is empty");
       diag.text = res.text;
+      diag.full = full;
       diag.loadedAt = new Date();
       setDiagStatus("", "");
     }).catch(function (err) {
@@ -4281,7 +4285,7 @@
   function downloadDiagnostics() {
     var text = ui.diag.text;
     if (typeof text !== "string") return;
-    var name = diagnosticsFileName(ui.diag.loadedAt);
+    var name = diagnosticsFileName(ui.diag.loadedAt, ui.diag.full);
     var url = window.URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
     var link = h("a", { href: url, download: name, hidden: true });
     document.body.appendChild(link);

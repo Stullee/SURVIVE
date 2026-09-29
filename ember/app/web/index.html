@@ -444,7 +444,11 @@
     <section class="panel" id="panel-diagnostics" role="tabpanel" aria-labelledby="tab-diagnostics" hidden>
       <article class="card">
         <h2>Diagnostics</h2>
-        <p class="card-sub">A text report of the whole system, for troubleshooting. Copy it and paste it to whoever helps you; it never contains your API key.</p>
+        <p class="card-sub">A text report of the whole system, for troubleshooting. It never contains your API key or passwords, and it leaves out other people's text (the emails the agent read and wrote, the web pages it researched) and masks email addresses, one-time codes, tokens in links and the words you removed from your messages. Read it before you share it, and don't paste it into an AI tool that can change Ember's code: parts of it were written by the agent, which reads emails and web pages.</p>
+        <div class="field field-check">
+          <label class="choice" for="diag-full"><input type="checkbox" id="diag-full" aria-describedby="diag-full-hint"> Include other people's text</label>
+          <p class="hint" id="diag-full-hint">A private report for your own eyes: with the emails and the web text. Don't share it.</p>
+        </div>
         <div class="diag-actions" role="group" aria-label="Diagnostics report">
           <button type="button" class="btn btn-primary" id="diag-load">Load report</button>
           <button type="button" class="btn" id="diag-copy" disabled>Copy</button>

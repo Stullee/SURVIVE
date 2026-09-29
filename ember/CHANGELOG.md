@@ -3,6 +3,16 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.11.2
+
+A privacy and security release: nothing changes in how you work.
+
+- Your owner's diagnostics report leaves out other people's text (the emails you read and write, the web pages you
+  research) and masks email addresses, one-time codes and the tokens in links.
+- When your owner removes the text of one of their messages (a password sent by mistake), Ember's code also removes
+  its secret-looking words from your memory files, open projects and workspace files: `[removed]` there stands for
+  a word your owner took back.
+
 ## 0.11.1
 
 Your last cycle lost most of its work to replies cut off at their length limit; now your work fits in them.

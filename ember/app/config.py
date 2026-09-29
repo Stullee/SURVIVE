@@ -240,11 +240,14 @@ class Settings(BaseModel):
         return bool(self.email_password.get_secret_value().strip())
 
     def public_dict(self) -> dict[str, Any]:
-        """Options safe to show in the dashboard. The API key and the passwords are replaced by flags."""
-        data = self.model_dump(mode="json", exclude={"anthropic_api_key", "email_password", "etsy_shared_secret"})
+        """Options safe to show in the dashboard. The API key, the passwords and Etsy's keystring (half of Ember's
+        Etsy API key, 0.11.2) are replaced by flags."""
+        secret = {"anthropic_api_key", "email_password", "etsy_shared_secret", "etsy_keystring"}
+        data = self.model_dump(mode="json", exclude=secret)
         data["anthropic_api_key_set"] = self.api_key_set
         data["email_password_set"] = self.email_password_set
         data["etsy_shared_secret_set"] = bool(self.etsy_shared_secret.get_secret_value().strip())
+        data["etsy_keystring_set"] = bool(self.etsy_keystring.strip())
         return data
 
 

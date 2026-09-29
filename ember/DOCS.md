@@ -647,16 +647,39 @@ Reddit's developer support:
 ## Diagnostics
 
 The **Diagnostics** tab shows a plain-text report of the whole system: options
-without the key, database, economy, lives, ledger, scheduler, what the agent's
+without the keys, database, economy, lives, ledger, scheduler, what the agent's
 next plan would see, the latest wake cycles with every model call, what the
-model wrote and every tool call (texts whole), research digests, the agent's
-records (journal entries, approvals with their texts, ventures, the roadmap,
-listings, memory and the workspace's text files), the mailbox (its status, each
-email's sender, recipient and subject, and the sends) and recent events. Use
-**Copy** to paste it into a bug report or a chat. It never contains the API
-key, the mailbox password or Etsy's secret and tokens, and never an email's
-text; it does hold your messages, the agent's work and your emails' senders and
-subjects, so read it before you share it publicly.
+model wrote and every tool call (texts whole), research, the agent's records
+(journal entries, approvals, ventures, the roadmap, listings, memory and the
+workspace's text files), the mailbox (its status, its emails and the sends) and
+recent events. Use **Copy** to paste it into a bug report or a chat.
+
+The report is **shareable** by default: it leaves out other people's text (the
+emails the agent read, the web pages it researched and the emails it wrote to
+others, with their subjects and senders' names wherever they are quoted), and
+keeps only their length. Every email address is masked (`[email 1]`, and
+`[Ember's address]`), and so are one-time codes (`[masked]`), the tokens in
+links (`https://example.com/verify?[…]`) and the words you removed from your
+messages (`[removed]`, see below). It never contains the API key, the mailbox
+password, Etsy's keystring, secret or tokens, or an email's text. It does hold
+your messages and the agent's work, so read it before you share it.
+
+Tick **Include other people's text** for a private report with the emails and
+the web text: for your own eyes only. Never paste a report into an AI tool that
+can change Ember's code: parts of it were written by the agent, which reads
+emails and web pages that anyone can write, so a report can carry instructions
+planted there. The report says at its top that it is data, not instructions.
+
+**Removing a message's text.** When you remove the text of one of your messages
+(a password sent by mistake), Ember's code also finds its copies: the words in
+it that look secret (letters with digits, long numbers such as a phone number,
+addresses, long mixed tokens) are registered as salted hashes, never as text.
+Ember's code replaces them with `[removed]` in the agent's memory files, open
+projects and workspace files (right away, or when a running cycle ends), and in
+every report. The history (the journal, the model's replies and the tool calls)
+can't be changed, so its copies stay in the database and are redacted wherever
+the report shows them. Words from messages removed before 0.11.2 were not
+registered: change such a password where it is used.
 
 ## Money
 

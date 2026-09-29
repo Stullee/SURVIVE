@@ -8,10 +8,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app import privacy
 from app.agent import prompts, tools
 from app.agent.owner import REMOVED_TEXT, Owner
 from app.agent.service import Agent
 from app.config import Settings
+from tests.economy_helpers import ScriptedTransport
 from tests.test_agent import make_agent, plan, rows, text
 from tests.test_agent import tools as tool_calls
 from tests.test_owner_api import post
@@ -75,6 +77,83 @@ def test_a_removed_password_is_gone_from_the_diagnostics(ingress_client: TestCli
     report = ingress_client.get("api/diagnostics").text
     assert PASSWORD not in report and REMOVED_TEXT in report
     assert post(ingress_client, f"api/inbox/{message_id}/remove", {}, headers={}).status_code == 403  # CSRF
+
+
+def test_a_removed_password_is_scrubbed_wherever_the_agent_copied_it(ingress_client: TestClient) -> None:
+    """0.11.2: the live report still showed a removed password in 10 places (the model's replies, the journal, memory,
+    the planner preview). Its words are registered as salted hashes: the report redacts every copy, and what the agent
+    keeps and reads again (memory, open projects, workspace files) is scrubbed. The history itself can't change."""
+    agent = ingress_client.app.state.ember.agent
+    assert post(ingress_client, "api/inbox", {"text": f"Here is the login: {SECRET}"}).status_code == 201
+    copy = f"The owner's login is example-user / {PASSWORD}"
+    project = {"title": "Etsy shop", "hypothesis": "Printables sell", "next_step": "log in", "status": "active"}
+    agent.transport = ScriptedTransport(
+        simulated=True,
+        outcomes=[
+            plan(steps=[f"log in with {PASSWORD}"]),
+            tool_calls(
+                ("memory_update", {"file": "lessons", "mode": "append", "content": copy}),
+                ("project_create", project),
+                ("workspace_write", {"path": "notes/login.md", "mode": "create", "content": f"# Login\n\n{copy}\n"}),
+                ("message_owner", {"text": f"I can't log in anywhere, so I won't use {PASSWORD}."}),
+            ),
+            tool_calls(("project_update", {"project_id": 1, "note": copy})),
+            text(f"Noted {PASSWORD}."),
+            tool_calls(("write_journal", {"summary": "Got a login", "entry": copy})),
+        ],
+    )
+    agent.meter = agent.economy.metered(agent.transport)
+    assert agent.run_cycle("owner").status == "completed"
+    before = ingress_client.get("api/diagnostics?full=1").text
+    assert before.count(PASSWORD) >= 8  # the message, the plan, the tool inputs, a reply, memory, journal, file ...
+
+    message_id = rows(agent, "SELECT id FROM messages WHERE sender = 'owner'")[0]["id"]
+    assert post(ingress_client, f"api/inbox/{message_id}/remove", {}).status_code == 200
+    for query in ("", "?full=1"):
+        report = ingress_client.get(f"api/diagnostics{query}").text
+        assert PASSWORD not in report and REMOVED_TEXT in report and privacy.REMOVED in report
+        assert "aaaaaa" not in report  # no part of it either
+        meta = diagnostics_section(report, "META")
+        assert "secret.redaction_salt | (set) |" in meta
+    salt = rows(agent, f"SELECT value FROM meta WHERE key = '{privacy.SALT_KEY}'")[0]["value"]
+    assert len(salt) == 32 and salt not in report
+    registered = rows(agent, "SELECT message_id, digest FROM redactions")
+    assert registered and all(r["message_id"] == message_id and len(r["digest"]) == 64 for r in registered)
+
+    # Scrubbed where the agent keeps and reads it again ...
+    assert PASSWORD not in agent.memory().read("lessons") and privacy.REMOVED in agent.memory().read("lessons")
+    assert PASSWORD not in agent.roots()[0].read("notes/login.md")
+    notes = rows(agent, "SELECT next_step, notes FROM projects")[0]
+    assert PASSWORD not in notes["notes"] and privacy.REMOVED in notes["notes"]
+    versions = rows(agent, "SELECT source, content FROM memory_versions WHERE file = 'lessons' ORDER BY id")
+    assert versions[-1]["source"] == "external" and PASSWORD in versions[-2]["content"]  # a new version; history stays
+    # ... and the history can't change, so it is only redacted where it is shown.
+    assert PASSWORD in rows(agent, "SELECT entry FROM journal")[0]["entry"]
+    assert agent.scrub_removed() is True and rows(agent, "SELECT COUNT(*) AS n FROM redactions")[0]["n"] == len(
+        registered
+    )
+
+
+def diagnostics_section(text: str, title: str) -> str:
+    return text.split(f"\n## {title}", 1)[1].split("\n## ", 1)[0]
+
+
+def test_a_removed_message_is_scrubbed_when_the_running_cycle_ends(data_dir: Path) -> None:
+    """A cycle that saw the message before it was removed may still copy it: the scrub runs again when it ends."""
+    agent, _ = make_agent(data_dir, [])
+    who = owner(agent)
+    message_id = who.send_message({"text": f"login {SECRET}"}, None).body["id"]
+    memory = agent.memory()
+    memory.jail.write("lessons.md", f"# Lessons\n\n- The login is {PASSWORD}\n")  # what the running cycle wrote
+    assert agent._lock.acquire(blocking=False)  # a cycle is running
+    try:
+        assert who.remove_message(message_id, None).status == 200
+        assert agent.scrub_removed() is False and PASSWORD in memory.read("lessons")  # not while it runs ...
+    finally:
+        agent._lock.release()
+    agent.transport.outcomes.extend([plan(steps=[]), text("Done."), tool_calls(("write_journal", {"summary": "s"}))])
+    agent.run_cycle("owner")
+    assert PASSWORD not in memory.read("lessons")  # ... but when it has ended
 
 
 @pytest.mark.parametrize(
@@ -150,7 +229,7 @@ def test_a_message_from_before_the_update_can_be_removed(tmp_path: Path) -> None
             f" VALUES (12, 'live', 0, 1, 'then', 'owner', NULL, 'login {SECRET}')"
         )
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         conn.execute(

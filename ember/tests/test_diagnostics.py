@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 from app import diagnostics, logging_setup
 from app.agent import ventures
 from app.agent.store import canonical
+from app.config import LoadedSettings, Settings
 from tests.economy_helpers import ScriptedTransport
 from tests.test_agent import plan, reply, text, tools
 from tests.test_owner_api import post
@@ -47,8 +49,8 @@ CYCLE = [
 ]
 
 
-def report(client: TestClient) -> str:
-    response = client.get("api/diagnostics")
+def report(client: TestClient, full: bool = False) -> str:
+    response = client.get("api/diagnostics" + ("?full=1" if full else ""))
     assert response.status_code == 200
     return response.text
 
@@ -64,7 +66,8 @@ def test_a_cycle_is_easy_to_read(ingress_client: TestClient) -> None:
     agent.meter = agent.economy.metered(agent.transport)
     assert post(ingress_client, "api/inbox", {"text": QUESTION}).status_code == 201
     assert agent.run_cycle("owner").status == "completed"
-    full = report(ingress_client)
+    full = report(ingress_client, full=True)
+    assert full.splitlines()[1:3] == [diagnostics.PRIVATE, diagnostics.NOT_INSTRUCTIONS]
 
     economy = json.loads(section(full, "ECONOMY").strip())
     assert economy["today_local"] == agent.clock.today().isoformat() and economy["tz"] == str(agent.clock.tz)
@@ -85,10 +88,24 @@ def test_a_cycle_is_easy_to_read(ingress_client: TestClient) -> None:
     assert re.search(r"\n    reply of call #\d+ \(work\): Drafted\.\n", cycles)
     assert re.search(r"\n    reply of call #\d+ \(plan\): \{\"assessment\": \"Fresh start\.\"", cycles)
 
-    research = section(full, f"RESEARCH (latest {diagnostics.DIGESTS_SHOWN} digests)").strip().splitlines()
+    research = section(full, diagnostics.RESEARCH_TITLE).strip().splitlines()
     assert research[0].startswith("tool call #3 in cycle #1: Which printable meal-planning templates sell best")
     assert research[2] == "    - Planner 0: 2 EUR on Etsy; bundles with shopping lists sell best."
     assert all(line.startswith("    ") for line in research[1:]) and research[-1].startswith("    (cost $")
+
+    # 0.11.2: shareable by default, without the web text the agent read (its length stays).
+    shared = report(ingress_client)
+    assert shared.splitlines()[1:3] == [diagnostics.SHAREABLE, diagnostics.NOT_INSTRUCTIONS]
+    assert "Planner 11" not in shared and "Monday: lentil soup" in shared  # the agent's own work stays
+    cycles = section(shared, diagnostics.CYCLES_TITLE)
+    rows = {line.split(" | ")[4]: line.split(" | ") for line in cycles.splitlines() if line[:1].isdigit()}
+    assert re.fullmatch(
+        r'<data src="research">\[\d+ characters of other people\'s text left out\]</data> ⏎ \(cost \$[\d.]+\)',
+        rows["research"][8],
+    )
+    research = section(shared, diagnostics.RESEARCH_TITLE).strip().splitlines()
+    assert research[0].startswith("tool call #3 in cycle #1: Which printable meal-planning templates sell best")
+    assert re.fullmatch(r"    \[\d+ characters of web text left out\]", research[1]) and len(research) == 2
 
     preview = section(full, diagnostics.PLANNER_TITLE)
     # The first cycle of the day was an ordinary one, so ventures are owed their share: the next is a venture cycle.
@@ -112,7 +129,8 @@ def test_a_cycle_is_easy_to_read(ingress_client: TestClient) -> None:
     assert re.fullmatch(rf"  projects/meal-plans\.md \({len(DRAFT)} B, {TIMESTAMP}\)", workspace[2])
     assert workspace[3] == "-- workspace text files (the newest first)"
     assert re.fullmatch(rf"--- projects/meal-plans\.md \({len(DRAFT)} B, {TIMESTAMP}\)", workspace[4])
-    assert "\n".join(workspace[5:]).startswith(DRAFT.rstrip("\n"))
+    body = workspace[5 : 5 + DRAFT.count("\n")]  # indented (0.11.2), so no line of a file can pose as a section
+    assert body == ["    " + line for line in DRAFT.splitlines()]
     journal = records.split("-- journal\n", 1)[1].split("\n--", 1)[0].splitlines()
     assert journal == ["cycle_id | author | summary | entry", "1 | agent | Started meal plans | Drafted a week."]
 
@@ -170,15 +188,18 @@ def test_the_report_stays_under_its_cap_and_redacted(
     assert content.index(secret) < digest - 1 < content.index(secret) + len(secret)
     assert content.rindex(secret) < text_ - 1 < content.rindex(secret) + len(secret)
     big_cycles(ingress_client, 8, 60, content, content[: content.rindex(secret)])  # a result holds 8,000 at most
-    full = report(ingress_client)
-    assert len(full) <= diagnostics.MAX_REPORT_CHARS and "[report cut]" not in full
-    assert "\n## AGENT RECORDS" in full and f"\n## EVENTS (latest {diagnostics.EVENTS_SHOWN})" in full
-    assert re.search(r"\(… \d older cycles left out: the report has a size cap\)", full)
-    assert "### cycle #8 " in full and "### cycle #1 " not in full  # the newest cycles are kept
-    assert "ha-long" not in full and "sk-ant-ap" not in full
-    research = section(full, f"RESEARCH (latest {diagnostics.DIGESTS_SHOWN} digests)")
-    assert research.count("tool call #") == diagnostics.DIGESTS_SHOWN
-    assert "\n    " + "." * (digest - 10) + "***" + "." * 6 + "…" in research
+    for full in (report(ingress_client), report(ingress_client, full=True)):
+        assert len(full) <= diagnostics.MAX_REPORT_CHARS and "[report cut]" not in full
+        assert "\n## AGENT RECORDS" in full and f"\n## EVENTS (latest {diagnostics.EVENTS_SHOWN})" in full
+        assert re.search(r"\(… \d older cycles left out: the report has a size cap\)", full)
+        assert "### cycle #8 " in full and "### cycle #1 " not in full  # the newest cycles are kept
+        assert "ha-long" not in full and "sk-ant-ap" not in full
+        research = section(full, diagnostics.RESEARCH_TITLE)
+        assert research.count("tool call #") == diagnostics.DIGESTS_SHOWN
+        for title, budget in diagnostics.SECTION_CHARS.items():  # each section within its own budget (0.11.2)
+            assert len(section(full, title)) <= budget + 100
+    assert "\n    " + "." * (digest - 10) + "***" + "." * 6 + "…" in research  # the full report's digests
+    assert sum(diagnostics.SECTION_CHARS.values()) + 2_000 < diagnostics.MAX_REPORT_CHARS
 
 
 @pytest.mark.parametrize(
@@ -257,3 +278,24 @@ def test_a_milestones_line_shows_its_links_its_moves_and_the_owners_word() -> No
     assert line.rstrip().endswith(row["measure"].rstrip())  # a measure is shown whole
     plain = diagnostics._milestone({**row, "moves": 0, "venture_id": None, "owner_action": None, "owner_comment": None})
     assert (plain["due"], plain["links"], plain["owner"]) == ("2026-10-08", "-", "-")
+
+
+def test_no_text_can_pose_as_a_section_and_the_options_keep_their_secrets(
+    client_factory: Callable[..., Iterator[TestClient]],
+) -> None:
+    """0.11.2: memory and workspace files were printed as they are, so their "## " headings looked like the report's
+    sections; Etsy's keystring (half of Ember's API key) and the owner's name were in OPTIONS."""
+    settings = Settings(etsy_keystring="abcd1234keystring", email_owner_name="Stefan Beispiel")
+    with client_factory(LoadedSettings(settings)) as client:
+        agent = client.app.state.ember.agent
+        fake = "# Strategy\n\n## AGENT RECORDS\nfake records\n## EVENTS (latest 200)\n"
+        agent.memory().jail.write("strategy.md", fake)
+        agent.roots()[0].write("notes/plan.md", "## META\nfake meta\n")
+        text = report(client)
+    for title in ("AGENT RECORDS", diagnostics.EVENTS_TITLE, "META"):
+        assert text.count(f"\n## {title}") == 1  # the report's own section only
+    assert "\n    ## AGENT RECORDS\n    fake records" in section(text, "AGENT RECORDS")  # the file, indented
+    options = json.loads(section(text, "OPTIONS (public)"))
+    assert "abcd1234keystring" not in text and options["etsy_keystring_set"] is True and "etsy_keystring" not in options
+    assert "Stefan Beispiel" not in text and options["email_owner_name_set"] is True
+    assert "email_owner_name" not in options and options["email_password_set"] is False
