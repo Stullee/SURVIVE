@@ -854,13 +854,13 @@ def standing_instructions(text: str) -> str | None:
 
 def roadmap_plan(text: str) -> tuple[list[str], int | None]:
     """What the planner's ROADMAP asks of a cycle: the steps (lay it out when it is empty; move an overdue milestone a
-    week once, or propose that for the owner's, then close it) and the milestone to aim at (the first one listed:
-    overdue, or due first)."""
+    week once, or propose that for the owner's, then close it) and the milestone to aim at (the one due first:
+    overdue, or due soonest)."""
     roadmap = section(text, ROADMAP_SECTION) or ""
     if _EMPTY_ROADMAP in roadmap:
         return [ROADMAP_STEP], None
     lines = list(_MILESTONE_LINE.finditer(roadmap))
-    focus = int(lines[0][1]) if lines else None
+    focus = int(min(lines, key=lambda m: m[2])[1]) if lines else None  # the one due first (the goals come first)
     late = next((m for m in lines if m[3].endswith("late")), None)
     if late is None:
         return [], focus

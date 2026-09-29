@@ -336,8 +336,9 @@ agent can check ("10 pins that link to the shop", "business case for venture
 #3 proposed"), and can serve a venture or a project.
 
 **Planning ahead.** The agent lays the roadmap out itself and keeps it filled:
-every plan sees it by horizon (overdue, this week, this month, the next three
-months, later) and aims the cycle at the milestone due first, which the cycle's
+every plan sees its goals first (the milestones the rest leads to, one line
+each, never cut), then the rest by horizon (overdue, this week, this month,
+the next three months, later), and aims the cycle at the milestone due first, which the cycle's
 work step sees with its measure. Ember's code flags an empty roadmap, overdue
 milestones, a week with nothing due and a roadmap that ends within the month,
 and asks the agent to fix that in its next plan. The daily review checks the

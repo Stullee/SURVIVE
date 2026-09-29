@@ -385,10 +385,26 @@ def checks(rows: list[Mapping[str, Any]], today: date) -> list[str]:
     return notes
 
 
+def goal_line(row: Mapping[str, Any], today: date) -> str:
+    """A goal for the plan, compact on one line (0.12.0: the ROADMAP's cut took every goal)."""
+    due = _due(row)
+    links = "".join(f" · {name} #{row[f'{name}_id']}" for name in ("venture", "project") if row[f"{name}_id"])
+    said = ""
+    if row["created_by"] == "owner":
+        said = " · your owner's" + (f": {_q(row['owner_comment'], 60)}" if row["owner_comment"] else "")
+    return (
+        f"#{row['id']} {_q(row['title'], 70)} · due {_day(due)} ({when(due, today)}) · measure: "
+        f"{_q(row['measure'], 90)}{links}{_moved(row)}{_proposed(row)}{said}"
+    )
+
+
 def planner_text(rows: list[Mapping[str, Any]], closed: list[Mapping[str, Any]], today: date) -> str:
-    """The ROADMAP section: a count by horizon and the checks first (so a cut never takes them), then the open
-    milestones by horizon (the measure shown for what is overdue or due this week, and for goals), and what was
-    closed lately."""
+    """The ROADMAP section: a count by horizon and the checks, then the goals (the open milestones that lead to no
+    other: what the rest is for) one line each, so a cut never takes them (0.12.0: with 18 milestones, the cut took
+    all 3 goals at every budget); then the other open milestones by horizon (the measure shown for what is overdue
+    or due this week), and what was closed lately."""
+    open_ids = {int(r["id"]) for r in rows}
+    goals = [r for r in rows if r["parent_id"] not in open_ids]
     groups: dict[str, list[Mapping[str, Any]]] = {}
     for r in rows:
         groups.setdefault(horizon(_due(r), today), []).append(r)
@@ -398,16 +414,17 @@ def planner_text(rows: list[Mapping[str, Any]], closed: list[Mapping[str, Any]],
         f"{len(rows)} open milestone{'s' if len(rows) != 1 else ''}: {tally}." if rows else "No open milestones."
     )
     lines = [head, *checks(rows, today)]
-    open_ids = {int(r["id"]) for r in rows}
+    if goals:
+        lines.append("Goals (the rest leads to them):")
+        lines.extend(goal_line(r, today) for r in goals)
     ends = {key: today + timedelta(days=last) for key, _, last in HORIZONS}
     for key, label in labels:
-        members = groups.get(key)
+        members = [r for r in groups.get(key, []) if r["parent_id"] in open_ids]  # the goals are listed above
         if not members:
             continue
         lines.append(f"{label} (to {_day(ends[key])}):" if key in ends else f"{label}:")
         for r in members:
-            detail = key in (OVERDUE[0], "week") or r["parent_id"] not in open_ids
-            lines.append(milestone_line(r, today, detail, open_ids))
+            lines.append(milestone_line(r, today, key in (OVERDUE[0], "week"), open_ids))
     if closed:
         done = "; ".join(
             f"#{r['id']} {_q(r['title'], 60)} {closed_as(r)} {str(r['closed_at'])[:10]}"

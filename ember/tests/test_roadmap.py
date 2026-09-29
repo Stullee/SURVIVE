@@ -295,14 +295,13 @@ def test_the_planner_sees_the_roadmap_by_horizon_with_its_checks() -> None:
         "(with the evidence), missed if not (why, and what now); or move its date with the reason, if it is still "
         "worth reaching.",
         "Roadmap check: nothing is due this week. Add this week's milestone: the next step toward your nearest goal.",
+        "Goals (the rest leads to them):",  # 0.12.0: first, one line each, so a cut never takes them
+        '#1 "Two legs" · due Sun 2026-10-11 (in 40 days) · measure: "30 EUR a month" · your owner\'s: "Make it 50"',
         "Overdue:",
         '#4 "Late" · due Mon 2026-08-31 (1 day late) · measure: "Five listings live" · leads to #2 · moved 1 time '
         "(first due 2026-08-24)",
         "This month (to Thu 2026-10-01):",
         '#2 "First sale" · due Mon 2026-09-21 (in 20 days) · venture #1 · project #12 · leads to #1',
-        "Next three months (to Tue 2026-12-01):",
-        '#1 "Two legs" · due Sun 2026-10-11 (in 40 days) · measure: "30 EUR a month" · your owner\'s milestone: '
-        '"Make it 50"',
         'Closed in the last 14 days: #3 "Photos" missed 2026-08-30: "No time".',
     ]
     this_month = [row(id=5, due=day(3)), row(id=6, due=day(12), parent_id=5)]
@@ -602,3 +601,32 @@ def test_the_fake_model_never_calls_a_milestone_done() -> None:
 
     source = inspect.getsource(fake_llm)
     assert '"status": "done"' not in source and "to show the flow" not in source
+
+
+def test_every_goal_survives_the_roadmaps_cut_at_every_scale() -> None:
+    """0.12.0 (FIX NOW 8), the analysis's reproduction: with 18 milestones, the cut took all 3 goals at every budget
+    scale (they came last, under "Next three months")."""
+    import dataclasses
+
+    from app.agent import context
+    from app.agent.loop import PLANNER_SCALES
+    from tests.test_agent_requests import overflowing_snapshot
+
+    snap = overflowing_snapshot()
+    assert snap.today is not None
+
+    def on(days: int) -> str:
+        return (snap.today + timedelta(days=days)).isoformat()  # type: ignore[operator]
+
+    long = {"measure": "Revenue my owner recorded reaches the amount in one month, from two different legs " * 3}
+    goals = [row(id=i, title=f"Goal {i}: " + "ä" * 80, due=on(80 + i), **long) for i in (1, 2, 3)]
+    months = [row(id=10 + i, title=f"Month {i}", due=on(20 + i), parent_id=1 + i % 3, **long) for i in range(5)]
+    weeks = [row(id=20 + i, title=f"Week {i}", due=on(i - 2), parent_id=10 + i % 5, **long) for i in range(10)]
+    snap = dataclasses.replace(snap, roadmap=sorted(goals + months + weeks, key=lambda r: r["due"]), roadmap_closed=[])
+    for scale in PLANNER_SCALES:
+        planner, _ = context.planner_context(snap, dry_run=True, scale=scale)
+        shown = section(planner, "ROADMAP")
+        assert shown.startswith("Today: Wednesday 2026-09-30. 18 open milestones: 2 overdue,"), scale
+        assert "Roadmap check: 2 milestones are overdue (#20, #21)" in shown, scale
+        for goal in (1, 2, 3):
+            assert f'\n#{goal} "Goal {goal}: ää' in shown, (scale, goal)

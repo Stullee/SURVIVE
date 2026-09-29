@@ -122,9 +122,12 @@ PLANNER_BUDGETS = {
     "review": 1_400,
     "etsy": 1_600,
     "ventures": 2_600,
-    "roadmap": 1_800,  # 0.11.0
+    "roadmap": 1_800,  # 0.11.0 (and never less than ROADMAP_FLOOR, whatever the scale: 0.12.0)
     "library": 1_200,  # 0.12.0: the owner's library, when it holds documents
 }
+# 0.12.0: the ROADMAP isn't scaled down with the other sections (its checks and goals come first, and the cut took
+# every goal once the budget shrank).
+ROADMAP_FLOOR = 1_800
 # 0.12.0: while requests wait for the owner, the plan is told that waiting isn't its job.
 WAITING_NOTE = "Your owner's decision on these wakes you: don't wait for it, work on something else meanwhile."
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
@@ -660,7 +663,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         ("SINCE YOUR LAST WAKE", since),
         *([("YOUR SOFTWARE", software)] if s.news.changelog else []),
         *([("TODAY'S REVIEW", cut(s.review, b["review"]))] if s.review else []),
-        ("ROADMAP", cut(roadmap_text(s), b["roadmap"])),
+        ("ROADMAP", cut(roadmap_text(s), max(b["roadmap"], ROADMAP_FLOOR))),
         ("OPEN PROJECTS", cut(project_lines(s), b["projects"])),
         ("VENTURES", cut(ventures.planner_lines(s.ventures, s.venture_money, s.venture), b["ventures"])),
         ("WAITING FOR YOUR OWNER", cut(pending, b["pending"])),

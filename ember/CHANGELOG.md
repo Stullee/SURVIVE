@@ -28,6 +28,8 @@ Your results now reach your records: what you earn counts where it belongs.
   in your plan lists what was newly learned, your work steps get the learnings that match your plan, knowledge_search
   (free) finds more, and library_read shows a document. It is your owner's reference: use it, don't copy its text into
   what you publish.
+- ROADMAP lists your goals (the milestones the rest leads to) right after its checks, one line each, and it is never
+  cut short when your plan's other sections are (it lost every three-month goal before).
 - Your owner's milestones are theirs: a new date you give one is a proposal they accept or reject (their answer comes
   in FROM YOUR OWNER), and only they drop one. A date moves twice at most; missed is for a milestone whose date has
   passed. Dropping a milestone drops the open milestones leading to it. You add milestones while fewer than 16 are
