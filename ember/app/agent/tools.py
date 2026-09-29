@@ -1296,6 +1296,10 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     )
 
 
+# What a "done" names as its evidence (0.12.0): a number, a reference (#123) or a link or file. "Done." closed one.
+EVIDENCE = re.compile(r"\d|https?://|[\w-]+/[\w./-]+\.\w+")
+
+
 def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     row = _open_milestone(conn, ctx.scope, args["milestone_id"])
     mid = row["id"]
@@ -1344,13 +1348,22 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
                     "dropped": "say in result why it no longer matters",
                 }[status]
             )
+        if status == "done" and not EVIDENCE.search(result):
+            raise ToolError(
+                "say in result what shows its measure is met: a number (3 listings live, 12 views) or a reference "
+                "(#123, a link or a workspace file); a done you close is shown as self-reported"
+            )
         if status == "dropped" and row["created_by"] == "owner":
             raise ToolError(
                 "your owner put this milestone on your roadmap: only they can drop it (ask them), or close it done "
                 "or missed"
             )
         changes.update(
-            status=status, result=result[: roadmap.LIMITS["result"]], closed_at=ctx.now(), closed_cycle_id=ctx.cycle_id
+            status=status,
+            result=result[: roadmap.LIMITS["result"]],
+            closed_at=ctx.now(),
+            closed_cycle_id=ctx.cycle_id,
+            closed_by="agent",  # 0.12.0: the agent's word, shown as self-reported (Ember's code closes with "code")
         )
     if note:
         changes["notes"] = roadmap.add_note(row["notes"], ctx.cycle_id, note)

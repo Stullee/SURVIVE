@@ -80,6 +80,7 @@ def row(**fields: Any) -> dict[str, Any]:
         "status": "open",
         "result": "",
         "closed_at": None,
+        "closed_by": None,
         "notes": "",
         "created_by": "agent",
         "owner_action": None,
@@ -251,7 +252,7 @@ def test_what_a_milestone_promised_and_how_it_ended_are_final(data_dir: Path) ->
             with pytest.raises(sqlite3.IntegrityError):
                 conn.execute(sql)
     with agent.db.transaction() as conn:
-        roadmap.update(conn, mid, NOW, status="done", result="Sold one.", closed_at=NOW)
+        roadmap.update(conn, mid, NOW, status="done", result="Sold one.", closed_at=NOW, closed_by="agent")
     with agent.db.connection() as conn:
         for sql in (
             "UPDATE milestones SET status = 'open', closed_at = NULL",
@@ -432,13 +433,15 @@ def test_the_review_reads_the_roadmap(data_dir: Path) -> None:
     create(agent, title="This week", measure="y", due=day(4), parent_id=goal)
     done = create(agent, title="Photos", measure="z", due=day(-5))
     with agent.db.transaction() as conn:
-        roadmap.update(conn, done, NOW, status="done", result="Five photos made.", closed_at=NOW, moves=2)
+        roadmap.update(
+            conn, done, NOW, status="done", result="Five photos made.", closed_at=NOW, moves=2, closed_by="agent"
+        )
     assert _review_text(agent).split("\n") == [
         "ROADMAP (3 open, 1 overdue; in the period: 1 done)",
         '- overdue: #2 "Late one" (2026-08-30)',
         '- due in the next 7 days: #3 "This week" (2026-09-05)',
         '- planned beyond this month: #1 "Two legs" (2026-10-31)',
-        '- closed in the period: #4 "Photos" done: "Five photos made."',
+        '- closed in the period: #4 "Photos" done (self-reported): "Five photos made."',  # 0.12.0: its own word
     ]
     parsed = review.parse(json.dumps({"verdicts": [], "roadmap": "Close #2 honestly."}), set())
     assert parsed is not None and parsed.roadmap == "Close #2 honestly."
@@ -522,3 +525,55 @@ def test_the_fake_lays_out_a_roadmap_and_keeps_it(data_dir: Path) -> None:
     agent.clock.advance(days=8)
     agent.run_cycle("schedule")
     assert milestone(agent, 3)["status"] in ("done", "missed")
+
+
+def test_a_done_needs_its_evidence_and_is_shown_as_the_agents_word(data_dir: Path) -> None:
+    """0.12.0 (FIX NOW 6): "3 listings live" was closed with "Done." while no listing existed, and the daily review
+    then showed it among YOUR NUMBERS (from Ember's records: exact)."""
+    fake = FakeTransport(
+        script=[
+            plan(),
+            ToolCalls(
+                [
+                    ("milestone_create", {"title": "3 listings live", "measure": "3 listings on Etsy", "due": day(5)}),
+                    ("milestone_update", {"milestone_id": 1, "status": "done", "result": "Done."}),
+                    ("milestone_update", {"milestone_id": 1, "status": "done", "result": "All up, as planned."}),
+                    ("milestone_update", {"milestone_id": 1, "status": "done", "result": "3 live: #901, #902, #903"}),
+                ]
+            ),
+            Reply("Done."),
+            JOURNAL,
+        ]
+    )
+    agent, _ = run(data_dir, fake)
+    bare, vague, done = tool_results(agent, "milestone_update")
+    assert bare["status"] == vague["status"] == "error" and done["status"] == "ok"
+    assert "a number (3 listings live, 12 views) or a reference (#123, a link or a workspace file)" in bare["result"]
+    assert milestone(agent, 1)["closed_by"] == "agent"
+    assert '- closed in the period: #1 "3 listings live" done (self-reported): "3 live: #901, #902, #903"' in (
+        _review_text(agent)
+    )
+    [shown] = agent.roadmap()["items"]
+    assert shown["closed_by"] == "agent"
+    with pytest.raises(sqlite3.IntegrityError, match="who closed a milestone is final"), agent.db.transaction() as c:
+        c.execute("UPDATE milestones SET closed_by = 'code'")
+
+
+def test_what_the_owner_drops_is_theirs_and_every_closed_milestone_names_its_closer(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]))
+    assert owner(agent).add_milestone({"title": "Pinterest", "measure": "10 pins", "due": day(9)}, None).status == 201
+    assert owner(agent).decide_milestone(1, {"action": "drop"}, "Stefan").status == 200
+    assert milestone(agent, 1)["closed_by"] == "owner"
+    goal = create(agent, title="Goal", measure="x", due=day(30))
+    with pytest.raises(sqlite3.IntegrityError, match="names who closed it"), agent.db.transaction() as conn:
+        conn.execute(f"UPDATE milestones SET status = 'done', closed_at = 'now' WHERE id = {goal}")
+
+
+def test_the_fake_model_never_calls_a_milestone_done() -> None:
+    """It can't check a measure; its done "to show the flow" taught the dry run that one sentence closes one."""
+    import inspect
+
+    from app.agent import fake_llm
+
+    source = inspect.getsource(fake_llm)
+    assert '"status": "done"' not in source and "to show the flow" not in source

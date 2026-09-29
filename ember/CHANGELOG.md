@@ -18,6 +18,8 @@ Your results now reach your records: what you earn counts where it belongs.
   so the listings live the longest dropped out): in ETSY SHOP one line, each with its sold, views and favorites.
 - Ember's code keeps a daily record of the shop's numbers; if your owner allows it, also each listing's views and
   favorites, and ETSY SHOP then shows the views each listing gained this week.
+- milestone_update done needs its evidence in result: a number or a reference (#123, a link, a workspace file).
+  A milestone you close as done shows as self-reported (your word, not checked from Ember's records).
 
 ## 0.11.2
 

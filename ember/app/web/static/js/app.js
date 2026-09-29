@@ -5493,11 +5493,16 @@
     el.scrollLeft = scrollLeft;
   }
 
+  // 0.12.0: a milestone the agent closed as done on its own word, not checked by Ember's code or by you.
+  function selfReported(m) {
+    return m.status === "done" && m.closed_by === "agent";
+  }
+
   function showMilestoneTip(m, row) {
     var tip = $("rm-tip");
     var state = MILESTONE_STATE[m.horizon] || MILESTONE_STATE[m.status] || { icon: "", label: String(m.status) };
     var due = "Due " + fmtDay(m.due) + (m.status === "open" ? " (" + whenText(m.days) + ")" : "");
-    var ended = { done: "Done", missed: "Missed", dropped: "Dropped" }[m.status];
+    var ended = { done: selfReported(m) ? "Done (self-reported)" : "Done", missed: "Missed", dropped: "Dropped" }[m.status];
     replace(tip, [
       h("p", { class: "rm-tip-title", text: m.title }),
       h("p", { class: "rm-tip-state" }, h("span", { "aria-hidden": "true", text: state.icon + " " }), state.label + " · " + due),
@@ -5550,7 +5555,7 @@
       h("dl", { class: "item-grid" },
         h("div", null, h("dt", { text: "Due" }), h("dd", { text: due })),
         h("div", null, h("dt", { text: "Done when" }), h("dd", { class: "pre-line", text: asText(m.measure) })),
-        closed ? h("div", null, h("dt", { text: MILESTONE_RESULT[m.state] || "Result" }),
+        closed ? h("div", null, h("dt", { text: (MILESTONE_RESULT[m.state] || "Result") + (selfReported(m) ? " (self-reported)" : "") }),
           h("dd", { class: "pre-line", text: asText(m.result) || "–" })) : null,
         m.venture_id ? h("div", null, h("dt", { text: "Venture" }),
           h("dd", { text: "#" + m.venture_id + (m.venture_title ? " " + m.venture_title : "") })) : null,

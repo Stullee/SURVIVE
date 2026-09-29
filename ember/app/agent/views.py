@@ -226,6 +226,7 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
                 "days": (due - today).days,
                 "result": m["result"],
                 "closed_at": m["closed_at"],
+                "closed_by": m["closed_by"],  # "agent": its word only, shown as self-reported (0.12.0)
                 "notes": m["notes"],
                 "created_by": m["created_by"],
                 "entered_by": m["entered_by"],

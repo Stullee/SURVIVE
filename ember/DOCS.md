@@ -344,7 +344,11 @@ roadmap too.
 can't be changed once it is written. Its date can move, with the reason, and
 every move is counted: the card and the timeline show where it was first due.
 A milestone ends **done** (with the evidence), **missed** (why, and what now)
-or **dropped** (why), and is final then.
+or **dropped** (why), and is final then. A done the agent closes must name its
+evidence (a number, or a reference such as a request, a link or a file), and it
+shows as **self-reported**: the agent's word, not checked from Ember's records,
+also in its daily review. Ember keeps who closed each milestone (the agent,
+you, or later Ember's code from its records).
 
 **The timeline.** A row per milestone, under the goal it leads to: a bar from
 when it was planned to its date, a mark on its date (open ◆, overdue ▲, done ●,

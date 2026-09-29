@@ -1863,15 +1863,12 @@ class FakeTransport:
                 "due": (today + timedelta(days=7)).isoformat(),
                 "note": "Dry run: the fake model moves an overdue milestone a week, once.",
             }
-        done = rng.random() < 0.5
+        # 0.12.0: never "done": the fake can't check a measure, and a done on its word taught the dry run that one
+        # sentence closes a milestone (Ember's code will close a met one from its records).
         return "milestone_update", {
             "milestone_id": milestone_id,
-            "status": "done" if done else "missed",
-            "result": (
-                "Dry run: the fake model can't check the measure, so it calls this one done to show the flow."
-                if done
-                else "Dry run: missed after a week's delay. Next: a smaller milestone for this week."
-            ),
+            "status": "missed",
+            "result": "Dry run: missed after a week's delay. Next: a smaller milestone for this week.",
         }
 
     def _tool_turn(

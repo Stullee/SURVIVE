@@ -48,6 +48,7 @@ _COLUMNS = frozenset(
         "result",
         "closed_at",
         "closed_cycle_id",
+        "closed_by",
         "notes",
         "parent_id",
         "venture_id",
@@ -224,12 +225,19 @@ def owner_word(
     params: tuple[Any, ...] = ()
     if action == "drop":
         result = "Dropped by your owner" + (f": {' '.join(comment.split())}" if comment else ".")
-        closing = ", status = 'dropped', result = ?, closed_at = ?"
+        closing = ", status = 'dropped', result = ?, closed_at = ?, closed_by = 'owner'"
         params = (result[: LIMITS["result"]], now)
     conn.execute(
         f"UPDATE milestones SET owner_action = ?, owner_comment = ?, owner_at = ?, owner_by = ?{closing},"
         " owner_version = owner_version + 1, seen_cycle_id = NULL, updated_at = ? WHERE id = ?",
         (action, comment, now, who, *params, now, milestone_id),
+    )
+
+
+def closed_as(row: sqlite3.Row) -> str:
+    """A closed milestone's status, "done (self-reported)" when only the agent's word says so (0.12.0)."""
+    return (
+        f"{row['status']} (self-reported)" if row["status"] == "done" and row["closed_by"] == "agent" else row["status"]
     )
 
 
@@ -352,7 +360,7 @@ def planner_text(rows: list[Mapping[str, Any]], closed: list[Mapping[str, Any]],
             lines.append(milestone_line(r, today, detail, open_ids))
     if closed:
         done = "; ".join(
-            f"#{r['id']} {_q(r['title'], 60)} {r['status']} {str(r['closed_at'])[:10]}"
+            f"#{r['id']} {_q(r['title'], 60)} {closed_as(r)} {str(r['closed_at'])[:10]}"
             + (f": {_q(r['result'], 100)}" if r["status"] != "done" and r["result"] else "")
             for r in closed[:6]
         )
@@ -431,6 +439,6 @@ def review_text(conn: sqlite3.Connection, scope: AgentScope, today: date, since:
     if closed:
         lines.append(
             "- closed in the period: "
-            + "; ".join(f"#{r['id']} {_q(r['title'], 50)} {r['status']}: {_q(r['result'], 120)}" for r in closed[:6])
+            + "; ".join(f"#{r['id']} {_q(r['title'], 50)} {closed_as(r)}: {_q(r['result'], 120)}" for r in closed[:6])
         )
     return "\n".join(lines)
