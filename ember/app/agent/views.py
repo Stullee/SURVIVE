@@ -79,6 +79,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "author": j["author"],
                 "summary": j["summary"],
                 "entry": j["entry"],
+                "handoff": j["handoff"],  # 0.12.0: what the next cycle should do first
             }
             for j in store.journal(conn, scope, 20)
         ]

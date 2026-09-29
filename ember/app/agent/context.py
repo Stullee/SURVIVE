@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
@@ -115,7 +115,7 @@ PLANNER_BUDGETS = {
     "strategy": 2_000,
     "identity": 600,
     "lessons": 1_300,
-    "journal": 600,
+    "journal": 600,  # YOUR LAST CYCLE (0.12.0: the handoff and the last goal; unused before)
     "workspace": 900,
     "research": RESEARCH_BUDGET,
     "workshop": 800,
@@ -403,9 +403,32 @@ def _news_head(s: Snapshot) -> str:
     if s.last_cycle is not None:
         c = s.last_cycle
         lines.append(f"Last cycle #{c['id']} ended {c['status']}" + (f" ({c['note']})" if c["note"] else "") + ".")
-    if s.last_journal is not None:
-        lines.append(f"Your last journal summary: {s.last_journal['summary']}")
     return "\n".join(lines)
+
+
+def last_cycle_text(s: Snapshot) -> str:
+    """0.12.0: the plan's YOUR LAST CYCLE: what it set out to do, the handoff its reflection left for this cycle, and
+    its journal's summary (the agent's words, JSON-quoted). The handoff never reached a plan before."""
+    lines = []
+    journal = s.last_journal
+    if journal is not None and journal["handoff"]:
+        lines.append(f"Your handoff to this cycle: {json.dumps(journal['handoff'], ensure_ascii=False)}")
+    goal = _plan_goal(s.last_cycle)
+    if goal:
+        lines.append(f"Its goal: {json.dumps(goal, ensure_ascii=False)}")
+    if journal is not None:
+        lines.append(f"Its journal: {json.dumps(journal['summary'], ensure_ascii=False)}")
+    return "\n".join(lines)
+
+
+def _plan_goal(cycle: Mapping[str, Any] | None) -> str:
+    raw = cycle["plan"] if cycle is not None and "plan" in cycle.keys() else None  # noqa: SIM118 - a Row's "in" sees values
+    try:
+        plan = json.loads(raw) if raw else {}
+    except ValueError:
+        return ""
+    goal = plan.get("goal") if isinstance(plan, dict) else None
+    return " ".join(goal.split())[:300] if isinstance(goal, str) else ""
 
 
 def owner_text(s: Snapshot, budget: int) -> str:
@@ -657,10 +680,12 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
     since = cut("\n".join(part for part in (head, owner) if part) or "Nothing new.", b["news"])
     software = cut(s.news.changelog, b["software"])
     research = research_text(s)
+    last_cycle = last_cycle_text(s)
     parts = [
         ("STATUS", cut(status_text(s, dry_run), b["status"])),
         *instructions_section(s, b["instructions"]),
         ("SINCE YOUR LAST WAKE", since),
+        *([("YOUR LAST CYCLE", cut(last_cycle, b["journal"]))] if last_cycle else []),
         *([("YOUR SOFTWARE", software)] if s.news.changelog else []),
         *([("TODAY'S REVIEW", cut(s.review, b["review"]))] if s.review else []),
         ("ROADMAP", cut(roadmap_text(s), max(b["roadmap"], ROADMAP_FLOOR))),

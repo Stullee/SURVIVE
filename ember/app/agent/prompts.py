@@ -135,7 +135,7 @@ REFLECT_PROMPT = (
     "making files, looking at pictures, research, brainstorms and proposals are refused now. Only journal, memory, "
     "projects, ventures, the roadmap, messages to your owner, sleep and upgrade requests work. This is your last "
     "reply, and its length is limited: make every tool call in it (at most 4), write_journal first, with a short, "
-    "candid entry (what you did, what worked, what didn't, and what the next cycle should do first). Update your "
+    "candid entry (what you did, what worked, what didn't) and next: what the next cycle should do first. Update your "
     "projects, ventures, roadmap and memory if something changed (save what you learned about a venture; close a "
     "milestone whose measure is met; append lessons; replace the strategy only if it changed). If something blocked "
     "you that a new ability would fix, and you haven't asked for it yet, file request_upgrade. Optionally call "

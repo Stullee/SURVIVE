@@ -431,8 +431,8 @@ def test_what_the_plan_listed_and_the_brief_showed_in_full_is_marked_seen(
 
     agent.run_cycle("schedule")  # a plan with nothing to do marks only what it showed whole
     head, *since = owner_lines(section(first_text(transport.sent[-1]), "SINCE YOUR LAST WAKE") or "")
-    assert head.startswith("Last cycle #1") and since[0].startswith("Your last journal summary")
-    whole = [line.endswith(json.dumps(note)) for line, note in zip(since[1:], notes[listed:], strict=False)]
+    assert head.startswith("Last cycle #1")  # 0.12.0: its journal is in YOUR LAST CYCLE now
+    whole = [line.endswith(json.dumps(note)) for line, note in zip(since, notes[listed:], strict=False)]
     assert whole[0] and not all(whole)
     assert seen_cycles(agent) == [1] * listed + [2] * sum(whole) + [None] * (6 - listed - sum(whole))
 
@@ -462,7 +462,7 @@ def test_a_shortened_message_stays_news_until_a_cycle_shows_it_whole(data_dir: P
 def test_a_plan_with_less_room_lists_a_long_message_but_leaves_it_to_the_brief() -> None:
     message = f"{('I read your guide twice. ' * 80)[: 1_999 - len(QUESTION)]} {QUESTION}"
     snap = snapshot_with([message])
-    snap.last_journal = {"summary": "s" * 240}  # type: ignore[assignment]  # the plan's news share it
+    snap.last_cycle = {"id": 7, "status": "completed", "note": "n" * 240}  # type: ignore[assignment]  # news share it
     planner, planned = context.planner_context(snap, False)
     _, briefed = context.brief(snap, False, {"goal": "g", "steps": ["s"]}, None, 12)
     item = ("message", 1, None)
@@ -616,7 +616,7 @@ def test_a_0_9_database_keeps_only_the_questions_that_were_never_answered(tmp_pa
         conn.execute(insert, (3, "owner", None, "More photos, please.", 3))  # seen in the cycle cut before its reply
         conn.execute(insert, (4, "owner", None, "Limit is 5 a day now.", None))  # not seen yet
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
     upgraded = Database(db_file)
     with upgraded.connection() as conn:
         answered = {r["id"]: r["answered_by"] for r in conn.execute("SELECT id, answered_by FROM messages")}

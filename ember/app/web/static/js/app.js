@@ -3045,7 +3045,8 @@
           h("p", { class: "when" }, j.cycle_id !== null && j.cycle_id !== undefined ? "Cycle #" + j.cycle_id + " · " : "", timeEl(j.created_at),
             j.author === "system" ? " · written by the system" : ""),
           j.summary ? h("p", { class: "journal-summary", text: String(j.summary) }) : null,
-          entry && entry !== j.summary ? h("pre", { class: "journal-entry", text: entry }) : null);
+          entry && entry !== j.summary ? h("pre", { class: "journal-entry", text: entry }) : null,
+          j.handoff ? h("p", { class: "journal-summary" }, h("strong", { text: "Next: " }), asText(j.handoff)) : null);
       })) : h("p", { class: "muted", text: "The journal is empty." }));
     } else {
       // Markdown written by the agent, shown as it is (never rendered).

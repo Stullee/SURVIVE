@@ -233,13 +233,31 @@ def update_project(conn: sqlite3.Connection, project_id: int, now: str, **column
 
 
 def write_journal(
-    conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, author: str, summary: str, entry: str, now: str
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    cycle_id: int,
+    author: str,
+    summary: str,
+    entry: str,
+    now: str,
+    handoff: str = "",
 ) -> bool:
-    """One entry per cycle; returns False if the cycle already has one."""
+    """One entry per cycle; returns False if the cycle already has one. ``handoff``: what the next cycle should do
+    first (0.12.0), for the next plan."""
     cursor = conn.execute(
-        "INSERT OR IGNORE INTO journal (mode, session, life_id, cycle_id, created_at, author, summary, entry)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (scope.mode, scope.session, scope.life_id, cycle_id, now, author, summary[:240] or "-", entry[:2000]),
+        "INSERT OR IGNORE INTO journal (mode, session, life_id, cycle_id, created_at, author, summary, entry, handoff)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            scope.mode,
+            scope.session,
+            scope.life_id,
+            cycle_id,
+            now,
+            author,
+            summary[:240] or "-",
+            entry[:2000],
+            handoff[:400],
+        ),
     )
     return cursor.rowcount == 1
 

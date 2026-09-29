@@ -94,8 +94,8 @@ def overflowing_snapshot() -> context.Snapshot:
         projects=[{"id": 1_000 + i, **project} for i in range(8)],  # type: ignore[misc]
         owner_messages=[{"id": i, "created_at": "2026-09-30T08:00:00Z", "text": "ä" * 2_000} for i in range(8)],  # type: ignore[misc]
         pending=[{"id": 1_000 + i, "type": "create_account", "title": "ä" * 120} for i in range(20)],  # type: ignore[misc]
-        last_cycle={"id": 10_000, "status": "completed", "note": "ä" * 300},  # type: ignore[arg-type]
-        last_journal={"summary": "ä" * 240},  # type: ignore[arg-type]
+        last_cycle={"id": 10_000, "status": "completed", "note": "ä" * 300, "plan": json.dumps({"goal": "ä" * 300})},  # type: ignore[arg-type]
+        last_journal={"summary": "ä" * 240, "handoff": "ä" * 400},  # type: ignore[arg-type]
         memory={"strategy": long, "identity": long, "lessons": long},
         workspace=[f"{'ä' * 190}/{i}.md (65,536 B)" for i in range(40)],
         news=News(
@@ -205,6 +205,7 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     assert "\n== ROADMAP ==\nToday: Wednesday 2026-09-30. 20 open milestones: 1 overdue, 1 this week," in planner
     assert "Roadmap check: 1 milestone is overdue (#1000)" in planner
     assert "\n== YOUR OWNER'S LIBRARY ==\n500 documents from your owner (5,000,000 characters)" in planner
+    assert '\n== YOUR LAST CYCLE ==\nYour handoff to this cycle: "ää' in planner  # 0.12.0
     assert f"\n== WAITING FOR YOUR OWNER ==\n{context.WAITING_NOTE}\n#1000 create_account" in planner
     assert rough_token_count(prompts.plan_request(SETTINGS, planner, venture=True)) <= PLANNER_OPENING.input_tokens
     plan = {"goal": "ä" * 300, "steps": ["ä" * 200] * 6}

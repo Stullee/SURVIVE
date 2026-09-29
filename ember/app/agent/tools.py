@@ -430,10 +430,14 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "write_journal",
-            "Write this cycle's journal entry once, as the last thing you do: a one-line summary and a candid entry "
-            "(what you did, what worked, what didn't). Written during your work, it ends the cycle without a "
-            "separate reflection.",
-            {"summary": _s("One line.", 240, cut=True), "entry": _s("The entry.", 2_000)},
+            "Write this cycle's journal entry once, as the last thing you do: a one-line summary, a candid entry "
+            "(what you did, what worked, what didn't) and next, for your next plan. Written during your work, it ends "
+            "the cycle without a separate reflection.",
+            {
+                "summary": _s("One line.", 240, cut=True),
+                "entry": _s("The entry.", 2_000),
+                "next": _s("What your next cycle should do first, and why.", 400, required=False, cut=True),
+            },
             per_cycle=1,
             reflect=True,
         ),
@@ -1612,8 +1616,9 @@ def _set_sleep(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
 
 
 def _write_journal(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    handoff = " ".join((args.get("next") or "").split())
     if ctx.state.journal_written or not store.write_journal(
-        conn, ctx.scope, ctx.cycle_id, "agent", args["summary"].strip(), args["entry"].strip(), ctx.now()
+        conn, ctx.scope, ctx.cycle_id, "agent", args["summary"].strip(), args["entry"].strip(), ctx.now(), handoff
     ):
         raise ToolError("this cycle's journal entry is already written")
     ctx.state.journal_written = True

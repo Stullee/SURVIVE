@@ -248,6 +248,7 @@ def test_a_message_from_before_the_update_can_be_removed(tmp_path: Path) -> None
         20,
         21,
         22,
+        23,
     ]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
