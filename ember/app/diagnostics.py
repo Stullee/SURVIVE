@@ -657,7 +657,8 @@ def _milestone(row: Any) -> dict[str, Any]:
     if row["owner_comment"]:
         owner += f": {row['owner_comment']}"
     first = f" (first {row['first_due']})" if row["moves"] else ""
-    return {**dict(row), "due": f"{row['due']}{first}", "links": ",".join(links) or "-", "owner": owner}
+    proposed = f" (proposed {row['proposed_due']})" if row["proposed_due"] else ""  # waiting for the owner (0.12.0)
+    return {**dict(row), "due": f"{row['due']}{first}{proposed}", "links": ",".join(links) or "-", "owner": owner}
 
 
 def _approval(row: Any, full: bool) -> dict[str, Any]:

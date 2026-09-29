@@ -61,7 +61,7 @@ and saving what it learned to that venture with new scores.
 
 It keeps a roadmap (0.11.0): when the planner's ROADMAP says it is empty, it lays one out (a goal three months ahead,
 a milestone this month that leads to it and one this week), aims each cycle at the first milestone listed, and an
-overdue milestone is moved a week once, then closed done or missed.
+overdue milestone is moved a week once (for the owner's, a proposed date), then closed missed.
 
 Tests can also pass ``script=[...]`` (:class:`Reply`, :class:`ToolCalls`, :class:`Plan`, :class:`Raw`,
 :class:`Fail`): turns answered in order (one per valid request) before the scenario takes over.
@@ -848,7 +848,8 @@ def standing_instructions(text: str) -> str | None:
 
 def roadmap_plan(text: str) -> tuple[list[str], int | None]:
     """What the planner's ROADMAP asks of a cycle: the steps (lay it out when it is empty; move an overdue milestone a
-    week once, then close it) and the milestone to aim at (the first one listed: overdue, or due first)."""
+    week once, or propose that for the owner's, then close it) and the milestone to aim at (the first one listed:
+    overdue, or due first)."""
     roadmap = section(text, ROADMAP_SECTION) or ""
     if _EMPTY_ROADMAP in roadmap:
         return [ROADMAP_STEP], None
@@ -857,7 +858,8 @@ def roadmap_plan(text: str) -> tuple[list[str], int | None]:
     late = next((m for m in lines if m[3].endswith("late")), None)
     if late is None:
         return [], focus
-    step = CLOSE_MILESTONE_STEP if " · moved " in late[4] else MOVE_MILESTONE_STEP
+    tried = " · moved " in late[4] or " · you proposed " in late[4]  # 0.12.0: a proposal waits for the owner
+    step = CLOSE_MILESTONE_STEP if tried else MOVE_MILESTONE_STEP
     return [step.format(id=late[1])], int(late[1])
 
 
@@ -1850,7 +1852,8 @@ class FakeTransport:
         return "milestone_create", args
 
     def _close_milestone(self, conv: _Conversation, rng: random.Random) -> tuple[str, dict] | None:
-        """The plan's overdue milestone: moved a week the first time, closed done or missed after that."""
+        """The plan's overdue milestone: moved a week the first time (for the owner's, proposed), closed missed after
+        that."""
         plan = _PLAN_SECTION.search(conv.brief)
         step = _OVERDUE_STEP.search(plan[1].lower()) if plan else None
         today = today_of(conv.brief)

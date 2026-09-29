@@ -85,6 +85,7 @@ def row(**fields: Any) -> dict[str, Any]:
         "created_by": "agent",
         "owner_action": None,
         "owner_comment": None,
+        "proposed_due": None,
     }
     return {**base, **fields}
 
@@ -199,12 +200,12 @@ def test_the_agent_lays_out_its_roadmap_and_keeps_it_honest(data_dir: Path) -> N
     assert "milestone #3 is done, which is final" in updated[7]["result"]
     assert "milestone #2 leads to #1 already" in updated[8]["result"]
     assert "there is no project #99" in updated[10]["result"]
-    assert updated[11]["result"] == (
-        "Milestone #1: dropped. Milestones leading to it are still open (#2): close them, or link them to another."
-    )
+    # 0.12.0: the open milestones leading to a dropped one go with it (they stayed open and looked like goals).
+    assert updated[11]["result"] == "Milestone #1: dropped. Dropped with it, as they led to it: #2."
     goal, sale, listing = (milestone(agent, i) for i in (1, 2, 3))
     assert (goal["status"], goal["result"], goal["closed_cycle_id"]) == ("dropped", "Too far out.", 1)
-    assert (sale["status"], sale["venture_id"], sale["notes"]) == ("open", 1, "[#c1] The Etsy leg's.")
+    assert (sale["status"], sale["venture_id"], sale["notes"]) == ("dropped", 1, "[#c1] The Etsy leg's.")
+    assert (sale["result"], sale["closed_by"], sale["closed_cycle_id"]) == ("Dropped with #1: Too far out.", "agent", 1)
     assert (listing["status"], listing["moves"], listing["first_due"], listing["due"]) == ("done", 1, day(5), day(7))
     assert listing["notes"] == "[#c1] Photos take longer." and listing["closed_at"] is not None
     assert listing["created_cycle_id"] == 1 and listing["created_by"] == "agent"
@@ -233,8 +234,18 @@ def test_the_agent_cant_drop_a_milestone_its_owner_added(data_dir: Path) -> None
 
     agent, _ = run(data_dir, fake, before=owners)
     dropped, missed = tool_results(agent, "milestone_update")
-    assert dropped["status"] == "error" and "only they can drop it" in dropped["result"]
-    assert missed["status"] == "ok" and milestone(agent, 1)["status"] == "missed"
+    assert dropped["status"] == "error"
+    assert "only they can drop it. Ask them (message_owner), or propose a new date" in dropped["result"]
+    # 0.12.0 (FIX NOW 7): not "missed" before its date either (the error suggested exactly that way out).
+    assert (
+        missed["status"] == "error"
+        and (
+            "milestone #1 is due 2026-09-10 (in 9 days): it is missed only once that day has passed. Until then, reach "
+            "it, or propose a new date (due, with why in note), or ask your owner to drop it"
+        )
+        in missed["result"]
+    )
+    assert milestone(agent, 1)["status"] == "open"
 
 
 def test_what_a_milestone_promised_and_how_it_ended_are_final(data_dir: Path) -> None:
@@ -335,7 +346,8 @@ def test_a_cycle_aims_at_a_milestone_and_the_brief_says_what_done_means(data_dir
     assert focus[:4] == [
         'Focus milestone: #2 "First sale" [open] · due Fri 2026-09-04 (in 3 days)',
         'Measure of done: "Owner records revenue"',
-        "Measure met: close it done, with the evidence. Out of reach by its date: move it (why), or close it missed.",
+        "Measure met: close it done, with the evidence. Out of reach by its date: move it (why; twice at most, and "
+        "your owner decides on theirs), or close it missed once the date has passed.",
         'Leads to: #1 "Two legs" (due 2026-10-31, open)',
     ]
 
@@ -380,11 +392,12 @@ def test_the_owner_adds_notes_and_drops_milestones_and_the_agent_hears_it(data_d
     assert noted.status == 200 and noted.body == {"id": 2, "status": "open"}
     assert who.decide_milestone(2, {"action": "note"}, None).body["field"] == "comment"
     dropped = who.decide_milestone(1, {"action": "drop", "comment": "Not now"}, "Stefan")
-    assert dropped.body == {"id": 1, "status": "dropped"}
+    assert dropped.body == {"id": 1, "status": "dropped", "dropped_with": [2]}  # 0.12.0: its open steps with it
     assert who.decide_milestone(1, {"action": "drop"}, None).status == 409
     assert who.decide_milestone(99, {"action": "note", "comment": "x"}, None).status == 404
     assert who.decide_milestone(2, {"action": "note", "comment": "x", "expected_version": 9}, None).status == 409
     assert who.decide_milestone(2, {"action": "dance"}, None).body["field"] == "action"
+    assert who.decide_milestone(2, {"action": "note", "comment": "Still, well done"}, None).status == 200
     gone = milestone(agent, 1)
     assert (gone["status"], gone["result"], gone["closed_cycle_id"]) == (
         "dropped",
@@ -392,16 +405,22 @@ def test_the_owner_adds_notes_and_drops_milestones_and_the_agent_hears_it(data_d
         None,
     )
     assert (gone["owner_version"], gone["owner_by"], gone["created_by"]) == (2, "Stefan", "owner")
+    step = milestone(agent, 2)
+    assert (step["status"], step["result"], step["closed_by"]) == (
+        "dropped",
+        "Dropped by your owner with #1: Not now",
+        "owner",
+    )
 
     agent.run_cycle("schedule")
     text = planner_texts(fake)[0]
     assert (
         'Your owner dropped milestone #1 "Pinterest live": stop working toward it. Owner\'s comment: "Not now".' in text
     )
-    assert 'Your owner wrote a note on milestone #2 "Account made". Owner\'s comment: "I made the account".' in text
-    assert (
-        '#2 "Account made" · due Fri 2026-09-04 (in 3 days) · measure: "Profile done" · your owner\'s milestone: '
-        '"I made the account"' in section(text, "ROADMAP")
+    assert 'Your owner wrote a note on milestone #2 "Account made". Owner\'s comment: "Still, well done".' in text
+    assert section(text, "ROADMAP").endswith(
+        'Closed in the last 14 days: #2 "Account made" dropped 2026-09-01: "Dropped by your owner with #1: Not now"; '
+        '#1 "Pinterest live" dropped 2026-09-01: "Dropped by your owner: Not now".'
     )
     assert rows(agent, "SELECT id, seen_cycle_id FROM milestones ORDER BY id") == [
         {"id": 1, "seen_cycle_id": 1},
@@ -433,9 +452,7 @@ def test_the_review_reads_the_roadmap(data_dir: Path) -> None:
     create(agent, title="This week", measure="y", due=day(4), parent_id=goal)
     done = create(agent, title="Photos", measure="z", due=day(-5))
     with agent.db.transaction() as conn:
-        roadmap.update(
-            conn, done, NOW, status="done", result="Five photos made.", closed_at=NOW, moves=2, closed_by="agent"
-        )
+        roadmap.update(conn, done, NOW, status="done", result="Five photos made.", closed_at=NOW, closed_by="agent")
     assert _review_text(agent).split("\n") == [
         "ROADMAP (3 open, 1 overdue; in the period: 1 done)",
         '- overdue: #2 "Late one" (2026-08-30)',
@@ -475,10 +492,18 @@ def test_the_roadmap_tab(ingress_client: TestClient) -> None:
     empty = ingress_client.get("api/roadmap").json()
     assert empty["items"] == [] and empty["total"] == 0 and empty["mode"] == "dry_run"
     assert [h["key"] for h in empty["horizons"]] == ["overdue", "week", "month", "quarter", "later"]
-    assert empty["limits"] == {"title": 100, "measure": 300, "comment": 1_000, "ahead_days": 366, "open": 20}
+    assert empty["limits"] == {
+        "title": 100,
+        "measure": 300,
+        "comment": 1_000,
+        "ahead_days": 366,
+        "open": 20,
+        "owner_slots": 4,
+        "moves": 2,
+    }
     today = date.fromisoformat(empty["today"])
     dashboard = ingress_client.get("api/dashboard").json()
-    assert dashboard["roadmap"] == {"stamp": empty["stamp"], "overdue": 0}
+    assert dashboard["roadmap"] == {"stamp": empty["stamp"], "overdue": 0, "proposals": 0}
     due = (today + timedelta(days=10)).isoformat()
     added = post(ingress_client, "api/roadmap", {"title": "Pinterest live", "measure": "10 pins", "due": due})
     assert added.status_code == 201 and added.json() == {"id": 1}

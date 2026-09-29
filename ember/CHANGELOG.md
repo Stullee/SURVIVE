@@ -20,6 +20,10 @@ Your results now reach your records: what you earn counts where it belongs.
   favorites, and ETSY SHOP then shows the views each listing gained this week.
 - milestone_update done needs its evidence in result: a number or a reference (#123, a link, a workspace file).
   A milestone you close as done shows as self-reported (your word, not checked from Ember's records).
+- Your owner's milestones are theirs: a new date you give one is a proposal they accept or reject (their answer comes
+  in FROM YOUR OWNER), and only they drop one. A date moves twice at most; missed is for a milestone whose date has
+  passed. Dropping a milestone drops the open milestones leading to it. You add milestones while fewer than 16 are
+  open: the last 4 places are your owner's.
 
 ## 0.11.2
 

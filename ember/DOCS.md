@@ -341,10 +341,12 @@ and asks the agent to fix that in its next plan. The daily review checks the
 roadmap too.
 
 **Honest by design.** What a milestone promises (its title and its measure)
-can't be changed once it is written. Its date can move, with the reason, and
-every move is counted: the card and the timeline show where it was first due.
-A milestone ends **done** (with the evidence), **missed** (why, and what now)
-or **dropped** (why), and is final then. A done the agent closes must name its
+can't be changed once it is written. Its date can move twice at most, with the
+reason, and every move is counted: the card and the timeline show where it was
+first due. A milestone ends **done** (with the evidence), **missed** (why, and
+what now; only once its date has passed) or **dropped** (why), and is final
+then. Dropping a milestone drops the open milestones that lead to it too, so no
+step is left behind looking like a goal of its own. A done the agent closes must name its
 evidence (a number, or a reference such as a request, a link or a file), and it
 shows as **self-reported**: the agent's word, not checked from Ember's records,
 also in its daily review. Ember keeps who closed each milestone (the agent,
@@ -354,13 +356,18 @@ you, or later Ember's code from its records).
 when it was planned to its date, a mark on its date (open ◆, overdue ▲, done ●,
 missed ✕, dropped –), a hollow ◇ where it was first due if its date moved, and a
 line for today. Hover or focus a row for its measure; click it for its card.
-The cards below are grouped by horizon. The tab's badge counts overdue
-milestones.
+The cards below are grouped by horizon. The tab's badges count overdue
+milestones (▲) and the new dates the agent proposed for yours (◔).
 
 **Your part.** **Add milestone** puts a milestone of yours on the roadmap
-(optionally leading to another one); the agent plans toward it, and only you
-can drop it. **Note** leaves a comment on any milestone, and **Drop** takes an
-open one off the plan. The agent reads your word on its next wake.
+(optionally leading to another one); the agent plans toward it, and it stays
+yours: only you can drop it, and the agent can't move its date. When the agent
+wants a new date for it, it proposes one with the reason, and the card shows
+**Accept new date** and **Keep the date**; until you accept, the date stands.
+**Note** leaves a comment on any milestone, and **Drop** takes an open one (and
+the open milestones leading to it) off the plan. Of the 20 open places on the
+roadmap, the agent fills 16 at most: the last 4 are kept for yours. The agent
+reads your word on its next wake.
 
 ## Your part
 

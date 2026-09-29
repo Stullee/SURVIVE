@@ -148,9 +148,9 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         instructions = store.instructions_json(store.standing_instructions(conn, scope))
         stamp = _ventures_stamp(conn, scope, simulated)
         today = agent.clock.today()
-        overdue = sum(
-            1 for m in roadmap.open_milestones(conn, scope) if m["due"] < today.isoformat()
-        )  # dates are YYYY-MM-DD
+        open_milestones = roadmap.open_milestones(conn, scope)
+        overdue = sum(1 for m in open_milestones if m["due"] < today.isoformat())  # dates are YYYY-MM-DD
+        proposals = sum(1 for m in open_milestones if m["proposed_due"])  # the agent's dates for the owner's (0.12.0)
         roadmap_stamp = _roadmap_stamp(conn, scope, simulated, today.isoformat())
     return {
         "badges": counts,
@@ -166,8 +166,9 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "last_will": {"text": will["text"], "cut_off": bool(will["cut_off"])} if will else None,
         # The venture tree is loaded apart (api/ventures) while its tab is open: this changes whenever it does.
         "ventures_stamp": stamp,
-        # So is the roadmap (api/roadmap); its tab shows how many milestones are overdue.
-        "roadmap": {"stamp": roadmap_stamp, "overdue": overdue},
+        # So is the roadmap (api/roadmap); its tab shows how many milestones are overdue and how many proposed dates
+        # wait for the owner.
+        "roadmap": {"stamp": roadmap_stamp, "overdue": overdue, "proposals": proposals},
     }
 
 
@@ -240,6 +241,10 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
                 "owner_by": m["owner_by"],
                 "owner_version": m["owner_version"],
                 "seen_by_agent": m["seen_cycle_id"] is not None,
+                # 0.12.0: the agent's proposed date for the owner's milestone, until they accept or reject it
+                "proposed_due": m["proposed_due"],
+                "proposed_note": m["proposed_note"],
+                "proposed_at": m["proposed_at"],
                 "simulated": m["mode"] == "dry_run",
             }
         )
@@ -257,6 +262,8 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
             "comment": roadmap.LIMITS["comment"],
             "ahead_days": roadmap.AHEAD_DAYS,
             "open": roadmap.MAX_OPEN,
+            "owner_slots": roadmap.OWNER_SLOTS,
+            "moves": roadmap.MAX_MOVES,
         },
         "items": items,
         "total": total,

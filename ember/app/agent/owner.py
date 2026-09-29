@@ -487,32 +487,73 @@ class Owner:
         return _reply(run)
 
     def decide_milestone(self, milestone_id: int, body: Any, who: str | None) -> Reply:
-        """Leave a note on a milestone, or drop an open one."""
+        """Leave a note on a milestone, drop an open one (its open steps with it), or accept or reject the date the
+        agent proposed for one of the owner's (0.12.0; ``proposed_due`` names the date the owner saw)."""
 
         def run() -> Reply:
-            data = _body(body, {"action", "comment", "expected_version"})
+            data = _body(body, {"action", "comment", "expected_version", "proposed_due"})
             action = data.get("action")
-            if action not in ("note", "drop"):
-                raise OwnerError("action", "choose note or drop")
+            if action not in ("note", "drop", "accept", "reject"):
+                raise OwnerError("action", "choose note, drop, accept or reject")
             comment = _text(data, "comment", roadmap.LIMITS["comment"], required=action == "note")
             expected = data.get("expected_version")
             if expected is not None and (not isinstance(expected, int) or isinstance(expected, bool)):
                 raise OwnerError("expected_version", "expected_version must be a number")
+            seen = data.get("proposed_due")
+            if action == "accept" and roadmap.parse_day(seen) is None:
+                raise OwnerError("proposed_due", "name the proposed date you accept (YYYY-MM-DD)")
+            if seen is not None and roadmap.parse_day(seen) is None:
+                raise OwnerError("proposed_due", "proposed_due must be a date written YYYY-MM-DD")
             with self.db.transaction() as conn:
                 row = roadmap.get(conn, self.scope, milestone_id)
                 if row is None:
                     raise OwnerError("id", "no such milestone", 404)
                 if expected is not None and expected != row["owner_version"]:
                     raise OwnerError("expected_version", "this milestone changed meanwhile", 409)
-                if action == "drop" and row["status"] != "open":
+                if action != "note" and row["status"] != "open":
                     raise OwnerError("action", f"this milestone is {row['status']} already", 409)
-                roadmap.owner_word(conn, milestone_id, self._now(), action, comment, who)
+                if action in ("accept", "reject"):
+                    self._check_proposal(conn, row, action, seen)
+                dropped = roadmap.owner_word(conn, milestone_id, self._now(), action, comment, who)
                 after = roadmap.get(conn, self.scope, milestone_id)
-            what = "dropped" if action == "drop" else "left a note on"
-            events.record(self.db, "info", "owner", f"{who or 'The owner'} {what} milestone #{milestone_id}")
-            return Reply(200, {"id": milestone_id, "status": after["status"] if after else None})
+            what = {
+                "drop": "dropped",
+                "accept": "accepted the proposed date of",
+                "reject": "kept the date of",
+            }.get(action, "left a note on")
+            also = f" and, with it, {', '.join(f'#{i}' for i in dropped)}" if dropped else ""
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} {what} milestone #{milestone_id}{also}")
+            reply: dict[str, Any] = {"id": milestone_id, "status": after["status"] if after else None}
+            if action == "drop":
+                reply["dropped_with"] = dropped
+            if action == "accept" and after is not None:
+                reply["due"] = after["due"]
+            return Reply(200, reply)
 
         return _reply(run)
+
+    def _check_proposal(self, conn: Any, row: Any, action: str, seen: str | None) -> None:
+        """A proposed date the owner can answer: the one they saw, and for an accept, one that still fits the dates
+        of the milestones it leads to and that lead to it."""
+        proposed = row["proposed_due"]
+        if proposed is None:
+            raise OwnerError("action", "there is no proposed date to decide on", 409)
+        if seen is not None and seen.strip() != proposed:
+            raise OwnerError("proposed_due", f"the agent has proposed another date meanwhile ({proposed})", 409)
+        if action != "accept":
+            return
+        if proposed < self.clock.today().isoformat():
+            raise OwnerError("proposed_due", f"the proposed date ({proposed}) has passed: keep the date instead", 409)
+        parent = roadmap.get(conn, self.scope, row["parent_id"]) if row["parent_id"] else None
+        if parent is not None and parent["status"] == "open" and proposed > parent["due"]:
+            raise OwnerError(
+                "proposed_due", f"it leads to milestone #{parent['id']}, which is due earlier ({parent['due']})", 409
+            )
+        later = [k for k in roadmap.children(conn, row["id"]) if k["status"] == "open" and k["due"] > proposed]
+        if later:
+            raise OwnerError(
+                "proposed_due", f"milestone #{later[0]['id']} leads to it and is due later ({later[0]['due']})", 409
+            )
 
 
 def kill(db: Database, economy: Economy, agent_name: str, body: Any, who: str | None) -> Reply:

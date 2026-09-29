@@ -7,12 +7,15 @@ sees the roadmap by horizon (overdue, this week, this month, the next three mont
 milestone (``cycles.milestone_id``); the daily review checks it.
 
 It stays honest by construction: what a milestone says it will reach (title) and how that is known (measure) never
-change; a date can move, and every move is counted (``moves``, with ``first_due`` kept); a milestone ends done (with
-the evidence), missed (why, and what now) or dropped (why), and is final then (migration 0014). Ember's code flags an
-empty roadmap, overdue milestones, a week with nothing due and a roadmap that ends within the month (``checks``).
+change; a date can move twice at most, and every move is counted (``moves``, with ``first_due`` kept); a milestone
+ends done (with the evidence), missed (why, and what now; only once its date has passed) or dropped (why, and the open
+milestones leading to it with it), and is final then (migration 0014). Ember's code flags an empty roadmap, overdue
+milestones, a week with nothing due and a roadmap that ends within the month (``checks``).
 
 The owner adds milestones, leaves notes and drops milestones on the Roadmap tab (``owner.py``); their word is news
-for the agent like a decision, and the agent can't drop a milestone the owner added. Dates are the owner's local days.
+for the agent like a decision. A milestone the owner added is theirs (0.12.0, migration 0021): the agent can't drop
+it, and its new date for one is a proposal the owner accepts or rejects. The last ``OWNER_SLOTS`` open places are kept
+for the owner. Dates are the owner's local days.
 """
 
 from __future__ import annotations
@@ -31,10 +34,12 @@ CLOSED = ("done", "missed", "dropped")
 LIMITS = {"title": 100, "measure": 300, "result": 600, "notes": 2_000, "comment": 1_000}
 NOTE_CHARS = 300
 MAX_OPEN = 20  # open milestones at once: a roadmap every plan can read
+OWNER_SLOTS = 4  # the last open places, kept for the owner: the agent adds milestones while fewer than 16 are open
+MAX_MOVES = 2  # how often a milestone's date can move
 MAX_MILESTONES = 2_000  # in all, closed ones included
 AHEAD_DAYS = 366  # how far ahead a milestone can be dated
 CLOSED_DAYS = 14  # the planner sees the milestones closed in these days
-OWNER_ACTIONS = ("added", "note", "drop")
+OWNER_ACTIONS = ("added", "note", "drop", "accept", "reject")
 # The horizons of an open milestone that isn't overdue, by the days until it is due: (key, label, last day).
 HORIZONS = (("week", "This week", 6), ("month", "This month", 30), ("quarter", "Next three months", 91))
 LATER = ("later", "Later")
@@ -53,8 +58,14 @@ _COLUMNS = frozenset(
         "parent_id",
         "venture_id",
         "project_id",
+        "proposed_due",
+        "proposed_note",
+        "proposed_at",
+        "proposed_cycle_id",
     }
 )
+NO_PROPOSAL = {"proposed_due": None, "proposed_note": None, "proposed_at": None, "proposed_cycle_id": None}
+_CLEAR_PROPOSAL = ", ".join(f"{name} = NULL" for name in NO_PROPOSAL)
 
 
 # --- dates ---
@@ -150,6 +161,31 @@ def children(conn: sqlite3.Connection, milestone_id: int) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM milestones WHERE parent_id = ? ORDER BY due, id", (milestone_id,)).fetchall()
 
 
+def open_steps(conn: sqlite3.Connection, milestone_id: int) -> list[sqlite3.Row]:
+    """The open milestones that lead to this one, directly or through others (the first due first)."""
+    return conn.execute(
+        "WITH RECURSIVE below(id) AS (SELECT id FROM milestones WHERE parent_id = ?"
+        " UNION SELECT m.id FROM milestones m JOIN below b ON m.parent_id = b.id)"
+        " SELECT * FROM milestones WHERE id IN below AND status = 'open' ORDER BY due, id",
+        (milestone_id,),
+    ).fetchall()
+
+
+def drop_steps(
+    conn: sqlite3.Connection, milestone_id: int, now: str, result: str, closed_by: str, cycle_id: int | None = None
+) -> list[int]:
+    """0.12.0: a dropped milestone's open steps are dropped with it (they stayed open and looked like goals of their
+    own). Returns their numbers."""
+    steps = open_steps(conn, milestone_id)
+    for step in steps:
+        conn.execute(
+            "UPDATE milestones SET status = 'dropped', result = ?, closed_at = ?, closed_cycle_id = ?, closed_by = ?,"
+            f" {_CLEAR_PROPOSAL}, updated_at = ? WHERE id = ?",
+            (result[: LIMITS["result"]], now, cycle_id, closed_by, now, step["id"]),
+        )
+    return [int(step["id"]) for step in steps]
+
+
 def leads_to(conn: sqlite3.Connection, milestone_id: int, parent_id: int) -> bool:
     """Whether ``parent_id`` is ``milestone_id`` or one of its descendants (linking them would make a loop)."""
     seen: set[int] = set()
@@ -217,21 +253,30 @@ def update(conn: sqlite3.Connection, milestone_id: int, now: str, **columns: Any
 
 def owner_word(
     conn: sqlite3.Connection, milestone_id: int, now: str, action: str, comment: str | None, who: str | None
-) -> None:
-    """The owner's note on a milestone, or their dropping it: news for the agent again (a new owner_version)."""
-    if action not in ("note", "drop"):
+) -> list[int]:
+    """The owner's note on a milestone, their dropping it (its open steps with it), or their answer to the agent's
+    proposed date (accept moves the date, a counted move; reject keeps it): news for the agent again (a new
+    owner_version). Returns the steps dropped with it."""
+    if action not in ("note", "drop", "accept", "reject"):
         raise ValueError("unknown owner action")
-    closing = ""
+    change = ""
     params: tuple[Any, ...] = ()
+    why = f": {' '.join(comment.split())}" if comment else "."
     if action == "drop":
-        result = "Dropped by your owner" + (f": {' '.join(comment.split())}" if comment else ".")
-        closing = ", status = 'dropped', result = ?, closed_at = ?, closed_by = 'owner'"
-        params = (result[: LIMITS["result"]], now)
+        change = f", status = 'dropped', result = ?, closed_at = ?, closed_by = 'owner', {_CLEAR_PROPOSAL}"
+        params = (("Dropped by your owner" + why)[: LIMITS["result"]], now)
+    elif action == "accept":
+        change = f", due = proposed_due, moves = moves + 1, {_CLEAR_PROPOSAL}"
+    elif action == "reject":
+        change = f", {_CLEAR_PROPOSAL}"
     conn.execute(
-        f"UPDATE milestones SET owner_action = ?, owner_comment = ?, owner_at = ?, owner_by = ?{closing},"
+        f"UPDATE milestones SET owner_action = ?, owner_comment = ?, owner_at = ?, owner_by = ?{change},"
         " owner_version = owner_version + 1, seen_cycle_id = NULL, updated_at = ? WHERE id = ?",
         (action, comment, now, who, *params, now, milestone_id),
     )
+    if action != "drop":
+        return []
+    return drop_steps(conn, milestone_id, now, f"Dropped by your owner with #{milestone_id}{why}", "owner")
 
 
 def closed_as(row: sqlite3.Row) -> str:
@@ -288,6 +333,11 @@ def _moved(row: Mapping[str, Any]) -> str:
     return f" · moved {moves} time{'s' if moves != 1 else ''} (first due {row['first_due']})"
 
 
+def _proposed(row: Mapping[str, Any]) -> str:
+    """A proposed date waiting for the owner (0.12.0), as a short clause ("" if none)."""
+    return f" · you proposed moving it to {row['proposed_due']} (your owner decides)" if row["proposed_due"] else ""
+
+
 def owner_said(row: Mapping[str, Any]) -> str:
     """The owner's part in a milestone, as a short clause ("" if none)."""
     if row["created_by"] != "owner" and not row["owner_comment"]:
@@ -303,7 +353,7 @@ def milestone_line(row: Mapping[str, Any], today: date, detail: bool, open_ids: 
     line = f"#{row['id']} {_q(row['title'], 100)} · due {_day(due)} ({when(due, today)})"
     if detail:
         line += f" · measure: {_q(row['measure'], 160)}"
-    return line + _links(row, open_ids) + _moved(row) + owner_said(row)
+    return line + _links(row, open_ids) + _moved(row) + _proposed(row) + owner_said(row)
 
 
 def checks(rows: list[Mapping[str, Any]], today: date) -> list[str]:
@@ -374,9 +424,11 @@ def focus_text(row: Mapping[str, Any], today: date, parent: Mapping[str, Any] | 
     due = _due(row)
     lines = [
         f"Focus milestone: #{row['id']} {_q(row['title'])} [{row['status']}] · due {_day(due)} ({when(due, today)})"
-        + _moved(row),
+        + _moved(row)
+        + _proposed(row),
         f"Measure of done: {_q(row['measure'])}",
-        "Measure met: close it done, with the evidence. Out of reach by its date: move it (why), or close it missed.",
+        "Measure met: close it done, with the evidence. Out of reach by its date: move it (why; twice at most, and "
+        "your owner decides on theirs), or close it missed once the date has passed.",
     ]
     if parent is not None:
         lines.append(f"Leads to: #{parent['id']} {_q(parent['title'], 100)} (due {parent['due']}, {parent['status']})")
@@ -403,6 +455,10 @@ def news_line(row: Mapping[str, Any]) -> str:
         )
     elif action == "drop":
         line = f"Your owner dropped {name}: stop working toward it"
+    elif action == "accept":
+        line = f"Your owner accepted your proposed date: {name} is due {row['due']} now"
+    elif action == "reject":
+        line = f"Your owner kept the date of {name}: it stays due {row['due']}"
     else:
         line = f"Your owner wrote a note on {name}"
     if row["owner_comment"]:

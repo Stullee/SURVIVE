@@ -128,7 +128,8 @@ def overflowing_snapshot() -> context.Snapshot:
 
 
 def biggest_milestone() -> dict[str, Any]:
-    """A milestone with every text at its limit, moved often, with the owner's longest note."""
+    """A milestone with every text at its limit, moved often, with the owner's longest note and a date proposed to
+    them (0.12.0)."""
     return {
         "id": 10**9,
         "parent_id": 10**9 - 1,
@@ -146,6 +147,7 @@ def biggest_milestone() -> dict[str, Any]:
         "created_by": "owner",
         "owner_action": "note",
         "owner_comment": "ä" * 1_000,
+        "proposed_due": "2026-10-20",
     }
 
 

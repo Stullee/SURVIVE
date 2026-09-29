@@ -890,6 +890,7 @@
       upgrades: pick("upgrades_new", function () { return rows(d.upgrades, function (x) { return x.status === "new"; }); }),
       ventures: pick("ventures_proposed", function () { return 0; }),
       overdue: isObject(d.roadmap) && !isNaN(num(d.roadmap.overdue)) ? num(d.roadmap.overdue) : 0,
+      proposals: isObject(d.roadmap) && !isNaN(num(d.roadmap.proposals)) ? num(d.roadmap.proposals) : 0,
     };
   }
 
@@ -901,6 +902,7 @@
     setBadge("badge-upgrades", c.upgrades, "◔", "new");
     setBadge("badge-ventures", c.ventures, "◔", "business cases waiting for your decision");
     setBadge("badge-roadmap", c.overdue, "▲", "overdue milestones");
+    setBadge("badge-roadmap-proposals", c.proposals, "◔", "proposed dates waiting for your decision");
     var sys = d.system;
     setBadge("badge-system", arr(sys.config_errors).length + (isObject(sys.database) && sys.database.ok === false ? 1 : 0) + (sys.economy_broken ? 1 : 0), "!", "need attention");
   }
@@ -5507,6 +5509,7 @@
       h("p", { class: "rm-tip-title", text: m.title }),
       h("p", { class: "rm-tip-state" }, h("span", { "aria-hidden": "true", text: state.icon + " " }), state.label + " · " + due),
       num(m.moves) > 0 ? h("p", { class: "muted", text: "Moved " + plural(m.moves, "time") + "; first due " + fmtDay(m.first_due) }) : null,
+      m.proposed_due ? h("p", { class: "muted", text: agentName() + " proposes " + fmtDay(m.proposed_due) + ": your decision" }) : null,
       h("p", null, h("strong", { text: "Done when: " }), asText(m.measure)),
       ended && m.result ? h("p", null, h("strong", { text: ended + ": " }), asText(m.result)) : null,
     ]);
@@ -5563,6 +5566,7 @@
           h("dd", { text: "#" + m.project_id + (m.project_title ? " " + m.project_title : "") })) : null,
         num(m.cycles) > 0 ? h("div", null, h("dt", { text: "Worked on" }),
           h("dd", { text: plural(m.cycles, "wake cycle") + " · " + usd(m.spent_usd) })) : null),
+      milestoneProposal(m),
       milestoneWord(m),
       m.notes ? h("details", { class: "notes" }, h("summary", { text: "Notes" }), h("pre", { class: "notes-text", text: asText(m.notes) })) : null,
       h("p", { class: "muted small" }, (m.created_by === "owner" ? "Added by " + (m.entered_by || "you") : "Planned by " + name) + " ",
@@ -5570,7 +5574,28 @@
     ];
   }
 
-  var MILESTONE_WORDS = { added: "You added this milestone", note: "Your note", drop: "You dropped it" };
+  var MILESTONE_WORDS = { added: "You added this milestone", note: "Your note", drop: "You dropped it",
+    accept: "You accepted the new date", reject: "You kept the date" };
+
+  // 0.12.0: the agent can't move the date of your milestone: it proposes one, and you accept it or keep yours.
+  function milestoneProposal(m) {
+    if (!m.proposed_due || m.state !== "open") return null;
+    var name = agentName();
+    var days = daysFromToday(m.proposed_due);
+    return h("div", { class: "decision" },
+      h("p", null, h("strong", { text: name + " proposes a new date: " + fmtDay(m.proposed_due) + (days === null ? "" : " (" + whenText(days) + ")") }),
+        " · ", timeEl(m.proposed_at)),
+      m.proposed_note ? h("p", { class: "pre-line", text: asText(m.proposed_note) }) : null,
+      h("p", { class: "muted small", text: "It stays due " + fmtDay(m.due) + " unless you accept. Moves so far: " + num(m.moves) +
+        " of " + roadmapLimit("moves", 2) + "." }));
+  }
+
+  function daysFromToday(day) {
+    var data = ui.rm.data;
+    var today = data && typeof data.today === "string" ? Date.parse(data.today + "T00:00:00Z") : NaN;
+    var then = typeof day === "string" ? Date.parse(day + "T00:00:00Z") : NaN;
+    return isNaN(today) || isNaN(then) ? null : Math.round((then - today) / 86400000);
+  }
 
   function milestoneWord(m) {
     if (!m.owner_action) return null;
@@ -5582,7 +5607,9 @@
   }
 
   function milestoneActions(it, m) {
-    var list = [panelButton(it, "note", "Note")];
+    var list = [];
+    if (m.state === "open" && m.proposed_due) list.push(panelButton(it, "accept", "Accept new date"), panelButton(it, "reject", "Keep the date"));
+    list.push(panelButton(it, "note", "Note"));
     if (m.state === "open") list.push(panelButton(it, "drop", "Drop", true));
     return list;
   }
@@ -5593,23 +5620,36 @@
       note: { title: "A note for " + name, submit: "Send note",
         intro: [h("p", { text: name + " reads it with the milestone on its next wake." })] },
       drop: { title: "Drop this milestone?", submit: "Drop", danger: true,
-        intro: [h("p", { text: name + " stops working toward it. It stays on the roadmap, marked dropped." })] },
+        intro: [h("p", { text: name + " stops working toward it. It stays on the roadmap, marked dropped, and so do the open milestones that lead to it: they are dropped with it." })] },
+      accept: { title: "Move it to " + fmtDay(it.row.proposed_due) + "?", submit: "Accept new date",
+        intro: [h("p", { text: name + " proposed it" + (it.row.proposed_note ? ": " + asText(it.row.proposed_note) : ".") }),
+          h("p", { class: "muted small", text: "It is due " + fmtDay(it.row.due) + " now. A date moves " + roadmapLimit("moves", 2) + " times at most." })] },
+      reject: { title: "Keep the date " + fmtDay(it.row.due) + "?", submit: "Keep the date",
+        intro: [h("p", { text: name + " proposed " + fmtDay(it.row.proposed_due) + (it.row.proposed_note ? ": " + asText(it.row.proposed_note) : ".") })] },
     };
     var spec = specs[mode];
     spec.mode = mode;
-    spec.fields = [{ name: "comment", label: mode === "note" ? "Your note" : "Why (optional)", rows: 2, max: roadmapLimit("comment", 1000),
-      required: mode === "note", missing: "Write the note." }];
+    spec.fields = [{ name: "comment", label: mode === "note" ? "Your note" : mode === "drop" ? "Why (optional)" : "A word for " + name + " (optional)",
+      rows: 2, max: roadmapLimit("comment", 1000), required: mode === "note", missing: "Write the note." }];
     spec.url = "api/roadmap/" + encodeURIComponent(String(it.row.id)) + "/decide";
     spec.body = function (values) {
       var body = { action: mode };
       var version = num(it.row.owner_version);
       if (!isNaN(version)) body.expected_version = version;
+      if ((mode === "accept" || mode === "reject") && it.row.proposed_due) body.proposed_due = it.row.proposed_due;
       if (values.comment) body.comment = values.comment;
       return body;
     };
-    spec.done = function () {
+    spec.done = function (res) {
       loadRoadmap();
-      return (mode === "note" ? "Note sent." : "Dropped.") + " " + name + " sees it on its next wake.";
+      var others = res && isObject(res.data) ? arr(res.data.dropped_with) : [];
+      var said = {
+        note: "Note sent.",
+        drop: "Dropped" + (others.length ? ", and with it " + others.map(function (i) { return "#" + i; }).join(", ") : "") + ".",
+        accept: "It is due " + fmtDay(it.row.proposed_due) + " now.",
+        reject: "It stays due " + fmtDay(it.row.due) + ".",
+      }[mode];
+      return said + " " + name + " sees it on its next wake.";
     };
     return spec;
   }

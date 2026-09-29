@@ -267,16 +267,19 @@ def test_a_milestones_line_shows_its_links_its_moves_and_the_owners_word() -> No
         "owner_action": "note",
         "owner_version": 2,
         "owner_comment": "Push it",
+        "proposed_due": "2026-10-20",  # 0.12.0: the agent's date for an owner's milestone, waiting for them
     }
     shown = diagnostics._milestone(row)
     assert (shown["due"], shown["links"], shown["owner"]) == (
-        "2026-10-08 (first 2026-10-01)",
+        "2026-10-08 (first 2026-10-01) (proposed 2026-10-20)",
         "v#1",
         "note v2: Push it",
     )
     line = diagnostics._rows([shown], ["due", "measure"]).splitlines()[1]
     assert line.rstrip().endswith(row["measure"].rstrip())  # a measure is shown whole
-    plain = diagnostics._milestone({**row, "moves": 0, "venture_id": None, "owner_action": None, "owner_comment": None})
+    plain = diagnostics._milestone(
+        {**row, "moves": 0, "venture_id": None, "owner_action": None, "owner_comment": None, "proposed_due": None}
+    )
     assert (plain["due"], plain["links"], plain["owner"]) == ("2026-10-08", "-", "-")
 
 

@@ -319,7 +319,7 @@ SPECS: dict[str, Spec] = {
             "milestone_create",
             "Put a milestone on your roadmap: what you will reach by a date, with a measure you can check ('3 listings "
             "live'). Goals for the next months, milestones leading to them (parent_id), this week's steps. Title and "
-            f"measure are final; a date can move. At most {roadmap.MAX_OPEN} open. Free.",
+            f"measure are final; a date can move. At most {roadmap.MAX_OPEN - roadmap.OWNER_SLOTS} open. Free.",
             {
                 "title": _s("What you will reach.", roadmap.LIMITS["title"]),
                 "measure": _s("How you will know: a number or a fact you can check.", roadmap.LIMITS["measure"]),
@@ -333,8 +333,9 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "milestone_update",
-            "Close a milestone (done: result gives the evidence; missed: why, and what now; dropped: why, never your "
-            "owner's), move its date (due, with why in note), link it or add a note. Closed is final. Free.",
+            "Close a milestone (done: result gives the evidence; missed, past its date: why, and what now; dropped: "
+            "why, never your owner's), move its date (due, why in note; twice at most; your owner's: a proposal), "
+            "link it or add a note. Closed is final. Free.",
             {
                 "milestone_id": _i("Its number."),
                 "status": _s("done, missed or dropped.", 8, required=False, enum=roadmap.CLOSED),
@@ -1261,8 +1262,12 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         raise ToolError("the title and the measure can't be empty")
     today = ctx.clock.today()
     due = _due_date(args["due"], today)
-    if roadmap.count(conn, ctx.scope, "open") >= roadmap.MAX_OPEN:
-        raise ToolError(f"{roadmap.MAX_OPEN} milestones are open already: close or drop one first")
+    places = roadmap.MAX_OPEN - roadmap.OWNER_SLOTS  # 0.12.0: the last places are your owner's
+    if roadmap.count(conn, ctx.scope, "open") >= places:
+        raise ToolError(
+            f"{places} milestones are open already, and the other {roadmap.OWNER_SLOTS} of the {roadmap.MAX_OPEN} "
+            "places are kept for your owner: close or drop one first"
+        )
     if roadmap.count(conn, ctx.scope) >= roadmap.MAX_MILESTONES:
         raise ToolError(f"your roadmap holds {roadmap.MAX_MILESTONES:,} milestones, as many as it can")
     same = roadmap.open_by_title(conn, ctx.scope, title)
@@ -1307,33 +1312,60 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     status = args.get("status")
     result = " ".join((args.get("result") or "").split())
     note = (args.get("note") or "").strip()
+    theirs = row["created_by"] == "owner"  # 0.12.0: the owner's milestone is theirs to move and drop
+    drop = "ask your owner to drop it" if theirs else "drop it (why)"
     changes: dict[str, Any] = {}
     if status and args.get("due"):
         raise ToolError("close a milestone or move its date, not both")
     if result and not status:
         raise ToolError("result is for closing a milestone: set status too")
     due = roadmap.parse_day(row["due"]) or today
+    moved_to: date | None = None
     if args.get("due"):
-        due = _due_date(args["due"], today)
-        if due.isoformat() != row["due"]:
+        wanted = _due_date(args["due"], today)
+        if wanted.isoformat() != row["due"]:
             if not note:
                 raise ToolError("say in note why the date moves")
-            later = [k for k in roadmap.children(conn, mid) if k["status"] == "open" and k["due"] > due.isoformat()]
+            if int(row["moves"]) >= roadmap.MAX_MOVES:
+                rest = (
+                    f"Close it now: done if its measure is met (with the evidence), missed if not (why, and what "
+                    f"now); or {drop}"
+                    if due < today
+                    else f"Reach it by {row['due']}, or {drop}; if it isn't reached, close it missed once that day "
+                    "has passed"
+                )
+                raise ToolError(
+                    f"milestone #{mid} has moved {row['moves']} times (first due {row['first_due']}): a date moves "
+                    f"{roadmap.MAX_MOVES} times at most. {rest}"
+                )
+            later = [k for k in roadmap.children(conn, mid) if k["status"] == "open" and k["due"] > wanted.isoformat()]
             if later:
                 raise ToolError(
                     f"milestone #{later[0]['id']} leads to it and is due {later[0]['due']}: move that first"
                 )
-            changes.update(due=due.isoformat(), moves=int(row["moves"]) + 1)
+            moved_to = wanted
     parent_id = args.get("parent_id")
     if parent_id is not None and parent_id != row["parent_id"]:
-        _parent(conn, ctx.scope, parent_id, due, mid)
+        _parent(conn, ctx.scope, parent_id, moved_to or due, mid)
         changes["parent_id"] = parent_id
-    elif row["parent_id"] is not None and "due" in changes:
+    elif row["parent_id"] is not None and moved_to is not None:
         parent = roadmap.get(conn, ctx.scope, row["parent_id"])
-        if parent is not None and parent["status"] == "open" and changes["due"] > parent["due"]:
+        if parent is not None and parent["status"] == "open" and moved_to.isoformat() > parent["due"]:
             raise ToolError(
                 f"it leads to milestone #{parent['id']}, due {parent['due']}: move that first, or link it elsewhere"
             )
+    if moved_to is not None and theirs:
+        if row["proposed_due"] == moved_to.isoformat():
+            raise ToolError(f"you proposed {moved_to.isoformat()} already: your owner decides on the Roadmap tab")
+        changes.update(
+            proposed_due=moved_to.isoformat(),
+            proposed_note=" ".join(note.split())[: roadmap.NOTE_CHARS],
+            proposed_at=ctx.now(),
+            proposed_cycle_id=ctx.cycle_id,
+        )
+    elif moved_to is not None:
+        due = moved_to
+        changes.update(due=moved_to.isoformat(), moves=int(row["moves"]) + 1)
     for name, check in (("venture_id", _open_venture), ("project_id", _open_project)):
         value = args.get(name)
         if value is not None and value != row[name]:
@@ -1353,37 +1385,61 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
                 "say in result what shows its measure is met: a number (3 listings live, 12 views) or a reference "
                 "(#123, a link or a workspace file); a done you close is shown as self-reported"
             )
-        if status == "dropped" and row["created_by"] == "owner":
+        if status == "missed" and due >= today:
+            move = "propose a new date" if theirs else "move its date"
+            ways = drop if int(row["moves"]) >= roadmap.MAX_MOVES else f"{move} (due, with why in note), or {drop}"
             raise ToolError(
-                "your owner put this milestone on your roadmap: only they can drop it (ask them), or close it done "
-                "or missed"
+                f"milestone #{mid} is due {row['due']} ({roadmap.when(due, today)}): it is missed only once that day "
+                f"has passed. Until then, reach it, or {ways}"
             )
+        if status == "dropped" and theirs:
+            raise ToolError(
+                "your owner put this milestone on your roadmap: only they can drop it. Ask them (message_owner), "
+                "or propose a new date (due, with why in note)"
+            )
+        if status == "dropped":
+            owners = [k for k in roadmap.open_steps(conn, mid) if k["created_by"] == "owner"]
+            if owners:
+                raise ToolError(
+                    f"your owner's milestone #{owners[0]['id']} leads to it: dropping it would drop theirs too. Link "
+                    "theirs to another milestone first (parent_id), or ask your owner"
+                )
         changes.update(
             status=status,
             result=result[: roadmap.LIMITS["result"]],
             closed_at=ctx.now(),
             closed_cycle_id=ctx.cycle_id,
             closed_by="agent",  # 0.12.0: the agent's word, shown as self-reported (Ember's code closes with "code")
+            **roadmap.NO_PROPOSAL,
         )
     if note:
         changes["notes"] = roadmap.add_note(row["notes"], ctx.cycle_id, note)
     if not changes:
         raise ToolError("nothing to change")
     roadmap.update(conn, mid, ctx.now(), **changes)
-    if status:
+    after = ""
+    if status == "dropped":
+        what = status
+        dropped = roadmap.drop_steps(conn, mid, ctx.now(), f"Dropped with #{mid}: {result}", "agent", ctx.cycle_id)
+        if dropped:
+            after = f" Dropped with it, as they led to it: {_numbers(dropped)}."
+    elif status:
         what = status
         waiting = [k["id"] for k in roadmap.children(conn, mid) if k["status"] == "open"]
-        after = (
-            f" Milestones leading to it are still open ({_numbers(waiting)}): close them, or link them to another."
-            if waiting
-            else ""
+        if waiting:
+            after = (
+                f" Milestones leading to it are still open ({_numbers(waiting)}): close them, or link them to another."
+            )
+    elif "proposed_due" in changes:
+        what = (
+            f"you proposed moving it to {changes['proposed_due']}. It is your owner's milestone, so the date moves "
+            f"only if they accept; until then it stays due {row['due']}"
         )
     elif "due" in changes:
         moves = changes["moves"]
         what = f"moved to {changes['due']} ({roadmap.when(due, today)}; moved {moves} time{'s' if moves != 1 else ''})"
-        after = ""
     else:
-        what, after = "updated", ""
+        what = "updated"
     return Outcome(True, f"Milestone #{mid}: {what}.{after}", f"milestone #{mid} {what}"[:300])
 
 
