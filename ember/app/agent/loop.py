@@ -253,11 +253,8 @@ class CycleRunner:
         with self.db.transaction() as conn:
             store.interrupt_open_tool_calls(conn, now, cycle_id)
             if not store.has_journal(conn, cycle_id):
-                row = conn.execute("SELECT plan FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
-                plan = json.loads(row["plan"]) if row and row["plan"] else {}
                 summary = f"Cycle ended {end.status}" + (f": {end.note}" if end.note else "")
-                entry = f"Goal: {plan.get('goal', '-')}" if plan else "No plan was made."
-                store.write_journal(conn, self.scope, cycle_id, "system", summary, entry, now)
+                store.write_journal(conn, self.scope, cycle_id, "system", summary, _code_journal(conn, cycle_id), now)
             if end.sleep_minutes is not None:
                 store.update_cycle(conn, cycle_id, sleep_minutes=end.sleep_minutes)
             store.update_cycle(conn, cycle_id, phase=None, current_action=None)
@@ -822,10 +819,13 @@ class CycleRunner:
         self, ctx: tools.ToolContext, uses: list[dict[str, Any]], call_id: int, phase: str
     ) -> list[dict[str, Any]]:
         results = []
-        for index, use in enumerate(uses):
+        counted = 0
+        for use in uses:
             name, raw, use_id = use.get("name", "?"), use.get("input"), use.get("id", "")
             self._check_stop()
-            if index >= MAX_TOOL_CALLS_PER_TURN:
+            # 0.12.0: the journal never counts toward the limit (a fifth call, it was skipped and the cycle lost it).
+            counted += name != "write_journal"
+            if counted > MAX_TOOL_CALLS_PER_TURN and name != "write_journal":
                 outcome = tools.skip(
                     ctx, name, raw, use_id, call_id, phase, f"at most {MAX_TOOL_CALLS_PER_TURN} tool calls per turn"
                 )
@@ -1169,6 +1169,39 @@ def _sources(response: dict[str, Any]) -> list[str]:
             if isinstance(item, dict) and isinstance(item.get("url"), str) and item["url"] not in urls:
                 urls.append(item["url"][:300])
     return urls
+
+
+def _code_journal(conn: Any, cycle_id: int) -> str:
+    """0.12.0: the journal of a cycle whose reflection wrote none, built by Ember's code from its records: the goal,
+    what its tools did (and what was refused or skipped, so it isn't taken for done) and what it cost. It was only
+    "Goal: …"."""
+    row = conn.execute("SELECT plan FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
+    try:
+        plan = json.loads(row["plan"]) if row and row["plan"] else {}
+    except ValueError:
+        plan = {}
+    goal = plan.get("goal") if isinstance(plan, dict) else None
+    lines = [
+        "Written by Ember's code: the reflection wrote no journal.",
+        f"Goal: {goal}" if goal else "No plan was made.",
+    ]
+    calls = conn.execute(
+        "SELECT tool, status, summary FROM tool_calls WHERE cycle_id = ? AND parent_id IS NULL ORDER BY id", (cycle_id,)
+    ).fetchall()
+    done = [f"{c['tool']} ({' '.join(str(c['summary'] or '').split())[:80]})" for c in calls if c["status"] == "ok"]
+    other = [f"{c['tool']} ({c['status']})" for c in calls if c["status"] != "ok"]
+    if done:
+        lines.append(f"Done: {'; '.join(done[:15])}" + (f"; and {len(done) - 15} more" if len(done) > 15 else ""))
+    if other:
+        lines.append(f"Refused, failed or skipped (not done): {'; '.join(other[:10])}")
+    if not calls:
+        lines.append("No tool was used.")
+    cost = conn.execute(
+        "SELECT COALESCE(SUM(cost_micros), 0) FROM llm_calls WHERE cycle_id = ? AND status IN ('ok', 'interrupted')",
+        (cycle_id,),
+    ).fetchone()[0]
+    lines.append(f"Cost: ${micros_to_usd(int(cost)):.4f}")
+    return "\n".join(lines)[:2_000]
 
 
 def _kept(ctx: tools.ToolContext) -> str:
