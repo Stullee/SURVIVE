@@ -25,7 +25,7 @@ from pathlib import Path
 from .. import paths
 from ..db import Database
 from . import roadmap
-from .store import AgentScope
+from .store import REQUEST_DAYS, AgentScope
 from .ventures import news_line
 
 # Bytes (JSON-escaped): the planner's YOUR SOFTWARE section holds this much uncut, and only then counts it as read.
@@ -130,7 +130,11 @@ class News:
                     head += f". Your owner changed the email's text; this is what is sent: {_q(r['final_payload'])}"
                 else:
                     head += f". Use the owner's version, not yours: {_q(r['final_payload'])}"
-            if r["decision_comment"]:
+            if r["status"] == "expired":  # 0.12.0: by Ember's code, not the owner's word
+                head += (
+                    f" after {REQUEST_DAYS.get(r['type'], 30)} days without a decision: ask again if it still matters"
+                )
+            elif r["decision_comment"]:
                 head += f". Owner's comment: {_q(r['decision_comment'])}"
             if r["status"] in ("done", "failed"):
                 if r["result_note"]:

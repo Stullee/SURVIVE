@@ -2222,7 +2222,8 @@
         h("div", null, h("dt", { text: "Expected benefit" }), h("dd", { text: asText(a.expected_benefit) || "–" })),
         project ? h("div", null, h("dt", { text: "Project" }), h("dd", { text: project })) : null),
       decisionInfo(a),
-      h("p", { class: "muted small" }, "Requested ", timeEl(a.created_at), " · #" + a.id),
+      h("p", { class: "muted small" }, "Requested ", timeEl(a.created_at), " · #" + a.id,
+        a.status === "pending" && a.expires_at ? [" · expires unanswered ", timeEl(a.expires_at, fmtDateTime(a.expires_at))] : null),
     ];
   }
 
@@ -2392,7 +2393,11 @@
 
   function decisionInfo(a) {
     var parts = [];
-    if (a.decided_at) {
+    if (a.decided_at && (a.status === "withdrawn" || a.status === "expired")) {  // 0.12.0: not the owner's decision
+      parts.push(h("p", null, h("strong", { text: a.status === "withdrawn" ? "Withdrawn by " + agentName() : "Expired without a decision" }),
+        " · ", timeEl(a.decided_at)));
+      if (a.decision_comment) parts.push(h("p", { class: "pre-line" }, h("strong", { text: "Why: " }), String(a.decision_comment)));
+    } else if (a.decided_at) {
       var verb = a.status === "rejected" ? "Rejected" : a.final_payload ? "Approved with changes" : "Approved";
       parts.push(h("p", null, h("strong", { text: verb }), " by " + (a.decided_by || "you") + " · ", timeEl(a.decided_at)));
       if (a.decision_comment) parts.push(h("p", { class: "pre-line" }, h("strong", { text: "Comment: " }), String(a.decision_comment)));

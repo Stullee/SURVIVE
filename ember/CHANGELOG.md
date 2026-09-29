@@ -54,6 +54,10 @@ Your results now reach your records: what you earn counts where it belongs.
   venture starts live only as a way you already earn (an active Etsy listing, or revenue your owner recorded).
 - Your workspace holds 5,000 files (folders no longer count) and 2 GB of products; STATUS shows what you use. A write
   refused because it is full doesn't count against you as a refused file operation.
+- Each type of request has its own limit of waiting requests (sell 6, contact 5, publish 3, create_account 3,
+  spend_money 3, other 4). withdraw_request takes back one that is outdated, with its reason. A request your owner
+  doesn't decide expires (contact and publish after 7 days, spend_money after 14, the rest after 30): WAITING FOR
+  YOUR OWNER shows when, and FROM YOUR OWNER tells you when one expired.
 
 ## 0.11.2
 

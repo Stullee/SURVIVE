@@ -223,6 +223,7 @@ class CycleRunner:
                     self.library_on = ctx.library = library.totals(conn, self.scope)[0] > 0
                 self._fetch_mail(cycle_id)
                 self._sync_etsy(cycle_id, ctx)
+                self._expire_requests()
             with netguard.sealed() if self.dry_run else contextlib.nullcontext():
                 end = self._last_will(cycle_id) if trigger == "last_will" else self._plan_act_reflect(cycle_id, ctx)
         except Stopping:
@@ -291,6 +292,14 @@ class CycleRunner:
             if turn:
                 store.update_cycle(conn, cycle_id, venture=1)
         return turn
+
+    def _expire_requests(self) -> None:
+        """0.12.0: the requests the owner didn't decide within their type's days expire (news for the agent)."""
+        with self.db.transaction() as conn:
+            expired = store.expire_requests(conn, self.scope, to_iso(self.clock.now()))
+        for r in expired:
+            days = store.REQUEST_DAYS[r["type"]]
+            events.record(self.db, "info", "agent", f"Request #{r['id']} expired: no decision in {days} days")
 
     def _fetch_mail(self, cycle_id: int) -> None:
         """New mail before the plan (errors are recorded and shown, and never stop the cycle)."""

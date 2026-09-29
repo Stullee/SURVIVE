@@ -581,7 +581,10 @@ def _sections(parts: list[tuple[str, str]]) -> str:
 def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str, Shown]:
     """The planner's context, and what of the owner's news and of the changelog it lists and shows whole."""
     b = {k: int(v * scale) for k, v in PLANNER_BUDGETS.items()}
-    pending = "\n".join(f"#{r['id']} {r['type']}: {r['title']}" for r in s.pending) or "None."
+    pending = (
+        "\n".join(f"#{r['id']} {r['type']}: {r['title']} (expires {store.expires_at(r)[:10]})" for r in s.pending)
+        or "None."
+    )
     if s.pending and s.decision_wakes:  # first, so a cut never takes it (0.12.0: it slept 12 hours for a decision)
         pending = f"{WAITING_NOTE}\n{pending}"
     head = _news_head(s)

@@ -11,7 +11,10 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
+
+from ..economy.clock import from_iso, to_iso
 
 OPEN_STATUSES = ("idea", "active", "waiting")
 CLOSED_STATUSES = ("succeeded", "failed", "abandoned")
@@ -302,6 +305,51 @@ def count_rows(conn: sqlite3.Connection, table: str, scope: AgentScope, conditio
         raise ValueError("unknown table")
     where, params = scope.where()
     return int(conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {where} AND {condition}", params).fetchone()[0])
+
+
+# 0.12.0: how many requests of each type may wait for the owner at once (one cap of 10 for all of them let waiting
+# listings block an email reply), and after how many days a request the owner hasn't decided expires.
+PENDING_CAPS = {"sell": 6, "contact": 5, "publish": 3, "create_account": 3, "spend_money": 3, "other": 4}
+REQUEST_DAYS = {"contact": 7, "publish": 7, "spend_money": 14, "sell": 30, "create_account": 30, "other": 30}
+
+
+def pending_of_type(conn: sqlite3.Connection, scope: AgentScope, kind: str) -> int:
+    where, params = scope.where()
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM approvals WHERE {where} AND status = 'pending' AND type = ?", (*params, kind)
+    )
+    return int(row.fetchone()[0])
+
+
+def expires_at(row: Any) -> str:
+    """When a pending request expires (0.12.0): REQUEST_DAYS after it was made."""
+    return to_iso(from_iso(str(row["created_at"])) + timedelta(days=REQUEST_DAYS[row["type"]]))
+
+
+def expire_requests(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[sqlite3.Row]:
+    """The pending requests the owner didn't decide within their type's days, expired (0.12.0): news for the agent,
+    like a decision, and no longer waiting. Returns them."""
+    where, params = scope.where()
+    pending = conn.execute(f"SELECT * FROM approvals WHERE {where} AND status = 'pending'", params).fetchall()
+    expired = [r for r in pending if expires_at(r) <= now]
+    for r in expired:
+        conn.execute(
+            "UPDATE approvals SET status = 'expired', decided_at = ?, version = version + 1"
+            " WHERE id = ? AND status = 'pending'",
+            (now, r["id"]),
+        )
+    return expired
+
+
+def withdraw_request(
+    conn: sqlite3.Connection, scope: AgentScope, approval_id: int, reason: str, cycle_id: int, now: str
+) -> None:
+    """The agent takes back one of its pending requests (0.12.0), saying why: not news for it (it did it)."""
+    conn.execute(
+        "UPDATE approvals SET status = 'withdrawn', decided_at = ?, decision_comment = ?, seen_cycle_id = ?,"
+        " version = version + 1 WHERE id = ? AND status = 'pending'",
+        (now, reason, cycle_id, approval_id),
+    )
 
 
 def insert_approval(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, now: str, **fields: Any) -> int:

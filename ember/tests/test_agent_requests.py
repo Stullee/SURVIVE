@@ -93,7 +93,10 @@ def overflowing_snapshot() -> context.Snapshot:
         cycle_cap=1_000,
         projects=[{"id": 1_000 + i, **project} for i in range(8)],  # type: ignore[misc]
         owner_messages=[{"id": i, "created_at": "2026-09-30T08:00:00Z", "text": "ä" * 2_000} for i in range(8)],  # type: ignore[misc]
-        pending=[{"id": 1_000 + i, "type": "create_account", "title": "ä" * 120} for i in range(20)],  # type: ignore[misc]
+        pending=[  # type: ignore[misc]
+            {"id": 1_000 + i, "type": "create_account", "title": "ä" * 120, "created_at": "2026-09-30T08:00:00Z"}
+            for i in range(20)
+        ],
         last_cycle={"id": 10_000, "status": "completed", "note": "ä" * 300, "plan": json.dumps({"goal": "ä" * 300})},  # type: ignore[arg-type]
         last_journal={"summary": "ä" * 240, "handoff": "ä" * 400},  # type: ignore[arg-type]
         memory={"strategy": long, "identity": long, "lessons": long},

@@ -58,7 +58,6 @@ WRITE_CHARS = 2_500
 READ_DEFAULT_CHARS = 3_000
 READ_MAX_CHARS = 6_000
 MAX_OPEN_PROJECTS = 8
-MAX_PENDING_APPROVALS = 10
 MAX_UNREAD_MESSAGES = 5
 MAX_NEW_UPGRADES = 5
 SANDBOX_STRIKES = 3
@@ -393,6 +392,17 @@ SPECS: dict[str, Spec] = {
                 "project_id": _i("The project this belongs to, if any.", required=False),
             },
             per_cycle=3,
+        ),
+        Spec(
+            "withdraw_request",
+            "Take back a request that waits for your owner (outdated, or a better one replaces it). Unanswered ones "
+            "expire (WAITING FOR YOUR OWNER says when). Free.",
+            {
+                "request_id": _i("The request's number."),
+                "reason": _s("Why, for your owner.", 300),
+            },
+            per_cycle=5,
+            reflect=True,
         ),
         Spec(
             "message_owner",
@@ -1627,8 +1637,7 @@ def _request_approval(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         return Outcome(
             True, f"Approval request #{existing} with this payload is already waiting.", f"duplicate of #{existing}"
         )
-    if store.count_rows(conn, "approvals", ctx.scope, "status = 'pending'") >= MAX_PENDING_APPROVALS:
-        raise ToolError(f"{MAX_PENDING_APPROVALS} requests are already waiting for your owner")
+    _room_for_request(ctx, conn, args["type"])
     project_id = args.get("project_id")
     if project_id is not None and store.project(conn, ctx.scope, project_id) is None:
         raise ToolError(f"there is no project #{project_id}")
@@ -1639,6 +1648,32 @@ def _request_approval(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         f"#{approval_id} {args['type']}: {args['title'][:60]}",
         project_id,
     )
+
+
+def _room_for_request(ctx: ToolContext, conn: Any, kind: str) -> None:
+    """0.12.0: a cap per type of request (one cap of 10 for all let waiting listings block an email reply)."""
+    cap = store.PENDING_CAPS[kind]
+    if store.pending_of_type(conn, ctx.scope, kind) >= cap:
+        raise ToolError(
+            f"{cap} {kind} requests are already waiting for your owner: withdraw one that is outdated "
+            "(withdraw_request), or wait for their decision"
+        )
+
+
+def _withdraw_request(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.12.0: the agent takes back one of its pending requests."""
+    request_id = args["request_id"]
+    where, params = ctx.scope.where()
+    row = conn.execute(f"SELECT * FROM approvals WHERE id = ? AND {where}", (request_id, *params)).fetchone()
+    if row is None:
+        raise ToolError(f"there is no request #{request_id}")
+    if row["status"] != "pending":
+        raise ToolError(f"request #{request_id} is {row['status'].replace('_', ' ')} already; only a waiting one")
+    reason = " ".join(args["reason"].split())
+    if not reason:
+        raise ToolError("say why in reason")
+    store.withdraw_request(conn, ctx.scope, request_id, reason, ctx.cycle_id, ctx.now())
+    return Outcome(True, f"Request #{request_id} is withdrawn: it left your owner's queue.", f"withdrew #{request_id}")
 
 
 def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -1928,8 +1963,7 @@ def _new_request(ctx: ToolContext, conn: Any, payload: str, action: dict[str, An
     existing = store.pending_approval_by_payload(conn, ctx.scope, store.sha256(payload))
     if existing is not None:
         return f"Approval request #{existing} with this text is already waiting."
-    if store.count_rows(conn, "approvals", ctx.scope, "status = 'pending'") >= MAX_PENDING_APPROVALS:
-        raise ToolError(f"{MAX_PENDING_APPROVALS} requests are already waiting for your owner")
+    _room_for_request(ctx, conn, fields["type"])
     return store.insert_approval(
         conn, ctx.scope, ctx.cycle_id, ctx.now(), payload=payload, action=action_json, **fields
     )
@@ -2210,6 +2244,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "milestone_create": _milestone_create,
     "milestone_update": _milestone_update,
     "request_approval": _request_approval,
+    "withdraw_request": _withdraw_request,
     "message_owner": _message_owner,
     "request_upgrade": _request_upgrade,
     "set_sleep": _set_sleep,

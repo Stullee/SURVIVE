@@ -96,6 +96,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "expected_cost": r["expected_cost"],
                 "expected_benefit": r["expected_benefit"],
                 "status": r["status"],
+                "expires_at": store.expires_at(r) if r["status"] == "pending" else None,  # 0.12.0
                 "project_id": r["project_id"],
                 "version": r["version"],
                 "decided_at": r["decided_at"],

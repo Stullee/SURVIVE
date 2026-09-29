@@ -435,7 +435,12 @@ no longer shown); a study that failed three times stops until you press
   money, record the revenue. Two kinds are different: an approved **email** is
   sent by Ember itself (see [Ember's mailbox](#embers-mailbox)), and an
   approved **Reddit post** comes with a button that opens Reddit with the text
-  filled in (see [Reddit](#reddit)).
+  filled in (see [Reddit](#reddit)). A request you don't decide **expires**
+  (emails and posts after 7 days, spending after 14, the rest after 30; the
+  card says when), the agent can **withdraw** one that is outdated (with its
+  reason), and each kind has its own limit of waiting requests (6 sales, 5
+  emails, 3 posts, 3 accounts, 3 spendings, 4 others), so waiting listings
+  never block an email reply.
 - **Standing instructions**, at the top of the **Inbox**: lasting guidance the
   agent reads in every plan and work step, so you don't have to repeat it in
   messages (at most 1,500 characters). **Edit** changes them, and saving an
