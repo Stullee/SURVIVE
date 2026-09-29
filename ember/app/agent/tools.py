@@ -44,13 +44,14 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
 from . import library, netguard, roadmap, store, ventures
-from .memory import Memory, MemoryError_
+from .memory import CAPS, Memory, MemoryError_
 from .sandbox import Jail, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
 
 log = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 4_000
+RESULT_CHARS = {"memory_read": 4_400}  # 0.12.0: a memory file whole (lessons: 4,000 bytes) with its heading
 # One workspace_write's text: what fits in one work reply (WORK_MAX_TOKENS) with room to spare. JSON specs and German
 # text take about 1.7 characters a token there: at 4,000 (until 0.11.1) a long write was cut off again and again.
 WRITE_CHARS = 2_500
@@ -180,14 +181,21 @@ SPECS: dict[str, Spec] = {
         Spec(
             "memory_update",
             "Change one of your memory files: strategy (at most 2,000 bytes, replace it), identity (800 bytes) or "
-            "lessons (4,000 bytes; append up to 5 short lines, the oldest drop off when it is full). Your "
-            "constitution can't be changed.",
+            "lessons (4,000 bytes; append up to 5 short lines, the oldest drop off when it is full). Before you "
+            "replace lessons, read them whole (memory_read). Your constitution can't be changed.",
             {
                 "file": _s("Which file.", 10, enum=("strategy", "identity", "lessons")),
                 "mode": _s("replace or append.", 10, enum=("replace", "append")),
                 "content": _s("The new text or the lines to add.", 4_000),
             },
             per_cycle=5,
+            reflect=True,
+        ),
+        Spec(
+            "memory_read",
+            "Read one of your memory files whole: strategy, identity or lessons (your plans see parts). Free.",
+            {"file": _s("Which file.", 10, enum=("strategy", "identity", "lessons"))},
+            per_cycle=6,
             reflect=True,
         ),
         Spec(
@@ -740,6 +748,10 @@ class CycleTools:
     # 0.12.0: what the reflection may cost, as the last work step was checked against: research, brainstorms and
     # workshop runs leave it (they spent it, and the cycle ended without reflecting).
     reflect_reserve: int = 0
+    # 0.12.0: the memory files read whole this cycle (memory_read), each with the model reply that asked for it;
+    # reply is the one whose tool calls run now (a file read in the same reply was not seen yet).
+    read_memory: dict[str, int] = field(default_factory=dict)
+    reply: int = 0
 
 
 @dataclass(frozen=True)
@@ -804,6 +816,7 @@ class ToolContext:
 def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_id: int, phase: str) -> Outcome:
     """Validate and run one tool call; always returns an Outcome (never raises)."""
     tool_input = raw_input if isinstance(raw_input, dict) else {"_raw": raw_input}
+    ctx.state.reply = llm_call_id
     with ctx.db.transaction() as conn:
         call_id = store.start_tool_call(
             conn,
@@ -854,7 +867,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
                 store.finish_tool_call(
                     conn, call_id, "ok" if outcome.ok else "error", outcome.summary, outcome.text, ctx.now()
                 )
-            return _clip(outcome)
+            return _clip(outcome, RESULT_CHARS.get(name, MAX_RESULT_CHARS))
         if outcome.ok:
             ctx.state.counts[name] = ctx.state.counts.get(name, 0) + 1
     except (ToolError, make.ProductError) as exc:
@@ -868,7 +881,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
         outcome = Outcome(False, f"Error: the tool failed ({type(exc).__name__}).", f"failed: {type(exc).__name__}")
     with ctx.db.transaction() as conn:
         store.finish_tool_call(conn, call_id, "ok" if outcome.ok else "error", outcome.summary, outcome.text, ctx.now())
-    return _clip(outcome)
+    return _clip(outcome, RESULT_CHARS.get(str(name), MAX_RESULT_CHARS))
 
 
 def per_cycle(ctx: ToolContext, spec: Spec) -> int:
@@ -947,10 +960,10 @@ def _noted(outcome: Outcome, notes: list[str]) -> Outcome:
     return replace(outcome, text=f"{outcome.text} (Saved, but {'; '.join(notes)}.)")
 
 
-def _clip(outcome: Outcome) -> Outcome:
-    if len(outcome.text) <= MAX_RESULT_CHARS:
+def _clip(outcome: Outcome, limit: int = MAX_RESULT_CHARS) -> Outcome:
+    if len(outcome.text) <= limit:
         return outcome
-    return replace(outcome, text=outcome.text[: MAX_RESULT_CHARS - 20] + "\n[… result cut]")
+    return replace(outcome, text=outcome.text[: limit - 20] + "\n[… result cut]")
 
 
 def _unstop(text: str) -> str:
@@ -1038,8 +1051,29 @@ def _workspace_write(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
 
 
 def _memory_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    seen = ctx.state.read_memory.get("lessons")
+    if args["file"] == "lessons" and args["mode"] == "replace" and seen in (None, ctx.state.reply):
+        # 0.12.0: rewrites ordered from what the plan showed (9 of 44 lessons) dropped rules the owner relied on.
+        kept = [line for line in args["content"].splitlines() if line.strip()]
+        known = [line for line in ctx.memory.read("lessons").splitlines() if line.strip()]
+        if len(kept) * 2 < len(known):
+            why = "you haven't read it whole in this cycle" if seen is None else "you haven't seen it yet"
+            raise ToolError(
+                f"this keeps {len(kept)} of the {len(known)} lines of lessons.md, and {why}: read it with memory_read "
+                "(free) while working, then replace it in a later reply of the same cycle, keeping what still helps"
+            )
     text = ctx.memory.update(conn, args["file"], args["mode"], args["content"], ctx.cycle_id, ctx.now())
     return Outcome(True, text, f"{args['mode']} {args['file']}")
+
+
+def _memory_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.12.0: a memory file whole, for the agent to rewrite it knowing what is in it."""
+    name = args["file"]
+    text = ctx.memory.read(name)
+    ctx.state.read_memory[name] = ctx.state.reply
+    size = len(text.encode("utf-8"))
+    body = wrap(ctx, "memory", text.rstrip("\n")) if text.strip() else "(empty)"
+    return Outcome(True, f"{name}.md, {size:,} of {CAPS[name]:,} bytes, whole:\n{body}", f"read {name}")
 
 
 def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -2116,6 +2150,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "workspace_read": _workspace_read,
     "workspace_write": _workspace_write,
     "memory_update": _memory_update,
+    "memory_read": _memory_read,
     "project_create": _project_create,
     "project_update": _project_update,
     "venture_create": _venture_create,

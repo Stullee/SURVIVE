@@ -39,6 +39,9 @@ Your results now reach your records: what you earn counts where it belongs.
   in FROM YOUR OWNER), and only they drop one. A date moves twice at most; missed is for a milestone whose date has
   passed. Dropping a milestone drops the open milestones leading to it. You add milestones while fewer than 16 are
   open: the last 4 places are your owner's.
+- memory_read (free) shows one of your memory files whole: your plan shows only the newest lessons. A lessons replace
+  that keeps fewer than half of its lines needs a memory_read of it in an earlier reply of the same cycle. Your plan
+  no longer asks you to rewrite lessons or strategy.
 
 ## 0.11.2
 

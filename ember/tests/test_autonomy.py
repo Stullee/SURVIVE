@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from app import paths, web
 from app.agent import context, fake_llm, loop, news, prompts
+from app.agent import tools as agent_tools
 from app.agent.memory import CAPS, SEEDS
 from app.agent.owner import INSTRUCTIONS_MAX, Owner
 from app.agent.service import Agent
@@ -252,87 +253,88 @@ def test_the_live_instructions_stay_out_of_a_dry_run(data_dir: Path) -> None:
 # --- memory hygiene ---
 
 
-@pytest.mark.parametrize(
-    ("line", "outdated"),
-    [
-        ("write_journal only works in the reflect phase.", True),
-        ("Call write_journal during the reflect phase, never while working.", True),
-        ("In the act phase write_journal is refused.", True),
-        ("Keep next_step under 200 chars or the call is refused.", True),
-        ("project_update notes are cut at 300 characters.", True),
-        ("request_approval: the description has a length limit.", True),
-        ("A too long hypothesis in project_create gets refused.", True),
-        ("Reddit titles can have at most 300 characters.", False),
-        ("propose_email has a daily limit of 3 emails.", False),
-        ("write_journal ends the cycle, so call it last.", False),
-        ("Check demand with one cheap listing first.", False),
-    ],
-)
-def test_outdated_lessons_ask_for_a_rewrite(line: str, outdated: bool) -> None:
-    lessons = f"# Lessons\n\n- [#c3] Ask people before building.\n- [#c7] {line}\n"
-    snap = snapshot_with([])
-    snap.memory = {"lessons": lessons}
-    note = context.lessons_note(snap)
-    assert bool(note) is outdated
-    if outdated:
-        assert note == (
-            "Memory check: lessons.md has outdated notes (since 0.4.0 write_journal works whenever you are done, and"
-            " tools show their length limits). Plan one step that rewrites it (memory_update lessons replace), keeping"
-            " only what still helps you earn money."
-        )
-
-
-def test_a_full_lessons_file_asks_for_a_rewrite() -> None:
-    snap = snapshot_with([])
-    line = "- [#c12] Check demand with one cheap listing first.\n"
-    limit = int(CAPS["lessons"] * context.LESSONS_FULL)
-    snap.memory = {"lessons": "# Lessons\n\n" + line * ((limit - 11) // len(line))}
-    assert len(snap.memory["lessons"]) <= limit and context.lessons_note(snap) == ""
-    snap.memory = {"lessons": snap.memory["lessons"] + line + "- [#c13] write_journal only in the reflect phase.\n"}
-    size = len(snap.memory["lessons"].encode())
-    assert size > limit
-    assert context.lessons_note(snap).startswith(
-        f"Memory check: lessons.md holds {size:,} of 4,000 bytes and has outdated notes (since 0.4.0"
-    )
-
-
 @pytest.mark.parametrize("scale", loop.PLANNER_SCALES)
-def test_the_note_is_for_the_planner_only_and_keeps_the_lessons_budget(scale: float) -> None:
+def test_the_planner_shows_the_newest_lessons_and_asks_for_no_blind_rewrite(scale: float) -> None:
+    # 0.12.0: the memory checks asked the planner to rewrite files it saw a part of, and the rewrites dropped rules.
     lessons = "# Lessons\n\n" + "".join(
-        f"- [#c{n}] Lesson number {n}: ask people before building.\n" for n in range(80)
+        f"- [#c{n}] Lesson number {n}: write_journal only in the reflect phase.\n" for n in range(80)
     )
+    strategy = "# Strategy\nThe owner builds the files from my specs in Canva.\n"
     snap = snapshot_with([])
-    snap.memory = {"lessons": lessons}
+    snap.memory = {"lessons": lessons, "strategy": strategy}
     planner, _ = context.planner_context(snap, False, scale)
     shown = section(planner, r"LESSONS \(newest last\)") or ""
-    note = context.lessons_note(snap)
-    assert note and shown.endswith(f"\n{note}")
-    assert "Lesson number 79: ask people before building." in shown  # the newest lessons stay
+    assert shown.endswith("- [#c79] Lesson number 79: write_journal only in the reflect phase.")
     assert context.json_bytes(shown) <= context.PLANNER_BUDGETS["lessons"] * scale
-    brief, _ = context.brief(snap, False, {"goal": "g", "steps": ["s"]}, None, 12)
-    assert "Memory check" not in brief and "Lesson number 79" in brief
+    assert section(planner, "STRATEGY") == strategy  # as it is
+    assert "Memory check" not in planner
 
 
-def test_the_agent_rewrites_its_lessons_and_the_note_goes(data_dir: Path) -> None:
-    rewrite = ("memory_update", {"file": "lessons", "mode": "replace", "content": "# Lessons\n\n- Ask people first."})
-    agent, transport = make_agent(
-        data_dir,
-        [
-            plan(steps=["Rewrite my lessons"]),
-            tools(rewrite),
-            text("Rewrote them."),
-            JOURNAL,
-            plan(steps=[], sleep=600),
-        ],
-    )
+def lessons_rewrite(agent: Agent) -> list[Any]:
+    """Run a cycle on a lessons file of 8 rules; returns the cycle's memory tool calls."""
     _, memory_root = agent.roots()
-    memory_root.write("lessons.md", "# Lessons\n\n- [#c1] write_journal only works in the reflect phase.\n")
+    memory_root.write("lessons.md", "# Lessons\n\n" + "".join(f"- [#c{n}] Rule number {n}.\n" for n in range(1, 9)))
     agent.run_cycle("schedule")
-    assert "Memory check: lessons.md has outdated notes" in first_text(transport.sent[0])
-    assert all("Memory check" not in first_text(r) for r in transport.sent[1:])  # not in the (cached) brief
-    agent.run_cycle("schedule")
-    assert "Memory check" not in first_text(transport.sent[-1])
+    return rows(agent, "SELECT tool, status, result FROM tool_calls WHERE tool LIKE 'memory_%' ORDER BY id")
+
+
+REWRITE = ("memory_update", {"file": "lessons", "mode": "replace", "content": "# Lessons\n\n- Ask people first."})
+READ = ("memory_read", {"file": "lessons"})
+
+
+def test_a_rewrite_that_drops_most_lessons_waits_for_a_whole_read(data_dir: Path) -> None:
+    replies = [tools(REWRITE), tools(READ), tools(REWRITE), text("Rewrote them.")]
+    agent, _ = make_agent(data_dir, [plan(steps=["Rewrite my lessons"]), *replies, JOURNAL])
+    refused, read, rewrote = lessons_rewrite(agent)
+    assert (refused["status"], refused["result"]) == (
+        "error",
+        "Error: this keeps 2 of the 9 lines of lessons.md, and you haven't read it whole in this cycle: read it with "
+        "memory_read (free) while working, then replace it in a later reply of the same cycle, keeping what still "
+        "helps.",
+    )
+    assert read["status"] == "ok" and read["result"].startswith("lessons.md, 195 of 4,000 bytes, whole:\n<data ")
+    assert "- [#c1] Rule number 1.\n" in read["result"] and "- [#c8] Rule number 8.\n</data " in read["result"]
+    assert rewrote["status"] == "ok" and agent.memory().read("lessons") == "# Lessons\n\n- Ask people first.\n"
+
+
+def test_a_read_in_the_same_reply_is_not_seen_yet(data_dir: Path) -> None:
+    both = tools(READ, REWRITE)
+    agent, _ = make_agent(data_dir, [plan(steps=["Rewrite my lessons"]), both, text("Done."), JOURNAL])
+    read, refused = lessons_rewrite(agent)
+    assert read["status"] == "ok" and refused["status"] == "error"
+    assert "lessons.md, and you haven't seen it yet: read it with memory_read" in refused["result"]
+    assert agent.memory().read("lessons").count("Rule number") == 8
+
+
+def test_a_read_while_working_counts_for_the_reflection(data_dir: Path) -> None:
+    reflect = tools(REWRITE, ("write_journal", {"summary": "Worked", "entry": "Rewrote my lessons."}))
+    agent, _ = make_agent(data_dir, [plan(steps=["Read my lessons"]), tools(READ), text("Read them."), reflect])
+    assert [call["status"] for call in lessons_rewrite(agent)] == ["ok", "ok"]
     assert agent.memory().read("lessons") == "# Lessons\n\n- Ask people first.\n"
+
+
+def test_a_rewrite_that_keeps_half_and_other_changes_need_no_read(data_dir: Path) -> None:
+    half = "# Lessons\n\n" + "".join(f"- Rule number {n}, shorter.\n" for n in range(1, 5))  # 5 of 9 lines
+    replies = [
+        tools(("memory_update", {"file": "lessons", "mode": "replace", "content": half})),
+        tools(("memory_update", {"file": "lessons", "mode": "append", "content": "Ask people first."})),
+        tools(("memory_update", {"file": "strategy", "mode": "replace", "content": "# Strategy\nSell planners."})),
+        text("Done."),
+    ]
+    agent, _ = make_agent(data_dir, [plan(steps=["Tidy my memory"]), *replies, JOURNAL])
+    assert [call["status"] for call in lessons_rewrite(agent)] == ["ok", "ok", "ok"]
+    assert agent.memory().read("lessons").startswith(half) and "Ask people first." in agent.memory().read("lessons")
+
+
+def test_memory_read_reads_every_file_whole_and_is_free() -> None:
+    spec = agent_tools.SPECS["memory_read"]
+    assert spec.reflect and spec.fields["file"].enum == ("strategy", "identity", "lessons")
+    assert "Free." in spec.description and "memory_read" in agent_tools.SPECS["memory_update"].description
+    assert "memory_read" not in agent_tools.CALLING_TOOLS  # no model call: it costs nothing
+    heading = len("lessons.md, 4,000 of 4,000 bytes, whole:\n") + len(
+        '<data src="memory" id="abcdef">\n\n</data id="abcdef">'
+    )
+    assert CAPS["lessons"] + heading <= agent_tools.RESULT_CHARS["memory_read"]  # a full file is never cut
 
 
 def test_the_strategy_seed_says_where_the_strategy_belongs() -> None:
@@ -521,7 +523,7 @@ def test_the_fake_quotes_the_standing_instructions_in_its_plan() -> None:
 
 
 @pytest.mark.parametrize("scenario", fake_llm.SCENARIOS)
-def test_the_fake_stays_valid_with_instructions_and_a_lessons_note(data_dir: Path, scenario: str) -> None:
+def test_the_fake_stays_valid_with_instructions_and_full_lessons(data_dir: Path, scenario: str) -> None:
     before, _ = make_agent(data_dir, [])
     owner(before).set_instructions({"text": "😀 " * 700}, "Stefan")
     _, memory_root = before.roots()
@@ -531,7 +533,7 @@ def test_the_fake_stays_valid_with_instructions_and_a_lessons_note(data_dir: Pat
     run(data_dir, fake, cycles=3)  # every request valid
     plans = [r for r in fake.sent if fake_llm.request_kind(r) == "plan"]
     assert plans and all(f"== {HEADING} ==" in first_text(r) for r in plans)
-    assert "Memory check: lessons.md" in first_text(plans[0])
+    assert all("Memory check" not in first_text(r) for r in plans)  # 0.12.0: no more requests for blind rewrites
 
 
 def test_the_release_notes_of_0_5_0_stand_alone() -> None:

@@ -15,7 +15,6 @@ from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls, request_ki
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
 from app.economy.clock import to_iso
-from app.economy.life import LifeStatus, Runway
 from tests.economy_helpers import make_economy
 from tests.test_agent import ROOMY, rows
 from tests.test_loop_shapes import run
@@ -541,35 +540,3 @@ def test_the_rules_ask_for_a_path_never_a_no() -> None:
     assert "brainstorm" not in {d["name"] for d in tools.definitions(mail=True, etsy=True)}
     request = prompts.brainstorm_request(Settings(), "context")
     assert request_kind(request) == "brainstorm" and validate_request(request) is None
-
-
-def test_an_idea_turned_down_and_a_strategy_without_ventures_are_rewritten() -> None:
-    declined = "- [#c34] Dropshipping declined (msg #47/48 answered): needs supplier/payment accounts, ad budget."
-    assert context.outdated(declined) == [
-        "since 0.10.0 no idea is turned down: it goes into your venture tree with its path, smallest test and numbers"
-    ]
-    assert context.outdated("- AI girlfriend idea: declined, it breaks my hard rules.") == []
-    assert context.outdated("- Fiverr is on hold per owner.\n- Etsy daily cap: 5 listings/day.") == []
-
-    def snap(strategy: str, share: int) -> context.Snapshot:
-        status = LifeStatus(
-            mode="live", life_id=1, state="alive", reason="", last_will_due=False, runway=Runway(9, None)
-        )
-        return context.Snapshot(
-            status=status,
-            local_time="Wednesday 2026-09-30 10:00 CEST",
-            version="0.10.0",
-            agent_name="Ember",
-            today_spend=0,
-            daily_cap=5,
-            cycle_cap=0.6,
-            memory={"strategy": strategy},
-            venture_share=share,
-        )
-
-    etsy_only = "STRATEGY\n- Focus: Etsy digital templates for German and English job seekers."
-    assert "your owner gives ventures 25% of your spending: plan for them too" in context.strategy_note(
-        snap(etsy_only, 25)
-    )
-    assert context.strategy_note(snap(etsy_only, 0)) == ""
-    assert context.strategy_note(snap(etsy_only + "\n- Ventures: research the heaviest idea.", 25)) == ""

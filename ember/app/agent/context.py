@@ -25,7 +25,7 @@ from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
 from . import library, review, roadmap, store, ventures
-from .memory import CAPS, Memory
+from .memory import Memory
 from .news import CHANGELOG_LIMIT, Item, News, Shown
 from .sandbox import Jail
 from .store import AgentScope
@@ -42,68 +42,6 @@ MAIL_SHOWN = 3
 # The owner's standing instructions (at most 1,500 characters, JSON-quoted), in every plan and work step.
 INSTRUCTIONS_HEADING = "YOUR OWNER'S STANDING INSTRUCTIONS"
 INSTRUCTIONS_BUDGET = 1_700
-# When the lessons file holds more than this share of its cap, or lessons or strategy hold notes a later version made
-# wrong, the planner is asked to rewrite the file (the note takes the room of the file's text it would show).
-LESSONS_FULL = 0.7
-# Outdated since 0.4.0: write_journal only in some phase (it works whenever the agent is done), and the length limits
-# of tool fields (tools show them, and cut notes): a line naming a tool or field (snake_case) and a length.
-_PHASE = re.compile(r"\b(?:phase|reflect)", re.IGNORECASE)
-_CODE_NAME = re.compile(r"\b[a-z]+(?:_[a-z]+)+\b")
-_LENGTH = re.compile(r"\b\d[\d,.]*\s*(?:chars?|characters)\b|\blength\b|\btoo long\b|\bmaxlength\b", re.IGNORECASE)
-# Outdated since 0.5.0: stopping or saving while the owner decides ("don't draft while waiting", "no spend beyond
-# planning", "sleep long to save money"); waiting is never a reason to stop, and the daily cap is for experiments.
-_WAITING = re.compile(
-    r"\b(?:don'?t|do not|never|no|stop|avoid)\b(?: \w+){0,3} (?:draft|build|mak|creat|writ|work)\w*\b.{0,60}?"
-    r"\b(?:while|until|before)\b.{0,40}?\b(?:wait|block|owner|approv|decision)"
-    r"|\bno spend(?:ing)? beyond\b|\b(?:don'?t|do not|never|avoid) spend(?:ing)?\b.{0,40}?\b(?:beyond|except|outside)\b"
-    r"|\bsleep (?:long|longer|as long as|the max)\w*\b(?!.*\bonly\b)",
-    re.IGNORECASE,
-)
-# Outdated since 0.6.0: the owner building files from Ember's specs (Canva, "owner builds the file"), or Ember only
-# delivering text; Ember makes PDF, Word, Excel files and listing photos itself.
-_HANDOFF = re.compile(
-    r"\bcanva\b|\bowner(?:'s)?(?: [\w,'/]+){0,4} (?:builds?|designs?|formats?|lays? out|makes?|exports?|converts?)"
-    r"(?: \w+){0,2} (?:files?|templates?|pdfs?|designs?|layouts?)\b"
-    r"|\b(?:can'?t|cannot|can not|unable to|no way to) (?:make|create|produce|export|design|build|generate)"
-    r"(?: \w+){0,2} (?:pdfs?|docx|word files?|excel|xlsx|spreadsheets?|images?|pngs?|photos?|files?|templates?"
-    r"|designs?)\b"
-    r"|\bonly (?:\w+ )?text files\b|\bcan (?:actually )?deliver\W+(?:\w+\W+){0,3}text\b",
-    re.IGNORECASE,
-)
-# Outdated since 0.10.0: an idea turned down ("dropshipping declined", "won't pursue this idea"); an idea goes into the
-# venture tree with its path, its smallest test and the numbers, and only a hard rule is a real no (a line that names
-# one stays).
-_DECLINED = re.compile(
-    r"\b(?:dropship\w*|drop-ship\w*|ventures?|(?:business |owner'?s |their )?ideas?)\b.{0,80}?"
-    r"\b(?:declin\w*|refus\w*|won'?t (?:do|pursue|build|try)|not (?:pursu\w*|worth)\w*|ruled out|rejected by me)\b"
-    r"|\b(?:declin\w*|refus\w*|won'?t pursue|not pursu\w*|ruled out)\b.{0,40}?\b(?:dropship\w*|ventures?|ideas?)\b",
-    re.IGNORECASE,
-)
-OUTDATED: tuple[tuple[str, str, Callable[[str], bool]], ...] = (
-    (
-        "0.4.0",
-        "write_journal works whenever you are done, and tools show their length limits",
-        lambda line: (
-            ("write_journal" in line and bool(_PHASE.search(line)))
-            or bool(_CODE_NAME.search(line) and _LENGTH.search(line))
-        ),
-    ),
-    (
-        "0.5.0",
-        "waiting for your owner is never a reason to stop, and your daily cap is there to be spent on experiments",
-        lambda line: bool(_WAITING.search(line)),
-    ),
-    (
-        "0.6.0",
-        "you make finished PDF, Word and Excel files and listing photos yourself, so your owner never builds them",
-        lambda line: bool(_HANDOFF.search(line)),
-    ),
-    (
-        "0.10.0",
-        "no idea is turned down: it goes into your venture tree with its path, smallest test and numbers",
-        lambda line: bool(_DECLINED.search(line)) and "hard rule" not in line.lower(),
-    ),
-)
 PLANNER_BUDGETS = {
     "status": 700,  # (0.10.1: with a venture cycle's research room)
     "instructions": INSTRUCTIONS_BUDGET,
@@ -597,63 +535,15 @@ def instructions_section(s: Snapshot, budget: int = INSTRUCTIONS_BUDGET) -> list
     return [(INSTRUCTIONS_HEADING, text)] if text else []
 
 
-def outdated(text: str) -> list[str]:
-    """What changed since the notes in ``text`` were written ("since 0.6.0 you make ..."), oldest change first."""
-    lines = text.splitlines()
-    return [f"since {version} {change}" for version, change, test in OUTDATED if any(test(line) for line in lines)]
-
-
-def lessons_note(s: Snapshot) -> str:
-    """For the planner only: a request to rewrite the lessons when they fill most of their file or hold notes that a
-    later version made wrong (empty otherwise)."""
-    lessons = s.memory.get("lessons", "")
-    size = len(lessons.encode("utf-8"))
-    full = size > CAPS["lessons"] * LESSONS_FULL
-    changes = outdated(lessons)
-    if not full and not changes:
-        return ""
-    why = []
-    if full:
-        why.append(f"holds {size:,} of {CAPS['lessons']:,} bytes")
-    if changes:
-        why.append(f"has outdated notes ({'; '.join(changes)})")
-    return (
-        f"Memory check: lessons.md {' and '.join(why)}. Plan one step that rewrites it (memory_update lessons replace),"
-        " keeping only what still helps you earn money."
-    )
-
-
-def strategy_note(s: Snapshot) -> str:
-    """For the planner only: a request to rewrite the strategy when it holds notes a later version made wrong, or
-    leaves out the ventures its owner gives a share of the spending to (0.10.0)."""
-    strategy = s.memory.get("strategy", "")
-    changes = outdated(strategy)
-    if s.venture_share and "venture" not in strategy.lower():
-        changes.append(f"since 0.10.0 your owner gives ventures {s.venture_share}% of your spending: plan for them too")
-    if not changes:
-        return ""
-    return (
-        f"Memory check: strategy.md has outdated notes ({'; '.join(changes)}). Plan one step that rewrites it "
-        "(memory_update strategy replace) for how you work now."
-    )
-
-
 def _lessons(s: Snapshot, budget: int) -> str:
-    """The planner's LESSONS: the newest lessons that fit, and the memory check's note after them (in the budget)."""
-    note = lessons_note(s)
-    room = budget - (json_bytes("\n" + note) - 2 if note else 0)
-    lessons = cut(_newest_lines(s.memory.get("lessons", ""), room), room) if room > 0 else ""
-    return "\n".join(part for part in (lessons, note) if part)
+    """The planner's LESSONS: the newest lessons that fit (0.12.0: without the memory checks that asked for blind
+    rewrites)."""
+    return cut(_newest_lines(s.memory.get("lessons", ""), budget), budget)
 
 
 def _strategy(s: Snapshot, budget: int) -> str:
-    """The planner's STRATEGY: as much of it as fits, and the memory check's note after it (in the budget)."""
-    note = strategy_note(s)
-    if not note:
-        return cut(s.memory.get("strategy", ""), budget)
-    room = budget - (json_bytes("\n" + note) - 2)
-    strategy = cut(s.memory.get("strategy", "").rstrip("\n"), room) if room > 0 else ""
-    return "\n".join(part for part in (strategy, note) if part)
+    """The planner's STRATEGY: as much of it as fits."""
+    return cut(s.memory.get("strategy", ""), budget)
 
 
 def workshop_text(s: Snapshot) -> str:

@@ -198,7 +198,6 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     planner, _ = context.planner_context(snap, dry_run=True)
     assert f"== {context.RESEARCH_HEADING} ==" in planner and "== FROM YOUR OWNER ==" not in planner
     assert "\n== MAIL ==\n" in planner and f"\n== {context.INSTRUCTIONS_HEADING} ==\n" in planner
-    assert "Memory check: lessons.md" in planner  # the lessons fill most of their file
     assert "\n== WORKSHOP ==\nWorkshop check: workshop/scripts/" in planner
     assert "\n== TODAY'S REVIEW ==\nää" in planner and "\n== ETSY SHOP ==\nää" in planner
     assert "\n== VENTURES ==\n#1000 [researching] ää" in planner
@@ -227,7 +226,7 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     assert "\n== VENTURE CYCLE ==\n" in brief and "Focus venture: #1000000000 ää" in brief
     assert '\n== FOCUS ==\nFocus milestone: #1000000000 "ää' in brief
     assert "== FROM YOUR OWNER ==" in brief and "\n== MAIL ==\n" in brief and brief.endswith("bytes cut]")
-    assert f"\n== {context.INSTRUCTIONS_HEADING} ==\n" in brief and "Memory check" not in brief
+    assert f"\n== {context.INSTRUCTIONS_HEADING} ==\n" in brief
     # The owner's and the research sections' room comes on top, even when the research itself is cut at the end.
     assert context.BRIEF_BUDGET < context.json_bytes(brief) <= context.BRIEF_MAX
     for request, profile in zip(first_step_and_reflection(brief), (WORK, REFLECT), strict=True):

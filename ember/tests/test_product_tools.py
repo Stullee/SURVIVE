@@ -16,14 +16,13 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from app.agent import context, loop, netguard, prompts, tools
+from app.agent import loop, netguard, prompts, tools
 from app.agent.fake_llm import FakeTransport, validate_request
 from app.economy.metering import picture_tokens, rough_token_count
 from app.products import make
 from tests.test_agent import check_conversations, make_agent, plan, rows, text
 from tests.test_agent import tools as tool_calls
 from tests.test_loop_shapes import run
-from tests.test_owner_news import snapshot_with
 
 PAGE = "# Weekly planner\n\n- [ ] Plan the week\n\n::: lines 4\n"
 
@@ -251,42 +250,6 @@ def test_a_dry_run_makes_products_every_second_cycle(data_dir: Path) -> None:
     assert {r["cycle_id"] for r in by_cycle} == {2}
     files = [e.path for e in agent.roots()[0].walk(300).files]
     assert any(f.endswith(".pdf") for f in files) and any(f.endswith("-photo-1.png") for f in files)
-
-
-# --- memory notes the new abilities made wrong --------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("line", "since"),
-    [
-        ("Canva (free tier) with a full design spec is the right level to hand off.", ["0.6.0"]),
-        ("Split: owner creates seller account, builds file from spec, uploads.", ["0.6.0"]),
-        ("I can't make PDFs, so the owner lays out the template.", ["0.6.0"]),
-        ("Don't draft more speculative content while blocked on an owner decision.", ["0.5.0"]),
-        ("No spend beyond planning/research.", ["0.5.0"]),
-        ("Sleep long between cycles to save money.", ["0.5.0"]),
-        ("Sleep long only when nothing useful is left.", []),
-        ("Never publish before my owner approves it.", []),
-        ("Research before drafting: it shows what buyers already get for free.", []),
-    ],
-)
-def test_notes_made_wrong_by_later_versions_are_found(line: str, since: list[str]) -> None:
-    assert [change.split()[1] for change in context.outdated(f"- [#c3] {line}")] == since
-
-
-def test_an_outdated_strategy_asks_for_a_rewrite_when_planning() -> None:
-    snap = snapshot_with([])
-    snap.memory = {"strategy": "# Strategy\nThe owner builds the files from my specs in Canva.\n", "lessons": ""}
-    note = context.strategy_note(snap)
-    assert note == (
-        "Memory check: strategy.md has outdated notes (since 0.6.0 you make finished PDF, Word and Excel files and "
-        "listing photos yourself, so your owner never builds them). Plan one step that rewrites it (memory_update "
-        "strategy replace) for how you work now."
-    )
-    planner, _ = context.planner_context(snap, dry_run=False)
-    assert f"== STRATEGY ==\n# Strategy\nThe owner builds the files from my specs in Canva.\n{note}" in planner
-    snap.memory["strategy"] = "# Strategy\nSell printable planners on Etsy.\n"
-    assert context.strategy_note(snap) == ""
 
 
 def test_the_prompts_tell_the_agent_to_make_files_and_ask_for_what_is_missing() -> None:
