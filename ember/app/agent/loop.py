@@ -40,7 +40,7 @@ from ..economy.metering import (
     picture_size,
     usd_cap_to_micros,
 )
-from ..economy.pricing import LAST_WILL, PLANNER_OPENING, REVIEW_CALL
+from ..economy.pricing import LAST_WILL, PLANNER_OPENING, REVIEW_CALL, working_cycle_cost
 from ..economy.service import Economy
 from ..integrations import etsy_publisher, mailstore
 from ..integrations.etsy_connection import EtsyConnection
@@ -578,7 +578,9 @@ class CycleRunner:
             except Unpriceable as exc:
                 log.warning("A study of the library can't be priced (%s); skipped", exc)
                 return
-            if quote > min(self.meter.headroom(cycle_id, STUDY), budget - spent):
+            # The study leaves what the cycle needs to work after it: its plan, a work step and the reflection.
+            working = working_cycle_cost(self.settings, self.db, self.economy.life.mode) or 0
+            if quote > min(self.meter.headroom(cycle_id, STUDY, keep=working), budget - spent):
                 log.info("The library's study waits: today's study budget or the money left can't cover it")
                 return
             first, last = parts[0]["part"], parts[-1]["part"]
@@ -703,7 +705,7 @@ class CycleRunner:
                 venture=ctx.venture,
                 library=self.library_on,
             )
-            if not self._affordable(cycle_id, request, brief, turns, ctx.venture):
+            if not self._affordable(cycle_id, request, brief, turns, ctx):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
                 break
             self._progress(cycle_id, step=step, current_action=f"Working (tool step {step}, at most {max_steps})")
@@ -789,9 +791,11 @@ class CycleRunner:
         return [*act.turns, {"role": "user", "content": list(act.pending)}]
 
     def _affordable(
-        self, cycle_id: int, request: dict[str, Any], brief: str, turns: list[dict[str, Any]], venture: bool = False
+        self, cycle_id: int, request: dict[str, Any], brief: str, turns: list[dict[str, Any]], ctx: tools.ToolContext
     ) -> bool:
-        """Only take a step if a reflect call still fits after it."""
+        """Only take a step if a reflect call still fits after it; what that costs is kept in the cycle's state, for
+        the step's calls of their own (research, brainstorms, workshop runs) to leave (0.12.0)."""
+        venture = ctx.venture
         grown = [*turns, {"role": "assistant", "content": [{"type": "text", "text": "x" * STEP_GROWTH_BYTES}]}]
         longest = "ä" * prompts.ENDED_CHARS  # the reflection is told why the work ended: priced with the longest reason
         try:
@@ -811,6 +815,7 @@ class CycleRunner:
             )
         except Unpriceable:
             return False
+        ctx.state.reflect_reserve = reflect_cost
         return step_cost + reflect_cost <= self.meter.headroom(cycle_id)
 
     def _run_tools(
@@ -865,14 +870,14 @@ class CycleRunner:
             venture=ctx.venture,
             library=self.library_on,
         )
+        # 0.12.0: why the work ended is kept first, also when the reflection can't be paid for.
+        self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)
         try:
             if self.meter.quote(request) > self.meter.headroom(cycle_id, "reflect"):
                 return False
         except Unpriceable:
             return False
-        self._progress(
-            cycle_id, phase="reflect", current_action="Reflecting", act_end_reason=act.end_reason[:300] or None
-        )
+        self._progress(cycle_id, phase="reflect", current_action="Reflecting")
         try:
             result = self._call(cycle_id, "reflect", request)
         except (CallRefused, CallFailed):
@@ -910,10 +915,11 @@ class CycleRunner:
                 quote = self.meter.quote(request)
             except Unpriceable as exc:
                 return tools.Outcome(False, f"Error: research can't be priced ({exc}).", "refused: unpriceable")
-            if quote > self.meter.headroom(cycle_id):
+            if quote > self.meter.headroom(cycle_id, keep=ctx.state.reflect_reserve):
                 return tools.Outcome(
                     False,
-                    f"Error: research could cost up to ${micros_to_usd(quote):.3f}, more than this cycle has left.",
+                    f"Error: research could cost up to ${micros_to_usd(quote):.3f}, more than this cycle has left"
+                    f"{_kept(ctx)}.",
                     "refused: budget",
                 )
             try:
@@ -982,10 +988,11 @@ class CycleRunner:
                 quote = self.meter.quote(request)
             except Unpriceable as exc:
                 return tools.Outcome(False, f"Error: a brainstorm can't be priced ({exc}).", "refused: unpriceable")
-            if quote > self.meter.headroom(ctx.cycle_id):
+            if quote > self.meter.headroom(ctx.cycle_id, keep=ctx.state.reflect_reserve):
                 return tools.Outcome(
                     False,
-                    f"Error: a brainstorm could cost up to ${micros_to_usd(quote):.3f}, more than this cycle has left.",
+                    f"Error: a brainstorm could cost up to ${micros_to_usd(quote):.3f}, more than this cycle has left"
+                    f"{_kept(ctx)}.",
                     "refused: budget",
                 )
             try:
@@ -1084,7 +1091,7 @@ class CycleRunner:
 
         def workshop(task: str, files: list[str], script: str | None, folder: str | None) -> tools.Outcome:
             try:
-                run = shop.run(ctx.cycle_id, task, files, script, folder)
+                run = shop.run(ctx.cycle_id, task, files, script, folder, keep=ctx.state.reflect_reserve)
             except WorkshopError as exc:
                 return tools.Outcome(False, f"Error: {exc}.", f"refused: {exc}"[:300])
             except CallRefused as exc:  # the budget guard's state or system refusal: the next call ends the cycle
@@ -1162,6 +1169,12 @@ def _sources(response: dict[str, Any]) -> list[str]:
             if isinstance(item, dict) and isinstance(item.get("url"), str) and item["url"] not in urls:
                 urls.append(item["url"][:300])
     return urls
+
+
+def _kept(ctx: tools.ToolContext) -> str:
+    """What a refusal says of the reflection's reserve (0.12.0), if there is one."""
+    reserve = ctx.state.reflect_reserve
+    return f" after the ${micros_to_usd(reserve):.3f} kept for your reflection" if reserve else ""
 
 
 def _brainstorm_context(status: Any, earned: int, instructions: str, tree: list[Any], parent: Any, theme: str) -> str:

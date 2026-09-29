@@ -386,7 +386,7 @@ class PausingMeter:
     def quote(self, request: dict[str, Any]) -> int:
         return 100_000
 
-    def headroom(self, cycle_id: int, purpose: str) -> int:
+    def headroom(self, cycle_id: int, purpose: str, keep: int = 0) -> int:
         return 10**9
 
     def call(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> Any:

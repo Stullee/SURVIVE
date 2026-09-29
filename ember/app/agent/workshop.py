@@ -110,9 +110,12 @@ class Workshop:
 
     # --- one run ---
 
-    def run(self, cycle_id: int, task: str, files: list[str], script: str | None, folder: str | None) -> Run:
+    def run(
+        self, cycle_id: int, task: str, files: list[str], script: str | None, folder: str | None, keep: int = 0
+    ) -> Run:
         """Run the task; raises WorkshopError before anything is spent, CallRefused for the budget guard's state
-        and system refusals (the cycle ends). Everything else ends up in the returned Run."""
+        and system refusals (the cycle ends). Everything else ends up in the returned Run. ``keep``: what the
+        cycle's reflection may cost, left for it (0.12.0)."""
         self._check_allowed()
         folder = (folder or DEFAULT_FOLDER).strip().strip("/")
         try:
@@ -127,7 +130,7 @@ class Workshop:
             for _path, name, data in inputs:
                 uploaded.append(self.transport.upload_file(name, data, MIME_TYPES[PurePosixPath(name).suffix]))
             request = prompts.workshop_request(self.settings, self._prompt(task, inputs, script), uploaded)
-            responses = self._calls(cycle_id, request, run)
+            responses = self._calls(cycle_id, request, run, keep)
             made = _output_ids(responses)
             run.answer = _answer(responses)
             if made:
@@ -187,7 +190,7 @@ class Workshop:
             )
         return "\n".join(lines)
 
-    def _calls(self, cycle_id: int, request: dict[str, Any], run: Run) -> list[dict[str, Any]]:
+    def _calls(self, cycle_id: int, request: dict[str, Any], run: Run, keep: int = 0) -> list[dict[str, Any]]:
         """The run's metered calls: the first, and its continuations after pause_turn."""
         responses: list[dict[str, Any]] = []
         first = request
@@ -200,12 +203,13 @@ class Workshop:
                 break
             # The run's cap covers all its calls: a continuation gets what the earlier calls left of it.
             left = usd_cap_to_micros(self.settings.workshop_run_cap_usd) - run.cost
-            room = min(self.meter.headroom(cycle_id, WORKSHOP), left)
+            room = min(self.meter.headroom(cycle_id, WORKSHOP, keep=keep), left)
             if quote > room:
                 going_on = "going on (the run paused)" if attempt else "the run"
                 run.failure = (
                     f"{going_on} could cost up to ${micros_to_usd(quote):.3f}, but only ${micros_to_usd(room):.3f} "
-                    "is left for it (the workshop's cap per run, the daily cap or the balance)"
+                    "is left for it (the workshop's cap per run, the daily cap or the balance"
+                    + (f", after the ${micros_to_usd(keep):.3f} kept for your reflection)" if keep else ")")
                 )
                 break
             try:

@@ -733,6 +733,9 @@ class CycleTools:
     journal_written: bool = False
     strikes: int = 0
     counts: dict[str, int] = field(default_factory=dict)
+    # 0.12.0: what the reflection may cost, as the last work step was checked against: research, brainstorms and
+    # workshop runs leave it (they spent it, and the cycle ended without reflecting).
+    reflect_reserve: int = 0
 
 
 @dataclass(frozen=True)

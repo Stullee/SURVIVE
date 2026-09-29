@@ -486,9 +486,10 @@ class MeteredModel:
             Decimal(str(self.settings.code_execution_usd_per_hour)),
         )
 
-    def headroom(self, cycle_id: int, purpose: str = "work") -> int:
+    def headroom(self, cycle_id: int, purpose: str = "work", keep: int = 0) -> int:
         """How much the next call of ``purpose`` in this cycle may cost: the tightest of the cycle cap, the daily
-        cap and the balance (keeping the last-will reserve unless the will is written or this is the will)."""
+        cap and the balance (keeping the last-will reserve unless the will is written or this is the will), less
+        ``keep`` of each that also limits a later call (0.12.0: the reflection's reserve)."""
         status = self.life.evaluate()
         scope = self.life.scope()
         with self.db.connection() as conn:
@@ -505,7 +506,8 @@ class MeteredModel:
             own_cap = daily_cap  # only the daily cap and the balance limit it (a study also its own budget: loop.py)
         else:
             own_cap = cycle["cap_micros"] - spent - reserved
-        room = min(own_cap, daily_cap - today - pending, status.balance - pending)
+        in_cap = keep if purpose not in OUTSIDE_CYCLE_CAP else 0  # a workshop run's own cap isn't the reflection's
+        room = min(own_cap - in_cap, daily_cap - today - pending - keep, status.balance - pending - keep)
         if purpose != "last_will" and status.last_will_at is None:
             room = min(
                 room, status.balance - pending - (last_will_reserve(self.settings, self.db, self.life.mode) or 0)
