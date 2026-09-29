@@ -698,7 +698,8 @@ reported as 365 days while it is unknown, for example before any spending),
 `today_api_spend_usd`, `daily_cap_usd`, `safe_mode`, `kill_switch_engaged`,
 `next_wake_at`, `cycle_running` and counts of what waits for you:
 `approvals_pending`, `approvals_todo` (approved, not yet marked done),
-`inbox_unread` and `upgrades_new`, and of Ember's mailbox: `email_unread`
+`inbox_unread`, `upgrades_new` and `ventures_proposed` (business cases
+waiting for you), and of Ember's mailbox: `email_unread`
 (emails the agent hasn't read) and `email_waiting` (approved emails not sent
 yet). It never contains any text the agent wrote.
 In dry run the numbers are the dry run's. If the database can't be read,
