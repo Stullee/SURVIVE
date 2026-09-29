@@ -846,10 +846,15 @@ def listings_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) 
     ]
 
 
+MAX_ORDERS_READ = 1_000  # the orders looked at for the dashboard (0.12.0)
+
+
 def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> list[dict[str, Any]]:
+    """The newest ``limit`` orders, and every older one that still needs the owner (0.12.0: the list stopped at 20,
+    so older orders lost their Record as revenue button): not recorded yet, or recorded and refunded since."""
     where, params = scope.where()
     rows = conn.execute(
-        f"SELECT * FROM etsy_orders WHERE {where} ORDER BY ordered_at DESC, id DESC LIMIT ?", (*params, limit)
+        f"SELECT * FROM etsy_orders WHERE {where} ORDER BY ordered_at DESC, id DESC LIMIT ?", (*params, MAX_ORDERS_READ)
     ).fetchall()
     out = []
     for r in rows:
@@ -881,7 +886,9 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
                 and r["total_cents"] > 0,
             }
         )
-    return out
+    return out[:limit] + [
+        o for o in out[limit:] if o["recordable"] or (o["recorded"] and o["status"] in etsy.DEAD_ORDERS)
+    ]
 
 
 def order_project(conn: sqlite3.Connection, scope: AgentScope, items: list[Any]) -> tuple[int | None, int | None]:

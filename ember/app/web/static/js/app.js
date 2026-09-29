@@ -1430,8 +1430,15 @@
     return Math.max(0, Math.abs(num(e.amount_usd) || 0) - Math.abs(num(e.corrected_usd) || 0));
   }
 
+  // 0.12.0: the dashboard brings the newest 20 entries; older ones load on request and stay until the page reloads.
+  var LEDGER_PAGE = 100;
+
   function renderLedger(d) {
-    var entries = arr(isObject(d.ledger) ? d.ledger.entries : null);
+    var newest = arr(isObject(d.ledger) ? d.ledger.entries : null);
+    var seen = {};
+    newest.forEach(function (e) { seen[String(e.id)] = true; });
+    var older = arr(ui.ledgerOlder).filter(function (e) { return !seen[String(e.id)]; });
+    var entries = newest.concat(older);
     var dry = isDryRun(d);
     ui.ledgerById = {};
     if (!isObject(d.ledger)) {
@@ -1481,6 +1488,27 @@
         extra.length ? h("p", { class: "l-extra", text: extra.join(" · ") }) : null,
         h("div", { class: "l-foot" }, h("p", { class: "l-meta", text: meta.join(" · ") }), correct));
     }));
+    var more = newest.length >= 20 && ui.ledgerEnd !== true;
+    if (more) $("ledger-list").appendChild(h("li", { class: "ledger-more" }, olderButton(entries[entries.length - 1].id)));
+  }
+
+  function olderButton(lastId) {
+    var b = h("button", { type: "button", class: "btn", text: "Show older entries" });
+    b.addEventListener("click", function () {
+      b.disabled = true;
+      b.textContent = "Loading…";
+      request("GET", "api/ledger?limit=" + LEDGER_PAGE + "&before=" + encodeURIComponent(String(lastId))).then(function (res) {
+        if (!res.ok || !isObject(res.data)) throw httpError(res);
+        var got = arr(res.data.entries);
+        ui.ledgerOlder = arr(ui.ledgerOlder).concat(got);
+        if (got.length < LEDGER_PAGE) ui.ledgerEnd = true;
+        if (ui.data) safely("ledger", function () { renderLedger(ui.data); });
+      }).catch(function (err) {
+        b.disabled = false;
+        b.textContent = "Show older entries (failed: " + errorText(err) + ")";
+      });
+    });
+    return b;
   }
 
   function origAmountText(e) {

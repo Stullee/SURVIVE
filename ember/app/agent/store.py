@@ -498,6 +498,18 @@ def workshop_runs_since(conn: sqlite3.Connection, scope: AgentScope, since: str)
     return int(row.fetchone()[0])
 
 
+def approvals_for_owner(conn: sqlite3.Connection, scope: AgentScope, closed: int = 30) -> list[sqlite3.Row]:
+    """The requests the owner's Approvals tab lists, newest first: every one still waiting or still to do, and the
+    newest ``closed`` others (0.12.0: only the newest 30 of all were listed, so older open ones vanished)."""
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT * FROM approvals WHERE {where} AND (status IN ('pending', 'approved', 'approved_with_changes')"
+        f" OR id IN (SELECT id FROM approvals WHERE {where} AND status NOT IN ('pending', 'approved',"
+        " 'approved_with_changes') ORDER BY id DESC LIMIT ?)) ORDER BY id DESC",
+        (*params, *params, closed),
+    ).fetchall()
+
+
 def queue(conn: sqlite3.Connection, table: str, scope: AgentScope, limit: int = 30) -> list[sqlite3.Row]:
     if table not in {"approvals", "messages", "upgrades"}:
         raise ValueError("unknown table")

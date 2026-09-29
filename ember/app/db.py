@@ -15,6 +15,7 @@ At runtime the whole process shares one connection (see :class:`Database`).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -137,6 +138,32 @@ def applied_versions(conn: sqlite3.Connection) -> list[int]:
     return [row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")]
 
 
+def _check_applied(conn: sqlite3.Connection, migrations: list[Migration]) -> None:
+    """0.12.0: an applied migration must be this version's migration of that number, by name, not only by number
+    (a database migrated by another build's 0024 would skip this one's), and by content once its checksum is known."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(schema_migrations)")}
+    if "sha256" not in columns:
+        conn.execute("ALTER TABLE schema_migrations ADD COLUMN sha256 TEXT")
+    by_version = {m.version: m for m in migrations}
+    for version, name, digest in conn.execute("SELECT version, name, sha256 FROM schema_migrations").fetchall():
+        known = by_version.get(version)
+        if known is None:
+            continue  # a newer version's: refused by migrate
+        if name != known.name:
+            raise MigrationError(
+                f"migration {version:04d} in the database is {name!r}, but this version's is {known.name!r}: the "
+                "database was written by another build (restore a backup, or use that build)"
+            )
+        if digest is None:
+            conn.execute("UPDATE schema_migrations SET sha256 = ? WHERE version = ?", (_digest(known), version))
+        elif digest != _digest(known):
+            log.warning("Migration %04d_%s changed since it was applied", version, name)
+
+
+def _digest(migration: Migration) -> str:
+    return hashlib.sha256(migration.path.read_bytes()).hexdigest()
+
+
 def migrate(db_file: Path, migrations: list[Migration] | None = None, backup_dir: Path | None = None) -> list[int]:
     """Bring the database up to date. Returns the versions that were applied."""
     migrations = discover_migrations() if migrations is None else migrations
@@ -145,6 +172,7 @@ def migrate(db_file: Path, migrations: list[Migration] | None = None, backup_dir
     try:
         conn.execute("PRAGMA journal_mode = WAL")
         done = applied_versions(conn)
+        _check_applied(conn, migrations)
         known = {m.version for m in migrations}
         unknown = [v for v in done if v not in known]
         if unknown:
@@ -192,8 +220,8 @@ def _apply(conn: sqlite3.Connection, migration: Migration, statements: list[str]
                 f"migration {migration.path.name} would leave {len(violations)} broken foreign key(s), e.g. {first}"
             )
         conn.execute(
-            "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
-            (migration.version, migration.name, utcnow()),
+            "INSERT INTO schema_migrations (version, name, applied_at, sha256) VALUES (?, ?, ?, ?)",
+            (migration.version, migration.name, utcnow(), _digest(migration)),
         )
         conn.execute("COMMIT")
     except (sqlite3.Error, MigrationError) as exc:

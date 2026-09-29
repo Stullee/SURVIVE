@@ -206,11 +206,15 @@ def events(request: Request, limit: int = Query(100, ge=1, le=500)) -> list[dict
 
 
 @router.get("/api/ledger")
-def ledger(request: Request, limit: int = Query(50, ge=1, le=500)) -> JSONResponse:
+def ledger(
+    request: Request, limit: int = Query(50, ge=1, le=500), before: int | None = Query(None, ge=1)
+) -> JSONResponse:
+    """The ledger's entries, newest first; ``before``: those older than that entry (0.12.0: the tab's older rows)."""
     economy = _economy(request)
     if economy is None:
         return UNAVAILABLE
-    return JSONResponse({"mode": economy.mode, "entries": economy.books.entries(economy.life.scope(), limit)})
+    entries = economy.books.entries(economy.life.scope(), limit, before)
+    return JSONResponse({"mode": economy.mode, "entries": entries})
 
 
 @router.post("/api/ledger/{kind}")

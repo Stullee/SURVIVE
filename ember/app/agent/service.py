@@ -399,7 +399,11 @@ class Agent:
                 self.publisher,
             )
             end = runner.run(trigger)
-            self._after(trigger, end)
+            try:
+                self._after(trigger, end)
+            except Exception:  # noqa: BLE001 - 0.12.0: it left the last wake time standing, so the agent woke again
+                log.exception("Scheduling the next wake failed")
+                self._fallback_wake()
             self._scrub_quietly()  # what this cycle wrote after the owner removed a message
             return end
         finally:
@@ -466,6 +470,17 @@ class Agent:
             except SandboxError:  # gone or unreadable meanwhile
                 continue
         return changed
+
+    def _fallback_wake(self) -> None:
+        """The next wake when working it out failed (0.12.0): the default interval from now, never the last one."""
+        minutes = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes)
+        with contextlib.suppress(Exception):
+            self._set_time("next_wake_at", self.clock.now() + timedelta(minutes=minutes))
+            self.db.set_meta(
+                self._key("next_wake_reason"),
+                f"working out the next wake failed (see the System log); in {minutes} min",
+            )
+            events.record(self.db, "error", "agent", "Working out the next wake failed; waking by the default interval")
 
     def _after(self, trigger: str, end: CycleEnd) -> None:
         now = self.clock.now()

@@ -437,11 +437,14 @@ class Books:
             )
         return series
 
-    def entries(self, scope: Scope, limit: int = 50) -> list[dict[str, Any]]:
+    def entries(self, scope: Scope, limit: int = 50, before: int | None = None) -> list[dict[str, Any]]:
+        """The newest ``limit`` entries, or those older than entry ``before`` (0.12.0: the tab showed only 20)."""
         where, params = scope.where()
+        older = " AND id < ?" if before is not None else ""
         with self.db.connection() as conn:
             rows = conn.execute(
-                f"SELECT {_ENTRY_COLUMNS} FROM ledger WHERE {where} ORDER BY id DESC LIMIT ?", (*params, limit)
+                f"SELECT {_ENTRY_COLUMNS} FROM ledger WHERE {where}{older} ORDER BY id DESC LIMIT ?",
+                (*params, *((before,) if before is not None else ()), limit),
             ).fetchall()
             corrections = self._corrections(conn, [row["id"] for row in rows])
         return [self._entry_json(row, corrections.get(row["id"], 0)) for row in rows]

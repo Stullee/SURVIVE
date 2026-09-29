@@ -142,11 +142,15 @@ class News:
                 if r["result_link"]:
                     head += f". Link: {_q(r['result_link'])}"
             elif r["status"] in ("approved", "approved_with_changes"):
-                head += (
-                    ". Ember's code sends it and you'll hear the result"
-                    if email
-                    else ". Your owner will carry it out and report back"
-                )
+                executor = _column(r, "executor")  # 0.12.0: Ember's code makes Etsy listings and changes itself
+                if email:
+                    head += ". Ember's code sends it and you'll hear the result"
+                elif executor in ("etsy_listing", "etsy_edit"):
+                    head += ". Ember's code carries it out in the Etsy shop and you'll hear the result"
+                elif executor == "reddit_link":
+                    head += ". Your owner posts it and reports back"
+                else:
+                    head += ". Your owner will carry it out and report back"
             lines.append(head + ".")
         return lines
 

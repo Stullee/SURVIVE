@@ -109,7 +109,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "seen_by_agent": r["seen_cycle_id"] is not None,
                 "simulated": r["mode"] == "dry_run",
             }
-            for r in store.queue(conn, "approvals", scope)
+            for r in store.approvals_for_owner(conn, scope)
         ]
         inbox = [
             {
