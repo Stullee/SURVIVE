@@ -671,23 +671,63 @@ def meta_key(mode: str, name: str) -> str:
 GOOD_PHOTOS = 5  # guide 'etsy': 5 to 10 photos; fewer is something to fix at once
 
 
-def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_name: str, daily_limit: int) -> str:
-    """The ETSY SHOP section of the plan: the listings Ember made and how they do, and this week's orders."""
+NEWEST_SHOWN = 5  # listings (and requests) the plan describes one by one, the newest first
+
+
+def sold_counts(conn: sqlite3.Connection, scope: AgentScope, since: str | None = None) -> dict[int, int]:
+    """How many of each listing sold (in orders that count: not cancelled or refunded), since ``since`` if given."""
     where, params = scope.where()
-    rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC LIMIT 10", params).fetchall()
+    period = " AND ordered_at >= ?" if since else ""
+    sold: dict[int, int] = {}
+    for order in conn.execute(
+        f"SELECT items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}{period}",
+        (*params, since) if since else params,
+    ):
+        for item in json.loads(order["items"] or "[]"):
+            sold[item.get("listing_id")] = sold.get(item.get("listing_id"), 0) + int(item.get("quantity") or 1)
+    return sold
+
+
+def live_rows(rows: list[sqlite3.Row], sold: dict[int, int]) -> list[sqlite3.Row]:
+    """The listings live on Etsy, top sellers first, then the most favorited and the most seen (0.12.0: the plan saw
+    only the newest 10 and the review the newest 8, so the oldest listings, seen the longest, dropped out first)."""
+    live = [r for r in rows if r["listing_id"] and r["status"] == "active" and (r["state"] or "active") == "active"]
+    return sorted(
+        live, key=lambda r: (-sold.get(r["listing_id"], 0), -(r["favorites"] or 0), -(r["views"] or 0), -r["id"])
+    )
+
+
+def live_line(rows: list[sqlite3.Row], sold: dict[int, int], what: str = "sold") -> str | None:
+    """One line for every live listing: its number, its title's start and its numbers."""
+    live = live_rows(rows, sold)
+    if not live:
+        return None
+    entries = []
+    for r in live:
+        title = " ".join((r["title"] or "").split())
+        title = title if len(title) <= 24 else title[:23].rstrip() + "…"
+        views = r["views"] if r["views"] is not None else "?"
+        favorites = r["favorites"] if r["favorites"] is not None else "?"
+        entries.append(f"#{r['listing_id']} {title} {sold.get(r['listing_id'], 0)}s {views}v {favorites}f")
+    return f"All {len(live)} live listings, top sellers first ({what} s, views v, favorites f): " + " · ".join(entries)
+
+
+def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_name: str, daily_limit: int) -> str:
+    """The ETSY SHOP section of the plan: every live listing and how it does (0.12.0: all of them, top sellers first),
+    this week's orders, what to fix, and the newest listings and requests one by one."""
+    where, params = scope.where()
+    rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC", params).fetchall()
     week = to_iso(clock.now() - timedelta(days=7))
     orders = conn.execute(
         f"SELECT total_cents, currency, items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}"
         " AND ordered_at >= ?",
         (*params, week),
     ).fetchall()
-    sold: dict[int, int] = {}
-    for order in conn.execute(f"SELECT items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}", params):
-        for item in json.loads(order["items"] or "[]"):
-            sold[item.get("listing_id")] = sold.get(item.get("listing_id"), 0) + int(item.get("quantity") or 1)
-    lines = [
-        f"Shop: {shop_name}. Listings you made (newest first):" if rows else f"Shop: {shop_name}. No listings yet."
-    ]
+    sold = sold_counts(conn, scope)
+    lines = [f"Shop: {shop_name}." + ("" if rows else " No listings yet.")]
+    summary = live_line(rows, sold)
+    if summary:
+        lines.append(summary)
     few: list[str] = []  # 0.11.1: the plans never saw a photo count, so single-photo listings stayed that way
     for r in rows:
         if r["listing_id"] and r["status"] in ("active", "draft"):
@@ -697,13 +737,6 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
                 listing = None
             if listing is not None and len(listing.photos) < GOOD_PHOTOS:
                 few.append(f"#{r['listing_id']} ({len(listing.photos)})")
-            views = r["views"] if r["views"] is not None else "?"
-            favorites = r["favorites"] if r["favorites"] is not None else "?"
-            numbers = f"{views} views · {favorites} favorites · {sold.get(r['listing_id'], 0)} sold"
-            state = r["state"] or r["status"]
-            lines.append(f"- #{r['listing_id']} [{state}] {r['title'][:80]} · {numbers} · since {r['started_at'][:10]}")
-        else:
-            lines.append(f"- request #{r['approval_id']} [{r['status']}] {r['title'][:80]}: {(r['error'] or '')[:100]}")
     if few:
         lines.append(
             f"Fewer than {GOOD_PHOTOS} photos: {', '.join(few)}. Etsy shows up to {etsy.MAX_PHOTOS}: make more and"
@@ -717,6 +750,14 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
         f"Orders in the last 7 days: {len(orders)}" + (f" ({money})" if money else "") + "; revenue counts once your"
         " owner records it."
     )
+    if rows:
+        lines.append("Newest:")
+    for r in rows[:NEWEST_SHOWN]:
+        if r["listing_id"] and r["status"] in ("active", "draft"):
+            state = r["state"] or r["status"]
+            lines.append(f"- #{r['listing_id']} [{state}] {r['title'][:80]} · since {r['started_at'][:10]}")
+        else:
+            lines.append(f"- request #{r['approval_id']} [{r['status']}] {r['title'][:80]}: {(r['error'] or '')[:100]}")
     left = max(0, daily_limit - created_today(conn, clock, scope))
     lines.append(f"Listings Ember can still create today: {left} of {daily_limit}.")
     if any(r["listing_id"] and r["status"] == "active" for r in rows):

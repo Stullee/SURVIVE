@@ -14,6 +14,8 @@ Your results now reach your records: what you earn counts where it belongs.
 - An Etsy order counts only your lines, net of tax, shipping, coupons and refunds (it counted the whole receipt), and a
   refunded or cancelled order no longer counts as sold.
 - Every cycle, model call and review records which version of Ember ran it.
+- ETSY SHOP and your daily review list every live listing, top sellers first (they showed only the newest 10 and 8,
+  so the listings live the longest dropped out): in ETSY SHOP one line, each with its sold, views and favorites.
 
 ## 0.11.2
 

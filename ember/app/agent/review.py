@@ -23,7 +23,7 @@ from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.ledger import Books, Scope
 from ..economy.life import LifeStatus
-from ..integrations import etsy
+from ..integrations import etsy, etsy_publisher
 from ..version import app_version
 from . import roadmap, ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
@@ -398,35 +398,35 @@ def _decisions(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
 
 
 def _etsy(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
-    """The Etsy listings Ember made and how they did: the clearest demand signal there is."""
+    """The Etsy listings Ember made and how they did: the clearest demand signal there is. Every live listing, top
+    sellers in the period first (0.12.0: the newest 8 only, so the listings live the longest dropped out first), and
+    the newest requests that didn't become one."""
     where, params = scope.where()
-    rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC LIMIT 8", params).fetchall()
+    rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC", params).fetchall()
     if not rows:
         return ""
-    sold: dict[int, int] = {}
+    sold = etsy_publisher.sold_counts(conn, scope, since)
     orders = conn.execute(
-        f"SELECT total_cents, currency, items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}"
-        " AND ordered_at >= ?",
+        f"SELECT total_cents, currency FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS} AND ordered_at >= ?",
         (*params, since),
     ).fetchall()
-    for order in orders:
-        for item in json.loads(order["items"] or "[]"):
-            sold[item.get("listing_id")] = sold.get(item.get("listing_id"), 0) + int(item.get("quantity") or 1)
     totals: dict[str, int] = {}
     for order in orders:
         totals[order["currency"]] = totals.get(order["currency"], 0) + int(order["total_cents"])
-    lines = ["ETSY LISTINGS YOU MADE"]
-    for r in rows:
-        if r["listing_id"] and r["status"] in ("active", "draft"):
-            views = r["views"] if r["views"] is not None else "?"
-            favorites = r["favorites"] if r["favorites"] is not None else "?"
-            lines.append(
-                f"- #{r['listing_id']} [{r['state'] or r['status']}] {_one_line(r['title'], 80)} · since"
-                f" {r['started_at'][:10]} · {views} views · {favorites} favorites · {sold.get(r['listing_id'], 0)} sold"
-                " in the period"
-            )
-        else:
-            lines.append(f"- request #{r['approval_id']} [{r['status']}] {_one_line(r['title'], 80)}")
+    lines = ["ETSY LISTINGS YOU MADE (live ones, top sellers in the period first)"]
+    live = etsy_publisher.live_rows(rows, sold)
+    for r in live:
+        views = r["views"] if r["views"] is not None else "?"
+        favorites = r["favorites"] if r["favorites"] is not None else "?"
+        lines.append(
+            f"- #{r['listing_id']} {_one_line(r['title'], 80)} · since {r['started_at'][:10]} · {views} views ·"
+            f" {favorites} favorites · {sold.get(r['listing_id'], 0)} sold in the period"
+        )
+    shown = {r["id"] for r in live}
+    for r in [r for r in rows if r["id"] not in shown][:5]:
+        state = r["state"] or r["status"]
+        what = f"#{r['listing_id']}" if r["listing_id"] else f"request #{r['approval_id']}"
+        lines.append(f"- {what} [{state}] {_one_line(r['title'], 80)}")
     money = ", ".join(f"{cents / 100:.2f} {currency}" for currency, cents in totals.items()) or "nothing"
     lines.append(f"Orders in the period: {len(orders)} ({money}); revenue counts once your owner records it.")
     return "\n".join(lines)

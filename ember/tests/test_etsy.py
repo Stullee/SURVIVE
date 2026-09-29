@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 httpx2 = pytest.importorskip("httpx2")
 
 from app import paths  # noqa: E402
-from app.agent import prompts, tools  # noqa: E402
+from app.agent import prompts, review, tools  # noqa: E402
 from app.agent.fake_llm import FakeTransport, request_kind, validate_request  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.economy.clock import Clock, to_iso  # noqa: E402
@@ -493,7 +493,8 @@ def test_an_approved_listing_goes_live_in_the_fake_shop(data_dir: Path) -> None:
     agent.run_cycle("schedule")
     plan = next(r for r in list(fake.sent)[before:] if request_kind(r) == "plan")
     text = plan["messages"][0]["content"][0]["text"]
-    assert "\n== ETSY SHOP ==\nShop: EmberTestShop. Listings you made (newest first):\n- #900000001 [active]" in text
+    assert "\n== ETSY SHOP ==\nShop: EmberTestShop.\nAll 1 live listings, top sellers first (sold s, views v," in text
+    assert "\nNewest:\n- #900000001 [active]" in text
     assert rows(agent, "SELECT views FROM etsy_listings")[0]["views"] > 0
 
 
@@ -1075,7 +1076,7 @@ def test_an_order_counts_only_embers_lines_and_follows_its_refunds(data_dir: Pat
     assert (first[81]["total"], first[81]["status"], first[81]["recordable"]) == ("4.41 EUR", "paid", True)
     assert [i["listing_id"] for i in first[81]["items"]] == [ours]  # only Ember's line
     assert (first[82]["total"], first[82]["recordable"]) == ("6.00 GBP", False)  # never prefilled as dollars
-    assert "2 sold" in sold()
+    assert f"#{ours} Printable chore charts… 2s " in sold()
 
     entry = owner_entry(agent.economy, "revenue", "4.41", idempotency_key=first[81]["revenue_key"], test_money=True)
     receipt.update(status="partially refunded", refunded=745)  # half the receipt: Ember's share is 2.45
@@ -1085,7 +1086,7 @@ def test_an_order_counts_only_embers_lines_and_follows_its_refunds(data_dir: Pat
     refunded = shown()[81]
     assert (refunded["total"], refunded["status"], refunded["recordable"]) == ("0.00 EUR", "fully refunded", False)
     assert refunded["entry_id"] == entry["entry"]["id"]  # the dashboard asks for a correction of that entry
-    assert "1 sold" in sold()  # a refunded order no longer counts
+    assert f"#{ours} Printable chore charts… 1s " in sold()  # a refunded order no longer counts
 
 
 # --- what the agent and the owner see --------------------------------------------------------------------------
@@ -1420,3 +1421,44 @@ def test_etsys_categories_are_fetched_again_after_a_day(tmp_path: Path) -> None:
     assert not cache.stale(now)
     cache.save([(1, "Paper")], to_iso(now - timedelta(hours=25)))
     assert cache.stale(now)
+
+
+def test_the_plan_and_the_review_see_every_live_listing_top_sellers_first(data_dir: Path) -> None:
+    """0.12.0: the plan saw only the newest 10 listings and the review the newest 8, so the oldest ones, live the
+    longest and with the most views, dropped out first."""
+    agent, _ = make_agent(data_dir, [])
+    scope = agent.scope()
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        cycle_id = conn.execute(
+            "INSERT INTO cycles (life_id, boot_id, started_at, status, trigger, simulated, cap_micros, session)"
+            " VALUES (?, 'b', ?, 'running', 'schedule', 1, 0, ?)",
+            (scope.life_id, now, scope.session),
+        ).lastrowid
+        for n in range(1, 16):  # listing 1 is the oldest, and the only one that sold
+            approval_id = conn.execute(
+                "INSERT INTO approvals (mode, session, life_id, cycle_id, created_at, type, title, description,"
+                " payload, payload_sha256, expected_cost, expected_benefit, executor, action) VALUES (?, ?, ?, ?, ?,"
+                " 'sell', 't', 'd', 'p', ?, 'c', 'b', 'etsy_listing', '{}')",
+                (scope.mode, scope.session, scope.life_id, cycle_id, now, f"s{n}"),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO etsy_listings (mode, session, approval_id, started_at, finished_at, status, title,"
+                " listing_id, state, views, favorites) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, 'active', ?, ?)",
+                (scope.mode, scope.session, approval_id, now, now, f"Planner {n}", 5_000 + n, 100 - n, n % 3),
+            )
+        conn.execute(
+            "INSERT INTO etsy_orders (mode, session, receipt_id, ordered_at, total, total_cents, currency, items,"
+            " synced_at, status) VALUES (?, ?, 1, ?, '4.90 EUR', 490, 'EUR', ?, ?, 'paid')",
+            (scope.mode, scope.session, now, json.dumps([{"listing_id": 5_001, "quantity": 2}]), now),
+        )
+    with agent.db.connection() as conn:
+        shop = etsy_publisher.shop_text(conn, scope, agent.clock, "Shop", 3)
+        review_text = review._etsy(conn, scope, to_iso(agent.clock.now() - timedelta(days=1)))
+    summary = next(line for line in shop.splitlines() if line.startswith("All 15 live listings"))
+    order = [int(part.split(" ", 1)[0][1:]) for part in summary.split(": ", 1)[1].split(" · ")]
+    assert sorted(order) == list(range(5_001, 5_016)) and order[0] == 5_001  # all, the one that sold first
+    assert "#5001 Planner 1 2s 99v 1f" in summary
+    assert order[1:] == sorted(order[1:], key=lambda n: (-((n - 5_000) % 3), n))  # then the most favorited
+    listed = [line for line in review_text.splitlines() if line.startswith("- #")]
+    assert len(listed) == 15 and listed[0].startswith("- #5001 Planner 1 ·") and "2 sold in the period" in listed[0]
