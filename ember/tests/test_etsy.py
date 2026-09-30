@@ -1194,6 +1194,7 @@ def test_the_rebuilt_approvals_keep_every_rule(data_dir: Path) -> None:
         "approvals_one_pending",
         "approvals_action_fixed",
         "approvals_action_pair",
+        "approvals_attribution_fixed",  # 0.12.0
         "approvals_closed_by_final",
         "approvals_decision_final",
         "approvals_no_delete",
@@ -1260,6 +1261,7 @@ def test_a_0_8_shop_keeps_its_listings_through_the_0_9_migration(tmp_path: Path)
         31,
         32,
         33,
+        34,
     ]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:

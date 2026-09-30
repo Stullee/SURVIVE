@@ -60,6 +60,9 @@ log = logging.getLogger(__name__)
 CYCLE_END_STATUSES = frozenset({"completed", "idle", "refused", "failed", "stopped", "interrupted"})
 # Calls that open a wake cycle; refusing one of them for lack of money is starvation.
 OPENING_PURPOSES = frozenset({"plan", "last_will"})
+# 0.12.0: the calls that do a cycle's work, charged to the venture and milestone they serve (the cycle's focus, or the
+# venture a research call names); the rest (plans, reviews, brainstorms, library study, the last will) is overhead.
+WORK_PURPOSES = ("work", "reflect", "research", "workshop")
 _PURPOSE = re.compile(r"^[a-z_]{1,32}$")
 _TRIGGER = re.compile(r"^[a-z_]{1,32}$")
 CLOCK_TOLERANCE_SECONDS = 60
@@ -449,8 +452,11 @@ class MeteredModel:
 
     # --- calls ---
 
-    def call(self, cycle_id: int, purpose: str, request: Mapping[str, Any]) -> CallResult:
-        """Reserve, send and settle one model request. Raises CallRefused or CallFailed."""
+    def call(
+        self, cycle_id: int, purpose: str, request: Mapping[str, Any], venture_id: int | None = None
+    ) -> CallResult:
+        """Reserve, send and settle one model request (``venture_id``: the venture it serves, if not the cycle's).
+        Raises CallRefused or CallFailed."""
         with self.db.connection() as conn:
             if conn.in_transaction:
                 # The reservation must be committed before the request is sent, and nothing may hold the
@@ -458,7 +464,7 @@ class MeteredModel:
                 raise RuntimeError("model calls must not run inside a database transaction")
         # The request that is priced is exactly the request that is sent.
         frozen = copy.deepcopy(dict(request))
-        reservation = self.reserve(cycle_id, purpose, frozen)
+        reservation = self.reserve(cycle_id, purpose, frozen, venture_id)
         try:
             outcome = self.transport.send(frozen)
         except Exception as exc:  # noqa: BLE001 - a transport bug must not lose the reservation
@@ -517,7 +523,9 @@ class MeteredModel:
             )
         return max(0, room)
 
-    def reserve(self, cycle_id: int, purpose: str, request: Mapping[str, Any]) -> Reservation:
+    def reserve(
+        self, cycle_id: int, purpose: str, request: Mapping[str, Any], venture_id: int | None = None
+    ) -> Reservation:
         """Check and record a call before it is sent. Raises CallRefused after committing the refusal."""
         if not _PURPOSE.match(purpose):
             raise ValueError("bad purpose name")
@@ -572,7 +580,17 @@ class MeteredModel:
                 call_id = None
                 if cycle is not None:
                     call_id = self._insert_call(
-                        conn, cycle_id, purpose, model, "refused", now, estimate, plan, None, refusal[0]
+                        conn,
+                        cycle_id,
+                        purpose,
+                        model,
+                        "refused",
+                        now,
+                        estimate,
+                        plan,
+                        None,
+                        refusal[0],
+                        venture_id=venture_id,
                     )
                 if starving:
                     state = self.life.starve(purpose, estimate)
@@ -599,6 +617,7 @@ class MeteredModel:
                     search_price,
                     geo,
                     container_price,
+                    venture_id=venture_id,
                 )
         if refusal is not None:
             raise CallRefused(refusal[0], refusal[1], call_id, state)
@@ -708,7 +727,20 @@ class MeteredModel:
         search_price: Decimal | None = None,
         geo: Decimal | None = None,
         container_price: Decimal | None = None,
+        venture_id: int | None = None,
     ) -> int:
+        # 0.12.0: what the call serves: its cycle's focus milestone, and the venture it names or the cycle's (its focus,
+        # or its project's); overhead serves none.
+        venture = milestone = None
+        if purpose in WORK_PURPOSES:
+            focus = conn.execute(
+                "SELECT y.milestone_id, COALESCE(y.venture_id, p.venture_id) FROM cycles y"
+                " LEFT JOIN projects p ON p.id = y.project_id WHERE y.id = ?",
+                (cycle_id,),
+            ).fetchone()
+            if focus is not None:
+                milestone, venture = focus[0], focus[1]
+            venture = venture_id if venture_id is not None else venture
         snapshot = None
         if price is not None:
             snapshot = json.dumps(
@@ -722,8 +754,8 @@ class MeteredModel:
             )
         cursor = conn.execute(
             "INSERT INTO llm_calls (boot_id, cycle_id, purpose, model, simulated, status, ts, local_day,"
-            " estimate_micros, guard_reason, price_snapshot, plan, app_version)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " estimate_micros, guard_reason, price_snapshot, plan, app_version, venture_id, milestone_id, overhead)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 self.boot_id,
                 cycle_id,
@@ -738,6 +770,9 @@ class MeteredModel:
                 snapshot,
                 json.dumps(plan.to_json()) if plan is not None else None,
                 app_version()[:40],
+                venture,
+                milestone,
+                0 if purpose in WORK_PURPOSES else 1,
             ),
         )
         return int(cursor.lastrowid)

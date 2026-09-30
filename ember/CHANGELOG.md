@@ -107,6 +107,8 @@ Your results now reach your records: what you earn counts where it belongs.
   Ember's code applies each verdict with milestone_update's rules; the day's plans see what came of them.
 - A milestone much like one you dropped or missed in the last 30 days names it (milestone_plan: replaces): it keeps
   that one's first date and moves (one more for a dropped one, never beyond two), and ROADMAP shows what it replaces.
+- Each of your model calls counts for the venture and milestone its work served (a research call for the venture it
+  names); your plans, reviews and brainstorms are overhead. A venture's "spent" in VENTURES is its own work now.
 
 ## 0.11.2
 

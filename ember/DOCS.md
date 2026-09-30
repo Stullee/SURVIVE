@@ -433,7 +433,10 @@ hours. These are set with it and can't be raised later: the plan shows "spent
 $0.42 of $1.00", and Ember's code flags a milestone that spent more than its
 budget. What counts toward a milestone is the work of the cycles aimed at it;
 their plans, the daily reviews, brainstorms and library study are overhead,
-shown as one line on the Roadmap tab. A milestone can also **wait**, for your
+shown as one line on the Roadmap tab. Every model call records the venture and
+milestone its work served (a research call for another venture counts for that
+venture), and every request to you records the venture and milestone of the
+cycle that made it, so a venture's "spent" is its own work, not whole cycles. A milestone can also **wait**, for your
 decision or for buyers, until a day at most 14 days ahead: while it waits it
 isn't flagged as overdue, and on the morning its check is due (08:00 your time)
 the agent wakes to look again. The plan also shows each overdue or this week's

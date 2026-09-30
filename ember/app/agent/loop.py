@@ -384,19 +384,20 @@ class CycleRunner:
                 decision_wakes=self.settings.wake_on_decision,
             )
 
-    def _call(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> CallResult:
-        """One metered call; a failure that cost nothing (no connection, overloaded) is retried once, but never a
-        request the API rejected as it is (0.10.1: a search limited to a blocked site was sent twice)."""
+    def _call(self, cycle_id: int, purpose: str, request: dict[str, Any], venture_id: int | None = None) -> CallResult:
+        """One metered call (``venture_id``: the venture it serves, if not the cycle's: 0.12.0); a failure that cost
+        nothing (no connection, overloaded) is retried once, but never a request the API rejected as it is (0.10.1: a
+        search limited to a blocked site was sent twice)."""
         self._check_stop()
         try:
-            return self.meter.call(cycle_id, purpose, request)
+            return self.meter.call(cycle_id, purpose, request, venture_id)
         except CallFailed as exc:
             if exc.result.status != "failed" or exc.result.cost_micros or _rejected(exc.result.error):
                 raise
             log.info("Call #%d failed without cost (%s); retrying once", exc.result.call_id, exc.result.error)
             if self.stop.wait(RETRY_DELAY_SECONDS):
                 raise Stopping from exc
-            return self.meter.call(cycle_id, purpose, request)
+            return self.meter.call(cycle_id, purpose, request, venture_id)
 
     # --- plan, act, reflect ---
 
@@ -983,7 +984,7 @@ class CycleRunner:
                     "refused: budget",
                 )
             try:
-                result = self._call(cycle_id, "research", request)
+                result = self._call(cycle_id, "research", request, venture_id)
             except CallRefused as exc:  # a state or system refusal ends the cycle at its next call
                 return tools.Outcome(False, f"Error: research refused ({exc.reason}).", "refused")
             except CallFailed as exc:
@@ -1008,7 +1009,7 @@ class CycleRunner:
                     {"role": "assistant", "content": response.get("content") or []},
                 ]
                 try:
-                    more = self._call(cycle_id, "research", follow)
+                    more = self._call(cycle_id, "research", follow, venture_id)
                     response = more.response or response
                     cost += more.cost_micros
                 except (CallRefused, CallFailed):

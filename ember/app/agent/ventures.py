@@ -18,8 +18,9 @@ owner decides on the Ventures tab.
 
 Stages: idea → researching → proposed (a business case) → building (the owner backed it) → live (launched or
 earning), with parked and killed on the side. The agent can't back or kill a venture: only the owner can
-(``owner.py``). Money: a cycle's cost counts toward the venture it focused on (``cycles.venture_id``), or else toward
-the venture of its project; revenue counts through the venture's projects.
+(``owner.py``). Money: each model call counts toward the venture its work served (0.12.0: ``llm_calls.venture_id``,
+the cycle's focus or its project's venture, or the venture a research call names; plans, reviews and brainstorms are
+overhead); revenue counts for the venture it names or through the venture's projects.
 """
 
 from __future__ import annotations
@@ -108,7 +109,7 @@ _WORD = re.compile(r"[a-z0-9]+")
 
 @dataclass(frozen=True)
 class Money:
-    """What a venture cost (every call of the cycles that worked on it) and earned (revenue for its projects)."""
+    """What a venture cost (the calls whose work served it: 0.12.0) and earned (revenue for it or its projects)."""
 
     spent: int = 0
     earned: int = 0
@@ -391,10 +392,12 @@ def projects_of(conn: sqlite3.Connection, venture_id: int) -> list[sqlite3.Row]:
 
 def money(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, Money]:
     """What each venture cost and earned (see the module's docstring); ventures without either aren't listed."""
+    # 0.12.0: each call names the venture its work served (a research call the one it names); plans, reviews and
+    # brainstorms are overhead (a cycle's whole cost was charged to its focus, and research for another venture too).
     spent = conn.execute(
-        "SELECT COALESCE(y.venture_id, p.venture_id) AS vid, COALESCE(SUM(c.cost_micros), 0)"
-        " FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id LEFT JOIN projects p ON p.id = y.project_id"
-        " WHERE y.session = ? AND y.simulated = ? AND COALESCE(y.venture_id, p.venture_id) IS NOT NULL GROUP BY vid",
+        "SELECT c.venture_id AS vid, COALESCE(SUM(c.cost_micros), 0) FROM llm_calls c"
+        " JOIN cycles y ON y.id = c.cycle_id WHERE y.session = ? AND y.simulated = ? AND c.venture_id IS NOT NULL"
+        " GROUP BY vid",
         (scope.session, 1 if scope.simulated else 0),
     ).fetchall()
     # Revenue named for the venture, or for one of its projects (0.12.0: the owner names them when recording it).

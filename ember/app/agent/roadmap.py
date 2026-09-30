@@ -27,6 +27,7 @@ from collections.abc import Mapping
 from datetime import date, timedelta
 from typing import Any
 
+from ..economy import metering
 from . import metrics
 from .store import AgentScope
 
@@ -83,7 +84,7 @@ _CLEAR_PROPOSAL = ", ".join(f"{name} = NULL" for name in NO_PROPOSAL)
 # 0.12.0: money and time on a milestone. What counts toward it: the calls that worked in the cycles aimed at it; plans,
 # reviews, brainstorms, library study and the last will are overhead, charged to no milestone. A wait lasts at most
 # WAIT_DAYS, and a waiting milestone isn't flagged overdue until its check is due.
-WORK_PURPOSES = ("work", "reflect", "research", "workshop")
+WORK_PURPOSES = metering.WORK_PURPOSES
 WAIT_DAYS = 14
 WAIT_CHARS = 200
 
@@ -473,14 +474,12 @@ def add_note(notes: str, cycle_id: int | None, note: str) -> str:
 
 
 def effort(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, tuple[int, int]]:
-    """(cycles, cost in micros) of the cycles that worked toward each milestone (their plan's focus): the cost of
-    their work calls (0.12.0: the whole cycle was charged, its plan too; the overhead is in ``overhead``)."""
-    purposes = ", ".join(f"'{p}'" for p in WORK_PURPOSES)
+    """(cycles, cost in micros) of the calls that worked toward each milestone (0.12.0: each call names the milestone
+    its work served; the whole cycle was charged, its plan too, and the overhead is in ``overhead``)."""
     rows = conn.execute(
-        "SELECT y.milestone_id, COUNT(DISTINCT y.id),"
-        f" COALESCE(SUM(CASE WHEN c.purpose IN ({purposes}) THEN c.cost_micros ELSE 0 END), 0) FROM cycles y"
-        " LEFT JOIN llm_calls c ON c.cycle_id = y.id WHERE y.session = ? AND y.simulated = ?"
-        " AND y.milestone_id IS NOT NULL GROUP BY y.milestone_id",
+        "SELECT c.milestone_id, COUNT(DISTINCT c.cycle_id), COALESCE(SUM(c.cost_micros), 0) FROM llm_calls c"
+        " JOIN cycles y ON y.id = c.cycle_id WHERE y.session = ? AND y.simulated = ? AND c.milestone_id IS NOT NULL"
+        " GROUP BY c.milestone_id",
         (scope.session, 1 if scope.simulated else 0),
     ).fetchall()
     return {int(r[0]): (int(r[1]), int(r[2])) for r in rows}
@@ -489,10 +488,9 @@ def effort(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, tuple[int, 
 def overhead(conn: sqlite3.Connection, scope: AgentScope) -> int:
     """What no milestone is charged (0.12.0), in micros: plans, reviews, brainstorms, library study, the last will, and
     the work of cycles aimed at none."""
-    purposes = ", ".join(f"'{p}'" for p in WORK_PURPOSES)
     row = conn.execute(
         "SELECT COALESCE(SUM(c.cost_micros), 0) FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id"
-        f" WHERE y.session = ? AND y.simulated = ? AND (c.purpose NOT IN ({purposes}) OR y.milestone_id IS NULL)",
+        " WHERE y.session = ? AND y.simulated = ? AND c.milestone_id IS NULL",
         (scope.session, 1 if scope.simulated else 0),
     ).fetchone()
     return int(row[0])

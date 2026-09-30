@@ -353,11 +353,17 @@ def withdraw_request(
 
 
 def insert_approval(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, now: str, **fields: Any) -> int:
-    """A request for the owner; with ``executor`` and ``action`` (canonical JSON), one Ember's code carries out."""
+    """A request for the owner; with ``executor`` and ``action`` (canonical JSON), one Ember's code carries out. It
+    names what it works for (0.12.0): its project's venture or the cycle's, and the cycle's focus milestone."""
+    focus = conn.execute(
+        "SELECT y.milestone_id, COALESCE((SELECT venture_id FROM projects WHERE id = ?), y.venture_id, p.venture_id)"
+        " FROM cycles y LEFT JOIN projects p ON p.id = y.project_id WHERE y.id = ?",
+        (fields.get("project_id"), cycle_id),
+    ).fetchone()
     cursor = conn.execute(
         "INSERT INTO approvals (mode, session, life_id, cycle_id, project_id, created_at, type, title, description,"
-        " payload, payload_sha256, expected_cost, expected_benefit, executor, action)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " payload, payload_sha256, expected_cost, expected_benefit, executor, action, milestone_id, venture_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             scope.mode,
             scope.session,
@@ -374,6 +380,8 @@ def insert_approval(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, 
             fields["expected_benefit"],
             fields.get("executor"),
             fields.get("action"),
+            focus[0] if focus else None,
+            focus[1] if focus else None,
         ),
     )
     return int(cursor.lastrowid)
