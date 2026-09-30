@@ -49,7 +49,8 @@ from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox, select_mailbox
 from ..integrations.pinterest_connection import PinterestConnection
 from ..integrations.printify_connection import PrintifyConnection
-from . import agenda, audit, metrics, netguard, news, policy, store, ventures
+from ..products import site
+from . import agenda, audit, metrics, netguard, news, policy, store, ventures, website
 from .loop import NO_STEP, CycleEnd, CycleRunner
 from .memory import CAPS, Memory
 from .sandbox import Jail, SandboxError, kind_of
@@ -802,11 +803,13 @@ class Agent:
                 created_today=etsy_publisher.created_today(conn, self.clock, scope),
                 waiting=etsy_publisher.waiting(conn, scope),
             )
+            home = website.describe(conn, scope, self.settings)  # 0.13.0 (Phase E3)
         return {
             "email": email_executor.integration(self.db, self.clock, self.settings, self.mode, scope, self.mailbox),
             "etsy": shop,
             "pinterest": self.pinterest.describe(scope),  # 0.13.0 (Phase E2)
             "printify": self.printify.describe(scope),  # 0.13.0 (Phase E4)
+            "site": home,
         }
 
     def agent_fields(self) -> dict[str, Any]:
@@ -936,6 +939,22 @@ class Agent:
         from . import views
 
         return views.upgrade_script(self, upgrade_id)
+
+    def site_files(self) -> dict[str, bytes]:
+        """The owner's website as Ember's code builds it now (0.13.0, Phase E3). Raises site.SiteError with why it
+        can't be built."""
+        if not self.settings.site_enabled:
+            raise site.SiteError("the website is off: switch it on in the app's options (site_enabled)")
+        with self.db.connection() as conn:
+            return website.built(conn, self.scope(), website.owner(self.settings))
+
+    def site_download(self) -> bytes:
+        """The website as a zip for the owner to publish; the download is recorded, so the plan and the dashboard can
+        say what changed since. Raises site.SiteError."""
+        files = self.site_files()
+        with self.db.transaction() as conn:
+            website.record_download(conn, self.scope(), files, to_iso(self.clock.now()))
+        return site.archive(files)
 
     def workspace_product(self, path: str) -> tuple[str, bytes, str]:
         """(file name, bytes, content type) of a PDF, Word, Excel or PNG file; raises views.WorkspaceFileError."""

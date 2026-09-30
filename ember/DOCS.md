@@ -82,6 +82,10 @@ code from Etsy's own numbers): the agent never reports its own.
 | Printify shop | 0 | The Printify shop connected to your Etsy shop (0: the only one that is). |
 | Printify currency | EUR | The currency of the prices and costs Printify shows for that shop. |
 | Printify products per day | 2 | The most products Ember creates in one day (0 to 10). |
+| Website | off | Lets the agent write the pages of a small website of yours, which Ember builds and you publish. See [Website](#website). |
+| Website name, language, address | empty, de, empty | The site's name in its header (empty: your name), the language of its pages, and where you publish it (https, for its sitemap). |
+| Your full name, address, email, phone, VAT ID (Impressum) | empty | Your data for the site's Impressum and privacy page: name, address and email are needed, phone and VAT ID optional. Never in the diagnostics report. |
+| Your web host (privacy page) | empty | The company hosting your site, named on the privacy page. |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -1308,6 +1312,42 @@ it made and what their orders cost you.
   test in them: a first order.
 - **Undo** on the product's entry under **What Ember's code did** deletes it at
   Printify.
+
+## Website
+
+With **Website** on, the agent writes the pages of a small website of yours: a
+home page and a few more (at most 8), for people who find your shop elsewhere
+and want to know who makes the products and where to buy them. Ember's own
+code builds the site from them in one fixed design:
+
+- every word the agent wrote is shown as text, never as code; its links can
+  only be https addresses and email addresses;
+- no scripts, no cookies, no trackers and nothing loaded from elsewhere (not
+  even fonts): the pages' Content-Security-Policy allows only their own
+  stylesheet, so every browser enforces it;
+- the **Impressum** (§ 5 DDG) and the **privacy page** are made from your
+  options only, never from the agent's words. They are in German, whatever
+  the site's language. The Impressum says the texts were written with the help
+  of an AI and checked before publishing: read them before you publish.
+
+Ember never publishes the site: you do. **System → Website** on the dashboard
+shows its pages and what changed since you last downloaded it. **Preview**
+opens it in a tab of its own (where it runs nothing); **Download (zip)** gives
+you every file. Upload them to your host: any host of static files works, for
+example your web hosting package. If your host adds cookies, statistics or
+anything else, the privacy page doesn't cover it: tell them apart, or ask your
+host. The agent's plan shows the pages and what you haven't published yet
+(WEBSITE), so it can tell you when a change is worth publishing again.
+
+### Setting it up
+
+In the app's **Configuration** tab, switch **Website** on and fill in **Your
+full name**, **Your address** (street, then postcode and town, separated by a
+comma), **Your email address** and, if you have them, **Your phone number**
+and **Your VAT ID**: the Impressum needs them, and the dashboard says which one
+is missing. Set **Website address** to where you will publish it (for its
+sitemap), **Website name** to your shop's name and **Your web host** to the
+company hosting it. Save and restart the app.
 
 ## Reddit
 

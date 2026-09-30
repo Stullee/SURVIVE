@@ -119,6 +119,8 @@ TABLES = (
     "printify_catalog",
     "printify_products",
     "printify_orders",
+    "site_pages",
+    "site_downloads",
     "memory_versions",
     "lesson_pins",
     "research_checks",
@@ -344,10 +346,17 @@ def _system(state: AppState) -> str:
     return _json(info)
 
 
+# 0.13.0: the owner's data for their website's Impressum, shown only as flags (the website's name, language and address
+# are public).
+PERSONAL_OPTIONS = ("email_owner_name", "site_owner_name", "site_address", "site_email", "site_phone", "site_vat_id")
+
+
 def _options(state: AppState) -> str:
-    """The public options, the owner's name only as a flag (Ember's address is masked like every address)."""
+    """The public options, the owner's name and their Impressum's data only as flags (Ember's address is masked like
+    every address)."""
     options = state.loaded.settings.public_dict()
-    options["email_owner_name_set"] = bool(str(options.pop("email_owner_name", "") or "").strip())
+    for key in PERSONAL_OPTIONS:
+        options[f"{key}_set"] = bool(str(options.pop(key, "") or "").strip())
     return _json(options)
 
 
@@ -1009,6 +1018,8 @@ def _integrations(state: AppState, full: bool = True) -> str:
     # 0.13.0 (Phase E4): Printify: the connection's status and shop (never the token; products and orders are above).
     pod = {k: v for k, v in agent.integrations()["printify"].items() if k not in ("products", "orders")}
     out.append(f"-- printify\n{_json(pod)}")
+    # 0.13.0 (Phase E3): the website's state and pages (the texts are the agent's; the owner's data is never in it).
+    out.append(f"-- website\n{_json(agent.integrations()['site'])}")
     return "\n".join(out)
 
 

@@ -328,3 +328,52 @@ configuration:
     description: >-
       At most this many approved products are created a day; more wait for
       the next day.
+  site_enabled:
+    name: Website
+    description: >-
+      Let the agent write the pages of a small website of yours. Ember's code
+      builds it in one fixed design without scripts, cookies or trackers, with
+      an Impressum and a privacy page made from the options below. You preview
+      it, download it and publish it yourself: Ember never does.
+  site_name:
+    name: Website name
+    description: >-
+      The site's name in its header, e.g. your shop's name. Empty: your name.
+  site_language:
+    name: Website language
+    description: >-
+      The language of the pages the agent writes (the Impressum and the
+      privacy page are German).
+  site_url:
+    name: Website address
+    description: >-
+      Where you publish it, e.g. https://example.org: for its sitemap and the
+      search engines. Optional.
+  site_owner_name:
+    name: Your full name (Impressum)
+    description: >-
+      Your name, or your business's with its legal form, as the Impressum
+      (§ 5 DDG) requires.
+  site_address:
+    name: Your address (Impressum)
+    description: >-
+      A postal address you can be reached at: street, then postcode and town,
+      separated by a comma (a P.O. box isn't enough).
+  site_email:
+    name: Your email address (Impressum)
+    description: >-
+      An address people can write to; the website shows it.
+  site_phone:
+    name: Your phone number (Impressum)
+    description: >-
+      Optional: shown in the Impressum if set.
+  site_vat_id:
+    name: Your VAT ID (Impressum)
+    description: >-
+      Optional: your Umsatzsteuer-Identifikationsnummer, if you have one.
+  site_host:
+    name: Your web host (privacy page)
+    description: >-
+      Optional: the name and address of the company that hosts your website,
+      e.g. 'Strato AG, Otto-Ostrowski-Straße 7, 10249 Berlin'. The privacy page
+      names it.

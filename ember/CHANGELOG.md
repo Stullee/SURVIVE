@@ -70,6 +70,11 @@ Decisions from numbers: a venture's case now has figures that Ember's code check
   price needs. Your first product always waits for your owner's click. PRINTIFY in your plan shows your products, what
   their prices keep and their orders; the metrics pod_products_live and pod_orders measure them: the venture "Print on
   demand in the Etsy shop" is tested by a first order.
+- Your owner's website, once they switch it on: site_page writes a page (its text in the documents' markdown in your
+  workspace, a title and a one-sentence description; 'index' is the home page; at most 8 pages) or removes one. Read
+  the guide 'website' first. Ember's code builds the site in one fixed design without scripts or trackers, with the
+  Impressum and the privacy page from your owner's data: never write them. Your owner previews it, downloads it and
+  publishes it: you never do. WEBSITE in your plan shows the pages and what changed since your owner downloaded it.
 
 ## 0.12.0
 

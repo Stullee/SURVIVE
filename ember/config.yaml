@@ -120,6 +120,11 @@ options:
   printify_shop_id: 0
   printify_currency: EUR
   printify_products_per_day: 2
+  # Your website (see the Documentation tab): pages the agent writes, built by Ember into a static site that you
+  # preview, download and publish yourself. Your name, address, email, phone, VAT ID and web host for its Impressum
+  # and privacy page, its name and its address are optional options too.
+  site_enabled: false
+  site_language: de
 
 schema:
   anthropic_api_key: password?
@@ -189,3 +194,13 @@ schema:
   printify_shop_id: int(0,999999999999)
   printify_currency: list(EUR|USD|GBP)
   printify_products_per_day: int(0,10)
+  site_enabled: bool
+  site_name: str?
+  site_language: list(de|en)
+  site_url: url?
+  site_owner_name: str?
+  site_address: str?
+  site_email: email?
+  site_phone: str?
+  site_vat_id: str?
+  site_host: str?

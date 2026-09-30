@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import html
+import re
 from typing import Annotated, Any
 from urllib.parse import quote
 
@@ -27,6 +28,8 @@ from .integrations.etsy import EtsyError
 from .integrations.pinterest import PinterestError
 from .logging_setup import printable
 from .paths import WEB_DIR
+from .products import site
+from .products.site import SiteError
 from .security import USER_ID_HEADER, ingress_base_href
 from .state import AppState
 from .version import app_version, build_id
@@ -775,6 +778,64 @@ def _attachment(name: str, inline: bool = False) -> str:
     fallback = clean.encode("ascii", "replace").decode("ascii").replace("?", "_")
     kind = "inline" if inline else "attachment"
     return f"{kind}; filename=\"{fallback}\"; filename*=UTF-8''{quote(clean, safe='')}"
+
+
+# 0.13.0 (Phase E3): the owner's website, as Ember's code builds it: its files' names and their types.
+_SITE_FILE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?\.(html|txt|xml)$")
+_SITE_TYPES = {"html": "text/html; charset=utf-8", "txt": "text/plain; charset=utf-8", "xml": "application/xml"}
+# The preview runs nothing on the dashboard's origin: a sandbox without scripts, forms or popups (the same origin only,
+# so its links keep the owner's session), and its own stylesheet the only thing it may load.
+SITE_PREVIEW_POLICY = f"sandbox allow-same-origin; {site.CSP}; frame-ancestors 'none'"
+
+
+@router.get("/api/site/preview/{name}")
+def site_preview(request: Request, name: Annotated[str, Path(max_length=60)]) -> Response:
+    """A file of the owner's website as it would be published: the dashboard's Preview opens index.html, and its
+    links open the others."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    if not _SITE_FILE.match(name):
+        return PlainTextResponse("There is no such page.", status_code=404)
+    try:
+        files = agent.site_files()
+    except SiteError as exc:
+        return PlainTextResponse(f"The website can't be built yet: {exc}.", status_code=409)
+    data = files.get(name)
+    if data is None:
+        return PlainTextResponse("There is no such page.", status_code=404)
+    return Response(
+        data,
+        media_type=_SITE_TYPES[name.rsplit(".", 1)[1]],
+        headers={
+            "content-security-policy": SITE_PREVIEW_POLICY,
+            "x-content-type-options": "nosniff",
+            "cache-control": "no-store",
+        },
+    )
+
+
+@router.get("/api/site/download")
+def site_download(request: Request) -> Response:
+    """The website as one zip for the owner to upload to their host; the download is recorded (what changed since
+    is what the owner hasn't published)."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    try:
+        data = agent.site_download()
+    except SiteError as exc:
+        return JSONResponse({"error": f"The website can't be built yet: {exc}."}, status_code=409)
+    return Response(
+        data,
+        media_type="application/zip",
+        headers={
+            "content-disposition": _attachment("website.zip"),
+            "content-security-policy": "sandbox; default-src 'none'",
+            "x-content-type-options": "nosniff",
+            "cache-control": "no-store",
+        },
+    )
 
 
 @router.get("/api/diagnostics")

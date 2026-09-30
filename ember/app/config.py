@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -27,6 +28,9 @@ log = logging.getLogger(__name__)
 # The smallest price the options accept: a price of 0 would make calls look free
 # and switch every spending limit off.
 MIN_PRICE = 0.000001
+# 0.13.0: the website's address (https, a host and at most a path: no query, no fragment) and its email address.
+_SITE_URL = re.compile(r"^https://[A-Za-z0-9.-]{1,190}(?::\d{1,5})?(?:/[A-Za-z0-9._~/-]*)?$")
+_SITE_EMAIL = re.compile(r"^[^@\s<>\"']{1,64}@[^@\s<>\"']{1,190}\.[A-Za-z]{2,63}$")
 
 
 class ModelPrice(BaseModel):
@@ -205,6 +209,20 @@ class Settings(BaseModel):
     printify_shop_id: int = Field(default=0, ge=0, le=999_999_999_999)
     printify_currency: Literal["EUR", "USD", "GBP"] = "EUR"
     printify_products_per_day: int = Field(default=2, ge=0, le=10)
+    # The owner's website (0.13.0, Phase E3): pages the agent writes, built by Ember's code into a static site that the
+    # owner previews, downloads and publishes (Ember never does). Its Impressum and privacy page are made from these:
+    # the owner's name, address (lines separated by commas), email and, if they have them, phone and VAT ID; their web
+    # host for the privacy page; the site's name (default: the owner's), its language and its address (https).
+    site_enabled: bool = False
+    site_name: str = Field(default="", max_length=60)
+    site_language: Literal["de", "en"] = "de"
+    site_url: str = Field(default="", max_length=200)
+    site_owner_name: str = Field(default="", max_length=100)
+    site_address: str = Field(default="", max_length=300)
+    site_email: str = Field(default="", max_length=254)
+    site_phone: str = Field(default="", max_length=40)
+    site_vat_id: str = Field(default="", max_length=20)
+    site_host: str = Field(default="", max_length=200)
 
     @field_validator("owner_user_ids", mode="before")
     @classmethod
@@ -245,6 +263,14 @@ class Settings(BaseModel):
         "etsy_redirect_uri",
         "pinterest_app_id",
         "pinterest_redirect_uri",
+        "site_name",
+        "site_url",
+        "site_owner_name",
+        "site_address",
+        "site_email",
+        "site_phone",
+        "site_vat_id",
+        "site_host",
         mode="before",
     )
     @classmethod
@@ -267,6 +293,10 @@ class Settings(BaseModel):
             problems.append("wake_interval_minutes must be between min_sleep_minutes and max_sleep_minutes")
         if 0 < self.etsy_usd_per_eur < 0.5:  # 0.12.0: the ledger's range for an exchange rate (0: none)
             problems.append("etsy_usd_per_eur must be 0 (no rate) or between 0.5 and 3 USD per EUR")
+        if self.site_url and not _SITE_URL.match(self.site_url):  # 0.13.0: the website's own address
+            problems.append("site_url must be an https address without a query, like https://example.org")
+        if self.site_email and not _SITE_EMAIL.match(self.site_email):
+            problems.append("site_email must be an email address, like shop@example.org")
         names = [p.model for p in self.price_table]
         if len(names) != len(set(names)):
             problems.append("price_table lists the same model more than once")

@@ -57,7 +57,8 @@ from ..integrations import (
 )
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
-from ..products import images, make
+from ..products import images, make, site
+from ..products.site import Owner as SiteOwner
 from . import (
     demand,
     econ,
@@ -73,6 +74,7 @@ from . import (
     stages,
     store,
     ventures,
+    website,
 )
 from .memory import CAPS, HEADING_REFUSAL, MAX_APPEND_LINES, Memory, MemoryError_, heading_line
 from .sandbox import Jail, Limits, QuotaError, SandboxError, kind_of
@@ -117,6 +119,7 @@ GUIDES = (
     "email",
     "pinterest",
     "printify",
+    "website",
 )
 WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
 # Offered only with an Etsy shop (demand_note 0.12.0: a product line's first listing needs one).
@@ -125,6 +128,8 @@ ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing
 PINTEREST_TOOLS = frozenset({"pinterest_boards", "propose_pin"})
 # Offered only with the owner's Printify account and an Etsy shop (0.13.0, Phase E4): a product becomes a listing there.
 PRINTIFY_TOOLS = frozenset({"printify_catalog", "propose_printify_product"})
+# Offered only when the owner switched their website on (0.13.0, Phase E3): its pages.
+SITE_TOOLS = frozenset({"site_page"})
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "mark_opt_out", "propose_email", "inquiry_done"})
 # Offered only in venture cycles (0.10.0; evidence 0.12.0: a venture's case, which grades pages any research found;
@@ -151,6 +156,7 @@ ORDINARY_TOOLS = (
     | ETSY_TOOLS
     | PINTEREST_TOOLS
     | PRINTIFY_TOOLS
+    | SITE_TOOLS
     | MAIL_TOOLS
 )
 # Model calls of their own (and, 0.12.0, the Etsy market probe of a demand note): they need the network, and no
@@ -1084,6 +1090,27 @@ SPECS: dict[str, Spec] = {
             },
             per_cycle=1,
         ),
+        Spec(
+            "site_page",
+            "Write a page of your owner's website from a markdown file in your workspace (as for make_document: "
+            "photos, writing lines and page breaks show nothing on a web page), or remove one. Ember's code builds "
+            "the site in one fixed design, with the Impressum and the privacy page from your owner's data; your "
+            f"owner publishes it. name '{site.HOME}' is the home page; at most {site.MAX_PAGES} pages. Read guide "
+            "'website' first. Free.",
+            {
+                "name": _s(
+                    f"The page's name: lower-case letters, digits and dashes, e.g. '{site.HOME}'.", site.SLUG_MAX
+                ),
+                "source": _s("The markdown file in your workspace, e.g. 'site/index.md'.", 200, required=False),
+                "title": _s(
+                    "The page's title: what it offers, in the words people search.", site.TITLE_MAX, required=False
+                ),
+                "description": _s("One sentence for search results.", site.DESCRIPTION_MAX, required=False),
+                "menu": _s("Its name in the site's menu (default: the title).", site.MENU_MAX, required=False),
+                "remove": _b("Take the page off the site."),
+            },
+            per_cycle=4,
+        ),
     )
 }
 
@@ -1114,6 +1141,7 @@ def definitions(
     library: bool = False,
     pinterest: bool = False,
     printify: bool = False,
+    site: bool = False,
 ) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds (the
     reflection reads it from the cache at a tenth of the price; a list of its own would write the whole conversation
@@ -1121,8 +1149,8 @@ def definitions(
     only when the owner's options allow runs, the Etsy tools only with a shop, brainstorm only in a venture cycle
     and, 0.12.0, the tools for building and selling only in an ordinary one, the library's only while it holds
     documents; 0.13.0: the Pinterest and Printify tools, and their manuals, only with the owner's account and a
-    shop)."""
-    channels = {"pinterest": pinterest and etsy, "printify": printify and etsy}
+    shop, and the website's only when the owner switched it on)."""
+    channels = {"pinterest": pinterest and etsy, "printify": printify and etsy, "website": site}
     return [
         _definition(_channel_guides(spec_of(spec.name, venture) or spec, channels))
         for spec in SPECS.values()
@@ -1135,6 +1163,7 @@ def definitions(
             library=library,
             pinterest=pinterest,
             printify=printify,
+            site=site,
         )
     ]
 
@@ -1149,7 +1178,7 @@ def _channel_guides(spec: Spec, channels: dict[str, bool]) -> Spec:
         topic = spec.fields["topic"]
         return replace(spec, fields={"topic": replace(topic, enum=tuple(t for t in topic.enum if t not in off))})
     if spec.name == "milestone_plan":
-        unused = {name for channel in off for name in metrics.CHANNEL_METRICS[channel][0]}
+        unused = {name for channel in off for name in metrics.CHANNEL_METRICS.get(channel, ((), ""))[0]}
         milestones = spec.fields["milestones"]
         items = dict(milestones.items)
         metric = items["metric"]
@@ -1172,6 +1201,7 @@ def offered(
     library: bool,
     pinterest: bool = False,
     printify: bool = False,
+    site: bool = False,
 ) -> bool:
     """Whether tool ``name`` is offered in a cycle of this configuration and kind (``venture``: a venture cycle)."""
     return (
@@ -1180,6 +1210,7 @@ def offered(
         and (etsy or name not in ETSY_TOOLS)
         and ((pinterest and etsy) or name not in PINTEREST_TOOLS)
         and ((printify and etsy) or name not in PRINTIFY_TOOLS)
+        and (site or name not in SITE_TOOLS)
         and (venture or name not in VENTURE_TOOLS)
         and not (venture and name in ORDINARY_TOOLS)
         and (library or name not in LIBRARY_TOOLS)
@@ -1343,6 +1374,7 @@ class ToolContext:
     pinterest: PinterestAccess | None = None  # the owner's Pinterest account, when connected (0.13.0)
     printify: PrintifyAccess | None = None  # the owner's Printify account, when set up (0.13.0)
     catalog: CatalogFn | None = None  # Printify's catalog (0.13.0): kept by Ember's code, read at Printify when old
+    site: SiteOwner | None = None  # the owner's data, when they switched their website on (0.13.0): its pages
     venture: bool = False  # a venture cycle (0.10.0): brainstorm, and more research
     usd_per_eur: float = 0.0  # the owner's exchange rate (etsy_usd_per_eur; 0: none, econ assumes one), 0.13.0
     venture_cash_eur: float = 20.0  # the owner's cash for a venture's first test (a knock-out beyond it), 0.13.0
@@ -1388,6 +1420,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
             library=ctx.library,
             pinterest=ctx.pinterest is not None,
             printify=ctx.printify is not None,
+            site=ctx.site is not None,
         ):
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
@@ -2952,6 +2985,7 @@ def guide_text(topic: str) -> str:
         .replace("{REPLY_WORDS}", str(qa.REPLY_WORDS))
         .replace("{PIN_TITLE}", str(pinterest.TITLE_MAX))
         .replace("{PIN_DESCRIPTION}", str(pinterest.DESCRIPTION_CHARS))
+        .replace("{SITE_PAGES}", str(site.MAX_PAGES))
     )
 
 
@@ -3638,6 +3672,43 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
     return Outcome(True, text, f"#{made} Printify product: {_cut(product.title, 60)}", project_id=project_id)
 
 
+def _site_page(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.13.0 (Phase E3): write a page of the owner's website, or take one off. Ember's code builds the site; the
+    owner publishes it."""
+    if ctx.site is None:
+        raise ToolError("your owner hasn't switched their website on")
+    slug = args["name"].strip().lower()
+    if args.get("remove"):
+        if not website.remove(conn, ctx.scope, slug, ctx.now()):
+            raise ToolError(f"the site has no page {slug!r}")
+        text = f"Page {slug!r} is off the site: your owner's next download of it leaves it out."
+        return Outcome(True, text, f"took page {slug} off the site")
+    missing = [name for name in ("source", "title", "description") if not (args.get(name) or "").strip()]
+    if missing:
+        raise ToolError(f"a page needs {', '.join(missing)} (or remove, to take it off)")
+    path = args["source"].strip()
+    if not path.lower().endswith((".md", ".txt")):
+        raise ToolError("source must be the .md (or .txt) file you wrote the page in")
+    try:
+        source = ctx.workspace.read(path)
+    except SandboxError as exc:
+        raise ToolError(str(exc)) from None
+    try:
+        page = site.check(slug, args["title"], args["description"], source, args.get("menu") or "")
+        new = website.save(conn, ctx.scope, page, ctx.cycle_id, ctx.now())
+    except site.SiteError as exc:
+        raise ToolError(str(exc)) from None
+    now = website.state(conn, ctx.scope, ctx.site)
+    lines = [
+        f"Page {page.slug!r} is {'on' if new else 'rewritten on'} the site ({len(now['pages'])} of {site.MAX_PAGES} "
+        "pages). Your owner previews it, downloads it and publishes it themselves."
+    ]
+    lines += [f"Note: {note}." for note in page.notes]
+    if now["problem"]:
+        lines.append(f"The site can't be built yet: {now['problem']}.")
+    return Outcome(True, "\n".join(lines), f"{'wrote' if new else 'rewrote'} page {page.slug}")
+
+
 def _propose_reddit_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     try:
         action = reddit.action(args["kind"], args["subreddit"], args.get("title"), args["body"], args.get("thread_url"))
@@ -3715,4 +3786,5 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "propose_pin": _propose_pin,
     "printify_catalog": _printify_catalog,
     "propose_printify_product": _propose_printify_product,
+    "site_page": _site_page,
 }

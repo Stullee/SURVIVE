@@ -79,6 +79,7 @@ from . import (
     store,
     tools,
     ventures,
+    website,
 )
 from . import memory as memory_files
 from .memory import Memory
@@ -220,6 +221,7 @@ class CycleRunner:
         self.printify = printify  # 0.13.0 (Phase E4): the owner's Printify account
         self.pod = pod
         self.printify_on = False  # the Printify tools and the PRINTIFY section: with the account, its shop and ours
+        self.site_on = settings.site_enabled  # 0.13.0 (Phase E3): the owner's website: its tool and WEBSITE section
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
         self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
@@ -287,6 +289,7 @@ class CycleRunner:
                 self._sync_etsy(cycle_id, ctx)
                 self._sync_pinterest(cycle_id, ctx)
                 self._sync_printify(cycle_id, ctx)
+                ctx.site = website.owner(self.settings) if self.site_on else None  # 0.13.0 (Phase E3)
                 self._expire_requests()
             with netguard.sealed() if self.dry_run else contextlib.nullcontext():
                 end = self._last_will(cycle_id) if trigger == "last_will" else self._plan_act_reflect(cycle_id, ctx)
@@ -555,6 +558,7 @@ class CycleRunner:
                     f" at most {self.settings.printify_products_per_day} products a day).\n"
                     + printify_publisher.text(conn, self.scope)
                 )
+            site_text = website.planner_text(conn, self.scope, website.owner(self.settings)) if self.site_on else ""
             return context.snapshot(
                 conn,
                 self.scope,
@@ -573,6 +577,7 @@ class CycleRunner:
                 etsy=shop,
                 pinterest=pins,
                 printify=pod,
+                website=site_text,
                 venture=venture,
                 venture_share=self.settings.venture_share,
                 shelf=library.shelf(conn, self.scope),
@@ -1136,6 +1141,7 @@ class CycleRunner:
                 library=self.library_on,
                 pinterest=self.pinterest_on,
                 printify=self.printify_on,
+                site=self.site_on,
             )
             if not self._affordable(cycle_id, request, brief, turns, ctx):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
@@ -1246,6 +1252,7 @@ class CycleRunner:
             library=self.library_on,
             pinterest=self.pinterest_on,
             printify=self.printify_on,
+            site=self.site_on,
         )
         try:
             step_worst = self.meter.quote(request, "work")
@@ -1322,6 +1329,7 @@ class CycleRunner:
             undone=undone,
             pinterest=self.pinterest_on,
             printify=self.printify_on,
+            site=self.site_on,
         )
         # 0.12.0: why the work ended is kept first, also when the reflection can't be paid for.
         self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)

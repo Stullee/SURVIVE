@@ -585,6 +585,7 @@
     section("etsy", [d.integrations, d.mode, minute], ["etsy-facts", "etsy-listings", "etsy-orders"], function () { renderEtsy(d); });
     section("pinterest", [d.integrations, d.mode, minute], ["pinterest-facts", "pinterest-pins"], function () { renderPinterest(d); });
     section("printify", [d.integrations, d.mode, minute], ["printify-facts", "printify-products", "printify-orders"], function () { renderPrintify(d); });
+    section("site", [d.integrations, d.mode, minute], ["site-facts", "site-actions", "site-pages"], function () { renderSite(d); });
     section("transitions", [d.transitions], ["transitions"], function () { renderTransitions(arr(d.transitions)); });
     section("events", [d.events], ["events"], function () { renderEvents(arr(d.events)); });
     section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d, agent); });
@@ -3897,6 +3898,53 @@
           h("td", { text: asText(o.status) || "–" }),
           h("td", null, h("span", { text: asText(o.cost) + " " }), printifyCostCell(o, fake)));
       })))) : h("p", { class: "muted", text: "No orders of Ember's products yet." }));
+  }
+
+  // 0.13.0 (Phase E3): the owner's website. Ember's code builds it; the owner previews it (in a tab of its own, where
+  // it runs nothing) and downloads it to publish it at their host. Ember never publishes it.
+  var SITE_STATUS = {
+    ok: { icon: "✓", label: "Ready to publish", tone: "good" },
+    not_ready: { icon: "○", label: "Not ready", tone: "warning" },
+  };
+
+  function renderSite(d) {
+    var s = isObject(d.integrations) && isObject(d.integrations.site) ? d.integrations.site : null;
+    var shown = !!s && s.status !== "disabled";  // off (the default), or an older server: no card
+    $("site-card").hidden = !shown;
+    if (!shown) { replace($("site-facts"), []); replace($("site-actions"), []); replace($("site-pages"), []); return; }
+    var ready = s.status === "ok";
+    var changed = arr(s.changed).map(asText);
+    var pages = arr(s.pages);
+    replace($("site-facts"), [
+      h("dt", { text: "Status" }), h("dd", null, chip(SITE_STATUS, s.status, sentence(String(s.status || "unknown").replace(/_/g, " ")))),
+      !ready && s.reason ? [h("dt", { text: "Why" }), h("dd", { class: "pre-line", text: sentence(String(s.reason)) + "." })] : null,
+      h("dt", { text: "Pages" }), h("dd", { text: count(pages.length) + " of " + count(s.max_pages) }),
+      h("dt", { text: "Address" }), h("dd", { text: s.url ? asText(s.url) : "Not set (site_url): the site has no sitemap" }),
+      h("dt", { text: "Downloaded" }), h("dd", null, s.downloaded_at ? timeEl(s.downloaded_at, fmtDateTime(s.downloaded_at) + " (" + relTime(s.downloaded_at) + ")") : h("span", { text: "Never" })),
+      s.downloaded_at ? [h("dt", { text: "Changed since" }), h("dd", { text: changed.length ? changed.join(", ") : "Nothing: what you downloaded is up to date" })] : null,
+    ]);
+    var preview = ready ? h("a", { class: "btn", href: "api/site/preview/index.html", target: "_blank", rel: "noopener", text: "Preview" }) : null;
+    var download = h("button", { type: "button", class: "btn btn-primary", text: "Download (zip)", disabled: !ready });
+    download.addEventListener("click", function () {
+      var link = h("a", { href: "api/site/download", download: "website.zip", hidden: true });
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setStatusText("site-status", "Downloading website.zip (check your downloads). Upload its files to your host.", "ok");
+      download.blur();  // the card shows the download once the dashboard has it (a focused button holds the card)
+      window.setTimeout(refresh, 3000);
+    });
+    replace($("site-actions"), [h("div", { class: "form-actions" }, preview, download), h("p", { class: "form-status", id: "site-status", role: "status" })]);
+    replace($("site-pages"), pages.length ? h("div", { class: "table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, ["Page", "Title and description", "Written"].map(function (c) { return h("th", { scope: "col", text: c }); }))),
+      h("tbody", null, pages.map(function (p) {
+        var file = asText(p.slug) + ".html";
+        return h("tr", null,
+          h("td", null, ready ? h("a", { href: "api/site/preview/" + encodeURIComponent(file), target: "_blank", rel: "noopener", text: file }) : h("span", { text: file }),
+            p.menu ? h("p", { class: "muted small", text: "Menu: " + asText(p.menu) }) : null),
+          h("td", null, h("span", { text: asText(p.title) }), h("p", { class: "muted small", text: asText(p.description) })),
+          h("td", null, timeEl(p.updated_at, fmtDateTime(p.updated_at))));
+      })))) : h("p", { class: "muted", text: "None yet: the agent writes the home page first." }));
   }
 
   // What an order cost you at Printify is an expense only you record: the form opens filled in, and its key records it
