@@ -2894,6 +2894,16 @@
 
   // ---- Inbox
 
+  // 0.12.0: what a message of the agent's promised (Ember's code keeps it until the agent closes it)
+  function promiseLine(o) {
+    var open = o.status === "open";
+    var late = open && o.due && o.due < todayIso();
+    return h("p", { class: "seen", "data-seen": open ? "no" : "yes" },
+      h("span", { "aria-hidden": "true", text: open ? "◌ " : "✓ " }),
+      "Promised: " + asText(o.what) + " · due " + fmtDay(o.due) +
+      (open ? (late ? " · overdue" : " · open") : " · closed" + (o.result ? ": " + asText(o.result) : "")));
+  }
+
   function renderInbox(messages, agentName, unread, dry) {
     var el = $("inbox");
     var name = agentName || "Ember";
@@ -2915,6 +2925,7 @@
           h("span", { class: "msg-text", "data-removed": m.removed ? "true" : null, text: asText(m.text) }),
           fromOwner ? seenLine(!!m.seen_by_agent) : null,
           fromOwner && m.seen_by_agent && !m.removed ? answeredLine(m, sorted) : null,
+          fromOwner ? null : arr(m.promises).map(promiseLine),
           fromOwner && !m.removed ? removeButton(num(m.id)) : null);
       }));
     }

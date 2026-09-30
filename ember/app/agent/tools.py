@@ -44,7 +44,7 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
-from . import library, metrics, netguard, roadmap, stages, store, ventures
+from . import library, metrics, netguard, obligations, roadmap, stages, store, ventures
 from .memory import CAPS, HEADING_REFUSAL, Memory, MemoryError_, heading_line
 from .sandbox import Jail, QuotaError, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
@@ -65,6 +65,7 @@ READ_DEFAULT_CHARS = 3_000
 READ_MAX_CHARS = 6_000
 MAX_OPEN_PROJECTS = 8
 MAX_UNREAD_MESSAGES = 5
+MESSAGES_PER_DAY = 2  # 0.12.0: messages to the owner a day that answer none of theirs (the rule was only prose)
 MAX_NEW_UPGRADES = 5
 SANDBOX_STRIKES = 3
 INBOX_SIZE = 15
@@ -457,7 +458,9 @@ SPECS: dict[str, Spec] = {
         Spec(
             "message_owner",
             "Send your owner a short message for their inbox (they read it when they have time). Name the messages "
-            "of theirs it answers: each stays in FROM YOUR OWNER until one of yours answers it.",
+            "of theirs it answers: each stays in FROM YOUR OWNER until one of yours answers it. At most "
+            f"{MESSAGES_PER_DAY} a day that answer none of theirs. What it promises for later goes in commits, with "
+            "due: OBLIGATIONS keeps it until you close it.",
             {
                 "text": _s("The message.", 2_000),
                 "answers": _s(
@@ -466,8 +469,23 @@ SPECS: dict[str, Spec] = {
                     200,
                     required=False,
                 ),
+                "commits": _s("What it promises to do or send later.", obligations.WHAT_CHARS, required=False),
+                "due": _s(
+                    f"YYYY-MM-DD the promise is due, within {obligations.PROMISE_DAYS} days.", 10, required=False
+                ),
             },
             per_cycle=2,
+            reflect=True,
+        ),
+        Spec(
+            "obligation_done",
+            "Close obligations you have met (numbers from OBLIGATIONS): a promise you kept or gave up, once your owner "
+            "has heard it from you; a decision of your owner's you acted on; a missed milestone you decided about.",
+            {
+                "numbers": _s("Their numbers, e.g. '3, 5'.", 100),
+                "result": _s("What you did: a reference (message #, request #, milestone #, file).", 300),
+            },
+            per_cycle=3,
             reflect=True,
         ),
         Spec(
@@ -2039,10 +2057,20 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     unread = store.count_rows(conn, "messages", ctx.scope, "sender = 'agent' AND read_at IS NULL")
     if unread >= MAX_UNREAD_MESSAGES:
         raise ToolError(f"your owner hasn't read your last {MAX_UNREAD_MESSAGES} messages yet")
-    message_id = store.insert_message(conn, ctx.scope, ctx.cycle_id, args["text"].strip(), ctx.now())
     named = list(dict.fromkeys(int(n) for n in re.findall(r"\d{1,9}", args.get("answers") or "")))[:20]
+    promised = _promise(ctx, args)
+    # 0.12.0: at most MESSAGES_PER_DAY a day that answer none of the owner's (the prompt's "once a day" was prose)
+    if not store.answerable(conn, ctx.scope, named) and _unasked_today(ctx, conn) >= MESSAGES_PER_DAY:
+        raise ToolError(
+            f"you sent your owner {MESSAGES_PER_DAY} messages today that answer none of theirs: batch the rest into "
+            "tomorrow's, or into your answer when they write"
+        )
+    message_id = store.insert_message(conn, ctx.scope, ctx.cycle_id, args["text"].strip(), ctx.now())
     answered = store.mark_answered(conn, ctx.scope, named, message_id)
     text = f"Message #{message_id} is in your owner's inbox."
+    if promised is not None:
+        made = obligations.promise(conn, ctx.scope, ctx.cycle_id, message_id, promised[0], promised[1], ctx.now())
+        text += f" Your promise is obligation #{made}, due {promised[1]}: close it with obligation_done once kept."
     if answered:
         text += f" It answers {_numbers(answered)}: they leave FROM YOUR OWNER."
     wrong = [n for n in named if n not in answered]
@@ -2057,6 +2085,59 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
 
 def _numbers(ids: list[int]) -> str:
     return ", ".join(f"#{i}" for i in ids)
+
+
+def _promise(ctx: ToolContext, args: dict[str, Any]) -> tuple[str, str] | None:
+    """(what, due day) of the promise a message makes (0.12.0), or None; raises ToolError."""
+    what = " ".join((args.get("commits") or "").split())
+    due = args.get("due")
+    if not what and not due:
+        return None
+    if not what or not due:
+        raise ToolError("a promise needs both: what you promise (commits) and when it is due (due)")
+    today = ctx.clock.today()
+    day = roadmap.parse_day(due)
+    last = today + timedelta(days=obligations.PROMISE_DAYS)
+    if day is None or not today <= day <= last:
+        raise ToolError(f"due is a day from today to {obligations.PROMISE_DAYS} days ahead ({last.isoformat()})")
+    return what, day.isoformat()
+
+
+def _unasked_today(ctx: ToolContext, conn: Any) -> int:
+    """The agent's messages of the owner's today that answered none of theirs."""
+    start = to_iso(ctx.clock.day_start(ctx.clock.today()))
+    where, params = ctx.scope.where("m")
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM messages m WHERE {where} AND m.sender = 'agent' AND m.created_at >= ?"
+        " AND NOT EXISTS (SELECT 1 FROM messages o WHERE o.answered_by = m.id)",
+        (*params, start),
+    ).fetchone()
+    return int(row[0])
+
+
+def _obligation_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.12.0: close obligations the agent met, with what it did (a promise only once the owner heard from it)."""
+    result = " ".join(args["result"].split())
+    if not EVIDENCE.search(result):
+        raise ToolError("result names what you did: a reference (message #, request #, milestone #) or a file")
+    named = list(dict.fromkeys(int(n) for n in re.findall(r"\d{1,9}", args["numbers"])))[:10]
+    if not named:
+        raise ToolError("numbers names the obligations from OBLIGATIONS, e.g. '3, 5'")
+    where, params = ctx.scope.where()
+    closed, refused = [], []
+    for number in named:
+        row = conn.execute(f"SELECT * FROM obligations WHERE id = ? AND {where}", (number, *params)).fetchone()
+        if row is None or row["status"] != "open":
+            refused.append(f"#{number} is not an open obligation of yours")
+        elif row["kind"] == "promise" and not obligations.told_since(conn, ctx.scope, row["message_id"]):
+            refused.append(f"#{number} is a promise: tell your owner it is kept (or why not) with message_owner first")
+        else:
+            obligations.close_one(conn, number, result, "agent", ctx.cycle_id, ctx.now())
+            closed.append(number)
+    if not closed:
+        raise ToolError("; ".join(refused))
+    text = f"Closed {_numbers(closed)}." + (f" Not closed: {'; '.join(refused)}." if refused else "")
+    return Outcome(True, text, f"closed {_numbers(closed)}")
 
 
 def _request_upgrade(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -2645,6 +2726,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "request_approval": _request_approval,
     "withdraw_request": _withdraw_request,
     "message_owner": _message_owner,
+    "obligation_done": _obligation_done,
     "request_upgrade": _request_upgrade,
     "set_sleep": _set_sleep,
     "write_journal": _write_journal,

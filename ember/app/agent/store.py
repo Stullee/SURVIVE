@@ -552,6 +552,21 @@ def open_messages(conn: sqlite3.Connection, scope: AgentScope, limit: int = 8) -
     ).fetchall()
 
 
+def answerable(conn: sqlite3.Connection, scope: AgentScope, ids: list[int]) -> bool:
+    """0.12.0: whether any of ``ids`` is an open message of the owner's the agent was shown (one ``mark_answered``
+    would mark)."""
+    if not ids:
+        return False
+    where, params = scope.where()
+    marks = ", ".join("?" for _ in ids)
+    found = conn.execute(
+        f"SELECT 1 FROM messages WHERE {where} AND sender = 'owner' AND answered_by IS NULL"
+        f" AND seen_cycle_id IS NOT NULL AND id IN ({marks}) LIMIT 1",
+        (*params, *ids),
+    ).fetchone()
+    return found is not None
+
+
 def mark_answered(conn: sqlite3.Connection, scope: AgentScope, ids: list[int], answer_id: int) -> list[int]:
     """Record the agent's message ``answer_id`` as the answer to the owner's messages ``ids`` it was shown; returns
     the ones marked (the others aren't open messages of the owner's that the agent has seen)."""

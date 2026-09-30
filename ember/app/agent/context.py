@@ -24,7 +24,7 @@ from ..economy.costs import micros_to_usd
 from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
-from . import digest, library, review, roadmap, store, ventures
+from . import digest, library, obligations, review, roadmap, store, ventures
 from .memory import Memory, heading_like
 from .news import CHANGELOG_LIMIT, Item, News, Shown
 from .sandbox import Jail
@@ -88,8 +88,19 @@ VENTURE_BRIEF = (
     "grow the tree with brainstorm (first, if you plan one), save what you learn with venture_update (learned, with "
     "sources) and rescore the venture from the evidence."
 )
+# 0.12.0: the brief's copy of OBLIGATIONS (the plan's is never cut), on top of the brief's budget like the owner's.
+OBLIGATIONS_BRIEF_BUDGET = 1_000
 # The largest brief, those sections and their headings included: the WORK and REFLECT profiles are measured on it.
-BRIEF_MAX = BRIEF_BUDGET + INSTRUCTIONS_BUDGET + OWNER_BUDGET + MAIL_BUDGET + RESEARCH_BUDGET + KNOWLEDGE_BUDGET + 260
+BRIEF_MAX = (
+    BRIEF_BUDGET
+    + INSTRUCTIONS_BUDGET
+    + OWNER_BUDGET
+    + MAIL_BUDGET
+    + RESEARCH_BUDGET
+    + KNOWLEDGE_BUDGET
+    + OBLIGATIONS_BRIEF_BUDGET
+    + 330
+)
 WILL_BUDGET = 4_500 + OWNER_BUDGET + 100  # the largest will context: the LAST_WILL profile is measured on it
 _QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')  # a JSON string: how the owner's and the agent's texts are quoted
 # 0.12.0: the agent's memory files are headed as its own words, so a forged "FROM YOUR OWNER" in one is plainly its own.
@@ -163,6 +174,7 @@ class Snapshot:
     last_cycle: sqlite3.Row | None = None
     last_journal: sqlite3.Row | None = None
     digests: list[str] = field(default_factory=list)  # the last cycles' digests, newest first (0.12.0)
+    obligations: str = ""  # 0.12.0: what the agent owes (OBLIGATIONS), bounded: never cut in the plan
     memory: dict[str, str] = field(default_factory=dict)
     workspace: list[str] = field(default_factory=list)
     workspace_usage: str = ""  # 0.12.0: what the workspace holds of its limits, for STATUS
@@ -251,6 +263,7 @@ def snapshot(
         last_cycle=last_cycle,
         last_journal=journal[0] if journal else None,
         digests=digest.latest(conn, scope),
+        obligations=obligations.text(conn, scope, today) if today is not None else "",
         memory=memory.read_all(),
         workspace=files,
         workspace_usage=_usage_line(workspace),
@@ -627,6 +640,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
     last_cycle = last_cycle_text(s)
     parts = [
         ("STATUS", cut(status_text(s, dry_run), b["status"])),
+        *([(obligations.HEADING, s.obligations)] if s.obligations else []),  # 0.12.0: first, never cut
         *instructions_section(s, b["instructions"]),
         ("SINCE YOUR LAST WAKE", since),
         *([("YOUR LAST CYCLE", cut(last_cycle, b["journal"]))] if last_cycle else []),
@@ -686,11 +700,13 @@ def brief(
     research = cut(research_text(s), RESEARCH_BUDGET)
     researched = [(RESEARCH_HEADING, research)] if research else []
     learned = [(KNOWLEDGE_HEADING, cut(knowledge, KNOWLEDGE_BUDGET))] if knowledge else []
+    owed = [(obligations.HEADING, cut(s.obligations, OBLIGATIONS_BRIEF_BUDGET))] if s.obligations else []
     parts = [
         *head,
         *standing,
         *owners,
         *mailed,
+        *owed,  # 0.12.0: what the agent owes, with the numbers obligation_done closes
         *([("VENTURE CYCLE", VENTURE_BRIEF)] if s.venture else []),
         *learned,  # before the FOCUS: a brief over its budget loses its end, and this section's room is its own
         ("FOCUS", focus_text),
@@ -699,7 +715,7 @@ def brief(
         *researched,
         ("LIMITS", f"At most {max_steps} steps this cycle and 4 tool calls per step. Stop when the goal is reached."),
     ]
-    on_top = [*standing, *owners, *mailed, *researched, *learned]
+    on_top = [*owed, *standing, *owners, *mailed, *researched, *learned]
     room = sum(json_bytes(f"\n\n== {title} ==\n{body}") - 2 for title, body in on_top)  # - 2: its own JSON quotes
     text = cut(_sections(parts), BRIEF_BUDGET + room)
     held = _held(text, _sections([*head, *standing]) + "\n\n== FROM YOUR OWNER ==\n", lines)

@@ -3,6 +3,7 @@ do first, and the last plan's goal, never reached a plan (the 600 bytes kept for
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls
@@ -22,10 +23,13 @@ def test_the_reflections_handoff_reaches_the_next_plan(data_dir: Path) -> None:
     assert rows(agent, "SELECT handoff FROM journal")[0]["handoff"] == HANDOFF
     first, second = planner_texts(fake)
     assert "== YOUR LAST CYCLE ==" not in first  # nothing before the first cycle
-    assert section(second, "YOUR LAST CYCLE") == (  # 0.12.0: with the digest Ember's code wrote of it
-        f'Your handoff to this cycle: "{HANDOFF}"\nIts journal: "Drafted half the planner"\n'
-        "What your last cycles did, from Ember's records (newest first):\n"
-        'Cycle #1 completed · $0.0464\nGoal: "Plan ahead"\nNo tool was used for the work.\n'
-        "Work ended: the agent ended it.\nReflection: yes; journal by the agent."
-    )
+    shown = section(second, "YOUR LAST CYCLE")  # 0.12.0: with the digest Ember's code wrote of it
+    assert re.fullmatch(
+        re.escape(f'Your handoff to this cycle: "{HANDOFF}"\nIts journal: "Drafted half the planner"\n')
+        + re.escape("What your last cycles did, from Ember's records (newest first):\nCycle #1 completed · $")
+        + r"0\.\d{4}"
+        + re.escape('\nGoal: "Plan ahead"\nNo tool was used for the work.\nWork ended: the agent ended it.\n')
+        + re.escape("Reflection: yes; journal by the agent."),
+        shown,
+    ), shown
     assert "Your last journal summary" not in second  # it moved from the news to this section

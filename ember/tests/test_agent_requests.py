@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from app.agent import context, digest, library, loop, prompts, roadmap, tools, ventures
+from app.agent import context, digest, library, loop, obligations, prompts, roadmap, tools, ventures
 from app.agent.news import CHANGELOG_LIMIT, News
 from app.config import Settings
 from app.economy.estimate import plan_request
@@ -33,9 +33,11 @@ def filler(budget: int) -> str:
 
 
 def biggest_planner_context() -> str:
-    # Every section at its budget: the standing instructions, RECENT RESEARCH and MAIL included.
+    # Every section at its budget: the standing instructions, RECENT RESEARCH and MAIL included, and (0.12.0) the
+    # OBLIGATIONS at their bound (never cut).
     parts = [f"== {HEADINGS.get(k, k.upper())} ==\n{filler(v)}" for k, v in context.PLANNER_BUDGETS.items()]
-    return "\n\n".join([*parts, "== TASK ==\nPlan this wake cycle. Reply with the JSON plan only."])
+    owed = f"== {obligations.HEADING} ==\n{filler(obligations.MAX_BYTES)}"
+    return "\n\n".join([owed, *parts, "== TASK ==\nPlan this wake cycle. Reply with the JSON plan only."])
 
 
 def longest_undone() -> list[str]:
@@ -147,6 +149,7 @@ def overflowing_snapshot() -> context.Snapshot:
             for i in range(roadmap.MAX_OPEN)
         ],
         roadmap_closed=[{**milestone, "id": 2_000 + i, "status": "missed"} for i in range(12)],  # type: ignore[misc]
+        obligations=filler(obligations.MAX_BYTES),  # 0.12.0: at its bound
         library=library.Shelf(  # 0.12.0: a full library, with its newly studied documents at their longest
             documents=library.MAX_DOCUMENTS,
             chars=library.LIBRARY_CHARS,

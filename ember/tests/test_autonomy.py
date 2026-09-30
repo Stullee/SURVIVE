@@ -353,7 +353,6 @@ def test_the_rules_ask_for_action_instead_of_waiting() -> None:
         "with no open project, start one now",
         "Build first, then ask",
         "one concrete action",
-        "at most once a day, in one batched message",
         "Your daily cap is a limit, not a target",  # 0.12.0: it was "there to be spent on experiments"
         "Sleep long only when there is truly nothing useful to do",
         "- money_path: how this goal leads to income",
@@ -361,7 +360,7 @@ def test_the_rules_ask_for_action_instead_of_waiting() -> None:
         assert words in planner, words
     rules = prompts.OPERATING_RULES
     for words in (
-        "at most once a day, in one",
+        "Ask your owner in one batched message",
         "work on another experiment meanwhile",
         "YOUR OWNER'S STANDING INSTRUCTIONS",
         "Your strategy\n  lives in memory (strategy), the only strategy you see when planning",
@@ -369,6 +368,9 @@ def test_the_rules_ask_for_action_instead_of_waiting() -> None:
         assert words in rules, words
     assert "money_path" in prompts.PLAN_SCHEMA["required"]
     assert "Sleeping longer saves money" not in json.dumps(prompts.work_request(Settings(), "brief", []))
+    # 0.12.0: the limit on messages is Ember's code's (message_owner says it), not two copies of "once a day"
+    assert "once a day" not in planner and "once a day" not in rules
+    assert "At most 2 a day that answer none of theirs" in json.dumps(prompts.work_request(Settings(), "b", []))
 
 
 # --- a message wakes the agent ---

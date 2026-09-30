@@ -111,6 +111,14 @@ def dashboard(agent: Agent) -> dict[str, Any]:
             }
             for r in store.approvals_for_owner(conn, scope)
         ]
+        where, params = scope.where()
+        promised: dict[int, list[dict[str, Any]]] = {}  # 0.12.0: what a message of the agent's promised
+        for o in conn.execute(
+            f"SELECT * FROM obligations WHERE {where} AND kind = 'promise' ORDER BY id", params
+        ).fetchall():
+            promised.setdefault(int(o["message_id"]), []).append(
+                {"id": o["id"], "what": o["what"], "due": o["due"], "status": o["status"], "result": o["result"]}
+            )
         inbox = [
             {
                 "id": r["id"],
@@ -122,6 +130,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "removed": r["removed_at"] is not None,
                 "seen_by_agent": r["seen_cycle_id"] is not None,
                 "answered_by": r["answered_by"],  # the agent's message that answered this one of the owner's
+                "promises": promised.get(int(r["id"]), []),
                 "simulated": r["mode"] == "dry_run",
             }
             for r in store.queue(conn, "messages", scope)

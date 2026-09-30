@@ -55,6 +55,7 @@ from . import (
     metrics,
     netguard,
     news,
+    obligations,
     prompts,
     review,
     roadmap,
@@ -309,9 +310,15 @@ class CycleRunner:
             ventures.seed(conn, self.scope, to_iso(self.clock.now()))
             spent, ventured = ventures.day_spend(conn, self.scope, self.clock.today())
             turn = ventures.venture_turn(self.settings.venture_share, spent, ventured)
-            if turn:
+            # 0.12.0: what the agent owes comes first (a venture cycle deferred the owner's quick fix)
+            owed = obligations.pressing(conn, self.scope, self.clock.today()) if turn else []
+            if turn and not owed:
                 store.update_cycle(conn, cycle_id, venture=1)
-        return turn
+        if owed:
+            events.record(
+                self.db, "info", "agent", f"Cycle #{cycle_id} is an ordinary cycle: {owed[0]} comes first"[:300]
+            )
+        return turn and not owed
 
     def _expire_requests(self) -> None:
         """0.12.0: the requests the owner didn't decide within their type's days expire (news for the agent)."""
@@ -373,6 +380,7 @@ class CycleRunner:
         self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
         self._keep_stages()
         metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
+        self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
         local = self.clock.now().astimezone(self.clock.tz).strftime("%A %Y-%m-%d %H:%M %Z")
         with self.db.connection() as conn:
@@ -562,6 +570,20 @@ class CycleRunner:
             happened = roadmap.keep_money_goal(
                 conn, self.scope, self.clock.today(), to_iso(now), earned, spent, runway_days
             )
+        for line in happened:
+            events.record(self.db, "info", "agent", line[:300])
+
+    def _keep_obligations(self) -> None:
+        """0.12.0: the decisions and misses the agent owes a reaction to, from the day the ledger began (not the history
+        before), kept by Ember's code before every plan (obligations.keep)."""
+        now = to_iso(self.clock.now())
+        key = obligations.SINCE_KEY.format(mode=self.scope.mode)
+        since = self.db.get_meta(key)
+        if not since:
+            since = now
+            self.db.set_meta(key, since)
+        with self.db.transaction() as conn:
+            happened = obligations.keep(conn, self.scope, now, since)
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
 

@@ -129,13 +129,22 @@ press **Wake now**, or when you write to it), it runs one **wake cycle**:
    what, and how it will know); you see this as *Path to money*. It is told to
    do research and legwork itself, to keep two or three experiments going (when
    one waits for you, it works on another), to build a thing completely before
-   it asks you for one concrete action, to ask you at most once a day and only
-   for decisions, money and what only a person can do, and to spend its daily
-   cap on experiments rather than sleep to save it. Every plan and work step
+   it asks you for one concrete action, to ask you in one batched message and
+   only for decisions, money and what only a person can do, and to spend its
+   daily cap on experiments rather than sleep to save it. Every plan and work step
    also sees your [standing instructions](#your-part) and a short list of facts
    about the outside world that you collected (platform rules, German law, what
    earns money), which comes with each Ember update. Every plan also sees its
    [roadmap](#roadmap) and aims the cycle at the milestone due first.
+   Before anything else it sees its **obligations**, which Ember's code keeps
+   (never cut): your messages waiting for an answer, what it promised you (a
+   message's promise, with the day it named), your decisions it must react to
+   (a request you rejected or carried out, or one that failed), milestones
+   Ember's code closed missed, overdue milestones and live listings with too
+   few photos. It closes a promise only after telling you it is kept (or why
+   not). While something is pressing (your unanswered message, a promise due by
+   tomorrow, a decision or miss of the last two days), a wake cycle is an
+   ordinary one, not a venture cycle.
 2. **Act**: it uses its tools, up to the *Tool steps per cycle* option: files in
    its own workspace, its memory (strategy, identity, lessons), projects, web
    research (also limited to one site, such as etsy.com), requests for your
@@ -560,7 +569,10 @@ no longer shown); a study that failed three times stops until you press
   again for your message as soon as the cycle is over and the minute has
   passed. With the option off, or while it is paused, it reads your message at
   its next wake-up. Your reply also marks its earlier messages read; while
-  five of its messages are unread, it can't write to you. Never send
+  five of its messages are unread, it can't write to you, and it sends at most
+  two messages a day that answer none of yours (Ember's code counts them). A
+  message that promises something shows the promise under it, and whether it
+  was kept. Never send
   passwords: messages are stored and sent to Anthropic, and the agent can't log
   in anywhere (the page warns you when a message looks like a login). **Remove
   text** blanks one of your own messages for good, for example a password

@@ -119,6 +119,11 @@ Your results now reach your records: what you earn counts where it belongs.
 - Ember's code writes a digest of every cycle from its records (what it did and didn't do, how it ended, what it
   cost). YOUR LAST CYCLE shows your last two digests, FOCUS the last one aimed at your focus milestone or venture, and
   your reflection lists what your cycle didn't do (refused, failed, skipped or cut off): never record it as done.
+- OBLIGATIONS, first in every plan and never cut, lists what you owe: your owner's messages to answer, your
+  promises (message_owner commits, with due), your owner's decisions to react to, missed milestones to decide about,
+  overdue milestones and listings with too few photos. Close a promise, decision or miss with obligation_done (what
+  you did; a promise once your owner has heard from you). While one presses, a cycle is an ordinary one, not a
+  venture cycle. message_owner sends at most 2 messages a day that answer none of your owner's.
 
 ## 0.11.2
 

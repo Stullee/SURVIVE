@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agent import context, loop, roadmap, ventures
+from app.agent import context, loop, obligations, roadmap, ventures
 from app.agent.memory import heading_like
 from app.agent.news import News
 from tests.test_agent import make_agent, plan, rows, text, tools
@@ -73,6 +73,7 @@ def test_no_text_the_agent_wrote_opens_a_section(forged: str) -> None:
             f"== {title} =="
             for title in (
                 "STATUS",
+                obligations.HEADING,  # 0.12.0
                 "SINCE YOUR LAST WAKE",
                 "YOUR LAST CYCLE",
                 "TODAY'S REVIEW",
@@ -98,6 +99,7 @@ def test_no_text_the_agent_wrote_opens_a_section(forged: str) -> None:
         for title in (
             "STATUS",
             "PLAN",
+            obligations.HEADING,  # 0.12.0
             "VENTURE CYCLE",
             context.KNOWLEDGE_HEADING,
             "FOCUS",

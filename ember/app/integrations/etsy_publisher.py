@@ -893,6 +893,24 @@ def live_line(
     return f"All {len(live)} live listings, top sellers first ({legend}): " + " · ".join(entries)
 
 
+def few_photos(conn: sqlite3.Connection, scope: AgentScope) -> list[tuple[int, int]]:
+    """0.12.0: the live listings with fewer than GOOD_PHOTOS photos in Ember's records, as (listing, photos): a defect
+    the obligations list until it is fixed."""
+    where, params = scope.where()
+    rows = conn.execute(
+        f"SELECT * FROM etsy_listings WHERE {where} AND listing_id IS NOT NULL AND status = 'active' ORDER BY id",
+        params,
+    ).fetchall()
+    found = []
+    for r in rows:
+        if etsy_state(r) != etsy.LIVE_STATE:
+            continue
+        listing = recorded_listing(conn, scope, r)
+        if listing is not None and len(listing.photos) < GOOD_PHOTOS:
+            found.append((int(r["listing_id"]), len(listing.photos)))
+    return found
+
+
 def recorded_listing(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> Listing | None:
     """A listing as Ember's records have it: a live one as listed or last changed, a draft as approved (0.12.0: drafts
     had no photo count at all). None when there is no readable record."""

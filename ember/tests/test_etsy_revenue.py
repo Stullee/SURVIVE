@@ -243,7 +243,7 @@ def test_the_ledger_keeps_its_rows_and_takes_etsys_numbers(tmp_path: Path) -> No
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(insert.replace("'owner'", "'etsy'"), (10, "revenue", 1_000, None, "c"))
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [35, 36]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [35, 36, 37]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         assert [tuple(r) for r in conn.execute("SELECT id, amount_micros, corrects_id FROM ledger")] == [

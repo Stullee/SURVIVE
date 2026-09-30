@@ -162,7 +162,7 @@ def test_a_reply_reads_the_agents_earlier_messages(data_dir: Path) -> None:
         journal = ("write_journal", {"summary": "Wrote to my owner", "entry": "."})
         return [plan(steps=["report"]), tools(*calls), text("Done."), tools(journal)]
 
-    agent, _ = make_agent(data_dir, [*cycle("Update 1.", "Update 2."), *cycle("Update 6."), *cycle("Thanks!")])
+    agent, fake = make_agent(data_dir, [*cycle("Update 1.", "Update 2."), *cycle("Update 6.")])
     agent.run_cycle("schedule")
     scope, cycle_id = agent.scope(), rows(agent, "SELECT id FROM cycles")[0]["id"]
     with agent.db.transaction() as conn:
@@ -177,12 +177,20 @@ def test_a_reply_reads_the_agents_earlier_messages(data_dir: Path) -> None:
 
     # The owner reads and replies, but never clicks "Mark all read".
     assert owner(agent).send_message({"text": "Thanks, go on with #1."}, "Stefan").status == 201
+    [theirs] = rows(agent, "SELECT id FROM messages WHERE sender = 'owner'")
+    journal = ("write_journal", {"summary": "Answered my owner", "entry": "."})
+    fake.outcomes += [
+        plan(steps=["answer"]),
+        tools(("message_owner", {"text": "Thanks!", "answers": str(theirs["id"])})),
+        text("Done."),
+        tools(journal),
+    ]
     unread = rows(agent, "SELECT text FROM messages WHERE read_at IS NULL ORDER BY id")
     assert [m["text"] for m in unread] == ["Elsewhere.", "Thanks, go on with #1."]  # never the owner's own
     assert agent.dashboard()["badges"]["inbox_unread"] == 0
 
     agent.run_cycle("schedule")
-    assert rows(agent, last)[0]["status"] == "ok"
+    assert rows(agent, last)[0]["status"] == "ok"  # (it answers the owner: 0.12.0 limits only the unasked ones)
     assert agent.dashboard()["badges"]["inbox_unread"] == 1  # the new one is unread until the next reply
 
 
