@@ -318,3 +318,13 @@ def test_the_secret_scan_allows_every_fake_password_in_the_repository() -> None:
     assert [value for value in found if not any(a.search(value) for a in allowed)] == []
     real_shape = "-".join(("Kx7mQp", "2vRtNw", "hB4zLs"))  # joined here, so this file has none of the shape
     assert shape.search(real_shape) and not any(a.search(real_shape) for a in allowed)  # still found
+
+
+def test_a_secret_that_contains_another_is_masked_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tests/test_pinterest.py failed about one run in four, depending on the hash seed: test_etsy.py had registered
+    an Etsy refresh token that is part of the Pinterest one, and redact masked whichever came first in the set."""
+    from app import logging_setup
+
+    etsy, pinterest = "r3fresh-t0ken-value", "pinr_r3fresh-t0ken-value"
+    monkeypatch.setattr(logging_setup, "_secrets", [etsy, pinterest])  # the shorter one first, as a set may have it
+    assert logging_setup.redact(f"token {pinterest} and {etsy}") == "token *** and ***"
