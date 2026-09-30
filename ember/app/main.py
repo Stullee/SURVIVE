@@ -18,10 +18,11 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
 from . import events, paths
-from .agent.owner import apply_kill_switch_reset
+from .agent.owner import KILL_RESET_KEY, apply_kill_switch_reset
 from .agent.scheduler import Scheduler
 from .agent.service import Agent
 from .config import LoadedSettings, load_settings
+from .economy.life import KILLED_KEY
 from .economy.metering import ProcessLock, lock_path
 from .economy.service import Economy
 from .logging_setup import printable, redact, register_secret, setup_logging
@@ -110,9 +111,8 @@ def create_app(loaded: LoadedSettings | None = None, *, dev_mode: bool | None = 
     )
     # The middleware added last runs first: SecurityMiddleware wraps CatchAllMiddleware.
     app.add_middleware(CatchAllMiddleware)
-    app.add_middleware(
-        SecurityMiddleware, policy=AccessPolicy(dev_mode=dev_mode, owner_ids=loaded.settings.owner_user_ids)
-    )
+    policy = AccessPolicy(dev_mode=dev_mode, owner_ids=loaded.settings.owner_user_ids, locked=loaded.owner_unknown)
+    app.add_middleware(SecurityMiddleware, policy=policy)
     app.include_router(router)
     app.mount("/static", StaticFiles(directory=paths.WEB_DIR / "static"), name="static")
     return app
@@ -145,13 +145,19 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
     )
     for error in loaded.errors:
         _record(state, "error", "config", f"Invalid option: {error}")
+    for correction in loaded.corrections:  # 0.14.0
+        _record(state, "error", "config", f"Options corrected: {correction}")
     if loaded.safe_mode:
-        _record(state, "warning", "config", "Safe mode: built-in defaults are used and dry-run is forced on.")
+        kept = "owner_user_ids and the kill switch are kept"
+        _record(state, "warning", "config", f"Safe mode: built-in defaults are used and dry-run is forced on; {kept}.")
     economy: Economy | None = None
     try:
         economy = Economy(database, loaded, lock=ProcessLock(lock_path(paths.data_dir())))
         economy.start()
-        apply_kill_switch_reset(database, economy, loaded.settings.kill_switch_reset)
+        if loaded.safe_mode:
+            _hold_kill_switch(state, loaded.settings.kill_switch_reset)
+        else:
+            apply_kill_switch_reset(database, economy, loaded.settings.kill_switch_reset)
     except Exception as exc:  # noqa: BLE001 - the dashboard must still come up
         state.economy_error = redact(f"{type(exc).__name__}: {exc}")
         log.exception("The economy could not start; model calls are disabled")
@@ -167,6 +173,19 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
         state.agent_error = redact(f"{type(exc).__name__}: {exc}")
         log.exception("The agent could not start; no wake cycles will run")
     return state
+
+
+def _hold_kill_switch(state: AppState, reset_value: int) -> None:
+    """0.14.0: options that don't validate never lift a kill switch, nor store a reset: the reset marker stays at the
+    last valid options' value, so the owner's change applies at the first start with valid options. Safe mode runs dry,
+    but the kill switch is one flag for every mode."""
+    if state.db.get_meta(KILLED_KEY) == "1" and state.db.get_meta(KILL_RESET_KEY) not in (None, str(reset_value)):
+        _record(
+            state,
+            "warning",
+            "control",
+            "Safe mode keeps the kill switch on: a new Kill switch reset applies once the options are valid",
+        )
 
 
 def _stop(state: AppState) -> None:

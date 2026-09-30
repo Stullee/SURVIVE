@@ -17,7 +17,9 @@ configuration:
     description: Hard limit on API spending per day. Calls that could exceed it are refused.
   cycle_spend_cap_usd:
     name: Spending cap per wake cycle (USD)
-    description: Hard limit on API spending in one wake cycle. Must not exceed the daily cap.
+    description: >-
+      Hard limit on API spending in one wake cycle. Must not exceed the daily
+      cap: if it does, Ember uses the daily cap and says so on the dashboard.
   venture_share:
     name: Share for ventures (%)
     description: >-
@@ -39,7 +41,9 @@ configuration:
       documents can still be searched and read.
   wake_interval_minutes:
     name: Default sleep between wake cycles (minutes)
-    description: Used when the agent does not choose its own sleep time.
+    description: >-
+      Used when the agent does not choose its own sleep time. Kept between the
+      shortest and the longest sleep (the dashboard says so if it isn't).
   min_sleep_minutes:
     name: Shortest sleep (minutes)
     description: The agent can't choose to wake up sooner than this.
@@ -266,7 +270,7 @@ configuration:
     description: >-
       The rate Ember's code uses for orders in EUR when it records them
       automatically, for example 1.08. 0: orders in EUR are left for you to
-      record.
+      record (a rate below 0.5 counts as 0).
   etsy_market_probe:
     name: Etsy market probe for demand notes
     description: >-
@@ -338,7 +342,8 @@ configuration:
   site_name:
     name: Website name
     description: >-
-      The site's name in its header, e.g. your shop's name. Empty: your name.
+      The site's name in its header, e.g. your shop's name (at most 60
+      characters). Empty: your name.
   site_language:
     name: Website language
     description: >-
@@ -348,7 +353,8 @@ configuration:
     name: Website address
     description: >-
       Where you publish it, e.g. https://example.org: for its sitemap and the
-      search engines. Optional.
+      search engines. Optional. An https address with at most a path (no ?, no
+      #); a domain with umlauts in its xn-- form.
   site_owner_name:
     name: Your full name (Impressum)
     description: >-
@@ -366,11 +372,12 @@ configuration:
   site_phone:
     name: Your phone number (Impressum)
     description: >-
-      Optional: shown in the Impressum if set.
+      Optional: shown in the Impressum if set (at most 40 characters).
   site_vat_id:
     name: Your VAT ID (Impressum)
     description: >-
-      Optional: your Umsatzsteuer-Identifikationsnummer, if you have one.
+      Optional: your Umsatzsteuer-Identifikationsnummer, if you have one (at
+      most 20 characters).
   site_host:
     name: Your web host (privacy page)
     description: >-

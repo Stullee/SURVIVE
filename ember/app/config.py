@@ -7,10 +7,13 @@ makes sure the API key can never leak through ``repr``, logs or the API.
 
 If the options are invalid the app does not crash: it starts in *safe mode*
 (built-in defaults, dry-run forced on) and shows the errors in the dashboard.
+0.14.0: safe mode keeps the owner's identity and the kill switch's reset, and
+the rules between options that the schema can't check are corrected instead.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -29,8 +32,10 @@ log = logging.getLogger(__name__)
 # and switch every spending limit off.
 MIN_PRICE = 0.000001
 # 0.13.0: the website's address (https, a host and at most a path: no query, no fragment) and its email address.
-_SITE_URL = re.compile(r"^https://[A-Za-z0-9.-]{1,190}(?::\d{1,5})?(?:/[A-Za-z0-9._~/-]*)?$")
-_SITE_EMAIL = re.compile(r"^[^@\s<>\"']{1,64}@[^@\s<>\"']{1,190}\.[A-Za-z]{2,63}$")
+# 0.14.0: with their lengths, and empty allowed: config.yaml's schema has the same patterns (a test checks), so Home
+# Assistant refuses a bad value when the owner saves it, instead of Ember starting in safe mode.
+_SITE_URL = re.compile(r"^(?=.{0,200}$)(?:https://[A-Za-z0-9.-]{1,190}(?::\d{1,5})?(?:/[A-Za-z0-9._~/-]*)?)?$")
+_SITE_EMAIL = re.compile(r"""^(?=.{0,254}$)(?:[^@\s<>"']{1,64}@[^@\s<>"']{1,190}\.[A-Za-z]{2,63})?$""")
 
 
 class ModelPrice(BaseModel):
@@ -370,6 +375,10 @@ class LoadedSettings:
     settings: Settings
     errors: list[str] = field(default_factory=list)
     source: str = "defaults"
+    # 0.14.0: rules between options that Ember corrected instead of starting safe mode (see _corrected), and, in safe
+    # mode, whether owner_user_ids couldn't be read: then Ember answers no one (app/security.py).
+    corrections: list[str] = field(default_factory=list)
+    owner_unknown: bool = False
 
     @property
     def safe_mode(self) -> bool:
@@ -394,15 +403,70 @@ def load_settings(path: Path | None = None) -> LoadedSettings:
         if not isinstance(raw, dict):
             raise ValueError("options file must contain a JSON object")
     except (OSError, ValueError) as exc:
-        return _safe_mode([f"could not read {path.name}: {exc}"])
+        return _safe_mode([f"could not read {path.name}: {exc}"], None)
+    values, corrections = _corrected(raw)
     try:
-        return LoadedSettings(Settings.model_validate(raw), source=str(path))
+        settings = Settings.model_validate(values)
     except ValidationError as exc:
-        return _safe_mode(_format_validation_error(exc))
+        return _safe_mode(_format_validation_error(exc), raw)
+    for correction in corrections:
+        log.error("Options corrected: %s", correction)
+    return LoadedSettings(settings, source=str(path), corrections=corrections)
 
 
-def _safe_mode(errors: list[str]) -> LoadedSettings:
+def _corrected(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """0.14.0: the rules between options that Home Assistant's schema can't check, corrected instead of starting safe
+    mode: the cycle cap at most the daily cap, the longest sleep at least the shortest (the shortest wins, as when
+    Ember sleeps), the default sleep between them, and an exchange rate below 0.5 as none. Each correction spends no
+    more than the owner's options would; the dashboard shows it until the options are fixed."""
+    values = dict(raw)
+    notes: list[str] = []
+
+    def number(key: str) -> float | None:
+        value = values.get(key, Settings.model_fields[key].default)
+        return value if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+    daily, cycle = number("daily_spend_cap_usd"), number("cycle_spend_cap_usd")
+    if daily is not None and cycle is not None and cycle > daily:
+        values["cycle_spend_cap_usd"] = daily
+        notes.append(f"cycle_spend_cap_usd ({cycle:g}) is larger than daily_spend_cap_usd: the cycle cap is {daily:g}")
+    shortest, longest = number("min_sleep_minutes"), number("max_sleep_minutes")
+    default = number("wake_interval_minutes")
+    if shortest is not None and longest is not None and default is not None:
+        if shortest > longest:
+            values["max_sleep_minutes"] = longest = shortest
+            notes.append(f"max_sleep_minutes is smaller than min_sleep_minutes: the longest sleep is {shortest:g}")
+        if not shortest <= default <= longest:
+            values["wake_interval_minutes"] = fitted = min(max(default, shortest), longest)
+            notes.append(
+                f"wake_interval_minutes ({default:g}) must be between min_sleep_minutes and max_sleep_minutes:"
+                f" the default sleep is {fitted:g}"
+            )
+    rate = number("etsy_usd_per_eur")
+    if rate is not None and 0 < rate < 0.5:
+        values["etsy_usd_per_eur"] = 0
+        notes.append(f"etsy_usd_per_eur ({rate:g}) must be 0 or 0.5 to 3: no rate is used, orders in EUR stay yours")
+    return values, notes
+
+
+def _safe_mode(errors: list[str], raw: dict[str, Any] | None) -> LoadedSettings:
+    """Built-in defaults with dry run forced on. 0.14.0: but the owner's identity and the kill switch's reset, each read
+    on its own, so one bad option neither opens the dashboard to every user nor lifts a kill switch (app/main.py
+    never applies a reset in safe mode). If owner_user_ids can't be read, Ember answers no one (owner_unknown)."""
     for error in errors:
         log.error("Invalid option: %s", error)
-    log.error("Starting in safe mode: built-in defaults, dry-run forced on.")
-    return LoadedSettings(Settings(dry_run=True), errors=errors, source="safe mode (built-in defaults)")
+    kept: dict[str, Any] = {}
+    for key in ("owner_user_ids", "kill_switch_reset"):
+        if raw is not None and key in raw:
+            with contextlib.suppress(ValidationError):
+                kept[key] = getattr(Settings.model_validate({key: raw[key]}), key)
+    owner_unknown = raw is None or ("owner_user_ids" in raw and "owner_user_ids" not in kept)
+    log.error("Starting in safe mode: built-in defaults, dry-run forced on; owner_user_ids and the kill switch kept.")
+    if owner_unknown:
+        log.error("owner_user_ids could not be read: Ember answers no one until the options are fixed.")
+    return LoadedSettings(
+        Settings(dry_run=True, **kept),
+        errors=errors,
+        source="safe mode (built-in defaults)",
+        owner_unknown=owner_unknown,
+    )
