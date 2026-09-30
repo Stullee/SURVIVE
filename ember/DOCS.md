@@ -421,6 +421,18 @@ the Roadmap tab shows where it stands (**Checked by Ember's code**), and the
 agent's plan says what Ember's code closed since its last cycle. A milestone
 without a metric is allowed; the agent's done on it stays self-reported.
 
+**Money, time and waiting.** A milestone can carry what it may cost: the API
+spending the agent plans for it, the cash it needs from you (EUR) and your
+hours. These are set with it and can't be raised later: the plan shows "spent
+$0.42 of $1.00", and Ember's code flags a milestone that spent more than its
+budget. What counts toward a milestone is the work of the cycles aimed at it;
+their plans, the daily reviews, brainstorms and library study are overhead,
+shown as one line on the Roadmap tab. A milestone can also **wait**, for your
+decision or for buyers, until a day at most 14 days ahead: while it waits it
+isn't flagged as overdue, and on the morning its check is due (08:00 your time)
+the agent wakes to look again. The plan also shows each overdue or this week's
+milestone's newest note.
+
 **Honest by design.** What a milestone promises (its title and its measure)
 can't be changed once it is written. Its date can move twice at most, with the
 reason, and every move is counted: the card and the timeline show where it was

@@ -32,6 +32,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -372,6 +373,9 @@ SPECS: dict[str, Spec] = {
                     12,
                     required=False,
                 ),
+                "budget_usd": _s("API spending you plan for it (fixed).", 10, required=False),
+                "cash_eur": _s("Cash it needs from your owner (fixed).", 10, required=False),
+                "owner_hours": _s("Your owner's hours it needs (fixed).", 6, required=False),
                 "due": _s("YYYY-MM-DD, at most a year ahead.", 10),
                 "parent_id": _i("The milestone it leads to (due no earlier).", required=False),
                 "venture_id": _i("The venture it serves.", required=False),
@@ -384,13 +388,17 @@ SPECS: dict[str, Spec] = {
             "milestone_update",
             "Close a milestone (done: result gives the evidence; missed, past its date: why, and what now; dropped: "
             "why, never your owner's), move its date (due, why in note; twice at most; your owner's: a proposal), "
-            "link it or add a note. Closed is final. Free.",
+            "let it wait (not overdue until check_at), link it or add a note. Closed is final. Free.",
             {
                 "milestone_id": _i("Its number."),
                 "status": _s("done, missed or dropped.", 8, required=False, enum=roadmap.CLOSED),
                 "result": _s("The evidence, or why and what now.", roadmap.LIMITS["result"], required=False),
                 "due": _s("A new date, YYYY-MM-DD.", 10, required=False),
                 "note": _s("Progress, or why the date moved.", roadmap.NOTE_CHARS, required=False, cut=True),
+                "wait_for": _s(
+                    "What it waits for, with check_at; 'nothing' ends it.", roadmap.WAIT_CHARS, required=False
+                ),
+                "check_at": _s(f"YYYY-MM-DD to check again, within {roadmap.WAIT_DAYS} days.", 10, required=False),
                 "parent_id": _i("Link it to this milestone.", required=False),
                 "venture_id": _i("Link it to this venture.", required=False),
                 "project_id": _i("Link it to this project.", required=False),
@@ -1506,6 +1514,20 @@ def _metric(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tuple[metrics.
     return m, target, baseline
 
 
+def _amount(text: Any, name: str, most: int, scale: int) -> int | None:
+    """0.12.0: an amount a milestone may take (USD, EUR or hours), in its smallest unit (``scale`` of them to one)."""
+    raw = " ".join(str(text or "").split()).replace(",", ".").lstrip("$€").removesuffix("h").strip()
+    if not raw:
+        return None
+    try:
+        value = Decimal(raw)
+    except InvalidOperation:
+        raise ToolError(f"{name} is a number, e.g. 1.50") from None
+    if not value.is_finite() or value <= 0 or value > most:
+        raise ToolError(f"{name} is a number above 0 and at most {most:,}")
+    return max(1, int(value * scale))
+
+
 def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     title = " ".join(args["title"].split())
     measure = " ".join((args.get("measure") or "").split())
@@ -1536,6 +1558,11 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     if args.get("project_id") is not None:
         _open_project(conn, ctx.scope, args["project_id"])
     checked = _metric(ctx, args, conn)
+    costs = {
+        "budget_micros": _amount(args.get("budget_usd"), "budget_usd", 1_000, 1_000_000),
+        "cash_cents": _amount(args.get("cash_eur"), "cash_eur", 100_000, 100),
+        "owner_minutes": _amount(args.get("owner_hours"), "owner_hours", 200, 60),
+    }
     if checked is not None and not measure:
         measure = metrics.measure_text(checked[0], checked[1], args.get("project_id"), args.get("venture_id"))
     milestone_id = roadmap.create(
@@ -1552,6 +1579,7 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         metric=checked[0].name if checked else None,
         target=checked[1] if checked else None,
         baseline=checked[2] if checked else None,
+        **costs,
     )
     leads = f", leading to #{parent_id}" if parent_id is not None else ""
     close = (
@@ -1570,6 +1598,31 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
 
 # What a "done" names as its evidence (0.12.0): a number, a reference (#123) or a link or file. "Done." closed one.
 EVIDENCE = re.compile(r"\d|https?://|[\w-]+/[\w./-]+\.\w+")
+
+
+def _wait(args: dict[str, Any], row: Any, today: date, closing: bool) -> dict[str, Any]:
+    """0.12.0: the wait a milestone_update sets or ends (its columns; {} if none changes). Closing ends a wait."""
+    wait_for = " ".join((args.get("wait_for") or "").split())
+    check = args.get("check_at")
+    if closing:
+        if wait_for or check:
+            raise ToolError("close a milestone or let it wait, not both")
+        return {"wait_for": None, "check_at": None} if row["wait_for"] else {}
+    if wait_for.lower() in ("nothing", "none", "-"):
+        if not row["wait_for"]:
+            raise ToolError(f"milestone #{row['id']} doesn't wait")
+        return {"wait_for": None, "check_at": None}
+    if not wait_for and not check:
+        return {}
+    if not wait_for or not check:
+        raise ToolError("a wait needs both: what it waits for (wait_for) and when to check again (check_at)")
+    day = roadmap.parse_day(check)
+    last = today + timedelta(days=roadmap.WAIT_DAYS)
+    if day is None or not today < day <= last:
+        raise ToolError(
+            f"check_at is a day after today and at most {roadmap.WAIT_DAYS} days ahead ({last.isoformat()})"
+        )
+    return {"wait_for": wait_for, "check_at": day.isoformat()}
 
 
 def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -1696,6 +1749,11 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
             closed_by="agent",  # 0.12.0: the agent's word, shown as self-reported (Ember's code closes with "code")
             **roadmap.NO_PROPOSAL,
         )
+    waits = _wait(args, row, today, bool(status))
+    if waits:
+        changes.update(waits)
+        if waits["wait_for"]:
+            note = f"{note} (waits for {waits['wait_for']} until {waits['check_at']})".strip()
     if note:
         changes["notes"] = roadmap.add_note(row["notes"], ctx.cycle_id, note)
     if not changes:
@@ -1722,6 +1780,10 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     elif "due" in changes:
         moves = changes["moves"]
         what = f"moved to {changes['due']} ({roadmap.when(due, today)}; moved {moves} time{'s' if moves != 1 else ''})"
+    elif waits.get("wait_for"):
+        what = f"waits for {waits['wait_for']} until {waits['check_at']} (not flagged overdue until then)"
+    elif waits:
+        what = "no longer waits"
     else:
         what = "updated"
     return Outcome(True, f"Milestone #{mid}: {what}.{after}", f"milestone #{mid} {what}"[:300])

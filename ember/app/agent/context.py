@@ -182,6 +182,7 @@ class Snapshot:
     today: date | None = None  # the owner's local date (the roadmap's horizons are counted from it)
     roadmap: list[sqlite3.Row] = field(default_factory=list)  # the open milestones, the first due first (0.11.0)
     roadmap_closed: list[sqlite3.Row] = field(default_factory=list)  # closed in the last roadmap.CLOSED_DAYS days
+    roadmap_spent: dict[int, int] = field(default_factory=dict)  # what each milestone's work cost (0.12.0)
     library: library.Shelf | None = None  # the owner's library (0.12.0): None while it is empty
     decision_wakes: bool = False  # the owner's decisions wake the agent (0.12.0, the wake_on_decision option)
 
@@ -268,6 +269,7 @@ def snapshot(
         today=today,
         roadmap=roadmap.open_milestones(conn, scope),
         roadmap_closed=_closed_lately(conn, scope, today),
+        roadmap_spent={mid: cost for mid, (_, cost) in roadmap.effort(conn, scope).items()},
         library=shelf,
         decision_wakes=decision_wakes,
     )
@@ -283,7 +285,7 @@ def roadmap_text(s: Snapshot) -> str:
     """The planner's ROADMAP (0.11.0), counted from the owner's today; what Ember's code closed since the last cycle
     ended is a check of its own (0.12.0)."""
     since = dict(s.last_cycle).get("ended_at") if s.last_cycle is not None else None
-    return roadmap.planner_text(s.roadmap, s.roadmap_closed, s.today or date.today(), since)
+    return roadmap.planner_text(s.roadmap, s.roadmap_closed, s.today or date.today(), since, s.roadmap_spent)
 
 
 def _safe_listing(workspace: Jail, shown: int = 19, budget: int = 900) -> list[str]:

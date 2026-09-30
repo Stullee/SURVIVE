@@ -304,6 +304,7 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
         }
         stamp = _roadmap_stamp(conn, scope, simulated, today.isoformat())
         total = roadmap.count(conn, scope)
+        overhead = roadmap.overhead(conn, scope)
     items = []
     for m in rows:
         due = roadmap.parse_day(m["due"]) or today
@@ -336,7 +337,14 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
                 "created_at": m["created_at"],
                 "updated_at": m["updated_at"],
                 "cycles": cycles,
-                "spent_usd": _usd(spent),
+                "spent_usd": _usd(spent),  # 0.12.0: the work of its cycles; their plans are overhead
+                # 0.12.0: what it may cost, and its wait
+                "budget_usd": _usd(m["budget_micros"]) if m["budget_micros"] else None,
+                "cash_eur": f"{m['cash_cents'] / 100:.2f}" if m["cash_cents"] else None,
+                "owner_hours": m["owner_minutes"] / 60 if m["owner_minutes"] else None,
+                "wait_for": m["wait_for"],
+                "check_at": m["check_at"],
+                "waiting": roadmap.waiting(m, today) if m["status"] == "open" else False,
                 "owner_action": m["owner_action"],
                 "owner_comment": m["owner_comment"],
                 "owner_at": m["owner_at"],
@@ -353,6 +361,7 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
     return {
         "mode": agent.mode,
         "today": today.isoformat(),
+        "overhead_usd": _usd(overhead),  # 0.12.0: plans, reviews, brainstorms and the rest no milestone is charged
         "horizons": [
             {"key": roadmap.OVERDUE[0], "label": roadmap.OVERDUE[1]},
             *({"key": key, "label": label, "days": last} for key, label, last in roadmap.HORIZONS),

@@ -253,7 +253,7 @@ def test_a_0_11_roadmap_comes_through_the_rebuild(tmp_path: Path) -> None:
         conn.execute("UPDATE cycles SET status = 'completed', ended_at = 'then' WHERE id = 1")
         before = [tuple(r) for r in conn.execute("SELECT * FROM milestones ORDER BY id")]
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         after = [tuple(r)[: len(before[0])] for r in conn.execute("SELECT * FROM milestones ORDER BY id")]

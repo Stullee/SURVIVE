@@ -63,6 +63,8 @@ _COLUMNS = frozenset(
         "proposed_note",
         "proposed_at",
         "proposed_cycle_id",
+        "wait_for",
+        "check_at",
     }
 )
 NO_PROPOSAL = {"proposed_due": None, "proposed_note": None, "proposed_at": None, "proposed_cycle_id": None}
@@ -78,6 +80,12 @@ DECISION_MEASURE = (
     "with that decision"
 )
 _CLEAR_PROPOSAL = ", ".join(f"{name} = NULL" for name in NO_PROPOSAL)
+# 0.12.0: money and time on a milestone. What counts toward it: the calls that worked in the cycles aimed at it; plans,
+# reviews, brainstorms, library study and the last will are overhead, charged to no milestone. A wait lasts at most
+# WAIT_DAYS, and a waiting milestone isn't flagged overdue until its check is due.
+WORK_PURPOSES = ("work", "reflect", "research", "workshop")
+WAIT_DAYS = 14
+WAIT_CHARS = 200
 
 
 # --- dates ---
@@ -229,6 +237,9 @@ def create(
     target: int | None = None,
     baseline: int | None = None,
     kind: str | None = None,
+    budget_micros: int | None = None,
+    cash_cents: int | None = None,
+    owner_minutes: int | None = None,
 ) -> int:
     """A new open milestone; one the owner adds is news for the agent (owner_action 'added'). With a metric (0.12.0),
     Ember's code checks it (metrics.grade)."""
@@ -257,6 +268,9 @@ def create(
         "target": target,
         "baseline": baseline,
         "kind": kind,  # Ember's code's: 'money_goal', 'decision' or 'first_test' (0.12.0)
+        "budget_micros": budget_micros,  # what it may cost (0.12.0): API spending, the owner's cash and time
+        "cash_cents": cash_cents,
+        "owner_minutes": owner_minutes,
     }
     names = ", ".join(columns)
     marks = ", ".join("?" for _ in columns)
@@ -424,14 +438,41 @@ def add_note(notes: str, cycle_id: int | None, note: str) -> str:
 
 
 def effort(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, tuple[int, int]]:
-    """(cycles, cost in micros) of the cycles that worked toward each milestone (their plan's focus)."""
+    """(cycles, cost in micros) of the cycles that worked toward each milestone (their plan's focus): the cost of
+    their work calls (0.12.0: the whole cycle was charged, its plan too; the overhead is in ``overhead``)."""
+    purposes = ", ".join(f"'{p}'" for p in WORK_PURPOSES)
     rows = conn.execute(
-        "SELECT y.milestone_id, COUNT(DISTINCT y.id), COALESCE(SUM(c.cost_micros), 0) FROM cycles y"
+        "SELECT y.milestone_id, COUNT(DISTINCT y.id),"
+        f" COALESCE(SUM(CASE WHEN c.purpose IN ({purposes}) THEN c.cost_micros ELSE 0 END), 0) FROM cycles y"
         " LEFT JOIN llm_calls c ON c.cycle_id = y.id WHERE y.session = ? AND y.simulated = ?"
         " AND y.milestone_id IS NOT NULL GROUP BY y.milestone_id",
         (scope.session, 1 if scope.simulated else 0),
     ).fetchall()
     return {int(r[0]): (int(r[1]), int(r[2])) for r in rows}
+
+
+def overhead(conn: sqlite3.Connection, scope: AgentScope) -> int:
+    """What no milestone is charged (0.12.0), in micros: plans, reviews, brainstorms, library study, the last will, and
+    the work of cycles aimed at none."""
+    purposes = ", ".join(f"'{p}'" for p in WORK_PURPOSES)
+    row = conn.execute(
+        "SELECT COALESCE(SUM(c.cost_micros), 0) FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id"
+        f" WHERE y.session = ? AND y.simulated = ? AND (c.purpose NOT IN ({purposes}) OR y.milestone_id IS NULL)",
+        (scope.session, 1 if scope.simulated else 0),
+    ).fetchone()
+    return int(row[0])
+
+
+def waiting(row: Mapping[str, Any], today: date) -> bool:
+    """Whether a milestone waits (0.12.0): for something named, until its check is due."""
+    check = parse_day(_column(row, "check_at"))
+    return bool(_column(row, "wait_for")) and check is not None and check > today
+
+
+def check_due(row: Mapping[str, Any], today: date) -> bool:
+    """Whether a milestone that waited has its check due (0.12.0)."""
+    check = parse_day(_column(row, "check_at"))
+    return bool(_column(row, "wait_for")) and check is not None and check <= today
 
 
 # --- what the agent is shown ---
@@ -482,20 +523,60 @@ def owner_said(row: Mapping[str, Any]) -> str:
     return f" · {words}{comment}"
 
 
+def _money(row: Mapping[str, Any], spent: Mapping[int, int] | None) -> str:
+    """What a milestone may cost and what its work spent so far (0.12.0), as a short clause ("" if nothing is set)."""
+    parts = []
+    budget = _column(row, "budget_micros")
+    if budget:
+        used = (spent or {}).get(int(row["id"]), 0)
+        parts.append(f"spent ${used / 1_000_000:.2f} of ${budget / 1_000_000:.2f}")
+    needs = []
+    if _column(row, "cash_cents"):
+        needs.append(f"{row['cash_cents'] / 100:.2f} EUR")
+    if _column(row, "owner_minutes"):
+        needs.append(f"{row['owner_minutes'] / 60:g} h")
+    if needs:
+        parts.append(f"needs {' and '.join(needs)} from your owner")
+    return "".join(f" · {part}" for part in parts)
+
+
+def _waits(row: Mapping[str, Any], today: date) -> str:
+    """A milestone's wait (0.12.0), as a short clause ("" if it doesn't wait)."""
+    if waiting(row, today):
+        return f" · waiting for {_q(row['wait_for'], 80)} until {row['check_at']}"
+    if check_due(row, today):
+        return f" · its check is due: it waited for {_q(row['wait_for'], 80)}"
+    return ""
+
+
+def _last_note(row: Mapping[str, Any]) -> str:
+    """A milestone's newest note (0.12.0: the planner never saw its notes), as a short clause."""
+    notes = str(_column(row, "notes") or "").strip()
+    return f" · last note: {_q(notes.splitlines()[-1], 100)}" if notes else ""
+
+
 def _checked(row: Mapping[str, Any]) -> str:
     """How Ember's code checks a milestone with a metric, and where it stands (0.12.0), as a short clause."""
     text = metrics.status_text(row)
     return f" · {text}" if text else ""
 
 
-def milestone_line(row: Mapping[str, Any], today: date, detail: bool, open_ids: set[int] | None = None) -> str:
-    """One milestone for the planner: its number, title, date, and (with ``detail``) its measure; with a metric, where
-    it stands."""
+def milestone_line(
+    row: Mapping[str, Any],
+    today: date,
+    detail: bool,
+    open_ids: set[int] | None = None,
+    spent: Mapping[int, int] | None = None,
+) -> str:
+    """One milestone for the planner: its number, title, date, and (with ``detail``) its measure and newest note; with
+    a metric, where it stands; what it may cost and spent (``spent``: its work's cost by milestone), and its wait."""
     due = _due(row)
     line = f"#{row['id']} {_q(row['title'], 100)} · due {_day(due)} ({when(due, today)})"
     if detail and not _column(row, "metric"):
         line += f" · measure: {_q(row['measure'], 160)}"
-    return line + _checked(row) + _links(row, open_ids) + _moved(row) + _proposed(row) + owner_said(row)
+    line += _checked(row) + _money(row, spent) + _waits(row, today)
+    line += _links(row, open_ids) + _moved(row) + _proposed(row) + owner_said(row)
+    return line + (_last_note(row) if detail else "")
 
 
 def _column(row: Mapping[str, Any], name: str) -> Any:
@@ -506,9 +587,9 @@ def _column(row: Mapping[str, Any], name: str) -> Any:
         return None
 
 
-def checks(rows: list[Mapping[str, Any]], today: date) -> list[str]:
-    """Ember's code's notes on the roadmap's shape, for the planner: empty, overdue, nothing due this week, nothing
-    planned beyond this month."""
+def checks(rows: list[Mapping[str, Any]], today: date, spent: Mapping[int, int] | None = None) -> list[str]:
+    """Ember's code's notes on the roadmap's shape, for the planner: empty, overdue (not what waits, 0.12.0), checks
+    due, spending over a milestone's budget, nothing due this week, nothing planned beyond this month."""
     if not rows:
         return [
             "Roadmap check: your roadmap is empty. Plan a step that lays it out with milestone_create: 1 to 3 goals "
@@ -517,13 +598,28 @@ def checks(rows: list[Mapping[str, Any]], today: date) -> list[str]:
         ]
     notes = []
     kinds = [horizon(_due(r), today) for r in rows]
-    overdue = [r for r, k in zip(rows, kinds, strict=True) if k == OVERDUE[0]]
+    overdue = [r for r, k in zip(rows, kinds, strict=True) if k == OVERDUE[0] and not waiting(r, today)]
     if overdue:
         ids = ", ".join(f"#{r['id']}" for r in overdue[:6])
         notes.append(
             f"Roadmap check: {len(overdue)} milestone{'s are' if len(overdue) != 1 else ' is'} overdue ({ids}). Close "
             "each with milestone_update: done if its measure is met (with the evidence), missed if not (why, and "
             "what now); or move its date with the reason, if it is still worth reaching."
+        )
+    checked = [r for r in rows if check_due(r, today)]
+    if checked:
+        notes.append(
+            f"Roadmap check: the check of {', '.join(f'#{r["id"]}' for r in checked[:6])} is due: see whether what it "
+            "waited for came, then close it, move it or wait again (milestone_update: wait_for, check_at)."
+        )
+    over = [
+        r for r in rows if _column(r, "budget_micros") and (spent or {}).get(int(r["id"]), 0) > int(r["budget_micros"])
+    ]
+    for r in over[:3]:
+        notes.append(
+            f"Roadmap check: #{r['id']} spent ${(spent or {})[int(r['id'])] / 1_000_000:.2f} of its "
+            f"${r['budget_micros'] / 1_000_000:.2f}: go on only if it is still worth it (say why in a note), or drop "
+            "it."
         )
     if "week" not in kinds:
         notes.append(
@@ -535,7 +631,7 @@ def checks(rows: list[Mapping[str, Any]], today: date) -> list[str]:
     return notes
 
 
-def goal_line(row: Mapping[str, Any], today: date) -> str:
+def goal_line(row: Mapping[str, Any], today: date, spent: Mapping[int, int] | None = None) -> str:
     """A goal for the plan, compact on one line (0.12.0: the ROADMAP's cut took every goal)."""
     due = _due(row)
     links = "".join(f" · {name} #{row[f'{name}_id']}" for name in ("venture", "project") if row[f"{name}_id"])
@@ -546,8 +642,8 @@ def goal_line(row: Mapping[str, Any], today: date) -> str:
         said = " · set by Ember's code"
     measure = _checked(row) or f" · measure: {_q(row['measure'], 90)}"
     return (
-        f"#{row['id']} {_q(row['title'], 70)} · due {_day(due)} ({when(due, today)}){measure}{links}{_moved(row)}"
-        f"{_proposed(row)}{said}"
+        f"#{row['id']} {_q(row['title'], 70)} · due {_day(due)} ({when(due, today)}){measure}{_money(row, spent)}"
+        f"{_waits(row, today)}{links}{_moved(row)}{_proposed(row)}{said}"
     )
 
 
@@ -572,7 +668,11 @@ def code_closed(closed: list[Mapping[str, Any]], since: str | None) -> list[str]
 
 
 def planner_text(
-    rows: list[Mapping[str, Any]], closed: list[Mapping[str, Any]], today: date, since: str | None = None
+    rows: list[Mapping[str, Any]],
+    closed: list[Mapping[str, Any]],
+    today: date,
+    since: str | None = None,
+    spent: Mapping[int, int] | None = None,
 ) -> str:
     """The ROADMAP section: a count by horizon and the checks (what Ember's code closed since ``since`` among them),
     then the goals (the open milestones that lead to no other: what the rest is for) one line each, so a cut never
@@ -588,10 +688,10 @@ def planner_text(
     head = f"Today: {today:%A} {today.isoformat()}. " + (
         f"{len(rows)} open milestone{'s' if len(rows) != 1 else ''}: {tally}." if rows else "No open milestones."
     )
-    lines = [head, *checks(rows, today), *code_closed(closed, since)]
+    lines = [head, *checks(rows, today, spent), *code_closed(closed, since)]
     if goals:
         lines.append("Goals (the rest leads to them):")
-        lines.extend(goal_line(r, today) for r in goals)
+        lines.extend(goal_line(r, today, spent) for r in goals)
     ends = {key: today + timedelta(days=last) for key, _, last in HORIZONS}
     for key, label in labels:
         members = [r for r in groups.get(key, []) if r["parent_id"] in open_ids]  # the goals are listed above
@@ -599,7 +699,7 @@ def planner_text(
             continue
         lines.append(f"{label} (to {_day(ends[key])}):" if key in ends else f"{label}:")
         for r in members:
-            lines.append(milestone_line(r, today, key in (OVERDUE[0], "week"), open_ids))
+            lines.append(milestone_line(r, today, key in (OVERDUE[0], "week"), open_ids, spent))
     if closed:
         done = "; ".join(
             f"#{r['id']} {_q(r['title'], 60)} {closed_as(r)} {str(r['closed_at'])[:10]}"
@@ -610,7 +710,9 @@ def planner_text(
     return "\n".join(lines)
 
 
-def focus_text(row: Mapping[str, Any], today: date, parent: Mapping[str, Any] | None) -> str:
+def focus_text(
+    row: Mapping[str, Any], today: date, parent: Mapping[str, Any] | None, spent: Mapping[int, int] | None = None
+) -> str:
     """The brief's FOCUS for the plan's milestone: what it takes to be done and how to close it first (a cut takes
     the end), then what it leads to and serves, the owner's word and the notes."""
     due = _due(row)
@@ -634,6 +736,12 @@ def focus_text(row: Mapping[str, Any], today: date, parent: Mapping[str, Any] | 
     said = owner_said(row)
     if said:
         lines.append(f"Owner: {said.removeprefix(' · ')}")
+    money = _money(row, spent)
+    if money:
+        lines.append(f"Money and time: {money.removeprefix(' · ')}")
+    waits = _waits(row, today)
+    if waits:
+        lines.append(f"Wait: {waits.removeprefix(' · ')}")
     if row["notes"]:
         lines.append(f"Notes: {_one_line(row['notes'][-300:], 300)}")
     return "\n".join(lines)

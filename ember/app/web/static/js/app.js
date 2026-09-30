@@ -5484,6 +5484,11 @@
     if (ended.length) parts.push("Closed: " + ended.join(", ") + ".");
     var moved = open.filter(function (m) { return num(m.moves) > 0; }).length;
     if (moved) parts.push(plural(moved, "open milestone") + " moved from " + (moved === 1 ? "its" : "their") + " first date.");
+    var waiting = open.filter(function (m) { return m.waiting; }).length;
+    if (waiting) parts.push(plural(waiting, "open milestone") + " waiting.");
+    if (data.overhead_usd !== undefined && data.overhead_usd !== null) {
+      parts.push("Overhead (plans, reviews, brainstorms, library study): " + usd(data.overhead_usd) + ".");
+    }
     $("rm-summary").textContent = parts.join(" ");
   }
 
@@ -5717,8 +5722,14 @@
           h("dd", { text: "#" + m.venture_id + (m.venture_title ? " " + m.venture_title : "") })) : null,
         m.project_id ? h("div", null, h("dt", { text: "Project" }),
           h("dd", { text: "#" + m.project_id + (m.project_title ? " " + m.project_title : "") })) : null,
-        num(m.cycles) > 0 ? h("div", null, h("dt", { text: "Worked on" }),
-          h("dd", { text: plural(m.cycles, "wake cycle") + " · " + usd(m.spent_usd) })) : null),
+        num(m.cycles) > 0 || m.budget_usd ? h("div", null, h("dt", { text: "Worked on" }),
+          h("dd", { text: plural(num(m.cycles), "wake cycle") + " · " + usd(m.spent_usd) +
+            (m.budget_usd ? " of its budget of " + usd(m.budget_usd) : "") })) : null,
+        m.cash_eur || m.owner_hours ? h("div", null, h("dt", { text: "Needs from you" }),
+          h("dd", { text: [m.cash_eur ? m.cash_eur + " EUR" : "", m.owner_hours ? m.owner_hours + " h of your time" : ""]
+            .filter(Boolean).join(" and ") })) : null,
+        m.wait_for && !closed ? h("div", null, h("dt", { text: m.waiting ? "Waiting for" : "Waited for (check due)" }),
+          h("dd", { text: asText(m.wait_for) + " · check on " + fmtDay(m.check_at) })) : null),
       milestoneProposal(m),
       milestoneWord(m),
       m.notes ? h("details", { class: "notes" }, h("summary", { text: "Notes" }), h("pre", { class: "notes-text", text: asText(m.notes) })) : null,

@@ -460,7 +460,8 @@ class CycleRunner:
                     plan.focus_milestone_id = None
                 else:
                     parent = roadmap.get(conn, self.scope, milestone["parent_id"]) if milestone["parent_id"] else None
-                    milestone_focus = roadmap.focus_text(milestone, self.clock.today(), parent)
+                    spent = {mid: cost for mid, (_, cost) in roadmap.effort(conn, self.scope).items()}
+                    milestone_focus = roadmap.focus_text(milestone, self.clock.today(), parent, spent)
         ctx.state.focus_project_id = plan.focus_project_id
         ctx.state.focus_venture_id = plan.focus_venture_id
         self._progress(

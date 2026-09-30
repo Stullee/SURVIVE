@@ -97,6 +97,10 @@ Your results now reach your records: what you earn counts where it belongs.
   Ember's code, due in 21 days), and the venture goes live when that is met. Research that brings no business case
   within 21 days, and a missed first test, get the venture parked; only your owner takes it up again. A venture parked
   or killed takes its open milestones with it. VENTURES shows each stage's rule.
+- A milestone can carry what it may cost (milestone_create: budget_usd, cash_eur, owner_hours; fixed once set), and
+  ROADMAP shows what its work spent of that ("spent $0.42 of $1.00"; plans, reviews and brainstorms are overhead).
+  milestone_update can let a milestone wait (wait_for, check_at, at most 14 days): it isn't flagged overdue until its
+  check is due, and you wake that morning. ROADMAP shows the newest note of what is overdue or due this week.
 
 ## 0.11.2
 

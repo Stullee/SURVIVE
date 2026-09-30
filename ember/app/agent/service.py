@@ -10,11 +10,12 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import os
 import shutil
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from .. import events, paths, privacy
@@ -45,6 +46,7 @@ MAX_WILL_ATTEMPTS = 3
 WAKE_NOW_MIN_GAP = timedelta(seconds=60)
 SLEEP_REASON_CHARS = 200  # of the agent's reason for its sleep, in the next wake's reason
 SHOP_RETRY = timedelta(minutes=etsy_publisher.SYNC_MINUTES)  # after a failed check of the Etsy shop
+CHECK_HOUR = 8  # the owner's hour a waiting milestone's check wakes the agent, on its day (0.12.0)
 
 
 def cycles_enabled_by_env() -> bool:
@@ -471,6 +473,22 @@ class Agent:
                 continue
         return changed
 
+    def _next_check(self, now: datetime) -> tuple[datetime, int] | None:
+        """0.12.0: the next morning (CHECK_HOUR, the owner's time) a waiting milestone's check is due, and its number;
+        None if none waits. The checks of a day share its morning: one wake-up a day at most."""
+        with self.db.connection() as conn:
+            where, params = self.scope().where()
+            rows = conn.execute(
+                f"SELECT id, check_at FROM milestones WHERE {where} AND status = 'open' AND wait_for IS NOT NULL"
+                " ORDER BY check_at, id",
+                params,
+            ).fetchall()
+        for row in rows:
+            moment = self.clock.day_start(date.fromisoformat(row["check_at"])) + timedelta(hours=CHECK_HOUR)
+            if moment > now:
+                return moment, int(row["id"])
+        return None
+
     def _fallback_wake(self) -> None:
         """The next wake when working it out failed (0.12.0): the default interval from now, never the last one."""
         minutes = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes)
@@ -532,6 +550,10 @@ class Agent:
                         f"; cut to {cap} min: {waiting} request{'s wait' if waiting != 1 else ' waits'} for your"
                         " decision, and it works on something else meanwhile"
                     )
+            check = self._next_check(now)  # 0.12.0: a milestone's check wakes it that morning (once a day at most)
+            if check is not None and now + timedelta(minutes=minutes) > check[0]:
+                minutes = max(self.settings.min_sleep_minutes, math.ceil((check[0] - now).total_seconds() / 60))
+                reason += f"; waking for the check of milestone #{check[1]}"
         else:
             failures += 1
             self.db.set_meta(self._key("failures"), str(failures))

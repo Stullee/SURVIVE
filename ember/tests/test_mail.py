@@ -238,6 +238,7 @@ def test_a_0_3_database_keeps_its_approvals_through_the_migration(tmp_path: Path
         28,
         29,
         30,
+        31,
     ]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
