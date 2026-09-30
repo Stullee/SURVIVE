@@ -519,6 +519,7 @@ class Agent:
                 self.pins,
                 self.printify,
                 self.pod,
+                unlocks_off=self.unlocks_off(),
             )
             end = runner.run(trigger)
             try:
@@ -707,16 +708,22 @@ class Agent:
         state = self.economy.life.evaluate().state
         return None if state in ("alive", "critical", "paused", "unfunded") else f"The agent is {state}"
 
+    def unlocks_off(self) -> str:
+        """0.14.0: why the owner's unlocks don't act now ("" when they do): no owner_user_ids, or safe mode."""
+        return policy.off(self.settings.owner_user_ids, self.loaded.safe_mode)
+
     def run_policy(self) -> None:
         """0.13.0: the owner's unlocks (policy.py): revoke the unlocks an unclear result, a spent budget, a missed
         milestone or a veto ended, then approve the requests whose veto window passed (one held by an unlock taken
-        back waits for the owner). Before the approved actions are carried out, in the scheduler's round. Then the
-        owner's daily digest of the day before, once (audit.py)."""
+        back waits for the owner; 0.14.0: none while unlocks are off). Before the approved actions are carried out,
+        in the scheduler's round. Then the owner's daily digest of the day before, once (audit.py)."""
         if self.executor_blocked():
             return
         scope = self.scope()
         with self.db.transaction() as conn:
-            happened = policy.keep(conn, scope, self.clock) + policy.run_due(conn, scope, self.clock)
+            happened = policy.keep(conn, scope, self.clock) + policy.run_due(
+                conn, scope, self.clock, self.unlocks_off()
+            )
             digest = audit.write_due(conn, scope, self.clock)
         for line in happened:
             events.record(self.db, "info", "control", line[:300])

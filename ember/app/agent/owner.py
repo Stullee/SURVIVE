@@ -43,6 +43,8 @@ CODE_CANCELLED = "Cancelled by the owner before Ember's code carried it out"
 AS_IS_EXECUTORS = ("pinterest_pin", "pinterest_delete", "printify_product", "printify_delete")
 TAKEN_BACK = "you took back every unlock"  # 0.13.0: the owner's switch
 TAKEN_BACK_NOTE = "Took back every unlock: your requests wait for me again"
+KILLED = "you used the kill switch"  # 0.14.0: it takes back every unlock too
+KILLED_NOTE = "Used the kill switch, which took back every unlock: your requests wait for me again"
 DECISIONS = {"approve": "approved", "approve_with_changes": "approved_with_changes", "reject": "rejected"}
 OUTCOMES = ("done", "failed")
 UPGRADE_STATUSES = ("accepted", "declined", "released")
@@ -106,12 +108,21 @@ def _reply(fn: Any) -> Reply:
 
 
 class Owner:
-    def __init__(self, db: Database, clock: Clock, economy: Economy, scope: AgentScope, agent_name: str) -> None:
+    def __init__(
+        self,
+        db: Database,
+        clock: Clock,
+        economy: Economy,
+        scope: AgentScope,
+        agent_name: str,
+        unlocks_off: str = "",
+    ) -> None:
         self.db = db
         self.clock = clock
         self.economy = economy
         self.scope = scope
         self.agent_name = agent_name
+        self.unlocks_off = unlocks_off  # 0.14.0: why no unlock may be granted now (policy.off), "" when one may
 
     def _now(self) -> str:
         return to_iso(self.clock.now())
@@ -568,6 +579,13 @@ class Owner:
                 raise OwnerError("rule", f"choose one of {', '.join(policy.RULES)}")
             if level not in policy.LEVELS:
                 raise OwnerError("level", f"choose one of {', '.join(policy.LEVELS)}")
+            if level != "manual" and self.unlocks_off:  # 0.14.0: only the owner, known by their user ID, unlocks
+                raise OwnerError(
+                    "level",
+                    f"No unlock while {self.unlocks_off}: put your Home Assistant user ID in owner_user_ids"
+                    " (Configuration tab), outside safe mode. Until then every request waits for your click.",
+                    409,
+                )
             limits = {}
             for name, default, most in (("per_day", policy.PER_DAY, 20), ("budget", policy.BUDGET, 100)):
                 value = data.get(name, default)
@@ -876,6 +894,7 @@ def kill(db: Database, economy: Economy, agent_name: str, body: Any, who: str | 
 
     The metering refuses every further model call of a killed agent, so a running
     cycle ends at its next call; the process keeps running so the dashboard stays up.
+    0.14.0: it takes back every unlock in the same transaction, so its reset approves nothing an unlock held.
     """
 
     def run() -> Reply:
@@ -884,7 +903,12 @@ def kill(db: Database, economy: Economy, agent_name: str, body: Any, who: str | 
         if not isinstance(name, str) or name.strip() != agent_name:
             raise OwnerError("confirm_name", f"type the agent's name ({agent_name}) to confirm")
         reason = _text(data, "reason", 300)
-        status = economy.life.set_switch(KILLED_KEY, True)
+        with db.transaction() as conn:
+            now = to_iso(economy.clock.now())
+            taken = policy.revoke_everywhere(conn, now, by=_signed(who), why=KILLED)
+            for milestone_id in sorted({int(g["milestone_id"]) for g in taken}):
+                roadmap.owner_word(conn, milestone_id, now, "note", KILLED_NOTE, who)
+            status = economy.life.set_switch(KILLED_KEY, True)
         message = f"{who or 'The owner'} used the kill switch" + (f": {reason}" if reason else "")
         events.record(db, "error", "control", message)
         return Reply(200, {"state": status.state})

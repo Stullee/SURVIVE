@@ -810,9 +810,14 @@ no longer shown); a study that failed three times stops until you press
   **Run unless I veto within 12 h** holds such a request on its card with the
   time it will be approved, and you can still reject it. **Run at once**
   approves it when it is made. Each rule has a daily limit and a budget of
-  actions. Ember's code takes an unlock back itself when one of its actions
-  ends unclear, its budget is spent, the milestone is missed or dropped, or you
-  veto one of its requests. It never widens one. When you approved 5 requests
+  actions. An unlock carries only a request that passes the checks its card
+  shows (QA: a reply keeps "Re: …" and has at most 200 words, a listing has at
+  least 5 photos); any other waits for you (0.14.0). Unlocks need your user ID
+  in `owner_user_ids`: without it, or in safe mode, you can't grant one and the
+  ones you granted approve nothing. Ember's code takes an unlock back itself
+  when one of its actions ends unclear, its budget is spent, the milestone is
+  missed or dropped, or you veto or cancel one of its requests. It never widens
+  one. When you approved 5 requests
   of a kind unchanged within 30 days, the Roadmap tab suggests an unlock, and
   you decide. Ember hears each change as your note on the milestone.
 
@@ -828,7 +833,8 @@ no longer shown); a study that failed three times stops until you press
   can only take an unlock back. The database checks this again on its own. It
   refuses an unlock's approval of such a request, an approval that no current
   unlock covers, and anything beyond an unlock's budget. When an unlock is
-  taken back, what it was holding waits for you.
+  taken back, what it was holding waits for you, and so does what it approved
+  that Ember's code hasn't begun (its card says why). What began runs on.
 - **What Ember's code did**, below the requests on the **Approvals** tab
   (0.13.0): every action it carries out (an email sent, a listing created,
   changed, renewed or deactivated, a sold listing's automatic renewal turned
@@ -860,8 +866,10 @@ no longer shown); a study that failed three times stops until you press
 
   **Take back every unlock**, at the top of this card while any unlock
   stands: one click sets every rule of every milestone back to **Ask me**.
-  What the unlocks held for your veto waits for your click again, and Ember
-  hears it as your note on each milestone.
+  What the unlocks held for your veto, or approved without Ember's code having
+  begun it, waits for your click again, and Ember hears it as your note on each
+  milestone. 0.14.0 took back every unlock of 0.13.0 once: grant again what you
+  want.
 - **Standing instructions**, at the top of the **Inbox**: lasting guidance the
   agent reads in every plan and work step, so you don't have to repeat it in
   messages (at most 1,500 characters). **Edit** changes them, and saving an
@@ -902,8 +910,9 @@ no longer shown); a study that failed three times stops until you press
   comes with the script (see [How Ember grows](#the-workshop)).
 - **Pause / Resume** stops and restarts the wake cycles. **Wake now** starts a
   cycle right away.
-- **Kill switch**: stops the agent for good (type its name to confirm). The
-  dashboard keeps working. To undo it, change **Kill switch reset** in the app's
+- **Kill switch**: stops the agent for good (type its name to confirm). It
+  takes back every unlock too, as **Take back every unlock** does, so its reset
+  approves nothing an unlock held. The dashboard keeps working. To undo it, change **Kill switch reset** in the app's
   **Configuration** tab to any other number, save and restart the app.
 
 The agent hears about your decisions, messages and upgrades once, at its next
@@ -989,6 +998,9 @@ included: encrypt your backups.
   > This email was written by Ember, an AI agent, on behalf of *your name*, and
   > approved by them before sending. Reply "stop" and Ember won't write to you
   > again.
+
+  An email your unlock approved says instead that it was "sent under rules they
+  set, without their review of this email" (0.14.0).
 
   **Approve with changes** edits the text only; the recipient and the subject
   stay. After a **Reject** nothing is sent.

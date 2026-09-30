@@ -2266,7 +2266,7 @@
   }
 
   function takeBackUnlocks(button, n) {
-    if (!window.confirm("Take back every unlock (" + n + ")? Every request waits for your click again, also those held for your veto.")) return;
+    if (!window.confirm("Take back every unlock (" + n + ")? Every request waits for your click again, also those held for your veto and those approved that haven't run yet.")) return;
     button.disabled = true;
     request("POST", "api/autonomy/take_back", {}).then(function (res) {
       if (res.ok) {
@@ -2365,6 +2365,8 @@
       actionFlags(a.action_class),
       a.veto_until && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "⏱ " }),
         h("strong", { text: "Your unlock: " }), name + "'s code approves it on " + fmtDateTime(a.veto_until) + " unless you decide first.") : null,
+      a.status === "pending" && a.decision_comment ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "↩ " }),
+        String(a.decision_comment)) : null,  // 0.14.0: an unlock taken back before its approval ran
       arr(a.never).length && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "🔒 " }),
         h("strong", { text: "Never automatic: " }), arr(a.never).join("; ") + ". It waits for you, whatever you unlocked.") : null,
       arr(a.qa).length ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
@@ -4798,7 +4800,7 @@
     var name = agentName();
     $("kill-name-show").textContent = name;
     $("kill-title").textContent = "Stop " + name + " with the kill switch?";
-    $("kill-desc-1").textContent = "The kill switch stops " + name + " for good: no more model calls, and a running cycle ends at its next call. Unlike Pause, Resume doesn't undo it.";
+    $("kill-desc-1").textContent = "The kill switch stops " + name + " for good: no more model calls, and a running cycle ends at its next call. It takes back every unlock too. Unlike Pause, Resume doesn't undo it.";
     $("kill-name").value = "";
     $("kill-reason").value = "";
     killFieldError("kill-name", "");
