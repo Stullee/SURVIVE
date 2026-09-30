@@ -41,7 +41,14 @@ from ..db import Database
 from ..version import app_version
 from .clock import Clock, from_iso, to_iso
 from .costs import MICROS_PER_USD, Usage, container_micros, cost_micros, micros_to_usd
-from .estimate import CONTAINER_MINIMUM_MINUTES, Plan, Unpriceable, plan_request, worst_case_micros
+from .estimate import (
+    CONTAINER_MINIMUM_MINUTES,
+    Plan,
+    Unpriceable,
+    expected_micros,
+    plan_request,
+    worst_case_micros,
+)
 from .ledger import Books
 from .life import Life, LifeStatus
 from .pricing import (
@@ -88,6 +95,15 @@ WORKSHOP = "workshop"
 REVIEW = "review"
 STUDY = "study"  # 0.12.0: Ember studying its owner's library, within the owner's daily study budget
 OUTSIDE_CYCLE_CAP = (WORKSHOP, REVIEW, STUDY)
+# 0.12.0: the cycle cap counts what a call is expected to cost (the daily cap, the balance and the last-will reserve
+# still count its worst case). A call with server tools (research) is expected to cost EXPECTED_FACTOR times the 95th
+# percentile of the last EXPECTED_WINDOW ones on its model, once there are EXPECTED_SAMPLES; so is a reflection at
+# least. A conversation's cache entry older than CACHE_FRESH_SECONDS (of its 5 minutes) counts as missed.
+EXPECTED_FACTOR = Decimal("1.5")
+EXPECTED_WINDOW = 20
+EXPECTED_SAMPLES = 5
+CACHE_FRESH_SECONDS = {"5m": 240, "1h": 3_540}
+CONVERSATION_PURPOSES = ("work", "reflect")
 _STANDARD_GEOS = frozenset({"global", "not_available"})
 _SNAPSHOT_SUFFIX = re.compile(r"^-\d{8}$")
 
@@ -478,14 +494,7 @@ class MeteredModel:
     def quote(self, request: Mapping[str, Any], purpose: str = "work", extra_tokens: int = 0) -> int:
         """The worst case the guard would reserve for ``request`` as a ``purpose`` call now (reads only), with
         ``extra_tokens`` more of prompt (what the conversation may still grow by). Raises Unpriceable."""
-        try:
-            input_tokens = self.transport.count_tokens(request)
-        except Exception:  # noqa: BLE001 - same fallback as reserve()
-            input_tokens = rough_token_count(request)
-        plan = plan_request(request, input_tokens + max(extra_tokens, 0))
-        price = self.settings.price_for(plan.model)
-        if price is None:
-            raise Unpriceable(f"model {plan.model!r} has no entry in the price table")
+        plan, price = self._plan(request, extra_tokens)
         return self._estimate(
             plan,
             price,
@@ -495,16 +504,144 @@ class MeteredModel:
             purpose,
         )
 
+    def expected(
+        self,
+        request: Mapping[str, Any],
+        purpose: str,
+        cycle_id: int,
+        extra_tokens: int = 0,
+        cached: int | None = None,
+    ) -> int:
+        """0.12.0: what the cycle cap counts for ``request`` as a ``purpose`` call in cycle ``cycle_id`` now (reads
+        only): its expected cost, at most its worst case; a call outside the cycle cap, its worst case. ``cached``:
+        the prompt tokens the cache will hold by then, if not what the cycle's last call cached (a reflection after
+        a step reads what the step cached). Raises Unpriceable."""
+        worst = self.quote(request, purpose, extra_tokens)
+        if purpose in OUTSIDE_CYCLE_CAP:
+            return worst
+        plan, price = self._plan(request, extra_tokens)
+        return min(worst, self._expected(plan, price, purpose, cycle_id, worst, cached)[0])
+
+    def prompt_tokens(self, request: Mapping[str, Any]) -> int:
+        """The prompt's tokens as the guard counts them (reads only). Raises Unpriceable."""
+        return self._plan(request)[0].input_tokens
+
+    def affordable(
+        self,
+        request: Mapping[str, Any],
+        purpose: str,
+        cycle_id: int,
+        keep: int = 0,
+        keep_money: int | None = None,
+        extra_tokens: int = 0,
+    ) -> tuple[bool, int, int]:
+        """0.12.0: (whether ``request`` fits now as a ``purpose`` call, its expected cost, its worst case), as the guard
+        will judge it: its expected cost under its own cap (the cycle cap) less ``keep``, its worst case under the
+        daily cap and the balance less ``keep_money`` (``keep`` if not given). A reflection may overdraw the cycle
+        cap by one cache miss. Raises Unpriceable."""
+        worst = self.quote(request, purpose, extra_tokens)
+        expected, allowance = worst, 0
+        if purpose not in OUTSIDE_CYCLE_CAP:
+            plan, price = self._plan(request, extra_tokens)
+            expected, miss = self._expected(plan, price, purpose, cycle_id, worst)
+            expected = min(expected, worst)
+            allowance = miss if purpose == "reflect" else 0
+        cycle_room, money_room = self.rooms(cycle_id, purpose, keep, keep_money)
+        own = expected if purpose not in OUTSIDE_CYCLE_CAP else worst
+        return own <= cycle_room + allowance and worst <= money_room, expected, worst
+
+    def reflection_reserve(self, expected: int, model: str) -> int:
+        """0.12.0: what a cycle keeps for its reflection under the cycle cap: 1.5 times the 95th percentile of the
+        recent reflections on ``model``, and at least what this one is expected to cost."""
+        history = self._history(model, "reflect")
+        return max(expected, history or 0)
+
+    def _plan(self, request: Mapping[str, Any], extra_tokens: int = 0) -> tuple[Plan, ModelPrice]:
+        try:
+            input_tokens = self.transport.count_tokens(request)
+        except Exception:  # noqa: BLE001 - same fallback as reserve()
+            input_tokens = rough_token_count(request)
+        plan = plan_request(request, input_tokens + max(extra_tokens, 0))
+        price = self.settings.price_for(plan.model)
+        if price is None:
+            raise Unpriceable(f"model {plan.model!r} has no entry in the price table")
+        return plan, price
+
+    def _expected(
+        self, plan: Plan, price: ModelPrice, purpose: str, cycle_id: int, worst: int, cached: int | None = None
+    ) -> tuple[int, int]:
+        """(the expected cost of a ``purpose`` call, what one cache miss would add to it) in micros, at the safety
+        factor of its model and purpose: a call with server tools by its history (the worst case without one), a
+        conversation's call by what the calls before it in the cycle cached (or ``cached``)."""
+        if plan.tool_uses or plan.code_runs:
+            history = self._history(plan.model, purpose)
+            return (worst if history is None else min(history, worst)), 0
+        if purpose not in CONVERSATION_PURPOSES or not plan.cache_ttls:
+            cached = 0
+        elif cached is None:
+            cached = self._cached(cycle_id, plan.model, plan.cache_ttls)
+        output = self._history(plan.model, purpose, "output_tokens")
+        base, miss = expected_micros(plan, price, cached, geo_multiplier(self.db), output)
+        factor = safety_factor(self.db, plan.model, self.life.mode, purpose)
+        scaled = [int((Decimal(n) * factor).to_integral_value(rounding=ROUND_CEILING)) for n in (base, miss)]
+        return scaled[0], scaled[1]
+
+    def _history(self, model: str, purpose: str, column: str = "cost_micros") -> int | None:
+        """EXPECTED_FACTOR times the 95th percentile of ``column`` (their cost, or their output tokens) of the last
+        EXPECTED_WINDOW calls of ``purpose`` on ``model`` in this mode that cost something, or None while there are
+        fewer than EXPECTED_SAMPLES."""
+        if column not in ("cost_micros", "output_tokens"):
+            raise ValueError(column)
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                f"SELECT {column} FROM llm_calls WHERE model = ? AND purpose = ? AND simulated = ? AND status = 'ok'"
+                " AND cost_micros > 0 ORDER BY id DESC LIMIT ?",
+                (model, purpose, 1 if self.simulated else 0, EXPECTED_WINDOW),
+            ).fetchall()
+        costs = sorted(int(r[0]) for r in rows)
+        if len(costs) < EXPECTED_SAMPLES:
+            return None
+        p95 = costs[min(len(costs) - 1, math.ceil(0.95 * len(costs)) - 1)]
+        return int((Decimal(p95) * EXPECTED_FACTOR).to_integral_value(rounding=ROUND_CEILING))
+
+    def _cached(self, cycle_id: int, model: str, ttls: tuple[str, ...]) -> int:
+        """The prompt tokens the conversation's last call in this cycle cached (0 if its entry may be gone), counted as
+        the guard counted that call's prompt, so they compare with this one's."""
+        if not ttls:
+            return 0
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT json_extract(plan, '$.input_tokens'), finished_at FROM llm_calls WHERE cycle_id = ?"
+                " AND model = ? AND status = 'ok' AND purpose IN ('work', 'reflect') ORDER BY id DESC LIMIT 1",
+                (cycle_id, model),
+            ).fetchone()
+        if row is None or row[1] is None:
+            return 0
+        fresh = max(CACHE_FRESH_SECONDS.get(ttl, 0) for ttl in ttls)
+        if (self.clock.now() - from_iso(row[1])).total_seconds() > fresh:
+            return 0
+        return int(row[0] or 0)
+
     def headroom(self, cycle_id: int, purpose: str = "work", keep: int = 0) -> int:
         """How much the next call of ``purpose`` in this cycle may cost: the tightest of the cycle cap, the daily
         cap and the balance (keeping the last-will reserve unless the will is written or this is the will), less
         ``keep`` of each that also limits a later call (0.12.0: the reflection's reserve)."""
+        return min(self.rooms(cycle_id, purpose, keep))
+
+    def rooms(
+        self, cycle_id: int, purpose: str = "work", keep: int = 0, keep_money: int | None = None
+    ) -> tuple[int, int]:
+        """0.12.0: (the room under the call's own cap: the cycle cap, a workshop run's cap, or the daily cap for a
+        review or a study, less ``keep`` where it limits a later call too; the room under the daily cap and the
+        balance, keeping the last-will reserve, less ``keep_money``, ``keep`` if not given). The cycle cap counts
+        expected costs, the rest worst cases."""
+        keep_money = keep if keep_money is None else keep_money
         status = self.life.evaluate()
         scope = self.life.scope()
         with self.db.connection() as conn:
             cycle = conn.execute("SELECT cap_micros FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
         if cycle is None:
-            return 0
+            return 0, 0
         spent, reserved = self.books.cycle_spend(cycle_id, outside_cap=False)
         pending = self.books.pending(scope)
         daily_cap = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
@@ -516,12 +653,12 @@ class MeteredModel:
         else:
             own_cap = cycle["cap_micros"] - spent - reserved
         in_cap = keep if purpose not in OUTSIDE_CYCLE_CAP else 0  # a workshop run's own cap isn't the reflection's
-        room = min(own_cap - in_cap, daily_cap - today - pending - keep, status.balance - pending - keep)
+        money = min(daily_cap - today - pending - keep_money, status.balance - pending - keep_money)
         if purpose != "last_will" and status.last_will_at is None:
-            room = min(
-                room, status.balance - pending - (last_will_reserve(self.settings, self.db, self.life.mode) or 0)
+            money = min(
+                money, status.balance - pending - (last_will_reserve(self.settings, self.db, self.life.mode) or 0)
             )
-        return max(0, room)
+        return max(0, own_cap - in_cap), max(0, money)
 
     def reserve(
         self, cycle_id: int, purpose: str, request: Mapping[str, Any], venture_id: int | None = None
@@ -575,7 +712,13 @@ class MeteredModel:
             if refusal is None:
                 assert plan is not None and price is not None
                 estimate = self._estimate(plan, price, search_price, geo, container_price, purpose)
-                refusal, starving = self._money_refusal(cycle, status, purpose, estimate)
+                # 0.12.0: the cycle cap counts the expected cost (a reflection may overdraw it by one cache miss)
+                expected, allowance = estimate, 0
+                if purpose not in OUTSIDE_CYCLE_CAP:
+                    expected, miss = self._expected(plan, price, purpose, cycle_id, estimate)
+                    expected = min(expected, estimate)
+                    allowance = miss if purpose == "reflect" else 0
+                refusal, starving = self._money_refusal(cycle, status, purpose, estimate, expected, allowance)
             if refusal is not None:
                 call_id = None
                 if cycle is not None:
@@ -658,9 +801,10 @@ class MeteredModel:
         return int((Decimal(base) * factor).to_integral_value(rounding=ROUND_CEILING))
 
     def _money_refusal(
-        self, cycle: Any, status: LifeStatus, purpose: str, estimate: int
+        self, cycle: Any, status: LifeStatus, purpose: str, estimate: int, expected: int, allowance: int = 0
     ) -> tuple[tuple[str, str] | None, bool]:
-        """(refusal, is it starvation) for the caps, the balance and the last-will reserve."""
+        """(refusal, is it starvation) for the caps, the balance and the last-will reserve: the cycle cap counts the
+        call's ``expected`` cost (with ``allowance`` more for a reflection: 0.12.0), the rest its worst case."""
         scope = self.life.scope()
         if purpose == WORKSHOP:
             run_cap = usd_cap_to_micros(self.settings.workshop_run_cap_usd)
@@ -672,10 +816,10 @@ class MeteredModel:
                 ), False
         elif purpose not in OUTSIDE_CYCLE_CAP:
             spent, reserved = self.books.cycle_spend(cycle["id"], outside_cap=False)
-            if spent + reserved + estimate > cycle["cap_micros"]:
+            if spent + reserved + expected > cycle["cap_micros"] + allowance:
                 return (
                     f"the cycle cap of ${micros_to_usd(cycle['cap_micros']):.2f} would be exceeded"
-                    f" (spent ${micros_to_usd(spent + reserved):.4f}, this call up to ${micros_to_usd(estimate):.4f})",
+                    f" (spent ${micros_to_usd(spent + reserved):.4f}, this call about ${micros_to_usd(expected):.4f})",
                     "cap",
                 ), False
         daily_cap = usd_cap_to_micros(self.settings.daily_spend_cap_usd)

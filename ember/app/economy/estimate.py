@@ -225,6 +225,39 @@ def worst_case_micros(
     return int(total.to_integral_value(rounding=ROUND_CEILING))
 
 
+def expected_micros(
+    plan: Plan,
+    price: ModelPrice,
+    cached_tokens: int,
+    multiplier: Decimal = Decimal(1),
+    output_tokens: int | None = None,
+) -> tuple[int, int]:
+    """0.12.0: (what a request without server tools is expected to cost, what one cache miss would add), in micros.
+
+    The part of its prompt the calls before it in the same conversation cached (``cached_tokens``) is read from the
+    cache at the read rate; the rest is written at the write rate (at the input rate without caching); the output is
+    ``output_tokens`` (what such calls wrote lately), at most the whole ``max_tokens``. Only the cycle cap and the
+    envelopes count this: live, the worst case priced later steps at 6.1 times their cost and reflections at 3.8
+    times. The daily cap, the balance and the last-will reserve still count the worst case."""
+    if plan.tool_uses or plan.code_runs:
+        raise ValueError("a request with server tools has no expected cost of its own")
+    write = dec(price.input)
+    if "5m" in plan.cache_ttls:
+        write = max(write, dec(price.cache_write_5m))
+    if "1h" in plan.cache_ttls:
+        write = max(write, dec(price.cache_write_1h))
+    cached = min(max(cached_tokens, 0), plan.input_tokens) if plan.cache_ttls else 0
+    read = dec(price.cache_read)
+    output = plan.max_output_tokens if output_tokens is None else min(max(output_tokens, 0), plan.max_output_tokens)
+    tokens = cached * read + (plan.input_tokens - cached) * write + output * dec(price.output)
+    miss = cached * (write - read)
+    scale = dec(multiplier)
+    return (
+        int((tokens * scale).to_integral_value(rounding=ROUND_CEILING)),
+        int((miss * scale).to_integral_value(rounding=ROUND_CEILING)),
+    )
+
+
 def _check_sources(node: Any) -> None:
     """Refuse images and documents given by URL or file id: their size isn't in the request."""
     if isinstance(node, Mapping):

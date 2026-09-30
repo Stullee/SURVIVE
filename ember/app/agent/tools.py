@@ -848,8 +848,10 @@ class CycleTools:
     strikes: int = 0
     counts: dict[str, int] = field(default_factory=dict)
     # 0.12.0: what the reflection may cost, as the last work step was checked against: research, brainstorms and
-    # workshop runs leave it (they spent it, and the cycle ended without reflecting).
+    # workshop runs leave it (they spent it, and the cycle ended without reflecting). Under the cycle cap, what it is
+    # expected to cost (reflect_reserve); under the daily cap and the balance, its worst case (reflect_money).
     reflect_reserve: int = 0
+    reflect_money: int = 0
     # 0.12.0: the memory files read whole this cycle (memory_read), each with the model reply that asked for it;
     # reply is the one whose tool calls run now (a file read in the same reply was not seen yet).
     read_memory: dict[str, int] = field(default_factory=dict)

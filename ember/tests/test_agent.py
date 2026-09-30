@@ -421,20 +421,22 @@ def test_the_models_own_cycle_tags_are_not_doubled(data_dir: Path) -> None:
 
 
 def test_the_cycle_cap_ends_act_but_keeps_money_for_reflecting(data_dir: Path) -> None:
-    # With the scripted transport a work step and the reflection are each quoted at 0.0225 USD, and the reflection
-    # after a step 0.0325 (0.12.0: with room for the step's growth, 4,000 tokens); each call costs 0.0028. After the
-    # plan and one step, 0.059 - 0.0056 leaves room for the reflection but not another step as well.
+    # With the scripted transport each call costs 0.0028 USD. 0.12.0: the cycle cap counts expected costs (a step
+    # after the first reads what the one before cached), so a few steps fit in 0.059 before the reflection's reserve
+    # (with room for a step's growth) stops the next one; the worst case let one step fit.
     settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=0.059)
     agent, transport = make_agent(
         data_dir,
-        [plan(), tools(("workspace_list", {})), tools(("workspace_list", {})), text("reflected")],
+        [plan(), *(tools(("workspace_list", {})) for _ in range(12)), text("reflected")],
         settings,
     )
     end = agent.run_cycle("schedule")
     assert end.status == "completed"
     purposes = [r["purpose"] for r in rows(agent, "SELECT purpose FROM llm_calls ORDER BY id")]
-    assert purposes == ["plan", "work", "reflect"]
+    assert purposes[0] == "plan" and purposes[-1] == "reflect" and 2 <= purposes.count("work") < 12
     assert "reflecting" in rows(agent, "SELECT act_end_reason FROM cycles")[0]["act_end_reason"]
+    spent = sum(r["cost_micros"] for r in rows(agent, "SELECT cost_micros FROM llm_calls"))
+    assert spent <= 59_000
 
 
 def test_starvation_leads_to_the_last_will(data_dir: Path) -> None:

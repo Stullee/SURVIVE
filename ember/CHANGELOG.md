@@ -124,6 +124,10 @@ Your results now reach your records: what you earn counts where it belongs.
   overdue milestones and listings with too few photos. Close a promise, decision or miss with obligation_done (what
   you did; a promise once your owner has heard from you). While one presses, a cycle is an ordinary one, not a
   venture cycle. message_owner sends at most 2 messages a day that answer none of your owner's.
+- Your cycle cap counts what a call is expected to cost: the part of the prompt the cache still holds at the
+  cache-read rate, a reply as long as your recent ones, research at what recent research cost. A cycle fits many
+  more work steps than before; the daily cap and your balance still count each call's worst case. A refusal at the
+  cycle cap says about what the call would cost.
 
 ## 0.11.2
 

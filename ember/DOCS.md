@@ -991,11 +991,25 @@ counted too (Etsy's fees make it shorter, a sale longer). While Ember earns at
 least what it spends, the net runway has no end.
 
 **Spending limits.** Before every API call Ember works out the most the call
-could cost and refuses it if that could break the per-cycle cap, the daily cap
-(per local calendar day, so up to twice the cap can be spent around midnight),
-or the balance. Workshop runs have their own cap per run instead of the cycle
-cap, and the daily review counts only toward the daily cap. A small reserve is always kept so the agent can write its last
-will. If a call ever costs more than that worst case, the cycle stops and Ember
+could cost (its worst case) and what it is expected to cost. It refuses the
+call if its worst case could break the daily cap (per local calendar day, so up
+to twice the cap can be spent around midnight) or the balance, or if its
+expected cost would break the per-cycle cap. The expected cost counts the part
+of the prompt the cache still holds (from the cycle's last call, if it is fresh)
+at the cache-read rate, and a reply as long as the recent replies of that kind
+were (1.5 times the 95th percentile of the last 20); a research call is
+expected to cost 1.5 times the 95th percentile of the last 20 research calls.
+Until there are 5 such calls, a reply counts at its full length limit and a
+research call at its worst case. So a cycle fits many more
+work steps into its cap than it did before 0.12.0, and it can end a little over
+its cap (by at most one call's worst case less its expected cost); the daily
+cap and the balance are never exceeded. A cycle keeps enough of its cap for its
+reflection (at least 1.5 times the 95th percentile of the recent reflections),
+and a reflection may go over the cycle cap by what a cache miss would add.
+Workshop runs have their own cap per run instead of the cycle cap, and the
+daily review counts only toward the daily cap. A small reserve is always kept
+so the agent can write its last will. If a call ever costs more than its worst
+case, the cycle stops and Ember
 scales up the estimates for that kind of call (planning, a work step, the
 reflection, research, ...) on that model, so it can't happen again; the other
 kinds keep theirs. A scaled-up estimate comes down by 0.05 after every 25

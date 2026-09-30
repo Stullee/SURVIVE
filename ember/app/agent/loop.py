@@ -904,27 +904,32 @@ class CycleRunner:
         if past and past[-1]["role"] == "user":
             pending = [b for b in past.pop()["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
         longest = "ä" * prompts.ENDED_CHARS  # the reflection is told why the work ended: priced with the longest reason
+        reflect = prompts.reflect_request(
+            self.settings,
+            brief,
+            past,
+            pending,
+            mail=self.mail,
+            etsy=self.etsy_on,
+            ended=longest,
+            venture=venture,
+            library=self.library_on,
+        )
         try:
-            step_cost = self.meter.quote(request, "work")
-            reflect_cost = self.meter.quote(
-                prompts.reflect_request(
-                    self.settings,
-                    brief,
-                    past,
-                    pending,
-                    mail=self.mail,
-                    etsy=self.etsy_on,
-                    ended=longest,
-                    venture=venture,
-                    library=self.library_on,
-                ),
-                "reflect",
-                extra_tokens=growth,
-            )
+            step_worst = self.meter.quote(request, "work")
+            step_expected = self.meter.expected(request, "work", cycle_id)
+            reflect_worst = self.meter.quote(reflect, "reflect", extra_tokens=growth)
+            # the reflection reads what this step caches: the step's whole prompt
+            cached = self.meter.prompt_tokens(request)
+            reflect_expected = self.meter.expected(reflect, "reflect", cycle_id, extra_tokens=growth, cached=cached)
         except Unpriceable:
             return False
-        ctx.state.reflect_reserve = reflect_cost
-        return step_cost + reflect_cost <= self.meter.headroom(cycle_id)
+        # 0.12.0: the cycle cap counts expected costs (the reflection's: at least 1.5 times the 95th percentile of the
+        # recent ones), the daily cap and the balance worst cases
+        ctx.state.reflect_reserve = self.meter.reflection_reserve(reflect_expected, str(reflect["model"]))
+        ctx.state.reflect_money = reflect_worst
+        cycle_room, money_room = self.meter.rooms(cycle_id)
+        return step_expected + ctx.state.reflect_reserve <= cycle_room and step_worst + reflect_worst <= money_room
 
     def _run_tools(
         self, ctx: tools.ToolContext, uses: list[dict[str, Any]], call_id: int, phase: str
@@ -987,7 +992,7 @@ class CycleRunner:
         # 0.12.0: why the work ended is kept first, also when the reflection can't be paid for.
         self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)
         try:
-            if self.meter.quote(request, "reflect") > self.meter.headroom(cycle_id, "reflect"):
+            if not self.meter.affordable(request, "reflect", cycle_id)[0]:
                 return False
         except Unpriceable:
             return False
@@ -1028,13 +1033,15 @@ class CycleRunner:
         ) -> tools.Outcome:
             request = prompts.research_request(self.settings, question, url, site)
             try:
-                quote = self.meter.quote(request, "research")
+                fits, expected, _ = self.meter.affordable(
+                    request, "research", cycle_id, ctx.state.reflect_reserve, ctx.state.reflect_money
+                )
             except Unpriceable as exc:
                 return tools.Outcome(False, f"Error: research can't be priced ({exc}).", "refused: unpriceable")
-            if quote > self.meter.headroom(cycle_id, keep=ctx.state.reflect_reserve):
+            if not fits:
                 return tools.Outcome(
                     False,
-                    f"Error: research could cost up to ${micros_to_usd(quote):.3f}, more than this cycle has left"
+                    f"Error: research could cost about ${micros_to_usd(expected):.3f}, more than this cycle has left"
                     f"{_kept(ctx)}.",
                     "refused: budget",
                 )
@@ -1124,14 +1131,16 @@ class CycleRunner:
                 _brainstorm_context(status, earned, standing["text"] if standing else "", tree, parent, theme),
             )
             try:
-                quote = self.meter.quote(request, "brainstorm")
+                fits, expected, _ = self.meter.affordable(
+                    request, "brainstorm", ctx.cycle_id, ctx.state.reflect_reserve, ctx.state.reflect_money
+                )
             except Unpriceable as exc:
                 return tools.Outcome(False, f"Error: a brainstorm can't be priced ({exc}).", "refused: unpriceable")
-            if quote > self.meter.headroom(ctx.cycle_id, keep=ctx.state.reflect_reserve):
+            if not fits:
                 return tools.Outcome(
                     False,
-                    f"Error: a brainstorm could cost up to ${micros_to_usd(quote):.3f}, more than this cycle has left"
-                    f"{_kept(ctx)}.",
+                    f"Error: a brainstorm could cost about ${micros_to_usd(expected):.3f}, more than this cycle has"
+                    f" left{_kept(ctx)}.",
                     "refused: budget",
                 )
             try:
@@ -1233,7 +1242,7 @@ class CycleRunner:
 
         def workshop(task: str, files: list[str], script: str | None, folder: str | None) -> tools.Outcome:
             try:
-                run = shop.run(ctx.cycle_id, task, files, script, folder, keep=ctx.state.reflect_reserve)
+                run = shop.run(ctx.cycle_id, task, files, script, folder, keep=ctx.state.reflect_money)
             except WorkshopError as exc:
                 return tools.Outcome(False, f"Error: {exc}.", f"refused: {exc}"[:300])
             except CallRefused as exc:  # the budget guard's state or system refusal: the next call ends the cycle
