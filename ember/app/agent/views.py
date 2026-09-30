@@ -13,6 +13,7 @@ from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import connectors, etsy, etsy_publisher, executor, mailstore, qa, reddit
 from . import (
+    audit,
     critic,
     desk,
     digest,
@@ -200,6 +201,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         library_stamp = _library_stamp(conn, scope)
         pinned = [{"id": r["id"], "text": r["text"], "created_at": r["created_at"]} for r in memory.pins(conn, scope)]
         models = _models(agent, conn, scope)
+        audit_view = audit.view(conn, scope)
     return {
         "badges": counts,
         "now": now,
@@ -209,6 +211,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "mind": {**agent.memory_files(), "journal": journal, "reviews": reviews, "lesson_pins": pinned},
         "models": models,
         "approvals": approvals,
+        "audit": audit_view,  # 0.13.0: what Ember's code did, the owner's Undo, the daily digest
         "inbox": inbox,
         "upgrades": upgrades,
         "instructions": instructions,

@@ -507,6 +507,9 @@ class Publisher:
                 )
 
             steps.append(({"files"}, new_files))
+        if edit.auto_renew is not None:  # 0.13.0: only in the owner's Undo
+            renewal = edit.auto_renew
+            steps.append(({"auto_renew"}, lambda _: shop.set_auto_renew(listing_id, renewal)))
         if edit.state == "deactivate":  # on its own
             steps.append(({"deactivate"}, set_state))
         made: set[str] = set()
@@ -535,7 +538,8 @@ class Publisher:
         note = _change_note(shop, edit, status, made, halfway, error)
         title = edit.title if "title" in made else None
         state = next((etsy.STATES[part] for part in ("renew", "deactivate") if part in made), None)
-        return self._changed(approval_id, status, after, title, note, error, scope, state)
+        renewal = edit.auto_renew if "auto_renew" in made else None
+        return self._changed(approval_id, status, after, title, note, error, scope, state, renewal)
 
     def _start_change(
         self,
@@ -575,6 +579,7 @@ class Publisher:
         error: str | None,
         scope: AgentScope | None = None,
         state: str | None = None,
+        renewal: bool | None = None,
     ) -> str:
         with self.db.transaction() as conn:
             row = conn.execute("SELECT * FROM etsy_edits WHERE approval_id = ?", (approval_id,)).fetchone()
@@ -606,6 +611,12 @@ class Publisher:
                     "UPDATE etsy_listings SET state = ?, ends_at = CASE WHEN ? = 'active' THEN NULL ELSE ends_at END"
                     f" WHERE {where} AND listing_id = ?",
                     (state, state, *params, row["listing_id"]),
+                )
+            if renewal is not None and scope is not None:  # 0.13.0: the owner's Undo of an automatic renewal
+                where, params = scope.where()
+                conn.execute(
+                    f"UPDATE etsy_listings SET auto_renew = ? WHERE {where} AND listing_id = ?",
+                    (int(renewal), *params, row["listing_id"]),
                 )
             listing_id = row["listing_id"]
             link = etsy.listing_url(listing_id) if status == "done" else etsy.edit_url(listing_id)
@@ -828,7 +839,7 @@ def _change_note(shop: Shop, edit: Edit, status: str, made: set[str], halfway: s
     """What happened to an approved change, for the owner and the agent."""
 
     def words(parts: set[str] | list[str]) -> str:
-        named = {"renew": "renewal", "deactivate": "deactivation"}
+        named = {"renew": "renewal", "deactivate": "deactivation", "auto_renew": "automatic renewal"}
         return ", ".join(named.get(p, p) for p in etsy.EDIT_PARTS if p in parts) or "nothing"
 
     url = etsy.listing_url(edit.listing_id)

@@ -531,6 +531,29 @@ def set_autonomy(request: Request, milestone_id: ItemId, body: Annotated[Any, Bo
     return _reply(reply)
 
 
+@router.post("/api/autonomy/take_back")
+def take_back_unlocks(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.13.0: the owner's switch that takes back every unlock at once."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    reply = actions.take_back_unlocks(body, _owner(request))
+    _wake_for_decision(request, reply)
+    return _reply(reply)
+
+
+@router.post("/api/actions/{journal_id}/undo")
+def undo_action(request: Request, journal_id: ItemId) -> JSONResponse:
+    """0.13.0: the owner's Undo of an action of Ember's code (carried out in the scheduler's next round)."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    reply = actions.undo(journal_id, _owner(request))
+    if reply.status == 200:
+        _poke(request)
+    return _reply(reply)
+
+
 @router.get("/api/roadmap")
 def roadmap(request: Request) -> JSONResponse:
     agent = _state(request).agent

@@ -921,3 +921,10 @@ body[data-stale="true"] .live { display: none; }
 /* The library (0.12.0): what the agent learned from a document. */
 .lib-learnings { margin: 0.5rem 0; padding-left: 1.2rem; }
 .lib-learnings li { margin: 0.3rem 0; }
+
+/* 0.13.0: what Ember's code did (Approvals) */
+.audit-feed { list-style: none; margin: 0; padding: 0; }
+.audit-item { border-top: 1px solid var(--grid); padding: 0.6rem 0; }
+.audit-item:first-child { border-top: 0; }
+.audit-item .item-head { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.audit-changes { margin: 0.3rem 0 0.3rem 1.2rem; padding: 0; font-size: 0.9em; }

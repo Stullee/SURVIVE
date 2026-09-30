@@ -106,7 +106,7 @@ def test_the_history_is_attributed_from_its_cycles(tmp_path: Path) -> None:
         conn.execute(insert, (1, "plan"))
         conn.execute(insert, (2, "work"))
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == list(range(34, 52))
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == list(range(34, 53))
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         got = [tuple(r) for r in conn.execute("SELECT id, venture_id, overhead FROM llm_calls ORDER BY id")]

@@ -39,7 +39,7 @@ from ..integrations import executor as email_executor
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox, select_mailbox
-from . import agenda, metrics, netguard, news, policy, store, ventures
+from . import agenda, audit, metrics, netguard, news, policy, store, ventures
 from .loop import NO_STEP, CycleEnd, CycleRunner
 from .memory import CAPS, Memory
 from .sandbox import Jail, SandboxError, kind_of
@@ -668,14 +668,18 @@ class Agent:
     def run_policy(self) -> None:
         """0.13.0: the owner's unlocks (policy.py): revoke the unlocks an unclear result, a spent budget, a missed
         milestone or a veto ended, then approve the requests whose veto window passed (one held by an unlock taken
-        back waits for the owner). Before the approved actions are carried out, in the scheduler's round."""
+        back waits for the owner). Before the approved actions are carried out, in the scheduler's round. Then the
+        owner's daily digest of the day before, once (audit.py)."""
         if self.executor_blocked():
             return
         scope = self.scope()
         with self.db.transaction() as conn:
             happened = policy.keep(conn, scope, self.clock) + policy.run_due(conn, scope, self.clock)
+            digest = audit.write_due(conn, scope, self.clock)
         for line in happened:
             events.record(self.db, "info", "control", line[:300])
+        if digest is not None:
+            events.record(self.db, "info", "control", f"Daily digest: {digest}"[:300])
 
     def execute_approved(self) -> list[tuple[int, str]]:
         """Send the approved emails and create the approved Etsy listings that are due (the scheduler calls this
@@ -761,6 +765,8 @@ class Agent:
             email_waiting = email_executor.waiting(conn, scope)
             agenda_open = agenda.open_count(conn, scope)  # 0.13.0
             event_wakes = agenda.wakes(conn, scope, self.clock)[0]
+            digest = audit.latest(conn, scope)
+            unlocks = sum(1 for g in policy.grants(conn, scope) if g["level"] != "manual")
         wake = self._meta_time("next_wake_at") if self.blocked_reason() is None else None
         return {
             **counts,
@@ -770,6 +776,10 @@ class Agent:
             "waiting_on_you": sum(counts[name] for name in views.WAITING_ON_YOU),
             "agenda_open": agenda_open,
             "event_wakes_today": event_wakes,
+            # 0.13.0: the unlocks that stand, and the newest daily digest (a notification can follow digest_day)
+            "unlocks": unlocks,
+            "digest_day": digest["day"] if digest else None,
+            "digest": digest["text"] if digest else None,
             "next_wake_at": to_iso(wake) if wake else None,
             "cycle_running": self.running_cycle,
         }

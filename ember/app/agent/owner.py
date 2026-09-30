@@ -29,7 +29,7 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import etsy, executor, mailstore
 from ..integrations.mail import BODY_MAX, valid_address
-from . import knockouts, library, memory, policy, predictions, roadmap, stages, store, ventures
+from . import audit, knockouts, library, memory, policy, predictions, roadmap, stages, store, ventures
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
@@ -38,6 +38,8 @@ INSTRUCTIONS_MAX = 1_500  # characters of the standing instructions (migration 0
 CANCELLED = "Cancelled by the owner before it was sent"
 LISTING_CANCELLED = "Cancelled by the owner before it was listed"
 CHANGE_CANCELLED = "Cancelled by the owner before the listing was changed"
+TAKEN_BACK = "you took back every unlock"  # 0.13.0: the owner's switch
+TAKEN_BACK_NOTE = "Took back every unlock: your requests wait for me again"
 DECISIONS = {"approve": "approved", "approve_with_changes": "approved_with_changes", "reject": "rejected"}
 OUTCOMES = ("done", "failed")
 UPGRADE_STATUSES = ("accepted", "declined", "released")
@@ -86,6 +88,11 @@ def _body(body: Any, allowed: set[str]) -> dict[str, Any]:
     if unknown:
         raise OwnerError(unknown[0], f"unknown field {unknown[0]!r}")
     return body
+
+
+def _signed(who: str | None) -> str:
+    """How the owner signs a decision: their name, or "the owner" (never a name Ember's code signs with)."""
+    return who if who and who not in policy.CODE else "the owner"
 
 
 def _reply(fn: Any) -> Reply:
@@ -555,8 +562,7 @@ class Owner:
                 if row["status"] != "open":
                     raise OwnerError("id", f"this milestone is {row['status']}", 409)
                 now = self._now()
-                by = who if who and who not in policy.CODE else "the owner"  # names Ember's code signs with
-                policy.set_grant(conn, self.scope, milestone_id, rule, level, now, by=by, **limits)
+                policy.set_grant(conn, self.scope, milestone_id, rule, level, now, by=_signed(who), **limits)
                 label = policy.RULES[rule].label
                 said = (
                     f"Unlocked for this milestone: {label} ({level.replace('_', ' ')}, at most {limits['per_day']} a"
@@ -569,6 +575,44 @@ class Owner:
                 self.db, "info", "owner", f"{who or 'The owner'} set {rule} to {level} for milestone #{milestone_id}"
             )
             return Reply(200, {"id": milestone_id, "rule": rule, "level": level, **limits})
+
+        return _reply(run)
+
+    def take_back_unlocks(self, body: Any, who: str | None) -> Reply:
+        """0.13.0: the owner's switch: every unlock that stands is taken back at once (what they held waits for the
+        owner again). The agent hears it as the owner's note on each milestone."""
+
+        def run() -> Reply:
+            _body(body, set())
+            with self.db.transaction() as conn:
+                now = self._now()
+                taken = policy.revoke_all(conn, self.scope, now, by=_signed(who), why=TAKEN_BACK)
+                for milestone_id in sorted({int(g["milestone_id"]) for g in taken}):
+                    roadmap.owner_word(conn, milestone_id, now, "note", TAKEN_BACK_NOTE, who)
+            events.record(
+                self.db, "warning", "owner", f"{who or 'The owner'} took back every unlock ({len(taken)} in all)"
+            )
+            return Reply(200, {"taken_back": len(taken)})
+
+        return _reply(run)
+
+    def undo(self, journal_id: int, who: str | None) -> Reply:
+        """0.13.0: undo an action of Ember's code on a listing: a request of the owner's, approved at once, which
+        Ember's code carries out in its next round (audit.undo)."""
+
+        def run() -> Reply:
+            with self.db.transaction() as conn:
+                try:
+                    approval_id, what = audit.undo(conn, self.scope, self._now(), journal_id, _signed(who))
+                except audit.Refused as exc:
+                    raise OwnerError("id", str(exc), exc.status) from None
+            events.record(
+                self.db,
+                "info",
+                "owner",
+                f"{who or 'The owner'} undid action #{journal_id}: {what}, request #{approval_id}",
+            )
+            return Reply(200, {"journal_id": journal_id, "approval_id": approval_id, "what": what})
 
         return _reply(run)
 

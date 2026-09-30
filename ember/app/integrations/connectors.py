@@ -86,6 +86,7 @@ CLASSES: dict[str, ActionClass] = {
             {"costs_money", "owner_identity"},
             undo="turn it off",
         ),
+        _class("etsy.auto_renew_off", "turn off a listing's automatic renewal at Etsy", {"owner_identity"}),
         _class(
             "reddit.post",
             "a Reddit post you publish from your account",
@@ -109,10 +110,13 @@ def class_of(executor: str | None, action: Any = None, request_type: str | None 
     if executor == "etsy_edit":
         try:
             data = json.loads(action) if isinstance(action, str) else action
-            state = data.get("state") if isinstance(data, Mapping) else None
         except ValueError:
-            state = None
-        return CLASSES[_STATES.get(str(state), "etsy.edit_listing")]
+            data = None
+        data = data if isinstance(data, Mapping) else {}
+        renewal = data.get("auto_renew")  # 0.13.0: the owner's Undo of an automatic renewal
+        if isinstance(renewal, bool):
+            return CLASSES["etsy.auto_renew" if renewal else "etsy.auto_renew_off"]
+        return CLASSES[_STATES.get(str(data.get("state")), "etsy.edit_listing")]
     if executor in _EXECUTORS:
         return CLASSES[_EXECUTORS[executor]]
     owned = {"create_account": "owner.create_account", "spend_money": "owner.spend_money"}

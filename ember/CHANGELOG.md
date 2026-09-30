@@ -45,6 +45,10 @@ Decisions from numbers: a venture's case now has figures that Ember's code check
   money, a first contact, your first listing in the shop, a Reddit post, a request whose words touch tax, VAT, a
   Gewerbe or a contract (those are your owner's alone), and what only your owner carries out. The tool's answer says
   when one waits for this reason. Only your owner unlocks, and the database refuses anything else.
+- Your owner sees what Ember's code did (before and after, on whose decision) and can undo an action on a listing:
+  deactivating one you listed, changing a change back, renewing a deactivated one, turning an automatic renewal off.
+  An Undo is their request, approved at once ("Undo: ..."), which Ember's code carries out like any change: don't
+  redo what they undid without asking them first. They can also take back every unlock at once.
 - milestone_plan is an ordinary cycle's tool now: a venture cycle researches and decides ventures; laying out the
   roadmap belongs to ordinary cycles (milestone_update still works in both).
 

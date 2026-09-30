@@ -388,6 +388,39 @@ def view(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, milestone_id
     return items
 
 
+def held(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
+    """The requests unlocks hold for their veto window now (waiting, under an unlock that stands), the first due
+    first."""
+    where, params = scope.where("a")
+    rows = conn.execute(
+        f"SELECT u.approval_id, u.veto_until, u.grant_id FROM policy_uses u JOIN approvals a ON a.id = u.approval_id"
+        f" WHERE {where} AND u.level = 'veto_window' AND u.approved_at IS NULL AND a.status = 'pending'"
+        " ORDER BY u.veto_until, u.id",
+        params,
+    ).fetchall()
+    return [r for r in rows if _stands(conn, int(r["grant_id"]))]
+
+
+def revoke_all(conn: sqlite3.Connection, scope: AgentScope, now: str, *, by: str, why: str) -> list[sqlite3.Row]:
+    """The owner's switch (0.13.0): every unlock that stands is taken back at once; what they held waits for the owner.
+    Returns the grants taken back."""
+    taken = [g for g in grants(conn, scope) if g["level"] != "manual"]
+    for g in taken:
+        set_grant(
+            conn,
+            scope,
+            int(g["milestone_id"]),
+            str(g["rule"]),
+            "manual",
+            now,
+            per_day=int(g["per_day"]),
+            budget=int(g["budget"]),
+            by=by,
+            why=why,
+        )
+    return taken
+
+
 def veto_until(conn: sqlite3.Connection, approval_id: int) -> str | None:
     """When a request held for its veto window is approved (None if it isn't held, or its unlock was taken back)."""
     row = conn.execute(

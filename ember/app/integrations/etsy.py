@@ -277,7 +277,9 @@ def with_changes(listing: Listing, text: str) -> Listing:
 # The parts of a listing a change can set, in the order Ember's code makes them: its renewal (0.12.0: an expired,
 # sold-out or deactivated listing goes live again first), the listing's own fields (one request), its price (Etsy keeps
 # it in the listing's inventory), the photos, the files buyers download, and its deactivation (0.12.0: on its own).
-EDIT_PARTS = ("renew", "title", "description", "tags", "category", "price", "photos", "files", "deactivate")
+EDIT_PARTS = (
+    "renew", "title", "description", "tags", "category", "price", "photos", "files", "auto_renew", "deactivate"
+)  # fmt: skip
 LISTING_PARTS = frozenset({"title", "description", "tags", "category"})
 STATES = {"renew": "active", "deactivate": "inactive"}  # what a change of its state sets at Etsy
 LIVE_STATE = "active"
@@ -291,7 +293,8 @@ _WORDS = ("title", "price", "tags")  # the head lines of the words the owner may
 class Edit:
     """A checked change to one of Ember's listings: only what changes (None stays as it is). Photos and files
     replace all of the listing's; the description gets Ember's AI line, like a new listing's. ``state`` (0.12.0):
-    'renew' puts it live again, 'deactivate' takes it off Etsy."""
+    'renew' puts it live again, 'deactivate' takes it off Etsy. ``auto_renew`` (0.13.0): Etsy's automatic renewal on
+    or off, only in the owner's Undo (the agent's tool never sets it)."""
 
     listing_id: int
     currency: str
@@ -304,6 +307,7 @@ class Edit:
     photos: tuple[Upload, ...] | None = None
     files: tuple[Upload, ...] | None = None
     state: str | None = None  # 'renew' or 'deactivate'
+    auto_renew: bool | None = None
 
     def parts(self) -> list[str]:
         """What changes, in EDIT_PARTS order."""
@@ -317,12 +321,13 @@ class Edit:
             "price": self.price,
             "photos": self.photos,
             "files": self.files,
+            "auto_renew": self.auto_renew,
         }
         return [part for part in EDIT_PARTS if present[part] is not None]
 
     def to_action(self) -> dict[str, Any]:
         data: dict[str, Any] = {"listing_id": self.listing_id, "currency": self.currency}
-        for name in ("title", "description", "price", "taxonomy_id", "category", "state"):
+        for name in ("title", "description", "price", "taxonomy_id", "category", "state", "auto_renew"):
             if getattr(self, name) is not None:
                 data[name] = getattr(self, name)
         if self.tags is not None:
@@ -402,9 +407,16 @@ def edit_from_action(raw: str | dict[str, Any]) -> Edit:
             photos=uploads("photos"),
             files=uploads("files"),
             state=_state(data.get("state")),
+            auto_renew=_flag(data.get("auto_renew")),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise EtsyError(f"the change isn't readable ({type(exc).__name__})") from None
+
+
+def _flag(value: Any) -> bool | None:
+    if value is not None and not isinstance(value, bool):
+        raise ValueError("not a flag")
+    return value
 
 
 def _state(value: Any) -> str | None:
@@ -457,6 +469,12 @@ def edit_payload(edit: Edit, now: Listing, state: str = "") -> str:
         lines.append(
             f"Files buyers download: {sized(edit.files)}\n  (they replace every file it has at Etsy: Ember's"
             f" {names(now.files)}, and any you added there)"
+        )
+    if edit.auto_renew is not None:
+        lines.append(
+            f"Automatic renewal at Etsy: on (Etsy renews it every four months, {RENEWAL_FEE} each time)"
+            if edit.auto_renew
+            else "Automatic renewal at Etsy: off (it ends after four months unless it is renewed)"
         )
     if edit.description is not None:
         lines += ["", "New description:", with_disclosure(edit.description)]

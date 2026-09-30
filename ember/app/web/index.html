@@ -366,6 +366,18 @@
 
     <section class="panel" id="panel-approvals" role="tabpanel" aria-labelledby="tab-approvals" hidden>
       <div class="queue" id="approvals"></div>
+      <article class="card" id="audit-card">
+        <div class="card-head">
+          <div>
+            <h2 id="audit-title" tabindex="-1">What Ember's code did</h2>
+            <p class="card-sub" id="audit-sub">&nbsp;</p>
+          </div>
+          <button type="button" class="btn btn-danger" id="audit-take-back" hidden>Take back every unlock</button>
+        </div>
+        <p class="hint" id="audit-digest" hidden></p>
+        <p class="form-status" id="audit-status" role="status"></p>
+        <ol class="audit-feed" id="audit-feed"></ol>
+      </article>
     </section>
 
     <section class="panel" id="panel-inbox" role="tabpanel" aria-labelledby="tab-inbox" hidden>

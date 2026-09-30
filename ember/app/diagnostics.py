@@ -130,6 +130,8 @@ TABLES = (
     "policy_grants",
     "policy_uses",
     "policy_candidates",
+    "action_undos",
+    "owner_digests",
     "emails",
     "email_actions",
     "email_suppressions",

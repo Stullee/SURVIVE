@@ -610,6 +610,7 @@
     section("approvals", [d.approvals, projectTitles(d), coming, agent.name, emailLimits(d), minute], null, function () {
       return renderApprovals(arr(d.approvals), projectTitles(d), emailLimits(d));
     });
+    section("audit", [d.audit, agent.name, minute], ["audit-feed", "audit-take-back"], function () { renderAudit(d.audit); });
     section("instructions", [d.instructions, agent.name, coming, !!agent.unavailable, minute], ["instructions-view"], function () {
       renderInstructions(isObject(d.instructions) ? d.instructions : null, agent);
     });
@@ -2164,6 +2165,104 @@
       actionKey: function (a) { return [a.status, a.version, executorOf(a) || "", executionStatus(a), a.reddit_url || ""].join("|"); },
       actions: approvalActions,
       panel: function (it, mode) { return approvalPanel(it, mode, email); },
+    });
+  }
+
+  // Approvals → What Ember's code did (0.13.0): the action journal, the owner's Undo, the daily digest and the switch
+  // that takes back every unlock.
+  var AUDIT_STATUS = {
+    running: { icon: "●", label: "Running", tone: "accent" },
+    done: { icon: "✓", label: "Done", tone: "good" },
+    simulated: { icon: "◌", label: "Dry run", tone: "" },
+    partial: { icon: "!", label: "Partly done", tone: "warning" },
+    failed: { icon: "✕", label: "Failed", tone: "critical" },
+    unclear: { icon: "!", label: "Unclear", tone: "critical" },
+  };
+
+  function renderAudit(audit) {
+    var data = isObject(audit) ? audit : {};
+    var items = arr(data.feed);
+    var digest = isObject(data.digest) ? data.digest : null;
+    var unlocks = num(data.unlocks) || 0;
+    var held = num(data.held) || 0;
+    $("audit-digest").hidden = !digest;
+    $("audit-digest").textContent = digest ? "Daily digest for " + digest.text : "";
+    $("audit-sub").textContent = (unlocks ? unlocks + (unlocks === 1 ? " unlock stands" : " unlocks stand")
+      : "No unlock stands: every request waits for you") + (held ? " · " + held + " held for your veto" : "");
+    var takeBack = $("audit-take-back");
+    takeBack.hidden = !unlocks;
+    takeBack.disabled = false;
+    takeBack.onclick = function () { takeBackUnlocks(takeBack, unlocks); };
+    replace($("audit-feed"), items.length ? items.map(auditItem)
+      : [h("li", { class: "muted", text: "Nothing yet: what " + agentName() + "'s code carries out (emails, listings, changes) shows here." })]);
+  }
+
+  function auditItem(e) {
+    var undo = isObject(e.undo) ? e.undo : {};
+    var undone = isObject(undo.request) ? undo.request : null;
+    var button = null;
+    if (undo.label && !undo.why_not) {
+      button = h("button", { type: "button", class: "btn small", text: "Undo: " + undo.label });
+      button.addEventListener("click", function () { undoAction(button, e, undo); });
+    }
+    var changes = arr(e.changes).map(function (c) {
+      return h("li", null, h("strong", { text: c.part + ": " }), String(c.before) + " → " + String(c.after));
+    });
+    var subject = e.subject ? (String(e["class"]).indexOf("etsy.") === 0 ? "listing #" : "") + e.subject : "";
+    return h("li", { class: "audit-item" },
+      h("div", { class: "item-head" },
+        h("strong", { text: sentence(e.what) + (subject ? " · " + subject : "") }),
+        chip(AUDIT_STATUS, e.status, String(e.status)), plainChip(sentence(e.by_text || e.by))),
+      h("p", { class: "muted small", text: "Action #" + e.id + " · " + fmtDateTime(e.finished_at || e.started_at) + (e.approval_id ? " · request #" + e.approval_id + (e.request_title ? ": " + e.request_title : "") : "") }),
+      changes.length ? h("ul", { class: "audit-changes" }, changes) : null,
+      e.note ? h("p", { class: "small pre-line", text: e.note }) : null,
+      undone ? h("p", { class: "small" }, h("strong", { text: "Your Undo: " }),
+        "request #" + undone.approval_id + " (" + String(undone.status).replace(/_/g, " ") + ")" + (undone.note ? ": " + undone.note : "")) : null,
+      button ? h("p", null, button)
+        : undo.label && !undone ? h("p", { class: "muted small", text: "Undo isn't possible now: " + undo.why_not + "." }) : null);
+  }
+
+  function auditSay(text, error) {
+    var status = $("audit-status");
+    status.textContent = text;
+    if (error) status.setAttribute("data-kind", "error"); else status.removeAttribute("data-kind");
+  }
+
+  function undoAction(button, e, undo) {
+    var cost = /renew/i.test(undo.label) ? " Etsy charges its listing fee for the renewal." : "";
+    if (!window.confirm("Undo: " + undo.label.toLowerCase() + "? " + agentName() + "'s code carries it out in its next round, as a request you approved." + cost)) return;
+    button.disabled = true;
+    request("POST", "api/actions/" + e.id + "/undo", {}).then(function (res) {
+      if (res.ok) {
+        auditSay("Undo requested: request #" + (isObject(res.data) ? res.data.approval_id : "?") + ", carried out in the next round.", false);
+        refresh();
+        return;
+      }
+      ownerFailure(res, {}, function (msg) { auditSay(msg, true); }, null);
+      button.disabled = false;
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      auditSay("Couldn't reach Ember, so the Undo may or may not be requested.", true);
+      button.disabled = false;
+    });
+  }
+
+  function takeBackUnlocks(button, n) {
+    if (!window.confirm("Take back every unlock (" + n + ")? Every request waits for your click again, also those held for your veto.")) return;
+    button.disabled = true;
+    request("POST", "api/autonomy/take_back", {}).then(function (res) {
+      if (res.ok) {
+        var taken = isObject(res.data) ? num(res.data.taken_back) : n;
+        auditSay("Took back " + taken + (taken === 1 ? " unlock" : " unlocks") + ": every request waits for you again.", false);
+        refresh();
+        return;
+      }
+      ownerFailure(res, {}, function (msg) { auditSay(msg, true); }, null);
+      button.disabled = false;
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      auditSay("Couldn't reach Ember, so the unlocks may or may not be taken back.", true);
+      button.disabled = false;
     });
   }
 

@@ -787,13 +787,35 @@ no longer shown); a study that failed three times stops until you press
   refuses an unlock's approval of such a request, an approval that no current
   unlock covers, and anything beyond an unlock's budget. When an unlock is
   taken back, what it was holding waits for you.
-- **What Ember's code did**: every action it carries out (an email sent, a
-  listing created, changed, renewed or deactivated, a sold listing's automatic
-  renewal turned on) is kept in one journal (0.13.0). It records what the
-  action acted on, the state before and after, how it ended and what would
-  undo it: deactivating a listing it created, restoring a changed one to how
-  it was, renewing a deactivated one. An email or a renewal's fee can't be
-  undone. The Undo button and the feed of these actions come next.
+- **What Ember's code did**, below the requests on the **Approvals** tab
+  (0.13.0): every action it carries out (an email sent, a listing created,
+  changed, renewed or deactivated, a sold listing's automatic renewal turned
+  on), the newest first. Each one shows:
+  - what it acted on, and what it changed (before → after);
+  - how it ended;
+  - on whose decision: **You approved it**, **Your unlock**, **Your Undo**,
+    or **Ember's code on its own**.
+
+  **Undo** reverses an action on one of Ember's listings. It deactivates a
+  listing Ember created, changes a changed listing back, renews a
+  deactivated one (Etsy's fee again) or turns an automatic renewal off. The
+  Undo is a request of yours, approved at once. Ember's code carries it out
+  in its next round, like any change you approve, and the entry shows its
+  request. Only the newest action on a listing can be undone, and not while
+  another change of it waits. An email can't be unsent. If an Undo failed
+  before anything changed, or you cancelled it, you can undo again.
+
+  **Daily digest**: at the start of each day, Ember's code sums up the day
+  before. It covers how many actions it carried out and on whose decision,
+  what failed, what your unlocks approved, what they hold for your veto,
+  which unlocks were taken back and why, and what waited for you whatever
+  you unlocked. The newest digest is at the top of this card, in the System
+  log and in the sensor (`digest`).
+
+  **Take back every unlock**, at the top of this card while any unlock
+  stands: one click sets every rule of every milestone back to **Ask me**.
+  What the unlocks held for your veto waits for your click again, and Ember
+  hears it as your note on each milestone.
 - **Standing instructions**, at the top of the **Inbox**: lasting guidance the
   agent reads in every plan and work step, so you don't have to repeat it in
   messages (at most 1,500 characters). **Edit** changes them, and saving an
@@ -1348,8 +1370,10 @@ waiting for you) and `milestone_proposals` (new dates the agent proposed for
 your milestones), with `waiting_on_you`, their total (0.13.0), and of Ember's
 mailbox: `email_unread` (emails the agent hasn't read) and `email_waiting`
 (approved emails not sent yet). `agenda_open` counts the events no plan has
-seen yet and `event_wakes_today` the wake-ups events caused today. It never
-contains any text the agent wrote.
+seen yet and `event_wakes_today` the wake-ups events caused today. `unlocks`
+counts the unlocks that stand (0.13.0), and `digest` is the newest daily digest,
+with the day it covers in `digest_day` (an automation can notify you when it
+changes). It never contains any text the agent wrote.
 In dry run the numbers are the dry run's. If the database can't be read,
 `state` is `unknown` and the numbers are empty.
 
