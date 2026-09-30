@@ -843,7 +843,9 @@ an amount is far larger than your usual ones, or when an entry would make the
 agent critical or end its life; the confirmation covers only the outcome it
 showed you. Sending the same form twice records it once. An API cost decrease
 (a refund) can't be larger than the API cost recorded on its day, and it never
-adds room under that day's spending cap.
+adds room under that day's spending cap. Date it on the day it corrects: the
+runway counts it there, so a refund of old charges doesn't make the last week
+look cheap, and it isn't money coming in (it doesn't end a critical state).
 
 **Spending limits.** Before every API call Ember works out the most the call
 could cost and refuses it if that could break the per-cycle cap, the daily cap
@@ -873,7 +875,7 @@ session. Each time you switch dry run on, a new session starts from scratch.
 | State | Meaning |
 |---|---|
 | alive | Running normally. |
-| critical | Less than 2 days of runway (balance divided by the average daily spending of the last 7 active days), or it couldn't afford its next planning call. It stays critical until runway is back to 4 days *and* money came in. The first time, it writes a last will. |
+| critical | Less than 2 days of runway (balance divided by the average daily spending of the last 7 active days), or it couldn't afford its next planning call. It stays critical until runway is back to 4 days *and* money came in (a grant, revenue or an adjustment that adds; a refund of API costs doesn't count). The first time, it writes a last will. |
 | paused | You paused it. Nothing runs until you resume. |
 | unfunded | No money yet and nothing spent: grant funds to start. |
 | dead | The balance ran out, or it could no longer afford even its last will. No model calls. The dashboard shows a memorial. A grant large enough for a fresh start begins a new life (the dashboard shows the amount needed); resuming alone never revives. |

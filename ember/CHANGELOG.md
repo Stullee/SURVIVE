@@ -71,6 +71,8 @@ Your results now reach your records: what you earn counts where it belongs.
   "keine E-Mails mehr", "désinscrire", ...), not only "stop" alone on the first line. When one asks in words the
   check misses, mark it with mark_opt_out (free, final): Ember never emails them again. No new email is dropped any
   more: the oldest are read first, and the rest waits for the next check.
+- A refund of API costs counts on the day it corrects: it no longer cancels out the last week's spending in your
+  runway, and it isn't money coming in, so it doesn't end a critical state.
 
 ## 0.11.2
 

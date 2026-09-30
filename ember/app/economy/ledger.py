@@ -38,11 +38,10 @@ _BALANCE_SIGN = """CASE type
     WHEN 'expense' THEN -amount_micros
 END"""
 _API_SPEND_TYPES = "('api_cost', 'api_cost_correction')"
-# Rows that mean money came in (for leaving the critical state).
+# Rows that mean money came in (for leaving the critical state). 0.12.0: a refund of API costs isn't one: it corrects
+# what was charged, and it ended a critical state that nothing had changed.
 _MONEY_IN = (
-    "((type IN ('owner_grant', 'revenue') AND corrects_id IS NULL)"
-    " OR (type = 'adjustment' AND amount_micros > 0)"
-    " OR (type = 'api_cost_correction' AND amount_micros < 0))"
+    "((type IN ('owner_grant', 'revenue') AND corrects_id IS NULL) OR (type = 'adjustment' AND amount_micros > 0))"
 )
 _ENTRY_COLUMNS = (
     "id, ts, occurred_on, type, amount_micros, simulated, source, note, llm_call_id, corrects_id,"
@@ -314,15 +313,24 @@ class Books:
         return int(row[0]) - int(excess[0])
 
     def api_spend_between(self, scope: Scope, start: datetime, end: datetime, after_id: int = 0) -> int:
-        """API spend recorded in [start, end] (and after ledger row ``after_id``)."""
+        """API spend in [start, end] (and after ledger row ``after_id``): the costs charged then, and the corrections of
+        those days, by the day they correct (0.12.0: by the time they were recorded, so a refund of old charges wiped
+        out the last days' spending and the runway jumped from 1.3 to 249 days)."""
         where, params = scope.where()
+        first_day = self.clock.local_day(to_iso(start)).isoformat()
+        last_day = self.clock.local_day(to_iso(end)).isoformat()
         with self.db.connection() as conn:
-            row = conn.execute(
-                f"SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type IN {_API_SPEND_TYPES}"
+            charged = conn.execute(
+                "SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type = 'api_cost'"
                 f" AND ts >= ? AND ts <= ? AND id > ? AND {where}",
                 (to_iso(start), to_iso(end), after_id, *params),
-            ).fetchone()
-        return int(row[0])
+            ).fetchone()[0]
+            corrected = conn.execute(
+                "SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type = 'api_cost_correction'"
+                f" AND occurred_on >= ? AND occurred_on <= ? AND ts <= ? AND id > ? AND {where}",
+                (first_day, last_day, to_iso(end), after_id, *params),
+            ).fetchone()[0]
+        return int(charged) + int(corrected)
 
     def first_api_cost_after(self, scope: Scope, mark: int) -> str | None:
         """When the first API cost after ledger row ``mark`` was recorded."""
@@ -339,7 +347,7 @@ class Books:
             return int(conn.execute("SELECT COALESCE(MAX(id), 0) FROM ledger").fetchone()[0])
 
     def money_in_after(self, scope: Scope, mark: int) -> bool:
-        """Did money come in (grant, revenue, refund, positive adjustment) after ledger row ``mark``?"""
+        """Did money come in (a grant, revenue or a positive adjustment) after ledger row ``mark``?"""
         where, params = scope.where()
         with self.db.connection() as conn:
             row = conn.execute(
