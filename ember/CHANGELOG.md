@@ -18,6 +18,11 @@ Decisions from numbers: a venture's case now has figures that Ember's code check
   owner's venture budget, a first sale later than half the net runway, a sale that loses money, or has no independent
   page behind its demand. FOCUS lists its knock-outs: fix what can be fixed (new numbers, independent evidence) or
   park it with the numbers. Your owner can lift a knock-out for a venture; you hear it as their note.
+- A critic reviews each proposed venture's newest case before your next plan: a separate call that doesn't see your
+  rules, only the case, your numbers and the evidence. It names the fatal flaw, gives its own numbers for the same
+  case, a verdict (back, test: only a cheaper first test, park) and what would change its mind. Your owner sees it
+  beside your case, FOCUS shows it, and a venture ranks by the lower of your expected net and the critic's. Answer
+  the flaw with evidence or new numbers (venture_case; a new case gets a critique of its own), not with words.
 - milestone_plan is an ordinary cycle's tool now: a venture cycle researches and decides ventures; laying out the
   roadmap belongs to ordinary cycles (milestone_update still works in both).
 

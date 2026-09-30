@@ -12,6 +12,7 @@ from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
 from . import (
+    critic,
     digest,
     evidence,
     knockouts,
@@ -412,7 +413,7 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
 
 def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated: int) -> str:
     """Changes when the tree or its money may have: a venture changed, a wake cycle ended, something was recorded in
-    the ledger (0.12.0: its P&L), a claim was saved as evidence (0.12.0) or a numeric case (0.13.0)."""
+    the ledger (0.12.0: its P&L), a claim was saved as evidence (0.12.0), a numeric case or a critique (0.13.0)."""
     where, params = scope.where()
     tree = conn.execute(
         f"SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM ventures WHERE {where}", params
@@ -427,7 +428,14 @@ def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated
         f"SELECT COALESCE(MAX(c.id), 0) FROM venture_cases c JOIN ventures ON ventures.id = c.venture_id WHERE {where}",
         params,
     ).fetchone()
-    return f"{int(tree[0])}|{tree[1]}|{int(cycle[0])}|{int(booked[0])}|{int(claims[0])}|{int(numbers[0])}"
+    judged = conn.execute(
+        f"SELECT COALESCE(MAX(k.id), 0) FROM venture_critiques k JOIN ventures ON ventures.id = k.venture_id"
+        f" WHERE {where}",
+        params,
+    ).fetchone()
+    return (
+        f"{int(tree[0])}|{tree[1]}|{int(cycle[0])}|{int(booked[0])}|{int(claims[0])}|{int(numbers[0])}|{int(judged[0])}"
+    )
 
 
 def ventures_view(agent: Agent) -> dict[str, Any]:
@@ -457,6 +465,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         digests = digest.newest_by(conn, scope, "venture_id")  # 0.12.0
         found = evidence.by_venture(conn, scope)  # 0.12.0
         cases = {v["id"]: ventures.latest_case(conn, v["id"]) for v in rows if v["cases"]}  # 0.13.0
+        judged = {vid: (critic.latest(conn, vid), critic.failures(conn, vid)) for vid in cases}  # 0.13.0
         # 0.13.0: what rules out a venture with a case that isn't backed yet (the owner lifts or restores each)
         net_days = agent.economy.life.evaluate().runway.net_days
         knocked = {
@@ -513,6 +522,9 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                 "net_usd": _usd(m.net),
                 "last_digest": digests.get(v["id"]),  # 0.12.0: the digest of the last cycle aimed at it
                 "numbers": _numbers(cases.get(v["id"])),  # 0.13.0: its newest numeric business case
+                # 0.13.0: the critic's review of that case, and the expected net it ranks by (the lower of the two)
+                "critique": _critique(*judged.get(v["id"], (None, 0))),
+                "ranking_ev_eur": critic.ranking_ev(cases.get(v["id"]), judged.get(v["id"], (None, 0))[0]),
                 "knockouts": [
                     {"rule": k.rule, "label": k.label, "why": k.why, "overridden": k.overridden}
                     for k in knocked.get(v["id"], [])
@@ -544,6 +556,29 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         "limits": {"title": ventures.LIMITS["title"], "pitch": ventures.LIMITS["pitch"], "comment": 1_000},
         "items": items,
         "stamp": stamp,
+    }
+
+
+def _critique(row: sqlite3.Row | None, failed: int) -> dict[str, Any] | None:
+    """The critic's review of a venture's newest case for its card (0.13.0): None before one (``failed``: how many
+    attempts failed; after critic.MAX_ATTEMPTS the case goes without)."""
+    if row is None:
+        return {"failed": failed, "gave_up": failed >= critic.MAX_ATTEMPTS} if failed else None
+    return {
+        "id": row["id"],
+        "case_id": row["case_id"],
+        "created_at": row["created_at"],
+        "verdict": row["verdict"],
+        "fatal_flaw": row["fatal_flaw"],
+        "change_mind": row["change_mind"],
+        "price_eur": row["price_eur"],
+        "unit_cost_eur": row["unit_cost_eur"],
+        "monthly_costs_eur": row["monthly_costs_eur"],
+        "sales": [row["sales_low"], row["sales_mid"], row["sales_high"]],
+        "first_sale_months": row["first_sale_months"],
+        "net_eur": row["net_eur"],
+        "break_even": row["break_even"],
+        "ev_eur": row["ev_eur"],
     }
 
 

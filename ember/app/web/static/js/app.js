@@ -376,7 +376,7 @@
   var PHASES = { review: "Daily review", study: "Studying the library", plan: "Plan", act: "Act", reflect: "Reflect", last_will: "Last will" };
   var PURPOSES = { review: "Daily review", plan: "Plan", work: "Work", reflect: "Reflect", research: "Research",
     workshop: "Workshop", draft: "Draft", brainstorm: "Brainstorm", study: "Library study", last_will: "Last will",
-    consolidate: "Lessons consolidated", research_check: "Research model check" };
+    consolidate: "Lessons consolidated", research_check: "Research model check", critic: "Critic" };
 
   function triggerText(trigger) { return TRIGGERS[trigger] || (trigger ? String(trigger).replace(/_/g, " ") : "–"); }
   function purposeText(purpose) { return PURPOSES[purpose] || (purpose ? sentence(String(purpose).replace(/_/g, " ")) : "Model call"); }
@@ -3261,7 +3261,7 @@
 
   // 0.12.0: which model does what, and the research model's check (its first questions go to both models)
   function modelsText(m) {
-    var parts = ["plans " + m.planner, "venture plans and reviews " + m.strategy, "work " + m.worker,
+    var parts = ["plans " + m.planner, "venture plans, reviews and the critic " + m.strategy, "work " + m.worker,
       "research " + m.research];
     var check = isObject(m.research_check) ? m.research_check : null;
     return parts.join(" · ") + (check ? " (research model check " + check.text + ")" : "");
@@ -5212,6 +5212,7 @@
       filled.length && needs.length && (v.stage === "researching" || v.stage === "idea") ?
         h("p", { class: "muted small", text: "For a business case " + name + " still needs: " + needs.join(", ") + "." }) : null,
       ventureNumbers(v),
+      ventureCritique(v),
       ventureKnockouts(v),
       ventureEvidence(v),
       h("dl", { class: "money" },
@@ -5263,6 +5264,37 @@
           h("dt", { text: "Expected" }), h("dd", { text: "€" + Math.round(num(n.ev_eur)) + " a month" +
             (n.ev_per_hour === null ? "" : " · €" + num(n.ev_per_hour).toFixed(2) + " per hour of yours") })),
         h("div", null, h("dt", { text: "To start" }), h("dd", { text: eur(n.setup_eur) + " · " + num(n.owner_hours) + " h a month from you · first sale in " + n.first_sale_months + " month" + (n.first_sale_months === 1 ? "" : "s") }))));
+  }
+
+  // 0.13.0: the independent critic's review of the newest case: its verdict, the fatal flaw, its own numbers (worked out
+  // by Ember's code like the agent's) and what would change its mind. The venture ranks by the lower expected net.
+  var CRITIC_VERDICTS = {
+    back: { icon: "✓", label: "Back it", tone: "good" },
+    test: { icon: "?", label: "Test first", tone: "warning" },
+    park: { icon: "■", label: "Park it", tone: "critical" },
+  };
+
+  function ventureCritique(v) {
+    var k = isObject(v.critique) ? v.critique : null;
+    if (!k) return null;
+    if (!k.verdict) {
+      return h("p", { class: "muted small", text: "The critic's review of this case failed " + k.failed + " time" +
+        (k.failed === 1 ? "" : "s") + (k.gave_up ? ": it goes without one." : "; it is tried again at the next cycle.") });
+    }
+    var eur = function (x) { return x === null || x === undefined ? "–" : "€" + num(x).toFixed(2); };
+    return h("div", { class: "vt-critique" },
+      h("p", null, h("strong", { text: "Critic: " }), chip(CRITIC_VERDICTS, k.verdict), " on case #" + k.case_id + " · ",
+        timeEl(k.created_at)),
+      h("dl", { class: "item-grid" },
+        h("div", null, h("dt", { text: "Fatal flaw" }), h("dd", { text: String(k.fatal_flaw) })),
+        h("div", { title: "The critic's own numbers for the same case, worked out by Ember's code like the agent's" },
+          h("dt", { text: "Its numbers" }), h("dd", { text: eur(k.price_eur) + " a sale keeps " + eur(k.net_eur) + " · " +
+            arr(k.sales).join(" / ") + " sales a month · first sale in " + k.first_sale_months + " month" +
+            (k.first_sale_months === 1 ? "" : "s") + " · expected €" + Math.round(num(k.ev_eur)) + " a month" })),
+        h("div", null, h("dt", { text: "Would change its mind" }), h("dd", { text: String(k.change_mind) })),
+        v.ranking_ev_eur === null || v.ranking_ev_eur === undefined ? null :
+          h("div", { title: "What the venture ranks by: the lower of the agent's and the critic's expected net" },
+            h("dt", { text: "Ranks by" }), h("dd", { text: "€" + Math.round(num(v.ranking_ev_eur)) + " a month" }))));
   }
 
   // 0.13.0: what rules it out, checked by Ember's code; you can lift a knock-out for this venture (and restore it).

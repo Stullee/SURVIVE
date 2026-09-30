@@ -378,7 +378,7 @@ SPECS: dict[str, Spec] = {
                 "sales_high": _i("P90.", minimum=0, maximum=MAX_SALES),
                 "setup_eur": _s("Cash to start.", 12),
                 "owner_hours": _s("Your owner's hours.", 6),
-                "first_sale_months": _i("Months to the first sale.", minimum=0, maximum=24),
+                "first_sale_months": _i("Months to the first sale.", minimum=0, maximum=econ.MAX_FIRST_SALE_MONTHS),
                 "api_usd": _s("Your API spend on it (USD).", 12),
                 "needs": _s(
                     "If it needs them: cold_outreach (people who didn't ask first), ember_accounts (accounts you'd "

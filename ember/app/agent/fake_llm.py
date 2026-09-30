@@ -57,7 +57,8 @@ Scenarios (the ``scenario`` argument; the app takes it from ``EMBER_FAKE_SCENARI
 
 In a venture cycle (0.10.0) it plans venture work: a brainstorm while the tree has fewer than 8 ideas (the brainstorm
 call answers with six ideas and first-guess scores), research on the venture being researched or the heaviest idea,
-and saving what it learned to that venture with new scores.
+and saving what it learned to that venture with new scores. The critic of a proposed venture's case (0.13.0) doubts its
+demand: it halves the agent's sales, puts the first sale a month later and would test it first.
 
 It keeps a roadmap (0.11.0): when the planner's ROADMAP says it is empty, it lays one out (a goal three months ahead,
 a milestone this month that leads to it and one this week), aims each cycle at the first milestone listed, and an
@@ -143,6 +144,7 @@ CHAOS: dict[str, tuple[str, ...]] = {
     "brainstorm": ("prose", "cut_off"),
     "study": ("prose", "cut_off"),
     "consolidate": ("prose", "drops_everything"),  # 0.12.0
+    "critic": ("prose", "cut_off"),  # 0.13.0
     "will": ("cut_off", "empty"),
 }
 _OPEN_STATUSES = ("idea", "active", "waiting")
@@ -384,8 +386,8 @@ def thinking_signature(thinking: str) -> str:
 
 
 def request_kind(request: Mapping[str, Any]) -> str:
-    """plan, review, brainstorm, study, consolidate, workshop, research, draft, reflect, work or will (anything else
-    without tools counts as a will)."""
+    """plan, review, brainstorm, study, consolidate, critic, workshop, research, draft, reflect, work or will (anything
+    else without tools counts as a will)."""
     output_config = request.get("output_config")
     fmt = output_config.get("format") if isinstance(output_config, Mapping) else None
     schema = fmt.get("schema") if isinstance(fmt, Mapping) else None
@@ -400,6 +402,8 @@ def request_kind(request: Mapping[str, Any]) -> str:
         return "study"
     if isinstance(properties, Mapping) and "keep" in properties:
         return "consolidate"  # 0.12.0
+    if isinstance(properties, Mapping) and "fatal_flaw" in properties:
+        return "critic"  # 0.13.0
     system = request.get("system")
     first = system[0] if isinstance(system, list) and system else None
     if isinstance(first, Mapping) and str(first.get("text") or "").startswith(DRAFT_MARKER):
@@ -1213,6 +1217,8 @@ class FakeTransport:
             return self._study(request, chaos)  # the same
         if kind == "consolidate":
             return self._consolidate(request, chaos)  # the same
+        if kind == "critic":
+            return self._critic(request, chaos)  # the same
         if kind == "research":
             draft = self._research(request, rng, chaos)
         elif kind == "workshop":
@@ -1369,6 +1375,39 @@ class FakeTransport:
         keep = [{"text": texts[key], "from": numbers} for key, numbers in groups.items()]
         answer = json.dumps({"keep": keep, "drop": []}, ensure_ascii=False)
         return _Draft([_text(answer)], note=f"consolidate: {len(lessons)} lessons, {len(keep)} kept")
+
+    def _critic(self, request: Mapping[str, Any], chaos: str | None) -> _Draft:
+        """The independent critic (0.13.0): it doubts the demand, halving the agent's sales and putting the first sale
+        a month later, and would test it first; its chaos answers in prose or is cut off."""
+        context = _text_of(request["messages"][-1].get("content"))
+        found = _CASE_NUMBERS.search(context)
+        if chaos == "prose":
+            return _Draft([_text("The case looks thin to me; I would test it first.")], note="chaos: prose")
+        low, mid, high = (int(found[name]) // 2 for name in ("low", "mid", "high")) if found else (0, 1, 2)
+        answer = json.dumps(
+            {
+                "fatal_flaw": f"Dry run: the fake critic doubts the demand: {mid} sales a month, not "
+                f"{found['mid'] if found else 'more'}; no independent page shows buyers at this price.",
+                "numbers": {
+                    "price_eur": float(found["price"]) if found else 5.0,
+                    "unit_cost_eur": float(found["cost"]) if found else 0.0,
+                    "monthly_costs_eur": float(found["fixed"]) if found else 0.0,
+                    "sales_low": low,
+                    "sales_mid": mid,
+                    "sales_high": high,
+                    "first_sale_months": min(24, int(found["first"]) + 1) if found else 2,
+                },
+                "verdict": "test",
+                "change_mind": "Dry run: an independent page with sales numbers for this kind of product.",
+            },
+            ensure_ascii=False,
+        )
+        if chaos == "cut_off":
+            max_tokens = int(request.get("max_tokens") or 1)
+            return _Draft(
+                [_text(answer[: len(answer) // 2])], "max_tokens", output_tokens=max_tokens, note="chaos: cut_off"
+            )
+        return _Draft([_text(answer)], note=f"critic: test, {mid} sales a month")
 
     def _brainstorm(self, request: Mapping[str, Any], rng: random.Random, chaos: str | None) -> _Draft:
         """Six ideas the tree doesn't have yet (from a small pool, then numbered variants), with random scores."""
@@ -2300,6 +2339,12 @@ class FakeTransport:
 
 
 _NUMBERED = re.compile(r"^(\d+)\. (.+)$", re.MULTILINE)  # the consolidation's lessons (0.12.0)
+# The agent's numbers in the critic's case (0.13.0: critic.case_text)
+_CASE_NUMBERS = re.compile(
+    r"price EUR (?P<price>[\d.]+), cost per sale EUR (?P<cost>[\d.]+), fixed costs EUR (?P<fixed>[\d.]+) a month, "
+    r"sales a month (?P<low>\d+) \(P10\) / (?P<mid>\d+) \(P50\) / (?P<high>\d+) \(P90\).*? first sale in "
+    r"(?P<first>\d+) months"
+)
 _MARKS = re.compile(r" \((?:pinned|has numbers|pinned, has numbers)\)$")
 
 _STAGE_TOOLS = {

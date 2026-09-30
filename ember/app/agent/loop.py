@@ -35,6 +35,7 @@ from ..economy.costs import micros_to_usd
 from ..economy.estimate import Unpriceable
 from ..economy.metering import (
     CONSOLIDATE,
+    CRITIC,
     RESEARCH_CHECK,
     REVIEW,
     STUDY,
@@ -54,7 +55,9 @@ from ..integrations.mail import Mailbox
 from ..version import app_version
 from . import (
     context,
+    critic,
     digest,
+    econ,
     evidence,
     knockouts,
     library,
@@ -476,6 +479,7 @@ class CycleRunner:
             self._review(cycle_id, ctx)
         if self.library_on:
             self._study(cycle_id)
+        self._critique(cycle_id)  # 0.13.0
         snap = self._snapshot(ctx.venture)
         ctx.net_runway_days = self.net_runway_days  # 0.13.0: the knock-outs' slow rule
         action = "Planning this venture cycle" if ctx.venture else "Planning this cycle"
@@ -642,7 +646,10 @@ class CycleRunner:
             size = None
         last = digest.newest_for(conn, self.scope, "venture_id", row["id"], cycle_id)
         found = evidence.focus_line(conn, row["id"])  # 0.12.0: its claims, by their sources' grade
-        numbers = ventures.numbers_text(ventures.latest_case(conn, row["id"]))  # 0.13.0
+        case_row = ventures.latest_case(conn, row["id"])
+        numbers = ventures.numbers_text(case_row)  # 0.13.0
+        judged = critic.text(critic.latest(conn, row["id"]), case_row)  # 0.13.0: the critic's review of it
+        numbers = f"{numbers}\n{judged}" if judged else numbers
         knocked = (  # 0.13.0: while it isn't backed
             knockouts.text(
                 knockouts.check(conn, row, cash_eur=self.settings.venture_cash_eur, net_days=self.net_runway_days)
@@ -754,6 +761,73 @@ class CycleRunner:
             f"Ember's code consolidated the lessons: {done[1]}"
             if done
             else "The lessons' consolidation changed nothing"
+        )
+        events.record(self.db, "info", "agent", message[:300])
+
+    def _critique(self, cycle_id: int) -> None:
+        """0.13.0: the independent critic, before the plan. A call of its own on the strategy model reviews the newest
+        business case of a proposed venture (the oldest proposal first, one a cycle) with its evidence. Ember's code
+        checks its answer, works out the economics of its numbers like the agent's and keeps it, for the owner and the
+        agent. Only while venture cycles run (the burn mode). It counts toward the daily cap only, leaves what the
+        cycle needs to work, and never ends the cycle: a critique the money can't cover now waits, and a failed one is
+        kept and tried again at the next cycle (critic.MAX_ATTEMPTS times a case)."""
+        if not burn.peek(self.db, self.economy.life.evaluate()).venture_cycles:
+            return
+        with self.db.connection() as conn:
+            venture = critic.due(conn, self.scope)
+            case_row = ventures.latest_case(conn, int(venture["id"])) if venture is not None else None
+            if venture is None or case_row is None:
+                return
+            case_text = critic.case_text(conn, venture, case_row)
+        vid, case_id = int(venture["id"]), int(case_row["id"])
+        request = prompts.critic_request(self.settings, case_text)
+        try:
+            quote = self.meter.quote(request, CRITIC)
+        except Unpriceable as exc:
+            log.warning("The critic can't be priced (%s); skipped", exc)
+            return
+        working = working_cycle_cost(self.settings, self.db, self.economy.life.mode) or 0
+        if quote > self.meter.headroom(cycle_id, CRITIC, keep=working):
+            log.info("The critic can't be afforded now; venture #%d's case waits for the next cycle", vid)
+            return
+        self._progress(cycle_id, current_action=f"The critic reviews venture #{vid}")
+        call_id = None
+        try:
+            result = self._call(cycle_id, CRITIC, request)
+        except CallRefused:
+            return  # the money: it waits
+        except CallFailed as exc:
+            call_id, note, parsed = (
+                exc.result.call_id,
+                f"the call failed ({exc.result.error or exc.result.status})",
+                None,
+            )
+        else:
+            response = result.response or {}
+            reply = _text_of(response)
+            self._save_text(result.call_id, reply, response)
+            stop = response.get("stop_reason")
+            try:
+                answer = json.loads(reply) if stop == "end_turn" else None
+            except ValueError:
+                answer = None
+            call_id = result.call_id
+            parsed = critic.parse(answer, ventures.case_of(case_row)[0])
+            note = "its answer wasn't usable" if stop == "end_turn" else f"it was cut off ({stop})"
+        now = to_iso(self.clock.now())
+        if parsed is None:
+            with self.db.transaction() as conn:
+                critic.add_failed(conn, vid, case_id, call_id, note, now)
+            message = f"The critic's review of venture #{vid} (case #{case_id}) failed: {note}"
+            events.record(self.db, "warning", "agent", message[:300])
+            return
+        texts, theirs = parsed
+        economics = econ.compute(theirs, self.settings.etsy_usd_per_eur)
+        with self.db.transaction() as conn:
+            critic.add(conn, vid, case_id, call_id, texts, theirs, economics, now)
+        message = (
+            f"The critic on venture #{vid} (case #{case_id}): {texts['verdict']}; expected EUR "
+            f"{economics.ev_eur:.0f} a month by its numbers. Fatal flaw: {texts['fatal_flaw']}"
         )
         events.record(self.db, "info", "agent", message[:300])
 

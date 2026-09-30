@@ -122,6 +122,7 @@ TABLES = (
     "demand_notes",
     "venture_cases",
     "knockout_overrides",
+    "venture_critiques",
     "emails",
     "email_actions",
     "email_suppressions",

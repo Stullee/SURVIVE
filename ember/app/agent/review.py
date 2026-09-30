@@ -61,6 +61,7 @@ _PURPOSES = {
     "research_check": "research",
     "review": "reviews",
     "consolidate": "reviews",
+    "critic": "reviews",  # 0.13.0
     "brainstorm": "brainstorms",
     "last_will": "the last will",
 }

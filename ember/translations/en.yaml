@@ -64,8 +64,9 @@ configuration:
   strategy_model:
     name: Model for venture plans and reviews
     description: >-
-      Optional. The model that plans the venture cycles and writes the daily
-      review, where Ember decides what to pursue; empty, the planner model.
+      Optional. The model that plans the venture cycles, writes the daily
+      review and critiques proposed ventures, where Ember decides what to
+      pursue; empty, the planner model.
       claude-opus-5-5 here with claude-sonnet-5 as the planner puts the
       stronger model on those decisions only. It needs an entry in the price
       table.

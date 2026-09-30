@@ -69,7 +69,8 @@ CYCLE_END_STATUSES = frozenset({"completed", "idle", "refused", "failed", "stopp
 # Calls that open a wake cycle; refusing one of them for lack of money is starvation.
 OPENING_PURPOSES = frozenset({"plan", "last_will"})
 # 0.12.0: the calls that do a cycle's work, charged to the venture and milestone they serve (the cycle's focus, or the
-# venture a research call names); the rest (plans, reviews, brainstorms, library study, the last will) is overhead.
+# venture a research call names); the rest (plans, reviews, critiques, brainstorms, library study, the last will) is
+# overhead.
 WORK_PURPOSES = ("work", "reflect", "research", "workshop", "draft")  # 0.12.0: a draft is work too
 _PURPOSE = re.compile(r"^[a-z_]{1,32}$")
 _TRIGGER = re.compile(r"^[a-z_]{1,32}$")
@@ -97,7 +98,8 @@ REVIEW = "review"
 STUDY = "study"  # 0.12.0: Ember studying its owner's library, within the owner's daily study budget
 CONSOLIDATE = "consolidate"  # 0.12.0: the lessons' consolidation after the daily review
 RESEARCH_CHECK = "research_check"  # 0.12.0: the research model's check, on the agent's research questions
-OUTSIDE_CYCLE_CAP = (WORKSHOP, REVIEW, STUDY, CONSOLIDATE)
+CRITIC = "critic"  # 0.13.0: the independent critic of a proposed venture's case, before the plan
+OUTSIDE_CYCLE_CAP = (WORKSHOP, REVIEW, STUDY, CONSOLIDATE, CRITIC)
 # 0.12.0: the cycle cap counts what a call is expected to cost (the daily cap, the balance and the last-will reserve
 # still count its worst case). A call with server tools (research) is expected to cost EXPECTED_FACTOR times the 95th
 # percentile of the last EXPECTED_WINDOW ones on its model, once there are EXPECTED_SAMPLES; so is a reflection at

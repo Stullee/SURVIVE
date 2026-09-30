@@ -28,6 +28,7 @@ PROCESSING_EUR = 0.30  # ...and a fixed part
 FEE_VAT = 0.19  # VAT on Etsy's seller fees (listing, transaction) for a seller without a VAT ID
 DEFAULT_USD_PER_EUR = 1.10  # when the owner set no exchange rate (etsy_usd_per_eur): an assumption, said as one
 HORIZON_MONTHS = 6  # what the expected net is judged over: the months before the first sale earn nothing
+MAX_FIRST_SALE_MONTHS = 24  # a case's months to the first sale (the agent's and the critic's)
 WEIGHTS = (0.3, 0.4, 0.3)  # Swanson's rule for the low, likely and high estimate (P10, P50, P90)
 
 

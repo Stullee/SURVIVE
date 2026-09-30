@@ -121,9 +121,10 @@ first call may then cost up to about $0.68, so raise **Workshop cap per run** to
 
 **Models by purpose.** Most plans are routine. To put Opus on the decisions that
 set the course only, keep the planner on `claude-sonnet-5` and set **Model for
-venture plans and reviews** to `claude-opus-5-5`: venture cycles plan with it and
-the daily review runs on it, while ordinary plans stay on Sonnet. A cycle can
-start only if its costlier plan fits, so the caps are checked against Opus.
+venture plans and reviews** to `claude-opus-5-5`: venture cycles plan with it, and
+the daily review and the critic of a proposed venture run on it, while ordinary
+plans stay on Sonnet. A cycle can start only if its costlier plan fits, so the
+caps are checked against Opus.
 
 **Research model.** Research can run on a cheaper model: set **Research model**
 to `claude-haiku-4-5` (new installs have its price; add it to an older price
@@ -425,6 +426,21 @@ A knocked-out venture isn't proposed: the agent fixes what can be fixed (new
 numbers, independent evidence) or parks it with the numbers. The card lists
 its knock-outs, and you can **Lift** one for that venture if you accept it
 (and **Restore** it later); the agent hears it as your note on the venture.
+
+**Critic.** The agent argues its own cases, so before its next plan after a
+venture is proposed, a separate call on the **Model for venture plans and
+reviews** reviews the newest case (0.13.0): the pitch, the case, the agent's
+numbers with Ember's code's economics and the evidence by grade. It answers
+with the fatal flaw, its own numbers for the same case, a verdict (**Back it**,
+**Test first**: only a cheaper first test, or **Park it**) and what would
+change its mind. Ember's code checks the answer and works out the economics of
+its numbers the same way (with the agent's cash to start, your hours and the
+API spend). The card shows the critique beside the case, the agent sees it in
+its focus, and a venture ranks by the lower of the two expected nets. It costs
+one call per case (about 1-3 cents on Opus), counts toward the daily cap but
+not the cycle's, and runs only while venture cycles do (not in the maintenance
+or dormant burn modes). A critique that fails is tried again at the next cycle,
+twice in all; a new case gets a critique of its own.
 
 **Evidence.** In a venture cycle the agent saves each number its research
 finds (a price, searches a month, sales, a fee, a margin) as evidence: the
