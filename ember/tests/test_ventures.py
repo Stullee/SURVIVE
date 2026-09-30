@@ -684,11 +684,14 @@ def test_the_owner_adds_ideas_and_decides_and_the_agent_hears_it(data_dir: Path)
         " and score it." in text
     )
     assert (
-        'Your owner backed venture #3 "Dropshipping store": it is building now. Plan its first test with them.'
-        ' Owner\'s comment: "Go, I make the accounts."' in text
+        'Your owner backed venture #3 "Dropshipping store": it is building now. Its first test is milestone #1 on your'
+        ' roadmap: meet it, then it goes live. Owner\'s comment: "Go, I make the accounts."' in text
     )
     assert 'Your owner wants venture #8 "Services on Fiverr" researched next (it is researching now)' in text
-    assert "#3 [building] Dropshipping store · not scored yet · your owner backed it (" in text
+    assert (
+        "#3 [building] Dropshipping store · not scored yet · first test: milestone #1; it goes live once that is met"
+        " · your owner backed it (" in text
+    )
     seen = rows(agent, "SELECT id, seen_cycle_id FROM ventures WHERE owner_action IS NOT NULL ORDER BY id")
     assert seen == [
         {"id": DROPSHIPPING, "seen_cycle_id": 1},

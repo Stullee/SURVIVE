@@ -29,7 +29,7 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import etsy, executor, mailstore
 from ..integrations.mail import BODY_MAX, valid_address
-from . import library, roadmap, store, ventures
+from . import library, roadmap, stages, store, ventures
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
@@ -443,7 +443,18 @@ class Owner:
                     raise OwnerError("expected_version", "this venture changed meanwhile", 409)
                 if row["stage"] not in allowed:
                     raise OwnerError("action", f"this venture is {row['stage']}", 409)
-                ventures.owner_word(conn, venture_id, self._now(), action, comment, who, stage)
+                now = self._now()
+                ventures.owner_word(conn, venture_id, now, action, comment, who, stage)
+                after = ventures.get(conn, self.scope, venture_id)
+                # 0.12.0: a backed venture's first test becomes a milestone; a parked or killed one's milestones go.
+                if action == "back" and after is not None:
+                    stages.first_test(conn, self.scope, after, self.clock.today(), now)
+                elif action in ("park", "kill"):
+                    stages.drop_milestones(
+                        conn, self.scope, venture_id, now, f"Your owner {stage} venture #{venture_id}.", "owner"
+                    )
+                elif action == "research":  # more research, asked for: the research clock starts again
+                    conn.execute("UPDATE ventures SET stage_at = ? WHERE id = ?", (now, venture_id))
                 after = ventures.get(conn, self.scope, venture_id)
             done = {"research": "asked for research on", "back": "backed", "park": "parked", "kill": "killed"}
             what = done.get(action, "left a note on")

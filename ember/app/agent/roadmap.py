@@ -228,6 +228,7 @@ def create(
     metric: str | None = None,
     target: int | None = None,
     baseline: int | None = None,
+    kind: str | None = None,
 ) -> int:
     """A new open milestone; one the owner adds is news for the agent (owner_action 'added'). With a metric (0.12.0),
     Ember's code checks it (metrics.grade)."""
@@ -255,6 +256,7 @@ def create(
         "metric": metric,
         "target": target,
         "baseline": baseline,
+        "kind": kind,  # Ember's code's: 'money_goal', 'decision' or 'first_test' (0.12.0)
     }
     names = ", ".join(columns)
     marks = ", ".join("?" for _ in columns)
@@ -280,8 +282,7 @@ def money_goal(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | Non
     """The open money goal Ember's code set, if any."""
     where, params = scope.where()
     return conn.execute(
-        f"SELECT * FROM milestones WHERE {where} AND created_by = 'code' AND parent_id IS NULL AND status = 'open'"
-        " ORDER BY id DESC LIMIT 1",
+        f"SELECT * FROM milestones WHERE {where} AND kind = 'money_goal' AND status = 'open' ORDER BY id DESC LIMIT 1",
         params,
     ).fetchone()
 
@@ -290,9 +291,7 @@ def _money_level(conn: sqlite3.Connection, scope: AgentScope) -> int:
     """How much the next money goal asks for: once what you spend, then one more for every goal met."""
     where, params = scope.where()
     met = conn.execute(
-        f"SELECT COUNT(*) FROM milestones WHERE {where} AND created_by = 'code' AND parent_id IS NULL"
-        " AND status = 'done'",
-        params,
+        f"SELECT COUNT(*) FROM milestones WHERE {where} AND kind = 'money_goal' AND status = 'done'", params
     ).fetchone()[0]
     return 1 + int(met)
 
@@ -326,7 +325,7 @@ def keep_money_goal(
         for step in children(conn, goal["id"]):
             if step["status"] != "open":
                 continue
-            if step["created_by"] == "code":  # its decision points: the next goal brings its own
+            if step["kind"] == "decision":  # its decision points: the next goal brings its own
                 conn.execute(
                     "UPDATE milestones SET status = 'dropped', result = ?, closed_at = ?, closed_by = 'code',"
                     " updated_at = ? WHERE id = ?",
@@ -337,9 +336,7 @@ def keep_money_goal(
         happened.append(f"Ember's code closed the money goal #{goal['id']} {status}: {numbers}")
     where, params = scope.where()
     dropped = conn.execute(
-        f"SELECT 1 FROM milestones WHERE {where} AND created_by = 'code' AND parent_id IS NULL AND status = 'dropped'"
-        " LIMIT 1",
-        params,
+        f"SELECT 1 FROM milestones WHERE {where} AND kind = 'money_goal' AND status = 'dropped' LIMIT 1", params
     ).fetchone()
     if dropped is not None or count(conn, scope, "open") + 1 + len(DECISION_FRACTIONS) > MAX_OPEN:
         return happened
@@ -353,6 +350,7 @@ def keep_money_goal(
         due=due.isoformat(),
         now=now,
         created_by="code",
+        kind="money_goal",
     )
     base = min(runway_days or MONEY_GOAL_DAYS, MONEY_GOAL_DAYS)
     last = 0
@@ -368,6 +366,7 @@ def keep_money_goal(
             now=now,
             parent_id=goal_id,
             created_by="code",
+            kind="decision",
         )
     for step_id in moving:
         conn.execute("UPDATE milestones SET parent_id = ?, updated_at = ? WHERE id = ?", (goal_id, now, step_id))

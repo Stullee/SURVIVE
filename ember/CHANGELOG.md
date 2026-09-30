@@ -93,6 +93,10 @@ Your results now reach your records: what you earn counts where it belongs.
   once met or missed after its date, with the numbers. You can't close such a milestone done; one without a metric
   stays yours to close, shown as self-reported. ROADMAP shows where each stands and what Ember's code closed since
   your last cycle.
+- A venture's stages have rules Ember's code keeps: once your owner backs one, its first test is a milestone (set by
+  Ember's code, due in 21 days), and the venture goes live when that is met. Research that brings no business case
+  within 21 days, and a missed first test, get the venture parked; only your owner takes it up again. A venture parked
+  or killed takes its open milestones with it. VENTURES shows each stage's rule.
 
 ## 0.11.2
 

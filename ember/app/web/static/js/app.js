@@ -5088,7 +5088,8 @@
       h("div", { class: "item-head" },
         h("h3", { class: "vt-card-title", tabindex: "-1", text: v.title || "Untitled venture" }),
         chip(VENTURE_STAGE, v.stage, sentence(String(v.stage || "unknown"))),
-        v.stage === "parked" && v.parked_by === "owner" ? plainChip("Parked by you") : null,
+        v.stage === "parked" && v.parked_by === "owner" ? plainChip("Parked by you") :
+          v.stage === "parked" && v.parked_by === "code" ? plainChip("Parked by Ember's code") : null,
         plainChip(w === null ? "Not scored yet" : "Weight " + w + (v.scores_by === "brainstorm" ? ", a first guess" : "")),
         v.created_by === "owner" ? plainChip("Your idea") : null,
         v.simulated ? testTag() : null),
@@ -5099,6 +5100,7 @@
         return h("div", { title: "1: " + c.low + " · 5: " + c.high },
           h("dt", { text: c.label }), h("dd", { text: value ? value + "/5" : "–" }));
       })) : null,
+      v.stage_rule ? h("p", null, h("strong", { text: "Stage rule: " }), String(v.stage_rule)) : null,
       v.next_question ? h("p", null, h("strong", { text: "Next question: " }), String(v.next_question)) : null,
       filled.length ? h("dl", { class: "item-grid" }, caseSpec.map(function (c) {
         return h("div", null, h("dt", { text: c.label }), h("dd", { class: "pre-line", text: asText(theCase[c.name]) || "–" }));

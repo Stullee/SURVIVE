@@ -48,7 +48,7 @@ from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox
 from ..version import app_version
-from . import context, library, metrics, netguard, news, prompts, review, roadmap, store, tools, ventures
+from . import context, library, metrics, netguard, news, prompts, review, roadmap, stages, store, tools, ventures
 from .memory import Memory
 from .sandbox import Jail, SandboxError
 from .store import AgentScope
@@ -352,6 +352,7 @@ class CycleRunner:
         status = self.economy.life.evaluate()
         scope = self.economy.life.scope()
         self._keep_money_goal(scope, status.runway.days)
+        self._keep_stages()
         metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
         local = self.clock.now().astimezone(self.clock.tz).strftime("%A %Y-%m-%d %H:%M %Z")
@@ -528,6 +529,14 @@ class CycleRunner:
             happened = roadmap.keep_money_goal(
                 conn, self.scope, self.clock.today(), to_iso(now), earned, spent, runway_days
             )
+        for line in happened:
+            events.record(self.db, "info", "agent", line[:300])
+
+    def _keep_stages(self) -> None:
+        """0.12.0: the rules of the ventures' stages (a first test for each backed venture, research without a business
+        case and a missed first test parked), kept by Ember's code before every plan (stages.keep)."""
+        with self.db.transaction() as conn:
+            happened = stages.keep(conn, self.scope, self.clock.today(), to_iso(self.clock.now()))
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
 

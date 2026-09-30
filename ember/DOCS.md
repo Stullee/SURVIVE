@@ -325,8 +325,11 @@ with at least two research calls for it that found web pages, all six scores
 from research and a business case that names a source link or an amount in
 euros. The tab's badge counts the ones waiting. On each card:
 
-- **Back it**: the agent builds it: it plans the first test and asks you for
-  what only you can do (accounts, money, setup), one step at a time.
+- **Back it**: the agent builds it: its first test becomes a milestone on the
+  roadmap (**First test: …**, set by Ember's code, due in 21 days, with the
+  business case's first test as its measure), and it asks you for what only you
+  can do (accounts, money, setup), one step at a time. The venture goes live
+  only once that first test is met (or you drop it on the Roadmap tab).
 - **Research next** (or **Research more**, **Research again**): it goes first
   in the next venture cycle.
 - **Park**, **Kill** or **Note**, each with an optional comment (a note needs
@@ -334,6 +337,17 @@ euros. The tab's badge counts the ones waiting. On each card:
   parked until you take it up again (**Research again** or **Back it**): the
   agent can't, and its card says **Parked by you**. The agent can take up the
   ventures it parked itself.
+
+**Each stage's rule, kept by Ember's code.** Before every plan, Ember's code
+parks a venture whose research brings no business case within 21 days of its
+first research call (while nothing is built for it: no open project), and a
+backed venture whose first test is missed (closed missed, or still open a week
+after its date). A venture parked this way says **Parked by Ember's code**, with
+the reason in its notes; like one you parked, only you take it up again. Only
+you back or kill a venture: the database refuses it from anyone else. A venture
+that is parked or killed takes its open milestones with it (when the agent or
+Ember's code parked it, yours stay yours to drop). Each card shows its stage's
+rule, and so does the agent's plan.
 
 **Add idea** puts your own idea into the tree, optionally as a branch of an
 existing venture: the agent scores and researches it and tells you what it

@@ -236,7 +236,6 @@ class Reading:
     at: str  # when the numbers were read: the Etsy sync's time, or now
     detail: str = ""  # what the value is made of: the evidence
     sample: int | None = None  # what a miss is judged against, for a metric that has one
-    lost: bool = False  # it can't be met any more (its venture was killed)
 
 
 @dataclass(frozen=True)
@@ -313,15 +312,13 @@ def read(
     venture = ventures.get(conn, scope, venture_id) if venture_id else None
     if venture is None:
         return Unread(f"there is no venture #{venture_id}")
-    killed = venture["stage"] == "killed"
     if m.name == "case_complete":
         gaps = ventures.proposal_gaps(venture, "researching")
-        needs = f", which still needs {'; '.join(gaps)}" if gaps and not killed else ""
-        detail = f" (venture #{venture_id}{', killed' if killed else ''}{needs})"
-        return Reading(0 if gaps else 1, now, detail, lost=killed)
+        needs = f", which still needs {'; '.join(gaps)}" if gaps else ""
+        return Reading(0 if gaps else 1, now, f" (venture #{venture_id}{needs})")
     stage = venture["stage"]
     rank = STAGES.index(stage) if stage in STAGES else -1
-    return Reading(rank, now, f" (venture #{venture_id}{'' if rank >= 0 else ' is ' + stage})", lost=killed)
+    return Reading(rank, now, f" (venture #{venture_id}{'' if rank >= 0 else ' is ' + stage})")
 
 
 def listing_counts(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any], metric: str) -> int:
@@ -419,8 +416,8 @@ def _evidence(m: Metric, reading: Reading, target: int, books: Books) -> str:
 def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str]:
     """Check every open metric milestone (no model call): record where it stands (``progress``, ``checked_at``, and
     the day's observation), close it done once met and missed once its date has passed without it (a ceiling: missed
-    once passed, done at its date; a milestone for a killed venture's stage or case: missed). Returns what happened,
-    for the events."""
+    once passed, done at its date). A killed venture's milestones were dropped with it (agent/stages.py). Returns what
+    happened, for the events."""
     now = to_iso(books.clock.now())
     today = books.clock.today()
     happened = []
@@ -442,7 +439,7 @@ def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str
         if m.ceiling:
             status = "missed" if reading.value > target else "done" if past else None
         else:
-            status = "done" if reading.value >= target else "missed" if past or reading.lost else None
+            status = "done" if reading.value >= target else "missed" if past else None
         if status is None:
             continue
         evidence = _evidence(m, reading, target, books)
@@ -451,7 +448,7 @@ def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str
         elif m.ceiling:
             result = f"Ember's code checked it: {evidence}: over the limit."
         else:
-            result = f"Ember's code checked it{'' if reading.lost else ' after its date'}: {evidence}."
+            result = f"Ember's code checked it after its date: {evidence}."
             if m.sample and reading.sample is not None and reading.sample < m.min_sample:
                 result += f" Too little to judge: {reading.sample:,} {m.sample} in all, fewer than {m.min_sample:,}."
         conn.execute(

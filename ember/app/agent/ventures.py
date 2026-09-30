@@ -30,7 +30,7 @@ import sqlite3
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from ..economy.costs import micros_to_usd
@@ -79,6 +79,10 @@ SCORES: tuple[Score, ...] = (
 SCORE_FIELDS = tuple(s.name for s in SCORES)
 LIMITS = {"title": 80, "pitch": 600, "next_question": 300, "notes": 2_000, **{n: c for n, _, c in CASE}}
 MAX_ACTIVE = 8  # ventures being worked on at once (ideas don't count: the tree keeps growing)
+# 0.12.0: the stages' rules Ember's code keeps (agent/stages.py): research that brings no business case this many days
+# after it began is parked, and a backed venture's first test is due this many days after the owner backed it.
+RESEARCH_DAYS = 21
+FIRST_TEST_DAYS = 21
 MAX_VENTURES = 400  # in the whole tree, parked and killed ones included
 DECIDE_USD = 3.0  # decide a venture that isn't backed yet (propose or park) after about this much spent on it
 RESEARCH_CALLS = 8  # research calls in a venture cycle (3 in any other)
@@ -228,7 +232,10 @@ def scores_text(values: Mapping[str, Any] | sqlite3.Row) -> str:
 
 # A venture's rows carry how many research calls for it found something (``researched``).
 _RESEARCHED = (
-    "(SELECT COUNT(*) FROM venture_research r WHERE r.venture_id = ventures.id AND r.sources > 0) AS researched"
+    "(SELECT COUNT(*) FROM venture_research r WHERE r.venture_id = ventures.id AND r.sources > 0) AS researched,"
+    # 0.12.0: when its research in this stage began (its first research call since the stage changed), or NULL
+    " (SELECT MIN(r.created_at) FROM venture_research r WHERE r.venture_id = ventures.id"
+    " AND r.created_at >= ventures.stage_at) AS research_from"
 )
 
 
@@ -494,8 +501,23 @@ def _head(v: Mapping[str, Any], m: Money) -> str:
     head = f"#{v['id']} [{v['stage']}] {_one_line(v['title'], 80)}{branch} · {scores_text(v)}"
     if m.spent or m.earned:
         head += f" · spent {usd(m.spent)} · earned {usd(m.earned)}"
+    rule = stage_rule(v)
     said = owner_said(v)
-    return head + (f" · {said}" if said else "")
+    return head + (f" · {rule}" if rule else "") + (f" · {said}" if said else "")
+
+
+def stage_rule(v: Mapping[str, Any]) -> str:
+    """The rule of the venture's stage that Ember's code keeps (0.12.0, agent/stages.py), in a few words: "" for a
+    stage without one, or a row built by hand without the columns."""
+    began, test, parked_by = (_value(v, name) for name in ("research_from", "test_milestone_id", "parked_by"))
+    if v["stage"] == "researching" and began:
+        park = date.fromisoformat(str(began)[:10]) + timedelta(days=RESEARCH_DAYS)
+        return f"researched since {str(began)[:10]}: no business case by {park.isoformat()} parks it"
+    if v["stage"] == "building" and test:
+        return f"first test: milestone #{test}; it goes live once that is met"
+    if v["stage"] == "parked" and parked_by == "code":
+        return "parked by Ember's code: only your owner takes it up again"
+    return ""
 
 
 def planner_lines(rows: list[sqlite3.Row], paid: dict[int, Money], full: bool) -> str:
@@ -579,6 +601,9 @@ def focus_text(
     said = owner_said(row, FOCUS_CHARS)
     if said:
         lines.append(f"Owner: {said}")
+    rule = stage_rule(row)
+    if rule:
+        lines.append(f"Stage rule (Ember's code keeps it): {rule}")
     count = researched(row)
     lines += [
         f"First test: {_one_line(row['first_test'], FOCUS_CHARS) or '-'}",
@@ -609,7 +634,12 @@ def news_line(row: Mapping[str, Any]) -> str:
     elif action == "research":
         line = f"Your owner wants {name} researched next (it is {row['stage']} now)"
     elif action == "back":
-        line = f"Your owner backed {name}: it is building now. Plan its first test with them"
+        test = _value(row, "test_milestone_id")
+        line = f"Your owner backed {name}: it is building now. " + (
+            f"Its first test is milestone #{test} on your roadmap: meet it, then it goes live"
+            if test
+            else "Plan its first test with them"
+        )
     elif action == "park":
         line = f"Your owner parked {name}"
     elif action == "kill":

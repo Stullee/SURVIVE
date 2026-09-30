@@ -427,6 +427,10 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                 "pitch": v["pitch"],
                 "stage": v["stage"],
                 "parked_by": v["parked_by"],  # who parked it (0.12.0): only the owner takes up what they parked
+                # 0.12.0: when its stage last changed, its first test's milestone, and its stage's rule
+                "stage_at": v["stage_at"],
+                "test_milestone_id": v["test_milestone_id"],
+                "stage_rule": ventures.stage_rule(v) or None,
                 "created_by": v["created_by"],
                 "entered_by": v["entered_by"],
                 "created_at": v["created_at"],

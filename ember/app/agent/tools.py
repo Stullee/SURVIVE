@@ -43,7 +43,7 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
-from . import library, metrics, netguard, roadmap, store, ventures
+from . import library, metrics, netguard, roadmap, stages, store, ventures
 from .memory import CAPS, HEADING_REFUSAL, Memory, MemoryError_, heading_line
 from .sandbox import Jail, QuotaError, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
@@ -1331,12 +1331,23 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
             raise ToolError(f"{ventures.MAX_ACTIVE} ventures are being worked on already: park or propose one first")
         if stage == "live" and current != "building":
             raise ToolError("a venture goes live once your owner backed it (building) and it launched")
+        if stage == "live" and not _tested(conn, ctx.scope, row):  # 0.12.0: the stage's rule, kept by the database too
+            test = f"milestone #{row['test_milestone_id']}" if row["test_milestone_id"] else "a milestone"
+            raise ToolError(
+                f"venture #{vid} goes live once its first test ({test} on your roadmap) is met: close that done with "
+                "the evidence first"
+            )
         if current in ("building", "live") and stage != "parked" and stage != "live":
             raise ToolError(f"venture #{vid} is {current}: your owner backed it; park it with a note if it should stop")
-        if current == "parked" and row["parked_by"] == "owner":  # 0.12.0: the agent revived the owner's parked ideas
+        if current == "parked" and row["parked_by"] in ("owner", "code"):  # 0.12.0: the owner's (and code's) park
+            who = (
+                f"your owner parked venture #{vid}: only they take it up again"
+                if row["parked_by"] == "owner"
+                else f"Ember's code parked venture #{vid} by its stage's rule: only your owner takes it up again"
+            )
             raise ToolError(
-                f"your owner parked venture #{vid}: only they take it up again (Research next on the Ventures tab). "
-                "If you found something that changes the picture, tell them with message_owner"
+                f"{who} (Research next on the Ventures tab). If you found something that changes the picture, tell "
+                "them with message_owner"
             )
         if stage == "parked" and not (args.get("note") or "").strip():
             raise ToolError("say why in note when you park a venture")
@@ -1354,12 +1365,25 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         raise ToolError("nothing to change")
     if changes:
         ventures.update(conn, vid, ctx.now(), **changes)
+    dropped = []
+    if changes.get("stage") == "parked":  # 0.12.0: its milestones go with it (your owner's stay theirs)
+        dropped = stages.drop_milestones(conn, ctx.scope, vid, ctx.now(), f"Venture #{vid} was parked.", "agent")
     saved = _save_learned(ctx, row, learned) if learned else ""
     transition = f"{current} → {changes['stage']}" if "stage" in changes else "updated"
+    if dropped:
+        transition += f" (its milestones {_numbers(dropped)} dropped with it)"
     after = " Your owner sees its business case on the Ventures tab." if changes.get("stage") == "proposed" else ""
     if scores:
         after += f" Now {ventures.scores_text({**dict(row), **changes})}."
     return Outcome(True, f"Venture #{vid}: {transition}.{saved}{after}", f"venture #{vid} {transition}")
+
+
+def _tested(conn: Any, scope: AgentScope, row: Any) -> bool:
+    """Whether a backed venture's first test is met (0.12.0), or the owner dropped it."""
+    test = roadmap.get(conn, scope, row["test_milestone_id"]) if row["test_milestone_id"] else None
+    return test is not None and (
+        test["status"] == "done" or (test["status"] == "dropped" and test["closed_by"] == "owner")
+    )
 
 
 def _save_learned(ctx: ToolContext, row: Any, learned: str) -> str:
@@ -1574,7 +1598,7 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
             raise ToolError(f"Ember's code set milestone #{mid}: it stays where it is")
         if status == "dropped":
             raise ToolError(f"Ember's code set milestone #{mid}: only your owner drops it")
-        if status and row["parent_id"] is None:
+        if status and row["kind"] == "money_goal":
             raise ToolError(
                 "Ember's code closes the money goal from the books (revenue less expenses against your API spending "
                 "over the last 30 days): work toward it"

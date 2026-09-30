@@ -250,11 +250,8 @@ def test_revenue_spending_and_a_ventures_stage(data_dir: Path) -> None:
     grade(agent)
     assert milestone(agent, backed)["status"] == "done" and milestone(agent, case)["status"] == "open"
     assert owner(agent).decide_venture(venture, {"action": "kill", "comment": "No."}, "Owner").status == 200
-    grade(agent)
-    assert milestone(agent, case)["status"] == "missed"  # a killed venture's case is never complete
-    assert milestone(agent, case)["result"].startswith(
-        f"Ember's code checked it: case_complete no (venture #{venture}, killed)"
-    )
+    assert (milestone(agent, case)["status"], milestone(agent, case)["closed_by"]) == ("dropped", "owner")
+    assert milestone(agent, case)["result"] == f"Your owner killed venture #{venture}."  # its milestones go with it
     agent.clock.advance(days=2)
     grade(agent)
     assert milestone(agent, loose)["status"] == "done"  # a ceiling kept to its date
