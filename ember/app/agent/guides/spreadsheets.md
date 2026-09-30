@@ -1,7 +1,8 @@
 MAKING SPREADSHEETS (make_spreadsheet)
 Write a JSON spec as a .json file in your workspace, then call make_spreadsheet with that source and an output
 ending in .xlsx. You get the Excel file (it opens in Excel, Google Sheets, Numbers and LibreOffice) and a picture
-of its first sheet (name-preview.png) that shows the formulas' results. Look at it before you sell it.
+of each sheet (name-preview.png, name-sheet2.png, ...) that shows the formulas' results. Look at them before you sell
+it. workspace_read shows any Excel file's cells (formulas with their results); make_image shows a sheet: 'b.xlsx#2'.
 
 {
   "title": "Monthly Budget Planner",

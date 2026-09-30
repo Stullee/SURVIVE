@@ -404,7 +404,7 @@ def test_a_pin_is_checked_before_it_reaches_the_owner(data_dir: Path) -> None:
         ({"board_id": "1", "board_name": "Planners"}, "give board_id (one of your boards) or board_name"),
         ({"board_id": "999"}, "999 isn't one of your boards"),
         ({"board_name": "Planners", "image": "shop/notes.pdf"}, "a pin's image is a .png or .jpg file"),
-        ({"board_name": "Planners", "image": "shop/broken.png"}, "isn't one of your pictures"),
+        ({"board_name": "Planners", "image": "shop/broken.png"}, "isn't a PNG or JPEG picture"),
         ({"board_name": "Planners", "image": "shop/missing.png", "write": False}, "missing.png"),
         ({"board_name": "Planners", "title": " \n "}, "title is empty"),
     ):

@@ -7,7 +7,11 @@ made them, in Anthropic's sandbox, so their bytes are the agent's choice. Before
 * a PDF is refused if anything in it can act on its own: JavaScript, launch or submit actions, embedded files, rich
   media, XFA forms, links that open other files, an action when it opens other than going to a page, links that
   aren't web or mail links (compressed object streams are searched too, and since 0.12.0 a stream Ember can't decode
-  is refused, as is an encrypted file);
+  is refused, as is an encrypted file). 0.14.0: JavaScript still hid in an object stream whose encoding was named
+  indirectly (/Filter 5 0 R), escaped (/Fil#74er) or twice, behind a PNG predictor, a "stream" line ending in a lone
+  CR, a false "obj" or "endstream" inside the data, or a picture encoding after Flate. Now a stream's dictionary is
+  everything since the stream before it, its encoding must be named directly and once, predictors are undone, a
+  stream must decode to its end, and pdfium (Chrome's PDF engine) is asked last what it finds;
 * a Word, Excel or PowerPoint file is refused if it holds macros, ActiveX or OLE objects, links to other files or
   templates, DDE, data connections or web queries, or actions that start programs; only web links may point outside
   the file, and (0.12.0) every part must be of a kind known to be safe: the formats' own XML, and PNG, JPEG or GIF
@@ -15,6 +19,9 @@ made them, in Anthropic's sandbox, so their bytes are the agent's choice. Before
 * text must be UTF-8 and small enough for a text file;
 * anything else (SVG, archives, programs, fonts, ...) is refused, and so is a file that can't be read whole (0.12.0: a
   malformed Office file escaped the checks and its run went unrecorded).
+
+``unzipped`` (0.14.0) reads an Office file within bounds for anyone who opens one (the workshop's check, the owner's
+library, workspace_read): a small .docx could make Ember unpack gigabytes.
 
 ``check`` returns what to save, or raises Refused with the reason, in words the agent can act on.
 """
@@ -33,14 +40,16 @@ from defusedxml import ElementTree
 from PIL import Image
 
 from ..agent.sandbox import TEXT_EXTENSIONS
+from . import images  # the PDF renderer, loaded at startup (see app.agent.tools)
 
 PICTURES = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG"}
 OFFICE = frozenset({".docx", ".xlsx", ".pptx"})
 KEPT = frozenset({*TEXT_EXTENSIONS, *PICTURES, ".pdf", *OFFICE})
 MAX_TEXT_BYTES = 64 * 1024
-MAX_PICTURE_PIXELS = 40_000_000
 MAX_PDF_PAGES = 300
 MAX_UNPACKED_BYTES = 100 * 1024 * 1024  # what the streams of a PDF or the parts of an Office file may unpack to
+READ_BYTES = 50_000_000  # 0.14.0: at most what an Office file Ember reads (library, workspace_read) unpacks to
+MAX_PREDICTED_BYTES = 4 * 1024 * 1024  # 0.14.0: a PDF's streams whose predictor Ember undoes (about 1 s a MB)
 MAX_PARTS = 3_000
 MAX_RATIO = 200  # an Office part that unpacks to more than this many times its size is a zip bomb
 # PDF names that make a file act on its own (a name's #xx escapes are decoded before the comparison).
@@ -61,7 +70,10 @@ ACTIVE_PDF = frozenset(
     }
 )
 _PDF_NAME = re.compile(rb"/([^\s/<>\[\]()%{}]{1,127})")
-_PDF_STREAM = re.compile(rb"(?<!end)stream\r?\n")  # (0.12.0: not the "stream" in "endstream")
+_REGULAR = rb"[^\x00\t\n\x0c\r /<>\[\]()%{}]"  # a character of a PDF word (not white space or a delimiter)
+# A stream's data starts after the line its keyword is on (0.12.0: not the "stream" in "endstream"; 0.14.0: that line
+# may end in CR, LF or both, as pdfium reads it: a lone CR hid a stream).
+_PDF_STREAM = re.compile(rb"(?<!" + _REGULAR + rb")stream(?!" + _REGULAR + rb")[^\r\n]*(?:\r\n|\r|\n)")
 _ESCAPE = re.compile(rb"#([0-9A-Fa-f]{2})")
 # 0.12.0: the encodings a PDF stream may use. Ember decodes these to search what they hold ...
 _DECODED = {
@@ -74,9 +86,17 @@ _DECODED = {
 }
 # ... and these picture encodings stay as they are, on pictures only (as the last encoding).
 _PICTURE_FILTERS = frozenset({"DCTDecode", "DCT", "JPXDecode", "JBIG2Decode", "CCITTFaxDecode", "CCF"})
-_FILTER = re.compile(rb"/Filter\s*(\[[^\]]*\]|/[^\s/<>\[\]()%{}]+)")
+# 0.14.0: a stream's /Filter and /DecodeParms, read as pdfium reads them (white space and comments between).
+_WS = rb"(?:[\x00\t\n\x0c\r ]|%[^\r\n]*)*"
+_KEY_END = rb"(?!" + _REGULAR + rb")"
+_FILTER = re.compile(rb"/Filter" + _KEY_END + _WS)
+_PARMS = re.compile(rb"/DecodeParms" + _KEY_END + _WS)
+_FILTER_NAME = rb"/" + _REGULAR + rb"+"
+_FILTER_VALUE = re.compile(_FILTER_NAME + rb"|\[(?:" + _WS + _FILTER_NAME + rb")*" + _WS + rb"\]")
+_PARMS_VALUE = re.compile(rb"null\b|<<[^<>]*>>|\[(?:[^\[\]<>]|<<[^<>]*>>)*\]")
+_REFERENCE = re.compile(rb"\d+" + _WS + rb"\d+" + _WS + rb"R" + _KEY_END)
+_INDIRECT_TYPE = re.compile(rb"/(?:Sub)?[Tt]ype" + _KEY_END + _WS + rb"\d")
 _IMAGE = re.compile(rb"/Subtype\s*/Image\b")
-_OBJECT = re.compile(rb"(\d+)\s+(\d+)\s+obj\b")
 _ACTION_TYPE = re.compile(rb"/S\s*/([^\s/<>\[\]()%{}]+)")
 _WEB_LINK = re.compile(rb"(?:https?://|mailto:)", re.IGNORECASE)
 # Parts of an Office file that run code, embed other programs' objects or pull in other files (0.12.0: data
@@ -150,8 +170,8 @@ def _picture(data: bytes, expected: str) -> bytes:
         with Image.open(io.BytesIO(data)) as image:
             if image.format != expected:
                 raise Refused(f"the file is a {image.format or 'unknown'} picture, not {expected}")
-            if image.width * image.height > MAX_PICTURE_PIXELS:
-                raise Refused(f"the picture has more than {MAX_PICTURE_PIXELS // 1_000_000} million pixels")
+            if images.too_large(image.width, image.height):  # 0.14.0: the size, as Ember's tools say it
+                raise Refused(f"the picture is {images.too_large(image.width, image.height)}")
             pixels = image.convert("RGBA" if expected == "PNG" and image.mode in ("RGBA", "LA", "P") else "RGB")
             pixels.load()
     except Refused:
@@ -172,17 +192,20 @@ def _pdf(data: bytes) -> bytes:
     if "Encrypt" in _names(data):
         raise Refused("the PDF is encrypted, so Ember can't check it")
     found = _active_names(data)
-    starts = [m.end() for m in _OBJECT.finditer(data)]
     unpacked = 0
     searched = [data]
+    ends: list[int] = []  # where the streams' data ended, in order
+    predictable = [MAX_PREDICTED_BYTES]
     for match in _PDF_STREAM.finditer(data):
         end = data.find(b"endstream", match.end())
         if end < 0:
-            break
-        # The stream's dictionary: from its object's start (the last "N G obj" before it) to the keyword.
-        at = bisect.bisect_right(starts, match.start()) - 1
-        head = data[starts[at] if at >= 0 else 0 : match.start()]
-        chunk = _decoded(head, data[match.end() : end], MAX_UNPACKED_BYTES - unpacked)
+            continue  # no stream at all: pdfium reads none without an end either
+        # 0.14.0: the stream's dictionary is somewhere after the last stream that ended before it. The last "N G obj"
+        # before the keyword could be a false one, in a string of the dictionary itself, which hid its /Filter.
+        at = bisect.bisect_right(ends, match.start()) - 1
+        head = data[ends[at] if at >= 0 else 0 : match.start()]
+        bisect.insort(ends, end)
+        chunk = _decoded(head, data[match.end() : end], MAX_UNPACKED_BYTES - unpacked, predictable)
         if chunk is None:
             continue  # a picture's own encoding, or no encoding (its raw bytes were searched already)
         unpacked += len(chunk)
@@ -194,14 +217,15 @@ def _pdf(data: bytes) -> bytes:
         raise Refused(f"the PDF has active content ({', '.join(sorted(found))}), which Ember never keeps")
     for chunk in searched:
         _check_actions(chunk, data)
-    from . import images  # the PDF renderer, loaded at startup (see app.agent.tools)
-
     try:
         pages = images.page_count(data)
+        active = images.pdf_active(data)
     except Exception:  # noqa: BLE001
         raise Refused("the PDF can't be opened") from None
     if not 1 <= pages <= MAX_PDF_PAGES:
         raise Refused(f"the PDF has {pages} pages; at most {MAX_PDF_PAGES}")
+    if active:  # 0.14.0: what a viewer finds, whatever the search above missed
+        raise Refused(f"the PDF has active content ({', '.join(active)}), which Ember never keeps")
     return data
 
 
@@ -217,36 +241,132 @@ def _active_names(data: bytes) -> set[str]:
     return _names(data) & ACTIVE_PDF
 
 
-def _decoded(head: bytes, raw: bytes, room: int) -> bytes | None:
+def _decoded(head: bytes, raw: bytes, room: int, predictable: list[int]) -> bytes | None:
     """What a stream holds, decoded for the search (0.12.0); None when there is nothing to search: no encoding (its raw
     bytes are searched with the file), or a picture in its own encoding. Refuses an encoding Ember can't decode (it
-    hid JavaScript from the search) and a stream that doesn't decode."""
-    matches = list(_FILTER.finditer(head))
-    if not matches:
+    hid JavaScript from the search) and a stream that doesn't decode.
+
+    0.14.0: ``head`` is everything since the stream before it, its #xx escapes decoded. Every /Filter and
+    /DecodeParms in it must say the same, directly (an indirect one hid an object stream). A stream decodes to its end
+    (a false "endstream" inside it cut it short), and a PNG or TIFF predictor is undone, except on a picture (it hid
+    the names in an object stream): at most ``predictable[0]`` bytes more, which is lowered by what is undone."""
+    head = _ESCAPE.sub(lambda m: bytes([int(m.group(1), 16)]), head)
+    filters = _one_value(head, _FILTER, _FILTER_VALUE, "encoding")
+    if filters is None:
         return None
-    filters = [f.decode("latin-1") for f in re.findall(rb"/([^\s/<>\[\]()%{}]+)", matches[-1].group(1))]
-    if not filters:
+    names = [f.decode("latin-1") for f in re.findall(rb"/(" + _REGULAR + rb"+)", filters)]
+    if not names:
         return None
-    if filters[-1] in _PICTURE_FILTERS and _IMAGE.search(head) and all(f in _DECODED for f in filters[:-1]):
-        return None
-    unknown = [f for f in filters if f not in _DECODED]
+    parms = _parameters(_one_value(head, _PARMS, _PARMS_VALUE, "decoding parameters"), filters, len(names))
+    picture = bool(_IMAGE.search(head)) and b"/ObjStm" not in head and not _INDIRECT_TYPE.search(head)
+    if names[-1] in _PICTURE_FILTERS and _IMAGE.search(head):
+        names = names[:-1]  # the picture's own encoding stays; what is around it is decoded and searched
+        if not names:
+            return None
+    unknown = [f for f in names if f not in _DECODED]
     if unknown:
         raise Refused(f"the PDF has a stream encoded with {unknown[0]}, which Ember can't check")
     data = raw
     try:
-        for name in filters:
+        for name, parm in zip(names, parms, strict=False):
             kind = _DECODED[name]
             if kind == "flate":
-                data = zlib.decompressobj().decompress(data, room + 1)
+                inflate = zlib.decompressobj()
+                data = inflate.decompress(data, room + 1)
+                if len(data) > room:
+                    return data  # the caller refuses: too much data
+                if not inflate.eof:
+                    raise ValueError("cut short")
+                if parm and not picture:
+                    data = _unpredicted(data, parm, predictable)
             elif kind == "a85":
-                text = re.sub(rb"\s", b"", data).split(b"~>")[0]
-                data = base64.a85decode(text, adobe=False)
+                text = re.sub(rb"\s", b"", data)
+                if b"~>" not in text:
+                    raise ValueError("cut short")
+                data = base64.a85decode(text.split(b"~>")[0], adobe=False)
             else:
-                text = re.sub(rb"\s", b"", data).split(b">")[0]
+                text = re.sub(rb"\s", b"", data)
+                if b">" not in text:
+                    raise ValueError("cut short")
+                text = text.split(b">")[0]
                 data = bytes.fromhex((text + b"0" * (len(text) % 2)).decode("ascii"))
+    except Refused:
+        raise
     except (zlib.error, ValueError):
         raise Refused("a stream of the PDF doesn't decode, so Ember can't check it") from None
     return data
+
+
+def _one_value(head: bytes, key: re.Pattern[bytes], value: re.Pattern[bytes], what: str) -> bytes | None:
+    """0.14.0: the value of a stream's /Filter or /DecodeParms: None when it has none; refused when it is named
+    indirectly, in a form Ember doesn't read, or twice with different values."""
+    values = set()
+    for match in key.finditer(head):
+        found = value.match(head, match.end())
+        if found is None or _REFERENCE.search(found.group(0)):
+            raise Refused(f"the PDF names a stream's {what} in a way Ember can't check")
+        values.add(found.group(0))
+    if len(values) > 1:
+        raise Refused(f"the PDF names a stream's {what} twice, so Ember can't check it")
+    return values.pop() if values else None
+
+
+def _parameters(value: bytes | None, filters: bytes, count: int) -> list[bytes | None]:
+    """Each encoding's parameters, as pdfium pairs them: an array of them with an array of encodings, a dictionary
+    with a single encoding; anything else is ignored."""
+    if value is None or value.startswith(b"null") or filters.startswith(b"[") != value.startswith(b"["):
+        return [None] * count
+    found = [m.group(0) if m.group(0).startswith(b"<<") else None for m in re.finditer(rb"<<[^<>]*>>|null", value)]
+    return (found + [None] * count)[:count]
+
+
+def _unpredicted(data: bytes, parms: bytes, predictable: list[int]) -> bytes:
+    """0.14.0: a stream's data with its PNG (10-15) or TIFF (2) predictor undone, as pdfium does; refused past
+    ``predictable[0]`` bytes (Python undoes about a MB a second)."""
+
+    def number(key: bytes, default: int) -> int:
+        match = re.search(rb"/" + key + _KEY_END + _WS + rb"(\d+)", parms)
+        return int(match.group(1)) if match else default
+
+    predictor = number(b"Predictor", 1)
+    if predictor < 2 or predictor in range(3, 10):
+        return data
+    predictable[0] -= len(data)
+    if predictable[0] < 0:
+        raise Refused(f"the PDF has more than {MAX_PREDICTED_BYTES // (1024 * 1024)} MB of predicted data to check")
+    colors, bits, columns = number(b"Colors", 1), number(b"BitsPerComponent", 8), number(b"Columns", 1)
+    if not (1 <= colors <= 32 and bits in (1, 2, 4, 8, 16) and 1 <= columns <= 1_000_000):
+        raise ValueError("predictor")
+    row = (colors * bits * columns + 7) // 8
+    step = max(1, colors * bits // 8)
+    out = bytearray()
+    if predictor == 2:
+        if bits != 8:
+            raise ValueError("predictor")
+        out.extend(data)
+        for start in range(0, len(out), row):
+            for at in range(start + step, min(start + row, len(out))):
+                out[at] = (out[at] + out[at - step]) & 255
+        return bytes(out)
+    previous = bytearray(row)
+    for start in range(0, len(data), row + 1):
+        kind, line = data[start], bytearray(data[start + 1 : start + 1 + row])
+        for at in range(len(line)):
+            left = line[at - step] if at >= step else 0
+            up, corner = previous[at], previous[at - step] if at >= step else 0
+            if kind == 1:
+                line[at] = (line[at] + left) & 255
+            elif kind == 2:
+                line[at] = (line[at] + up) & 255
+            elif kind == 3:
+                line[at] = (line[at] + (left + up) // 2) & 255
+            elif kind == 4:
+                guess = left + up - corner
+                near = min((abs(guess - left), 0, left), (abs(guess - up), 1, up), (abs(guess - corner), 2, corner))
+                line[at] = (line[at] + near[2]) & 255
+        out.extend(line)
+        previous = line + bytearray(row - len(line))
+    return bytes(out)
 
 
 def _check_actions(chunk: bytes, whole: bytes) -> None:
@@ -292,57 +412,86 @@ def _web_link(value: bytes) -> bool:
     return False  # an indirect or odd value: not a plain web link
 
 
-def _office(data: bytes, suffix: str) -> bytes:
+def unzipped(data: bytes, what: str, max_bytes: int = MAX_UNPACKED_BYTES) -> dict[str, bytes]:
+    """0.14.0: the parts of a zip (an Office file), by name. Before anything is unpacked: at most MAX_PARTS parts,
+    ``max_bytes`` in all by the sizes they declare, none far larger than it is packed (a zip bomb), only stored or
+    deflated. Each part is then unpacked a piece at a time, never past the size it declares: a reader that unpacks a
+    part whole (python-docx, openpyxl) took whatever a lying size let it (a 229 KB .docx took 421 MB), so give them
+    ``stored`` of these. Refuses, naming ``what``, whatever doesn't hold."""
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
-    except zipfile.BadZipFile:
-        raise Refused(f"the {suffix} file isn't a valid Office file") from None
+    except (zipfile.BadZipFile, ValueError, EOFError):
+        raise Refused(f"{what} isn't a valid Office file") from None
     with archive:
         parts = archive.infolist()
         if len(parts) > MAX_PARTS:
-            raise Refused("the file has too many parts")
-        if sum(p.file_size for p in parts) > MAX_UNPACKED_BYTES:
-            raise Refused("the file unpacks to too much data")
+            raise Refused(f"{what} has too many parts")
+        if sum(p.file_size for p in parts) > max_bytes:
+            raise Refused(f"{what} unpacks to too much data")
         for part in parts:
             if part.compress_size and part.file_size / part.compress_size > MAX_RATIO and part.file_size > 1_000_000:
-                raise Refused("the file unpacks to far more than its size (a zip bomb)")
-            if _ACTIVE_PART.search(part.filename):
-                raise Refused(
-                    f"the file holds {part.filename}: macros, ActiveX, embedded objects or links to other files"
-                )
-        names = {p.filename for p in parts}
-        if "[Content_Types].xml" not in names:
-            raise Refused(f"the {suffix} file isn't a valid Office file")
-        types = archive.read("[Content_Types].xml").decode("utf-8", "replace")
-        if "macroEnabled" in types or "vbaProject" in types:
-            raise Refused("the file is macro-enabled")
-        for part in parts:
-            if part.filename.endswith(".rels"):
-                _relationships(archive.read(part), part.filename)
-        for part in parts:
-            if not part.filename.endswith(".xml"):
-                continue
-            xml = archive.read(part).decode("utf-8", "replace")
-            if suffix == ".docx" and part.filename.startswith("word/"):
-                _word_fields(xml, part.filename)
-            elif suffix == ".xlsx" and part.filename.startswith("xl/worksheets/"):
-                _excel_formulas(xml, part.filename)
-            elif suffix == ".xlsx" and part.filename == "xl/workbook.xml":
-                _excel_names(xml, part.filename)
-            elif suffix == ".pptx" and _PPT_ACTIONS.search(xml):
-                raise Refused(f"{part.filename} has an action that starts a program or macro")
-        _known_parts(parts, _parse(types, "[Content_Types].xml"))
+                raise Refused(f"{what} unpacks to far more than its size (a zip bomb)")
+            if part.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) or part.flag_bits & 1:
+                raise Refused(f"{what} isn't a valid Office file")
+        found: dict[str, bytes] = {}
+        try:
+            for part in parts:
+                pieces = []
+                with archive.open(part) as stream:
+                    while piece := stream.read(64 * 1024):
+                        pieces.append(piece)
+                found[part.filename] = b"".join(pieces)
+        except (zipfile.BadZipFile, zlib.error, EOFError, OSError, ValueError, RuntimeError, NotImplementedError):
+            raise Refused(f"{what} can't be read whole") from None
+    return found
+
+
+def stored(parts: dict[str, bytes]) -> bytes:
+    """0.14.0: parts ``unzipped`` read, as a zip again, not compressed: what a reader unpacks from it is what was
+    checked."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+    return out.getvalue()
+
+
+def _office(data: bytes, suffix: str) -> bytes:
+    parts = unzipped(data, f"the {suffix} file")
+    for name in parts:
+        if _ACTIVE_PART.search(name):
+            raise Refused(f"the file holds {name}: macros, ActiveX, embedded objects or links to other files")
+    if "[Content_Types].xml" not in parts:
+        raise Refused(f"the {suffix} file isn't a valid Office file")
+    types = parts["[Content_Types].xml"].decode("utf-8", "replace")
+    if "macroEnabled" in types or "vbaProject" in types:
+        raise Refused("the file is macro-enabled")
+    for name, part in parts.items():
+        if name.endswith(".rels"):
+            _relationships(part, name)
+    for name, part in parts.items():
+        if not name.endswith(".xml"):
+            continue
+        xml = part.decode("utf-8", "replace")
+        if suffix == ".docx" and name.startswith("word/"):
+            _word_fields(xml, name)
+        elif suffix == ".xlsx" and name.startswith("xl/worksheets/"):
+            _excel_formulas(xml, name)
+        elif suffix == ".xlsx" and name == "xl/workbook.xml":
+            _excel_names(xml, name)
+        elif suffix == ".pptx" and _PPT_ACTIONS.search(xml):
+            raise Refused(f"{name} has an action that starts a program or macro")
+    _known_parts(list(parts), _parse(types, "[Content_Types].xml"))
     return data
 
 
-def _known_parts(parts: list[zipfile.ZipInfo], types: object) -> None:
+def _known_parts(names: list[str], types: object) -> None:
     """0.12.0: every part is of a kind known to be safe (by its content type: named, or by its file ending)."""
     named = {
         n.get("PartName", "").lstrip("/").lower(): n.get("ContentType", "") for n in types.iter(f"{_TYPES_NS}Override")
     }  # type: ignore[attr-defined]
     endings = {n.get("Extension", "").lower(): n.get("ContentType", "") for n in types.iter(f"{_TYPES_NS}Default")}  # type: ignore[attr-defined]
-    for part in parts:
-        name = part.filename
+    for name in names:
         if name == "[Content_Types].xml" or name.endswith("/"):
             continue
         last = name.rsplit("/", 1)[-1]

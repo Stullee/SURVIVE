@@ -2,9 +2,10 @@
 
 * ``document``: a Markdown file (with settings and ``:::`` layout lines, see markup.py) becomes a PDF, an editable
   Word file next to it and pictures of its first pages: ``shop/cv.pdf``, ``shop/cv.docx``, ``shop/cv-page1.png``.
-* ``spreadsheet``: a JSON spec becomes an Excel file and a picture of its first table: ``shop/budget.xlsx``,
-  ``shop/budget-preview.png``.
-* ``image``: a listing photo made of pages of Ember's own PDFs or pictures, with a title, a subtitle and a badge.
+* ``spreadsheet``: a JSON spec becomes an Excel file and a picture of each table: ``shop/budget.xlsx``,
+  ``shop/budget-preview.png`` (0.14.0: and ``shop/budget-sheet2.png`` for the second sheet, and so on).
+* ``image``: a listing photo made of pages of Ember's own PDFs, sheets of its Excel files or pictures (0.14.0: or a
+  region of one, zoomed in), with a title, a subtitle and a badge; (0.14.0) a text photo, or a poster at print size.
 
 The agent never writes the bytes of these files: Ember's code makes them from the agent's text and writes them
 with ``Jail.write_bytes``. Every problem the agent can fix comes back as a ProductError naming what to change.
@@ -16,13 +17,17 @@ import re
 from dataclasses import dataclass, field
 
 from ..agent.sandbox import Jail
-from . import images, markup, pdf, sheets, word
+from . import checks, images, markup, pdf, sheets, word
 
 PAGE_PREVIEWS = 4  # pictures of the first pages of a document
 PREVIEW_DPI = 100  # an A4 page is 827 x 1169 pixels
 MAX_LISTING_PAGES = 3
 _COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
-_PAGE_REF = re.compile(r"^(?P<path>.+?\.pdf)(?:#(?P<page>\d{1,3}))?$", re.IGNORECASE)
+# 0.14.0: 'shop/cv.pdf#2' (a page), 'shop/b.xlsx#2' or 'shop/b.xlsx#Budget' (a sheet), 'shop/p.png', each with an
+# optional region to zoom in on: 'shop/cv.pdf#1@top'.
+_PAGE_REF = re.compile(
+    r"^(?P<path>.+?\.(?P<kind>pdf|xlsx|png|jpg))(?:#(?P<part>[^@#]{1,31}))?(?:@(?P<region>[a-z-]+))?$", re.IGNORECASE
+)
 
 
 class ProductError(ValueError):
@@ -134,7 +139,7 @@ def _sentence(text: str) -> str:
 
 
 def spreadsheet(jail: Jail, source: str, output: str) -> Made:
-    """Make ``output`` (an Excel file) from the JSON spec ``source``, and a picture of its first table."""
+    """Make ``output`` (an Excel file) from the JSON spec ``source``, and a picture of each table (0.14.0)."""
     base = _base(output, ".xlsx", "output")
     if not source.lower().endswith(".json"):
         raise ProductError("source must be the .json file you wrote the spreadsheet spec in")
@@ -142,13 +147,20 @@ def spreadsheet(jail: Jail, source: str, output: str) -> Made:
     try:
         spec = sheets.parse(text, jail.read)
         data = sheets.build(spec)
-        picture = sheets.preview(spec)
+        # 0.14.0: a picture of each sheet (the workshop was paid $1.84 to draw three); the first keeps its old name.
+        pictures = [sheets.preview(spec, index=index) for index in range(len(spec.sheets))]
     except sheets.SheetError as exc:
         raise ProductError(f"{source}: {exc}") from None
     made = Made()
     _write(jail, made, output, data)
-    preview = f"{base}-preview.png"
-    _write(jail, made, preview, picture)
+    shown = [f"{base}-preview.png"] + [f"{base}-sheet{n}.png" for n in range(2, len(spec.sheets) + 1)]
+    for path, picture in zip(shown, pictures, strict=True):
+        _write(jail, made, path, picture)
+    for number in range(len(spec.sheets) + 1, sheets.MAX_SHEETS + 1):  # a sheet this version no longer has
+        path = f"{base}-sheet{number}.png"
+        if number > 1 and jail.size_of(path, "product") is not None:
+            jail.delete(path)
+            made.removed.append(path)
     parts = [f"{s.name} ({len(s.rows)} row{'s' if len(s.rows) != 1 else ''}" for s in spec.sheets]
     formulas = sum(
         1 for s in spec.sheets for row in s.rows for value in row if isinstance(value, str) and value.startswith("=")
@@ -157,38 +169,58 @@ def spreadsheet(jail: Jail, source: str, output: str) -> Made:
     made.report.append(f"Made {output}: {len(spec.sheets)} sheet{'s' if len(spec.sheets) != 1 else ''}: {listed}.")
     extra = f"{formulas} formula{'s' if formulas != 1 else ''}" if formulas else "no formulas"
     notes = f", a 'How to use' sheet with {len(spec.notes)} lines" if spec.notes else ""
-    made.report.append(f"{_size(len(data))}; {extra}{notes}. Picture of the first sheet: {preview}.")
+    pictures = ", ".join(f"{path} ({sheet.name})" for path, sheet in zip(shown, spec.sheets, strict=True))
+    made.report.append(f"{_size(len(data))}; {extra}{notes}. Pictures of its sheets: {pictures}.")
     if spec.warnings:
         made.report.append("Check: " + " ".join(_sentence(w) for w in spec.warnings))
+    if made.removed:
+        made.report.append(f"Removed old sheet pictures: {_names(made.removed)}.")
     return made
 
 
 # --- listing photos ---
 
 
-def _pictures(jail: Jail, pages: str, height: int) -> list[images.Image.Image]:
-    """The pages to show: 'shop/cv.pdf#2' (a PDF page; '#1' when left out) or a PNG, separated by commas."""
+def _pictures(jail: Jail, pages: str, height: int) -> tuple[list[images.Image.Image], list[str]]:
+    """The pages to show, separated by commas: 'shop/cv.pdf#2' (a PDF page; '#1' when left out), 'shop/b.xlsx#2' or
+    'shop/b.xlsx#Budget' (0.14.0: a sheet, by number or name; the first when left out) or a PNG or JPEG, each with an
+    optional region to zoom in on ('@top', 0.14.0); and each as one way of writing it (what the photo shows)."""
     refs = [ref.strip() for ref in pages.split(",") if ref.strip()]
     if not 1 <= len(refs) <= MAX_LISTING_PAGES:
         raise ProductError(f"pages must name 1 to {MAX_LISTING_PAGES} pages, separated by commas")
     shown: list[images.Image.Image] = []
-    documents: dict[str, bytes] = {}
+    keys: list[str] = []
+    files: dict[str, bytes] = {}
     for ref in refs:
         match = _PAGE_REF.match(ref)
+        if match is None:
+            raise ProductError(
+                f"{ref!r} is not a page: use 'file.pdf#2', 'file.xlsx#2' (a sheet) or a .png or .jpg file in your "
+                "workspace, with '@top' or another region to zoom in"
+            )
+        path, kind, part = match.group("path"), match.group("kind").lower(), match.group("part") or ""
+        name = (match.group("region") or "").lower()
+        if name and name not in images.REGIONS:
+            raise ProductError(f"{ref}: the region must be one of {', '.join(images.REGIONS)}")
+        region = images.REGIONS.get(name, images.FULL)
+        if part and kind in ("png", "jpg"):
+            raise ProductError(f"{ref}: a picture has no pages; name it alone ('{path}')")
+        if part and kind == "pdf" and not part.isdigit():
+            raise ProductError(f"{ref}: a PDF's page is a number ('{path}#2')")
+        keys.append(f"{path}#{part.strip().lower() or 1}@{name or 'all'}")
+        if path not in files:
+            files[path] = jail.read_bytes(path)
         try:
-            if match:
-                path = match.group("path")
-                if path not in documents:
-                    documents[path] = jail.read_bytes(path)
-                number = int(match.group("page") or 1)
-                shown.extend(images.pdf_pages(documents[path], [number], height=height))
-            elif ref.lower().endswith((".png", ".jpg")):
-                shown.append(images.open_png(jail.read_bytes(ref)))
+            if kind == "pdf":
+                shown.extend(images.pdf_pages(files[path], [int(part or 1)], height=height, region=region))
+            elif kind == "xlsx":
+                shown.append(images.cropped(sheets.picture(files[path], part.strip()), region))
             else:
-                raise ProductError(f"{ref!r} is not a page: use 'file.pdf#2' or a .png or .jpg file in your workspace")
-        except images.ImageError as exc:
+                picture = images.open_png(files[path], longest=2 * height)
+                shown.append(images.cropped(picture, region))
+        except (images.ImageError, sheets.SheetError, checks.Refused) as exc:
             raise ProductError(f"{ref}: {exc}") from None
-    return shown
+    return shown, keys
 
 
 def image(
@@ -201,22 +233,49 @@ def image(
     background: str | None = None,
     accent: str | None = None,
     shape: str = "landscape",
+    layout: str = "photo",
 ) -> Made:
-    """Make ``output`` (a PNG listing photo) showing ``pages`` next to a title, a subtitle and a badge."""
+    """Make ``output`` (a PNG listing photo) showing ``pages`` next to a title, a subtitle and a badge; 0.14.0: or,
+    with layout 'text', the title and the subtitle's lines (separated by '|') as a list, or with layout 'poster', a
+    poster at print size."""
     _base(output, ".png", "output")
     for name, value in (("background", background), ("accent", accent)):
         if value is not None and not _COLOR.fullmatch(value):
             raise ProductError(f"{name} must be a colour like #F4EFE6")
     if shape not in images.SHAPES:
         raise ProductError(f"shape must be one of {', '.join(images.SHAPES)}")
-    height = images.SHAPES[shape][1]
-    pictures = _pictures(jail, pages, height)
+    if layout not in images.LAYOUTS:
+        raise ProductError(f"layout must be one of {', '.join(images.LAYOUTS)}")
+    lines = [line.strip() for line in subtitle.split("|") if line.strip()]
+    if layout != "photo" and pages.strip():
+        raise ProductError(f"a {layout} layout shows no pages: leave pages empty (or use layout photo)")
     try:
-        data = images.listing(pictures, title.strip(), subtitle.strip(), badge.strip(), background, accent, shape)
+        if layout == "text":
+            data = images.text_photo(title.strip(), lines, badge.strip(), background, accent, shape)
+            shows = "text:" + "|".join(lines)
+        elif layout == "poster":
+            data = images.poster(title.strip(), lines, background, accent, shape)
+            shows = ""
+        else:
+            if not pages.strip():
+                raise ProductError("name the pages to show (or use layout text or poster)")
+            pictures, keys = _pictures(jail, pages, images.SHAPES[shape][1])
+            data = images.listing(pictures, title.strip(), " ".join(lines), badge.strip(), background, accent, shape)
+            shows = "photo:" + ",".join(sorted(keys))
     except images.ImageError as exc:
         raise ProductError(str(exc)) from None
+    if shows:  # 0.14.0: the QA registry counts another title on the same pages as the same photo
+        data = images.marked(data, shows)
     made = Made()
     _write(jail, made, output, data)
+    if layout == "poster":
+        width, height = images.poster_size(shape)
+        made.report.append(
+            f"Made {output}: a poster, {width} x {height} pixels ({shape}), {_size(len(data))}: at 150 dpi it prints "
+            f"up to {width / 150 * 2.54:.0f} x {height / 150 * 2.54:.0f} cm."
+        )
+        return made
     width, height = images.SHAPES[shape]
-    made.report.append(f"Made {output}: a {shape} listing photo, {width} x {height} pixels, {_size(len(data))}.")
+    what = "text listing photo" if layout == "text" else "listing photo"
+    made.report.append(f"Made {output}: a {shape} {what}, {width} x {height} pixels, {_size(len(data))}.")
     return made
