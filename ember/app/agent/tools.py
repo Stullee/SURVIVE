@@ -1485,6 +1485,18 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         raise ToolError("close a milestone or move its date, not both")
     if result and not status:
         raise ToolError("result is for closing a milestone: set status too")
+    if row["created_by"] == "code":  # 0.12.0: the money goal and its decision points
+        if args.get("due") and args["due"] != row["due"]:
+            raise ToolError(f"Ember's code set the date of milestone #{mid}: it doesn't move")
+        if args.get("parent_id") is not None and args["parent_id"] != row["parent_id"]:
+            raise ToolError(f"Ember's code set milestone #{mid}: it stays where it is")
+        if status == "dropped":
+            raise ToolError(f"Ember's code set milestone #{mid}: only your owner drops it")
+        if status and row["parent_id"] is None:
+            raise ToolError(
+                "Ember's code closes the money goal from the books (revenue less expenses against your API spending "
+                "over the last 30 days): work toward it"
+            )
     due = roadmap.parse_day(row["due"]) or today
     moved_to: date | None = None
     if args.get("due"):

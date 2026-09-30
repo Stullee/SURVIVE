@@ -21,7 +21,9 @@ from app.agent.service import Agent
 from app.db import Database, discover_migrations, migrate
 from tests.test_loop_shapes import run
 from tests.test_owner_loop import owner
-from tests.test_roadmap import NOW, TODAY, create, day, milestone, plan, row
+from tests.test_roadmap import NOW, TODAY, create, day, milestone, no_money_goal, plan, row  # noqa: F401
+
+# no_money_goal: an autouse fixture (the money goal Ember's code keeps stays out of these tests)
 
 
 def agent_with_a_cycle(data_dir: Path) -> Agent:
@@ -251,7 +253,7 @@ def test_a_0_11_roadmap_comes_through_the_rebuild(tmp_path: Path) -> None:
         conn.execute("UPDATE cycles SET status = 'completed', ended_at = 'then' WHERE id = 1")
         before = [tuple(r) for r in conn.execute("SELECT * FROM milestones ORDER BY id")]
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [21, 22, 23, 24, 25, 26, 27]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [21, 22, 23, 24, 25, 26, 27, 28]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         after = [tuple(r)[: len(before[0])] for r in conn.execute("SELECT * FROM milestones ORDER BY id")]

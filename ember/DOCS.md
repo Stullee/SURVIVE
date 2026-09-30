@@ -366,6 +366,19 @@ milestones, a week with nothing due and a roadmap that ends within the month,
 and asks the agent to fix that in its next plan. The daily review checks the
 roadmap too.
 
+**The money goal.** The roadmap is never empty: Ember's code keeps a money
+goal at its root, **Earn as much as you spend** (over the last 30 days, the
+revenue you recorded less expenses at least equals the API spending), due in 90
+days, with two **decision points** under it, at a quarter and at half of the
+runway (of the 90 days at most), where the agent decides from the numbers which
+projects and ventures go on, change or stop. Ember's code checks the goal from
+the books before every plan: once it is met it closes it **done** and sets the
+next, which asks for more (twice, then three times what the agent spends); past
+its date it closes it **missed** and sets it again. The agent can't move, drop
+or close the goal, nor move a decision point; it closes a decision point with
+its decision. You can drop the goal: then Ember's code sets no more, and the
+roadmap's goals are yours and the agent's.
+
 **Honest by design.** What a milestone promises (its title and its measure)
 can't be changed once it is written. Its date can move twice at most, with the
 reason, and every move is counted: the card and the timeline show where it was
@@ -376,7 +389,7 @@ step is left behind looking like a goal of its own. A done the agent closes must
 evidence (a number, or a reference such as a request, a link or a file), and it
 shows as **self-reported**: the agent's word, not checked from Ember's records,
 also in its daily review. Ember keeps who closed each milestone (the agent,
-you, or later Ember's code from its records).
+you, or Ember's code from its records).
 
 **The timeline.** A row per milestone, under the goal it leads to: a bar from
 when it was planned to its date, a mark on its date (open ◆, overdue ▲, done ●,

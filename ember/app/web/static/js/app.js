@@ -5701,7 +5701,7 @@
       h("div", { class: "item-head" },
         h("h3", { class: "rm-card-title", tabindex: "-1", text: m.title || "Untitled milestone" }),
         chip(MILESTONE_STATE, m.horizon, sentence(String(m.horizon || "unknown"))),
-        m.created_by === "owner" ? plainChip("Your milestone") : null,
+        m.created_by === "owner" ? plainChip("Your milestone") : m.created_by === "code" ? plainChip("Set by Ember's code") : null,
         m.simulated ? testTag() : null),
       h("p", { class: "muted small", text: "#" + m.id + (parent ? " · leads to #" + parent.id + " " + parent.title : "") }),
       h("dl", { class: "item-grid" },
@@ -5718,7 +5718,7 @@
       milestoneProposal(m),
       milestoneWord(m),
       m.notes ? h("details", { class: "notes" }, h("summary", { text: "Notes" }), h("pre", { class: "notes-text", text: asText(m.notes) })) : null,
-      h("p", { class: "muted small" }, (m.created_by === "owner" ? "Added by " + (m.entered_by || "you") : "Planned by " + name) + " ",
+      h("p", { class: "muted small" }, (m.created_by === "owner" ? "Added by " + (m.entered_by || "you") : m.created_by === "code" ? "Set by Ember's code" : "Planned by " + name) + " ",
         timeEl(m.created_at), closed && m.closed_at ? [" · closed ", timeEl(m.closed_at)] : [" · updated ", timeEl(m.updated_at)]),
     ];
   }

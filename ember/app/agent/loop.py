@@ -22,6 +22,7 @@ import re
 import secrets
 import threading
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
 from .. import events
@@ -349,6 +350,7 @@ class CycleRunner:
     def _snapshot(self, venture: bool = False) -> context.Snapshot:
         status = self.economy.life.evaluate()
         scope = self.economy.life.scope()
+        self._keep_money_goal(scope, status.runway.days)
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
         local = self.clock.now().astimezone(self.clock.tz).strftime("%A %Y-%m-%d %H:%M %Z")
         with self.db.connection() as conn:
@@ -512,6 +514,20 @@ class CycleRunner:
         if ctx.state.sleep_minutes:  # set_sleep, the last call winning (the reflection's after the act phase's)
             return CycleEnd(status, note, sleep_minutes=ctx.state.sleep_minutes, sleep_reason=ctx.state.sleep_reason)
         return CycleEnd(status, note, sleep_minutes=plan.sleep_minutes)
+
+    def _keep_money_goal(self, books_scope: Any, runway_days: float | None) -> None:
+        """0.12.0: the roadmap is never empty: Ember's code settles its money goal from the books and sets the next
+        one (roadmap.keep_money_goal) before every plan."""
+        now = self.clock.now()
+        start = now - timedelta(days=roadmap.MONEY_WINDOW_DAYS)
+        earned = self.economy.books.net_revenue_between(books_scope, start, now)
+        spent = self.economy.books.api_spend_between(books_scope, start, now)
+        with self.db.transaction() as conn:
+            happened = roadmap.keep_money_goal(
+                conn, self.scope, self.clock.today(), to_iso(now), earned, spent, runway_days
+            )
+        for line in happened:
+            events.record(self.db, "info", "agent", line[:300])
 
     def _venture_focus(self, conn: Any, row: Any) -> str:
         """The brief's FOCUS for the plan's venture: its record, money, projects and knowledge file."""

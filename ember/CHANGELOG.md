@@ -83,6 +83,11 @@ Your results now reach your records: what you earn counts where it belongs.
   transaction fee). Your owner records the fees as an expense of the project whose listing sold.
 - Your daily cap is a limit, not a target: spend on work that can earn or teach you something you can measure (the
   rules said it was there to be spent).
+- ROADMAP always has a money goal, set by Ember's code: earn at least what you spend (the revenue your owner
+  recorded, less expenses, against your API spending, over the last 30 days), with two decision points under it.
+  Ember's code checks it before every plan: met, it closes done and the next asks for more; past its date, missed and
+  set again. You can't move, drop or close it; close a decision point with your decision (go on, change or stop, from
+  the numbers). Link your milestones to it.
 
 ## 0.11.2
 

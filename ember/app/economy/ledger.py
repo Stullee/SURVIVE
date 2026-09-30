@@ -332,6 +332,21 @@ class Books:
             ).fetchone()[0]
         return int(charged) + int(corrected)
 
+    def net_revenue_between(self, scope: Scope, start: datetime, end: datetime) -> int:
+        """Revenue less expenses (their corrections included) on the owner's days from ``start`` to ``end`` (0.12.0: the
+        money goal Ember's code keeps on the roadmap)."""
+        where, params = scope.where()
+        first_day = self.clock.local_day(to_iso(start)).isoformat()
+        last_day = self.clock.local_day(to_iso(end)).isoformat()
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(CASE type WHEN 'revenue' THEN amount_micros ELSE -amount_micros END), 0)"
+                " FROM ledger WHERE type IN ('revenue', 'expense') AND occurred_on >= ? AND occurred_on <= ?"
+                f" AND {where}",
+                (first_day, last_day, *params),
+            ).fetchone()
+        return int(row[0])
+
     def first_api_cost_after(self, scope: Scope, mark: int) -> str | None:
         """When the first API cost after ledger row ``mark`` was recorded."""
         where, params = scope.where()
