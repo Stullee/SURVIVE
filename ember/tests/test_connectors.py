@@ -58,11 +58,13 @@ def test_the_email_executor_writes_the_shared_journal(data_dir: Path) -> None:
     approve(agent, approval_id)
     assert agent.execute_approved() == [(approval_id, "simulated")]  # what it did is unchanged
     [entry] = journal(agent)
-    assert (entry["approval_id"], entry["class"], entry["status"]) == (approval_id, "email.send", "simulated")
+    # 0.13.0 (Phase E1): an answer in a thread the person started is its own class, never a first contact
+    assert (entry["approval_id"], entry["class"], entry["status"]) == (approval_id, "email.reply", "simulated")
     assert entry["subject"] == READER  # what it acted on: the one recipient
     assert json.loads(entry["after"]) == {"status": "simulated"} and entry["undo"] is None  # an email can't be unsent
     shown = next(a for a in agent.dashboard()["approvals"] if a["id"] == approval_id)
-    assert shown["action_class"]["name"] == "email.send" and shown["qa"] == []
+    assert shown["action_class"]["name"] == "email.reply" and not shown["action_class"]["first_contact"]
+    assert shown["qa"] == []  # it keeps the thread's subject and is short
     with pytest.raises(sqlite3.IntegrityError, match="a finished action is final"), agent.db.transaction() as conn:
         conn.execute("UPDATE action_journal SET note = 'x'")
     with pytest.raises(sqlite3.IntegrityError, match="rows cannot be deleted"), agent.db.transaction() as conn:

@@ -62,6 +62,8 @@ CLASSES: dict[str, ActionClass] = {
     c.name: c
     for c in (
         _class("email.send", "send an approved email from Ember's mailbox", {"reaches_people", "first_contact"}),
+        # 0.13.0 (Phase E1): an answer in the thread of someone who wrote to Ember: never a first contact
+        _class("email.reply", "answer someone who wrote to Ember, in their thread", {"reaches_people"}),
         _class(
             "etsy.create_listing",
             "create a listing in your Etsy shop (USD 0.20)",
@@ -117,6 +119,13 @@ def class_of(executor: str | None, action: Any = None, request_type: str | None 
         if isinstance(renewal, bool):
             return CLASSES["etsy.auto_renew" if renewal else "etsy.auto_renew_off"]
         return CLASSES[_STATES.get(str(data.get("state")), "etsy.edit_listing")]
+    if executor == "email":
+        try:
+            data = json.loads(action) if isinstance(action, str) else action
+        except ValueError:
+            data = None
+        replying = isinstance(data, Mapping) and bool(data.get("in_reply_to"))  # the tool sets it for answers only
+        return CLASSES["email.reply" if replying else "email.send"]
     if executor in _EXECUTORS:
         return CLASSES[_EXECUTORS[executor]]
     owned = {"create_account": "owner.create_account", "spend_money": "owner.spend_money"}

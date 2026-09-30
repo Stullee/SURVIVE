@@ -7,9 +7,10 @@ forgotten, and a decision of the owner's was shown once. Now Ember's code keeps 
 * decisions: a request of the agent's that the owner rejected or carried out, or that failed: it must react;
 * misses: a milestone Ember's code closed missed (a metric's): the agent decides what now;
 
-and reads the rest from their own records: the owner's messages waiting for an answer, overdue milestones and live
-listings with too few photos. The plan shows them first and never cuts them; a pressing one (``pressing``) makes a
-wake cycle an ordinary one rather than a venture cycle. The agent closes a promise, decision or miss with
+and reads the rest from their own records: the owner's messages waiting for an answer, people's emails waiting for
+one (0.13.0, Phase E1: mailstore.inquiries), overdue milestones and live listings with too few photos. The plan shows
+them first and never cuts them; a pressing one (``pressing``) makes a wake cycle an ordinary one rather than a
+venture cycle. The agent closes a promise, decision or miss with
 ``obligation_done``, saying what it did; a promise only once its owner has heard from it since, and a miss also closes
 when a milestone replaces it.
 """
@@ -21,7 +22,7 @@ import sqlite3
 from datetime import date, timedelta
 from typing import Any
 
-from ..integrations import etsy_publisher, qa
+from ..integrations import etsy_publisher, mailstore, qa
 from . import roadmap
 from .store import AgentScope
 
@@ -176,6 +177,17 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date) -> str:
             f"- Answer your owner's message{'s' if len(waiting) != 1 else ''} {ids} (FROM YOUR OWNER; waiting since"
             f" {str(waiting[0]['created_at'])[:16].replace('T', ' ')} UTC)."
         )
+    mail = mailstore.inquiries(conn, scope)
+    if mail:
+        shown = mailstore.INQUIRIES_SHOWN
+        ids = ", ".join(f"#{r['id']} ({_age(r['received_at'], today)})" for r in mail[:shown]) + (
+            f" and {len(mail) - shown} more" if len(mail) > shown else ""
+        )
+        waits = "An email from a person waits" if len(mail) == 1 else "Emails from people wait"
+        lines.append(
+            f"- {waits} for your answer: {ids}: answer with propose_email and reply_to_email_id (guide 'email'),"
+            " or inquiry_done when none is needed."
+        )
     rows = open_rows(conn, scope)
     for r in rows[:SHOWN]:
         lines.append(f"- {line(r, today)}")
@@ -209,6 +221,14 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date) -> str:
     while len(lines) > 1 and _bytes("\n".join(lines)) > MAX_BYTES:  # can't happen with the limits above
         lines.pop(-2)
     return "\n".join(lines)
+
+
+def _age(stamp: str, today: date) -> str:
+    try:
+        days = (today - date.fromisoformat(str(stamp)[:10])).days
+    except ValueError:
+        return "?"
+    return "today" if days <= 0 else f"{days} d"
 
 
 def _bytes(text: str) -> int:

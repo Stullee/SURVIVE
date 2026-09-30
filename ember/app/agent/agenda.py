@@ -7,6 +7,8 @@ the agent sleeps), once each:
 
 * order: an Etsy order of Ember's listings (urgent);
 * reply: an email that answers one Ember sent (urgent);
+* inquiry: a person writes to Ember first (0.13.0, Phase E1): an email that waits for an answer (mailstore.inquiries),
+  unread and come in after the last cycle ended (a cycle's MAIL section already showed what came before; urgent);
 * favorites: a listing's favorites reaching one of FAVORITE_STEPS (the counts a listing had when the agenda began are
   a baseline, never shown);
 * milestone_due: an open milestone due today, from CHECK_HOUR (urgent: its last day).
@@ -25,12 +27,12 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import etsy
+from ..integrations import etsy, mailstore
 from . import metrics
 from .store import AgentScope
 
-KINDS = ("order", "reply", "favorites", "milestone_due")
-URGENT = frozenset({"order", "reply", "milestone_due"})
+KINDS = ("order", "reply", "inquiry", "favorites", "milestone_due")
+URGENT = frozenset({"order", "reply", "inquiry", "milestone_due"})
 EVENT_WAKES = 4  # a day
 MIN_GAP = timedelta(minutes=30)  # between two event wake-ups
 REACTIVE_STEPS = 5  # a reactive cycle's work steps at most
@@ -77,7 +79,8 @@ def _orders(conn: sqlite3.Connection, scope: AgentScope, since: str, now: str) -
     return noted
 
 
-def _replies(conn: sqlite3.Connection, scope: AgentScope, since: str, now: str) -> list[str]:
+def _mail(conn: sqlite3.Connection, scope: AgentScope, since: str, now: str) -> list[str]:
+    """Emails that arrived: an answer to one Ember sent (reply), or a person writing to Ember first (inquiry)."""
     where, params = scope.where()
     sent = {
         str(r["message_id"])
@@ -85,20 +88,31 @@ def _replies(conn: sqlite3.Connection, scope: AgentScope, since: str, now: str) 
             f"SELECT message_id FROM emails WHERE {where} AND direction = 'out' AND message_id IS NOT NULL", params
         )
     }
-    if not sent:
-        return []
+    ended = conn.execute(
+        "SELECT MAX(ended_at) FROM cycles WHERE session = ? AND simulated = ?",
+        (scope.session, 1 if scope.mode == "dry_run" else 0),
+    ).fetchone()[0]
+    waiting = {int(r["id"]) for r in mailstore.inquiries(conn, scope)}
     noted = []
     for mail in conn.execute(
-        f"SELECT id, from_addr, subject, in_reply_to, references_ FROM emails WHERE {where} AND direction = 'in'"
-        " AND received_at >= ? ORDER BY id",
+        f"SELECT id, from_addr, subject, in_reply_to, references_, received_at, read_by_agent_at FROM emails"
+        f" WHERE {where} AND direction = 'in' AND received_at >= ? ORDER BY id",
         (*params, since),
     ):
         answers = {mail["in_reply_to"], *str(mail["references_"] or "").split()}
-        if not answers & sent:
-            continue
         subject = json.dumps(" ".join(str(mail["subject"] or "").split())[:80], ensure_ascii=False)
-        text = f"Email #{mail['id']} from {mail['from_addr']} answers one you sent: {subject}"
-        if _add(conn, scope, "reply", str(mail["id"]), text, now):
+        sender = str(mail["from_addr"])
+        if answers & sent:
+            kind, text = "reply", f"Email #{mail['id']} from {sender} answers one you sent: {subject}"
+        elif (
+            int(mail["id"]) in waiting
+            and mail["read_by_agent_at"] is None
+            and (ended is None or str(mail["received_at"]) > str(ended))
+        ):
+            kind, text = "inquiry", f"Email #{mail['id']} from {sender} writes to you: {subject}"
+        else:
+            continue
+        if _add(conn, scope, kind, str(mail["id"]), text, now):
             noted.append(text)
     return noted
 
@@ -142,7 +156,7 @@ def note(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, since: str, 
     now = to_iso(clock.now())
     return [
         *_orders(conn, scope, since, now),
-        *_replies(conn, scope, since, now),
+        *_mail(conn, scope, since, now),
         *_favorites(conn, scope, now, first),
         *_milestones(conn, scope, clock, now),
     ]

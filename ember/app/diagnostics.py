@@ -132,6 +132,7 @@ TABLES = (
     "policy_candidates",
     "action_undos",
     "owner_digests",
+    "inquiry_closures",
     "emails",
     "email_actions",
     "email_suppressions",

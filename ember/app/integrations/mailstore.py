@@ -118,8 +118,8 @@ def store_incoming(
         return None  # the same email again (after the server renumbered its mailbox)
     cursor = conn.execute(
         "INSERT OR IGNORE INTO emails (mode, session, life_id, direction, uidvalidity, uid, message_id, in_reply_to,"
-        " references_, from_addr, from_name, to_addr, subject, sent_at, received_at, body, body_cut, attachments)"
-        " VALUES (?, ?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " references_, from_addr, from_name, to_addr, subject, sent_at, received_at, body, body_cut, attachments,"
+        " bulk) VALUES (?, ?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             scope.mode,
             scope.session,
@@ -138,6 +138,7 @@ def store_incoming(
             mail.body,
             1 if mail.body_cut else 0,
             mail.attachments_json(),
+            1 if mail.bulk else 0,  # 0.13.0: a list's or a machine's mail is no inquiry
         ),
     )
     return int(cursor.lastrowid) if cursor.rowcount == 1 else None
@@ -224,6 +225,65 @@ def has_written(conn: sqlite3.Connection, scope: Scope, address: str) -> bool:
         (*params, address.lower()),
     ).fetchone()
     return row is not None
+
+
+# --- inquiries (0.13.0, Phase E1): the emails of people that wait for an answer ---
+
+INQUIRIES_SHOWN = 6
+_MACHINE = re.compile(r"^(?:mailer-daemon|postmaster|no-?reply|do-?not-?reply)@", re.IGNORECASE)
+
+
+def machine(address: str) -> bool:
+    """Whether an address is a machine's (bounces, no-reply senders): its mail is no inquiry."""
+    return _MACHINE.match(address.strip()) is not None
+
+
+# An email request that answers someone: made after their email arrived, and not turned down or dropped.
+_ANSWERED = (
+    "EXISTS (SELECT 1 FROM approvals a WHERE a.mode = e.mode AND a.session = e.session AND a.executor = 'email'"
+    " AND lower(json_extract(a.action, '$.to')) = lower(e.from_addr) AND a.created_at >= e.received_at"
+    " AND a.status NOT IN ('rejected', 'withdrawn', 'expired', 'failed'))"
+)
+
+
+def inquiries(conn: sqlite3.Connection, scope: Scope, own: str | None = None) -> list[sqlite3.Row]:
+    """The emails of people that wait for an answer, the oldest first: received (since 0.13.0), not from a list or a
+    machine, not from Ember's own address, from someone who didn't ask to stop, neither answered nor closed."""
+    where, params = scope.where("e")
+    rows = conn.execute(
+        f"SELECT e.* FROM emails e WHERE {where} AND e.direction = 'in' AND e.bulk = 0 AND lower(e.from_addr) <> ?"
+        " AND NOT EXISTS (SELECT 1 FROM email_suppressions s WHERE s.mode = e.mode AND s.session = e.session"
+        " AND s.address = lower(e.from_addr)) AND NOT EXISTS (SELECT 1 FROM inquiry_closures c WHERE"
+        f" c.email_id = e.id) AND NOT {_ANSWERED} ORDER BY e.id",
+        (*params, (own or "").lower()),
+    ).fetchall()
+    return [r for r in rows if not machine(str(r["from_addr"]))]
+
+
+def is_inquiry(conn: sqlite3.Connection, scope: Scope, email_id: int) -> bool:
+    return any(r["id"] == email_id for r in inquiries(conn, scope))
+
+
+def close_inquiry(conn: sqlite3.Connection, email_id: int, reason: str, by: str, now: str) -> None:
+    """An inquiry that needs no answer, closed with why (final)."""
+    conn.execute(
+        "INSERT INTO inquiry_closures (email_id, reason, by, created_at) VALUES (?, ?, ?, ?)",
+        (email_id, reason[:300], by[:60], now),
+    )
+
+
+def counts(conn: sqlite3.Connection, scope: Scope, since: str) -> tuple[int, int]:
+    """People's emails received since then, and how many of them an email Ember sent answered (the metrics
+    inquiries_received and inquiries_answered)."""
+    where, params = scope.where("e")
+    row = conn.execute(
+        f"SELECT COUNT(*), COALESCE(SUM(EXISTS (SELECT 1 FROM emails o WHERE o.mode = e.mode AND o.session ="
+        " e.session AND o.direction = 'out' AND lower(o.to_addr) = lower(e.from_addr) AND COALESCE(o.sent_at,"
+        f" o.received_at) >= e.received_at)), 0) FROM emails e WHERE {where} AND e.direction = 'in' AND e.bulk = 0"
+        " AND e.received_at >= ?",
+        (*params, since),
+    ).fetchone()
+    return int(row[0]), int(row[1])
 
 
 # --- what the agent reads ---

@@ -40,7 +40,7 @@ from .. import paths
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
-from ..integrations import etsy, etsy_publisher, mail, mailstore, qa, reddit
+from ..integrations import connectors, etsy, etsy_publisher, mail, mailstore, qa, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
@@ -93,12 +93,12 @@ CATEGORIES_SHOWN = 10  # etsy_categories' answer, shortest paths first
 DEPARTMENT = " (a whole department: too broad for a listing)"
 # Making files takes a moment: these run sealed, but outside the database transaction the other tools share.
 MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image"})
-GUIDES = ("documents", "spreadsheets", "listing_photos", "workshop", "etsy", "ventures")
+GUIDES = ("documents", "spreadsheets", "listing_photos", "workshop", "etsy", "ventures", "email")
 WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
 # Offered only with an Etsy shop (demand_note 0.12.0: a product line's first listing needs one).
 ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing", "propose_etsy_edit", "demand_note"})
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
-MAIL_TOOLS = frozenset({"email_inbox", "email_read", "mark_opt_out", "propose_email"})
+MAIL_TOOLS = frozenset({"email_inbox", "email_read", "mark_opt_out", "propose_email", "inquiry_done"})
 # Offered only in venture cycles (0.10.0; evidence 0.12.0: a venture's case, which grades pages any research found;
 # venture_case 0.13.0: its numbers).
 VENTURE_TOOLS = frozenset({"brainstorm", "evidence", "venture_case"})
@@ -816,6 +816,12 @@ SPECS: dict[str, Spec] = {
             {"email_id": _i("The email that asks."), "reason": _s("What it asks, briefly.", 200)},
             per_cycle=5,
             reflect=True,
+        ),
+        Spec(
+            "inquiry_done",
+            "Close a person's email that needs no answer (OBLIGATIONS lists those waiting): a thank-you, spam. Free.",
+            {"email_id": _i("The email."), "reason": _s("Why it needs no answer.", 200)},
+            per_cycle=5,
         ),
         Spec(
             "propose_email",
@@ -2740,7 +2746,11 @@ def _guide(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
 def guide_text(topic: str) -> str:
     """A guide, with the numbers Ember's code keeps filled in (0.13.0: the QA registry's photos)."""
     text = (paths.APP_DIR / "agent" / "guides" / f"{topic}.md").read_text(encoding="utf-8").strip()
-    return text.replace("{MIN_PHOTOS}", str(qa.MIN_PHOTOS)).replace("{MAX_PHOTOS}", str(etsy.MAX_PHOTOS))
+    return (
+        text.replace("{MIN_PHOTOS}", str(qa.MIN_PHOTOS))
+        .replace("{MAX_PHOTOS}", str(etsy.MAX_PHOTOS))
+        .replace("{REPLY_WORDS}", str(qa.REPLY_WORDS))
+    )
 
 
 def image_block(picture: bytes) -> dict[str, Any]:
@@ -2858,6 +2868,18 @@ def _mark_opt_out(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     return Outcome(True, f"The sender of email #{row['id']} is never emailed again.", f"#{row['id']}: opted out")
 
 
+def _inquiry_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.13.0 (Phase E1): a person's email that needs no answer leaves OBLIGATIONS."""
+    box = _mail(ctx)
+    row = mailstore.email(conn, ctx.scope, args["email_id"])
+    if row is None:
+        raise ToolError(f"there is no email #{args['email_id']}")
+    if not any(r["id"] == row["id"] for r in mailstore.inquiries(conn, ctx.scope, box.address)):
+        raise ToolError(f"email #{row['id']} doesn't wait for an answer (OBLIGATIONS lists those that do)")
+    mailstore.close_inquiry(conn, row["id"], args["reason"].strip(), "agent", ctx.now())
+    return Outcome(True, f"Email #{row['id']} needs no answer: closed.", f"#{row['id']}: closed")
+
+
 def _new_request(ctx: ToolContext, conn: Any, payload: str, action: dict[str, Any], **fields: Any) -> int | str:
     """An approval request that Ember's code or the owner's click carries out; the text of a duplicate instead."""
     action_json = store.canonical(action)
@@ -2928,6 +2950,9 @@ def _propose_email(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     )
     if first:
         text += " This person never wrote to you, so your owner is warned that it is a first contact."
+    short = qa.defects(connectors.class_of("email", action).name, action)  # 0.13.0: an answer's checks
+    if short:
+        text += f" QA (Ember's code): {'; '.join(short)}; your owner sees it too."
     text += _unlocked(ctx)
     return Outcome(True, text, f"#{made} email to {_cut(to, 60)}")
 
@@ -3256,6 +3281,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "email_inbox": _email_inbox,
     "email_read": _email_read,
     "mark_opt_out": _mark_opt_out,
+    "inquiry_done": _inquiry_done,
     "propose_email": _propose_email,
     "propose_reddit_post": _propose_reddit_post,
 }

@@ -41,7 +41,8 @@ def test_a_promise_stays_until_the_owner_has_heard_it_is_kept(data_dir: Path) ->
     assert made.ok and "Your promise is obligation #1, due" in made.text, made.text
     agent.run_cycle("schedule")
     shown = section(planner_texts(agent.transport)[-1], obligations.HEADING)  # type: ignore[attr-defined]
-    assert shown.startswith(f'- #1 promise to your owner, due {day(2)} (in 2 d): "Send you the three drafts"')
+    promise = f'- #1 promise to your owner, due {day(2)} (in 2 d): "Send you the three drafts"'
+    assert any(line.startswith(promise) for line in shown.splitlines())  # after the dry run's reader's email
     assert "Close a promise, decision or miss you have met with obligation_done" in shown
     early = call(agent, "obligation_done", numbers="1", result="Sent them in message #3")
     assert not early.ok and "tell your owner it is kept" in early.text
@@ -50,7 +51,7 @@ def test_a_promise_stays_until_the_owner_has_heard_it_is_kept(data_dir: Path) ->
     assert done.ok and "Closed #1. Not closed: #7 is not an open obligation of yours." in done.text, done.text
     [row] = rows(agent, "SELECT status, closed_by, result FROM obligations")
     assert row == {"status": "closed", "closed_by": "agent", "result": "Sent them in message #2"}
-    assert owed(agent) == ""
+    assert owed(agent).startswith("- An email from a person waits") and "promise" not in owed(agent)  # the reader's
     [promising] = [m for m in agent.dashboard()["inbox"] if m["text"] == "Drafts by Friday."]
     assert promising["promises"] == [
         {"id": 1, "what": "Send you the three drafts", "due": day(2), "status": "closed", "result": row["result"]}

@@ -965,6 +965,24 @@ included: encrypt your backups.
   emailed** (someone asked you, by phone for example). An opt-out is final: the
   list can't be shortened. A false alarm only means Ember doesn't write to that
   person; they can still write to it, and you can answer them yourself.
+- **People who write to Ember** (0.13.0): Ember treats each email from a
+  person as waiting for an answer: a buyer's question, a reader, a partner.
+  Newsletters, automatic replies, bounces and no-reply senders don't count,
+  and neither does anyone who asked to stop. Emails stored before 0.13.0 never
+  count. Ember's plan lists the waiting ones first, so they are answered
+  before other work. A new one that comes in between cycles wakes Ember
+  (see the agenda). An email stops waiting when Ember proposes an answer to
+  that person. If you reject the answer, the email waits again. The agent can
+  also close an email that needs no answer (`inquiry_done`, with the reason),
+  for example a thank-you or spam.
+- An answer in the thread of someone who wrote has its own kind on the card:
+  **answer someone who wrote to Ember**. It is never a first contact. Ember's
+  code checks two things, and the card and the agent both see the result:
+  that the subject keeps the thread ("Re: …"), and that the answer is short
+  (at most 200 words). On the Roadmap, the metrics `inquiries_received` and
+  `inquiries_answered` count people's emails, and Ember's answers to them,
+  from a milestone's start. If someone asks to stop after an answer your
+  email-reply unlock sent, that unlock is taken back.
 - In dry run a built-in fake mailbox stands in: a reader asks about a German
   version of a planner in the first cycle, a newsletter with hidden
   instructions arrives in the third, and the reader's "stop" in the fifth.

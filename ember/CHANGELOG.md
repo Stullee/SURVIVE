@@ -49,6 +49,10 @@ Decisions from numbers: a venture's case now has figures that Ember's code check
   deactivating one you listed, changing a change back, renewing a deactivated one, turning an automatic renewal off.
   An Undo is their request, approved at once ("Undo: ..."), which Ember's code carries out like any change: don't
   redo what they undid without asking them first. They can also take back every unlock at once.
+- People's emails that wait for your answer are in OBLIGATIONS, and a new one wakes you: answer with propose_email
+  and reply_to_email_id (the guide 'email'), or inquiry_done when none is needed (a thank-you, spam). An answer keeps
+  the thread's subject (Re: ...) and is short, at most 200 words: the tool says when it isn't. The metrics
+  inquiries_received and inquiries_answered count them for a milestone.
 - milestone_plan is an ordinary cycle's tool now: a venture cycle researches and decides ventures; laying out the
   roadmap belongs to ordinary cycles (milestone_update still works in both).
 

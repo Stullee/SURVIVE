@@ -740,6 +740,8 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
     editable = None
     shortfalls: list[str] = []  # 0.13.0: what the QA registry finds short in it
     kind = connectors.class_of(r["executor"], action, r["type"])
+    if r["executor"] == "email" and action is not None:
+        shortfalls = qa.defects(kind.name, action)  # 0.13.0 (Phase E1): an answer's checks
     execution = executor.execution(conn, r, scope, agent.clock, agent.settings.email_daily_limit)
     if r["executor"] == "etsy_listing" and action is not None:
         execution = etsy_publisher.execution(conn, r, scope, agent.clock, agent.settings.etsy_listings_per_day)

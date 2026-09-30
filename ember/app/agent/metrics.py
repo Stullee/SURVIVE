@@ -28,7 +28,7 @@ from typing import Any
 from .. import events
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import etsy, etsy_publisher, qa
+from ..integrations import etsy, etsy_publisher, mailstore, qa
 from . import ventures
 from .store import AgentScope
 
@@ -119,6 +119,23 @@ CATALOGUE: dict[str, Metric] = {
             since_set=True,
             ceiling=True,
         ),
+        # 0.13.0 (Phase E1): inbound email, Ember's records (a list's or a machine's mail isn't counted)
+        Metric(
+            "inquiries_received",
+            "emails people wrote to you since it was set",
+            "count",
+            "ember",
+            unit="email",
+            since_set=True,
+        ),
+        Metric(
+            "inquiries_answered",
+            "of those emails, the ones you answered (an email sent)",
+            "count",
+            "ember",
+            unit="email",
+            since_set=True,
+        ),
         Metric(
             "qa_clean",
             f"each live listing has at least {qa.MIN_PHOTOS} photos",
@@ -133,7 +150,8 @@ NAMES = tuple(CATALOGUE)
 # The catalogue in the tool's words, as short as it can be: every request of a work step carries it.
 HELP = (
     "listings_live counts now; the deltas, orders_observed, revenue_verified_usd (recorded revenue less "
-    "expenses), research_calls_ok (found something) and api_spend_usd (a ceiling) count from when it is set; "
+    "expenses), research_calls_ok (found something), inquiries_received and inquiries_answered (people's "
+    "emails; your answers) and api_spend_usd (a ceiling) count from when it is set; "
     f"case_complete and stage_reached are a venture's; qa_clean: {qa.MIN_PHOTOS}+ photos on each live "
     "listing"
 )
@@ -300,6 +318,9 @@ def read(
         return _read_revenue(conn, books.ledger, project_id, venture_id, books.clock.local_day(since).isoformat(), now)
     if m.name == "api_spend_usd":
         return _read_spend(conn, scope, project_id, venture_id, since, now)
+    if m.name in ("inquiries_received", "inquiries_answered"):
+        received, answered = mailstore.counts(conn, scope, since)
+        return Reading(received if m.name == "inquiries_received" else answered, now, "")
     if m.name == "research_calls_ok":
         where, params = scope.where("v")
         mine = " AND r.venture_id = ?" if venture_id else ""

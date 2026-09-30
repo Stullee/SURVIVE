@@ -53,7 +53,7 @@ RULES: dict[str, Rule] = {
         Rule("price_change", "etsy.edit_listing", "price changes within 15% on a live listing"),
         Rule("listing_variant", "etsy.create_listing", "new listings in a backed leg after 5 approved unchanged"),
         Rule("deactivate", "etsy.deactivate", "taking a listing of Ember's off Etsy"),
-        Rule("email_reply", "email.send", "email replies in threads the other person started"),
+        Rule("email_reply", "email.reply", "email replies in threads the other person started"),
     )
 }
 LEVELS = ("manual", "veto_window", "auto")
@@ -303,7 +303,8 @@ def run_due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[s
 
 def keep(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[str]:
     """Revoke the grants whose milestone was missed or dropped, whose budget is spent, which carried a request that
-    ended unclear, or whose request the owner vetoed. Returns what happened."""
+    ended unclear, whose request the owner vetoed, or (email replies) whose reply the person answered by asking to
+    stop. Returns what happened."""
     now = to_iso(clock.now())
     happened = []
     for g in grants(conn, scope):
@@ -332,6 +333,16 @@ def _revocation(conn: sqlite3.Connection, g: sqlite3.Row, clock: Clock) -> str:
             return f"your owner vetoed request #{use['approval_id']}"
         if use["carried"] == "unclear":
             return f"request #{use['approval_id']} ended unclear"
+    if g["rule"] == "email_reply":  # 0.13.0 (Phase E1): the channel's kill rule
+        stopped = conn.execute(
+            "SELECT u.approval_id, s.address FROM policy_uses u JOIN approvals a ON a.id = u.approval_id"
+            " JOIN email_suppressions s ON s.mode = a.mode AND s.session = a.session"
+            " AND s.address = lower(json_extract(a.action, '$.to')) WHERE u.grant_id = ? AND u.approved_at IS NOT NULL"
+            " AND s.since >= u.approved_at ORDER BY u.id LIMIT 1",
+            (g["id"],),
+        ).fetchone()
+        if stopped is not None:
+            return f"{stopped['address']} asked to stop after an automatic reply (request #{stopped['approval_id']})"
     total, _ = used(conn, int(g["id"]), clock)
     if total >= int(g["budget"]):
         return f"its budget of {g['budget']} actions is spent"

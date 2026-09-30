@@ -260,6 +260,7 @@ def test_a_0_3_database_keeps_its_approvals_through_the_migration(tmp_path: Path
         50,
         51,
         52,
+        53,
     ]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
@@ -833,7 +834,12 @@ def test_the_mail_section_shows_unread_mail_as_data(data_dir: Path) -> None:
         f'#1 from "{READER}" "Is your meal planner available in German?"'
     )
     brief = transport.sent[1]["messages"][0]["content"][0]["text"]
-    assert f"== MAIL ==\n{section}\n\n== FOCUS ==" in brief
+    waiting = (  # 0.13.0 (Phase E1): the reader's email waits for an answer
+        "== OBLIGATIONS (kept by Ember's code: deal with them first) ==\n- An email from a person waits for your"
+        " answer: #1 (today): answer with propose_email and reply_to_email_id (guide 'email'), or inquiry_done when"
+        " none is needed."
+    )
+    assert f"== MAIL ==\n{section}\n\n{waiting}\n\n== FOCUS ==" in brief
     assert all(r["messages"][0] == transport.sent[1]["messages"][0] for r in transport.sent[1:])  # byte-stable
 
     snap = context.Snapshot(
