@@ -376,9 +376,11 @@ class LoadedSettings:
     errors: list[str] = field(default_factory=list)
     source: str = "defaults"
     # 0.14.0: rules between options that Ember corrected instead of starting safe mode (see _corrected), and, in safe
-    # mode, whether owner_user_ids couldn't be read: then Ember answers no one (app/security.py).
+    # mode, whether owner_user_ids couldn't be read (then Ember answers no one, app/security.py) and whether
+    # kill_switch_reset couldn't be (then its value is never stored, app/main.py).
     corrections: list[str] = field(default_factory=list)
     owner_unknown: bool = False
+    reset_unknown: bool = False
 
     @property
     def safe_mode(self) -> bool:
@@ -418,13 +420,25 @@ def _corrected(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """0.14.0: the rules between options that Home Assistant's schema can't check, corrected instead of starting safe
     mode: the cycle cap at most the daily cap, the longest sleep at least the shortest (the shortest wins, as when
     Ember sleeps), the default sleep between them, and an exchange rate below 0.5 as none. Each correction spends no
-    more than the owner's options would; the dashboard shows it until the options are fixed."""
+    more than the owner's options would; the dashboard shows it until the options are fixed. A required text of spaces
+    only, which the schema's str(1,x) lets through, becomes its default. A value outside its own range is left for the
+    model to refuse (safe mode): Home Assistant refuses it before, so only a hand-edited file has one."""
     values = dict(raw)
     notes: list[str] = []
 
     def number(key: str) -> float | None:
-        value = values.get(key, Settings.model_fields[key].default)
-        return value if isinstance(value, int | float) and not isinstance(value, bool) else None
+        info = Settings.model_fields[key]
+        value = values.get(key, info.default)
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            return None
+        limits = {type(m).__name__: m for m in info.metadata}
+        return value if limits["Ge"].ge <= value <= limits["Le"].le else None  # NaN is in no range
+
+    for key, info in Settings.model_fields.items():
+        value = values.get(key)
+        if isinstance(value, str) and not value.strip() and any(getattr(m, "min_length", 0) for m in info.metadata):
+            values[key] = info.default
+            notes.append(f"{key} is blank: the default {info.default} is used")
 
     daily, cycle = number("daily_spend_cap_usd"), number("cycle_spend_cap_usd")
     if daily is not None and cycle is not None and cycle > daily:
@@ -449,10 +463,17 @@ def _corrected(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     return values, notes
 
 
+def safe_mode_keeps(owner_unknown: bool) -> str:
+    """0.14.0: what safe mode keeps of the owner's options, for its log line and its event."""
+    if owner_unknown:
+        return "owner_user_ids couldn't be read, so Ember answers no one; the kill switch is kept"
+    return "owner_user_ids and the kill switch are kept"
+
+
 def _safe_mode(errors: list[str], raw: dict[str, Any] | None) -> LoadedSettings:
     """Built-in defaults with dry run forced on. 0.14.0: but the owner's identity and the kill switch's reset, each read
     on its own, so one bad option neither opens the dashboard to every user nor lifts a kill switch (app/main.py
-    never applies a reset in safe mode). If owner_user_ids can't be read, Ember answers no one (owner_unknown)."""
+    never lifts one in safe mode). If owner_user_ids can't be read, Ember answers no one (owner_unknown)."""
     for error in errors:
         log.error("Invalid option: %s", error)
     kept: dict[str, Any] = {}
@@ -461,12 +482,12 @@ def _safe_mode(errors: list[str], raw: dict[str, Any] | None) -> LoadedSettings:
             with contextlib.suppress(ValidationError):
                 kept[key] = getattr(Settings.model_validate({key: raw[key]}), key)
     owner_unknown = raw is None or ("owner_user_ids" in raw and "owner_user_ids" not in kept)
-    log.error("Starting in safe mode: built-in defaults, dry-run forced on; owner_user_ids and the kill switch kept.")
-    if owner_unknown:
-        log.error("owner_user_ids could not be read: Ember answers no one until the options are fixed.")
+    reset_unknown = raw is None or ("kill_switch_reset" in raw and "kill_switch_reset" not in kept)
+    log.error("Starting in safe mode: built-in defaults, dry-run forced on; %s.", safe_mode_keeps(owner_unknown))
     return LoadedSettings(
         Settings(dry_run=True, **kept),
         errors=errors,
         source="safe mode (built-in defaults)",
         owner_unknown=owner_unknown,
+        reset_unknown=reset_unknown,
     )

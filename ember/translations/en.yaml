@@ -73,7 +73,7 @@ configuration:
       pursue; empty, the planner model.
       claude-opus-5-5 here with claude-sonnet-5 as the planner puts the
       stronger model on those decisions only. It needs an entry in the price
-      table.
+      table (at most 100 characters).
   research_model:
     name: Research model
     description: >-
@@ -81,7 +81,8 @@ configuration:
       worker model. It takes over only after a check: its first 10 research
       questions also go to the worker model, and it takes over if it found web
       pages for as many of them, less one. The System log says how the check
-      came out. It needs an entry in the price table.
+      came out. It needs an entry in the price table (at most 100
+      characters).
   price_table:
     name: Price table
     description: >-
@@ -144,7 +145,7 @@ configuration:
     description: >-
       The model that writes the workshop's code. Empty: the worker model.
       claude-opus-5-5 writes better code at twice the price per token. It
-      needs an entry in the price table.
+      needs an entry in the price table (at most 100 characters).
   workshop_run_cap_usd:
     name: Workshop cap per run (USD)
     description: >-
@@ -176,7 +177,8 @@ configuration:
       The Home Assistant user IDs of Ember's owner: only these users can use
       Ember's dashboard, its actions and its diagnostics. Empty: everyone who can
       open the panel counts as the owner, and the dashboard shows your ID to put
-      here. Restart the app after changing it.
+      here. Restart the app after changing it. Each ID has at most 100
+      characters.
   log_level:
     name: Log level
     description: How much detail goes to the app log.
@@ -225,7 +227,7 @@ configuration:
     name: Etsy app keystring
     description: >-
       The keystring of the app you registered at etsy.com/developers for your
-      shop.
+      shop (at most 100 characters).
   etsy_shared_secret:
     name: Etsy app shared secret
     description: >-
@@ -290,7 +292,7 @@ configuration:
     name: Pinterest app ID
     description: >-
       The ID of the app you created for your own account at
-      developers.pinterest.com.
+      developers.pinterest.com (at most 100 characters).
   pinterest_app_secret:
     name: Pinterest app secret
     description: >-
@@ -359,28 +361,28 @@ configuration:
     name: Your full name (Impressum)
     description: >-
       Your name, or your business's with its legal form, as the Impressum
-      (§ 5 DDG) requires.
+      (§ 5 DDG) requires (at most 100 characters).
   site_address:
     name: Your address (Impressum)
     description: >-
       A postal address you can be reached at: street, then postcode and town,
-      separated by a comma (a P.O. box isn't enough).
+      separated by a comma (a P.O. box isn't enough; at most 300 characters).
   site_email:
     name: Your email address (Impressum)
     description: >-
-      An address people can write to; the website shows it.
+      An address people can write to, like shop@example.org (at most 254
+      characters); the website shows it.
   site_phone:
     name: Your phone number (Impressum)
     description: >-
-      Optional: shown in the Impressum if set (at most 40 characters).
+      Optional: shown in the Impressum if set.
   site_vat_id:
     name: Your VAT ID (Impressum)
     description: >-
-      Optional: your Umsatzsteuer-Identifikationsnummer, if you have one (at
-      most 20 characters).
+      Optional: your Umsatzsteuer-Identifikationsnummer, if you have one.
   site_host:
     name: Your web host (privacy page)
     description: >-
       Optional: the name and address of the company that hosts your website,
-      e.g. 'Strato AG, Otto-Ostrowski-Straße 7, 10249 Berlin'. The privacy page
-      names it.
+      e.g. 'Strato AG, Otto-Ostrowski-Straße 7, 10249 Berlin' (at most 200
+      characters). The privacy page names it.

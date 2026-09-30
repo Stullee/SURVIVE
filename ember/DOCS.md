@@ -104,7 +104,8 @@ check whether options fit together, so Ember corrects that at start, toward
 spending less, and the top of the dashboard shows each correction until you fix
 the options: a cycle cap above the daily cap counts as the daily cap, a longest
 sleep below the shortest as the shortest, the default sleep is kept between the
-two, and an exchange rate below 0.5 counts as none. Any other invalid option
+two, an exchange rate below 0.5 counts as none, and a name, model or redirect URI
+made of spaces only counts as its default. Any other invalid option
 (for example a model missing from the price table) starts **safe mode**:
 built-in defaults, dry run forced on, and the problem shown at the top of the
 dashboard. Safe mode keeps your **Owner user IDs** and never lifts the kill
@@ -914,8 +915,7 @@ no longer shown); a study that failed three times stops until you press
   cycle right away.
 - **Kill switch**: stops the agent for good (type its name to confirm). The
   dashboard keeps working. To undo it, change **Kill switch reset** in the app's
-  **Configuration** tab to any other number, save and restart the app (in safe
-  mode the kill switch stays on until the options are valid).
+  **Configuration** tab to any other number, save and restart the app.
 
 The agent hears about your decisions, messages and upgrades once, at its next
 wake-up.

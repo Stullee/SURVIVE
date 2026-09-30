@@ -17,7 +17,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from app.agent.owner import KILL_RESET_KEY
-from app.config import _SITE_EMAIL, _SITE_URL, ModelPrice, Settings, load_settings
+from app.config import _SITE_EMAIL, _SITE_URL, ModelPrice, Settings, _corrected, load_settings
 from app.economy.life import KILLED_KEY
 from app.security import NOT_OWNER, SAFE_MODE_LOCKED, AccessPolicy
 from tests.test_owner_api import CSRF, grant
@@ -143,11 +143,47 @@ def test_safe_mode_keeps_the_kill_switch(client_factory: Callable[..., Iterator[
     assert any("may run again" in e["message"] for e in valid["events"])
 
 
-def test_a_first_start_in_safe_mode_stores_no_reset(
+def test_a_kill_made_in_safe_mode_needs_a_reset_after_it(
     client_factory: Callable[..., Iterator[TestClient]], write_options
 ) -> None:
-    assert _start(client_factory, write_options, {"kill_switch_reset": 3, **UNPRICED})["marker"] is None
+    """Review round 1: the owner changed kill_switch_reset while the options were invalid and Ember was alive, then
+    used the kill switch in that safe-mode session. The next valid start took the earlier change for a reset and lifted
+    the kill. With valid options throughout, the kill stays on."""
+    assert _start(client_factory, write_options, {"kill_switch_reset": 1})["marker"] == "1"
+    write_options({"owner_user_ids": [OWNER], "kill_switch_reset": 2, **UNPRICED})
+    with client_factory(load_settings()) as client:
+        assert client.app.state.ember.db.get_meta(KILL_RESET_KEY) == "2"  # alive: nothing to lift, as a valid start
+        killed = client.post("api/control/kill", json={"confirm_name": "Ember"}, headers=as_user(OWNER))
+        assert killed.status_code == 200 and killed.json()["state"] == "killed"
+    valid = _start(client_factory, write_options, {"kill_switch_reset": 2})
+    assert valid["killed"] == "1" and valid["marker"] == "2"
+    assert not any("may run again" in e["message"] for e in valid["events"])
+    assert _start(client_factory, write_options, {"kill_switch_reset": 3})["killed"] == "0"  # a reset after the kill
+
+
+def test_a_reset_safe_mode_cant_read_is_never_stored(
+    client_factory: Callable[..., Iterator[TestClient]], write_options
+) -> None:
+    unreadable = _start(client_factory, write_options, {"kill_switch_reset": -1, **UNPRICED})
+    assert unreadable["marker"] is None and unreadable["killed"] is None
+    assert _start(client_factory, write_options, {"kill_switch_reset": 3, **UNPRICED})["marker"] == "3"
     assert _start(client_factory, write_options, {"kill_switch_reset": 3})["marker"] == "3"
+
+
+def test_the_safe_mode_messages_say_what_is_kept(
+    client_factory: Callable[..., Iterator[TestClient]], write_options
+) -> None:
+    """Review round 1: a locked safe mode still said "owner_user_ids and the kill switch are kept", and an unreadable
+    reset was announced as a new one."""
+    write_options({"owner_user_ids": [OWNER], "kill_switch_reset": 1})
+    with client_factory(load_settings()) as client:
+        killed = client.post("api/control/kill", json={"confirm_name": "Ember"}, headers=as_user(OWNER))
+        assert killed.status_code == 200
+    write_options({"owner_user_ids": OWNER, "kill_switch_reset": "two", **UNPRICED})
+    with client_factory(load_settings()) as client:
+        messages = [row["message"] for row in client.app.state.ember.db.recent_events(50)]
+    assert any("owner_user_ids couldn't be read, so Ember answers no one" in m for m in messages)
+    assert not any("are kept" in m or "Safe mode keeps the kill switch on" in m for m in messages)
 
 
 # --- FIX 5: rules between options are corrected, bounds are in config.yaml ------------------------------------------
@@ -198,6 +234,44 @@ def test_consistent_options_are_not_corrected(write_options) -> None:
     assert not loaded.safe_mode and loaded.corrections == []
     write_options({"min_sleep_minutes": "late", "wake_interval_minutes": 60})  # a wrong type is still an error
     assert load_settings().safe_mode
+
+
+@pytest.mark.parametrize(
+    ("options", "error"),
+    [
+        ({"min_sleep_minutes": 10**400}, "min_sleep_minutes: Input should be less than or equal to 10080"),
+        ({"cycle_spend_cap_usd": 10**400}, "cycle_spend_cap_usd: Input should be a valid number"),  # beyond a float
+        ({"cycle_spend_cap_usd": 2000}, "cycle_spend_cap_usd: Input should be less than or equal to 1000"),
+        ({"max_sleep_minutes": 3}, "max_sleep_minutes: Input should be greater than or equal to 5"),
+        ({"etsy_usd_per_eur": float("nan")}, "etsy_usd_per_eur: Input should be less than or equal to 3"),
+    ],
+)
+def test_a_number_outside_its_range_is_reported_not_corrected(
+    options: dict, error: str, data_dir: Path, write_options
+) -> None:
+    """Review round 1: the corrections ran before each option's own range was checked. An integer too large for a float
+    crashed load_settings ("Never raises"), and an out-of-range value was quietly corrected instead of reported. Home
+    Assistant refuses both; a hand-edited options file doesn't."""
+    if options.get("etsy_usd_per_eur") != options.get("etsy_usd_per_eur"):  # NaN: json.dumps writes it as NaN
+        (data_dir / "options.json").write_text('{"etsy_usd_per_eur": NaN}', encoding="utf-8")
+    else:
+        write_options(options)
+    loaded = load_settings()
+    assert loaded.safe_mode and loaded.corrections == []
+    assert any(e.startswith(error) for e in loaded.errors), loaded.errors
+
+
+REQUIRED_TEXT = ("agent_name", "planner_model", "worker_model", "etsy_redirect_uri", "pinterest_redirect_uri")
+
+
+@pytest.mark.parametrize("key", REQUIRED_TEXT)
+def test_a_required_text_of_spaces_only_is_its_default(key: str, write_options) -> None:
+    """Review round 1: Home Assistant's str(1,40) saves " ", which Ember strips to nothing and refused (safe mode)."""
+    write_options({key: " \t", "dry_run": False})
+    loaded = load_settings()
+    default = Settings.model_fields[key].default
+    assert not loaded.safe_mode and getattr(loaded.settings, key) == default
+    assert loaded.corrections == [f"{key} is blank: the default {default} is used"]
 
 
 # The Supervisor's grammar for a schema rule (supervisor/addons/options.py, RE_SCHEMA_ELEMENT). A rule outside it
@@ -284,15 +358,23 @@ def test_every_bound_in_config_py_is_in_the_schema() -> None:
         ("owner_user_ids[]", "x" * 100),
         ("owner_user_ids[]", "x" * 101),
         ("workshop_model", "m" * 101),
+        *((key, blank) for key in REQUIRED_TEXT for blank in (" ", "\t", "\n")),
+        ("price_table.model", " "),  # both accept it: the row's model is stripped after its length is checked
     ],
 )
 def test_what_home_assistant_saves_ember_accepts(key: str, value: str) -> None:
     """The same answer from both: a value Home Assistant saves never starts safe mode, and one Ember would refuse is
     refused when the owner saves it."""
     rule = dict((name, rule) for name, rule, _ in _rules())[key]
-    options = {"owner_user_ids": [value]} if key == "owner_user_ids[]" else {key: value}
+    if key == "owner_user_ids[]":
+        options: dict[str, Any] = {"owner_user_ids": [value]}
+    elif key == "price_table.model":
+        rows = [price.model_dump() for price in Settings().price_table]
+        options = {"price_table": [*rows, {**rows[0], "model": value}]}
+    else:
+        options = {key: value}
     try:
-        Settings.model_validate(options)
+        Settings.model_validate(_corrected(options)[0])  # as load_settings does
         ember = True
     except pydantic.ValidationError:
         ember = False
