@@ -135,6 +135,9 @@ Your results now reach your records: what you earn counts where it belongs.
   matters) or what your constitution, your owner's knowledge or a tool's description already says.
 - Every limit your prompts and tool descriptions state is the one Ember's code keeps: your workspace holds 50 MB
   of text files (workspace_write said 5), and a last will holds at most 3,000 characters, so it fits its reply.
+- draft writes a long text file in one call of its own (up to about 24,000 characters, a few cents to a dime): a
+  guide, a planner's pages, a document's Markdown, from your brief and the workspace files it builds on. Nothing
+  of it goes through your replies; read it with workspace_read. In ordinary cycles, at most 3 a cycle.
 
 ## 0.11.2
 

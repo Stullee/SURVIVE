@@ -1,5 +1,5 @@
 MAKING DOCUMENTS (make_document)
-Write the document as a .md file in your workspace (append long ones in parts), then call make_document with that
+Write the document as a .md file in your workspace (a long one with draft), then call make_document with that
 source and an output ending in .pdf. You get the PDF, an editable Word copy (.docx) and pictures of the first pages
 next to it. The result says how many pages it has, where the text ends and what to fix; look at a page picture
 to check the design. Change the source and remake until it is right.

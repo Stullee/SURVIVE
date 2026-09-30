@@ -616,6 +616,7 @@ GOOD_REQUESTS = {
     "every request the agent builds": prompts.plan_request(SETTINGS, "context"),
     "the reflect turn": prompts.reflect_request(SETTINGS, "brief", [turn("assistant", TEXT, USE)], [RESULT]),
     "the last will": prompts.will_request(SETTINGS, "context"),
+    "a draft": prompts.draft_request(SETTINGS, "A guide to weekly planning.", '<data src="a.md" id="x">\nA</data>'),
     "a search limited to one site": prompts.research_request(SETTINGS, "q", None, "reddit.com"),
     "a step with the mailbox's tools": prompts.work_request(SETTINGS, "brief", [], mail=True),
 }
@@ -951,6 +952,7 @@ def test_chaos_produces_every_kind_of_misbehaviour() -> None:
         fake = FakeTransport(seed=seed, scenario="chaos", clock=Clock())
         card = f"YOUR NUMBERS\n#1 [active] Planner · open 2 days · 3 cycles in the period (3 in all) · take {seed}"
         fake.send(prompts.review_request(SETTINGS, card))
+        fake.send(prompts.draft_request(SETTINGS, f"A guide to weekly planning, take {seed}."))  # 0.12.0
         notes |= {note for _, _, note in fake.trace}
     assert {f"chaos: {c}" for kinds in CHAOS.values() for c in kinds} <= notes
     inputs = [(name, args, ok) for sim in sims for _, name, args, ok in sim.tool_log]

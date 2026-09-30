@@ -85,7 +85,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.metering import Completed, FilesError, Interrupted, NotSent, Outcome, Rejected, rough_token_count
-from .prompts import REFLECT_MARKER
+from .prompts import DRAFT_MARKER, REFLECT_MARKER
 from .tools import SPECS
 
 SCENARIOS = ("founder", "idle", "drain", "flaky", "chaos", "injection")
@@ -137,6 +137,7 @@ CHAOS: dict[str, tuple[str, ...]] = {
     ),
     "reflect": ("disallowed_tool", "double_journal", "text_only", "empty"),
     "research": ("pause_turn", "search_error"),
+    "draft": ("cut_off", "fenced"),  # 0.12.0
     "workshop": ("svg", "nothing", "pause"),
     "review": ("prose", "cut_off", "unknown_project"),
     "brainstorm": ("prose", "cut_off"),
@@ -382,8 +383,8 @@ def thinking_signature(thinking: str) -> str:
 
 
 def request_kind(request: Mapping[str, Any]) -> str:
-    """plan, review, brainstorm, study, workshop, research, reflect, work or will (anything else without tools counts
-    as a will)."""
+    """plan, review, brainstorm, study, workshop, research, draft, reflect, work or will (anything else without tools
+    counts as a will)."""
     output_config = request.get("output_config")
     fmt = output_config.get("format") if isinstance(output_config, Mapping) else None
     schema = fmt.get("schema") if isinstance(fmt, Mapping) else None
@@ -396,6 +397,10 @@ def request_kind(request: Mapping[str, Any]) -> str:
         return "brainstorm"
     if isinstance(properties, Mapping) and "learnings" in properties:
         return "study"
+    system = request.get("system")
+    first = system[0] if isinstance(system, list) and system else None
+    if isinstance(first, Mapping) and str(first.get("text") or "").startswith(DRAFT_MARKER):
+        return "draft"  # 0.12.0
     tools = [t for t in request.get("tools") or [] if isinstance(t, Mapping)]
     if any(str(t.get("type") or "").startswith("code_execution_") for t in tools):
         return "workshop"
@@ -1209,6 +1214,8 @@ class FakeTransport:
             draft = self._workshop(request, rng, chaos)
         elif kind == "will":
             draft = self._will(request, rng, chaos)
+        elif kind == "draft":
+            draft = self._draft(request, rng, chaos)
         elif kind == "reflect":
             draft = self._reflect(request, _Conversation.parse(request), rng, chaos)
         else:
@@ -2210,6 +2217,26 @@ class FakeTransport:
         return _Draft(content, extra_input_tokens=SEARCH_RESULT_TOKENS, web_search_requests=1, note="research")
 
     # last will (and any other plain request)
+
+    def _draft(self, request: Mapping[str, Any], rng: random.Random, chaos: str | None) -> _Draft:
+        """A long file from the agent's brief (0.12.0): a title from the brief's first line, then sections."""
+        ask = _text_of(request["messages"][-1].get("content"))
+        brief = ask.removeprefix("Brief:\n").split("\n\nThe files it builds on:")[0].strip()
+        title = " ".join(brief.split("\n")[0].split())[:80].rstrip(".") or "Draft"
+        sections = [f"# {title}"]
+        for number in range(1, rng.randint(3, 6) + 1):
+            sections.append(f"## Part {number}\n\n{_filler(rng, rng.randint(400, 1_500))}")
+        sections.append("---\n\nMade with AI help.")
+        text = "\n\n".join(sections)
+        if chaos == "cut_off":
+            max_tokens = int(request.get("max_tokens") or 1)
+            text = text + "\n\n" + _filler(rng, max_tokens * 4)
+            return _Draft(
+                [_text(text[: max_tokens * 3])], "max_tokens", output_tokens=max_tokens, note="chaos: cut_off"
+            )
+        if chaos == "fenced":
+            return _Draft([_text(f"```markdown\n{text}\n```")], note="chaos: fenced")
+        return _Draft([_text(text)], note="draft")
 
     def _will(self, request: Mapping[str, Any], rng: random.Random, chaos: str | None) -> _Draft:
         context = _text_of(request["messages"][-1].get("content"))

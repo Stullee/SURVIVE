@@ -230,6 +230,7 @@ class CycleRunner:
             mail=tools.MailAccess(self.mailbox.address, self.settings.email_daily_limit) if self.mailbox else None,
         )
         ctx.research = self._research_fn(ctx)
+        ctx.draft = self._draft_fn(ctx)
         ctx.workshop = self._workshop_fn(ctx) if prompts.workshop_on(self.settings) else None
         end = CycleEnd("failed", "the cycle ended unexpectedly")
         try:
@@ -1115,6 +1116,45 @@ class CycleRunner:
 
         return research
 
+    # --- drafts (0.12.0: a long file written by a metered call of its own) ---
+
+    def _draft_fn(self, ctx: tools.ToolContext) -> tools.DraftFn:
+        def draft(brief: str, sources: str) -> tools.Drafted | tools.Outcome:
+            request = prompts.draft_request(self.settings, brief, sources)
+            try:
+                fits, expected, _ = self.meter.affordable(
+                    request, "draft", ctx.cycle_id, ctx.state.reflect_reserve, ctx.state.reflect_money
+                )
+            except Unpriceable as exc:
+                return tools.Outcome(False, f"Error: the draft can't be priced ({exc}).", "refused: unpriceable")
+            if not fits:
+                return tools.Outcome(
+                    False,
+                    f"Error: the draft could cost about ${micros_to_usd(expected):.3f}, more than this cycle has left"
+                    f"{_kept(ctx)}.",
+                    "refused: budget",
+                )
+            try:
+                result = self._call(ctx.cycle_id, "draft", request)
+            except CallRefused as exc:  # a state or system refusal ends the cycle at its next call
+                return tools.Outcome(False, f"Error: the draft was refused ({exc.reason}).", "refused")
+            except CallFailed as exc:
+                why = exc.result.error or exc.result.status
+                return tools.Outcome(False, f"Error: the draft failed ({why}).", "failed", paid=True)
+            response = result.response or {}
+            text = _unfenced(_text_of(response))
+            if not text.strip():
+                cost = micros_to_usd(result.cost_micros)
+                return tools.Outcome(
+                    False, f"Error: the draft came back empty (cost ${cost:.4f}).", "failed: empty", paid=True
+                )
+            self._save_text(result.call_id, text, response)
+            return tools.Drafted(
+                text.rstrip("\n") + "\n", response.get("stop_reason") == "max_tokens", result.cost_micros
+            )
+
+        return draft
+
     # --- brainstorms (0.10.0: a metered call on the planner's model that grows the venture tree) ---
 
     def _brainstorm_fn(self, ctx: tools.ToolContext) -> tools.BrainstormFn:
@@ -1297,6 +1337,14 @@ def _step(text: str) -> str:
     """A plan step as the brief shows it: at most STEP_CHARS characters, a longer one cut with "…" (0.11.1: steps were
     cut silently, often the first one, which answers the owner)."""
     return text if len(text) <= STEP_CHARS else text[: STEP_CHARS - 1].rstrip() + "…"
+
+
+def _unfenced(text: str) -> str:
+    """A draft's text without a code fence around all of it (0.12.0: it is told not to, but may)."""
+    lines = text.strip("\n").split("\n")
+    if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1])
+    return text
 
 
 def _whole_calls(content: list[Any], uses: list[dict[str, Any]]) -> list[dict[str, Any]]:

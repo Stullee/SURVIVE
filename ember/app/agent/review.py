@@ -57,6 +57,7 @@ _PURPOSES = {
     "reflect": "planning and work",
     "research": "research",
     "workshop": "the workshop",
+    "draft": "drafts",
     "review": "reviews",
     "brainstorm": "brainstorms",
     "last_will": "the last will",

@@ -226,6 +226,14 @@ agent's workspace:
   next to a title, a subtitle and a badge, in Etsy's 4:3 size (3000 x 2250) or
   square or portrait.
 
+A long text (a guide, a planner's pages) no longer goes through the agent's
+replies 2,500 characters at a time: with **draft** the worker model writes the
+whole file in one call of its own (up to about 24,000 characters, a few cents
+to a dime on claude-sonnet-5), from the agent's brief and the workspace files it
+names; the file is saved in the workspace and never read back through the
+conversation. Drafts count toward the cycle cap like research, at most 3 a
+cycle, in ordinary cycles only.
+
 The agent can **look** at a picture (a page or a listing photo) before it shows
 you anything, and it reads a short guide for each tool. The PDFs embed their
 fonts (Carlito, Caladea and Poppins, all under the SIL Open Font License); the

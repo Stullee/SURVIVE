@@ -69,7 +69,7 @@ CYCLE_END_STATUSES = frozenset({"completed", "idle", "refused", "failed", "stopp
 OPENING_PURPOSES = frozenset({"plan", "last_will"})
 # 0.12.0: the calls that do a cycle's work, charged to the venture and milestone they serve (the cycle's focus, or the
 # venture a research call names); the rest (plans, reviews, brainstorms, library study, the last will) is overhead.
-WORK_PURPOSES = ("work", "reflect", "research", "workshop")
+WORK_PURPOSES = ("work", "reflect", "research", "workshop", "draft")  # 0.12.0: a draft is work too
 _PURPOSE = re.compile(r"^[a-z_]{1,32}$")
 _TRIGGER = re.compile(r"^[a-z_]{1,32}$")
 CLOCK_TOLERANCE_SECONDS = 60

@@ -92,14 +92,20 @@ LIBRARY_TOOLS = frozenset({"knowledge_search", "library_read"})
 # the tools for building and selling (making and looking at files, the workshop, the shop, email and Reddit). They
 # belong to ordinary cycles, like the legs they serve.
 ORDINARY_TOOLS = (
-    frozenset({"make_document", "make_spreadsheet", "make_image", "look", "workshop", "propose_reddit_post"})
+    frozenset({"make_document", "make_spreadsheet", "make_image", "look", "workshop", "draft", "propose_reddit_post"})
     | ETSY_TOOLS
     | MAIL_TOOLS
 )
 # Model calls of their own: they need the network, and no database transaction is held meanwhile.
-CALLING_TOOLS = frozenset({"research", "workshop", "brainstorm"})
+CALLING_TOOLS = frozenset({"research", "workshop", "brainstorm", "draft"})
 WORKSHOP_INPUTS = 5  # files handed over to one workshop run
 WORKSHOP_INPUT_MB = 10  # their size together
+# 0.12.0: a long file written in one call of its own (draft; prompts takes these from here). A work reply holds only
+# ONE_REPLY_CHARS of a text, and every part written through the conversation is read again by each later step.
+DRAFT_MAX_TOKENS = 8_000
+DRAFT_CHARS = DRAFT_MAX_TOKENS * 3  # what a draft holds at least (3 characters a token)
+DRAFT_SOURCES = 5  # workspace files a draft builds on
+DRAFT_SOURCE_CHARS = 24_000  # their text, together
 FIRST_CONTACT = (
     "First email to this address: Ember has never received mail from it. Cold advertising emails are illegal in "
     "Germany (§ 7 UWG)."
@@ -193,7 +199,8 @@ SPECS: dict[str, Spec] = {
         Spec(
             "workspace_write",
             f"Create, overwrite, append to or delete a text file in your workspace (at most {WRITE_CHARS:,} characters "
-            "per call: write a longer file in parts, create then append, one part per reply; "
+            "per call: write a longer file with draft where you have it, or in parts, create then append, one part "
+            "per reply; "
             f"{Limits().max_file_bytes // 1024} KB per file; {Limits().max_total_bytes // (1024 * 1024)} MB in "
             "total). Allowed endings: .md .txt .csv .tsv .json .yaml .yml .html .css .xml. PDF, Word, Excel and PNG "
             "files are made with the make_ tools; delete works for them too.",
@@ -540,6 +547,32 @@ SPECS: dict[str, Spec] = {
             },
             per_cycle=1,
             reflect=True,
+        ),
+        Spec(
+            "draft",
+            f"Have a long text file written in one call of its own on your worker's model (up to about "
+            f"{DRAFT_CHARS:,} characters, a few cents to a dime): a guide, a planner's pages, a document's Markdown. "
+            "Give a precise brief and the workspace files it builds on; the file is saved in your workspace (read it "
+            "with workspace_read), and nothing of it goes through your replies.",
+            {
+                "path": _s("The text file to write, e.g. 'drafts/planner-guide.md'.", 200),
+                "brief": _s(
+                    "What to write, precisely: purpose, readers, structure, length, tone and language.", ONE_REPLY_CHARS
+                ),
+                "sources": _s(
+                    f"Workspace text files it builds on, separated by commas (at most {DRAFT_SOURCES}).",
+                    600,
+                    required=False,
+                ),
+                "mode": _s(
+                    "create (the default), overwrite, or append (to go on where a draft was cut off: give the file as "
+                    "a source).",
+                    10,
+                    enum=("create", "overwrite", "append"),
+                    required=False,
+                ),
+            },
+            per_cycle=3,
         ),
         Spec(
             "research",
@@ -912,6 +945,18 @@ BrainstormFn = Callable[[str, "int | None"], Outcome]  # the theme ("" for anyth
 
 
 @dataclass(frozen=True)
+class Drafted:
+    """A draft's text (0.12.0), whether its reply was cut off at its length, and what it cost."""
+
+    text: str
+    cut_off: bool
+    cost_micros: int
+
+
+DraftFn = Callable[[str, str], "Drafted | Outcome"]  # the brief, the sources marked as data: the text, or why not
+
+
+@dataclass(frozen=True)
 class MailAccess:
     """What the tools know of Ember's mailbox: its address and send limit, never its password or a way to send."""
 
@@ -950,6 +995,7 @@ class ToolContext:
     venture: bool = False  # a venture cycle (0.10.0): brainstorm, and more research
     library: bool = False  # the owner's library holds documents (0.12.0): its tools
     brainstorm: BrainstormFn | None = None
+    draft: DraftFn | None = None  # 0.12.0
     nonce: str = field(default_factory=lambda: secrets.token_hex(3))
 
     def now(self) -> str:
@@ -1507,6 +1553,54 @@ def _brainstorm(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     if ctx.brainstorm is None:
         raise ToolError("brainstorming isn't available right now")
     return ctx.brainstorm(" ".join((args.get("theme") or "").split()), args.get("venture_id"))
+
+
+def _draft(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
+    """0.12.0: a long text file written by a call of its own and saved in the workspace; everything that can be
+    refused is checked before the call is paid for."""
+    if ctx.draft is None:
+        raise ToolError("drafting isn't available right now")
+    path, mode = args["path"].strip(), args.get("mode") or "create"
+    ctx.workspace.parts(path)  # a text file's path, or refused
+    exists = ctx.workspace.exists(path)
+    if mode == "create" and exists:
+        raise ToolError(f"{path} already exists: overwrite it, append to it, or name a new file")
+    if mode == "append" and not exists:
+        raise ToolError(f"{path} doesn't exist yet: create it first")
+    brief = args["brief"].strip()
+    if not brief:
+        raise ToolError("the brief is empty")
+    names = [n.strip() for n in (args.get("sources") or "").split(",") if n.strip()]
+    if len(names) > DRAFT_SOURCES:
+        raise ToolError(f"a draft builds on at most {DRAFT_SOURCES} files")
+    sources, left = [], DRAFT_SOURCE_CHARS
+    for name in dict.fromkeys(names):
+        text = ctx.workspace.read(name)  # a text file of the workspace, or refused
+        if len(text) > left:
+            more = f"\n[... the rest of {name} left out: a draft's sources hold {DRAFT_SOURCE_CHARS:,} characters]"
+            text = text[: max(0, left)] + more
+        left -= len(text)
+        sources.append(wrap(ctx, name, text))
+    drafted = ctx.draft(brief, "\n\n".join(sources))
+    if isinstance(drafted, Outcome):
+        return drafted
+    cost = f"(cost ${micros_to_usd(drafted.cost_micros):.4f})"
+    try:
+        size = ctx.workspace.write(path, drafted.text, append=mode == "append", create_only=mode == "create")
+    except SandboxError as exc:
+        return Outcome(False, f"Error: the draft was written but can't be saved ({exc}). {cost}", "refused", paid=True)
+    cut = (
+        f" It was cut off at its length limit: read its end with workspace_read, then draft the rest with mode append "
+        f"and {path} as a source."
+        if drafted.cut_off
+        else ""
+    )
+    return Outcome(
+        True,
+        f"{'Appended to' if mode == 'append' else 'Wrote'} {path}: {len(drafted.text):,} characters, now {size:,} "
+        f"bytes.{cut} Read it with workspace_read before you use it. {cost}",
+        f"draft {path}",
+    )
 
 
 # --- the roadmap (0.11.0) ---
@@ -2768,6 +2862,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "set_sleep": _set_sleep,
     "write_journal": _write_journal,
     "research": _research,
+    "draft": _draft,
     "knowledge_search": _knowledge_search,
     "library_read": _library_read,
     "workshop": _workshop,
