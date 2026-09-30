@@ -85,6 +85,12 @@ MAX_ACTIVE = 8  # ventures being worked on at once (ideas don't count: the tree 
 # after it began is parked, and a backed venture's first test is due this many days after the owner backed it.
 RESEARCH_DAYS = 21
 FIRST_TEST_DAYS = 21
+# 0.13.0: triage, an idea of the agent's is researched or parked within this many days of coming up; a live venture that
+# has sold nothing this many days after going live is parked (and one that earns more than it costs gets a decision
+# point to scale it, due in SCALE_DAYS).
+TRIAGE_DAYS = 30
+LIVE_DAYS = 60
+SCALE_DAYS = 21
 MAX_VENTURES = 400  # in the whole tree, parked and killed ones included
 # 0.12.0: a venture that isn't backed has this much for research calls (their cost, from the start or since the owner
 # last asked for research on it), then a decision: Ember's code refuses more (it was "decide within about $3", a line
@@ -670,10 +676,40 @@ def _head(v: Mapping[str, Any], m: Money) -> str:
     return head + (f" · {rule}" if rule else "") + (f" · {said}" if said else "")
 
 
+def rule_clock(v: Mapping[str, Any]) -> date | None:
+    """0.13.0: the day a stage's rule counts from: when the venture reached its stage or, for one already in it when
+    the rule came (rules_from), that day. None for a row built by hand without the columns."""
+    reached = _value(v, "stage_at") or _value(v, "created_at")
+    if not reached:
+        return None
+    start = date.fromisoformat(str(reached)[:10])
+    since = _value(v, "rules_from")
+    return max(start, date.fromisoformat(str(since)[:10])) if since else start
+
+
+def triage_date(v: Mapping[str, Any]) -> date | None:
+    """0.13.0: the day Ember's code parks an idea of the agent's no one took up (None for the owner's ideas)."""
+    start = rule_clock(v)
+    if v["stage"] != "idea" or _value(v, "created_by") != "agent" or start is None:
+        return None
+    return start + timedelta(days=TRIAGE_DAYS)
+
+
 def stage_rule(v: Mapping[str, Any]) -> str:
     """The rule of the venture's stage that Ember's code keeps (0.12.0, agent/stages.py), in a few words: "" for a
     stage without one, or a row built by hand without the columns."""
     began, test, parked_by = (_value(v, name) for name in ("research_from", "test_milestone_id", "parked_by"))
+    triage = triage_date(v)
+    if triage is not None:  # 0.13.0
+        return f"an idea: research it by {triage.isoformat()} or Ember's code parks it (triage)"
+    if v["stage"] == "live":  # 0.13.0
+        scale = _value(v, "scale_milestone_id")
+        if scale:
+            return f"it earns more than it costs: milestone #{scale} scales it"
+        start = rule_clock(v)
+        if start is not None:
+            ends = (start + timedelta(days=LIVE_DAYS)).isoformat()
+            return f"live: nothing sold by {ends} parks it; earning more than it costs sets a milestone to scale it"
     if v["stage"] == "researching" and began:
         park = date.fromisoformat(str(began)[:10]) + timedelta(days=RESEARCH_DAYS)
         return f"researched since {str(began)[:10]}: no business case by {park.isoformat()} parks it"

@@ -11,6 +11,12 @@ stage has a rule (``RULES``): what completes it, and when Ember's code parks the
 * building: when the owner backs a venture, its first test becomes a milestone Ember's code sets (``first_test``, due
   in FIRST_TEST_DAYS, its date fixed); the venture goes live once that is met (the database refuses it before), and is
   parked when it is missed (closed missed, or still open FIRST_TEST_GRACE_DAYS after its date).
+* idea (0.13.0, triage): an idea of the agent's is researched (researching) or parked within TRIAGE_DAYS of coming up;
+  Ember's code parks it then. The owner's ideas wait for them.
+* live (0.13.0, scale): a live venture that earns more than it costs (its P&L: revenue less expenses and the API calls
+  that worked for it) gets a decision point Ember's code sets, to scale it (``scale``, due in SCALE_DAYS); one that has
+  sold nothing (no revenue recorded, no Etsy order of its listings) LIVE_DAYS after it went live is parked.
+For a venture already in the stage when a rule came, the rule counts from then (``rules_from``).
 
 Ember's code parks reversibly (``parked_by`` 'code'): only the owner takes such a venture up again, and only the owner
 backs or kills one (migration 0030). A venture parked or killed takes its open milestones with it
@@ -25,11 +31,14 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import from_iso
-from . import roadmap, ventures
+from . import metrics, roadmap, ventures
 from .store import AgentScope
 
 RESEARCH_DAYS = ventures.RESEARCH_DAYS
 FIRST_TEST_DAYS = ventures.FIRST_TEST_DAYS
+TRIAGE_DAYS = ventures.TRIAGE_DAYS  # 0.13.0
+LIVE_DAYS = ventures.LIVE_DAYS
+SCALE_DAYS = ventures.SCALE_DAYS
 FIRST_TEST_GRACE_DAYS = 7
 OPEN_PROJECTS = ("idea", "active", "waiting")
 NO_TEST = (
@@ -121,11 +130,66 @@ def park(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any]
     return f"Ember's code parked venture #{vid} ({venture['title']}): {why}{also}"
 
 
+def sold(conn: sqlite3.Connection, scope: AgentScope, venture_id: int, paid: ventures.Money) -> bool:
+    """0.13.0: whether a venture has sold anything: revenue recorded for it, or an Etsy order of its listings."""
+    if paid.earned > 0:
+        return True
+    ours = {int(r["listing_id"]) for r in metrics.listings(conn, scope, None, venture_id)}
+    return bool(ours) and bool(metrics.orders_of(conn, scope, ours, ""))
+
+
+def scale(
+    conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any], paid: ventures.Money, today: date, now: str
+) -> int:
+    """0.13.0: the decision point of a live venture that earns more than it costs: scale what sells. A goal of its own
+    in the plan, due in SCALE_DAYS, closed by the agent once that is under way. Returns its number."""
+    title = f"Scale it: {' '.join(str(venture['title']).split())}"
+    limit = roadmap.LIMITS["title"]
+    milestone_id = roadmap.create(
+        conn,
+        scope,
+        title=title if len(title) <= limit else title[: limit - 1].rstrip() + "…",
+        measure=(
+            f"It earns more than it costs ({ventures.money_text(paid)}): more of what sells (variants, bundles, "
+            "another channel) is under way; you close it then"
+        )[: roadmap.LIMITS["measure"]],
+        due=(today + timedelta(days=SCALE_DAYS)).isoformat(),
+        now=now,
+        venture_id=int(venture["id"]),
+        created_by="code",
+        kind="decision",
+    )
+    conn.execute(
+        "UPDATE ventures SET scale_milestone_id = ?, updated_at = ? WHERE id = ?", (milestone_id, now, venture["id"])
+    )
+    return milestone_id
+
+
 def keep(conn: sqlite3.Connection, scope: AgentScope, today: date, now: str) -> list[str]:
     """Before every plan: a first test for each backed venture that has none, and the stages' rules (research without
-    a business case, a missed first test). Returns what happened, for the events."""
+    a business case, a missed first test; 0.13.0: an idea no one took up, a live venture that sells nothing or earns
+    more than it costs). Returns what happened, for the events."""
     happened = []
+    paid = ventures.money(conn, scope)
     for v in ventures.all_ventures(conn, scope):
+        if v["stage"] == "idea":  # 0.13.0: triage
+            triage = ventures.triage_date(v)
+            if triage is not None and today >= triage:
+                happened.append(
+                    park(conn, scope, v, now, f"no one took the idea up within {TRIAGE_DAYS} days (triage)")
+                )
+            continue
+        if v["stage"] == "live":  # 0.13.0: scale, or park what sells nothing
+            money = paid.get(int(v["id"]), ventures.Money())
+            start = ventures.rule_clock(v)
+            if money.earned > 0 and money.net > 0 and not v["scale_milestone_id"]:
+                made = scale(conn, scope, v, money, today, now)
+                happened.append(
+                    f"Ember's code set milestone #{made}: scale venture #{v['id']} (it earns more than it costs)"
+                )
+            elif start is not None and (today - start).days >= LIVE_DAYS and not sold(conn, scope, int(v["id"]), money):
+                happened.append(park(conn, scope, v, now, f"nothing sold {LIVE_DAYS} days after it went live"))
+            continue
         if v["stage"] == "researching":
             if not v["research_from"] or (today - _day(v["research_from"])).days < RESEARCH_DAYS:
                 continue

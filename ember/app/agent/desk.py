@@ -148,10 +148,15 @@ def ready(
             ranked.append(((_TIER["answer"], *by_value, vid), Item("answer", vid, text)))
         elif stage == "idea":
             text = f"{title} · an idea, {ventures.scores_text(v)}: research it (stage researching) or park it with why"
+            triage = ventures.triage_date(v)  # 0.13.0: an idea of the agent's no one takes up is parked then
+            if triage is not None:
+                text += f" · parked by Ember's code on {triage.isoformat()}"
             if wish:
                 ranked.append(
                     ((_TIER["wish"], 1, 1, 0.0, heavy, vid), Item("triage", vid, f"your owner's idea: {text}"))
                 )
+            elif room and triage is not None and (triage - today).days <= URGENT_DAYS:
+                ranked.append(((_TIER["urgent"], triage.toordinal(), 1, 0.0, heavy, vid), Item("triage", vid, text)))
             elif room:
                 ranked.append(((_TIER["triage"], heavy, vid), Item("triage", vid, text)))
     if mode == burn.EXPLORE and len(rows) + ventures.BRAINSTORM_IDEAS <= ventures.MAX_VENTURES:

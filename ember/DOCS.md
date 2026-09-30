@@ -557,7 +557,14 @@ euros. The tab's badge counts the ones waiting. On each card:
 parks a venture whose research brings no business case within 21 days of its
 first research call (while nothing is built for it: no open project), and a
 backed venture whose first test is missed (closed missed, or still open a week
-after its date). A venture parked this way says **Parked by Ember's code**, with
+after its date). It also parks an idea of the agent's that no one took up
+(researched) within 30 days, the **triage** (your own ideas wait for you), and a
+**live** venture that has sold nothing 60 days after it went live (no revenue
+recorded for it, no Etsy order of its listings). A live venture that earns more
+than it costs gets a decision point instead: **Scale it** (21 days), a goal of
+its own on the roadmap, which the agent closes once more of what sells is under
+way. Ventures already waiting as ideas or live when this version came count
+from the upgrade, so none is parked at once. A venture parked this way says **Parked by Ember's code**, with
 the reason in its notes; like one you parked, only you take it up again. Only
 you back or kill a venture: the database refuses it from anyone else. A venture
 that is parked or killed takes its open milestones with it (when the agent or
