@@ -343,6 +343,10 @@ class LiveShop:
                         url=str(item.get("url") or listing_url(item["listing_id"])),
                         views=_int(item.get("views")),
                         favorites=_int(item.get("num_favorers")),
+                        ends_at=_moment(item.get("ending_timestamp")),
+                        auto_renew=item["should_auto_renew"]
+                        if isinstance(item.get("should_auto_renew"), bool)
+                        else None,
                     )
                 )
         return found
@@ -425,6 +429,27 @@ class LiveShop:
         path = f"/v3/application/shops/{self._shop_id()}/listings/{listing_id}/files/{file_id}"
         self._call("DELETE", path, changes=True)
 
+    # --- a listing's state and renewal (0.12.0) ---
+
+    def set_state(self, listing_id: int, state: str) -> str:
+        """'active' puts a listing live again (Etsy renews an expired or sold-out one, for its listing fee);
+        'inactive' takes it off the shop. Returns the state Etsy answers with."""
+        data = self._call(
+            "PATCH",
+            f"/v3/application/shops/{self._shop_id()}/listings/{listing_id}",
+            changes=True,
+            data={"state": state},
+        )
+        return str(data.get("state") or state) if isinstance(data, dict) else state
+
+    def set_auto_renew(self, listing_id: int, on: bool) -> None:
+        self._call(
+            "PATCH",
+            f"/v3/application/shops/{self._shop_id()}/listings/{listing_id}",
+            changes=True,
+            data={"should_auto_renew": "true" if on else "false"},
+        )
+
 
 def _order(receipt: Any) -> Order | None:
     """An order with its status: paid ones count; cancelled and refunded ones update what was stored (0.12.0: they
@@ -473,6 +498,12 @@ def _cents(money: Any) -> int | None:
 
 def _int(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _moment(seconds: Any) -> str | None:
+    """A Unix time Etsy gives (seconds), as Ember stores times; None when there is none."""
+    value = _int(seconds)
+    return to_iso(datetime.fromtimestamp(value, tz=UTC)) if value else None
 
 
 def _ranked(data: Any, key: str) -> list[int]:

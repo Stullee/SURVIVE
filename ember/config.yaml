@@ -91,6 +91,8 @@ options:
   # A daily history of your listings' views and favorites. Turn it on once you have confirmed that Etsy's API terms
   # allow keeping it (see the Documentation tab).
   etsy_stats_history: false
+  # Etsy's automatic renewal (USD 0.20 every four months) for a listing once it has sold.
+  etsy_auto_renew_sold: true
 
 schema:
   anthropic_api_key: password?
@@ -143,3 +145,4 @@ schema:
   etsy_redirect_uri: str(1,300)
   etsy_listings_per_day: int(0,20)
   etsy_stats_history: bool
+  etsy_auto_renew_sold: bool

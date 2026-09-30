@@ -1249,6 +1249,7 @@ def test_a_0_8_shop_keeps_its_listings_through_the_0_9_migration(tmp_path: Path)
         23,
         24,
         25,
+        26,
     ]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:

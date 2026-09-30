@@ -168,6 +168,9 @@ class Settings(BaseModel):
     # 0.12.0: keep a daily history of the listings' views and favorites (observations). Off until the owner has
     # confirmed that Etsy's API terms allow keeping it; the shop's own counts are kept either way.
     etsy_stats_history: bool = False
+    # 0.12.0: turn Etsy's automatic renewal on for a listing once it has sold (USD 0.20 every four months): listings
+    # are created without it, so every one, the ones that sell too, expired after four months.
+    etsy_auto_renew_sold: bool = True
 
     @field_validator("owner_user_ids", mode="before")
     @classmethod

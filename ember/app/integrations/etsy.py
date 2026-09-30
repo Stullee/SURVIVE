@@ -273,17 +273,24 @@ def with_changes(listing: Listing, text: str) -> Listing:
 
 # --- what a change to a live listing is (0.9.0) ----------------------------------------------------------------------
 
-# The parts of a listing a change can set, in the order Ember's code makes them: the listing's own fields (one
-# request), its price (Etsy keeps it in the listing's inventory), the photos, and the files buyers download.
-EDIT_PARTS = ("title", "description", "tags", "category", "price", "photos", "files")
+# The parts of a listing a change can set, in the order Ember's code makes them: its renewal (0.12.0: an expired,
+# sold-out or deactivated listing goes live again first), the listing's own fields (one request), its price (Etsy keeps
+# it in the listing's inventory), the photos, the files buyers download, and its deactivation (0.12.0: on its own).
+EDIT_PARTS = ("renew", "title", "description", "tags", "category", "price", "photos", "files", "deactivate")
 LISTING_PARTS = frozenset({"title", "description", "tags", "category"})
+STATES = {"renew": "active", "deactivate": "inactive"}  # what a change of its state sets at Etsy
+LIVE_STATE = "active"
+RENEWABLE = frozenset({"expired", "sold_out", "inactive"})  # Etsy's states of a listing that can be renewed
+LISTING_DAYS = 120  # a listing lasts four months at Etsy
+RENEWAL_FEE = "USD 0.20"  # Etsy's listing fee, charged again for a renewal
 _WORDS = ("title", "price", "tags")  # the head lines of the words the owner may change
 
 
 @dataclass(frozen=True)
 class Edit:
-    """A checked change to one of Ember's live listings: only what changes (None stays as it is). Photos and files
-    replace all of the listing's; the description gets Ember's AI line, like a new listing's."""
+    """A checked change to one of Ember's listings: only what changes (None stays as it is). Photos and files
+    replace all of the listing's; the description gets Ember's AI line, like a new listing's. ``state`` (0.12.0):
+    'renew' puts it live again, 'deactivate' takes it off Etsy."""
 
     listing_id: int
     currency: str
@@ -295,10 +302,13 @@ class Edit:
     category: str | None = None
     photos: tuple[Upload, ...] | None = None
     files: tuple[Upload, ...] | None = None
+    state: str | None = None  # 'renew' or 'deactivate'
 
     def parts(self) -> list[str]:
         """What changes, in EDIT_PARTS order."""
         present = {
+            "renew": True if self.state == "renew" else None,
+            "deactivate": True if self.state == "deactivate" else None,
             "title": self.title,
             "description": self.description,
             "tags": self.tags,
@@ -311,7 +321,7 @@ class Edit:
 
     def to_action(self) -> dict[str, Any]:
         data: dict[str, Any] = {"listing_id": self.listing_id, "currency": self.currency}
-        for name in ("title", "description", "price", "taxonomy_id", "category"):
+        for name in ("title", "description", "price", "taxonomy_id", "category", "state"):
             if getattr(self, name) is not None:
                 data[name] = getattr(self, name)
         if self.tags is not None:
@@ -336,8 +346,8 @@ class Edit:
         return fields
 
 
-def listing_text(listing_id: int, listing: Listing) -> str:
-    """One of Ember's live listings in full, for the agent."""
+def listing_text(listing_id: int, listing: Listing, state: str = "") -> str:
+    """One of Ember's listings in full, for the agent (``state``: how it stands at Etsy, 0.12.0)."""
 
     def names(uploads: tuple[Upload, ...]) -> str:
         return ", ".join(u.path for u in uploads) or "none"
@@ -345,6 +355,7 @@ def listing_text(listing_id: int, listing: Listing) -> str:
     return "\n".join(
         [
             f"Listing #{listing_id}: {listing_url(listing_id)}",
+            *([f"At Etsy: {state}"] if state else []),
             f"Title: {listing.title}",
             f"Price: {listing.price} {listing.currency}",
             f"Tags ({len(listing.tags)}): {', '.join(listing.tags)}",
@@ -389,9 +400,16 @@ def edit_from_action(raw: str | dict[str, Any]) -> Edit:
             category=None if data.get("category") is None else str(data["category"]),
             photos=uploads("photos"),
             files=uploads("files"),
+            state=_state(data.get("state")),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise EtsyError(f"the change isn't readable ({type(exc).__name__})") from None
+
+
+def _state(value: Any) -> str | None:
+    if value is not None and value not in STATES:
+        raise ValueError("unknown state")
+    return value
 
 
 def edited(listing: Listing, edit: Edit, parts: frozenset[str] | set[str] | None = None) -> Listing:
@@ -406,9 +424,9 @@ def edited(listing: Listing, edit: Edit, parts: frozenset[str] | set[str] | None
     return replace(listing, **changes)
 
 
-def edit_payload(edit: Edit, now: Listing) -> str:
+def edit_payload(edit: Edit, now: Listing, state: str = "") -> str:
     """The change as the owner reads and approves it: each part next to what it replaces (``now``: the listing as it
-    is), the new description in full."""
+    is; ``state``: how it stands at Etsy, for a renewal or deactivation), the new description in full."""
 
     def sized(uploads: tuple[Upload, ...]) -> str:
         return "; ".join(f"{u.path} ({_size(u.bytes)})" for u in uploads)
@@ -417,6 +435,10 @@ def edit_payload(edit: Edit, now: Listing) -> str:
         return ", ".join(u.path for u in uploads) or "none"
 
     lines = [f"Listing #{edit.listing_id}: {now.title}"]
+    if edit.state == "renew":
+        lines.append(f"Renew it: it goes live at Etsy again for four months ({RENEWAL_FEE} at most).\n  (now: {state})")
+    elif edit.state == "deactivate":
+        lines.append(f"Deactivate it: buyers no longer find it at Etsy; it can be renewed later.\n  (now: {state})")
     if edit.title is not None:
         lines.append(f"Title: {edit.title}\n  (was: {now.title})")
     if edit.tags is not None:
@@ -503,6 +525,8 @@ class RemoteListing:
     url: str
     views: int | None
     favorites: int | None
+    ends_at: str | None = None  # 0.12.0: when the listing ends at Etsy (it lasts four months), and
+    auto_renew: bool | None = None  # whether Etsy renews it then
 
 
 @dataclass(frozen=True)
@@ -573,6 +597,12 @@ class Shop(Protocol):
     def file_ids(self, listing_id: int) -> list[int]: ...  # in their order
 
     def delete_file(self, listing_id: int, file_id: int) -> None: ...
+
+    # A listing's state and renewal (0.12.0).
+
+    def set_state(self, listing_id: int, state: str) -> str: ...  # 'active' (renews it) or 'inactive'; the new state
+
+    def set_auto_renew(self, listing_id: int, on: bool) -> None: ...
 
 
 def listing_url(listing_id: int) -> str:
@@ -716,9 +746,33 @@ class FakeShop:
         item = self._listing(listing_id)
         if not item["photos"] or not item["files"]:
             raise NotSent("a digital listing needs at least one photo and one file before it can go live")
-        item["state"], item["live_since"] = "active", to_iso(self.clock.now())
+        now = self.clock.now()
+        item["state"], item["live_since"] = "active", to_iso(now)
+        item["ends_at"], item["auto_renew"] = to_iso(now + timedelta(days=LISTING_DAYS)), False
         self._on_change(self.state)
         return "active"
+
+    def set_state(self, listing_id: int, state: str) -> str:
+        """Like Etsy: 'active' renews an expired or sold-out listing for four months (a deactivated one keeps its
+        end until then), 'inactive' takes it off the shop."""
+        item = self._listing(listing_id)
+        self._roll(item)
+        if state == "active":
+            if not item["photos"] or not item["files"]:
+                raise NotSent("a digital listing needs at least one photo and one file before it can go live")
+            if item["state"] in ("expired", "sold_out") or not item.get("ends_at"):
+                item["ends_at"] = to_iso(self.clock.now() + timedelta(days=LISTING_DAYS))
+                item["renewals"] = int(item.get("renewals", 0)) + 1
+            item["live_since"] = item["live_since"] or to_iso(self.clock.now())
+        elif state != "inactive":
+            raise NotSent(f"a listing can't be set {state}")
+        item["state"] = state
+        self._on_change(self.state)
+        return state
+
+    def set_auto_renew(self, listing_id: int, on: bool) -> None:
+        self._listing(listing_id)["auto_renew"] = on
+        self._on_change(self.state)
 
     def listings(self, listing_ids: list[int]) -> list[RemoteListing]:
         found = []
@@ -726,11 +780,39 @@ class FakeShop:
             item = self.state["listings"].get(str(listing_id))
             if item is None:
                 continue
+            if self._roll(item):
+                self._on_change(self.state)
             views, favorites = self._interest(listing_id, item)
             found.append(
-                RemoteListing(listing_id, item["state"], item["title"], listing_url(listing_id), views, favorites)
+                RemoteListing(
+                    listing_id,
+                    item["state"],
+                    item["title"],
+                    listing_url(listing_id),
+                    views,
+                    favorites,
+                    item.get("ends_at"),
+                    bool(item.get("auto_renew")),
+                )
             )
         return found
+
+    def _roll(self, item: dict[str, Any]) -> bool:
+        """A live listing past its end: renewed for four months at a time when it renews itself, else expired.
+        Returns whether it changed. (A state from before 0.12.0 ends four months after it went live.)"""
+        if item["state"] != "active" or item["live_since"] is None:
+            return False
+        ends = from_iso(item.get("ends_at") or to_iso(from_iso(item["live_since"]) + timedelta(days=LISTING_DAYS)))
+        before = item.get("ends_at")
+        now = self.clock.now()
+        while ends <= now and item.get("auto_renew"):
+            ends += timedelta(days=LISTING_DAYS)
+            item["renewals"] = int(item.get("renewals", 0)) + 1
+        item["ends_at"] = to_iso(ends)
+        if ends <= now:
+            item["state"] = "expired"
+            return True
+        return item["ends_at"] != before
 
     def orders(self, since: datetime) -> list[Order]:
         """One order per listing on its second day live, for listings whose number says they sell."""

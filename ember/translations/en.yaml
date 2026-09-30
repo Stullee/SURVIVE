@@ -223,3 +223,10 @@ configuration:
       see how each one changed. Etsy's API terms limit how long its content may
       be kept: turn this on only once you have confirmed that they allow this
       history of your own listings.
+  etsy_auto_renew_sold:
+    name: Renew listings that sell
+    description: >-
+      On: once one of Ember's listings has sold, Ember turns on Etsy's
+      automatic renewal for it, so it doesn't expire after four months (Etsy
+      charges its listing fee, USD 0.20, at each renewal). Ember does this once
+      per listing: if you turn it off at Etsy afterwards, that stands.

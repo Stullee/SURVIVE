@@ -33,3 +33,7 @@ CHANGING A LIVE LISTING (free at Etsy): etsy_listing shows it as Ember listed it
 propose_etsy_edit asks your owner to approve a change and gives only what changes. New photos or files replace the
 whole set (the main photo first), so give all of them. One change per listing at a time. Fix at once what is wrong:
 a category that doesn't fit, a description promising what the files don't hold, fewer than 5 photos.
+
+RENEWING: a listing runs four months. One that sold renews itself; one that expired can be renewed with
+propose_etsy_edit (state renew, USD 0.20), best together with what would make it sell. Deactivate (free) one that
+only costs attention; it can be renewed later.

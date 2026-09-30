@@ -67,6 +67,7 @@ your approval, and only you can record revenue.
 | Etsy redirect URI | https://localhost/ember-etsy | The callback URL registered for that app, exactly as there. |
 | Etsy listings per day | 3 | The most listings Ember creates in one day (0 to 20). |
 | Keep a history of the listings' numbers | off | A daily record of each listing's views and favorites, so the plans see how each changed. Turn it on only once you have confirmed that Etsy's API terms allow it (see [What Ember sees](#what-ember-sees)). |
+| Renew listings that sell | on | Once a listing has sold, Ember turns on Etsy's automatic renewal for it (USD 0.20 every four months), once per listing (see [How a listing is made](#how-a-listing-is-made)). |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -653,16 +654,27 @@ can also remove the app's access at Etsy).
   listing twice: if it can't tell whether Etsy created it (a lost connection),
   it says so and doesn't try again.
 - At most **Etsy listings per day** are created a day; approved listings beyond
-  that wait for the next day. Automatic renewal is off: a listing expires after
-  four months unless you renew it at Etsy.
+  that wait for the next day.
+- A listing runs for four months. Ember creates it without Etsy's automatic
+  renewal; once a listing has sold, Ember turns automatic renewal on for it
+  (Etsy charges its listing fee, USD 0.20, at each renewal), so the listings
+  that sell don't expire. It does this once per listing: if you turn it off at
+  Etsy afterwards, that stands. Switch **Renew listings that sell** off to
+  decide every renewal yourself.
 
 ### Changing a live listing
 
-- The agent reads its live listings as it listed them or last changed them
+- The agent reads its listings as it listed them or last changed them
   (`etsy_listing`) and proposes a change with `propose_etsy_edit`: a new title,
   description, price, tags or category, or a new set of photos or of the files
   buyers download. The approval card shows each change next to what it
   replaces, and the new photos.
+- A change can also **renew** a listing that expired, sold out or was
+  deactivated (it goes live again for four months; Etsy charges its listing fee,
+  USD 0.20, for an expired or sold-out one), with other changes or without, or
+  **deactivate** a live one that doesn't sell (free, and on its own: it can be
+  renewed later). A listing Etsy says isn't live counts as not live: the agent
+  changes it only together with its renewal.
 - **Approve** and Ember makes the change at Etsy: the listing's own fields,
   then the price, then the photos and files (the new ones are uploaded before
   the old ones are deleted, so the listing is never without them). Etsy charges
@@ -680,7 +692,8 @@ can also remove the app's access at Etsy).
 
 Every hour while the app runs, also while the agent sleeps between wake cycles
 (not while it is paused, stopped or dead), Ember reads how its own listings do:
-their state, views (Etsy counts them once a day) and favorites, and the orders
+their state, when they end and whether they renew themselves, views (Etsy
+counts them once a day) and favorites, and the orders
 that hold them: date, status, Ember's lines and which listing, never who bought.
 An order's amount is only Ember's lines: their price times quantity, less their
 share of a coupon and of any refund; tax, shipping and your own products in the

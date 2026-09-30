@@ -3271,7 +3271,10 @@
           h("td", null, l.url && !fake ? etsyLink(l.url, asText(l.title)) : h("span", { text: asText(l.title) }),
             l.listing_id ? h("span", { class: "muted small", text: " #" + l.listing_id }) : null,
             l.error ? h("p", { class: "muted small pre-line", text: asText(l.error) }) : null),
-          h("td", null, chip(LISTING_STATUS, l.status, sentence(String(l.status || "?"))), l.state && l.state !== l.status ? h("span", { class: "muted small", text: " (" + asText(l.state) + ")" }) : null),
+          h("td", null, chip(LISTING_STATUS, l.status, sentence(String(l.status || "?"))), l.state && l.state !== l.status ? h("span", { class: "muted small", text: " (" + asText(l.state) + ")" }) : null,
+            // 0.12.0: when it ends at Etsy, or that Etsy renews it
+            l.status === "active" && l.auto_renew ? h("span", { class: "muted small", text: " · renews itself" }) : null,
+            l.status === "active" && !l.auto_renew && l.ends_at ? h("span", { class: "muted small", text: (l.state === "expired" ? " · ended " : " · ends ") + fmtDate(l.ends_at) }) : null),
           h("td", { class: "num", text: l.views === null || l.views === undefined ? "–" : count(l.views) }),
           h("td", { class: "num", text: l.favorites === null || l.favorites === undefined ? "–" : count(l.favorites) }),
           h("td", null, timeEl(l.started_at, fmtDate(l.started_at))));

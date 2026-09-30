@@ -658,7 +658,7 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "etsy_listing",
-            "Read your live Etsy listings as Ember listed them or last changed them (what your owner changed at Etsy "
+            "Read your Etsy listings as Ember listed them or last changed them (what your owner changed at Etsy "
             "isn't known): without listing_id a short list, with one its title, price, tags, category, photos, files "
             "and description in full. Free.",
             {"listing_id": _i("The listing's number; leave it out for the list.", required=False, minimum=1)},
@@ -666,12 +666,19 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "propose_etsy_edit",
-            "Ask your owner to approve a change to one of your live Etsy listings. Give only what changes: a new "
+            "Ask your owner to approve a change to one of your Etsy listings. Give only what changes: a new "
             "title, description, price, tags or category, or a new set of photos or of files, which replaces all "
             "the listing has. After approval Ember's code makes the change at Etsy (free) and you hear the result. "
             "Read the listing with etsy_listing first.",
             {
                 "listing_id": _i("The listing's number.", minimum=1),
+                "state": _s(
+                    f"renew: a listing that isn't live goes live for 4 months ({etsy.RENEWAL_FEE}), with changes or "
+                    "without; deactivate (alone): a live one leaves the shop.",
+                    10,
+                    required=False,
+                    enum=("renew", "deactivate"),
+                ),
                 "title": _s("The new title.", etsy.TITLE_CHARS, required=False),
                 "description": _s("The new description, in full. Plain text.", etsy.DESCRIPTION_CHARS, required=False),
                 "price": _s("The new price in the shop's currency, like 4.90.", 12, required=False),
@@ -2107,16 +2114,21 @@ def _etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     try:
         if listing_id is None:
             found = etsy_publisher.live_listings(conn, ctx.scope)
+            idle = etsy_publisher.idle_listings(conn, ctx.scope)  # 0.12.0: they were listed as live
+            gone = "; ".join(f"#{r['listing_id']} {etsy_publisher.state_text(r)}" for r in idle)
             if not found:
-                return Outcome(True, "You have no live listings yet.", "none")
+                text = "You have no live listings." + (f" Not live at Etsy: {gone}." if gone else "")
+                return Outcome(True, text, "none")
             lines = "\n".join(etsy.listing_line(i, listing) for i, listing in found)
-            return Outcome(True, f"Your live listings (newest first):\n{lines}", f"{len(found)} listings")
+            text = f"Your live listings (newest first):\n{lines}" + (f"\nNot live at Etsy: {gone}." if gone else "")
+            return Outcome(True, text, f"{len(found)} listings")
         listing = etsy_publisher.current_listing(conn, ctx.scope, listing_id)
     except etsy.EtsyError as exc:
         raise ToolError(f"Ember's record of #{listing_id} isn't readable ({exc})") from None
-    if listing is None:
+    row = etsy_publisher.listing_row(conn, ctx.scope, listing_id)
+    if listing is None or row is None:
         raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
-    text = etsy.listing_text(listing_id, listing)
+    text = etsy.listing_text(listing_id, listing, etsy_publisher.state_text(row))
     waiting = etsy_publisher.open_edit(conn, ctx.scope, listing_id)
     if waiting is not None:
         text += f"\n\nRequest #{waiting} changes it and hasn't been made yet."
@@ -2130,8 +2142,14 @@ def _propose_etsy_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
         now = etsy_publisher.current_listing(conn, ctx.scope, listing_id)
     except etsy.EtsyError as exc:
         raise ToolError(f"Ember's record of #{listing_id} isn't readable ({exc})") from None
-    if now is None:
+    row = etsy_publisher.listing_row(conn, ctx.scope, listing_id)
+    if now is None or row is None:
         raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
+    state, action, stands = etsy_publisher.etsy_state(row), args.get("state"), etsy_publisher.state_text(row)
+    if action == "renew" and state not in etsy.RENEWABLE:
+        raise ToolError(f"#{listing_id} is {stands} at Etsy: only an expired, sold-out or deactivated one is renewed")
+    if action != "renew" and state != etsy.LIVE_STATE:  # 0.12.0: Etsy's state counts, not Ember's record
+        raise ToolError(f"#{listing_id} isn't live at Etsy ({stands}): renew it (state renew), with changes or without")
     waiting = etsy_publisher.open_edit(conn, ctx.scope, listing_id)
     if waiting is not None:
         raise ToolError(f"request #{waiting} already changes #{listing_id}; you hear its result first")
@@ -2158,30 +2176,42 @@ def _propose_etsy_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
     for name in [n for n in ("title", "description", "price", "tags", "photos", "files") if n in changes]:
         if changes[name] == getattr(now, name):
             del changes[name]  # the same as now: no change
-    if not changes:
+    if action == "deactivate" and changes:
+        raise ToolError("deactivate on its own: a change to a listing that leaves the shop helps nobody")
+    if not changes and action is None:
         raise ToolError("nothing changes: give a part that differs from the listing now (etsy_listing shows it)")
-    edit = etsy.Edit(listing_id=listing_id, currency=now.currency, **changes)
+    edit = etsy.Edit(listing_id=listing_id, currency=now.currency, state=action, **changes)
     reason = args["reason"].strip()
+    verb = {"renew": "Renew", "deactivate": "Deactivate"}.get(action or "", "Change")
+    cost = "none: Etsy charges nothing for changing a listing"
+    if action == "renew":
+        cost = f"Etsy's listing fee for the renewal ({etsy.RENEWAL_FEE} at most), and its fees on each sale"
     made = _new_request(
         ctx,
         conn,
-        etsy.edit_payload(edit, now),
+        etsy.edit_payload(edit, now, stands),
         edit.to_action(),
         type="sell",
-        title=_cut(f"Change Etsy listing: {now.title}", 120),
+        title=_cut(f"{verb} Etsy listing: {now.title}", 120),
         description=reason,
-        expected_cost="none: Etsy charges nothing for changing a listing",
+        expected_cost=cost,
         expected_benefit=reason,
         executor="etsy_edit",
     )
     if isinstance(made, str):
         return Outcome(True, made, "duplicate change")
-    parts = ", ".join(edit.parts())
+    parts = ", ".join(p for p in edit.parts() if p not in etsy.STATES)
+    does = {"renew": "renews", "deactivate": "deactivates"}.get(action or "", "changes")
+    what = f"{does} #{listing_id}" + (f" and changes its {parts}" if action and parts else "")
+    if action is None:
+        what = f"changes the {parts} of #{listing_id}"
     text = (
-        f"Approval request #{made} is waiting for your owner: it changes the {parts} of #{listing_id}. Nothing has "
-        "changed at Etsy yet. If they approve it, Ember's code makes the change and you hear the result."
+        f"Approval request #{made} is waiting for your owner: it {what}. Nothing has changed at Etsy yet. If they "
+        "approve it, Ember's code makes the change and you hear the result."
     )
-    return Outcome(True, text, f"#{made} change of #{listing_id}: {parts}")
+    if action is None:
+        return Outcome(True, text, f"#{made} change of #{listing_id}: {parts}")
+    return Outcome(True, text, f"#{made} {verb.lower()} #{listing_id}" + (f": {parts}" if parts else ""))
 
 
 def _shop(ctx: ToolContext) -> EtsyAccess:

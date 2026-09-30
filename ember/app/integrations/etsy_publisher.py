@@ -142,12 +142,48 @@ def current_listing(conn: sqlite3.Connection, scope: AgentScope, listing_id: int
     return approved_listing(approval)
 
 
+def listing_row(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> sqlite3.Row | None:
+    """Ember's record of one of the listings it made live (its state at Etsy as the last sync read it: 0.12.0), or
+    None."""
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT * FROM etsy_listings WHERE {where} AND listing_id = ? AND status = 'active'", (*params, listing_id)
+    ).fetchone()
+
+
+def etsy_state(row: sqlite3.Row) -> str:
+    """A listing's state at Etsy as the last sync read it: live ('active') until a sync says otherwise."""
+    return str(row["state"] or etsy.LIVE_STATE)
+
+
+def state_text(row: sqlite3.Row) -> str:
+    """How a listing stands at Etsy, in a few words: its state, when it ends, whether it renews itself."""
+    state, ends = etsy_state(row), (row["ends_at"] or "")[:10]
+    if state == etsy.LIVE_STATE:
+        if row["auto_renew"]:
+            return "live, renews itself" + (f" on {ends}" if ends else "")
+        return f"live until {ends}" if ends else "live"
+    words = {"expired": f"expired on {ends}" if ends else "expired", "inactive": "deactivated", "sold_out": "sold out"}
+    return words.get(state, state)
+
+
+def idle_listings(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
+    """0.12.0: Ember's listings that Etsy says aren't live (expired, sold out, deactivated), newest first."""
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT * FROM etsy_listings WHERE {where} AND status = 'active' AND listing_id IS NOT NULL"
+        f" AND COALESCE(state, '{etsy.LIVE_STATE}') <> '{etsy.LIVE_STATE}' ORDER BY id DESC",
+        params,
+    ).fetchall()
+
+
 def live_listings(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> list[tuple[int, Listing]]:
-    """Ember's live listings (newest first), each as Ember listed it or last changed it."""
+    """Ember's live listings (newest first), each as Ember listed it or last changed it; live as Etsy last said
+    (0.12.0: an expired listing counted as live)."""
     where, params = scope.where()
     rows = conn.execute(
         f"SELECT listing_id FROM etsy_listings WHERE {where} AND status = 'active' AND listing_id IS NOT NULL"
-        " ORDER BY id DESC LIMIT ?",
+        f" AND COALESCE(state, '{etsy.LIVE_STATE}') = '{etsy.LIVE_STATE}' ORDER BY id DESC LIMIT ?",
         (*params, limit),
     ).fetchall()
     found = []
@@ -416,6 +452,12 @@ class Publisher:
         """The change at Etsy, part by part; what was made is recorded, whatever happens."""
         listing_id = edit.listing_id
         steps: list[tuple[set[str], Callable[[list[str]], None]]] = []
+
+        def set_state(_: list[str]) -> None:
+            shop.set_state(listing_id, etsy.STATES[edit.state or ""])
+
+        if edit.state == "renew":  # first: the rest of the change is made to a live listing
+            steps.append(({"renew"}, set_state))
         fields = edit.listing_fields()
         if fields:
             steps.append((set(edit.parts()) & etsy.LISTING_PARTS, lambda _: shop.update_listing(listing_id, fields)))
@@ -448,6 +490,8 @@ class Publisher:
                 )
 
             steps.append(({"files"}, new_files))
+        if edit.state == "deactivate":  # on its own
+            steps.append(({"deactivate"}, set_state))
         made: set[str] = set()
         progress: list[str] = []  # uploads and deletions of the photos or files being replaced
         halfway: set[str] = set()  # parts left half replaced
@@ -473,7 +517,8 @@ class Publisher:
         after = etsy.edited(before, edit, made) if made else None
         note = _change_note(shop, edit, status, made, halfway, error)
         title = edit.title if "title" in made else None
-        return self._changed(approval_id, status, after, title, note, error, scope)
+        state = next((etsy.STATES[part] for part in ("renew", "deactivate") if part in made), None)
+        return self._changed(approval_id, status, after, title, note, error, scope, state)
 
     def _start_change(
         self, conn: sqlite3.Connection, scope: AgentScope, approval_id: int, listing_id: int, stamp: str
@@ -502,6 +547,7 @@ class Publisher:
         note: str,
         error: str | None,
         scope: AgentScope | None = None,
+        state: str | None = None,
     ) -> str:
         with self.db.transaction() as conn:
             row = conn.execute("SELECT * FROM etsy_edits WHERE approval_id = ?", (approval_id,)).fetchone()
@@ -522,6 +568,15 @@ class Publisher:
                 conn.execute(
                     f"UPDATE etsy_listings SET title = ? WHERE {where} AND listing_id = ?",
                     (title[:140], *params, row["listing_id"]),
+                )
+            if (
+                state is not None and scope is not None
+            ):  # 0.12.0: as it is now; a renewal's end comes with the next sync
+                where, params = scope.where()
+                conn.execute(
+                    "UPDATE etsy_listings SET state = ?, ends_at = CASE WHEN ? = 'active' THEN NULL ELSE ends_at END"
+                    f" WHERE {where} AND listing_id = ?",
+                    (state, state, *params, row["listing_id"]),
                 )
             listing_id = row["listing_id"]
             link = etsy.listing_url(listing_id) if status == "done" else etsy.edit_url(listing_id)
@@ -570,9 +625,18 @@ class Publisher:
             with self.db.transaction() as conn:
                 for item in remote:
                     conn.execute(
-                        f"UPDATE etsy_listings SET state = ?, views = ?, favorites = ?, synced_at = ? WHERE {where}"
-                        " AND listing_id = ?",
-                        (item.state[:20], item.views, item.favorites, stamp, *params, item.listing_id),
+                        "UPDATE etsy_listings SET state = ?, views = ?, favorites = ?, ends_at = ?, auto_renew = ?,"
+                        f" synced_at = ? WHERE {where} AND listing_id = ?",
+                        (
+                            item.state[:20],
+                            item.views,
+                            item.favorites,
+                            item.ends_at,
+                            None if item.auto_renew is None else int(item.auto_renew),
+                            stamp,
+                            *params,
+                            item.listing_id,
+                        ),
                     )
                 for order in orders:
                     items = [i for i in order.items if i.get("listing_id") in ours]
@@ -604,11 +668,53 @@ class Publisher:
                             (*values, *params, order.receipt_id),
                         )
                 observe(conn, scope, self.clock.today().isoformat(), stamp, self.settings.etsy_stats_history)
+            if self.settings.etsy_auto_renew_sold:
+                self._renew_sellers(shop, scope)
             self.db.set_meta(meta_key(scope.mode, "last_sync_at"), stamp)
             self.db.set_meta(meta_key(scope.mode, "last_error"), "")
             return None
         finally:
             self._lock.release()
+
+    def _renew_sellers(self, shop: Shop, scope: AgentScope) -> None:
+        """0.12.0: Etsy's automatic renewal for each live listing that sold and doesn't renew itself, tried once per
+        listing: after that, the owner's own choice at Etsy stands (and a refusal isn't repeated every hour)."""
+        where, params = scope.where()
+        with self.db.connection() as conn:
+            sold = sold_counts(conn, scope)
+            rows = conn.execute(
+                f"SELECT listing_id FROM etsy_listings WHERE {where} AND status = 'active' AND listing_id IS NOT NULL"
+                f" AND COALESCE(state, '{etsy.LIVE_STATE}') = '{etsy.LIVE_STATE}' AND auto_renew = 0"
+                " AND renew_set_at IS NULL",
+                params,
+            ).fetchall()
+        for listing_id in [int(r["listing_id"]) for r in rows if sold.get(r["listing_id"])]:
+            error = None
+            try:
+                with _guard(shop):
+                    shop.set_auto_renew(listing_id, True)
+            except Exception as exc:  # noqa: BLE001 - reported, never raised: the sync goes on
+                error = str(exc) if isinstance(exc, EtsyError) else type(exc).__name__
+                log.warning("Turning on automatic renewal for Etsy listing %d failed: %s", listing_id, error)
+            with self.db.transaction() as conn:
+                conn.execute(
+                    f"UPDATE etsy_listings SET renew_set_at = ?, auto_renew = COALESCE(?, auto_renew) WHERE {where}"
+                    " AND listing_id = ?",
+                    (to_iso(self.clock.now()), None if error else 1, *params, listing_id),
+                )
+            shop_name = "the dry run's fake shop" if shop.simulated else "Etsy"
+            if error is None:
+                message = (
+                    f"Listing #{listing_id} sold {sold[listing_id]} time(s): Ember turned on automatic renewal at"
+                    f" {shop_name} ({etsy.RENEWAL_FEE} every four months)"
+                )
+                events.record(self.db, "info", "etsy", message)
+            else:
+                message = (
+                    f"Listing #{listing_id} sold, but Ember couldn't turn on its automatic renewal ({error}): turn it"
+                    " on at Etsy, or it expires after four months"
+                )
+                events.record(self.db, "warning", "etsy", message[:300])
 
 
 def _replace(
@@ -637,7 +743,8 @@ def _change_note(shop: Shop, edit: Edit, status: str, made: set[str], halfway: s
     """What happened to an approved change, for the owner and the agent."""
 
     def words(parts: set[str] | list[str]) -> str:
-        return ", ".join(p for p in etsy.EDIT_PARTS if p in parts) or "nothing"
+        named = {"renew": "renewal", "deactivate": "deactivation"}
+        return ", ".join(named.get(p, p) for p in etsy.EDIT_PARTS if p in parts) or "nothing"
 
     url = etsy.listing_url(edit.listing_id)
     if status == "done":
@@ -673,6 +780,16 @@ GOOD_PHOTOS = 5  # guide 'etsy': 5 to 10 photos; fewer is something to fix at on
 
 
 NEWEST_SHOWN = 5  # listings (and requests) the plan describes one by one, the newest first
+IDLE_SHOWN = 8  # listings Etsy says aren't live, named in the plan (0.12.0)
+
+
+def _ending(row: sqlite3.Row) -> str:
+    """When a listing ends at Etsy, as far as the last sync knew (0.12.0)."""
+    if row["auto_renew"]:
+        return "renews itself"
+    if not row["ends_at"]:
+        return ""
+    return ("ends " if etsy_state(row) == etsy.LIVE_STATE else "ended ") + str(row["ends_at"])[:10]
 
 
 def sold_counts(conn: sqlite3.Connection, scope: AgentScope, since: str | None = None) -> dict[int, int]:
@@ -806,11 +923,22 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
     for r in rows[:NEWEST_SHOWN]:
         if r["listing_id"] and r["status"] in ("active", "draft"):
             state = r["state"] or r["status"]
-            lines.append(f"- #{r['listing_id']} [{state}] {_flat(r['title'], 80)} · since {r['started_at'][:10]}")
+            ending = f" · {_ending(r)}" if r["status"] == "active" and _ending(r) else ""
+            lines.append(
+                f"- #{r['listing_id']} [{state}] {_flat(r['title'], 80)} · since {r['started_at'][:10]}{ending}"
+            )
         else:
             lines.append(
                 f"- request #{r['approval_id']} [{r['status']}] {_flat(r['title'], 80)}: {_flat(r['error'], 100)}"
             )
+    idle = [r for r in rows if r["listing_id"] and r["status"] == "active" and etsy_state(r) != etsy.LIVE_STATE]
+    if idle:  # 0.12.0: they counted as live
+        shown = ", ".join(f"#{r['listing_id']} ({state_text(r)})" for r in idle[:IDLE_SHOWN])
+        more = f" and {len(idle) - IDLE_SHOWN} more" if len(idle) > IDLE_SHOWN else ""
+        lines.append(
+            f"Not live at Etsy: {shown}{more}. Renew one worth selling again with propose_etsy_edit (state renew,"
+            f" {etsy.RENEWAL_FEE})."
+        )
     left = max(0, daily_limit - created_today(conn, clock, scope))
     lines.append(f"Listings Ember can still create today: {left} of {daily_limit}.")
     if any(r["listing_id"] and r["status"] == "active" for r in rows):
@@ -841,6 +969,8 @@ def listings_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) 
             "title": r["title"],
             "status": r["status"],
             "state": r["state"],
+            "ends_at": r["ends_at"],  # 0.12.0
+            "auto_renew": None if r["auto_renew"] is None else bool(r["auto_renew"]),
             "views": r["views"],
             "favorites": r["favorites"],
             "url": etsy.listing_url(r["listing_id"]) if r["listing_id"] else None,

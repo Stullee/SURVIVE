@@ -63,6 +63,10 @@ Your results now reach your records: what you earn counts where it belongs.
 - Only Ember's code writes the headings of your context: a line of your memory files or of a project's texts can't
   begin with "=", an older one that does is shown quoted, and your plan's goal and steps, your projects' texts and
   your requests' titles show on one line. STRATEGY, IDENTITY and LESSONS say they are written by you.
+- An Etsy listing runs four months. ETSY SHOP and etsy_listing show when each ends and list the ones Etsy says
+  aren't live (expired, sold out, deactivated): they no longer count as live. propose_etsy_edit takes state: renew
+  puts one live again for four months (USD 0.20), with other changes or without; deactivate takes a live one off
+  the shop (free, on its own). A listing that sold renews itself: Ember's code turns Etsy's renewal on for it.
 
 ## 0.11.2
 
