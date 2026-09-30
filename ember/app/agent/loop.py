@@ -72,7 +72,7 @@ from .workshop import report as workshop_report
 
 log = logging.getLogger(__name__)
 
-MAX_TOOL_CALLS_PER_TURN = 4
+MAX_TOOL_CALLS_PER_TURN = tools.MAX_TOOL_CALLS_PER_TURN
 # The work conversation's size limit (bytes of JSON, pictures counted as below). At 24,000 (until 0.9.0) it ended every
 # cycle that made a product and looked at its pictures after 5 to 10 tool steps. Money is checked before each step.
 MAX_CONVERSATION_BYTES = 64_000
@@ -87,7 +87,8 @@ CUT_CALL = (
     f" file in parts of at most {tools.WRITE_CHARS:,} characters (create, then append, one part per reply) and keep"
     " other texts shorter"
 )
-STEP_CHARS = 200  # a plan step's length (prompts.PLANNER_RULES tells the planner)
+STEP_CHARS = prompts.STEP_CHARS  # a plan step's length (prompts.PLANNER_RULES tells the planner)
+RESEARCH_DIGEST_CHARS = 2_000  # a research digest kept (prompts.RESEARCH_RULES asks for less)
 STEP_GROWTH_BYTES = 20_000  # the most one step can add (4 tool results and a reply): the REFLECT profile's room
 # 0.12.0: what the next step may add, as the reflection after it is priced: the largest step of this cycle so far, 1.5
 # times, and at least STEP_GROWTH_TOKENS. A fixed 20,000 bytes of "x" counted as about 19,000 tokens live, while real
@@ -761,15 +762,19 @@ class CycleRunner:
         if not isinstance(data, dict):
             return None
         steps = data.get("steps")
-        steps = [_step(s) for s in steps if isinstance(s, str) and s.strip()][:6] if isinstance(steps, list) else []
+        steps = (
+            [_step(s) for s in steps if isinstance(s, str) and s.strip()][: prompts.PLAN_STEPS]
+            if isinstance(steps, list)
+            else []
+        )
         focus = data.get("focus_project_id")
         venture = data.get("focus_venture_id")
         milestone = data.get("focus_milestone_id")
         sleep = data.get("sleep_minutes")
         return Plan(
-            assessment=str(data.get("assessment") or "")[:600],
-            goal=str(data.get("goal") or "")[:300],
-            money_path=str(data.get("money_path") or "")[:300],
+            assessment=str(data.get("assessment") or "")[: prompts.PLAN_CHARS["assessment"]],
+            goal=str(data.get("goal") or "")[: prompts.PLAN_CHARS["goal"]],
+            money_path=str(data.get("money_path") or "")[: prompts.PLAN_CHARS["money_path"]],
             focus_project_id=focus if isinstance(focus, int) and not isinstance(focus, bool) else None,
             focus_venture_id=venture if isinstance(venture, int) and not isinstance(venture, bool) else None,
             focus_milestone_id=milestone if isinstance(milestone, int) and not isinstance(milestone, bool) else None,
@@ -1076,7 +1081,7 @@ class CycleRunner:
                     cost += more.cost_micros
                 except (CallRefused, CallFailed):
                     pass
-            digest = _text_of(response)[:2_000] or "Nothing useful was found."
+            digest = _text_of(response)[:RESEARCH_DIGEST_CHARS] or "Nothing useful was found."
             sources = _sources(response)
             ctx.state.seen_urls.update(sources)
             self._save_text(result.call_id, digest, response)

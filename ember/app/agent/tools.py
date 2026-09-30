@@ -45,8 +45,8 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
 from . import library, metrics, netguard, obligations, roadmap, stages, store, ventures
-from .memory import CAPS, HEADING_REFUSAL, Memory, MemoryError_, heading_line
-from .sandbox import Jail, QuotaError, SandboxError, kind_of
+from .memory import CAPS, HEADING_REFUSAL, MAX_APPEND_LINES, Memory, MemoryError_, heading_line
+from .sandbox import Jail, Limits, QuotaError, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
 
 log = logging.getLogger(__name__)
@@ -64,6 +64,7 @@ DESCRIPTION_CHARS = min(etsy.DESCRIPTION_CHARS, ONE_REPLY_CHARS - 500)  # a list
 READ_DEFAULT_CHARS = 3_000
 READ_MAX_CHARS = 6_000
 MAX_OPEN_PROJECTS = 8
+MAX_TOOL_CALLS_PER_TURN = 4  # a reply's tool calls that run (write_journal besides them); the rest are skipped
 MAX_UNREAD_MESSAGES = 5
 MESSAGES_PER_DAY = 2  # 0.12.0: messages to the owner a day that answer none of theirs (the rule was only prose)
 MAX_NEW_UPGRADES = 5
@@ -97,6 +98,8 @@ ORDINARY_TOOLS = (
 )
 # Model calls of their own: they need the network, and no database transaction is held meanwhile.
 CALLING_TOOLS = frozenset({"research", "workshop", "brainstorm"})
+WORKSHOP_INPUTS = 5  # files handed over to one workshop run
+WORKSHOP_INPUT_MB = 10  # their size together
 FIRST_CONTACT = (
     "First email to this address: Ember has never received mail from it. Cold advertising emails are illegal in "
     "Germany (§ 7 UWG)."
@@ -190,7 +193,8 @@ SPECS: dict[str, Spec] = {
         Spec(
             "workspace_write",
             f"Create, overwrite, append to or delete a text file in your workspace (at most {WRITE_CHARS:,} characters "
-            "per call: write a longer file in parts, create then append, one part per reply; 64 KB per file; 5 MB in "
+            "per call: write a longer file in parts, create then append, one part per reply; "
+            f"{Limits().max_file_bytes // 1024} KB per file; {Limits().max_total_bytes // (1024 * 1024)} MB in "
             "total). Allowed endings: .md .txt .csv .tsv .json .yaml .yml .html .css .xml. PDF, Word, Excel and PNG "
             "files are made with the make_ tools; delete works for them too.",
             {
@@ -202,9 +206,10 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "memory_update",
-            "Change one of your memory files: strategy (at most 2,000 bytes, replace it), identity (800 bytes) or "
-            "lessons (4,000 bytes; append up to 5 short lines, the oldest drop off when it is full). Before you "
-            "replace lessons, read them whole (memory_read). Your constitution can't be changed.",
+            f"Change one of your memory files: strategy (at most {CAPS['strategy']:,} bytes, replace it), identity "
+            f"({CAPS['identity']:,} bytes) or lessons ({CAPS['lessons']:,} bytes; append up to {MAX_APPEND_LINES} "
+            "short lines, the oldest drop off when it is full). Before you replace lessons, read them whole "
+            "(memory_read). Your constitution can't be changed.",
             {
                 "file": _s("Which file.", 10, enum=("strategy", "identity", "lessons")),
                 "mode": _s("replace or append.", 10, enum=("replace", "append")),
@@ -282,7 +287,8 @@ SPECS: dict[str, Spec] = {
             "Update a venture. learned: what you found out, with sources, saved to its knowledge file. Scores from 1 "
             "to 5 weigh it in your tree: rescore it from the evidence once research for it found web pages. The six "
             "business case fields (demand to first_test): stage proposed puts it before your owner on the Ventures "
-            "tab and needs the researching stage, 2 such research calls, all six scores and all six fields, with a "
+            f"tab and needs the researching stage, {ventures.RESEARCH_TO_PROPOSE} such research calls, all six scores "
+            "and all six fields, with a "
             "source link or euros. Only your owner backs a venture (building) or kills it; park one with a note "
             "saying why. Free.",
             {
@@ -572,7 +578,10 @@ SPECS: dict[str, Spec] = {
                     "What to make, precisely: each file (name, size, format) and what is in it.", ONE_REPLY_CHARS
                 ),
                 "files": _s(
-                    "Workspace files to hand over, separated by commas (at most 5, 10 MB).", 600, required=False
+                    f"Workspace files to hand over, separated by commas (at most {WORKSHOP_INPUTS}, "
+                    f"{WORKSHOP_INPUT_MB} MB).",
+                    600,
+                    required=False,
                 ),
                 "script": _s(
                     "A kept script to run again, e.g. 'workshop/scripts/price-chart-3.py'.", 200, required=False
@@ -590,7 +599,7 @@ SPECS: dict[str, Spec] = {
                 "source": _s("Your .md file, e.g. 'drafts/cv.md'.", 200),
                 "output": _s("The PDF to make, e.g. 'shop/cv-modern.pdf'; the .docx and pictures go next to it.", 200),
                 "word": _b("Also make the Word copy (default true)."),
-                "pictures": _b("Also make pictures of the first 4 pages (default true)."),
+                "pictures": _b(f"Also make pictures of the first {make.PAGE_PREVIEWS} pages (default true)."),
             },
             per_cycle=4,
         ),
@@ -607,11 +616,16 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "make_image",
-            "Make a listing photo (PNG) that shows 1 to 3 of your pages or pictures with a title, a subtitle and a "
+            f"Make a listing photo (PNG) that shows 1 to {make.MAX_LISTING_PAGES} of your pages or pictures with a "
+            "title, a subtitle and a "
             "badge. Read guide 'listing_photos' first.",
             {
                 "output": _s("The .png to make, e.g. 'shop/cv-photo-1.png'.", 200),
-                "pages": _s("1 to 3 pages, separated by commas: 'shop/cv.pdf#1, shop/cv.pdf#2' or a .png file.", 400),
+                "pages": _s(
+                    f"1 to {make.MAX_LISTING_PAGES} pages, separated by commas: 'shop/cv.pdf#1, shop/cv.pdf#2' or a "
+                    ".png file.",
+                    400,
+                ),
                 "title": _s("The big title.", 80),
                 "subtitle": _s("A line under the title.", 160, required=False),
                 "badge": _s("A few words in a coloured box, e.g. 'Instant download'.", 30, required=False),

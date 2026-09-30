@@ -133,6 +133,8 @@ Your results now reach your records: what you earn counts where it belongs.
   work: nothing reads a tool's answer after your reflection's one reply.
 - Your rules are shorter: they no longer repeat what Ember's code enforces (its refusals say so when it
   matters) or what your constitution, your owner's knowledge or a tool's description already says.
+- Every limit your prompts and tool descriptions state is the one Ember's code keeps: your workspace holds 50 MB
+  of text files (workspace_write said 5), and a last will holds at most 3,000 characters, so it fits its reply.
 
 ## 0.11.2
 

@@ -24,7 +24,7 @@ from ..economy.costs import micros_to_usd
 from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
-from . import digest, library, obligations, review, roadmap, store, ventures
+from . import digest, library, obligations, review, roadmap, store, tools, ventures
 from .memory import Memory, heading_like
 from .news import CHANGELOG_LIMIT, Item, News, Shown
 from .sandbox import Jail
@@ -713,7 +713,11 @@ def brief(
         (LESSONS_HEADING, _newest_lines(s.memory.get("lessons", ""), 800)),
         ("WORKSPACE", "\n".join(s.workspace[:20]) or "Empty."),
         *researched,
-        ("LIMITS", f"At most {max_steps} steps this cycle and 4 tool calls per step. Stop when the goal is reached."),
+        (
+            "LIMITS",
+            f"At most {max_steps} steps this cycle and {tools.MAX_TOOL_CALLS_PER_TURN} tool calls per step. Stop when "
+            "the goal is reached.",
+        ),
     ]
     on_top = [*owed, *standing, *owners, *mailed, *researched, *learned]
     room = sum(json_bytes(f"\n\n== {title} ==\n{body}") - 2 for title, body in on_top)  # - 2: its own JSON quotes

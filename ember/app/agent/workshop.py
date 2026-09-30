@@ -34,11 +34,12 @@ from ..products import checks
 from . import netguard, prompts, store
 from .sandbox import NAME, Jail, SandboxError, kind_of
 from .store import AgentScope
+from .tools import WORKSHOP_INPUT_MB, WORKSHOP_INPUTS
 
 log = logging.getLogger(__name__)
 
-MAX_INPUTS = 5
-MAX_INPUT_BYTES = 10 * 1024 * 1024
+MAX_INPUTS = WORKSHOP_INPUTS  # the workshop tool's description states them (0.12.0: one source)
+MAX_INPUT_BYTES = WORKSHOP_INPUT_MB * 1024 * 1024
 MAX_OUTPUTS = 12
 MAX_LOOKUPS = 3 * MAX_OUTPUTS  # files looked at: a file copied out in several commands comes back each time
 MAX_CONTINUATIONS = 2  # a paused run (pause_turn) is continued at most twice, each a metered call

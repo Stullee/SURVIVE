@@ -42,7 +42,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
-NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")  # used with fullmatch: "$" also matches before a "\n"
+NAME_CHARS = 64  # a file or folder name (0.12.0: the workshop is told it)
+NAME = re.compile(
+    rf"[A-Za-z0-9][A-Za-z0-9._-]{{0,{NAME_CHARS - 1}}}"
+)  # used with fullmatch: "$" also matches before a "\n"
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 # .py: scripts the workshop wrote and the agent keeps (text only here: nothing in Ember ever runs them).
 TEXT_EXTENSIONS = frozenset({".md", ".txt", ".csv", ".tsv", ".json", ".yaml", ".yml", ".html", ".css", ".xml", ".py"})

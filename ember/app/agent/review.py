@@ -25,7 +25,7 @@ from ..economy.ledger import Books, Scope
 from ..economy.life import LifeStatus, Runway
 from ..integrations import etsy, etsy_publisher
 from ..version import app_version
-from . import roadmap, ventures
+from . import prompts, roadmap, ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
 
 WINDOW_DAYS = 7
@@ -49,7 +49,7 @@ LIMITS = {
     "ventures": 600,
     "roadmap": 600,  # 0.11.0
 }
-WHY_CHARS = 200
+WHY_CHARS = prompts.REVIEW_WHY_CHARS
 # Where the money went, by call purpose.
 _PURPOSES = {
     "plan": "planning and work",
