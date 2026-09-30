@@ -40,7 +40,7 @@ from .. import paths
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
-from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
+from ..integrations import etsy, etsy_publisher, mail, mailstore, qa, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
@@ -2736,7 +2736,9 @@ def _guide(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
 
 
 def guide_text(topic: str) -> str:
-    return (paths.APP_DIR / "agent" / "guides" / f"{topic}.md").read_text(encoding="utf-8").strip()
+    """A guide, with the numbers Ember's code keeps filled in (0.13.0: the QA registry's photos)."""
+    text = (paths.APP_DIR / "agent" / "guides" / f"{topic}.md").read_text(encoding="utf-8").strip()
+    return text.replace("{MIN_PHOTOS}", str(qa.MIN_PHOTOS)).replace("{MAX_PHOTOS}", str(etsy.MAX_PHOTOS))
 
 
 def image_block(picture: bytes) -> dict[str, Any]:
@@ -2997,6 +2999,9 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
         f"Nothing is on Etsy yet. If they approve it, Ember's code creates the listing in {shop.shop_name} (at most "
         f"{shop.daily_limit} a day) and you hear the result."
     )
+    short = qa.defects("etsy.create_listing", listing)  # 0.13.0: the QA registry; your owner sees it too
+    if short:
+        text += f" QA (Ember's code): {'; '.join(short)}: make more with make_image and change the request."
     return Outcome(True, text, f"#{made} Etsy listing: {_cut(listing.title, 60)}")
 
 

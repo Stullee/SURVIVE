@@ -45,7 +45,7 @@ from ..agent.store import AgentScope
 from ..config import Settings
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
-from . import etsy
+from . import connectors, etsy, qa
 from .etsy import Edit, EtsyError, Listing, NotSent, Shop, Unclear, Upload
 
 log = logging.getLogger(__name__)
@@ -359,10 +359,20 @@ class Publisher:
 
     def _after(self, approval_id: int, status: str, listing_id: int | None, note: str, error: str | None = None) -> str:
         with self.db.transaction() as conn:
+            now = to_iso(self.clock.now())
             conn.execute(
                 "UPDATE etsy_listings SET status = ?, finished_at = ?, listing_id = COALESCE(?, listing_id),"
                 " result = ?, error = ? WHERE approval_id = ?",
-                (status, to_iso(self.clock.now()), listing_id, note[:500], (error or "")[:500] or None, approval_id),
+                (status, now, listing_id, note[:500], (error or "")[:500] or None, approval_id),
+            )
+            connectors.finish(  # 0.13.0: the shared journal (a draft Etsy holds: partial)
+                conn,
+                approval_id,
+                {"active": "done", "draft": "partial"}.get(status, status),
+                now,
+                {"listing_id": listing_id, "status": status} if listing_id else None,
+                note,
+                subject=str(listing_id) if listing_id else None,
             )
             link = etsy.listing_url(listing_id) if status == "active" and listing_id else None
             if status == "draft" and listing_id:
@@ -374,10 +384,12 @@ class Publisher:
 
     def _failed(self, conn: sqlite3.Connection, approval_id: int, reason: str) -> str:
         note = f"Not listed: {reason}"
+        now = to_iso(self.clock.now())
         conn.execute(
             "UPDATE etsy_listings SET status = 'failed', finished_at = ?, error = ? WHERE approval_id = ?",
-            (to_iso(self.clock.now()), reason[:500], approval_id),
+            (now, reason[:500], approval_id),
         )
+        connectors.finish(conn, approval_id, "failed", now, note=note)
         self._close(conn, approval_id, "failed", note, None)
         return "failed"
 
@@ -388,6 +400,7 @@ class Publisher:
             " VALUES (?, ?, ?, ?, 'running', ?)",
             (scope.mode, scope.session, approval_id, stamp, title[:140]),
         )
+        connectors.begin(conn, approval_id, stamp)  # 0.13.0: its listing's number comes when it is finished
 
     def _close(self, conn: sqlite3.Connection, approval_id: int, outcome: str, note: str, link: str | None) -> None:
         """Close the approval (unless the owner did meanwhile): the agent hears the result at its next wake."""
@@ -439,7 +452,7 @@ class Publisher:
             except EtsyError as exc:
                 self._start_change(conn, scope, approval_id, listing_id, stamp)
                 return self._change_failed(conn, approval_id, str(exc))
-            self._start_change(conn, scope, approval_id, edit.listing_id, stamp)
+            self._start_change(conn, scope, approval_id, edit.listing_id, stamp, before)
         # Committed: from here on this change is never made a second time, whatever happens.
         return self._make(shop, scope, approval_id, edit, before, photos, files)
 
@@ -525,20 +538,30 @@ class Publisher:
         return self._changed(approval_id, status, after, title, note, error, scope, state)
 
     def _start_change(
-        self, conn: sqlite3.Connection, scope: AgentScope, approval_id: int, listing_id: int, stamp: str
+        self,
+        conn: sqlite3.Connection,
+        scope: AgentScope,
+        approval_id: int,
+        listing_id: int,
+        stamp: str,
+        before: Listing | None = None,
     ) -> None:
         conn.execute(
             "INSERT INTO etsy_edits (mode, session, approval_id, listing_id, started_at, status)"
             " VALUES (?, ?, ?, ?, ?, 'running')",
             (scope.mode, scope.session, approval_id, listing_id, stamp),
         )
+        # 0.13.0: the shared journal, with the listing as it was (what changing it back restores)
+        connectors.begin(conn, approval_id, stamp, str(listing_id), before.to_action() if before else None)
 
     def _change_failed(self, conn: sqlite3.Connection, approval_id: int, reason: str) -> str:
         note = f"Not changed: {reason}"
+        now = to_iso(self.clock.now())
         conn.execute(
             "UPDATE etsy_edits SET status = 'failed', finished_at = ?, error = ? WHERE approval_id = ?",
-            (to_iso(self.clock.now()), reason[:500], approval_id),
+            (now, reason[:500], approval_id),
         )
+        connectors.finish(conn, approval_id, "failed", now, note=note)
         self._close(conn, approval_id, "failed", note, None)
         return "failed"
 
@@ -555,18 +578,20 @@ class Publisher:
     ) -> str:
         with self.db.transaction() as conn:
             row = conn.execute("SELECT * FROM etsy_edits WHERE approval_id = ?", (approval_id,)).fetchone()
+            now = to_iso(self.clock.now())
             conn.execute(
                 "UPDATE etsy_edits SET status = ?, finished_at = ?, listing = ?, result = ?, error = ?"
                 " WHERE approval_id = ?",
                 (
                     status,
-                    to_iso(self.clock.now()),
+                    now,
                     json.dumps(after.to_action(), ensure_ascii=False) if after else None,
                     note[:500],
                     (error or "")[:500] or None,
                     approval_id,
                 ),
             )
+            connectors.finish(conn, approval_id, status, now, after.to_action() if after else None, note)
             if title is not None and scope is not None:
                 where, params = scope.where()
                 conn.execute(
@@ -745,10 +770,22 @@ class Publisher:
                 error = str(exc) if isinstance(exc, EtsyError) else type(exc).__name__
                 log.warning("Turning on automatic renewal for Etsy listing %d failed: %s", listing_id, error)
             with self.db.transaction() as conn:
+                now = to_iso(self.clock.now())
                 conn.execute(
                     f"UPDATE etsy_listings SET renew_set_at = ?, auto_renew = COALESCE(?, auto_renew) WHERE {where}"
                     " AND listing_id = ?",
-                    (to_iso(self.clock.now()), None if error else 1, *params, listing_id),
+                    (now, None if error else 1, *params, listing_id),
+                )
+                connectors.record(  # 0.13.0: Ember's code's own action, in the shared journal
+                    conn,
+                    scope,
+                    "etsy.auto_renew",
+                    str(listing_id),
+                    "failed" if error else "simulated" if shop.simulated else "done",
+                    now,
+                    before={"auto_renew": False},
+                    after=None if error else {"auto_renew": True},
+                    note=error,
                 )
             shop_name = "the dry run's fake shop" if shop.simulated else "Etsy"
             if error is None:
@@ -824,9 +861,6 @@ def meta_key(mode: str, name: str) -> str:
     return f"integrations.etsy.{mode}.{name}"
 
 
-GOOD_PHOTOS = 5  # guide 'etsy': 5 to 10 photos; fewer is something to fix at once
-
-
 NEWEST_SHOWN = 5  # listings (and requests) the plan describes one by one, the newest first
 IDLE_SHOWN = 8  # listings Etsy says aren't live, named in the plan (0.12.0)
 
@@ -894,7 +928,7 @@ def live_line(
 
 
 def few_photos(conn: sqlite3.Connection, scope: AgentScope) -> list[tuple[int, int]]:
-    """0.12.0: the live listings with fewer than GOOD_PHOTOS photos in Ember's records, as (listing, photos): a defect
+    """0.12.0: the live listings with fewer than qa.MIN_PHOTOS photos in Ember's records, as (listing, photos): a defect
     the obligations list until it is fixed."""
     where, params = scope.where()
     rows = conn.execute(
@@ -906,7 +940,7 @@ def few_photos(conn: sqlite3.Connection, scope: AgentScope) -> list[tuple[int, i
         if etsy_state(r) != etsy.LIVE_STATE:
             continue
         listing = recorded_listing(conn, scope, r)
-        if listing is not None and len(listing.photos) < GOOD_PHOTOS:
+        if listing is not None and len(listing.photos) < qa.MIN_PHOTOS:
             found.append((int(r["listing_id"]), len(listing.photos)))
     return found
 
@@ -998,10 +1032,10 @@ def shop_text(
     if summary:
         lines.append(summary)
     # 0.11.1: the plans never saw a photo count, so single-photo listings stayed that way
-    few = [f"#{listing_id} ({count})" for listing_id, count in photos.items() if count < GOOD_PHOTOS]
+    few = [f"#{listing_id} ({count})" for listing_id, count in photos.items() if count < qa.MIN_PHOTOS]
     if few:
         lines.append(
-            f"Fewer than {GOOD_PHOTOS} photos: {', '.join(few)}. Etsy shows up to {etsy.MAX_PHOTOS}: make more and"
+            f"Fewer than {qa.MIN_PHOTOS} photos: {', '.join(few)}. Etsy shows up to {etsy.MAX_PHOTOS}: make more and"
             " give the whole set with propose_etsy_edit."
         )
     totals: dict[str, int] = {}

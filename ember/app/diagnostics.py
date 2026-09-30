@@ -126,6 +126,7 @@ TABLES = (
     "desk_picks",
     "predictions",
     "agenda",
+    "action_journal",
     "emails",
     "email_actions",
     "email_suppressions",

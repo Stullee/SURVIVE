@@ -2245,6 +2245,9 @@
         executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : "Reddit") : null,
         statusChip, a.simulated ? testTag() : null),
       a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
+      actionFlags(a.action_class),
+      arr(a.qa).length ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
+        h("strong", { text: "QA (Ember's code): " }), arr(a.qa).join("; ") + ".") : null,
       executor === "email" && a.first_contact ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
         h("strong", { text: "First email to this address." }), " Cold advertising emails are illegal in Germany (§ 7 UWG). Approve only if this person asked to hear from you.") : null,
       note ? h("p", { class: "todo-note" }, h("span", { "aria-hidden": "true", text: "☐ " }), note) : null,
@@ -5989,6 +5992,19 @@
       h("dt", { text: label }),
       h("dd", null, num(p.likely) + "% by " + fmtDay(p.due) + " ", chip(PREDICTION_STATE, p.status),
         p.result ? " " + String(p.result) : ""));
+  }
+
+  // 0.13.0: what an action is, in the connector protocol's words: what it reaches, costs and can undo.
+  function actionFlags(c) {
+    if (!isObject(c)) return null;
+    var flags = [];
+    if (c.reaches_people) flags.push("reaches people");
+    if (c.first_contact) flags.push("can be a first contact");
+    if (c.costs_money) flags.push("costs money");
+    if (c.publishes_under_owner_identity) flags.push("appears under your name");
+    flags.push(c.reversible ? "can be undone (" + String(c.undo) + ")" : "can't be undone");
+    return h("p", { class: "muted small", title: "Action class " + String(c.name) },
+      sentence(String(c.what)) + (c.by_owner ? " (you carry it out)" : "") + ": " + flags.join(", ") + ".");
   }
 
   function milestoneView(m) {

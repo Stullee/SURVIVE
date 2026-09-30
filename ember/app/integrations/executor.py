@@ -38,7 +38,7 @@ from ..agent.store import AgentScope
 from ..config import Settings
 from ..db import Database
 from ..economy.clock import Clock, to_iso
-from . import mail, mailstore
+from . import connectors, mail, mailstore
 from .mail import Mailbox, MailError, NotSent, Unclear
 
 log = logging.getLogger(__name__)
@@ -256,7 +256,7 @@ class Executor:
             except ValueError as exc:
                 self._start(conn, approval_id, stamp, None)
                 return self._failed(conn, approval_id, f"the approved email can't be sent: {exc}")
-            self._start(conn, approval_id, stamp, message_id)
+            self._start(conn, approval_id, stamp, message_id, action["to"])
             if mailstore.is_suppressed(conn, scope, action["to"]):
                 return self._failed(conn, approval_id, SUPPRESSED)
         # Committed: from here on this email is never sent a second time, whatever happens.
@@ -315,11 +315,14 @@ class Executor:
         return "failed"
 
     @staticmethod
-    def _start(conn: sqlite3.Connection, approval_id: int, stamp: str, message_id: str | None) -> None:
+    def _start(
+        conn: sqlite3.Connection, approval_id: int, stamp: str, message_id: str | None, to: str | None = None
+    ) -> None:
         conn.execute(
             "INSERT INTO email_actions (approval_id, started_at, status, message_id) VALUES (?, ?, 'running', ?)",
             (approval_id, stamp, message_id),
         )
+        connectors.begin(conn, approval_id, stamp, subject=to)  # 0.13.0: the shared journal
 
     def _finish(
         self,
@@ -329,11 +332,14 @@ class Executor:
         result: str | None = None,
         error: str | None = None,
     ) -> None:
+        now = to_iso(self.clock.now())
         conn.execute(
             "UPDATE email_actions SET status = ?, finished_at = ?, result = ?, error = ?"
             " WHERE approval_id = ? AND status = 'running'",
-            (status, to_iso(self.clock.now()), _cap(result, 500), _cap(error, 500), approval_id),
+            (status, now, _cap(result, 500), _cap(error, 500), approval_id),
         )
+        journaled = {"sent": "done"}.get(status, status)  # simulated, failed and unclear are the journal's too
+        connectors.finish(conn, approval_id, journaled, now, {"status": status}, result or error)
 
     def _close(self, conn: sqlite3.Connection, approval_id: int, outcome: str, note: str) -> None:
         """Close the approval as Ember, unless the owner already closed it (then the action row stays as it is)."""

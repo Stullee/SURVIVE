@@ -750,7 +750,19 @@ no longer shown); a study that failed three times stops until you press
   card says when), the agent can **withdraw** one that is outdated (with its
   reason), and each kind has its own limit of waiting requests (6 sales, 5
   emails, 3 posts, 3 accounts, 3 spendings, 4 others), so waiting listings
-  never block an email reply.
+  never block an email reply. Each card says what kind of action it is
+  (0.13.0) and flags what matters for your decision: whether it reaches people,
+  can be a first contact, costs money, appears under your name, and whether
+  Ember's code can undo it. A listing, or a change to one, with fewer than 5
+  photos (the one **QA** number: the Etsy guide, the plan's defects and the
+  `qa_clean` metric read it too) says so on its card before you decide.
+- **What Ember's code did**: every action it carries out (an email sent, a
+  listing created, changed, renewed or deactivated, a sold listing's automatic
+  renewal turned on) is kept in one journal (0.13.0). It records what the
+  action acted on, the state before and after, how it ended and what would
+  undo it: deactivating a listing it created, restoring a changed one to how
+  it was, renewing a deactivated one. An email or a renewal's fee can't be
+  undone. The Undo button and the feed of these actions come next.
 - **Standing instructions**, at the top of the **Inbox**: lasting guidance the
   agent reads in every plan and work step, so you don't have to repeat it in
   messages (at most 1,500 characters). **Edit** changes them, and saving an

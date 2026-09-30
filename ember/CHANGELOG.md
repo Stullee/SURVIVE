@@ -35,6 +35,8 @@ Decisions from numbers: a venture's case now has figures that Ember's code check
   for a short reactive cycle (at most 5 steps, no venture work), a few times a day at most. SINCE YOUR LAST WAKE
   lists what Ember's code noted in the agenda meanwhile (favorites milestones too): react to it first. Until 20:00,
   scheduled cycles leave a fifth of the daily cap for these wake-ups.
+- A listing needs at least 5 photos: that is the one number (the guide, the defects in OBLIGATIONS and ETSY SHOP,
+  qa_clean), and propose_etsy_listing says when a listing falls short (your owner's card says it too).
 - milestone_plan is an ordinary cycle's tool now: a venture cycle researches and decides ventures; laying out the
   roadmap belongs to ordinary cycles (milestone_update still works in both).
 

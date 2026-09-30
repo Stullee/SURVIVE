@@ -28,7 +28,7 @@ from typing import Any
 from .. import events
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import etsy, etsy_publisher
+from ..integrations import etsy, etsy_publisher, qa
 from . import ventures
 from .store import AgentScope
 
@@ -121,7 +121,7 @@ CATALOGUE: dict[str, Metric] = {
         ),
         Metric(
             "qa_clean",
-            f"each live listing has at least {etsy_publisher.GOOD_PHOTOS} photos",
+            f"each live listing has at least {qa.MIN_PHOTOS} photos",
             "yes",
             "etsy",
             sample="live listings",
@@ -134,7 +134,7 @@ NAMES = tuple(CATALOGUE)
 HELP = (
     "listings_live counts now; the deltas, orders_observed, revenue_verified_usd (recorded revenue less "
     "expenses), research_calls_ok (found something) and api_spend_usd (a ceiling) count from when it is set; "
-    f"case_complete and stage_reached are a venture's; qa_clean: {etsy_publisher.GOOD_PHOTOS}+ photos on each live "
+    f"case_complete and stage_reached are a venture's; qa_clean: {qa.MIN_PHOTOS}+ photos on each live "
     "listing"
 )
 
@@ -356,7 +356,7 @@ def _read_etsy(
     for r in live:
         listing = etsy_publisher.recorded_listing(conn, scope, r)
         photos = len(listing.photos) if listing is not None else 0
-        if photos < etsy_publisher.GOOD_PHOTOS:
+        if photos < qa.MIN_PHOTOS:
             few.append(f"#{r['listing_id']} has {photos}")
     detail = f" ({', '.join(few[:6])})" if few else f" ({len(live)} live)"
     return Reading(1 if live and not few else 0, synced, detail, sample=len(live))

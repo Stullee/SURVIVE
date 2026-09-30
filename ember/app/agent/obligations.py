@@ -21,7 +21,7 @@ import sqlite3
 from datetime import date, timedelta
 from typing import Any
 
-from ..integrations import etsy_publisher
+from ..integrations import etsy_publisher, qa
 from . import roadmap
 from .store import AgentScope
 
@@ -196,7 +196,7 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date) -> str:
         shown = ", ".join(f"#{listing_id} ({count})" for listing_id, count in few[:4])
         more = f" and {len(few) - 4} more" if len(few) > 4 else ""
         lines.append(
-            f"- Live listings with fewer than {etsy_publisher.GOOD_PHOTOS} photos: {shown}{more}: give each the whole"
+            f"- Live listings with fewer than {qa.MIN_PHOTOS} photos: {shown}{more}: give each the whole"
             " set with propose_etsy_edit."
         )
     if not lines:

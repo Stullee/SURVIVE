@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ..economy import burn
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
-from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
+from ..integrations import connectors, etsy, etsy_publisher, executor, mailstore, qa, reddit
 from . import (
     critic,
     desk,
@@ -711,21 +711,29 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
     if r["executor"] == "reddit_link" and action is not None:
         reddit_url = reddit.prefilled_url(action, r["final_payload"] or None)  # the owner's text, if they changed it
     editable = None
+    shortfalls: list[str] = []  # 0.13.0: what the QA registry finds short in it
+    kind = connectors.class_of(r["executor"], action, r["type"])
     execution = executor.execution(conn, r, scope, agent.clock, agent.settings.email_daily_limit)
     if r["executor"] == "etsy_listing" and action is not None:
         execution = etsy_publisher.execution(conn, r, scope, agent.clock, agent.settings.etsy_listings_per_day)
         try:
-            editable = etsy.editable(etsy.listing_from_action(action))
+            listing = etsy.listing_from_action(action)
+            editable = etsy.editable(listing)
+            shortfalls = qa.defects(kind.name, listing)
         except etsy.EtsyError:
             editable = None
     if r["executor"] == "etsy_edit" and action is not None:
         execution = etsy_publisher.edit_execution(conn, r)
         try:
-            editable = etsy.edit_editable(etsy.edit_from_action(action))  # None: no words or price change
+            edit = etsy.edit_from_action(action)
+            editable = etsy.edit_editable(edit)  # None: no words or price change
+            shortfalls = qa.defects(kind.name, edit)
         except etsy.EtsyError:
             editable = None
     return {
         "executor": r["executor"],
+        "action_class": kind.flags(),  # 0.13.0: the connector protocol's class and its flags
+        "qa": shortfalls,
         "action": action,
         "first_contact": first_contact,
         "execution": execution,
