@@ -816,10 +816,15 @@ def live_rows(rows: list[sqlite3.Row], sold: dict[int, int]) -> list[sqlite3.Row
 
 
 def live_line(
-    rows: list[sqlite3.Row], sold: dict[int, int], what: str = "sold", week: dict[int, int] | None = None
+    rows: list[sqlite3.Row],
+    sold: dict[int, int],
+    what: str = "sold",
+    week: dict[int, int] | None = None,
+    photos: dict[int, int] | None = None,
 ) -> str | None:
     """One line for every live listing: its number, its title's start and its numbers, with the views it gained this
-    week where the history has them (``week``: its views a week ago)."""
+    week where the history has them (``week``: its views a week ago) and its photos in Ember's records (``photos``,
+    0.12.0: a separate line dropped out once there were about 10 listings)."""
     live = live_rows(rows, sold)
     if not live:
         return None
@@ -831,9 +836,25 @@ def live_line(
         before = (week or {}).get(r["listing_id"])
         gained = f"(+{r['views'] - before})" if before is not None and r["views"] is not None else ""
         favorites = r["favorites"] if r["favorites"] is not None else "?"
-        entries.append(f"#{r['listing_id']} {title} {sold.get(r['listing_id'], 0)}s {views}v{gained} {favorites}f")
+        shown = f" {photos[r['listing_id']]}p" if photos and r["listing_id"] in photos else ""
+        entries.append(
+            f"#{r['listing_id']} {title} {sold.get(r['listing_id'], 0)}s {views}v{gained} {favorites}f{shown}"
+        )
     legend = f"{what} s, views v (gained this week), favorites f" if week else f"{what} s, views v, favorites f"
+    legend += ", photos p" if photos else ""
     return f"All {len(live)} live listings, top sellers first ({legend}): " + " · ".join(entries)
+
+
+def recorded_listing(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> Listing | None:
+    """A listing as Ember's records have it: a live one as listed or last changed, a draft as approved (0.12.0: drafts
+    had no photo count at all). None when there is no readable record."""
+    try:
+        if row["status"] == "active":
+            return current_listing(conn, scope, row["listing_id"])
+        approval = conn.execute("SELECT * FROM approvals WHERE id = ?", (row["approval_id"],)).fetchone()
+        return approved_listing(approval) if approval is not None else None
+    except EtsyError:
+        return None
 
 
 def observe(conn: sqlite3.Connection, scope: AgentScope, day: str, now: str, listing_history: bool) -> int:
@@ -893,18 +914,17 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
     ).fetchall()
     sold = sold_counts(conn, scope)
     lines = [f"Shop: {shop_name}." + ("" if rows else " No listings yet.")]
-    summary = live_line(rows, sold, week=week_ago(conn, scope, clock.today()))
-    if summary:
-        lines.append(summary)
-    few: list[str] = []  # 0.11.1: the plans never saw a photo count, so single-photo listings stayed that way
+    photos: dict[int, int] = {}  # each listing's photos in Ember's records, drafts too
     for r in rows:
         if r["listing_id"] and r["status"] in ("active", "draft"):
-            try:
-                listing = current_listing(conn, scope, r["listing_id"])
-            except EtsyError:
-                listing = None
-            if listing is not None and len(listing.photos) < GOOD_PHOTOS:
-                few.append(f"#{r['listing_id']} ({len(listing.photos)})")
+            listing = recorded_listing(conn, scope, r)
+            if listing is not None:
+                photos[int(r["listing_id"])] = len(listing.photos)
+    summary = live_line(rows, sold, week=week_ago(conn, scope, clock.today()), photos=photos)
+    if summary:
+        lines.append(summary)
+    # 0.11.1: the plans never saw a photo count, so single-photo listings stayed that way
+    few = [f"#{listing_id} ({count})" for listing_id, count in photos.items() if count < GOOD_PHOTOS]
     if few:
         lines.append(
             f"Fewer than {GOOD_PHOTOS} photos: {', '.join(few)}. Etsy shows up to {etsy.MAX_PHOTOS}: make more and"

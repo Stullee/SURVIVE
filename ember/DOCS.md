@@ -697,7 +697,9 @@ can also remove the app's access at Etsy).
   part, the card says what changed and what didn't and links to the listing's
   editor at Etsy. Ember never makes a change twice.
 - Ember knows only its own changes: what you change at Etsy yourself isn't in
-  its records, so tell the agent when you do.
+  its records, so tell the agent when you do. A new set of photos or files
+  replaces every one the listing has at Etsy, also ones you added there
+  yourself: the card says so.
 
 ### What Ember sees
 

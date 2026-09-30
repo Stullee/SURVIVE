@@ -76,6 +76,9 @@ Your results now reach your records: what you earn counts where it belongs.
 - A venture's knowledge file that is full (64 KB) continues in a new part (ventures/<number>-<name>-2.md, ...);
   FOCUS names the newest part and the earlier ones. If what you learned can't be saved at all, venture_update says so
   and still saves the rest of the update (scores, stage, note).
+- A text a tool takes whole holds at most 2,500 characters, what one reply can carry (a request's payload, an email,
+  a Reddit post, a workshop task, a memory update; a listing's description 2,000): put a longer text in a workspace
+  file and name it. ETSY SHOP shows each live listing's photos (p), and a draft's photos count too.
 
 ## 0.11.2
 

@@ -698,7 +698,10 @@ def test_a_live_listing_is_read_and_a_change_proposed(data_dir: Path) -> None:
     assert payload.startswith(f"Listing #900000001: {before.title}\n")
     assert "Price: 3.90 EUR (was: 4.50 EUR)" in payload
     assert f"Category: {etsy.FAKE_CATEGORIES[1][1]} (#2)\n  (was: {before.category} (#{before.taxonomy_id}))" in payload
-    assert "Photos, the main one first: shop/new-1.png (1 KB); shop/new-2.png (1 KB)\n  (they replace: " in payload
+    assert (
+        "Photos, the main one first: shop/new-1.png (1 KB); shop/new-2.png (1 KB)\n  (they replace every photo it has"
+        " at Etsy: Ember's "
+    ) in payload and ", and any you added there)" in payload
     assert payload.endswith(f"New description:\nA better description.\n\n{DISCLOSURE}")
     again = call(ctx, "propose_etsy_edit", {"listing_id": listing_id, "title": "Another title", "reason": "r"})
     assert not again.ok and f"request #{request} already changes #900000001" in again.text

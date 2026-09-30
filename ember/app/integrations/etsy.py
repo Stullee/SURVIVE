@@ -448,9 +448,15 @@ def edit_payload(edit: Edit, now: Listing, state: str = "") -> str:
     if edit.price is not None:
         lines.append(f"Price: {edit.price} {edit.currency} (was: {now.price} {now.currency})")
     if edit.photos is not None:
-        lines.append(f"Photos, the main one first: {sized(edit.photos)}\n  (they replace: {names(now.photos)})")
+        lines.append(  # 0.12.0: the whole set at Etsy, also what the owner added there, which Ember doesn't know
+            f"Photos, the main one first: {sized(edit.photos)}\n  (they replace every photo it has at Etsy: Ember's"
+            f" {names(now.photos)}, and any you added there)"
+        )
     if edit.files is not None:
-        lines.append(f"Files buyers download: {sized(edit.files)}\n  (they replace: {names(now.files)})")
+        lines.append(
+            f"Files buyers download: {sized(edit.files)}\n  (they replace every file it has at Etsy: Ember's"
+            f" {names(now.files)}, and any you added there)"
+        )
     if edit.description is not None:
         lines += ["", "New description:", with_disclosure(edit.description)]
     return "\n".join(lines)

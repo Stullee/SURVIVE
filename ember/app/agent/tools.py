@@ -52,9 +52,14 @@ log = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 4_000
 RESULT_CHARS = {"memory_read": 4_400}  # 0.12.0: a memory file whole (lessons: 4,000 bytes) with its heading
-# One workspace_write's text: what fits in one work reply (WORK_MAX_TOKENS) with room to spare. JSON specs and German
-# text take about 1.7 characters a token there: at 4,000 (until 0.11.1) a long write was cut off again and again.
-WRITE_CHARS = 2_500
+# A work reply's length (prompts takes it from here). JSON specs and German text take about 1.7 characters a token in
+# it, so a text that can't be written in parts gets at most ONE_REPLY_CHARS: what fits in one reply beside its call's
+# other fields. One workspace_write at 4,000 (until 0.11.1) was cut off again and again; 0.12.0: so were payloads of
+# 8,000 characters, emails of 5,000 and listing descriptions of 4,000, which no reply could hold.
+WORK_MAX_TOKENS = 2_000
+ONE_REPLY_CHARS = int(WORK_MAX_TOKENS * 1.7) - 900  # 2,500
+WRITE_CHARS = ONE_REPLY_CHARS
+DESCRIPTION_CHARS = min(etsy.DESCRIPTION_CHARS, ONE_REPLY_CHARS - 500)  # a listing's other fields come with it
 READ_DEFAULT_CHARS = 3_000
 READ_MAX_CHARS = 6_000
 MAX_OPEN_PROJECTS = 8
@@ -185,7 +190,7 @@ SPECS: dict[str, Spec] = {
             {
                 "file": _s("Which file.", 10, enum=("strategy", "identity", "lessons")),
                 "mode": _s("replace or append.", 10, enum=("replace", "append")),
-                "content": _s("The new text or the lines to add.", 4_000),
+                "content": _s("The new text or the lines to add.", ONE_REPLY_CHARS),
             },
             per_cycle=5,
             reflect=True,
@@ -386,7 +391,10 @@ SPECS: dict[str, Spec] = {
                 "type": _s("Kind of action.", 20, enum=APPROVAL_TYPES),
                 "title": _s("Short title.", 120),
                 "description": _s("What, why, and what your owner has to do.", 2_000),
-                "payload": _s("The exact content (post text, message, listing, amounts...).", 8_000),
+                "payload": _s(
+                    "The exact content (post text, message, listing, amounts...); a longer text: its workspace file.",
+                    ONE_REPLY_CHARS,
+                ),
                 "expected_cost": _s("Expected cost in words, e.g. 'none' or 'about 5 EUR per month'.", 300),
                 "expected_benefit": _s("Expected benefit in words.", 300),
                 "project_id": _i("The project this belongs to, if any.", required=False),
@@ -494,7 +502,9 @@ SPECS: dict[str, Spec] = {
             "are checked and kept in your workspace, and its script in workshop/scripts/ (run it again with script). "
             "A run costs cents to dimes: read guide 'workshop' first.",
             {
-                "task": _s("What to make, precisely: each file (name, size, format) and what is in it.", 3_000),
+                "task": _s(
+                    "What to make, precisely: each file (name, size, format) and what is in it.", ONE_REPLY_CHARS
+                ),
                 "files": _s(
                     "Workspace files to hand over, separated by commas (at most 5, 10 MB).", 600, required=False
                 ),
@@ -598,7 +608,7 @@ SPECS: dict[str, Spec] = {
             {
                 "to": _s("One plain address (name@example.org). Leave empty when replying.", 254, required=False),
                 "subject": _s("The subject line.", mail.SUBJECT_MAX),
-                "body": _s("The plain text of the email (Ember adds the footer).", mail.BODY_MAX),
+                "body": _s("The plain text of the email (Ember adds the footer).", min(mail.BODY_MAX, ONE_REPLY_CHARS)),
                 "reason": _s("Why this email, for your owner.", 300),
                 "reply_to_email_id": _i("The email you are answering: the reply goes to its sender.", required=False),
             },
@@ -614,7 +624,7 @@ SPECS: dict[str, Spec] = {
                 "subreddit": _s("The subreddit's name, e.g. 'SideProject'.", 24),
                 "kind": _s("A new post or a comment in a thread.", 10, enum=reddit.KINDS),
                 "title": _s("The post's title (not for comments).", reddit.TITLE_CHARS, required=False),
-                "body": _s("The text (markdown).", reddit.BODY_CHARS),
+                "body": _s("The text (markdown).", min(reddit.BODY_CHARS, ONE_REPLY_CHARS)),
                 "thread_url": _s(
                     "For a comment: the thread's https://www.reddit.com/r/<name>/comments/... link.",
                     300,
@@ -640,7 +650,7 @@ SPECS: dict[str, Spec] = {
                 "title": _s("The title: what it is and for whom, the words buyers search for first.", etsy.TITLE_CHARS),
                 "description": _s(
                     "What buyers get and how to use it: pages, formats, sizes, printing. Plain text.",
-                    etsy.DESCRIPTION_CHARS,
+                    DESCRIPTION_CHARS,
                 ),
                 "price": _s("The price in the shop's currency, like 4.90.", 12),
                 "tags": _s(
@@ -687,7 +697,7 @@ SPECS: dict[str, Spec] = {
                     enum=("renew", "deactivate"),
                 ),
                 "title": _s("The new title.", etsy.TITLE_CHARS, required=False),
-                "description": _s("The new description, in full. Plain text.", etsy.DESCRIPTION_CHARS, required=False),
+                "description": _s("The new description, in full. Plain text.", DESCRIPTION_CHARS, required=False),
                 "price": _s("The new price in the shop's currency, like 4.90.", 12, required=False),
                 "tags": _s(
                     f"All its tags from now on (up to {etsy.MAX_TAGS}), separated by commas.", 400, required=False

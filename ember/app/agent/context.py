@@ -86,8 +86,7 @@ MILESTONE_FOCUS_BUDGET = 700  # a milestone's FOCUS in the brief (0.11.0)
 VENTURE_BRIEF = (
     "This is a venture cycle: read guide 'ventures' first, research as often as this cycle can pay for (STATUS), "
     "grow the tree with brainstorm (first, if you plan one), save what you learn with venture_update (learned, with "
-    "sources) and rescore the venture from the evidence. Products and listings for a leg you already run wait for an "
-    "ordinary cycle."
+    "sources) and rescore the venture from the evidence."
 )
 # The largest brief, those sections and their headings included: the WORK and REFLECT profiles are measured on it.
 BRIEF_MAX = BRIEF_BUDGET + INSTRUCTIONS_BUDGET + OWNER_BUDGET + MAIL_BUDGET + RESEARCH_BUDGET + KNOWLEDGE_BUDGET + 260

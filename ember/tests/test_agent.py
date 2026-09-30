@@ -340,8 +340,10 @@ def test_the_reflection_is_told_why_the_work_ended(data_dir: Path, monkeypatch: 
     assert "making files, looking at pictures, research, brainstorms and proposals are refused now" in prompt
     # 0.10.1: the first venture cycle's reflection spent its one reply on other calls and wrote no journal; 0.11.1:
     # one was cut off at its length limit, so the journal comes first.
-    assert "This is your last reply, and its length is limited: make every tool call in it (at most 4), write_journal"
-    assert " first, with a short, candid entry" in prompt
+    assert (  # 0.12.0: the first half was a bare string, so it never checked anything
+        "This is your last reply, and its length is limited: make every tool call in it (at most 4), write_journal"
+        " first, with a short, candid entry"
+    ) in prompt
     assert prompts.reflect_prompt("refused: the daily cap is used up").startswith(
         "REFLECT PHASE. Your work steps for this cycle are over (refused: the daily cap is used up)"
     )
