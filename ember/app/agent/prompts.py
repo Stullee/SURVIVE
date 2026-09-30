@@ -25,7 +25,8 @@ from . import tools
 THINKING = {"type": "disabled"}
 ADAPTIVE = {"type": "adaptive"}
 PLAN_MAX_TOKENS = 1_200
-REVIEW_MAX_TOKENS = 1_800  # the verdicts on up to 8 projects and seven short texts (0.11.0: the roadmap)
+# The verdicts on up to 8 projects and seven short texts (0.11.0: the roadmap), and on up to 12 milestones (0.12.0).
+REVIEW_MAX_TOKENS = 2_200
 WORK_MAX_TOKENS = tools.WORK_MAX_TOKENS  # the tools' longest texts are derived from it (0.12.0)
 WILL_MAX_TOKENS = 1_000
 RESEARCH_MAX_TOKENS = 1_200  # a digest cut at 800 lost its end in live use
@@ -84,7 +85,7 @@ PLANNER_RULES = """PLANNING
 Decide what this wake cycle should achieve, following your owner's standing instructions. Take into account what
 your owner wrote or decided since your last wake. Each message of theirs listed there waits for your answer until you
 give it: make answering them (one message_owner answers several) the first step of this cycle; an answer that
-promises work for later also puts it on your roadmap (milestone_create). Plan work you do yourself with your
+promises work for later also puts it on your roadmap (milestone_plan). Plan work you do yourself with your
 tools, never your owner's research or legwork.
 - Keep 2-3 experiments in flight at different stages. Waiting on your owner is never a reason to do nothing: when a
   project waits, work on another; with no open project, start one now.
@@ -171,8 +172,8 @@ numbers below come from Ember's records: they are exact, so never argue with the
 - Name one lesson worth keeping, and today's focus: what most likely brings in money soonest.
 - Look at your venture tree: which venture is closest to a first euro, which research is going nowhere (park it), and
   whether the tree needs new ideas.
-- Check your roadmap: what is overdue (close it honestly, or move it with the reason), what is due this week and
-  whether your work leads there, and whether it still reaches three months ahead.
+- Check your roadmap: judge each milestone overdue or due this week (Ember's code applies your verdicts), say
+  whether your work leads there, and whether the roadmap still reaches three months ahead.
 Reply only with JSON matching the schema:
 - verdicts: one per project listed: project_id, verdict (continue, change or stop) and why (<= 200 characters,
   with the numbers that decide it)
@@ -182,12 +183,25 @@ Reply only with JSON matching the schema:
 - lesson: one lesson worth keeping (<= 300 characters)
 - focus: today's focus (<= 300 characters)
 - ventures: your read of the venture tree and what to do next there (<= 400 characters)
-- roadmap: your read of the roadmap: what is overdue or at risk, and what to add or change (<= 400 characters)"""
+- roadmap: your read of the roadmap: what is overdue or at risk, and what to add or change (<= 400 characters)
+- milestones: one per milestone you judge: milestone_id, verdict (hit: its measure is met, the evidence in why;
+  miss: past its date and not met; extend: a new date in new_due, YYYY-MM-DD; park: it waits a week), why (<= 200
+  characters) and new_due ("" unless extend)"""
 
 REVIEW_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["verdicts", "working", "not_working", "owner_feedback", "lesson", "focus", "ventures", "roadmap"],
+    "required": [
+        "verdicts",
+        "working",
+        "not_working",
+        "owner_feedback",
+        "lesson",
+        "focus",
+        "ventures",
+        "roadmap",
+        "milestones",
+    ],
     "properties": {
         "verdicts": {
             "type": "array",
@@ -209,6 +223,20 @@ REVIEW_SCHEMA: dict[str, Any] = {
         "focus": {"type": "string"},
         "ventures": {"type": "string"},
         "roadmap": {"type": "string"},
+        "milestones": {  # 0.12.0: verdicts Ember's code applies
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["milestone_id", "verdict", "why", "new_due"],
+                "properties": {
+                    "milestone_id": {"type": "integer"},
+                    "verdict": {"type": "string", "enum": ["hit", "miss", "extend", "park"]},
+                    "why": {"type": "string"},
+                    "new_due": {"type": "string"},
+                },
+            },
+        },
     },
 }
 

@@ -101,6 +101,10 @@ Your results now reach your records: what you earn counts where it belongs.
   ROADMAP shows what its work spent of that ("spent $0.42 of $1.00"; plans, reviews and brainstorms are overhead).
   milestone_update can let a milestone wait (wait_for, check_at, at most 14 days): it isn't flagged overdue until its
   check is due, and you wake that morning. ROADMAP shows the newest note of what is overdue or due this week.
+- milestone_plan replaces milestone_create: 1 to 12 milestones in one call, each leading to its parent by a key from
+  the same call or a milestone's number, all or none.
+- Your daily review judges each milestone overdue or due this week (milestones: hit, miss, extend or park), and
+  Ember's code applies each verdict with milestone_update's rules; the day's plans see what came of them.
 
 ## 0.11.2
 

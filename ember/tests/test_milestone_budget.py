@@ -38,20 +38,26 @@ def test_a_milestone_carries_what_it_may_cost(data_dir: Path) -> None:
     step = made(
         call(
             agent,
-            "milestone_create",
-            title="Planner bundle live",
-            measure="One bundle listing is live",
-            due=day(10),
-            budget_usd="1.00",
-            cash_eur="20",
-            owner_hours="1.5",
+            "milestone_plan",
+            milestones=[
+                dict(
+                    title="Planner bundle live",
+                    measure="One bundle listing is live",
+                    due=day(10),
+                    budget_usd="1.00",
+                    cash_eur="20",
+                    owner_hours="1.5",
+                )
+            ],
         )
     )
     row = rows(agent, f"SELECT budget_micros, cash_cents, owner_minutes FROM milestones WHERE id = {step}")[0]
     assert row == {"budget_micros": 1_000_000, "cash_cents": 2_000, "owner_minutes": 90}
     for name, bad in (("budget_usd", "0"), ("budget_usd", "lots"), ("budget_usd", "5000"), ("owner_hours", "-2")):
         refused = call(
-            agent, "milestone_create", title=f"Another {name} {bad}", measure="x", due=day(10), **{name: bad}
+            agent,
+            "milestone_plan",
+            milestones=[dict(title=f"Another {name} {bad}", measure="x", due=day(10), **{name: bad})],
         )
         assert not refused.ok and name in refused.text, refused.text
     with agent.db.transaction() as conn, pytest.raises(sqlite3.IntegrityError, match="may cost is fixed"):
@@ -80,7 +86,11 @@ def test_its_work_is_charged_to_it_and_the_plans_are_overhead(data_dir: Path) ->
 def test_a_waiting_milestone_is_not_overdue_until_its_check(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]))
     step = made(
-        call(agent, "milestone_create", title="Bundle approved", measure="My request approved", due=day(1), parent_id=1)
+        call(
+            agent,
+            "milestone_plan",
+            milestones=[dict(title="Bundle approved", measure="My request approved", due=day(1), parent=str(1))],
+        )
     )
     agent.clock.advance(days=2)
     assert f"milestone is overdue (#{step})" in roadmap_text(agent)
@@ -118,7 +128,7 @@ def test_a_waiting_milestone_is_not_overdue_until_its_check(data_dir: Path) -> N
 def test_the_agent_wakes_on_the_morning_a_check_is_due(data_dir: Path) -> None:
     long = Plan({**plan(steps=[]).plan, "sleep_minutes": 1_440})  # type: ignore[dict-item]
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[]), long]))
-    step = made(call(agent, "milestone_create", title="Buyers came", measure="1 order", due=day(9)))
+    step = made(call(agent, "milestone_plan", milestones=[dict(title="Buyers came", measure="1 order", due=day(9))]))
     tomorrow = agent.clock.today() + timedelta(days=1)
     assert call(agent, "milestone_update", milestone_id=step, wait_for="buyers", check_at=tomorrow.isoformat()).ok
     agent.run_cycle("schedule")  # it chose to sleep a whole day

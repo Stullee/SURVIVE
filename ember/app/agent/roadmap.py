@@ -592,7 +592,7 @@ def checks(rows: list[Mapping[str, Any]], today: date, spent: Mapping[int, int] 
     due, spending over a milestone's budget, nothing due this week, nothing planned beyond this month."""
     if not rows:
         return [
-            "Roadmap check: your roadmap is empty. Plan a step that lays it out with milestone_create: 1 to 3 goals "
+            "Roadmap check: your roadmap is empty. Plan a step that lays it out with milestone_plan: 1 to 3 goals "
             "for the next three months (what you will earn, and the legs and ventures that bring it), the milestones "
             "this month that lead to them, and this week's."
         ]

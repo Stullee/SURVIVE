@@ -113,14 +113,15 @@ _BAD_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2
 
 @dataclass(frozen=True)
 class Field:
-    type: str  # "string" | "integer" | "boolean"
+    type: str  # "string" | "integer" | "boolean" | "array" (of objects with ``items`` as their fields, 0.12.0)
     description: str
     required: bool = True
-    max_len: int = 0
+    max_len: int = 0  # a string's characters; an array's items
     enum: tuple[str, ...] = ()
     minimum: int | None = None
     maximum: int | None = None
     cut: bool = False  # too long: cut to max_len with a note instead of refusing (for notes, not content)
+    items: tuple[tuple[str, Field], ...] = ()  # an array's objects: their fields, in order
 
 
 @dataclass(frozen=True)
@@ -145,7 +146,14 @@ def _b(description: str) -> Field:
     return Field("boolean", description, required=False)
 
 
+def _a(description: str, most: int, items: dict[str, Field]) -> Field:
+    """0.12.0: a list of 1 to ``most`` objects, each with ``items`` as its fields."""
+    return Field("array", description, max_len=most, items=tuple(items.items()))
+
+
 APPROVAL_TYPES = ("publish", "contact", "create_account", "spend_money", "sell", "other")
+# A roadmap laid out in one call (0.12.0: each child needed its parent's number from a turn before).
+PLAN_MILESTONES = 12
 PROJECT_STATUSES = ("idea", "active", "waiting", "succeeded", "failed", "abandoned")
 
 SPECS: dict[str, Spec] = {
@@ -349,39 +357,47 @@ SPECS: dict[str, Spec] = {
             per_cycle=10,
         ),
         Spec(
-            "milestone_create",
-            "Put a milestone on your roadmap: what you will reach by a date and how you will know. With a metric, "
-            "Ember's code checks it and closes it (done once met, missed after its date); without, your done is "
-            "self-reported. Goals for the next months, milestones leading to them (parent_id), this week's steps. "
-            f"Title, measure and metric are final; a date can move. At most {roadmap.MAX_OPEN - roadmap.OWNER_SLOTS} "
-            "open. Free.",
+            "milestone_plan",
+            f"Put 1 to {PLAN_MILESTONES} milestones on your roadmap in one call: goals for the next months, the "
+            "milestones leading to them and this week's steps. Each leads to its parent (a key from this call, or a "
+            "milestone's number), due no earlier. With a metric, Ember's code checks it and closes it (done once met, "
+            "missed after its date); without, your done is self-reported. Title, measure, metric and costs are final; "
+            f"a date can move. At most {roadmap.MAX_OPEN - roadmap.OWNER_SLOTS} open. Free.",
             {
-                "title": _s("What you will reach.", roadmap.LIMITS["title"]),
-                "measure": _s(
-                    "How you will know: a number or a fact you can check (optional with a metric).",
-                    roadmap.LIMITS["measure"],
-                    required=False,
+                "milestones": _a(
+                    "The milestones, parents before the milestones that lead to them.",
+                    PLAN_MILESTONES,
+                    {
+                        "key": _s("A name for it in this call, for others' parent.", 20, required=False),
+                        "parent": _s("A key from this call, or a milestone's number.", 20, required=False),
+                        "title": _s("What you will reach.", roadmap.LIMITS["title"]),
+                        "measure": _s(
+                            "How you will know: a number or a fact you can check (optional with a metric).",
+                            roadmap.LIMITS["measure"],
+                            required=False,
+                        ),
+                        "metric": _s(
+                            f"Checked by Ember's code, for the linked project or venture (else all): {metrics.HELP}.",
+                            24,
+                            required=False,
+                            enum=metrics.NAMES,
+                        ),
+                        "target": _s(
+                            "A number (USD for *_usd) or, for stage_reached, a stage; none for case_complete and "
+                            "qa_clean.",
+                            12,
+                            required=False,
+                        ),
+                        "due": _s("YYYY-MM-DD, at most a year ahead.", 10),
+                        "venture_id": _i("The venture it serves.", required=False),
+                        "project_id": _i("The project it serves.", required=False),
+                        "budget_usd": _s("API spending you plan for it (fixed).", 10, required=False),
+                        "cash_eur": _s("Cash it needs from your owner (fixed).", 10, required=False),
+                        "owner_hours": _s("Your owner's hours it needs (fixed).", 6, required=False),
+                    },
                 ),
-                "metric": _s(
-                    f"Checked by Ember's code, for the linked project or venture (else all): {metrics.HELP}.",
-                    24,
-                    required=False,
-                    enum=metrics.NAMES,
-                ),
-                "target": _s(
-                    "A number (USD for *_usd) or, for stage_reached, a stage; none for case_complete, qa_clean.",
-                    12,
-                    required=False,
-                ),
-                "budget_usd": _s("API spending you plan for it (fixed).", 10, required=False),
-                "cash_eur": _s("Cash it needs from your owner (fixed).", 10, required=False),
-                "owner_hours": _s("Your owner's hours it needs (fixed).", 6, required=False),
-                "due": _s("YYYY-MM-DD, at most a year ahead.", 10),
-                "parent_id": _i("The milestone it leads to (due no earlier).", required=False),
-                "venture_id": _i("The venture it serves.", required=False),
-                "project_id": _i("The project it serves.", required=False),
             },
-            per_cycle=6,
+            per_cycle=3,
             reflect=True,
         ),
         Spec(
@@ -767,10 +783,16 @@ def definitions(
 
 
 def _definition(spec: Spec) -> dict[str, Any]:
+    return {"name": spec.name, "description": spec.description, "input_schema": _object_schema(spec.fields)}
+
+
+def _object_schema(fields: dict[str, Field]) -> dict[str, Any]:
     properties: dict[str, Any] = {}
-    for name, f in spec.fields.items():
+    for name, f in fields.items():
         prop: dict[str, Any] = {"type": f.type, "description": f.description}
-        if f.enum:
+        if f.type == "array":  # 0.12.0: a list of objects
+            prop.update(minItems=1, maxItems=f.max_len, items=_object_schema(dict(f.items)))
+        elif f.enum:
             prop["enum"] = list(f.enum)
         elif f.max_len:  # the model sees the limit before it writes, not only in a refusal
             prop["maxLength"] = f.max_len
@@ -780,14 +802,10 @@ def _definition(spec: Spec) -> dict[str, Any]:
             prop["maximum"] = f.maximum
         properties[name] = prop
     return {
-        "name": spec.name,
-        "description": spec.description,
-        "input_schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": properties,
-            "required": [name for name, f in spec.fields.items() if f.required],
-        },
+        "type": "object",
+        "additionalProperties": False,
+        "properties": properties,
+        "required": [name for name, f in fields.items() if f.required],
     }
 
 
@@ -986,13 +1004,17 @@ def skip(
 
 def validate(spec: Spec, raw: Any, notes: list[str] | None = None) -> dict[str, Any]:
     """The checked arguments; a too-long ``cut`` field is shortened and described in ``notes``."""
+    return _checked(spec.fields, raw, notes)
+
+
+def _checked(fields: dict[str, Field], raw: Any, notes: list[str] | None, where: str = "") -> dict[str, Any]:
     if not isinstance(raw, dict):
-        raise ToolError("the input must be an object")
-    unknown = sorted(set(raw) - set(spec.fields))
+        raise ToolError(f"{where or 'the input'} must be an object")
+    unknown = sorted(set(raw) - set(fields))
     if unknown:
-        raise ToolError(f"unknown field {unknown[0]!r}")
+        raise ToolError(f"unknown field {unknown[0]!r}" + (f" in {where}" if where else ""))
     args: dict[str, Any] = {}
-    for name, f in spec.fields.items():
+    for name, f in fields.items():
         value = raw.get(name)
         if value is None or (f.type == "string" and value == "" and not f.required):
             if f.required:
@@ -1016,6 +1038,12 @@ def validate(spec: Spec, raw: Any, notes: list[str] | None = None) -> dict[str, 
         elif f.type == "boolean":
             if not isinstance(value, bool):
                 raise ToolError(f"{name} must be true or false")
+        elif f.type == "array":  # 0.12.0: each item checked like the input itself
+            if not isinstance(value, list) or not value:
+                raise ToolError(f"{name} must be a list of 1 to {f.max_len} objects")
+            if len(value) > f.max_len:
+                raise ToolError(f"{name} holds at most {f.max_len} items")
+            value = [_checked(dict(f.items), item, notes, f"{name} item {i}") for i, item in enumerate(value, 1)]
         else:
             if not isinstance(value, int) or isinstance(value, bool):
                 raise ToolError(f"{name} must be a whole number")
@@ -1528,7 +1556,44 @@ def _amount(text: Any, name: str, most: int, scale: int) -> int | None:
     return max(1, int(value * scale))
 
 
-def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+_NUMBER = re.compile(r"^#?(\d{1,9})$")
+
+
+def _milestone_plan(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.12.0: 1 to PLAN_MILESTONES milestones in one call, a parent named by its key in the call or its number. All
+    or none: a refused one refuses the call, and nothing is put on the roadmap."""
+    items = args["milestones"]
+    keys: dict[str, int] = {}
+    made: list[tuple[int, str]] = []
+    for i, item in enumerate(items, 1):
+        key = " ".join((item.get("key") or "").split())
+        try:
+            if key and (key in keys or _NUMBER.match(key)):
+                raise ToolError(f"key {key!r} is taken or looks like a milestone's number: choose another")
+            parent = " ".join((item.get("parent") or "").split())
+            parent_id = None
+            if parent:
+                number = _NUMBER.match(parent)
+                if number is None and parent not in keys:
+                    raise ToolError(f"parent {parent!r} is no key of an earlier milestone in this call, nor a number")
+                parent_id = int(number[1]) if number else keys[parent]
+            milestone_id, line = _milestone_create(ctx, {**item, "parent_id": parent_id}, conn)
+        except ToolError as exc:
+            if len(items) == 1:
+                raise
+            name = f"milestone {i} of {len(items)}" + (f" ({key})" if key else "")
+            raise ToolError(f"{name}: {_unstop(str(exc))}. Nothing was put on your roadmap") from None
+        if key:
+            keys[key] = milestone_id
+        made.append((milestone_id, line))
+    ids = [m for m, _ in made]
+    summary = f"milestone{'s' if len(ids) != 1 else ''} {_numbers(ids)}"
+    return Outcome(True, "\n".join(line for _, line in made), summary[:300])
+
+
+def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tuple[int, str]:
+    """One milestone of a plan (``args``: its fields, its parent's number as parent_id): its number, and the line
+    that says what happened."""
     title = " ".join(args["title"].split())
     measure = " ".join((args.get("measure") or "").split())
     if not title:
@@ -1588,16 +1653,25 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         if checked
         else "When its measure is met, close it with milestone_update (done, with the evidence)."
     )
-    return Outcome(
-        True,
+    return milestone_id, (
         f"Milestone #{milestone_id} is on your roadmap{leads}, due {due.isoformat()} ({roadmap.when(due, today)}). "
-        + close,
-        f"milestone #{milestone_id} {title[:60]}, due {due.isoformat()}",
+        + close
     )
 
 
 # What a "done" names as its evidence (0.12.0): a number, a reference (#123) or a link or file. "Done." closed one.
 EVIDENCE = re.compile(r"\d|https?://|[\w-]+/[\w./-]+\.\w+")
+
+
+def update_milestone(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
+    """0.12.0: a milestone_update Ember's code makes for the daily review's verdict, with the tool's rules; refused
+    like the tool (the Outcome says why), counted toward no limit and recorded by the review."""
+    try:
+        checked = validate(SPECS["milestone_update"], args)
+        with ctx.db.transaction() as conn, netguard.sealed():
+            return _milestone_update(ctx, checked, conn)
+    except ToolError as exc:
+        return Outcome(False, _unstop(str(exc)), f"refused: {exc}"[:300])
 
 
 def _wait(args: dict[str, Any], row: Any, today: date, closing: bool) -> dict[str, Any]:
@@ -2515,7 +2589,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "venture_create": _venture_create,
     "venture_update": _venture_update,
     "brainstorm": _brainstorm,
-    "milestone_create": _milestone_create,
+    "milestone_plan": _milestone_plan,
     "milestone_update": _milestone_update,
     "request_approval": _request_approval,
     "withdraw_request": _withdraw_request,

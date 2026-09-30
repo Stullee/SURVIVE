@@ -171,8 +171,13 @@ products and workshop runs, and its verdicts from the last review.
 The agent then judges every project (**continue**, **change** or **stop**, with
 the numbers that decide it), says what works and what doesn't, what your
 decisions tell it, one lesson and today's focus, and it checks its venture tree
-and its roadmap (what is overdue, what is due this week, whether it still
-reaches three months ahead). Every plan that day shows the
+and its roadmap. Each milestone that is overdue or due this week gets a
+verdict, **hit** (its measure is met, with the evidence), **miss** (past its
+date and not met), **extend** (a new date) or **park** (it waits a week), and
+Ember's code applies each one with the same rules as the agent's own changes (a
+milestone with a metric is left to Ember's code, the money goal can't be
+closed, a date moves twice at most): the review keeps what came of each
+verdict, and the day's plans see it. Every plan that day shows the
 review, and the agent is told to carry it out: close what it stopped, change
 what it changed, keep the lesson. The next review shows whether it did. You can
 read every review, with the numbers it judged, under **Mind → Daily reviews**.
@@ -371,8 +376,9 @@ Each milestone has a due date and a *measure of done*, a number or a fact the
 agent can check ("10 pins that link to the shop", "business case for venture
 #3 proposed"), and can serve a venture or a project.
 
-**Planning ahead.** The agent lays the roadmap out itself and keeps it filled:
-every plan sees its goals first (the milestones the rest leads to, one line
+**Planning ahead.** The agent lays the roadmap out itself and keeps it filled,
+up to 12 milestones in one step (a goal and the milestones that lead to it,
+each naming its parent in the same step): every plan sees its goals first (the milestones the rest leads to, one line
 each, never cut), then the rest by horizon (overdue, this week, this month,
 the next three months, later), and aims the cycle at the milestone due first, which the cycle's
 work step sees with its measure. Ember's code flags an empty roadmap, overdue

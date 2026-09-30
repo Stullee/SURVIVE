@@ -135,24 +135,52 @@ def test_the_agent_lays_out_its_roadmap_and_keeps_it_honest(data_dir: Path) -> N
             plan(),
             ToolCalls(
                 [
-                    ("milestone_create", {"title": "Two legs that earn", "measure": "30 EUR a month", "due": day(80)}),
                     (
-                        "milestone_create",
-                        {"title": "First sale", "measure": "Revenue recorded", "due": day(20), "parent_id": 1},
+                        "milestone_plan",
+                        {
+                            "milestones": [
+                                {
+                                    "key": "goal",
+                                    "title": "Two legs that earn",
+                                    "measure": "30 EUR a month",
+                                    "due": day(80),
+                                },
+                                {
+                                    "key": "sale",
+                                    "parent": "goal",
+                                    "title": "First sale",
+                                    "measure": "Revenue recorded",
+                                    "due": day(20),
+                                },
+                                {"parent": "sale", "title": "Listing ready", "measure": "Proposed", "due": day(5)},
+                            ]
+                        },
                     ),
                     (
-                        "milestone_create",
-                        {"title": "Listing ready", "measure": "Proposed", "due": day(5), "parent_id": 2},
+                        "milestone_plan",
+                        {"milestones": [{"title": "After", "measure": "x", "due": day(30), "parent": "3"}]},
                     ),
-                    ("milestone_create", {"title": "After", "measure": "x", "due": day(30), "parent_id": 3}),
+                    (
+                        "milestone_plan",
+                        {
+                            "milestones": [
+                                {"key": "solid", "title": "Solid", "measure": "x", "due": day(10)},
+                                {"parent": "solid", "title": "Past", "measure": "x", "due": day(-1)},
+                            ]
+                        },
+                    ),
+                    (
+                        "milestone_plan",
+                        {"milestones": [{"title": "Orphan", "measure": "x", "due": day(9), "parent": "nope"}]},
+                    ),
                 ]
             ),
             ToolCalls(
                 [
-                    ("milestone_create", {"title": "first  SALE", "measure": "x", "due": day(10)}),
-                    ("milestone_create", {"title": "Past", "measure": "x", "due": day(-1)}),
-                    ("milestone_create", {"title": "Far", "measure": "x", "due": day(367)}),
-                    ("milestone_create", {"title": "Vague", "measure": "x", "due": "1 October"}),
+                    ("milestone_plan", {"milestones": [{"title": "first  SALE", "measure": "x", "due": day(10)}]}),
+                    ("milestone_plan", {"milestones": [{"title": "Far", "measure": "x", "due": day(367)}]}),
+                    ("milestone_plan", {"milestones": [{"title": "Vague", "measure": "x", "due": "1 October"}]}),
+                    ("milestone_plan", {"milestones": []}),
                 ]
             ),
             ToolCalls(
@@ -184,17 +212,24 @@ def test_the_agent_lays_out_its_roadmap_and_keeps_it_honest(data_dir: Path) -> N
         ]
     )
     agent, _ = run(data_dir, fake)
-    created = tool_results(agent, "milestone_create")
-    assert [r["status"] for r in created] == ["ok"] * 3 + ["error"] * 5
-    assert created[0]["result"].startswith("Milestone #1 is on your roadmap, due 2026-11-20 (in 80 days).")
-    assert created[1]["result"].startswith("Milestone #2 is on your roadmap, leading to #1, due 2026-09-21")
+    created = tool_results(agent, "milestone_plan")
+    assert [r["status"] for r in created] == ["ok"] + ["error"] * 7
+    laid = created[0]["result"].splitlines()  # 0.12.0: a whole tree in one call
+    assert laid[0].startswith("Milestone #1 is on your roadmap, due 2026-11-20 (in 80 days).")
+    assert laid[1].startswith("Milestone #2 is on your roadmap, leading to #1, due 2026-09-21")
+    assert laid[2].startswith("Milestone #3 is on your roadmap, leading to #2, due 2026-09-06")
     assert (
-        "milestone #3 is due 2026-09-06: a milestone leading to it is due by then at the latest" in created[3]["result"]
+        "milestone #3 is due 2026-09-06: a milestone leading to it is due by then at the latest" in created[1]["result"]
     )
+    assert created[2]["result"] == (
+        "Error: milestone 2 of 2: due must be today (2026-09-01) or later. Nothing was put on your roadmap."
+    )
+    assert rows(agent, "SELECT id FROM milestones WHERE title = 'Solid'") == []  # all or none
+    assert "parent 'nope' is no key of an earlier milestone in this call, nor a number" in created[3]["result"]
     assert "open milestone #2 already has this title" in created[4]["result"]
-    assert "due must be today (2026-09-01) or later" in created[5]["result"]
-    assert "due can be at most a year ahead (2027-09-02)" in created[6]["result"]
-    assert "due must be a date written YYYY-MM-DD, e.g. 2026-09-08" in created[7]["result"]
+    assert "due can be at most a year ahead (2027-09-02)" in created[5]["result"]
+    assert "due must be a date written YYYY-MM-DD, e.g. 2026-09-08" in created[6]["result"]
+    assert "milestones must be a list of 1 to 12 objects" in created[7]["result"]
     updated = tool_results(agent, "milestone_update")
     assert [r["status"] for r in updated] == ["error", "error", "ok", "error"] * 2 + ["error", "ok", "error", "ok"]
     assert "say in note why the date moves" in updated[0]["result"]
@@ -364,7 +399,7 @@ def test_the_rules_ask_the_agent_to_plan_ahead() -> None:
     assert "ROADMAP is your plan ahead" in prompts.OPERATING_RULES
     assert "roadmap" in prompts.REVIEW_SCHEMA["required"] and "Check your roadmap" in prompts.REVIEW_RULES
     assert "the roadmap" in prompts.reflect_prompt()
-    specs = {name: tools.SPECS[name] for name in ("milestone_create", "milestone_update")}
+    specs = {name: tools.SPECS[name] for name in ("milestone_plan", "milestone_update")}
     assert all(spec.reflect for spec in specs.values())
     names = {d["name"] for d in tools.definitions()}
     assert set(specs) <= names
@@ -566,7 +601,10 @@ def test_a_done_needs_its_evidence_and_is_shown_as_the_agents_word(data_dir: Pat
             plan(),
             ToolCalls(
                 [
-                    ("milestone_create", {"title": "3 listings live", "measure": "3 listings on Etsy", "due": day(5)}),
+                    (
+                        "milestone_plan",
+                        {"milestones": [{"title": "3 listings live", "measure": "3 listings on Etsy", "due": day(5)}]},
+                    ),
                     ("milestone_update", {"milestone_id": 1, "status": "done", "result": "Done."}),
                     ("milestone_update", {"milestone_id": 1, "status": "done", "result": "All up, as planned."}),
                     ("milestone_update", {"milestone_id": 1, "status": "done", "result": "3 live: #901, #902, #903"}),

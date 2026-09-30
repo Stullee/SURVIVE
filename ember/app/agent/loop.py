@@ -404,7 +404,7 @@ class CycleRunner:
         with self.db.connection() as conn:
             review_due = review.due(conn, self.scope, self.clock)
         if review_due:
-            self._review(cycle_id)
+            self._review(cycle_id, ctx)
         if self.library_on:
             self._study(cycle_id)
         snap = self._snapshot(ctx.venture)
@@ -551,9 +551,10 @@ class CycleRunner:
             size = None
         return ventures.focus_text(row, paid, size, ventures.projects_of(conn, row["id"]), parts)
 
-    def _review(self, cycle_id: int) -> None:
+    def _review(self, cycle_id: int, ctx: tools.ToolContext) -> None:
         """The daily review, before the first plan of the day. It never ends the cycle: a review the budget can't
-        cover now is tried at the next cycle, and a failed one is recorded (at most review.MAX_ATTEMPTS a day)."""
+        cover now is tried at the next cycle, and a failed one is recorded (at most review.MAX_ATTEMPTS a day). Its
+        verdicts on milestones are applied first (0.12.0), and it is kept with what came of them."""
         self._progress(cycle_id, phase="review", current_action="Reviewing the last 7 days")
         status = self.economy.life.evaluate()
         with self.db.connection() as conn:
@@ -593,6 +594,11 @@ class CycleRunner:
         note = None
         if parsed is None:
             note = "the review wasn't valid JSON" if stop == "end_turn" else f"the review was cut off ({stop})"
+        for verdict in parsed.milestones if parsed else []:
+            outcome = tools.update_milestone(ctx, review.update_args(verdict, self.clock.today()))
+            verdict.applied, verdict.outcome = outcome.ok, outcome.text.removeprefix("Error: ")
+            if outcome.ok:
+                events.record(self.db, "info", "agent", f"The daily review: {outcome.text}"[:300])
         self._save_review(cycle_id, card, parsed, note)
 
     def _study(self, cycle_id: int) -> None:

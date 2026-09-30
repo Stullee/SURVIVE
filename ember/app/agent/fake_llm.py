@@ -697,7 +697,6 @@ CLOSE_MILESTONE_STEP = "Close overdue milestone #{id}"
 DECIDE_MILESTONE_STEP = "Decide at overdue milestone #{id}"  # 0.12.0: a decision point Ember's code set never moves
 _EMPTY_ROADMAP = "Roadmap check: your roadmap is empty"
 _MILESTONE_LINE = re.compile(r'^#(\d+) "(?:[^"\\]|\\.)*" · due \w+ (\d{4}-\d{2}-\d{2}) \(([^)]*)\)(.*)$', re.MULTILINE)
-_MILESTONE_MADE = re.compile(r"Milestone #(\d+) is on your roadmap")
 _OVERDUE_STEP = re.compile(r"(move|close|decide at) overdue milestone #(\d+)")
 _TODAY = re.compile(r"^Time: [A-Za-z]+ (\d{4}-\d{2}-\d{2}) ", re.MULTILINE)
 VENTURE_IDEAS: tuple[tuple[str, str], ...] = (
@@ -1292,6 +1291,7 @@ class FakeTransport:
             "focus": "Get one finished product and its listing in front of my owner today.",
             "ventures": "Research the heaviest idea next and keep the tree growing; park what research doesn't back.",
             "roadmap": "Close what is overdue honestly and keep one small milestone due this week.",
+            "milestones": [],  # 0.12.0: it can't check a measure, so it judges none (its cycles move, then close)
         }
         if chaos == "prose":
             return _Draft([_text("Overall things are going fine and I will keep going.")], note="chaos: prose")
@@ -1560,9 +1560,7 @@ class FakeTransport:
             "brainstorm": BRAINSTORM_STEP.lower() in steps,
             "venture_save": "save what i learned to venture #" in steps,
             "milestone_close": "overdue milestone #" in steps,
-            "roadmap_goal": "lay out my roadmap" in steps,
-            "roadmap_month": "lay out my roadmap" in steps,
-            "roadmap_week": "lay out my roadmap" in steps,
+            "roadmap": "lay out my roadmap" in steps,
         }
         wanted["guide"] = wanted["make"] and crng.random() < 0.5
         wanted["look"] = wanted["photo"] = wanted["make"]
@@ -1582,9 +1580,7 @@ class FakeTransport:
             stages = (
                 "close",
                 "milestone_close",
-                "roadmap_goal",
-                "roadmap_month",
-                "roadmap_week",
+                "roadmap",
                 "mail_read",
                 "mail_reply",
                 "brainstorm",
@@ -1663,8 +1659,8 @@ class FakeTransport:
                 "next_step": "Research demand and write a first draft",
                 "status": "active",
             }
-        if stage in ("roadmap_goal", "roadmap_month", "roadmap_week"):
-            return self._milestone(stage, conv, idea)
+        if stage == "roadmap":
+            return self._roadmap(conv, idea)
         if stage == "milestone_close":
             return self._close_milestone(conv, rng)
         if stage == "brainstorm":
@@ -1861,42 +1857,38 @@ class FakeTransport:
             return "set_sleep", {"minutes": minutes, "reason": "The next step needs my owner or new information."}
         raise ValueError(f"unknown stage {stage}")
 
-    def _milestone(self, stage: str, conv: _Conversation, idea: Idea) -> tuple[str, dict] | None:
-        """One milestone of a new roadmap: a goal about three months ahead, then this month's (leading to it), then
-        this week's (leading to that)."""
+    def _roadmap(self, conv: _Conversation, idea: Idea) -> tuple[str, dict] | None:
+        """A new roadmap in one milestone_plan call (0.12.0): a goal about three months ahead, this month's milestone
+        leading to it, and this week's leading to that."""
         today = today_of(conv.brief)
         if today is None:
             return None
-        made = [
-            int(found[1])
-            for c in conv.of("act")
-            if c.name == "milestone_create" and c.result and not c.error
-            for found in [_MILESTONE_MADE.search(c.result)]
-            if found
-        ]
-        if stage == "roadmap_goal":
-            args: dict[str, Any] = {
-                "title": "Two legs that earn: 30 EUR a month in all",
-                "measure": "Revenue my owner recorded reaches 30 EUR in one month, from two different legs",
-                "due": (today + timedelta(days=84)).isoformat(),
-            }
-        elif stage == "roadmap_month":
-            args = {
-                "title": f"First sale: {idea.title}"[:100],
-                "measure": "My owner records the first revenue for it",
-                "due": (today + timedelta(days=25)).isoformat(),
-            }
-            if conv.project_id is not None:
-                args["project_id"] = conv.project_id
-        else:
-            args = {
-                "title": f"Listing ready for my owner: {idea.title}"[:100],
-                "measure": "The PDF, the photos and the listing text are finished and proposed to my owner",
-                "due": (today + timedelta(days=5)).isoformat(),
-            }
-        if stage != "roadmap_goal" and made:
-            args["parent_id"] = made[-1]
-        return "milestone_create", args
+        month: dict[str, Any] = {
+            "key": "month",
+            "parent": "goal",
+            "title": f"First sale: {idea.title}"[:100],
+            "measure": "My owner records the first revenue for it",
+            "due": (today + timedelta(days=25)).isoformat(),
+        }
+        if conv.project_id is not None:
+            month["project_id"] = conv.project_id
+        return "milestone_plan", {
+            "milestones": [
+                {
+                    "key": "goal",
+                    "title": "Two legs that earn: 30 EUR a month in all",
+                    "measure": "Revenue my owner recorded reaches 30 EUR in one month, from two different legs",
+                    "due": (today + timedelta(days=84)).isoformat(),
+                },
+                month,
+                {
+                    "parent": "month",
+                    "title": f"Listing ready for my owner: {idea.title}"[:100],
+                    "measure": "The PDF, the photos and the listing text are finished and proposed to my owner",
+                    "due": (today + timedelta(days=5)).isoformat(),
+                },
+            ]
+        }
 
     def _close_milestone(self, conv: _Conversation, rng: random.Random) -> tuple[str, dict] | None:
         """The plan's overdue milestone: moved a week the first time (for the owner's, proposed), closed missed after
@@ -2242,9 +2234,7 @@ class FakeTransport:
 _STAGE_TOOLS = {
     "close": "project_update",
     "milestone_close": "milestone_update",
-    "roadmap_goal": "milestone_create",
-    "roadmap_month": "milestone_create",
-    "roadmap_week": "milestone_create",
+    "roadmap": "milestone_plan",
     "brainstorm": "brainstorm",
     "venture_save": "venture_update",
     "etsy_find": "etsy_categories",
@@ -2271,7 +2261,7 @@ _STAGE_TOOLS = {
     "sleep": "set_sleep",
 }
 _INTROS = {
-    "roadmap_goal": "My roadmap is empty, so I'll plan ahead first: a goal, then the steps toward it.",
+    "roadmap": "My roadmap is empty, so I'll plan ahead first: a goal, then the steps toward it.",
     "milestone_close": "One of my milestones is overdue; I'll deal with it honestly first.",
     "mail_read": "Someone wrote to me; I'll read it first.",
     "mail_reply": "That's a real question, so I'll draft an answer for my owner to approve.",

@@ -35,6 +35,10 @@ MAX_DECISIONS = 6
 MAX_SALES = 6  # revenue entries listed in the scorecard
 MAX_ATTEMPTS = 2  # reviews a day, failed ones included
 VERDICTS = ("continue", "change", "stop")
+# 0.12.0: the review's verdicts on milestones, which Ember's code applies (``update_args``); park lets one wait a week.
+MILESTONE_VERDICTS = ("hit", "miss", "extend", "park")
+MAX_MILESTONE_VERDICTS = 12
+PARK_DAYS = 7
 # The dashboard's and the database's limits for the review's texts.
 LIMITS = {
     "working": 600,
@@ -80,6 +84,16 @@ class Verdict:
 
 
 @dataclass
+class MilestoneVerdict:
+    milestone_id: int
+    verdict: str
+    why: str
+    new_due: str = ""  # extend's new date
+    applied: bool = False  # what Ember's code did with it
+    outcome: str = ""
+
+
+@dataclass
 class Review:
     verdicts: list[Verdict]
     working: str
@@ -89,6 +103,21 @@ class Review:
     focus: str
     ventures: str = ""
     roadmap: str = ""
+    milestones: list[MilestoneVerdict] = field(default_factory=list)
+
+
+def update_args(v: MilestoneVerdict, today: date) -> dict[str, Any]:
+    """A milestone verdict as the milestone_update Ember's code makes of it (0.12.0): hit closes it done, miss closes it
+    missed, extend moves its date, park lets it wait PARK_DAYS; the review's why is the result, note or wait."""
+    why = f"Daily review: {v.why}"
+    if v.verdict == "hit":
+        return {"milestone_id": v.milestone_id, "status": "done", "result": why}
+    if v.verdict == "miss":
+        return {"milestone_id": v.milestone_id, "status": "missed", "result": why}
+    if v.verdict == "extend":
+        return {"milestone_id": v.milestone_id, "due": v.new_due, "note": why}
+    check = (today + timedelta(days=PARK_DAYS)).isoformat()
+    return {"milestone_id": v.milestone_id, "wait_for": f"the daily review's word: {v.why}"[:200], "check_at": check}
 
 
 def due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> bool:
@@ -493,9 +522,21 @@ def parse(text: str, project_ids: set[int]) -> Review | None:
         seen.add(pid)
         verdicts.append(Verdict(pid, verdict, _one_line(item.get("why"), WHY_CHARS)))
     texts = {key: str(data.get(key) or "").strip()[:limit] for key, limit in LIMITS.items()}
-    if not verdicts and not any(texts.values()):
+    judged: list[MilestoneVerdict] = []
+    items = data.get("milestones")
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict) or len(judged) >= MAX_MILESTONE_VERDICTS:
+            continue
+        mid, verdict = item.get("milestone_id"), item.get("verdict")
+        if not isinstance(mid, int) or isinstance(mid, bool) or verdict not in MILESTONE_VERDICTS:
+            continue
+        if any(v.milestone_id == mid for v in judged):
+            continue
+        new_due = str(item.get("new_due") or "").strip()[:10]
+        judged.append(MilestoneVerdict(mid, verdict, _one_line(item.get("why"), WHY_CHARS), new_due))
+    if not verdicts and not judged and not any(texts.values()):
         return None
-    return Review(verdicts=verdicts, **texts)
+    return Review(verdicts=verdicts, milestones=judged, **texts)
 
 
 def _json_object(text: str) -> Any:
@@ -527,11 +568,22 @@ def save(
     verdicts = (
         [{"project_id": v.project_id, "verdict": v.verdict, "why": v.why} for v in review.verdicts] if review else []
     )
+    judged = [
+        {
+            "milestone_id": v.milestone_id,
+            "verdict": v.verdict,
+            "why": v.why,
+            "new_due": v.new_due,
+            "applied": v.applied,
+            "outcome": v.outcome[:300],
+        }
+        for v in (review.milestones if review else [])
+    ]
     texts = {key: getattr(review, key) if review else "" for key in LIMITS}
     cursor = conn.execute(
         "INSERT INTO reviews (mode, session, life_id, cycle_id, created_at, day, status, scorecard, verdicts, working,"
-        " not_working, owner_feedback, lesson, focus, ventures, roadmap, note, app_version) VALUES (?, ?, ?, ?, ?, ?,"
-        " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " not_working, owner_feedback, lesson, focus, ventures, roadmap, note, app_version, milestones) VALUES (?, ?,"
+        " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             scope.mode,
             scope.session,
@@ -551,9 +603,19 @@ def save(
             texts["roadmap"],
             (note or "")[:300] or None,
             app_version()[:40],
+            json.dumps(judged, ensure_ascii=False),
         ),
     )
     return int(cursor.lastrowid)
+
+
+def milestone_verdicts(row: sqlite3.Row) -> list[dict[str, Any]]:
+    """A review's verdicts on milestones (0.12.0), with what Ember's code did with them ([] for older reviews)."""
+    try:
+        items = json.loads(row["milestones"] or "[]")
+    except (IndexError, KeyError, ValueError):
+        return []
+    return [v for v in items if isinstance(v, dict)]
 
 
 def _verdicts(row: sqlite3.Row) -> list[dict[str, Any]]:
@@ -574,6 +636,10 @@ def planner_text(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
         project = conn.execute("SELECT title, status FROM projects WHERE id = ?", (v["project_id"],)).fetchone()
         title = f" {_one_line(project['title'], 60)} [{project['status']}]" if project else ""
         lines.append(f"- #{v['project_id']}{title}: {v['verdict']}: {_one_line(v['why'], 160)}")
+    for v in milestone_verdicts(row):
+        verdict = f"{v.get('verdict')} to {v.get('new_due')}" if v.get("verdict") == "extend" else v.get("verdict")
+        done = "applied" if v.get("applied") else f"not applied: {_one_line(v.get('outcome'), 120)}"
+        lines.append(f"- milestone #{v.get('milestone_id')}: {verdict}: {_one_line(v.get('why'), 120)} ({done})")
     if row["focus"]:
         lines.append(f"Focus today: {_one_line(row['focus'], 300)}")
     if row["lesson"]:

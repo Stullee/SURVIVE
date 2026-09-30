@@ -611,6 +611,7 @@ def _review(conn: sqlite3.Connection, r: sqlite3.Row) -> dict[str, Any]:
         "focus": r["focus"],
         "ventures": r["ventures"],
         "roadmap": r["roadmap"],
+        "milestones": review.milestone_verdicts(r),  # 0.12.0: its verdicts on milestones, and what came of them
         "note": r["note"],
         "scorecard": r["scorecard"],
     }

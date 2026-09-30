@@ -3132,6 +3132,11 @@
             h("strong", { text: "#" + v.project_id + (v.title ? " " + asText(v.title) : "") }),
             v.why ? ": " + asText(v.why) : "");
         })) : null,
+        arr(r.milestones).length ? h("ul", { class: "verdicts" }, arr(r.milestones).map(function (v) {
+          return h("li", null, h("strong", { text: "Milestone #" + v.milestone_id + ": " + String(v.verdict || "?") +
+            (v.verdict === "extend" && v.new_due ? " to " + fmtDay(v.new_due) : "") }),
+            v.why ? ": " + asText(v.why) : "", " · " + (v.applied ? "applied" : "not applied: " + asText(v.outcome)));
+        })) : null,
         reviewLine("Focus", r.focus),
         reviewLine("Working", r.working),
         reviewLine("Not working", r.not_working),

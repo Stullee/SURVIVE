@@ -54,12 +54,12 @@ LAST_WILL = CallProfile(input_tokens=6_400, max_tokens=1_000)
 # The first work step with the largest brief, and the reflection after it (with the room the loop keeps for one
 # step's growth), measured the same way: a wake cycle is only worth starting if both fit after its plan. Measured
 # with the most tools (a mailbox's, a shop's, a venture cycle's and the library's too) and the library's learnings
-# (0.12.0: and the Etsy renewals, mark_opt_out, and the milestones' metrics, budgets and waits).
-WORK = CallProfile(input_tokens=30_100, max_tokens=2_000, cache_ttls=("5m",))
-REFLECT = CallProfile(input_tokens=40_700, max_tokens=2_000, cache_ttls=("5m",))
+# (0.12.0: and the Etsy renewals, mark_opt_out, and the milestones' metrics, budgets, waits and milestone_plan).
+WORK = CallProfile(input_tokens=30_300, max_tokens=2_000, cache_ttls=("5m",))
+REFLECT = CallProfile(input_tokens=40_900, max_tokens=2_000, cache_ttls=("5m",))
 # The daily review (0.7.1), measured the same way: the constitution, the knowledge, the review rules (with the
-# venture tree's: 0.10.0, and the roadmap's: 0.11.0) and a full scorecard.
-REVIEW_CALL = CallProfile(input_tokens=14_600, max_tokens=1_800)
+# venture tree's: 0.10.0, and the roadmap's: 0.11.0, with verdicts on milestones: 0.12.0) and a full scorecard.
+REVIEW_CALL = CallProfile(input_tokens=14_900, max_tokens=2_200)
 # The biggest first call of a workshop run (0.7.0), measured the same way: its rules, a task at its length limit and
 # the most files handed over. It also has the code execution tool, priced with every code run and container time.
 WORKSHOP_RUN = CallProfile(input_tokens=5_100, max_tokens=8_000, cache_ttls=("5m",))

@@ -133,11 +133,15 @@ def test_research_without_a_business_case_is_parked_after_three_weeks(data_dir: 
     researched(agent, DROPSHIPPING)
     step = call(
         agent,
-        "milestone_create",
-        title="Case for dropshipping",
-        measure="Its business case is proposed",
-        due=(agent.clock.today() + timedelta(days=30)).isoformat(),
-        venture_id=DROPSHIPPING,
+        "milestone_plan",
+        milestones=[
+            dict(
+                title="Case for dropshipping",
+                measure="Its business case is proposed",
+                due=(agent.clock.today() + timedelta(days=30)).isoformat(),
+                venture_id=DROPSHIPPING,
+            )
+        ],
     )
     assert step.ok, step.text
     theirs = owner(agent).add_milestone(
@@ -233,7 +237,7 @@ def test_the_0_11_tree_and_roadmap_come_through_the_rebuild(tmp_path: Path) -> N
         conn.execute(insert, (3, 1, "agent", "Mine"))
         before = [tuple(r) for r in conn.execute("SELECT * FROM ventures")]
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [30, 31]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [30, 31, 32]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         after = [tuple(r)[: len(before[0])] for r in conn.execute("SELECT * FROM ventures")]

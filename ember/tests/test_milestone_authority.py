@@ -215,7 +215,7 @@ def test_the_last_four_open_places_are_the_owners(data_dir: Path) -> None:
     agent = agent_with_a_cycle(data_dir)
     for n in range(16):
         create(agent, title=f"Step {n}", measure="x", due=day(10))
-    assert refused(agent, "milestone_create", title="One more", measure="x", due=day(10)) == (
+    assert refused(agent, "milestone_plan", milestones=[dict(title="One more", measure="x", due=day(10))]) == (
         "16 milestones are open already, and the other 4 of the 20 places are kept for your owner: close or drop one "
         "first"
     )
@@ -253,7 +253,7 @@ def test_a_0_11_roadmap_comes_through_the_rebuild(tmp_path: Path) -> None:
         conn.execute("UPDATE cycles SET status = 'completed', ended_at = 'then' WHERE id = 1")
         before = [tuple(r) for r in conn.execute("SELECT * FROM milestones ORDER BY id")]
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         after = [tuple(r)[: len(before[0])] for r in conn.execute("SELECT * FROM milestones ORDER BY id")]

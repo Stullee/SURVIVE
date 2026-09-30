@@ -89,11 +89,8 @@ def test_a_met_goal_closes_done_and_the_next_asks_for_more(data_dir: Path) -> No
     agent, _ = run(data_dir, fake)
     step = call(
         agent,
-        "milestone_create",
-        title="First Etsy sale",
-        measure="1 order of a listing",
-        due=day(20),
-        parent_id=1,
+        "milestone_plan",
+        milestones=[dict(title="First Etsy sale", measure="1 order of a listing", due=day(20), parent=str(1))],
     )
     assert step.ok, step.text
     owner_entry(agent.economy, "revenue", "5", test_money=True)

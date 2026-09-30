@@ -89,11 +89,8 @@ def test_a_live_listing_milestone_is_closed_by_code_after_the_sync(data_dir: Pat
     step = made(
         call(
             agent,
-            "milestone_create",
-            title="My first listing live",
-            metric="listings_live",
-            target="1",
-            due=day(agent, 7),
+            "milestone_plan",
+            milestones=[dict(title="My first listing live", metric="listings_live", target="1", due=day(agent, 7))],
         )
     )
     row = milestone(agent, step)
@@ -132,7 +129,9 @@ def test_a_target_met_already_is_refused(data_dir: Path) -> None:
     agent, _ = listed(data_dir)
     agent.sync_shop()
     refused = call(
-        agent, "milestone_create", title="A listing live", metric="listings_live", target="1", due=day(agent, 7)
+        agent,
+        "milestone_plan",
+        milestones=[dict(title="A listing live", metric="listings_live", target="1", due=day(agent, 7))],
     )
     assert not refused.ok and "listings_live is 1 listing already (#900000001), so a target" in refused.text
     for args, error in (
@@ -142,10 +141,13 @@ def test_a_target_met_already_is_refused(data_dir: Path) -> None:
         ({"target": "3"}, "target is a metric's: set metric too"),
         ({}, "say how you will know it is reached"),
     ):
-        refused = call(agent, "milestone_create", title="Something", due=day(agent, 7), **args)
+        refused = call(agent, "milestone_plan", milestones=[dict(title="Something", due=day(agent, 7), **args)])
         assert not refused.ok and error in refused.text, (args, refused.text)
     refused = call(
-        agent, "milestone_create", shop=False, title="Two live", metric="listings_live", target="2", due=day(agent, 7)
+        agent,
+        "milestone_plan",
+        shop=False,
+        milestones=[dict(title="Two live", metric="listings_live", target="2", due=day(agent, 7))],
     )
     assert not refused.ok and "isn't set up" in refused.text
 
@@ -154,7 +156,11 @@ def test_a_miss_says_the_numbers_and_whether_there_was_enough_to_judge(data_dir:
     agent, listing_id = listed(data_dir)
     agent.sync_shop()
     step = made(
-        call(agent, "milestone_create", title="First order", metric="orders_observed", target="1", due=day(agent, 1))
+        call(
+            agent,
+            "milestone_plan",
+            milestones=[dict(title="First order", metric="orders_observed", target="1", due=day(agent, 1))],
+        )
     )
     agent.clock.advance(days=2)
     agent.sync_shop()  # the fake shop's listing #900000001 never sells
@@ -170,7 +176,11 @@ def test_old_numbers_are_not_graded(data_dir: Path) -> None:
     agent, _ = listed(data_dir)
     agent.sync_shop()
     step = made(
-        call(agent, "milestone_create", title="Two live", metric="listings_live", target="2", due=day(agent, 1))
+        call(
+            agent,
+            "milestone_plan",
+            milestones=[dict(title="Two live", metric="listings_live", target="2", due=day(agent, 1))],
+        )
     )
     agent.clock.advance(days=2)  # past its date, but the shop wasn't read since it was set
     assert grade(agent) == []
@@ -190,27 +200,30 @@ def test_revenue_spending_and_a_ventures_stage(data_dir: Path) -> None:
     earn = made(
         call(
             agent,
-            "milestone_create",
-            title="Earn 4 USD with it",
-            metric="revenue_verified_usd",
-            target="4",
-            project_id=project["id"],
-            due=day(agent, 20),
+            "milestone_plan",
+            milestones=[
+                dict(
+                    title="Earn 4 USD with it",
+                    metric="revenue_verified_usd",
+                    target="4",
+                    project_id=project["id"],
+                    due=day(agent, 20),
+                )
+            ],
         )
     )
     tight = made(
         call(
             agent,
-            "milestone_create",
-            title="Spend a cent at most",
-            metric="api_spend_usd",
-            target="0.01",
-            due=day(agent, 20),
+            "milestone_plan",
+            milestones=[dict(title="Spend a cent at most", metric="api_spend_usd", target="0.01", due=day(agent, 20))],
         )
     )
     loose = made(
         call(
-            agent, "milestone_create", title="Spend 50 at most", metric="api_spend_usd", target="50", due=day(agent, 1)
+            agent,
+            "milestone_plan",
+            milestones=[dict(title="Spend 50 at most", metric="api_spend_usd", target="50", due=day(agent, 1))],
         )
     )
     with agent.db.transaction() as conn:
@@ -225,16 +238,18 @@ def test_revenue_spending_and_a_ventures_stage(data_dir: Path) -> None:
     backed = made(
         call(
             agent,
-            "milestone_create",
-            title="Backed",
-            metric="stage_reached",
-            target="building",
-            venture_id=venture,
-            due=day(agent, 20),
+            "milestone_plan",
+            milestones=[
+                dict(title="Backed", metric="stage_reached", target="building", venture_id=venture, due=day(agent, 20))
+            ],
         )
     )
     case = made(
-        call(agent, "milestone_create", title="A case", metric="case_complete", venture_id=venture, due=day(agent, 20))
+        call(
+            agent,
+            "milestone_plan",
+            milestones=[dict(title="A case", metric="case_complete", venture_id=venture, due=day(agent, 20))],
+        )
     )
     assert grade(agent) == []
     owner_entry(agent.economy, "revenue", "5", project_id=project["id"], test_money=True)
@@ -265,12 +280,9 @@ def test_views_gained_need_the_history_and_count_from_when_it_was_set(data_dir: 
     step = made(
         call(
             agent,
-            "milestone_create",
+            "milestone_plan",
             history=True,
-            title="Fifty more views",
-            metric="views_delta",
-            target="50",
-            due=day(agent, 7),
+            milestones=[dict(title="Fifty more views", metric="views_delta", target="50", due=day(agent, 7))],
         )
     )
     assert milestone(agent, step)["baseline"] == before
@@ -289,7 +301,11 @@ def test_the_plan_sees_what_code_closed_since_the_last_cycle(data_dir: Path) -> 
     agent, _, request = proposed(data_dir)
     agent.sync_shop()
     step = made(
-        call(agent, "milestone_create", title="Live at last", metric="listings_live", target="1", due=day(agent, 7))
+        call(
+            agent,
+            "milestone_plan",
+            milestones=[dict(title="Live at last", metric="listings_live", target="1", due=day(agent, 7))],
+        )
     )
     owner(agent).decide(request, {"decision": "approve"}, "Owner")
     agent.execute_approved()
