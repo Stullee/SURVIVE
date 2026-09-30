@@ -758,6 +758,11 @@ def week_ago(conn: sqlite3.Connection, scope: AgentScope, today: date, metric: s
     return first
 
 
+def _flat(text: str | None, chars: int) -> str:
+    """A listing's title or error on one line (0.12.0: the plan's sections are headed by lines of their own)."""
+    return " ".join((text or "").split())[:chars]
+
+
 def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_name: str, daily_limit: int) -> str:
     """The ETSY SHOP section of the plan: every live listing and how it does (0.12.0: all of them, top sellers first),
     this week's orders, what to fix, and the newest listings and requests one by one."""
@@ -801,9 +806,11 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
     for r in rows[:NEWEST_SHOWN]:
         if r["listing_id"] and r["status"] in ("active", "draft"):
             state = r["state"] or r["status"]
-            lines.append(f"- #{r['listing_id']} [{state}] {r['title'][:80]} · since {r['started_at'][:10]}")
+            lines.append(f"- #{r['listing_id']} [{state}] {_flat(r['title'], 80)} · since {r['started_at'][:10]}")
         else:
-            lines.append(f"- request #{r['approval_id']} [{r['status']}] {r['title'][:80]}: {(r['error'] or '')[:100]}")
+            lines.append(
+                f"- request #{r['approval_id']} [{r['status']}] {_flat(r['title'], 80)}: {_flat(r['error'], 100)}"
+            )
     left = max(0, daily_limit - created_today(conn, clock, scope))
     lines.append(f"Listings Ember can still create today: {left} of {daily_limit}.")
     if any(r["listing_id"] and r["status"] == "active" for r in rows):

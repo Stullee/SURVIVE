@@ -109,7 +109,7 @@ def planner_context(
         ("SINCE YOUR LAST WAKE", "\n".join([*lines, *(news or [])]) or "Nothing new."),
         ("OPEN PROJECTS", _project_lines(projects or {})),
         ("WAITING FOR YOUR OWNER", "None."),
-        ("STRATEGY", strategy),
+        ("STRATEGY (written by you)", strategy),
         ("TASK", "Plan this wake cycle. Reply with the JSON plan only."),
     )
 
@@ -132,7 +132,7 @@ def brief(
         ("PLAN", f"Goal: {plan.get('goal', '')}\n{steps}"),
         *([("FROM YOUR OWNER", "\n".join(owner))] if owner else []),
         ("FOCUS", focus),
-        ("LESSONS", "- Keep it small."),
+        ("LESSONS (written by you, newest last)", "- Keep it small."),
         ("WORKSPACE", "Empty."),
         ("LIMITS", "At most 12 steps this cycle and 4 tool calls per step. Stop when the goal is reached."),
     )

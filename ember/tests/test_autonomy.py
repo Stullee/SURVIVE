@@ -263,10 +263,10 @@ def test_the_planner_shows_the_newest_lessons_and_asks_for_no_blind_rewrite(scal
     snap = snapshot_with([])
     snap.memory = {"lessons": lessons, "strategy": strategy}
     planner, _ = context.planner_context(snap, False, scale)
-    shown = section(planner, r"LESSONS \(newest last\)") or ""
+    shown = section(planner, r"LESSONS \(written by you, newest last\)") or ""
     assert shown.endswith("- [#c79] Lesson number 79: write_journal only in the reflect phase.")
     assert context.json_bytes(shown) <= context.PLANNER_BUDGETS["lessons"] * scale
-    assert section(planner, "STRATEGY") == strategy  # as it is
+    assert section(planner, r"STRATEGY \(written by you\)") == strategy  # as it is
     assert "Memory check" not in planner
 
 

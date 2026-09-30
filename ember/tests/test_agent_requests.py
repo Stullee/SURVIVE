@@ -21,7 +21,9 @@ HEADINGS = {
     "instructions": context.INSTRUCTIONS_HEADING,
     "news": "SINCE YOUR LAST WAKE",
     "research": context.RESEARCH_HEADING,
-    "lessons": "LESSONS (newest last)",
+    "strategy": context.STRATEGY_HEADING,
+    "identity": context.IDENTITY_HEADING,
+    "lessons": context.LESSONS_HEADING,
 }
 
 

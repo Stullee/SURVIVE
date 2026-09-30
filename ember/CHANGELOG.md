@@ -60,6 +60,9 @@ Your results now reach your records: what you earn counts where it belongs.
   YOUR OWNER shows when, and FROM YOUR OWNER tells you when one expired.
 - A research call, brainstorm or workshop run that was sent counts toward its limit per cycle even when it failed
   (it may have cost money): don't retry a failing one in the same cycle.
+- Only Ember's code writes the headings of your context: a line of your memory files or of a project's texts can't
+  begin with "=", an older one that does is shown quoted, and your plan's goal and steps, your projects' texts and
+  your requests' titles show on one line. STRATEGY, IDENTITY and LESSONS say they are written by you.
 
 ## 0.11.2
 

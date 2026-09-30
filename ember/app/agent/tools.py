@@ -44,7 +44,7 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
 from . import library, netguard, roadmap, store, ventures
-from .memory import CAPS, Memory, MemoryError_
+from .memory import CAPS, HEADING_REFUSAL, Memory, MemoryError_, heading_line
 from .sandbox import Jail, QuotaError, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
 
@@ -1100,7 +1100,15 @@ def _memory_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     return Outcome(True, f"{name}.md, {size:,} of {CAPS[name]:,} bytes, whole:\n{body}", f"read {name}")
 
 
+def _no_heading(args: dict[str, Any], *names: str) -> None:
+    """0.12.0: a project's texts, in every plan, never hold a line that begins like a heading of the context."""
+    for name in names:
+        if heading_line(args.get(name) or ""):
+            raise ToolError(HEADING_REFUSAL.format(name=name))
+
+
 def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    _no_heading(args, "title", "hypothesis", "next_step")
     open_ = store.open_projects(conn, ctx.scope)
     if len(open_) >= MAX_OPEN_PROJECTS:
         raise ToolError(f"you already have {MAX_OPEN_PROJECTS} open projects; close one first")
@@ -1130,6 +1138,7 @@ def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
 
 
 def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    _no_heading(args, "next_step", "hypothesis", "note")
     row = store.project(conn, ctx.scope, args["project_id"])
     if row is None:
         raise ToolError(f"there is no project #{args['project_id']}")

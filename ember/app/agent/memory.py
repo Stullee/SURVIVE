@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
+import unicodedata
 from collections.abc import Callable
 
 from .. import events
@@ -23,6 +24,10 @@ from .store import AgentScope, sha256
 log = logging.getLogger(__name__)
 
 CAPS = {"strategy": 2_000, "identity": 800, "lessons": 4_000}
+HEADING_REFUSAL = (
+    "a line of {name} begins with '=', as only the headings of your context do (== ... ==): begin it otherwise, a "
+    "heading of yours with '#'"
+)
 MAX_APPEND_LINES = 5
 _PREFIX = re.compile(r"^[-\s]*(?:\[#c\d+\]\s*)?")
 _OWN_TAGS = re.compile(r"^(?:\[#c\d+\]\s*)+")  # cycle tags the model wrote itself: the code adds the real one
@@ -36,6 +41,25 @@ SEEDS = {
     "identity": "# Identity\n\nI am an AI agent. I work honestly and in the open, with my owner's approval.\n",
     "lessons": "# Lessons\n\n",
 }
+
+
+# 0.12.0: characters that look like "=" at a line's start without being one (NFKC turns most others into "=").
+_EQUALS_LOOKALIKES = frozenset("═゠꞊")
+
+
+def heading_like(line: str) -> bool:
+    """Whether a line begins like a heading of the agent's context ("== FROM YOUR OWNER =="): with "=" or a lookalike,
+    after any spaces and invisible characters. The agent's own texts can't hold such a line (0.12.0: one could pose as
+    its owner's words), and the context shows any other one quoted."""
+    for char in line:
+        if not (char.isspace() or unicodedata.category(char) == "Cf"):
+            return char in _EQUALS_LOOKALIKES or unicodedata.normalize("NFKC", char).startswith("=")
+    return False
+
+
+def heading_line(text: str) -> bool:
+    """Whether any line of ``text`` begins like a heading of the agent's context (every kind of line break counts)."""
+    return any(heading_like(line) for line in text.splitlines())
 
 
 class MemoryError_(ValueError):  # noqa: N801 - "MemoryError" is a builtin
@@ -87,6 +111,8 @@ class Memory:
         text = content.strip()
         if not text:
             raise MemoryError_("the content is empty")
+        if heading_line(text):
+            raise MemoryError_(HEADING_REFUSAL.format(name="the content"))
         dropped = skipped = 0
         if mode == "replace":
             new = text + "\n"

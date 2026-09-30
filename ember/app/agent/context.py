@@ -25,7 +25,7 @@ from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
 from . import library, review, roadmap, store, ventures
-from .memory import Memory
+from .memory import Memory, heading_like
 from .news import CHANGELOG_LIMIT, Item, News, Shown
 from .sandbox import Jail
 from .store import AgentScope
@@ -93,6 +93,11 @@ VENTURE_BRIEF = (
 BRIEF_MAX = BRIEF_BUDGET + INSTRUCTIONS_BUDGET + OWNER_BUDGET + MAIL_BUDGET + RESEARCH_BUDGET + KNOWLEDGE_BUDGET + 260
 WILL_BUDGET = 4_500 + OWNER_BUDGET + 100  # the largest will context: the LAST_WILL profile is measured on it
 _QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')  # a JSON string: how the owner's and the agent's texts are quoted
+# 0.12.0: the agent's memory files are headed as its own words, so a forged "FROM YOUR OWNER" in one is plainly its own.
+STRATEGY_HEADING = "STRATEGY (written by you)"
+IDENTITY_HEADING = "IDENTITY (written by you)"
+LESSONS_HEADING = "LESSONS (written by you, newest last)"
+_LINE_BREAK = re.compile(r"(\r\n|[\n\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029])")  # what str.splitlines() splits at
 _DIGEST = re.compile(r'<data src="research" id="[0-9a-f]+">\n(.*?)\n</data id="[0-9a-f]+">', re.DOTALL)
 
 
@@ -341,6 +346,11 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
     return "\n".join(lines)
 
 
+def flat(text: Any) -> str:
+    """The agent's text on one line (0.12.0: a text over several lines could pose as a section of its own)."""
+    return " ".join(str(text or "").split())
+
+
 def project_lines(s: Snapshot) -> str:
     if not s.projects:
         return "No open projects."
@@ -348,10 +358,10 @@ def project_lines(s: Snapshot) -> str:
     for p in s.projects[:8]:
         spent, earned = s.project_money.get(p["id"], (0, 0))
         lines.append(
-            f"#{p['id']} [{p['status']}] {p['title']} · next: {p['next_step'] or '-'} · spent "
+            f"#{p['id']} [{p['status']}] {flat(p['title'])} · next: {flat(p['next_step']) or '-'} · spent "
             f"${micros_to_usd(spent):.2f} · earned ${micros_to_usd(earned):.2f}"
         )
-        lines.append(f"   hypothesis: {p['hypothesis']}")
+        lines.append(f"   hypothesis: {flat(p['hypothesis'])}")
     return "\n".join(lines)
 
 
@@ -359,7 +369,9 @@ def _news_head(s: Snapshot) -> str:
     lines = []
     if s.last_cycle is not None:
         c = s.last_cycle
-        lines.append(f"Last cycle #{c['id']} ended {c['status']}" + (f" ({c['note']})" if c["note"] else "") + ".")
+        lines.append(
+            f"Last cycle #{c['id']} ended {c['status']}" + (f" ({flat(c['note'])})" if c["note"] else "") + "."
+        )
     return "\n".join(lines)
 
 
@@ -575,14 +587,24 @@ def workshop_text(s: Snapshot) -> str:
 
 
 def _sections(parts: list[tuple[str, str]]) -> str:
-    return "\n\n".join(f"== {title} ==\n{body}" for title, body in parts)
+    """The sections under their headings. Only a heading begins a line with "=": a line of a section that does (0.12.0:
+    in a memory file from before, or one changed outside Ember) is shown JSON-quoted, so it can't pose as one."""
+    return "\n\n".join(f"== {title} ==\n{_unheaded(body)}" for title, body in parts)
+
+
+def _unheaded(body: str) -> str:
+    pieces = _LINE_BREAK.split(body)  # the lines, with the line breaks between them
+    for i in range(0, len(pieces), 2):
+        if heading_like(pieces[i]):
+            pieces[i] = json.dumps(pieces[i], ensure_ascii=False)
+    return "".join(pieces)
 
 
 def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str, Shown]:
     """The planner's context, and what of the owner's news and of the changelog it lists and shows whole."""
     b = {k: int(v * scale) for k, v in PLANNER_BUDGETS.items()}
     pending = (
-        "\n".join(f"#{r['id']} {r['type']}: {r['title']} (expires {store.expires_at(r)[:10]})" for r in s.pending)
+        "\n".join(f"#{r['id']} {r['type']}: {flat(r['title'])} (expires {store.expires_at(r)[:10]})" for r in s.pending)
         or "None."
     )
     if s.pending and s.decision_wakes:  # first, so a cut never takes it (0.12.0: it slept 12 hours for a decision)
@@ -606,9 +628,9 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         ("WAITING FOR YOUR OWNER", cut(pending, b["pending"])),
         *([("MAIL", cut(mail_text(s), b["mail"]))] if s.mail is not None else []),
         *([("ETSY SHOP", cut(s.etsy, b["etsy"]))] if s.etsy else []),
-        ("STRATEGY", _strategy(s, b["strategy"])),
-        ("IDENTITY", cut(s.memory.get("identity", ""), b["identity"])),
-        ("LESSONS (newest last)", _lessons(s, b["lessons"])),
+        (STRATEGY_HEADING, _strategy(s, b["strategy"])),
+        (IDENTITY_HEADING, cut(s.memory.get("identity", ""), b["identity"])),
+        (LESSONS_HEADING, _lessons(s, b["lessons"])),
         ("WORKSPACE", cut("\n".join(s.workspace) or "Empty.", b["workspace"])),
         *([(RESEARCH_HEADING, cut(research, b["research"]))] if research else []),
         *([("WORKSHOP", cut(workshop_text(s), b["workshop"]))] if s.proven else []),
@@ -639,14 +661,14 @@ def brief(
         focus_parts.append(cut(venture_focus, VENTURE_FOCUS_BUDGET))
     if focus is not None:
         focus_parts.append(
-            f"Focus project: #{focus['id']} {focus['title']} [{focus['status']}]\n"
-            f"Hypothesis: {focus['hypothesis']}\nNext step: {focus['next_step'] or '-'}\n"
-            f"Notes: {focus['notes'][-600:] or '-'}"
+            f"Focus project: #{focus['id']} {flat(focus['title'])} [{focus['status']}]\n"
+            f"Hypothesis: {flat(focus['hypothesis'])}\nNext step: {flat(focus['next_step']) or '-'}\n"
+            f"Notes: {flat(focus['notes'][-600:]) or '-'}"
         )
     focus_text = "\n\n".join(focus_parts) or "None."
-    steps = "\n".join(f"{i}. {step}" for i, step in enumerate(plan.get("steps", []), 1))
-    money = f"\nPath to money: {plan['money_path']}" if plan.get("money_path") else ""
-    head = [("STATUS", status_text(s, dry_run)), ("PLAN", f"Goal: {plan.get('goal', '')}{money}\n{steps}")]
+    steps = "\n".join(f"{i}. {flat(step)}" for i, step in enumerate(plan.get("steps", []), 1))
+    money = f"\nPath to money: {flat(plan['money_path'])}" if plan.get("money_path") else ""
+    head = [("STATUS", status_text(s, dry_run)), ("PLAN", f"Goal: {flat(plan.get('goal'))}{money}\n{steps}")]
     standing = instructions_section(s)
     owner, lines, too_long = _owner(s, OWNER_BUDGET)
     owners = [("FROM YOUR OWNER", owner)] if owner else []
@@ -662,7 +684,7 @@ def brief(
         *([("VENTURE CYCLE", VENTURE_BRIEF)] if s.venture else []),
         *learned,  # before the FOCUS: a brief over its budget loses its end, and this section's room is its own
         ("FOCUS", focus_text),
-        ("LESSONS", _newest_lines(s.memory.get("lessons", ""), 800)),
+        (LESSONS_HEADING, _newest_lines(s.memory.get("lessons", ""), 800)),
         ("WORKSPACE", "\n".join(s.workspace[:20]) or "Empty."),
         *researched,
         ("LIMITS", f"At most {max_steps} steps this cycle and 4 tool calls per step. Stop when the goal is reached."),
@@ -677,14 +699,14 @@ def brief(
 
 
 def will_context(s: Snapshot, dry_run: bool) -> str:
-    closed = "\n".join(f"- {j['summary']}" for j in reversed(s.journal)) or "No journal yet."
+    closed = "\n".join(f"- {flat(j['summary'])}" for j in reversed(s.journal)) or "No journal yet."
     parts = [
         ("STATUS", status_text(s, dry_run)),
         *owner_section(s),
         ("PROJECTS", project_lines(s)),
         ("RECENT JOURNAL", closed),
-        ("LESSONS", _newest_lines(s.memory.get("lessons", ""), 1_200)),
-        ("STRATEGY", s.memory.get("strategy", "")[:800]),
+        (LESSONS_HEADING, _newest_lines(s.memory.get("lessons", ""), 1_200)),
+        (STRATEGY_HEADING, s.memory.get("strategy", "")[:800]),
         ("TASK", "Write your last will now."),
     ]
     return cut(_sections(parts), WILL_BUDGET)
