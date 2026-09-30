@@ -159,8 +159,8 @@
     "app/web.py",
     "app/diagnostics.py"
    ],
-   "evidence": "web.py:54-67 labels the owner's actions as 'name (user id)'. The report prints events raw (diagnostics.py:1049-1057) and OPTIONS includes owner_user_ids (diagnostics.py:355-361). Live 0.13.0: OPTIONS :75 has the 32-hex id; EVENTS has 10 lines such as 'MVP (7f32…) approved request #13'. The 0.12.0 report has the same at :3176-3180.",
-   "failure_scenario": "An owner whose Home Assistant display name is their real name publishes it with every shared report, next to the id that owner_user_ids trusts. Today the name is 'MVP'.",
+   "evidence": "web.py:54-67 labels the owner's actions as 'name (user id)'. The report prints events raw (diagnostics.py:1049-1057) and OPTIONS includes owner_user_ids (diagnostics.py:355-361). Live 0.13.0: OPTIONS :75 has the 32-hex id; EVENTS has 10 lines such as '[owner] ([id]…) approved request #13'. The 0.12.0 report has the same at :3176-3180.",
+   "failure_scenario": "An owner whose Home Assistant display name is their real name publishes it with every shared report, next to the id that owner_user_ids trusts. Today it is a short nickname.",
    "label": "live",
    "fix": "In the shareable report, show owner labels as 'the owner' and the ids as 'owner_user_ids: 1 set'; keep both in the full report.",
    "effort": "S",

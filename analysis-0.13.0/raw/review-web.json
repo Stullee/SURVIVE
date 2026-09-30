@@ -205,7 +205,7 @@
   {
    "item": "0.3: owner_user_ids enforced on every route (incl. routes added in 0.12/0.13)",
    "verdict": "partial",
-   "evidence": "SecurityMiddleware checks the first X-Remote-User-Id for every path except /static/*, /api/health and /api/sensors (security.py:97-103, :148-155), so every 0.12/0.13 route (autonomy, take_back, undo, knockouts, pinterest/*, site/*, library/*) is covered. Traversal probes (/static/../api/dashboard and encoded forms) gave 403/404 (scratchpad test_static_traversal). The live audit trail stores 'MVP (7f32…)' (0.13.0 report EVENTS:3457). But safe mode empties the option (finding safe-mode-drops-owner-identity), and unlocks don't require it (unlocks-without-owner-identity)."
+   "evidence": "SecurityMiddleware checks the first X-Remote-User-Id for every path except /static/*, /api/health and /api/sensors (security.py:97-103, :148-155), so every 0.12/0.13 route (autonomy, take_back, undo, knockouts, pinterest/*, site/*, library/*) is covered. Traversal probes (/static/../api/dashboard and encoded forms) gave 403/404 (scratchpad test_static_traversal). The live audit trail stores '[owner] ([id]…)' (0.13.0 report EVENTS:3457). But safe mode empties the option (finding safe-mode-drops-owner-identity), and unlocks don't require it (unlocks-without-owner-identity)."
   },
   {
    "item": "0.3: open paths (health, sensors, static) hold nothing private",
@@ -305,7 +305,7 @@
  "strengths": [
   {
    "what": "Default-deny owner check at the middleware, not per route",
-   "evidence": "security.py:97-155: every path except /static/*, /api/health and /api/sensors needs an owner ID once the option is set. All 12 routes added in 0.12/0.13 were covered with no per-route code, and path-traversal probes returned 403/404 (scratchpad test_static_traversal). The owner set the option live (0.13.0 report OPTIONS:74-76), and events record 'MVP (7f32…)' (EVENTS:3457)."
+   "evidence": "security.py:97-155: every path except /static/*, /api/health and /api/sensors needs an owner ID once the option is set. All 12 routes added in 0.12/0.13 were covered with no per-route code, and path-traversal probes returned 403/404 (scratchpad test_static_traversal). The owner set the option live (0.13.0 report OPTIONS:74-76), and events record '[owner] ([id]…)' (EVENTS:3457)."
   },
   {
    "what": "Text-only dashboard with validated links, enforced by a test",
