@@ -223,7 +223,8 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "mind": {**agent.memory_files(), "journal": journal, "reviews": reviews, "lesson_pins": pinned},
         "models": models,
         "approvals": approvals,
-        "audit": audit_view,  # 0.13.0: what Ember's code did, the owner's Undo, the daily digest
+        # 0.13.0: what Ember's code did, the owner's Undo, the daily digest (0.14.0: and why unlocks are off, if so)
+        "audit": {**audit_view, "unlocks_off": agent.unlocks_off()},
         "inbox": inbox,
         "upgrades": upgrades,
         "instructions": instructions,
@@ -448,6 +449,7 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
         "today": today.isoformat(),
         "forecasts": record or None,  # 0.13.0: the record of the agent's forecasts (predictions.calibration)
         "autonomy_levels": list(policy.LEVELS),  # 0.13.0
+        "unlocks_off": agent.unlocks_off(),  # 0.14.0: why no unlock acts or may be granted now ("" when one may)
         "autonomy_suggestions": promotions,
         "overhead_usd": _usd(overhead),  # 0.12.0: plans, reviews, brainstorms and the rest no milestone is charged
         "horizons": [

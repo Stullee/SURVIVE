@@ -2206,7 +2206,8 @@
     $("audit-digest").hidden = !digest;
     $("audit-digest").textContent = digest ? "Daily digest for " + digest.text : "";
     $("audit-sub").textContent = (unlocks ? unlocks + (unlocks === 1 ? " unlock stands" : " unlocks stand")
-      : "No unlock stands: every request waits for you") + (held ? " · " + held + " held for your veto" : "");
+      : "No unlock stands: every request waits for you") + (held ? " · " + held + " held for your veto" : "") +
+      (data.unlocks_off ? " · Unlocks are off while " + data.unlocks_off + ": none approves anything, and none can be granted" : "");
     var takeBack = $("audit-take-back");
     takeBack.hidden = !unlocks;
     takeBack.disabled = false;
@@ -6391,12 +6392,15 @@
   function milestoneAutonomy(m) {
     var rules = arr(m.autonomy);
     if (!rules.length) return null;
+    var off = ui.rm.data && ui.rm.data.unlocks_off ? String(ui.rm.data.unlocks_off) : "";  // 0.14.0
     var on = rules.filter(function (r) { return r.level !== "manual"; }).length;
     var status = h("p", { class: "muted small", role: "status" });
     return h("div", { class: "rm-autonomy" }, h("details", null,
       h("summary", null, h("strong", { text: "Autonomy: " }), on ? plural(on, "rule") + " unlocked" : "all manual"),
       h("p", { class: "muted small", text: "What " + agentName() + "'s code may carry out for this milestone without your click. " +
         "It takes back an unlock itself on an unclear result, a spent budget, a missed milestone or your veto." }),
+      off ? h("p", { class: "warn-box", text: "Unlocks are off while " + off + ": " + agentName() + "'s code takes them back " +
+        "and you can't grant one. Put your Home Assistant user ID in owner_user_ids (Configuration tab), outside safe mode." }) : null,
       h("ul", { class: "vt-evidence" }, rules.map(function (r) {
         var level = h("select", { "aria-label": "Level for " + r.label });
         Object.keys(AUTONOMY_LEVELS).forEach(function (k) {

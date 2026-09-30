@@ -148,6 +148,16 @@ ENFORCED: list[tuple[str, str]] = [
     ("Research the heaviest ideas first", "test_desk::test_ready_ranks_the_ventures_next_decisions"),
 ]
 
+# 0.14.0: what the constitution said that Ember's code does otherwise: gone from every text, with the test that proves
+# what the code does. The constitution is scanned too.
+CONTRADICTED: list[tuple[str, str]] = [
+    ("everything else your owner carries out", "test_etsy::test_an_approved_listing_goes_live_in_the_fake_shop"),
+    (
+        "Revenue only counts when your owner records it",
+        "test_etsy_revenue::test_a_paid_order_and_its_fees_are_recorded_once",
+    ),
+]
+
 
 def _tool(name: str) -> Callable[[], str]:
     return lambda: tools.SPECS[name].description
@@ -242,9 +252,9 @@ def test_every_rule_is_registered_in_order(name: str) -> None:
 
 
 def test_what_code_enforces_is_not_prose_any_more() -> None:
-    everything = " ".join([*prompt_texts().values(), prompts.operating_rules(False), *descriptions()])
-    everything = " ".join(everything.split())
-    for phrase, proof in ENFORCED:
+    texts = [*prompt_texts().values(), prompts.operating_rules(False), prompts.constitution(SETTINGS), *descriptions()]
+    everything = " ".join(" ".join(texts).split())
+    for phrase, proof in [*ENFORCED, *CONTRADICTED]:
         assert phrase not in everything, phrase
         module, test = proof.split("::")
         assert callable(getattr(importlib.import_module(f"tests.{module}"), test, None)), proof

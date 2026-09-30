@@ -232,6 +232,7 @@ class Agent:
         except Exception:  # noqa: BLE001 - the ventures must never keep the agent from starting
             log.exception("Could not plant the first ventures")
         etsy_revenue.audit(self.db, self.clock, self.settings)  # 0.12.0: the owner turned it on or off
+        self.take_back_while_off()  # 0.14.0: no owner_user_ids, or safe mode
         wake = self._meta_time("next_wake_at")
         if wake is not None and wake < now + BOOT_GRACE:
             # Give the owner a minute to pause after an update or restart.
@@ -712,13 +713,29 @@ class Agent:
         """0.14.0: why the owner's unlocks don't act now ("" when they do): no owner_user_ids, or safe mode."""
         return policy.off(self.settings.owner_user_ids, self.loaded.safe_mode)
 
+    def take_back_while_off(self) -> None:
+        """0.14.0: while unlocks are off, Ember's code takes back every unlock that stands, in every mode and session,
+        as the kill switch does. None acts again once they are back on: a veto window that passed meanwhile approves
+        nothing. The owner grants again."""
+        off = self.unlocks_off()
+        if not off:
+            return
+        with self.db.transaction() as conn:
+            now = to_iso(self.clock.now())
+            taken = policy.revoke_everywhere(conn, now, by=policy.REVOKED_BY, why=f"unlocks are off while {off}")
+        if taken:
+            message = f"Ember's code took back every unlock ({len(taken)} in all): unlocks are off while {off}"
+            events.record(self.db, "warning", "control", message)
+
     def run_policy(self) -> None:
         """0.13.0: the owner's unlocks (policy.py): revoke the unlocks an unclear result, a spent budget, a missed
         milestone or a veto ended, then approve the requests whose veto window passed (one held by an unlock taken
-        back waits for the owner; 0.14.0: none while unlocks are off). Before the approved actions are carried out,
-        in the scheduler's round. Then the owner's daily digest of the day before, once (audit.py)."""
+        back waits for the owner; 0.14.0: none while unlocks are off, and they are taken back). Before the approved
+        actions are carried out, in the scheduler's round. Then the owner's daily digest of the day before, once
+        (audit.py)."""
         if self.executor_blocked():
             return
+        self.take_back_while_off()
         scope = self.scope()
         with self.db.transaction() as conn:
             happened = policy.keep(conn, scope, self.clock) + policy.run_due(

@@ -33,7 +33,7 @@ from tests.test_agent import tools as calls  # noqa: E402
 from tests.test_etsy import listed  # noqa: E402
 from tests.test_executor import REPLY  # noqa: E402
 from tests.test_mail import JOURNAL, mail_cycle  # noqa: E402
-from tests.test_never import fits, request  # noqa: E402
+from tests.test_never import a_use, approve_as_code, fits, request  # noqa: E402
 from tests.test_owner_api import CSRF  # noqa: E402
 from tests.test_owner_identity import OWNER, as_user  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
@@ -138,6 +138,92 @@ def test_a_rule_taken_back_or_revoked_by_ember_s_code_stops_what_it_approved(dat
     assert (after["status"], after["decided_by"]) == ("pending", None)
     assert f"(milestone #{goal} was dropped)" in after["decision_comment"]
     assert agent.execute_approved() == []
+
+
+def test_a_spent_budget_ends_an_unlock_but_what_it_approved_runs(data_dir: Path) -> None:
+    """A spent budget is a normal end, not a take-back. The scheduler's round revokes the unlock first, then carries
+    out what is approved: the action that spent the budget runs."""
+    agent, listing_id = listed(data_dir)
+    goal = a_milestone(agent)
+    body = {"rule": "price_change", "level": "auto", "budget": 1}
+    assert owner(agent).set_autonomy(goal, body, "Stefan").status == 200
+    old = price_of(agent, listing_id)
+    made = a_small_cut(agent, goal, listing_id)
+    assert (made["status"], made["decided_by"]) == ("approved", policy.POLICY_BY)
+    agent.run_policy()
+    assert rows(agent, "SELECT level, by, why FROM policy_grants ORDER BY id DESC LIMIT 1") == [
+        {"level": "manual", "by": policy.REVOKED_BY, "why": "its budget of 1 actions is spent"}
+    ]
+    assert status_of(agent, made["id"])["status"] == "approved"
+    assert agent.execute_approved() == [(made["id"], "done")]
+    assert price_of(agent, listing_id) < old
+
+
+def test_a_spent_budget_ends_a_veto_window_once_what_it_holds_is_approved(data_dir: Path) -> None:
+    """The request that spent a veto window's budget is still approved at the time its card said."""
+    agent, listing_id = listed(data_dir)
+    goal = a_milestone(agent)
+    body = {"rule": "price_change", "level": "veto_window", "budget": 1}
+    assert owner(agent).set_autonomy(goal, body, "Stefan").status == 200
+    old = price_of(agent, listing_id)
+    held = a_small_cut(agent, goal, listing_id)
+    agent.run_policy()
+    card = next(a for a in agent.dashboard()["approvals"] if a["id"] == held["id"])
+    assert card["veto_until"] is not None and rows(agent, "SELECT COUNT(*) AS n FROM policy_grants") == [{"n": 1}]
+    agent.clock.advance(hours=policy.VETO_HOURS, minutes=1)
+    agent.run_policy()
+    assert status_of(agent, held["id"])["decided_by"] == policy.POLICY_BY
+    assert agent.execute_approved() == [(held["id"], "done")] and price_of(agent, listing_id) < old
+    agent.run_policy()  # now its budget ends it
+    assert rows(agent, "SELECT level, why FROM policy_grants ORDER BY id DESC LIMIT 1") == [
+        {"level": "manual", "why": "its budget of 1 actions is spent"}
+    ]
+
+
+@pytest.mark.parametrize("how", ["take back", "kill"])
+def test_taking_back_every_unlock_also_stops_what_an_ended_unlock_approved(data_dir: Path, how: str) -> None:
+    agent, listing_id = listed(data_dir)
+    goal = a_milestone(agent)
+    body = {"rule": "price_change", "level": "auto", "budget": 1}
+    assert owner(agent).set_autonomy(goal, body, "Stefan").status == 200
+    made = a_small_cut(agent, goal, listing_id)
+    agent.run_policy()  # its budget is spent: the unlock ends, and its approval stands
+    if how == "kill":
+        assert kill(agent.db, agent.economy, "Ember", {"confirm_name": "Ember"}, "Stefan").status == 200
+        why = "you used the kill switch"
+    else:
+        assert owner(agent).take_back_unlocks({}, "Stefan").body == {"taken_back": 0}
+        why = "you took back every unlock"
+    after = status_of(agent, made["id"])
+    assert (after["status"], after["decided_by"]) == ("pending", None)
+    assert f"({why})" in after["decision_comment"]
+
+
+def test_ember_s_code_says_which_request_waits_and_which_it_closed(data_dir: Path) -> None:
+    """Two requests the same unlock approved, alike (an older one, say): one waits for the owner again, the other is
+    closed (one waits at a time), and the event log says which."""
+    agent, listing_id = listed(data_dir)
+    goal = a_milestone(agent)
+    unlock(agent, goal, "price_change")
+    first = a_small_cut(agent, goal, listing_id)["id"]
+    columns = (
+        "mode, session, life_id, cycle_id, created_at, type, title, description, payload, payload_sha256,"
+        " expected_cost, expected_benefit, executor, action, milestone_id, venture_id"
+    )
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        copied = f"INSERT INTO approvals ({columns}) SELECT {columns} FROM approvals WHERE id = ?"
+        second = int(conn.execute(copied, (first,)).lastrowid)
+        a_use(conn, second, policy.grant(conn, agent.scope(), goal, "price_change"), now)
+        approve_as_code(conn, second, now)
+    assert owner(agent).decide_milestone(goal, {"action": "drop"}, "Stefan").status == 200
+    agent.run_policy()
+    assert [status_of(agent, n)["status"] for n in (first, second)] == ["pending", "failed"]
+    lines = "SELECT message FROM events WHERE message LIKE 'Request #% again:%' OR message LIKE 'Request #% closed:%'"
+    assert [r["message"] for r in rows(agent, lines)] == [
+        f"Request #{first} waits for you again: its unlock was taken back before it ran",
+        f"Request #{second} closed: the same request waits for you as #{first}",
+    ]
 
 
 def test_the_owner_cancelling_an_automatic_action_is_a_veto(data_dir: Path) -> None:
@@ -259,6 +345,31 @@ def test_standing_unlocks_act_only_while_ember_knows_its_owner(data_dir: Path, s
 
 
 @pytest.mark.parametrize("safe_mode", [False, True])
+def test_unlocks_off_are_taken_back_and_approve_nothing_when_back_on(data_dir: Path, safe_mode: bool) -> None:
+    """While unlocks are off, Ember's code takes them back, as the kill switch does: a veto window that passed
+    meanwhile approves nothing once owner_user_ids is back or safe mode is over. The dashboard says why."""
+    agent, listing_id = listed(data_dir)
+    goal = a_milestone(agent)
+    unlock(agent, goal, "price_change", "veto_window")
+    held = a_small_cut(agent, goal, listing_id)
+    settings, old = agent.settings, price_of(agent, listing_id)
+    reason = forget_the_owner(agent, safe_mode)
+    assert (agent.dashboard()["audit"]["unlocks_off"], agent.roadmap()["unlocks_off"]) == (reason, reason)
+    agent.recover()  # the app starts again like this
+    assert rows(agent, "SELECT level, by, why FROM policy_grants ORDER BY id DESC LIMIT 1") == [
+        {"level": "manual", "by": policy.REVOKED_BY, "why": f"unlocks are off while {reason}"}
+    ]
+    assert agent.dashboard()["audit"]["unlocks"] == 0
+    agent.clock.advance(hours=3 * policy.VETO_HOURS)
+    agent.settings, agent.loaded = settings, LoadedSettings(settings)  # the owner fixed the options and restarted
+    agent.recover()
+    assert agent.unlocks_off() == "" and agent.roadmap()["unlocks_off"] == ""
+    agent.run_policy()
+    assert status_of(agent, held["id"])["status"] == "pending"
+    assert agent.execute_approved() == [] and price_of(agent, listing_id) == old
+
+
+@pytest.mark.parametrize("safe_mode", [False, True])
 def test_the_agent_hears_that_unlocks_are_off(data_dir: Path, safe_mode: bool) -> None:
     agent, listing_id = listed(data_dir)
     goal = a_milestone(agent)
@@ -321,9 +432,23 @@ def test_a_held_request_that_fails_its_qa_is_not_approved(data_dir: Path, monkey
     with agent.db.transaction() as conn:
         assert "unless your owner decides first" in policy.apply(conn, agent.scope(), held, agent.clock)
     monkeypatch.setattr("app.integrations.qa.MIN_PHOTOS", 6)
+    assert agent.dashboard()["audit"]["held"] == 0  # no longer promised: it can't be approved
     agent.clock.advance(hours=policy.VETO_HOURS, minutes=1)
     agent.run_policy()
-    assert status_of(agent, held)["status"] == "pending"
+    agent.run_policy()
+    after = status_of(agent, held)
+    assert after["status"] == "pending"
+    assert after["decision_comment"] == (
+        "Held by your unlock, but not approved when its veto window passed: an unlock carries only what passes QA (5 "
+        "photos, fewer than 6 (Etsy shows up to 10)). It waits for you."
+    )
+    card = next(a for a in agent.dashboard()["approvals"] if a["id"] == held)
+    assert card["veto_until"] is None and card["decision_comment"] == after["decision_comment"]
+    said = rows(agent, f"SELECT message FROM events WHERE message LIKE 'Request #{held} %'")
+    assert [r["message"] for r in said] == [  # said once
+        f"Request #{held} waits for you: an unlock carries only what passes QA (5 photos, fewer than 6 (Etsy shows up "
+        "to 10))"
+    ]
 
 
 # --- the upgrade: every unlock of 0.13.0 is taken back once ---
@@ -358,14 +483,17 @@ def test_the_upgrade_takes_back_every_unlock_and_stops_what_it_approved(tmp_path
                 " VALUES ('live', 0, 1, ?, ?, 3, 10, 'Stefan', ?)",
                 (rule, level, then),
             )
-        for n in (1, 2, 3):
+        # 4 waits already as 5; 6 and 7 are alike; 8 began and 9 is alike. One of each waits at a time: approved first.
+        made = ((1, 1, "auto"), (2, 2, "auto"), (3, 3, "veto_window"), (4, 4, "auto"), (5, 4, None), (6, 6, "auto"))
+        for n, same, level in (*made, (7, 6, "auto"), (8, 8, "auto"), (9, 8, "auto")):
             conn.execute(
                 "INSERT INTO approvals (id, mode, session, life_id, cycle_id, created_at, type, title, description,"
                 " payload, payload_sha256, expected_cost, expected_benefit, executor, action, milestone_id)"
                 " VALUES (?, 'live', 0, 1, 1, ?, 'sell', ?, 'Sells better.', ?, ?, 'none', 'more', 'etsy_edit', ?, 1)",
-                (n, then, f"Cut {n}", f"Cut {n}", f"sha-{n}", json.dumps({"listing_id": n, "price": "4.05"})),
+                (n, then, f"Cut {n}", f"Cut {same}", f"sha-{same}", json.dumps({"listing_id": same, "price": "4.05"})),
             )
-        for n, level in ((1, "auto"), (2, "auto"), (3, "veto_window")):
+            if level is None:
+                continue
             grant = conn.execute("SELECT id FROM policy_grants WHERE level = ?", (level,)).fetchone()[0]
             veto = then if level == "veto_window" else None
             conn.execute(
@@ -373,15 +501,18 @@ def test_the_upgrade_takes_back_every_unlock_and_stops_what_it_approved(tmp_path
                 " VALUES (?, ?, ?, ?, ?, ?)",
                 (n, grant, level, then, veto, None if veto else then),
             )
-        conn.execute(
-            "UPDATE approvals SET status = 'approved', decided_at = ?, decided_by = ?, version = 1 WHERE id IN (1, 2)",
-            (then, policy.POLICY_BY),
-        )
-        conn.execute(  # request 2 is being carried out
-            "INSERT INTO action_journal (mode, session, approval_id, class, started_at, status)"
-            " VALUES ('live', 0, 2, 'etsy.edit_listing', ?, 'running')",
-            (then,),
-        )
+            if level == "auto":
+                conn.execute(
+                    "UPDATE approvals SET status = 'approved', decided_at = ?, decided_by = ?, version = 1"
+                    " WHERE id = ?",
+                    (then, policy.POLICY_BY, n),
+                )
+        for n in (2, 8):  # requests 2 and 8 are being carried out
+            conn.execute(
+                "INSERT INTO action_journal (mode, session, approval_id, class, started_at, status)"
+                " VALUES ('live', 0, ?, 'etsy.edit_listing', ?, 'running')",
+                (n, then),
+            )
     old.close()
     assert migrate(db_file, backup_dir=tmp_path / "backups") == [
         m.version for m in everything if m.version >= ours.version
@@ -397,11 +528,32 @@ def test_the_upgrade_takes_back_every_unlock_and_stops_what_it_approved(tmp_path
             ("price_change", "manual", policy.REVOKED_BY),
             ("qa_fix", "manual", "Stefan"),
         ]
-        got = conn.execute("SELECT id, status, decided_by FROM approvals ORDER BY id").fetchall()
+        got = conn.execute(
+            "SELECT id, status, decided_by, closed_by, result_note FROM approvals ORDER BY id"
+        ).fetchall()
+        closed = "Approved by your unlock, which was taken back (the upgrade to 0.14.0) before Ember's code carried it"
         assert [tuple(r) for r in got] == [
-            (1, "pending", None),  # approved at once, not begun: it waits for the owner
-            (2, "approved", policy.POLICY_BY),  # begun: it runs on, exactly once
-            (3, "pending", None),  # held: its unlock no longer stands
+            (1, "pending", None, None, None),  # approved at once, not begun: it waits for the owner
+            (2, "approved", policy.POLICY_BY, None, None),  # begun: it runs on, exactly once
+            (3, "pending", None, None, None),  # held: its unlock no longer stands
+            (
+                4,
+                "failed",
+                policy.POLICY_BY,
+                policy.REVOKED_BY,
+                f"{closed} out: it waits for you. The same request waits as #5.",
+            ),
+            (5, "pending", None, None, None),
+            (6, "pending", None, None, None),
+            (
+                7,
+                "failed",
+                policy.POLICY_BY,
+                policy.REVOKED_BY,
+                f"{closed} out: it waits for you. The same request waits as #6.",
+            ),
+            (8, "approved", policy.POLICY_BY, None, None),
+            (9, "pending", None, None, None),  # what began alike doesn't hold it back
         ]
     upgraded.close()
 

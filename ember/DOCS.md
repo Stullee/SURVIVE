@@ -812,14 +812,15 @@ no longer shown); a study that failed three times stops until you press
   approves it when it is made. Each rule has a daily limit and a budget of
   actions. An unlock carries only a request that passes the checks its card
   shows (QA: a reply keeps "Re: …" and has at most 200 words, a listing has at
-  least 5 photos); any other waits for you (0.14.0). Unlocks need your user ID
-  in `owner_user_ids`: without it, or in safe mode, you can't grant one and the
-  ones you granted approve nothing. Ember's code takes an unlock back itself
-  when one of its actions ends unclear, its budget is spent, the milestone is
-  missed or dropped, or you veto or cancel one of its requests. It never widens
-  one. When you approved 5 requests
-  of a kind unchanged within 30 days, the Roadmap tab suggests an unlock, and
-  you decide. Ember hears each change as your note on the milestone.
+  least 5 photos); any other waits for you, and a held one's card says why
+  (0.14.0). Unlocks need your user ID in `owner_user_ids`: without it, or in
+  safe mode, you can't grant one, the Autonomy box says why, and Ember's code
+  takes back the ones you granted (grant them again once it's fixed). Ember's
+  code takes an unlock back itself when one of its actions ends unclear, its
+  budget is spent, the milestone is missed or dropped, or you veto or cancel
+  one of its requests. It never widens one. When you approved 5 requests of a
+  kind unchanged within 30 days, the Roadmap tab suggests an unlock, and you
+  decide. Ember hears each change as your note on the milestone.
 
   **Never automatic**, whatever you unlock: creating an account, moving or
   spending money, a first contact (someone who never wrote to Ember, § 7 UWG),
@@ -834,7 +835,9 @@ no longer shown); a study that failed three times stops until you press
   refuses an unlock's approval of such a request, an approval that no current
   unlock covers, and anything beyond an unlock's budget. When an unlock is
   taken back, what it was holding waits for you, and so does what it approved
-  that Ember's code hasn't begun (its card says why). What began runs on.
+  that Ember's code hasn't begun (its card says why). What began runs on. An
+  unlock that ends because its budget is spent takes nothing back: what it
+  approved runs.
 - **What Ember's code did**, below the requests on the **Approvals** tab
   (0.13.0): every action it carries out (an email sent, a listing created,
   changed, renewed or deactivated, a sold listing's automatic renewal turned
@@ -912,8 +915,9 @@ no longer shown); a study that failed three times stops until you press
   cycle right away.
 - **Kill switch**: stops the agent for good (type its name to confirm). It
   takes back every unlock too, as **Take back every unlock** does, so its reset
-  approves nothing an unlock held. The dashboard keeps working. To undo it, change **Kill switch reset** in the app's
-  **Configuration** tab to any other number, save and restart the app.
+  approves nothing an unlock held. The dashboard keeps working. To undo it,
+  change **Kill switch reset** in the app's **Configuration** tab to any other
+  number, save and restart the app.
 
 The agent hears about your decisions, messages and upgrades once, at its next
 wake-up.

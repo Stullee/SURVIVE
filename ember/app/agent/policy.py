@@ -24,6 +24,7 @@ unlocks. The database checks the same (migration 0051); what it refuses is undon
 0.14.0: an unlock carries only a request that passes its class's QA (qa.CHECKS), and unlocks act only while Ember
 knows its owner (owner_user_ids) outside safe mode (``off``). An unlock taken back (by the owner, the kill switch or
 Ember's code) also stops what it approved and Ember's code hasn't begun: it waits for the owner again (``_stop``).
+A spent budget only ends an unlock: what it approved runs.
 """
 
 from __future__ import annotations
@@ -71,6 +72,7 @@ POLICY_BY = "Ember's code (your unlock)"
 REVOKED_BY = "Ember's code"
 CODE = (POLICY_BY, REVOKED_BY, "Ember")  # who never unlocks anything (migration 0051 names them too)
 STOPPED = "Approved by your unlock, which was taken back ({why}) before Ember's code carried it out: it waits for you."
+SPENT = "its budget of {budget} actions is spent"  # 0.14.0: a normal end, not a take-back
 
 
 def _action(row: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -198,6 +200,7 @@ def set_grant(
     budget: int = BUDGET,
     by: str,
     why: str | None = None,
+    stop: bool = True,
 ) -> int:
     if rule not in RULES or level not in LEVELS:
         raise ValueError("unknown rule or level")
@@ -208,15 +211,15 @@ def set_grant(
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (scope.mode, scope.session, milestone_id, rule, level, per_day, budget, by[:60], why, now),
     )
-    if level == "manual":  # 0.14.0: in the same transaction, before an executor can begin what it approved
+    if level == "manual" and stop:  # 0.14.0: in the same transaction, before an executor can begin what it approved
         _stop(conn, milestone_id, rule, now, why or "you took it back")
     return int(cursor.lastrowid)
 
 
-def _stop(conn: sqlite3.Connection, milestone_id: int, rule: str, now: str, why: str) -> list[int]:
+def _stop(conn: sqlite3.Connection, milestone_id: int, rule: str, now: str, why: str) -> list[str]:
     """0.14.0: what the unlocks of a milestone's rule approved and Ember's code hasn't begun (no journal entry) waits
     for the owner again, saying why. The executors check the status when they begin; what began runs on, once. The
-    same request waiting already: this one is closed instead. Returns the requests stopped."""
+    same request waiting already: this one is closed instead. Returns what happened to each."""
     said = STOPPED.format(why=why)
     stopped = []
     for r in conn.execute(
@@ -236,13 +239,14 @@ def _stop(conn: sqlite3.Connection, milestone_id: int, rule: str, now: str, why:
                 " version = version + 1, seen_cycle_id = NULL WHERE id = ? AND status = 'approved'",
                 (said[:2000], r["id"]),
             )
+            stopped.append(f"Request #{r['id']} waits for you again: its unlock was taken back before it ran")
         else:
             conn.execute(
                 "UPDATE approvals SET status = 'failed', closed_at = ?, closed_by = ?, result_note = ?,"
                 " version = version + 1, seen_cycle_id = NULL WHERE id = ? AND status = 'approved'",
                 (now, REVOKED_BY, f"{said} The same request waits as #{twin['id']}."[:2000], r["id"]),
             )
-        stopped.append(int(r["id"]))
+            stopped.append(f"Request #{r['id']} closed: the same request waits for you as #{twin['id']}")
     return stopped
 
 
@@ -343,9 +347,19 @@ def apply(conn: sqlite3.Connection, scope: AgentScope, approval_id: int, clock: 
     return f" It is approved {VETO_HOURS} hours from now unless your owner decides first: {unlock} (veto window)."
 
 
+def _held_back(conn: sqlite3.Connection, row: Mapping[str, Any]) -> str:
+    """0.14.0: why no unlock carries a request now ("" when one may): NEVER, or its QA."""
+    found = never.reasons(conn, row)
+    if found:
+        return f"never automatic for {never.text(found)}"
+    falls = short(row)
+    return f"an unlock carries only what passes QA ({'; '.join(falls)})" if falls else ""
+
+
 def run_due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, off: str = "") -> list[str]:
     """Approve the requests whose veto window has passed while the owner didn't decide; returns what happened. 0.14.0:
-    none while unlocks are off, and none that falls short of its QA."""
+    none while unlocks are off, and none that falls short of NEVER or its QA: that one waits for the owner, saying
+    why."""
     if off:
         return []
     now = to_iso(clock.now())
@@ -359,7 +373,16 @@ def run_due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, off: str 
         if use["status"] != "pending" or not _stands(conn, int(use["grant_id"])):
             continue  # the owner decided first, or the unlock was taken back: it waits for them
         row = conn.execute("SELECT * FROM approvals WHERE id = ?", (use["approval_id"],)).fetchone()
-        if never.reasons(conn, row) or short(row):
+        held_back = _held_back(conn, row)
+        if held_back:  # said once, on its card too
+            said = f"Held by your unlock, but not approved when its veto window passed: {held_back}. It waits for you."
+            if row["decision_comment"] != said[:2000]:
+                conn.execute(
+                    "UPDATE approvals SET decision_comment = ?, version = version + 1 WHERE id = ?"
+                    " AND status = 'pending'",
+                    (said[:2000], row["id"]),
+                )
+                happened.append(f"Request #{row['id']} waits for you: {held_back}")
             continue
         why = f"Approved: no veto within {VETO_HOURS} hours (your unlock, grant #{use['grant_id']})."
         try:
@@ -377,20 +400,22 @@ def run_due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, off: str 
 def keep(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[str]:
     """Revoke the grants whose milestone was missed or dropped, whose budget is spent, which carried a request that
     ended unclear, whose request the owner vetoed, or (email replies) whose reply the person answered by asking to
-    stop. Returns what happened."""
+    stop. 0.14.0: what a revoked grant approved and Ember's code hasn't begun waits for the owner, unless its budget
+    is spent (a normal end). Returns what happened."""
     now = to_iso(clock.now())
     happened = []
     for g in grants(conn, scope):
-        if g["level"] == "manual":  # 0.14.0: taken back (by an upgrade too): what it approved waits for the owner
-            for approval_id in _stop(conn, int(g["milestone_id"]), str(g["rule"]), now, g["why"] or "by you"):
-                happened.append(f"Request #{approval_id} waits for you: its unlock was taken back before it ran")
+        if g["level"] == "manual":
             continue
         why = _revocation(conn, g, clock)
         if why:
-            set_grant(conn, scope, int(g["milestone_id"]), str(g["rule"]), "manual", now, by=REVOKED_BY, why=why[:300])
+            milestone_id, rule = int(g["milestone_id"]), str(g["rule"])
+            set_grant(conn, scope, milestone_id, rule, "manual", now, by=REVOKED_BY, why=why[:300], stop=False)
             happened.append(
-                f"Ember's code revoked the unlock for {RULES[g['rule']].label} (milestone #{g['milestone_id']}): {why}"
+                f"Ember's code revoked the unlock for {RULES[rule].label} (milestone #{milestone_id}): {why}"
             )
+            if why != SPENT.format(budget=g["budget"]):  # 0.14.0: a spent budget ends it; what it approved runs
+                happened += _stop(conn, milestone_id, rule, now, why[:300])
     return happened
 
 
@@ -421,8 +446,13 @@ def _revocation(conn: sqlite3.Connection, g: sqlite3.Row, clock: Clock) -> str:
         if stopped is not None:
             return f"{stopped['address']} asked to stop after an automatic reply (request #{stopped['approval_id']})"
     total, _ = used(conn, int(g["id"]), clock)
-    if total >= int(g["budget"]):
-        return f"its budget of {g['budget']} actions is spent"
+    holding = conn.execute(  # 0.14.0: a spent budget ends it once what it holds for its veto window is decided
+        "SELECT u.approval_id FROM policy_uses u JOIN approvals a ON a.id = u.approval_id WHERE u.grant_id = ?"
+        " AND u.level = 'veto_window' AND u.approved_at IS NULL AND a.status = 'pending'",
+        (g["id"],),
+    ).fetchall()
+    if total >= int(g["budget"]) and not any(_holds(conn, int(g["id"]), int(u["approval_id"])) for u in holding):
+        return SPENT.format(budget=g["budget"])
     return ""
 
 
@@ -476,9 +506,17 @@ def view(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, milestone_id
     return items
 
 
+def _holds(conn: sqlite3.Connection, grant_id: int, approval_id: int) -> bool:
+    """Whether an unlock still holds a request for its veto window: it stands, and (0.14.0) may carry the request."""
+    if not _stands(conn, grant_id):
+        return False
+    row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
+    return row is not None and not _held_back(conn, row)
+
+
 def held(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
-    """The requests unlocks hold for their veto window now (waiting, under an unlock that stands), the first due
-    first."""
+    """The requests unlocks hold for their veto window now (waiting, under an unlock that stands and may carry them),
+    the first due first."""
     where, params = scope.where("a")
     rows = conn.execute(
         f"SELECT u.approval_id, u.veto_until, u.grant_id FROM policy_uses u JOIN approvals a ON a.id = u.approval_id"
@@ -486,12 +524,13 @@ def held(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
         " ORDER BY u.veto_until, u.id",
         params,
     ).fetchall()
-    return [r for r in rows if _stands(conn, int(r["grant_id"]))]
+    return [r for r in rows if _holds(conn, int(r["grant_id"]), int(r["approval_id"]))]
 
 
 def revoke_all(conn: sqlite3.Connection, scope: AgentScope, now: str, *, by: str, why: str) -> list[sqlite3.Row]:
     """The owner's switch (0.13.0): every unlock that stands is taken back at once; what they held, and (0.14.0) what
-    they approved that hasn't begun, waits for the owner. Returns the grants taken back."""
+    an unlock approved that hasn't begun (one that ended with its budget too), waits for the owner. Returns the grants
+    taken back."""
     taken = [g for g in grants(conn, scope) if g["level"] != "manual"]
     for g in taken:
         set_grant(
@@ -506,6 +545,8 @@ def revoke_all(conn: sqlite3.Connection, scope: AgentScope, now: str, *, by: str
             by=by,
             why=why,
         )
+    for g in grants(conn, scope):  # 0.14.0: all manual now; the rest of what an unlock approved
+        _stop(conn, int(g["milestone_id"]), str(g["rule"]), now, why)
     return taken
 
 
@@ -519,9 +560,10 @@ def revoke_everywhere(conn: sqlite3.Connection, now: str, *, by: str, why: str) 
 
 
 def veto_until(conn: sqlite3.Connection, approval_id: int) -> str | None:
-    """When a request held for its veto window is approved (None if it isn't held, or its unlock was taken back)."""
+    """When a request held for its veto window is approved (None if it isn't held, its unlock was taken back, or 0.14.0
+    it may not carry the request: NEVER or its QA)."""
     row = conn.execute(
         "SELECT veto_until, grant_id FROM policy_uses WHERE approval_id = ? AND approved_at IS NULL", (approval_id,)
     ).fetchone()
-    held = row is not None and row["veto_until"] and _stands(conn, int(row["grant_id"]))
+    held = row is not None and row["veto_until"] and _holds(conn, int(row["grant_id"]), approval_id)
     return str(row["veto_until"]) if held else None

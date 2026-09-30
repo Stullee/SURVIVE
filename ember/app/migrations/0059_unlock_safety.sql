@@ -29,8 +29,8 @@ END;
 
 -- The unlocks of 0.13.0 were granted under looser rules (without owner_user_ids, past the kill switch, without QA):
 -- every one that stands is taken back once, by Ember's code, and the owner grants again what they want. What they
--- held waits for the owner; what they approved and nothing began waits too (the same request waiting already: Ember's
--- code closes this one in its first round).
+-- held waits for the owner; what they approved and nothing began waits too. The same request waiting already (one
+-- waits at a time): this one is closed.
 INSERT INTO policy_grants (mode, session, milestone_id, rule, level, per_day, budget, by, why, created_at)
 SELECT g.mode, g.session, g.milestone_id, g.rule, 'manual', g.per_day, g.budget, 'Ember''s code',
     'the upgrade to 0.14.0', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
@@ -46,5 +46,14 @@ WHERE status = 'approved' AND decided_by = 'Ember''s code (your unlock)'
         SELECT 1 FROM approvals p WHERE p.mode = approvals.mode AND p.session = approvals.session
             AND p.payload_sha256 = approvals.payload_sha256 AND p.id <> approvals.id
             AND (p.status = 'pending' OR (p.status = 'approved' AND p.decided_by = 'Ember''s code (your unlock)'
-                AND p.id < approvals.id))
+                AND p.id < approvals.id AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = p.id)))
     );
+UPDATE approvals SET status = 'failed', closed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), closed_by = 'Ember''s code',
+    version = version + 1, seen_cycle_id = NULL,
+    result_note = 'Approved by your unlock, which was taken back (the upgrade to 0.14.0) before Ember''s code carried it'
+        || ' out: it waits for you. The same request waits as #' || (
+            SELECT p.id FROM approvals p WHERE p.mode = approvals.mode AND p.session = approvals.session
+                AND p.payload_sha256 = approvals.payload_sha256 AND p.status = 'pending'
+        ) || '.'
+WHERE status = 'approved' AND decided_by = 'Ember''s code (your unlock)'
+    AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = approvals.id);
