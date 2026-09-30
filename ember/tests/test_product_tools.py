@@ -255,10 +255,14 @@ def test_a_dry_run_makes_products_every_second_cycle(data_dir: Path) -> None:
 def test_the_prompts_tell_the_agent_to_make_files_and_ask_for_what_is_missing() -> None:
     work = prompts.work_request(context_settings(), "brief", [])
     rules = work["system"][2]["text"]
-    assert "You make finished files yourself" in rules and "file request_upgrade" in rules
+    # 0.12.0: the owner's knowledge says the agent makes its files, request_upgrade's description when to ask for an
+    # ability; the rules no longer repeat them (tests/test_rule_audit.py)
+    assert "Look at the pictures of what you make before you show your work" in rules
     assert "file request_upgrade" in prompts.REFLECT_PROMPT
+    assert "when a missing tool blocks a way to earn money" in tools.SPECS["request_upgrade"].description
     knowledge = prompts.knowledge()
     assert "Designed by" in knowledge and "make_document" in knowledge
+    assert "You make finished products yourself" in knowledge
 
 
 def context_settings() -> Any:

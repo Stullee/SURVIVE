@@ -343,8 +343,10 @@ you want more research. In a venture cycle the agent:
 
 A venture cycle only researches and decides: its work steps don't carry the
 tools for making files, the workshop, the Etsy shop, email or Reddit (they
-belong to ordinary cycles), which makes their fixed prompt about a quarter
-shorter.
+belong to ordinary cycles). With the shorter rules of 0.12.0, which no longer
+repeat what Ember's code enforces or what the constitution, your knowledge
+file or a tool's description already says, a venture cycle's fixed prompt is
+about a third shorter than in 0.11.
 
 **Business cases.** A venture the agent proposes comes to you with its demand
 (evidence that people pay), economics, setup (money, your hours, accounts,

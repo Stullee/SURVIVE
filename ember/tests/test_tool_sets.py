@@ -36,7 +36,7 @@ def test_a_venture_cycle_carries_no_tools_for_building_or_selling() -> None:
     assert names(ordinary) >= tools.ORDINARY_TOOLS and "brainstorm" not in names(ordinary)
     assert not names(venture) & tools.ORDINARY_TOOLS and "brainstorm" in names(venture)
     assert "research" in names(venture) and "venture_update" in names(venture)
-    building = "You make finished files yourself"
+    building = "Look at the pictures of what you make"
     assert building in json.dumps(ordinary["system"]) and building not in json.dumps(venture["system"])
     assert fixed(venture) <= 0.75 * fixed(ordinary)
     reflection = prompts.reflect_request(SETTINGS, "brief", [], [], venture=True, **EVERYTHING)

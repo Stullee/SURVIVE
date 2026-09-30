@@ -359,12 +359,11 @@ def test_the_rules_ask_for_action_instead_of_waiting() -> None:
         "- money_path: how this goal leads to income",
     ):
         assert words in planner, words
-    rules = prompts.OPERATING_RULES
-    for words in (
-        "Ask your owner in one batched message",
-        "work on another experiment meanwhile",
+    rules = " ".join(prompts.OPERATING_RULES.split())
+    for words in (  # 0.12.0: waiting on the owner is Ember's code's now (tests/test_rule_audit.py)
+        "ask your owner for one concrete action, in one batched message",
         "YOUR OWNER'S STANDING INSTRUCTIONS",
-        "Your strategy\n  lives in memory (strategy), the only strategy you see when planning",
+        "Your strategy lives in memory (strategy), the only strategy you see when planning",
     ):
         assert words in rules, words
     assert "money_path" in prompts.PLAN_SCHEMA["required"]

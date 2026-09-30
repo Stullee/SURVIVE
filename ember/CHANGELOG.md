@@ -131,6 +131,8 @@ Your results now reach your records: what you earn counts where it belongs.
 - A venture cycle has the tools for researching and deciding only: making and looking at files, the workshop,
   the shop, email and Reddit belong to ordinary cycles. memory_read and knowledge_search work only while you
   work: nothing reads a tool's answer after your reflection's one reply.
+- Your rules are shorter: they no longer repeat what Ember's code enforces (its refusals say so when it
+  matters) or what your constitution, your owner's knowledge or a tool's description already says.
 
 ## 0.11.2
 

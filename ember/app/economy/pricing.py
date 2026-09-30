@@ -53,11 +53,12 @@ PLANNER_OPENING = CallProfile(input_tokens=21_300, max_tokens=1_200)
 LAST_WILL = CallProfile(input_tokens=6_400, max_tokens=1_000)
 # The first work step with the largest brief, and the reflection after it (with the room the loop keeps for one
 # step's growth), measured the same way: a wake cycle is only worth starting if both fit after its plan. Measured
-# with the most tools (a mailbox's, a shop's, a venture cycle's and the library's too) and the library's learnings
-# (0.12.0: and the Etsy renewals, mark_opt_out, and the milestones' metrics, budgets, waits and milestone_plan; the
-# OBLIGATIONS and obligation_done; the reflection with the most tool calls its cycle didn't do).
-WORK = CallProfile(input_tokens=31_400, max_tokens=2_000, cache_ttls=("5m",))
-REFLECT = CallProfile(input_tokens=43_100, max_tokens=2_000, cache_ttls=("5m",))
+# with the most tools (an ordinary cycle's with a mailbox's, a shop's and the library's too: a venture cycle carries
+# fewer, 0.12.0) and the library's learnings (0.12.0: and the Etsy renewals, mark_opt_out, and the milestones'
+# metrics, budgets, waits and milestone_plan; the OBLIGATIONS and obligation_done; the reflection with the most tool
+# calls its cycle didn't do; the rules without what Ember's code enforces or another text already says).
+WORK = CallProfile(input_tokens=30_000, max_tokens=2_000, cache_ttls=("5m",))
+REFLECT = CallProfile(input_tokens=41_600, max_tokens=2_000, cache_ttls=("5m",))
 # The daily review (0.7.1), measured the same way: the constitution, the knowledge, the review rules (with the
 # venture tree's: 0.10.0, and the roadmap's: 0.11.0, with verdicts on milestones: 0.12.0) and a full scorecard.
 REVIEW_CALL = CallProfile(input_tokens=14_900, max_tokens=2_200)
