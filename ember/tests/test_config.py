@@ -92,7 +92,8 @@ def test_price_lookup_is_exact() -> None:
     assert settings.price_for("claude-sonnet-5") is not None
     # A similar-looking but different model must not borrow another model's price.
     assert settings.price_for("claude-sonnet-5-20990101") is None
-    assert settings.price_for("claude-haiku-4-5") is None
+    assert settings.price_for("claude-haiku-4-5") is not None  # 0.12.0: priced out of the box, for research
+    assert settings.price_for("claude-haiku-4-5-20251001") is None
 
 
 def test_invalid_json_starts_safe_mode(data_dir: Path) -> None:

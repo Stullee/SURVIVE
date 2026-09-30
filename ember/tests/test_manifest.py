@@ -82,7 +82,8 @@ def test_options_match_settings_defaults() -> None:
     # Every schema key is a setting; every setting is in the schema.
     assert set(schema) == fields
     # Only the optional options ("?") have no default: the API key, the mailbox's address, password and owner, the
-    # workshop's model (the worker model when empty), and the Etsy app's keystring and shared secret.
+    # workshop's model (the worker model when empty), the strategy and research models (0.12.0: the planner and the
+    # worker model when empty), and the Etsy app's keystring and shared secret.
     optional = {key for key, rule in schema.items() if isinstance(rule, str) and rule.endswith("?")}
     assert optional == {
         "anthropic_api_key",
@@ -90,6 +91,8 @@ def test_options_match_settings_defaults() -> None:
         "email_password",
         "email_owner_name",
         "workshop_model",
+        "strategy_model",
+        "research_model",
         "etsy_keystring",
         "etsy_shared_secret",
     }

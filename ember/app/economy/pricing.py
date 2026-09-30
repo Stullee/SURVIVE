@@ -200,9 +200,13 @@ def profile_cost(
 
 
 def opening_cost(settings: Settings, db: Database, mode: str = "live") -> int | None:
-    """What the planning call that opens a wake cycle can cost at most."""
-    model = settings.planner_model
-    return profile_cost(settings, db, model, with_room(PLANNER_OPENING, model), mode, purpose="plan")
+    """What the planning call that opens a wake cycle can cost at most: on the planner's model, or (0.12.0) the
+    strategy model's for a venture cycle, whichever costs more."""
+    costs = [
+        profile_cost(settings, db, model, with_room(PLANNER_OPENING, model), mode, purpose="plan")
+        for model in {settings.planner_model, settings.strategy_model or settings.planner_model}
+    ]
+    return None if None in costs else max(c for c in costs if c is not None)
 
 
 def working_cycle_cost(settings: Settings, db: Database, mode: str = "live") -> int | None:

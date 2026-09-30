@@ -65,6 +65,10 @@ class ModelPrice(BaseModel):
 DEFAULT_PRICE_TABLE: tuple[ModelPrice, ...] = (
     ModelPrice(model="claude-sonnet-5", input=2.0, output=10.0, cache_write_5m=2.5, cache_write_1h=4.0, cache_read=0.2),
     ModelPrice(model="claude-opus-5-5", input=4.0, output=20.0, cache_write_5m=5.0, cache_write_1h=8.0, cache_read=0.2),
+    # 0.12.0: priced out of the box as a research model (research_model), once its check passes
+    ModelPrice(
+        model="claude-haiku-4-5", input=1.0, output=5.0, cache_write_5m=1.25, cache_write_1h=2.0, cache_read=0.1
+    ),
 )
 
 # Published prices of models the owner is likely to configure (same source and date).
@@ -73,9 +77,6 @@ REFERENCE_PRICES: dict[str, ModelPrice] = {
     p.model: p
     for p in (
         *DEFAULT_PRICE_TABLE,
-        ModelPrice(
-            model="claude-haiku-4-5", input=1.0, output=5.0, cache_write_5m=1.25, cache_write_1h=2.0, cache_read=0.1
-        ),
         ModelPrice(
             model="claude-haiku-4-5-20251001",
             input=1.0,
@@ -120,6 +121,10 @@ class Settings(BaseModel):
     max_tool_steps: int = Field(default=15, ge=1, le=100)
     planner_model: str = Field(default="claude-sonnet-5", min_length=1, max_length=100)
     worker_model: str = Field(default="claude-sonnet-5", min_length=1, max_length=100)
+    # 0.12.0: model routing. The venture cycles' plans and the daily review on their own model (empty: the planner
+    # model), and research on its own (empty: the worker model), once a paired check shows it finds as much.
+    strategy_model: str = Field(default="", max_length=100)
+    research_model: str = Field(default="", max_length=100)
     price_table: tuple[ModelPrice, ...] = DEFAULT_PRICE_TABLE
     web_search_usd_per_1000: float = Field(default=10.0, ge=MIN_PRICE, le=1_000)
     dry_run: bool = True
@@ -198,6 +203,8 @@ class Settings(BaseModel):
         "agent_name",
         "planner_model",
         "worker_model",
+        "strategy_model",
+        "research_model",
         "workshop_model",
         "email_address",
         "email_imap_host",
@@ -230,9 +237,10 @@ class Settings(BaseModel):
         names = [p.model for p in self.price_table]
         if len(names) != len(set(names)):
             problems.append("price_table lists the same model more than once")
-        for role in ("planner_model", "worker_model", "workshop_model"):
+        for role in ("planner_model", "worker_model", "strategy_model", "research_model", "workshop_model"):
             model = getattr(self, role)
-            if (model or role != "workshop_model") and self.price_for(model) is None:
+            optional = role in ("strategy_model", "research_model", "workshop_model")
+            if (model or not optional) and self.price_for(model) is None:
                 problems.append(f"{role} '{model}' has no entry in price_table")
         if problems:
             raise ValueError("; ".join(problems))

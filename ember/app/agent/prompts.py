@@ -500,12 +500,20 @@ def workshop_model(settings: Settings) -> str:
     return settings.workshop_model or settings.worker_model
 
 
+def strategy_model(settings: Settings) -> str:
+    """The model of the venture cycles' plans and the daily review (0.12.0): their own, the planner's if none is
+    set."""
+    return settings.strategy_model or settings.planner_model
+
+
 def plan_request(settings: Settings, context: str, venture: bool = False) -> dict[str, Any]:
-    """The plan of a wake cycle; a venture cycle's (``venture``) is told what venture cycles are for."""
+    """The plan of a wake cycle; a venture cycle's (``venture``) is told what venture cycles are for, and (0.12.0) is
+    made on the strategy model."""
     rules = [_text(PLANNER_RULES), *([_text(VENTURE_RULES)] if venture else [])]
+    model = strategy_model(settings) if venture else settings.planner_model
     return {
-        "model": settings.planner_model,
-        **_thinking(settings.planner_model, PLAN_MAX_TOKENS),
+        "model": model,
+        **_thinking(model, PLAN_MAX_TOKENS),
         "system": [_text(constitution(settings)), _text(knowledge()), *rules],
         "output_config": {"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
         "messages": [{"role": "user", "content": [_text(context)]}],
@@ -513,10 +521,12 @@ def plan_request(settings: Settings, context: str, venture: bool = False) -> dic
 
 
 def review_request(settings: Settings, scorecard: str) -> dict[str, Any]:
-    """The daily review: the planner's model judges the scorecard Ember's code built from its records."""
+    """The daily review: the strategy model (0.12.0; the planner's if none is set) judges the scorecard Ember's code
+    built from its records."""
+    model = strategy_model(settings)
     return {
-        "model": settings.planner_model,
-        **_thinking(settings.planner_model, REVIEW_MAX_TOKENS),
+        "model": model,
+        **_thinking(model, REVIEW_MAX_TOKENS),
         "system": [_text(constitution(settings)), _text(knowledge()), _text(REVIEW_RULES)],
         "output_config": {"format": {"type": "json_schema", "schema": REVIEW_SCHEMA}},
         "messages": [{"role": "user", "content": [_text(scorecard)]}],
@@ -606,8 +616,12 @@ def will_request(settings: Settings, context: str) -> dict[str, Any]:
     }
 
 
-def research_request(settings: Settings, question: str, url: str | None, site: str | None = None) -> dict[str, Any]:
-    """A search (limited to ``site``, a bare domain, if given) or the reading of ``url``."""
+def research_request(
+    settings: Settings, question: str, url: str | None, site: str | None = None, model: str | None = None
+) -> dict[str, Any]:
+    """A search (limited to ``site``, a bare domain, if given) or the reading of ``url``, on ``model`` (the worker's
+    unless the research model is checked or took over: 0.12.0)."""
+    model = model or settings.worker_model
     ask = f"Question: {question}"
     tool: dict[str, Any] = SEARCH_TOOL
     if url:
@@ -617,8 +631,8 @@ def research_request(settings: Settings, question: str, url: str | None, site: s
         ask += f"\nSearch only this site: {site}"
         tool = {**SEARCH_TOOL, "allowed_domains": [site]}
     return {
-        "model": settings.worker_model,
-        **_thinking(settings.worker_model, RESEARCH_MAX_TOKENS),
+        "model": model,
+        **_thinking(model, RESEARCH_MAX_TOKENS),
         "cache_control": {"type": "ephemeral"},
         "system": [_text(RESEARCH_RULES)],
         "tools": [tool],

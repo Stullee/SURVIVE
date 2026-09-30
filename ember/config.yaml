@@ -58,6 +58,12 @@ options:
       cache_write_5m: 5
       cache_write_1h: 8
       cache_read: 0.2
+    - model: claude-haiku-4-5
+      input: 1
+      output: 5
+      cache_write_5m: 1.25
+      cache_write_1h: 2
+      cache_read: 0.1
   web_search_usd_per_1000: 10
   dry_run: true
   web_fetch: false
@@ -128,6 +134,8 @@ schema:
   worker_effort: list(default|high|medium|low)
   workshop: bool
   workshop_model: str?
+  strategy_model: str?
+  research_model: str?
   workshop_run_cap_usd: float(0.05,100)
   workshop_runs_per_day: int(0,50)
   code_execution_usd_per_hour: float(0,100)

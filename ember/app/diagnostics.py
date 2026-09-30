@@ -116,6 +116,7 @@ TABLES = (
     "etsy_orders",
     "memory_versions",
     "lesson_pins",
+    "research_checks",
     "emails",
     "email_actions",
     "email_suppressions",

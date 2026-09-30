@@ -33,6 +33,7 @@ from ..economy.costs import micros_to_usd
 from ..economy.estimate import Unpriceable
 from ..economy.metering import (
     CONSOLIDATE,
+    RESEARCH_CHECK,
     REVIEW,
     STUDY,
     CallFailed,
@@ -58,6 +59,7 @@ from . import (
     news,
     obligations,
     prompts,
+    research_check,
     review,
     roadmap,
     stages,
@@ -1084,7 +1086,8 @@ class CycleRunner:
         def research(
             question: str, url: str | None, cycle_id: int, site: str | None = None, venture_id: int | None = None
         ) -> tools.Outcome:
-            request = prompts.research_request(self.settings, question, url, site)
+            model, checking = self._research_model()
+            request = prompts.research_request(self.settings, question, url, site, model)
             try:
                 fits, expected, _ = self.meter.affordable(
                     request, "research", cycle_id, ctx.state.reflect_reserve, ctx.state.reflect_money
@@ -1129,8 +1132,11 @@ class CycleRunner:
                     cost += more.cost_micros
                 except (CallRefused, CallFailed):
                     pass
-            digest = _text_of(response)[:RESEARCH_DIGEST_CHARS] or "Nothing useful was found."
+            answer = _text_of(response)
+            digest = answer[:RESEARCH_DIGEST_CHARS] or "Nothing useful was found."
             sources = _sources(response)
+            if checking is not None:  # 0.12.0: the research model's check, on the same question
+                self._compare_research(ctx, checking, question, url, site, result.call_id, sources, answer)
             ctx.state.seen_urls.update(sources)
             self._save_text(result.call_id, digest, response)
             body = tools.wrap(ctx, "research", digest)
@@ -1162,6 +1168,64 @@ class CycleRunner:
             )
 
         return research
+
+    def _research_model(self) -> tuple[str, str | None]:
+        """0.12.0: (the model research runs on, the research model being checked on the same questions, if any).
+        The owner's research model takes over once its check passed (research_check)."""
+        worker, candidate = self.settings.worker_model, self.settings.research_model
+        if not candidate or candidate == worker:
+            return worker, None
+        with self.db.connection() as conn:
+            state = research_check.check(conn, self.scope, candidate)
+        if not state.done:
+            return worker, candidate
+        return (candidate if state.passed else worker), None
+
+    def _compare_research(
+        self,
+        ctx: tools.ToolContext,
+        candidate: str,
+        question: str,
+        url: str | None,
+        site: str | None,
+        worker_call: int,
+        worker_sources: list[str],
+        worker_answer: str,
+    ) -> None:
+        """0.12.0: ask the research model being checked the same question and keep the comparison; never more than
+        the cycle can pay for after its reflection (a comparison it can't pay for waits for another question)."""
+        request = prompts.research_request(self.settings, question, url, site, candidate)
+        try:
+            fits = self.meter.affordable(
+                request, RESEARCH_CHECK, ctx.cycle_id, ctx.state.reflect_reserve, ctx.state.reflect_money
+            )[0]
+        except Unpriceable:
+            return
+        if not fits:
+            return
+        try:
+            result = self._call(ctx.cycle_id, RESEARCH_CHECK, request)
+            response = result.response or {}
+            answer = _text_of(response).strip()
+            compared = (result.call_id, len(_sources(response)), len(answer), bool(answer))
+        except CallRefused:
+            return
+        except CallFailed as exc:
+            compared = (exc.result.call_id, 0, 0, False)
+        with self.db.transaction() as conn:
+            state = research_check.record(
+                conn,
+                self.scope,
+                candidate,
+                ctx.cycle_id,
+                question,
+                (worker_call, len(worker_sources), len(worker_answer)),
+                compared,
+                to_iso(self.clock.now()),
+            )
+        if state.compared == research_check.QUESTIONS:
+            level = "info" if state.passed else "warning"
+            events.record(self.db, level, "agent", f"The research model's check {state.text()}"[:300])
 
     # --- drafts (0.12.0: a long file written by a metered call of its own) ---
 

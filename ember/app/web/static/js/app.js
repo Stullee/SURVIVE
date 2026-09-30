@@ -375,7 +375,8 @@
   var TRIGGERS = { schedule: "scheduled", owner: "woken by you", last_will: "last will" };
   var PHASES = { review: "Daily review", study: "Studying the library", plan: "Plan", act: "Act", reflect: "Reflect", last_will: "Last will" };
   var PURPOSES = { review: "Daily review", plan: "Plan", work: "Work", reflect: "Reflect", research: "Research",
-    workshop: "Workshop", draft: "Draft", brainstorm: "Brainstorm", study: "Library study", last_will: "Last will" };
+    workshop: "Workshop", draft: "Draft", brainstorm: "Brainstorm", study: "Library study", last_will: "Last will",
+    consolidate: "Lessons consolidated", research_check: "Research model check" };
 
   function triggerText(trigger) { return TRIGGERS[trigger] || (trigger ? String(trigger).replace(/_/g, " ") : "–"); }
   function purposeText(purpose) { return PURPOSES[purpose] || (purpose ? sentence(String(purpose).replace(/_/g, " ")) : "Model call"); }
@@ -3243,6 +3244,7 @@
       h("dt", { text: "Installed" }), h("dd", { text: s.installed_at || s.born_at ? fmtDateTime(s.installed_at || s.born_at) : "–" }),
       h("dt", { text: "Mode" }), h("dd", { text: (isDryRun(d) ? "Dry run (fake model, simulated API costs)" : "Live (real API calls, real money)") + (s.dev_mode ? " · local development" : "") }),
       h("dt", { text: "Options" }), h("dd", { text: s.config_source + (s.safe_mode ? " · SAFE MODE" : "") }),
+      isObject(d.models) ? [h("dt", { text: "Models" }), h("dd", { text: modelsText(d.models) })] : null,
       h("dt", { text: "API key" }), h("dd", { text: options.anthropic_api_key_set ? "Set (hidden)" : "Not set" }),
       h("dt", { text: "Database" }), h("dd", { text: db.ok ? "OK, schema version " + db.schema_version : "Error: " + db.error }),
       h("dt", { text: "Economy" }), h("dd", { text: s.economy_error ? "Not available: " + s.economy_error
@@ -3251,6 +3253,14 @@
         h("span", { class: "muted small", text: " for a Home Assistant REST sensor (see the app's Documentation tab)" })),
     ]);
     replace($("options"), optionsTable(options));
+  }
+
+  // 0.12.0: which model does what, and the research model's check (its first questions go to both models)
+  function modelsText(m) {
+    var parts = ["plans " + m.planner, "venture plans and reviews " + m.strategy, "work " + m.worker,
+      "research " + m.research];
+    var check = isObject(m.research_check) ? m.research_check : null;
+    return parts.join(" · ") + (check ? " (research model check " + check.text + ")" : "");
   }
 
   var EMAIL_STATUS = {

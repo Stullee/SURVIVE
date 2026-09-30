@@ -117,6 +117,24 @@ The **Workshop model** can be `claude-opus-5-5` too, for harder code. A run's
 first call may then cost up to about $0.68, so raise **Workshop cap per run** to
 1.00 (the dashboard says so when the cap is too low for one run).
 
+**Models by purpose.** Most plans are routine. To put Opus on the decisions that
+set the course only, keep the planner on `claude-sonnet-5` and set **Model for
+venture plans and reviews** to `claude-opus-5-5`: venture cycles plan with it and
+the daily review runs on it, while ordinary plans stay on Sonnet. A cycle can
+start only if its costlier plan fits, so the caps are checked against Opus.
+
+**Research model.** Research can run on a cheaper model: set **Research model**
+to `claude-haiku-4-5` (new installs have its price; add it to an older price
+table: input 1.00, output 5.00, cache write 5 min 1.25, cache write 1 h 2.00,
+cache read 0.10). It doesn't take over at once. The agent's next 10 research
+questions go to both models; the agent reads the worker model's answer, and
+Ember's code compares what each found. The research model takes over if it
+answered at least 9 of the 10 and found web pages for as many questions as the
+worker model, less one; otherwise research stays on the worker model. The
+System log says how the check came out, and **System → Models** shows where it
+stands. Each compared question costs one more research call (a cent or two with
+Haiku), counted as overhead.
+
 ## How the agent works
 
 The agent sleeps most of the time. When it wakes up (on its schedule, when you

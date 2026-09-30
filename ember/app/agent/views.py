@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
-from . import digest, library, memory, metrics, review, roadmap, store, ventures
+from . import digest, library, memory, metrics, prompts, research_check, review, roadmap, store, ventures
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
 if TYPE_CHECKING:
@@ -165,6 +165,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         roadmap_stamp = _roadmap_stamp(conn, scope, simulated, today.isoformat())
         library_stamp = _library_stamp(conn, scope)
         pinned = [{"id": r["id"], "text": r["text"], "created_at": r["created_at"]} for r in memory.pins(conn, scope)]
+        models = _models(agent, conn, scope)
     return {
         "badges": counts,
         "now": now,
@@ -172,6 +173,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "venture_choices": venture_choices,
         "activity": activity,
         "mind": {**agent.memory_files(), "journal": journal, "reviews": reviews, "lesson_pins": pinned},
+        "models": models,
         "approvals": approvals,
         "inbox": inbox,
         "upgrades": upgrades,
@@ -865,3 +867,27 @@ def _find(jail: Jail, parts: list[str]) -> Entry | None:
         if entry is None:
             return None
     return entry
+
+
+def _models(agent: Agent, conn: Any, scope: Any) -> dict[str, Any]:
+    """0.12.0: which model does what, and where the research model's check stands (research_check)."""
+    s = agent.settings
+    research, check = s.worker_model, None
+    if s.research_model and s.research_model != s.worker_model:
+        state = research_check.check(conn, scope, s.research_model)
+        research = s.research_model if state.passed else s.worker_model
+        check = {
+            "model": state.model,
+            "compared": state.compared,
+            "needed": research_check.QUESTIONS,
+            "done": state.done,
+            "passed": state.passed,
+            "text": state.text(),
+        }
+    return {
+        "planner": s.planner_model,
+        "strategy": prompts.strategy_model(s),
+        "worker": s.worker_model,
+        "research": research,
+        "research_check": check,
+    }

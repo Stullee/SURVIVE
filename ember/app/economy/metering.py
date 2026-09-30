@@ -95,6 +95,7 @@ WORKSHOP = "workshop"
 REVIEW = "review"
 STUDY = "study"  # 0.12.0: Ember studying its owner's library, within the owner's daily study budget
 CONSOLIDATE = "consolidate"  # 0.12.0: the lessons' consolidation after the daily review
+RESEARCH_CHECK = "research_check"  # 0.12.0: the research model's check, on the agent's research questions
 OUTSIDE_CYCLE_CAP = (WORKSHOP, REVIEW, STUDY, CONSOLIDATE)
 # 0.12.0: the cycle cap counts what a call is expected to cost (the daily cap, the balance and the last-will reserve
 # still count its worst case). A call with server tools (research) is expected to cost EXPECTED_FACTOR times the 95th

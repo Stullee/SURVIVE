@@ -55,6 +55,22 @@ configuration:
     description: >-
       Model that carries out the plan and writes the journal. Can be a cheaper
       model than the planner. Must be listed in the price table.
+  strategy_model:
+    name: Model for venture plans and reviews
+    description: >-
+      Optional. The model that plans the venture cycles and writes the daily
+      review, where Ember decides what to pursue; empty, the planner model.
+      claude-opus-5-5 here with claude-sonnet-5 as the planner puts the
+      stronger model on those decisions only. It needs an entry in the price
+      table.
+  research_model:
+    name: Research model
+    description: >-
+      Optional. A model for research (claude-haiku-4-5, say); empty, the
+      worker model. It takes over only after a check: its first 10 research
+      questions also go to the worker model, and it takes over if it found web
+      pages for as many of them, less one. The System log says how the check
+      came out. It needs an entry in the price table.
   price_table:
     name: Price table
     description: >-

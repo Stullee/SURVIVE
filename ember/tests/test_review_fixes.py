@@ -110,17 +110,9 @@ def test_a_missing_usage_block_is_charged_the_worst_case(data_dir: Path, usage: 
 
 
 def test_a_dated_snapshot_answer_is_the_same_model(data_dir: Path) -> None:
-    from app.config import ModelPrice
 
-    haiku = ModelPrice(
-        model="claude-haiku-4-5", input=1, output=5, cache_write_5m=1.25, cache_write_1h=2, cache_read=0.1
-    )
-    settings = Settings(
-        starting_balance_usd=50,
-        daily_spend_cap_usd=5,
-        cycle_spend_cap_usd=5,
-        worker_model="claude-haiku-4-5",
-        price_table=(*Settings().price_table, haiku),
+    settings = Settings(  # 0.12.0: claude-haiku-4-5 is in the default price table
+        starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=5, worker_model="claude-haiku-4-5"
     )
     economy = make_economy(data_dir, settings)
     answers = [
