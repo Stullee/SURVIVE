@@ -861,6 +861,8 @@ body[data-stale="true"] .live { display: none; }
 .vt-scores dd { margin: 0; font-weight: 600; }
 .vt-file { display: grid; gap: 8px; justify-items: start; margin: 8px 0; }
 .vt-knowledge { width: 100%; }
+.vt-evidence { display: grid; gap: 6px; margin: 6px 0 0; padding: 0; list-style: none; }
+.vt-evidence li { overflow-wrap: anywhere; }
 .card.venture[data-selected="true"] { box-shadow: 0 0 0 3px var(--focus); }
 .card.venture .money { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 10px 0; font-variant-numeric: tabular-nums; }
 .card.venture .money div { display: flex; gap: 6px; min-width: 0; }

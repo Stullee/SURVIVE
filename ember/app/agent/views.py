@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
-from . import digest, library, memory, metrics, prompts, research_check, review, roadmap, store, ventures
+from . import digest, evidence, library, memory, metrics, prompts, research_check, review, roadmap, store, ventures
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
 if TYPE_CHECKING:
@@ -398,8 +398,8 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
 
 
 def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated: int) -> str:
-    """Changes when the tree or its money may have: a venture changed, a wake cycle ended, or (0.12.0: its P&L)
-    something was recorded in the ledger."""
+    """Changes when the tree or its money may have: a venture changed, a wake cycle ended, something was recorded in
+    the ledger (0.12.0: its P&L) or a claim was saved as evidence (0.12.0)."""
     where, params = scope.where()
     tree = conn.execute(
         f"SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM ventures WHERE {where}", params
@@ -409,7 +409,8 @@ def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated
         (simulated, scope.session),
     ).fetchone()
     booked = conn.execute("SELECT COALESCE(MAX(id), 0) FROM ledger").fetchone()
-    return f"{int(tree[0])}|{tree[1]}|{int(cycle[0])}|{int(booked[0])}"
+    claims = conn.execute(f"SELECT COALESCE(MAX(id), 0) FROM evidence WHERE {where}", params).fetchone()
+    return f"{int(tree[0])}|{tree[1]}|{int(cycle[0])}|{int(booked[0])}|{int(claims[0])}"
 
 
 def ventures_view(agent: Agent) -> dict[str, Any]:
@@ -437,6 +438,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         ).fetchone()[0]
         stamp = _ventures_stamp(conn, scope, simulated)
         digests = digest.newest_by(conn, scope, "venture_id")  # 0.12.0
+        found = evidence.by_venture(conn, scope)  # 0.12.0
     items = []
     for v in rows:
         m = paid.get(v["id"], ventures.Money())
@@ -481,6 +483,8 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                 "expenses_usd": _usd(m.expenses),
                 "net_usd": _usd(m.net),
                 "last_digest": digests.get(v["id"]),  # 0.12.0: the digest of the last cycle aimed at it
+                # 0.12.0: its evidence: the claims by grade and the newest (see evidence.py)
+                "evidence": found.get(v["id"], {"counts": dict.fromkeys(evidence.GRADES, 0), "items": []}),
                 "projects": linked.get(v["id"], []),
                 "owner_action": v["owner_action"],
                 "owner_comment": v["owner_comment"],

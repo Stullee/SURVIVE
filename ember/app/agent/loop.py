@@ -54,6 +54,7 @@ from ..version import app_version
 from . import (
     context,
     digest,
+    evidence,
     library,
     metrics,
     netguard,
@@ -631,7 +632,10 @@ class CycleRunner:
         except SandboxError:
             size = None
         last = digest.newest_for(conn, self.scope, "venture_id", row["id"], cycle_id)
-        return ventures.focus_text(row, paid, size, ventures.projects_of(conn, row["id"]), parts, last=last)
+        found = evidence.focus_line(conn, row["id"])  # 0.12.0: its claims, by their sources' grade
+        return ventures.focus_text(
+            row, paid, size, ventures.projects_of(conn, row["id"]), parts, last=last, evidence=found
+        )
 
     def _review(self, cycle_id: int, ctx: tools.ToolContext) -> None:
         """The daily review, before the first plan of the day. It never ends the cycle: a review the budget can't
@@ -1155,6 +1159,8 @@ class CycleRunner:
             answer = _text_of(response)
             digest = answer[:RESEARCH_DIGEST_CHARS] or "Nothing useful was found."
             sources = _sources(response)
+            with self.db.transaction() as conn:  # 0.12.0: what evidence can be checked against
+                evidence.record_sources(conn, self.scope, cycle_id, result.call_id, sources, to_iso(self.clock.now()))
             if checking is not None:  # 0.12.0: the research model's check, on the same question
                 self._compare_research(ctx, checking, question, url, site, result.call_id, sources, answer)
             ctx.state.seen_urls.update(sources)

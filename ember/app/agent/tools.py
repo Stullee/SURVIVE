@@ -44,7 +44,7 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
-from . import library, metrics, netguard, obligations, roadmap, stages, store, ventures
+from . import evidence, library, metrics, netguard, obligations, roadmap, stages, store, ventures
 from .memory import CAPS, HEADING_REFUSAL, MAX_APPEND_LINES, Memory, MemoryError_, heading_line
 from .sandbox import Jail, Limits, QuotaError, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
@@ -84,8 +84,8 @@ WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's option
 ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing", "propose_etsy_edit"})
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "mark_opt_out", "propose_email"})
-# Offered only in venture cycles (0.10.0).
-VENTURE_TOOLS = frozenset({"brainstorm"})
+# Offered only in venture cycles (0.10.0; evidence 0.12.0: a venture's case, which grades pages any research found).
+VENTURE_TOOLS = frozenset({"brainstorm", "evidence"})
 # Offered only while the owner's library holds documents (0.12.0).
 LIBRARY_TOOLS = frozenset({"knowledge_search", "library_read"})
 # Offered only in ordinary cycles (0.12.0): a venture cycle researches and decides, so its prompt no longer carries
@@ -115,6 +115,7 @@ REDDIT_NOTE = (
     "mark it done with the link. Check the subreddit's rules on AI-written content and self-promotion first."
 )
 _SITE = re.compile(r"^(?=.{4,60}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+_PLAIN_NUMBER = re.compile(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")  # evidence's values (0.12.0)
 _DOCUMENT = re.compile(r"\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|epub|zip)$", re.IGNORECASE)
 # Etsy's website and its short links, with their subdomains: Etsy's API terms forbid programs reading them. Searching
 # them (site 'etsy.com') stays allowed: that reads a search engine's results, not Etsy's pages.
@@ -150,6 +151,24 @@ class Spec:
     per_cycle: int
     reflect: bool = False  # allowed in the reflect phase
     act: bool = True  # allowed in the act phase
+
+
+def _write_text(venture: bool) -> str:
+    """workspace_write's description (a venture cycle has neither draft nor the make_ tools)."""
+    longer, made = (
+        ("in parts", "; delete works for any file.")
+        if venture
+        else (
+            "with draft, or in parts",
+            ". PDF, Word, Excel and PNG files are made with the make_ tools; delete works for them too.",
+        )
+    )
+    return (
+        f"Create, overwrite, append to or delete a text file in your workspace (at most {WRITE_CHARS:,} characters "
+        f"per call: write a longer file {longer}, create then append, one part per reply; "
+        f"{Limits().max_file_bytes // 1024} KB per file; {Limits().max_total_bytes // (1024 * 1024)} MB in total). "
+        f"Allowed endings: .md .txt .csv .tsv .json .yaml .yml .html .css .xml{made}"
+    )
 
 
 def _s(description: str, max_len: int, required: bool = True, enum: tuple[str, ...] = (), cut: bool = False) -> Field:
@@ -198,12 +217,7 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "workspace_write",
-            f"Create, overwrite, append to or delete a text file in your workspace (at most {WRITE_CHARS:,} characters "
-            "per call: write a longer file with draft where you have it, or in parts, create then append, one part "
-            "per reply; "
-            f"{Limits().max_file_bytes // 1024} KB per file; {Limits().max_total_bytes // (1024 * 1024)} MB in "
-            "total). Allowed endings: .md .txt .csv .tsv .json .yaml .yml .html .css .xml. PDF, Word, Excel and PNG "
-            "files are made with the make_ tools; delete works for them too.",
+            _write_text(venture=False),
             {
                 "path": _s("File path inside the workspace, e.g. 'drafts/post.md'.", 200),
                 "mode": _s("What to do.", 10, enum=("create", "overwrite", "append", "delete")),
@@ -251,8 +265,8 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "project_update",
-            "Update one of your projects: status, next step, hypothesis, or a short note. A closed project "
-            "(succeeded, failed, abandoned) is final. 'succeeded' needs revenue recorded for it.",
+            "Update one of your projects. A closed project (succeeded, failed, abandoned) is final. 'succeeded' needs "
+            "revenue recorded for it.",
             {
                 "project_id": _i("The project's number."),
                 "status": _s("New status.", 10, required=False, enum=PROJECT_STATUSES),
@@ -273,8 +287,8 @@ SPECS: dict[str, Spec] = {
             "venture_create",
             "Add a venture to your tree: a new way to earn beyond what you do now (a market, a platform, a business "
             "model, or a channel that brings buyers to what you sell), or a leg you already run (stage live). Branch "
-            "it from the venture it grew out of. Its knowledge file keeps what you learn. Ideas are unlimited; at "
-            f"most {ventures.MAX_ACTIVE} ventures are worked on at once. Free.",
+            f"it from the venture it grew out of. Ideas are unlimited; at most {ventures.MAX_ACTIVE} ventures are "
+            "worked on at once. Free.",
             {
                 "title": _s("A short name.", 80, cut=True),
                 "pitch": _s("What it is, who pays for what, and why it could work.", 600, cut=True),
@@ -287,6 +301,24 @@ SPECS: dict[str, Spec] = {
                 ),
             },
             per_cycle=3,
+            reflect=True,
+        ),
+        Spec(
+            "evidence",
+            "Save a claim from your research, with its numbers and its page, to a venture's case. Ember's code grades "
+            "the page: independent, marketing (a vendor's or an affiliate's) or unchecked (not in your research "
+            "results). Free.",
+            {
+                "claim": _s("One sentence.", 300),
+                "metric": _s("e.g. 'monthly searches', 'price', 'margin'.", 60),
+                "low": _s("A number, e.g. 1200 or 4.5.", 20),
+                "high": _s("For a range.", 20, required=False),
+                "unit": _s("e.g. 'EUR', '%', 'orders/month'.", 24),
+                "region": _s("e.g. 'DE', 'EU', 'global'.", 40),
+                "url": _s("The page, from your research results.", 300),
+                "venture_id": _i("Default: the focus venture.", required=False),
+            },
+            per_cycle=10,
             reflect=True,
         ),
         Spec(
@@ -354,7 +386,7 @@ SPECS: dict[str, Spec] = {
             "Grow your venture tree: a separate, creative call on your planner's model (about 5 to 15 cents) finds "
             f"{ventures.BRAINSTORM_IDEAS} new ways to earn that fit your owner (Germany, their time and money) and "
             "what you can do or could learn to do, and adds them to the tree as ideas with first-guess scores. Branch "
-            "from a venture (its variants, niches, channels, next steps) or give a theme; leave both out for anything.",
+            "from a venture or give a theme; leave both out for anything.",
             {
                 "venture_id": _i("Branch the new ideas from this venture.", required=False),
                 "theme": _s("A market, a customer group, a problem or a skill to think about.", 300, required=False),
@@ -447,8 +479,8 @@ SPECS: dict[str, Spec] = {
             "request_approval",
             "Ask your owner to approve and carry out something that leaves this container: publish, contact "
             "someone, create an account, spend money, sell, or other. Nothing happens until your owner decides. "
-            "Put the exact text or details in payload. Disclose that you are an AI wherever your work reaches "
-            "people, and flag legal points (German owner: Impressum, GDPR, taxes).",
+            "Disclose that you are an AI wherever your work reaches people, and flag legal points (German owner: "
+            "Impressum, GDPR, taxes).",
             {
                 "type": _s("Kind of action.", 20, enum=APPROVAL_TYPES),
                 "title": _s("Short title.", 120),
@@ -592,10 +624,7 @@ SPECS: dict[str, Spec] = {
                     60,
                     required=False,
                 ),
-                "venture_id": _i(
-                    "The venture it researches (in a venture cycle, the focus venture unless you name another).",
-                    required=False,
-                ),
+                "venture_id": _i("The venture it researches (default: a venture cycle's focus).", required=False),
             },
             per_cycle=3,
         ),
@@ -836,6 +865,24 @@ SPECS: dict[str, Spec] = {
 }
 
 
+# 0.12.0: a venture cycle's own text for the tools whose description speaks of making files (not offered there):
+# the guide offers only the ventures manual.
+VENTURE_VARIANTS: dict[str, Spec] = {
+    "guide": replace(
+        SPECS["guide"],
+        description="Read the ventures manual: researching, scoring and making the business case of a venture, and "
+        "what selling needs in Germany.",
+        fields={"topic": replace(SPECS["guide"].fields["topic"], enum=("ventures",))},
+    ),
+    "workspace_write": replace(SPECS["workspace_write"], description=_write_text(venture=True)),
+}
+
+
+def spec_of(name: str, venture: bool) -> Spec | None:
+    """Tool ``name`` as a cycle of this kind describes and checks it (``venture``: a venture cycle)."""
+    return (VENTURE_VARIANTS.get(name) if venture else None) or SPECS.get(name)
+
+
 def definitions(
     mail: bool = False, workshop: bool = True, etsy: bool = False, venture: bool = False, library: bool = False
 ) -> list[dict[str, Any]]:
@@ -846,7 +893,7 @@ def definitions(
     and, 0.12.0, the tools for building and selling only in an ordinary one, the library's only while it holds
     documents)."""
     return [
-        _definition(spec)
+        _definition(spec_of(spec.name, venture) or spec)
         for spec in SPECS.values()
         if offered(spec.name, mail=mail, workshop=workshop, etsy=etsy, venture=venture, library=library)
     ]
@@ -1018,7 +1065,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
             now=ctx.now(),
         )
     try:
-        spec = SPECS.get(name)
+        spec = spec_of(name, ctx.venture)
         if spec is not None and ctx.venture and name in ORDINARY_TOOLS:
             raise ToolError(
                 f"{name} is not one of your tools in a venture cycle: making files, the shop, email and Reddit belong "
@@ -1395,6 +1442,45 @@ def _open_venture(conn: Any, scope: AgentScope, venture_id: int) -> Any:
     if row["stage"] == "killed":
         raise ToolError(f"your owner killed venture #{venture_id}")
     return row
+
+
+# --- evidence (0.12.0) ---
+
+
+def _evidence(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    low = _value(args["low"], "low")
+    high = low if args.get("high") is None else _value(args["high"], "high")
+    if high < low:
+        raise ToolError("high must be at least low")
+    url = args["url"].strip()
+    if not url.startswith(("https://", "http://")) or any(c.isspace() for c in url):
+        raise ToolError("url must be a web address from your research results (https://...)")
+    texts = {name: " ".join(args[name].split()) for name in ("claim", "metric", "unit", "region")}
+    venture_id = args.get("venture_id", ctx.state.focus_venture_id)  # offered in venture cycles only
+    if venture_id is None:
+        raise ToolError("name the venture it is evidence for (venture_id): this cycle has no focus venture")
+    _open_venture(conn, ctx.scope, venture_id)
+    number, grade = evidence.add(
+        conn, ctx.scope, venture_id, ctx.cycle_id, **texts, low=low, high=high, url=url, now=ctx.now()
+    )
+    why = {
+        "independent": "a page from your research results",
+        "marketing": "a vendor's or an affiliate's page: it sells what it describes, so weigh it lightly",
+        "unchecked": "not a page from your research results: your word only until research finds it",
+    }[grade]
+    return Outcome(
+        True,
+        f"Saved evidence #{number} for venture #{venture_id}. Its source is {grade}: {why}.",
+        f"evidence #{number} {grade}",
+    )
+
+
+def _value(text: str, name: str) -> float:
+    """A plain number: 1200, 1,200, 4.5 or -3 (not 4,5 or 1.200,50: which comma is the decimal one is a guess)."""
+    plain = text.strip()
+    if not _PLAIN_NUMBER.fullmatch(plain):
+        raise ToolError(f"{name} must be a plain number like 1200 or 4.5")
+    return float(plain.replace(",", ""))
 
 
 # --- ventures (0.10.0) ---
@@ -2862,6 +2948,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "set_sleep": _set_sleep,
     "write_journal": _write_journal,
     "research": _research,
+    "evidence": _evidence,
     "draft": _draft,
     "knowledge_search": _knowledge_search,
     "library_read": _library_read,

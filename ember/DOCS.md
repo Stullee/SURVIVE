@@ -386,7 +386,25 @@ tools for making files, the workshop, the Etsy shop, email or Reddit (they
 belong to ordinary cycles). With the shorter rules of 0.12.0, which no longer
 repeat what Ember's code enforces or what the constitution, your knowledge
 file or a tool's description already says, a venture cycle's fixed prompt is
-about a third shorter than in 0.11.
+about 30% shorter than in 0.11.
+
+**Evidence.** In a venture cycle the agent saves each number its research
+finds (a price, searches a month, sales, a fee, a margin) as evidence: the
+claim, the metric, a low and a high value, the unit, the region and the page it
+is on. Ember's code grades the page, and neither the claim nor its grade ever
+changes:
+
+- **independent**: a page one of the agent's research calls returned (Ember's
+  code keeps each call's pages, matched without tracking parameters);
+- **marketing**: a vendor's page (a business selling what the page describes:
+  Shopify, Printful, Printify, Etsy research tools such as eRank or Marmalead,
+  course platforms and the like) or an affiliate's link (one that pays whoever
+  sends a buyer), even when research returned it;
+- **unchecked**: a page no research call returned: the agent's word only.
+
+A venture's card lists its evidence (**Evidence: … claims**), each claim with
+its grade and a link to its page, and the agent's plans show it by grade with
+the newest values.
 
 **Business cases.** A venture the agent proposes comes to you with its demand
 (evidence that people pay), economics, setup (money, your hours, accounts,

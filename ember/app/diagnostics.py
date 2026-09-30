@@ -117,6 +117,8 @@ TABLES = (
     "memory_versions",
     "lesson_pins",
     "research_checks",
+    "research_sources",
+    "evidence",
     "emails",
     "email_actions",
     "email_suppressions",

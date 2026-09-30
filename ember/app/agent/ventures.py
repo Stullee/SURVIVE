@@ -616,11 +616,13 @@ def focus_text(
     projects: list[sqlite3.Row],
     parts: list[str] | None = None,
     last: str = "",
+    evidence: str = "",
 ) -> str:
     """The brief's FOCUS for a venture: everything the agent knows of it, the most important first, as the brief cuts
     it from the end (0.12.0: it lost the owner's comment and the first test): the owner's word, the first test, the
-    next question and the knowledge file, the digest of the last cycle aimed at it (``last``), then the scores, the
-    pitch and the rest of the business case, each field at most FOCUS_CHARS characters."""
+    next question and the knowledge file, the digest of the last cycle aimed at it (``last``), the scores, its
+    evidence by grade (``evidence``, 0.12.0), then the pitch and the rest of the business case, each field at most
+    FOCUS_CHARS characters."""
     file = parts[-1] if parts else file_of(row["id"], row["title"])  # ``parts``: the knowledge file's (0.12.0)
     kept = f"{file} ({file_size:,} B)" if file_size is not None else f"{file} (not written yet)"
     if parts and len(parts) > 1:
@@ -642,6 +644,7 @@ def focus_text(
         f"Scores: {scores_text(row)}",
         f"Research for it: {count} call{'s' if count != 1 else ''} that found something (scores need "
         f"{RESEARCH_TO_SCORE}, a business case {RESEARCH_TO_PROPOSE})",
+        *([evidence] if evidence else []),
         f"Pitch: {_one_line(row['pitch'], FOCUS_CHARS)}",
     ]
     lines += [f"{label}: {_one_line(row[name], FOCUS_CHARS) or '-'}" for name, label, _ in CASE if name != "first_test"]

@@ -1820,8 +1820,9 @@
     return null;
   }
 
-  // An owner-entered link: a real link only after validation, opened in a new tab without a referrer.
-  function ownerLink(value) {
+  // An owner-entered link: a real link only after validation, opened in a new tab without a referrer. 0.12.0: a
+  // label shows instead of the address (the whole address in its title), for the agent's sources.
+  function ownerLink(value, label) {
     var text = String(value);
     var url = null;
     if (!linkProblem(text)) {
@@ -1833,7 +1834,8 @@
     a.setAttribute("rel", "noopener noreferrer");
     a.setAttribute("target", "_blank");
     a.className = "result-link";
-    append(a, [text, h("span", { class: "visually-hidden", text: " (opens in a new tab)" })]);
+    if (label) a.setAttribute("title", url.href);
+    append(a, [label || text, h("span", { class: "visually-hidden", text: " (opens in a new tab)" })]);
     return a;
   }
 
@@ -5209,6 +5211,7 @@
       })) : null,
       filled.length && needs.length && (v.stage === "researching" || v.stage === "idea") ?
         h("p", { class: "muted small", text: "For a business case " + name + " still needs: " + needs.join(", ") + "." }) : null,
+      ventureEvidence(v),
       h("dl", { class: "money" },
         h("div", { title: "Research calls for this venture that found web pages: its scores need one, a business case " + toPropose + "." },
           h("dt", { text: "Research" }),
@@ -5232,6 +5235,35 @@
       h("p", { class: "muted small" }, (v.created_by === "owner" ? "Added by " + (v.entered_by || "you") : "Added by " + name) + " ",
         timeEl(v.created_at), " · updated ", timeEl(v.updated_at)),
     ];
+  }
+
+  // 0.12.0: the claims its research found, each with the grade Ember's code gave its page.
+  var EVIDENCE_GRADE = {
+    independent: { icon: "✓", label: "Independent", tone: "good" },
+    marketing: { icon: "$", label: "Marketing", tone: "warning" },
+    unchecked: { icon: "?", label: "Unchecked", tone: "" },
+  };
+
+  function ventureEvidence(v) {
+    var ev = isObject(v.evidence) ? v.evidence : {};
+    var counts = isObject(ev.counts) ? ev.counts : {};
+    var items = arr(ev.items);
+    var grades = ["independent", "marketing", "unchecked"];
+    var total = grades.reduce(function (sum, g) { return sum + (num(counts[g]) || 0); }, 0);
+    if (!total) return null;
+    return h("details", { class: "notes" },
+      h("summary", { text: "Evidence: " + plural(total, "claim") + " (" + grades.map(function (g) {
+        return (num(counts[g]) || 0) + " " + g;
+      }).join(", ") + ")" }),
+      h("p", { class: "muted small", text: "Ember's code grades each page: independent, marketing (a vendor's or an affiliate's page) or unchecked (not a page " +
+        agentName() + "'s research found)." }),
+      h("ul", { class: "vt-evidence" }, items.map(function (e) {
+        var host = "";
+        try { host = new URL(String(e.url)).hostname.replace(/^www\./, ""); } catch (err) { host = ""; }
+        return h("li", null, chip(EVIDENCE_GRADE, e.source, sentence(String(e.source))), " ",
+          h("strong", { text: String(e.value) }), " · " + String(e.claim) + " · ", ownerLink(e.url, host || null), " · #" + e.id);
+      })),
+      items.length < total ? h("p", { class: "muted small", text: "The newest " + items.length + " of " + total + "." }) : null);
   }
 
   var VENTURE_WORDS = { added: "You added this idea", research: "You asked for research next", back: "You backed it",

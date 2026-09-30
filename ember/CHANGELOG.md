@@ -147,6 +147,12 @@ Your results now reach your records: what you earn counts where it belongs.
   from 15 to 30 (the tests already running go on, no brainstorms); maintenance below 15 (one scheduled cycle a
   day of at most $0.40, no venture cycles); dormant once your last will is written and your runway is critical
   (no model calls until money comes in).
+- evidence (free, in venture cycles) saves a number your research found: the claim, its metric, a low and a high
+  value (one value: low only), its unit, region and page, for your focus venture unless you name another. Ember's
+  code grades the page: independent (your research returned it), marketing (a vendor's or an affiliate's page: it
+  sells what it describes) or unchecked (no research of yours returned it). FOCUS shows a venture's evidence by
+  grade with the newest values; your owner sees every claim on the Ventures tab. In a venture cycle, guide has the
+  ventures manual.
 
 ## 0.11.2
 
