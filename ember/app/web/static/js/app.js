@@ -825,7 +825,9 @@
       var net = num(a.net_runway_days);
       // 0.12.0: and net of the revenue and expenses of the same days, when there were any
       $("kpi-runway-sub").textContent = (a.runway_note || "at the last 7 days' spending") + (num(a.runway_net_in_usd) ?
-        " · net of revenue and expenses: " + (isNaN(net) ? (a.net_runway_note || "–").toLowerCase() : net >= 365 ? "365+ days" : plural(net, "day")) : "");
+        " · net of revenue and expenses: " + (isNaN(net) ? (a.net_runway_note || "–").toLowerCase() : net >= 365 ? "365+ days" : plural(net, "day")) : "") +
+        // 0.12.0: the burn mode Ember's code sets from the net runway, when it holds the agent back
+        (a.burn_mode && a.burn_mode !== "explore" ? " · burn mode " + a.burn_mode : "");
     }
     runway.setAttribute("data-tone", !isNaN(days) && days < 2 ? "critical" : "");
 

@@ -28,6 +28,7 @@ from typing import Any
 from .. import events
 from ..config import Settings
 from ..db import Database
+from ..economy import burn
 from ..economy.clock import Clock, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.estimate import Unpriceable
@@ -240,7 +241,9 @@ class CycleRunner:
         try:
             if trigger != "last_will":
                 ctx.venture = self._venture_cycle(cycle_id)
-                ctx.brainstorm = self._brainstorm_fn(ctx) if ctx.venture else None
+                # 0.12.0: brainstorms only while the burn mode is explore
+                explore = burn.peek(self.db, self.economy.life.evaluate()).brainstorms
+                ctx.brainstorm = self._brainstorm_fn(ctx) if ctx.venture and explore else None
                 with self.db.connection() as conn:
                     self.library_on = ctx.library = library.totals(conn, self.scope)[0] > 0
                 self._fetch_mail(cycle_id)
@@ -312,10 +315,11 @@ class CycleRunner:
     def _venture_cycle(self, cycle_id: int) -> bool:
         """Whether this is a venture cycle: venture cycles have had less than the owner's share of the day's spending
         (``ventures.venture_turn``). Recorded on the cycle; an empty venture tree gets its first ideas first."""
+        allowed = self._burn_allows_ventures()  # 0.12.0: read before the transaction
         with self.db.transaction() as conn:
             ventures.seed(conn, self.scope, to_iso(self.clock.now()))
             spent, ventured = ventures.day_spend(conn, self.scope, self.clock.today())
-            turn = ventures.venture_turn(self.settings.venture_share, spent, ventured)
+            turn = allowed and ventures.venture_turn(self.settings.venture_share, spent, ventured)
             # 0.12.0: what the agent owes comes first (a venture cycle deferred the owner's quick fix)
             owed = obligations.pressing(conn, self.scope, self.clock.today()) if turn else []
             if turn and not owed:
@@ -325,6 +329,21 @@ class CycleRunner:
                 self.db, "info", "agent", f"Cycle #{cycle_id} is an ordinary cycle: {owed[0]} comes first"[:300]
             )
         return turn and not owed
+
+    def _burn_allows_ventures(self) -> bool:
+        """0.12.0: venture cycles run in explore, and in focus only while a venture is backed or live (the tests
+        already running); not in maintenance or dormant."""
+        mode = burn.peek(self.db, self.economy.life.evaluate())
+        if not mode.venture_cycles:
+            return False
+        if mode.mode == burn.EXPLORE:
+            return True
+        where, params = self.scope.where()
+        with self.db.connection() as conn:
+            running = conn.execute(
+                f"SELECT 1 FROM ventures WHERE {where} AND stage IN ('building', 'live') LIMIT 1", params
+            ).fetchone()
+        return running is not None
 
     def _expire_requests(self) -> None:
         """0.12.0: the requests the owner didn't decide within their type's days expire (news for the agent)."""
@@ -421,6 +440,7 @@ class CycleRunner:
                 venture_share=self.settings.venture_share,
                 shelf=library.shelf(conn, self.scope),
                 decision_wakes=self.settings.wake_on_decision,
+                burn=_burn_line(burn.peek(self.db, status)),
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any], venture_id: int | None = None) -> CallResult:
@@ -1634,3 +1654,8 @@ def _picture_bytes(block: dict[str, Any]) -> int:
         return IMAGE_EQUIVALENT_BYTES
     width, height = size
     return min(IMAGE_EQUIVALENT_BYTES, math.ceil(width * height * IMAGE_EQUIVALENT_BYTES / tools.LOOK_PIXELS**2))
+
+
+def _burn_line(mode: burn.Burn) -> str:
+    """STATUS's burn mode (0.12.0), when it holds the agent back: nothing in explore."""
+    return "" if mode.mode == burn.EXPLORE else mode.text()

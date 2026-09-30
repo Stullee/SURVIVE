@@ -24,6 +24,7 @@ from app.agent import prompts, review, tools  # noqa: E402
 from app.agent.fake_llm import FakeTransport, request_kind, validate_request  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.economy.clock import Clock, to_iso  # noqa: E402
+from app.economy.life import KILLED_KEY  # noqa: E402
 from app.integrations import etsy, etsy_publisher  # noqa: E402
 from app.integrations.etsy import (  # noqa: E402
     DISCLOSURE,
@@ -1396,16 +1397,20 @@ def test_the_shop_is_read_every_hour_while_the_agent_sleeps(data_dir: Path) -> N
     assert agent.integrations()["etsy"]["last_sync_at"] == to_iso(agent.clock.now())  # the dashboard's "Numbers from"
 
 
-def test_the_shop_is_read_only_while_the_agent_could_run(data_dir: Path) -> None:
+def test_the_shop_is_read_while_paused_but_not_once_killed(data_dir: Path) -> None:
+    # 0.12.0: reading spends nothing, so a sale is still seen while the agent is paused or dormant (it stopped)
     agent, _ = make_agent(data_dir, [])
     key = etsy_publisher.meta_key(agent.mode, "last_sync_at")
     agent.economy.set_paused(True)
-    assert agent.executor_blocked() == "The agent is paused"
-    agent.sync_shop()
-    assert agent.db.get_meta(key) is None
-    agent.economy.set_paused(False)
+    assert agent.executor_blocked() == "The agent is paused" and agent.sync_blocked() is None  # sending waits
     agent.sync_shop()
     assert agent.db.get_meta(key) == to_iso(agent.clock.now()) and rows(agent, "SELECT id FROM cycles") == []
+    agent.economy.set_paused(False)
+    agent.economy.life.set_switch(KILLED_KEY, True)
+    assert agent.sync_blocked() == "The agent is killed"
+    agent.clock.advance(hours=2)
+    agent.sync_shop()
+    assert agent.db.get_meta(key) != to_iso(agent.clock.now())  # not read again
 
 
 def test_a_failed_check_of_the_shop_waits_an_hour(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -188,6 +188,7 @@ def sensors(request: Request) -> JSONResponse:
             "runway_days": None,
             "runway_known": False,
             "net_runway_days": None,
+            "burn_mode": None,
             "today_api_spend_usd": None,
             "daily_cap_usd": state.loaded.settings.daily_spend_cap_usd,
         }

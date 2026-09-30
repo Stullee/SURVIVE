@@ -39,6 +39,7 @@ from .. import events
 from ..config import ModelPrice, Settings
 from ..db import Database
 from ..version import app_version
+from . import burn
 from .clock import Clock, from_iso, to_iso
 from .costs import MICROS_PER_USD, Usage, container_micros, cost_micros, micros_to_usd
 from .estimate import (
@@ -429,6 +430,8 @@ class MeteredModel:
         if not _TRIGGER.match(trigger):
             raise ValueError("bad trigger name")
         status = self.life.evaluate_and_persist()
+        # 0.12.0: a maintenance cycle has at most its burn mode's cap (kept before the transaction: it writes meta)
+        cap = burn.current(self.db, status).cycle_cap(usd_cap_to_micros(self.settings.cycle_spend_cap_usd))
         refusal: tuple[str, str] | None = None
         cycle_id = 0
         with self.db.transaction() as conn:
@@ -446,7 +449,7 @@ class MeteredModel:
                             to_iso(self.clock.now()),
                             trigger,
                             1 if self.simulated else 0,
-                            usd_cap_to_micros(self.settings.cycle_spend_cap_usd),
+                            cap,
                             self.life.session(),
                             app_version()[:40],
                         ),

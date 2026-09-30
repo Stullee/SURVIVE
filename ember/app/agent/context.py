@@ -43,7 +43,7 @@ MAIL_SHOWN = 3
 INSTRUCTIONS_HEADING = "YOUR OWNER'S STANDING INSTRUCTIONS"
 INSTRUCTIONS_BUDGET = 1_700
 PLANNER_BUDGETS = {
-    "status": 700,  # (0.10.1: with a venture cycle's research room)
+    "status": 900,  # (0.10.1: with a venture cycle's research room; 0.12.0: and the burn mode)
     "instructions": INSTRUCTIONS_BUDGET,
     "news": 2_300,
     "software": CHANGELOG_LIMIT,
@@ -203,6 +203,7 @@ class Snapshot:
     roadmap_spent: dict[int, int] = field(default_factory=dict)  # what each milestone's work cost (0.12.0)
     library: library.Shelf | None = None  # the owner's library (0.12.0): None while it is empty
     decision_wakes: bool = False  # the owner's decisions wake the agent (0.12.0, the wake_on_decision option)
+    burn: str = ""  # 0.12.0: the burn mode Ember's code set from the net runway (burn.Burn.text)
 
 
 def snapshot(
@@ -226,6 +227,7 @@ def snapshot(
     venture_share: int = 0,
     shelf: library.Shelf | None = None,
     decision_wakes: bool = False,
+    burn: str = "",
 ) -> Snapshot:
     """What the planner, the brief and the will see; ``today`` (the owner's local date) finds the day's review and
     the day's spending on ventures."""
@@ -293,6 +295,7 @@ def snapshot(
         roadmap_spent={mid: cost for mid, (_, cost) in roadmap.effort(conn, scope).items()},
         library=shelf,
         decision_wakes=decision_wakes,
+        burn=burn,
     )
 
 
@@ -355,6 +358,8 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
         f"Spent today ${micros_to_usd(s.today_spend):.2f} of ${s.daily_cap:.2f}."
         f" This cycle may spend up to ${s.cycle_cap:.2f}.",
     ]
+    if s.burn:
+        lines.append(f"Burn mode, set by Ember's code: {s.burn}.")
     if s.workspace_usage:
         lines.append(s.workspace_usage)
     if s.venture_share:

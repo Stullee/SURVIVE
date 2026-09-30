@@ -22,6 +22,7 @@ from .. import events
 from ..config import LoadedSettings
 from ..db import Database
 from ..logging_setup import printable
+from . import burn
 from .clock import Clock, from_iso
 from .costs import micros_to_usd
 from .ledger import (
@@ -371,6 +372,9 @@ class Economy:
             "net_runway_days": _round(status.runway.net_days),
             "net_runway_note": status.runway.net_note or status.runway.note,
             "runway_net_in_usd": micros_to_usd(status.runway.window_net_in),
+            # 0.12.0: the burn mode Ember's code sets from the net runway
+            "burn_mode": burn.peek(self.db, status).mode,
+            "burn_text": burn.peek(self.db, status).text(),
             "today_spend_usd": micros_to_usd(self.books.cap_spend_on(scope, self.clock.today())),
             "daily_cap_usd": self.settings.daily_spend_cap_usd,
             "cycle_cap_usd": self.settings.cycle_spend_cap_usd,
@@ -445,6 +449,7 @@ class Economy:
             "runway_known": runway is not None,
             # 0.12.0: net of revenue and expenses; unknown (the cap) while it earns what it spends
             "net_runway_days": round(min(net, RUNWAY_CAP_DAYS), 1) if net is not None else RUNWAY_CAP_DAYS,
+            "burn_mode": burn.peek(self.db, status).mode,  # 0.12.0
             "today_api_spend_usd": round(
                 micros_to_usd(self.books.cap_spend_on(self.life.scope(), self.clock.today())), 2
             ),

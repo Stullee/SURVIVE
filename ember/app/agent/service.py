@@ -21,6 +21,7 @@ from typing import Any
 from .. import events, paths, privacy
 from ..config import LoadedSettings, Settings
 from ..db import Database
+from ..economy import burn
 from ..economy.clock import from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.metering import MeteredModel, OfflineTransport, Transport, usd_cap_to_micros
@@ -245,6 +246,9 @@ class Agent:
             if retry is None or now >= retry or self.wake_requested:
                 return Decision(True, "last_will", "the last will is due")
             return Decision(False, reason="The last will is due; retrying later", wait_until=retry)
+        # 0.12.0: dormant, no model calls until money comes in; only the owner's Wake now runs a cycle
+        if burn.current(self.db, status).mode == burn.DORMANT and not self.wake_requested:
+            return Decision(False, reason=f"Dormant: {burn.MEANING[burn.DORMANT]}; Wake now runs a cycle")
         if self.message_waiting and not self.wake_requested:
             ready = self._wake_for_waiting_message()
             if ready is not None:
@@ -562,6 +566,9 @@ class Agent:
             if check is not None and now + timedelta(minutes=minutes) > check[0]:
                 minutes = max(self.settings.min_sleep_minutes, math.ceil((check[0] - now).total_seconds() / 60))
                 reason += f"; waking for the check of milestone #{check[1]}"
+            daily = min(burn.MAINTENANCE_SLEEP_MINUTES, self.settings.max_sleep_minutes)
+            if minutes < daily and burn.current(self.db, self.economy.life.evaluate()).mode == burn.MAINTENANCE:
+                minutes, reason = daily, "the burn mode is maintenance: one cycle a day"  # 0.12.0
         else:
             failures += 1
             self.db.set_meta(self._key("failures"), str(failures))
@@ -581,6 +588,17 @@ class Agent:
         state = self.economy.life.evaluate().state
         return None if state in ("alive", "critical") else f"The agent is {state}"
 
+    def sync_blocked(self) -> str | None:
+        """0.12.0: why the Etsy shop isn't read now (None if it may be). Unlike sending, reading spends nothing and
+        goes on while the agent is paused, dormant or waiting for money, so a sale is still seen and recorded; not
+        once the kill switch is on or the life is over."""
+        if not self.cycles_enabled:
+            return "Wake cycles are switched off (EMBER_SCHEDULER=off)"
+        if not self.economy.health.lock_held:
+            return "Another Ember process is using the data folder"
+        state = self.economy.life.evaluate().state
+        return None if state in ("alive", "critical", "paused", "unfunded") else f"The agent is {state}"
+
     def execute_approved(self) -> list[tuple[int, str]]:
         """Send the approved emails and create the approved Etsy listings that are due (the scheduler calls this
         before every decision)."""
@@ -595,7 +613,7 @@ class Agent:
         other content for a day. The scheduler calls this every round (between checks it only looks at the time of
         the last one); after a failure (raised, or kept for the dashboard) the next try waits an hour."""
         now = self.clock.now()
-        if self.executor_blocked() or not self.publisher.due():
+        if self.sync_blocked() or not self.publisher.due():
             return
         if self._shop_failed_at and now - self._shop_failed_at < SHOP_RETRY:
             return

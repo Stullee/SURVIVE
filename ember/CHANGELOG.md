@@ -143,6 +143,10 @@ Your results now reach your records: what you earn counts where it belongs.
   numbers first. After each daily review, once you have 12 lessons or more, Ember's code has them consolidated:
   lessons that say the same become one, and those a newer one contradicts are retired (never a pinned one or one
   with numbers).
+- Ember's code sets your burn mode from your net runway, and STATUS says which: explore above 30 days; focus
+  from 15 to 30 (the tests already running go on, no brainstorms); maintenance below 15 (one scheduled cycle a
+  day of at most $0.40, no venture cycles); dormant once your last will is written and your runway is critical
+  (no model calls until money comes in).
 
 ## 0.11.2
 

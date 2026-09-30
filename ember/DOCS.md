@@ -1037,6 +1037,26 @@ Next to it, the dashboard, the agent's plans and its daily review show the
 counted too (Etsy's fees make it shorter, a sale longer). While Ember earns at
 least what it spends, the net runway has no end.
 
+**Burn modes.** Ember's code sets how fast the agent may spend from the net
+runway, and the agent's plans say which mode it is in:
+
+- **explore**: more than 30 days (or it earns what it spends): as your options
+  allow;
+- **focus**: 15 to 30 days: the tests already running go on (venture cycles
+  only while a venture is backed or live), with no brainstorms;
+- **maintenance**: under 15 days: one scheduled cycle a day, of at most $0.40,
+  and no venture cycles (your messages and decisions still wake it);
+- **dormant**: once its last will is written and its runway is critical: no
+  model calls until money comes in (a sale or your grant); **Wake now** still
+  runs a cycle.
+
+A mode moves down at once and up only 20% past its threshold, so it doesn't
+flicker. Each change is in the System log, and the dashboard's runway shows the
+mode when it holds the agent back (sensor attribute `burn_mode`). The Etsy shop
+is read on its schedule also while the agent is paused, dormant or waiting for
+money, so a sale is still seen and recorded; only the kill switch or the end of
+a life stops it.
+
 **Spending limits.** Before every API call Ember works out the most the call
 could cost (its worst case) and what it is expected to cost. It refuses the
 call if its worst case could break the daily cap (per local calendar day, so up
