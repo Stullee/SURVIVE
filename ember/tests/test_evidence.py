@@ -170,7 +170,12 @@ def test_a_venture_cycle_has_its_own_tools_and_texts() -> None:
     venture = {d["name"]: d for d in tools.definitions(mail=True, etsy=True, venture=True)}
     assert "evidence" in venture and "evidence" not in ordinary
     assert venture["guide"]["input_schema"]["properties"]["topic"]["enum"] == ["ventures"]
-    assert ordinary["guide"]["input_schema"]["properties"]["topic"]["enum"] == list(tools.GUIDES)
+    # 0.13.0: a channel's manual comes with the channel
+    channels = ("pinterest", "printify")
+    topics = [topic for topic in tools.GUIDES if topic not in channels]
+    assert ordinary["guide"]["input_schema"]["properties"]["topic"]["enum"] == topics
+    every = {d["name"]: d for d in tools.definitions(mail=True, etsy=True, pinterest=True, printify=True)}
+    assert every["guide"]["input_schema"]["properties"]["topic"]["enum"] == list(tools.GUIDES)
     writing = venture["workspace_write"]["description"]
     assert "make_" not in writing and "draft" not in writing and "delete works for any file" in writing
     assert "with draft, or in parts" in ordinary["workspace_write"]["description"]

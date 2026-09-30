@@ -114,6 +114,12 @@ options:
   pinterest_enabled: false
   pinterest_redirect_uri: https://localhost/ember-pinterest
   pinterest_pins_per_day: 3
+  # Printify (see the Documentation tab): physical products with Ember's designs, made on order and sold in your Etsy
+  # shop through Printify's Etsy connection. Your personal access token is an optional option too.
+  printify_enabled: false
+  printify_shop_id: 0
+  printify_currency: EUR
+  printify_products_per_day: 2
 
 schema:
   anthropic_api_key: password?
@@ -178,3 +184,8 @@ schema:
   pinterest_app_secret: password?
   pinterest_redirect_uri: str(1,300)
   pinterest_pins_per_day: int(0,20)
+  printify_enabled: bool
+  printify_api_token: password?
+  printify_shop_id: int(0,999999999999)
+  printify_currency: list(EUR|USD|GBP)
+  printify_products_per_day: int(0,10)

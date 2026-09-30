@@ -66,10 +66,12 @@ def test_the_catalogue() -> None:
         "inquiries_answered",
         "pins_live",  # 0.13.0 (Phase E2)
         "pin_clicks",
+        "pod_products_live",  # 0.13.0 (Phase E4)
+        "pod_orders",
         "qa_clean",
     }
     for m in metrics.CATALOGUE.values():
-        assert m.name in metrics.HELP or m.name.endswith("_delta"), m.name
+        assert m.name in metrics.help_text() or m.name.endswith("_delta"), m.name
         assert m.source in metrics.SOURCES and m.kind in ("count", "usd", "yes", "stage")
         assert (m.sample == "") == (m.min_sample == 0)
     listings, usd = metrics.CATALOGUE["listings_live"], metrics.CATALOGUE["revenue_verified_usd"]

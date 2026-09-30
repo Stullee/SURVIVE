@@ -77,6 +77,11 @@ code from Etsy's own numbers): the agent never reports its own.
 | Pinterest app ID, app secret | empty | From the Pinterest app you create for your own account. The secret is never logged or shown. |
 | Pinterest redirect URI | https://localhost/ember-pinterest | The redirect URI registered for that app, exactly as there. |
 | Pins per day | 3 | The most pins Ember makes in one day (0 to 20). |
+| Printify | off | Lets the agent propose physical products with its designs, made on order by Printify and sold in your Etsy shop. See [Printify](#printify). |
+| Printify personal access token | empty | A token you create in Printify for Ember. Never logged or shown. |
+| Printify shop | 0 | The Printify shop connected to your Etsy shop (0: the only one that is). |
+| Printify currency | EUR | The currency of the prices and costs Printify shows for that shop. |
+| Printify products per day | 2 | The most products Ember creates in one day (0 to 10). |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -782,9 +787,10 @@ no longer shown); a study that failed three times stops until you press
 
   **Never automatic**, whatever you unlock: creating an account, moving or
   spending money, a first contact (someone who never wrote to Ember, § 7 UWG),
-  Ember's first listing in your shop and the pin that makes its first Pinterest
-  board (a new public presence needs your decision and your Impressum, § 5
-  DDG), a post in a third-party community, a request
+  Ember's first listing in your shop, the pin that makes its first Pinterest
+  board and its first Printify product (a new public presence needs your
+  decision and your Impressum, § 5 DDG; physical goods bring duties of their
+  own), a post in a third-party community, a request
   whose words touch tax, VAT, a Gewerbe or a contract, and anything only you
   carry out. Such a request always waits for your click, and if it fits an
   unlocked kind, its card says why it waits. Only you unlock: Ember's code
@@ -795,8 +801,8 @@ no longer shown); a study that failed three times stops until you press
 - **What Ember's code did**, below the requests on the **Approvals** tab
   (0.13.0): every action it carries out (an email sent, a listing created,
   changed, renewed or deactivated, a sold listing's automatic renewal turned
-  on, a Pinterest board or pin made or deleted), the newest first. Each one
-  shows:
+  on, a Pinterest board or pin made or deleted, a Printify product created or
+  deleted), the newest first. Each one shows:
   - what it acted on, and what it changed (before → after);
   - how it ended;
   - on whose decision: **You approved it**, **Your unlock**, **Your Undo**,
@@ -810,8 +816,9 @@ no longer shown); a study that failed three times stops until you press
   request. Only the newest action on a listing can be undone, and not while
   another change of it waits. An email can't be unsent. A pin's **Delete the
   pin** deletes it at Pinterest (a board stays: delete it at Pinterest if you
-  want). If an Undo failed before anything changed, or you cancelled it, you
-  can undo again.
+  want). A Printify product's **Delete the product** deletes it at Printify,
+  which takes its Etsy listing down too (check your shop). If an Undo failed
+  before anything changed, or you cancelled it, you can undo again.
 
   **Daily digest**: at the start of each day, Ember's code sums up the day
   before. It covers how many actions it carried out and on whose decision,
@@ -1231,6 +1238,76 @@ remove the app's access in your Pinterest settings).
   numbers: its pins bring 10 clicks to the shop's listings.
 - **Undo** on the pin's entry under **What Ember's code did** deletes it at
   Pinterest.
+
+## Printify
+
+With **Printify** on, the agent can sell physical products with its designs:
+posters, mugs, journals and more, made on order by Printify's print providers
+and shipped to the buyer. They are sold in your Etsy shop: Printify publishes
+each product as a listing there through its own Etsy connection. The agent
+proposes a product, you approve it, and Ember's own code creates it at
+Printify. In dry run a fake account with a small catalog stands in, so you can
+try the whole flow first.
+
+**Before you start**, know what selling physical goods means for you. Printify
+makes and ships them, but you sell them: under the EU's product safety rules
+(GPSR) your listings must name the manufacturer (Printify gives its providers'
+details), in Germany packaging must be registered (LUCID, VerpackG) unless your
+provider takes that over, and Etsy wants Printify's provider named as your
+**production partner** (Shop settings → Production partners). Ember's first
+product always waits for your decision, whatever you unlocked.
+
+### Setting it up
+
+1. Create a Printify account and connect your Etsy shop to it (Printify: My
+   stores → Add new store → Etsy). Set up billing at Printify: it charges you
+   for making and shipping each order.
+2. In Printify, open **My profile → Connections** and create a personal access
+   token for Ember, with access to shops, catalog, products, orders and
+   uploads. Copy it (it is shown once).
+3. In Ember's **Configuration** tab, turn on **Show unused optional
+   configuration options**, switch **Printify** on, paste the token, set
+   **Printify currency** to the currency your Printify shop shows its prices
+   and costs in, save and restart the app. If you have more than one Printify
+   shop connected to Etsy, set **Printify shop** to its number too.
+
+**System → Printify** on the dashboard shows the shop Ember found, the products
+it made and what their orders cost you.
+
+### How a product is made
+
+- The agent looks through Printify's catalog (`printify_catalog`: products,
+  who makes them, their sizes with the print area and the shipping to Germany)
+  and proposes a product with `propose_printify_product`: one of its pictures,
+  the variants (sizes of one shape) with their prices, and the listing's title,
+  description and tags. Ember adds a line saying AI helped design it, as on
+  Etsy. The approval card shows every word, each price with its shipping, and
+  what the QA check finds short (a picture that prints blurry below 150 dpi, or
+  whose shape leaves part of the print area blank).
+- **Approve** and Ember uploads the picture, creates the product at Printify
+  (not published yet) and reads what each variant costs to make. It publishes
+  the product to your Etsy shop only if every price keeps **15%** of itself
+  after Etsy's fees (about 10.5% and 0.50), making and shipping. Otherwise it
+  deletes the unpublished product and the card says, for each price, what it
+  would need. A product can only be approved as it is or rejected; **Cancel**
+  stops it before Ember starts.
+- Printify then publishes the listing in your shop (it can take a few
+  minutes); the card shows the listing once the sync has read it. At most
+  **Printify products per day** are created a day.
+- If the picture changed after you approved, nothing is created. Ember never
+  creates a product twice: if it can't tell what Printify made (a lost
+  connection), it says so and doesn't try again.
+- Every hour while the app runs, Ember reads its products' state and the
+  Printify orders of its products: what making and shipping each one costs
+  you. **Record the cost** on an order opens the expense form filled in (it can
+  be recorded once). The sale itself is an order in your Etsy shop: its revenue
+  is recorded as for any listing of Ember's.
+- The agent's plan shows each product with what its prices keep and the orders
+  (PRINTIFY); the metrics `pod_products_live` and `pod_orders` can measure a
+  milestone. The seeded venture *Print on demand in the Etsy shop* has its first
+  test in them: a first order.
+- **Undo** on the product's entry under **What Ember's code did** deletes it at
+  Printify.
 
 ## Reddit
 

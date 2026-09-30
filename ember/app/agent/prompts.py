@@ -590,12 +590,20 @@ def work_request(
     venture: bool = False,
     library: bool = False,
     pinterest: bool = False,
+    printify: bool = False,
 ) -> dict[str, Any]:
     """One step of the act loop. The prefix (system, tools, brief) stays byte-identical, so it is cached; ``mail``,
-    ``etsy``, ``venture``, ``library`` and ``pinterest`` (whether Ember has a mailbox, a shop, a library and the
-    owner's Pinterest account, and a venture cycle's tools) are the same for every step of a cycle."""
+    ``etsy``, ``venture``, ``library``, ``pinterest`` and ``printify`` (whether Ember has a mailbox, a shop, a library
+    and the owner's Pinterest and Printify accounts, and a venture cycle's tools) are the same for every step of a
+    cycle."""
     offered = tools.definitions(
-        mail, workshop=workshop_on(settings), etsy=etsy, venture=venture, library=library, pinterest=pinterest
+        mail,
+        workshop=workshop_on(settings),
+        etsy=etsy,
+        venture=venture,
+        library=library,
+        pinterest=pinterest,
+        printify=printify,
     )
     return {
         "model": settings.worker_model,
@@ -640,6 +648,7 @@ def reflect_request(
     library: bool = False,
     undone: Sequence[str] = (),
     pinterest: bool = False,
+    printify: bool = False,
 ) -> dict[str, Any]:
     """The final turn of the same conversation (so the cached prefix is reused: its tool list stays the work's, which
     it reads from the cache at a tenth of the price); ``ended`` says why the work ended, ``undone`` which of its tool
@@ -648,7 +657,15 @@ def reflect_request(
     Roles must alternate: when there was no act turn at all, the reflect prompt joins the brief's turn.
     """
     request = work_request(
-        settings, brief, turns, mail=mail, etsy=etsy, venture=venture, library=library, pinterest=pinterest
+        settings,
+        brief,
+        turns,
+        mail=mail,
+        etsy=etsy,
+        venture=venture,
+        library=library,
+        pinterest=pinterest,
+        printify=printify,
     )
     messages = request["messages"]
     prompt = _text(reflect_prompt(ended, undone))

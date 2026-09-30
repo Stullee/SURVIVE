@@ -584,6 +584,7 @@
     section("email", [d.integrations, minute], ["email-facts", "email-never"], function () { renderEmail(d); });
     section("etsy", [d.integrations, d.mode, minute], ["etsy-facts", "etsy-listings", "etsy-orders"], function () { renderEtsy(d); });
     section("pinterest", [d.integrations, d.mode, minute], ["pinterest-facts", "pinterest-pins"], function () { renderPinterest(d); });
+    section("printify", [d.integrations, d.mode, minute], ["printify-facts", "printify-products", "printify-orders"], function () { renderPrintify(d); });
     section("transitions", [d.transitions], ["transitions"], function () { renderTransitions(arr(d.transitions)); });
     section("events", [d.events], ["events"], function () { renderEvents(arr(d.events)); });
     section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d, agent); });
@@ -2133,7 +2134,8 @@
   function executorOf(a) {
     if (!isObject(a.action)) return null;
     return a.executor === "email" || a.executor === "reddit_link" || a.executor === "etsy_listing" || a.executor === "etsy_edit" ||
-      a.executor === "pinterest_pin" || a.executor === "pinterest_delete" ? a.executor : null;
+      a.executor === "pinterest_pin" || a.executor === "pinterest_delete" ||
+      a.executor === "printify_product" || a.executor === "printify_delete" ? a.executor : null;
   }
 
   // A new Etsy listing, or a change to a live one: Ember's code makes both after approval.
@@ -2142,15 +2144,23 @@
   // 0.13.0 (Phase E2): a pin, or the owner's Undo of one: Ember's code carries both out after approval.
   function isPinterest(a) { var e = executorOf(a); return e === "pinterest_pin" || e === "pinterest_delete"; }
 
+  // 0.13.0 (Phase E4): a Printify product, or the owner's Undo of one: Ember's code carries both out after approval.
+  function isPrintify(a) { var e = executorOf(a); return e === "printify_product" || e === "printify_delete"; }
+
+  // What Ember's code carries out exactly as approved: approve or reject, and cancel before it starts.
+  function isAsIs(a) { return isPinterest(a) || isPrintify(a); }
+
   var APPROVAL_GROUPS = [
     { key: "pending", title: "Waiting for your decision", match: function (s) { return s === "pending"; } },
-    { key: "todo", title: "Approved, to carry out", match: function (s, a) { return isApproved(s) && !(a && (executorOf(a) === "email" || isEtsy(a) || isPinterest(a))); } },
+    { key: "todo", title: "Approved, to carry out", match: function (s, a) { return isApproved(s) && !(a && (executorOf(a) === "email" || isEtsy(a) || isAsIs(a))); } },
     { key: "sending", label: "Approved emails", title: function () { return "Approved emails, " + agentName() + " sends them"; },
       match: function (s, a) { return isApproved(s) && !!a && executorOf(a) === "email"; } },
     { key: "listing", label: "Approved listings and changes", title: function () { return "Approved Etsy listings and changes, " + agentName() + " makes them"; },
       match: function (s, a) { return isApproved(s) && !!a && isEtsy(a); } },
     { key: "pinning", label: "Approved pins", title: function () { return "Approved pins, " + agentName() + " makes them"; },
       match: function (s, a) { return isApproved(s) && !!a && isPinterest(a); } },
+    { key: "printing", label: "Approved products", title: function () { return "Approved Printify products, " + agentName() + " makes them"; },
+      match: function (s, a) { return isApproved(s) && !!a && isPrintify(a); } },
     { key: "closed", title: "Closed", match: function () { return true; } },
   ];
 
@@ -2281,7 +2291,7 @@
   // Where an approved email is ("" for other requests). Approved without an execution row yet: waiting.
   function executionStatus(a) {
     var executor = executorOf(a);
-    if (executor !== "email" && executor !== "etsy_listing" && executor !== "etsy_edit" && !isPinterest(a)) return "";
+    if (executor !== "email" && executor !== "etsy_listing" && executor !== "etsy_edit" && !isAsIs(a)) return "";
     if (isObject(a.execution) && typeof a.execution.status === "string" && a.execution.status) return a.execution.status;
     return isApproved(a.status) ? "waiting" : "";
   }
@@ -2348,7 +2358,7 @@
     return [
       h("div", { class: "item-head" },
         h("h3", { text: a.title || "Untitled request" }), plainChip(APPROVAL_TYPES[a.type] || sentence(String(a.type || "other").replace(/_/g, " "))),
-        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : isPinterest(a) ? "Pinterest" : "Reddit") : null,
+        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : isPinterest(a) ? "Pinterest" : isPrintify(a) ? "Printify" : "Reddit") : null,
         statusChip, a.simulated ? testTag() : null),
       a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
       actionFlags(a.action_class),
@@ -2366,6 +2376,7 @@
       a.status === "pending" && executor === "etsy_listing" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this listing in your Etsy shop itself: a draft, its photos and files, then live. Etsy charges USD 0.20 per listing." }) : null,
       a.status === "pending" && executor === "etsy_edit" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this change to the live listing itself. Etsy charges nothing for it." }) : null,
       a.status === "pending" && executor === "pinterest_pin" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this pin on your Pinterest account itself (a new board first, if it names one), exactly as shown. Pinterest charges nothing for it; your Undo deletes it." }) : null,
+      a.status === "pending" && executor === "printify_product" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this product at Printify and publishes it to your Etsy shop, exactly as shown, if every price keeps 15% after Etsy's fees, making and shipping; otherwise it deletes it there and says what each price needs. Printify charges you for making and shipping each order; your Undo deletes the product." }) : null,
       executionView(a, email),
       final ? h("div", { class: "final-wrap" },
         h("h4", { class: "small-head", text: executor === "email" ? "Your version of the body (" + name + " sends this)" : executor === "etsy_listing" ? "Your version (" + name + " lists this)" : executor === "etsy_edit" ? "Your version (" + name + " makes this change)" : "Your version (the agent must use this)" }),
@@ -2496,6 +2507,7 @@
     if (executorOf(a) === "etsy_listing") return listingExecutionView(a, st);
     if (executorOf(a) === "etsy_edit") return changeExecutionView(a, st);
     if (isPinterest(a)) return pinExecutionView(a, st);
+    if (isPrintify(a)) return productExecutionView(a, st);
     var ex = isObject(a.execution) ? a.execution : {};
     var name = agentName();
     var limit = limitText(email);
@@ -2537,6 +2549,33 @@
     else detail = [ex.error ? endSentence(String(ex.error)) : st === "deleted" ? "Deleted at Pinterest." : ""];
     return h("div", { class: "execution", "data-status": st },
       h("p", { class: "execution-head" }, chip(PIN_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
+      h("p", { class: "execution-detail" }, detail));
+  }
+
+  // 0.13.0 (Phase E4): a Printify product, or the owner's Undo of one, as Ember's code carries it out.
+  var PRODUCT_EXECUTION = {
+    waiting: { icon: "◔", label: "Waiting", tone: "accent" },
+    waiting_limit: { icon: "◔", label: "Waiting for tomorrow's limit", tone: "warning" },
+    running: { icon: "●", label: "At Printify now", tone: "accent" },
+    publishing: { icon: "◔", label: "Published: the Etsy listing follows", tone: "accent" },
+    active: { icon: "✓", label: "In the shop", tone: "good" },
+    deleted: { icon: "–", label: "Deleted", tone: "" },
+    failed: { icon: "✕", label: "Not published", tone: "critical" },
+    unclear: { icon: "!", label: "Unclear: check Printify", tone: "critical" },
+  };
+
+  function productExecutionView(a, st) {
+    var ex = isObject(a.execution) ? a.execution : {};
+    var name = agentName();
+    var detail;
+    if (st === "waiting") detail = [name + (executorOf(a) === "printify_delete" ? " deletes it" : " creates it") + " by itself shortly; it checks every few minutes."];
+    else if (st === "waiting_limit") detail = [name + " has made its products for today, so this one waits for tomorrow's limit."];
+    else if (st === "running") detail = ex.started_at ? ["At Printify since ", timeEl(ex.started_at), "."] : ["At Printify now."];
+    else if (st === "active") detail = ["In the shop", ex.url && !a.simulated ? [": ", etsyLink(ex.url, ex.url)] : "."];
+    else if (ex.result) detail = [endSentence(sentence(ex.result))];
+    else detail = [ex.error ? endSentence(String(ex.error)) : st === "deleted" ? "Deleted at Printify." : ""];
+    return h("div", { class: "execution", "data-status": st },
+      h("p", { class: "execution-head" }, chip(PRODUCT_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
       h("p", { class: "execution-detail" }, detail));
   }
 
@@ -2599,8 +2638,8 @@
     if (a.status === "pending") {
       // A Reddit draft is posted by the owner, who can still edit it on Reddit: no separate "with changes".
       if (executor === "reddit_link") return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
-      // 0.13.0: a pin is approved as it is (the agent proposes a better one after a rejection).
-      if (isPinterest(a)) return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
+      // 0.13.0: a pin or a product is approved as it is (the agent proposes a better one after a rejection).
+      if (isAsIs(a)) return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
       // A change of photos, files or category only has no words to change.
       if (executor === "etsy_edit" && !a.editable) return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
       return [panelButton(it, "approve", "Approve"), panelButton(it, "approve_with_changes", "Approve with changes"), panelButton(it, "reject", "Reject", true)];
@@ -2615,7 +2654,7 @@
         return ls === "waiting" || ls === "waiting_limit" ? [panelButton(it, "failed", "Cancel listing", true)] : [];
       }
       if (executor === "etsy_edit") return executionStatus(a) === "waiting" ? [panelButton(it, "failed", "Cancel change", true)] : [];
-      if (isPinterest(a)) {
+      if (isAsIs(a)) {
         var ps = executionStatus(a);
         return ps === "waiting" || ps === "waiting_limit" ? [panelButton(it, "failed", "Cancel", true)] : [];
       }
@@ -2655,6 +2694,8 @@
         approveIntro = name + " then changes the live listing at Etsy itself, exactly as shown (Etsy charges nothing for it). You hear the result on this card.";
       } else if (executor === "pinterest_pin") {
         approveIntro = name + " then makes this pin on your Pinterest account itself, exactly as shown (a new board first, if it names one). You hear the result on this card; your Undo deletes it.";
+      } else if (executor === "printify_product") {
+        approveIntro = name + " then creates this product at Printify and publishes it to your Etsy shop, exactly as shown, if every price keeps its margin after what Printify charges to make and ship it. You hear the result on this card; your Undo deletes it.";
       }
       var specs = {
         approve: { title: executor === "email" ? "Approve this email" : "Approve this request", submit: "Approve",
@@ -2703,6 +2744,7 @@
         if (executor === "etsy_listing") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " creates the listing itself; this card shows when it's live.";
         if (executor === "etsy_edit") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " changes the listing itself; this card shows when it's done.";
         if (executor === "pinterest_pin") return "Approved. " + name + " makes the pin itself; this card shows when it's live.";
+        if (executor === "printify_product") return "Approved. " + name + " creates the product itself; this card shows when it's in the shop.";
         if (mode === "approve_with_changes" && st === "approved") return "Approved as it was (the text was unchanged). Carry it out, then mark it done or failed.";
         if (mode === "approve_with_changes") return "Approved with your changes. Carry it out with your version, then mark it done or failed.";
         return "Approved. Carry it out, then mark it done or failed.";
@@ -2720,11 +2762,11 @@
         done: function () { return "Cancelled. " + name + " won't create this listing."; },
       };
     }
-    if (isPinterest(a) && failed) {
+    if (isAsIs(a) && failed) {
       return {
         mode: mode, title: "Cancel this?", submit: "Cancel", danger: true, cancelLabel: "Keep it",
         intro: [h("p", { text: name + " won't carry it out. The request is marked failed, and " + name + " sees that on its next wake." })],
-        fields: [{ name: "result_note", label: "Why (" + name + " reads it)", rows: 2, max: 2000, required: true, value: "Cancelled before it reached Pinterest.", missing: "Say why you cancel it." }],
+        fields: [{ name: "result_note", label: "Why (" + name + " reads it)", rows: 2, max: 2000, required: true, value: isPrintify(a) ? "Cancelled before it reached Printify." : "Cancelled before it reached Pinterest.", missing: "Say why you cancel it." }],
         url: url + "close",
         body: function (v) { return { outcome: "failed", expected_version: version, result_note: v.result_note }; },
         done: function () { return "Cancelled. " + name + " won't carry it out."; },
@@ -3806,6 +3848,74 @@
           h("td", { class: "num", text: numbers(q.saves) }),
           h("td", { class: "num", text: numbers(q.clicks) }));
       })))) : h("p", { class: "muted", text: "None yet. When you approve a pin the agent proposed, Ember makes it here." }));
+  }
+
+  // ---- System -> Printify (0.13.0, Phase E4): the account's shop, Ember's products and what their orders cost.
+
+  function renderPrintify(d) {
+    var p = isObject(d.integrations) && isObject(d.integrations.printify) ? d.integrations.printify : null;
+    var shown = !!p && p.status !== "disabled";  // off (the default), or an older server: no card
+    $("printify-card").hidden = !shown;
+    if (!shown) { replace($("printify-facts"), []); replace($("printify-products"), []); replace($("printify-orders"), []); return; }
+    var fake = p.mode === "fake";
+    var reason = p.reason ? String(p.reason) : null;
+    if (!reason && p.status === "not_configured") reason = "Not set up: see the Documentation tab, 'Printify'.";
+    var shop = isObject(p.shop) ? p.shop : null;
+    var currency = asText(p.currency);
+    replace($("printify-facts"), [
+      h("dt", { text: "Status" }), h("dd", null, chip(ETSY_STATUS, p.status, sentence(String(p.status || "unknown").replace(/_/g, " ")))),
+      reason && (p.status !== "ok" || fake) ? [h("dt", { text: fake ? "Mode" : "Why" }), h("dd", { class: "pre-line", text: reason })] : null,
+      h("dt", { text: "Shop" }), h("dd", { text: shop ? asText(shop.title) + " (#" + shop.shop_id + ")" + (fake ? " (fake)" : "") : "Not found yet" }),
+      h("dt", { text: "Prices in" }), h("dd", { text: currency || "–" }),
+      h("dt", { text: "Products a day" }), h("dd", { text: "at most " + count(p.daily_limit) }),
+      p.last_sync_at ? [h("dt", { text: "Numbers from" }), h("dd", null, timeEl(p.last_sync_at, fmtDateTime(p.last_sync_at) + " (" + relTime(p.last_sync_at) + ")"))] : null,
+      p.last_error ? [h("dt", { text: "Last error" }), h("dd", { class: "fact-error" }, h("span", { "aria-hidden": "true", text: "✕ " }), String(p.last_error))] : null,
+    ]);
+    var products = arr(p.products);
+    var money = function (cents, cur) { var n = num(cents); return isNaN(n) ? "–" : (n / 100).toFixed(2) + " " + asText(cur); };
+    replace($("printify-products"), products.length ? h("div", { class: "table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, ["Product", "Status", "Prices (making + shipping, kept)", "Views", "Favorites"].map(function (c) { return h("th", { scope: "col", text: c }); }))),
+      h("tbody", null, products.map(function (q) {
+        var prices = arr(q.prices).map(function (v) {
+          return "#" + v[0] + ": " + money(v[1], q.currency) + " (" + money(v[2], q.currency) + " + " + money(v[3], q.currency) + ", kept " + money(v[4], q.currency) + ")";
+        });
+        return h("tr", null,
+          h("td", null, q.url && !fake ? etsyLink(q.url, asText(q.title)) : h("span", { text: asText(q.title) }),
+            q.status !== "active" && q.result ? h("p", { class: "muted small pre-line", text: asText(q.result) }) : null),
+          h("td", null, chip(PRODUCT_EXECUTION, q.status, sentence(String(q.status || "?")))),
+          h("td", { class: "small", text: prices.join("; ") || "–" }),
+          h("td", { class: "num", text: q.views === null || q.views === undefined ? "–" : count(q.views) }),
+          h("td", { class: "num", text: q.favorites === null || q.favorites === undefined ? "–" : count(q.favorites) }));
+      })))) : h("p", { class: "muted", text: "None yet. When you approve a product the agent proposed, Ember creates it here." }));
+    var orders = arr(p.orders);
+    replace($("printify-orders"), orders.length ? h("div", { class: "table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, ["Ordered", "Products", "Status", "Making and shipping"].map(function (c) { return h("th", { scope: "col", text: c }); }))),
+      h("tbody", null, orders.map(function (o) {
+        return h("tr", null,
+          h("td", null, timeEl(o.created_at, fmtDateTime(o.created_at))),
+          h("td", { text: asText(o.titles) + (num(o.quantity) > 1 ? " (" + count(o.quantity) + " items)" : "") }),
+          h("td", { text: asText(o.status) || "–" }),
+          h("td", null, h("span", { text: asText(o.cost) + " " }), printifyCostCell(o, fake)));
+      })))) : h("p", { class: "muted", text: "No orders of Ember's products yet." }));
+  }
+
+  // What an order cost you at Printify is an expense only you record: the form opens filled in, and its key records it
+  // once. Only EUR and USD can be recorded here.
+  function printifyCostCell(o, fake) {
+    if (o.recorded) return h("span", { class: "muted small", text: "Recorded" });
+    if (o.currency !== "EUR" && o.currency !== "USD") return h("span", { class: "muted small", text: "In " + asText(o.currency) + ": convert it and record it yourself" });
+    var cents = num(o.cost_cents);
+    var b = h("button", { type: "button", class: "btn btn-small", text: "Record the cost" });
+    b.addEventListener("click", function () {
+      openLedgerForm("expense", isNaN(cents) ? null : (cents / 100).toFixed(2), {
+        currency: o.currency,
+        note: "Printify: making and shipping order " + o.order_id + " (" + asText(o.titles).slice(0, 80) + ")",
+        day: String(o.created_at || "").slice(0, 10),
+        idKey: String(o.key || ""),
+        testMoney: fake,
+      });
+    });
+    return b;
   }
 
   function renderTransitions(list) {

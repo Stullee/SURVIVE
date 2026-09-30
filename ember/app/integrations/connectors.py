@@ -18,6 +18,7 @@ Now:
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -100,6 +101,14 @@ CLASSES: dict[str, ActionClass] = {
             "pinterest.create_board", "make a board on your Pinterest profile", {"reaches_people", "owner_identity"}
         ),
         _class("pinterest.delete_pin", "delete a pin of Ember's from Pinterest", {"owner_identity"}),
+        # 0.13.0 (Phase E4): Printify, the owner's account and their Etsy shop
+        _class(
+            "printify.create_product",
+            "create a product at Printify and publish it to your Etsy shop",
+            {"reaches_people", "owner_identity"},
+            undo="delete it",
+        ),
+        _class("printify.delete_product", "delete a product of Ember's at Printify", {"owner_identity"}),
         _class(
             "reddit.post",
             "a Reddit post you publish from your account",
@@ -119,6 +128,8 @@ _EXECUTORS = {
     "reddit_link": "reddit.post",
     "pinterest_pin": "pinterest.create_pin",  # 0.13.0 (Phase E2)
     "pinterest_delete": "pinterest.delete_pin",  # the owner's Undo of a pin
+    "printify_product": "printify.create_product",  # 0.13.0 (Phase E4)
+    "printify_delete": "printify.delete_product",  # the owner's Undo of a product
 }
 # 0.13.0: every executor Ember's code has (the approvals table takes any short name since 0054: this is the list)
 EXECUTORS = frozenset({*_EXECUTORS, "etsy_edit"})
@@ -153,7 +164,11 @@ def class_of(executor: str | None, action: Any = None, request_type: str | None 
 
 def undo_of(name: str, status: str, subject: str | None) -> dict[str, Any] | None:
     """What would undo a finished action of class ``name`` on ``subject`` (a listing's number, a pin's), or None."""
-    if status not in ("done", "partial", "simulated") or not subject or not subject.isdigit():
+    if status not in ("done", "partial", "simulated") or not subject:
+        return None
+    if name == "printify.create_product":  # 0.13.0 (Phase E4): Printify's numbers are hexadecimal
+        return {"action": "delete_product", "product_id": subject} if re.fullmatch(r"[0-9a-f]{1,40}", subject) else None
+    if not subject.isdigit():
         return None
     if name == "pinterest.create_pin":  # 0.13.0 (Phase E2)
         return {"action": "delete_pin", "pin_id": subject} if status != "partial" else None

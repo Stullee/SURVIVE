@@ -19,6 +19,8 @@ from ..integrations import (
     mailstore,
     pinterest,
     pinterest_publisher,
+    printify,
+    printify_publisher,
     qa,
     reddit,
 )
@@ -767,6 +769,14 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
             try:
                 shortfalls = qa.defects(kind.name, pinterest.pin_from_action(action))
             except pinterest.PinterestError:
+                shortfalls = []
+    if r["executor"] in ("printify_product", "printify_delete") and action is not None:  # 0.13.0 (Phase E4)
+        daily = agent.settings.printify_products_per_day
+        execution = printify_publisher.execution(conn, r, scope, agent.clock, daily)
+        if r["executor"] == "printify_product":
+            try:
+                shortfalls = qa.defects(kind.name, printify.product_from_action(action))
+            except printify.PrintifyError:
                 shortfalls = []
     if r["executor"] == "etsy_edit" and action is not None:
         execution = etsy_publisher.edit_execution(conn, r)

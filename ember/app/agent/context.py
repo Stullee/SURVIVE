@@ -62,6 +62,7 @@ PLANNER_BUDGETS = {
     "review": 1_400,
     "etsy": 1_600,
     "pinterest": 700,  # 0.13.0 (Phase E2): with the owner's Pinterest account
+    "printify": 900,  # 0.13.0 (Phase E4): with the owner's Printify account
     "ventures": 2_600,
     "ready": 1_550,  # 0.13.0: a venture cycle's READY list (desk.MAX_ITEMS items) and the forecasts' record
     "roadmap": 1_800,  # 0.11.0 (and never less than ROADMAP_FLOOR, whatever the scale: 0.12.0)
@@ -196,6 +197,7 @@ class Snapshot:
     review: str = ""  # today's daily review, as the planner sees it ("" before it is made)
     etsy: str = ""  # the ETSY SHOP section ("" without a shop)
     pinterest: str = ""  # the PINTEREST section ("" without the owner's account), 0.13.0
+    printify: str = ""  # the PRINTIFY section ("" without the owner's account), 0.13.0
     ventures: list[sqlite3.Row] = field(default_factory=list)  # the venture tree (0.10.0)
     venture_money: dict[int, ventures.Money] = field(default_factory=dict)
     venture: bool = False  # a venture cycle
@@ -235,6 +237,7 @@ def snapshot(
     venture_share: int = 0,
     shelf: library.Shelf | None = None,
     pinterest: str = "",
+    printify: str = "",
     decision_wakes: bool = False,
     burn: str = "",
     ready: str = "",
@@ -296,6 +299,7 @@ def snapshot(
         review=review.planner_text(conn, todays_review) if todays_review is not None else "",
         etsy=etsy,
         pinterest=pinterest,
+        printify=printify,
         ventures=ventures.all_ventures(conn, scope),
         venture_money=ventures.money(conn, scope),
         venture=venture,
@@ -691,6 +695,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *([("MAIL", cut(mail_text(s), b["mail"]))] if s.mail is not None else []),
         *([("ETSY SHOP", cut(s.etsy, b["etsy"]))] if s.etsy else []),
         *([("PINTEREST", cut(s.pinterest, b["pinterest"]))] if s.pinterest else []),
+        *([("PRINTIFY", cut(s.printify, b["printify"]))] if s.printify else []),
         (STRATEGY_HEADING, _strategy(s, b["strategy"])),
         (IDENTITY_HEADING, cut(s.memory.get("identity", ""), b["identity"])),
         (LESSONS_HEADING, lessons_text(s, b["lessons"], int(PINS_BUDGET * scale))),

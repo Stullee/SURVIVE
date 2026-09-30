@@ -38,8 +38,9 @@ INSTRUCTIONS_MAX = 1_500  # characters of the standing instructions (migration 0
 CANCELLED = "Cancelled by the owner before it was sent"
 LISTING_CANCELLED = "Cancelled by the owner before it was listed"
 CHANGE_CANCELLED = "Cancelled by the owner before the listing was changed"
-PIN_CANCELLED = "Cancelled by the owner before Ember's code carried it out"  # 0.13.0 (Phase E2)
-PIN_EXECUTORS = ("pinterest_pin", "pinterest_delete")
+# 0.13.0 (Phase E2, E4): what Ember's code carries out as approved, with no version of the owner's
+CODE_CANCELLED = "Cancelled by the owner before Ember's code carried it out"
+AS_IS_EXECUTORS = ("pinterest_pin", "pinterest_delete", "printify_product", "printify_delete")
 TAKEN_BACK = "you took back every unlock"  # 0.13.0: the owner's switch
 TAKEN_BACK_NOTE = "Took back every unlock: your requests wait for me again"
 DECISIONS = {"approve": "approved", "approve_with_changes": "approved_with_changes", "reject": "rejected"}
@@ -138,8 +139,9 @@ class Owner:
                 if row["status"] != "pending":
                     raise OwnerError("id", f"this request is already {row['status']}", 409)
                 status = DECISIONS[decision]
-                if row["executor"] in PIN_EXECUTORS and final is not None:  # 0.13.0 (Phase E2)
-                    raise OwnerError("decision", "approve a pin as it is, or reject it and say what should change")
+                if row["executor"] in AS_IS_EXECUTORS and final is not None:  # 0.13.0 (Phase E2, E4)
+                    what = "a pin" if row["executor"].startswith("pinterest") else "a product"
+                    raise OwnerError("decision", f"approve {what} as it is, or reject it and say what should change")
                 unchanged = row["payload"]
                 if row["executor"] == "email" and final is not None:
                     # For an email the owner's version is the text Ember sends (recipient and subject stay).
@@ -214,17 +216,19 @@ class Owner:
                     if outcome == "done":
                         raise OwnerError("outcome", "Ember makes approved changes itself; to stop one, cancel it")
                     note = note or CHANGE_CANCELLED
-                elif row["executor"] in PIN_EXECUTORS:  # 0.13.0 (Phase E2)
+                elif row["executor"] in AS_IS_EXECUTORS:  # 0.13.0 (Phase E2, E4)
                     started = conn.execute(
                         "SELECT 1 FROM pinterest_pins WHERE approval_id = ?"
+                        " UNION ALL SELECT 1 FROM printify_products WHERE approval_id = ?"
                         " UNION ALL SELECT 1 FROM action_journal WHERE approval_id = ?",
-                        (approval_id, approval_id),
+                        (approval_id, approval_id, approval_id),
                     ).fetchone()
                     if started:
                         raise OwnerError("id", "Ember is already carrying this out; it reports the result", 409)
                     if outcome == "done":
-                        raise OwnerError("outcome", "Ember carries approved pins out itself; to stop one, cancel it")
-                    note = note or PIN_CANCELLED
+                        what = "pins" if row["executor"].startswith("pinterest") else "products"
+                        raise OwnerError("outcome", f"Ember carries approved {what} out itself; to stop one, cancel it")
+                    note = note or CODE_CANCELLED
                 elif outcome == "failed" and note is None:
                     raise OwnerError("result_note", "please fill in result note")
                 conn.execute(

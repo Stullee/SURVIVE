@@ -116,6 +116,9 @@ TABLES = (
     "etsy_orders",
     "pinterest_boards",
     "pinterest_pins",
+    "printify_catalog",
+    "printify_products",
+    "printify_orders",
     "memory_versions",
     "lesson_pins",
     "research_checks",
@@ -827,6 +830,17 @@ def _agent(state: AppState, full: bool = True) -> str:
                 ],
                 10,
             ),
+            # 0.13.0 (Phase E4): Ember's Printify products (their prices, costs and margins) and their orders' costs
+            (
+                "printify_products",
+                ["id", "approval_id", "status", "product_id", "listing_id", "currency", "prices", "views", "title"],
+                10,
+            ),
+            (
+                "printify_orders",
+                ["id", "order_id", "product_id", "quantity", "cost_cents", "shipping_cents", "currency", "status"],
+                10,
+            ),
             # The owner's library (0.12.0): titles, sizes and how far the study got; never the texts.
             (
                 "library_documents",
@@ -992,6 +1006,9 @@ def _integrations(state: AppState, full: bool = True) -> str:
     # 0.13.0 (Phase E2): Pinterest: the connection's status and Ember's boards (never a token; the pins are above).
     account = {k: v for k, v in agent.integrations()["pinterest"].items() if k != "pins"}
     out.append(f"-- pinterest\n{_json(account)}")
+    # 0.13.0 (Phase E4): Printify: the connection's status and shop (never the token; products and orders are above).
+    pod = {k: v for k, v in agent.integrations()["printify"].items() if k not in ("products", "orders")}
+    out.append(f"-- printify\n{_json(pod)}")
     return "\n".join(out)
 
 

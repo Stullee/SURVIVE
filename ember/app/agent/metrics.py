@@ -28,7 +28,7 @@ from typing import Any
 from .. import events
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import etsy, etsy_publisher, mailstore, pinterest_publisher, qa
+from ..integrations import etsy, etsy_publisher, mailstore, pinterest_publisher, printify_publisher, qa
 from . import ventures
 from .store import AgentScope
 
@@ -38,7 +38,13 @@ MAX_USD = Decimal("100000")
 MICROS = 1_000_000
 # A venture's stages in the order they are reached; parked and killed aren't reached.
 STAGES = ("idea", "researching", "proposed", "building", "live")
-SOURCES = {"etsy": "Etsy", "owner": "your owner's records", "ember": "Ember's records", "pinterest": "Pinterest"}
+SOURCES = {
+    "etsy": "Etsy",
+    "owner": "your owner's records",
+    "ember": "Ember's records",
+    "pinterest": "Pinterest",
+    "printify": "Printify",
+}
 
 
 @dataclass(frozen=True)
@@ -139,6 +145,9 @@ CATALOGUE: dict[str, Metric] = {
         # 0.13.0 (Phase E2): Ember's pins, as the last Pinterest sync read them
         Metric("pins_live", "your pins live on Pinterest now", "count", "pinterest", unit="pin"),
         Metric("pin_clicks", "clicks your pins brought to their links, in all", "count", "pinterest", unit="click"),
+        # 0.13.0 (Phase E4): Ember's Printify products, as the last Printify sync read them
+        Metric("pod_products_live", "your Printify products in the shop now", "count", "printify", unit="product"),
+        Metric("pod_orders", "orders of your Printify products, in all", "count", "printify", unit="order"),
         Metric(
             "qa_clean",
             f"each live listing has at least {qa.MIN_PHOTOS} photos",
@@ -156,8 +165,18 @@ HELP = (
     "expenses), research_calls_ok (found something), inquiries_received and inquiries_answered (people's "
     "emails; your answers) and api_spend_usd (a ceiling) count from when it is set; "
     f"case_complete and stage_reached are a venture's; qa_clean: {qa.MIN_PHOTOS}+ photos on each live "
-    "listing; pins_live and pin_clicks: Pinterest, now"
+    "listing"
 )
+# 0.13.0: a channel's metrics, offered with the channel (tools.definitions), and their words for HELP.
+CHANNEL_METRICS = {
+    "pinterest": (("pins_live", "pin_clicks"), "pins_live and pin_clicks: Pinterest, now"),
+    "printify": (("pod_products_live", "pod_orders"), "pod_products_live and pod_orders: Printify, now"),
+}
+
+
+def help_text(off: frozenset[str] | set[str] = frozenset()) -> str:
+    """HELP with the metrics of the channels a cycle has (``off``: the channels it hasn't)."""
+    return "; ".join([HELP, *(words for channel, (_, words) in CHANNEL_METRICS.items() if channel not in off)])
 
 
 class TargetError(ValueError):
@@ -324,6 +343,9 @@ def read(
     if m.name in ("pins_live", "pin_clicks"):  # 0.13.0 (Phase E2)
         live, clicks = pinterest_publisher.totals(conn, scope)
         return Reading(live if m.name == "pins_live" else clicks, now, "")
+    if m.name in ("pod_products_live", "pod_orders"):  # 0.13.0 (Phase E4)
+        products, orders = printify_publisher.totals(conn, scope)
+        return Reading(products if m.name == "pod_products_live" else orders, now, "")
     if m.name in ("inquiries_received", "inquiries_answered"):
         received, answered = mailstore.counts(conn, scope, since)
         return Reading(received if m.name == "inquiries_received" else answered, now, "")

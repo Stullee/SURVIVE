@@ -91,10 +91,12 @@ def recent(conn: sqlite3.Connection, project_id: int, now: str) -> sqlite3.Row |
 
 def listed(conn: sqlite3.Connection, project_id: int) -> bool:
     """Whether the project's product line has a listing already: a listing request for it (its own, or made in a
-    cycle focused on it, as the revenue form attributes a sale) that is waiting, approved or carried out."""
+    cycle focused on it, as the revenue form attributes a sale) that is waiting, approved or carried out (0.13.0: a
+    Printify product's request too: it becomes a listing in the shop)."""
     marks = ", ".join("?" for _ in LISTED)
     row = conn.execute(
-        "SELECT 1 FROM approvals a LEFT JOIN cycles y ON y.id = a.cycle_id WHERE a.executor = 'etsy_listing'"
+        "SELECT 1 FROM approvals a LEFT JOIN cycles y ON y.id = a.cycle_id"
+        " WHERE a.executor IN ('etsy_listing', 'printify_product')"
         f" AND COALESCE(a.project_id, y.project_id) = ? AND a.status IN ({marks}) LIMIT 1",
         (project_id, *LISTED),
     ).fetchone()

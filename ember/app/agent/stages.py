@@ -39,6 +39,7 @@ NO_TEST = (
 # checks (missed: the venture is parked, as any first test): its pins must bring buyers to the shop.
 CHANNEL_TESTS = {
     "pinterest": ("pin_clicks", 10, "Its pins bring 10 clicks to the shop's listings (Pinterest's numbers)"),
+    "printify": ("pod_orders", 1, "A buyer orders one of its products (Printify's records)"),  # Phase E4
 }
 
 

@@ -42,7 +42,19 @@ from .. import paths
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
-from ..integrations import connectors, etsy, etsy_publisher, mail, mailstore, pinterest, pinterest_publisher, qa, reddit
+from ..integrations import (
+    connectors,
+    etsy,
+    etsy_publisher,
+    mail,
+    mailstore,
+    pinterest,
+    pinterest_publisher,
+    printify,
+    printify_publisher,
+    qa,
+    reddit,
+)
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
@@ -95,12 +107,24 @@ CATEGORIES_SHOWN = 10  # etsy_categories' answer, shortest paths first
 DEPARTMENT = " (a whole department: too broad for a listing)"
 # Making files takes a moment: these run sealed, but outside the database transaction the other tools share.
 MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image"})
-GUIDES = ("documents", "spreadsheets", "listing_photos", "workshop", "etsy", "ventures", "email", "pinterest")
+GUIDES = (
+    "documents",
+    "spreadsheets",
+    "listing_photos",
+    "workshop",
+    "etsy",
+    "ventures",
+    "email",
+    "pinterest",
+    "printify",
+)
 WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
 # Offered only with an Etsy shop (demand_note 0.12.0: a product line's first listing needs one).
 ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing", "propose_etsy_edit", "demand_note"})
 # Offered only with the owner's Pinterest account and an Etsy shop (0.13.0, Phase E2): a pin links to a live listing.
 PINTEREST_TOOLS = frozenset({"pinterest_boards", "propose_pin"})
+# Offered only with the owner's Printify account and an Etsy shop (0.13.0, Phase E4): a product becomes a listing there.
+PRINTIFY_TOOLS = frozenset({"printify_catalog", "propose_printify_product"})
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "mark_opt_out", "propose_email", "inquiry_done"})
 # Offered only in venture cycles (0.10.0; evidence 0.12.0: a venture's case, which grades pages any research found;
@@ -126,11 +150,12 @@ ORDINARY_TOOLS = (
     )
     | ETSY_TOOLS
     | PINTEREST_TOOLS
+    | PRINTIFY_TOOLS
     | MAIL_TOOLS
 )
 # Model calls of their own (and, 0.12.0, the Etsy market probe of a demand note): they need the network, and no
 # database transaction is held meanwhile.
-CALLING_TOOLS = frozenset({"research", "workshop", "brainstorm", "draft", "demand_note"})
+CALLING_TOOLS = frozenset({"research", "workshop", "brainstorm", "draft", "demand_note", "printify_catalog"})
 WORKSHOP_INPUTS = 5  # files handed over to one workshop run
 WORKSHOP_INPUT_MB = 10  # their size together
 # 0.12.0: a long file written in one call of its own (draft; prompts takes these from here). A work reply holds only
@@ -504,7 +529,8 @@ SPECS: dict[str, Spec] = {
                             required=False,
                         ),
                         "metric": _s(
-                            f"Checked by Ember's code, for the linked project or venture (else all): {metrics.HELP}.",
+                            "Checked by Ember's code, for the linked project or venture (else all): "
+                            f"{metrics.help_text()}.",
                             24,
                             required=False,
                             enum=metrics.NAMES,
@@ -1012,6 +1038,52 @@ SPECS: dict[str, Spec] = {
             },
             per_cycle=2,
         ),
+        Spec(
+            "printify_catalog",
+            "Look through Printify's catalog of products made on order (posters, mugs, journals, shirts): search "
+            "words find products; blueprint_id lists who makes one; blueprint_id and provider_id list its variants "
+            "with their print area and the shipping to Germany. Free.",
+            {
+                "search": _s("Words in the product's name, e.g. 'poster matte'.", 60, required=False),
+                "blueprint_id": _i("A product's number, from a search.", required=False, minimum=1),
+                "provider_id": _i("A print provider's number, from a product's providers.", required=False, minimum=1),
+            },
+            per_cycle=6,
+        ),
+        Spec(
+            "propose_printify_product",
+            "Ask your owner to approve a product made on order by Printify and sold in their Etsy shop: one of your "
+            "pictures on a Printify product (printify_catalog first), variants of one print area's shape with their "
+            "prices, and the listing's title, description and tags. After approval Ember's code creates it at "
+            f"Printify and publishes it only if each price keeps {printify.MIN_MARGIN * 100:.0f}% after Etsy's fees, "
+            "making and shipping; a line saying AI helped design it is added to the description. Read guide "
+            "'printify' first.",
+            {
+                "blueprint_id": _i("The product's number.", minimum=1),
+                "provider_id": _i("The print provider's number.", minimum=1),
+                "prices": _s(
+                    f"The variants it sells and their prices in the shop's currency, e.g. '43135: 24.90, 43150: "
+                    f"22.90' (at most {printify.MAX_VARIANTS}).",
+                    400,
+                ),
+                "image": _s("The picture: a .png or .jpg in your workspace, as big as the print area allows.", 200),
+                "title": _s(
+                    "The listing's title: what it is and for whom, the words buyers search first.", etsy.TITLE_CHARS
+                ),
+                "description": _s(
+                    "What buyers get: the product, its sizes and material, how it is made on order. Plain text.",
+                    DESCRIPTION_CHARS,
+                ),
+                "tags": _s(
+                    f"Up to {etsy.MAX_TAGS} search tags, separated by commas, each at most {etsy.TAG_CHARS} "
+                    "characters.",
+                    400,
+                ),
+                "reason": _s("Why this product now, and what you expect from it.", 300),
+                "project_id": _i("Its project (product line); default: your focus project.", required=False),
+            },
+            per_cycle=1,
+        ),
     )
 }
 
@@ -1041,24 +1113,65 @@ def definitions(
     venture: bool = False,
     library: bool = False,
     pinterest: bool = False,
+    printify: bool = False,
 ) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds (the
     reflection reads it from the cache at a tenth of the price; a list of its own would write the whole conversation
     again), and in every cycle of a mode, configuration and kind (the email tools only with a mailbox, the workshop
     only when the owner's options allow runs, the Etsy tools only with a shop, brainstorm only in a venture cycle
     and, 0.12.0, the tools for building and selling only in an ordinary one, the library's only while it holds
-    documents; 0.13.0: the Pinterest tools only with the owner's account and a shop)."""
+    documents; 0.13.0: the Pinterest and Printify tools, and their manuals, only with the owner's account and a
+    shop)."""
+    channels = {"pinterest": pinterest and etsy, "printify": printify and etsy}
     return [
-        _definition(spec_of(spec.name, venture) or spec)
+        _definition(_channel_guides(spec_of(spec.name, venture) or spec, channels))
         for spec in SPECS.values()
         if offered(
-            spec.name, mail=mail, workshop=workshop, etsy=etsy, venture=venture, library=library, pinterest=pinterest
+            spec.name,
+            mail=mail,
+            workshop=workshop,
+            etsy=etsy,
+            venture=venture,
+            library=library,
+            pinterest=pinterest,
+            printify=printify,
         )
     ]
 
 
+def _channel_guides(spec: Spec, channels: dict[str, bool]) -> Spec:
+    """0.13.0: the guide tool's topics and milestone_plan's metrics without the manuals and the metrics of the channels
+    this cycle doesn't have."""
+    off = {channel for channel, on in channels.items() if not on}
+    if not off:
+        return spec
+    if spec.name == "guide":
+        topic = spec.fields["topic"]
+        return replace(spec, fields={"topic": replace(topic, enum=tuple(t for t in topic.enum if t not in off))})
+    if spec.name == "milestone_plan":
+        unused = {name for channel in off for name in metrics.CHANNEL_METRICS[channel][0]}
+        milestones = spec.fields["milestones"]
+        items = dict(milestones.items)
+        metric = items["metric"]
+        items["metric"] = replace(
+            metric,
+            description=metric.description.replace(metrics.help_text(), metrics.help_text(off)),
+            enum=tuple(m for m in metric.enum if m not in unused),
+        )
+        return replace(spec, fields={"milestones": replace(milestones, items=tuple(items.items()))})
+    return spec
+
+
 def offered(
-    name: str, *, mail: bool, workshop: bool, etsy: bool, venture: bool, library: bool, pinterest: bool = False
+    name: str,
+    *,
+    mail: bool,
+    workshop: bool,
+    etsy: bool,
+    venture: bool,
+    library: bool,
+    pinterest: bool = False,
+    printify: bool = False,
 ) -> bool:
     """Whether tool ``name`` is offered in a cycle of this configuration and kind (``venture``: a venture cycle)."""
     return (
@@ -1066,6 +1179,7 @@ def offered(
         and (workshop or name not in WORKSHOP_TOOLS)
         and (etsy or name not in ETSY_TOOLS)
         and ((pinterest and etsy) or name not in PINTEREST_TOOLS)
+        and ((printify and etsy) or name not in PRINTIFY_TOOLS)
         and (venture or name not in VENTURE_TOOLS)
         and not (venture and name in ORDINARY_TOOLS)
         and (library or name not in LIBRARY_TOOLS)
@@ -1197,6 +1311,19 @@ class PinterestAccess:
     daily_limit: int
 
 
+@dataclass(frozen=True)
+class PrintifyAccess:
+    """What the tools know of the owner's Printify account (0.13.0, Phase E4): its shop's name, the currency of its
+    prices and the daily limit, never the token or a way to reach Printify (the catalog comes through ``catalog``)."""
+
+    shop_title: str
+    currency: str
+    daily_limit: int
+
+
+CatalogFn = Callable[[str | None, int | None, int | None], str]  # search, blueprint, provider: the catalog's answer
+
+
 @dataclass
 class ToolContext:
     db: Database
@@ -1214,6 +1341,8 @@ class ToolContext:
     mail: MailAccess | None = None  # Ember's mailbox, when it has one
     etsy: EtsyAccess | None = None  # the Etsy shop, when there is one
     pinterest: PinterestAccess | None = None  # the owner's Pinterest account, when connected (0.13.0)
+    printify: PrintifyAccess | None = None  # the owner's Printify account, when set up (0.13.0)
+    catalog: CatalogFn | None = None  # Printify's catalog (0.13.0): kept by Ember's code, read at Printify when old
     venture: bool = False  # a venture cycle (0.10.0): brainstorm, and more research
     usd_per_eur: float = 0.0  # the owner's exchange rate (etsy_usd_per_eur; 0: none, econ assumes one), 0.13.0
     venture_cash_eur: float = 20.0  # the owner's cash for a venture's first test (a knock-out beyond it), 0.13.0
@@ -1258,6 +1387,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
             venture=ctx.venture,
             library=ctx.library,
             pinterest=ctx.pinterest is not None,
+            printify=ctx.printify is not None,
         ):
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
@@ -2815,6 +2945,9 @@ def guide_text(topic: str) -> str:
     text = (paths.APP_DIR / "agent" / "guides" / f"{topic}.md").read_text(encoding="utf-8").strip()
     return (
         text.replace("{MIN_PHOTOS}", str(qa.MIN_PHOTOS))
+        .replace("{SHARP_DPI}", str(qa.SHARP_DPI))
+        .replace("{MIN_MARGIN}", f"{printify.MIN_MARGIN * 100:.0f}")
+        .replace("{MAX_VARIANTS}", str(printify.MAX_VARIANTS))
         .replace("{MAX_PHOTOS}", str(etsy.MAX_PHOTOS))
         .replace("{REPLY_WORDS}", str(qa.REPLY_WORDS))
         .replace("{PIN_TITLE}", str(pinterest.TITLE_MAX))
@@ -3376,6 +3509,135 @@ def _propose_pin(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     return Outcome(True, text, f"#{made_id} pin: {_cut(pin.title, 60)}")
 
 
+def _printify(ctx: ToolContext) -> PrintifyAccess:
+    if ctx.printify is None:
+        raise ToolError("your owner's Printify account isn't set up")
+    return ctx.printify
+
+
+def _printify_catalog(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
+    """0.13.0 (Phase E4): Printify's catalog (a network call when Ember's copy is old: no transaction is held)."""
+    _printify(ctx)
+    if ctx.catalog is None:
+        raise ToolError("Printify's catalog can't be read now")
+    search = " ".join(str(args.get("search") or "").split()) or None
+    blueprint_id, provider_id = args.get("blueprint_id"), args.get("provider_id")
+    if provider_id is not None and blueprint_id is None:
+        raise ToolError("give the product's blueprint_id with its provider_id")
+    try:
+        answer = ctx.catalog(search, blueprint_id, provider_id)
+    except printify.PrintifyError as exc:
+        raise ToolError(f"Printify's catalog: {exc}") from None
+    what = (
+        f"variants of #{blueprint_id}" if provider_id else f"providers of #{blueprint_id}" if blueprint_id else search
+    )
+    return Outcome(True, answer, f"catalog: {_cut(str(what), 60)}")
+
+
+def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.13.0 (Phase E4): a product made on order by Printify, sold in the owner's Etsy shop."""
+    access = _printify(ctx)
+    _shop(ctx)
+    blueprint_id, provider_id = args["blueprint_id"], args["provider_id"]
+    try:
+        prices = printify.parse_prices(args["prices"])
+    except printify.PrintifyError as exc:
+        raise ToolError(str(exc)) from None
+    known = printify_publisher.variants(conn, ctx.scope.mode, blueprint_id, provider_id)
+    if known is None:
+        raise ToolError(
+            f"read the variants of #{blueprint_id} by provider #{provider_id} with printify_catalog first "
+            "(blueprint_id and provider_id)"
+        )
+    by_id = {v.variant_id: v for v in known}
+    unknown = next((v for v, _ in prices if v not in by_id), None)
+    if unknown is not None:
+        raise ToolError(f"variant {unknown} isn't one provider #{provider_id} makes of #{blueprint_id}")
+    chosen = [by_id[v] for v, _ in prices]
+    shape = chosen[0].height / chosen[0].width
+    other = next((v for v in chosen if abs(v.height / v.width - shape) / shape > printify.SHAPE_TOLERANCE), None)
+    if other is not None:
+        raise ToolError(
+            f"{chosen[0].title} and {other.title} have print areas of different shapes: one product each (or variants "
+            "of one shape)"
+        )
+    area = max(chosen, key=lambda v: v.width * v.height)
+    path = args["image"].strip()
+    try:
+        data = ctx.workspace.read_bytes(path)
+    except SandboxError as exc:
+        raise ToolError(str(exc)) from None
+    try:
+        upload = printify.image(path, data)
+        width, height = images.png_size(data)
+    except printify.PrintifyError as exc:
+        raise ToolError(str(exc)) from None
+    except images.ImageError:
+        raise ToolError(f"{path} isn't one of your pictures (a PNG or JPEG Ember's code can read)") from None
+    try:
+        title = etsy.check_title(args["title"])
+        description = etsy.check_description(args["description"].replace(printify.DISCLOSURE, ""))  # added, once
+        tags = etsy.check_tags(args["tags"])
+    except etsy.EtsyError as exc:
+        raise ToolError(str(exc)) from None
+    project_id = args.get("project_id", ctx.state.focus_project_id)
+    if project_id is None:
+        raise ToolError("name its project (project_id): each product belongs to a product line")
+    if store.project(conn, ctx.scope, project_id) is None:
+        raise ToolError(f"there is no project #{project_id}")
+    if not demand.listed(conn, project_id) and demand.recent(conn, project_id, ctx.now()) is None:
+        raise ToolError(
+            f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "
+            f"{demand.DAYS} days first (demand_note: the keywords buyers search and what shows they buy)"
+        )
+    product = printify.Product(
+        title=title,
+        description=description,
+        tags=tags,
+        blueprint_id=blueprint_id,
+        provider_id=provider_id,
+        prices=prices,
+        shipping=tuple((v.variant_id, v.shipping_cents) for v in chosen),
+        image=upload,
+        width=width,
+        height=height,
+        area_width=area.width,
+        area_height=area.height,
+        currency=access.currency,
+    )
+    blueprint, provider = printify_publisher.names(conn, ctx.scope.mode, blueprint_id, provider_id)
+    reason = args["reason"].strip()
+    made = _new_request(
+        ctx,
+        conn,
+        printify.payload(product, blueprint, provider, {v.variant_id: v.title for v in chosen}),
+        product.to_action(),
+        project_id=project_id,
+        type="sell",
+        title=_cut(f"Printify product: {product.title}", 120),
+        description=reason,
+        expected_cost=(
+            "Printify charges your owner for making and shipping each order; Etsy's listing fee (USD 0.20) and its "
+            "fees on each sale"
+        ),
+        expected_benefit=reason,
+        executor="printify_product",
+    )
+    if isinstance(made, str):
+        return Outcome(True, made, "duplicate product")
+    text = (
+        f"Approval request #{made} is waiting for your owner. Nothing is at Printify yet. If they approve it, Ember's "
+        f"code creates the product at Printify, publishes it to {access.shop_title} only if each price keeps "
+        f"{printify.MIN_MARGIN * 100:.0f}% after Etsy's fees, making and shipping (at most {access.daily_limit} "
+        "products a day), and you hear the result."
+    )
+    short = qa.defects("printify.create_product", product)  # the QA registry: your owner sees it too
+    if short:
+        text += f" QA (Ember's code): {'; '.join(short)}."
+    text += _unlocked(ctx)
+    return Outcome(True, text, f"#{made} Printify product: {_cut(product.title, 60)}", project_id=project_id)
+
+
 def _propose_reddit_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     try:
         action = reddit.action(args["kind"], args["subreddit"], args.get("title"), args["body"], args.get("thread_url"))
@@ -3451,4 +3713,6 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "propose_reddit_post": _propose_reddit_post,
     "pinterest_boards": _pinterest_boards,
     "propose_pin": _propose_pin,
+    "printify_catalog": _printify_catalog,
+    "propose_printify_product": _propose_printify_product,
 }

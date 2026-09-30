@@ -392,11 +392,12 @@ def test_the_default_caps_leave_room_and_a_tight_cycle_cap_is_warned_about(data_
     assert usd_cap_to_micros(Settings().daily_spend_cap_usd) >= 3 * usd_cap_to_micros(Settings().cycle_spend_cap_usd)
     assert not any("cycle spend cap" in w for w in defaults.warnings())
     defaults.stop()
-    tight = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.30))
+    cap = math.ceil(working * 1.2 / 10_000) / 100  # above one working cycle, below 1.5 times that
+    tight = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=cap))
     [warning] = [w for w in tight.warnings() if "cycle spend cap" in w]
     roomy = math.ceil(working * ROOMY_CYCLE / 10_000) / 100
     assert warning == (
-        "The cycle spend cap ($0.30) leaves little room for work: a working cycle (plan, a work step and the"
+        f"The cycle spend cap (${cap:.2f}) leaves little room for work: a working cycle (plan, a work step and the"
         f" reflection) can cost up to ${working / 1e6:.2f}, and below 1.5 times that (${roomy:.2f}) most cycles end"
         " after a step or two."
     )

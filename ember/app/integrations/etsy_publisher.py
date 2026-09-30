@@ -45,7 +45,7 @@ from ..agent.store import AgentScope
 from ..config import Settings
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
-from . import connectors, etsy, qa
+from . import connectors, etsy, printify_publisher, qa
 from .etsy import Edit, EtsyError, Listing, NotSent, Shop, Unclear, Upload
 
 log = logging.getLogger(__name__)
@@ -651,6 +651,8 @@ class Publisher:
                         f"SELECT listing_id FROM etsy_listings WHERE {where} AND listing_id IS NOT NULL", params
                     )
                 ]
+                # 0.13.0 (Phase E4): the listings Printify made of Ember's products are Ember's too
+                ids += [i for i in printify_publisher.listing_ids(conn, scope) if i not in ids]
                 known = {
                     int(r[0])
                     for r in conn.execute(
@@ -671,6 +673,11 @@ class Publisher:
             processing = self._processing_fees(shop, orders, ours, known)
             with self.db.transaction() as conn:
                 for item in remote:
+                    conn.execute(
+                        "UPDATE printify_products SET state = ?, views = ?, favorites = ?, synced_at = ?"
+                        f" WHERE {where} AND listing_id = ?",
+                        (item.state[:20], item.views, item.favorites, stamp, *params, item.listing_id),
+                    )
                     conn.execute(
                         "UPDATE etsy_listings SET state = ?, views = ?, favorites = ?, ends_at = ?, auto_renew = ?,"
                         f" synced_at = ? WHERE {where} AND listing_id = ?",
@@ -1202,6 +1209,14 @@ def order_project(conn: sqlite3.Connection, scope: AgentScope, items: list[Any])
             " WHERE l.listing_id = ? AND l.mode = ? AND l.session = ? ORDER BY l.id DESC LIMIT 1",
             (listing_id, scope.mode, scope.session),
         ).fetchone()
+        if row is None:  # 0.13.0 (Phase E4): a listing Printify made of one of Ember's products
+            row = conn.execute(
+                "SELECT p.id AS project_id, p.venture_id FROM printify_products x JOIN approvals a"
+                " ON a.id = x.approval_id LEFT JOIN cycles y ON y.id = a.cycle_id JOIN projects p"
+                " ON p.id = COALESCE(a.project_id, y.project_id) WHERE x.listing_id = ? AND x.mode = ?"
+                " AND x.session = ? ORDER BY x.id DESC LIMIT 1",
+                (listing_id, scope.mode, scope.session),
+            ).fetchone()
         if row is not None:
             return row["project_id"], row["venture_id"]
     return None, None

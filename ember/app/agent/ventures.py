@@ -935,8 +935,9 @@ def seed(conn: sqlite3.Connection, scope: AgentScope, now: str) -> int:
             update(conn, ids[key], now, notes=note)
         if stage == "parked":  # the owner's ideas were put on hold by them (0.12.0)
             update(conn, ids[key], now, parked_by="owner" if by == "owner" else "agent")
-        if key in ("pinterest",):  # 0.13.0 (Phase E2): the channel Ember's code serves it with
-            conn.execute("UPDATE ventures SET channel = ? WHERE id = ?", (key, ids[key]))
+        channel = {"pinterest": "pinterest", "print-on-demand": "printify"}.get(key)  # 0.13.0 (Phase E2, E4)
+        if channel is not None:  # the channel Ember's code serves it with
+            conn.execute("UPDATE ventures SET channel = ? WHERE id = ?", (channel, ids[key]))
     # The projects whose cycles proposed or changed Etsy listings belong to the Etsy leg (open ones: a closed
     # project is final).
     conn.execute(

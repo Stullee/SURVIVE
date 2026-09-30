@@ -48,11 +48,13 @@ from ..economy.metering import (
 )
 from ..economy.pricing import LAST_WILL, PLANNER_OPENING, REVIEW_CALL, working_cycle_cost
 from ..economy.service import Economy
-from ..integrations import etsy_publisher, mailstore, pinterest_publisher
+from ..integrations import etsy_publisher, mailstore, pinterest_publisher, printify_publisher
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox
 from ..integrations.pinterest_connection import PinterestConnection
+from ..integrations.printify import PrintifyError
+from ..integrations.printify_connection import PrintifyConnection
 from ..version import app_version
 from . import (
     agenda,
@@ -194,6 +196,8 @@ class CycleRunner:
         publisher: Publisher | None = None,
         pinterest: PinterestConnection | None = None,
         pins: pinterest_publisher.Publisher | None = None,
+        printify: PrintifyConnection | None = None,
+        pod: printify_publisher.Publisher | None = None,
     ) -> None:
         self.db = db
         self.settings = settings
@@ -213,6 +217,9 @@ class CycleRunner:
         self.pinterest = pinterest  # 0.13.0 (Phase E2): the owner's Pinterest account
         self.pins = pins
         self.pinterest_on = False  # the Pinterest tools and the PINTEREST section: with the account and a shop
+        self.printify = printify  # 0.13.0 (Phase E4): the owner's Printify account
+        self.pod = pod
+        self.printify_on = False  # the Printify tools and the PRINTIFY section: with the account, its shop and ours
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
         self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
@@ -226,6 +233,7 @@ class CycleRunner:
         fetched, synced, marked or spent."""
         self.etsy_on = self.etsy is not None and self.publisher is not None and self.etsy.shop() is not None
         self.pinterest_on = self.etsy_on and self.pinterest is not None and self.pinterest.account() is not None
+        self.printify_on = self.etsy_on and self.printify is not None and self.printify.account() is not None
         snap = self._snapshot(venture)
         planner = ""
         for scale in PLANNER_SCALES:
@@ -278,6 +286,7 @@ class CycleRunner:
                 self._fetch_mail(cycle_id)
                 self._sync_etsy(cycle_id, ctx)
                 self._sync_pinterest(cycle_id, ctx)
+                self._sync_printify(cycle_id, ctx)
                 self._expire_requests()
             with netguard.sealed() if self.dry_run else contextlib.nullcontext():
                 end = self._last_will(cycle_id) if trigger == "last_will" else self._plan_act_reflect(cycle_id, ctx)
@@ -445,6 +454,47 @@ class CycleRunner:
         )
         self.pinterest_on = True
 
+    def _sync_printify(self, cycle_id: int, ctx: tools.ToolContext) -> None:
+        """0.13.0 (Phase E4): the products' state and orders before the plan, and what the tools know of the owner's
+        Printify account (errors are recorded and shown, and never stop the cycle). Its products become listings in
+        the shop: nothing without it, nor while it can't be told which Printify shop sells there."""
+        self.printify_on = False
+        if self.printify is None or self.pod is None or not self.etsy_on:
+            return
+        account = self.printify.account()
+        if account is None:
+            return
+        # The fake account of a dry run needs no network; the owner's is reached by Ember's code only.
+        sealed = netguard.sealed if account.simulated else contextlib.nullcontext
+        try:
+            with sealed():
+                shop = self.printify.shop()
+        except PrintifyError as exc:
+            events.record(self.db, "warning", "printify", f"Printify's shop isn't known: {exc}"[:300])
+            return
+        except Exception:  # noqa: BLE001 - Printify must never end a cycle
+            log.exception("Finding the Printify shop failed")
+            return
+        if shop is None:
+            return
+        if not self.stop.is_set():
+            self._progress(cycle_id, current_action="Checking the products at Printify")
+            try:
+                with sealed():
+                    self.pod.sync()
+            except Exception:  # noqa: BLE001 - Printify must never end a cycle
+                log.exception("Checking the products at Printify failed")
+        currency = self.settings.printify_currency
+        ctx.printify = tools.PrintifyAccess(shop.title, currency, self.settings.printify_products_per_day)
+        catalog = printify_publisher.Catalog(self.db, self.clock, self.scope.mode, lambda: account)
+
+        def look(search: str | None, blueprint_id: int | None, provider_id: int | None) -> str:
+            with sealed():
+                return catalog.answer(search, blueprint_id, provider_id, currency)
+
+        ctx.catalog = look
+        self.printify_on = True
+
     def _progress(self, cycle_id: int, **columns: Any) -> None:
         with self.db.transaction() as conn:
             store.update_cycle(conn, cycle_id, **columns)
@@ -497,6 +547,14 @@ class CycleRunner:
                     f"Your owner's account: {account} (at most {self.settings.pinterest_pins_per_day} pins a day).\n"
                     + pinterest_publisher.text(conn, self.scope)
                 )
+            pod = ""
+            if self.printify_on and self.printify is not None:  # 0.13.0 (Phase E4)
+                known = self.printify.describe().get("shop") or {}
+                pod = (
+                    f"Printify shop: {known.get('title') or 'yours'} (prices in {self.settings.printify_currency};"
+                    f" at most {self.settings.printify_products_per_day} products a day).\n"
+                    + printify_publisher.text(conn, self.scope)
+                )
             return context.snapshot(
                 conn,
                 self.scope,
@@ -514,6 +572,7 @@ class CycleRunner:
                 today=self.clock.today(),
                 etsy=shop,
                 pinterest=pins,
+                printify=pod,
                 venture=venture,
                 venture_share=self.settings.venture_share,
                 shelf=library.shelf(conn, self.scope),
@@ -1076,6 +1135,7 @@ class CycleRunner:
                 venture=ctx.venture,
                 library=self.library_on,
                 pinterest=self.pinterest_on,
+                printify=self.printify_on,
             )
             if not self._affordable(cycle_id, request, brief, turns, ctx):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
@@ -1185,6 +1245,7 @@ class CycleRunner:
             venture=venture,
             library=self.library_on,
             pinterest=self.pinterest_on,
+            printify=self.printify_on,
         )
         try:
             step_worst = self.meter.quote(request, "work")
@@ -1260,6 +1321,7 @@ class CycleRunner:
             library=self.library_on,
             undone=undone,
             pinterest=self.pinterest_on,
+            printify=self.printify_on,
         )
         # 0.12.0: why the work ended is kept first, also when the reflection can't be paid for.
         self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)

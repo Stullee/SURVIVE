@@ -6,7 +6,8 @@ the one number the guide, the live listings' defects (OBLIGATIONS, ETSY SHOP), t
 below read. ``CHECKS`` holds each action class's checks (connectors.CLASSES): a listing proposed or changed is checked
 when it is proposed, and the owner's request card and the agent's tool result say what falls short. 0.13.0 (Phase
 E1): an answer to someone who wrote keeps their thread's subject and is short (REPLY_WORDS); (Phase E2) a pin's image
-is portrait, about 2:3 (PIN_RATIO).
+is portrait, about 2:3 (PIN_RATIO); (Phase E4) a Printify product's picture prints sharp (SHARP_DPI) and fills its
+print area (SHAPE_SHARE).
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ from .etsy import MAX_PHOTOS, Edit, Listing
 MIN_PHOTOS = 5  # a listing's photos at least (Etsy shows up to etsy.MAX_PHOTOS)
 REPLY_WORDS = 200  # an email answer's words at most (the footer Ember adds not counted)
 PIN_RATIO = (1.3, 1.7)  # a pin's image, height to width: portrait, about 2:3 (1000 x 1500) shows best
+SHARP_DPI = 150  # a printed picture below this looks blurry
+SHAPE_SHARE = 0.1  # a picture whose shape differs more from its print area's leaves part of it blank
 _THREAD = re.compile(r"^\s*(?:re|aw|antw|sv|rif)\s*(?:\[\d+\])?\s*:", re.IGNORECASE)
 
 
@@ -56,12 +59,39 @@ def _pin_shape(pin: Any) -> str:
     return f"{width} x {height} pixels: a pin shows best portrait, about 2:3 (1000 x 1500)"
 
 
+def _print_sharpness(product: Any) -> str:
+    dpi = int(product.dpi()) if callable(getattr(product, "dpi", None)) else 0
+    if dpi <= 0:
+        return "its picture's size is unknown"
+    if dpi >= SHARP_DPI:
+        return ""
+    return (
+        f"it prints at about {dpi} dpi on the print area ({product.area_width} x {product.area_height} pixels at "
+        f"300 dpi): blurry below {SHARP_DPI}; use a bigger picture or a smaller size"
+    )
+
+
+def _print_shape(product: Any) -> str:
+    width, height = int(getattr(product, "width", 0) or 0), int(getattr(product, "height", 0) or 0)
+    area_width, area_height = int(getattr(product, "area_width", 0) or 0), int(getattr(product, "area_height", 0) or 0)
+    if not (width and height and area_width and area_height):
+        return ""
+    picture, area = height / width, area_height / area_width
+    if abs(picture - area) / area <= SHAPE_SHARE:
+        return ""
+    return (
+        f"the picture ({width} x {height}) and the print area ({area_width} x {area_height}) differ in shape: part of "
+        "the area stays blank"
+    )
+
+
 # Each action class's checks: a function of what the request would do, returning what falls short ("" when fine).
 CHECKS: dict[str, tuple[Callable[..., str], ...]] = {
     "etsy.create_listing": (_listing_photos,),
     "etsy.edit_listing": (_edit_photos,),
     "email.reply": (_reply_subject, _reply_length),  # the email's action (to, subject, body)
     "pinterest.create_pin": (_pin_shape,),  # the pin (pinterest.Pin)
+    "printify.create_product": (_print_sharpness, _print_shape),  # the product (printify.Product)
 }
 
 

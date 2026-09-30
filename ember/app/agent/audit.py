@@ -23,7 +23,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import connectors, etsy, etsy_publisher, pinterest
+from ..integrations import connectors, etsy, etsy_publisher, pinterest, printify_publisher
 from . import never, policy, store
 from .store import AgentScope
 
@@ -40,6 +40,7 @@ UNDO = {
     ),
     "auto_renew_off": ("Turn automatic renewal off", "turn off automatic renewal of", "none"),
     "delete_pin": ("Delete the pin", "delete", "none"),  # 0.13.0 (Phase E2)
+    "delete_product": ("Delete the product", "delete", "none"),  # 0.13.0 (Phase E4)
 }
 WHO = {
     "unlock": "your unlock",
@@ -171,7 +172,7 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
         if row["status"] == "failed":
             return "nothing was done"
         if row["status"] == "unclear":
-            place = "Pinterest" if str(row["class"]).startswith("pinterest.") else "Etsy"
+            place = {"pinterest": "Pinterest", "printify": "Printify"}.get(str(row["class"]).split(".")[0], "Etsy")
             return f"it is unclear what happened: check it at {place}"
         return "Ember's code can't undo it"
     last = _last_undo(conn, int(row["id"]))
@@ -183,6 +184,12 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
             f"SELECT status FROM pinterest_pins WHERE {where} AND pin_id = ?", (*params, row["subject"])
         ).fetchone()
         return None if pin is not None and pin["status"] == "active" else "the pin isn't on Pinterest anymore"
+    if undo["action"] == "delete_product":  # 0.13.0 (Phase E4)
+        product = conn.execute(
+            f"SELECT status FROM printify_products WHERE {where} AND product_id = ?", (*params, row["subject"])
+        ).fetchone()
+        live = product is not None and product["status"] in printify_publisher.LIVE
+        return None if live else "the product isn't at Printify anymore"
     later = conn.execute(
         f"SELECT id FROM action_journal WHERE {where} AND subject = ? AND class LIKE 'etsy.%' AND id > ?"
         " AND status <> 'failed' ORDER BY id LIMIT 1",
@@ -290,6 +297,25 @@ def undo(conn: sqlite3.Connection, scope: AgentScope, now: str, journal_id: int,
         )
         _approve(conn, now, by, button, journal_id, approval_id)
         return approval_id, f"delete the pin ({pin_id})"
+    if kind == "delete_product":  # 0.13.0 (Phase E4): Ember's code deletes it at Printify, which takes its listing down
+        product_id = str(row["subject"])
+        approval_id = store.insert_approval(
+            conn,
+            scope,
+            cycle_id,
+            now,
+            project_id=original["project_id"] if original is not None else None,
+            payload=f"Delete product {product_id} at Printify (its Etsy listing goes with it)",
+            action=store.canonical({"product_id": product_id}),
+            type="sell",
+            title=f"Undo: delete Printify product {product_id}"[:120],
+            description=because,
+            expected_cost=cost,
+            expected_benefit="The product is gone from Printify and from the shop.",
+            executor="printify_delete",
+        )
+        _approve(conn, now, by, button, journal_id, approval_id)
+        return approval_id, f"delete the product ({product_id})"
     listing_id = int(row["subject"])
     current = etsy_publisher.current_listing(conn, scope, listing_id)
     listing = etsy_publisher.listing_row(conn, scope, listing_id)

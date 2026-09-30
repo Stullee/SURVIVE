@@ -302,3 +302,29 @@ configuration:
     name: Pins per day
     description: >-
       At most this many approved pins a day; more wait for the next day.
+  printify_enabled:
+    name: Printify
+    description: >-
+      Let Ember propose physical products with its designs (posters, mugs,
+      journals), made on order by Printify and sold in your Etsy shop through
+      Printify's Etsy connection. Each product waits for your approval; the
+      first one always does. In dry run a fake account stands in.
+  printify_api_token:
+    name: Printify personal access token
+    description: >-
+      A token you create in Printify (My profile, Connections) with access to
+      shops, catalog, products, orders and uploads. Stored by Home Assistant;
+      Ember never logs or displays it.
+  printify_shop_id:
+    name: Printify shop
+    description: >-
+      The Printify shop connected to your Etsy shop. 0: the only one that is.
+  printify_currency:
+    name: Printify currency
+    description: >-
+      The currency of the prices and costs Printify shows for that shop.
+  printify_products_per_day:
+    name: Printify products per day
+    description: >-
+      At most this many approved products are created a day; more wait for
+      the next day.

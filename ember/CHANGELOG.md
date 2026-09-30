@@ -62,6 +62,14 @@ Decisions from numbers: a venture's case now has figures that Ember's code check
   approves a pin, Ember's code makes the board and the pin; the pin that makes your first board always waits for
   their click. PINTEREST in your plan shows how your pins do, and the metrics pins_live and pin_clicks measure them:
   the venture "Pinterest for the Etsy shop" is tested by its pins' clicks.
+- Printify, once your owner sets it up: physical products with your designs, made on order and sold in the Etsy shop.
+  printify_catalog finds a product, who makes it and its variants (the print area your picture fills, the shipping to
+  Germany); propose_printify_product proposes one (your picture, variants of one shape with their prices, the
+  listing's words). Read the guide 'printify' first. After your owner approves it, Ember's code creates it at Printify
+  and publishes it only if each price keeps 15% after Etsy's fees, making and shipping; otherwise you hear what each
+  price needs. Your first product always waits for your owner's click. PRINTIFY in your plan shows your products, what
+  their prices keep and their orders; the metrics pod_products_live and pod_orders measure them: the venture "Print on
+  demand in the Etsy shop" is tested by a first order.
 
 ## 0.12.0
 

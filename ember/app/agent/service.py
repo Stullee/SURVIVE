@@ -34,12 +34,21 @@ from ..economy.metering import (
 )
 from ..economy.pricing import opening_cost, working_cycle_cost
 from ..economy.service import Economy
-from ..integrations import etsy, etsy_publisher, etsy_revenue, mailstore, pinterest, pinterest_publisher
+from ..integrations import (
+    etsy,
+    etsy_publisher,
+    etsy_revenue,
+    mailstore,
+    pinterest,
+    pinterest_publisher,
+    printify_publisher,
+)
 from ..integrations import executor as email_executor
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox, select_mailbox
 from ..integrations.pinterest_connection import PinterestConnection
+from ..integrations.printify_connection import PrintifyConnection
 from . import agenda, audit, metrics, netguard, news, policy, store, ventures
 from .loop import NO_STEP, CycleEnd, CycleRunner
 from .memory import CAPS, Memory
@@ -146,6 +155,18 @@ class Agent:
         self.pins = pinterest_publisher.Publisher(
             db, self.clock, self.settings, self.scope, self.pinterest.account, lambda: self.roots()[0]
         )
+        # 0.13.0 (Phase E4): the owner's Printify account (the fake one in dry run), switched on in the options: the
+        # products it makes on order are sold in the Etsy shop. Only Ember's code reaches it.
+        self.printify = PrintifyConnection(db, self.clock, self.settings, self.mode, economy.life.session())
+        self.pod = printify_publisher.Publisher(
+            db,
+            self.clock,
+            self.settings,
+            self.scope,
+            self.printify.account,
+            self.printify.shop_id,
+            lambda: self.roots()[0],
+        )
         self._shop_failed_at: datetime | None = None  # the last check of the shop that failed (sync_shop)
         self._mail_checked_at: datetime | None = None  # 0.13.0: the last read of the mailbox between cycles
 
@@ -194,6 +215,7 @@ class Agent:
             self.executor.recover()  # an email that was being sent may have gone out: it is never sent again
             self.publisher.recover()  # a listing that was being created may exist: it is never created again
             self.pins.recover()  # so may a pin (0.13.0)
+            self.pod.recover()  # and a Printify product
         if self.mode == "dry_run":
             self._rotate_dry_run_folders()
         workspace, memory_root = self.roots()
@@ -494,6 +516,8 @@ class Agent:
                 self.publisher,
                 self.pinterest,
                 self.pins,
+                self.printify,
+                self.pod,
             )
             end = runner.run(trigger)
             try:
@@ -699,12 +723,20 @@ class Agent:
             events.record(self.db, "info", "control", f"Daily digest: {digest}"[:300])
 
     def execute_approved(self) -> list[tuple[int, str]]:
-        """Send the approved emails, create the approved Etsy listings and (0.13.0) pins that are due (the scheduler
-        calls this before every decision)."""
+        """Send the approved emails, create the approved Etsy listings and (0.13.0) pins and Printify products that are
+        due (the scheduler calls this before every decision)."""
         if self.executor_blocked():
             return []
         done = self.executor.run() if self.mailbox is not None else []
-        return done + self.publisher.run() + self.pins.run()
+        return done + self.publisher.run() + self.pins.run() + self._pod_run()
+
+    def _pod_run(self) -> list[tuple[int, str]]:
+        """The approved Printify products (the fake account of a dry run needs no network)."""
+        account = self.printify.account()
+        if account is None:
+            return []
+        with netguard.sealed() if account.simulated else contextlib.nullcontext():
+            return self.pod.run()
 
     def sync_shop(self) -> None:
         """Read the Etsy shop's listings and orders (at most hourly) and its categories (daily) while Ember runs, not
@@ -715,6 +747,7 @@ class Agent:
         if self.sync_blocked():
             return
         self._sync_pins()
+        self._sync_pod()
         if not self.publisher.due():
             return
         if self._shop_failed_at and now - self._shop_failed_at < SHOP_RETRY:
@@ -746,6 +779,17 @@ class Agent:
         except Exception:  # noqa: BLE001 - Pinterest must not keep the shop from being checked
             log.exception("Checking the pins on Pinterest failed")
 
+    def _sync_pod(self) -> None:
+        """0.13.0 (Phase E4): the Printify products and their orders, at most every printify_publisher.SYNC_MINUTES."""
+        account = self.printify.account()
+        if account is None or not self.pod.due():
+            return
+        try:
+            with netguard.sealed() if account.simulated else contextlib.nullcontext():
+                self.pod.sync()
+        except Exception:  # noqa: BLE001 - Printify must not keep the shop from being checked
+            log.exception("Checking the products at Printify failed")
+
     # --- dashboard ---
 
     def integrations(self) -> dict[str, Any]:
@@ -762,6 +806,7 @@ class Agent:
             "email": email_executor.integration(self.db, self.clock, self.settings, self.mode, scope, self.mailbox),
             "etsy": shop,
             "pinterest": self.pinterest.describe(scope),  # 0.13.0 (Phase E2)
+            "printify": self.printify.describe(scope),  # 0.13.0 (Phase E4)
         }
 
     def agent_fields(self) -> dict[str, Any]:
@@ -857,6 +902,8 @@ class Agent:
             self.publisher,
             self.pinterest,
             self.pins,
+            self.printify,
+            self.pod,
         )
         with self.db.connection() as conn:
             spent, ventured = ventures.day_spend(conn, scope, self.clock.today())
