@@ -429,6 +429,21 @@ class LiveShop:
         path = f"/v3/application/shops/{self._shop_id()}/listings/{listing_id}/files/{file_id}"
         self._call("DELETE", path, changes=True)
 
+    # --- an order's fees (0.12.0) ---
+
+    def payment_fees(self, receipt_id: int) -> int | None:
+        """The processing fee of the order's payment in cents, after any refund's adjustment; None without a payment."""
+        data = self._call("GET", f"/v3/application/shops/{self._shop_id()}/receipts/{receipt_id}/payments")
+        results = data.get("results") if isinstance(data, dict) else None
+        payments = [p for p in results if isinstance(p, dict)] if isinstance(results, list) else []
+        if not payments:
+            return None
+        total = 0
+        for payment in payments:
+            adjusted = _cents(payment.get("adjusted_fees"))
+            total += adjusted if adjusted is not None else (_cents(payment.get("amount_fees")) or 0)
+        return total
+
     # --- a listing's state and renewal (0.12.0) ---
 
     def set_state(self, listing_id: int, state: str) -> str:

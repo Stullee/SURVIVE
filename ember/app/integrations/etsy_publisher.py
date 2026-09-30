@@ -55,6 +55,7 @@ APPROVED = ("approved", "approved_with_changes")
 _APPROVED_SQL = ", ".join(f"'{status}'" for status in APPROVED)
 COUNTED = ("running", "active", "draft", "unclear")  # what uses up the daily limit
 SYNC_MINUTES = 60
+FEE_READS = 10  # order payments read per sync, for the fees (0.12.0)
 ORDER_DAYS = 30  # how far back the sync looks for orders
 INTERRUPTED = "the app stopped while creating the listing"
 CHANGE_INTERRUPTED = "the app stopped while changing the listing"
@@ -611,6 +612,12 @@ class Publisher:
                         f"SELECT listing_id FROM etsy_listings WHERE {where} AND listing_id IS NOT NULL", params
                     )
                 ]
+                known = {
+                    int(r[0])
+                    for r in conn.execute(
+                        f"SELECT receipt_id FROM etsy_orders WHERE {where} AND fees_cents IS NOT NULL", params
+                    )
+                }
             try:
                 with _guard(shop):
                     remote = shop.listings(ids) if ids else []
@@ -622,6 +629,7 @@ class Publisher:
                 return error
             stamp = to_iso(now)
             ours = set(ids)
+            processing = self._processing_fees(shop, orders, ours, known)
             with self.db.transaction() as conn:
                 for item in remote:
                     conn.execute(
@@ -653,13 +661,25 @@ class Publisher:
                         stamp,
                     )
                     if order.paid:
+                        fee = processing.get(order.receipt_id)
+                        fees = etsy.fees_share(order, items, fee) if fee is not None else None
                         conn.execute(
                             "INSERT INTO etsy_orders (mode, session, receipt_id, ordered_at, currency, total,"
-                            " total_cents, items, status, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                            " total_cents, items, status, synced_at, fees_cents)"
+                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                             " ON CONFLICT (mode, session, receipt_id) DO UPDATE SET total = excluded.total,"
                             " total_cents = excluded.total_cents, items = excluded.items, status = excluded.status,"
-                            " synced_at = excluded.synced_at",
-                            (scope.mode, scope.session, order.receipt_id, order.ordered_at, order.currency, *values),
+                            " synced_at = excluded.synced_at,"
+                            " fees_cents = COALESCE(excluded.fees_cents, etsy_orders.fees_cents)",
+                            (
+                                scope.mode,
+                                scope.session,
+                                order.receipt_id,
+                                order.ordered_at,
+                                order.currency,
+                                *values,
+                                fees,
+                            ),
                         )
                     else:  # cancelled, refunded or not paid (yet): only an order already stored learns it
                         conn.execute(
@@ -675,6 +695,26 @@ class Publisher:
             return None
         finally:
             self._lock.release()
+
+    def _processing_fees(self, shop: Shop, orders: list[etsy.Order], ours: set[int], known: set[int]) -> dict[int, int]:
+        """0.12.0: the processing fee of each paid order with Ember's listings whose fees aren't known yet (at most
+        FEE_READS a sync), read from its payment. A failure is left for the next sync, never raised."""
+        found: dict[int, int] = {}
+        for order in orders:
+            if len(found) >= FEE_READS:
+                break
+            if not order.paid or order.receipt_id in known or not any(i.get("listing_id") in ours for i in order.items):
+                continue
+            try:
+                with _guard(shop):
+                    fee = shop.payment_fees(order.receipt_id)
+            except Exception as exc:  # noqa: BLE001 - the next sync tries again
+                error = str(exc) if isinstance(exc, EtsyError) else type(exc).__name__
+                log.warning("Reading the payment of Etsy order %d failed: %s", order.receipt_id, error)
+                break  # the same answer for the rest, most likely
+            if fee is not None:
+                found[order.receipt_id] = fee
+        return found
 
     def _renew_sellers(self, shop: Shop, scope: AgentScope) -> None:
         """0.12.0: Etsy's automatic renewal for each live listing that sold and doesn't renew itself, tried once per
@@ -908,7 +948,7 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
     rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC", params).fetchall()
     week = to_iso(clock.now() - timedelta(days=7))
     orders = conn.execute(
-        f"SELECT total_cents, currency, items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}"
+        f"SELECT total_cents, currency, items, fees_cents FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}"
         " AND ordered_at >= ?",
         (*params, week),
     ).fetchall()
@@ -931,9 +971,14 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
             " give the whole set with propose_etsy_edit."
         )
     totals: dict[str, int] = {}
+    fees: dict[str, int] = {}  # 0.12.0: Etsy's fees on them, where the payments were read
     for o in orders:
         totals[o["currency"]] = totals.get(o["currency"], 0) + int(o["total_cents"])
-    money = ", ".join(f"{cents / 100:.2f} {currency}" for currency, cents in totals.items())
+        fees[o["currency"]] = fees.get(o["currency"], 0) + int(o["fees_cents"] or 0)
+    money = ", ".join(
+        f"{cents / 100:.2f} {currency}" + (f" less {fees[currency] / 100:.2f} of Etsy's fees" if fees[currency] else "")
+        for currency, cents in totals.items()
+    )
     lines.append(
         f"Orders in the last 7 days: {len(orders)}" + (f" ({money})" if money else "") + "; revenue counts once your"
         " owner records it."
@@ -1017,6 +1062,8 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
     for r in rows:
         key = revenue_key(r["receipt_id"])
         entry = conn.execute("SELECT id FROM ledger WHERE idempotency_key = ?", (key,)).fetchone()
+        fees_key = fee_key(r["receipt_id"])
+        fees_entry = conn.execute("SELECT id FROM ledger WHERE idempotency_key = ?", (fees_key,)).fetchone()
         items = json.loads(r["items"] or "[]")
         project_id, venture_id = order_project(conn, scope, items)
         status = r["status"]
@@ -1041,6 +1088,15 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
                 and status not in etsy.DEAD_ORDERS
                 and r["currency"] in ("EUR", "USD")
                 and r["total_cents"] > 0,
+                # 0.12.0: Ember's share of Etsy's fees, an expense the owner records once the revenue is recorded
+                "fees_cents": r["fees_cents"],
+                "fee_key": fees_key,
+                "fees_recorded": fees_entry is not None,
+                "fees_recordable": fees_entry is None
+                and entry is not None
+                and bool(r["fees_cents"])
+                and status not in etsy.DEAD_ORDERS
+                and r["currency"] in ("EUR", "USD"),
             }
         )
     return out[:limit] + [
@@ -1064,6 +1120,11 @@ def order_project(conn: sqlite3.Connection, scope: AgentScope, items: list[Any])
         if row is not None:
             return row["project_id"], row["venture_id"]
     return None, None
+
+
+def fee_key(receipt_id: int) -> str:
+    """The ledger's request key for an order's Etsy fees recorded as an expense (0.12.0), like ``revenue_key``."""
+    return hashlib.sha256(f"etsy-fees-{receipt_id}".encode()).hexdigest()[:32]
 
 
 def revenue_key(receipt_id: int) -> str:

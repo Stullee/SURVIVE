@@ -559,6 +559,21 @@ DEAD_ORDERS = frozenset({"canceled", "fully refunded"})
 COUNTED_ORDERS = "COALESCE(status, 'paid') NOT IN ('canceled', 'fully refunded')"  # SQL, on etsy_orders
 
 
+# Etsy's transaction fee on an item's price (0.12.0: Etsy's fees were never booked). The payment processing fee is read
+# from the order's payment; this one isn't in it.
+TRANSACTION_FEE = Decimal("0.065")
+
+
+def fees_share(order: Order, lines: list[dict[str, Any]], processing_cents: int) -> int:
+    """Ember's share of Etsy's fees on an order, in cents: its lines' share of the payment's processing fee (by their
+    price) and the transaction fee on what they earned."""
+    gross = sum(int(i.get("price_cents") or 0) * int(i.get("quantity") or 1) for i in lines)
+    whole = order.items_cents or gross
+    share = gross / whole if whole else 1.0
+    transaction = Decimal(order_net(order, lines)) * TRANSACTION_FEE
+    return max(0, round(processing_cents * share) + int(transaction.to_integral_value(rounding=ROUND_HALF_UP)))
+
+
 def order_net(order: Order, lines: list[dict[str, Any]]) -> int:
     """What Ember's ``lines`` of a receipt earned, in cents (0.12.0: the whole receipt was stored): their price times
     quantity, less their share of the coupon and of the refunds. Tax, shipping and the owner's own products don't
@@ -609,6 +624,12 @@ class Shop(Protocol):
     def set_state(self, listing_id: int, state: str) -> str: ...  # 'active' (renews it) or 'inactive'; the new state
 
     def set_auto_renew(self, listing_id: int, on: bool) -> None: ...
+
+    # An order's fees (0.12.0).
+
+    def payment_fees(
+        self, receipt_id: int
+    ) -> int | None: ...  # the payment's processing fee in cents (None: no payment)
 
 
 def listing_url(listing_id: int) -> str:
@@ -779,6 +800,11 @@ class FakeShop:
     def set_auto_renew(self, listing_id: int, on: bool) -> None:
         self._listing(listing_id)["auto_renew"] = on
         self._on_change(self.state)
+
+    def payment_fees(self, receipt_id: int) -> int | None:
+        """Like Etsy Payments in Germany: 4% of the order and EUR 0.30 (its orders hold one listing each)."""
+        item = self.state["listings"].get(str(receipt_id - 3_000_000_000))
+        return None if item is None else round(int(item["price_cents"]) * 0.04) + 30
 
     def listings(self, listing_ids: list[int]) -> list[RemoteListing]:
         found = []

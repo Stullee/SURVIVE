@@ -3346,7 +3346,9 @@
   function orderRevenueCell(o, fake) {
     var refunded = o.status === "fully refunded" || o.status === "canceled";
     if (o.recorded) {
-      return h("span", { class: "muted small", text: refunded ? "Recorded, then " + o.status + ": correct entry #" + o.entry_id : "Recorded" });
+      var said = h("span", { class: "muted small", text: refunded ? "Recorded, then " + o.status + ": correct entry #" + o.entry_id : "Recorded" });
+      if (o.fees_recordable) return [said, " ", recordFeesButton(o, fake)];  // 0.12.0: Etsy's fees on it
+      return o.fees_recorded ? [said, h("span", { class: "muted small", text: " · fees recorded" })] : said;
     }
     if (o.recordable) return recordOrderButton(o, fake);
     if (refunded) return h("span", { class: "muted small", text: "Nothing to record" });
@@ -3368,6 +3370,26 @@
         idKey: String(o.revenue_key || ""),
         testMoney: fake,
         projectId: o.project_id || null,  // the project whose listing sold (0.12.0)
+        ventureId: o.venture_id || null,
+      });
+    });
+    return b;
+  }
+
+  // 0.12.0: Ember's share of Etsy's fees on a recorded order (its processing fee, read from the payment, and the 6.5%
+  // transaction fee), as an expense of the same project: the form opens filled in, and its key records it once.
+  function recordFeesButton(o, fake) {
+    var cents = num(o.fees_cents);
+    var amount = isNaN(cents) ? null : (cents / 100).toFixed(2);
+    var b = h("button", { type: "button", class: "btn btn-small", text: "Record Etsy's fees" + (amount ? " (" + amount + " " + asText(o.currency) + ")" : "") });
+    b.addEventListener("click", function () {
+      openLedgerForm("expense", amount, {
+        currency: o.currency,
+        note: "Etsy's fees on order " + o.receipt_id + ": payment processing and the 6.5% transaction fee",
+        day: String(o.ordered_at || "").slice(0, 10),
+        idKey: String(o.fee_key || ""),
+        testMoney: fake,
+        projectId: o.project_id || null,
         ventureId: o.venture_id || null,
       });
     });
@@ -4087,6 +4109,7 @@
       f.fields.amount.currency.dispatchEvent(new Event("change", { bubbles: true }));
     }
     if (prefill.source && f.fields.source) f.fields.source.control.value = prefill.source;
+    if (prefill.note && f.fields.note) f.fields.note.control.value = prefill.note;
     if (prefill.day && f.fields.day) f.fields.day.control.value = prefill.day;
     if (prefill.testMoney && f.fields.test_money && !f.fields.test_money.wrap.hidden) f.fields.test_money.control.checked = true;
     if (prefill.idKey) f.idKey = prefill.idKey;

@@ -710,7 +710,7 @@ counts them once a day) and favorites, and the orders
 that hold them: date, status, Ember's lines and which listing, never who bought.
 An order's amount is only Ember's lines: their price times quantity, less their
 share of a coupon and of any refund; tax, shipping and your own products in the
-same receipt don't count, and Etsy's fees are booked on their own. Every sync
+same receipt don't count, and Etsy's fees are recorded on their own (below). Every sync
 reads the receipts that changed lately, so an order refunded or cancelled after
 it was read is updated, and it stops counting. Etsy's
 categories are fetched again every day. Etsy's API terms allow showing its
@@ -720,7 +720,12 @@ Etsy** lists the listings and orders and says when the numbers were read;
 **Record as revenue** opens the revenue form filled in from a paid order in EUR
 or USD (an order can't be recorded twice; convert another currency yourself).
 If an order you recorded is refunded later, the list asks you to correct that
-entry. Revenue still counts only when you record it.
+entry. Revenue still counts only when you record it. Once an order's revenue
+is recorded, **Record Etsy's fees** opens the expense form for the same
+project, filled in with Ember's share of Etsy's fees on it: its share of the
+payment processing fee (Ember reads the order's payment once) and Etsy's 6.5%
+transaction fee on what its lines earned. Check it against your Etsy payment
+account (VAT on fees, Offsite Ads) and change the amount before you save.
 
 Every day Ember's code also keeps a record of how the shop does (the first
 sync of the day writes it, and it never changes): the number of live listings,

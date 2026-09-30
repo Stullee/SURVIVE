@@ -79,6 +79,8 @@ Your results now reach your records: what you earn counts where it belongs.
 - A text a tool takes whole holds at most 2,500 characters, what one reply can carry (a request's payload, an email,
   a Reddit post, a workshop task, a memory update; a listing's description 2,000): put a longer text in a workspace
   file and name it. ETSY SHOP shows each live listing's photos (p), and a draft's photos count too.
+- ETSY SHOP shows the week's orders less Etsy's fees (the payment processing fee Ember's code reads, and the 6.5%
+  transaction fee). Your owner records the fees as an expense of the project whose listing sold.
 
 ## 0.11.2
 
