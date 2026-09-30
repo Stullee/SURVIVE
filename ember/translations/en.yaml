@@ -230,3 +230,17 @@ configuration:
       automatic renewal for it, so it doesn't expire after four months (Etsy
       charges its listing fee, USD 0.20, at each renewal). Ember does this once
       per listing: if you turn it off at Etsy afterwards, that stands.
+  etsy_auto_record_revenue:
+    name: Record Etsy revenue automatically
+    description: >-
+      On: at each Etsy sync, Ember's code records the revenue of paid orders
+      of Ember's listings placed from the day you turn it on, Etsy's fees on
+      them and their refunds in the ledger (shown as made by Ember's code), so
+      its balance and goals see them without waiting for you. Off: you record
+      them (System, Etsy). Entries you made stay yours.
+  etsy_usd_per_eur:
+    name: Exchange rate for Etsy revenue (USD per 1 EUR)
+    description: >-
+      The rate Ember's code uses for orders in EUR when it records them
+      automatically, for example 1.08. 0: orders in EUR are left for you to
+      record.

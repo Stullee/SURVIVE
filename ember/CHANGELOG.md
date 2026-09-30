@@ -51,7 +51,7 @@ Your results now reach your records: what you earn counts where it belongs.
   (they were cut off at the end); each field shows at most 220 characters, and … marks one that goes on.
 - A venture your owner parked stays parked until they take it up again (Research next on the Ventures tab): tell them
   with message_owner if you found something that changes the picture. You still take up the ones you parked. A new
-  venture starts live only as a way you already earn (an active Etsy listing, or revenue your owner recorded).
+  venture starts live only as a way you already earn (an active Etsy listing, or recorded revenue).
 - Your workspace holds 5,000 files (folders no longer count) and 2 GB of products; STATUS shows what you use. A write
   refused because it is full doesn't count against you as a refused file operation.
 - Each type of request has its own limit of waiting requests (sell 6, contact 5, publish 3, create_account 3,
@@ -83,8 +83,8 @@ Your results now reach your records: what you earn counts where it belongs.
   transaction fee). Your owner records the fees as an expense of the project whose listing sold.
 - Your daily cap is a limit, not a target: spend on work that can earn or teach you something you can measure (the
   rules said it was there to be spent).
-- ROADMAP always has a money goal, set by Ember's code: earn at least what you spend (the revenue your owner
-  recorded, less expenses, against your API spending, over the last 30 days), with two decision points under it.
+- ROADMAP always has a money goal, set by Ember's code: earn at least what you spend (the revenue recorded, less
+  expenses, against your API spending, over the last 30 days), with two decision points under it.
   Ember's code checks it before every plan: met, it closes done and the next asks for more; past its date, missed and
   set again. You can't move, drop or close it; close a decision point with your decision (go on, change or stop, from
   the numbers). Link your milestones to it.
@@ -109,6 +109,9 @@ Your results now reach your records: what you earn counts where it belongs.
   that one's first date and moves (one more for a dropped one, never beyond two), and ROADMAP shows what it replaces.
 - Each of your model calls counts for the venture and milestone its work served (a research call for the venture it
   names); your plans, reviews and brainstorms are overhead. A venture's "spent" in VENTURES is its own work now.
+- If your owner turns it on, Ember's code records your Etsy orders from Etsy's own numbers at each sync: a paid
+  order's revenue (your lines, net), Etsy's fees on it and its refunds, for the project whose listing sold. ETSY SHOP
+  says who records the week's orders. Revenue still counts only once it is recorded.
 
 ## 0.11.2
 

@@ -235,8 +235,8 @@ def _money(
             "MONEY",
             f"API calls: ${spent:.2f} in the period" + (f" ({split})" if split else "") + ".",
             f"Per day: {per_day} · today so far ${today['api_cost_usd']:.2f} (on average ${average:.2f} a full day).",
-            f"Revenue your owner recorded: ${revenue:.2f} in these days, ${total_revenue:.2f} in all."
-            f" Expenses your owner paid for you: ${expenses:.2f}.",
+            f"Revenue recorded: ${revenue:.2f} in these days, ${total_revenue:.2f} in all."
+            f" Expenses recorded: ${expenses:.2f}.",
             *(
                 f"- {s['occurred_on']}: ${micros_to_usd(s['amount_micros']):.2f} from"
                 f" {_one_line(s['source'] or s['note'] or 'an unnamed source', 120)}"
@@ -457,7 +457,7 @@ def _etsy(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
         what = f"#{r['listing_id']}" if r["listing_id"] else f"request #{r['approval_id']}"
         lines.append(f"- {what} [{state}] {_one_line(r['title'], 80)}")
     money = ", ".join(f"{cents / 100:.2f} {currency}" for currency, cents in totals.items()) or "nothing"
-    lines.append(f"Orders in the period: {len(orders)} ({money}); revenue counts once your owner records it.")
+    lines.append(f"Orders in the period: {len(orders)} ({money}); revenue counts once it is recorded.")
     return "\n".join(lines)
 
 

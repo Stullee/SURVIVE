@@ -164,7 +164,7 @@ def test_the_scorecard_holds_the_facts(data_dir: Path) -> None:
     assert card.project_ids == {1}
     assert text.startswith("YOUR NUMBERS (from Ember's records: exact)\nPeriod: the last 7 days,")
     assert "DRY RUN: the money is simulated." in text
-    assert "Revenue your owner recorded: $12.50 in these days, $12.50 in all." in text
+    assert "Revenue recorded: $12.50 in these days, $12.50 in all." in text
     assert "$12.50 from Etsy: the meal planner" in text
     assert "YOUR LAST REVIEW\nThis is your first review." in text
     assert "#1 [active] " in text and "3 cycles in the period (3 in all)" in text and "hypothesis: " in text

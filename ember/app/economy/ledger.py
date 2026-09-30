@@ -112,6 +112,15 @@ class DuplicateKeyMismatch(ValueError):
     """The idempotency key was used before for a different entry (HTTP 409)."""
 
 
+class AlreadyRecorded(ValueError):
+    """0.12.0: Ember's code recorded this Etsy order's entry from Etsy's numbers before the owner's button did (HTTP
+    409): a new key must not record it twice."""
+
+    def __init__(self, entry_id: int) -> None:
+        super().__init__(f"Ember's code already recorded this from Etsy's numbers (entry #{entry_id})")
+        self.entry_id = entry_id
+
+
 @dataclass(frozen=True)
 class Scope:
     """Which ledger rows belong to a mode's economy.
@@ -152,6 +161,7 @@ class PreparedEntry:
     entered_by: str | None = None
     project_id: int | None = None  # the project and venture it belongs to (revenue and expenses, 0.12.0)
     venture_id: int | None = None
+    created_by: str = "owner"  # or, 0.12.0, 'etsy': revenue, fees and refunds from Etsy's numbers
 
     @property
     def balance_effect(self) -> int:
@@ -563,7 +573,7 @@ class Books:
             usd = (amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             if usd == 0:
                 raise EntryError("amount", "the amount is too small")
-            orig_amount, orig_currency, fx_text = f"{amount:.2f}", "EUR", _decimal_text(rate)
+            orig_amount, orig_currency, fx_text = f"{amount:.2f}", "EUR", decimal_text(rate)
             amount = usd
         elif currency != "USD":
             raise EntryError("currency", "choose USD or EUR")
@@ -720,15 +730,17 @@ class Books:
     # --- writing ---
 
     def existing(self, prepared: PreparedEntry) -> dict[str, Any] | None:
-        """The entry already stored under this key, or None. Raises DuplicateKeyMismatch."""
+        """The entry already stored under this key, or None. Raises DuplicateKeyMismatch (or AlreadyRecorded)."""
         with self.db.connection() as conn:
             row = conn.execute(
                 "SELECT id, type, amount_micros, simulated, source, note, occurred_on, corrects_id, orig_amount,"
-                " orig_currency, fx_rate, project_id, venture_id FROM ledger WHERE idempotency_key = ?",
+                " orig_currency, fx_rate, project_id, venture_id, created_by FROM ledger WHERE idempotency_key = ?",
                 (prepared.idempotency_key,),
             ).fetchone()
         if row is None:
             return None
+        if row["created_by"] == "etsy" and prepared.created_by != "etsy":  # 0.12.0: an Etsy order's button, too late
+            raise AlreadyRecorded(row["id"])
         same = (
             row["type"] == prepared.type
             and row["amount_micros"] == prepared.amount_micros
@@ -749,11 +761,11 @@ class Books:
         return self.entry(row["id"])
 
     def insert(self, conn: sqlite3.Connection, prepared: PreparedEntry) -> int:
-        """Store an owner entry; call inside a transaction."""
+        """Store an owner entry (or, 0.12.0, one from Etsy's numbers); call inside a transaction."""
         cursor = conn.execute(
             "INSERT INTO ledger (ts, occurred_on, type, amount_micros, simulated, source, note, corrects_id,"
             " orig_amount, orig_currency, fx_rate, created_by, entered_by, idempotency_key, project_id, venture_id)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'owner', ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 to_iso(self.clock.now()),
                 prepared.occurred_on,
@@ -766,6 +778,7 @@ class Books:
                 prepared.orig_amount,
                 prepared.orig_currency,
                 prepared.fx_rate,
+                prepared.created_by,
                 prepared.entered_by,
                 prepared.idempotency_key,
                 prepared.project_id,
@@ -790,6 +803,6 @@ class Books:
             return int(cursor.lastrowid)
 
 
-def _decimal_text(value: Decimal) -> str:
+def decimal_text(value: Decimal) -> str:
     text = format(value.normalize(), "f")
     return text if "." in text else text + ".0"

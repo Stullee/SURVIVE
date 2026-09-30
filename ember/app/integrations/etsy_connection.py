@@ -23,7 +23,7 @@ from typing import Any
 from ..config import Settings
 from ..db import Database
 from ..economy.clock import Clock, to_iso
-from . import etsy, etsy_publisher
+from . import etsy, etsy_publisher, etsy_revenue
 from .etsy import CONNECT_MINUTES, EtsyError, FakeShop, Shop, TaxonomyFile, TokenFile
 
 
@@ -135,6 +135,10 @@ class EtsyConnection:
             "connecting": self._pending is not None,
             "redirect_uri": self.settings.etsy_redirect_uri,
             "daily_limit": self.settings.etsy_listings_per_day,
+            # 0.12.0: Ember's code records the orders' revenue, fees and refunds (the owner's option), EUR at this rate
+            "auto_revenue": self.settings.etsy_auto_record_revenue,
+            "auto_revenue_since": self.db.get_meta(etsy_revenue.SINCE_KEY) or None,  # the orders from that day on
+            "usd_per_eur": self.settings.etsy_usd_per_eur or None,
             "last_sync_at": self.db.get_meta(etsy_publisher.meta_key(self.mode, "last_sync_at")),
             "last_error": self.db.get_meta(etsy_publisher.meta_key(self.mode, "last_error")) or None,
             "notice": etsy.NOTICE,  # Etsy's trademark notice, which its API terms require wherever Etsy is shown

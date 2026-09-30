@@ -323,7 +323,7 @@ def money_goal_title(level: int) -> str:
 def money_goal_measure(level: int) -> str:
     times = "at least" if level == 1 else f"at least {level} times"
     return (
-        f"Over the last {MONEY_WINDOW_DAYS} days, the revenue your owner recorded, less expenses, is {times} your API "
+        f"Over the last {MONEY_WINDOW_DAYS} days, the revenue recorded, less expenses, is {times} your API "
         "spending (Ember's code checks it)"
     )
 

@@ -672,7 +672,7 @@ REVIEW_STOP_CYCLES = 12  # the fake's daily review stops a project that took thi
 CLOSE_STEP = "Close project #{id}: my review says stop"
 # A project line of the review's scorecard: id, status, title, cycles in all.
 _SCORECARD_PROJECT = re.compile(r"^#(\d+) \[(\w+)[^\]]*\] (.*?) · open .*?cycles in the period \((\d+) in all\)", re.M)
-_NO_REVENUE = "Revenue your owner recorded: $0.00 in these days"
+_NO_REVENUE = "Revenue recorded: $0.00 in these days"
 _REVIEW_STOP = re.compile(r"^- #(\d+)[^\n]*?: stop: ", re.M)
 _CLOSE = re.compile(r"close project #(\d+)")
 PROMOTE_STEP = "Ask for this workshop script to be built into Ember:"

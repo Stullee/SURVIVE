@@ -3,8 +3,9 @@
 Owner entries are validated, checked for replays and for surprises (an
 unusually large amount, or a change that would make the agent critical or kill
 it), and only then written, together with the life-state evaluation, in one
-transaction. The ledger's writers are this module (owner entries) and the
-budget guard (API costs); nothing else writes money.
+transaction. The ledger's writers are this module (owner entries and, 0.12.0,
+the entries from Etsy's numbers the owner turned on) and the budget guard (API
+costs); nothing else writes money.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from .clock import Clock, from_iso
 from .costs import micros_to_usd
 from .ledger import (
     STATE_SEVERITY,
+    AlreadyRecorded,
     Books,
     DuplicateKeyMismatch,
     EntryError,
@@ -56,12 +58,26 @@ TYPE_LABELS = {
 }
 
 
+# 0.12.0: an entry from an integration's numbers may make the agent critical (that is what its money says), but it
+# never kills the agent or leaves it unfunded: that entry waits for the owner.
+HELD_STATES = frozenset({"dead", "unfunded"})
+
+
 @dataclass(frozen=True)
 class Reply:
     """An HTTP status and JSON body for an owner request."""
 
     status: int
     body: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class Recorded:
+    """What came of an entry from an integration's numbers (0.12.0): its id; nothing when its key was used already
+    (or the database refused it meanwhile); or the state it would have brought, when it waits for the owner."""
+
+    entry_id: int | None = None
+    held: str | None = None
 
 
 class Economy:
@@ -165,6 +181,8 @@ class Economy:
                 existing = self.books.existing(prepared)
             except DuplicateKeyMismatch as exc:
                 return Reply(409, {"error": str(exc), "code": "duplicate_key_mismatch"})
+            except AlreadyRecorded as exc:
+                return Reply(409, {"error": str(exc), "code": "already_recorded", "entry_id": exc.entry_id})
             if existing is not None:
                 return Reply(200, {"entry": existing, "economy": self._summary(self.life.evaluate()), "replay": True})
             if not confirm_large:
@@ -214,6 +232,32 @@ class Economy:
             for life in lives[1:]:
                 life.persist_if_dead()  # a confirmed death of the sleeping live agent is recorded now, not later
         return Reply(201, {"entry": self.books.entry(entry_id), "economy": self._summary(status)})
+
+    def record_integration(self, prepared: PreparedEntry) -> Recorded:
+        """An entry from an integration's numbers (0.12.0: Etsy's orders, when the owner turned that on). Nobody is
+        asked to confirm it, so it is never written twice (its key, which the owner's button for it uses too) and
+        never when it would kill the agent or leave it unfunded. In dry run it is test money: the fake shop's."""
+        with self.db.transaction() as conn:
+            if conn.execute("SELECT 1 FROM ledger WHERE idempotency_key = ?", (prepared.idempotency_key,)).fetchone():
+                return Recorded()
+            before = self.life.evaluate()
+            conn.execute("SAVEPOINT integration_entry")
+            try:
+                entry_id = self.books.insert(conn, prepared)
+            except sqlite3.IntegrityError as exc:  # the owner corrected the same entry meanwhile, say
+                conn.execute("ROLLBACK TO integration_entry")
+                conn.execute("RELEASE integration_entry")
+                log.warning("The ledger refused an entry from %s: %s", prepared.created_by, exc)
+                return Recorded()
+            worse = _worse_state(before, self.life.evaluate())
+            if worse in HELD_STATES:
+                conn.execute("ROLLBACK TO integration_entry")
+                conn.execute("RELEASE integration_entry")
+                return Recorded(held=worse)
+            conn.execute("RELEASE integration_entry")
+            events.record(self.db, "info", "ledger", _describe(prepared, entry_id), {"entry_id": entry_id})
+            self.life.evaluate_and_persist()
+        return Recorded(entry_id)
 
     def set_paused(self, paused: bool, who: str | None = None) -> LifeStatus:
         status = self.life.set_switch(PAUSED_KEY, paused)
@@ -413,6 +457,8 @@ def _worse_state(before: LifeStatus, after: LifeStatus) -> str | None:
 
 def _describe(prepared: PreparedEntry, entry_id: int) -> str:
     who = printable(prepared.entered_by, 60) if prepared.entered_by else "The owner"
+    if prepared.created_by == "etsy":
+        who = "Ember's code"
     amount = f"${micros_to_usd(abs(prepared.amount_micros)):.2f}"
     if prepared.corrects_id is not None:
         text = f"{who} corrected entry #{prepared.corrects_id} by {amount}"
@@ -420,6 +466,9 @@ def _describe(prepared: PreparedEntry, entry_id: int) -> str:
         label = TYPE_LABELS.get(prepared.type, prepared.type)
         sign = "" if prepared.amount_micros > 0 else "negative "
         text = f"{who} recorded {sign}{label} of {amount}"
+    if prepared.created_by == "etsy":  # what it was for: the order, its fees or its refund
+        detail = prepared.source if prepared.type == "revenue" and prepared.corrects_id is None else prepared.note
+        text += f" from Etsy's numbers: {printable(detail or '', 120)}"
     if prepared.simulated:
         text += " (test money)"
     return f"{text} (entry #{entry_id})"

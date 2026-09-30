@@ -1471,7 +1471,7 @@
       var recorded = new Date(e.ts);
       var sameDay = validDate(recorded) && e.occurred_on === recorded.getFullYear() + "-" + String(recorded.getMonth() + 1).padStart(2, "0") + "-" + String(recorded.getDate()).padStart(2, "0");
       meta.push("recorded " + (sameDay ? shortTimeFmt.format(recorded) : fmtDateTime(e.ts)));
-      meta.push(e.entered_by ? "by " + e.entered_by : e.created_by === "owner" ? "by you" : e.created_by === "system" ? "by the system" : "by " + e.created_by);
+      meta.push(e.entered_by ? "by " + e.entered_by : e.created_by === "owner" ? "by you" : e.created_by === "system" ? "by the system" : e.created_by === "etsy" ? "by Ember's code, from Etsy's numbers" : "by " + e.created_by);
       if (e.llm_call_id !== null && e.llm_call_id !== undefined) meta.push("call #" + e.llm_call_id);
       if (e.project_id) meta.push("for project #" + e.project_id);
       else if (e.venture_id) meta.push("for venture #" + e.venture_id);
@@ -3333,7 +3333,11 @@
           h("td", null, timeEl(l.started_at, fmtDate(l.started_at))));
       })))) : h("p", { class: "muted", text: "None yet. When you approve a listing the agent proposed, Ember creates it here." }));
     var orders = arr(e.orders);
-    replace($("etsy-orders"), orders.length ? h("div", { class: "table-wrap" }, h("table", null,
+    // 0.12.0: Ember's code records the orders in the ledger itself when the owner turned that on
+    var auto = e.auto_revenue ? h("p", { class: "muted small", text: "Ember's code records these orders in the ledger at each sync: their revenue, Etsy's fees and refunds" +
+      (e.auto_revenue_since ? ", for the orders placed from " + fmtDay(e.auto_revenue_since) + " on" : "") +
+      (num(e.usd_per_eur) > 0 ? " (EUR at " + num(e.usd_per_eur) + " USD)." : "; orders in EUR are yours to record (no exchange rate set).") }) : null;
+    replace($("etsy-orders"), orders.length ? [auto, h("div", { class: "table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, ["Ordered", "Ember's lines", "Listings", "Status", "Revenue"].map(function (c) { return h("th", { scope: "col", text: c }); }))),
       h("tbody", null, orders.map(function (o) {
         return h("tr", null,
@@ -3343,7 +3347,7 @@
           h("td", { text: arr(o.items).map(function (i) { return asText(i.title) + (num(i.quantity) > 1 ? " × " + i.quantity : ""); }).join("; ") }),
           h("td", { text: o.status ? asText(o.status) : "–" }),
           h("td", null, orderRevenueCell(o, fake)));
-      })))) : h("p", { class: "muted", text: "No orders with Ember's listings yet." }));
+      }))))] : h("p", { class: "muted", text: "No orders with Ember's listings yet." }));
   }
 
   // What the owner can do about an order's revenue: record it (only a paid order in EUR or USD, whose net is known),
@@ -3351,7 +3355,8 @@
   function orderRevenueCell(o, fake) {
     var refunded = o.status === "fully refunded" || o.status === "canceled";
     if (o.recorded) {
-      var said = h("span", { class: "muted small", text: refunded ? "Recorded, then " + o.status + ": correct entry #" + o.entry_id : "Recorded" });
+      var by = o.recorded_by === "etsy" ? "Recorded by Ember's code" : "Recorded";  // 0.12.0: from Etsy's numbers
+      var said = h("span", { class: "muted small", text: refunded ? by + ", then " + o.status + (o.corrected_in_full ? ", and corrected" : ": correct entry #" + o.entry_id) : by });
       if (o.fees_recordable) return [said, " ", recordFeesButton(o, fake)];  // 0.12.0: Etsy's fees on it
       return o.fees_recorded ? [said, h("span", { class: "muted small", text: " · fees recorded" })] : said;
     }
@@ -4005,6 +4010,9 @@
       var typical = isNaN(num(data.typical_usd)) ? "" : ": typical entries are about " + usd(data.typical_usd);
       showConfirm(f, "confirm_large", (isNaN(num(data.amount_usd)) ? "This amount" : usd(data.amount_usd)) + " is much more than usual" + typical +
         ". Check the amount. Record it anyway?", false);
+    } else if (res.status === 409 && data.code === "already_recorded") {
+      // 0.12.0: Ember's code recorded this Etsy order from Etsy's numbers first; the same key keeps it that way
+      setStatus(f, (typeof data.error === "string" ? data.error : "Ember's code already recorded this") + ". Nothing new was recorded.", "error");
     } else if (res.status === 409 && data.code === "duplicate_key_mismatch") {
       f.idKey = newKey();
       f.unresolved = false;

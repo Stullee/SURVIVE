@@ -19,14 +19,14 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from .. import events, paths, privacy
-from ..config import LoadedSettings
+from ..config import LoadedSettings, Settings
 from ..db import Database
 from ..economy.clock import from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.metering import MeteredModel, OfflineTransport, Transport, usd_cap_to_micros
 from ..economy.pricing import opening_cost, working_cycle_cost
 from ..economy.service import Economy
-from ..integrations import etsy, etsy_publisher, mailstore
+from ..integrations import etsy, etsy_publisher, etsy_revenue, mailstore
 from ..integrations import executor as email_executor
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
@@ -121,7 +121,9 @@ class Agent:
             etsy.TokenFile(paths.etsy_dir() / "tokens.json"),
             etsy.TaxonomyFile(paths.etsy_dir() / "categories.json"),
         )
-        self.publisher = Publisher(db, self.clock, self.settings, self.scope, self.etsy.shop, lambda: self.roots()[0])
+        self.publisher = Publisher(
+            db, self.clock, self.settings, self.scope, self.etsy.shop, lambda: self.roots()[0], self._etsy_numbers
+        )
         self._shop_failed_at: datetime | None = None  # the last check of the shop that failed (sync_shop)
 
     # --- where things live ---
@@ -182,10 +184,16 @@ class Agent:
                 ventures.seed(conn, scope, to_iso(now))  # the tree's first ideas (0.10.0), once
         except Exception:  # noqa: BLE001 - the ventures must never keep the agent from starting
             log.exception("Could not plant the first ventures")
+        etsy_revenue.audit(self.db, self.clock, self.settings)  # 0.12.0: the owner turned it on or off
         wake = self._meta_time("next_wake_at")
         if wake is not None and wake < now + BOOT_GRACE:
             # Give the owner a minute to pause after an update or restart.
             self._set_time("next_wake_at", now + BOOT_GRACE)
+
+    def _etsy_numbers(self, scope: AgentScope, settings: Settings) -> None:
+        """0.12.0: the orders' revenue, Etsy's fees and refunds in the ledger after a sync, when the owner turned that
+        on (etsy_revenue)."""
+        etsy_revenue.record(self.db, self.clock, self.economy, scope, settings)
 
     def _rotate_dry_run_folders(self) -> None:
         session = str(self.economy.life.session())

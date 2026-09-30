@@ -236,6 +236,7 @@ class Publisher:
         scope: Callable[[], AgentScope],
         shop: Callable[[], Shop | None],
         workspace: Callable[[], Jail],
+        after_sync: Callable[[AgentScope, Settings], Any] | None = None,
     ) -> None:
         self.db = db
         self.clock = clock
@@ -243,6 +244,8 @@ class Publisher:
         self.scope = scope
         self.shop = shop
         self.workspace = workspace
+        # 0.12.0: what Ember's code does with the fresh numbers of a sync that worked (the orders in the ledger)
+        self.after_sync = after_sync
         self._lock = threading.Lock()  # one run (or sync) at a time in this process
 
     # --- approved listings ---
@@ -692,6 +695,11 @@ class Publisher:
                 self._renew_sellers(shop, scope)
             self.db.set_meta(meta_key(scope.mode, "last_sync_at"), stamp)
             self.db.set_meta(meta_key(scope.mode, "last_error"), "")
+            if self.after_sync is not None:
+                try:
+                    self.after_sync(scope, self.settings)
+                except Exception:  # noqa: BLE001 - the numbers are stored; the next sync tries again
+                    log.exception("Recording the Etsy orders in the ledger failed")
             return None
         finally:
             self._lock.release()
@@ -941,9 +949,17 @@ def _flat(text: str | None, chars: int) -> str:
     return " ".join((text or "").split())[:chars]
 
 
-def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_name: str, daily_limit: int) -> str:
+def shop_text(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    clock: Clock,
+    shop_name: str,
+    daily_limit: int,
+    auto_revenue: bool = False,
+) -> str:
     """The ETSY SHOP section of the plan: every live listing and how it does (0.12.0: all of them, top sellers first),
-    this week's orders, what to fix, and the newest listings and requests one by one."""
+    this week's orders, what to fix, and the newest listings and requests one by one. ``auto_revenue``: Ember's code
+    records the orders' revenue (0.12.0, the owner's option), else the owner does."""
     where, params = scope.where()
     rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC", params).fetchall()
     week = to_iso(clock.now() - timedelta(days=7))
@@ -979,9 +995,9 @@ def shop_text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, shop_na
         f"{cents / 100:.2f} {currency}" + (f" less {fees[currency] / 100:.2f} of Etsy's fees" if fees[currency] else "")
         for currency, cents in totals.items()
     )
+    who = "Ember's code records it from Etsy's numbers" if auto_revenue else "your owner records it"
     lines.append(
-        f"Orders in the last 7 days: {len(orders)}" + (f" ({money})" if money else "") + "; revenue counts once your"
-        " owner records it."
+        f"Orders in the last 7 days: {len(orders)}" + (f" ({money})" if money else "") + f"; revenue counts once {who}."
     )
     if rows:
         lines.append("Newest:")
@@ -1061,7 +1077,11 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
     out = []
     for r in rows:
         key = revenue_key(r["receipt_id"])
-        entry = conn.execute("SELECT id FROM ledger WHERE idempotency_key = ?", (key,)).fetchone()
+        entry = conn.execute(
+            "SELECT id, created_by, amount_micros + (SELECT COALESCE(SUM(k.amount_micros), 0) FROM ledger k"
+            " WHERE k.corrects_id = ledger.id) AS left_micros FROM ledger WHERE idempotency_key = ?",
+            (key,),
+        ).fetchone()
         fees_key = fee_key(r["receipt_id"])
         fees_entry = conn.execute("SELECT id FROM ledger WHERE idempotency_key = ?", (fees_key,)).fetchone()
         items = json.loads(r["items"] or "[]")
@@ -1078,6 +1098,8 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
                 "revenue_key": key,
                 "recorded": entry is not None,
                 "entry_id": entry["id"] if entry else None,  # to correct if the order was refunded since
+                "recorded_by": entry["created_by"] if entry else None,  # 0.12.0: the owner, or 'etsy' (Ember's code)
+                "corrected_in_full": entry is not None and entry["left_micros"] <= 0,  # 0.12.0
                 "project_id": project_id,  # what the revenue form suggests (0.12.0)
                 "venture_id": venture_id,
                 # 0.12.0: the order's status; an order from before has none, and its total is the whole receipt's.

@@ -171,6 +171,11 @@ class Settings(BaseModel):
     # 0.12.0: turn Etsy's automatic renewal on for a listing once it has sold (USD 0.20 every four months): listings
     # are created without it, so every one, the ones that sell too, expired after four months.
     etsy_auto_renew_sold: bool = True
+    # 0.12.0: record the revenue of paid orders with Ember's listings, Etsy's fees on them and their refunds in the
+    # ledger at each sync (created_by 'etsy'), instead of waiting for the owner to. Off until the owner turns it on
+    # (audited); EUR amounts need the owner's exchange rate (USD per 1 EUR), 0 leaves them to the owner.
+    etsy_auto_record_revenue: bool = False
+    etsy_usd_per_eur: float = Field(default=0.0, ge=0, le=3)
 
     @field_validator("owner_user_ids", mode="before")
     @classmethod
@@ -220,6 +225,8 @@ class Settings(BaseModel):
             problems.append("min_sleep_minutes must not be larger than max_sleep_minutes")
         elif not self.min_sleep_minutes <= self.wake_interval_minutes <= self.max_sleep_minutes:
             problems.append("wake_interval_minutes must be between min_sleep_minutes and max_sleep_minutes")
+        if 0 < self.etsy_usd_per_eur < 0.5:  # 0.12.0: the ledger's range for an exchange rate (0: none)
+            problems.append("etsy_usd_per_eur must be 0 (no rate) or between 0.5 and 3 USD per EUR")
         names = [p.model for p in self.price_table]
         if len(names) != len(set(names)):
             problems.append("price_table lists the same model more than once")

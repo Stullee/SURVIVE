@@ -93,6 +93,11 @@ options:
   etsy_stats_history: false
   # Etsy's automatic renewal (USD 0.20 every four months) for a listing once it has sold.
   etsy_auto_renew_sold: true
+  # Record the revenue of Ember's Etsy orders, Etsy's fees and refunds in the ledger yourself, or let Ember's code do
+  # it at each sync for the orders from the day you turn it on (see the Documentation tab). EUR amounts need your
+  # exchange rate: USD per 1 EUR (0.5 to 3; 0: none).
+  etsy_auto_record_revenue: false
+  etsy_usd_per_eur: 0
 
 schema:
   anthropic_api_key: password?
@@ -146,3 +151,5 @@ schema:
   etsy_listings_per_day: int(0,20)
   etsy_stats_history: bool
   etsy_auto_renew_sold: bool
+  etsy_auto_record_revenue: bool
+  etsy_usd_per_eur: float(0,3)

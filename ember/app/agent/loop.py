@@ -361,7 +361,13 @@ class CycleRunner:
             shop = ""
             if self.etsy_on and self.etsy is not None:
                 name = self.etsy.shop_name() or "your shop"
-                shop = etsy_publisher.shop_text(conn, self.scope, self.clock, name, self.settings.etsy_listings_per_day)
+                # 0.12.0: Ember's code records the orders' revenue when the owner turned that on (and can convert it)
+                auto = self.settings.etsy_auto_record_revenue and (
+                    self.settings.etsy_usd_per_eur > 0 or self.etsy.currency() == "USD"
+                )
+                shop = etsy_publisher.shop_text(
+                    conn, self.scope, self.clock, name, self.settings.etsy_listings_per_day, auto_revenue=auto
+                )
             return context.snapshot(
                 conn,
                 self.scope,

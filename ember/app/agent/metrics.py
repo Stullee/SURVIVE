@@ -96,7 +96,7 @@ CATALOGUE: dict[str, Metric] = {
         ),
         Metric(
             "revenue_verified_usd",
-            "revenue less expenses your owner recorded since it was set",
+            "revenue less expenses recorded since it was set",
             "usd",
             "owner",
             since_set=True,
@@ -132,7 +132,7 @@ CATALOGUE: dict[str, Metric] = {
 NAMES = tuple(CATALOGUE)
 # The catalogue in the tool's words, as short as it can be: every request of a work step carries it.
 HELP = (
-    "listings_live counts now; the deltas, orders_observed, revenue_verified_usd (what your owner recorded, less "
+    "listings_live counts now; the deltas, orders_observed, revenue_verified_usd (recorded revenue less "
     "expenses), research_calls_ok (found something) and api_spend_usd (a ceiling) count from when it is set; "
     f"case_complete and stage_reached are a venture's; qa_clean: {etsy_publisher.GOOD_PHOTOS}+ photos on each live "
     "listing"

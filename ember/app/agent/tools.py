@@ -232,7 +232,7 @@ SPECS: dict[str, Spec] = {
         Spec(
             "project_update",
             "Update one of your projects: status, next step, hypothesis, or a short note. A closed project "
-            "(succeeded, failed, abandoned) is final. 'succeeded' needs revenue your owner recorded for it.",
+            "(succeeded, failed, abandoned) is final. 'succeeded' needs revenue recorded for it.",
             {
                 "project_id": _i("The project's number."),
                 "status": _s("New status.", 10, required=False, enum=PROJECT_STATUSES),

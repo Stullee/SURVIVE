@@ -4,7 +4,8 @@ Ember is an AI agent that lives in this app and tries to pay for itself. Every
 call it makes to Anthropic's API costs real money from a balance you fund; it has
 to find honest ways to earn more than it spends. You stay in control: anything
 that leaves the container (publishing, contacting people, spending money) needs
-your approval, and only you can record revenue.
+your approval, and only you can record revenue (or, if you turn it on, Ember's
+code from Etsy's own numbers): the agent never reports its own.
 
 > **Current status: all five phases are in, ready for live testing.** In dry
 > run (the default) the agent works with a built-in fake model and costs
@@ -68,6 +69,8 @@ your approval, and only you can record revenue.
 | Etsy listings per day | 3 | The most listings Ember creates in one day (0 to 20). |
 | Keep a history of the listings' numbers | off | A daily record of each listing's views and favorites, so the plans see how each changed. Turn it on only once you have confirmed that Etsy's API terms allow it (see [What Ember sees](#what-ember-sees)). |
 | Renew listings that sell | on | Once a listing has sold, Ember turns on Etsy's automatic renewal for it (USD 0.20 every four months), once per listing (see [How a listing is made](#how-a-listing-is-made)). |
+| Record Etsy revenue automatically | off | At each Etsy sync, Ember's code records the revenue of paid orders with Ember's listings placed from the day you turn it on, Etsy's fees on them and their refunds in the ledger, instead of you (see [What Ember sees](#what-ember-sees)). |
+| Exchange rate for Etsy revenue | 0 | USD per 1 EUR for orders in EUR recorded automatically (0.5 to 3; 0: orders in EUR stay yours to record). |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -388,7 +391,7 @@ roadmap too.
 
 **The money goal.** The roadmap is never empty: Ember's code keeps a money
 goal at its root, **Earn as much as you spend** (over the last 30 days, the
-revenue you recorded less expenses at least equals the API spending), due in 90
+revenue recorded less expenses at least equals the API spending), due in 90
 days, with two **decision points** under it, at a quarter and at half of the
 runway (of the 90 days at most), where the agent decides from the numbers which
 projects and ventures go on, change or stop. Ember's code checks the goal from
@@ -412,7 +415,7 @@ close such a milestone done; the database refuses it as well. The metrics:
 | `listings_live` | the agent's listings live on Etsy now | Etsy |
 | `views_delta`, `favorites_delta` | views or favorites gained since it was set (only while `etsy_stats_history` is on) | Etsy |
 | `orders_observed` | Etsy orders of the agent's listings since it was set | Etsy |
-| `revenue_verified_usd` | revenue less expenses you recorded since it was set | your records |
+| `revenue_verified_usd` | revenue less expenses recorded since it was set | the ledger |
 | `research_calls_ok` | research calls that found something since it was set | Ember |
 | `case_complete` | the venture's business case is complete (researched, scored, filled in) | Ember |
 | `stage_reached` | the venture reached a stage (researching, proposed, building, live) | Ember |
@@ -808,6 +811,25 @@ payment processing fee (Ember reads the order's payment once) and Etsy's 6.5%
 transaction fee on what its lines earned. Check it against your Etsy payment
 account (VAT on fees, Offsite Ads) and change the amount before you save.
 
+**Record Etsy revenue automatically** (off by default) lets Ember's code do
+this at each sync, from Etsy's numbers, for the orders placed from the day you
+turn it on (earlier ones keep their buttons, in case you booked them otherwise):
+the revenue of each paid order with Ember's listings (Ember's lines, net, as
+above), Etsy's fees on it once the payment was read, and, when such an order is
+refunded or cancelled later, a correction of its revenue down to what it earns
+now. Each entry belongs to the
+project whose listing sold, shows in the ledger as made by Ember's code, and
+uses the same key as the buttons, so an order is never recorded twice, whoever
+comes first; an order you recorded stays yours, with its fees and refunds.
+Orders in EUR need **Exchange rate for Etsy revenue** (USD per 1 EUR, for
+example 1.08; 0 leaves them to you), and an order's fees and refunds keep the
+rate its revenue was recorded at; other currencies stay yours to convert.
+Etsy's fees on an order refunded later stay recorded: correct them with what
+Etsy credited back. An entry that would kill Ember or leave it without money to
+run is never recorded automatically: the System log tells you once, and the
+order's button asks you as usual. The System log also notes each time you turn
+the option on or off or change the rate.
+
 Every day Ember's code also keeps a record of how the shop does (the first
 sync of the day writes it, and it never changes): the number of live listings,
 orders and units sold, from Ember's own records. With **Keep a history of the
@@ -909,7 +931,8 @@ On the dashboard you can record:
   sure your Anthropic account has at least this much. The starting balance
   from the options is recorded as the first grant, once.
 - **Revenue**: money Ember earned (with its source). Only you can record
-  revenue; the agent can never report its own.
+  revenue (and, if you turn it on, Ember's code for its Etsy orders, from
+  Etsy's numbers; see [Etsy](#etsy)); the agent can never report its own.
 - **Expense**: real-world money you spent on Ember's behalf (a domain, a fee).
 - **Adjustment**: add to or subtract from the balance for anything else.
 - **API cost correction**: if Anthropic's Console shows a different cost than
@@ -920,7 +943,7 @@ On the dashboard you can record:
 Revenue and expenses can name **what they belong to**: one of the agent's
 projects (its venture counts it too) or a venture. That is how a project or
 venture shows what it earned, and how a project can succeed: the agent can
-close one as succeeded only when the revenue you recorded for it, less its
+close one as succeeded only when the revenue recorded for it, less its
 expenses, is more than its API calls cost. **Record as revenue** on an Etsy
 order suggests the project whose listing sold. A correction belongs where the
 entry it corrects belongs.
