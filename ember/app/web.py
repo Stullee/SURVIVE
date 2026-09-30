@@ -521,6 +521,16 @@ def override_knockout(request: Request, venture_id: ItemId, body: Annotated[Any,
     return _reply(reply)
 
 
+@router.post("/api/milestones/{milestone_id}/autonomy")
+def set_autonomy(request: Request, milestone_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    reply = actions.set_autonomy(milestone_id, body, _owner(request))
+    _wake_for_decision(request, reply)
+    return _reply(reply)
+
+
 @router.get("/api/roadmap")
 def roadmap(request: Request) -> JSONResponse:
     agent = _state(request).agent

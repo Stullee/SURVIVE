@@ -29,7 +29,7 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import etsy, executor, mailstore
 from ..integrations.mail import BODY_MAX, valid_address
-from . import knockouts, library, memory, predictions, roadmap, stages, store, ventures
+from . import knockouts, library, memory, policy, predictions, roadmap, stages, store, ventures
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
@@ -528,6 +528,46 @@ class Owner:
                 self.db, "info", "owner", f"{who or 'The owner'} {verb} the knock-out {rule} of venture #{venture_id}"
             )
             return Reply(200, {"id": venture_id, "rule": rule, "lifted": lift})
+
+        return _reply(run)
+
+    def set_autonomy(self, milestone_id: int, body: Any, who: str | None) -> Reply:
+        """0.13.0: unlock a rule of the policy engine for a milestone (veto_window or auto, with a daily limit and a
+        budget of actions), or take it back (manual). Kept as history; the agent hears it as the owner's note."""
+
+        def run() -> Reply:
+            data = _body(body, {"rule", "level", "per_day", "budget"})
+            rule, level = data.get("rule"), data.get("level")
+            if rule not in policy.RULES:
+                raise OwnerError("rule", f"choose one of {', '.join(policy.RULES)}")
+            if level not in policy.LEVELS:
+                raise OwnerError("level", f"choose one of {', '.join(policy.LEVELS)}")
+            limits = {}
+            for name, default, most in (("per_day", policy.PER_DAY, 20), ("budget", policy.BUDGET, 100)):
+                value = data.get(name, default)
+                if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= most:
+                    raise OwnerError(name, f"{name} is a whole number from 1 to {most}")
+                limits[name] = value
+            with self.db.transaction() as conn:
+                row = roadmap.get(conn, self.scope, milestone_id)
+                if row is None:
+                    raise OwnerError("id", "no such milestone", 404)
+                if row["status"] != "open":
+                    raise OwnerError("id", f"this milestone is {row['status']}", 409)
+                now = self._now()
+                policy.set_grant(conn, self.scope, milestone_id, rule, level, now, by=who or "the owner", **limits)
+                label = policy.RULES[rule].label
+                said = (
+                    f"Unlocked for this milestone: {label} ({level.replace('_', ' ')}, at most {limits['per_day']} a"
+                    f" day, {limits['budget']} in all)"
+                    if level != "manual"
+                    else f"Took back the unlock for {label}: your requests wait for me again"
+                )
+                roadmap.owner_word(conn, milestone_id, now, "note", said[: roadmap.LIMITS["comment"]], who)
+            events.record(
+                self.db, "info", "owner", f"{who or 'The owner'} set {rule} to {level} for milestone #{milestone_id}"
+            )
+            return Reply(200, {"id": milestone_id, "rule": rule, "level": level, **limits})
 
         return _reply(run)
 

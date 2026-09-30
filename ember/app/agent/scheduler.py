@@ -82,6 +82,10 @@ class Scheduler:
                     await asyncio.to_thread(self.db.prune_events, KEEP_EVENTS)
                     self._last_prune = time.monotonic()
                 if self.agent is not None and not self._stopping:
+                    try:  # 0.13.0: the owner's unlocks first: what their veto windows let through, and revocations
+                        await asyncio.to_thread(self.agent.run_policy)
+                    except Exception:  # noqa: BLE001 - the unlocks must not stop the wake cycles
+                        log.exception("Running the owner's unlocks failed")
                     try:
                         await asyncio.to_thread(self.agent.execute_approved)
                     except Exception:  # noqa: BLE001 - a sending problem must not stop the wake cycles

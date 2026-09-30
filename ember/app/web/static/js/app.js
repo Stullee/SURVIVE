@@ -2246,6 +2246,8 @@
         statusChip, a.simulated ? testTag() : null),
       a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
       actionFlags(a.action_class),
+      a.veto_until && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "⏱ " }),
+        h("strong", { text: "Your unlock: " }), name + "'s code approves it on " + fmtDateTime(a.veto_until) + " unless you decide first.") : null,
       arr(a.qa).length ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
         h("strong", { text: "QA (Ember's code): " }), arr(a.qa).join("; ") + ".") : null,
       executor === "email" && a.first_contact ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
@@ -5766,6 +5768,10 @@
     if (data.forecasts) {  // 0.13.0: the prediction ledger's record, settled by Ember's code
       parts.push(name + "'s forecasts, settled by Ember's code: " + String(data.forecasts) + ".");
     }
+    arr(data.autonomy_suggestions).forEach(function (sg) {  // 0.13.0: promotions Ember's code proposes; you decide
+      parts.push("Suggestion: you approved " + sg.approved + " requests for " + sg.label + " unchanged (milestone #" +
+        sg.milestone_id + "): unlock it with a veto window on that milestone's card?");
+    });
     if (data.overhead_usd !== undefined && data.overhead_usd !== null) {
       parts.push("Overhead (plans, reviews, brainstorms, library study): " + usd(data.overhead_usd) + ".");
     }
@@ -5978,6 +5984,60 @@
 
   var MILESTONE_RESULT = { done: "Evidence", missed: "Why, and what now", dropped: "Why it was dropped" };
 
+  // 0.13.0: the owner's unlocks for a milestone (the policy engine): each rule manual, with a veto window, or auto,
+  // with a daily limit and a budget of actions. Ember's code revokes one on an unclear result, a spent budget, a
+  // missed milestone or a veto.
+  var AUTONOMY_LEVELS = { manual: "Ask me (manual)", veto_window: "Run unless I veto within 12 h", auto: "Run at once (auto)" };
+
+  function milestoneAutonomy(m) {
+    var rules = arr(m.autonomy);
+    if (!rules.length) return null;
+    var on = rules.filter(function (r) { return r.level !== "manual"; }).length;
+    var status = h("p", { class: "muted small", role: "status" });
+    return h("div", { class: "rm-autonomy" }, h("details", null,
+      h("summary", null, h("strong", { text: "Autonomy: " }), on ? plural(on, "rule") + " unlocked" : "all manual"),
+      h("p", { class: "muted small", text: "What " + agentName() + "'s code may carry out for this milestone without your click. " +
+        "It takes back an unlock itself on an unclear result, a spent budget, a missed milestone or your veto." }),
+      h("ul", { class: "vt-evidence" }, rules.map(function (r) {
+        var level = h("select", { "aria-label": "Level for " + r.label });
+        Object.keys(AUTONOMY_LEVELS).forEach(function (k) {
+          var option = h("option", { value: k, text: AUTONOMY_LEVELS[k] });
+          if (k === r.level) option.selected = true;
+          level.appendChild(option);
+        });
+        var perDay = h("input", { type: "number", min: "1", max: "20", value: String(r.per_day), "aria-label": "At most a day", class: "num-small" });
+        var budget = h("input", { type: "number", min: "1", max: "100", value: String(r.budget), "aria-label": "In all", class: "num-small" });
+        var save = h("button", { type: "button", class: "btn btn-small", text: "Save" });
+        save.addEventListener("click", function () {
+          setAutonomy(save, status, m, r, { rule: r.rule, level: level.value, per_day: parseInt(perDay.value, 10), budget: parseInt(budget.value, 10) });
+        });
+        var use = r.level !== "manual" ? " · used " + r.used + " of " + r.budget + " (" + r.used_today + " today)" : "";
+        var why = r.why ? " · taken back: " + String(r.why) : "";
+        return h("li", null, h("strong", { text: String(r.label) }), use + why, h("div", { class: "form-row" },
+          level, " at most ", perDay, " a day, ", budget, " in all ", save));
+      })),
+      status));
+  }
+
+  function setAutonomy(button, status, m, r, body) {
+    button.disabled = true;
+    status.removeAttribute("data-kind");
+    request("POST", "api/milestones/" + m.id + "/autonomy", body).then(function (res) {
+      if (res.ok) {
+        status.textContent = "Saved: " + r.label + ", " + (AUTONOMY_LEVELS[body.level] || body.level) + ". " + agentName() + " hears it on its next wake.";
+        refresh();
+        return;
+      }
+      ownerFailure(res, {}, function (msg) { status.textContent = msg; status.setAttribute("data-kind", "error"); }, null);
+      button.disabled = false;
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      status.textContent = "Couldn't reach Ember, so the unlock may or may not have changed.";
+      status.setAttribute("data-kind", "error");
+      button.disabled = false;
+    });
+  }
+
   // 0.13.0: a prediction Ember's code settles (the agent's odds on a milestone, or a backed venture's first sale).
   var PREDICTION_STATE = {
     open: { icon: "…", label: "Open", tone: "" },
@@ -6026,6 +6086,7 @@
         h("div", null, h("dt", { text: "Done when" }), h("dd", { class: "pre-line", text: asText(m.measure) })),
         m.checked ? h("div", null, h("dt", { text: "Checked by Ember's code" }), h("dd", { text: asText(m.checked) })) : null,
         predictionRow(m.prediction, name + "'s odds"),
+        milestoneAutonomy(m),
         closed ? h("div", null, h("dt", { text: (MILESTONE_RESULT[m.state] || "Result") + (selfReported(m) ? " (self-reported)" :
           m.closed_by === "code" && m.metric ? " (checked by Ember's code)" : "") }),
           h("dd", { class: "pre-line", text: asText(m.result) || "–" })) : null,

@@ -39,7 +39,7 @@ from ..integrations import executor as email_executor
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox, select_mailbox
-from . import agenda, metrics, netguard, news, store, ventures
+from . import agenda, metrics, netguard, news, policy, store, ventures
 from .loop import NO_STEP, CycleEnd, CycleRunner
 from .memory import CAPS, Memory
 from .sandbox import Jail, SandboxError, kind_of
@@ -664,6 +664,18 @@ class Agent:
             return "Another Ember process is using the data folder"
         state = self.economy.life.evaluate().state
         return None if state in ("alive", "critical", "paused", "unfunded") else f"The agent is {state}"
+
+    def run_policy(self) -> None:
+        """0.13.0: the owner's unlocks (policy.py): approve the requests whose veto window passed, and revoke the
+        unlocks an unclear result, a spent budget, a missed milestone or a veto ended. Before the approved actions are
+        carried out, in the scheduler's round."""
+        if self.executor_blocked():
+            return
+        scope = self.scope()
+        with self.db.transaction() as conn:
+            happened = policy.run_due(conn, scope, self.clock) + policy.keep(conn, scope, self.clock)
+        for line in happened:
+            events.record(self.db, "info", "control", line[:300])
 
     def execute_approved(self) -> list[tuple[int, str]]:
         """Send the approved emails and create the approved Etsy listings that are due (the scheduler calls this

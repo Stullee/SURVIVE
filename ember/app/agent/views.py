@@ -21,6 +21,7 @@ from . import (
     library,
     memory,
     metrics,
+    policy,
     predictions,
     prompts,
     research_check,
@@ -237,7 +238,13 @@ def _roadmap_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated:
     called = conn.execute(
         f"SELECT COUNT(*), COALESCE(MAX(settled_at), '') FROM predictions WHERE {where}", params
     ).fetchone()
-    return f"{int(row[0])}|{row[1]}|{int(cycle[0])}|{today}|{int(called[0])}|{called[1]}"
+    granted = conn.execute(  # 0.13.0: the owner's unlocks and what they carried
+        f"SELECT COUNT(*), (SELECT COUNT(*) FROM policy_uses) FROM policy_grants WHERE {where}", params
+    ).fetchone()
+    return (
+        f"{int(row[0])}|{row[1]}|{int(cycle[0])}|{today}|{int(called[0])}|{called[1]}|{int(granted[0])}"
+        f"|{int(granted[1])}"
+    )
 
 
 def _library_stamp(conn: sqlite3.Connection, scope: store.AgentScope) -> str:
@@ -356,6 +363,11 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
         digests = digest.newest_by(conn, scope, "milestone_id")  # 0.12.0
         odds = predictions.of_milestones(conn, [int(m["id"]) for m in rows])  # 0.13.0: the agent's odds on them
         record = predictions.calibration(conn, scope)
+        # 0.13.0: the owner's unlocks (policy.py) on each open milestone, and the promotions Ember's code proposes
+        autonomy = {
+            int(m["id"]): policy.view(conn, scope, agent.clock, int(m["id"])) for m in rows if m["status"] == "open"
+        }
+        promotions = policy.suggestions(conn, scope, agent.clock)
     items = []
     for m in rows:
         due = roadmap.parse_day(m["due"]) or today
@@ -411,6 +423,7 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
                 "proposed_at": m["proposed_at"],
                 # 0.13.0: the agent's odds that it is met by its first date, and how Ember's code settled them
                 "prediction": _prediction(called),
+                "autonomy": autonomy.get(int(m["id"])),  # 0.13.0: what the owner unlocked for it (open ones)
                 "simulated": m["mode"] == "dry_run",
             }
         )
@@ -418,6 +431,8 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
         "mode": agent.mode,
         "today": today.isoformat(),
         "forecasts": record or None,  # 0.13.0: the record of the agent's forecasts (predictions.calibration)
+        "autonomy_levels": list(policy.LEVELS),  # 0.13.0
+        "autonomy_suggestions": promotions,
         "overhead_usd": _usd(overhead),  # 0.12.0: plans, reviews, brainstorms and the rest no milestone is charged
         "horizons": [
             {"key": roadmap.OVERDUE[0], "label": roadmap.OVERDUE[1]},
@@ -734,6 +749,7 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
         "executor": r["executor"],
         "action_class": kind.flags(),  # 0.13.0: the connector protocol's class and its flags
         "qa": shortfalls,
+        "veto_until": policy.veto_until(conn, int(r["id"])),  # 0.13.0: held by the owner's unlock until then
         "action": action,
         "first_contact": first_contact,
         "execution": execution,

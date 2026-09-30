@@ -756,6 +756,25 @@ no longer shown); a study that failed three times stops until you press
   Ember's code can undo it. A listing, or a change to one, with fewer than 5
   photos (the one **QA** number: the Etsy guide, the plan's defects and the
   `qa_clean` metric read it too) says so on its card before you decide.
+- **Autonomy** (0.13.0): on the Roadmap tab, an open milestone's card has an
+  **Autonomy** box. There you can let Ember's code carry out a few small kinds
+  of request for that milestone without your click. Each is off (**Ask me**)
+  until you choose otherwise:
+  - QA fixes: photos up to 5 on a live listing;
+  - price changes within 15% on a live listing;
+  - new listings in a backed leg, once you approved 5 of its listings
+    unchanged;
+  - taking a listing of Ember's off Etsy;
+  - email replies in threads the other person started.
+
+  **Run unless I veto within 12 h** holds such a request on its card with the
+  time it will be approved, and you can still reject it. **Run at once**
+  approves it when it is made. Each rule has a daily limit and a budget of
+  actions. Ember's code takes an unlock back itself when one of its actions
+  ends unclear, its budget is spent, the milestone is missed or dropped, or you
+  veto one of its requests. It never widens one. When you approved 5 requests
+  of a kind unchanged within 30 days, the Roadmap tab suggests an unlock, and
+  you decide. Ember hears each change as your note on the milestone.
 - **What Ember's code did**: every action it carries out (an email sent, a
   listing created, changed, renewed or deactivated, a sold listing's automatic
   renewal turned on) is kept in one journal (0.13.0). It records what the

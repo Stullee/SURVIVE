@@ -53,6 +53,7 @@ from . import (
     metrics,
     netguard,
     obligations,
+    policy,
     predictions,
     roadmap,
     stages,
@@ -1068,6 +1069,7 @@ class CycleTools:
     # reflection's price leaves room for).
     conversation_tokens: int = 0
     largest_step_tokens: int = 0
+    policy_note: str = ""  # 0.13.0: what the owner's unlock did with the request just made (policy.apply)
 
 
 @dataclass(frozen=True)
@@ -2865,9 +2867,17 @@ def _new_request(ctx: ToolContext, conn: Any, payload: str, action: dict[str, An
     if existing is not None:
         return f"Approval request #{existing} with this text is already waiting."
     _room_for_request(ctx, conn, fields["type"])
-    return store.insert_approval(
+    made = store.insert_approval(
         conn, ctx.scope, ctx.cycle_id, ctx.now(), payload=payload, action=action_json, **fields
     )
+    ctx.state.policy_note = policy.apply(conn, ctx.scope, made, ctx.clock)  # 0.13.0: the owner's unlocks
+    return made
+
+
+def _unlocked(ctx: ToolContext) -> str:
+    """What the owner's unlock did with the request just made ("" when it waits for them as before)."""
+    note, ctx.state.policy_note = ctx.state.policy_note, ""
+    return note
 
 
 def _propose_email(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -2918,6 +2928,7 @@ def _propose_email(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     )
     if first:
         text += " This person never wrote to you, so your owner is warned that it is a first contact."
+    text += _unlocked(ctx)
     return Outcome(True, text, f"#{made} email to {_cut(to, 60)}")
 
 
@@ -3002,6 +3013,7 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
     short = qa.defects("etsy.create_listing", listing)  # 0.13.0: the QA registry; your owner sees it too
     if short:
         text += f" QA (Ember's code): {'; '.join(short)}: make more with make_image and change the request."
+    text += _unlocked(ctx)
     return Outcome(True, text, f"#{made} Etsy listing: {_cut(listing.title, 60)}")
 
 
@@ -3140,7 +3152,7 @@ def _propose_etsy_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
     text = (
         f"Approval request #{made} is waiting for your owner: it {what}. Nothing has changed at Etsy yet. If they "
         "approve it, Ember's code makes the change and you hear the result."
-    )
+    ) + _unlocked(ctx)
     if action is None:
         return Outcome(True, text, f"#{made} change of #{listing_id}: {parts}")
     return Outcome(True, text, f"#{made} {verb.lower()} #{listing_id}" + (f": {parts}" if parts else ""))
