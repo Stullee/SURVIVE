@@ -21,6 +21,7 @@ import math
 import re
 import secrets
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
@@ -390,6 +391,8 @@ class CycleRunner:
             categories=tuple(self.etsy.categories()),
             stats_history=self.settings.etsy_stats_history,
         )
+        if self.settings.etsy_market_probe:  # 0.12.0: Etsy's numbers for a demand note's keywords
+            ctx.market = _market_fn(shop)
         self.etsy_on = True
 
     def _progress(self, cycle_id: int, **columns: Any) -> None:
@@ -1468,6 +1471,17 @@ class CycleRunner:
         details = response.get("stop_details") if isinstance(response.get("stop_details"), dict) else None
         with self.db.transaction() as conn:
             store.save_call_text(conn, call_id, text, details)
+
+
+def _market_fn(shop: Any) -> Callable[[str], Any]:
+    """0.12.0: the owner's Etsy market probe (etsy_market_probe), for demand notes: the fake shop of a dry run needs no
+    network; the owner's is reached by Ember's code only (the tool gets this function, not the shop)."""
+
+    def probe(keywords: str) -> Any:
+        with netguard.sealed() if shop.simulated else contextlib.nullcontext():
+            return shop.market(keywords)
+
+    return probe
 
 
 def _step(text: str) -> str:

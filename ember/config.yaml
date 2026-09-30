@@ -104,6 +104,10 @@ options:
   # exchange rate: USD per 1 EUR (0.5 to 3; 0: none).
   etsy_auto_record_revenue: false
   etsy_usd_per_eur: 0
+  # A demand note reads Etsy's search of active listings for its keywords: how many match and their price quartiles,
+  # nothing else kept. Turn it on once you have confirmed that Etsy's API terms allow this use; otherwise add a keyword
+  # export to the Library each week (see the Documentation tab).
+  etsy_market_probe: false
 
 schema:
   anthropic_api_key: password?
@@ -161,3 +165,4 @@ schema:
   etsy_auto_renew_sold: bool
   etsy_auto_record_revenue: bool
   etsy_usd_per_eur: float(0,3)
+  etsy_market_probe: bool

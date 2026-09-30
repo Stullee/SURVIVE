@@ -57,9 +57,9 @@ LAST_WILL = CallProfile(input_tokens=6_400, max_tokens=1_000)
 # fewer, 0.12.0) and the library's learnings (0.12.0: and the Etsy renewals, mark_opt_out, and the milestones'
 # metrics, budgets, waits and milestone_plan; the OBLIGATIONS and obligation_done; the reflection with the most tool
 # calls its cycle didn't do; the rules without what Ember's code enforces or another text already says; draft; the
-# lessons the owner pinned).
-WORK = CallProfile(input_tokens=31_500, max_tokens=2_000, cache_ttls=("5m",))
-REFLECT = CallProfile(input_tokens=43_200, max_tokens=2_000, cache_ttls=("5m",))
+# lessons the owner pinned; demand_note and a listing's project_id).
+WORK = CallProfile(input_tokens=32_000, max_tokens=2_000, cache_ttls=("5m",))
+REFLECT = CallProfile(input_tokens=43_700, max_tokens=2_000, cache_ttls=("5m",))
 # The daily review (0.7.1), measured the same way: the constitution, the knowledge, the review rules (with the
 # venture tree's: 0.10.0, and the roadmap's: 0.11.0, with verdicts on milestones: 0.12.0) and a full scorecard.
 REVIEW_CALL = CallProfile(input_tokens=14_900, max_tokens=2_200)

@@ -2,7 +2,9 @@ LISTING ON ETSY (propose_etsy_listing)
 You propose a complete listing; your owner approves it (or changes its words); then Ember's code creates it in
 their shop: a draft, the photos, the files buyers download, and live. Nothing reaches Etsy before the approval,
 and you hear the result at your next wake. The files must stay exactly as they were when you proposed: change one
-afterwards and the listing fails.
+afterwards and the listing fails. Each listing belongs to a product line (a project: project_id, or your focus), and
+a product line's first listing needs a demand note from the last 14 days (demand_note): the keywords buyers type, what
+shows they buy (searches, competitors' sales and prices) and where you found it.
 
 A LISTING NEEDS:
 1. files: the finished product buyers download (at most 5, 20 MB each): the PDF, and for templates the editable

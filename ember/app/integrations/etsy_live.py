@@ -32,6 +32,7 @@ from .etsy import (
     REFRESH_EARLY,
     EtsyError,
     Listing,
+    Market,
     NotSent,
     Order,
     RemoteListing,
@@ -41,6 +42,7 @@ from .etsy import (
     Unclear,
     expired,
     listing_url,
+    market,
     with_disclosure,
 )
 
@@ -443,6 +445,20 @@ class LiveShop:
             adjusted = _cents(payment.get("adjusted_fees"))
             total += adjusted if adjusted is not None else (_cents(payment.get("amount_fees")) or 0)
         return total
+
+    # --- the market probe (0.12.0) ---
+
+    def market(self, keywords: str) -> Market:
+        """Etsy's search of active listings for ``keywords``: how many match, and the price quartiles of the first
+        page by relevance. Only these aggregates leave this method (the owner's etsy_market_probe)."""
+        data = self._call(
+            "GET",
+            "/v3/application/listings/active",
+            auth=False,
+            params={"keywords": keywords, "limit": PAGE, "sort_on": "score", "sort_order": "desc"},
+        )
+        found = data if isinstance(data, dict) else {}
+        return market(found.get("count"), found.get("results"))
 
     # --- a listing's state and renewal (0.12.0) ---
 

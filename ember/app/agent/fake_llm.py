@@ -1590,11 +1590,13 @@ class FakeTransport:
             "close": "close project #" in steps,
             "etsy_find": "propose an etsy listing" in steps,
             "etsy_propose": "propose an etsy listing" in steps,
+            "demand": "propose an etsy listing" in steps,  # 0.12.0: a product line's first listing needs a note
             "brainstorm": BRAINSTORM_STEP.lower() in steps,
             "venture_save": "save what i learned to venture #" in steps,
             "milestone_close": "overdue milestone #" in steps,
             "roadmap": "lay out my roadmap" in steps,
         }
+        wanted["research"] = wanted["research"] or wanted["etsy_propose"]  # 0.12.0: a demand note cites research
         wanted["guide"] = wanted["make"] and crng.random() < 0.5
         wanted["look"] = wanted["photo"] = wanted["make"]
         only_answering = answering and not any(wanted.values())
@@ -1626,6 +1628,7 @@ class FakeTransport:
                 "look",
                 "photo",
                 "etsy_find",
+                "demand",
                 "etsy_propose",
                 "workshop",
                 "update",
@@ -1723,7 +1726,8 @@ class FakeTransport:
         if stage == "research":
             args = {"question": idea.question}
             if rng.random() < 0.2:
-                args["url"] = f"{SIMULATED_SITE}/guides/{slug(idea.title)}"
+                if "propose an etsy listing" not in conv.brief.lower():  # 0.12.0: a demand note needs a search's pages
+                    args["url"] = f"{SIMULATED_SITE}/guides/{slug(idea.title)}"
             elif rng.random() < 0.25:
                 args.update(
                     question=f"What do Etsy's search results show about this? {idea.question}", site=SEARCHED_SITE
@@ -1814,6 +1818,17 @@ class FakeTransport:
             }
         if stage == "etsy_find":
             return ("etsy_categories", {"search": "planner"}) if _succeeded(conv, "make_image") else None
+        if stage == "demand":  # 0.12.0: the demand for the product line, from this cycle's research
+            page = _research_page(conv)
+            if pid is None or page is None or not _succeeded(conv, "make_image"):
+                return None
+            return "demand_note", {
+                "project_id": pid,
+                "keywords": f"{idea.title} printable"[:100].lower(),
+                "demand": f"[simulated] Buyers search for {idea.title.lower()}; competing listings sell for a few "
+                "euros.",
+                "source": page,
+            }
         if stage == "etsy_propose":
             found = next(
                 (c for c in reversed(conv.calls) if c.name == "etsy_categories" and c.result and not c.error), None
@@ -2295,6 +2310,7 @@ _STAGE_TOOLS = {
     "venture_save": "venture_update",
     "etsy_find": "etsy_categories",
     "etsy_propose": "propose_etsy_listing",
+    "demand": "demand_note",
     "survey": "workspace_list",
     "reply": "message_owner",
     "create": "project_create",
@@ -2374,6 +2390,16 @@ _DOC_EXTRAS = (
     "- Legal check for a German owner: Impressum, GDPR and taxes on any sale.",
     "- Write the listing text in plain language, without hype.",
 )
+
+
+def _research_page(conv: _Conversation) -> str | None:
+    """The first web page a research call of this cycle found (0.12.0: a demand note's source), or None."""
+    for c in conv.calls:
+        if c.name == "research" and c.result and not c.error:
+            found = re.search(r"^- (https://\S+)$", c.result, re.MULTILINE)
+            if found:
+                return found[1]
+    return None
 
 
 def _succeeded(conv: _Conversation, tool: str, path: str | None = None) -> bool:

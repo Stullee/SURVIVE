@@ -119,6 +119,7 @@ TABLES = (
     "research_checks",
     "research_sources",
     "evidence",
+    "demand_notes",
     "emails",
     "email_actions",
     "email_suppressions",

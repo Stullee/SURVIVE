@@ -42,7 +42,7 @@ from app.integrations.etsy_connection import EtsyConnection  # noqa: E402
 from app.integrations.etsy_live import LiveShop, _Allowlist, connect  # noqa: E402
 from app.logging_setup import redact  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
-from tests.test_agent import make_agent, rows  # noqa: E402
+from tests.test_agent import ROOMY, make_agent, rows  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
 
@@ -1127,10 +1127,19 @@ def test_a_proposal_is_checked_before_it_reaches_the_owner(data_dir: Path) -> No
         ("propose_etsy_listing", {**base, "files": "shop/missing.pdf"}),
         ("propose_etsy_listing", {**base, "photos": "shop/p.pdf"}),
     ]
+    line = {"title": "Planners", "hypothesis": "Printables sell.", "next_step": "List one", "status": "active"}
     fake = FakeTransport(
-        script=[Plan(PLAN), ToolCalls(calls), ToolCalls([("propose_etsy_listing", base)]), Reply("Ok."), JOURNAL]
+        script=[
+            Plan(PLAN),
+            ToolCalls(calls),
+            # 0.12.0: a listing belongs to a product line, whose first listing needs a demand note
+            ToolCalls([("project_create", line), ("demand_note", {"project_id": 1, "keywords": "planner"})]),
+            ToolCalls([("propose_etsy_listing", base)]),
+            Reply("Ok."),
+            JOURNAL,
+        ]
     )
-    agent, _ = run(data_dir, fake, before=made)
+    agent, _ = run(data_dir, fake, before=made, settings=ROOMY.model_copy(update={"etsy_market_probe": True}))
     results = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'propose_etsy_listing' ORDER BY id")
     assert [r["status"] for r in results] == ["error", "error", "error", "ok"]
     assert "category 999 isn't an Etsy category" in results[0]["result"]
@@ -1270,6 +1279,7 @@ def test_a_0_8_shop_keeps_its_listings_through_the_0_9_migration(tmp_path: Path)
         39,
         40,
         41,
+        42,
     ]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:

@@ -260,3 +260,11 @@ configuration:
       The rate Ember's code uses for orders in EUR when it records them
       automatically, for example 1.08. 0: orders in EUR are left for you to
       record.
+  etsy_market_probe:
+    name: Etsy market probe for demand notes
+    description: >-
+      On: before a new product line's first listing, Ember's demand note reads
+      Etsy's search of active listings for its keywords and keeps only how
+      many match and their price quartiles. Turn it on only once you have
+      confirmed that Etsy's API terms allow this use; otherwise add a keyword
+      export to the Library each week.

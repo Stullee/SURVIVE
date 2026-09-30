@@ -28,6 +28,7 @@ import json
 import os
 import re
 import secrets
+import statistics
 import tempfile
 import threading
 import unicodedata
@@ -631,6 +632,59 @@ class Shop(Protocol):
         self, receipt_id: int
     ) -> int | None: ...  # the payment's processing fee in cents (None: no payment)
 
+    # The market probe (0.12.0, the owner's etsy_market_probe): aggregates of Etsy's active-listing search.
+
+    def market(self, keywords: str) -> Market: ...
+
+
+# --- the market probe (0.12.0, the owner's etsy_market_probe) ---
+
+
+@dataclass(frozen=True)
+class Market:
+    """What Etsy's search of active listings shows for some keywords: only aggregates, computed as Etsy's answer is
+    read (the owner's etsy_market_probe; no other seller's listing is kept or shown)."""
+
+    listings: int  # active listings matching the keywords (Etsy's count)
+    sampled: int  # the first ones by relevance whose prices were read (in ``currency``)
+    currency: str
+    low: float  # their prices' lower quartile, median and upper quartile (0 when none were read)
+    median: float
+    high: float
+
+    def text(self) -> str:
+        if not self.sampled:
+            return f"{self.listings:,} active listings on Etsy match (no prices read)"
+        return (
+            f"{self.listings:,} active listings on Etsy match; {self.sampled} of the first by relevance, priced in "
+            f"{self.currency}: {self.low:.2f} (lower quartile), {self.median:.2f} (median), {self.high:.2f} (upper "
+            "quartile)"
+        )
+
+
+def market(count: Any, results: Any) -> Market:
+    """The aggregates of an active-listing search: how many match, and the quartiles of the prices in the most common
+    currency among the listings read. The listings themselves go no further than this function."""
+    prices: dict[str, list[float]] = {}
+    for item in results if isinstance(results, list) else []:
+        price = item.get("price") if isinstance(item, dict) else None
+        if not isinstance(price, dict):
+            continue
+        try:
+            value = float(Decimal(int(price["amount"])) / Decimal(int(price["divisor"])))
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            continue
+        code = str(price.get("currency_code") or "").strip().upper()
+        if value > 0 and re.fullmatch(r"[A-Z]{3}", code):
+            prices.setdefault(code, []).append(value)
+    total = count if isinstance(count, int) and not isinstance(count, bool) and count >= 0 else 0
+    if not prices:
+        return Market(total, 0, "", 0.0, 0.0, 0.0)
+    currency, values = max(prices.items(), key=lambda kv: len(kv[1]))
+    values.sort()
+    low, median, high = values * 3 if len(values) == 1 else statistics.quantiles(values, n=4, method="inclusive")
+    return Market(max(total, len(values)), len(values), currency, round(low, 2), round(median, 2), round(high, 2))
+
 
 def listing_url(listing_id: int) -> str:
     return f"https://www.etsy.com/listing/{listing_id}"
@@ -805,6 +859,18 @@ class FakeShop:
         """Like Etsy Payments in Germany: 4% of the order and EUR 0.30 (its orders hold one listing each)."""
         item = self.state["listings"].get(str(receipt_id - 3_000_000_000))
         return None if item is None else round(int(item["price_cents"]) * 0.04) + 30
+
+    def market(self, keywords: str) -> Market:
+        """An invented search (0.12.0), the same for the same words: some thousands of listings, most in USD."""
+        seed = int.from_bytes(hashlib.sha256(" ".join(keywords.casefold().split()).encode()).digest()[:8], "big")
+        results = []
+        for i in range(60):
+            value = seed >> (i % 48) & 0xFFFF
+            cents = 150 + value % 1_050 + (value >> 10) % 400
+            results.append(
+                {"price": {"amount": cents, "divisor": 100, "currency_code": "EUR" if i % 5 == 0 else "USD"}}
+            )
+        return market(200 + seed % 48_000, results)
 
     def listings(self, listing_ids: list[int]) -> list[RemoteListing]:
         found = []

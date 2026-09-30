@@ -181,6 +181,10 @@ class Settings(BaseModel):
     # (audited); EUR amounts need the owner's exchange rate (USD per 1 EUR), 0 leaves them to the owner.
     etsy_auto_record_revenue: bool = False
     etsy_usd_per_eur: float = Field(default=0.0, ge=0, le=3)
+    # 0.12.0: a demand note may read Etsy's search of active listings for its keywords (how many match, their price
+    # quartiles: aggregates only). Off until the owner has confirmed that Etsy's API terms allow this use; without it,
+    # the owner's keyword export in the library (or research) is the source.
+    etsy_market_probe: bool = False
 
     @field_validator("owner_user_ids", mode="before")
     @classmethod

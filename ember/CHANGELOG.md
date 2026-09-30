@@ -159,6 +159,11 @@ Your results now reach your records: what you earn counts where it belongs.
   cycle, research is always a venture's (your focus venture unless you name another). A question you asked in the
   last 30 days that found web pages (the same words, site or page) is answered from then, free: it doesn't count
   as research for a venture.
+- Each Etsy listing belongs to a product line: propose_etsy_listing takes project_id (your focus project if you
+  leave it out). A product line's first listing needs a demand note from the last 14 days (demand_note, free): the
+  keywords buyers type, what shows they buy, with numbers, and its source (a page from your research results or
+  'library #12'). If your owner turned on Etsy's market probe, the note also shows how many active listings match
+  the keywords and their price quartiles.
 
 ## 0.11.2
 

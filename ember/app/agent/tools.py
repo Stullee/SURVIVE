@@ -44,7 +44,7 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
-from . import evidence, library, metrics, netguard, obligations, roadmap, stages, store, ventures
+from . import demand, evidence, library, metrics, netguard, obligations, roadmap, stages, store, ventures
 from .memory import CAPS, HEADING_REFUSAL, MAX_APPEND_LINES, Memory, MemoryError_, heading_line
 from .sandbox import Jail, Limits, QuotaError, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
@@ -80,8 +80,8 @@ DEPARTMENT = " (a whole department: too broad for a listing)"
 MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image"})
 GUIDES = ("documents", "spreadsheets", "listing_photos", "workshop", "etsy", "ventures")
 WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
-# Offered only with an Etsy shop.
-ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing", "propose_etsy_edit"})
+# Offered only with an Etsy shop (demand_note 0.12.0: a product line's first listing needs one).
+ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing", "propose_etsy_edit", "demand_note"})
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "mark_opt_out", "propose_email"})
 # Offered only in venture cycles (0.10.0; evidence 0.12.0: a venture's case, which grades pages any research found).
@@ -96,8 +96,9 @@ ORDINARY_TOOLS = (
     | ETSY_TOOLS
     | MAIL_TOOLS
 )
-# Model calls of their own: they need the network, and no database transaction is held meanwhile.
-CALLING_TOOLS = frozenset({"research", "workshop", "brainstorm", "draft"})
+# Model calls of their own (and, 0.12.0, the Etsy market probe of a demand note): they need the network, and no
+# database transaction is held meanwhile.
+CALLING_TOOLS = frozenset({"research", "workshop", "brainstorm", "draft", "demand_note"})
 WORKSHOP_INPUTS = 5  # files handed over to one workshop run
 WORKSHOP_INPUT_MB = 10  # their size together
 # 0.12.0: a long file written in one call of its own (draft; prompts takes these from here). A work reply holds only
@@ -789,6 +790,28 @@ SPECS: dict[str, Spec] = {
             per_cycle=4,
         ),
         Spec(
+            "demand_note",
+            "Save the demand for a product line (a project) before its first Etsy listing: propose_etsy_listing "
+            f"needs one for it from the last {demand.DAYS} days. With your owner's Etsy market probe on, Ember's code "
+            "adds Etsy's numbers for the keywords (matching listings, price quartiles); without it, give demand and "
+            "source. Free.",
+            {
+                "project_id": _i("The project."),
+                "keywords": _s("What buyers type, e.g. 'haushaltsbuch 2027 pdf'.", 100),
+                "demand": _s(
+                    "What shows buyers want it, with numbers: searches, competitors' sales, prices.",
+                    600,
+                    required=False,
+                ),
+                "source": _s(
+                    "Where: a page from your research results, or 'library #12' (your owner's document).",
+                    300,
+                    required=False,
+                ),
+            },
+            per_cycle=3,
+        ),
+        Spec(
             "propose_etsy_listing",
             "Ask your owner to approve a listing in their Etsy shop. After approval Ember's code creates it with "
             "its photos and the files buyers download, and publishes it (Etsy charges USD 0.20 a listing). A line "
@@ -817,6 +840,7 @@ SPECS: dict[str, Spec] = {
                     600,
                 ),
                 "reason": _s("Why this listing now, and what you expect from it.", 300),
+                "project_id": _i("Its project (product line); default: your focus project.", required=False),
             },
             per_cycle=1,
         ),
@@ -1051,6 +1075,7 @@ class ToolContext:
     library: bool = False  # the owner's library holds documents (0.12.0): its tools
     brainstorm: BrainstormFn | None = None
     draft: DraftFn | None = None  # 0.12.0
+    market: Callable[[str], etsy.Market] | None = None  # 0.12.0: the owner's Etsy market probe (etsy_market_probe)
     nonce: str = field(default_factory=lambda: secrets.token_hex(3))
 
     def now(self) -> str:
@@ -2800,11 +2825,23 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
     except etsy.EtsyError as exc:
         raise ToolError(str(exc)) from None
     reason = args["reason"].strip()
+    # 0.12.0: a listing belongs to a product line (a project), and a product line's first listing needs a demand note.
+    project_id = args.get("project_id", ctx.state.focus_project_id)
+    if project_id is None:
+        raise ToolError("name its project (project_id): each listing belongs to a product line")
+    if store.project(conn, ctx.scope, project_id) is None:
+        raise ToolError(f"there is no project #{project_id}")
+    if not demand.listed(conn, project_id) and demand.recent(conn, project_id, ctx.now()) is None:
+        raise ToolError(
+            f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "
+            f"{demand.DAYS} days first (demand_note: the keywords buyers search and what shows they buy)"
+        )
     made = _new_request(
         ctx,
         conn,
         etsy.payload(listing),
         listing.to_action(),
+        project_id=project_id,
         type="sell",
         title=_cut(f"Etsy listing: {listing.title}", 120),
         description=reason,
@@ -2820,6 +2857,41 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
         f"{shop.daily_limit} a day) and you hear the result."
     )
     return Outcome(True, text, f"#{made} Etsy listing: {_cut(listing.title, 60)}")
+
+
+def _demand_note(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
+    """0.12.0: a demand note for a project; with the owner's market probe on, Etsy's numbers for its keywords first
+    (a network call: no transaction is held meanwhile)."""
+    _shop(ctx)
+    project_id = args["project_id"]
+    keywords = " ".join(args["keywords"].split())
+    said = " ".join(str(args.get("demand") or "").split()) or None
+    source = str(args.get("source") or "").strip() or None
+    with ctx.db.connection() as conn:
+        if store.project(conn, ctx.scope, project_id) is None:
+            raise ToolError(f"there is no project #{project_id}")
+        problem = demand.source_problem(conn, ctx.scope, source) if source is not None else ""
+    if problem:
+        raise ToolError(problem)
+    if ctx.market is None and (said is None or source is None):
+        raise ToolError("give demand and its source: your owner's Etsy market probe is off")
+    found = None
+    if ctx.market is not None:
+        try:
+            found = ctx.market(keywords)
+        except etsy.EtsyError as exc:
+            if said is None or source is None:
+                raise ToolError(f"Etsy's market probe failed ({exc}): give demand and its source instead") from None
+    with ctx.db.transaction() as conn:
+        number = demand.add(conn, ctx.scope, ctx.cycle_id, project_id, keywords, said, source, found, ctx.now())
+    probe = f" Etsy's market probe for '{keywords}': {found.text()}." if found is not None else ""
+    return Outcome(
+        True,
+        f"Saved demand note #{number} for project #{project_id}: its first listing may be proposed within "
+        f"{demand.DAYS} days.{probe}",
+        f"demand note #{number} for project #{project_id}",
+        project_id=project_id,
+    )
 
 
 def _etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -3008,6 +3080,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "write_journal": _write_journal,
     "research": _research,
     "evidence": _evidence,
+    "demand_note": _demand_note,
     "draft": _draft,
     "knowledge_search": _knowledge_search,
     "library_read": _library_read,

@@ -71,6 +71,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Renew listings that sell | on | Once a listing has sold, Ember turns on Etsy's automatic renewal for it (USD 0.20 every four months), once per listing (see [How a listing is made](#how-a-listing-is-made)). |
 | Record Etsy revenue automatically | off | At each Etsy sync, Ember's code records the revenue of paid orders with Ember's listings placed from the day you turn it on, Etsy's fees on them and their refunds in the ledger, instead of you (see [What Ember sees](#what-ember-sees)). |
 | Exchange rate for Etsy revenue | 0 | USD per 1 EUR for orders in EUR recorded automatically (0.5 to 3; 0: orders in EUR stay yours to record). |
+| Etsy market probe for demand notes | off | A demand note also reads Etsy's search of active listings for its keywords, keeping only how many match and their price quartiles. Turn it on only once you have confirmed that Etsy's API terms allow this use (see [How a listing is made](#how-a-listing-is-made)). |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -846,6 +847,20 @@ can also remove the app's access at Etsy).
   it says so and doesn't try again.
 - At most **Etsy listings per day** are created a day; approved listings beyond
   that wait for the next day.
+- Every listing belongs to a product line: a project (the one the agent names,
+  or the project its cycle focuses on), which is how a sale is attributed. A
+  product line's **first** listing needs a **demand note** from the last 14
+  days: the keywords buyers type, what shows they buy (searches, competitors'
+  sales and prices) and its source, which must be a page the agent's research
+  returned or a document in your Library. No more generic templates without
+  one.
+- **Etsy market probe** (off by default): with it on, a demand note also reads
+  Etsy's search of active listings for its keywords and keeps only two things:
+  how many listings match, and the price quartiles of the first ones (never
+  another seller's listing). Turn it on only once you have confirmed that
+  Etsy's API terms allow this use. Without it, add a keyword export (from a
+  keyword tool you use) to the **Library** each week: the agent can cite it as
+  the source of its demand notes.
 - A listing runs for four months. Ember creates it without Etsy's automatic
   renewal; once a listing has sold, Ember turns automatic renewal on for it
   (Etsy charges its listing fee, USD 0.20, at each renewal), so the listings
