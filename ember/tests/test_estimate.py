@@ -34,19 +34,20 @@ def test_cache_writes_are_priced_at_the_highest_ttl() -> None:
 
 def test_server_tool_loops_without_caching() -> None:
     plan = plan_request(base(tools=[search(2)]), input_tokens=1_000)
-    # Up to 10 samplings; each later one re-reads the prompt, every result (16,000 tokens each since 0.12.0) and the
-    # output.
+    # Up to 10 samplings, each writing up to max_tokens (0.14.0: it limits each sampling, not the loop); sampling k
+    # re-reads the prompt, every result (16,000 tokens each since 0.12.0) and what the k-1 before it wrote.
     assert SEARCH_RESULT_ALLOWANCE_TOKENS == 16_000
-    later = 9 * (1_000 + 2 * 16_000 + 1_000)
-    assert worst_case_micros(plan, PRICE, 10) == (1_000 + later) * 2 + 1_000 * 10 + 2 * 10_000
+    later = 9 * (1_000 + 2 * 16_000) + 1_000 * (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9)
+    assert worst_case_micros(plan, PRICE, 10) == (1_000 + later) * 2 + 10 * 1_000 * 10 + 2 * 10_000
 
 
 def test_server_tool_loops_with_caching() -> None:
     body = base(tools=[search(1)], system=[{"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}}])
     plan = plan_request(body, input_tokens=1_000)
-    grown = 16_000 + 1_000
-    tokens = 1_000 * 2.5 + 9 * (1_000 + grown) * 0.2 + grown * 2.5 + 1_000 * (2.5 - 0.2)
-    assert worst_case_micros(plan, PRICE, 10) == round(tokens) + 1_000 * 10 + 10_000
+    reread = 9 * (1_000 + 16_000) + 1_000 * 45
+    grown = 16_000 + 10 * 1_000  # every result and every sampling's output, written once
+    tokens = 1_000 * 2.5 + reread * 0.2 + grown * 2.5 + 1_000 * (2.5 - 0.2)
+    assert worst_case_micros(plan, PRICE, 10) == round(tokens) + 10 * 1_000 * 10 + 10_000
 
 
 def test_one_search_is_priced_at_the_api_loop_limit() -> None:

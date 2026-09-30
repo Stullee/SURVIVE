@@ -610,6 +610,8 @@ def _cycle(conn: Any, c: Any, full: bool = True) -> str:
                     "cache_write_5m_tokens",
                     "cache_read_tokens",
                     "web_search_requests",
+                    "iterations",  # 0.14.0: the samplings of a server tool's loop
+                    "overrun",  # 0.14.0: it cost more than its worst case (a workshop call's estimate is what it held)
                     "stop_reason",
                     "guard_reason",
                     "error",

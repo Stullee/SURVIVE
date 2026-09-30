@@ -18,8 +18,9 @@ WHAT YOU GET BACK
   change: that costs less and gives the same quality. Look at pictures with look before you use them.
 
 COSTS
-A run costs cents to dimes (the code the model writes, its tries, and sandbox time). It counts toward your daily
-cap, not your cycle cap, and each run has its own cap; your owner may allow a few runs a day.
+A run costs cents to dollars (the code the model writes, its tries, what it looks at, and sandbox time). It counts
+toward your daily cap, not your cycle cap, and each run has its own cap; your owner may allow a few runs a day. A run
+that costs more than its estimate closes the workshop for the rest of the cycle.
 
 GROWING
 The workshop is where you grow new abilities. When a script proves itself (you run it again, or its files go into

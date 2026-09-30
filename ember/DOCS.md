@@ -61,7 +61,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Emails per day | 3 | The most emails Ember sends in one day (0 to 20). |
 | Workshop | on | Lets the agent have code written and run in Anthropic's sandbox. See [The workshop](#the-workshop). |
 | Workshop model | empty | The model that writes the workshop's code. Empty: the worker model. |
-| Workshop cap per run | 0.50 USD | The most one workshop run may cost. Runs count toward the daily cap, not the cycle cap. |
+| Workshop cap per run | 0.75 USD | The most one workshop run may be priced at, and what Ember keeps of the daily cap for each run (more after costlier runs). Runs count toward the daily cap, not the cycle cap. |
 | Workshop runs per day | 6 | The most workshop runs in one day (0 switches the workshop off). |
 | Sandbox price | 0.05 USD per hour | What Anthropic charges per hour of sandbox time beyond its free hours. |
 | Etsy shop | off | Lets the agent propose listings for your Etsy shop, which Ember creates after you approve them. See [Etsy](#etsy). |
@@ -363,12 +363,20 @@ Anthropic's storage when the run is over.
 **What it costs.** A run is one metered call (up to three if a long run
 pauses): tokens at the workshop model's prices, plus sandbox time. Anthropic's
 first 1,550 sandbox hours a month are free, then $0.05 an hour; Ember books at
-least 5 minutes per call anyway, the most it could cost. A run typically costs
-$0.02–0.15. Before each call Ember reserves the worst case (about $0.35 with
-claude-sonnet-5), so a run needs that much room. Runs have their own **cap per
-run**, count toward the daily cap and the balance but not the cycle cap (one
-run can cost more than a whole cycle may), and **runs per day** limits how
-often the agent uses it. Switch it off with **Workshop** or 0 runs per day.
+least 5 minutes per call anyway, the most it could cost. Live, runs cost
+$0.02–0.35, and one cost $1.84. Ember prices a call as up to 10 rounds of the
+model, each writing up to 3,000 tokens and reading what the rounds before it
+added (about $0.60 with claude-sonnet-5), and refuses a run priced above what
+is left of its **cap per run**. That price is not a ceiling: nothing limits
+what the run's code prints or looks at, and that one run read ten times more
+than the price allows for. So each call keeps back the cap per run, or 1.5
+times what the costliest recent runs cost (the last 14 days) if that is more,
+under the daily cap and the balance, and a run waits until that fits. A call
+can still cost more than all of this; Ember then books what it cost, makes no
+more workshop calls in that cycle, and raises the workshop's estimates. Runs
+count toward the daily cap and the balance but not the cycle cap (one run can
+cost more than a whole cycle may), and **runs per day** limits how often the
+agent uses it. Switch it off with **Workshop** or 0 runs per day.
 
 **How Ember grows.** A script proves itself when the agent runs it again, or
 when its files go into a request you approved. The planner then reminds the
@@ -1531,18 +1539,28 @@ Until there are 5 such calls, a reply counts at its full length limit and a
 research call at its worst case. So a cycle fits many more
 work steps into its cap than it did before 0.12.0, and it can end a little over
 its cap (by at most one call's worst case less its expected cost); the daily
-cap and the balance are never exceeded. A cycle keeps enough of its cap for its
-reflection (at least 1.5 times the 95th percentile of the recent reflections),
-and a reflection may go over the cycle cap by what a cache miss would add.
+cap and the balance hold up to each call's worst case. A cycle keeps enough of
+its cap for its reflection (at least 1.5 times the 95th percentile of the
+recent reflections), and a reflection may go over the cycle cap by what a cache
+miss would add, and by what calls of its cycle cost beyond their worst case.
 Workshop runs have their own cap per run instead of the cycle cap, and the
 daily review counts only toward the daily cap. A small reserve is always kept
-so the agent can write its last will. If a call ever costs more than its worst
-case, the cycle stops and Ember
-scales up the estimates for that kind of call (planning, a work step, the
-reflection, research, ...) on that model, so it can't happen again; the other
-kinds keep theirs. A scaled-up estimate comes down by 0.05 after every 25
-calls in a row that didn't need it. The dashboard lists them with **Reset
-estimates**, for when you know why it happened (a price you corrected, say).
+so the agent can write its last will. The worst case of a call with Anthropic's
+server tools (the workshop, research) is priced under assumptions the request
+can't enforce (how much a code run prints, how long a search result is), so
+for those the daily cap and the balance hold only up to what Ember keeps back
+for them (see [The workshop](#the-workshop)). If a call ever costs more than its
+worst case, Ember scales up the estimates for that kind of call (planning, a
+work step, the reflection, research, ...) on that model, up to 8 times; the
+other kinds keep theirs. That kind of call makes no more calls in the cycle,
+and the cycle goes on. It stops only when the call counts toward the cycle cap
+and cost more than 10% or $0.02 over its worst case; its reflection still
+runs, and the next wake is no sooner than the agent chose. A scaled-up estimate
+comes down by half of what it is above 1 after 3 calls of its kind in a row
+that didn't need it, and after every 7 days without a change. The dashboard
+lists them with **Reset estimates**, for when you know why it happened (a price
+you corrected, say); it also makes the workshop forget what the runs before it
+cost.
 A call whose bill is uncertain (the API failed before any reply) is charged to
 the balance at its worst case until you correct it, but counts toward the caps
 only with what it is known to cost.

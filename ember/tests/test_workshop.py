@@ -383,11 +383,17 @@ class PausingMeter:
     def __init__(self) -> None:
         self.calls = 0
 
-    def quote(self, request: dict[str, Any], purpose: str = "work") -> int:
+    def quote(self, request: dict[str, Any], purpose: str = "work", *, scaled: bool = True) -> int:
+        return 100_000
+
+    def reservation(self, request: dict[str, Any], purpose: str = "work") -> int:
         return 100_000
 
     def headroom(self, cycle_id: int, purpose: str, keep: int = 0) -> int:
         return 10**9
+
+    def rooms(self, cycle_id: int, purpose: str, keep: int = 0) -> tuple[int, int]:
+        return 10**9, 10**9
 
     def call(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> Any:
         self.calls += 1
@@ -494,9 +500,9 @@ def test_the_owner_hears_when_the_workshop_cap_is_below_one_run(data_dir: Path) 
     opus = ROOMY.model_copy(update={"workshop_model": "claude-opus-5-5"})
     economy = make_economy(data_dir, opus)
     assert any(
-        "workshop cap per run ($0.50) is below one workshop run with claude-opus-5-5" in w for w in economy.warnings()
+        "workshop cap per run ($0.75) is below one workshop run with claude-opus-5-5" in w for w in economy.warnings()
     )
-    economy.settings = opus.model_copy(update={"workshop_run_cap_usd": 1.0})
+    economy.settings = opus.model_copy(update={"workshop_run_cap_usd": 2.5})  # 0.14.0: output priced per sampling
     assert not any("workshop" in w for w in economy.warnings())
     economy.settings = ROOMY
     assert not any("workshop" in w for w in economy.warnings())  # the worker model's run fits the default cap

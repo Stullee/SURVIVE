@@ -7,18 +7,24 @@ stored so every later estimate includes them:
   on token prices. Ember never asks for it, but when a response reports it,
   estimates and costs use the multiplier from then on.
 * If a call ever costs more than its worst-case estimate, the estimates for
-  that model and purpose are scaled up (the safety factor), so the same mistake
-  can't repeat. The factor is kept per mode (an overrun of the fake model in a
+  that model and purpose are scaled up (the safety factor), so a call like it
+  is priced at what it cost, with a margin. The factor is kept per mode (an overrun of the fake model in a
   dry run says nothing about the real API) and, since 0.12.0, per purpose: one
   research call's overrun raised every estimate of its model, planning
-  included, until scheduled wake-ups stopped. A factor comes down by 0.05 after
-  every 25 calls in a row that cost no more than the unscaled estimate, and
-  the owner can reset them all.
+  included, until scheduled wake-ups stopped. The owner can reset them all.
+
+0.14.0: a factor covers what was missed up to 8 times (4 couldn't cover a
+workshop run 5.3 times its estimate), and it comes down again: by half of what
+it is above 1 after 3 calls of its purpose in a row that cost no more than the
+unscaled estimate, and after every 7 days without a change. Before, it came
+down by 0.05 after 25 such calls: about 1,500 workshop runs from 4 back to 1,
+and never while the raised estimate refused every run.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import date
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 
 from ..config import Settings
@@ -26,13 +32,17 @@ from ..db import Database
 from .estimate import Plan, worst_case_micros
 
 US_INFERENCE_MULTIPLIER = Decimal("1.1")
-MAX_SAFETY_FACTOR = Decimal(4)
-SAFETY_DECAY = Decimal("0.05")  # taken off a raised factor ...
-SAFETY_DECAY_AFTER = 25  # ... after this many accurate calls in a row
+MAX_SAFETY_FACTOR = Decimal(8)  # 4 until 0.14.0
+SAFETY_DECAY = Decimal("0.5")  # 0.14.0: the share of a raised factor's excess over 1 taken off ...
+SAFETY_DECAY_AFTER = 3  # ... after this many accurate calls of its purpose in a row (25 until 0.14.0) ...
+SAFETY_FADE_DAYS = 7  # ... and after this many days without a change (0.14.0)
+SAFETY_FLOOR = Decimal("0.05")  # 0.14.0: a factor less than this above 1 is back to 1
 _GEO_KEY = "economy.inference_geo_us"
 _SAFETY_PREFIX = "economy.safety."  # until 0.12.0: one factor per mode and model (no longer read)
 _FACTOR_PREFIX = "economy.factor."  # 0.12.0: economy.factor.<mode>.<purpose>.<model>
 _ACCURATE_PREFIX = "economy.factor_ok."  # the accurate calls in a row since the factor last changed
+_SINCE_PREFIX = "economy.factor_on."  # 0.14.0: the day the factor last changed
+_RESET_PREFIX = "economy.reset_after."  # 0.14.0: the last model call before the owner's reset, per mode
 
 
 @dataclass(frozen=True)
@@ -67,7 +77,8 @@ REFLECT = CallProfile(input_tokens=47_600, max_tokens=2_000, cache_ttls=("5m",))
 REVIEW_CALL = CallProfile(input_tokens=14_900, max_tokens=2_200)
 # The biggest first call of a workshop run (0.7.0), measured the same way: its rules, a task at its length limit and
 # the most files handed over. It also has the code execution tool, priced with every code run and container time.
-WORKSHOP_RUN = CallProfile(input_tokens=5_100, max_tokens=8_000, cache_ttls=("5m",))
+# 0.14.0: 3,000 tokens of output per sampling (the API applies max_tokens to each), and its rules ask for short scripts.
+WORKSHOP_RUN = CallProfile(input_tokens=5_200, max_tokens=3_000, cache_ttls=("5m",))
 
 # Models that always think (Anthropic's adaptive thinking can't be switched off for them, e.g. Claude Opus 5.5):
 # their requests get adaptive thinking and this much more room for output, so the thinking can't crowd out the
@@ -113,27 +124,53 @@ def _accurate_key(model: str, mode: str, purpose: str) -> str:
     return f"{_ACCURATE_PREFIX}{mode}.{purpose}.{model}"
 
 
+def _since_key(model: str, mode: str, purpose: str) -> str:
+    return f"{_SINCE_PREFIX}{mode}.{purpose}.{model}"
+
+
 def safety_factor(db: Database, model: str, mode: str = "live", purpose: str = "work") -> Decimal:
     """How much the worst-case estimates of ``model``'s ``purpose`` calls are scaled up (1: not at all)."""
     value = _decimal(db.get_meta(_safety_key(model, mode, purpose)), Decimal(1))
     return min(MAX_SAFETY_FACTOR, max(Decimal(1), value))
 
 
+def _set_factor(db: Database, model: str, mode: str, purpose: str, factor: Decimal, today: date | None) -> None:
+    db.set_meta(_safety_key(model, mode, purpose), str(factor))
+    db.set_meta(_accurate_key(model, mode, purpose), "0")
+    # its days without a change start today (not given: from the next fade_safety_factors)
+    db.set_meta(_since_key(model, mode, purpose), today.isoformat() if today is not None else "")
+
+
+def _eased(factor: Decimal) -> Decimal:
+    """``factor`` less SAFETY_DECAY of its excess over 1 (0.14.0); back to 1 once that excess is below SAFETY_FLOOR."""
+    lowered = (1 + (factor - 1) * (1 - SAFETY_DECAY)).quantize(Decimal("0.01"), rounding=ROUND_CEILING)
+    return Decimal(1) if lowered - 1 < SAFETY_FLOOR else lowered
+
+
 def raise_safety_factor(
-    db: Database, model: str, actual: int, estimate: int, mode: str = "live", purpose: str = "work"
+    db: Database,
+    model: str,
+    actual: int,
+    estimate: int,
+    mode: str = "live",
+    purpose: str = "work",
+    today: date | None = None,
 ) -> Decimal:
-    """After a call cost more than estimated, scale that model's estimates for that purpose up (10% margin)."""
+    """After a call cost more than estimated, scale that model's estimates for that purpose up (10% margin), at most
+    MAX_SAFETY_FACTOR times; ``today`` starts its days without a change (0.14.0)."""
     current = safety_factor(db, model, mode, purpose)
     needed = (Decimal(actual) / Decimal(max(estimate, 1)) * current * Decimal("1.1")).quantize(Decimal("0.01"))
     factor = min(MAX_SAFETY_FACTOR, max(current, needed))
-    db.set_meta(_safety_key(model, mode, purpose), str(factor))
-    db.set_meta(_accurate_key(model, mode, purpose), "0")
+    _set_factor(db, model, mode, purpose, factor, today)
     return factor
 
 
-def note_accurate_call(db: Database, model: str, mode: str = "live", purpose: str = "work") -> Decimal | None:
+def note_accurate_call(
+    db: Database, model: str, mode: str = "live", purpose: str = "work", today: date | None = None
+) -> Decimal | None:
     """A call that cost no more than its unscaled estimate (0.12.0): after SAFETY_DECAY_AFTER of them in a row, a
-    raised factor comes down by SAFETY_DECAY, never below 1. Returns the lowered factor, or None."""
+    raised factor comes down by SAFETY_DECAY of its excess (0.14.0), never below 1. Returns the lowered factor, or
+    None."""
     current = safety_factor(db, model, mode, purpose)
     if current <= 1:
         return None
@@ -142,10 +179,29 @@ def note_accurate_call(db: Database, model: str, mode: str = "live", purpose: st
     if count < SAFETY_DECAY_AFTER:
         db.set_meta(key, str(count))
         return None
-    lowered = max(Decimal(1), current - SAFETY_DECAY)
-    db.set_meta(_safety_key(model, mode, purpose), str(lowered))
-    db.set_meta(key, "0")
+    lowered = _eased(current)
+    _set_factor(db, model, mode, purpose, lowered, today)
     return lowered
+
+
+def fade_safety_factors(db: Database, mode: str, today: date) -> list[tuple[str, str, Decimal]]:
+    """0.14.0: every raised factor in ``mode`` unchanged for SAFETY_FADE_DAYS comes down as after accurate calls: a
+    factor that refuses every call of its purpose can't learn from calls, so without this it stayed until the owner
+    reset it. Returns (purpose, model, lowered factor) of those that came down. A factor from before 0.14.0 counts
+    its days from the first time this runs."""
+    faded = []
+    for purpose, model, factor in raised_safety_factors(db, mode):
+        key = _since_key(model, mode, purpose)
+        try:
+            since = date.fromisoformat(db.get_meta(key) or "")
+        except ValueError:
+            db.set_meta(key, today.isoformat())
+            continue
+        if (today - since).days >= SAFETY_FADE_DAYS:
+            lowered = _eased(factor)
+            _set_factor(db, model, mode, purpose, lowered, today)
+            faded.append((purpose, model, lowered))
+    return faded
 
 
 def raised_safety_factors(db: Database, mode: str) -> list[tuple[str, str, Decimal]]:
@@ -163,14 +219,22 @@ def raised_safety_factors(db: Database, mode: str) -> list[tuple[str, str, Decim
 
 
 def reset_safety_factors(db: Database, mode: str) -> int:
-    """The owner's reset (0.12.0): every estimate in ``mode`` unscaled again, the factors from before 0.12.0 included.
-    Returns how many raised factors there were."""
+    """The owner's reset (0.12.0): every estimate in ``mode`` unscaled again, the factors from before 0.12.0 included,
+    and (0.14.0) the workshop's reservation forgets the runs before it (``reset_after``). Returns how many raised
+    factors there were."""
     raised = len(raised_safety_factors(db, mode))
     with db.transaction() as conn:
-        for prefix in (_FACTOR_PREFIX, _ACCURATE_PREFIX, _SAFETY_PREFIX):
+        for prefix in (_FACTOR_PREFIX, _ACCURATE_PREFIX, _SAFETY_PREFIX, _SINCE_PREFIX):
             start = f"{prefix}{mode}."
             conn.execute("DELETE FROM meta WHERE substr(key, 1, ?) = ?", (len(start), start))
+        last = conn.execute("SELECT COALESCE(MAX(id), 0) FROM llm_calls").fetchone()[0]
+    db.set_meta(f"{_RESET_PREFIX}{mode}", str(last))
     return raised
+
+
+def reset_after(db: Database, mode: str) -> int:
+    """0.14.0: the last model call before the owner's latest reset of the estimates in ``mode`` (0 if never)."""
+    return int(_decimal(db.get_meta(f"{_RESET_PREFIX}{mode}"), Decimal(0)))
 
 
 def profile_cost(
@@ -182,8 +246,10 @@ def profile_cost(
     *,
     purpose: str = "work",
     code_execution: bool = False,
+    scaled: bool = True,
 ) -> int | None:
-    """Worst-case micros of one ``profile`` call on ``model`` for ``purpose``; None if the model has no price."""
+    """Worst-case micros of one ``profile`` call on ``model`` for ``purpose`` (``scaled``: at its safety factor); None
+    if the model has no price."""
     price = settings.price_for(model)
     if price is None:
         return None
@@ -197,7 +263,7 @@ def profile_cost(
     estimate = worst_case_micros(
         plan, price, settings.web_search_usd_per_1000, geo_multiplier(db), settings.code_execution_usd_per_hour
     )
-    factor = safety_factor(db, model, mode, purpose)
+    factor = safety_factor(db, model, mode, purpose) if scaled else Decimal(1)
     return int((Decimal(estimate) * factor).to_integral_value(rounding=ROUND_CEILING))
 
 
@@ -222,11 +288,12 @@ def working_cycle_cost(settings: Settings, db: Database, mode: str = "live") -> 
     return None if None in costs else sum(c for c in costs if c is not None)
 
 
-def workshop_run_cost(settings: Settings, db: Database, mode: str = "live") -> int | None:
-    """What the first call of a workshop run can cost at most, on the workshop's model (the worker's if none is set)."""
+def workshop_run_cost(settings: Settings, db: Database, mode: str = "live", scaled: bool = True) -> int | None:
+    """What the first call of a workshop run can cost at most, on the workshop's model (the worker's if none is set);
+    ``scaled=False``: as the request is priced, what its cap per run is checked against (0.14.0)."""
     model = settings.workshop_model or settings.worker_model
     run = with_room(WORKSHOP_RUN, model)
-    return profile_cost(settings, db, model, run, mode, purpose="workshop", code_execution=True)
+    return profile_cost(settings, db, model, run, mode, purpose="workshop", code_execution=True, scaled=scaled)
 
 
 def last_will_reserve(settings: Settings, db: Database, mode: str = "live") -> int | None:

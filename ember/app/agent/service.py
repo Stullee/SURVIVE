@@ -609,6 +609,20 @@ class Agent:
                 return moment, int(row["id"])
         return None
 
+    def _chosen_after_overrun(self, end: CycleEnd) -> int:
+        """0.14.0: the sleep the agent chose for a cycle that a call's overrun stopped or cut short (the budget guard
+        stopped it, or refused further calls of that kind); 0 if none. Its money was spent already: backing off
+        sooner than it chose (live, 30 minutes instead of 420) only brought the next paid cycle sooner."""
+        if end.status not in ("stopped", "refused") or not end.sleep_minutes or end.cycle_id is None:
+            return 0
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM llm_calls WHERE cycle_id = ? AND overrun = 1 LIMIT 1", (end.cycle_id,)
+            ).fetchone()
+        if row is None:
+            return 0
+        return max(self.settings.min_sleep_minutes, min(self.settings.max_sleep_minutes, end.sleep_minutes))
+
     def _fallback_wake(self) -> None:
         """The next wake when working it out failed (0.12.0): the default interval from now, never the last one."""
         minutes = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes)
@@ -682,6 +696,10 @@ class Agent:
             self.db.set_meta(self._key("failures"), str(failures))
             minutes = min(self.settings.max_sleep_minutes, self.settings.min_sleep_minutes * 2 ** (failures - 1))
             reason = f"after a {end.status} cycle, backing off"
+            chosen = self._chosen_after_overrun(end)
+            if chosen > minutes:
+                minutes = chosen
+                reason = f"{self.settings.agent_name} chose {chosen} min (a call cost more than its worst case)"
         self._set_time("next_wake_at", now + timedelta(minutes=minutes))
         self.db.set_meta(self._key("next_wake_reason"), reason)
 

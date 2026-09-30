@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -239,7 +240,7 @@ def test_an_overrun_stops_the_cycle_and_raises_the_safety_factor(data_dir: Path)
     cycle = model.open_cycle("test")
     result = model.call(cycle, "work", request(max_tokens=1_000))
     assert result.overrun and result.cost_micros == 52_000
-    assert safety_factor(economy.db, "claude-sonnet-5", "dry_run") == 4  # 52,000 / 12,000 x 1.1, capped at 4
+    assert safety_factor(economy.db, "claude-sonnet-5", "dry_run") == Decimal("4.77")  # 52,000 / 12,000 x 1.1
     with pytest.raises(CallRefused, match="stopped"):
         model.call(cycle, "work", request())
     events = economy.db.recent_events(limit=10)

@@ -4,6 +4,7 @@ scheduled wake-ups stopped."""
 
 from __future__ import annotations
 
+import math
 from decimal import Decimal
 from pathlib import Path
 
@@ -25,12 +26,14 @@ def test_an_overrun_raises_only_the_estimates_of_its_purpose(data_dir: Path) -> 
     working = working_cycle_cost(economy.settings, economy.db, "dry_run")
     model, _ = metered(economy, ScriptedTransport(outcomes=[Completed(message(1_000, 5_000))]))
     assert model.call(model.open_cycle("test"), "research", request(max_tokens=1_000)).overrun
-    assert safety_factor(economy.db, MODEL, "dry_run", "research") == 4  # 52,000 / 12,000 x 1.1, capped at 4
+    assert safety_factor(economy.db, MODEL, "dry_run", "research") == Decimal("4.77")  # 52,000 / 12,000 x 1.1
     assert [safety_factor(economy.db, MODEL, "dry_run", p) for p in ("plan", "work", "reflect")] == [1, 1, 1]
     assert working_cycle_cost(economy.settings, economy.db, "dry_run") == working  # the wake-ups go on
-    assert model.quote(request(max_tokens=1_000), "research") == 4 * model.quote(request(max_tokens=1_000))
+    assert model.quote(request(max_tokens=1_000), "research") == math.ceil(
+        4.77 * model.quote(request(max_tokens=1_000))
+    )
     events = [e["message"] for e in economy.db.recent_events(limit=10)]
-    assert any("estimates for research calls on claude-sonnet-5 are now scaled by 4" in m for m in events)
+    assert any("estimates for research calls on claude-sonnet-5 are now scaled by 4.77" in m for m in events)
 
 
 def test_a_raised_factor_comes_down_after_calls_that_did_not_need_it(data_dir: Path) -> None:
@@ -38,11 +41,12 @@ def test_a_raised_factor_comes_down_after_calls_that_did_not_need_it(data_dir: P
     assert pricing.raise_safety_factor(economy_db, MODEL, 13_200, 12_000, "live", "work") == Decimal("1.21")
     for _ in range(SAFETY_DECAY_AFTER - 1):
         assert pricing.note_accurate_call(economy_db, MODEL, "live", "work") is None
-    assert pricing.note_accurate_call(economy_db, MODEL, "live", "work") == Decimal("1.16")
+    # 0.14.0: half of the excess comes off (after 3 calls; 0.05 after 25 before)
+    assert pricing.note_accurate_call(economy_db, MODEL, "live", "work") == Decimal("1.11")
     pricing.raise_safety_factor(economy_db, MODEL, 12_000, 12_000, "live", "work")  # an overrun starts the count over
     for _ in range(SAFETY_DECAY_AFTER - 1):
         assert pricing.note_accurate_call(economy_db, MODEL, "live", "work") is None
-    assert safety_factor(economy_db, MODEL, "live", "work") == Decimal("1.28")  # 12,000 / 12,000 x 1.16 x 1.1
+    assert safety_factor(economy_db, MODEL, "live", "work") == Decimal("1.22")  # 12,000 / 12,000 x 1.11 x 1.1
     economy_db.set_meta("economy.factor.live.work.claude-sonnet-5", "1.03")
     for _ in range(SAFETY_DECAY_AFTER):
         pricing.note_accurate_call(economy_db, MODEL, "live", "work")
@@ -59,9 +63,9 @@ def test_accurate_calls_bring_a_factor_down_in_the_meter(data_dir: Path) -> None
     for _ in range(SAFETY_DECAY_AFTER):
         result = model.call(cycle, "work", request(max_tokens=1_000))
         assert result.cost_micros == 4_000 and not result.overrun  # well within the unscaled 12,000
-    assert safety_factor(economy.db, MODEL, "dry_run", "work") == Decimal("1.16")
+    assert safety_factor(economy.db, MODEL, "dry_run", "work") == Decimal("1.11")
     events = [e["message"] for e in economy.db.recent_events(limit=5)]
-    assert any("Estimates for work calls on claude-sonnet-5 are now scaled by 1.16" in m for m in events)
+    assert any("Estimates for work calls on claude-sonnet-5 are now scaled by 1.11" in m for m in events)
 
 
 def test_the_owner_resets_every_estimate(data_dir: Path) -> None:

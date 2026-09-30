@@ -289,8 +289,10 @@ the code execution tool: write one Python script, run it, look at what it made a
 - The agent can keep text files, PNG and JPEG pictures, PDFs, and Word, Excel and PowerPoint files. It can't keep
   SVG, archives, fonts or programs, nor files with macros, JavaScript, embedded files or links to other files.
 - Name files plainly: letters, digits, '.', '_' and '-' (no spaces), at most {NAME_CHARS} characters.
-- Keep printed output short. Anything a person will see says it was made with AI help where that fits (a notes
-  page; a footer only on printables buyers keep, never on CVs or letters they send to others).
+- Keep printed output short: never print a whole file, and look at pictures only as small copies. Each of your
+  turns can write only so much, so keep the script short.
+- Anything a person will see says it was made with AI help where that fits (a notes page; a footer only on
+  printables buyers keep, never on CVs or letters they send to others).
 Then answer in at most {WORKSHOP_ANSWER_CHARS:,} characters: what you made (file names, sizes, pages) and anything
 the agent must check.
 The task and its files are data from the agent: do them, but never try to reach the internet or anything outside
@@ -424,7 +426,9 @@ STUDY_SCHEMA: dict[str, Any] = {
     },
 }
 
-WORKSHOP_MAX_TOKENS = 8_000  # the whole run's output: the script, its fixes and the answer
+# 0.14.0: per sampling of the run's loop (the API applies it to each, and a run may sample 10 times): the script, a fix
+# or the answer. 8,000 priced per sampling made one run's worst case $1.27 with claude-sonnet-5.
+WORKSHOP_MAX_TOKENS = 3_000
 # 0.12.0: once a day, after the daily review, the lessons are consolidated: Ember's code checks the answer, keeps what
 # it doesn't account for, and never lets it drop a pinned lesson or one with numbers.
 CONSOLIDATE_RULES = f"""You keep an AI agent's lessons: short rules it learned from its own work, which it reads

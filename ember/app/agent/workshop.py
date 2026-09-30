@@ -13,6 +13,12 @@ went into a request the owner approved, and the agent asks for it to be built in
 Money: every call goes through the budget guard. A workshop call has its own cap per run and counts toward the
 daily cap and the balance, not toward the cycle cap. The Files API is free: inputs are uploaded for one run (and
 expire within the hour), and every file is deleted from Anthropic once the run is over.
+
+0.14.0: a run's worst case is a price, not a ceiling: nothing bounds what its code runs print or look at (live, a run
+cost $1.84 against $0.35). So a call is refused when its price is above what is left of the cap per run, and it
+holds at least that cap, or what recent runs cost if that is more, of the daily cap and the balance
+(metering.workshop_reservation). A call can still cost more than all of that; the guard books it, refuses further
+workshop calls in the cycle and raises the workshop's estimates.
 """
 
 from __future__ import annotations
@@ -199,19 +205,29 @@ class Workshop:
         done: list[Any] = []
         for attempt in range(1 + MAX_CONTINUATIONS):
             try:
-                quote = self.meter.quote(request, WORKSHOP)
+                # 0.14.0: the cap is checked against the request as priced; what the call holds of the day can be more
+                quote = self.meter.quote(request, WORKSHOP, scaled=False)
+                held = self.meter.reservation(request, WORKSHOP)
             except Unpriceable as exc:
                 run.failure = f"the run can't be priced ({exc})"
                 break
             # The run's cap covers all its calls: a continuation gets what the earlier calls left of it.
             left = usd_cap_to_micros(self.settings.workshop_run_cap_usd) - run.cost
             room = min(self.meter.headroom(cycle_id, WORKSHOP, keep=keep), left)
+            going_on = "going on (the run paused)" if attempt else "the run"
+            kept = f", after the ${micros_to_usd(keep):.3f} kept for your reflection)" if keep else ")"
             if quote > room:
-                going_on = "going on (the run paused)" if attempt else "the run"
                 run.failure = (
                     f"{going_on} could cost up to ${micros_to_usd(quote):.3f}, but only ${micros_to_usd(room):.3f} "
-                    "is left for it (the workshop's cap per run, the daily cap or the balance"
-                    + (f", after the ${micros_to_usd(keep):.3f} kept for your reflection)" if keep else ")")
+                    "is left for it (the workshop's cap per run, the daily cap or the balance" + kept
+                )
+                break
+            money = self.meter.rooms(cycle_id, WORKSHOP, keep=keep)[1]
+            if held > money:
+                run.failure = (
+                    f"{going_on} holds ${micros_to_usd(held):.3f} of the day (the workshop's cap per run, or what "
+                    f"recent runs cost), but only ${micros_to_usd(money):.3f} is left (the daily cap or the balance"
+                    + kept
                 )
                 break
             try:

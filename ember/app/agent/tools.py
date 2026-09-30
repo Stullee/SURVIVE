@@ -747,7 +747,7 @@ SPECS: dict[str, Spec] = {
             "pandas, matplotlib, pillow, reportlab, python-pptx, openpyxl and more; no internet), for what your "
             "make_ tools can't do: charts, PowerPoint files, data work, pictures drawn by code. The files it makes "
             "are checked and kept in your workspace, and its script in workshop/scripts/ (run it again with script). "
-            "A run costs cents to dimes: read guide 'workshop' first.",
+            "A run costs cents to dollars: read guide 'workshop' first.",
             {
                 "task": _s(
                     "What to make, precisely: each file (name, size, format) and what is in it.", ONE_REPLY_CHARS

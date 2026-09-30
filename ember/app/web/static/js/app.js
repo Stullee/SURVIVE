@@ -753,7 +753,7 @@
     var factors = arr(agent.estimate_factors);
     if (factors.length) {
       list.push({ kind: "info", icon: "i", title: "Some cost estimates are scaled up because a call once cost more than estimated. " +
-        "Each comes down by 0.05 after 25 calls that didn't need it; reset them if you know why it happened.",
+        "Each comes down halfway to 1 after 3 calls that didn't need it, and every 7 days; reset them if you know why it happened.",
         items: factors.map(function (f) { return sentence(String(f.purpose).replace(/_/g, " ")) + " calls on " + f.model + ": ×" + Number(f.factor).toFixed(2); }),
         action: { label: "Reset estimates", post: "api/economy/estimates/reset" } });
     }
