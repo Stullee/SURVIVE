@@ -1,0 +1,419 @@
+{
+ "area": "autonomy",
+ "findings": [
+  {
+   "id": "email-reply-trusts-unauthenticated-sender",
+   "title": "An email_reply unlock answers any From address, spoofed or bulk: the NEVER first-contact check trusts an unauthenticated header",
+   "severity": "medium",
+   "category": "security",
+   "files": [
+    "app/agent/never.py",
+    "app/agent/policy.py",
+    "app/integrations/mail.py",
+    "app/integrations/mailstore.py",
+    "app/migrations/0055_printify.sql"
+   ],
+   "evidence": "never.py:63 and never.py:90-94 count someone as having 'written' if any stored inbound row has that from_addr. policy.py:79-90 and :110-111 treat a thread as 'started by them' when the first Message-ID in References is an inbound row from `to`. mail.py:246-281 (parse_message) takes From as given, and no code checks Authentication-Results, DKIM, SPF or DMARC (a grep for dkim, spf, dmarc and authentication-results in app/ finds nothing). The bulk flag (mail.py:283-290) is used only by mailstore.inquiries (mailstore.py:249-259), not by never.reasons, has_written (mailstore.py:220-227), match() or the DB view (0055_printify.sql:84-89). Live: the mailbox holds 16 inbound emails and 0 sends, all from service or noreply senders (DIAG 0.13.0, AGENT RECORDS, emails, lines 3338-3355). Each of them already counts as 'wrote to Ember'.",
+   "failure_scenario": "The owner unlocks email_reply (auto or veto window) for a milestone. A spam newsletter or an attacker sends Ember a mail with a forged From: ceo@victim.example on a domain without DMARC reject. The agent answers it through reply_to_email_id. match() returns email_reply, never.reasons() is empty and approvals_never says never=0, so Ember's code approves the reply and sends a promotional email to someone who never wrote. That is the UWG section 7 first contact NEVER is meant to block, repeatable up to per_day (at most 20) and budget (at most 100) times per grant.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/autonomy/test_repro_email.py: a bulk=1 inbound mail from ceo@victim.example, with email_reply=auto. Printed: \"REQUEST 1 approved Ember's code (your unlock)\"; \"never.reasons: [] view: {'never': 0, 'first_contact': 0}\"; \"inquiries (bulk excluded): [1]\" (the forged newsletter isn't even an inquiry); \"executed: [(1, 'simulated')]\"; \"SENT to ceo@victim.example\".",
+   "related": "Phase D NEVER (first contact, UWG section 7); Phase E1 'email.reply ... never a first contact'",
+   "fix": "Store the provider's Authentication-Results verdict for each inbound email (dmarc=pass, or dkim=pass aligned with the From domain), next to bulk and machine. Count only authenticated, non-bulk, non-machine mail as 'wrote' in never.reasons, has_written and _started_by_them, and in approvals_never through a column the view reads. Until then allow email_reply only at veto_window.",
+   "effort": "M"
+  },
+  {
+   "id": "unlock-skips-qa-checks",
+   "title": "Unlocks approve requests that fail their own QA checks (replies over 200 words or without 'Re:', new listings with one photo)",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "app/agent/policy.py",
+    "app/agent/tools.py",
+    "app/integrations/qa.py"
+   ],
+   "evidence": "policy.apply (policy.py:230-273) never calls qa.defects. The tools compute QA only after _new_request has already applied the unlock: tools.py:3131 applies the policy, then tools.py:3189-3192 (email) and :3274-3277 (listing) add the QA text. qa.py:89-95 defines the checks for email.reply and etsy.create_listing. Live: the owner flagged one-photo listings three times (first analysis section 3e). On 2026-09-30 they approved #12 and #13 with 'additional pictures just seem like duplicates' (DIAG 0.13.0, lines 1400-1401): a count-only check lets exactly this through.",
+   "failure_scenario": "listing_variant is at auto after 5 clean approvals. The agent proposes a new listing with 1 photo. The tool result says 'QA: 1 photo, fewer than 5', but the request is already approved, and Ember's code creates it at Etsy in the next round. The same happens to an automatic email reply of 329 words with a new subject.",
+   "label": "reproduced",
+   "reproduction": "test_repro_email.py tool result: \"QA (Ember's code): its subject doesn't keep the thread (Re: ...); 329 words, more than 200: an answer is short; your owner sees it too. Ember's code approved it at once ...\". The email was then executed and sent (359 words with the footer).",
+   "related": "Phase D QA registry; Phase E1 email.reply QA",
+   "fix": "In policy.apply and run_due, compute qa.defects(class_of(row), subject) and carry nothing that falls short: the request waits for the owner, and the tool answer says why.",
+   "effort": "S"
+  },
+  {
+   "id": "qa-fix-overwrites-owner-photos",
+   "title": "qa_fix and price_change judge Ember's stale record, not Etsy: an automatic QA fix deletes photos the owner added at Etsy, and Undo can't restore them",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "app/agent/policy.py",
+    "app/integrations/etsy_publisher.py",
+    "app/agent/audit.py"
+   ],
+   "evidence": "policy.py:120-130 decides from etsy_publisher.current_listing, which by its own docstring ignores 'changes the owner made at Etsy' (etsy_publisher.py:125-143). A photo change replaces every photo at Etsy (etsy_publisher.py:484-496, _replace over shop.photo_ids). The journal's 'before' is Ember's record, and the Undo 'restore' is rebuilt from it (audit.py:147-161). few_photos (etsy_publisher.py:948-962) keeps listing such a listing as a defect in OBLIGATIONS, which pushes the agent to make the fix. The rule checks only the count, so byte-identical images pass. FIX NOW 32 added only a warning on the card, and at auto the owner never sees the card.",
+   "failure_scenario": "The owner adds 5 photos to a one-photo listing at Etsy. Ember's record still says 1 photo, so OBLIGATIONS keeps listing the listing. The agent proposes 5 images, and qa_fix at auto approves the change. All 6 photos at Etsy, the owner's included, are deleted and replaced. Undo brings back only Ember's single photo. price_change has the same flaw: the ±15% band is measured from Ember's old price and overwrites a price the owner set at Etsy.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/autonomy/test_repro_photos.py printed: \"owner added photos at Etsy: [1, 4, 5, 6, 7, 8]\"; \"Ember's record: 1 photo(s)\"; \"request: approved Ember's code (your unlock)\"; \"at Etsy after: [9, 10, 11, 12, 13] owner's left: []\"; feed before '1: local-family-events-newsletter-photo-1.png', after '5: dup0.png ... dup4.png' (5 identical files); \"at Etsy after Undo: [14] owner's left: []\".",
+   "related": "FIX NOW 32 (photos you added); Phase D qa_fix and price_change rules; Undo 'photos included'",
+   "fix": "Match against Etsy's synced state (photo ids and count, price), and carry nothing when it differs from Ember's record. Make qa_fix append-only: keep the existing photo ids and add up to MIN_PHOTOS. Refuse duplicate SHA-256 photos in QA. Journal Etsy's real 'before' (photo ids), and refuse an Undo that can't restore it.",
+   "effort": "M"
+  },
+  {
+   "id": "unlock-scope-follows-agent-focus",
+   "title": "A milestone's unlock carries any request made while the agent's plan names that milestone, whatever listing, venture or person it touches",
+   "severity": "medium",
+   "category": "design",
+   "files": [
+    "app/agent/policy.py",
+    "app/agent/store.py",
+    "app/agent/loop.py",
+    "app/web/static/js/app.js"
+   ],
+   "evidence": "approvals.milestone_id is the cycle's focus (store.py:355-383). The planner model picks the focus among the open milestones (loop.py:674-695, :1108-1117). match() (policy.py:105-137) and apply() (policy.py:242-247) never compare the request's listing, project or venture with the milestone's venture_id or project_id, which milestones do have (roadmap.py:223-243). The Roadmap card tells the owner: 'What Ember's code may carry out for this milestone without your click' (app.js:6396).",
+   "failure_scenario": "The owner sets deactivate to auto on milestone A, 'Retire the old CV templates'. A plan focused on A proposes deactivating the shop's best-selling listing of another product line, and Ember's code approves it at once. email_reply works the same way: an unlock given for a support milestone carries any reply.",
+   "label": "reproduced",
+   "reproduction": "test_repro_policy.py::test_unrelated_milestone: milestone 'Write the Pinterest guide' (no project or venture) with deactivate=auto. The listing of project #1 was deactivated: \"UNRELATED {'id': 3, 'status': 'approved', 'decided_by': \\\"Ember's code (your unlock)\\\" ...}\", \"executed: [(3, 'done')]\".",
+   "related": "Phase D policy engine ('a request of the milestone its cycle aimed at'); the task's 'wrong milestone' question",
+   "fix": "Scope each grant: carry a request only if its listing's project or venture (or, for an email, the inquiry's thread) belongs to the milestone's project or venture. Store that link on policy_uses and check it in the policy_uses_standing trigger. A milestone without a link carries nothing, or the owner picks the listings. Say the scope on the card.",
+   "effort": "M"
+  },
+  {
+   "id": "take-back-leaves-approved-actions-running",
+   "title": "'Take back every unlock' (and Ember's own revocations) stop only held requests; actions an unlock already approved still run",
+   "severity": "medium",
+   "category": "design",
+   "files": [
+    "app/agent/policy.py",
+    "app/agent/owner.py",
+    "app/integrations/executor.py",
+    "app/agent/service.py"
+   ],
+   "evidence": "revoke_all (policy.py:415-432) only writes manual grants, and owner.take_back_unlocks (owner.py:600-616) does nothing else. The executors carry out any 'approved' request and never re-check the unlock (executor.py:218-226; service.py:726-730). Emails wait for the daily limit (3 live, OPTIONS) and listings for the shop's daily limit, so an automatically approved action can sit for a day. Cancelling an automatically approved request (owner.close) doesn't count as a veto, because _revocation looks only at 'rejected' (policy.py:332).",
+   "failure_scenario": "The owner notices odd automatic replies and presses Take back. Three replies the unlock approved earlier are waiting on today's email limit, and they still go out tomorrow. Automatically approved new listings waiting on the shop's daily limit are created the same way.",
+   "label": "reproduced",
+   "reproduction": "test_repro_policy.py::test_take_back_leaves_approved printed: \"TAKE BACK 200 {'taken_back': 1}\"; \"executed after take-back: [(3, 'done')] price 4.50 -> 4.05\".",
+   "related": "Phase D audit: 'take back every unlock ... what the unlocks held waits for you' (the kill switch)",
+   "fix": "In revoke_all and keep(), close as failed ('taken back before it ran') every request the grant's unlocks approved that has no execution row yet. Do it in the same transaction; the executors already re-check the status. Treat the owner's cancel of an unlock-approved request as a veto.",
+   "effort": "S"
+  },
+  {
+   "id": "never-legal-wordlist-evaded",
+   "title": "NEVER's tax and contract check is a word list: ordinary phrasing, other languages and invisible characters pass it, and the agent is told what tripped it",
+   "severity": "medium",
+   "category": "security",
+   "files": [
+    "app/agent/never.py",
+    "app/migrations/0055_printify.sql",
+    "app/agent/policy.py"
+   ],
+   "evidence": "never.py:51-60 holds LEGAL_WORDS and LEGAL_PARTS and lowers ASCII letters only. The view has the same list (0055_printify.sql:99-103). policy.py:249-251 tells the agent 'never automatic for tax, VAT, a Gewerbe or a contract', which names the words to avoid.",
+   "failure_scenario": "With email_reply unlocked, a customer asks for 200 custom planners. An automatic reply 'Ja, wir nehmen Ihren Auftrag über 200 Stück zu 3 € an, Rechnung folgt' accepts an order (a contract) and promises an invoice. 'Kleinunternehmer gemäß § 19 UStG' is a VAT statement. Both pass the code and the DB check and go out under the owner's name.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/autonomy/test_repro_never.py: code=0 and db=0 for '§ 19 UStG', 'Auftrag ... Rechnung folgt', 'invoice to follow', 'Our agreement', 'taxable', 'taxation', 'Kleinunternehmerregelung', 'IVA/TVA/BTW', 'Stеuer' (Cyrillic е), a soft hyphen or zero-width space inside 'Steuer', 'subcontract', 'contractual', 'Umsatzst.', 'Zoll ... Einfuhrumsatz-Abgaben'. Code and DB agreed on every one.",
+   "related": "Phase D NEVER (tax, VAT, Gewerbe, contracts)",
+   "fix": "Normalize the text before matching: NFKC, strip Unicode format characters (Cf, including U+00AD and U+200B), refuse mixed scripts inside a word. Store the normalized text in a column the view reads. Extend the lists: ustg, kleinunternehmer, rechnung, invoice, auftrag, angebot, agreement, offer, taxable, taxation, zoll, customs, iva, tva, btw, moms, licen[cs]e. For email_reply, don't carry a body that names a price, a quantity or a commitment (numbers with a currency) automatically.",
+   "effort": "M"
+  },
+  {
+   "id": "auto-email-footer-claims-owner-approval",
+   "title": "An email sent on an unlock tells the recipient the owner approved it before sending",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "app/integrations/executor.py",
+    "app/agent/tools.py"
+   ],
+   "evidence": "executor.footer (executor.py:60-65) always says 'approved by them before sending'. build_message adds it to every email (executor.py:104), whether decided_by is the owner or \"Ember's code (your unlock)\". The agent's tool answer opens 'Approval request #N is waiting for your owner. Nothing has been sent. If they approve it...' and then says Ember's code approved it at once (tools.py:3184-3192).",
+   "failure_scenario": "Every automatic reply states a falsehood to a third party ('approved by them before sending'), against the constitution's first priority, honesty. The contradictory tool text can also lead the agent to tell the owner that the reply still waits for them.",
+   "label": "reproduced",
+   "reproduction": "test_repro_email.py: the request's decided_by was \"Ember's code (your unlock)\", and the sent body's footer read: 'This email was written by Ember, an AI agent, on behalf of its owner, and approved by them before sending.'",
+   "related": "Phase D email_reply 'with the AI footer'",
+   "fix": "Pass the approval row to footer(). When the request was carried by an unlock (POLICY_BY), write e.g. 'sent by Ember under a standing permission of {owner}, who reviews what it sends'. Build the tool answer from the policy outcome first.",
+   "effort": "S"
+  },
+  {
+   "id": "unlock-price-band-ratchets",
+   "title": "The ±15% price band applies to each change on its own: an unlock can cut a price 36% in a day and about 78% over its default budget",
+   "severity": "medium",
+   "category": "money",
+   "files": [
+    "app/agent/policy.py",
+    "app/agent/owner.py"
+   ],
+   "evidence": "policy.py:123-128 compares the new price with current_listing's price, which is the last change. The defaults are PER_DAY=3 and BUDGET=10 (policy.py:65), and the owner may set up to 20 a day and 100 in all (owner.py:572-576).",
+   "failure_scenario": "An agent chasing the order-count listing test cuts a €4.50 digital listing in 'small' steps: 3 a day, 10 per grant, down to about €1.00. That keeps well under half after Etsy's transaction and payment fees and the $0.20 renewal on each sale, and the owner never approved any single step.",
+   "label": "reproduced",
+   "reproduction": "test_repro_policy.py::test_price_ratchet printed: \"RATCHET start=4.50 end=2.86 ratio=0.636 trail=['4.50', '3.87', '3.33', '2.86']\", three automatically approved changes on one day. Over the default budget of 10: 0.86^10 = 0.22.",
+   "related": "Phase D 'price changes within ±15%'",
+   "fix": "Anchor the band per listing to its price when the grant was made, or its last owner-approved price, and apply it cumulatively. Allow at most one price change per listing per grant per week. Keep the anchor in policy_uses so the DB can check it.",
+   "effort": "S"
+  },
+  {
+   "id": "event-wakes-bypass-owner-and-backoff-guards",
+   "title": "Event wake-ups ignore the owner's wake settings, the crash-loop and no-room guards and the backoff after a stopped cycle; any stranger's email triggers one",
+   "severity": "medium",
+   "category": "cost",
+   "files": [
+    "app/agent/service.py",
+    "app/agent/agenda.py",
+    "app/config.py"
+   ],
+   "evidence": "service.py:305-307 checks _event_wake before _no_room_for_work (:308) and _crash_loop (:320), and before the next_wake_at backoff. agenda.py:95-112 makes any non-bulk, non-machine email that waits for an answer an urgent 'inquiry'. config.py:140-142 has wake_on_message and wake_on_decision but no switch for events. Live: the owner set wake_on_message and wake_on_decision to false (DIAG 0.13.0, OPTIONS lines 130-131). The cycle cap is $1.00 and the daily cap $7.00. Recent cycles cost $0.39 to $2.00 (#44 $2.0045, #45 $0.3871, #46 $0.5222). META shows 'after a stopped cycle, backing off' at 15:04 after a cost overrun.",
+   "failure_scenario": "Four stranger or spam emails a day (without list headers) each wake a reactive cycle of up to the $1.00 cycle cap. That is up to about $4 of the owner's $7 daily cap a day spent reacting to strangers. It happens even right after a cost-overrun stop, or during a crash loop in which scheduled wakes are halted. The owner can't turn it off except by pausing Ember.",
+   "label": "code",
+   "reproduction": "",
+   "related": "Phase D agenda (4 a day, 30 minutes apart); Phase E1 inquiry wake-ups; 0.12.0 wake_on_* options",
+   "fix": "Add a wake_on_events option (inquiries follow wake_on_message when it isn't set). Run _crash_loop, _no_room_for_work and the failure backoff before _event_wake. Make an inquiry urgent only when its sender passes authentication or has written to Ember before.",
+   "effort": "S"
+  },
+  {
+   "id": "veto-window-approves-after-milestone-done",
+   "title": "A veto window still approves a held request after its milestone is closed as done, and the DB approval trigger checks neither the milestone nor the window",
+   "severity": "low",
+   "category": "fix-incomplete",
+   "files": [
+    "app/agent/policy.py",
+    "app/migrations/0054_pinterest.sql"
+   ],
+   "evidence": "_stands (policy.py:196-203) and run_due (policy.py:286-290) don't look at the milestone. _revocation revokes only on missed or dropped (policy.py:324). The trigger approvals_unlock_carries (0054_pinterest.sql:192-200) checks neither m.status='open' nor that veto_until has passed. The patch note claims refusal 'for a closed milestone', and the card says the unlock is 'for this milestone'.",
+   "failure_scenario": "A deactivation is held under milestone #5's veto window. The milestone is closed as done 2 hours later. 10 hours after that, Ember's code approves and carries out the deactivation, although the owner's unlock was for a finished goal.",
+   "label": "reproduced",
+   "reproduction": "test_repro_policy.py::test_done_milestone_veto printed: \"DONE MILESTONE [{'status': 'approved', 'decided_by': \\\"Ember's code (your unlock)\\\"}]\", \"executed: [(3, 'done')]\".",
+   "related": "Phase D NEVER in the DB ('... or for a closed milestone')",
+   "fix": "Require an open milestone in _stands and run_due, and have keep() revoke on done too. In approvals_unlock_carries, join milestones with m.status='open' AND (u.level='auto' OR u.veto_until <= NEW.decided_at).",
+   "effort": "S"
+  },
+  {
+   "id": "undo-stack-dead-end",
+   "title": "After an Undo, the earlier action on that listing can never be undone (for example, the listing's creation)",
+   "severity": "low",
+   "category": "ux",
+   "files": [
+    "app/agent/audit.py",
+    "app/integrations/connectors.py"
+   ],
+   "evidence": "audit.py:193-199 refuses an Undo while any later non-failed etsy.* journal entry exists on the listing, including the owner's own Undo of that later action. Ember's automatic renewal of sold listings is journaled too (connectors.record), so after a sale the creation can't be undone either.",
+   "failure_scenario": "An unlock changes a listing's price, and the owner undoes it. The owner then decides the listing should go: 'Deactivate it' on the creation answers 'a later action changed this listing (#2): undo that one first', but #2 shows 'it is undone'. The owner has to go to Etsy.",
+   "label": "reproduced",
+   "reproduction": "test_repro_policy.py::test_undo_stack: after the Undo of #2 was done, undo of #1 gave 409 \"this action can't be undone: a later action changed this listing (#2): undo that one first\". The feed showed #2 as 'it is undone'.",
+   "related": "Phase D audit: 'only the newest action on a listing'",
+   "fix": "In the 'later' check, skip entries whose Undo is done and the Undo entries themselves. Or give the owner a direct 'Deactivate' on any of Ember's live listings.",
+   "effort": "S"
+  },
+  {
+   "id": "digest-reports-nothing-before-journal",
+   "title": "The first daily digest after the upgrade says 'Ember's code carried out nothing' for a day on which it created 5 listings and made 3 changes",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "app/agent/audit.py",
+    "app/agent/service.py"
+   ],
+   "evidence": "audit.digest reads only action_journal (audit.py:392-426), which began with 0.13.0 (migration 0049; action_journal: 0 rows live). write_due writes yesterday once, and the row can't be changed (audit.py:473-487; 0052 triggers). run_policy skips the digest while executor_blocked (service.py:710-720), so a day spent paused never gets one.",
+   "failure_scenario": "The owner's write-once audit record for 2026-09-29 is false: it shows no automatic activity although Ember's code published and changed listings that day.",
+   "label": "live",
+   "reproduction": "DIAG 0.13.0 EVENTS line 3460: '2026-09-30T14:52:28Z ... Daily digest: 2026-09-29: Ember's code carried out nothing.' The approvals (lines 1403-1410) show #3-#7 listed on Etsy and #8-#10 changed at Etsy between 2026-09-29T08:29Z and 19:58Z, all on the owner's day in Europe/Berlin.",
+   "related": "Phase D audit: daily digest",
+   "fix": "Record when the journal began (meta) and write digests only for days after it, or read the executors' own tables for older days. Write one digest per missed day after a pause.",
+   "effort": "S"
+  },
+  {
+   "id": "undo-delete-crash-left-running",
+   "title": "A restart during a pin's or Printify product's Undo leaves it 'under way' forever, with no way to cancel it or try again",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "app/integrations/pinterest_publisher.py",
+    "app/integrations/printify_publisher.py",
+    "app/agent/owner.py"
+   ],
+   "evidence": "The delete executors commit the journal entry first, then call the platform (pinterest_publisher.py:368-383; printify_publisher.py:577-591). Their recover() methods handle only pin and product rows (pinterest_publisher.py:410-421; printify_publisher.py:622-632). _approved skips any request that has a journal row (pinterest_publisher.py:197-208; printify_publisher.py:400-410). owner.close refuses once a journal row exists (owner.py:219-229).",
+   "failure_scenario": "Home Assistant restarts Ember (14 start/stop events on 2026-09-30 live) while 'Delete the pin' is running. The journal entry stays 'running' and the request 'approved', and the feed shows 'your Undo of it is under way' for good. The owner can't cancel or retry it, and the pin or product stays live.",
+   "label": "code",
+   "reproduction": "",
+   "related": "Phase E2/E4 Undo; connector journal crash recovery",
+   "fix": "In recover(), finish such entries as 'unclear' and close the request, or simply retry: a delete is idempotent (Gone counts as done).",
+   "effort": "S"
+  },
+  {
+   "id": "event-reserve-dst-spin",
+   "title": "On DST days the 20:00 event reserve ends an hour off; in autumn the scheduler loops every second for an hour",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "app/agent/service.py",
+    "app/economy/metering.py",
+    "app/agent/scheduler.py"
+   ],
+   "evidence": "service.py:331 computes evening as day_start + 20 h of absolute time, while metering.event_reserve (metering.py:410) uses the owner's local hour. scheduler.py:122-123 floors a wait in the past at 1 second.",
+   "failure_scenario": "On 2026-10-25, with the rest of the cap inside the reserve, decide() sets next_wake_at to 19:00 CET, which has already passed. It returns that time again every round, so the full round (policy, executors, the agenda transaction) runs every second until 20:00: about 3,600 rounds. On 2027-03-28, scheduled cycles wait until 21:00.",
+   "label": "reproduced",
+   "reproduction": "A clock script in the venv printed: '2026-10-25 evening (decide's wait) = 19:00 CET', 'at 19:30 local, event_reserve applies: True'; '2027-03-28 evening = 21:00 CEST'.",
+   "related": "Phase D reserve until 20:00",
+   "fix": "Use evening = datetime.combine(today, time(EVENT_RESERVE_HOUR), tz).astimezone(UTC).",
+   "effort": "S"
+  },
+  {
+   "id": "promotion-counts-qualified-approvals",
+   "title": "Promotions count approvals that came with an objection, and propose a rule again right after Ember's code revoked it for cause",
+   "severity": "low",
+   "category": "design",
+   "files": [
+    "app/agent/policy.py"
+   ],
+   "evidence": "suggestions (policy.py:352-374) and _clean_approvals (policy.py:93-102) count any approval whose final_payload is NULL and ignore decision_comment. After a revocation the grant is manual, so grant() returns None and the rule is proposed again. Live: #12 and #13 were approved without changes but with 'I approve but note that additional pictures just seem like duplicates. Improve in the future' (DIAG 0.13.0, lines 1400-1401).",
+   "failure_scenario": "Five photo fixes approved with objections like these make Ember's code suggest qa_fix at veto_window. After the owner vetoes a held request, the same suggestion comes back at once.",
+   "label": "code",
+   "reproduction": "",
+   "related": "Phase D promotions ('5 of your approvals without changes')",
+   "fix": "Count only approvals with neither changes nor a comment (or give the owner an 'approve, but' choice). Don't suggest a rule again within 30 days of a revocation for cause.",
+   "effort": "S"
+  }
+ ],
+ "fix_checks": [
+  {
+   "item": "Phase D agenda: event wake-ups at most 4 a day, 30 minutes apart, never while dormant, only while the cap covers an opening",
+   "verdict": "holds",
+   "evidence": "service.py:294-296 checks dormancy before events. _event_wake (service.py:343-361) reads the count and gap from the cycles table (agenda.py:184-192) and checks the opening cost. Gap: event wakes bypass the crash-loop, no-room and backoff guards (finding event-wakes-bypass-owner-and-backoff-guards)."
+  },
+  {
+   "item": "Phase D agenda: 20% of the daily cap reserved until 20:00",
+   "verdict": "partial",
+   "evidence": "metering.py:406-414 uses the local hour, but service.py:331 uses day_start + 20 h, which is 19:00 or 21:00 on DST days (reproduced)."
+  },
+  {
+   "item": "Phase D agenda: lean reactive cycle, write-once events, history before the agenda ignored",
+   "verdict": "holds",
+   "evidence": "loop.py:251-254, 283, 612-617; 0053_inquiries.sql triggers agenda_event_fixed and agenda_no_delete; service.py:380-387 takes 'since' from meta; tests/test_agenda.py passes."
+  },
+  {
+   "item": "Phase D connector protocol: classes with flags, one write-once journal written in the executors' own transactions, crash leads to 'unclear'",
+   "verdict": "partial",
+   "evidence": "connectors.py:62-135, and 0049 (unique 'running' per request, final-state triggers). Email and Etsy journal inside their own transactions and recover to 'unclear'. The Pinterest and Printify Undo deletes don't recover (finding undo-delete-crash-left-running)."
+  },
+  {
+   "item": "Phase D QA registry: one MIN_PHOTOS; the card and the tool result show shortfalls",
+   "verdict": "partial",
+   "evidence": "qa.py:21, 89-100 are read everywhere, but unlocks ignore QA (reproduced: an automatic reply of 329 words without 'Re:' was sent)."
+  },
+  {
+   "item": "Phase D policy engine: manual / veto_window / auto with a daily limit and a budget; write-once grants; budget in the DB",
+   "verdict": "holds",
+   "evidence": "0050_policy.sql:7-43 and 0051_never.sql:110-113 (policy_uses_budget); policy.py:252-256; tests/test_policy.py and tests/test_never.py pass. Weaknesses: the per-change price band (unlock-price-band-ratchets) and scope following the agent's focus (unlock-scope-follows-agent-focus)."
+  },
+  {
+   "item": "Phase D policy: revocation on an unclear result, a spent budget, a missed or dropped milestone, a veto; opt-out kill rule for email_reply",
+   "verdict": "partial",
+   "evidence": "policy.py:322-349 is tested, and the kill rule passes tests/test_inquiries.py. A milestone closed as done doesn't revoke, and its held requests are still approved (reproduced). Cancelling an automatically approved request isn't a veto (policy.py:332)."
+  },
+  {
+   "item": "Phase D policy: code only proposes promotions; only the owner unlocks",
+   "verdict": "holds",
+   "evidence": "policy.py:175-176; trigger policy_grants_owner_unlocks (0051_never.sql:132-134); owner._signed (owner.py:96-98); tests/test_never.py::test_only_the_owner_unlocks. The promotion count includes approvals with objections (low finding)."
+  },
+  {
+   "item": "NEVER: in code and in the DB, and both read a request alike",
+   "verdict": "holds",
+   "evidence": "tests/test_never.py's 300 random requests agree. My check of pinterest_pin, printify_product, pinterest_delete and printify_delete × publish/sell/spend_money found 0 disagreements (test_repro_agree.py), and the evasion phrases agree too. Each DB check holds alone (tests/test_never.py:211-238)."
+  },
+  {
+   "item": "NEVER: tax, VAT, Gewerbe, contracts ('English and German, compounds included')",
+   "verdict": "partial",
+   "evidence": "The listed words and compounds are caught, but UStG, Kleinunternehmer, Rechnung/invoice, Auftrag/agreement, taxable/taxation, IVA/TVA, homoglyphs, soft hyphens and zero-width spaces all pass both checks (reproduced)."
+  },
+  {
+   "item": "NEVER: first contact (an address that never wrote to Ember)",
+   "verdict": "partial",
+   "evidence": "This holds for honest mail, but 'wrote' is any stored inbound From, unauthenticated and including bulk. A forged newsletter sender got an automatic reply (reproduced)."
+  },
+  {
+   "item": "NEVER: first publication across Etsy, Pinterest and Printify",
+   "verdict": "holds",
+   "evidence": "never.py:95-100 and 0055_printify.sql:90-98 check each channel's own table, and code and DB agree. No rule covers pins or products, so only Etsy's listing_variant can reach it, and that is checked again at approval (policy.py:289)."
+  },
+  {
+   "item": "NEVER: unknown executors are the owner's; the policies are the owner's",
+   "verdict": "holds",
+   "evidence": "never.py:48, 105-106; the view's owner_only (0055_printify.sql:104-106); the executor CHECK in 0054:44; tests/test_pinterest.py:640-650."
+  },
+  {
+   "item": "Round revokes first, then approves; a request held by a revoked unlock waits and its card no longer shows a time",
+   "verdict": "holds",
+   "evidence": "service.py:719 runs keep() before run_due(). policy.py:286 checks _stands, and the approvals_unlock_carries trigger checks the newest grant. veto_until() returns None when the grant doesn't stand (policy.py:435-441); tested."
+  },
+  {
+   "item": "Audit feed (before → after, whose decision)",
+   "verdict": "holds",
+   "evidence": "audit.py:220-253 and tests/test_audit.py. The 'before' of a change is Ember's record, not Etsy's (see qa-fix-overwrites-owner-photos)."
+  },
+  {
+   "item": "Audit Undo: one at a time (trigger), refused while a change waits, only the newest action",
+   "verdict": "partial",
+   "evidence": "The action_undos_once trigger and open_edit (audit.py:200-203; tools.py:3358-3360) hold. There is a dead end after an Undo (reproduced), 'restore' rebuilds Ember's record rather than Etsy's (reproduced), and a crash during a pin or product delete leaves the Undo stuck."
+  },
+  {
+   "item": "Audit daily digest",
+   "verdict": "partial",
+   "evidence": "It is written once for yesterday, but the live digest for 2026-09-29 says 'carried out nothing' against 8 actions that day (DIAG 0.13.0 line 3460 vs lines 1403-1410), and paused days are skipped."
+  },
+  {
+   "item": "Take back every unlock: what the unlocks held waits for the owner",
+   "verdict": "partial",
+   "evidence": "Held requests do wait (policy.py:286), but requests an unlock already approved still execute afterwards (reproduced: price 4.50 -> 4.05 after the take-back)."
+  },
+  {
+   "item": "FIX NOW 21: caps per type, withdraw_request, expiry by type",
+   "verdict": "holds",
+   "evidence": "store.py:312-313, 324-341; tools.py:2659-2682; loop.py:294, 391-394; tests/test_request_expiry.py passes. Batch approve (the M part) is still missing."
+  },
+  {
+   "item": "Phase E1 email.reply class: never a first contact; QA checks the subject and 200 words; the card and tool result say so",
+   "verdict": "partial",
+   "evidence": "connectors.py:152-158 and qa.py:44-50, 92 exist and show the shortfall, but the unlock doesn't enforce QA, and a forged or bulk sender makes a 'reply' a real first contact (reproduced)."
+  },
+  {
+   "item": "Phase E1 inquiries exclude newsletters, automatic replies, machine senders, opt-outs, answered and closed mail",
+   "verdict": "holds",
+   "evidence": "mailstore.py:236-259 and mail.py:283-290; tests/test_inquiries.py passes. In the reproduction the bulk mail wasn't an inquiry, but the email_reply rule doesn't use this filter."
+  }
+ ],
+ "still_open_from_0_11_1": [
+  "FIX NOW 21, M part: batch approve is still missing (no batch route or control in web.py, owner.py or app.js).",
+  "Phase D deviation: Etsy reviews still aren't read, so 'a review' is no agenda event.",
+  "Phase D 'Watch' metrics (owner actions a day falling from about 46 to under 10, 0 NEVER-class approvals by unlocks, median reaction under 60 minutes) aren't computed anywhere in code."
+ ],
+ "strengths": [
+  {
+   "what": "NEVER is defense in depth, and the two layers really agree",
+   "evidence": "never.py plus the approvals_never view and 5 triggers (0051, recreated in 0054 and 0055). Each DB check refuses on its own (tests/test_never.py:211-238). 300 random requests agree class by class (tests/test_never.py:347-405). My extra check of the newer executors (pinterest_pin, printify_product, pinterest_delete, printify_delete) found 0 disagreements. Unknown executors fail closed as owner_only."
+  },
+  {
+   "what": "Only the owner can unlock, enforced in three places",
+   "evidence": "policy.py:175-176; trigger policy_grants_owner_unlocks (0051_never.sql:132-134); owner._signed maps an owner whose name equals one of the code's names to 'the owner' (owner.py:96-98); tested in tests/test_never.py::test_only_the_owner_unlocks."
+  },
+  {
+   "what": "Revocation is fail-closed and ordered before approval",
+   "evidence": "service.py:719 runs keep() before run_due(). A request held by a grant that was revoked or replaced is never approved: _stands (policy.py:196-203) and the newest-grant check in approvals_unlock_carries. Grants and uses are write-once history, and the budget is enforced in the DB (policy_uses_budget). Veto windows are UTC-absolute and the per-day counts use the owner's local day (policy.py:185-193), so the veto window itself is DST-safe."
+  },
+  {
+   "what": "One write-once journal with safe crash semantics for email and Etsy",
+   "evidence": "0049: a unique 'running' entry per request and final-state triggers. The email executor and the Etsy publisher journal in the same transaction as their own 'running' rows (executor.py:318-325; etsy_publisher.py:550-559) and recover to 'unclear', never retried (executor.py:352-367; etsy_publisher.py:414-428). An unclear result revokes the unlock (policy.py:334-335; tested)."
+  },
+  {
+   "what": "The Undo can't race the agent",
+   "evidence": "The action_undos_once trigger allows one Undo at a time. An Undo is refused while a change waits (audit.py:200-203), and an approved Undo blocks new edits by the agent, because open_edit counts approved requests (etsy_publisher.py:201-209; tools.py:3358-3360)."
+  },
+  {
+   "what": "The agenda's limits come from durable state, and inquiries are filtered",
+   "evidence": "Wake counts and the gap are read from the cycles table (agenda.py:184-192), not memory, and the dormant check comes first (service.py:294-296). Events are write-once with unique keys (0053). Inquiries exclude bulk, machine, opted-out, answered and closed mail (mailstore.py:236-259)."
+  },
+  {
+   "what": "The tests use the real paths",
+   "evidence": "tests/test_policy.py drives the agent's own tools through a full cycle (work_on). The DB triggers are tested with direct inserts and updates. All 27 tests in my area passed, and so did the 52 Pinterest, Printify and request-expiry tests."
+  },
+  {
+   "what": "Shipped off by default: nothing is automatic live",
+   "evidence": "DIAG 0.13.0 DATABASE lines 185-191: policy_grants 0, policy_uses 0, action_journal 0, agenda 0. Every outbound action still waits for the owner's click."
+  }
+ ],
+ "notes": "All my findings are latent: live has 0 grants, so none has fired yet. They apply as soon as the owner unlocks a rule, which the Roadmap card now invites. Before any email_reply or listing_variant unlock is used, I'd fix these first: unlock-skips-qa-checks, auto-email-footer-claims-owner-approval, take-back-leaves-approved-actions-running and email-reply-trusts-unauthenticated-sender (all S except the last, which is M).\n\nReproductions (read-only, scratch only) are in /tmp/claude-0/-home-user-SURVIVE/16767151-7117-55b8-8b14-a711cc61e9f8/scratchpad/autonomy/: test_repro_policy.py, test_repro_email.py, test_repro_never.py, test_repro_photos.py, test_repro_agree.py and a conftest.py. Run them from ember/ with python -m pytest -s --rootdir=<that dir>.\n\nMinor observations, not reported as findings:\n- mailstore.thread_headers (mailstore.py:332-338) keeps only the last 4 References. In long threads Ember started, _started_by_them can therefore see one of the other person's messages as the root, so email_reply matches a thread Ember began. It is harmless, since that person has replied.\n- Agenda text puts the unquoted sender address into the plan. It is single-line, so it can't forge a section.\n- The phrase 'Steuerung' is a false positive for 'legal'. It fails closed.\n\nNot checked:\n- HA sensors and the rendering of the Approvals and Roadmap cards in a browser.\n- The Reddit path.\n- Pinterest and Printify publishers beyond NEVER and Undo.\n- Whether Printify cancels open orders when a product is deleted.\n- The cost of the approvals_never view, which triggers scan on each status update.\n\nProcess (lead's area): 0.13.0, with all of Phase D, was installed the same day as 0.12.0, with no 72-hour hold."
+}

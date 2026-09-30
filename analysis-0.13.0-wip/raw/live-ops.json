@@ -1,0 +1,260 @@
+{
+ "summary": "Scope: cycles #33-#46 from both diagnostics reports. R1 = 281e8edf…141055.txt (0.12.0, 12:10Z). R2 = fdd5866d…171054.txt (0.13.0, 15:10Z). Both are from 2026-09-30. I parsed them with /tmp/claude-0/-home-user-SURVIVE/16767151-7117-55b8-8b14-a711cc61e9f8/scratchpad/ops/{parse.py,table2.py,spend.py,owner.py}; the output is cycles.json and rows.json in the same folder.\n\nMoney. Live API spend was $10.37 in 2.12 active days: $2.20 on 09-28 (derived), $3.51 on 09-29 and $4.66 on 09-30 up to 17:10 Berlin time. Revenue was $0. The balance is $89.63. Burn over the runway window is $4.89/day (the first analysis had $3.76). Runway went 25 → 19.1 → 18.3 days. The Phase B checkpoint was at most $2.20/day. It was missed by 1.6x on 09-29 and 2.1x on 09-30, and the owner then raised the daily cap to $7.\n\nWhat drove 09-30:\n- Workshop runs: $2.64 (57%). One run, #423, cost $1.84 against a \"worst case\" of $0.35. Its cycle #44 spent $2.00, twice the $1.00 cycle cap.\n- Owner-triggered cycles: 66% of the day (#43, #44, #46).\n- Plans: cost 22% more per cycle ($0.054 → $0.067; always on Opus, never cached; planner prompt 25% bigger).\n\nFixed overhead per cycle is about $0.11-0.13, as before. Its share fell to about 26% for normal cycles (the old figure was 48-49%). That is because cycles cost more and the reflection is now skipped when the work step writes the journal, not because overhead fell.\n\nBoth cost overruns stopped a cycle after the money was already spent:\n- The rest of the plan was dropped.\n- The digest told the next planner \"the plan was done\".\n- The agent's chosen sleep (120 and 420 min) became a 30-min backoff, which brings the next paid cycle sooner.\n\nThe estimator's code-execution assumptions are falsified by live data. #369 wrote 12,439 output tokens against max_tokens 8,000. #423 wrote 540,865 cache tokens against about 48,000 assumed. The top safety factor (4x) cannot cover a 5.3x miss.\n\nToken counting fails for every workshop request with input files: 3 failures are logged and 2 more were likely hidden by the 5-minute de-duplication.\n\nWatch items:\n- No \"Goal:\"-only journal on 0.12.0+ (0 of 5 cycles): met.\n- At most 15% of the cap unused on a money stop: not testable, since no cycle stopped for money. Cycles end on their own with 45-69% of the cap unused; the daily cap is now the binding limit.\n- Burn at most $2.20/day: missed.\n\nOwner actions: 44 on 09-29 (36 without restarts), close to the ~46/day before. On 09-30 up to 17:10 there were 19 (12 without restarts). Messages fell from 12 to 1, but there were still 7 restarts.\n\nOptions: the owner kept min sleep 30, interval 60 and the Opus planner. Cycle cap went $0.60 → $1.00 (09-29 13:31Z), daily cap $5 → $7 (09-30 15:08Z), workshop run cap $0.50 → $1.50. Wake-on-message has been off since the evening of 09-28; wake-on-decision since 09-30 12:09Z.\n\n0.13.0 has run only cycle #46. Of its new tables, only listing_gates (5), printify_catalog (4) and owner_digests (1) have rows. venture_cases, critiques, desk_picks, predictions, agenda, action_journal, policy_* and the rest are 0. The observations table is not counted in diagnostics at all.",
+ "observations": [
+  {
+   "topic": "Workshop worst-case bound is not a bound",
+   "finding": "2 of 6 live workshop runs cost more than their 'worst-case' reservation. Run #423 cost $1.8376 against an estimate of $0.3482 (5.28x). That put cycle #44 at $2.0045 against its $1.00 cap (200%) and the workshop run at 3.7x its $0.50 run cap. Run #444 cost $0.3466 against $0.3441. The data contradicts all three assumptions of the bound. (1) Output bounded by max_tokens: #369 wrote 12,439 output tokens with max_tokens 8,000 (Sonnet, no thinking). (2) At most 10 samplings with at most 4,000 tokens per code result: #423 wrote 540,865 cache tokens, 11x the ~48,000 the bound assumes, and read 2,008,335. (3) The cap: MAX_SAFETY_FACTOR 4 cannot cover a 5.28x miss (the factor was capped at 4). The daily cap and the balance are only protected up to the reservation, so the first analysis's 'no overspend' strength no longer holds for workshop runs. Whether the loop ran more than 10 samplings or its results were larger than 4k tokens can't be told from the report (inferred).",
+   "evidence": "R2:708 (call 423: est 348191, cost 1837601, cw 540865, cr 2008335, out 7954); R2:604 (call 444: est 344126, cost 346592); R2:922 (call 369: out 12439); R2 EVENTS 12:08:40Z 'scaled by 4', 15:04:20Z 'scaled by 1.11'; R2 workshop_runs (R2:1436-1443); R1:206 warning 'up to $1.40'",
+   "severity": "high",
+   "likely_cause_in_code": "economy/estimate.py:17-28 (assumptions stated as unverified), :42-44 (MAX_SERVER_ITERATIONS 10, CODE_RESULT_ALLOWANCE_TOKENS 4000), :206-219; agent/prompts.py:427 WORKSHOP_MAX_TOKENS 8000; economy/pricing.py:29, :128 (factor capped at 4); agent/workshop.py:206-213 checks run cap against the quote only; economy/metering.py:107 puts workshop outside the cycle cap"
+  },
+  {
+   "topic": "Burn and runway",
+   "finding": "Burn went up, not down. Live API spend was $2.20 on 09-28 (derived: total minus the two later days), $3.51 on 09-29 (14 cycles) and $4.66 on 09-30 up to 17:10 local (6 cycles). The runway window shows $10.37 over 2.12 active days = $4.89/day (first analysis: $3.76). The balance fell to $89.63 and the runway to 19.1 days (12:10Z) and then 18.3 days (15:10Z). Revenue, expenses and orders are all 0, and the 6 listings have 4 views in total. The Phase B checkpoint (at most $2.20/day) was missed by 1.6x and 2.1x. The owner then raised the daily cap from $5 to $7. My projection from the ECONOMY numbers and burn.py: at $7/day the runway reaches the 15-day maintenance line in about 0.94 active days, and at $4.89/day in about 3.3. With only 2.12 active days in the window, each $1 spent cuts the shown runway by about 2 days, so one more $2 overrun would have left exactly 15.0 days. Maintenance mode forbids venture cycles, which would stop the POD test the owner backed.",
+   "evidence": "R2 ECONOMY (R2:199-249: balance 89.625809, runway 18.319, window_spend 10.374191, today 4.658492); R1:159-195 (90.535068, 19.087, 3.749233); EVENTS 'Cycle #N completed: $X' summed per Berlin day; R2 PLANNER CONTEXT etsy listings 2v+2v",
+   "severity": "high",
+   "likely_cause_in_code": "economy/burn.py:26-31 (thresholds); economy/life.py:49, :387 (7-day window from born_at); owner's options (daily_spend_cap_usd 7.0 at R2:47)"
+  },
+  {
+   "topic": "What drove 09-30 spend",
+   "finding": "Of the $4.6585 spent on 09-30:\n- workshop: $2.6428 (56.7%). $1.49 of it is the #423 overrun beyond its estimate; the 4 runs in #41 cost $0.459;\n- work steps: $1.069 (22.9%);\n- research: $0.404 (8.7%);\n- plans: $0.386 (8.3%);\n- study: $0.066; review: $0.063; reflection: $0.028.\n\nOwner-triggered cycles cost $3.09 (66%): decision wakes #43 and #44, and Wake now #46. #42-#44 ran within 11.6 minutes and cost $2.93. Cost per cycle rose from $0.25 on 09-29 to $0.78 on 09-30 ($0.34 without the workshop), while cycles per day fell from 14 to 6. Project #7 (the €6.90 Nebenkosten listing, 0 views) has used $3.58, 35% of all live spend. All workshop spend ($2.64, 25.5% of lifetime API spend) happened on 09-30.",
+   "evidence": "cycle table (tables_markdown) from R2 WAKE CYCLES; R2 PLANNER CONTEXT 'OPEN PROJECTS #7 ... spent $3.58'; R2 SCHEDULER venture_cycles_today_usd 0.949923",
+   "severity": "high",
+   "likely_cause_in_code": "Owner options wake_on_decision (then true) and Wake now; agent/workshop.py runs at up to 2 per cycle"
+  },
+  {
+   "topic": "Overrun stop is counterproductive for money and continuity",
+   "finding": "An overrun is detected after the money is spent. The guard then stops the cycle. That drops the rest of the plan: #44 never proposed the photo edit or sent the planned owner message, and #46 made poster #1 ($0.35) but never proposed it as a Printify product. It also skips the reflection. The agent's chosen sleep is replaced with a backoff of min_sleep × 2^(failures-1) = 30 min: #44 wanted 120 min, #46 wanted 420 min, and the next wake was 15:34:28Z, a venture cycle. So the stop brings the next paid cycle (about $0.11-0.13 of fixed cost) forward and re-plans the unfinished work. #444's overrun was only 0.7%. The digest also tells the next planner 'Work ended: the plan was done' for both stopped cycles.",
+   "evidence": "R2 cycle #46 note (R2:579 'step=5/15'), call 445 refused; R2:683 (#44 step 4/15); R2 SCHEDULER next_wake_at 15:34:28Z 'after a stopped cycle, backing off'; R1:397 and R2:437 'Work ended: the plan was done.'",
+   "severity": "medium",
+   "likely_cause_in_code": "economy/metering.py:1151-1164 (overrun marks the cycle stopped); agent/service.py:680-684 (backoff replaces the chosen sleep); agent/digest.py:32-33, :89-90 (an empty act_end_reason maps to 'the plan was done')"
+  },
+  {
+   "topic": "Owner's estimate reset and run-cap raise",
+   "finding": "After #423, the workshop factor went to 4. R1 then warned that the workshop could not run ($0.50 run cap < 4 x $0.348 = $1.40). At 12:26:27Z the owner reset all estimates to 1, and between 12:10Z and 15:10Z raised workshop_run_cap_usd to $1.50. The next run (#444) was again priced at $0.344 and overran again, stopping #46 about 2.5 h later. The factor is now 1.11. The warning's advice pushes the owner to raise caps or reset the learning, while the estimator stays wrong.",
+   "evidence": "R1:206 warning; R2 EVENTS 12:26:27Z 'reset the cost estimates: 1 scaled-up estimate(s) back to 1'; R1:117 vs R2:138 workshop_run_cap_usd 0.5 → 1.5; R2 META economy.factor.live.workshop.claude-sonnet-5 = 1.11",
+   "severity": "medium",
+   "likely_cause_in_code": "economy/pricing.py:165-170 (the owner's reset clears every factor); the warning text in economy/service or diagnostics that suggests the cap"
+  },
+  {
+   "topic": "Fixed overhead per cycle",
+   "finding": "I used the first analysis's basis ($0.107 of $0.218 = 49%, matching plan + the first work step's prompt-cache write + reflection):\n- 0.12.0+ normal cycles: $0.121 (#42, 33%), $0.111 (#43, 20%), $0.108 (#45, 28%), about 26% on average;\n- stopped cycles: #44 6% and #46 24% of total, but 73% and 72% of in-cap spend;\n- plan + reflection only: 12-17% on normal 0.12.0+ cycles;\n- 09-29 cycles (0.9-0.11): 28-43%.\n\nIn dollars, the overhead did not fall: it averaged $0.118 per cycle on 0.12.0+ against $0.110 on #33-#40. The share fell because (a) cycles now cost more and (b) the reflection is skipped when work writes the journal (0 reflect calls in 5 cycles). Plan input grew 25% (8,894 → 11,156 tokens on average) and plan cost 22% ($0.054 → $0.067). All 14 plans ran on Opus with no cache reads or writes, even #42-#44 within 11.6 minutes. The ordinary work prompt grew from 17,789 to 21,025-22,666 tokens (+18-27%). The venture work prompt went from 16,912-17,263 to 15,947-16,022 tokens (-6 to -8%, not the 30% watch item; first-call cache write used as a proxy). Planned target: at most 25%.",
+   "evidence": "R2 WAKE CYCLES per-call rows (plan rows cache_write 0 / cache_read 0; first work call cache_write_5m_tokens); R1 cycles #33/#34",
+   "severity": "medium",
+   "likely_cause_in_code": "agent/loop.py:731-732 (journal written in work = reflection); planner_model option Opus (default is Sonnet, config.yaml:46); plan request uncached; prompt growth from 0.12.0/0.13.0 sections"
+  },
+  {
+   "topic": "Token counting failures",
+   "finding": "There are 4 logged failures:\n- 09-29 14:17:37Z, InternalServerError, during the 503 that failed #36;\n- 09-30 07:49:27Z, 07:56:07Z and 12:06:32Z, BadRequestError.\n\nEach BadRequestError falls just before a workshop call with an .xlsx input (#366, #374, #423). #369 and #371 also had input files and started within 300 s of a logged failure, so their failures were probably hidden by the event log's de-duplication (inferred). #444 had no input files and no failure. So all workshop requests with files are probably uncountable. The fallback barely changed the estimate ($0.348 against $0.344 without files), so it did not cause the overrun (inferred). Separately, the 503 plan call is still charged at its worst case ($0.1522 against a $0.0482 floor). Its $0.104 excess is unreconciled in both reports.",
+   "evidence": "R2 EVENTS 3473, 3499, 3500, 3528; ledger/llm timing R2:275-353; R1:205 and R2 ECONOMY warning '$0.10 of interrupted calls'; R2 cycle #36 row 293 (billing_uncertain 1)",
+   "severity": "low",
+   "likely_cause_in_code": "economy/anthropic_transport.py:139-157 (strips the code_execution tool but keeps container_upload blocks from agent/prompts.py:776-786); events.py:32 REPEAT_WINDOW_SECONDS 300"
+  },
+  {
+   "topic": "Watch item: cap unused when a cycle stops for money",
+   "finding": "This can't be tested yet: no cycle on 0.12.0+ stopped for money. The last money stop was #35 on 0.10.0, which used 66% of the $0.60 cap (34% unused, as in the first analysis). On 0.12.0+, cycles end on their own with 45-69% of the $1.00 cycle cap unused (in-cap spend $0.31/$0.55/$0.39). The limit that now binds is the daily cap: #46's plan said 'Only $0.86 is left of today's cap, so this cycle should be cheap' and deferred the photo fixes to 'tomorrow's budget'. Work estimates are still 2-6x the actual cost (for example #45 work estimates $0.063-0.087 against costs of $0.008-0.041), and research reservations are $0.118 against about $0.044 actual.",
+   "evidence": "R2 cycle notes #42/#43/#45 (step 14/15, 14/15, 8/15, act_end '-'); R2:582 (#46 plan assessment); R2 call rows 426-437",
+   "severity": "medium",
+   "likely_cause_in_code": "economy/metering.py:548-584 (expected vs worst case); daily cap counts worst-case reservations (metering.py rooms)"
+  },
+  {
+   "topic": "Journals (watch item)",
+   "finding": "Met. On 0.12.0+, 0 of 5 cycles have a 'Goal:'-only journal. #42, #43 and #45 were written by the agent during work. #44 and #46 were built by code with a Done list and, for #44, a Not done list. Before 0.12.0, 3 of 8 cycles lost the journal (#35, #39, #41); in #39 and #41 the reflection was cut at 2,000 output tokens. Cut-off calls also dropped: 1 of 43 work calls on 0.12.0+ (#43 call 410) against 7 work calls and 2 reflections in #37-#41.",
+   "evidence": "R2 journal (R2:1365-1396): 46/44 'Written by Ember's code', 41/39/35 'Goal: …' only; calls 343, 378 stop_reason max_tokens",
+   "severity": "positive",
+   "likely_cause_in_code": "agent/loop.py:1800-1810 (code-built journal, FIX NOW 11)"
+  },
+  {
+   "topic": "Daily review and library study costs",
+   "finding": "The daily review on 09-30 cost $0.0627 (Opus, 6,752 input and 1,784 output tokens, inside #41 on 0.11.0). The library study read 4 documents (40,475 characters, 18 parts, 44 learnings) in 4 calls for $0.0661: 3 in #42 and 1 in #43. That is 13% of the $0.50/day study budget and 1.4% of the day. No consolidation call has run yet: lesson_pins is 0 and memory_versions stayed at 45, because the only 09-30 review ran on 0.11.0 before 0.12.0 was installed at 08:17Z.",
+   "evidence": "R2 call 357 (review); R2 calls 379-381, 397 (study); R2 library_documents (R2:1474-1479); R1/R2 DATABASE memory_versions 45",
+   "severity": "positive",
+   "likely_cause_in_code": "-"
+  },
+  {
+   "topic": "Owner-driven wakes and the pending-approval sleep cap",
+   "finding": "5 of 14 cycles were owner-triggered: Wake now for #38, #39 and #46, and a decision for #43 and #44. The decision wakes started #43 43 s after #42 ended and #44 18 s after #43 ended. The owner then turned wake_on_decision off at the 12:09Z restart. There is also a latent cost driver. While any approval is pending, the agent's chosen sleep is cut to max(min_sleep, wake_interval), which is 60 min at the owner's options, not the 240 min the patch note describes. With a request pending, cycles can run hourly until the daily cap stops them (projection). The cut applied after #42 (240 → 60 min) but the decision wake came first.",
+   "evidence": "R2 EVENTS 12:00:59Z and 12:05:43Z 'The owner's decision woke the agent'; R1:109 wake_on_decision false; R2:129 wake_interval_minutes 60",
+   "severity": "medium",
+   "likely_cause_in_code": "agent/service.py:659-668 (cap = max(min_sleep_minutes, wake_interval_minutes)); web.py:475"
+  },
+  {
+   "topic": "Owner options vs the first analysis's advice",
+   "finding": "The owner went the other way on every money setting:\n- cycle cap: $0.60 → $1.00 at the 09-29 13:31Z restart (#35 has cap 600000, #36 has 1000000);\n- daily cap: $5 → $7 at the 09-30 15:08:36Z restart (still $5 when #46 planned at 15:02);\n- min sleep 30 and wake interval 60: unchanged (the advice was 180-240 and 240);\n- planner: still Opus, with strategy_model and research_model empty, so model routing and the Haiku research check never engaged;\n- workshop run cap: $0.50 → $1.50;\n- wake_on_message: off since the evening of 09-28 (the last message wake was 15:38Z; a message at 21:06Z woke nothing).\n\nEvery one of these is above the config.yaml defaults (daily $1.50, cycle $0.50, interval 240, Sonnet planner).",
+   "evidence": "R1:46-117 vs R2:46-138 OPTIONS; R2 WAKE CYCLES cap= fields; R2 EVENTS 09-28 message wakes; ember/config.yaml:37-46, :77",
+   "severity": "medium",
+   "likely_cause_in_code": "owner settings (👤)"
+  },
+  {
+   "topic": "Owner workload",
+   "finding": "On 09-29 (Berlin day) the owner did 44 actions, 36 without restarts: 12 messages, 9 approval decisions, 6 pauses and resumes, 8 restarts, 3 Wake nows, 5 venture notes, backs or research asks, and 1 standing-instruction change. That matches the first analysis's ~46/day. On 09-30 up to 17:10 there were 19 actions, 12 without restarts: 1 message, 4 approvals, 0 pauses, 7 restarts (2 installs and 5 option changes or other), 4 library uploads, 1 estimate reset, 1 upgrade marked released and 1 Wake now. That is a pace of about 27/day. The owner still does QA: the #12 and #13 approvals say the new photos 'just seem like duplicates'. They also override decisions: #62 reversed the agent's Gelato choice in #61. On 09-28 the visible part (from 14:18 local) had 38 actions, 11 of them restarts.",
+   "evidence": "R1+R2 EVENTS (merged, de-duplicated), counted per Berlin day; R2 approvals (R2:1397-1411)",
+   "severity": "medium",
+   "likely_cause_in_code": "-"
+  },
+  {
+   "topic": "Research share",
+   "finding": "Research cost $0.404 on 09-30 (8.7% of spend) and $0.439 on #33-#40. Research calls cost $0.041-0.048 each on 0.12.0 against a $0.118 reservation each. The Phase C watch item says research should be at least 20% of spend. The workshop (57%) crowds research out.",
+   "evidence": "R2 calls 428, 429, 431, 432 (#45), #43 research rows",
+   "severity": "low",
+   "likely_cause_in_code": "economy/estimate.py:43 SEARCH_RESULT_ALLOWANCE_TOKENS 16000"
+  },
+  {
+   "topic": "Features that engaged vs stayed at zero",
+   "finding": "0.12.0 features that engaged:\n- cycle digests (5 of 5 cycles);\n- obligations (2 rows);\n- the 2/day unasked message limit (exactly at the limit: #60, #61);\n- evidence (8 rows, graded marketing or independent);\n- research sources (48 → 88);\n- 1 demand note (the first attempt was refused);\n- the library;\n- focus burn mode (no brainstorms);\n- a money goal and a first-test milestone set by code;\n- decision wakes (twice, then switched off).\n\n0.12.0 features at zero: research_checks, lesson_pins, consolidation, draft calls; auto-revenue, market probe and stats history are off by option.\n\n0.13.0 has run only #46. Its non-zero tables are listing_gates (5, which created milestones #9-#13), printify_catalog (4), owner_digests (1: 'Ember's code carried out nothing') and one upgrade released. Every table on the list below is at 0. The observations table is not in diagnostics' TABLES list, so the Phase A watch item (one observation per listing per day) can't be checked from the report.",
+   "evidence": "R1 DATABASE (R1:121-155) vs R2 DATABASE (R2:142-197); R2 EVENTS 15:01:47Z listing tests; R2 META agenda.since.live 14:52:28Z",
+   "severity": "medium",
+   "likely_cause_in_code": "diagnostics.py:95 TABLES lacks observations, venture_research, learnings, call_texts; most 0.13.0 tables fill only in venture cycles or once options or channels are on"
+  },
+  {
+   "topic": "Quick fixes and QA under budget pressure",
+   "finding": "The owner's quick fix #58 (a cover-letter listing with 1 photo) was proposed in the next cycle, #41: met. The owner's 12:02Z complaint that the photos look like duplicates is still open after 3 cycles. #44 failed: make_image refused an .xlsx page three times, then a $1.84 workshop run rendered sheets that are still unused. #45 was a venture cycle. #46 deferred the photos to 'tomorrow's budget'. 4 listings are still under 5 photos.",
+   "evidence": "R2 calls 518-520 (make_image errors); R2:582; R2 PLANNER CONTEXT OBLIGATIONS",
+   "severity": "low",
+   "likely_cause_in_code": "-"
+  }
+ ],
+ "tables_markdown": "### A. Every cycle #33-#46 (R1 for #33/#34, R2 for #35-#46; UTC; versions marked * inferred from 'Started version' events)\nNotes on the columns:\n- **Cache-read share:** cache-read tokens / (input + cache-write + cache-read tokens).\n- **In-cap:** excludes workshop, review and study, which sit outside the cycle cap (metering.py:107).\n- **Fixed A:** plan + reflection.\n- **Fixed B:** plan + reflection + the first work call (its prompt-cache write), the basis of the first analysis's 48-49%.\n\n| # | start | trigger | kind | version | steps | cost $ | plan $ (model) | work $ | reflect $ | research $ | workshop $ | review / study $ | cache-read share | cost/cap (in-cap) | fixed A / B | how it ended | sleep plan / chosen (min) | gap to next (min) |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| 33 | 09-29 10:13 | schedule | ordinary | 0.9.0* | 10/15 | 0.1892 | 0.0445 (Opus) | 0.1447 | 0 | 0 | 0 | - | 84% | 32% of $0.60 | 24% / 43% | completed | 60 / 60 | 60 |\n| 34 | 09-29 11:14 | schedule | ordinary | 0.9.1* | 15/15 | 0.2537 | 0.0557 (Opus) | 0.1980 | 0 | 0 | 0 | - | 89% | 42% of $0.60 | 22% / 38% | completed, step limit | 90 / 90 | 119 (owner pause 12:11-13:14) |\n| 35 | 09-29 13:15 | schedule | venture | 0.10.0* | 4/15 | 0.3974 | 0.0635 (Opus) | 0.1041 | 0.0243 | 0.2055 | 0 | - | 53% | 66% of $0.60 | 22% / 35% | completed early: budget kept for reflecting (money stop, 34% unused); journal 'Goal:' only | 60 / 60 | 60 |\n| 36 | 09-29 14:17 | schedule | venture | 0.10.0* | 0/0 | 0.1522 | 0.1522 (Opus, 503) | 0 | 0 | 0 | 0 | - | - | 15% of $1.00 | 100% | failed: plan 503, charged worst case (floor $0.0482) | - | 30 (backoff) |\n| 37 | 09-29 14:47 | schedule | ordinary | 0.10.0* | 15/15 | 0.3988 | 0.0575 (Opus) | 0.2297 | 0.0213 | 0.0903 | 0 | - | 86% | 40% | 20% / 31% | completed, step limit | 240 / 300 | 30 (Wake now) |\n| 38 | 09-29 15:19 | owner: Wake now | venture | 0.10.0* | 10/15 | 0.3675 | 0.0576 (Opus) | 0.1671 | 0 | 0.1428 | 0 | - | 75% | 37% | 16% / 28% | completed | 120 / 120 | 21 (Wake now after restart) |\n| 39 | 09-29 15:43 | owner: Wake now | ordinary | 0.11.0* | 15/15 | 0.3964 | 0.0619 (Opus) | 0.3078 | 0.0267 | 0 | 0 | - | 90% | 40% | 22% / 34% | completed, step limit; 5 work calls + reflection cut at 2,000 tokens; journal 'Goal:' only | 240 / 240 | 240 (incl. owner pause 17:26-18:55) |\n| 40 | 09-29 19:46 | schedule | ordinary | 0.11.0* | 12/15 | 0.2347 | 0.0481 (Opus) | 0.1865 | 0 | 0 | 0 | - | 87% | 23% | 21% / 40% | completed | 480 / 720 | 720 |\n| 41 | 09-30 07:48 | schedule | ordinary | 0.11.0* | 15/15 | 0.8197 | 0.0533 (Opus) | 0.2173 | 0.0278 | 0 | 0.4586 (4 runs) | 0.0627 review | 91% | 82% (30% in-cap) | 10% / 16% | completed, step limit; reflection cut; journal 'Goal:' only | 240 / 240 | 240 |\n| 42 | 09-30 11:57 | schedule | ordinary | 0.12.0 | 14/15 | 0.3622 | 0.0594 (Opus) | 0.2484 | 0 | 0 | 0 | 0.0545 study | 86% | 36% (31%) | 16% / 33% | completed, agent ended; journal in work | 180 / 240 (cut to 60: request #14 pending) | 1 (decision wake) |\n| 43 | 09-30 12:01 | owner decision (#14) | venture | 0.12.0 | 14/15 | 0.5628 | 0.0697 (Opus) | 0.2547 | 0 | 0.2269 | 0 | 0.0116 study | 77% | 56% (55%) | 12% / 20% | completed | 90 / 600 | 0 (decision wake) |\n| 44 | 09-30 12:05 | owner decision (#12/#13) | ordinary | 0.12.0 | 4/15 | 2.0045 | 0.0682 (Opus) | 0.0987 | 0 | 0 | 1.8376 (est 0.3482) | - | 78% | 200% (17%) | 3% / 6% (73% of in-cap) | stopped: overrun #423; journal by code | 120 / none | 30 (backoff) |\n| 45 | 09-30 12:38 | schedule (backoff) | venture | 0.12.0 | 8/15 | 0.3871 | 0.0673 (Opus) | 0.1425 | 0 | 0.1773 | 0 | - | 66% | 39% | 17% / 28% | completed | 540 / 480 | 141 (Wake now) |\n| 46 | 09-30 15:01 | owner: Wake now | ordinary | 0.13.0 | 5/15 | 0.5222 | 0.0682 (Opus) | 0.1074 | 0 | 0 | 0.3466 (est 0.3441) | - | 80% | 52% (18%) | 13% / 24% (72% of in-cap) | stopped: overrun #444; journal by code | 420 / none | next wake 15:34:28 (30, backoff; venture cycle) |\n\nNo cycle was triggered by an agenda event. The only 0.13.0 cycle so far is #46.\n\n### B. Per day (Europe/Berlin)\n| day | versions | cycles | API spend | $/cycle | spend by purpose | owner-triggered cycles | owner actions (all / excl. restarts) | messages | approvals | pause+resume | restarts | other owner actions |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| 09-28 (live from 11:39; events visible from 14:18) | …→0.6.0→0.8.0→0.8.1 | ≥15 (#12-#26 visible) | $2.20 (derived) of which $1.63 in visible cycles | ~$0.11 | not in reports | 9 message wakes, Wake now | 38 / 27 (partial day) | 14 | 1 | 2 | 11 | Wake now 6, Etsy connect 2, grant $80 1, standing instr. 1 |\n| 09-29 | 0.8.1→0.8.2→0.9.0→0.9.1→0.10.0→0.11.0 | 14 (#27-#40) | $3.51 | $0.25 | #33-#40 ($2.39): plan $0.541 (incl. $0.152 failed 503), work $1.338, research $0.439, reflect $0.072; #27-#32 $1.12 not itemised | #32, #38, #39: $0.91 (26%) | 44 / 36 | 12 | 9 (8 approved, #2 marked failed) | 6 | 8 | Wake now 3, venture notes/back/research 5, standing instr. 1 |\n| 09-30 (to 17:10) | 0.11.0→0.12.0 (10:17)→0.13.0 (16:52) | 6 (#41-#46) | $4.66 | $0.78 ($0.34 excl. workshop) | workshop $2.643 (57%), work $1.069 (23%), research $0.404 (9%), plan $0.386 (8%), study $0.066, review $0.063, reflect $0.028 | #43, #44, #46: $3.09 (66%) | 19 / 12 | 1 | 4 | 0 | 7 | library uploads 4, estimate reset 1, upgrade marked released 1, Wake now 1 |\n\nAcross the two reports, the daily cap was $5 until the 15:08:36Z restart on 09-30 and $7 after it. The runway went 25 d (first analysis) → 19.1 d (12:10Z) → 18.3 d (15:10Z). Burn is $4.89/day over 2.12 active days. The $2.20/day watch item was missed on both full days.\n\n### C. Workshop runs: estimate vs cost\n| call | cycle | version | input files | token count | estimate $ | cost $ | cost/estimate | cache write | cache read | output tokens (max 8,000) |\n|---|---|---|---|---|---|---|---|---|---|---|\n| 366 | 41 | 0.11.0 | .xlsx | failed 07:49:27 | 0.3346 | 0.0625 | 19% | 9,454 | 30,059 | 2,870 |\n| 369 | 41 | 0.11.0 | .xlsx | likely failed (de-duplicated) | 0.3394 | 0.2899 | 85% | 24,966 | 493,955 | 12,439 |\n| 371 | 41 | 0.11.0 | .xlsx | likely failed (de-duplicated) | 0.3344 | 0.0829 | 25% | 11,373 | 66,838 | 3,690 |\n| 374 | 41 | 0.11.0 | .xlsx | failed 07:56:07 | 0.3339 | 0.0233 | 7% | 4,445 | 7,620 | 644 |\n| 423 | 44 | 0.12.0 | .xlsx | failed 12:06:32 | 0.3482 | 1.8376 | 528% | 540,865 | 2,008,335 | 7,954 |\n| 444 | 46 | 0.13.0 | none | ok | 0.3441 | 0.3466 | 101% | 83,249 | 377,190 | 5,882 |\n\n### D. Options and when they changed\n| option | default | owner value | changed when (evidence) |\n|---|---|---|---|\n| cycle_spend_cap_usd | 0.50 | 0.60 → 1.00 | 09-29 13:31Z restart (#35 cap 600000, #36 1000000) |\n| daily_spend_cap_usd | 1.50 | 5 → 7 | 09-30 15:08:36Z restart (R1:47 $5; #46 plan at 15:02 saw $0.86 left; R2:47 $7) |\n| min_sleep / wake_interval | 30 / 240 | 30 / 60 | unchanged (advised 180-240 / 240) |\n| planner_model (strategy, research) | Sonnet ('', '') | Opus ('', '') | unchanged |\n| workshop_run_cap_usd | 0.50 | 0.50 → 1.50 | between 12:10Z and 15:10Z on 09-30 (restarts 12:25:59, 14:52:22, 14:57:48, 15:08:36) |\n| wake_on_message | true | false | 09-28 between 15:38Z (last message wake) and 21:06Z (message woke nothing): restarts 19:31-21:04Z |\n| wake_on_decision (new in 0.12.0) | true | false | 09-30 12:09:28Z restart (decision wakes at 12:00:59 and 12:05:43 need it on, web.py:475; off in R1 at 12:10) |\n| Printify token | - | set | 09-30 14:57:48Z restart (Printify sync 14:57:53) |",
+ "feature_engagement": [
+  {
+   "feature": "0.12.0 cycle digest (cycle_digests)",
+   "engaged": "yes",
+   "evidence": "3 rows at 12:10Z, 5 at 15:10Z = every cycle #42-#46; shown in the planner context. It says 'Work ended: the plan was done' for the stopped cycles #44/#46 (R1:397, R2:437)"
+  },
+  {
+   "feature": "Code-built journal when the reflection writes none",
+   "engaged": "yes",
+   "evidence": "#44 and #46 journals by code with Done / Not done lists; 0 'Goal:'-only journals on 0.12.0+"
+  },
+  {
+   "feature": "Reflection skipped when work wrote the journal",
+   "engaged": "yes",
+   "evidence": "0 reflect calls in cycles #42-#46 (loop.py:732)"
+  },
+  {
+   "feature": "Obligations ledger (obligations)",
+   "engaged": "yes",
+   "evidence": "1 row at 12:10Z → 2 at 15:10Z; promise #1 due 10-07; #2 closed by #46 via obligation_done; 2 obligation_done errors in #42"
+  },
+  {
+   "feature": "message_owner limit of 2 unasked messages a day",
+   "engaged": "yes (at limit)",
+   "evidence": "09-30: #60 and #61 unasked; #59 and #63 answers"
+  },
+  {
+   "feature": "Budget engine at expected cost",
+   "engaged": "yes",
+   "evidence": "No money stops on 0.12.0+; work estimates are still 2-6x actual"
+  },
+  {
+   "feature": "Burn modes",
+   "engaged": "yes",
+   "evidence": "META burn_mode.live.2 = focus since 08:17:06Z; plans cite 'no brainstorms'; 0 brainstorm calls"
+  },
+  {
+   "feature": "Evidence store",
+   "engaged": "yes",
+   "evidence": "evidence 5 → 8; #45 saved 2 marketing and 1 independent; #43 had 2 evidence errors and 1 skipped"
+  },
+  {
+   "feature": "Research bound to a venture / research_sources",
+   "engaged": "yes",
+   "evidence": "venture_id on #45's research calls; research_sources 48 → 88"
+  },
+  {
+   "feature": "Demand note before a new product line",
+   "engaged": "yes",
+   "evidence": "demand_notes 1 (#42); first attempt refused for a non-research source"
+  },
+  {
+   "feature": "Library study",
+   "engaged": "yes",
+   "evidence": "4 docs uploaded 08:29-08:30Z, 44 learnings, $0.0661 in 4 study calls (#42, #43)"
+  },
+  {
+   "feature": "Wake on decision",
+   "engaged": "yes, then switched off",
+   "evidence": "Woke #43 and #44 (12:00:59, 12:05:43); off from 12:09Z"
+  },
+  {
+   "feature": "Sleep cut while a request waits",
+   "engaged": "latent",
+   "evidence": "Applied after #42 (240 → 60 min, request #14 pending) but pre-empted by the decision wake"
+  },
+  {
+   "feature": "Roadmap money goal / first-test milestone set by code",
+   "engaged": "yes",
+   "evidence": "Events 11:57:39Z: goal #5 and milestone #8"
+  },
+  {
+   "feature": "Daily consolidation / lesson pins",
+   "engaged": "no",
+   "evidence": "0 consolidate calls; lesson_pins 0; memory_versions 45 → 45; the 09-30 review ran on 0.11.0"
+  },
+  {
+   "feature": "draft sub-call",
+   "engaged": "no",
+   "evidence": "0 calls with purpose draft in #42-#46"
+  },
+  {
+   "feature": "Model routing (strategy_model) / research model check",
+   "engaged": "no (options empty)",
+   "evidence": "research_checks 0; all plans and the review on Opus"
+  },
+  {
+   "feature": "Automatic Etsy revenue writer / market probe / stats history",
+   "engaged": "no (options off)",
+   "evidence": "etsy_auto_record_revenue, etsy_market_probe and etsy_stats_history all false; etsy_orders 0"
+  },
+  {
+   "feature": "observations (Phase A)",
+   "engaged": "unknown",
+   "evidence": "Table not in diagnostics TABLES (diagnostics.py:95)"
+  },
+  {
+   "feature": "0.13.0 listing test gates",
+   "engaged": "yes",
+   "evidence": "listing_gates 5; milestones #9-#13 set 15:01:47Z"
+  },
+  {
+   "feature": "0.13.0 Printify connector",
+   "engaged": "partly",
+   "evidence": "printify_catalog 4 (5 catalog calls in #46); printify_products 0; the product proposal never happened (#46 stopped)"
+  },
+  {
+   "feature": "0.13.0 owner daily digest",
+   "engaged": "yes",
+   "evidence": "owner_digests 1: '2026-09-29: Ember's code carried out nothing' (14:52:28Z)"
+  },
+  {
+   "feature": "0.13.0 venture cases / knock-outs / critic / decision desk / predictions",
+   "engaged": "no",
+   "evidence": "venture_cases 0, knockout_overrides 0, venture_critiques 0, desk_picks 0 (READY shown in context), predictions 0; no venture cycle on 0.13.0 yet"
+  },
+  {
+   "feature": "0.13.0 agenda with event wake-ups",
+   "engaged": "no events yet",
+   "evidence": "agenda 0; mail fetched 15:08:42Z; no cycle with an event trigger"
+  },
+  {
+   "feature": "0.13.0 policy engine / audit / undo / inquiries / email actions",
+   "engaged": "no",
+   "evidence": "policy_grants, policy_uses, policy_candidates, action_journal, action_undos, inquiry_closures, email_actions, email_suppressions all 0"
+  },
+  {
+   "feature": "0.13.0 Pinterest / website",
+   "engaged": "no",
+   "evidence": "pinterest_boards/pins 0 (pinterest_app_id empty); site_pages/downloads 0 (site_enabled false)"
+  },
+  {
+   "feature": "Upgrade path",
+   "engaged": "yes",
+   "evidence": "Upgrade #1 (Printify API) released 0.13.0, marked by the owner 15:00:32Z"
+  },
+  {
+   "feature": "0.13.0 cycles run",
+   "engaged": "1 cycle",
+   "evidence": "Only #46 (stopped at step 5/15); next wake 15:34:28Z (venture cycle)"
+  }
+ ]
+}

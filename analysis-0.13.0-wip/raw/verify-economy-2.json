@@ -1,0 +1,20 @@
+{
+ "verdicts": [
+  {
+   "id": "event-reserve-evening-dst",
+   "verdict": "confirmed",
+   "severity": "low",
+   "label": "reproduced",
+   "reasoning": "The line references are all correct on HEAD ab713b0. agent/service.py:331 computes `evening = self.clock.day_start(self.clock.today()) + timedelta(hours=EVENT_RESERVE_HOUR)`. day_start (economy/clock.py:59-61) returns the UTC moment of local midnight, so adding 20 hours of elapsed time lands on 19:00 on a 25-hour day and on 21:00 on a 23-hour day. The reserve itself goes by the local wall-clock hour (economy/metering.py:410: `clock.now().astimezone(clock.tz).hour >= EVENT_RESERVE_HOUR`).\n\nAutumn case: at 19:0x CET the reserve is still held (local hour 19 < 20). decide() gets past the `now < wake` check at service.py:316, because next_wake_at is the old 19:00. It enters the reserve branch again (service.py:330-335), writes next_wake_at and next_wake_reason unconditionally (db.set_meta does an upsert that always rewrites updated_at) and returns a wait_until that has already passed. Scheduler._seconds_until (scheduler.py:123) clamps that to 1.0 s. Each round then reruns economy.tick, run_policy, execute_approved, sync_shop, check_events and decide(); mail and shop reads have their own rate limits.\n\nSpring case: once 20:00 CEST passes the reserve is 0, but decide() returns early at service.py:316, because next_wake_at is 21:00. Scheduled work waits an extra hour.\n\nThis applies to this owner: both diagnostics reports show \"tz\": \"Europe/Berlin\" (fdd5866d report lines 37 and 245), and 2026-10-25 is 25 days away.\n\nNothing I checked prevents it. Event and owner wakes come earlier in decide() and still work. The existing test (tests/test_agenda.py:131-150) asserts wait_until == the same day_start+20h expression, so it would not catch this, and there is no DST test. No money is lost and no API calls are made: the cost is about an hour of 1-second polling with meta writes (a few thousand DB writes, which matters a little on SD-card devices), or an hour's delay on one day a year. Low is the right severity. The proposed fix (datetime.combine(today, time(EVENT_RESERVE_HOUR), clock.tz).astimezone(UTC)) is correct, and a DST test is warranted.",
+   "reproduction": "scratchpad/verify-economy-1/dst_repro.py builds a make_agent agent, sets clock.tz=Europe/Berlin and cap_spend_on to the reserve band used in tests/test_agenda.py, then calls decide(). Output:\n'autumn local now 2026-10-25 15:00:00+01:00 -> The rest of the daily cap is kept for event wake-ups until 20:00' / 'wait_until local: 2026-10-25 19:00:00+01:00'.\nAt 19:01 CET: 'event_reserve(schedule) = 1000000', 'autumn decide: False ... wait_until local 2026-10-25 19:00:00+01:00 now>=wait_until: True', 'autumn scheduler timeout: 1.0'.\nA real Scheduler run for 5.2 wall-clock seconds with the clock frozen at 19:01 CET printed 'decide() calls in 5.2 s: 6' (about one round per second, last_error None).\nControl day 2026-10-24: 'wait_until local: 2026-10-24 20:00:00+02:00'.\nSpring: 'wait_until local: 2027-03-28 21:00:00+02:00'. At 20:30 CEST: 'event_reserve(schedule) = 0' but 'spring decide: False None ... wait_until local 2027-03-28 21:00:00+02:00'.",
+   "files": [
+    "ember/app/agent/service.py",
+    "ember/app/agent/scheduler.py",
+    "ember/app/economy/metering.py",
+    "ember/app/economy/clock.py",
+    "ember/tests/test_agenda.py",
+    "/tmp/claude-0/-home-user-SURVIVE/16767151-7117-55b8-8b14-a711cc61e9f8/scratchpad/verify-economy-1/dst_repro.py"
+   ]
+  }
+ ]
+}

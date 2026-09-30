@@ -1,0 +1,403 @@
+{
+ "area": "loop",
+ "findings": [
+  {
+   "id": "stopped-cycle-recorded-as-plan-done",
+   "title": "A cycle the budget guard stops mid-work is recorded as 'the plan was done', and its journal blames the wrong thing",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "agent/loop.py",
+    "agent/store.py",
+    "agent/digest.py",
+    "economy/metering.py"
+   ],
+   "evidence": "When the guard stops a cycle for an overrun, metering.py:1151-1156 sets it to 'stopped'. Every later call is then refused as 'wake cycle #N is stopped' (metering.py:811, category 'request'), and loop.py:1162-1166 raises EndCycle('stopped', 'refused: …'). act_end_reason is only ever written through store.update_cycle (loop.py:728 and :1345), and that function ignores a cycle that has already ended (store.py:72: `WHERE id = ? AND status = 'running'`). The same happens to phase, current_action and sleep_minutes (loop.py:337-339). digest.py:33 maps a missing reason to \"the plan was done\" (used at digest.py:88-90). The code journal's summary is built from the loop's own `end`, not from the cycle row (loop.py:330). So it names the refusal that followed the stop, or even says 'completed' when _affordable refused first (loop.py:1156-1158, :733). Live, 0.13.0 report: the header for #46 reads 'stopped … phase=act step=5/15 act_end=- sleep=None' (line 579). YOUR LAST CYCLE says 'Its journal: \"Cycle ended stopped: refused: wake cycle #46 is stopped\"' and 'Work ended: the plan was done.' (lines 432, 437), yet plan step 4 (propose poster #1 at Printify) never ran. The 0.12.0 report shows the same for #44 (line 397).",
+   "failure_scenario": "The plan is 'design poster #1, then propose it as the first Printify product'. The workshop call at step 5 costs 0.7% over its worst case, and the guard stops the cycle. The next planner reads that the plan was done, plus a journal whose only reason is a refusal. The Done list shows the workshop ran, so the agent can take the proposal as made.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/loop/repro_stopped_digest.py: a work reply billed at 900k input tokens makes the guard stop the cycle. It printed cycle row {'status': 'stopped', 'note': 'a call cost more than its worst-case estimate', 'act_end_reason': None}, journal summary 'Cycle ended completed: the budget left in this cycle is kept for reflecting', and digest line 'Work ended: the plan was done.'",
+   "related": "FIX NOW 9 (end reason recorded before the reflection), FIX NOW 11 (code journal), Phase B cycle digest",
+   "fix": "In _write_report, read the cycle row's status and note and build the journal summary from them, e.g. 'Cycle #46 was stopped by the budget guard: a call cost more than its worst-case estimate'. Write act_end_reason, sleep_minutes and the cleared phase/current_action with an update that doesn't need status='running' (once, from _close). In digest.ENDED, show a missing reason as 'ended early (stopped/failed before the work finished)', never 'the plan was done'. Add a test for a guard stop in mid-work.",
+   "effort": "S"
+  },
+  {
+   "id": "tiny-overrun-ends-cycle-unreflected",
+   "title": "A 0.7% overrun on one call throws away the rest of the cycle, its reflection, and a promise made minutes earlier",
+   "severity": "medium",
+   "category": "design",
+   "files": [
+    "economy/metering.py",
+    "agent/loop.py",
+    "agent/service.py"
+   ],
+   "evidence": "metering.py:1151-1163 stops the cycle on any overrun (`if s.overrun`), however small, and even when every cap still holds. The loop has no way to close properly after that: the next work call is refused and loop.py:1166 ends the cycle without a reflection. Live, cycle #46 (0.13.0 report): workshop call #444 was estimated at 344,126 µ$ and cost 346,592 (+$0.0025, +0.7%; line 604; event line 3449). This happened at step 5 of 15, with $0.52 of the $1.00 cap spent. Plan step 4 (propose the product) and the journal never ran. Three minutes earlier, message #63 told the owner the agent 'will propose it as a Printify product this cycle' (line 620). The scheduler then backs off 30 minutes (service.py:680-684). The next cycle is a venture cycle (SCHEDULER next_cycle.venture=true), and venture cycles don't have PRINTIFY_TOOLS (tools.py:143-160), so the promise can't be kept there either. #44 was stopped the same way, although its 5.3× workshop overrun was a real estimation failure (line 3472).",
+   "failure_scenario": "Any call that lands just over its worst case, which is common for multi-turn workshop runs, ends the cycle mid-plan. The work already paid for goes without a journal or handoff (see handoff-lost-after-code-journal), and the owner is left with a broken 'this cycle' promise.",
+   "label": "live",
+   "related": "FIX NOW 17 (safety factor), stopped-cycle-recorded-as-plan-done, handoff-lost-after-code-journal; economy area",
+   "fix": "Stop the cycle only when the overrun breaks a hard limit (the cycle or daily cap, the balance, or the last-will reserve) or goes beyond a tolerance (e.g. 10% and $0.01). Otherwise raise the safety factor, log it and carry on. When the guard does stop a cycle, still allow one closing reflect call, priced at its worst case under the daily cap and the balance, so the cycle gets its journal and handoff.",
+   "effort": "S"
+  },
+  {
+   "id": "work-journal-skips-reflection",
+   "title": "Writing the journal during the work skips the reflection, which live now means every cycle: no undone-call check, no end reason, no memory upkeep",
+   "severity": "medium",
+   "category": "design",
+   "files": [
+    "agent/tools.py",
+    "agent/loop.py",
+    "agent/prompts.py"
+   ],
+   "evidence": "write_journal's description invites it: 'Written during your work, it ends the cycle without a separate reflection' (tools.py:684-693). loop.py:732 then skips _reflect. But _act doesn't stop after the journal (loop.py:1197-1201), so the model is called once more. act_end_reason is only stored inside _reflect (loop.py:1345). The reflect prompt (prompts.py:158-167) is where the agent hears which calls were not done (Phase B), and where it is asked to append lessons, update projects, ventures and strategy, and file upgrades. Live: all three completed 0.12.0/0.13.0 cycles (#42, #43, #45) called set_sleep and write_journal in the act phase. Each then paid for one more work call that only reported (#396 $0.0110, #417 $0.0139, #437 $0.0120). The last reflect call anywhere is #378 in cycle #41, and act_end is '-' on all three (0.13.0 lines 624, 725, 807). There has been no memory_update since #40, and the strategy was last replaced in #35. It still says 'Current priority: dropshipping (#3, owner's explicit wish)' and 'never rejected outright' (0.13.0 line 526). Project #7's next step still reads 'Wait for owner approval of request #14' although that listing went live on 09-30 (line 469).",
+   "failure_scenario": "A work step's write is skipped (the 5th call of a reply). Next step, the agent journals 'Wrote drafts/planner.md' and ends. No reflection is told what wasn't done, nothing asks for lessons or a strategy update, and each cycle pays about $0.012 for the closing report.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/loop/repro_act_journal.py printed: llm calls ['plan','work','work','work'], act_end_reason None, journal ('agent', 'Wrote drafts/planner.md'), a digest with 'Not done (1): workspace_write drafts/planner.md (skipped: …)' and 'Work ended: the plan was done.', and 'a reflection was asked (and told what wasn't done): False'.",
+   "related": "FIX NOW 11, Phase B digest (the reflection sees the undone list), Phase B lessons/consolidation",
+   "fix": "Make write_journal reflect-only (Spec act=False) and delete that sentence, so every cycle that worked reflects. The reflection reads the cached prefix, and live the extra report step already costs about as much as a reflection (#37's cost $0.021). If journaling during work stays, end the act loop right after that reply's tool results and store act_end_reason 'journal written'.",
+   "effort": "S"
+  },
+  {
+   "id": "planner-budgets-cut-review-and-roadmap",
+   "title": "Fixed section budgets cut the daily review's guidance and the backed venture's first test out of the plan, while about 8.6 KB of the planner's budget goes unused",
+   "severity": "medium",
+   "category": "prompt",
+   "files": [
+    "agent/context.py",
+    "agent/review.py",
+    "agent/roadmap.py",
+    "agent/gates.py"
+   ],
+   "evidence": "Each planner section is cut on its own budget (context.py:47-71, :686-712). Live 0.13.0 PLANNER CONTEXT: TODAY'S REVIEW '…[1262 bytes cut]' (line 451), ROADMAP '…[737 bytes cut]' (466), YOUR LAST CYCLE '…[607 bytes cut]' (441) and OPEN PROJECTS '…[229 bytes cut]' (478). Meanwhile other sections leave about 8.6 KB of budget unused: SINCE 79/2,300, READY 206/1,550, PRINTIFY 139/900, STRATEGY 824/2,000, RESEARCH 48/1,200, LIBRARY 248/1,200, WAITING 7/500, MAIL 127/600 (measured from the report). The live plan call used 11,521 input tokens against PLANNER_OPENING's 24,400. review.planner_text puts every project verdict first (review.py:650-657), so Focus, Lesson, Ventures, Roadmap and 'Act on it' come last (658-672). roadmap.planner_text lists 'This month' by due date (roadmap.py:733-740). There, Ember's code's five near-identical day-7 listing tests (#9-#13, gates.py:143-161) come before #7 (decision point) and #8 (the backed venture's first test, which the last three cycles aimed at).",
+   "failure_scenario": "The day's review ($0.063 on Opus) tells the plans to 'sleep longer, about 1 cheap check a day, to hold cost near $0.30 a day' and to 'Park #4 print on demand until the digital listings show views'. No plan sees this, and the day ends at $4.66. The review's lesson ('Each extra wake cycle burns runway…') never reaches LESSONS. With every new product line, more code-checked listing tests push first tests and decision points out of ROADMAP.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/loop/repro_review_cut.py runs the live review reply (#357) through review.planner_text with the 1,400-byte budget: '…[1274 bytes cut]', and 'Focus today' / 'Lesson' / 'Ventures' reach the plan: False. scratchpad/loop/repro_roadmap_cut.py rebuilds the live 13 milestones: the text is cut after #11, '#8 (the backed venture's first test) shown: False', '#7 shown: False'.",
+   "related": "FIX NOW 8 (ROADMAP floor), root cause (c)",
+   "fix": "Allocate in two passes. First each section takes min(its text, its budget); then the unused remainder goes to the cut sections in priority order (review, roadmap, last cycle, projects). The worst case, with every section full, is unchanged, so PLANNER_OPENING still holds. In review.planner_text, put Focus, Lesson, Ventures, Roadmap and the stop/change verdicts first, and collapse the 'continue' verdicts into one line of ids. In ROADMAP, show one bar's listing tests as one line ('Day-7 listing tests #9-#13: 10 views each by Wed 10-07; Ember's code checks them'), and list first tests and decision points before code-checked bars. Let code append the review's lesson to lessons.md (it is already checked JSON).",
+   "effort": "M"
+  },
+  {
+   "id": "handoff-lost-after-code-journal",
+   "title": "After any cycle without an agent journal, the next plan loses the last handoff, and the older digest is cut down to its goal",
+   "severity": "medium",
+   "category": "fix-incomplete",
+   "files": [
+    "agent/context.py",
+    "agent/loop.py",
+    "agent/digest.py"
+   ],
+   "evidence": "last_cycle_text shows only the newest journal's handoff and summary (context.py:437-444). A code journal has no handoff (loop.py:331) and its summary is 'Cycle ended stopped: …'. The two digests share 1,700 bytes (context.py:58, :691), while one digest can be 2,000 characters (digest.py:24), so the older one is cut at the section's tail. Live: #45 left the handoff 'Design 3 poster concepts … and separately fix the 4 live listings under 5 photos … Do NOT request Gelato account yet'. After #46 was stopped, the 0.13.0 plan shows no handoff at all, and #45's digest is cut after its goal (lines 431-441). The same happened after #44 in 0.12.0 (lines 390-401, '…[1086 bytes cut]').",
+   "failure_scenario": "A cycle ends stopped, failed or refused. The next plan starts without the last reflection's 'do this next' (here: the photo fixes), and without most of that cycle's digest.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/loop/repro_handoff_lost.py: cycle 1 writes a journal with next=…, and cycle 2 is stopped by an overrun. Cycle 3's YOUR LAST CYCLE shows 'Its journal: \"Cycle ended completed: the budget left in this cycle is kept for reflecting\"' and no handoff line. Printed: \"cycle 1's handoff reaches cycle 3's plan: False\".",
+   "related": "FIX NOW 10, Phase B digest",
+   "fix": "Show the newest agent-written handoff with its cycle number ('from cycle #45; #46 ended stopped before writing one'). Drop the 'Its journal' line when that journal is Ember's code's, since its digest says more. Cut each digest to its own share (e.g. 900 + 700 bytes) instead of cutting the section's tail.",
+   "effort": "S"
+  },
+  {
+   "id": "owner-comment-lost-with-stopped-cycle",
+   "title": "The owner's comment on an approved request is shown to one cycle; if that cycle is stopped, the feedback is lost",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "agent/loop.py",
+    "agent/obligations.py",
+    "agent/news.py"
+   ],
+   "evidence": "Owner news is marked seen as soon as the first work step is answered (loop.py:1171-1173), whether or not the cycle then finishes. An approval decided with a comment only becomes an obligation when it was rejected, failed or carried out by the owner (obligations.py:48-55), and pressing() never looks at comments (obligations.py:140-159). Live: approvals #12 and #13 were approved at 12:02 with 'I approve but note that additional pictures just seem like dupl…' (0.13.0 lines 1400-1401, seen_cycle_id 44). #44's plan took it in ('my owner said the extra photos looked like duplicates', step 6 'Log the lesson: every photo must show a different feature', lines 686, 698), then the guard stopped it at step 4 (line 683). The 0.13.0 planner context has no trace of that feedback (no 'duplic' in lines 409-576), while OBLIGATIONS still says 'give each the whole set with propose_etsy_edit' (line 422).",
+   "failure_scenario": "The next photo work makes more photos the owner calls duplicates, and the owner has to give the same feedback a third time (after messages #52, #55 and #58).",
+   "label": "live",
+   "related": "Phase B obligations; root cause (e) 'You do the QA'; tiny-overrun-ends-cycle-unreflected",
+   "fix": "Make an approval decided with a comment a 'decision' obligation ('react to your owner's comment on #12: …'), closed with obligation_done. Alternatively, mark owner news as seen only when the cycle ends completed or idle, so a stopped or failed cycle leaves it for the next. Attach the comment to that listing's QA line.",
+   "effort": "S"
+  },
+  {
+   "id": "wake-now-bypasses-will-backoff",
+   "title": "Pressing Wake now while the last will is due bypasses the will's retry back-off: three failures in one minute, or an endless loop of refused cycles",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "agent/service.py",
+    "agent/scheduler.py"
+   ],
+   "evidence": "decide() lets wake_requested override the will's retry time (service.py:290-293). run_cycle clears wake_requested only for trigger 'owner' (service.py:501-502). The scheduler decides again at once after every cycle (scheduler.py:102-105). So the retry times that _after sets (service.py:626-645) never take effect.",
+   "failure_scenario": "The runway is critical and the owner presses Wake now. (1) During a one-minute API overload, three will attempts run back to back and Ember gives up on its last will for this life. (2) If the day's cap is spent, the will is refused, and the scheduler spins: each round opens a refused cycle with its own row, journal, digest and 2 events, until midnight. That floods the 5,000-event log the owner audits (events.py:35).",
+   "label": "reproduced",
+   "reproduction": "scratchpad/loop/repro_will_giveup.py, with the will failing: cycles #1-#3 ran at the same clock minute, then 'Gave up on the last will after 3 failed attempts' and will_given_up=1. scratchpad/loop/repro_will_loop.py, with the will refused: 6 of 6 rounds reran at once, will_retry_at stayed at the next midnight, and wake_requested stayed True. With the will call stubbed, 50 rounds took 0.2 s.",
+   "related": "",
+   "fix": "Clear wake_requested when a cycle starts for it, last_will included. Or let it override the retry time only once. Have the scheduler wait at least one round after a refused or failed cycle.",
+   "effort": "S"
+  },
+  {
+   "id": "status-states-options-cap",
+   "title": "STATUS and the venture room line state the options' cycle cap, not the real cap of this cycle",
+   "severity": "low",
+   "category": "prompt",
+   "files": [
+    "agent/loop.py",
+    "agent/context.py",
+    "agent/ventures.py",
+    "economy/metering.py",
+    "economy/burn.py"
+   ],
+   "evidence": "The snapshot passes settings.cycle_spend_cap_usd (loop.py:574-575) to STATUS ('This cycle may spend up to $…', context.py:382-383) and to the room line (context.py:395-396; ventures.py:611-622). But open_cycle stores the real cap: at most $0.40 in maintenance (burn.py:53-54), and the day's rest less the 20% event reserve for a scheduled cycle before 20:00 (metering.py:452-457). Live 0.13.0 preview at 17:10 CEST, with $4.66 of $7.00 spent: STATUS says $1.00, but a scheduled cycle would open with $0.94. The STATUS arithmetic itself is right: 35% of $1.00 = $0.35, /$0.05 = 7 research calls, and live research costs $0.041-0.055.",
+   "failure_scenario": "In maintenance, the plan is told it has $1.00 and '7 research calls' next to 'one cycle a day of at most $0.40'. It plans work for a cycle 2.5 times bigger, and the steps get cut with 'the budget left in this cycle is kept for reflecting'.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/loop/repro_status_cap.py (maintenance forced): cycles.cap_micros 400000, while STATUS says 'This cycle may spend up to $1.00.' next to '…one cycle a day of at most $0.40…'.",
+   "related": "Phase D 20:00 reserve; Phase B burn modes",
+   "fix": "Read cycles.cap_micros for the running cycle (the loop has cycle_id) into the Snapshot, and say why it is lower (maintenance, or the event reserve until 20:00).",
+   "effort": "S"
+  },
+  {
+   "id": "focus-mode-still-offers-brainstorm",
+   "title": "In the focus burn mode ('no brainstorms, no new ideas'), venture cycles are still told to brainstorm and still get the tool, which then refuses",
+   "severity": "low",
+   "category": "prompt",
+   "files": [
+    "agent/tools.py",
+    "agent/context.py",
+    "agent/ventures.py",
+    "agent/prompts.py",
+    "agent/loop.py"
+   ],
+   "evidence": "Brainstorms are switched off outside explore (loop.py:285-286; tools.py:2041-2043). But tools.offered still offers brainstorm in every venture cycle (tools.py:1214). STATUS still prices 'or a brainstorm and 5' (ventures.py:611-622). VENTURE_BRIEF says 'grow the tree with brainstorm (first, if you plan one)' (context.py:92-96), and VENTURE_RULES says 'a brainstorm first' (prompts.py:143-146). 'No new ideas' is enforced nowhere: venture_create has no burn check. Live: both reports are in focus, and their STATUS carries both 'no brainstorms, no new ideas' and 'or a brainstorm and 5' (0.13.0 lines 413-418).",
+   "failure_scenario": "A focus-mode venture cycle plans a brainstorm first, as the rules say. The call is refused and the step is wasted.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/loop/repro_focus_brainstorm.py: STATUS shows both lines, 'brainstorm tool offered: True', and the call returns \"refused: brainstorming isn't available right now\".",
+   "related": "Phase B burn modes, FIX NOW 32 (VENTURE_BRIEF)",
+   "fix": "Pass the burn mode to tools.definitions/offered, ventures.room_text and VENTURE_BRIEF. Drop brainstorm (and venture_create, if 'no new ideas' is meant) outside explore.",
+   "effort": "S"
+  },
+  {
+   "id": "maintenance-backoff-skips-daily-rule",
+   "title": "Maintenance's 'one cycle a day' only applies after a completed cycle; after a failed, stopped or refused one, the next wake comes 30 minutes later",
+   "severity": "low",
+   "category": "cost",
+   "files": [
+    "agent/service.py"
+   ],
+   "evidence": "_after applies the maintenance day only in the completed/idle branch (service.py:653-679). Failed, stopped and refused cycles back off from min_sleep instead (service.py:680-684). Event wake-ups, up to 4 a day (service.py:305-307), aren't limited by the mode either.",
+   "failure_scenario": "The runway is under 15 days and a cycle hits a 5xx or an overrun (like #44 and #46). Another $0.40 cycle follows 30 minutes later, then 60, 120 and so on, instead of the next day.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/loop/repro_maintenance_backoff.py (maintenance forced, the plan comes back unusable): next wake 12:30 for a 12:00 cycle, reason 'after a failed cycle, backing off'.",
+   "related": "Phase B burn modes",
+   "fix": "In the failure branch, take the larger of the back-off and the maintenance day while in maintenance. Decide whether event wake-ups count against it, and say so in STATUS.",
+   "effort": "S"
+  },
+  {
+   "id": "waiting-hides-old-requests",
+   "title": "WAITING FOR YOUR OWNER only finds pending requests among the newest 20 approvals",
+   "severity": "low",
+   "category": "fix-incomplete",
+   "files": [
+    "agent/context.py",
+    "agent/store.py"
+   ],
+   "evidence": "context.py:287 filters pending requests out of store.queue(conn, 'approvals', scope, 20), the newest 20 approvals of any status (store.py:521-525). FIX NOW 25(5) fixed the same defect for the owner's Approvals tab (store.py:509-518), but not for the agent. The sleep cut counts every pending request (service.py:665-667), so the two disagree.",
+   "failure_scenario": "A 30-day sell request waits for the owner while newer pins, Printify products and listing edits, some auto-approved under Phase D unlocks, pile up past 20. The plan says nothing waits and the 'don't wait for it' note disappears. The agent can't withdraw the request and may propose it again.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/loop/repro_waiting_hidden.py: 3 requests pending behind 32 decided ones. The Approvals tab lists [3, 2, 1]; the plan's WAITING FOR YOUR OWNER says 'None.'; the database holds 3 pending.",
+   "related": "FIX NOW 25(5)",
+   "fix": "Select the pending requests directly, like approvals_for_owner (and approved requests that aren't done yet, if useful), ordered by expiry.",
+   "effort": "S"
+  },
+  {
+   "id": "changelog-mostly-unread",
+   "title": "After an upgrade, the agent reads only the first 2 KB of the release notes, and the whole version is then marked as read",
+   "severity": "low",
+   "category": "prompt",
+   "files": [
+    "agent/news.py",
+    "agent/context.py",
+    "agent/loop.py"
+   ],
+   "evidence": "changelog_news cuts the notes to CHANGELOG_LIMIT, 2,000 bytes, from the end (news.py:29, :83-116) and labels the cut '…(older changes cut)'. The plan's YOUR SOFTWARE budget is the same 2,000 bytes (context.py:683), so the section counts as shown whole (context.py:715) and loop.py:656-657 marks the version as read. Live: neither report shows a YOUR SOFTWARE section after the 0.12.0 and 0.13.0 upgrades.",
+   "failure_scenario": "On the 0.12.0 → 0.13.0 upgrade (installed today), the agent reads venture cases, knock-outs and the critic, then nothing about READY/predictions, policy unlocks, NEVER, Pinterest, Printify, the website or the listing tests. The 'older' label is also wrong: what was cut is the rest of 0.13.0.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/loop/changelog_cut.py: the 0.12.0 → 0.13.0 upgrade shows 1,937 of 8,456 characters, and 0.11.1 → 0.13.0 shows 1,937 of 25,121. The text stops inside 0.13.0's critic paragraph with '…(older changes cut)'.",
+   "related": "root cause (f): behaviour steered by text",
+   "fix": "Keep a read position per version and show the next unread 2 KB in each plan until the version is read, or have code write a one-line-per-change summary. Label the cut '(the rest of 0.13.0 comes in your next plan)'.",
+   "effort": "S"
+  },
+  {
+   "id": "killed-cycle-no-digest",
+   "title": "A cycle killed by a restart or crash gets no digest and no journal",
+   "severity": "low",
+   "category": "fix-incomplete",
+   "files": [
+    "agent/loop.py",
+    "agent/service.py",
+    "economy/metering.py"
+   ],
+   "evidence": "The digest and the code journal are only written in CycleRunner._close (loop.py:310-339). If the process dies mid-cycle (Home Assistant kills the app 10 s after asking it to stop, and the scheduler waits 8 s, scheduler.py:28; also power loss or OOM), the metering marks the cycle interrupted at the next boot (metering.py:389-392). recover() then writes neither a digest nor a journal (service.py:210-238). The Phase B note says 'when a cycle ends, however it ends, Ember's code writes its digest'.",
+   "failure_scenario": "An update restarts the app during a workshop run. The next plan's YOUR LAST CYCLE shows the cycle before it, and that cycle's done and undone calls, charged at their worst case, are invisible to the agent.",
+   "label": "code",
+   "related": "Phase B cycle digest",
+   "fix": "In recover(), write the code journal and the digest from the records for every interrupted cycle that has none.",
+   "effort": "S"
+  },
+  {
+   "id": "preview-mutates-state",
+   "title": "The diagnostics' 'read-only' planner preview runs Ember's code's keepers, outside any cycle and without the cycle lock",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "agent/loop.py",
+    "agent/service.py",
+    "diagnostics.py"
+   ],
+   "evidence": "planner_preview promises that 'nothing is fetched, synced, marked or spent' (loop.py:234-236). But it calls _snapshot, which runs the money goal, stages.keep (parks ventures), metrics.grade_all (closes milestones), gates.keep (creates listing tests), predictions.settle_all and obligations.keep (loop.py:510-520). The diagnostics call it from the web thread without the cycle lock (diagnostics.py:533-540 → service.py:888-915).",
+   "failure_scenario": "The owner generates a report while a cycle is inside _snapshot. Both run gates.keep, one hits the UNIQUE constraint on listing_gates (migrations/0057_listing_gates.sql:12-15), and the cycle fails with an internal error. Even without a race, generating a report parks ventures and closes milestones at report time, outside any cycle.",
+   "label": "code",
+   "related": "",
+   "fix": "Split _snapshot into keep() and read(), and let the preview only read. Or have it skip the keepers, or take the lock, while a cycle runs.",
+   "effort": "S"
+  },
+  {
+   "id": "constitution-stale-executor-claims",
+   "title": "The constitution, sent with every request, still says the owner carries out everything but email and that only the owner records revenue",
+   "severity": "low",
+   "category": "prompt",
+   "files": [
+    "agent/constitution.md",
+    "agent/prompts.py"
+   ],
+   "evidence": "constitution.md:21-25 says 'approved emails are sent by Ember's code …, everything else your owner carries out' and 'Revenue only counts when your owner records it'. Since 0.12.0/0.13.0, Ember's code lists approved Etsy listings and edits, creates pins and Printify products, can record Etsy revenue itself (etsy_auto_record_revenue), and runs actions the owner unlocked. FIX NOW 25(1) corrected the same claim in news.py, and OPERATING_RULES says otherwise on revenue (prompts.py:68-69). The constitution is in every plan, work step, review and will (prompts.py:555-605), and the rule audit doesn't scan it.",
+   "failure_scenario": "The agent asks the owner to carry out an approved listing by hand, or discounts revenue that Ember's code recorded.",
+   "label": "code",
+   "related": "FIX NOW 25(1), Phase B rule audit",
+   "fix": "An edit of those two sentences, approved by the owner (it is their text). Add constitution.md to the rule audit's check for contradictions.",
+   "effort": "S"
+  }
+ ],
+ "fix_checks": [
+  {
+   "item": "FIX NOW 9: the reflection's reserve kept in the loop, and the end reason recorded before the reflection",
+   "verdict": "partial",
+   "evidence": "Research, draft and brainstorm check quote + reserve (loop.py:1389-1391, 1535-1537, 1589-1591). Workshop runs keep the reflection's money under the daily cap and the balance (loop.py:1700; metering.py:677-684); workshop is outside the cycle cap by design. act_end_reason is stored before the reflection is priced (loop.py:1345). But it is never stored when the guard has already stopped the cycle (store.py:72), nor when the journal was written during the work (loop.py:732): live act_end=- on #42-#46."
+  },
+  {
+   "item": "FIX NOW 10: the handoff (`next`) reaches the next plan",
+   "verdict": "partial",
+   "evidence": "Stored and shown (context.py:438-439); test_handoff passes; live, the journals of #42, #43 and #45 all carry `next`. It is lost whenever the newest journal is Ember's code's (after #44 and #46 in the live reports; reproduced in repro_handoff_lost.py)."
+  },
+  {
+   "item": "FIX NOW 11: journal built by code, and write_journal outside the 4-call limit",
+   "verdict": "partial",
+   "evidence": "The limit exemption holds (loop.py:1291-1293), and the code journal body is built from records (loop.py:1799-1829; live #44 and #46 list Done and refused calls). But its summary comes from the loop's end note: 'Cycle ended stopped: refused: wake cycle #46 is stopped', or even 'Cycle ended completed' for a stopped cycle (reproduced)."
+  },
+  {
+   "item": "FIX NOW 12: memory_read, no blind rewrites, OUTDATED nags deleted",
+   "verdict": "holds",
+   "evidence": "memory_read exists (tools.py:1663-1670). A lessons replace keeping under half the lines, without an earlier-reply read, is refused (tools.py:1647-1658). No OUTDATED left in context.py or prompts.py, and the test_autonomy memory tests pass. Live, no rewrite has been attempted since 0.12.0."
+  },
+  {
+   "item": "FIX NOW 15: venture FOCUS order",
+   "verdict": "holds",
+   "evidence": "ventures.py:803-825 puts the owner's word, the stage rule, first test, next question and knowledge file first, each field at most FOCUS_CHARS (220)."
+  },
+  {
+   "item": "FIX NOW 27: forged headings",
+   "verdict": "holds",
+   "evidence": "Every planner, brief and will section passes through _sections/_unheaded (context.py:656-667), including 0.13.0's READY, PINTEREST, PRINTIFY, WEBSITE and the agenda lines. Email senders are flattened (integrations/mail.py:252). test_forged_headings passes."
+  },
+  {
+   "item": "FIX NOW 32: the VENTURE_BRIEF sentence",
+   "verdict": "holds",
+   "evidence": "context.py:92-96 no longer sends listings to ordinary cycles. It still says 'grow the tree with brainstorm' in focus mode (see focus-mode-still-offers-brainstorm)."
+  },
+  {
+   "item": "Waiting for your decisions: decision wakes, sleep cut while requests wait, WAITING note",
+   "verdict": "partial",
+   "evidence": "Decision wakes (service.py:456-492), the sleep cut (service.py:662-672) and the note placed first (context.py:677-678) are all there, and test_decision_wakes passes. WAITING misses pending requests beyond the newest 20 approvals (reproduced). Live, the owner has wake_on_decision off, and the cut uses the owner's 60-minute Default sleep (DOCS.md:52)."
+  },
+  {
+   "item": "Phase B cycle digest",
+   "verdict": "partial",
+   "evidence": "Every _close writes one, write-once (loop.py:332-336; digest.py:95-101), and the live Done/Not done lists are accurate (#44's 3 refused make_image calls). But: 'Work ended: the plan was done' for guard-stopped and journal-in-work cycles; no digest for a cycle killed by a restart; and YOUR LAST CYCLE cuts the second digest (live '…[607 bytes cut]'). The reflection's undone list never runs live (work-journal-skips-reflection)."
+  },
+  {
+   "item": "Phase B obligations: the venture cycle gives way",
+   "verdict": "holds",
+   "evidence": "loop.py:358-374 with obligations.pressing (obligations.py:140-159). Live: 'Cycle #46 is an ordinary cycle: 1 message of your owner's to answer comes first' (event line 3455), and #46 answered #62 in its first tool reply (line 620). Its plan was aimed at venture #4 / milestone #8, which the planner rules allow ('In an ordinary cycle, work on your projects (a backed venture's included)', prompts.py:114-115). Gaps: QA lines, overdue milestones, people's emails and owner comments on approvals never press (owner-comment-lost-with-stopped-cycle)."
+  },
+  {
+   "item": "Phase B make room: tool sets, rule audit, one source for limits",
+   "verdict": "holds",
+   "evidence": "Venture cycles don't carry ORDINARY_TOOLS (tools.py:143-160, 1194-1216). test_rule_audit and test_text_limits pass. The rule audit doesn't cover constitution.md, which has 2 stale claims."
+  },
+  {
+   "item": "Prompt profiles PLANNER_OPENING 24,400 / WORK 35,900 / REFLECT 47,600 against caps",
+   "verdict": "holds",
+   "evidence": "pricing.py:53-64 match the patch notes, and test_agent_requests pins each profile within 15% of the measured worst case (passes). With defaults, a working cycle is $0.3096 worst case against the $0.50 default cap (1.62×; the test floor is 1.5×; it was about $0.25 in 0.12.0). With the owner's Opus planner it is $0.4504, above the maintenance cap of $0.40. The live plan call used 11,521 of 24,400 tokens."
+  },
+  {
+   "item": "Phase B lessons, pins and consolidation",
+   "verdict": "holds",
+   "evidence": "Pins are kept word for word and shown first (memory.py:131-139; context.py:627-639). The consolidation is checked by code (memory.py:297-352; loop.py:887-928). Live it never ran (8 lessons, under CONSOLIDATE_FROM=12), and with no lesson appended since #40 it won't."
+  },
+  {
+   "item": "Phase D event wakes and the reactive cycle",
+   "verdict": "holds",
+   "evidence": "At most 4 a day, 30 minutes apart, the dormant check first, and only when the day's cap covers an opening (service.py:296-307, 343-361). The reactive cycle has no venture, review, study or critic, and at most 5 steps (loop.py:252-255, 283, 612-618; context.py:718-723). test_agenda passes. Not exercised live (no orders or replies yet)."
+  },
+  {
+   "item": "20:00 reserve's effect on scheduling",
+   "verdict": "holds",
+   "evidence": "decide() holds a scheduled wake until 20:00 when only the reserve would pay for it (service.py:329-335), and open_cycle lowers the cap (metering.py:452-457). But STATUS still states the options' cap (status-states-options-cap)."
+  },
+  {
+   "item": "Burn modes' effect on scheduling (maintenance: one cycle a day)",
+   "verdict": "partial",
+   "evidence": "The rule applies only after a completed or idle cycle (service.py:677-679). Failed, stopped and refused cycles back off from 30 minutes (reproduced), and event wakes are extra. Focus still offers brainstorms (reproduced)."
+  },
+  {
+   "item": "STATUS line math ('$1.00 pays for about $0.35 … about 7 research calls')",
+   "verdict": "partial",
+   "evidence": "The arithmetic is consistent (ventures.py:611-622: ROOM_SHARE 0.35 × $1.00 = $0.35; /$0.05 = 7; ($0.35 − $0.10)/$0.05 = 5), and live research costs $0.041-0.055. But it uses the options' cap rather than the cycle's, and offers a brainstorm in focus mode."
+  }
+ ],
+ "still_open_from_0_11_1": [
+  "Root cause (c), 'the defaults have no room': the default working cycle is now $0.31 at worst against the $0.50 default cap (1.62×, test floor 1.5×). It was about $0.25 in 0.12.0; about $0.024 of worst-case growth is left before the next prompt addition forces a cap bump or trimming.",
+  "Root cause (a), 'costs land on the wrong goal': PLANNER_RULES still says 'Aim each cycle at the milestone due first' (prompts.py:118). In 0.13.0 the milestones due first are Ember's code's listing tests (#9-#13) and #3, which only code, or a done-with-evidence close, can settle.",
+  "Root cause (b), 'promises are only prose' (in part): only the agent's own `commits` become obligations. An owner's request is closed by any answer, and an owner's comment on an approved request is shown once (owner-comment-lost-with-stopped-cycle). #46's 'this cycle' promise in message #63 was never registered.",
+  "Root cause (f), tests check wording rather than outcomes: no loop test covers a guard stop in mid-work (digest, journal, handoff and back-off after an overrun). Both live stops (#44, #46) hit exactly that path."
+ ],
+ "strengths": [
+  {
+   "what": "One choke point for spending, with clean refusal handling",
+   "evidence": "Every model call goes through MeteredModel via CycleRunner._call (loop.py:593-606). A free failure is retried once, never a 4xx the API rejected (loop.py:600-606, 1893-1900). Budget refusals end the step, not the app (loop.py:1162-1169). The cycle is always closed even if the report fails (loop.py:310-323)."
+  },
+  {
+   "what": "Digests built by code are accurate about what was and wasn't done",
+   "evidence": "The live #44 digest lists the 3 refused make_image calls with their reasons, and a Done list with the $1.84 workshop run (0.12.0 report lines 391-399). Digests are write-once (digest.py:95-101; test_cycle_digest checks the trigger refuses UPDATE)."
+  },
+  {
+   "what": "Obligations make an owner's message come first, and it works live",
+   "evidence": "Event 'Cycle #46 is an ordinary cycle: 1 message of your owner's to answer comes first' (0.13.0 line 3455). #46 answered #62 in its second work reply and closed the replaced Gelato promise with obligation_done (tool calls 542-543). OBLIGATIONS is never cut (context.py:688)."
+  },
+  {
+   "what": "Protection against forged headings is structural, not per field",
+   "evidence": "_sections/_unheaded (context.py:656-667) quotes any heading-like line in every planner, brief and will section, so the new 0.13.0 sections (READY, PINTEREST, PRINTIFY, WEBSITE, agenda) are covered without extra code. test_forged_headings passes."
+  },
+  {
+   "what": "Pricing at expected cost ended the starvation of 0.11.1",
+   "evidence": "Live 0.12.0+ cycles ran 8-14 work steps within a $1.00 cap (#42: 14 steps, $0.36; #43: 14 steps, $0.56; #45: 8 steps, $0.39). Work steps read 94-98% of their prompt from cache (#46 calls 440-443: 22.7k-25.9k tokens read against 0.4-1.6k written)."
+  },
+  {
+   "what": "Prompt profiles are measured and pinned, and the live planner has headroom",
+   "evidence": "test_agent_requests builds every section at its budget with multibyte filler and asserts each profile within 15% of it (tests/test_agent_requests.py:77-88). The live plan call was 11,521 input tokens against 24,400."
+  },
+  {
+   "what": "The agent writes concrete handoffs when it journals",
+   "evidence": "All three agent journals since 0.12.0 carry a specific `next`, e.g. #45: 'Design 3 poster concepts … fix the 4 live listings under 5 photos … Do NOT request Gelato account yet'."
+  },
+  {
+   "what": "The scheduler has one decision point and one lock, and handles owner actions during a cycle correctly",
+   "evidence": "decide() is the single place that chooses (service.py:284-341). A decision or message arriving during a cycle sets message_waiting and wakes once afterwards unless the cycle saw it (service.py:462-492). The scrub runs under the cycle lock (service.py:537-548). An error while scheduling falls back to the default interval (service.py:524-528, 612-621)."
+  },
+  {
+   "what": "The area's tests are broad and pass",
+   "evidence": "14 area test files (rule audit, text limits, profiles, digest, code journal, handoff, reflection reserve, obligations, agenda, burn modes, decision wakes, scheduler, forged headings, lessons) all pass on HEAD with the provided venv."
+  }
+ ],
+ "notes": "Reproductions are in /tmp/claude-0/-home-user-SURVIVE/16767151-7117-55b8-8b14-a711cc61e9f8/scratchpad/loop/. The scripts that force a burn mode monkeypatch burn.settle, and the will scripts stub CycleRunner._last_will; everything else runs the real loop against the fake transport.\n\nFor the economy/workshop reviewer:\n- Cycle #44's workshop call #423 was estimated at $0.348 and cost $1.838 (5.3×). That is more than workshop_run_cap_usd ($1.50), and the cycle spent $2.0045 against a $1.00 cap. Workshop runs are outside the cycle cap by design (metering.py:107, 677-678), so only the overrun check caught it, after the money was spent.\n\nOn #46 being 'ordinary' yet aimed at venture #4 / milestone #8:\n- This is by design. Ordinary cycles build backed ventures (prompts.py:114-115), and the pressing message was answered first.\n- The planner is never told why the cycle became ordinary.\n- After #46 the next cycle is a venture cycle whose READY says 'build #4'. That cycle has no build or Printify tools, so #63's 'this cycle' promise can't be picked up there.\n- The scheduler's next_cycle preview (service.py:911-915) ignores the burn mode and obligations; it was right today.\n\nSmaller items, not filed:\n- CycleEnd.rerun is set (loop.py:634) and never read (dead code).\n- _announce logs 'next sleep N min' with the agent's chosen number, not the sleep after the cut, back-off or maintenance rule.\n- The sleep cut while requests wait uses the owner's Default sleep: 60 min live, 240 by default. It is documented in DOCS.md:52, but with 60 a waiting request means hourly cycles.\n\nNot checked:\n- The brief at full size: with a milestone, a venture and a project focus all long, the brief loses its end, and LIMITS (the step count, including the reactive 5) is cut first.\n- desk.py, news.decided_unseen internals, and the review scorecard's own contents.\n- I didn't run the whole test suite, only the 14 area files."
+}

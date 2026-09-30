@@ -1,0 +1,409 @@
+{
+ "area": "channels",
+ "findings": [
+  {
+   "id": "pod-margin-rule-fee-model",
+   "title": "Printify's 15% margin check uses a looser fee model than Ember's own, and leaves out VAT and who pays shipping",
+   "severity": "medium",
+   "category": "money",
+   "files": [
+    "app/integrations/printify.py",
+    "app/agent/econ.py",
+    "app/integrations/printify_live.py",
+    "app/agent/guides/printify.md"
+   ],
+   "evidence": "The check at printify.py:46-51 and :206-220 is price*(1-0.105) - 0.50 - making - shipping >= 15% of price. Ember's own Etsy model, econ.py:24-29 and :82-89 (used for venture cases), adds VAT on Etsy's fees and converts the USD listing fee. At EUR 25 that model charges EUR 3.45 in fees, where Printify's check assumes EUR 3.125. Worked numbers from the owner's live case (EUR 25 poster, EUR 6.09 shipping; my script margin2.py): the code passes any making cost up to EUR 12.04 (keeps 3.75 = 15.0%). With econ's fees the same sale keeps EUR 3.42 (13.7%). If Printify adds 19% VAT to its bill for a seller without a VAT ID, the sale keeps -0.02 EUR, a loss. Printify's order records carry a tax total, and _line at printify_live.py:222-231 reads no tax. The check also treats shipping as a cost the seller pays out of the price, but nothing in the code sets or reads the Etsy shipping profile Printify publishes with.",
+   "failure_scenario": "The owner approves a EUR 25 A3 poster whose making cost is EUR 11.50, and the code publishes it as keeping 15%. Each sale then keeps about EUR 3.9 under Ember's own fee model, and about EUR 0.6 if Printify bills VAT. If Printify's Etsy shipping profile instead charges the buyer EUR 6.09, the rule does the opposite: least_price(900, 609) demands EUR 21.00, when about EUR 14 already keeps 15%, so the agent overprices and sells less.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/channels/margin.py and margin2.py import app.integrations.printify and app.agent.econ. Output: 'max making cost passing at EUR 25.00 / 6.09 shipping = 1204'; 'fees: printify model 3.125 econ model 3.45'; 'making 12.04: code keeps 3.75 (15.0%); econ fees 3.42 (13.7%); + 19% VAT on Printify's bill -0.02 (-0.1%)'; 'least_price(900, 609) = 21.0'; 'least price if buyer pays shipping (making 9.00): 14.0'.",
+   "related": "Phase E4 patch note: 'publishes only if every price keeps 15% after Etsy's fees (about 10.5% and 0.50), making and shipping'",
+   "fix": "Compute the check with econ.fees (one fee model for the whole app, VAT on fees and the USD listing fee at the owner's rate). Read Printify's tax on orders (and add an option for the owner's VAT status) and include it in costs. Decide who pays shipping: read or set the Etsy shipping profile Printify publishes with, and compute the margin on price plus buyer-paid shipping when the buyer pays. Show the fee assumptions on the approval card.",
+   "effort": "M"
+  },
+  {
+   "id": "pod-pnl-asymmetric",
+   "title": "A POD sale's revenue is credited to its venture, but Printify's making and shipping costs are recorded as overhead, and the buyer's shipping payment is dropped",
+   "severity": "medium",
+   "category": "money",
+   "files": [
+    "app/integrations/printify_publisher.py",
+    "app/web/static/js/app.js",
+    "app/integrations/etsy.py",
+    "app/integrations/etsy_publisher.py",
+    "app/agent/stages.py",
+    "app/agent/ventures.py"
+   ],
+   "evidence": "orders_json (printify_publisher.py:230-261) returns no project_id or venture_id. printifyCostCell (web/static/js/app.js:3952-3966) opens the expense form without projectId or ventureId, while Etsy's revenue and fee buttons prefill both (app.js:3670-3700). order_project (etsy_publisher.py:1199-1221) does credit the sale of a Printify listing to its project (reproduced: order_project -> (1, None)). order_net (etsy.py:596-605) leaves shipping out of revenue, yet Printify's recorded cost includes shipping (printify_publisher.py:246). ventures.money (ventures.py:545-570) sums only ledger rows that name the venture or its project, and the scale rule (stages.py:180-185) fires when revenue > 0 and net > 0.",
+   "failure_scenario": "A EUR 25 poster sells. The revenue goes to venture #4 (auto-recorded, or by the owner's prefilled click), and so do Etsy's fees of about EUR 3. The Printify bill of about EUR 14.39 is recorded with Record the cost as an expense with no venture. Venture #4 shows a net of about +EUR 22 less its API spend, so Ember's code sets 'Scale it: Print on demand' even though each sale may keep only a few euros. If the buyer also paid EUR 6.09 shipping, that income never appears while the shipping cost does.",
+   "label": "code",
+   "fix": "Add project_id and venture_id to orders_json by joining printify_products -> approvals -> projects, and pass them to openLedgerForm as the Etsy buttons do. Consider recording Printify's cost automatically under the same option as etsy_auto_record_revenue. Count the shipping the buyer paid on the receipt as revenue for Ember's lines, or subtract it from the recorded cost.",
+   "effort": "S"
+  },
+  {
+   "id": "pod-publish-unclear-never-reconciled",
+   "title": "A Printify publish that times out leaves a live Etsy listing Ember never tracks, and a publish that never reaches Etsy stays 'publishing' forever",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "app/integrations/printify_publisher.py",
+    "app/integrations/printify_live.py",
+    "app/integrations/connectors.py"
+   ],
+   "evidence": "A timeout or 5xx on publish (printify_live.py:69-71, :80-81) becomes Unclear, and the row goes to 'unclear' with its product_id (printify_publisher.py:458-463). The sync reads only rows in LIVE = ('publishing', 'active') (:60, :662), so an unclear row is never looked at again, although its product_id is known. listing_ids needs a listing_id (:197-205), so Etsy's sync never reads that listing. The journal entry gets subject None and no Undo (connectors.finish; _after at :553-563). Printify's orders of that product are still collected (:676-677). A 'publishing' row whose Etsy listing never appears has no deadline, and its approval is already closed 'done' with 'its Etsy listing follows in a few minutes' (:469-475, :565).",
+   "failure_scenario": "Printify publishes the poster, but the answer to publish.json is lost (ReadTimeout). The poster is live in the shop and charged Etsy's listing fee, yet Ember records 'unclear'. It never reads the listing's views, a buyer's Etsy order is not counted as Ember's, and the dashboard offers no Undo. Printify's cost of that order still shows up to be recorded. The next product is still treated as the 'first publication'. Separately, if Etsy rejects Printify's listing (for example, no production partner is set), the row stays 'publishing' for good, pod_products_live stays 0, and nothing tells the owner or the agent.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/channels/test_repro_printify.py patches the fake account's publish to publish and then raise Unclear. Printed: row {'status': 'unclear', 'product_id': '0…02', 'listing_id': None}; fake account product listing 800000003; after sync still 'unclear'; 'listing_ids tracked for Etsy sync: []'; journal subject None, undo None; 'undo offered: … why_not: it is unclear what happened: check it at Printify'; after a sale 'printify orders kept: [('000000', '12.40 EUR', False)]'; 'never reasons of the second: ['first_publication']'. A second test, where publish is accepted but no listing ever appears: 'after +30d: publishing None' while the approval reads status 'done'.",
+   "related": "Phase E4: 'The row goes publishing until the sync reads the Etsy listing Printify made, then active. A crash leaves it unclear, never retried.'",
+   "fix": "In the sync, also read rows that are 'unclear' and have a product_id. If Printify shows an Etsy listing, set 'active' with its listing_id, write the journal subject and offer Undo; if it is Gone, mark it failed or deleted; if it is unpublished, say so and offer deletion. Give 'publishing' a deadline (for example 24 h) after which an event, a plan line and a card note say that Printify didn't publish it to Etsy, and point the owner to Printify's error. Never retry the publish automatically.",
+   "effort": "M"
+  },
+  {
+   "id": "pod-listings-invisible-to-metrics-gates-stages",
+   "title": "Etsy listings made by Printify are left out of the Etsy metrics, the listing test and the 'nothing sold' park rule",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "app/agent/metrics.py",
+    "app/agent/gates.py",
+    "app/agent/stages.py",
+    "app/integrations/printify_publisher.py",
+    "app/integrations/etsy_publisher.py"
+   ],
+   "evidence": "metrics.listings (metrics.py:310-326) reads etsy_listings only. views_total, favorites_total, orders_total, orders_observed and listings_live (:387-406), gates._live_projects (gates.py:115-129) and stages.sold (stages.py:133-138) all build on it. Printify listings live only in printify_products (listing_id, views and favorites are written by Etsy's sync at etsy_publisher.py:674-679). pod_products_live counts status = 'active' (printify_publisher.py:264-273) and ignores the Etsy state the sync stores, so a listing that has expired or been deactivated at Etsy still counts as live.",
+   "failure_scenario": "A POD product line with only Printify listings never gets the day-7, day-14 or day-21 listing test, because no gates are set. A milestone measured by orders_total, views_total or favorites_total on the POD project reads 0 despite real views and orders. When the POD venture is live and its sales come only from Printify listings whose revenue was not recorded (auto_revenue is off on the device), stages.sold returns False and Ember's code parks the venture 60 days after it went live as 'nothing sold'. A Printify listing that expired at Etsy still counts in pod_products_live.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/channels/test_repro_pod_metrics.py publishes a product in the dry run, inserts an Etsy order of its listing 800000003, and sets views to 40 and favorites to 3. Printed: 'metrics.listings(project): [900000001]' (only the Etsy listing); 'orders_of(printify listing): [555]'; 'orders_total for the project: 0'; 'views_total for the project: 0'; 'favorites_total for the project: 0'; 'order_project: (1, None)' (attribution itself works).",
+   "related": "Phase E4: 'Printify's listings of Ember's products count as Ember's in Etsy's sync (views, favorites, orders)'; 0.13.0 listing test (5b0db88); venture stages (ab713b0)",
+   "fix": "Make metrics.listings a union of etsy_listings and printify_products rows that have a listing_id (project and venture via their approval), or add a shared view that gates, stages.sold and the Etsy metrics read. Count pod_products_live by Etsy state 'active' as the Etsy sync last read it. Add a test where a POD-only product line gets the listing test and is not parked after an order.",
+   "effort": "M"
+  },
+  {
+   "id": "pod-currency-assumed",
+   "title": "Printify amounts are always labelled with the printify_currency option; the currency Printify reports is ignored and never compared with the Etsy shop's",
+   "severity": "medium",
+   "category": "money",
+   "files": [
+    "app/integrations/printify_live.py",
+    "app/integrations/printify.py",
+    "app/integrations/printify_publisher.py",
+    "app/agent/tools.py",
+    "app/config.py"
+   ],
+   "evidence": "printify_live.py:144 reads first_item.cost and ignores first_item.currency, which the repo's own fixture includes (tests/test_printify.py:175 'first_item': {'cost': 450, 'currency': 'EUR'}). Order lines (:222-231) and product costs (:234-240) take no currency. Every amount is printed by money(cents, settings.printify_currency) (printify.py:202; printify_publisher.py:176, :340-345), and orders take the product's option currency (:676, :695). The proposal copies access.currency (tools.py:3640), and nothing compares it with the Etsy shop's currency (ctx.etsy.currency) or with the option when the request is carried out (printify_publisher.py:425, :440). Live: cycle #46's catalog call returned 'shipping to Germany 6.09 EUR' (0.13.0 report, WAKE CYCLES line 617), and the agent told the owner 'real DE shipping 6.09-6.29 EUR' (message #63, line 620). That EUR label came from the option, not from Printify.",
+   "failure_scenario": "If Printify quotes the account in USD while the option keeps its default EUR, USD 6.09 of shipping is shown, margin-checked and reported to the owner as EUR 6.09, and a USD 15.80 order is offered to the ledger as EUR 15.80 (about 8-15% off). If the owner changes printify_currency between a proposal and its execution, the approved cents are sent as prices in a different currency.",
+   "label": "code",
+   "related": "Phase E4 option 'Printify currency'",
+   "fix": "Read the currency Printify states (the shipping profile's first_item.currency, and the currency on products and orders). Store it with the catalog rows and orders. Refuse a proposal or execution when it differs from printify_currency or from the Etsy shop's currency, and show it on the approval card. Record order costs in the currency Printify reports.",
+   "effort": "S"
+  },
+  {
+   "id": "pod-cannot-price-before-proposal",
+   "title": "The agent can't know a product's making cost before proposing it, so it guesses prices and a failed margin check costs an owner approval",
+   "severity": "medium",
+   "category": "design",
+   "files": [
+    "app/integrations/printify_publisher.py",
+    "app/agent/guides/printify.md",
+    "app/integrations/printify.py"
+   ],
+   "evidence": "The catalog answer ends 'What each costs to make is known once Ember's code creates the product' (printify_publisher.py:179-183). The guide tells the agent to 'price at 2.5 to 3 times making and shipping' (guides/printify.md PRICES), a number it cannot know. Costs read at creation are kept only in that product's row (printify_publisher.py:540-547) and are never added to the catalog for the next proposal. A price below the margin ends the request as 'failed' (:447-451), and the agent must propose again for a new owner click. Live, cycle #46 (0.13.0 report line 620): 'Base product cost not shown by catalog tool directly (only known when Ember's code creates the product and checks 15% margin …) … so I set prices with buffer above the Gelato-based estimate'. The agent's promise #1 ('Build 3 poster listings once Printify base cost is confirmed', PLANNER CONTEXT line 421) is blocked on exactly this.",
+   "failure_scenario": "The agent prices the 3 promised posters from a Gelato estimate. If one price misses the margin, the owner approves, Ember's code creates and deletes the product, the request fails, and the agent re-proposes: two owner clicks and a day's delay per mispriced product, against the 10-minutes-per-request budget in the owner's standing instructions. If the guess is high, the product is overpriced and sells less.",
+   "label": "live",
+   "related": "Phase E4 deviation: 'a product whose prices keep too little costs you an approval and a retry'",
+   "fix": "Cache each variant's making cost in printify_catalog (kind 'costs', key blueprint:provider) whenever Ember's code creates a product, and show it with least_price in printify_catalog. On a margin miss, have the failed note carry a ready re-proposal at the least prices that the owner can approve in one click. Optionally, with the owner's opt-in, let Ember's code create and delete an unpublished draft (no cost, not visible to buyers) to read costs before proposing.",
+   "effort": "M"
+  },
+  {
+   "id": "channel-enabled-but-unready-invisible",
+   "title": "A channel that is switched on but not set up is invisible to the agent (live: Pinterest on, app ID empty), and a channel venture's first-test clock ignores readiness",
+   "severity": "medium",
+   "category": "ux",
+   "files": [
+    "app/agent/loop.py",
+    "app/agent/context.py",
+    "app/agent/stages.py",
+    "app/integrations/pinterest_connection.py"
+   ],
+   "evidence": "_sync_pinterest returns without a word when account() is None (loop.py:439-459). The PINTEREST section and the guide are offered only when the channel works (loop.py:549-553; context.py:701). No code in agent/ reads pinterest_enabled or a not_configured status (grep finds nothing). Live, 0.13.0 report: OPTIONS pinterest_enabled true, pinterest_app_id '' (lines 77-81); INTEGRATIONS pinterest status 'not_configured: pinterest_app_id is missing; pinterest_app_secret is missing' (line ~3392). The PLANNER CONTEXT has no Pinterest line apart from venture #2, whose owner note reads 'you would design and post and handle the whole Pinterest account. I don't want to do it' (line 492). Earlier plans said Pinterest 'needs … an API or posting upgrade. I will file the upgrade requests' (lines 1047/1081), unaware that the feature now exists and is waiting for the owner. stages.first_test (stages.py:61-76) starts the 21-day pin_clicks ≥ 10 test when a venture is backed, whether or not the channel is connected.",
+   "failure_scenario": "The owner backs venture #2 while Pinterest still lacks the app ID and secret. The agent doesn't know why it has no pin tools, so it files a redundant upgrade request or asks vaguely. The first test's 21 days plus 7 days' grace run out during setup, and Ember's code parks the venture for a missed test that was never possible. Separately, every pin needs the owner's click (no unlock rule covers pins), which contradicts the owner's stated wish to hand the account over. The agent is never told this, so it can't say so up front.",
+   "label": "live",
+   "related": "Phase E2: tools and manual 'offered only with your account and the shop'",
+   "fix": "Add one plan line per switched-on channel that isn't ready, naming exactly what the owner must do (for example 'Pinterest: on, not set up: app ID and secret missing, then System → Pinterest → Connect'). Start or extend a channel venture's first test only once its channel is ready. State in the guide and plan that every pin needs the owner's click, and consider an unlock rule for pins on an existing board.",
+   "effort": "S"
+  },
+  {
+   "id": "pod-discard-note-claims-deletion",
+   "title": "When a product misses the margin and its deletion fails, the note still tells the owner and the agent it was deleted, and the product ID is lost",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "app/integrations/printify_publisher.py"
+   ],
+   "evidence": "_discard swallows the error and only logs it (printify_publisher.py:498-503). The note is then written unconditionally as '… The unpublished product was deleted at Printify.' (:449-451), and _after is given product_id None (:451).",
+   "failure_scenario": "Printify answers the DELETE with 429 or 5xx. The request closes with a note saying the product was deleted, but an unpublished product stays in the owner's Printify account, and Ember no longer knows its ID, so it can't clean it up.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/channels/test_repro_discard.py makes the fake account's delete raise NotSent. Printed: row product_id None; 'left at Printify: ['000000000000000000000002']'; note '…at least 17.40 EUR. The unpublished product was deleted at Printify.'",
+   "fix": "Have _discard return whether the delete worked. Keep product_id on the row either way, and word the note to match ('couldn't be deleted: delete product X at Printify').",
+   "effort": "S"
+  },
+  {
+   "id": "site-impressum-conditional-gaps",
+   "title": "The generated Impressum can be email-only and has no place for a Wirtschafts-Identifikationsnummer or a register entry; the privacy page gives no log retention period",
+   "severity": "low",
+   "category": "docs",
+   "files": [
+    "app/products/site.py",
+    "app/config.py",
+    "DOCS.md"
+   ],
+   "evidence": "impressum() (site.py:278-301) makes phone optional, the site has no contact form (CSP form-action 'none', :230), and Owner.problems (:69-77) requires only name, address and email. § 5 Abs. 1 Nr. 2 DDG as read by the EuGH (C-298/07) requires a second quick channel besides email. § 5 Abs. 1 Nr. 6 DDG requires a Wirtschafts-Identifikationsnummer (§ 139c AO) if the owner has one; the only option is site_vat_id, printed as 'Umsatzsteuer-Identifikationsnummer gemäß § 27a' (:290-294). Nr. 4 requires a register entry, and there is none. datenschutz() (:304-335) names the server logs but not how long they are kept (Art. 13(2)(a) GDPR). My site_check.py confirmed that an email-only Impressum builds without complaint.",
+   "failure_scenario": "The owner, a Kleinunternehmer with a W-IdNr and no USt-IdNr, publishes the site without a phone number. The Impressum then lists email only and no W-IdNr, which is a common ground for an Abmahnung (typically several hundred euros).",
+   "label": "inferred",
+   "reproduction": "scratchpad/channels/site_check.py: 'email-only impressum builds (no phone, no form): True'.",
+   "related": "Phase E3: 'Impressum (§ 5 DDG, contact, VAT ID if set, § 18 Abs. 2 MStV)'",
+   "fix": "Warn on the card and in the plan, or require, a second contact channel (phone). Add optional site_business_id (W-IdNr) and register-entry options with the right labels. Add a retention sentence for server logs (for example 'nach spätestens 14 Tagen gelöscht, soweit der Anbieter nichts anderes angibt'), or let the host's retention be set.",
+   "effort": "S"
+  },
+  {
+   "id": "pod-first-test-not-retargeted",
+   "title": "On the owner's device, the backed POD venture keeps its 0.12.0 prose first test; the new 'first order' channel test never applies to it",
+   "severity": "low",
+   "category": "fix-incomplete",
+   "files": [
+    "app/migrations/0055_printify.sql",
+    "app/agent/stages.py"
+   ],
+   "evidence": "0055 sets ventures.channel = 'printify' (0055_printify.sql, UPDATE ventures …), but stages.first_test runs only for a backed venture that has no first test (stages.py:61-89). Venture #4 was backed on 2026-09-29 under 0.12.0, and its first test #8 already existed (0.12.0 report line 1324). In the 0.13.0 report (line 1358), #8 still reads 'Its first test is met: Cost: $0 to Ember … Test: publish 3 POD listings …', a measure the agent judges rather than one Ember's code checks.",
+   "failure_scenario": "The POD venture passes or fails its first test on the agent's own judgement of prose, not on pod_orders ≥ 1 as the patch notes promise the owner. Ember's code never grades it.",
+   "label": "live",
+   "related": "Phase E4: 'The seeded Print on demand … venture has its first test in a first order (channel printify)'",
+   "fix": "In a migration or at startup, give an open, code-set first-test milestone of a venture that has a channel that channel's metric and target (or ask the owner via a decision point). Say this in the release notes.",
+   "effort": "S"
+  },
+  {
+   "id": "pinterest-refresh-lifetime-assumed",
+   "title": "The Pinterest refresh-token lifetime is assumed to be 365 days rather than read from Pinterest's answer",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "app/integrations/pinterest_live.py",
+    "DOCS.md"
+   ],
+   "evidence": "REFRESH_DAYS = 365 (pinterest_live.py:44) sets refresh_expires_at on connect and on every refresh (:149, :199). The token answer's refresh_token_expires_in is never read. DOCS says 'renews itself … at least once a year'.",
+   "failure_scenario": "If Pinterest's continuous refresh tokens last less than a year (for example 60 days), and Ember goes that long without using Pinterest, the dashboard still shows 'connected'. The next pin then fails with 'Pinterest didn't renew the connection: connect it again' after the owner approved it.",
+   "label": "code",
+   "fix": "Store the refresh_token_expires_in Pinterest returns (falling back to a conservative default), and refresh at least once within that window from the scheduler's 6-hour sync, even when no pins exist.",
+   "effort": "S"
+  },
+  {
+   "id": "pin-link-not-rechecked",
+   "title": "An approved pin is made even if its listing stopped being live while the pin waited",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "app/integrations/pinterest_publisher.py"
+   ],
+   "evidence": "The link is fixed at proposal time, and propose_pin checks the listing is live then (tools.py:3463-3480). _one (pinterest_publisher.py:219-262) never re-checks etsy_publisher.etsy_state before create_pin, even though pins can wait days behind pinterest_pins_per_day (:226-227, :189-190).",
+   "failure_scenario": "The owner approves four pins; the fourth waits until tomorrow. Meanwhile its listing is deactivated (an Undo, or the kill rule) or expires. The next day Ember's code publishes a public pin pointing to 'this item is unavailable', which then needs another owner Undo.",
+   "label": "code",
+   "fix": "In _one, read the listing's row and state before sending. If it isn't live, fail the request with that reason and send nothing.",
+   "effort": "S"
+  },
+  {
+   "id": "never-agreement-test-misses-new-executors",
+   "title": "The NEVER code-versus-database agreement test doesn't generate the new executors",
+   "severity": "low",
+   "category": "test-gap",
+   "files": [
+    "tests/test_never.py"
+   ],
+   "evidence": "test_the_database_reads_a_request_as_the_code_does picks executors from (None, 'email', 'reddit_link', 'etsy_listing', 'etsy_edit') only (tests/test_never.py:385). test_pinterest and test_printify check never.reasons (the code) but never the view (tests/test_pinterest.py:431, tests/test_printify.py:401). The next view rebuild could drift for pinterest_pin or printify_product unnoticed.",
+   "failure_scenario": "A future migration recreating approvals_never drops the printify_product branch. Code and database then disagree about the first publication, and no test fails.",
+   "label": "code",
+   "reproduction": "scratchpad/channels/test_never_new.py generates 120 random requests with pinterest_pin, printify_product, pinterest_delete, printify_delete and an unknown executor. The view and the code agree before and after a first board or product ('agree before: 120', 'agree after: 120'), so this is a coverage gap, not a live bug.",
+   "fix": "Add the four new executors (and a board or product going live) to the randomized agreement test.",
+   "effort": "S"
+  }
+ ],
+ "fix_checks": [
+  {
+   "item": "E2: pinterest_live.py is the only module that talks to Pinterest; allowlist, no redirects, size limit, NotSent/Unclear",
+   "verdict": "holds",
+   "evidence": "pinterest_live.py:50-57 (allowlist), :60-67 (follow_redirects False, trust_env False), :70-96 (2 MB cap; 5xx on a change is Unclear, 404 is Gone)"
+  },
+  {
+   "item": "E2: OAuth in two steps with PKCE and state, redirect URI matched exactly",
+   "verdict": "holds",
+   "evidence": "pinterest_connection.py:78-107 (secrets.token_urlsafe state, 15-minute window, cleared on success); pinterest.py:309-323 compares scheme, netloc and path, and checks state before error and code"
+  },
+  {
+   "item": "E2: tokens in a 0600 file, redacted, refreshed continuously",
+   "verdict": "partial",
+   "evidence": "pinterest.py:265-279 (mkstemp, fchmod 0600, fsync, os.replace; register_secret) holds. Refresh works (pinterest_live.py:173-201), but the refresh lifetime is assumed to be 365 days, not read (see pinterest-refresh-lifetime-assumed)"
+  },
+  {
+   "item": "E2: approved pins made once (committed 'running' first; a crash is unclear, never retried); new board first with its own journal entry; a second pin reuses it",
+   "verdict": "holds",
+   "evidence": "pinterest_publisher.py:219-262, :264-303, :410-421; tests/test_pinterest.py passes (part of 60 passed across test_printify, test_pinterest and test_site)"
+  },
+  {
+   "item": "E2: approved-file SHA-256 and at most Pins per day",
+   "verdict": "holds",
+   "evidence": "pinterest_publisher.py:210-217 and :226-227, checked inside BEGIN IMMEDIATE (db.py:121-130). Minor: created_today (:91-98) also counts failed pins toward the limit"
+  },
+  {
+   "item": "E2: NEVER first board, in code and in the DB view",
+   "verdict": "holds",
+   "evidence": "never.py:98-99; 0054/0055 view. My scratch test test_never_new.py shows the view and code agree for the new executors, before and after a board exists"
+  },
+  {
+   "item": "E2: sync every 6 h; 404 marks a pin deleted; pins_live/pin_clicks",
+   "verdict": "holds",
+   "evidence": "pinterest_publisher.py:425-465; service.py:769-779 (scheduler); loop.py:439-459 (before the plan)"
+  },
+  {
+   "item": "E2: stage template pin_clicks >= 10 for the seeded Pinterest venture",
+   "verdict": "partial",
+   "evidence": "stages.py:49-52 and :61-76 hold in code, but the clock starts at backing whether or not the channel is set up (live: Pinterest on with an empty app ID)"
+  },
+  {
+   "item": "E2 watch item: 0054 is the last approvals rebuild; executor is any short name",
+   "verdict": "holds",
+   "evidence": "0054_pinterest.sql executor CHECK (GLOB '*[^a-z_]*'); 0055 recreates only the view and 2 triggers"
+  },
+  {
+   "item": "E4: printify_live.py alone, allowlist, token redacted, Gone/NotSent/Unclear",
+   "verdict": "holds",
+   "evidence": "printify_live.py:46-82, :98-115 (register_secret)"
+  },
+  {
+   "item": "E4: catalog kept 7 days (variants 1 day); proposal checked offline against it",
+   "verdict": "holds",
+   "evidence": "printify_publisher.py:59, :74-128; tools.py:3580-3598"
+  },
+  {
+   "item": "E4: a product line's first product needs a demand note",
+   "verdict": "holds",
+   "evidence": "tools.py:3620-3626; demand.py:99 counts printify_product"
+  },
+  {
+   "item": "E4: publishes only if every price keeps 15% after Etsy's fees, making and shipping; otherwise deletes the unpublished product",
+   "verdict": "partial",
+   "evidence": "The gate works (tests/test_printify.py:434-445), but the fee model is looser than econ.py's and leaves out VAT and who pays shipping (pod-margin-rule-fee-model). Deletion is best-effort, yet the note always claims it (pod-discard-note-claims-deletion, reproduced)"
+  },
+  {
+   "item": "E4: 'publishing' until the sync reads the Etsy listing, then 'active'; a crash is unclear, never retried",
+   "verdict": "partial",
+   "evidence": "The crash path holds (printify_publisher.py:622-631). An Unclear publish is never reconciled, and 'publishing' has no deadline (reproduced; pod-publish-unclear-never-reconciled)"
+  },
+  {
+   "item": "E4: NEVER first Printify product, in code and in the DB view",
+   "verdict": "holds",
+   "evidence": "never.py:66, :99; 0055_printify.sql view; my scratch agreement test passes. Caveat: a product stuck in 'publishing' already counts as the first publication"
+  },
+  {
+   "item": "E4: Printify's listings count as Ember's in Etsy's sync (views, favorites, orders)",
+   "verdict": "partial",
+   "evidence": "The sync reads them (etsy_publisher.py:655, :674-679), but metrics, listing gates and stages.sold read etsy_listings only (reproduced: orders_total/views_total 0 for the project)"
+  },
+  {
+   "item": "E4: a sale is attributed to the product's project",
+   "verdict": "holds",
+   "evidence": "etsy_publisher.py:1213-1221; reproduced order_project -> (1, None) for the Printify listing"
+  },
+  {
+   "item": "E4: sync keeps Printify orders' costs; Record the cost keyed per order",
+   "verdict": "partial",
+   "evidence": "printify_publisher.py:676-700 and order_key :225-227 hold, but the cost carries no project or venture (app.js:3952-3966), no tax, and the option's currency (pod-pnl-asymmetric, pod-currency-assumed)"
+  },
+  {
+   "item": "E4: Undo deletes the product",
+   "verdict": "holds",
+   "evidence": "printify_publisher.py:577-620; connectors.py undo_of for hex IDs; tests/test_printify.py:447-463. Not offered for 'unclear' rows"
+  },
+  {
+   "item": "E4: metrics pod_products_live and pod_orders",
+   "verdict": "partial",
+   "evidence": "printify_publisher.py:264-273: pod_products_live counts status 'active' and ignores the Etsy state (an expired listing still counts)"
+  },
+  {
+   "item": "E4: seeded POD venture's first test is a first order",
+   "verdict": "broken",
+   "evidence": "Live: venture #4 was backed under 0.12.0, and its first test #8 is still prose (0.13.0 report line 1358); 0055 sets channel but doesn't retarget the milestone"
+  },
+  {
+   "item": "E4: QA below 150 dpi or a shape that leaves the print area blank",
+   "verdict": "holds",
+   "evidence": "qa.py:94; tools.py:3668; tests/test_printify.py:385"
+  },
+  {
+   "item": "E3: every text escaped into one template; links https/mailto only, nofollow",
+   "verdict": "holds",
+   "evidence": "site.py:129-193; markup.py:39. Reproduced with site_check.py: script, img/onerror and javascript: inputs produce no such tags, and tags are limited to the template's"
+  },
+  {
+   "item": "E3: stylesheet inline, named by SHA-256 in each page's CSP (default-src 'none')",
+   "verdict": "holds",
+   "evidence": "site.py:228-230, :257, :265; site_check.py: 'csp hash matches inline style: True True'"
+  },
+  {
+   "item": "E3: robots.txt, sitemap and canonical links with the address; legal pages noindex",
+   "verdict": "holds",
+   "evidence": "site.py:238-243, :261-264, :359-367"
+  },
+  {
+   "item": "E3: Impressum (§ 5 DDG) and privacy page from the owner's options only, in German",
+   "verdict": "partial",
+   "evidence": "site.py:278-335 hold for the fields they cover; missing: second contact channel, W-IdNr, register entry, log retention (site-impressum-conditional-gaps)"
+  },
+  {
+   "item": "E3: preview served with sandbox allow-same-origin and the site's policy on Home Assistant's origin",
+   "verdict": "holds",
+   "evidence": "web.py:788-815 (the CSP header replaces the dashboard's; x-content-type-options; the file name is regex-limited); pages carry meta referrer no-referrer (site.py:258), so the ingress path isn't leaked to linked sites"
+  },
+  {
+   "item": "E3: Download (zip) gives the same bytes for the same site and is recorded with each file's SHA-256",
+   "verdict": "holds",
+   "evidence": "site.py:379-402; service.py:951-957; site_check.py: 'zip same bytes: True'. Note: the download is recorded on a GET"
+  },
+  {
+   "item": "E3: diagnostics show the Impressum data only as flags",
+   "verdict": "holds",
+   "evidence": "Live 0.13.0 report OPTIONS lines 115-124 (site_address_set, site_email_set …); website.describe never returns the address (agent/website.py:147-161)"
+  }
+ ],
+ "still_open_from_0_11_1": [
+  "Phase E watch item 'at least 2 attributed traffic sources' is not met on the device: Pinterest is not configured (app ID and secret empty), there are 0 boards and 0 pins, and the website is off"
+ ],
+ "strengths": [
+  {
+   "what": "Once-only execution for both new executors: a 'running' row is committed before anything is sent, and a crash becomes 'unclear', never a retry",
+   "evidence": "pinterest_publisher.py:219-262, :410-421; printify_publisher.py:423-475, :622-631; _approved excludes requests that have a journal entry or a row. All 60 tests in test_printify.py, test_pinterest.py and test_site.py pass on HEAD"
+  },
+  {
+   "what": "The NEVER 'first publication' rule for the new channels is enforced twice (Python and the SQLite view with triggers), and the two agree",
+   "evidence": "never.py:62-104; 0055_printify.sql view; my scratch randomized test over pinterest_pin, printify_product, the delete executors and an unknown executor agrees before and after a board or product goes live"
+  },
+  {
+   "what": "The website builder is a tight, audited template: all text escaped, https/mailto links only, no scripts, CSP by hash verified, deterministic zip, and a sandboxed preview on HA's origin with no referrer leak",
+   "evidence": "site.py:129-275, :393-402; web.py:788-815; scratchpad site_check.py showed script, onerror and javascript: inputs neutralised, a matching CSP hash and byte-identical zips"
+  },
+  {
+   "what": "Each outside service is reached from one module only, through an allowlisted transport with no redirects and capped response sizes, and every error is sorted into 'nothing changed' or 'may have changed'",
+   "evidence": "printify_live.py:46-82; pinterest_live.py:50-96; tests/test_printify.py:286-297 (the error mapping)"
+  },
+  {
+   "what": "What the owner approves is exactly what is sent: the picture is pinned by its SHA-256, pins and products are approve-as-is only, and every word, price and shipping cost is on the card together with the QA shortfalls",
+   "evidence": "printify_publisher.py:414-421; pinterest_publisher.py:210-217; owner.py:43 (AS_IS_EXECUTORS); printify.payload (printify.py:223-240)"
+  },
+  {
+   "what": "A Printify listing's sale is credited to the product's project, and a margin gate stops publication below the bar and tells the owner the minimum price per variant",
+   "evidence": "etsy_publisher.py:1213-1221 (reproduced: order_project returns the project); printify_publisher.py:477-496; tests/test_printify.py:434-445"
+  },
+  {
+   "what": "Privacy of the new channels holds in the live report: no tokens, and the Impressum data appears only as flags",
+   "evidence": "0.13.0 report OPTIONS lines 77-124 and INTEGRATIONS pinterest/printify/website (no secrets, only *_set flags)"
+  }
+ ],
+ "notes": "Couldn't verify these without reaching the services, so they are not findings. They are worth a quick check against the current docs:\n(1) Pinterest's trial-access apps may only be allowed to write in the API sandbox (api-sandbox.pinterest.com). If so, create_board and create_pin in production fail with NotSent for the owner's new app, and the DOCS line 'trial access … all Ember needs' is wrong.\n(2) Printify's orders endpoint may cap `limit` below the 50 that printify_live.py:205 sends. If a larger limit is refused, the hourly sync fails and no order costs are ever read.\n(3) Printify may refuse base64 uploads above about 5 MB (IMAGE_MAX_BYTES is 15 MB); the failure is safe.\n(4) Deleting a product at Printify may not remove its Etsy listing (the Undo's note says it does).\n(5) Printify's default Etsy shipping profile (buyer pays shipping or not) and whether Printify bills VAT to EU merchants decide which half of pod-margin-rule-fee-model and pod-pnl-asymmetric applies.\n\nFor the diagnostics/privacy reviewer: the 0.13.0 report masks the word 'Pinterest' as '[sender of email #15]' everywhere, including the seeded venture title in PLANNER CONTEXT (line 492). The masking of senders' names over-reaches into ordinary words.\n\nLive facts: only cycle #46 ran on 0.13.0. Printify is connected (catalog calls work; 4 catalog rows), but the diagnostics show 'shop': null, because the shop is found lazily after a restart. There are no products yet, so none of the publish paths have run live.\n\nNot covered for lack of time: the dashboard rendering of the Pinterest and Printify cards beyond the cost button, the prompt-size claims, and the Etsy-and-Pinterest shared connect UI.\n\nScratch files (reproductions) are in /tmp/claude-0/-home-user-SURVIVE/16767151-7117-55b8-8b14-a711cc61e9f8/scratchpad/channels/. Run them from ember/ with: PYTHONPATH=. python -m pytest -s -p tests.conftest --rootdir=. &lt;file&gt;."
+}

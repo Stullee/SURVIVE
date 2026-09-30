@@ -1,0 +1,86 @@
+{
+ "verdicts": [
+  {
+   "id": "demand-note-any-library-document",
+   "verdict": "confirmed",
+   "severity": "medium",
+   "label": "reproduced",
+   "reasoning": "The code matches the finding. demand.py:32-38 accepts 'library #N' if any row with that id exists in scope. It doesn't check removed_at (library.remove at library.py:333-339 only sets removed_at and deletes the parts), and it doesn't check the document's venture_id/project_id or what kind of document it is. demand.py:39-40 accepts any URL graded other than 'unchecked', so 'marketing' pages pass too. tools.py:3292-3297 (_demand_note) needs demand and source only when the probe is off and never looks for numbers. With the probe on, a note with keywords alone is saved (tests/test_demand_notes.py:142-168 asserts demand=None, source=None). Nothing downstream re-checks: propose_etsy_listing (tools.py:3249) and the Printify path (tools.py:3622) only call demand.recent(). New evidence that makes it worse: the owner never sees the demand note. No view, owner API or web file mentions demand notes (grep of web/, views.py and owner.py finds nothing; only diagnostics.py:130 counts the rows). So the owner approving the listing can't catch a hollow note. Live data checked in the 0.13.0 report: line 877 refused a free-text source and line 879 accepted 'library #1'. The demand text has legal facts only, no buyer numbers. The probe is off (line 63, etsy_market_probe false). Library #1 is the general Etsy search guide (line 1479). Listing 4585678592 for that product line is active (lines 1450 and 512). Medium is right: this is the gate the first analysis made the fix for 'generic templates without a demand note'. It failed on its very first live use, and the listing fee and effort were spent on a line with no demand evidence.",
+   "reproduction": "verify-ventures-1/test_v_demand.py, run end to end with FakeTransport. (1) The owner adds an Etsy tag guide, then removes it. The agent creates project #1, calls demand_note with demand 'Landlords must do this by law.' and source 'library #1', then propose_etsy_listing. Printed: library rows [{'id': 1, 'removed': 1, 'venture_id': None, 'project_id': None}]; demand_note [('ok', 'Saved demand note #1 for project #1 ...')]; propose_etsy_listing [('ok', 'Approval request #1 is waiting for your owner ...')]; approvals [{executor 'etsy_listing', status 'pending', project_id 1}]. (2) A research result from printify.com/blog graded 'marketing', used as source with demand 'It sells.': demand_note ok and propose_etsy_listing ok.",
+   "correction": "Minor addition, not a correction: besides the missing checks the finding lists, the demand note isn't shown to the owner anywhere (approval card, Ventures/Projects tabs), so no human check makes up for the weak gate.",
+   "files": [
+    "ember/app/agent/demand.py",
+    "ember/app/agent/tools.py",
+    "ember/app/agent/library.py",
+    "ember/tests/test_demand_notes.py"
+   ]
+  },
+  {
+   "id": "vendor-only-knockout-too-weak",
+   "verdict": "confirmed",
+   "severity": "medium",
+   "label": "reproduced",
+   "reasoning": "knockouts.py:115-122 raises vendor_only only when counts['independent'] == 0, whatever the claim's metric or host count. evidence.py:117 matches the host exactly or as a subdomain against MARKETING_DOMAINS (evidence.py:28-68), so other TLDs and unlisted vendors grade 'independent'. Nothing else stops the proposal: the critic runs only after a venture is proposed, and the owner then decides. The live facts check out in the 0.13.0 report. Venture #4's evidence #1-4 and #6-7 are marketing (printify.com, help.printify.com, gelato/printify). #5 comes from support.finerworks.com with metric 'policy requirement' and graded independent (line 797). #8 is one etsy.com/listing page with a price and graded independent (line 677). BigBuy is venture #3's chosen supplier in its case (line 1347). Venture #4 was backed by the owner directly, so the knock-out made no difference live. The live data shows the grading gap; the proposal slipping through is what I reproduced. Medium is fair: the patch notes say 'no proposal rests on vendor sources alone' is enforced, and a single non-demand fact from an unlisted vendor defeats it.",
+   "reproduction": "verify-ventures-1/test_v_vendor.py, run end to end. A researched venture #3 with a complete case (EUR 10 setup) and one printify.com/blog sales claim (graded marketing) printed knock-outs [('vendor_only', False)]. Grades: www.shopify.de, www.bigbuy.eu, syncee.com, www.printful.de and www.etsy.com/listing all 'independent'. After one support.finerworks.com claim with metric 'policy requirement' (graded 'independent'), knock-outs were []. The next cycle's venture_update to 'proposed' printed [('ok', 'venture #3 researching → proposed')] and the stage became 'proposed'.",
+   "correction": "Small wording fix: either #5 or #8 alone lifts vendor_only, not the two together. In the live data vendor_only never gated venture #4, because the owner backed it directly; the live evidence shows the grading gap, not a proposal that got through.",
+   "files": [
+    "ember/app/agent/knockouts.py",
+    "ember/app/agent/evidence.py"
+   ]
+  },
+  {
+   "id": "cold-outreach-pattern-misfires",
+   "verdict": "confirmed",
+   "severity": "low",
+   "label": "reproduced",
+   "reasoning": "_COLD (knockouts.py:42-47) is searched over pitch plus the case fields (knockouts.py:94-98) with no handling of negation. Its only German word is 'kaltakquise', and the email/contact branch needs the verb right before one of the listed object nouns. guides/ventures.md:34 tells the agent to put legal duties in risks, and :52 has the UWG line. Low is right. The owner can lift a wrong knock-out and the matched words are shown. A false negative doesn't send anything by itself, because outbound contact still needs the owner's approval and `needs cold_outreach` is the primary declaration.",
+   "reproduction": "verify-ventures-1/cold.py (regex run directly). Matches: 'No cold outreach: advertising emails are illegal in Germany (UWG 7).' matched 'cold outreach', and 'We never email businesses; buyers find us on Etsy.' matched 'email businesses' (false positives). No match (None): 'Firmen per E-Mail anschreiben und Unternehmen kontaktieren.', 'Reach out to 50 HR managers on LinkedIn.', 'Writing to shop owners in Berlin.', 'Contact hiring managers at 30 companies directly by phone.'",
+   "correction": "The guide's own sentence, 'cold advertising emails are illegal (section 7 UWG)', does NOT trigger the regex: 'cold' isn't directly before 'emails', and my run returned None for it. The false positive needs a paraphrase such as 'No cold outreach' or 'cold emails are illegal', which remains plausible.",
+   "files": [
+    "ember/app/agent/knockouts.py",
+    "ember/app/agent/guides/ventures.md"
+   ]
+  },
+  {
+   "id": "research-budget-bypass-ordinary-cycles",
+   "verdict": "confirmed",
+   "severity": "low",
+   "label": "reproduced",
+   "reasoning": "tools.py:2838-2842 binds research to a venture only when venture_id is given or the cycle is a venture cycle (ctx.venture). The research_refusal check at 2846 and ventures.add_research at loop.py:1444-1455 therefore never run for unbound research in an ordinary cycle. An ordinary plan may set focus_venture_id (prompts.py:127/381, loop.py:666-694, any OPEN_STAGE), and _progress writes it to cycles.venture_id. metering.py:905-914 then attributes the research call to that venture (venture_id None falls back to COALESCE(y.venture_id, p.venture_id)), so ventures.money counts it. research_spent (ventures.py:301) sums venture_research only. Paid failures return at loop.py:1403-1416 before add_research, so they never count toward the budget either. The patch notes document ordinary-cycle research as unbound, but the mismatch with metering and the budget bypass are real. Low is right: the calls cost about a cent each, and the owner's cycle and daily caps still apply.",
+   "reproduction": "verify-ventures-1/test_v_budget.py, with RESEARCH_BUDGET_USD monkeypatched to 0 and ORDINARY settings (venture_share=0). The plan focuses venture #3 and runs two research calls, one without venture_id and one with it. Printed: cycle venture_id [{'id': 1, 'venture_id': 3}]; research [('ok', 'research: Who sells phone cases?'), ('error', 'refused: venture #3 has used its research budget ($0.00 of $...')]; llm_calls research [{'purpose': 'research', 'venture_id': 3, 'cost_micros': 12800}]; venture_research rows [{'n': 0}].",
+   "files": [
+    "ember/app/agent/tools.py",
+    "ember/app/agent/loop.py",
+    "ember/app/economy/metering.py",
+    "ember/app/agent/ventures.py"
+   ]
+  },
+  {
+   "id": "study-continues-after-learnings-cap",
+   "verdict": "confirmed",
+   "severity": "low",
+   "label": "reproduced",
+   "reasoning": "save_study caps new learnings at MAX_LEARNINGS=60 (room = 60 - known) but always sets studied_parts = last_part and study = 'waiting' until the last part is read. next_to_study picks any 'waiting' document, and Loop._study (loop.py:996-1057) keeps paying for calls, up to STUDY_CALLS=3 a cycle, within the daily study budget. Nothing stops once the cap is full. The study context still lists what was learned, and new learnings are dropped silently. The sizes add up: DOCUMENT_CHARS 300,000 / STUDY_CHARS 24,000 is 13 calls. Live studies kept 9-12 learnings per call (report lines 1476-1479), so the cap fills after about 5 calls. Low is right: roughly $0.02-0.03 per wasted call, bounded by the owner's daily study budget.",
+   "reproduction": "verify-ventures-1/test_v_study.py: a 299,000-character document, with save_study called on the parts next_parts returns and 12 distinct learnings per call. Printed: calls: 13, kept per call: [12, 12, 12, 12, 12, 0, 0, 0, 0, 0, 0, 0, 0]. Eight of 13 calls kept nothing.",
+   "correction": "The library.py line references are wrong on HEAD. save_study is library.py:492-527: the cap is at 506-512 and the studied_parts/study update at 518-525, not 431-445. next_to_study is library.py:395-402, not 357-365 (that range is part_text/full_text/learnings_of). The loop.py:997-1058 reference is right.",
+   "files": [
+    "ember/app/agent/library.py",
+    "ember/app/agent/loop.py"
+   ]
+  },
+  {
+   "id": "decided-count-includes-code-parks",
+   "verdict": "confirmed",
+   "severity": "low",
+   "label": "code",
+   "reasoning": "desk.decided (desk.py:224-233) counts ventures with stage IN ('proposed','parked','killed') AND stage_at >= since, with no parked_by filter. stages.park (def at stages.py:119, UPDATE at 124-126) sets stage='parked', parked_by='code', and the ventures_stage_at trigger (migrations/0030_venture_stages.sql:124-126) stamps stage_at. stages.keep parks by code for triage (stages.py:179), selling nothing after going live (191), research without a case (201) and a missed first test (219). views.py:549/655 shows the count as decided_week, the Phase C watch item. Brainstorms create several agent ideas at once, and triage_date (ventures.py:690-695) gives them the same deadline of created/rule start + 30 days, so a same-day batch of code parks is plausible. Low: this affects a displayed metric only.",
+   "correction": "Line detail: stages.park is defined at stages.py:119, and its UPDATE is at 124-126.",
+   "files": [
+    "ember/app/agent/desk.py",
+    "ember/app/agent/stages.py",
+    "ember/app/migrations/0030_venture_stages.sql",
+    "ember/app/agent/views.py"
+   ]
+  }
+ ]
+}

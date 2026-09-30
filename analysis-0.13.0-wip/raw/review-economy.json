@@ -1,0 +1,253 @@
+{
+ "area": "economy",
+ "findings": [
+  {
+   "id": "workshop-quote-is-not-a-ceiling",
+   "title": "The workshop's 'worst case' is a guess: code-execution calls have no provable ceiling, so the run cap, the daily cap and 'never exceeded' don't hold",
+   "severity": "high",
+   "category": "money",
+   "files": [
+    "ember/app/economy/estimate.py",
+    "ember/app/agent/workshop.py",
+    "ember/app/economy/anthropic_transport.py",
+    "ember/app/economy/pricing.py",
+    "ember/app/agent/prompts.py",
+    "ember/DOCS.md"
+   ],
+   "evidence": "The workshop quote (economy/estimate.py:189-225) prices a code-execution request as 10 samplings (MAX_SERVER_ITERATIONS, :42). It assumes each code run adds at most CODE_RESULT_ALLOWANCE_TOKENS = 4,000 tokens (:44) and that max_tokens bounds the whole loop's output: output is counted once (:204, :212). The module's own docstring calls these assumptions (:18-21, 'to verify with a live call in phase 5'). The request can bound none of them: code-execution results (stdout, file views, pictures) have no size parameter; the model may read the uploaded inputs (up to 10 MB, tools.py:166) into context; and WORKSHOP_RULES tells it to 'look at what it made and fix it until it is right' (prompts.py:282). Every run with input files also loses count_tokens: container_upload blocks give BadRequestError (anthropic_transport.py:153-158), so the prompt uses the rough count. That is why the warning at 12:06:32 came before #423, and why #444, which had no inputs, was counted. Live results, both reports: #423 was quoted $0.348191 and cost $1.837601 (0.12.0 report line 554). It wrote 540,865 cache tokens and read 2,008,335, against at most 57,886 writes and 476,487 reads the quote allows. #444 wrote 83,249 against 57,886 and cost 0.7% over its quote. #369 wrote 12,439 output tokens with max_tokens 8,000 (0.13.0 report line 922), so max_tokens limits each sampling, not the loop. 2 of the 6 live runs overran and a third reached 85% of its quote. The workshop was 25% of all spend ($2.64 of $10.37). The safety factor can't catch up: needed 5.81, capped at MAX_SAFETY_FACTOR 4 (pricing.py:29, :127-128), so the raised quote ($1.3969) is still below the $1.8376 already seen. DOCS.md:1533-1541 says 'the daily cap and the balance are never exceeded' and that a scaled-up estimate means 'it can't happen again'. DOCS.md:366 says a run 'typically costs $0.02–0.15', but the live median is $0.19 and 3 of 6 runs cost more than $0.15.",
+   "failure_scenario": "Cycle #44: the agent asks the workshop to render 3 sheets of an xlsx to PNG. The guard quotes $0.348 (rough prompt 4,943 tokens), which passes the owner's $1.50 run cap and the $7 daily cap, and sends the request. The server-side loop grows the context about 10 times past the allowance, and Anthropic bills $1.8376: 22% over the run cap and 5.3× what was reserved. At the default caps ($1.50 a day, $0.50 a run), the same run is admitted with $0.40 of the day left and takes the day to about $2.94, nearly twice the 'hard' daily cap.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/economy/repro_423.py builds the live request through prompts.workshop_request and prices it with the repo code. It prints 'worst=$0.3482 (live estimate $0.348191)', 'assumed: <= 10 samplings, context grows by <= 48,000 tokens; cache writes <= 57,886, cache reads <= 476,487' and 'ratio live/worst = 5.28'. It rebuilds #423 at $1.8334 plus $0.0042 of container time (= $1.8376) and #444 at $0.3466. per_sampling.py shows that pricing output per sampling alone would raise the quote only to $1.3758, still below #423. factor_lock.py shows the factor capped at 4 against 5.81 needed.",
+   "related": "First analysis §2 'Money safety' strength row ('Requests with no provable cost ceiling are refused… No overspend in live use'); FIX NOW 17; estimate.py docstring 'phase 5' assumption",
+   "fix": "1) Say what it is: a code-execution call has no provable ceiling. Keep the invariant for token-only calls, and give server-tool calls their own budget class. 2) Price output as MAX_SERVER_ITERATIONS × max_tokens for every server-tool request (live #369 and #286). 3) Reserve a workshop call at max(quote, 1.5 × p95 of recent workshop costs, 1.1 × the largest workshop cost seen), under both the run cap and the daily cap. Admit a run only while the day's room covers that tail, and let an overrun come out of the same day's room (today already counts actual cost). 4) Lower the tail with the prompt: never cat or print whole files, check pictures only through a thumbnail of 800 px at most, at most 2 checks. 5) Store usage.iterations (the number of samplings and the tokens of each) for server-tool calls and show them in diagnostics. 6) Add regression fixtures with the live usage of #369, #423 and #444; the reservation must cover them (they fail today). 7) Correct DOCS.md:366 and :1533-1541, and the 'what is going right' row. As the outer ceiling, keep the Anthropic workspace spend limit and recommend it more strongly.",
+   "effort": "M"
+  },
+  {
+   "id": "overrun-stops-cycle-and-reflection",
+   "title": "Any overrun, even 0.17%, and even by a call outside the cycle cap, stops the whole cycle and refuses the reflection",
+   "severity": "medium",
+   "category": "design",
+   "files": [
+    "ember/app/economy/metering.py",
+    "ember/app/agent/loop.py"
+   ],
+   "evidence": "In metering.py:1151-1162, `if s.overrun:` sets the cycle to 'stopped'. The overrun flag is `known > expected` (:1070): there is no threshold, and it applies to every purpose, workshop included, although workshop calls don't count toward the cycle cap (OUTSIDE_CYCLE_CAP, :107). The next call of any kind is then refused by `_cycle_refusal` ('wake cycle #N is stopped'), the reflection among them. The loop ends with EndCycle('stopped') (loop.py:1166). Live: in cycle #46, call #444 cost $0.3466 against a $0.3441 quote (+$0.0025). Call #445 was refused and the cycle ended without a reflection or a journal (0.13.0 report lines 578-605, events 15:04:20-15:04:28). In that same cycle the agent had just told the owner in message #63 that it 'will propose it as a Printify product this cycle'. Cycle #44 ended the same way. 2 of the 5 cycles since 0.12.0 were stopped by overruns.",
+   "failure_scenario": "A workshop run 0.7% over its quote stops the cycle. The remaining plan steps (propose the product, the handoff) and the reflection are lost, and a promise to the owner, made a minute earlier in the same cycle, is broken. The next cycle pays for a new plan (~$0.07 on Opus) and a new cache write of the first step (~$0.055) to pick the work up again. Stopping gains nothing: the money was already spent, the call was outside the cycle cap, and the reflection has a provable ceiling of its own.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/economy/stop_on_tiny_overrun.py (a scripted workshop-purpose call 0.17% over its quote) prints 'overrun=True', \"cycle status: ('stopped', 'a call cost more than its worst-case estimate')\", 'reflection: wake cycle #1 is stopped' and 'workshop factor now 1.10'.",
+   "related": "FIX NOW 9 (reflection reserve), FIX NOW 17",
+   "fix": "On an overrun: raise the factor (as now), record a warning, and refuse further calls of the same purpose (or all server-tool calls) in this cycle. Keep the cycle running when the purpose is outside the cycle cap or the overrun is at most max(5%, $0.02). Never refuse the reflection because of an overrun: it has a provable ceiling and is still checked against the daily cap and the balance. Stop the cycle outright only when the actual spend broke the daily cap or the last-will reserve. Add a test: a small workshop overrun is followed by a reflection.",
+   "effort": "S"
+  },
+  {
+   "id": "outside-cap-calls-bypass-reserve-and-maintenance",
+   "title": "Workshop runs, reviews and studies bypass the burn mode's maintenance cap and the 20:00 event reserve; STATUS still says 'This cycle may spend up to $1.00'",
+   "severity": "medium",
+   "category": "money",
+   "files": [
+    "ember/app/economy/metering.py",
+    "ember/app/economy/burn.py",
+    "ember/app/agent/context.py"
+   ],
+   "evidence": "burn.Burn.cycle_cap (burn.py:53-54) and the event reserve (metering.py:452-457) change only cycles.cap_micros. In rooms(), a workshop's own cap is workshop_run_cap_usd (metering.py:677-678), and review and study use the daily cap. Their money room is `daily_cap - today - pending - keep_money` (:684), with no event reserve and no burn mode. Nothing else in the code reads the burn mode for these purposes (grep of `burn.` usages: loop.py:285/379/514/937, service.py:296/678). Live: cycle #44 cost $2.0045 against its $1.00 cap. The plan's STATUS (0.13.0 report line 414) tells the agent 'This cycle may spend up to $1.00'. The workshop is 25% of all spend.",
+   "failure_scenario": "(a) At 10:00, with $5 of a $7 day spent, a scheduled cycle opens with its cap cut to $0.60 so that $1.40 stays for event wakes. Its workshop run may still spend $1.50, and the daily review $2.00. A real Etsy order later that day then finds less than an opening's cost left and can't wake Ember. (b) With 9 days of runway, maintenance is meant to be 'one cycle a day of at most $0.40'. The cycle's workshop runs can still spend $1.50 each (6 a day), so the mode meant to stretch the money doesn't bound the day. At the live burn ($4.89 a day), maintenance begins around 2026-10-03.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/economy/repro_reserve.py prints 'event reserve $1.40; scheduled cycle cap $0.60', then 'workshop room in that scheduled cycle: $1.50 (reserve not kept)' and 'review room in that scheduled cycle: $2.00'. With runway 9.0 (maintenance) it prints 'maintenance cycle cap $0.40; workshop room $1.50; review room $7.00'.",
+   "related": "Phase B burn modes (6a0231f); Phase D event reserve (3855b26)",
+   "fix": "In rooms(): for a scheduled cycle before 20:00, subtract event_reserve from the money room for every purpose. In maintenance, cap a workshop run at MAINTENANCE_CYCLE_USD less what the cycle has spent, or switch the workshop off (a maintenance day's total should be bounded). Make STATUS say 'this cycle may spend up to $X, plus workshop runs of up to $Y each'. Add tests for both.",
+   "effort": "S"
+  },
+  {
+   "id": "research-quote-not-a-ceiling-and-continuation",
+   "title": "Research quotes are empirical, not ceilings (output per sampling, search-result size), and a paused research call's continuation skips the reflection reserve",
+   "severity": "low",
+   "category": "money",
+   "files": [
+    "ember/app/economy/estimate.py",
+    "ember/app/agent/loop.py"
+   ],
+   "evidence": "Research (web_search_20250305, max_uses 1: prompts.py:395) is priced with output counted once (estimate.py:204, :212) and 16,000 tokens per search result (:43). The request bounds neither: web_fetch has max_content_tokens, web_search has nothing like it. Live: research #286 wrote 1,295 output tokens with max_tokens 1,200 and stop_reason max_tokens (0.13.0 report line 1278). Under the old 8,000 allowance, research reached 78% of its quote (#286: 55,108 of 70,576). It is about 35-45% now. After pause_turn the continuation `more = self._call(cycle_id, \"research\", follow, venture_id)` (loop.py:1427) is sent without the `affordable(..., reflect_reserve, reflect_money)` check the first call gets (:1389-1391).",
+   "failure_scenario": "A paused or long research loop writes about 10 × 1,200 output tokens, or gets unusually large search results, and costs more than its quote: the cycle stops (see overrun-stops-cycle-and-reflection) and research estimates are scaled up. A continuation after pause_turn can also spend the money kept for the reflection.",
+   "label": "live",
+   "reproduction": "per_sampling.py: pricing research output per sampling raises its quote from $0.1218 to $0.2763 (Sonnet 5).",
+   "related": "FIX NOW 9, FIX NOW 17 (research allowances)",
+   "fix": "Price output per sampling for every server-tool request, as in the workshop fix. Check the continuation with meter.affordable(follow, 'research', cycle_id, reflect_reserve, reflect_money) before sending it. Record usage.iterations.",
+   "effort": "S"
+  },
+  {
+   "id": "safety-factor-locks-rare-purposes",
+   "title": "The safety factor can't learn from large overruns and can't decay for rare purposes: at the default run cap one overrun locks the workshop until the owner resets it",
+   "severity": "low",
+   "category": "design",
+   "files": [
+    "ember/app/economy/pricing.py"
+   ],
+   "evidence": "raise_safety_factor caps the factor at MAX_SAFETY_FACTOR = 4 (pricing.py:29, :128), below the 5.81 that #423 needed. note_accurate_call lowers it by 0.05 only after 25 accurate calls of the same purpose on the same model (:30-31, :134-148): 1,500 workshop calls to get from 4 back to 1, at 1-6 runs a day. The default workshop_run_cap_usd is $0.50 (config.py:152) and the first call of a workshop run is quoted $0.3492, so any factor of 1.44 or more refuses every run. A refused run makes no accurate call, so the factor can never come down. Only the owner's Reset brings it back, and that re-exposes the same overrun.",
+   "failure_scenario": "On default settings, one run like #423 sets the workshop factor to 4. Every later run is quoted $1.40, more than the $0.50 run cap, and refused. The factor stays at 4 until the owner notices the banner and presses Reset. Then nothing stops the next such run.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/economy/factor_lock.py prints 'factor after a #423-size overrun: 4 (needed 5.81 )', 'workshop first call now quoted $1.3969 vs default run cap $0.5 and vs the live cost it is meant to cover $1.8376', 'accurate calls needed to decay back to 1: 1500'.",
+   "related": "FIX NOW 17",
+   "fix": "For server-tool purposes, replace the multiplicative factor with the observed-cost reservation from the workshop fix. For token-only purposes, keep the factor, but let it decay with time (for example, halve the excess every 7 days) or with accurate calls of any purpose on the model. When a raised factor makes a purpose unaffordable under its cap, warn with that purpose named.",
+   "effort": "S"
+  },
+  {
+   "id": "critic-consolidate-counted-in-cycle-cap",
+   "title": "Critic and consolidation calls count toward the cycle cap, although the guard and the patch notes treat them as outside it",
+   "severity": "low",
+   "category": "fix-incomplete",
+   "files": [
+    "ember/app/economy/ledger.py",
+    "ember/app/economy/metering.py"
+   ],
+   "evidence": "OUTSIDE_CYCLE_CAP = (WORKSHOP, REVIEW, STUDY, CONSOLIDATE, CRITIC) (metering.py:107), and _money_refusal skips the cycle-cap check for them (:845). But Books.cycle_spend(outside_cap=False) hard-codes `purpose NOT IN ('workshop', 'review', 'study')` (ledger.py:397), so their cost is subtracted from the cycle cap for every later plan, work, research and reflect call. rooms() also limits the critic and the consolidation by the cycle room (metering.py:675-681, else branch). Patch note: the critic 'counts toward the daily cap but not the cycle cap'; the consolidation 'counts toward the daily cap only'.",
+   "failure_scenario": "The critic runs on the strategy model (Opus) before a venture cycle's plan. Its cost (worst case about $0.10, 1,000 + 4,000 thinking tokens) comes out of the cycle's cap, and the decision cycle gets fewer work steps or research calls than the owner's cap allows. The daily consolidation does the same to the cycle it runs in.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/economy/repro_critic_cap.py prints 'critic cost $0.2020: cycle-cap room for work before $0.5000, after $0.2980' and the same for consolidate, while review and workshop leave $0.5000.",
+   "related": "Phase C critic (c79fa08); Phase B lessons consolidation (cf05295)",
+   "fix": "Build the exclusion list in cycle_spend from metering.OUTSIDE_CYCLE_CAP (one source), and treat them like REVIEW in rooms(). Add a test that a critic call leaves the cycle room unchanged.",
+   "effort": "S"
+  },
+  {
+   "id": "eight-count-tokens-per-step",
+   "title": "Each work step sends 8 count_tokens requests; a failed count inflates the quote",
+   "severity": "low",
+   "category": "performance",
+   "files": [
+    "ember/app/agent/loop.py",
+    "ember/app/economy/metering.py"
+   ],
+   "evidence": "Loop._affordable (loop.py:1268-1273) calls quote, expected, quote, prompt_tokens and expected. expected() calls quote() and _plan() again (metering.py:547-551), and every _plan calls transport.count_tokens (metering.py:587-590), which is an HTTP request with 2 retries and a 30 s timeout (anthropic_transport.py:154). reserve() counts once more (:708-713). On any failure the rough count (half a token per byte plus 600) is used instead, and it is much larger. Live: count_tokens failed with InternalServerError once (event 2026-09-29T14:17:37).",
+   "failure_scenario": "A 15-step cycle makes about 120 count requests. Under the count endpoint's rate limit or an outage, the rough counts inflate step and reflection quotes, so a cycle can stop 'for money' with money left, and each step waits on up to 8 round trips.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/economy/repro_counts.py prints 'count_tokens requests for the affordability check: 7' and '... plus the call itself: 8'.",
+   "related": "Phase B budget engine (3879955)",
+   "fix": "Count each request body once per step: memoize _plan by a hash of the frozen request inside MeteredModel, and pass the plan from quote to expected, then to reserve.",
+   "effort": "S"
+  },
+  {
+   "id": "event-reserve-evening-dst",
+   "title": "On DST days the event reserve's '20:00' becomes 19:00 or 21:00; in autumn the scheduler polls every second for an hour",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "ember/app/agent/service.py",
+    "ember/app/agent/scheduler.py"
+   ],
+   "evidence": "service.py:331 computes `evening = day_start(today) + timedelta(hours=EVENT_RESERVE_HOUR)`, but metering.event_reserve checks the local hour (metering.py:406-414). On a 25-hour day, evening is 19:00, so between 19:00 and 20:00 decide() sets next_wake_at to a time already past. The scheduler's wait is max(1.0, …) (scheduler.py:123), so it loops about every second, writing meta each round. On a 23-hour day, evening is 21:00, and scheduled cycles wait an hour longer than the reserve lasts.",
+   "failure_scenario": "On 2026-10-25 (Europe/Berlin), a scheduled wake held by the reserve runs decide() about 3,600 times between 19:00 and 20:00 local, rewriting next_wake_at each time. On 2027-03-28 scheduled work is delayed until 21:00.",
+   "label": "reproduced",
+   "reproduction": "A Clock with Europe/Berlin gives '2026-10-24 -> 20:00 CEST', '2026-10-25 -> 19:00 CET', '2027-03-28 -> 21:00 CEST' from the service.py:331 expression.",
+   "related": "Phase D agenda (3855b26)",
+   "fix": "Use datetime.combine(today, time(EVENT_RESERVE_HOUR), clock.tz).astimezone(UTC), and add a DST test.",
+   "effort": "S"
+  }
+ ],
+ "fix_checks": [
+  {
+   "item": "FIX NOW 9: reflection reserve kept from research, brainstorms and workshop runs",
+   "verdict": "partial",
+   "evidence": "The reserve is in the cycle state (tools.CycleTools reflect_reserve and reflect_money; loop.py:1278-1279). Research, draft and brainstorm pass it to affordable() (loop.py:1389-1391, :1535, :1589), and the workshop keeps reflect_money off the money room (loop.py:1700, workshop.py:208, metering.py:683-684). tests/test_reflection_reserve.py passes. Gaps: a research pause_turn continuation is sent without the reserve check (loop.py:1427), and in both live workshop overruns (#44, #46) the reflection never ran because the guard stopped the cycle."
+  },
+  {
+   "item": "FIX NOW 17: safety factor per mode, purpose and model; decay; owner reset; research allowances 16,000/3,000",
+   "verdict": "partial",
+   "evidence": "Keys are economy.factor.<mode>.<purpose>.<model> (pricing.py:108-119). #423 raised only the workshop factor: plan and work estimates and scheduled wakes were untouched. The owner's reset worked live (event 2026-09-30T12:26:27Z). Allowances are 16,000 and 3,000 (estimate.py:43, anthropic_transport.py:40). But the factor is capped at 4 while 5.81 was needed, so 'the same mistake can't repeat' is false. Decay needs 1,500 accurate workshop calls to get from 4 to 1, and a factor that makes the workshop unaffordable can never decay (reproduced)."
+  },
+  {
+   "item": "FIX NOW 18: no 20,000-byte padding; growth = max(4k tokens, 1.5 × the largest step)",
+   "verdict": "holds",
+   "evidence": "_step_growth (loop.py:1908-1916) is passed as extra_tokens to quote and expected for the reflection (loop.py:1270, :1273). The padding string is gone."
+  },
+  {
+   "item": "FIX NOW 19: default caps $0.50 per cycle and $1.50 per day, at least 1.5 working cycles",
+   "verdict": "holds",
+   "evidence": "config.py:114-115. A working cycle at the defaults is now $0.3095 (computed with pricing.working_cycle_cost), so cap/working = 1.62. No warnings at the defaults. The patch note's 'up to $0.25' is stale: the profiles have grown and the margin above 1.5 is shrinking."
+  },
+  {
+   "item": "FIX NOW 23: uncertain charges count their floors toward the caps; the balance keeps the worst case",
+   "verdict": "holds",
+   "evidence": "Live call #293 (503 before any reply) was charged $0.152232 to the balance with a floor of $0.048232 (12,058 input × $4/M) (0.13.0 report line 1250). ECONOMY shows provisional_excess_usd 0.104 and a settled balance $0.104 above the balance. ledger.py:300-323 and :393-406 use floor_micros."
+  },
+  {
+   "item": "FIX NOW 30: refunds no longer wipe out the burn; a refund isn't money in",
+   "verdict": "holds",
+   "evidence": "api_spend_between counts corrections by occurred_on (ledger.py:325-343). _MONEY_IN is grants, revenue and positive adjustments (ledger.py:43-45). tests/test_refund_burn.py passes."
+  },
+  {
+   "item": "Phase A: P&L per venture and net runway",
+   "verdict": "holds",
+   "evidence": "life.py:383-402. The ECONOMY section reproduces: $89.625809 / ($10.374191 / 2.12043 active days) = 18.32 days. Active days are elapsed time less the ~157 paused minutes in life_transitions. Net runway equals runway, as revenue is $0."
+  },
+  {
+   "item": "Phase B: budget engine at expected cost (soft cycle cap; daily cap and balance at worst case)",
+   "verdict": "partial",
+   "evidence": "The cycle cap counts expected cost (metering.py:741-748, :845-852) and is soft by at most one call. Live 0.12.0+ cycles ran to 14-15 of 15 steps at $0.36-0.82 under a $1.00 cap, with no money stops (before: 34-40% of the cap left unused). But DOCS' 'the daily cap and the balance are never exceeded' rests on quotes the workshop doesn't respect (#423)."
+  },
+  {
+   "item": "Phase B: burn modes with thresholds and hysteresis",
+   "verdict": "partial",
+   "evidence": "The thresholds (30/15 days) and moving up only 20% past a threshold are correct (burn.py:61-82; tests pass). Live: focus at 18.3 days. But the maintenance cap of $0.40 limits only cycles.cap_micros: workshop runs, the review and studies in a maintenance cycle are not bounded (reproduced)."
+  },
+  {
+   "item": "Phase B: model routing and the research model's check",
+   "verdict": "holds",
+   "evidence": "The research_check purpose goes through affordable() with the reflection's reserve and is skipped when it can't be paid for (loop.py:1497-1506). opening_cost takes the dearer of the planner and strategy models (pricing.py:204-211). Not exercised live: research_model is empty and research_checks has 0 rows."
+  },
+  {
+   "item": "Phase D: event reserve (20% of the daily cap until 20:00, metering.event_reserve)",
+   "verdict": "partial",
+   "evidence": "A scheduled cycle's cap is cut to daily − today − held (metering.py:452-457; reproduced $0.60 with $5 of $7 spent), and decide() holds the wake until 20:00 (service.py:328-336). But outside-cap calls in that cycle (workshop $1.50, review $2.00) ignore it (reproduced), and on DST days the evening lands at 19:00 or 21:00 (service.py:331)."
+  },
+  {
+   "item": "Critic 'counts toward the daily cap but not the cycle cap'; consolidation 'daily cap only'",
+   "verdict": "broken",
+   "evidence": "ledger.py:397 excludes only workshop, review and study. A $0.20 critic or consolidate call cut the cycle room for work from $0.50 to $0.298 (repro_critic_cap.py)."
+  },
+  {
+   "item": "Invariant: one metered call is one HTTP request, reserved before sending; no provable ceiling means refused",
+   "verdict": "partial",
+   "evidence": "One request per metered call holds: max_retries=0 (anthropic_transport.py:113), and continuations and retries are new metered calls (workshop.py:200-243, loop.py:593-606). The reservation is committed before sending (metering.py:497-512). The ceiling is provable only for token-only calls: 166 live calls, 0 overruns. It is empirical for research (#286 output exceeded max_tokens) and false for the workshop (2 overruns in 6 runs)."
+  }
+ ],
+ "still_open_from_0_11_1": [
+  "0.4 owner settings not adopted: live burn is $4.89/day ($10.37 over 2.12 active days) against the Phase B watch target of ≤ $2.20/day. Options: min_sleep 30, wake_interval 60, daily cap $7.00, Opus planner. The focus burn mode doesn't slow spending; at this rate maintenance starts around 2026-10-03.",
+  "Uncertain 5xx charges still wait for the owner to check the Console by hand (ECONOMY warning: $0.10 from call #293 since 2026-09-29).",
+  "Phase B 'left for later': until 5 recent replies of a kind exist, a reply counts at its full max_tokens (fresh installs with small caps can refuse the first step).",
+  "Phase B 'envelopes': hard per-milestone and per-venture budgets are still deferred (milestone budget_usd is advisory)."
+ ],
+ "strengths": [
+  {
+   "what": "Billing reconstruction is exact to the micro, even for the pathological call",
+   "evidence": "From the usage rows and the price table, repro_423.py rebuilds #423 at $1.833434 in tokens plus $0.004167 for the 5-minute container minimum = $1.837601, and #444 at $0.346592, both exactly as booked (costs.py, metering.py:1063-1067). The ledger is append-only with integer micros, rounded up."
+  },
+  {
+   "what": "Token-only calls really have provable ceilings, and they held in live use",
+   "evidence": "166 live plan, work, reflect, review and study calls (ids 254-445 in both reports) with 0 overruns: work reached at most 0.815 of its quote, reflect 0.273, study 0.672. The prompt is priced from count_tokens × 1.05 + 200 (or a generous rough count), the whole prompt at the cache-write rate, plus the full max_tokens (estimate.py:189-225)."
+  },
+  {
+   "what": "The budget engine at expected cost ended budget starvation",
+   "evidence": "Since 0.12.0, cycles #41-#43 and #45 ran 8-15 of 15 steps at $0.36-0.82 under the $1.00 cap, and no cycle stopped for money. At 0.11.x cycles stopped with 34-40% of the cap unused (metering.py:741-748; tests/test_expected_cost.py)."
+  },
+  {
+   "what": "The per-purpose safety factor contained the damage of #423",
+   "evidence": "Only economy.factor.live.workshop.claude-sonnet-5 was raised. Plan, work and reflect estimates and scheduled wakes were unaffected (cycle #45 ran as scheduled at 12:38). The owner's Reset worked live (event 12:26:27, '1 scaled-up estimate(s) back to 1')."
+  },
+  {
+   "what": "Overruns are detected loudly and precisely",
+   "evidence": "Both overruns produced error events with the actual cost, the quote, the purpose, the model and the new factor (0.13.0 events 15:04:20 and 12:08:40), and cycle digests recorded the stop."
+  },
+  {
+   "what": "Floors and provisional accounting work live",
+   "evidence": "#293 (503 before any reply): the balance was charged the $0.152 worst case, the caps counted the $0.048 floor, and ECONOMY shows provisional_excess 0.104 with an owner warning (FIX NOW 23)."
+  },
+  {
+   "what": "The runway math is transparent and robust",
+   "evidence": "Active days leave out paused time, corrections count on the days they correct, and refunds are not money in (life.py:383-418, ledger.py:43-45, :325-343). The 0.13.0 ECONOMY figures (18.3 days) reproduce by hand."
+  },
+  {
+   "what": "Economy tests are green and self-contained",
+   "evidence": "test_metering, test_safety_factor, test_expected_cost, test_reflection_reserve, test_burn_modes, test_refund_burn, test_workshop, test_agenda and test_venture_pnl: 108 passed in 45 s on HEAD."
+  }
+ ],
+ "notes": "What the invariant is worth now. 'One metered call is one HTTP request, reserved before sending' holds everywhere: SDK max_retries=0, and a continuation or retry is a new metered call. 'Reserved at its worst case; no provable ceiling means refused' holds only for token-only calls. Those are plan, work, reflect, review, study, critic, consolidate, brainstorm, draft and last_will: one sampling, a counted prompt, the full max_tokens. For research and research_check (web_search and web_fetch) the ceiling is empirical. The request can't bound the size of search results (only web_fetch has max_content_tokens), and live #286 shows max_tokens limits each sampling, not the loop. For the workshop (code execution) there is no ceiling at all, and the estimate.py docstring (:18-21) admits its model was never verified. The accurate statement is: 'token-only calls are reserved at a provable worst case; server-tool calls are reserved at an estimate, and overruns are detected afterwards.' The dashboard and DOCS should say that, and the first report's 'No overspend in live use' strength row no longer holds (#423 went 22% over the owner's run cap).\n\nRoot cause of #423. count_tokens can't count requests with container_upload blocks, so the prompt came from the rough count (4,943 tokens). That is harmless, because the rough count runs high. The quote then assumed ≤10 samplings, ≤4,000 tokens per code result, and output counted once. The usage row (540,865 cache writes, 2,008,335 cache reads, 7,954 output) proves the context grew far past 48k tokens. The diagnostics don't keep usage_raw or usage.iterations, so I couldn't tell whether that came from larger results, more samplings or cache re-writes. Adding per-iteration usage to the diagnostics would settle it. Contributing prompt text: 'look at what it made and fix it until it is right' (prompts.py:282).\n\nIs stopping the cycle on a 0.7% overrun right? No (finding overrun-stops-cycle-and-reflection). The money is already spent, workshop calls aren't under the cycle cap, and the reflection has a provable ceiling of its own.\n\nNot covered for lack of time: the per-venture P&L attribution SQL in detail, the economy web endpoints in economy/service.py (only the warnings were read), and the full test suite (only the economy-related files were run).\n\nMinor, not reported as findings: every workshop run with input files logs 'Token counting failed (BadRequestError)' (container_upload); this is noise. And the cycle #46 plan said '$0.86 left of today's cap' when $2.86 was left, a misreading by the model, not the code.\n\nScratch scripts are in /tmp/claude-0/-home-user-SURVIVE/16767151-7117-55b8-8b14-a711cc61e9f8/scratchpad/economy/: repro_423.py, per_sampling.py, factor_lock.py, stop_on_tiny_overrun.py, repro_reserve.py, repro_critic_cap.py, repro_counts.py, defaults.py."
+}

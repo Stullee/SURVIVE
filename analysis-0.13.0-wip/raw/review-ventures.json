@@ -1,0 +1,365 @@
+{
+ "area": "ventures",
+ "findings": [
+  {
+   "id": "library-text-in-shareable-report",
+   "title": "The shareable diagnostics report carries the owner's library texts (study replies and library_read results)",
+   "severity": "high",
+   "category": "privacy",
+   "files": [
+    "diagnostics.py",
+    "agent/library.py",
+    "agent/tools.py"
+   ],
+   "evidence": "diagnostics.py:625-629 `_reply_text` withholds only purpose 'research' from the shareable report, so every 'study' reply (summary plus up to 12 learnings drawn from the owner's document) is printed whole. diagnostics.py:574-576 masks only propose_email inputs, so `library_read` results (a whole 3,000-character part, tools.py:2615-2627) and `knowledge_search` passages go out verbatim. This contradicts the module's own rule at diagnostics.py:854 ('never the texts') and :891 (learnings are 'full report only'), and the patch note 'Diagnostics show titles/sizes/progress/cost, never texts'. Removing a document (library.py:281-287) deletes library_parts but leaves the copies in tool_calls.result and call_texts. Live: the 0.13.0 report, whose header line 2 says 'Shareable report', prints the study replies of calls #397 and #379-#381 in full (report lines 766, 845-847). The 0.12.0 report does the same (lines 612, 691-693).",
+   "failure_scenario": "The owner pastes their own notes or a weekly keyword export with their shop's figures into the Library (the patch notes suggest exactly this). The study runs, or the agent calls library_read. The owner then shares the default diagnostics report to get help, and the text goes out with it; removing the document afterwards doesn't take it out.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/ventures/test_repro_library_privacy.py: posted a private note through api/library, ran one cycle (study, then library_read) and fetched api/diagnostics without full. 'Musterweg 12' was found on 2 lines (the study reply and the library_read row), and '3,100' and 'quit in March' on the library_read row.",
+   "related": "Library patch note (f1717e9); first analysis 0.2 (report not safe to share)",
+   "fix": "When the report isn't full, treat purpose 'study' like research in `_reply_text` (show its length only). Replace the results of library_read and knowledge_search with their lengths in `_cycle`. When a document is removed, scrub its text from tool_calls and call_texts, as scrub_removed does for messages. Add a test that a library sentinel never appears in the shareable report.",
+   "effort": "S"
+  },
+  {
+   "id": "econ-ev-ignores-presale-fixed-costs",
+   "title": "econ's expected net drops the fixed costs of the months before the first sale, so a slow venture that loses money shows a profit",
+   "severity": "medium",
+   "category": "money",
+   "files": [
+    "agent/econ.py",
+    "agent/desk.py",
+    "agent/critic.py"
+   ],
+   "evidence": "econ.py:97-102: `net` already subtracts `fixed` (monthly costs plus API spend), and the whole expected net is then multiplied by `earning = (6 - m)/6`. The m months before the first sale therefore cost nothing, although fixed costs are paid from day one. When the first sale is 6 or more months out, EV is just -setup/6. desk.py:120-121 ranks every tier by this EV (via critic.ranking_ev), and the owner's card and the critic see the same number. The fee arithmetic itself is right: EUR 3.00 keeps EUR 2.13, matching a hand computation of 2.1316.",
+   "failure_scenario": "A dropshipping case: EUR 30 price, EUR 18 unit cost, EUR 39 a month for Shopify, USD 5 of API a month, sales 0/5/15, first sale in 3 months, EUR 20 setup. The code shows 'expected EUR +13.89 a month'; counting the three pre-sale months of fixed costs gives -7.88. A case with EUR 500 a month of fixed costs and its first sale in 6 months shows -3.33 instead of about -549. A losing case (EUR 10 price, EUR 9 cost, EUR 100 a month fixed) improves from -97 to 0 as its first sale moves from 0 to 6 months out, so a later first sale ranks higher on READY.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/ventures/econ_check.py printed: 'code EV 13.89, EV if the pre-sale months still pay fixed costs -7.88'; 'fixed EUR 500/month, first sale in 6 months: ev_eur=-3.33'; 'losing case, first sale in 0/2/4/6/12 months -> EV -97.0/-64.67/-32.33/-0.0/-0.0'.",
+   "related": "Phase C numeric case (4ced088)",
+   "fix": "With m = min(first_sale_months, HORIZON): ev = ((HORIZON - m) * expected - m * fixed - setup) / HORIZON. Add a unit test for the three cases above. Recompute stored cases on read, or note that cases saved before the fix used the old formula.",
+   "effort": "S"
+  },
+  {
+   "id": "slow-knockout-whole-months",
+   "title": "The 'slow' knock-out compares whole months with half the runway: below about 61 days of runway it rules out every honest case, or none",
+   "severity": "medium",
+   "category": "design",
+   "files": [
+    "agent/knockouts.py",
+    "agent/tools.py",
+    "agent/predictions.py"
+   ],
+   "evidence": "knockouts.py:104-105: days = first_sale_months * 30.4, and 'slow' applies when that is more than net_days/2. tools.py:419 takes first_sale_months as an integer from 0. Explore mode needs a net runway above 30 days (economy/burn.py:64-67), and live it is 18.3 days (report STATUS line 413). With any net runway of 60.8 days or less, a first sale '1 month' out is knocked out and '0 months' passes. So the rule can't tell a 10-day first sale from a 25-day one. Entering 0 also makes the case's EV undiscounted (econ.py:101) and sets the first_sale prediction's due date to the 14-day minimum (predictions.py:35, :71).",
+   "failure_scenario": "Explore mode with a 45-day net runway, and a venture whose first sale is honestly about 3 weeks away. Entering 1 month knocks it out ('its first sale in 1 months, half the runway is 22 days'). Entering 0 passes. The agent learns to enter 0, or every proposal needs the owner to lift 'slow' by hand.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/ventures/test_repro_knockouts.py::test_slow_knockout_with_whole_months: first_sale_months=1 at net runways 18.3/36/45/60 gave [('slow', False)], at 61 and 90 gave []. first_sale_months=0 at 18.3 gave [].",
+   "related": "Phase C knock-outs (5603605)",
+   "fix": "Take the time to the first sale in days or weeks (e.g. `first_sale_days`, 0-730), compare those days with net_days/2, and derive EV months and the prediction's due date from them. Show the day limit in FOCUS ('a first sale must come within 9 days').",
+   "effort": "S"
+  },
+  {
+   "id": "legacy-proposal-escapes-gates",
+   "title": "A venture proposed before the gates (live #3, dropshipping) bypasses case, research, knock-outs, critic and desk, and can be backed",
+   "severity": "medium",
+   "category": "fix-incomplete",
+   "files": [
+    "agent/critic.py",
+    "agent/desk.py",
+    "agent/views.py",
+    "agent/ventures.py",
+    "agent/stages.py"
+   ],
+   "evidence": "No migration or stage rule re-checks an existing 'proposed' row. The triggers of 0024 and 0043 fire only on a change to proposed, and stages.keep has no 'proposed' rule (stages.py:168-220). critic.due joins venture_cases (critic.py:44-48), so a proposal without a case is never critiqued. desk.ready lists a proposed venture only when its critic said test or park (desk.py:142). views.py:533-537 computes knock-outs only for ventures with a case. ventures.py:738 prints 'business case: complete' from the prose fields alone. Live (0.13.0 report line 486): '#3 [proposed] Dropshipping store … research: 0 calls … business case: complete'. It was proposed in cycle #38 on 0.10.0, 76 minutes after the owner asked for more research (report line 1165; EVENTS 'asked for research on venture #3' 14:03). Its case plans a EUR 50 ad test and says demand is 'not yet validated' (AGENT RECORDS line 1347): exactly the proposal the knock-outs were built against.",
+   "failure_scenario": "The owner opens the Ventures tab and sees #3 as a complete proposal with no knock-outs, no numbers and no critique, and presses Back. It goes to building with a EUR 50 test above the EUR 20 venture budget, 0 research calls and no evidence. Had it been checked, cash, vendor_only and (at this runway) slow would all stand.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/ventures/test_repro_legacy.py (the 0024/0043 triggers dropped to recreate a pre-gate row): gaps ['2 research calls … (it has 0)', 'its numbers (venture_case)']; knock-outs if checked ['cold_outreach', 'vendor_only']; critic due None; READY has no key for #3; card knockouts [] numbers None missing [] researched 0; the owner's back returned 200 and the stage is now building.",
+   "related": "FIX NOW 13; Phase C knock-outs, critic, desk; first analysis 3(d) 'dropshipping with vendor blogs as the only sources'",
+   "fix": "A one-off migration or stage rule: a proposed venture without a case or with fewer than 2 counted calls goes back to researching with a code note, keeping the owner's research wish. Also: compute knock-outs on the card for every EXPLORING venture (cold_outreach and vendor_only need no case); have planner_lines say 'complete' only when proposal_gaps is empty; and have the desk list such a venture as 'appraise'.",
+   "effort": "S"
+  },
+  {
+   "id": "create-live-bypasses-backing",
+   "title": "venture_create at 'live' is guarded only by 'Ember earns somewhere', so any new venture can skip the owner's backing",
+   "severity": "medium",
+   "category": "fix-incomplete",
+   "files": [
+    "agent/tools.py",
+    "agent/ventures.py",
+    "migrations/0030_venture_stages.sql"
+   ],
+   "evidence": "tools.py:1895-1899 refuses stage 'live' only when `_earning()` is false. tools.py:1770-1778 is true for ANY active Etsy listing or ANY recorded revenue in the scope, not for the venture being created. AGENT_START_STAGES still includes 'live' (ventures.py:48). No DB trigger covers an INSERT at live: 0030's ventures_owner_decides covers transitions to building or killed only. Live: 6 active listings (report ETSY SHOP, line 508), so the guard is vacuous today. A live venture also has no research budget (ventures.py:99, 211) and never meets the proposal gates, knock-outs or critic.",
+   "failure_scenario": "In any cycle the agent calls venture_create(title='Recruiting agency for SMEs', pitch='Cold-call companies…', stage='live'). It is accepted and takes one of the 8 active slots. It has unlimited research and is never proposed, knocked out or critiqued; the owner never backed it.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/ventures/test_repro_live_create.py: after one owner revenue entry, venture_create stage live returned 'ok | Venture #9 is in your tree (live)'. Its row: stage 'live', owner_action None; research budget None.",
+   "related": "FIX NOW 16 ('venture_create at live needs an active Etsy listing or revenue you recorded')",
+   "fix": "Remove 'live' from AGENT_START_STAGES: legs are seeded by code, and a new channel for an existing leg is a child idea. Or require revenue or listings attributed to that venture, which a new one can't have. Add a BEFORE INSERT trigger refusing stage 'live' unless created_by is the seed or code.",
+   "effort": "S"
+  },
+  {
+   "id": "unlinked-product-line-sale-parks-etsy-leg",
+   "title": "A sale on an Etsy product line not linked to a venture doesn't count, so code parks the Etsy leg after 60 days",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "agent/stages.py",
+    "agent/metrics.py",
+    "agent/tools.py"
+   ],
+   "evidence": "stages.py:133-138 `sold()` counts revenue attributed to the venture (ventures.money groups by COALESCE(l.venture_id, p.venture_id), ventures.py:557-566) or Etsy orders of listings whose project or focus venture is the venture (metrics.py:316-325). project_create's venture_id is optional (tools.py:1687-1689), and nothing links new Etsy product lines to the Etsy leg; the seed links only the projects that existed at seeding (ventures.py:979-984). Live: project #7 (Nebenkostenabrechnung, listing #4585678592 active since 2026-09-30) has venture_id '-' (report line 1334; listing at line 1450). The Etsy leg's rule reads 'nothing sold by 2026-11-29 parks it' (line 485). The same gap blocks the scale milestone (stages.py:185) and the first_sale prediction (predictions.py:101-129).",
+   "failure_scenario": "By 2026-11-29 the only sale is a Nebenkostenabrechnung, recorded by the owner for project #7. stages.keep parks venture #1 'nothing sold 60 days after it went live' (parked_by code, only the owner can revive it). Its code milestones are dropped, and venture plans then list '#1 Etsy digital products' under 'Parked or killed (don't start them again)' (ventures.py:752-754).",
+   "label": "reproduced",
+   "reproduction": "scratchpad/ventures/test_repro_live_park.py: the Etsy leg live, an unlinked project, the owner's EUR 6.90 revenue for that project on day 10, then 60 more days. keep() printed 'Ember's code parked venture #1 (Etsy digital products): nothing sold 60 days after it went live'.",
+   "related": "Venture stages triage/scale (ab713b0); predictions first_sale (c47094e)",
+   "fix": "Give every project that lists on Etsy the Etsy leg as its venture: propose_etsy_listing and propose_printify_product set projects.venture_id when it is NULL, and a migration backfills existing ones. Or have `sold()` for the leg the shop belongs to count any counted order of the shop's listings and any revenue of its projects.",
+   "effort": "S"
+  },
+  {
+   "id": "focus-cut-drops-knockouts-and-critic",
+   "title": "A venture's FOCUS (1,900 bytes) loses its knock-outs, evidence, pitch and case, and often the critic line, once numbers and a critique exist",
+   "severity": "medium",
+   "category": "regression",
+   "files": [
+    "agent/ventures.py",
+    "agent/context.py",
+    "agent/loop.py"
+   ],
+   "evidence": "ventures.py:803-825 puts the new 0.13.0 lines (numbers ~380 B, critic ~640 B, knock-outs of any length) after the header, owner word, stage rule, first test, next question, knowledge file, digest, scores and research line, and none of them is capped at FOCUS_CHARS. context.py:90 VENTURE_FOCUS_BUDGET = 1_900, and context.cut (context.py:128-142) cuts from the end. loop.py:673 also prepends a 'Decision desk: you took …' line. The CHANGELOG (line 19) tells the agent 'FOCUS lists its knock-outs'.",
+   "failure_scenario": "The desk hands the agent 'answer #3' or 'appraise #3' (knocked out: fix its case). The work brief's FOCUS shows the numbers but not the knock-out reasons, the critic's flaw and change_mind, the evidence by grade, or the prose case. The agent works on the case without seeing what rules it out.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/ventures/focus_cut.py: a realistic venture with a case, a critique, 3 knock-outs and 4 claims gives a 3,499-byte FOCUS. After cut() the last line kept is 'Numbers (case #1 …)', then '…[1888 bytes cut]'. Without the desk line, owner word and digest it is 2,955 B: the critic line is kept, but knock-outs, evidence and pitch are all cut.",
+   "related": "FIX NOW 15 (16d935d)",
+   "fix": "Put a compact knock-out line and the critic's 'verdict: flaw' (≤220 chars) right after the header. Cap numbers, critic and knock-outs at FOCUS_CHARS, with the full text on the card. Or raise VENTURE_FOCUS_BUDGET and re-measure. Extend the FIX NOW 15 limit test to a venture that has a case, a critique and knock-outs.",
+   "effort": "S"
+  },
+  {
+   "id": "demand-note-any-library-document",
+   "title": "Any library document number satisfies a demand note's source: live, a generic Etsy SEO guide 'backed' a new product line",
+   "severity": "medium",
+   "category": "fix-incomplete",
+   "files": [
+    "agent/demand.py",
+    "agent/tools.py"
+   ],
+   "evidence": "demand.py:32-38 accepts 'library #N' when the row exists in scope: it doesn't check removed_at, relevance to the project, or whether the document is a keyword export. demand.py:39-40 also accepts 'marketing' pages. tools.py:3291-3296 never requires numbers in `demand`, and with the probe on neither demand nor source is required (a competitor count alone passes). Live (report lines 877, 879): the first note was refused for a free-text source, then accepted with source 'library #1'. Library #1 is 'Etsy search is a powerful tool…' (line 1479), a general search guide. The demand text states legal duties (§556 BGB) with no buyer numbers. The product line's listing was then proposed and went live (line 1450).",
+   "failure_scenario": "The agent cites any library document (even a removed one) to pass the 14-day demand gate for a product line nobody searched for. The gate meant to stop 'generic templates without a demand note' passes without any demand evidence.",
+   "label": "live",
+   "reproduction": "scratchpad/ventures/test_repro_demand.py: source_problem('library #1') for an Etsy tag guide returned ''; the same after library.remove returned ''; a printify.com blog page graded 'marketing' returned ''.",
+   "related": "Phase C market probe and demand notes (1eadb12)",
+   "fix": "Accept 'library #N' only for a document that isn't removed and is linked to the project or its venture, or marked as a keyword/stats export (a new document kind). Refuse marketing-graded pages. Require at least one number in `demand` when there is no probe. With the probe on, still require keywords with a non-zero match count and store why the count shows demand.",
+   "effort": "S"
+  },
+  {
+   "id": "vendor-only-knockout-too-weak",
+   "title": "vendor_only is lifted by any one 'independent' claim of any metric, and the vendor table misses common vendors",
+   "severity": "medium",
+   "category": "design",
+   "files": [
+    "agent/knockouts.py",
+    "agent/evidence.py"
+   ],
+   "evidence": "knockouts.py:115-122 checks only `graded['independent'] == 0`, whatever the claim's metric. evidence.py:117 matches hosts against a fixed .com-heavy list (evidence.py:28-68): shopify.de, bigbuy.eu (live #3's supplier), syncee.com and support.finerworks.com (a print-on-demand vendor) all grade 'independent'. Live (report lines 677, 797): venture #4's only 'independent' claims are #5, a policy requirement from support.finerworks.com, and #8, one competitor's etsy.com/listing page. Neither shows demand, yet together they would lift vendor_only. The phase C watch item 'no proposal rests on vendor sources alone' is claimed enforced.",
+   "failure_scenario": "A case whose demand rests on vendor blogs saves one policy fact from a vendor's help site not in the table, or one competitor listing's price. vendor_only stops standing and the proposal reaches the owner with no independent demand evidence.",
+   "label": "live",
+   "reproduction": "scratchpad/ventures/test_repro_knockouts.py::test_vendor_only_passes_on_any_independent_claim: finerworks, bigbuy.eu, shopify.de and syncee all graded 'independent'. Knock-outs: [('vendor_only', False)] with no evidence, then [] after one 'policy requirement' claim.",
+   "related": "Phase C evidence store (cb5583e) and knock-outs (5603605)",
+   "fix": "Match vendors by registrable name across TLDs (shopify.*, printful.*), and add dropshipping, POD and Etsy-tool vendors (bigbuy, syncee, finerworks, autods, sellvia, vidaxl, koalanda, etsyhunt…). Require an independent claim with a demand-type metric (searches, sales, orders, reviews, buyers), ideally from 2 hosts, and don't count a single marketplace listing as demand.",
+   "effort": "S"
+  },
+  {
+   "id": "cold-outreach-pattern-misfires",
+   "title": "The cold_outreach word check knocks out cases that rule cold outreach out, and misses German and common English phrasings",
+   "severity": "low",
+   "category": "design",
+   "files": [
+    "agent/knockouts.py"
+   ],
+   "evidence": "knockouts.py:42-47 and :94-98 search pitch plus case fields with no negation handling. The ventures guide tells the agent to write legal duties in risks, including 'cold advertising emails are illegal (section 7 UWG)' (guides/ventures.md). The only German term is 'kaltakquise', and it requires 'contact/email/message' right before 'companies|businesses|…'.",
+   "failure_scenario": "False positive: risks 'No cold outreach: … illegal in Germany (UWG 7)' or 'We never email businesses' knocks the case out until the owner lifts it. False negative: the seeded recruiting venture's natural plan 'Contact hiring managers at 30 companies directly by phone', 'Reach out to 50 HR managers on LinkedIn', 'Writing to shop owners in Berlin' or 'Firmen per E-Mail anschreiben und Unternehmen kontaktieren' pass.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/ventures/test_repro_knockouts.py::test_cold_outreach_words: 'negated risk' and 'negated email' gave [('cold_outreach', False)]; 'german', 'reach out', 'writing to' and 'recruiting' gave [].",
+   "related": "Phase C knock-outs (5603605)",
+   "fix": "Make `needs cold_outreach` the primary signal and require the agent to answer it (yes/no) in venture_case. Keep the regex as a hint shown to the owner rather than a hard knock-out, or skip sentences with negations (no/never/not/kein/nicht). Add German verbs (anschreiben, kontaktieren, anrufen) and 'reach out to'.",
+   "effort": "S"
+  },
+  {
+   "id": "research-budget-bypass-ordinary-cycles",
+   "title": "Research for a venture in an ordinary cycle focused on it escapes its research budget, while its cost is charged to the venture",
+   "severity": "low",
+   "category": "design",
+   "files": [
+    "agent/tools.py",
+    "agent/loop.py",
+    "economy/metering.py"
+   ],
+   "evidence": "tools.py:2835-2846 binds research to a venture only when it names one or in a venture cycle. In an ordinary cycle whose plan focuses the venture, research_refusal is never checked and no venture_research row is written. Yet metering attributes the call to the cycle's focus venture (economy/metering.py:905-914), so ventures.money counts it. A research call that fails but is paid (loop.py:1403-1416, paid=True) is also never charged to the budget.",
+   "failure_scenario": "Venture #3 has used its $0.60. The next ordinary cycle focuses #3 and asks research questions without venture_id. They run and cost money attributed to #3, and the pages grade 'independent' for later evidence. The 'decide it now' forcing function never bites.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/ventures/test_repro_budget.py: with the budget at 0, an ordinary cycle focused on #3 ran research without venture_id 'ok' (llm_calls venture_id 3, 12,800 micros); the same question with venture_id=3 was refused; venture_research rows: 0.",
+   "related": "Phase C research budget (cadb759), its documented deviation",
+   "fix": "In ordinary cycles, bind research to the plan's focus venture when it is in a BUDGETED stage, which applies the refusal and the row. Record paid failures in venture_research with sources=0 so they count toward the budget.",
+   "effort": "S"
+  },
+  {
+   "id": "study-continues-after-learnings-cap",
+   "title": "A long library document keeps being studied (and paid for) after its 60-learning cap, and its later parts are never learned",
+   "severity": "low",
+   "category": "cost",
+   "files": [
+    "agent/library.py",
+    "agent/loop.py"
+   ],
+   "evidence": "library.py:431-445 `save_study` drops new learnings once MAX_LEARNINGS (60) are kept but still advances studied_parts. next_to_study (library.py:357-365) and loop.py:997-1058 keep calling until every part is read. A 300,000-character document is about 13 study calls at up to 12 learnings each, so the cap is reached halfway.",
+   "failure_scenario": "The owner uploads a 100-page Etsy seller handbook. The first 5-7 calls fill the 60 learnings, and the remaining 6-8 calls are paid (about $0.02 each live) and keep nothing. The second half of the guide never becomes learnings, contradicting 'study it once… so nothing has to be fetched again'.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/ventures/test_repro_study_cap.py: a 105-part (290,728-char) document took 14 study calls. Learnings kept per call: [8, 8, 8, 8, 8, 8, 8, 4, 0, 0, 0, 0, 0, 0]; the calls that kept nothing cost $0.098 (fake prices).",
+   "related": "Library patch note (f1717e9)",
+   "fix": "Scale the cap with the document (e.g. max(60, parts × 1.5)) or give each study call its share (cap ÷ calls). Once the cap is reached, mark the study done ('learnings full') instead of paying for more calls.",
+   "effort": "S"
+  },
+  {
+   "id": "decided-count-includes-code-parks",
+   "title": "The desk's 'ventures decided in 7 days' watch counts code's automatic triage and stage parks as decisions",
+   "severity": "low",
+   "category": "design",
+   "files": [
+    "agent/desk.py",
+    "agent/stages.py"
+   ],
+   "evidence": "desk.py:224-233 counts every venture whose stage became proposed, parked or killed since the date. stages.park (stages.py:124-127) sets stage 'parked', and the stage_at trigger (0030:124-126) stamps it, so timed-out ideas count. views.py shows it as the Phase C watch item 'at least 2 a week'.",
+   "failure_scenario": "Thirty days after a brainstorm, code parks its 6 untouched ideas on one day. The Decision desk box shows 6 ventures decided this week while nobody decided anything, and the watch item looks met.",
+   "label": "code",
+   "related": "Phase C decision desk (4bd68bd), watch items",
+   "fix": "Exclude parked_by='code', or report code parks separately ('6 timed out by code').",
+   "effort": "S"
+  }
+ ],
+ "fix_checks": [
+  {
+   "item": "FIX NOW 13: research label needs a counted call; proposed needs researching, 2 counted calls, 6 research scores and a source or euros",
+   "verdict": "partial",
+   "evidence": "Holds for new changes: tools.py:1930-1938 and ventures.py:243-265, DB triggers in migrations/0030_venture_stages.sql:87-100, tests pass. Not applied to rows proposed before 0024: live #3 is proposed with 0 counted calls (report line 486). See legacy-proposal-escapes-gates."
+  },
+  {
+   "item": "FIX NOW 14: no 'never answer with a no' or 'research sparingly'; 'a no backed by data' and 'research before you build'",
+   "verdict": "holds",
+   "evidence": "prompts.py:86 and :137, guides/ventures.md:4; grep finds neither old phrase."
+  },
+  {
+   "item": "FIX NOW 15: venture FOCUS ordered by importance, each field at most 220 characters",
+   "verdict": "partial",
+   "evidence": "The first lines keep their order (ventures.py:803-815). The 0.13.0 numbers, critic and knock-out lines aren't capped and push knock-outs, evidence, pitch and case past VENTURE_FOCUS_BUDGET=1,900 (reproduced: 1,888 bytes cut)."
+  },
+  {
+   "item": "FIX NOW 16: parked_by; the agent can't revive the owner's (or code's) park",
+   "verdict": "holds",
+   "evidence": "tools.py:1956-1966 and trigger ventures_owner_park (0030:102-106); tests pass."
+  },
+  {
+   "item": "FIX NOW 16: venture_create at live needs an active listing or recorded revenue",
+   "verdict": "broken",
+   "evidence": "tools.py:1895 and :1770-1778 check whether Ember earns anywhere, not the venture. With 6 active listings live, any new venture can start live (reproduced)."
+  },
+  {
+   "item": "FIX NOW 31: a full knowledge file continues in parts; a failed append no longer loses scores or stage",
+   "verdict": "holds",
+   "evidence": "tools.py:2011-2038 and ventures.py:160-174; tests/test_knowledge_parts.py passes."
+  },
+  {
+   "item": "Library: study once within a daily budget, ≤3 calls a cycle, 3 failures stop it, outside the cycle cap",
+   "verdict": "holds",
+   "evidence": "loop.py:1001-1024 (quote vs min(headroom, budget - spent)), library.py:41-43, :447-457; STUDY is in OUTSIDE_CYCLE_CAP (metering.py:105). Live: 4 documents fully studied for $0.066 in all, 44 learnings (report lines 1476-1480)."
+  },
+  {
+   "item": "Library: texts shown as data, never copied; diagnostics never show texts",
+   "verdict": "broken",
+   "evidence": "Nonce wrapping holds (library.py:399-403, tools.py:2582-2627). The shareable report prints study replies and library_read results (diagnostics.py:574-576, :625-629; live report lines 766, 845-847)."
+  },
+  {
+   "item": "Evidence store: a URL counts only if the research tool returned it; vendor/affiliate domains are marketing; claims write-once",
+   "verdict": "partial",
+   "evidence": "Only *_tool_result blocks become sources (loop.py:1786-1796); triggers in 0040:17-42. Live, the grading worked (gelato and printify pages graded marketing, report lines 675-676, 791-796). The domain table misses shopify.de, bigbuy.eu, syncee and finerworks (reproduced)."
+  },
+  {
+   "item": "Research budget $0.60, only the owner grants more, repeats free",
+   "verdict": "partial",
+   "evidence": "Refused before paying (tools.py:2843-2849), trigger 0041:7-10, repeat logic tools.py:2854-2892 (killed/unknown venture checked first). Bypassed by unbound research in ordinary cycles focused on the venture, and paid failures aren't counted (reproduced). research_check comparison calls are overhead, not in the budget (loop.py:1506)."
+  },
+  {
+   "item": "Market probe keeps only aggregates; a new product line needs a demand note under 14 days",
+   "verdict": "partial",
+   "evidence": "integrations/etsy.py:683-704 keeps only counts and quartiles. The source check accepts any, even removed, library document or a marketing page, and demands no numbers. Live, library #1 (an Etsy SEO guide) backed the Nebenkostenabrechnung line (report line 879)."
+  },
+  {
+   "item": "Numeric case and econ.py: Etsy DE fees, break-even, P10/P50/P90 with Swanson 30/40/30, EV per API dollar and per hour",
+   "verdict": "partial",
+   "evidence": "Fees are right as modelled: EUR 3.00 gives fees 0.8684 and net 2.13 (hand check equals code), weights (0.3, 0.4, 0.3), rate default 1.10. The EV formula drops fixed costs before the first sale (econ.py:99-102, reproduced). Offsite Ads (15% on attributed sales unless opted out) isn't modelled."
+  },
+  {
+   "item": "Knock-outs: cold outreach, accounts, cash, slow, losing, vendor_only; lift and restore history",
+   "verdict": "partial",
+   "evidence": "Lift and restore are kept as trigger-protected history (0044:19-22; owner.py:527-556). 'slow' is all-or-nothing with whole months; cold_outreach misfires both ways; vendor_only is too weak (all reproduced)."
+  },
+  {
+   "item": "Independent critic: separate strategy-model call with structured output, validated, ranking by the lower EV, 2 attempts per case",
+   "verdict": "holds",
+   "evidence": "prompts.py:763-773 (json_schema CRITIC_SCHEMA, knowledge + CRITIC_RULES only); critic.py:78-108 validation; critic.py:39-50 (MAX_ATTEMPTS=2 including failed ones); loop.py:937-955 (burn gating, keep=working, outside the cycle cap). It never reaches proposals without a case (live #3). Unexercised live: venture_critiques 0."
+  },
+  {
+   "item": "Decision desk: READY of up to 5 ranked items, key parsing, picks write-once, focus mode = build only",
+   "verdict": "holds",
+   "evidence": "desk.py:94-172 tiers; 15 key strings checked (desk_keys.py): 'Build #4: …', 'appraise 3' and 'APPRAISE #03' map correctly, 'nonsense' isn't taken as none, '#3 appraise' is refused. 0046 triggers. Live READY had '1. build #4' in focus mode (report line 482); desk_picks 0 because 0.13.0 ran no venture cycle before the report."
+  },
+  {
+   "item": "Predictions first_sale: 50% call from the newest case when backed, settled by order or revenue in time",
+   "verdict": "holds",
+   "evidence": "predictions.py:56-79 (None without a case, so #4, backed before cases existed, has none) and :101-160 (date-bounded). Shares the attribution gap of unlinked projects."
+  },
+  {
+   "item": "Venture stages: triage (agent ideas parked after 30 days), scale (decision point when it earns), live parked after 60 days without a sale, rules_from",
+   "verdict": "partial",
+   "evidence": "stages.py:168-192 and migrations/0058:7; tests/test_venture_rules.py (5) pass. Live, the Etsy leg shows 'nothing sold by 2026-11-29 parks it'. A sale on an unlinked product line doesn't count (reproduced)."
+  }
+ ],
+ "still_open_from_0_11_1": [
+  "3(d) 'A weak score': weight is still a compensatory sum (ventures.py:268-278). Doability 1 with every other score at its best still weighs 86, and weight still orders ideas in VENTURES (ventures.py:731) and the desk's triage tier (desk.py:161).",
+  "3(d) 'Research is shallow': each research call still runs at most one search (prompts.py:395, max_uses 1). New: research is now bound to a venture and its pages are kept.",
+  "Phase C watch items are still uncoded except 'decided a week' (see decided-count-includes-code-parks): nothing measures research ≥20% of spend, a euro estimate within 3 venture cycles, or a failed venture parked within 1 day."
+ ],
+ "strengths": [
+  {
+   "what": "Decision records are write-once and enforced by the database, so the agent can't rewrite its own evidence, cases, critiques, desk picks, overrides or forecasts",
+   "evidence": "Triggers in migrations/0040_evidence.sql:17-42, 0042_demand_notes.sql:27-30, 0043_venture_cases.sql:37-40, 0044_knockouts.sql:19-22, 0045_critiques.sql:38-41, 0046_desk_picks.sql:16-19, 0047_predictions.sql:29-36; test_knockouts asserts 'history cannot change'."
+  },
+  {
+   "what": "Source grading can't be forged by the model's prose: only URLs in the web tools' result blocks count as research sources",
+   "evidence": "loop.py:1786-1796 reads only *_tool_result blocks; evidence.py:107-121. Live, vendor pages were graded correctly (gelato.com and printify.com as marketing, report lines 675-676, 791-796)."
+  },
+  {
+   "what": "econ.py is one small, shared, correct fee model, used for both the agent's and the critic's numbers",
+   "evidence": "econ.py:82-112. Hand check: EUR 3.00 digital gives fees 0.8684 and net 2.1316, equal to the code's 0.87/2.13; the Swanson weights are (0.3, 0.4, 0.3); the critic reuses compute() with the agent's setup, hours and API spend (critic.py:97-107, loop.py:989)."
+  },
+  {
+   "what": "The owner's authority over ventures is enforced in the database, not only in the prompt",
+   "evidence": "0030_venture_stages.sql:102-119: only the owner takes a venture out of their park or code's, only the owner backs or kills, live only after the first test. 0041:7-10: only the owner grants research budget. owner.py:49-55 lists which stages each owner action applies to."
+  },
+  {
+   "what": "The critic is well isolated and bounded",
+   "evidence": "prompts.py:763-773 uses the strategy model with a json_schema format and the owner's knowledge file, not the agent's rules; critic.py:78-108 validates the verdict, texts and rising sales; at most 2 attempts per case (critic.py:36-50); outside the cycle cap while keeping a working cycle's cost (loop.py:951-955)."
+  },
+  {
+   "what": "The library pipeline is careful with untrusted text and cheap in practice",
+   "evidence": "library.py:52-53, :84-89 strip control and bidi characters; study context is nonce-wrapped with the nonce removed from the body (library.py:399-403); duplicates are refused by sha256 of the normalized text; pending study calls count at their estimate (library.py:373-384). Live: 4 documents, 44 learnings, $0.066 in all (report lines 1476-1480)."
+  },
+  {
+   "what": "Research budget and repeat detection are enforced before any money is spent, and repeats are re-wrapped with the current nonce",
+   "evidence": "tools.py:2835-2850 (a killed or unknown venture is refused before the repeat check), tools.py:2854-2892 (only earlier answers that found pages count as repeats); tests/test_research_budget.py passes."
+  },
+  {
+   "what": "The desk's key parsing is tolerant but strict about identity, and each pick is audited with the list it came from",
+   "evidence": "desk.py:46 and :185-197: 15 phrasings checked, e.g. 'Build #4: …', 'appraise 3', 'APPRAISE #03' and 'appraise#3' map correctly, while '#3 appraise' and 'brainstorm #3' are refused with a reason; desk.py:200-212 records items, pick and why."
+  },
+  {
+   "what": "The area's tests are extensive and green",
+   "evidence": "89 tests across test_knockouts, test_venture_cases, test_desk, test_critic, test_venture_rules, test_library, test_evidence, test_demand_notes, test_research_budget, test_ventures, test_venture_stages, test_knowledge_parts, test_predictions and test_venture_pnl all pass on HEAD ab713b0."
+  }
+ ],
+ "notes": "1) Phase C's 0.13.0 machinery has not run live yet. 0.13.0 started at 14:52 UTC, and the only 0.13.0 cycle before the report (#46) was an ordinary one that was stopped. So venture_cases, venture_critiques, desk_picks and predictions are all 0. None of the critic, desk or knock-out behaviour is live-verified. The next cycle was set to be a venture cycle with READY 'build #4'.\n2) Watch item (not reported as a finding): in focus burn mode, venture cycles keep 25% of spend while the Etsy leg is live. Once #4 has a project, READY is empty in focus mode, and venture cycles have no make or Printify tools (tools.py:147-163). Those cycles may idle on plan cost. Worth a look by whoever owns scheduling and burn modes.\n3) Minor observations, not written up:\n- The affiliate detector treats any 'ref' or 'tag' query parameter as an affiliate link (evidence.py:70). Etsy listing links with ?ref= would grade 'marketing', which errs on the safe side.\n- econ.py doesn't model Offsite Ads (15% on attributed sales for shops that don't opt out), and the case's api_usd is the agent's own figure rather than a floor from the venture's measured API spend.\n- A research call that ends in pause_turn records sources only from the continuation (loop.py:1420-1436). With max_uses 1 this is unlikely, and it was not seen live.\n- A new case with no critique yet hides the critic's earlier verdict from ranking and READY for one cycle.\n4) Every reproduction is in /tmp/claude-0/-home-user-SURVIVE/16767151-7117-55b8-8b14-a711cc61e9f8/scratchpad/ventures/. Run them from /home/user/SURVIVE/ember with PYTHONDONTWRITEBYTECODE=1, -p no:cacheprovider and --rootdir=/home/user/SURVIVE/ember. They import the tests' fixtures; nothing in the repository was modified.\n5) Not deeply checked: the Ventures and Library UI JavaScript; the web routes' auth, which belongs to the auth area (the routes go through _owner_actions); brainstorm prompt quality."
+}

@@ -1,0 +1,226 @@
+{
+ "area": "etsy",
+ "findings": [
+  {
+   "id": "etsy-fees-underbooked",
+   "title": "Etsy fees are under-booked by 15-29% a sale: the ledger's fee model leaves out the listing fee a sale triggers and the VAT on fees, and listing fees are never booked at all",
+   "severity": "medium",
+   "category": "money",
+   "files": [
+    "integrations/etsy.py",
+    "integrations/etsy_revenue.py",
+    "agent/econ.py",
+    "integrations/etsy_publisher.py",
+    "agent/tools.py"
+   ],
+   "evidence": "etsy.py:583-593: fees_share = the processing fee share + TRANSACTION_FEE (6.5%) × net, and nothing else. Ember's own venture model, agent/econ.py:24-29 and :82-89, also counts LISTING_FEE_USD 0.20 (charged again at each sale of a multi-quantity listing; Ember lists at QUANTITY 999, etsy.py:65) and FEE_VAT 19% on the listing and transaction fees. The FEES_NOTE text (etsy_revenue.py:52) and the owner's prefilled button (DOCS.md:1172-1175) use the same two-part model. The automatic writer (etsy_revenue.py:175-203) books it without the 'check it against your payment account' step that DOCS asks of the owner. The $0.20 fees for creating a listing (tools.py:3263), for a renewal and for the automatic renewal Ember's code turns on (etsy_publisher.py:770-820) never become a ledger expense anywhere (grep finds no booking path).",
+   "failure_scenario": "A €6.00 sale of one of the live listings (rate 1.10): the ledger books €0.93 of fees, while Ember's own econ.fees says €1.22. At €3.00 it books €0.62 against €0.87 (29% short); at €24.90 (a POD poster), €2.92 against €3.44. Each venture's P&L, the net runway, revenue_verified_usd and the 'earning more than it costs → scale' rule all read the ledger's overstated net. Creating 5 listings a day also spends $1/day of the owner's money that no P&L shows.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/etsy/fees_compare.py printed: 'EUR 3.00: ledger books fees 0.62; econ.fees 0.87 ... understates fees by 0.25 (29%)', 'EUR 6.00: ... 0.93 vs 1.22 (24%)', 'EUR 24.90: ... 2.92 vs 3.44 (15%)'.",
+   "related": "FIX NOW 5; Phase A automatic revenue writer; Phase C venture_case fee model",
+   "fix": "Have fees_share use one shared fee table (econ's constants): the processing fee from the payment, plus 6.5% of the net and of any shipping, plus USD 0.20 × units sold (converted at the entry's rate), plus 19% VAT on the listing and transaction parts when the owner has no VAT ID (an option). Book the listing fees as 'etsy' expenses: at create, at renewal and at the automatic renewals, keyed per listing and event. Name every part in FEES_NOTE.",
+   "effort": "M"
+  },
+  {
+   "id": "etsy-refund-held-balance-overstated",
+   "title": "A refund of revenue that Ember's code recorded is held when it would make Ember dead or unfunded, so the agent keeps spending money the buyer got back",
+   "severity": "medium",
+   "category": "money",
+   "files": [
+    "integrations/etsy_revenue.py",
+    "economy/service.py"
+   ],
+   "evidence": "economy/service.py:237-261 (record_integration) rolls back any integration entry whose state would get worse (HELD_STATES = dead, unfunded, :64; _worse_state :460-468). That includes the negative revenue correction that _refund prepares (etsy_revenue.py:206-250). _write (:253-277) only logs one warning in the System log. Nothing holds back the held amount from the spendable balance (grep: HELD_KEY is only used for that warning). The revenue itself (positive) is always written. For a partial refund, the dashboard doesn't flag the order either (app.js:3650 treats only 'fully refunded'/'canceled' as refunded).",
+   "failure_scenario": "With etsy_auto_record_revenue on: a €4.50 order is recorded (+$4.95). The agent spends the balance down to about $1. The buyer is fully refunded. The correction (-$4.95) is held because it 'would kill the agent'. The ledger still shows $1.00 'alive' while the true balance is -$3.95, so Ember goes on making API calls on refunded money until the owner happens to read the System log. The patch note presents this as a safeguard, but it breaks the budget guarantee in exactly the case it covers.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/etsy/test_repro_refund_held.py (pytest with PYTHONPATH=ember). It printed: 'balance after spending: 995834 alive' → 'entries after refund: [(revenue, 4950000, None), (expense, 850000, None)]' → 'balance after refund sync: 995834 alive', warning 'Ember's code did not record a refund of Etsy order revenue ($4.95 ...): it would kill the agent'.",
+   "related": "Phase A automatic revenue writer ('An entry that would kill Ember ... waits for you')",
+   "fix": "Treat corrections of Etsy's own revenue as facts: write them, and let the life state and the owner's decision follow, or pause the agent with a reason ('a refund made the balance negative') instead of withholding the entry. At the least, subtract held corrections from the spendable balance and the caps until they are written, and show them on the dashboard's order row, not only in the log. Keep holding only for fees, if the owner wants that.",
+   "effort": "M"
+  },
+  {
+   "id": "etsy-pod-shipping-excluded",
+   "title": "On print-on-demand orders, the shipping the buyer pays is dropped from revenue, while Printify's shipping is counted as a cost",
+   "severity": "medium",
+   "category": "money",
+   "files": [
+    "integrations/etsy.py",
+    "integrations/etsy_live.py",
+    "integrations/etsy_publisher.py",
+    "integrations/printify_publisher.py",
+    "integrations/printify.py"
+   ],
+   "evidence": "order_net (etsy.py:596-605) counts only price × quantity of Ember's lines. _order (etsy_live.py:485-517) never reads the receipt's total_shipping_cost. Since 0.13.0 the sync counts listings Printify made as Ember's (etsy_publisher.py:654-655), so a POD sale's revenue excludes shipping. The Printify order cost the owner records includes shipping_cents (printify_publisher.py:231-256, total = cost + shipping). printify.kept() subtracts shipping from the price too (printify.py:206-209). fees_share takes 6.5% of the item net only, but Etsy charges it on shipping as well. Nothing in the Printify publisher sets free shipping (grep: no shipping profile handling). By default, Printify's Etsy integration creates shipping profiles that charge the buyer.",
+   "failure_scenario": "A €24.90 poster sells with €4.50 shipping paid by the buyer (receipt grandtotal €29.40). Ember records €24.90 of revenue, then the owner records Printify's making plus €4.50 shipping as a cost. The product line's net is €4.50 lower than reality on every sale, about 18% of revenue, and Etsy's fee on the shipping is missed. With margins around €5-8, this can turn a working product line into 'losing' or trigger its park/kill rule.",
+   "label": "inferred",
+   "reproduction": "scratchpad/etsy/order_net_check.py: a receipt with 24.90 + 4.50 shipping printed \"Ember's net = 2490 cents\".",
+   "related": "Phase E4 (Printify) × FIX NOW 2 (order net)",
+   "fix": "For lines of listings Printify made, add their share of total_shipping_cost to the net (Etsy's fee applies to it too), or record the shipping as its own revenue line. Or have Printify publish with free shipping and a price that includes it, so kept() and the revenue match. Unit-test a POD receipt with shipping.",
+   "effort": "M"
+  },
+  {
+   "id": "etsy-partial-refund-not-flagged",
+   "title": "An order the owner recorded that is later partly refunded is never flagged for a correction, and it drops out of the list once 20 newer orders exist",
+   "severity": "low",
+   "category": "fix-incomplete",
+   "files": [
+    "integrations/etsy_publisher.py",
+    "web/static/js/app.js"
+   ],
+   "evidence": "orders_json keeps older orders only when they are recordable or recorded with a status in DEAD_ORDERS = {canceled, fully refunded} (etsy_publisher.py:1194-1196). orderRevenueCell asks for a correction only when status is 'fully refunded' or 'canceled' (app.js:3650-3653); a partly refunded recorded order just says 'Recorded'. DOCS.md:1169-1170 says 'If an order you recorded is refunded later, the list asks you to correct that entry.' With the automatic writer off (live: etsy_auto_record_revenue false), every entry is the owner's, so partial refunds go unnoticed.",
+   "failure_scenario": "The owner records order 71 as $4.95. The buyer gets €3.00 back ('partially refunded', Ember's lines now earn €1.50). The ledger keeps $4.95. The dashboard shows 'Recorded' with no prompt, and once 20 newer orders arrive, order 71 disappears from System → Etsy.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/etsy/test_repro_partial_refund.py printed: \"orders listed: 25 ; order 71 listed: False\" and \"stored: {'status': 'partially refunded', 'total': '1.50 EUR'} | recorded: True | corrected_in_full: False\".",
+   "related": "FIX NOW 2, FIX NOW 25(6)",
+   "fix": "Compare each recorded owner entry, net of its corrections, with the order's current net. When the order earns less (any refund status), keep it in the list and show 'correct entry #N by X'. Add a test for a partial refund.",
+   "effort": "S"
+  },
+  {
+   "id": "etsy-missing-listing-stays-live",
+   "title": "A listing that Etsy's batch answer leaves out (expired, deactivated or removed) stays 'live' in Ember's records for good; FIX NOW 28 rests on an unverified API assumption with no fallback",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "integrations/etsy_publisher.py",
+    "integrations/etsy_live.py"
+   ],
+   "evidence": "The sync only UPDATEs the rows Etsy returned (etsy_publisher.py:675-694). A requested listing that is missing keeps its old state, views and synced_at, and nothing compares ends_at with now (grep: ends_at is only displayed). LiveShop.listings uses GET /v3/application/listings/batch (etsy_live.py:330-354). Whether that endpoint returns expired or inactive listings is only assumed: the tests' mock answers include them (tests/test_etsy_renewal.py:193-225). Shop.set_state's answer is also discarded (etsy_publisher.py:473-474), and the new state is recorded as asked (:606-614). Grading uses the shop-wide last_sync_at (metrics.py:330-346), so stale views of a missing listing still count as fresh.",
+   "failure_scenario": "If Etsy's batch endpoint omits non-active listings, the 5 listings that end on 2027-01-29 (live ETSY SHOP, 0.13.0 report lines 510-516) expire without anyone noticing. On 2027-02-09, ETSY SHOP still shows '[active] … ends 2027-01-29'. etsy_listing and propose_etsy_edit treat them as live, 'Not live at Etsy' never appears, and the renew path never triggers.",
+   "label": "inferred",
+   "reproduction": "scratchpad/etsy/test_repro_missing_listing.py (fake shop answering [] after 130 days) printed: \"row: {'state': 'active', 'ends_at': '2026-12-30T12:00:00Z', 'synced_at': '2026-09-01T12:00:00Z'} now: 2027-01-09\" and live_listings: [900000001].",
+   "related": "FIX NOW 28 (its 'not verified against the live API' note)",
+   "fix": "Treat an id requested but not returned as unseen: mark it (state 'unknown', last_seen_at) and look it up with getListing, or read getListingsByShop with state=expired/inactive/sold_out, which needs OAuth listings_r. Fall back to 'expired' when ends_at has passed and auto_renew is off. Record the state set_state returns. Confirm the batch behaviour once against the live shop.",
+   "effort": "S"
+  },
+  {
+   "id": "etsy-order-items-poison-sync",
+   "title": "An order with many lines of Ember's listings fails the items CHECK, so every sync for the next 30 days fails silently",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "integrations/etsy_publisher.py",
+    "migrations/0010_etsy.sql",
+    "agent/service.py"
+   ],
+   "evidence": "etsy_publisher.py:705 stores json.dumps(items)[:4000]. etsy_orders.items has CHECK (json_valid(items) AND length(items) <= 4000) (0010_etsy.sql:126). All orders, the listing updates and observe() share one transaction (etsy_publisher.py:674-736), and the IntegrityError isn't caught inside sync(). sync_shop (agent/service.py:760) lets it reach the scheduler's log-only except (scheduler.py:93-96), and last_error is never set, so the dashboard shows nothing. The receipt is fetched again at every sync while it stays inside min_last_modified's 30 days.",
+   "failure_scenario": "A buyer orders about 19 or more lines of Ember's listings in one receipt (distinct listings, or POD variants, each with a title of up to 140 characters). From then on every hourly sync raises: no views, favorites, orders, fees, renewals, observations or automatic revenue for 30 days. Metric grading goes stale, and the dashboard still shows the last good sync with no error.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/etsy/test_repro_items_truncation.py (24 lines of ~130-character titles): sync() raised 'sqlite3.IntegrityError: CHECK constraint failed: json_valid(items) AND length(items) <= 4000' at etsy_publisher.py:712.",
+   "related": "FIX NOW 2 (the items stored per order)",
+   "fix": "Store only listing_id, quantity and price_cents per line (titles come from etsy_listings), or cap the number of lines instead of the characters. Wrap each order's upsert in a savepoint so one bad receipt is skipped and logged, and set last_error when sync() raises.",
+   "effort": "S"
+  },
+  {
+   "id": "etsy-order-window-gap",
+   "title": "Orders are fetched only for the last 30 days before now, not since the last sync that worked, so a longer gap loses orders",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "integrations/etsy_publisher.py",
+    "agent/service.py"
+   ],
+   "evidence": "etsy_publisher.py:59 ORDER_DAYS = 30 and :665 shop.orders(now - 30 days) use min_last_modified from the current time. sync_blocked (agent/service.py:699-708) stops all reading while the agent is dead or the kill switch is on. Receipts are also capped at 5 pages of 100 (etsy_live.py:359).",
+   "failure_scenario": "Ember is dead (or disconnected) for 5 weeks while a digital order is placed and auto-completed. When it syncs again, that receipt was last modified more than 30 days ago, so it is never stored: no sales count, no gate credit (orders_total), no revenue button or automatic entry.",
+   "label": "code",
+   "reproduction": "",
+   "related": "Phase B (sync while paused)",
+   "fix": "Use since = min(now - 30 days, last successful sync - 1 day), bounded (e.g. 365 days), and page until the answer is exhausted on a catch-up sync.",
+   "effort": "S"
+  }
+ ],
+ "fix_checks": [
+  {
+   "item": "FIX NOW 2: order net (only Ember's lines, less coupon and refunds; status via min_last_modified; correction prompt when refunded)",
+   "verdict": "partial",
+   "evidence": "The net math holds: etsy.py:596-605, etsy_live.py:485-517; order_net_check.py gave 425 cents for a 6.00 line of a 26.00 receipt with a 2.60 coupon and a 5.00 refund. Receipts are read by min_last_modified (etsy_live.py:356-380) and statuses are kept (etsy_publisher.py:709-735). Refunded or cancelled orders stop counting (COUNTED_ORDERS, etsy.py:578). But the correction prompt works only for full refunds and cancellations: a partial refund of an owner-recorded order is never flagged (finding etsy-partial-refund-not-flagged). Shipping is excluded even for POD orders (etsy-pod-shipping-excluded)."
+  },
+  {
+   "item": "FIX NOW 3: one line per live listing, top sellers first (plan and review)",
+   "verdict": "holds",
+   "evidence": "etsy_publisher.py:909-945 and review.py:444-470. Live, the 0.13.0 report line 508 reads 'All 6 live listings, top sellers first (sold s, views v, favorites f, photos p): #4584938666 … 3p · …'."
+  },
+  {
+   "item": "FIX NOW 4: observations (daily, append-only; per-listing history behind etsy_stats_history)",
+   "verdict": "partial",
+   "evidence": "Migration 0019 has a UNIQUE key per day and triggers that refuse UPDATE and DELETE. observe() runs at every sync with ON CONFLICT DO NOTHING, so the first value of the day stays (etsy_publisher.py:978-1001). The per-listing history is off live (OPTIONS etsy_stats_history false). As stated, it waits for the owner."
+  },
+  {
+   "item": "FIX NOW 5: fees (processing fee from the payment, plus the 6.5% transaction fee)",
+   "verdict": "partial",
+   "evidence": "The payment is read once, up to 10 a sync, and a failure never stops the sync (etsy_publisher.py:750-768; test_etsy_fees passes). The 6.5% constant is right for the transaction fee, applied after the coupon. But the model omits the USD 0.20 listing fee that each sale of a quantity-999 listing triggers, and 19% VAT on fees, both of which agent/econ.py counts. Fees end up 15-29% short (finding etsy-fees-underbooked). Still unverified against the live API: whether adjusted_fees is null or 0 when there was no adjustment (etsy_live.py:445-446 trusts any adjusted_fees present), and each Money's currency_code is ignored (_cents, etsy_live.py:520-527)."
+  },
+  {
+   "item": "FIX NOW 25(6): older orders keep their button",
+   "verdict": "partial",
+   "evidence": "Unrecorded orders, and recorded ones that were fully refunded or cancelled, stay in the list (etsy_publisher.py:1194-1196). Recorded orders that were partly refunded drop out (reproduced: order 71 not listed)."
+  },
+  {
+   "item": "FIX NOW 28: renewal, deactivation, Etsy's state counts, auto-renew for sellers",
+   "verdict": "partial",
+   "evidence": "The code matches the claim: tools.py propose_etsy_edit refuses changes to a listing that isn't live unless they renew it; renewal runs first and deactivation on its own (etsy_publisher.py:473-514); _renew_sellers sets auto-renew once per listing, and a refusal is reported once (:770-820). test_etsy_renewal passes. Live, ends_at is read (0.13.0 ETSY SHOP 'ends 2027-01-29/30'). Two API assumptions are still unverified: that PATCH state=active renews an expired listing, and that listings/batch returns non-active listings. Neither has a fallback, and set_state's answer is ignored (finding etsy-missing-listing-stays-live)."
+  },
+  {
+   "item": "FIX NOW 32: photo counts per line, drafts counted, whole-set warning; upload-then-delete",
+   "verdict": "holds",
+   "evidence": "Each line shows 'Np' and drafts are counted (etsy_publisher.py:1043-1058). The change card warns that the set replaces every photo at Etsy (etsy.py:463-472). _replace uploads the new set before deleting old photos and deletes one early only at Etsy's limit (etsy_publisher.py:823-842); a partial failure is 'partial' with the half-replaced parts named. Live: edits #9-#13 (photos) and #8 (category) all 'done' with no errors in EVENTS. The counts are still Ember's records, not Etsy's (still open)."
+  },
+  {
+   "item": "Phase A: automatic revenue writer (idempotent, crash-safe, keyed like the owner's buttons, own-corrections-only trigger)",
+   "verdict": "partial",
+   "evidence": "Idempotency and crash safety hold. Each entry is its own transaction with a deterministic key shared with the buttons, UNIQUE in the ledger, and an IntegrityError is treated as already recorded (economy/service.py:237-261). Refunds get one key per level (etsy_revenue.py:63-66). Migration 0035 lets 'etsy' write only revenue and expenses, and correct only its own entries (the trigger ledger_etsy_corrects_its_own). test_etsy_revenue passes (8). Two flaws: held refund corrections leave refunded money spendable (reproduced), and the fees it books are too low. It has not run live: the option is off and the rate is 0.0 (OPTIONS lines 58, 67)."
+  },
+  {
+   "item": "Phase C: market probe (aggregates only, the tool gets a function, not the shop)",
+   "verdict": "holds",
+   "evidence": "LiveShop.market calls GET /v3/application/listings/active with the app key only, keywords, limit 100, sort_on=score (etsy_live.py:451-461). Only etsy.market()'s aggregates leave it (etsy.py:683-704). loop.py:435-436 and :1746-1754 hand the tool a function. It is off live (etsy_market_probe false), so it is not exercised against Etsy."
+  },
+  {
+   "item": "Data the listing gates grade from (views_total, favorites_total, orders_total)",
+   "verdict": "holds",
+   "evidence": "metrics.py:388-405 sum the project's etsy_listings views and favorites as of the last sync, and orders_of counts non-refunded receipts. read() refuses numbers older than FRESH_HOURS or synced before the milestone was set (metrics.py:330-346). Caveat: freshness is shop-wide, so a listing missing from the batch keeps its old views while counting as fresh (see etsy-missing-listing-stays-live). POD listings (printify_products) aren't in metrics.listings(), which is consistent with POD having its own stage test."
+  }
+ ],
+ "still_open_from_0_11_1": [
+  "FIX NOW 4: the per-listing views history waits for the owner to confirm Etsy's API terms (etsy_stats_history is false live)",
+  "Photo QA counts only Ember's records (etsy_publisher.py:948-975), not Etsy's: photos the owner adds, half-replaced sets and anything Etsy does on upload are invisible. New evidence: getListingsByListingIds accepts includes=Images, so the hourly sync could read real counts with no extra request, and _replace could re-read photo_ids afterwards to verify the set",
+  "Not verified against the live API (patch notes' own caveats): that PATCH state=active renews an expired listing, and the payments fields amount_fees/adjusted_fees (null vs 0 when there was no adjustment; currency_code not checked)",
+  "Fees Etsy credits back on a refund stay the owner's to correct; currencies other than EUR and USD stay the owner's",
+  "Etsy reviews are still not read by the integration (patch notes, Phase D agenda)",
+  "Market probe: 👤 the owner's API-terms check before turning etsy_market_probe on"
+ ],
+ "strengths": [
+  {
+   "what": "Exactly-once, crash-safe execution of listings and changes: a 'running' row is committed before anything reaches Etsy, a crash becomes 'unclear' and is never retried, and a refused draft, a draft left at Etsy, a partial change and an unclear one are told apart",
+   "evidence": "etsy_publisher.py:285-340, :414-428, :459-542; tests test_a_crash_while_creating_is_unclear_and_never_repeated, test_a_change_etsy_refuses_halfway_is_partial. Live: 7 listings and 6 changes carried out on 09-29/09-30, all 'done'/'active', with no Etsy errors in EVENTS (0.13.0 report EVENTS; etsy_edits #1-#6)."
+  },
+  {
+   "what": "What the owner approved is exactly what gets uploaded: every file and photo is pinned by SHA-256 at proposal time and checked again before upload",
+   "evidence": "etsy_publisher.py:342-358 (CHANGED error); test_a_file_changed_after_approval_is_never_listed, test_a_file_changed_after_the_change_was_approved_is_never_uploaded."
+  },
+  {
+   "what": "A careful live client: an allowlist transport (HTTPS to api.etsy.com only, no redirects, no proxy env), a response size cap, NotSent/Unclear classification by whether Etsy may have changed something, tokens in a 0600 file written atomically, secrets registered for log redaction, one refresh at a time",
+   "evidence": "etsy_live.py:66-83, :92-124, :213-245; etsy.py:1035-1071. Live: refresh_expires_at rolls forward with each hourly sync (INTEGRATIONS etsy: last_sync_at 15:01:45, refresh_expires_at 2026-12-29T15:01:45Z, last_error null)."
+  },
+  {
+   "what": "Upload-before-delete replacement of photos and files, so a live digital listing is never left without them, with the half-replaced parts reported",
+   "evidence": "etsy_publisher.py:823-842 and :515-542; test_new_photos_come_first_and_the_old_ones_go_without_ever_leaving_none. Live: whole-set photo edits #9-#13 done."
+  },
+  {
+   "what": "The ledger itself enforces what Etsy's numbers may write: 'etsy' may create only revenue and expenses and correct only its own entries, rows are append-only, and idempotency keys are shared with the owner's buttons so no order is recorded twice",
+   "evidence": "migrations/0035_etsy_revenue.sql (CHECKs, the ledger_etsy_corrects_its_own trigger, UNIQUE idempotency_key); economy/service.py:237-261; tests/test_etsy_revenue.py (8 tests pass)."
+  },
+  {
+   "what": "The order net is correct in the common case: tax, shipping and the owner's own lines are excluded, the coupon and refunds are prorated, and refunds are followed by last-modified time",
+   "evidence": "etsy.py:596-605; etsy_live.py:356-380, :485-517; the order_net_check.py reproduction; test_an_order_counts_only_embers_lines_and_follows_its_refunds."
+  },
+  {
+   "what": "The market probe is privacy-minded: only aggregates leave the function, and the tool never gets the shop object",
+   "evidence": "etsy.py:661-704; loop.py:1746-1754."
+  },
+  {
+   "what": "Broad test coverage of the area, including the live client against mock transports: 92 tests in test_etsy, test_etsy_fees, test_etsy_renewal, test_etsy_revenue, test_demand_notes and test_venture_pnl pass on HEAD",
+   "evidence": "pytest run on HEAD ab713b0: all passed (exit 0)."
+  }
+ ],
+ "notes": "No money path in this area has run live yet. The device has 0 orders, etsy_auto_record_revenue is false and etsy_usd_per_eur is 0.0 (0.13.0 report OPTIONS lines 58 and 67; etsy_orders empty), so every revenue, fee and refund finding comes from code or reproductions. Recommendation for the owner: fix etsy-refund-held-balance-overstated and etsy-fees-underbooked before turning on automatic revenue recording.\n\nThe live listing, change and sync paths are healthy. Six listings are active, ends_at is read from Etsy, edits #8-#13 are done, and the hourly sync reports no error.\n\nUnverified Open API v3 assumptions worth one live check each:\n- getListingsByListingIds returns expired, inactive and sold_out listings.\n- PATCH state=active renews an expired listing.\n- Payment adjusted_fees is null, not 0, when there was no adjustment, and payment Money is in the shop's currency.\n- Form-encoded 'tags' as a comma-joined string: probably fine, since six listings were created, but tags are never read back.\n\nPrintify-related money (the kept() margin check subtracting shipping as if the seller paid it) overlaps with the Printify reviewer's area; I reported only the Etsy revenue side.\n\nMinor, not reported:\n- Idempotency keys (revenue_key/fee_key) aren't scoped by mode, so a dry-run fake receipt could only collide with a real one in theory.\n- A refresh refused with a 5xx tells the owner to 'connect the shop again', which is misleading.\n- The etsy_listing tool lists only the newest 20 live listings (live_listings limit=20).\n- The agent wrote '$6' for a 6.00 EUR listing in cycle #33 (0.12.0 report line 1261). This is model text, not code.\n\nScratch reproductions are in /tmp/claude-0/-home-user-SURVIVE/16767151-7117-55b8-8b14-a711cc61e9f8/scratchpad/etsy/. Run them from /home/user/SURVIVE/ember with PYTHONPATH=/home/user/SURVIVE/ember and --rootdir=/home/user/SURVIVE/ember."
+}

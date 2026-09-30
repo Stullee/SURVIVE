@@ -1,0 +1,260 @@
+{
+ "area": "tools",
+ "findings": [
+  {
+   "id": "workshop-cost-unbounded-stops-cycles",
+   "title": "A workshop run's 'worst case' is not an upper bound: one run cost $1.84 against a $0.35 estimate and the $1.50 run cap, and every overrun stops the cycle",
+   "severity": "high",
+   "category": "money",
+   "files": [
+    "agent/workshop.py",
+    "economy/estimate.py",
+    "economy/metering.py",
+    "economy/pricing.py",
+    "agent/prompts.py",
+    "agent/guides/workshop.md"
+   ],
+   "evidence": "economy/estimate.py:23-29 and :42-44 price a code-execution call as 10 samplings, each adding at most CODE_RESULT_ALLOWANCE_TOKENS = 4,000 tokens. economy/pricing.py:70 sets WORKSHOP_RUN at 5,100 tokens in and 8,000 out. economy/metering.py:837-845 compares only that estimate with workshop_run_cap_usd. metering.py:1151-1163 stops the wake cycle whenever a call costs more than its estimate. agent/prompts.py:282 tells the workshop model to 'look at what it made and fix it until it is right', which drives the server-side loop.\n\nLIVE (diag 171054):\n- Call #423 in cycle #44 (0.12.0): estimate 348,191 µ$, cost 1,837,601 µ$, cache_write 540,865 and cache_read 2,008,335 tokens (lines 700-707).\n- EVENTS l.3472: 'Call #423 cost $1.8376, more than its worst-case estimate $0.3482. The wake cycle was stopped … scaled by 4'. The owner reset the factor (l.3465).\n- Call #444 in cycle #46 (0.13.0): 344,126 vs 346,592, and the cycle was stopped again (l.600-607, EVENTS l.3449).\n- OPTIONS: workshop_run_cap_usd 1.5 (l.138).\n- Both cycles ended with 'the reflection wrote no journal' (l.1367, 1369). #44's planned owner message and #46's Printify proposal never ran.\n- Workshop runs were $2.64 of the day's $4.66 API spend (ECONOMY today_cap_spend 4.658; workshop_runs l.1438-1442).\n- guides/workshop.md:21-22 still says 'A run costs cents to dimes … each run has its own cap'.",
+   "failure_scenario": "The agent asks the workshop to render three spreadsheet sheets. The guard reserves $0.35, and the server-side code loop re-reads a growing context about 2 million tokens' worth. The run costs $1.84, which breaks the owner's $1.50 per-run cap, and the whole cycle is stopped mid-plan with no reflection. The daily cap and the balance are only protected up to the estimate. The same +$1.49 overrun arriving with less than that left under the $7 daily cap (or near the last-will reserve) overspends a cap the patch notes call hard. Today 2 of 6 runs overran, one by only 0.7%, and each killed its cycle.",
+   "label": "live",
+   "fix": "1. Reserve a workshop run at max(estimate, workshop_run_cap_usd) under the daily cap and the balance, so those stay hard.\n2. Estimate it like research: 1.5 × the p95 of recent workshop runs.\n3. For purpose 'workshop', which is already outside the cycle cap, record the overrun and raise its factor, but don't stop the cycle, so the reflection still runs.\n4. Recalibrate CODE_RESULT_ALLOWANCE_TOKENS from live runs.\n5. In WORKSHOP_RULES, forbid printing whole files or viewing full-size images, and cap the number of code runs.\n6. Correct the guide's 'cents to dimes'.",
+   "effort": "M",
+   "related": "0.11.1 §3(b) (workshop calls spending the reflection's reserve), FIX NOW 9/17; Phase B budget engine ('daily cap, balance stay hard')"
+  },
+  {
+   "id": "print-size-pictures-refused",
+   "title": "Pictures over 12 MP (every print-resolution poster) are refused by propose_printify_product, look, workspace_read and make_image, with messages that hide the reason",
+   "severity": "high",
+   "category": "bug",
+   "files": [
+    "products/images.py",
+    "agent/tools.py",
+    "products/checks.py",
+    "integrations/qa.py",
+    "agent/guides/printify.md",
+    "agent/guides/workshop.md"
+   ],
+   "evidence": "The limit and where it bites:\n- products/images.py:21 sets MAX_PIXELS = 12,000,000.\n- images.py:80-87 _checked raises 'only Ember's own PNG and JPEG pictures can be shown' above it.\n- _checked backs png_size (tools.py:3606 propose_printify_product, :3499 propose_pin), thumbnail (look, tools.py:2966), open_png (make_image pages, make.py:186) and _describe_product (tools.py:1621, where ImageError is not caught and surfaces as 'the tool failed').\n\nThe instructions that contradict it:\n- products/checks.py:41 lets the workshop keep pictures up to 40 MP.\n- tools.py:1075 and guides/printify.md:13 say 'as big as the print area allows'.\n- qa.py:62-71 advises 'use a bigger picture'.\n- workshop.md:18 says 'Look at pictures with look'.\n\nLIVE: Printify's print areas are 3510x4950, 4950x7020 and 7020x9930 (diag 171054 tool call 539). Workshop run #444 kept workshop/out/bauhaus_poster_1.png at 3510x4950 = 17.4 MP (l.544, 1573).",
+   "failure_scenario": "In the next cycle the agent proposes the poster it paid $0.35 for. The refusal says it 'isn't one of your pictures', and look and workspace_read fail too, so nothing tells it the file is too big. It likely pays for more workshop runs (convert, redraw) without learning the limit, and the backed POD venture's first test (milestone #8, 3 posters by 10-07) stalls. For the 23.4x33.1 in and 24x36 in variants, 150 dpi needs 17.4 to 19.4 MP, so the QA advice ('use a bigger picture') can never be followed.",
+   "label": "reproduced",
+   "reproduction": "Script: scratchpad/tools/test_poster_size.py (dry-run agent, fake Printify, 3510x4950 PNG passed through checks.check). It printed:\n- 'PROPOSE workshop/out/bauhaus_poster_1.png False Error: … isn't one of your pictures (a PNG or JPEG Ember's code can read).'\n- 'LOOK … Error: only Ember's own PNG and JPEG pictures can be shown.'\n- 'READ … Error: the tool failed (ImageError).'\n- 'MAKE_IMAGE … only Ember's own PNG and JPEG pictures can be shown.'\nThe same happened for a 3600x5400 picture (the 12x18 in print area). An 11.8 MP picture with the 24x36 in variant was accepted with 'QA … about 116 dpi … blurry below 150; use a bigger picture or a smaller size'.",
+   "fix": "1. Use one pixel limit for checks.py and images.py (e.g. 40 MP), with Image.draft/reduce for thumbnails.\n2. Make refusals say 'W x H = N MP, more than M MP'.\n3. Catch ImageError in _describe_product.\n4. Compute the QA advice against what the limit allows, and warn when the largest chosen variant can't reach SHARP_DPI.\n5. Put the limit in the printify guide.",
+   "effort": "S",
+   "related": "Phase E4 Printify (QA SHARP_DPI), Phase E2 images._checked"
+  },
+  {
+   "id": "pdf-check-bypass",
+   "title": "The workshop's PDF active-content check (FIX NOW 24) is bypassed by an indirect /Filter or a CR-only 'stream' line end",
+   "severity": "medium",
+   "category": "security",
+   "files": [
+    "products/checks.py"
+   ],
+   "evidence": "- checks.py:64: _PDF_STREAM = (?<!end)stream\\r?\\n misses a stream keyword followed by a bare CR.\n- checks.py:77: _FILTER matches only a direct name or array. For '/Filter 9 0 R', _decoded returns None (checks.py:224-226, treated as 'no encoding: its raw bytes were searched'), so the Flate stream is never decoded or searched.\n- The patch note claims 'any other encoding … a stream that doesn't decode … are refused'.",
+   "failure_scenario": "The agent reads emails and web pages and steers the workshop, whose code a model writes. Through that path the workshop returns a PDF whose catalog, /OpenAction and a JavaScript action sit in a compressed object stream with an indirect /Filter. Ember keeps it, and it can be proposed as a buyer download in the owner's Etsy shop. JavaScript then runs in buyers' viewers under the owner's name.",
+   "label": "reproduced",
+   "reproduction": "Scripts: scratchpad/tools/pdf_bypass2.py builds a 1-page PDF with the catalog, /OpenAction and a /Names JavaScript entry inside a Flate object stream. It printed:\n- 'direct /Filter /FlateDecode -> refused: the PDF has active content (JS, JavaScript)'\n- 'indirect /Filter 9 0 R -> KEPT | pdfium pages: 1'\n- 'pdfium document-level JS actions: 1' (pdfium is Chrome's PDF engine)\nscratchpad/tools/pdf_cr.py printed \"direct filter, 'stream\\r' EOL -> KEPT | pdfium pages 1 JS 1\".",
+   "fix": "1. Refuse any stream whose /Filter or /DecodeParms isn't a direct name or array (or resolve the reference).\n2. Delimit streams after \\r\\n, \\n or \\r, and refuse what can't be delimited.\n3. Better: walk every object with a real parser (pikepdf/pypdf), or normalise with qpdf (uncompressed, no object streams) and scan the result.\n4. Add both cases to tests/test_workshop_checks.py.",
+   "effort": "S",
+   "related": "FIX NOW 24"
+  },
+  {
+   "id": "factory-gaps-paid-workshop",
+   "title": "No free tools to read a spreadsheet, preview its other sheets or copy a product file: $2.01 of $2.64 workshop spend went on these, plus a stopped cycle",
+   "severity": "medium",
+   "category": "cost",
+   "files": [
+    "products/sheets.py",
+    "products/make.py",
+    "agent/tools.py",
+    "agent/workshop.py",
+    "agent/guides/listing_photos.md"
+   ],
+   "evidence": "CODE:\n- sheets.py:441-447 previews only the first sheet, 18 rows. Cross-sheet formulas show as text.\n- make.py:185-188 refuses anything but PDF pages or pictures.\n- tools.py:1612-1626: workspace_read on an .xlsx says only 'an Excel workbook, 9 KB'.\n- No tool copies or renames a product file (workspace_write is text-only, sandbox.py:170-176).\n- guides/listing_photos.md:15 asks for 'Every page or sheet'.\n- workshop.report marks an answer-only run as not ok ('Nothing was kept', workshop.py:340-342).\n\nLIVE (diag 171054):\n- Cycle #41 (pre-0.12.0), reply #365: 'I can't inspect xlsx formulas directly, let me use the workshop'. Runs #450 ($0.0625) and #454 ($0.0829) ended 'error: nothing kept' (l.963, 967).\n- Run #456 cost $0.0233 just to copy a file into shop/. A second copy was refused at the per-cycle limit (l.969-970).\n- Cycle #44: make_image was refused 3 times for 'shop/nebenkostenabrechnung_de.xlsx#1' (l.718-720), then workshop run #423 cost $1.8376 to render the 3 sheets (l.722).\n- workshop_runs table: l.1438-1442.",
+   "failure_scenario": "Two cases:\n- A spreadsheet product needs more than one listing photo, or the agent must check its formulas. Either way the work goes through a paid model call of unbounded cost. On 09-30 that cost $1.84 and stopped cycle #44 before its photos and owner message.\n- A read-only run is reported as a failure, and since 0.12.0 it counts toward the 2-runs-per-cycle limit.",
+   "label": "live",
+   "fix": "1. make_spreadsheet writes one preview per sheet (<base>-sheet2.png …) with an optional cell range.\n2. make_image accepts 'file.xlsx#2' (renders that sheet).\n3. workspace_read on .xlsx, .docx and .pdf returns cell values and formulas, or text (openpyxl read-only / pdfium text, sealed).\n4. Add a free workspace_copy/rename for product files.\n5. Report an answer-only workshop run as ok.\n6. Align the listing_photos guide.",
+   "effort": "M",
+   "related": "0.11.1 §3(e) (self-improvement loop); FIX NOW 22"
+  },
+  {
+   "id": "photos-duplicates-qa-counts-copies",
+   "title": "The photo factory can't make five different photos of a one-page product, and QA counts copies as photos",
+   "severity": "medium",
+   "category": "ux",
+   "files": [
+    "products/images.py",
+    "products/make.py",
+    "integrations/qa.py",
+    "agent/tools.py"
+   ],
+   "evidence": "CODE:\n- images.listing (images.py:162-235) has a single layout: 1-3 pages fanned next to a title, subtitle and badge. There is no crop, zoom, detail view, text-only feature graphic or mockup.\n- qa.photo_defect (qa.py:29-38) counts photos only.\n- tools.py:3435-3436 refuses the same file name twice but not the same picture.\n\nLIVE (diag 171054):\n- The make_image calls for en_resume_listing_photo2 to photo5 all used shop/en_resume_template.pdf#1, and the cover-letter photos repeat page 1 of each letter.\n- The owner approved requests #12 and #13 with 'I approve but note that additional pictures just seem like duplicates. Improve in the future' (l.1400-1401). Plan #44 repeats this (l.686).\n- OBLIGATIONS still lists 4 listings under 5 photos (l.422).",
+   "failure_scenario": "For one-page products (CVs, cover letters, single-sheet tools), the MIN_PHOTOS=5 obligation can only be met with near-identical photos. The code obligation closes on the count while buyers and the owner see duplicates, so the owner is back to doing QA.",
+   "label": "live",
+   "fix": "1. Add make_image modes: a crop or zoom of a page region ('cv.pdf#1@top'), a features layout without pages, a 'what's included' grid, and a print/device mockup.\n2. In QA, count distinct source pages or regions, and flag identical or near-identical pictures (SHA-256 plus a small perceptual hash) as adding no photo. Show this on the card.",
+   "effort": "M",
+   "related": "0.11.1 §3(e) 'You do the QA'; Phase D QA registry"
+  },
+  {
+   "id": "make-image-cap-below-min-photos",
+   "title": "make_image allows 4 per cycle while the QA registry asks for 5 photos per listing",
+   "severity": "medium",
+   "category": "design",
+   "files": [
+    "agent/tools.py",
+    "integrations/qa.py"
+   ],
+   "evidence": "tools.py:818 sets make_image per_cycle=4, while qa.py:21 sets MIN_PHOTOS=5. propose_etsy_listing is 1 per cycle, and edits must give 'the whole set' (tools.py:995-1000). make_image makes no API call.\n\nLIVE (diag 171054):\n- Cycle #40 had two make_image refusals, 'can be used at most 4 times per cycle', in the middle of a photo set (l.1028-1029).\n- Plan #44: 'The cap is 4 make_image calls per cycle, so I will split the photo work across 2 cycles' (l.686).",
+   "failure_scenario": "A listing whose photos are built with make_image can't get its 5-photo set in one cycle. The agent either proposes a short set (QA shortfall, then a later edit and another approval) or spends extra cycles on a free operation. Each extra cycle costs its plan plus a first-step cache write, about $0.12 or more on this configuration. Meanwhile the photo obligation stays open.",
+   "label": "live",
+   "fix": "Derive the cap from the photo rules: per_cycle = etsy.MAX_PHOTOS (10), or let one make_image call make a set. If device CPU is the concern, keep a time guard instead.",
+   "effort": "S",
+   "related": "Phase D QA registry (MIN_PHOTOS); FIX NOW 32 photos"
+  },
+  {
+   "id": "fixed-prompt-over-bound-with-channels",
+   "title": "With the owner's channels on, an ordinary or reactive step's fixed prompt is 48.5 KB, above the 45,866-byte bound that the test checks only without channels",
+   "severity": "low",
+   "category": "cost",
+   "files": [
+    "agent/tools.py",
+    "agent/prompts.py",
+    "tests/test_rule_audit.py"
+   ],
+   "evidence": "tests/test_rule_audit.py:280-285 measures only mail+etsy+library (45,755 B). prompts.work_request (prompts.py:582-609) has no reactive variant, so reactive cycles (agenda.REACTIVE_STEPS=5) carry the full ordinary list. The largest definitions are milestone_plan 3,160 B, venture_update 2,949 B, propose_printify_product 1,910 B, propose_etsy_edit 1,784 B and propose_etsy_listing 1,727 B.",
+   "failure_scenario": "Each new channel adds 2-3 KB to every ordinary and reactive work step. The watch item 'an ordinary cycle no bigger than 0.11.1' fails silently on the owner's device (Printify is on) while CI passes. A 5-step reactive cycle pays a full cache write of about 21k tokens for tools it mostly can't use.",
+   "label": "reproduced",
+   "reproduction": "Script: scratchpad/tools/measure.py. Fixed prompt of one work step by configuration:\n\n| Configuration | Cycle kind | Tools | Tool definitions | Fixed prompt |\n|---|---|---|---|---|\n| live (mail, etsy, printify, library, workshop) | ordinary/reactive | 41 | 38,879 B | 48,511 B (system 9,628 B) |\n| live | venture | 24 | 21,631 B | 31,195 B |\n| everything on | ordinary/reactive | 44 | 42,135 B | 51,767 B |\n| no channels | ordinary/reactive | 27 | 27,139 B | 36,771 B |\n\nWith mail+etsy+library only (the test's configuration): 45,755 B. Adding Printify gives 48,511 B; adding Pinterest too gives 50,530 B.",
+   "fix": "1. Check the bound with every channel on.\n2. Trim the largest descriptions: milestone_plan's metric help, venture_update's case-field prose.\n3. Give reactive cycles a lean list: email, Etsy reading and editing, obligations, messages, journal.",
+   "effort": "S",
+   "related": "Phase B 'make room in the prompts' watch item; Phase E4 prompt-size note"
+  },
+  {
+   "id": "paid-before-refusable-checks",
+   "title": "Some refusals come only after a paid call: a draft appended past 64 KB, and a workshop output folder four levels deep",
+   "severity": "low",
+   "category": "cost",
+   "files": [
+    "agent/tools.py",
+    "agent/workshop.py"
+   ],
+   "evidence": "- tools.py:2053-2080: _draft checks path, mode and sources, but not whether the existing size plus a draft of up to DRAFT_CHARS fits max_file_bytes (64 KB). On QuotaError it returns 'the draft was written but can't be saved' and the drafted text is discarded.\n- workshop.py:122-126 checks the folder with jail.parts(folder, want_file=False), which allows 4 levels. Outputs are written to f\"{folder}/{name}\" (workshop.py:273), and that 5-level path is refused for every file after the run is paid.\n- The Phase B note claims 'everything refusable is checked before it is paid for'.",
+   "failure_scenario": "The agent continues a long guide with draft mode append once the file passes about 40 KB. The call is paid, the text is thrown away, and the agent will likely retry. Or the agent names folder 'shop/posters/eu/a3': the run is paid and every output file is refused.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/tools/test_draft_append.py printed \"Error: the draft was written but can't be saved (a file can hold at most 64 KB). (cost $0.0711)\", and llm_calls shows the draft call ok at 71,104 µ$. A Jail check printed \"folder check: ['shop', 'posters', 'eu', 'a3']\" and then 'write refused: at most 4 folder levels'.",
+   "fix": "1. Before the draft call, refuse an append when existing size + DRAFT_MAX_TOKENS×4 bytes > max_file_bytes, or save the overflow to <name>-2.md.\n2. Refuse a workshop folder deeper than MAX_DEPTH-1 before uploading anything.",
+   "effort": "S",
+   "related": "Phase B draft sub-call; FIX NOW 22"
+  }
+ ],
+ "fix_checks": [
+  {
+   "item": "FIX NOW 13 (tool side of research-backed scores and proposals)",
+   "verdict": "holds",
+   "evidence": "tools.py:1929-1938 refuses scores until ventures.researched(row) >= RESEARCH_TO_SCORE (1). The 'proposed' stage goes through ventures.proposal_gaps (ventures.py:243-260): researching stage, 2 counted calls, six scores from research, and a case naming a link or euros. Knock-outs are checked too (tools.py:1971-1985). A repeated question is free and marked reused, so it doesn't count (tools.py:2856-2893). The tests pass."
+  },
+  {
+   "item": "FIX NOW 20 (workspace quota, QuotaError is no strike)",
+   "verdict": "holds",
+   "evidence": "Limits are 5,000 files, 1,000 folders, 50 MB of text and 2 GB of products (sandbox.py:78-83). QuotaError (sandbox.py:64-66) is excluded from strikes (tools.py:1460). test_sandbox and test_workspace pass. Caveat: Missing (a mistyped or non-existent path) still counts as a strike; live, cycle #41 had 'workshop doesn't exist' (diag l.962)."
+  },
+  {
+   "item": "FIX NOW 21 (withdraw_request, expiry, caps per type)",
+   "verdict": "holds",
+   "evidence": "_room_for_request applies store.PENDING_CAPS per type in both request_approval and _new_request (tools.py:2659-2666, 3127). withdraw_request accepts only the agent's pending requests (tools.py:2669-2682; store.py:344-352). The owner's Undo requests are approved when created (audit.py:283-330), so the agent can't withdraw them. test_request_expiry passes. I did not trace the expiry pass in loop.py. Note that 'publish' (cap 3) is shared by pins and Reddit posts."
+  },
+  {
+   "item": "FIX NOW 22 (paid failures count toward limits)",
+   "verdict": "holds",
+   "evidence": "tools.py:1455-1456 counts a call when it is ok or paid. The loop's workshop closure returns paid=run.calls > 0 (loop.py:1695-1707). draft's failed save returns paid=True (tools.py:2080). test_paid_limits passes. Edge case: a workshop run that raises an unexpected exception after sending is neither recorded nor counted. Live cycle #41, before 0.12.0, ran 4 workshop runs against a limit of 2, which is the bug this fixed."
+  },
+  {
+   "item": "FIX NOW 24 (workshop file checks)",
+   "verdict": "broken",
+   "evidence": "Reproduced: a PDF whose JavaScript and /OpenAction sit in an object stream with an indirect /Filter (9 0 R), or with a bare-CR 'stream' line end, is KEPT. pdfium opens it and counts 1 JavaScript action (checks.py:64, :77, :224-226). The Office allowlist, picture re-encoding and read-error refusals look sound, and test_workshop_checks passes."
+  },
+  {
+   "item": "FIX NOW 31 (knowledge file continues in parts)",
+   "verdict": "holds",
+   "evidence": "tools.py:2016-2038 rolls over to part n+1 with the venture's head, reports a failed save while the rest of the update is kept, and raises no strike. test_knowledge_parts passes."
+  },
+  {
+   "item": "FIX NOW 32 (texts fit a reply)",
+   "verdict": "partial",
+   "evidence": "Every whole-taken field is capped at ONE_REPLY_CHARS = 2,500 (tools.py:91-94), and test_reply_limits passes. But one call's uncut fields can total 5,240 characters (request_approval), 4,062 (propose_etsy_edit) or 4,052 (propose_etsy_listing), against about 3,400 characters in a 2,000-token reply. Live, 0.12.0 cycles had 1 cut-off reply (cycle #43, call #410, workspace_write skipped; diag l.798) against 7 on 09-29."
+  },
+  {
+   "item": "Phase B: draft sub-call",
+   "verdict": "partial",
+   "evidence": "It is metered, ordinary-only, 3 per cycle, and keeps the reserve (tools.py:696-721, 2047-2092). But an append to a large file is paid first and then refused, discarding the text (reproduced: $0.0711)."
+  },
+  {
+   "item": "Phase B: tool sets per cycle kind",
+   "verdict": "holds",
+   "evidence": "Measured: a venture step carries 24 tools (31,195 B fixed, −32% vs 45,866), an ordinary step 41 (48,511 B in the live configuration). Ordinary tools are refused in venture cycles (tools.py:1409-1413). Reactive cycles get the full ordinary list, and the ordinary bound holds only with no channel on (finding fixed-prompt-over-bound-with-channels). The refusal text omits Printify and the website."
+  },
+  {
+   "item": "Phase B: one source for limits",
+   "verdict": "partial",
+   "evidence": "Prompts and tool descriptions mostly read the constants (test_text_limits passes). But tools.py:952 types '20 MB each', while the workspace holds at most 15 MB per product file (sandbox.py:82). The guides type limits the code keeps elsewhere: etsy.md:6/10/14/16 (14 days, 5 files, 20 MB, 140, 13, 20) and listing_photos.md:5-6 (pixel sizes). The test scans only prompts.py, tools.py and context.py for 'at most/up to/within' patterns."
+  },
+  {
+   "item": "Phase D: QA registry used by the tools",
+   "verdict": "partial",
+   "evidence": "qa.defects runs in propose_etsy_listing, propose_etsy_edit, propose_email, propose_pin and propose_printify_product (tools.py:3189, 3274, 3539, 3668), and guide_text fills in MIN_PHOTOS and the other numbers. But the checks are advisory and count photos, not distinct photos (the owner flagged duplicates). Printify's sharpness advice can't be followed past 12 MP."
+  },
+  {
+   "item": "0.12.0/0.13.0 tools: memory_read, knowledge_search, library_read, evidence, demand_note, venture_case, obligation_done, inquiry_done, mark_opt_out, propose_pin, pinterest_boards, printify_catalog, propose_printify_product, site_page, withdraw_request, milestone_plan likely",
+   "verdict": "partial",
+   "evidence": "Validation is generally tight: one spec for schema and checks, plain-number parsing, per-type caps, the pin's link set by code, site slugs, the Printify variant/shape check, and likely only with a metric. Gaps:\n- propose_printify_product, propose_pin and look refuse >12 MP pictures misleadingly (finding print-size-pictures-refused).\n- obligation_done and inquiry_done accept any result containing a digit, or no check at all (tools.py:2361, 2750, 3107-3116).\n- The guide tool's description names 6 of its up to 10 topics (tools.py:830-833)."
+  }
+ ],
+ "still_open_from_0_11_1": [
+  "§3(e) The self-improvement loop still hasn't closed. There were 6 workshop runs, none re-ran a kept script (script_used '-' on all), and no upgrade request carried a workshop_script (diag 171054 l.1433-1442). Instead the workshop is now the costliest line of the day ($2.64 of $4.66).",
+  "§3(c) Cut-off replies are fewer but not gone: 1 in 0.12.0 cycles (#43, call #410) against 7 on 09-29. One call's fields can still total more than a reply holds.",
+  "§3(e) 'You do the QA': the owner again had to flag listing photos (duplicates, requests #12 and #13). The QA registry counts photos, not distinct ones."
+ ],
+ "strengths": [
+  {
+   "what": "One tool description drives both the model's JSON schema and code validation, so the two can't drift",
+   "evidence": "tools.py:1-8, 1220-1244 (additionalProperties false; maxLength, minimum and maximum shown to the model) and 1497-1547 (the same fields checked; long note fields cut with a note instead of a refused retry)."
+  },
+  {
+   "what": "The agent never writes product bytes, and every outbound file is pinned by SHA-256 at proposal and re-verified at execution",
+   "evidence": "Jail.write_bytes is only called by Ember's code (sandbox.py:359-380). _uploads hashes the files (tools.py:3428-3447). The hash is re-checked in etsy_publisher.py:355, printify_publisher.py:419 and pinterest_publisher.py:215 (CHANGED fails closed)."
+  },
+  {
+   "what": "A hardened file jail",
+   "evidence": "sandbox.py: every path is walked with O_NOFOLLOW (and O_DIRECTORY for folders); hard links, FIFOs and devices are refused; writes are atomic (O_EXCL temp file, fsync, replace); names come from a fixed character set; folders and files have separate quotas (lines 143-211, 437-452)."
+  },
+  {
+   "what": "Workspace files are never rendered on Home Assistant's origin",
+   "evidence": "web.py:723-775 serves them as attachments with 'sandbox; default-src none' and nosniff; only PNG and JPEG may show inline."
+  },
+  {
+   "what": "Ember's own spreadsheets and documents can't reach outside",
+   "evidence": "sheets.py:308-323 allows only listed functions and refuses '|' or '[' in formulas; markup links are https/mailto only. The workshop's Office outputs are checked against an allowlist of part kinds, with zip-bomb and size limits (checks.py:295-352), and pictures are re-encoded so only pixels survive (checks.py:148-166)."
+  },
+  {
+   "what": "The workshop is contained",
+   "evidence": "Code runs only in Anthropic's sandbox, which has no internet. Inputs come only from the workspace, capped at 5 files and 10 MB. The helper's answer is wrapped as data with a per-cycle nonce. Every uploaded and produced file is deleted from Anthropic after the run, and every run is recorded (workshop.py:115-145, 156-182, 305-322)."
+  },
+  {
+   "what": "Venture cycles carry a third less fixed prompt",
+   "evidence": "Measured 24 tools and 31,195 B against 45,866 B in 0.11.1 (−32%). Tools for building and selling are refused there by code (tools.py:1409-1413), and the reflection reuses the cached list."
+  },
+  {
+   "what": "Network and process sealing around tool handlers and makers, and a build-time product self-test",
+   "evidence": "tools.py:1440-1448; netguard.py:23-81 (audit hook: sockets, subprocess, dlopen, threads); products/selftest.py makes one of each product in the image build."
+  },
+  {
+   "what": "Research can't be used to carry data out",
+   "evidence": "A page may be read only if it appeared in this cycle's results (tools.py:2826-2828); Etsy and Reddit pages are refused (tools.py:2819-2825); a repeated question is answered free and counts for nothing (tools.py:2856-2893)."
+  },
+  {
+   "what": "The area is well tested",
+   "evidence": "All tool, workshop and product tests I ran pass: test_tool_sets, test_reply_limits, test_text_limits, test_workshop_checks, test_workshop, test_paid_limits, test_request_expiry, test_knowledge_parts, test_draft, test_product_tools, test_products, test_sandbox, test_workspace, test_rule_audit and test_netguard."
+  }
+ ],
+ "notes": "Scratch scripts are in /tmp/claude-0/-home-user-SURVIVE/16767151-7117-55b8-8b14-a711cc61e9f8/scratchpad/tools/: test_poster_size.py, pdf_bypass2.py, pdf_cr.py, measure.py, test_draft_append.py and png_time.py. Run the pytest ones from ember/ with `-p tests.conftest --rootdir=/home/user/SURVIVE/ember`.\n\n**Is the product factory enough for what the owner and ventures now need?** No.\n- Listing photos: make_image has one layout, and spreadsheets get a single first-sheet preview. Photos that differ are only possible through the paid workshop.\n- Spreadsheet previews: first sheet only, 18 rows, with cross-sheet formulas shown as text.\n- Print-on-demand art: there is no deterministic path. The workshop (Pillow) is the only way to make a poster, and anything over 12 MP is then refused downstream.\n- The owner asked for HTML/CSS-designed posters (plan #46). Neither Ember nor the workshop container has an HTML renderer; the agent drew with Pillow.\n\n**Can workshop outputs flow into listings, pins and Printify safely?** Mostly:\n- Picture checks strip metadata and trailing data.\n- Provenance holds by construction: only Ember's code writes product bytes, and hashes are pinned and re-verified.\n- Request cards don't say a file came from model-written code. On 09-29, cycle #41 (pre-0.12.0) replaced the Nebenkosten spreadsheet's allocation logic via the workshop and listed it after a sanity check.\n- Weak points: the PDF check (finding pdf-check-bypass), and the 12 MP versus 40 MP mismatch between downstream tools and the workshop's own checks.\n\n**Overlap with other areas.** Finding workshop-cost-unbounded-stops-cycles also belongs to the economy area (estimate.py, metering.py). Merge it with the economy reviewer's findings if they found the same overrun.\n\n**Smaller items, not filed:**\n- The venture-cycle refusal text lists 'making files, the shop, Pinterest, email, Reddit and … the roadmap' but omits Printify and the website (tools.py:1410-1412).\n- A mistyped path (Missing) still counts as a sandbox strike; 3 strikes end the work.\n- Nothing warns when make_*, the workshop or a delete overwrites a file that a pending request names. It fails closed at execution with CHANGED, but the owner's approval is wasted.\n- store.PENDING_CAPS 'publish' = 3 is shared by pins and Reddit posts.\n- _propose_printify_product divides by a variant's width; a zero-width print area from Printify would raise 'the tool failed'.\n- inquiry_done can close any waiting person's email with no check, under OBLIGATIONS pressure.\n\n**Not covered in depth:** the loop's request-expiry pass, the internals of pdf.py, word.py, markup.py and fonts.py (font licensing of workshop-rendered text sold commercially), printify_live and pinterest_live, and the website builder beyond site.check and website.save."
+}

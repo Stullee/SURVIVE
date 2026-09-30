@@ -1,0 +1,309 @@
+{
+ "area": "roadmap",
+ "findings": [
+  {
+   "id": "roadmap-code-milestones-fill-slots",
+   "title": "Code-set milestones use up the agent's 16 places and the owner's 4 reserved places, and push most of the ROADMAP out of the plan",
+   "severity": "high",
+   "category": "design",
+   "files": [
+    "agent/gates.py",
+    "agent/roadmap.py",
+    "agent/tools.py",
+    "agent/owner.py",
+    "agent/context.py",
+    "agent/stages.py"
+   ],
+   "evidence": "roadmap.create (roadmap.py:223-289) has no limit on open milestones. gates._set (gates.py:142-161), stages.first_test/scale and keep_money_goal all create milestones through it. Yet every open milestone, code-set or not, counts toward the agent's limit (tools.py:2246-2251: refused at 16 or more open) and the owner's limit (owner.py:671-672: refused at 20 or more). A product line holds 2 open bars in its day-8 to day-14 window, and there can be up to 8 open projects (tools.py:97). The patch note says 'the tests can't fill the roadmap's 20 open milestones'; that is false. keep_money_goal also sets no new goal when open+3 > 20 (roadmap.py:391). Live (0.13.0 report, PLANNER CONTEXT line 454-466): 13 open, of which 9 were set by code. The ROADMAP was already cut ('…[737 bytes cut]', line 466), which hides bars #12 and #13, decision point #7 and the backed venture's first test #8.",
+   "failure_scenario": "On the live trajectory, the five day-7 bars close on about 2026-10-08 and 10 day-14 bars open. That makes 4 agent goals + money goal + 2 decision points + first test #8 + 10 bars = 18 open. From then until about 10-14, every milestone_plan is refused with '16 milestones are open already… close or drop one first', but the agent can't drop code milestones. One more product line (6 lines in their day-14 window) reaches 20, and the owner's 'Add milestone' returns 409. A simulated 10-08 ROADMAP (17 open, 3,920 bytes against the 1,800-byte floor) hides 9 milestones, including first test #8.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/roadmap/test_repro_slots.py (dry-run agent with 8 product lines, day-7 bars closed missed): printed 'open after day-14 bars: 19 [decision 2, first_test 16, money_goal 1]', 'AGENT refused: 16 milestones are open already, and the other 4 of the 20 places are kept for your owner', 'OWNER add 1: 201', 'OWNER add 2: 409 {'error': '20 milestones are open already'}'. scratchpad/roadmap/roadmap_cut.py: 'live 09-30: hidden [12, 13]'; '10-08 (day-14 bars): 17 open, full text 3920 bytes, floor 1800: hidden [8, 16..23]'.",
+   "related": "FIX NOW 7 (4 of 20 kept for you); listing test bars 5b0db88 ('can't fill the roadmap's 20'); FIX NOW 8 (ROADMAP floor)",
+   "fix": "Count only created_by in ('agent','owner') toward the 16 and 20 limits, so the owner's 4 places are always free. Give code milestones their own cap. Better still, keep one milestone per product line ('Listing test of X') whose progress names the current bar, instead of 2 per line. In ROADMAP, summarise all listing tests on one line ('Listing tests: #3 day 7 due 10-07 2/10 views; …'). Add a test with 8 live lines that asserts the agent can still plan and the owner still has 4 places.",
+   "effort": "M"
+  },
+  {
+   "id": "roadmap-miss-action-cut-from-plan",
+   "title": "A missed bar's action (fix listings / park the line / stop building) never reaches the planner",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "agent/gates.py",
+    "agent/obligations.py",
+    "agent/roadmap.py"
+   ],
+   "evidence": "gates._owe (gates.py:181-184) builds what = \"milestone #N '<title>' was missed (<result up to 160 chars>): <action>\". obligations.line cuts every non-promise obligation to LINE_CHARS=160 (obligations.py:246), and the plan and the work brief both use obligations.text (context.py:291, :688, :761). So the action, which always comes after the first 160 characters, is cut off. The bar's measure ('Missed: fix their titles…') is not shown in ROADMAP either, because milestone_line omits the measure for metric milestones (roadmap.py:613). Live, the bar lines show no measure (PLANNER CONTEXT #9-#11). The only other wording the plan gets is roadmap.code_closed's generic 'aim again (a new milestone), change the approach, or let it go' (roadmap.py:701), which contradicts 'stop building this product type'.",
+   "failure_scenario": "On about 10-08, the day-7 bar of the Job Application Tracker line is missed with 0 of 10 views. The plan shows '#2 miss (2026-10-08): milestone #11 'Day 7: 10 views of Job Application Tracker EN+DE (Excel)' was missed (Ember's code checked it after its date: views_total 0 views…, target a…'. It does not say to fix the titles, tags and category once. At day 21, 'stop building this product type' is lost the same way, so the agent may keep building a product type that failed its test.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/roadmap/test_repro_owed_line.py: stored what ends '…: fix the titles, tags and category of its listings once (propose_etsy_edit), then let them run', while PLAN OBLIGATIONS printed '- #1 miss (2026-09-09): milestone #4 'Day 7: 10 views of Local family events newsletter' was missed (Ember's code checked it after its date: views_total 3 views (1 listings), target a…'.",
+   "related": "listing test bars 5b0db88 ('A miss is an obligation with its bar's action, first in the plan'); #87 Roadmap 3 leftover",
+   "fix": "Put the action first in gates._owe ('Fix titles, tags and category of project #5's listings once (propose_etsy_edit): day-7 bar #11 missed, 0 of 10 views'), or render miss lines as action + short numbers. For bar misses, skip the generic 'aim again' sentence in code_closed. Add a test that checks obligations.text, not only the stored row.",
+   "effort": "S"
+  },
+  {
+   "id": "roadmap-agent-relinks-code-and-metric-milestones",
+   "title": "The agent can move a code-set bar or any metric milestone to another project or venture, which changes what Ember's code counts",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "agent/tools.py",
+    "migrations/0028_code_milestones.sql",
+    "migrations/0029_milestone_metrics.sql",
+    "agent/metrics.py"
+   ],
+   "evidence": "_milestone_update refuses a date move, a new parent or a drop for created_by='code' (tools.py:2419-2432). It then accepts venture_id/project_id changes for any open milestone with no guard (tools.py:2478-2482). No trigger fixes the links of an open milestone: milestones_fixed and milestones_metric_fixed cover title, measure, metric, target and baseline only. metrics.listings grades by the milestone's own project_id/venture_id (metrics.py:310-336), while gates keeps its own project in listing_gates.",
+   "failure_scenario": "Project #3's day-7 bar (#9) is at 2 views. The agent, perhaps tidying links, sets project_id to a line with more views. At the next sync Ember's code closes #9 'done' from the other line's views. No 'fix titles' obligation is made, and listing_gates still opens project #3's day-14 bars as if day 7 were met. The same edit can widen or narrow the listings behind an agent's metric milestone and its forecast after the target is set.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/roadmap/test_repro_relink.py: 'agent milestone_update project_id -> True Milestone #4: updated.', 'bar after: 2 gate row project: [{'project_id': 1}]', 'after sync: status done, result \"Ember's code checked it: views_total 500 views (1 listings)…\", project_id 2' (project #1's own listing had 1 view).",
+   "related": "Roadmap 2 ('a milestone linked to a project or venture counts only what belongs to it'); Roadmap 3; listing test bars",
+   "fix": "In _milestone_update, refuse venture_id/project_id changes when created_by='code' or metric IS NOT NULL. Add a trigger to match: milestones_links_fixed BEFORE UPDATE OF venture_id, project_id WHEN OLD.created_by='code' OR OLD.metric IS NOT NULL.",
+   "effort": "S"
+  },
+  {
+   "id": "roadmap-owner-drop-respawns-bars",
+   "title": "When the owner drops a listing-test bar, or the money goal, Ember's code opens the next bar at the next plan",
+   "severity": "medium",
+   "category": "design",
+   "files": [
+    "agent/gates.py",
+    "agent/roadmap.py",
+    "agent/owner.py"
+   ],
+   "evidence": "gates._next_bar (gates.py:170-176) skips every closed bar, whatever its status, and opens the next one. A bar the owner dropped counts as closed. The owner has no project controls (owner.py has no project actions), so dropping bars is their only lever. roadmap.keep_money_goal says 'Once you drop a money goal… the roadmap is yours', and the owner's drop cascades to the bars under it (drop_steps). gates then sets the next bar again, now without a parent.",
+   "failure_scenario": "The owner decides a line isn't worth testing and drops its day-7 bar with 'stop testing this line'. The next plan opens its two day-14 bars. Dropping those opens the day-21 bar. Ending one line's test takes 4 drops over 3 plans. Dropping the money goal to shape the roadmap themselves likewise brings the listing test back.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/roadmap/test_repro_drop.py: 'owner drop: 200 … status dropped' then 'keep -> [\"Ember's code set the next bar of project #1's listing test: milestone #5, milestone #6\"]'. After the owner dropped money goal #1: 'dropped_with: [5, 6, 2, 3]' then 'keep -> [\"… milestone #7\"]' (day21_sale, parent_id None).",
+   "related": "listing test bars 5b0db88 ('only you drop the milestones'); Roadmap 1 (a dropped money goal hands the roadmap to the owner)",
+   "fix": "When any bar of a line was dropped by the owner, end that line's test: _next_bar returns [] and the event says so. Or add a 'Stop this listing test' action on the card that records it in listing_gates. For a cascade from the money goal, keep the bars and re-parent them to None instead of dropping them.",
+   "effort": "S"
+  },
+  {
+   "id": "roadmap-pod-and-unlinked-listings-invisible",
+   "title": "Printify (POD) listings and projects without a venture are invisible to the listing test, the venture 'live' rule and first-sale forecasts",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "agent/metrics.py",
+    "agent/gates.py",
+    "agent/stages.py",
+    "agent/predictions.py",
+    "integrations/etsy_publisher.py"
+   ],
+   "evidence": "metrics.listings reads only etsy_listings (metrics.py:316). Listings Printify makes live in printify_products, whose views and favorites the Etsy sync keeps (etsy_publisher.py:655, :672-677; 0055_printify.sql:23-45), and whose orders are attributed to their project (etsy_publisher.py:1212-1219). gates._live_projects (gates.py:117), stages.sold (stages.py:137) and predictions._sold (predictions.py:106) all go through metrics.listings. Venture membership also needs projects.venture_id or the cycle's venture. Live: project #7 (Nebenkosten, listing #4585678592 live) has venture '-' (AGENT RECORDS projects), so it doesn't count for venture #1, whose rule reads 'nothing sold by 2026-11-29 parks it' (VENTURES).",
+   "failure_scenario": "The backed POD venture #4 (the owner's current priority) gets its first Printify listing. No day-7/14/21 bars are ever set for that line. Once #4 is live, a paid Etsy order of its poster doesn't count as a sale unless the owner records the revenue attributed to it (auto_revenue is off live, META line 114). So Ember's code parks the venture 60 days after it went live. The same applies to venture #1 if only project #7's listing sells.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/roadmap/test_repro_pod.py (POD project under venture 4, printify_products row active with 25 views, a paid etsy_orders row for that listing): 'gates.keep -> []', 'bars for POD project: []', 'metrics.listings(project): []', 'stages.sold(venture): False'.",
+   "related": "Venture stages ab713b0 (live: parked after 60 days without a sale); listing test bars; Phase C first_sale",
+   "fix": "Have metrics.listings UNION printify_products (joined through approvals and project like etsy_listings, with views, favorites and state), and let live_rows treat an active printify row as live. When a project with Etsy listings has no venture, default it to the Etsy leg, or refuse project_create without venture_id once the leg exists.",
+   "effort": "S"
+  },
+  {
+   "id": "roadmap-first-test-on-agents-word",
+   "title": "A backed venture goes live on a first test the agent (or the daily review) closes on its own word; venture #4's 0.13.0 channel test was never applied",
+   "severity": "medium",
+   "category": "design",
+   "files": [
+    "agent/tools.py",
+    "migrations/0030_venture_stages.sql",
+    "agent/stages.py",
+    "agent/review.py",
+    "migrations/0055_printify.sql"
+   ],
+   "evidence": "_tested (tools.py:2008-2013) and trigger ventures_tested_live (0030_venture_stages.sql:113-119) accept status 'done' from anyone. A code-set first_test without a metric can be closed done by the agent with any digit in the result (tools.py:2419-2432 blocks only drop, date move and the money goal; EVIDENCE at tools.py:2361). The review's 'hit' verdict can close it too, through tools.update_milestone (review.py:117-118, loop.py:878-879). review.parse accepts verdicts on any milestone id, not only those overdue or due this week (review.py:541-551). Live: first test #8 of venture #4 is plain text ('Its first test is met: Cost: $0 to Ember… any 1 sale = continue', AGENT RECORDS milestones). It was set at 0.12.0 on 11:57Z; 0.13.0 later gave the venture channel 'printify' (0055_printify.sql:71). Its CHANNEL_TESTS rule, pod_orders ≥ 1 (stages.py:49-52, :70), applies only when a first test is created.",
+   "failure_scenario": "The agent publishes 3 POD listings, closes #8 'done: 3 listings live #…' (self-reported, with no sale), and moves venture #4 to live. The kill rule in #8's own text ('0 views on all 3 → stop') was never checked by code. The live stage then gives the venture another 60 days.",
+   "label": "code",
+   "related": "Roadmap 4 ('building → live requires it met … tool and DB trigger'); Phase E4 channel first test",
+   "fix": "Count a first test toward live only when closed_by is 'code' or 'owner' (tool and trigger). A plain-text first test then needs the owner's confirmation, or a metric. Migrate open plain-text first tests of channel ventures to the channel metric: a replacing code milestone, due on the old date. In review.parse, keep only verdicts on milestones that were overdue or due this week.",
+   "effort": "S"
+  },
+  {
+   "id": "roadmap-forecast-void-by-agent-drop",
+   "title": "The agent voids a losing forecast by dropping its milestone before the date, and Ember's own FOCUS text suggests doing so",
+   "severity": "medium",
+   "category": "design",
+   "files": [
+    "agent/predictions.py",
+    "agent/roadmap.py",
+    "agent/tools.py"
+   ],
+   "evidence": "predictions._milestone returns 'void' for any milestone dropped before its date, whoever dropped it (predictions.py:95-96). The agent may drop its own milestones (tools.py:2451-2467). For a metric milestone the FOCUS says 'Out of reach by its date: move it (why; twice at most), or drop it (why)' (roadmap.py:769-771). A move keeps the first date and so settles as a miss, but a drop settles as void. Voids are left out of calibration (predictions.py:178-182), which READY/triage, the critic and the review read.",
+   "failure_scenario": "The agent gives '5 listings live by 10-15' 90% odds. On 10-14, 2 are live, and following the FOCUS it drops the milestone ('out of reach'). The forecast is void. Repeated, the record never shows 'your odds run high', and the critic and triage keep trusting over-confident odds.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/roadmap/test_repro_void.py: five listings_live milestones with likely=90, dropped the day before their date: 5x 'settled … void: milestone #N was dropped on 2026-09-07, before its date', and calibration: ''.",
+   "related": "Phase C prediction ledger ('void if the milestone was dropped first')",
+   "fix": "Void only when the owner or code dropped the milestone (an owner drop, a venture parked by code or the owner). Settle the agent's own drop as a miss, or as a miss when progress < target at the drop. Say so in milestone_update's reply.",
+   "effort": "S"
+  },
+  {
+   "id": "roadmap-late-grade-after-sync-gap",
+   "title": "After an Etsy sync gap across a bar's date, a bar met days late is graded 'done'",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "agent/metrics.py"
+   ],
+   "evidence": "grade checks 'met' before 'past': status = 'done' if reading.value >= target else 'missed' if past (metrics.py:504-508). While the last sync is stale, read returns Unread and the milestone stays open (metrics.py:339-343). The first fresh read after the date therefore decides by the current count. The daily observations of each milestone's progress (metrics.py:497-501) are not used.",
+   "failure_scenario": "Etsy can't be read from day 6 to day 10 (token expired). A line with 6 views at its last read before its day-7 date reaches 11 views by day 10, and the bar closes 'done'. No 'fix titles' obligation is made, and the day-14 bars open as if day 7 were met.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/roadmap/test_repro_late.py: 'day 6, 6 views: []', 'day 10 before sync: [] open', then 'day 10 after sync (due was 2026-09-08): closed milestone #4 done: views_total 11 views … read 2026-09-11 12:00'; keep() opened the day-14 bars.",
+   "related": "Roadmap 3 (code grading); listing test bars",
+   "fix": "When past the due day, grade from the last observation on or before the due day (subject 'milestone'). With none, close missed with 'not read by its date'. Or label such a close 'met late' and owe the bar's action.",
+   "effort": "S"
+  },
+  {
+   "id": "roadmap-first-sale-late-record",
+   "title": "A first-sale forecast settles as a miss before a sale that happened in time but was recorded late can count",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "agent/predictions.py"
+   ],
+   "evidence": "settle marks first_sale 'miss' on the first plan after due (predictions.py:144-151). _sold does accept ledger revenue whose occurred_on falls in the window (predictions.py:122-129), but a settled prediction is final (0047 trigger predictions_settled_once). The patch note says 'a sale recorded late still counts only if it happened in time', which implies a late record can count.",
+   "failure_scenario": "A backed venture's case gives 1 month to the first sale. A sale happens on the last day, but the owner records the revenue (dated that day) 3 days later, as they do by hand (auto_revenue off). The forecast is already a miss and stays one. The same happens for any sale ledger-only because of the POD gap.",
+   "label": "code",
+   "related": "Phase C prediction ledger (first_sale)",
+   "fix": "Settle a ledger-based first_sale miss only after a grace period (e.g. 7 days past due). Etsy orders synced in time can still settle a hit at once.",
+   "effort": "S"
+  },
+  {
+   "id": "roadmap-agent-goals-self-graded",
+   "title": "The agent's own goals stay self-graded even where Ember's code has the number",
+   "severity": "low",
+   "category": "design",
+   "files": [
+    "agent/metrics.py",
+    "agent/tools.py"
+   ],
+   "evidence": "views_total and favorites_total need no views history but are code_only (metrics.py:152-158, NAMES at :169). views_delta needs etsy_stats_history, which is off live. Live: all 4 of the agent's milestones are plain text. #4 'Listings reach 20 views' could only be plain text. #3 'Nebenkosten tool live' has been met since listing #4585678592 went live at 12:01Z 09-30, but it stays open: cycle #44's plan step 'close milestone #3 as met' (WAKE CYCLES line 695) never ran because the cycle stopped at step 4. It will show as overdue on 10-07 and cost a step.",
+   "failure_scenario": "The agent's views goal is closed on its own word (self-reported), or is left open and overdue, while Ember's code already grades the same number for its bars.",
+   "label": "live",
+   "related": "Roadmap 2/3; FIX NOW 4 (views history off)",
+   "fix": "Let the agent set views_total and favorites_total with a project or venture (refused when already met). Have milestone_plan suggest listings_live with project_id for 'X live' goals.",
+   "effort": "S"
+  }
+ ],
+ "fix_checks": [
+  {
+   "item": "FIX NOW 6: closed_by, evidence for done, self-reported labels, fake stops closing done",
+   "verdict": "holds",
+   "evidence": "0020 triggers (closed_by required and final); tools.py:2361 EVIDENCE plus the done check in _milestone_update; roadmap.closed_as used in the planner and in review_text (roadmap.py:434-438, :845); fake_llm.py:1999-2018 closes only decision points done. Weak spot: any digit counts as evidence (e.g. a date)."
+  },
+  {
+   "item": "FIX NOW 7: proposals for the owner's dates, 2 moves, missed only after due, drops cascade, 16 for the agent / 4 for the owner",
+   "verdict": "partial",
+   "evidence": "The agent's side holds (tools.py:2437-2494; 0021/0028 triggers milestones_owner_date, _owner_drop, _moves_counted). The owner's 4 reserved places break: code-set milestones count toward them but are created without a limit (reproduced: owner's second add refused 409 with 19 code milestones open)."
+  },
+  {
+   "item": "FIX NOW 8: goals first, ROADMAP floor not scaled",
+   "verdict": "holds",
+   "evidence": "roadmap.planner_text lists goals right after the checks; context.py:694 applies ROADMAP_FLOOR. Live 0.13.0: all 5 goals shown despite '…[737 bytes cut]' (line 466). The floor now overflows with code bars (#12, #13, #7, #8 hidden live)."
+  },
+  {
+   "item": "Roadmap 1: never empty (money goal and decision points)",
+   "verdict": "holds",
+   "evidence": "roadmap.keep_money_goal (roadmap.py:349-429). Live: goal #5 and decision points #6/#7 set 2026-09-30 11:57Z (events). Caveats: no new goal once open+3 > 20 (roadmap.py:391); after the owner drops the goal, the bars cascade and then respawn (see finding)."
+  },
+  {
+   "item": "Roadmap 2: metric catalogue, trust labels, freshness, sample",
+   "verdict": "partial",
+   "evidence": "Catalogue and freshness hold (metrics.py:339-345; live bars show 'not checked yet' because the last sync 15:01:45Z preceded their creation 15:01:47Z). But 'counts only what belongs to it' breaks: links are mutable by the agent, and Printify listings are left out."
+  },
+  {
+   "item": "Roadmap 3: code does the grading, DB trigger on done",
+   "verdict": "holds",
+   "evidence": "metrics.grade (metrics.py:482-527) runs after syncs (service.py:762) and before every plan (loop.py:517); trigger milestones_metric_done (0029). A late 'done' after a sync gap is possible (low finding)."
+  },
+  {
+   "item": "Roadmap 4 / venture stages: building → live needs the first test met; kill_if rules; parked venture drops its milestones",
+   "verdict": "partial",
+   "evidence": "Rules hold in stages.keep (stages.py:168-220). 'Met' accepts the agent's self-reported done (tools.py:2008-2013; 0030:113-119). drop_milestones selects only venture_id, so the bars of a parked venture's projects stay open (stages.py:100-103)."
+  },
+  {
+   "item": "Roadmap 5: money and time on every milestone (closed by #87)",
+   "verdict": "holds",
+   "evidence": "roadmap.effort/overhead read llm_calls.milestone_id (roadmap.py:473-492); budget fixed by trigger (0031); waits kept out of the overdue checks (roadmap.py:497-506, :662)."
+  },
+  {
+   "item": "Roadmap 6: milestone_plan, and the review's verdicts applied by code",
+   "verdict": "holds",
+   "evidence": "loop.py:878-882 applies each verdict through tools.update_milestone with the tool's rules. Caveat: review.parse accepts any milestone id, not only those overdue or due this week, and 'hit' can close a plain-text code first test. The review has not yet run on ≥0.12.0 live (reviews #2 at cycle #41, version '-')."
+  },
+  {
+   "item": "Roadmap 7: replaces_id",
+   "verdict": "holds",
+   "evidence": "tools._replaced (tools.py:2330-2358); trigger 0033; replaced_moves; tests pass."
+  },
+  {
+   "item": "Phase B: obligations ledger",
+   "verdict": "partial",
+   "evidence": "Table and triggers (0037), keep/pressing/text (obligations.py) and the promise rule via told_since all hold. Live: promise #1 is first in OBLIGATIONS, and #2 was closed with a reference after message #63. A missed bar's action is cut out of the plan line (reproduced)."
+  },
+  {
+   "item": "Phase C: prediction ledger (first-date rule, voids, first_sale)",
+   "verdict": "partial",
+   "evidence": "First-date rule holds (predictions.py:85-99); write-once triggers (0047). The agent can void a forecast by dropping its milestone (reproduced). A late-recorded first sale can't count after settlement. Live: predictions 0 and venture_cases 0, so it is unexercised."
+  },
+  {
+   "item": "Listing test bars (5b0db88)",
+   "verdict": "partial",
+   "evidence": "Holds: one bar at a time, graded from Etsy counts, scale point on a first order, closed project drops its bars. Live: #9-#13 began 2026-09-30 15:01 for projects #3-#7, all due 10-07, matching 'from the day this version first sees them'. For new lines, code counts from the first plan that sees a live listing, not the listing's live day. Broken: 'can't fill the roadmap's 20'. Weakened: the action is cut in the plan, the owner's drop respawns bars, the agent can re-link a bar, and POD lines are invisible."
+  },
+  {
+   "item": "Venture stages triage/scale (ab713b0)",
+   "verdict": "partial",
+   "evidence": "Triage for the agent's ideas and rules_from hold (ventures.py:679-695; live VENTURES: 'nothing sold by 2026-11-29 parks it'). The live 60-day rule misses POD orders and projects without a venture (live project #7)."
+  },
+  {
+   "item": "#87: Roadmap 3 leftover closed by obligations",
+   "verdict": "partial",
+   "evidence": "A miss becomes an obligation (obligations.py:63-76; gates._owe), but the plan never shows the bar's action (reproduced)."
+  },
+  {
+   "item": "#87: FIX NOW 4 stays owner-side",
+   "verdict": "holds",
+   "evidence": "views_delta and favorites_delta need etsy_stats_history (metrics.py:346-347). The bars grade from views_total and don't need it."
+  }
+ ],
+ "still_open_from_0_11_1": [
+  "The owner still can't give their own milestones a metric on the Roadmap tab (owner.add_milestone, owner.py:640-690, takes no metric).",
+  "The fake model never sets metric milestones or 'likely' (no 'metric' in fake_llm.py), so dry runs never exercise code grading or forecasts.",
+  "FIX NOW 4 remains 🟡: etsy_stats_history is off, so views_delta and favorites_delta are unusable for the agent.",
+  "The money goal's date is fixed at 90 days out, not a date the owner sets.",
+  "Plain-text milestones remain self-reported, and any digit (even a date) satisfies the evidence check."
+ ],
+ "strengths": [
+  {
+   "what": "Database triggers make the roadmap's records hard to tamper with",
+   "evidence": "0028: a code milestone's date never moves, and only the owner or code drops it. 0029: only code or the owner closes a metric milestone done. 0030: only the owner backs or kills a venture. 0047: forecasts are write-once. 0037: obligations are fixed once made and final once closed. 0057: listing_gates can't be deleted and is UNIQUE per bar."
+  },
+  {
+   "what": "Grading refuses stale or pre-milestone Etsy numbers",
+   "evidence": "metrics.read (metrics.py:339-345) needs a sync after the milestone was set and at most 3 h old. Live, bars #9-#13 correctly read 'not checked yet', because the last sync (15:01:45Z) came 2 s before they were created."
+  },
+  {
+   "what": "Goals-first ROADMAP survives the cut live",
+   "evidence": "0.13.0 PLANNER CONTEXT (lines 453-466): all 5 goals shown despite a 737-byte cut."
+  },
+  {
+   "what": "New stage rules don't park anything at upgrade time",
+   "evidence": "0058 sets rules_from for ventures already in idea or live; live VENTURES line: venture #1 'live: nothing sold by 2026-11-29 parks it'."
+  },
+  {
+   "what": "Dates are the owner's local days, and date arithmetic is DST-safe",
+   "evidence": "Clock.today() and local_day (economy/clock.py) drive due dates, gates, grading and forecast settlement. Due dates are computed on dates, so the end-of-October DST change can't shift them."
+  },
+  {
+   "what": "Forecasts settle on the first date",
+   "evidence": "predictions._milestone (predictions.py:85-99): moving a milestone's date doesn't move the forecast's date; settled rows are final by trigger."
+  },
+  {
+   "what": "Obligations work in the live loop",
+   "evidence": "Promise #1 is first in OBLIGATIONS. In cycle #46 the agent closed duplicate promise #2 with a reference after messaging the owner (#63), per the told_since rule."
+  },
+  {
+   "what": "The area's tests pass",
+   "evidence": "43 tests pass in test_listing_gates, test_predictions, test_obligations, test_venture_rules, test_milestone_metrics, test_money_goal, test_review_verdicts and test_milestone_authority."
+  }
+ ],
+ "notes": "Every reproduction script is in /tmp/claude-0/-home-user-SURVIVE/16767151-7117-55b8-8b14-a711cc61e9f8/scratchpad/roadmap/. Run from /home/user/SURVIVE/ember with `--rootdir` pointing at that directory; its conftest.py imports the data_dir fixture.\n\nMinor points, not raised as findings:\n1. **Time-zone slips of up to 1 day, always early.** stages._day and ventures.rule_clock/stage_rule take the UTC date of a timestamp (str[:10]) and compare it with the local today. Obligations are due on now[:10] (UTC) in obligations.keep and gates._owe. Near midnight a triage or live park can come 1 day early, and 'pressing' can last a day longer. The DST change needs nothing, because due dates are computed on dates.\n2. **A parked venture's product lines keep their tests.** A venture parked by code or the owner doesn't close its projects. Their bars (linked to the project, not the venture) stay open, and obligations for its lines keep coming.\n3. **Wasted obligation calls.** In cycle #42 the agent spent 2 obligation_done calls guessing obligation numbers from unnumbered OBLIGATIONS lines. The owner-message and photo lines have no ids.\n4. **Pointer for the policy reviewer.** policy.apply lets a grant on milestone X carry any matching request made in a cycle aimed at X, whatever project or listing the request touches (policy.py:229-260).\n5. **Not yet exercised on live.** The daily review has not run on ≥0.12.0 live: review #2 came from cycle #41, version '-'. So verdict application and YOUR FORECASTS are untested live. Predictions: 0 and venture_cases: 0 live, so venture #4 has no first-sale forecast.\n6. **Not checked in depth:** the agenda's 08:00 check wake-ups around DST, the review scorecard's size limits, and whether burn-mode pauses delay gates.keep (bars start from the first plan that sees a live listing)."
+}

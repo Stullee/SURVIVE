@@ -1,0 +1,375 @@
+{
+ "area": "mail",
+ "findings": [
+  {
+   "id": "report-name-mask-breaks-address-mask",
+   "title": "Shareable report: senders' display names and subjects replace ordinary words everywhere and defeat the address mask",
+   "severity": "medium",
+   "category": "privacy",
+   "files": [
+    "app/privacy.py",
+    "app/diagnostics.py"
+   ],
+   "evidence": "privacy.py:176-177 applies the quoted-words pattern before the address mask at :180. The pattern holds every email's from_name (at least 5 characters) and subject (at least 8), across all modes, matched case-sensitively as whole words (diagnostics.py:212-227 `_others`). Once a label inside an address is replaced, `_EMAIL` no longer matches it. Live 0.13.0 report: OPTIONS :49 `\"email_address\": \"emberthehelper@[sender of email #1].org\"` and :52 `imap.[sender of email #1].org`; INTEGRATIONS :3325 and :3340-3354 (`noreply@[sender of email #1].org`); AGENT RECORDS :3265; EVENTS :3486 and :3501 (\"2 new emails in Ember's [sender of email #1]\", where the word is 'mailbox'); PLANNER :489 \"#2 [idea] [sender of email #15] for the Etsy shop\" (Pinterest); the owner's standing instructions at :426 and :1432 read \"[sender of email #7] is on hold\" (Fiverr); :497 \"Services on [sender of email #7]\". The 0.12.0 report has the same at :49, :385, :443, :3079 and :3094-3108. Each report has about 170 replacements from 3 senders, none of them a person. Code masking over-masks too: `confirm\\w*` is a code word (privacy.py:27-37), so Etsy category ids are hidden: \"Confirmed category [masked] via etsy_categories\" (0.13.0 :1380, :1384, :1407, :1409). The category was one of the first analysis's incidents.",
+   "failure_scenario": "A buyer writes from jane@mailbox.org. The report shows `jane@[sender of email #1].org`, and Ember's own address is readable in OPTIONS. That address receives the owner's account confirmations (Etsy, Fiverr, Printify, Pinterest), and anyone who knows it can mail the agent. Whoever the owner shares the report with reads 'Pinterest' as '[sender of email #15]' and 'Fiverr' as '[sender of email #7]', including inside the owner's own instructions. They can't see which Etsy category the agent confirmed.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/mail/test_repro_mail.py::test_sender_name_mask_defeats_address_mask printed 'Buyer wrote from john.doe@mailbox.org about it.' -> 'Buyer wrote from john.doe@[sender of email #1].org about it.' (without the name mask: '[email 1]'), and 'Venture #2: Pinterest for the Etsy shop' -> 'Venture #2: [sender of email #15] for the Etsy shop'. scratchpad/mail/masker_probe.py printed 'Confirmed category 2078 via etsy_categories' -> 'Confirmed category [masked] via etsy_categories' and 'blueprint 1033' -> 'blueprint [masked]'.",
+   "fix": "Mask addresses and URLs before the quoted words. Mask a display name only when it looks like a person's name: skip it when it equals a label of the sender's own address or domain, or is a single brand word. Replace quoted words only in agent-written text, not in code-written sections (OPTIONS, SYSTEM, META, the event texts code writes). Build `_others` from the report's own mode. Stop treating confirm* as a code word, or require an explicit code/pin/otp/passcode word. Add a test with the live shape: display name 'mailbox', domain mailbox.org.",
+   "effort": "S",
+   "related": "0.2 patch note (0.11.2 `541155a`): 'every email address', 'senders' display names wherever quoted'"
+  },
+  {
+   "id": "forged-sender-counts-as-wrote",
+   "title": "The From header is trusted: a forged sender counts as 'someone who wrote', so an email to them is never a first contact and can go out automatically",
+   "severity": "medium",
+   "category": "security",
+   "files": [
+    "app/integrations/mail.py",
+    "app/integrations/mailstore.py",
+    "app/agent/never.py",
+    "app/agent/policy.py",
+    "app/agent/views.py",
+    "app/agent/tools.py",
+    "app/migrations/0051_never.sql"
+   ],
+   "evidence": "parse_message takes From from the header (mail.py:246-253). Nothing in app/ reads Authentication-Results, DKIM, SPF or DMARC (grep finds none). These all rest on emails.from_addr:\n- `has_written` (mailstore.py:220-227);\n- `never.reasons` first_contact (never.py:63, :90-94);\n- the database's own NEVER view (0051_never.sql:21, recreated in 0054_pinterest.sql:165);\n- `policy._started_by_them` (policy.py:79-90);\n- the card's first_contact flag (views.py:749);\n- the tool's §7 warning (tools.py:3167).\nThe code layer and the database layer check the same unauthenticated signal.",
+   "failure_scenario": "Spam or an attacker sends `From: victim@bank.example`, asking for a price. The victim's domain has no enforcing DMARC policy; the receiving server marked it dmarc=fail, but Ember ignores that. Ember stores it as an inquiry, and OBLIGATIONS tells the agent to answer it. With the email_reply unlock set to auto or to the 12 h veto window, Ember's code sends the answer to a person who never wrote. That is backscatter and unsolicited mail (UWG §7). In manual mode the card says 'answer someone who wrote to Ember', with first_contact False and no §7 warning. Latent live: policy_grants is 0 (DATABASE, 0.13.0 report).",
+   "label": "reproduced",
+   "reproduction": "scratchpad/mail/test_repro_spoof_e2e.py: a forged email carrying 'Authentication-Results: …dmarc=fail' plus an email_reply 'auto' unlock gave: request approved by \"Ember's code (your unlock)\" to victim@bank.example; card [('email.reply', False)]; executor [(1, 'simulated')]; sent to ['victim@bank.example']. test_repro_mail.py::test_spoofed_sender_is_not_first_contact: inquiries [1, 2], has_written True, NEVER reasons [], started_by_them True.",
+   "fix": "Read the topmost Authentication-Results header written by the configured provider (its authserv-id checked against the IMAP host's domain). Store an `authenticated` flag per email (dmarc=pass, or aligned dkim/spf pass). Count only authenticated inbound mail in has_written, _WROTE (DB view), _started_by_them and inquiries. Refuse the email_reply rule on unauthenticated threads, and show 'sender not verified' on the card. Also consider warning that 'wrote once' is not consent to advertising for a non-reply email.",
+   "effort": "M",
+   "related": "Phase D NEVER (`c82893e`); Phase E1 (`1a8ad44`) 'never a first contact'"
+  },
+  {
+   "id": "auto-reply-footer-claims-owner-approval",
+   "title": "Automatic email replies carry a footer saying the owner approved them",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "app/integrations/executor.py",
+    "app/agent/policy.py",
+    "DOCS.md"
+   ],
+   "evidence": "executor.py:60-65: the footer is '…on behalf of {owner}, and approved by them before sending.' It is appended at executor.py:104 whoever decided: the owner, or policy.POLICY_BY \"Ember's code (your unlock)\" (policy.py:66). DOCS.md:986-992 quotes it as the fixed footer.",
+   "failure_scenario": "The owner unlocks email_reply ('Run at once', or 'Run unless I veto within 12 h') on a milestone. Ember's code approves a reply the owner never saw, and the recipient reads that the owner approved it. That is a false statement to a third party under the owner's name, inside the very line that is Ember's AI disclosure. It breaks the constitution's honesty priority for exactly the class Phase D delegated.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/mail/test_repro_mail.py::test_footer_claims_owner_approval_on_automatic_reply printed request {'status': 'approved', 'decided_by': \"Ember's code (your unlock)\"} and FOOTER SENT: 'This email was written by Ember, an AI agent, on behalf of its owner, and approved by them before sending. Reply \"stop\" and Ember won't write to you again.'",
+   "fix": "Pass who approved into build_message. Keep the current text for the owner's approvals. For an unlock, write something like 'sent by Ember under rules its owner set, without their review of this email'. Test both. Update DOCS.",
+   "effort": "S",
+   "related": "Phase D policy engine (`c5c3fb6`) 'email replies … with the AI footer'"
+  },
+  {
+   "id": "optout-misses-common-phrasings",
+   "title": "Opt-out detection misses 'Hello,\\nPlease stop.' and a dozen common English and German phrasings; a stop from another address in the thread suppresses only that address",
+   "severity": "medium",
+   "category": "fix-incomplete",
+   "files": [
+    "app/integrations/optout.py",
+    "app/integrations/mailstore.py"
+   ],
+   "evidence": "optout.py:139-145 counts a lone 'stop' only on the first own line. Later lines only reach `_PHRASES` (:67-99), which has no 'please stop', 'remove my address', 'take my email off', 'leave me alone', 'don't write again', 'entfernen Sie mich', 'streichen Sie mich', 'hören Sie auf', 'nicht mehr angeschrieben' or 'stoppen Sie'. mailstore.py:96-100 suppresses `mail.from_addr` only, while the executor checks the recipient Ember writes to (executor.py:260).",
+   "failure_scenario": "The footer invites people to 'Reply \"stop\"'. Someone replies 'Hallo,\\n\\nStopp.\\n\\nGruß Jan'. The check misses it, so the email stays an inquiry and OBLIGATIONS asks Ember to answer it. With email_reply unlocked, Ember's code sends an automatic reply to a person who objected. The kill rule (policy.py:336-345) can't fire, because no suppression exists. Likewise, when a staff member replies 'stop' from anna@shop.de to a thread with info@shop.de, info@ is still emailed. Only model judgement (mark_opt_out) stands in the way.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/mail/optout_probe.py returned None for 13 inputs:\n- \"Hello Ember,\\nPlease stop.\\n\\nThanks\"\n- \"Hi,\\n\\nstop\\n\\nLena\"\n- \"Hallo,\\n\\nStopp.\\n\\nGruß Jan\"\n- 'Please remove my address from your list.'\n- 'Take my email off your list please.'\n- 'I do not want any more emails from you.'\n- 'Leave me alone.'\n- \"Not interested. Don't write again.\"\n- 'Bitte entfernen Sie mich aus Ihrem Verteiler.'\n- 'Bitte streichen Sie mich von Ihrer Liste.'\n- 'Hören Sie auf, mir zu schreiben.'\n- 'Ich möchte nicht mehr angeschrieben werden.'\n- 'Stoppen Sie bitte diese E-Mails.'\nThe 11 controls behaved as intended.",
+   "fix": "Count a short own line anywhere in the first 3 own lines, skipping greeting and sign-off lines: up to 4 words, containing stop/stopp/unsubscribe/abmelden/remove, not negated. Add the missing phrases (please stop, remove my (e-?mail|address), take my … off, leave me alone, don't write (again|anymore), entfernen/streichen Sie mich, hören Sie auf, nicht mehr angeschrieben, stoppen Sie). When a stop answers a thread (In-Reply-To/References name an outgoing email), also suppress that email's recipient. Add the 13 cases as tests.",
+   "effort": "S",
+   "related": "FIX NOW 29 (`2cbe269`)"
+  },
+  {
+   "id": "non-human-mail-wakes-paid-cycles",
+   "title": "Automatic replies, bounces, transactional mail and spam wake paid reactive cycles",
+   "severity": "medium",
+   "category": "cost",
+   "files": [
+    "app/agent/agenda.py",
+    "app/integrations/mailstore.py",
+    "app/integrations/mail.py",
+    "app/agent/service.py"
+   ],
+   "evidence": "agenda.py:102-106 makes any email whose In-Reply-To/References names a Message-ID Ember sent an urgent 'reply'. It skips the bulk, machine and suppression filters that the inquiry branch uses (:107-112 via mailstore.inquiries). service.py:343-361 wakes on it: at most 4 a day, 30 minutes apart. The inquiry filter is itself narrow:\n- machine() knows 4 local-part prefixes (mailstore.py:233-238);\n- `_bulk` reads only the List-*, Precedence and Auto-Submitted headers (mail.py:283-290);\n- spam headers and the provider's authentication verdict are never read.",
+   "failure_scenario": "Every email Ember sends (up to 3 a day) to someone with an out-of-office on comes back as an RFC 3834 auto-reply, with In-Reply-To and 'Auto-Submitted: auto-replied'. Each one wakes a reactive cycle. Account confirmations from notifications@, noreply+id@, no_reply@ or transaction@ style senders, and spam that reaches INBOX, become inquiries: each wakes Ember and then sits in OBLIGATIONS until closed with a tool call. The live mailbox got 16 emails in 2.5 days, all from companies (mailbox.org receipts, Etsy setup, a Fiverr code, Printify and Pinterest confirmations). They are pre-0.13 rows with bulk NULL, so they don't count yet, but the same mix will from now on. A reactive cycle (a plan plus up to 5 steps) costs a good part of the $0.36-0.82 of the live ordinary cycles, so 4 a day can take roughly $1-2 of the $7 cap. When the cap binds, that displaces useful cycles.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/mail/test_repro_autoreply.py: an out-of-office with In-Reply-To = the sent Message-ID printed 'bulk flag: True', agenda [{'kind': 'reply', 'urgent': 1, …}], and 'decision: True event woken by an event: Email #3 … Automatic reply: …'. The machine() probe returned False for no_reply@, noreply+abc@, noreply-orders@, notifications@, notification@facebookmail.com, bounce-123@, do_not_reply@ and transaction@etsy.com. The cost range is inferred.",
+   "fix": "Put the reply branch through the same predicate: an auto-reply, bulk mail, a machine sender or a suppressed sender is noted but not urgent. Widen machine() (no[-_]?reply[+-]…, notifications?, bounces?[-+], do[-_]?not[-_]?reply). Read X-Spam-Flag/X-Spam-Status and the provider's Authentication-Results; an unauthenticated or spam-flagged email never wakes Ember. Consider waking only for known correspondents and noting first-time senders for the next plan.",
+   "effort": "S",
+   "related": "Phase D agenda (`3855b26`); Phase E1 (`1a8ad44`)"
+  },
+  {
+   "id": "own-address-inquiry-cannot-close",
+   "title": "Mail from Ember's own address becomes an obligation nothing can close; the inquiry metrics count bounces, no-reply senders and Ember itself",
+   "severity": "medium",
+   "category": "bug",
+   "files": [
+    "app/integrations/mailstore.py",
+    "app/agent/obligations.py",
+    "app/agent/agenda.py",
+    "app/agent/tools.py",
+    "DOCS.md"
+   ],
+   "evidence": "obligations.py:180 and agenda.py:95 call `mailstore.inquiries(conn, scope)` without `own`, so it compares against '' (mailstore.py:249-260); `is_inquiry` (:263-264) does the same. Every way to clear such an email refuses Ember's own address:\n- `inquiry_done` passes box.address (tools.py:3113-3114) and refuses;\n- `mark_opt_out` refuses (tools.py:3099-3100);\n- `propose_email` refuses (tools.py:3163-3164).\n`counts()` (mailstore.py:275-286) has no machine, own or suppression filter, although DOCS.md:1020-1022 says bounces and no-reply senders don't count.",
+   "failure_scenario": "Spam forges the recipient's own address (a common scam), or the owner sends a test from Ember's webmail to itself. OBLIGATIONS ('deal with them first') then shows 'An email from a person waits for your answer: #N' forever. The email wakes Ember once as an urgent inquiry, and every attempt to close it is a refused tool call. A milestone graded on inquiries_received can be met by bounces and no-reply receipts.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/mail/test_repro_mail.py::test_own_address_mail_is_an_obligation_nothing_can_close: OBLIGATIONS '#1 (today), #2 (today)'. inquiry_done -> \"email #2 doesn't wait for an answer (OBLIGATIONS lists those that do)\"; mark_opt_out -> 'has no sender Ember could write to'; propose_email -> 'that is your own address'; 'still an obligation: True'. scratchpad/mail/test_repro_metric.py: the inquiries list was [lena…, 'ember@example.invalid'], and counts() gave (3, 0) for noreply@, MAILER-DAEMON@ and Ember's own address.",
+   "fix": "Make `own` required, or look it up inside mailstore from the mailbox. Put the machine and own-address filters in one SQL predicate, and have inquiries(), is_inquiry() and counts() all use it. Add a test with a forged own-address email.",
+   "effort": "S",
+   "related": "Phase E1 (`1a8ad44`): inquiries, metrics"
+  },
+  {
+   "id": "shareable-report-other-peoples-words",
+   "title": "Other people's words still reach the shareable report: subjects cut to 80 characters, opt-out reasons, library study replies",
+   "severity": "low",
+   "category": "privacy",
+   "files": [
+    "app/agent/agenda.py",
+    "app/integrations/mailstore.py",
+    "app/diagnostics.py",
+    "app/agent/service.py"
+   ],
+   "evidence": "agenda.py:103, :106 and :112 put a subject cut to 80 characters into event texts. The masker replaces only whole subjects (diagnostics.py:222-224; privacy.py:169), so the cut subject shows in EVENTS ('Agenda: …', service.py:388-389), in SCHEDULER decision_now.reason (diagnostics.py:523-529, from service.py:361) and in the agenda line of PLANNER CONTEXT. mailstore.py:99 stores `replied \"{the sender's own words}\"` (up to 60 characters) as the suppression reason, and the report prints the newest 20 reasons (executor.py:180, shown via diagnostics.py:981). `_reply_text` (diagnostics.py:625-629) leaves out only research replies, so 'study' replies with the library learnings print whole (live 0.13.0 :766 and :845-847; 4 study replies). Yet diagnostics.py:892 keeps learnings for the full report only, and the library patch note says 'never texts'.",
+   "failure_scenario": "A tenant writes with a subject longer than 80 characters that names their street and name. The shareable report shows it three times. A person's 'stop' reply, with their name in it, is quoted in INTEGRATIONS. Material the owner put in the library (for example a supplier's terms) shows up digested in WAKE CYCLES.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/mail/test_repro_report.py: the subject 'Frage zu Ihrem Nebenkostenabrechnung-Tool fuer meine Wohnung in der Musterstrasse 12, Mieter …' appeared on 3 lines of the shareable report (SCHEDULER reason, PLANNER agenda line, EVENTS), cut at 'Musterstrass'. The opt-out reason 'replied \"Bitte keine Mails mehr an mich, ich bin Hans Beispielmann au\"' appeared in INTEGRATIONS.",
+   "fix": "Name the email in agenda and decision texts by id and masked sender only, with no subject (the plan can read it with email_read). In the shareable report, show suppression reasons as '[the sender's words, N characters]'. Leave out 'study' replies the way research replies are.",
+   "effort": "S",
+   "related": "0.2 'other people's text is left out'; library patch note (`f1717e9`)"
+  },
+  {
+   "id": "report-decide-side-effects",
+   "title": "Generating the report calls agent.decide(), which marks agenda events as having woken the agent",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "app/diagnostics.py",
+    "app/agent/service.py"
+   ],
+   "evidence": "diagnostics.py:523 calls `agent.decide()`. decide calls `_event_wake`, which calls `agenda.mark_woke` (service.py:305-307, :358-359), and decide may also write next_wake meta (service.py:311-315, :330-340). The report never runs the cycle it decided on.",
+   "failure_scenario": "An urgent event (an order or a reply) has been noted but not yet acted on by the scheduler. The owner opens the Diagnostics tab at that moment. The event is marked as having woken the agent, the scheduler's decide() finds nothing waking, and Ember sleeps; the event waits for the next scheduled plan, hours later. The window is small, but it is a read with side effects.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/mail/test_repro_decide.py: after diagnostics.report(), the agenda row had woke_at set, and agent.decide() returned 'False None Ember chose 120 min'.",
+   "fix": "Add a pure preview (for example `decide(preview=True)`) that computes the decision without writing, and use it in the report.",
+   "effort": "S",
+   "related": "Phase D agenda (`3855b26`)"
+  },
+  {
+   "id": "owner-ha-identity-in-report",
+   "title": "The owner's Home Assistant display name and user id are printed throughout the shareable report",
+   "severity": "low",
+   "category": "privacy",
+   "files": [
+    "app/web.py",
+    "app/diagnostics.py"
+   ],
+   "evidence": "web.py:54-67 labels the owner's actions as 'name (user id)'. The report prints events raw (diagnostics.py:1049-1057) and OPTIONS includes owner_user_ids (diagnostics.py:355-361). Live 0.13.0: OPTIONS :75 has the 32-hex id; EVENTS has 10 lines such as 'MVP (7f32…) approved request #13'. The 0.12.0 report has the same at :3176-3180.",
+   "failure_scenario": "An owner whose Home Assistant display name is their real name publishes it with every shared report, next to the id that owner_user_ids trusts. Today the name is 'MVP'.",
+   "label": "live",
+   "fix": "In the shareable report, show owner labels as 'the owner' and the ids as 'owner_user_ids: 1 set'; keep both in the full report.",
+   "effort": "S",
+   "related": "0.3 owner identity (`af0f19a`)"
+  },
+  {
+   "id": "imap-refused-fetch-loses-mail",
+   "title": "A message fetch the server refuses is stored as an empty email and its UID is passed: the real email, an opt-out included, is lost",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "app/integrations/mail.py"
+   ],
+   "evidence": "mail.py:501-509 ignores the FETCH status. When `_fetched_size` returns None, the code takes the headers-only branch; when `_literal` returns None, it calls parse_message(b\"\"). The result is stored with an empty From and '[This email is larger than 1 MB (unknown size)…]', and `last = uid` (:511) moves past it for good.",
+   "failure_scenario": "The server answers a transient 'NO [UNAVAILABLE]', or the message is expunged between SEARCH and FETCH. The email is never fetched again, and a stop request in it is never applied. That contradicts FIX NOW 29's 'no dropped mail'.",
+   "label": "reproduced",
+   "reproduction": "scratchpad/mail/test_repro_imap.py: uid 2 (subject 'Please stop', body 'stop') came back with from '' and subject '', its body was '[This email is larger than 1 MB (unknown size), so only its headers we…', and last_uid was 3.",
+   "fix": "Check typ == 'OK' and that a literal came back. Otherwise end the batch before that UID, so the next check retries it; after N failures, skip it with a warning event.",
+   "effort": "S",
+   "related": "FIX NOW 29 'no dropped mail'"
+  },
+  {
+   "id": "mailbox-errors-no-backoff",
+   "title": "A failing mailbox is retried every 15 minutes with no backoff, logging a warning each time",
+   "severity": "low",
+   "category": "bug",
+   "files": [
+    "app/agent/service.py",
+    "app/integrations/mailstore.py",
+    "app/events.py"
+   ],
+   "evidence": "service.py:371-379 sets `_mail_checked_at` before trying and retries every MAIL_MINUTES whatever the last error was. mailstore.py:77-80 records a warning on each failure, and events.record doesn't deduplicate (events.py:150-166).",
+   "failure_scenario": "The owner changes the mailbox password, or the provider locks the account. Ember then makes about 100 failed IMAP logins a day, plus one per cycle, which a provider may treat as brute force. The report's EVENTS (the latest 200) fills with the same warning within about 2 days.",
+   "label": "code",
+   "fix": "Back off after consecutive errors (15 min up to 4 h). Record one 'still failing since …' event. After AUTHENTICATIONFAILED, stop until the options change.",
+   "effort": "S",
+   "related": "Phase D agenda (`3855b26`) mailbox reads between cycles"
+  },
+  {
+   "id": "hidden-html-filter-inline-only",
+   "title": "The hidden-text filter only sees inline styles",
+   "severity": "low",
+   "category": "security",
+   "files": [
+    "app/integrations/mail.py"
+   ],
+   "evidence": "mail.py:398-403 `_hides` reads only the element's own style, hidden and aria-hidden attributes. The module docstring (mail.py:9-11) promises text 'without what a reader wouldn't see'.",
+   "failure_scenario": "A newsletter or an attacker hides instructions behind a CSS class in <style>, in white-on-white text, at font-size 1px, off-screen, or with mso-hide:all. The agent reads them as the email's text. The risk is mitigated: the text is wrapped as untrusted data, the model has no send tool, and an attacker could put instructions in the plain-text part anyway.",
+   "label": "reproduced",
+   "reproduction": "An html_to_text probe (scratchpad/mail, run inline): the 'class-hidden', 'white-on-white', 'tiny-font-1px', 'offscreen' and 'mso-hide' cases all LEAKED their text; only inline display:none was stripped.",
+   "fix": "Apply simple class and id rules from <style> that set display:none or visibility:hidden, and treat font-size <= 2px, a colour equal to the background, large negative offsets and mso-hide:all as hidden. Or say in the docstring and DOCS that the filter is best-effort.",
+   "effort": "M",
+   "related": "0.4.0 mail design; fake newsletter test"
+  }
+ ],
+ "fix_checks": [
+  {
+   "item": "0.2: shareable report by default (GET api/diagnostics; ?full=1 private)",
+   "verdict": "holds",
+   "evidence": "web.py:841-845 defaults to full=False; both live reports start with 'Shareable report: …' and the not-instructions line (line 2-3)."
+  },
+  {
+   "item": "0.2: other people's text left out (email/research data blocks, subjects as lengths, propose_email lengths, MAIL/RESEARCH preview counts)",
+   "verdict": "partial",
+   "evidence": "Holds for the main paths: privacy.py:192-197; live INTEGRATIONS subjects shown as '[25 characters]' (0.13.0 :3340-3354); MAIL '(3 emails: their senders and subjects are left out)'; research replies shown as lengths. Leaks remain: agenda subjects cut to 80 characters, opt-out reasons and study replies (finding shareable-report-other-peoples-words)."
+  },
+  {
+   "item": "0.2: every email address masked ([email N], [Ember's address])",
+   "verdict": "broken",
+   "evidence": "Live 0.13.0 OPTIONS :49 'emberthehelper@[sender of email #1].org' and INTEGRATIONS :3340-3354 'noreply@[sender of email #1].org'; the same in 0.12.0 :49 and :3094-3108. The cause is the display-name mask running before the address mask (privacy.py:176-180)."
+  },
+  {
+   "item": "0.2: one-time codes masked in both kinds",
+   "verdict": "holds",
+   "evidence": "Live: 'mail #8 contains Etsy confirmation code [masked]' (both reports). It also over-masks Etsy category ids next to 'confirmed' (0.13.0 :1380, :1384)."
+  },
+  {
+   "item": "0.2: tokens in links masked",
+   "verdict": "holds",
+   "evidence": "privacy.py:200-224; live 'https://help.printify.com/hc/en-us/articles/[…]'; the probe masked /verify/<hex> and /login/<mixed> segments and kept listing ids and slugs."
+  },
+  {
+   "item": "0.2: keystring and owner name only as flags",
+   "verdict": "holds",
+   "evidence": "Live OPTIONS: etsy_keystring_set true, email_owner_name_set true, printify_api_token_set true, pinterest_app_secret_set false."
+  },
+  {
+   "item": "0.2: layout, indentation and per-section budgets; later sections always appear",
+   "verdict": "holds",
+   "evidence": "Both live reports are about 580,000 characters (WAKE CYCLES 331-346k, AGENT RECORDS 177-191k); no '[section cut' or 'older … left out'; EVENTS present; files are indented under '--- path'."
+  },
+  {
+   "item": "0.2: words the owner removed are redacted",
+   "verdict": "not-checked",
+   "evidence": "The live reports contain no '[removed]' and no removal events. test_privacy.py passes on HEAD."
+  },
+  {
+   "item": "0.3: only the owner downloads the report",
+   "verdict": "holds",
+   "evidence": "owner_user_ids is set live (OPTIONS :74-76); the middleware covers the whole API per the patch note."
+  },
+  {
+   "item": "FIX NOW 29: multilingual opt-out detection in the sender's own words",
+   "verdict": "partial",
+   "evidence": "Quoted text, signatures and newsletter footers are handled (test_opt_outs passes). 13 common phrasings are missed, including 'Hello,\\nPlease stop.' and 'Hallo,\\n\\nStopp.' (finding optout-misses-common-phrasings)."
+  },
+  {
+   "item": "FIX NOW 29: mark_opt_out tool and the owner's 'Never emailed' button",
+   "verdict": "holds",
+   "evidence": "tools.py:3090-3104; POST /api/email/suppressions; append-only table (0005_integrations.sql:92-104); tests pass."
+  },
+  {
+   "item": "FIX NOW 29: no dropped mail (oldest first, 5 x 20 per check, the rest waits)",
+   "verdict": "partial",
+   "evidence": "The backlog is handled (mail.py:494-512, mailstore.py:55-71; flood test passes; live last_uid 16 with 16 emails stored, META and DATABASE). A refused per-message FETCH still loses the email (finding imap-refused-fetch-loses-mail)."
+  },
+  {
+   "item": "Phase E1: email.reply class, 'never a first contact'",
+   "verdict": "partial",
+   "evidence": "The class works (connectors.py:152-158; test_inquiries passes), but 'never a first contact' rests on an unauthenticated From header (finding forged-sender-counts-as-wrote)."
+  },
+  {
+   "item": "Phase E1: inquiries leave out newsletters, automatic replies, machine senders, opted-out, answered and closed emails",
+   "verdict": "partial",
+   "evidence": "The SQL filters work for List-*/Auto-Submitted mail. machine() knows 4 prefixes only, and Ember's own address counts in OBLIGATIONS and the agenda (findings own-address-inquiry-cannot-close, non-human-mail-wakes-paid-cycles)."
+  },
+  {
+   "item": "Phase E1: a new inquiry wakes Ember; one already shown isn't news",
+   "verdict": "holds",
+   "evidence": "agenda.py:107-112; test_inquiries.py:101-119 passes; reproduced in test_repro_decide.py. The reply branch, however, wakes Ember on auto-replies too."
+  },
+  {
+   "item": "Phase E1: metrics inquiries_received and inquiries_answered",
+   "verdict": "partial",
+   "evidence": "mailstore.py:275-286 counts noreply@, MAILER-DAEMON and Ember's own address: (3, 0) in test_repro_metric.py, against DOCS.md:1020-1022."
+  },
+  {
+   "item": "Phase E1: QA (Re:/AW: subject, at most 200 words)",
+   "verdict": "holds",
+   "evidence": "qa registry; test_inquiries.py:122-140 passes."
+  },
+  {
+   "item": "Phase E1: kill rule (an opt-out after an automatic reply revokes email_reply)",
+   "verdict": "partial",
+   "evidence": "policy.py:336-345 works for detected opt-outs (test passes). A missed opt-out (finding optout-misses-common-phrasings) never triggers it."
+  },
+  {
+   "item": "Phase D agenda: mailbox read every 15 minutes between cycles, at no model cost",
+   "verdict": "holds",
+   "evidence": "service.py:363-389; PEEK and read-only select (mail.py:484, :508); live last_fetch_at 15:08:42Z right after the 15:08:41 restart. No backoff on errors (finding mailbox-errors-no-backoff)."
+  },
+  {
+   "item": "Library: diagnostics show titles, sizes, progress and cost, never texts",
+   "verdict": "partial",
+   "evidence": "AGENT RECORDS shows metadata only, and learnings appear in the full report only (diagnostics.py:892). Study-call replies with the learnings print whole in the shareable report (0.13.0 :766, :845-847)."
+  },
+  {
+   "item": "Pinterest: diagnostics show the connection (never a token), boards and pins",
+   "verdict": "holds",
+   "evidence": "pinterest_connection.py:129-163 returns the username and URL, no token; live INTEGRATIONS pinterest block."
+  },
+  {
+   "item": "Printify: diagnostics without the token; orders' costs only",
+   "verdict": "holds",
+   "evidence": "printify_connection.py:85-111; printify_orders stores no buyer data (0055_printify.sql:52-66)."
+  },
+  {
+   "item": "Website: Impressum data only as flags (never the owner's address)",
+   "verdict": "holds",
+   "evidence": "diagnostics.py:352-361; website.describe (agent/website.py:147-161) has no address; live site_*_set flags."
+  }
+ ],
+ "still_open_from_0_11_1": [
+  "Captured requests (section 9) are not built: model requests are still not stored for replay, so the ~580 KB diagnostics report (both 2026-09-30 reports) is still the owner's debugging tool.",
+  "Section 10's 'don't widen the diagnostics' is only partly kept: 0.12/0.13 added library, Pinterest, Printify and website sections. Size held at ~580 KB, but new paths carry other people's words (agenda subjects, study replies, opt-out reasons)."
+ ],
+ "strengths": [
+  {
+   "what": "The email executor is exactly-once and fails closed",
+   "evidence": "The row is committed as running before sending, and an unclear send is never retried (executor.py:222-300, :350-367). Suppression is checked at proposal (tools.py:3165) and again at send (executor.py:260). The envelope comes from code, with exactly one plain-text recipient and no Cc/Bcc (mail.py:183-193, :514-544). There is a daily limit, and every send is journaled. Tests pass."
+  },
+  {
+   "what": "Inbound mail is handled as untrusted data",
+   "evidence": "Bodies are capped at 8,000 characters, invisible and direction characters are stripped, and attachments are listed but never opened (mail.py:170-180, :308-335). Reads use PEEK on a read-only INBOX (mail.py:484, :508). Tool results are wrapped with a per-cycle nonce (tools.py:1568-1571) and say 'The sender is unverified' (tools.py:3043, :3077). The planner's MAIL section quotes senders and subjects as data."
+  },
+  {
+   "what": "Transport security is tight",
+   "evidence": "TLS certificates and host names are verified, TLS 1.2 is the minimum, only the configured hosts are contacted (`_server`), STARTTLS never falls back to plain text, and the password goes only to login (mail.py:449-460, :527-533)."
+  },
+  {
+   "what": "The mail backlog no longer drops anything, and live reading works",
+   "evidence": "Mail is read oldest first, 5 x 20 per check, and the rest waits with a count (mail.py:494-512, mailstore.py:55-85). Live: last_uid 16 with 16 emails stored, no last_error, and a fetch at 15:08:42 right after the restart (0.13.0 META and INTEGRATIONS)."
+  },
+  {
+   "what": "Opt-outs are final and have three independent inputs",
+   "evidence": "The suppressions table is append-only, with triggers (0005_integrations.sql:92-104). Inputs are the code's check, the agent's mark_opt_out and the owner's 'Never emailed' button. Newsletter unsubscribe footers and automatic replies are correctly ignored (optout.py:101-107; mail.py:283-290). The email_reply kill rule revokes an unlock after an opt-out."
+  },
+  {
+   "what": "The shareable report does its main job, within budget",
+   "evidence": "Email bodies and web text become lengths, codes are masked (live 'Etsy confirmation code [masked]'), there are no keys or tokens, and Impressum data appears only as flags. The report opens with a data-not-instructions header, the route is owner-only, and both live reports (~580 KB) show every section with nothing cut."
+  },
+  {
+   "what": "New channels keep third-party personal data out",
+   "evidence": "Printify orders store only ids, costs and status (0055_printify.sql:52-66). Pinterest and Printify describe() never return tokens. Etsy orders hold no buyer data (diagnostics.py:1013)."
+  },
+  {
+   "what": "The tests in this area are extensive and green",
+   "evidence": "142 tests pass on HEAD across test_mail, test_opt_outs, test_inquiries, test_privacy, test_diagnostics and test_agenda. The dry-run fake mailbox includes a newsletter with hidden injection and a 'stop' reply."
+  }
+ ],
+ "notes": "What I ran: every reproduction is in /tmp/claude-0/-home-user-SURVIVE/16767151-7117-55b8-8b14-a711cc61e9f8/scratchpad/mail/:\n- test_repro_mail.py (4 tests)\n- test_repro_spoof_e2e.py\n- test_repro_autoreply.py\n- test_repro_report.py\n- test_repro_decide.py\n- test_repro_metric.py\n- test_repro_imap.py\n- optout_probe.py and masker_probe.py\n\nRun them from ember/ with PYTHONPATH=/home/user/SURVIVE/ember, PYTHONDONTWRITEBYTECODE=1 and --rootdir=/home/user/SURVIVE/ember. The repository is unchanged (git status clean).\n\nRelated issues seen but not raised as findings:\n- **SMTP rejection classed as unclear.** A 5xx after DATA (smtplib.SMTPDataError, a definite rejection) is classed Unclear (mail.py:539-540). That tells the owner the email may have gone out, and it would revoke an email_reply unlock.\n- **Mailbox switch or UIDVALIDITY reset.** received_at is the fetch time (mailstore.py:137). Switching Ember to a mailbox with history would turn every non-list email in it into a new inquiry. Emails without a Message-ID are stored again after a UIDVALIDITY reset.\n- **Dry-run words in live reports.** `_others` is built from all modes, so dry-run senders' names also mask words in live reports.\n- **IMAP deadline.** The 30 s deadline is checked only between UIDs. With 20 s socket timeouts, a hanging server can hold a scheduler round for over a minute.\n- **Forged 'reply' events.** Anyone who holds a Message-ID Ember sent (every recipient) can create a 'reply' event; this is folded into non-human-mail-wakes-paid-cycles.\n\nSeverity context:\n- **forged-sender-counts-as-wrote and auto-reply-footer-claims-owner-approval** are latent today (policy_grants 0 live). Both become live the moment the owner unlocks email_reply. I would treat them as prerequisites for that unlock, the way the first analysis treated FIX NOW 29.\n\nNot checked:\n- the removal/redaction path on live data (no removals in either report);\n- Reddit beyond a code read (link-only, disclosure line correct);\n- HTML parser performance on hostile input."
+}
