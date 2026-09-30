@@ -441,19 +441,35 @@ def workshop_reservation(
     $2.94 against a $1.50 cap. Holding what runs were seen to cost keeps the daily cap and the balance hard for runs
     like those; a run can still cost more than anything seen, and that is booked when it happens. The tail forgets a
     costly run after WORKSHOP_TAIL_DAYS, so it can't refuse the workshop for good."""
-    since = to_iso(clock.now() - timedelta(days=WORKSHOP_TAIL_DAYS))
-    with db.connection() as conn:
-        rows = conn.execute(
-            "SELECT cost_micros FROM llm_calls WHERE model = ? AND purpose = ? AND simulated = ? AND status = 'ok'"
-            " AND cost_micros > 0 AND ts >= ? AND id > ? ORDER BY id DESC LIMIT ?",
-            (model, WORKSHOP, 1 if simulated else 0, since, reset_after(db, mode), EXPECTED_WINDOW),
-        ).fetchall()
-    costs = sorted(int(r[0]) for r in rows)
+    costs = sorted(cost for _, cost in _workshop_tail(db, clock, simulated, model, mode))
     tail = 0
     if costs:
         p95 = costs[min(len(costs) - 1, math.ceil(0.95 * len(costs)) - 1)]
         tail = int((Decimal(p95) * EXPECTED_FACTOR).to_integral_value(rounding=ROUND_CEILING))
     return max(quote, usd_cap_to_micros(settings.workshop_run_cap_usd), tail)
+
+
+def workshop_tail_ends(
+    db: Database, clock: Clock, simulated: bool, model: str, mode: str, above: int
+) -> datetime | None:
+    """0.14.0: when the last of the recent workshop calls on ``model`` that alone make a hold of more than ``above``
+    leaves the tail of workshop_reservation (None if none does)."""
+    costly = [ts for ts, cost in _workshop_tail(db, clock, simulated, model, mode) if cost * EXPECTED_FACTOR > above]
+    return from_iso(max(costly)) + timedelta(days=WORKSHOP_TAIL_DAYS) if costly else None
+
+
+def _workshop_tail(db: Database, clock: Clock, simulated: bool, model: str, mode: str) -> list[tuple[str, int]]:
+    """(when, what it is known to cost) of the last EXPECTED_WINDOW answered workshop calls on ``model`` in the last
+    WORKSHOP_TAIL_DAYS days, since the owner's last reset. What they are known to cost, not what they were booked at:
+    an uncertain call booked at its hold would raise the next hold with every call."""
+    since = to_iso(clock.now() - timedelta(days=WORKSHOP_TAIL_DAYS))
+    with db.connection() as conn:
+        rows = conn.execute(
+            "SELECT ts, floor_micros FROM llm_calls WHERE model = ? AND purpose = ? AND simulated = ? AND status = 'ok'"
+            " AND floor_micros > 0 AND ts >= ? AND id > ? ORDER BY id DESC LIMIT ?",
+            (model, WORKSHOP, 1 if simulated else 0, since, reset_after(db, mode), EXPECTED_WINDOW),
+        ).fetchall()
+    return [(str(r[0]), int(r[1])) for r in rows]
 
 
 class MeteredModel:
@@ -1125,7 +1141,8 @@ class MeteredModel:
         response = outcome.response
         raw = response.get("usage")
         notes: list[str] = []
-        if not isinstance(raw, Mapping) or not raw.get("input_tokens") or "output_tokens" not in raw:
+        usage_read = isinstance(raw, Mapping) and bool(raw.get("input_tokens")) and "output_tokens" in raw
+        if not usage_read:
             # Every answer reports its usage; without it the bill is unknown (a transport bug).
             notes.append("usage missing or incomplete")
             raw = raw if isinstance(raw, Mapping) else {}
@@ -1173,7 +1190,9 @@ class MeteredModel:
         # A multiplier first learned from this answer (US-only inference) isn't an estimation error.
         expected = int((Decimal(quote) * multiplier / res.geo).to_integral_value(rounding=ROUND_CEILING))
         uncertain = bool(notes)
-        cost = max(known, res.estimate) if uncertain else known
+        # 0.14.0: an uncertain answer (an unknown usage field, say) is charged at its worst case; one without its usage
+        # at what it held, as a workshop run's worst case is no ceiling
+        cost = max(known, quote if usage_read else res.estimate) if uncertain else known
         return _Settlement(
             "ok",
             cost,

@@ -23,7 +23,8 @@ from app.economy.estimate import MAX_SERVER_ITERATIONS, plan_request, worst_case
 from app.economy.metering import OVERRUN_STOP, WORKSHOP, CallRefused, Completed
 from app.economy.pricing import safety_factor
 from tests.economy_helpers import FakeClock, ScriptedTransport, make_economy, message, metered, request
-from tests.test_agent import make_agent, plan, rows, tools
+from tests.test_agent import make_agent, plan, rows, text, tools
+from tests.test_owner_loop import APPROVAL
 
 MODEL = "claude-sonnet-5"
 # The owner's live options at 0.13.0 (the workshop's cap per run raised to $1.50 after #423)
@@ -81,6 +82,23 @@ def test_a_workshop_call_holds_the_tail_of_recent_runs(data_dir: Path) -> None:
     clock.advance(days=15)  # the tail forgets after 14 days (and the factor has faded meanwhile)
     model.open_cycle("test")
     assert model.reservation(workshop(OWNER), WORKSHOP) < held
+
+
+def test_uncertain_workshop_calls_dont_raise_the_next_hold(data_dir: Path) -> None:
+    # Review of 0.14.0: an uncertain answer was booked at its hold, and the hold then grew from what calls were booked
+    # at: $0.07 of cheap runs was charged as $12.19, and the workshop locked itself.
+    economy = make_economy(data_dir, OWNER)
+    odd = [Completed(message(1_000, 200, unknown_field=5)) for _ in range(4)]
+    model, _ = metered(economy, ScriptedTransport(outcomes=[*odd, Completed(message(0, 0))]))
+    cycle = model.open_cycle("test")
+    quote = model.quote(workshop(OWNER), WORKSHOP)
+    for _ in range(4):
+        assert model.reservation(workshop(OWNER), WORKSHOP) == 1_500_000  # the cap per run, every time
+        result = model.call(cycle, WORKSHOP, workshop(OWNER))
+        assert result.cost_micros == quote < 1_500_000  # charged at its worst case, as the docs say
+    model.call(cycle, WORKSHOP, workshop(OWNER))  # an answer without its usage: its bill is anyone's guess
+    assert [(r["billing_uncertain"], r["cost_micros"]) for r in llm_calls(economy.db)][-1] == (1, 1_500_000)
+    assert model.reservation(workshop(OWNER), WORKSHOP) == 1_500_000
 
 
 def test_output_is_priced_per_sampling_of_a_server_tools_loop() -> None:
@@ -259,6 +277,26 @@ def test_a_cycle_an_overrun_stopped_reflects_and_sleeps_as_chosen(data_dir: Path
     assert agent._meta_time("next_wake_at") == agent.clock.now() + timedelta(minutes=420)
 
 
+def test_after_an_overrun_stop_a_waiting_request_still_cuts_the_sleep(data_dir: Path) -> None:
+    # Review of 0.14.0: the chosen sleep after an overrun skipped what a completed cycle's gets (the cut while a
+    # request waits, a milestone's check, maintenance's one cycle a day)
+    big = tools(("workspace_write", {"path": "notes/a.md", "mode": "create", "content": "a"}))
+    big.response["usage"]["output_tokens"] = 60_000
+    reflection = tools(
+        ("write_journal", {"summary": "Stopped by an overrun", "entry": "Waiting for my owner."}),
+        ("set_sleep", {"minutes": 720, "reason": "the poster waits for the owner"}),
+    )
+    script = [plan(steps=["ask to publish", "notes"], sleep=720), tools(("request_approval", APPROVAL)), text("Asked.")]
+    agent, _ = make_agent(data_dir, [*script, big, reflection])
+    assert agent.run_cycle("schedule").status == "stopped"
+    assert rows(agent, "SELECT status FROM approvals") == [{"status": "pending"}]
+    assert agent._meta_time("next_wake_at") == agent.clock.now() + timedelta(minutes=240)
+    assert agent.agent_fields()["next_wake_reason"].endswith(
+        "cut to 240 min: 1 request waits for your decision, and it works on something else meanwhile (the cycle was"
+        " stopped after a call cost more than its worst case)"
+    )
+
+
 # --- X4: the safety factor covers what was missed and comes down again ---
 
 
@@ -328,7 +366,10 @@ def test_the_owner_hears_when_what_a_run_holds_is_more_than_the_day(data_dir: Pa
     assert not any("workshop" in w for w in economy.warnings())
     model = economy.metered(FakeTransport(script=[Overrun()]))
     model.call(model.open_cycle("test"), WORKSHOP, workshop(settings))
-    assert any("more than the daily spend cap ($2.00), so the workshop can't run" in w for w in economy.warnings())
+    [warning] = [w for w in economy.warnings() if "workshop" in w]
+    assert "more than the daily spend cap ($2.00), so the workshop can't run" in warning
+    day = (economy.clock.now() + timedelta(days=14)).astimezone(economy.clock.tz).date().isoformat()
+    assert warning.endswith(f"What recent runs cost stops counting on {day}, or at once with Reset estimates.")
 
 
 # --- the migration ---

@@ -44,6 +44,7 @@ from .metering import (
     recover_interrupted,
     usd_cap_to_micros,
     workshop_reservation,
+    workshop_tail_ends,
 )
 from .pricing import (
     opening_cost,
@@ -339,11 +340,18 @@ class Economy:
                     f" with {model} (up to ${micros_to_usd(run):.2f}), so the workshop can't run."
                 )
             elif usd_cap_to_micros(daily) < held:
-                result.append(
+                warning = (
                     f"A workshop run with {model} now keeps ${micros_to_usd(held):.2f} of the day (its cap per run, its"
                     " raised estimate or what recent runs cost), more than the daily spend cap"
                     f" (${daily:.2f}), so the workshop can't run."
                 )
+                ends = workshop_tail_ends(self.db, self.clock, simulated, model, self.mode, usd_cap_to_micros(daily))
+                if ends is not None:
+                    warning += (
+                        f" What recent runs cost stops counting on {ends.astimezone(self.clock.tz).date().isoformat()},"
+                        " or at once with Reset estimates."
+                    )
+                result.append(warning)
         return result
 
     def dashboard(self) -> dict[str, Any]:

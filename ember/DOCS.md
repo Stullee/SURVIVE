@@ -369,9 +369,10 @@ model, each writing up to 3,000 tokens and reading what the rounds before it
 added (about $0.60 with claude-sonnet-5), and refuses a run priced above what
 is left of its **cap per run**. That price is not a ceiling: nothing limits
 what the run's code prints or looks at, and that one run read ten times more
-than the price allows for. So each call keeps back the cap per run, or 1.5
-times what the costliest recent runs cost (the last 14 days) if that is more,
-under the daily cap and the balance, and a run waits until that fits. A call
+than the price allows for. So each call keeps back the most of its cap per
+run, its raised estimate, and about 1.5 times the costliest of the last 20
+workshop calls in 14 days (what they are known to cost), under the daily cap
+and the balance, and a run waits until that fits. A call
 can still cost more than all of this; Ember then books what it cost, makes no
 more workshop calls in that cycle, and raises the workshop's estimates. Runs
 count toward the daily cap and the balance but not the cycle cap (one run can
@@ -1555,15 +1556,16 @@ work step, the reflection, research, ...) on that model, up to 8 times; the
 other kinds keep theirs. That kind of call makes no more calls in the cycle,
 and the cycle goes on. It stops only when the call counts toward the cycle cap
 and cost more than 10% or $0.02 over its worst case; its reflection still
-runs, and the next wake is no sooner than the agent chose. A scaled-up estimate
+runs, and the next wake follows the agent's chosen sleep as after a completed
+cycle (never sooner than the usual back-off). A scaled-up estimate
 comes down by half of what it is above 1 after 3 calls of its kind in a row
 that didn't need it, and after every 7 days without a change. The dashboard
 lists them with **Reset estimates**, for when you know why it happened (a price
 you corrected, say); it also makes the workshop forget what the runs before it
 cost.
 A call whose bill is uncertain (the API failed before any reply) is charged to
-the balance at its worst case until you correct it, but counts toward the caps
-only with what it is known to cost.
+the balance at its worst case (a workshop call: what it kept back) until you
+correct it, but counts toward the caps only with what it is known to cost.
 As an outside safety net, give Ember its own
 [Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
 API key and set a monthly spend limit there.
