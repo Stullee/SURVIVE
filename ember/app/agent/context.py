@@ -25,7 +25,7 @@ from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
 from . import digest, library, obligations, review, roadmap, store, tools, ventures
-from .memory import Memory, heading_like
+from .memory import Memory, heading_like, lesson_key, pins
 from .news import CHANGELOG_LIMIT, Item, News, Shown
 from .sandbox import Jail
 from .store import AgentScope
@@ -90,6 +90,9 @@ VENTURE_BRIEF = (
 )
 # 0.12.0: the brief's copy of OBLIGATIONS (the plan's is never cut), on top of the brief's budget like the owner's.
 OBLIGATIONS_BRIEF_BUDGET = 1_000
+# 0.12.0: the lessons the owner pinned come first in LESSONS, on top of its budget (at most memory.MAX_PINS of them).
+PINS_BUDGET = 2_000
+PINS_HEADING = "Pinned by your owner (always kept):"
 # The largest brief, those sections and their headings included: the WORK and REFLECT profiles are measured on it.
 BRIEF_MAX = (
     BRIEF_BUDGET
@@ -99,6 +102,7 @@ BRIEF_MAX = (
     + RESEARCH_BUDGET
     + KNOWLEDGE_BUDGET
     + OBLIGATIONS_BRIEF_BUDGET
+    + PINS_BUDGET
     + 330
 )
 WILL_BUDGET = 4_500 + OWNER_BUDGET + 100  # the largest will context: the LAST_WILL profile is measured on it
@@ -176,6 +180,7 @@ class Snapshot:
     digests: list[str] = field(default_factory=list)  # the last cycles' digests, newest first (0.12.0)
     obligations: str = ""  # 0.12.0: what the agent owes (OBLIGATIONS), bounded: never cut in the plan
     memory: dict[str, str] = field(default_factory=dict)
+    pins: list[str] = field(default_factory=list)  # 0.12.0: the lessons the owner pinned
     workspace: list[str] = field(default_factory=list)
     workspace_usage: str = ""  # 0.12.0: what the workspace holds of its limits, for STATUS
     journal: list[sqlite3.Row] = field(default_factory=list)
@@ -265,6 +270,7 @@ def snapshot(
         digests=digest.latest(conn, scope),
         obligations=obligations.text(conn, scope, today) if today is not None else "",
         memory=memory.read_all(),
+        pins=[str(p["text"]) for p in pins(conn, scope)],
         workspace=files,
         workspace_usage=_usage_line(workspace),
         journal=journal,
@@ -589,10 +595,19 @@ def instructions_section(s: Snapshot, budget: int = INSTRUCTIONS_BUDGET) -> list
     return [(INSTRUCTIONS_HEADING, text)] if text else []
 
 
-def _lessons(s: Snapshot, budget: int) -> str:
-    """The planner's LESSONS: the newest lessons that fit (0.12.0: without the memory checks that asked for blind
-    rewrites)."""
-    return cut(_newest_lines(s.memory.get("lessons", ""), budget), budget)
+def lessons_text(s: Snapshot, budget: int, pins_budget: int = PINS_BUDGET) -> str:
+    """LESSONS: the lessons the owner pinned first (0.12.0, on top of the budget), then the newest others that fit
+    (0.12.0: without the memory checks that asked for blind rewrites)."""
+    pinned = {lesson_key(p) for p in s.pins}
+    others = "\n".join(line for line in s.memory.get("lessons", "").splitlines() if lesson_key(line) not in pinned)
+    newest = cut(_newest_lines(others, budget), budget)
+    pinned_text = pins_text(s, pins_budget)
+    return f"{pinned_text}\n\n{newest}" if pinned_text and newest else pinned_text or newest
+
+
+def pins_text(s: Snapshot, budget: int = PINS_BUDGET) -> str:
+    """The lessons the owner pinned, as LESSONS shows them first (0.12.0); empty without any."""
+    return f"{PINS_HEADING}\n{cut(chr(10).join(f'- {p}' for p in s.pins), budget)}" if s.pins else ""
 
 
 def _strategy(s: Snapshot, budget: int) -> str:
@@ -654,7 +669,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *([("ETSY SHOP", cut(s.etsy, b["etsy"]))] if s.etsy else []),
         (STRATEGY_HEADING, _strategy(s, b["strategy"])),
         (IDENTITY_HEADING, cut(s.memory.get("identity", ""), b["identity"])),
-        (LESSONS_HEADING, _lessons(s, b["lessons"])),
+        (LESSONS_HEADING, lessons_text(s, b["lessons"], int(PINS_BUDGET * scale))),
         ("WORKSPACE", cut("\n".join(s.workspace) or "Empty.", b["workspace"])),
         *([(RESEARCH_HEADING, cut(research, b["research"]))] if research else []),
         *([("WORKSHOP", cut(workshop_text(s), b["workshop"]))] if s.proven else []),
@@ -710,7 +725,7 @@ def brief(
         *([("VENTURE CYCLE", VENTURE_BRIEF)] if s.venture else []),
         *learned,  # before the FOCUS: a brief over its budget loses its end, and this section's room is its own
         ("FOCUS", focus_text),
-        (LESSONS_HEADING, _newest_lines(s.memory.get("lessons", ""), 800)),
+        (LESSONS_HEADING, lessons_text(s, 800)),
         ("WORKSPACE", "\n".join(s.workspace[:20]) or "Empty."),
         *researched,
         (
@@ -721,6 +736,7 @@ def brief(
     ]
     on_top = [*owed, *standing, *owners, *mailed, *researched, *learned]
     room = sum(json_bytes(f"\n\n== {title} ==\n{body}") - 2 for title, body in on_top)  # - 2: its own JSON quotes
+    room += json_bytes(f"{pins_text(s)}\n\n") - 2 if s.pins else 0  # 0.12.0: the owner's pins are on top too
     text = cut(_sections(parts), BRIEF_BUDGET + room)
     held = _held(text, _sections([*head, *standing]) + "\n\n== FROM YOUR OWNER ==\n", lines)
     # A message longer than the brief can ever hold is shown in full as far as it can be.
@@ -735,7 +751,7 @@ def will_context(s: Snapshot, dry_run: bool) -> str:
         *owner_section(s),
         ("PROJECTS", project_lines(s)),
         ("RECENT JOURNAL", closed),
-        (LESSONS_HEADING, _newest_lines(s.memory.get("lessons", ""), 1_200)),
+        (LESSONS_HEADING, lessons_text(s, 1_200)),
         (STRATEGY_HEADING, s.memory.get("strategy", "")[:800]),
         ("TASK", "Write your last will now."),
     ]

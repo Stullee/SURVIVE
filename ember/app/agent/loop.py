@@ -32,6 +32,7 @@ from ..economy.clock import Clock, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.estimate import Unpriceable
 from ..economy.metering import (
+    CONSOLIDATE,
     REVIEW,
     STUDY,
     CallFailed,
@@ -64,6 +65,7 @@ from . import (
     tools,
     ventures,
 )
+from . import memory as memory_files
 from .memory import Memory
 from .sandbox import Jail, SandboxError
 from .store import AgentScope
@@ -658,6 +660,51 @@ class CycleRunner:
             if outcome.ok:
                 events.record(self.db, "info", "agent", f"The daily review: {outcome.text}"[:300])
         self._save_review(cycle_id, card, parsed, note)
+        if parsed is not None:
+            self._consolidate(cycle_id)
+
+    def _consolidate(self, cycle_id: int) -> None:
+        """0.12.0: the lessons' daily consolidation, after the daily review: a call of its own on the planner's model
+        merges the lessons that say the same and retires those newer ones contradict, once the file holds
+        memory_files.CONSOLIDATE_FROM lessons. Ember's code checks its answer (memory_files.consolidate). It counts
+        toward the daily cap only, leaves what the cycle needs to work, and never ends the cycle."""
+        text = self.memory.read("lessons")
+        if len(memory_files.lesson_lines(text)[1]) < memory_files.CONSOLIDATE_FROM:
+            return
+        with self.db.connection() as conn:
+            pinned = {memory_files.lesson_key(p["text"]) for p in memory_files.pins(conn, self.scope)}
+        request = prompts.consolidate_request(self.settings, memory_files.consolidation_input(text, pinned))
+        try:
+            quote = self.meter.quote(request, CONSOLIDATE)
+        except Unpriceable as exc:
+            log.warning("The lessons' consolidation can't be priced (%s); skipped", exc)
+            return
+        working = working_cycle_cost(self.settings, self.db, self.economy.life.mode) or 0
+        if quote > self.meter.headroom(cycle_id, CONSOLIDATE, keep=working):
+            log.info("The lessons' consolidation can't be afforded now; it waits for the next daily review")
+            return
+        self._progress(cycle_id, current_action="Consolidating the lessons")
+        try:
+            result = self._call(cycle_id, CONSOLIDATE, request)
+        except (CallRefused, CallFailed):
+            return  # a refusal meets the plan too; a failure waits for the next daily review
+        response = result.response or {}
+        reply = _text_of(response)
+        self._save_text(result.call_id, reply, response)
+        try:
+            answer = json.loads(reply) if response.get("stop_reason") == "end_turn" else None
+        except ValueError:
+            answer = None
+        with self.db.transaction() as conn:
+            done = memory_files.consolidate(text, answer, pinned, memory_files.CAPS["lessons"])
+            if done is not None and self.memory.read("lessons") == text:
+                self.memory.rewrite(conn, "lessons", done[0], "consolidation", to_iso(self.clock.now()))
+        message = (
+            f"Ember's code consolidated the lessons: {done[1]}"
+            if done
+            else "The lessons' consolidation changed nothing"
+        )
+        events.record(self.db, "info", "agent", message[:300])
 
     def _study(self, cycle_id: int) -> None:
         """0.12.0: study the owner's library before the plan: the next parts of the documents waiting, a few calls a

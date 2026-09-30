@@ -437,6 +437,24 @@ def set_instructions(request: Request, body: Annotated[Any, Body()] = None) -> J
     return _reply(actions.set_instructions(body, _owner(request)))
 
 
+@router.post("/api/lessons/pins")
+def pin_lesson(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.12.0: the owner pins one of the agent's lessons."""
+    actions, agent = _owner_actions(request), _state(request).agent
+    if actions is None or agent is None:
+        return NO_AGENT
+    return _reply(actions.pin_lesson(body, _owner(request), agent.memory().read("lessons")))
+
+
+@router.post("/api/lessons/pins/{pin_id}/unpin")
+def unpin_lesson(request: Request, pin_id: ItemId) -> JSONResponse:
+    """0.12.0: the owner unpins a lesson."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.unpin_lesson(pin_id, _owner(request)))
+
+
 @router.post("/api/email/suppressions")
 def suppress_email(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
     """0.12.0: the owner adds an address Ember never emails."""

@@ -3118,11 +3118,70 @@
           entry && entry !== j.summary ? h("pre", { class: "journal-entry", text: entry }) : null,
           j.handoff ? h("p", { class: "journal-summary" }, h("strong", { text: "Next: " }), asText(j.handoff)) : null);
       })) : h("p", { class: "muted", text: "The journal is empty." }));
+    } else if (ui.mind === "lessons") {
+      renderLessons(body, mind);
     } else {
       // Markdown written by the agent, shown as it is (never rendered).
       var text = asText(mind[ui.mind]);
       replace(body, text.trim() ? h("pre", { class: "mind-text", text: text }) : h("p", { class: "muted", text: MIND_EMPTY[ui.mind] || "Nothing written yet." }));
     }
+  }
+
+  // Mind → Lessons (0.12.0): the owner pins a lesson: it is never dropped, a rewrite of the lessons must keep it, and
+  // every plan shows it first. The daily review's consolidation merges the others once there are many.
+  var MAX_PINS = 6;
+
+  function lessonText(line) { return String(line).replace(/^[-\s]*(\[#c\d+\]\s*)?/, "").replace(/\s+/g, " ").trim(); }
+
+  function renderLessons(body, mind) {
+    var lines = asText(mind.lessons).split("\n").filter(function (line) { return /^- /.test(line); });
+    var pins = arr(mind.lesson_pins);
+    if (!lines.length && !pins.length) {
+      replace(body, h("p", { class: "muted", text: MIND_EMPTY.lessons }));
+      return;
+    }
+    var byText = {};
+    pins.forEach(function (p) { byText[lessonText(p.text).toLowerCase()] = p; });
+    var full = pins.length >= MAX_PINS;
+    var status = h("p", { class: "muted small", role: "status" });
+    var items = lines.map(function (line) {
+      var pin = byText[lessonText(line).toLowerCase()] || null;
+      var button = h("button", {
+        type: "button", class: "small", text: pin ? "Unpin" : "Pin", disabled: !pin && full,
+        title: pin ? "Stop keeping this lesson for good"
+          : full ? "At most " + MAX_PINS + " lessons are pinned: unpin one first"
+          : "Keep this lesson for good: never dropped, and first in every plan",
+      });
+      button.addEventListener("click", function () { pinLesson(button, status, pin, line); });
+      return h("li", { "data-pinned": pin ? "true" : null }, pin ? h("strong", { text: "Pinned: " }) : null,
+        h("span", { text: lessonText(line) }), " ", button);
+    });
+    replace(body, [
+      h("p", { class: "muted small", text: "Pin a lesson to keep it for good: " + agentName() + " never drops it, a " +
+        "rewrite of its lessons must keep it, and every plan shows it first. After the daily review, lessons that " +
+        "say the same are merged and outdated ones retired, never a pinned one or one with numbers." }),
+      h("ul", { class: "lessons" }, items), status]);
+  }
+
+  function pinLesson(button, status, pin, line) {
+    button.disabled = true;
+    status.removeAttribute("data-kind");
+    var call = pin ? request("POST", "api/lessons/pins/" + pin.id + "/unpin", {})
+      : request("POST", "api/lessons/pins", { text: line });
+    call.then(function (res) {
+      if (res.ok) {
+        status.textContent = pin ? "Unpinned." : "Pinned: " + agentName() + " keeps it from now on.";
+        refresh();
+        return;
+      }
+      ownerFailure(res, {}, function (msg) { status.textContent = msg; status.setAttribute("data-kind", "error"); }, null);
+      button.disabled = false;
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      status.textContent = "Couldn't reach Ember, so the lesson may or may not be " + (pin ? "unpinned" : "pinned") + ".";
+      status.setAttribute("data-kind", "error");
+      button.disabled = false;
+    });
   }
 
   var VERDICTS = {

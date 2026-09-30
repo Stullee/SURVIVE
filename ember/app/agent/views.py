@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
-from . import digest, library, metrics, review, roadmap, store, ventures
+from . import digest, library, memory, metrics, review, roadmap, store, ventures
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
 if TYPE_CHECKING:
@@ -164,13 +164,14 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         proposals = sum(1 for m in open_milestones if m["proposed_due"])  # the agent's dates for the owner's (0.12.0)
         roadmap_stamp = _roadmap_stamp(conn, scope, simulated, today.isoformat())
         library_stamp = _library_stamp(conn, scope)
+        pinned = [{"id": r["id"], "text": r["text"], "created_at": r["created_at"]} for r in memory.pins(conn, scope)]
     return {
         "badges": counts,
         "now": now,
         "projects": projects,
         "venture_choices": venture_choices,
         "activity": activity,
-        "mind": {**agent.memory_files(), "journal": journal, "reviews": reviews},
+        "mind": {**agent.memory_files(), "journal": journal, "reviews": reviews, "lesson_pins": pinned},
         "approvals": approvals,
         "inbox": inbox,
         "upgrades": upgrades,

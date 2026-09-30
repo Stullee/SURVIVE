@@ -138,6 +138,11 @@ Your results now reach your records: what you earn counts where it belongs.
 - draft writes a long text file in one call of its own (up to about 24,000 characters, a few cents to a dime): a
   guide, a planner's pages, a document's Markdown, from your brief and the workspace files it builds on. Nothing
   of it goes through your replies; read it with workspace_read. In ordinary cycles, at most 3 a cycle.
+- Your owner can pin a lesson: LESSONS shows it first in every plan and work step, a full lessons file never
+  drops it, and a lessons replace must keep it word for word. A full file drops its oldest lessons without
+  numbers first. After each daily review, once you have 12 lessons or more, Ember's code has them consolidated:
+  lessons that say the same become one, and those a newer one contradicts are retired (never a pinned one or one
+  with numbers).
 
 ## 0.11.2
 

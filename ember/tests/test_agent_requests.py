@@ -34,10 +34,11 @@ def filler(budget: int) -> str:
 
 def biggest_planner_context() -> str:
     # Every section at its budget: the standing instructions, RECENT RESEARCH and MAIL included, and (0.12.0) the
-    # OBLIGATIONS at their bound (never cut).
+    # OBLIGATIONS at their bound (never cut) and the lessons the owner pinned (on top of LESSONS' budget).
     parts = [f"== {HEADINGS.get(k, k.upper())} ==\n{filler(v)}" for k, v in context.PLANNER_BUDGETS.items()]
     owed = f"== {obligations.HEADING} ==\n{filler(obligations.MAX_BYTES)}"
-    return "\n\n".join([owed, *parts, "== TASK ==\nPlan this wake cycle. Reply with the JSON plan only."])
+    pinned = f"{context.PINS_HEADING}\n{filler(context.PINS_BUDGET)}"
+    return "\n\n".join([owed, *parts, pinned, "== TASK ==\nPlan this wake cycle. Reply with the JSON plan only."])
 
 
 def longest_undone() -> list[str]:

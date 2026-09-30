@@ -953,6 +953,7 @@ def test_chaos_produces_every_kind_of_misbehaviour() -> None:
         card = f"YOUR NUMBERS\n#1 [active] Planner · open 2 days · 3 cycles in the period (3 in all) · take {seed}"
         fake.send(prompts.review_request(SETTINGS, card))
         fake.send(prompts.draft_request(SETTINGS, f"A guide to weekly planning, take {seed}."))  # 0.12.0
+        fake.send(prompts.consolidate_request(SETTINGS, f"1. Ask people first, take {seed}.\n2. Tags matter."))
         notes |= {note for _, _, note in fake.trace}
     assert {f"chaos: {c}" for kinds in CHAOS.values() for c in kinds} <= notes
     inputs = [(name, args, ok) for sim in sims for _, name, args, ok in sim.tool_log]

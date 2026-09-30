@@ -29,7 +29,7 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import etsy, executor, mailstore
 from ..integrations.mail import BODY_MAX, valid_address
-from . import library, roadmap, stages, store, ventures
+from . import library, memory, roadmap, stages, store, ventures
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
@@ -301,6 +301,38 @@ class Owner:
                 self.db, "info", "owner", f"{actor} {'changed' if text else 'cleared'} the standing instructions"
             )
             return Reply(200, {"instructions": store.instructions_json(saved), "changed": True})
+
+        return _reply(run)
+
+    def pin_lesson(self, body: Any, who: str | None, lessons: str) -> Reply:
+        """0.12.0: pin one of the agent's lessons (``lessons``: its lessons file now): it is never dropped, a rewrite
+        of the lessons must keep it, and every plan shows it first."""
+
+        def run() -> Reply:
+            data = _body(body, {"text"})
+            line = _text(data, "text", 2_000, required=True) or ""
+            with self.db.transaction() as conn:
+                try:
+                    pin_id = memory.pin(conn, self.scope, lessons, line, who, self._now())
+                except memory.MemoryError_ as exc:
+                    raise OwnerError("text", str(exc), 409) from None
+            text = memory.lesson_text(line)
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} pinned a lesson: {text}"[:300])
+            return Reply(201, {"id": pin_id, "text": text})
+
+        return _reply(run)
+
+    def unpin_lesson(self, pin_id: int, who: str | None) -> Reply:
+        """0.12.0: unpin a lesson (final: pin it again to keep it)."""
+
+        def run() -> Reply:
+            with self.db.transaction() as conn:
+                try:
+                    text = memory.unpin(conn, self.scope, pin_id, self._now())
+                except memory.MemoryError_ as exc:
+                    raise OwnerError("id", str(exc), 404) from None
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} unpinned a lesson: {text}"[:300])
+            return Reply(200, {"id": pin_id})
 
         return _reply(run)
 

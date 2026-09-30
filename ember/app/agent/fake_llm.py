@@ -142,6 +142,7 @@ CHAOS: dict[str, tuple[str, ...]] = {
     "review": ("prose", "cut_off", "unknown_project"),
     "brainstorm": ("prose", "cut_off"),
     "study": ("prose", "cut_off"),
+    "consolidate": ("prose", "drops_everything"),  # 0.12.0
     "will": ("cut_off", "empty"),
 }
 _OPEN_STATUSES = ("idea", "active", "waiting")
@@ -383,8 +384,8 @@ def thinking_signature(thinking: str) -> str:
 
 
 def request_kind(request: Mapping[str, Any]) -> str:
-    """plan, review, brainstorm, study, workshop, research, draft, reflect, work or will (anything else without tools
-    counts as a will)."""
+    """plan, review, brainstorm, study, consolidate, workshop, research, draft, reflect, work or will (anything else
+    without tools counts as a will)."""
     output_config = request.get("output_config")
     fmt = output_config.get("format") if isinstance(output_config, Mapping) else None
     schema = fmt.get("schema") if isinstance(fmt, Mapping) else None
@@ -397,6 +398,8 @@ def request_kind(request: Mapping[str, Any]) -> str:
         return "brainstorm"
     if isinstance(properties, Mapping) and "learnings" in properties:
         return "study"
+    if isinstance(properties, Mapping) and "keep" in properties:
+        return "consolidate"  # 0.12.0
     system = request.get("system")
     first = system[0] if isinstance(system, list) and system else None
     if isinstance(first, Mapping) and str(first.get("text") or "").startswith(DRAFT_MARKER):
@@ -1208,6 +1211,8 @@ class FakeTransport:
             return self._brainstorm(request, rng, chaos)  # the same
         if kind == "study":
             return self._study(request, chaos)  # the same
+        if kind == "consolidate":
+            return self._consolidate(request, chaos)  # the same
         if kind == "research":
             draft = self._research(request, rng, chaos)
         elif kind == "workshop":
@@ -1343,6 +1348,27 @@ class FakeTransport:
                 [_text(answer[: len(answer) // 2])], "max_tokens", output_tokens=max_tokens, note="chaos: cut_off"
             )
         return _Draft([_text(answer)], note=f"study: {len(learnings[:12])} learnings")
+
+    def _consolidate(self, request: Mapping[str, Any], chaos: str | None) -> _Draft:
+        """The lessons' consolidation (0.12.0): lessons that say the same (the same words) merge into the first,
+        the rest stay; its chaos drops every lesson, pinned ones and those with numbers too."""
+        context = _text_of(request["messages"][-1].get("content"))
+        lessons = [(int(m[1]), m[2]) for m in _NUMBERED.finditer(context)]
+        if chaos == "prose":
+            return _Draft([_text("The lessons look fine to me.")], note="chaos: prose")
+        if chaos == "drops_everything":
+            drop = [{"line": number, "why": "old"} for number, _ in lessons]
+            return _Draft([_text(json.dumps({"keep": [], "drop": drop}))], note="chaos: drops_everything")
+        groups: dict[str, list[int]] = {}
+        texts: dict[str, str] = {}
+        for number, line in lessons:
+            text = _MARKS.sub("", line).strip()
+            key = " ".join(text.split()).casefold()
+            groups.setdefault(key, []).append(number)
+            texts.setdefault(key, text)
+        keep = [{"text": texts[key], "from": numbers} for key, numbers in groups.items()]
+        answer = json.dumps({"keep": keep, "drop": []}, ensure_ascii=False)
+        return _Draft([_text(answer)], note=f"consolidate: {len(lessons)} lessons, {len(keep)} kept")
 
     def _brainstorm(self, request: Mapping[str, Any], rng: random.Random, chaos: str | None) -> _Draft:
         """Six ideas the tree doesn't have yet (from a small pool, then numbered variants), with random scores."""
@@ -2257,6 +2283,9 @@ class FakeTransport:
 
 # --- building blocks ---
 
+
+_NUMBERED = re.compile(r"^(\d+)\. (.+)$", re.MULTILINE)  # the consolidation's lessons (0.12.0)
+_MARKS = re.compile(r" \((?:pinned|has numbers|pinned, has numbers)\)$")
 
 _STAGE_TOOLS = {
     "close": "project_update",

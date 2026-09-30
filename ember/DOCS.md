@@ -207,6 +207,20 @@ claude-sonnet-5). It counts toward the daily cap, not the cycle cap, so the
 cycle it opens can still do its work. If the day's budget can't cover it, it is
 tried at the next cycle.
 
+**Lessons.** The agent's lessons file holds 4,000 bytes. When it is full, a
+new lesson pushes the oldest out: those without numbers first, so a no backed by
+data ("dropshipping ruled out: margins under 5%") lasts. After each daily review,
+once the file holds 12 lessons or more, one more call on the planner model
+(about a cent) **consolidates** it: lessons that say the same become one, and
+those a newer lesson contradicts are retired, each with why. Ember's code checks
+the answer: what it doesn't account for stays, and a pinned lesson or one with
+numbers is never dropped. The System log says what changed, and every version
+of the file is kept.
+
+Under **Mind → Lessons** you can **pin** a lesson (at most 6): the agent never
+drops it, a rewrite of its lessons must keep it word for word, and every plan
+and work step shows it first. **Unpin** lets it go the usual way.
+
 ## Products
 
 Ember doesn't hand you design work: it makes the files itself. The agent writes
