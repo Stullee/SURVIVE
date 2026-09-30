@@ -81,6 +81,8 @@ Your results now reach your records: what you earn counts where it belongs.
   file and name it. ETSY SHOP shows each live listing's photos (p), and a draft's photos count too.
 - ETSY SHOP shows the week's orders less Etsy's fees (the payment processing fee Ember's code reads, and the 6.5%
   transaction fee). Your owner records the fees as an expense of the project whose listing sold.
+- Your daily cap is a limit, not a target: spend on work that can earn or teach you something you can measure (the
+  rules said it was there to be spent).
 
 ## 0.11.2
 

@@ -354,7 +354,7 @@ def test_the_rules_ask_for_action_instead_of_waiting() -> None:
         "Build first, then ask",
         "one concrete action",
         "at most once a day, in one batched message",
-        "Your daily cap is there to be spent on experiments",
+        "Your daily cap is a limit, not a target",  # 0.12.0: it was "there to be spent on experiments"
         "Sleep long only when there is truly nothing useful to do",
         "- money_path: how this goal leads to income",
     ):
