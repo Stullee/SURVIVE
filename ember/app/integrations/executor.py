@@ -168,6 +168,8 @@ def integration(
         "unread": 0,
         "sent_today": 0,
         "daily_limit": settings.email_daily_limit,
+        "suppressed_count": 0,
+        "suppressed": [],  # 0.12.0: the newest addresses Ember never emails
     }
     if mailbox is None or db is None or clock is None or scope is None:
         return info
@@ -175,6 +177,7 @@ def integration(
     with db.connection() as conn:
         info["unread"] = mailstore.unread(conn, scope, 0)[0]
         info["sent_today"] = sent_today(conn, clock, scope)
+        info["suppressed_count"], info["suppressed"] = mailstore.suppressions(conn, scope)
     info.update(
         available=True,
         mode="fake" if mailbox.simulated else "live",

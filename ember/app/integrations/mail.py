@@ -40,7 +40,7 @@ from ..config import Settings
 from ..economy.clock import to_iso
 
 TIMEOUT_SECONDS = 20
-MAX_FETCH = 20  # emails per fetch (the newest)
+MAX_FETCH = 20  # emails per fetch, the oldest new ones first (0.12.0: the newest, and the rest were dropped)
 MAX_MESSAGE_BYTES = 1_000_000  # larger emails are stored with their headers only
 BODY_CHARS = 8_000
 SUBJECT_CHARS = 300
@@ -210,6 +210,9 @@ class IncomingMail:
     body: str
     body_cut: bool
     attachments: list[dict[str, Any]] = field(default_factory=list)
+    # 0.12.0: a newsletter, a mailing list or an automatic reply (by its headers): its "unsubscribe" is about Ember
+    # leaving it, never someone asking Ember to stop writing.
+    bulk: bool = False
 
     def attachments_json(self) -> str:
         return json.dumps(self.attachments, ensure_ascii=False)
@@ -220,7 +223,7 @@ class FetchResult:
     mails: list[IncomingMail]
     last_uid: int  # the highest UID dealt with: the next fetch starts after it
     uidvalidity: int | None
-    skipped: int = 0  # new emails left out because more than the limit had arrived
+    waiting: int = 0  # new emails not fetched yet (beyond the limit, or out of time): the next fetch reads them
 
 
 @dataclass(frozen=True)
@@ -273,7 +276,18 @@ def parse_message(raw: bytes, uid: int, *, headers_only: bool = False, size: int
         body=body,
         body_cut=cut,
         attachments=attachments,
+        bulk=_bulk(msg),
     )
+
+
+def _bulk(msg: Message) -> bool:
+    """Whether an email came from a list or a machine: List-Unsubscribe or List-Id, Precedence bulk, list or junk, or
+    Auto-Submitted other than no."""
+    if _header(msg, "List-Unsubscribe", 10) or _header(msg, "List-Id", 10):
+        return True
+    precedence = (_header(msg, "Precedence", 20) or "").lower()
+    submitted = (_header(msg, "Auto-Submitted", 40) or "no").lower()
+    return precedence in ("bulk", "list", "junk") or not submitted.startswith("no")
 
 
 def _header(msg: Message, name: str, limit: int) -> str | None:
@@ -478,9 +492,8 @@ class LiveMailbox:
         if typ != "OK":
             raise MailError("searching the mailbox failed")
         found = sorted({int(n) for n in (data[0] or b"").split() if n.isdigit() and int(n) > after_uid})
-        wanted = found[-limit:]
-        # Older new emails beyond the limit are skipped for good (a flood must not fill the agent's context).
-        last = max(after_uid, wanted[0] - 1) if wanted else after_uid
+        wanted = found[:limit]  # the oldest first: the rest waits for the next fetch, none is dropped (0.12.0)
+        last = after_uid
         mails: list[IncomingMail] = []
         for uid in wanted:
             if deadline is not None and time.monotonic() > deadline:
@@ -496,7 +509,7 @@ class LiveMailbox:
                 mail = parse_message((_literal(data) or b"")[: MAX_MESSAGE_BYTES + 1], uid)
             mails.append(mail)
             last = uid
-        return FetchResult(mails, last, validity, len(found) - len(wanted))
+        return FetchResult(mails, last, validity, len(found) - len(mails))
 
     def send(self, message: EmailMessage, to: str) -> SendResult:
         check_outgoing(message, to)
@@ -648,9 +661,9 @@ class FakeMailbox:
             after_uid = 0
         wake = self._wake()
         arrived = [m for m in FAKE_INBOX if m.wake <= wake and m.uid > after_uid]
-        wanted = arrived[-limit:]
+        wanted = arrived[:limit]  # the oldest first, like the live mailbox
         mails = [parse_message(m.build(self.address).as_bytes(), m.uid) for m in wanted]
-        last = max([after_uid, *(m.uid for m in arrived)])
+        last = max([after_uid, *(m.uid for m in wanted)])
         return FetchResult(mails, last, self.uidvalidity, len(arrived) - len(wanted))
 
     def send(self, message: EmailMessage, to: str) -> SendResult:

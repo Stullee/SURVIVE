@@ -436,6 +436,15 @@ def set_instructions(request: Request, body: Annotated[Any, Body()] = None) -> J
     return _reply(actions.set_instructions(body, _owner(request)))
 
 
+@router.post("/api/email/suppressions")
+def suppress_email(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.12.0: the owner adds an address Ember never emails."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.suppress_email(body, _owner(request)))
+
+
 @router.post("/api/inbox/{message_id}/remove")
 def remove_message(request: Request, message_id: ItemId) -> JSONResponse:
     actions = _owner_actions(request)

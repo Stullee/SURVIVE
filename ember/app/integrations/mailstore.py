@@ -20,13 +20,16 @@ from ..agent.store import AgentScope as Scope
 from ..db import Database
 from ..economy.clock import Clock, to_iso
 from ..logging_setup import redact
-from .mail import MAX_FETCH, IncomingMail, Mailbox, MailError, one_line
+from .mail import MAX_FETCH, FetchResult, IncomingMail, Mailbox, MailError, one_line
+from .optout import opt_out
 
 log = logging.getLogger(__name__)
 
 FETCH_BUDGET_SECONDS = 30.0
+# 0.12.0: fetches per check while new mail waits (MAX_FETCH each, the oldest first): a backlog is read over a few
+# checks, never dropped (the newest 20 were kept and the rest lost for good).
+FETCH_ROUNDS = 5
 ERROR_CHARS = 300
-STOP_WORDS = frozenset({"stop", "unsubscribe", "abmelden"})
 
 
 def meta_key(mode: str, name: str) -> str:
@@ -37,27 +40,53 @@ def meta_key(mode: str, name: str) -> str:
 class Fetched:
     stored: list[int] = field(default_factory=list)
     suppressed: list[str] = field(default_factory=list)
-    skipped: int = 0
+    waiting: int = 0  # new emails left for the next check
     error: str | None = None
 
 
 def fetch(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, budget: float = FETCH_BUDGET_SECONDS) -> Fetched:
-    """Fetch new mail, store it, apply "stop" replies and record how it went. Never raises."""
+    """Fetch new mail, the oldest first, store it, apply the replies that ask to stop and record how it went. Up to
+    FETCH_ROUNDS fetches while more waits and time is left; what is left waits for the next check. Never raises."""
     result = Fetched()
     now = to_iso(clock.now())
+    deadline = time.monotonic() + budget
     last = _int(db.get_meta(meta_key(scope.mode, "last_uid")))
     validity = _int(db.get_meta(meta_key(scope.mode, "uidvalidity"))) or None
-    try:
-        fetched = mailbox.fetch_new(last, MAX_FETCH, validity, time.monotonic() + budget)
-    except MailError as exc:
-        result.error = redact(str(exc))[:ERROR_CHARS]
-    except Exception as exc:  # noqa: BLE001 - reading mail must never end the cycle
-        log.exception("Fetching mail failed")
-        result.error = redact(f"{type(exc).__name__}: {exc}")[:ERROR_CHARS]
+    for _ in range(FETCH_ROUNDS):
+        try:
+            fetched = mailbox.fetch_new(last, MAX_FETCH, validity, deadline)
+        except MailError as exc:
+            result.error = redact(str(exc))[:ERROR_CHARS]
+        except Exception as exc:  # noqa: BLE001 - reading mail must never end the cycle
+            log.exception("Fetching mail failed")
+            result.error = redact(f"{type(exc).__name__}: {exc}")[:ERROR_CHARS]
+        if result.error is not None:
+            break
+        _store(db, scope, mailbox, fetched, now, result)
+        last, validity = fetched.last_uid, fetched.uidvalidity or None
+        db.set_meta(meta_key(scope.mode, "last_uid"), str(fetched.last_uid))
+        db.set_meta(meta_key(scope.mode, "uidvalidity"), str(fetched.uidvalidity or ""))
+        result.waiting = fetched.waiting
+        if not fetched.waiting or not fetched.mails or time.monotonic() > deadline:
+            break
+    if result.stored:
+        count = len(result.stored)
+        events.record(db, "info", "email", f"{count} new email{'s' if count > 1 else ''} in Ember's mailbox")
+    for _ in result.suppressed:
+        events.record(db, "info", "email", "A sender asked not to get emails; Ember won't write to them again")
     if result.error is not None:
         db.set_meta(meta_key(scope.mode, "last_error"), result.error)
         events.record(db, "warning", "email", f"Checking Ember's mailbox failed: {result.error}")
         return result
+    db.set_meta(meta_key(scope.mode, "last_fetch_at"), now)
+    db.set_meta(meta_key(scope.mode, "last_error"), "")
+    if result.waiting:
+        events.record(db, "info", "email", f"{result.waiting} more new email(s) wait for the next check of the mailbox")
+    return result
+
+
+def _store(db: Database, scope: Scope, mailbox: Mailbox, fetched: FetchResult, now: str, result: Fetched) -> None:
+    """One fetch's emails, each stored once; a sender whose email asks to stop is never written to again."""
     with db.transaction() as conn:
         for mail in fetched.mails:
             email_id = store_incoming(conn, scope, mail, fetched.uidvalidity or 0, now)
@@ -65,38 +94,14 @@ def fetch(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, budget: fl
                 continue
             result.stored.append(email_id)
             own = mail.from_addr.lower() == mailbox.address.lower()  # Ember's own address is never suppressed
-            if _asks_to_stop(mail.body) and mail.from_addr and not own:
-                reason = f'replied "{_first_line(mail.body)}"'
-                if suppress(conn, scope, mail.from_addr, now, reason, email_id):
-                    result.suppressed.append(mail.from_addr)
-    result.skipped = fetched.skipped
-    db.set_meta(meta_key(scope.mode, "last_uid"), str(fetched.last_uid))
-    db.set_meta(meta_key(scope.mode, "uidvalidity"), str(fetched.uidvalidity or ""))
-    db.set_meta(meta_key(scope.mode, "last_fetch_at"), now)
-    db.set_meta(meta_key(scope.mode, "last_error"), "")
-    if result.stored:
-        count = len(result.stored)
-        events.record(db, "info", "email", f"{count} new email{'s' if count > 1 else ''} in Ember's mailbox")
-    if result.skipped:
-        events.record(
-            db, "warning", "email", f"{result.skipped} older new email(s) were skipped: at most {MAX_FETCH} per check"
-        )
-    for _ in result.suppressed:
-        events.record(db, "info", "email", "A sender asked not to get emails; Ember won't write to them again")
-    return result
+            # A newsletter's "unsubscribe" is about Ember leaving it (0.12.0).
+            words = opt_out(mail.subject, mail.body) if mail.from_addr and not own and not mail.bulk else None
+            if words is not None and suppress(conn, scope, mail.from_addr, now, f'replied "{words}"', email_id):
+                result.suppressed.append(mail.from_addr)
 
 
 def _int(value: str | None) -> int:
     return int(value) if value and value.isdigit() else 0
-
-
-def _first_line(body: str) -> str:
-    return next((line.strip() for line in body.splitlines() if line.strip()), "")[:40]
-
-
-def _asks_to_stop(body: str) -> bool:
-    """The first non-empty line is only "stop", "unsubscribe" or "abmelden" (any case, trailing punctuation)."""
-    return _first_line(body).lower().rstrip(".!") in STOP_WORDS
 
 
 def store_incoming(
@@ -190,6 +195,17 @@ def suppress(
         (scope.mode, scope.session, address.lower(), since, reason[:300] or "asked to stop", email_id),
     )
     return cursor.rowcount == 1
+
+
+def suppressions(conn: sqlite3.Connection, scope: Scope, limit: int = 20) -> tuple[int, list[dict[str, str]]]:
+    """How many addresses Ember never emails, and the newest ``limit`` of them (0.12.0: for the owner)."""
+    where, params = scope.where()
+    count = conn.execute(f"SELECT COUNT(*) FROM email_suppressions WHERE {where}", params).fetchone()[0]
+    rows = conn.execute(
+        f"SELECT address, since, reason FROM email_suppressions WHERE {where} ORDER BY since DESC, address LIMIT ?",
+        (*params, limit),
+    ).fetchall()
+    return int(count), [dict(r) for r in rows]
 
 
 def is_suppressed(conn: sqlite3.Connection, scope: Scope, address: str) -> bool:

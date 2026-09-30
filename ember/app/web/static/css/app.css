@@ -815,6 +815,14 @@ body[data-stale="true"] .live { display: none; }
 .etsy-connect { display: grid; gap: 8px; margin-top: 12px; }
 .etsy-step { display: grid; gap: 6px; }
 .etsy-step input[type="url"] { width: 100%; }
+/* 0.12.0: the addresses Ember never emails, and the form to add one */
+.email-never { display: grid; gap: 8px; margin-top: 12px; }
+.email-never ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; overflow-wrap: anywhere; }
+.email-never .field input[type="email"] {
+  width: 100%; min-width: 0; min-height: 38px; padding: 6px 10px;
+  color: var(--text); background: var(--surface);
+  border: 1px solid var(--field-border); border-radius: 8px;
+}
 
 /* ---- Ventures (0.10.0): the venture tree, left to right; a node's size is its weight, its colour its stage. */
 .vt-summary { color: var(--text-2); font-size: 0.9rem; margin: 4px 0 8px; }

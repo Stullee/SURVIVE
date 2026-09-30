@@ -75,7 +75,7 @@ WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's option
 # Offered only with an Etsy shop.
 ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing", "propose_etsy_edit"})
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
-MAIL_TOOLS = frozenset({"email_inbox", "email_read", "propose_email"})
+MAIL_TOOLS = frozenset({"email_inbox", "email_read", "mark_opt_out", "propose_email"})
 # Offered only in venture cycles (0.10.0).
 VENTURE_TOOLS = frozenset({"brainstorm"})
 # Offered only while the owner's library holds documents (0.12.0).
@@ -581,6 +581,13 @@ SPECS: dict[str, Spec] = {
                 "offset": _i("Character offset in the text to start from (default 0).", required=False, minimum=0),
             },
             per_cycle=6,
+        ),
+        Spec(
+            "mark_opt_out",
+            "Never email the sender of an email again: when it asks for that in words Ember's code missed. Free.",
+            {"email_id": _i("The email that asks."), "reason": _s("What it asks, briefly.", 200)},
+            per_cycle=5,
+            reflect=True,
         ),
         Spec(
             "propose_email",
@@ -1974,6 +1981,23 @@ def _email_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     return Outcome(True, f"{lead}\n{wrap(ctx, source, text)}{more}", f"read email #{row['id']}")
 
 
+def _mark_opt_out(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.12.0: an opt-out in words the code's check missed (it knew three words, on the first line only)."""
+    box = _mail(ctx)
+    row = mailstore.email(conn, ctx.scope, args["email_id"])
+    if row is None:
+        raise ToolError(f"there is no email #{args['email_id']}")
+    if row["direction"] != "in":
+        raise ToolError(f"email #{row['id']} is one Ember sent: mark the email in which they asked")
+    sender = (row["from_addr"] or "").strip().lower()
+    if not sender or sender == box.address.lower():
+        raise ToolError(f"email #{row['id']} has no sender Ember could write to")
+    reason = f"asked in email #{row['id']}: {args['reason'].strip()}"
+    if not mailstore.suppress(conn, ctx.scope, sender, ctx.now(), reason, row["id"]):
+        return Outcome(True, f"The sender of email #{row['id']} is already never emailed.", f"#{row['id']}: already")
+    return Outcome(True, f"The sender of email #{row['id']} is never emailed again.", f"#{row['id']}: opted out")
+
+
 def _new_request(ctx: ToolContext, conn: Any, payload: str, action: dict[str, Any], **fields: Any) -> int | str:
     """An approval request that Ember's code or the owner's click carries out; the text of a duplicate instead."""
     action_json = store.canonical(action)
@@ -2306,6 +2330,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "guide": _guide,
     "email_inbox": _email_inbox,
     "email_read": _email_read,
+    "mark_opt_out": _mark_opt_out,
     "propose_email": _propose_email,
     "propose_reddit_post": _propose_reddit_post,
 }

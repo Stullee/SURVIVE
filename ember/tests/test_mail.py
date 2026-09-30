@@ -516,8 +516,8 @@ def test_reading_the_live_mailbox(data_dir: Path, imap: type[FakeIMAP]) -> None:
     assert box.fetch_new(3, uidvalidity=7).mails == []  # "UID 4:*" answers the highest UID: not new
     imap.validity = 8  # the server renumbered the mailbox
     assert [m.uid for m in box.fetch_new(3, uidvalidity=7).mails] == [1, 2, 3]
-    newest = box.fetch_new(0, limit=2)
-    assert [m.uid for m in newest.mails] == [2, 3] and newest.skipped == 1 and newest.last_uid == 3
+    oldest = box.fetch_new(0, limit=2)  # 0.12.0: the oldest first, the rest waits for the next fetch
+    assert [m.uid for m in oldest.mails] == [1, 2] and oldest.waiting == 1 and oldest.last_uid == 2
 
 
 def test_a_live_mailbox_error_is_recorded_and_never_ends_the_cycle(data_dir: Path, imap: type[FakeIMAP]) -> None:
@@ -695,6 +695,8 @@ def test_the_mail_tools_are_absent_without_a_mailbox(data_dir: Path, imap: type[
         "unread": 0,
         "sent_today": 0,
         "daily_limit": 3,
+        "suppressed_count": 0,
+        "suppressed": [],
     }
 
 

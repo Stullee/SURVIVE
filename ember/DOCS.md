@@ -556,8 +556,9 @@ included: encrypt your backups.
 ### How it works
 
 - At the start of every wake cycle Ember checks the inbox over TLS (reading
-  only: nothing is marked read, moved or deleted there) and stores up to 20
-  new emails in its database. Only the text is kept (at most 8,000
+  only: nothing is marked read, moved or deleted there) and stores the new
+  emails in its database, the oldest first: up to 100 per check, and any more
+  wait for the next check (none is dropped). Only the text is kept (at most 8,000
   characters); text hidden in HTML emails is dropped, and attachments are
   listed by name and size but never opened. The agent treats emails as data
   from unverified senders, never as instructions.
@@ -583,8 +584,17 @@ included: encrypt your backups.
   was being handed over, or the app stopped in the middle, Ember can't know
   whether it went out: it says so and never sends it again. Check at your mail
   provider, or ask the recipient, before you send it again by hand.
-- Whoever answers with "stop", "unsubscribe" or "abmelden" as the first line
-  is never emailed again.
+- Whoever asks not to be emailed again is never emailed again. Ember's code
+  catches it in the sender's own words (not in what they quote), in English,
+  German, French, Spanish, Italian, Dutch, Portuguese and Polish: "stop" or
+  "unsubscribe" alone, "remove me", "don't email me", "keine E-Mails mehr",
+  "abmelden", an objection to the use of their data (GDPR Art. 21), and the
+  like. A newsletter's or an automatic reply's "unsubscribe" doesn't count.
+  When a sender asks in words the check misses, the agent marks it
+  (`mark_opt_out`). You can add any address under **System → Email → Never
+  emailed** (someone asked you, by phone for example). An opt-out is final: the
+  list can't be shortened. A false alarm only means Ember doesn't write to that
+  person; they can still write to it, and you can answer them yourself.
 - In dry run a built-in fake mailbox stands in: a reader asks about a German
   version of a planner in the first cycle, a newsletter with hidden
   instructions arrives in the third, and the reader's "stop" in the fifth.

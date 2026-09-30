@@ -27,8 +27,8 @@ from ..db import Database
 from ..economy.clock import Clock, to_iso
 from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
-from ..integrations import etsy, executor
-from ..integrations.mail import BODY_MAX
+from ..integrations import etsy, executor, mailstore
+from ..integrations.mail import BODY_MAX, valid_address
 from . import library, roadmap, store, ventures
 from .store import AgentScope
 
@@ -253,6 +253,26 @@ class Owner:
                 )
             events.record(self.db, "info", "owner", f"{who or 'The owner'} sent a message to the agent")
             return Reply(201, {"id": message_id})
+
+        return _reply(run)
+
+    # --- email (0.12.0) ---
+
+    def suppress_email(self, body: Any, who: str | None) -> Reply:
+        """Ember never emails ``address`` again: someone asked the owner, or asked in words Ember's check missed.
+        Final, like every opt-out (the database refuses changes)."""
+
+        def run() -> Reply:
+            data = _body(body, {"address"})
+            address = str(data.get("address") or "").strip().lower()
+            if not valid_address(address):
+                raise OwnerError("address", "give one plain email address, like name@example.org")
+            actor = who or "The owner"
+            with self.db.transaction() as conn:
+                added = mailstore.suppress(conn, self.scope, address, self._now(), f"{actor} added it", None)
+            if added:
+                events.record(self.db, "info", "owner", f"{actor} added an address Ember never emails")
+            return Reply(201 if added else 200, {"address": address, "added": added})
 
         return _reply(run)
 

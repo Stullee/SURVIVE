@@ -580,7 +580,7 @@
 
     safely("banners", renderBanners);
     section("system", [d.system, d.mode], ["system-facts", "options"], function () { renderSystem(d); });
-    section("email", [d.integrations, minute], ["email-facts"], function () { renderEmail(d); });
+    section("email", [d.integrations, minute], ["email-facts", "email-never"], function () { renderEmail(d); });
     section("etsy", [d.integrations, d.mode, minute], ["etsy-facts", "etsy-listings", "etsy-orders"], function () { renderEtsy(d); });
     section("transitions", [d.transitions], ["transitions"], function () { renderTransitions(arr(d.transitions)); });
     section("events", [d.events], ["events"], function () { renderEvents(arr(d.events)); });
@@ -3182,7 +3182,7 @@
   function renderEmail(d) {
     var e = isObject(d.integrations) && isObject(d.integrations.email) ? d.integrations.email : null;
     $("email-card").hidden = !e;
-    if (!e) { replace($("email-facts"), []); return; }
+    if (!e) { replace($("email-facts"), []); replace($("email-never"), []); return; }
     var reason = e.reason ? String(e.reason) : null;
     if (!reason && e.status === "not_configured") reason = "Not set up: see the Documentation tab, 'Ember's mailbox'.";
     if (!reason && e.status === "disabled") reason = "Off: see the Documentation tab, 'Ember's mailbox', to set it up.";
@@ -3199,6 +3199,54 @@
       h("dt", { text: "Not opened by the agent" }), h("dd", { text: plural(e.unread, "email") }),
       h("dt", { text: "Sent today" }), h("dd", { text: count(e.sent_today) + " (limit: " + count(e.daily_limit) + " a day)" }),
     ]);
+    replace($("email-never"), e.available ? [emailNeverArea(e)] : []);
+  }
+
+  // 0.12.0: the addresses Ember never emails (they asked to stop, the agent marked them, or you added them), and a
+  // form to add one. An opt-out is final: the list can't be shortened.
+  function emailNeverArea(e) {
+    var c = ui.emailNever;
+    if (!c) {
+      c = ui.emailNever = {};
+      var inputId = "email-never-address";
+      c.address = h("input", { type: "email", id: inputId, autocomplete: "off", spellcheck: "false", maxlength: "254", placeholder: "name@example.org" });
+      c.add = h("button", { type: "button", class: "btn", text: "Never email" });
+      c.status = h("p", { class: "form-status small", role: "status" });
+      c.list = h("div");
+      c.add.addEventListener("click", function () {
+        var address = c.address.value.trim();
+        if (!address) { c.status.textContent = "Type the address first."; c.address.focus(); return; }
+        if (!window.confirm("Never let " + agentName() + " email " + address + " again? This can't be undone.")) return;
+        c.add.disabled = true;
+        c.status.textContent = "Saving…";
+        request("POST", "api/email/suppressions", { address: address }).then(function (res) {
+          var data = isObject(res.data) ? res.data : {};
+          if (!res.ok) {
+            c.status.textContent = res.status === 422 && typeof data.error === "string" ? endSentence(sentence(data.error)) : "Not saved (" + errorText(httpError(res)) + ").";
+            return;
+          }
+          c.status.textContent = data.added === false ? "It was already on the list." : "Added: " + agentName() + " never emails it.";
+          c.address.value = "";
+          refresh();
+        }).catch(function (err) {
+          c.status.textContent = "Couldn't reach Ember (" + errorText(err) + "): check the list after the next update.";
+        }).then(function () { c.add.disabled = false; });
+      });
+      c.wrap = h("div", { class: "email-never" },
+        h("h3", { class: "small-head", text: "Never emailed" }), c.list,
+        h("div", { class: "field" }, h("label", { for: inputId, text: "Add an address that asked you, in any way, not to be emailed" }),
+          c.address, h("div", { class: "form-actions" }, c.add)), c.status);
+    }
+    var shown = arr(e.suppressed);
+    var total = num(e.suppressed_count);
+    replace(c.list, shown.length ? [
+      h("ul", { class: "small" }, shown.map(function (s) {
+        return h("li", null, h("span", { class: "link-text", text: asText(s.address) }),
+          h("span", { class: "muted", text: " · " + fmtDate(s.since) + (s.reason ? " · " + asText(s.reason) : "") }));
+      })),
+      total > shown.length ? h("p", { class: "muted small", text: "and " + plural(total - shown.length, "older one") + "." }) : null,
+    ] : [h("p", { class: "muted small", text: "None yet." })]);
+    return c.wrap;
   }
 
   // ---- System -> Etsy (0.8.0): the shop, connecting it, what Ember listed and the orders it brought.

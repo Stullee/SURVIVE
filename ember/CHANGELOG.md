@@ -67,6 +67,10 @@ Your results now reach your records: what you earn counts where it belongs.
   aren't live (expired, sold out, deactivated): they no longer count as live. propose_etsy_edit takes state: renew
   puts one live again for four months (USD 0.20), with other changes or without; deactivate takes a live one off
   the shop (free, on its own). A listing that sold renews itself: Ember's code turns Etsy's renewal on for it.
+- A sender who asks not to be emailed again is caught in their own words in several languages ("remove me",
+  "keine E-Mails mehr", "désinscrire", ...), not only "stop" alone on the first line. When one asks in words the
+  check misses, mark it with mark_opt_out (free, final): Ember never emails them again. No new email is dropped any
+  more: the oldest are read first, and the rest waits for the next check.
 
 ## 0.11.2
 

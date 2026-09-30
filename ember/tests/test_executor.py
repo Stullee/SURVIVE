@@ -447,6 +447,8 @@ EMAIL_KEYS = {
     "unread",
     "sent_today",
     "daily_limit",
+    "suppressed_count",  # 0.12.0: the addresses Ember never emails
+    "suppressed",
 }
 CARRIED_OUT = {"executor", "action", "first_contact", "execution", "reddit_url"}
 
