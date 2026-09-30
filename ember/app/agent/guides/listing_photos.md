@@ -1,7 +1,7 @@
 MAKING LISTING PHOTOS (make_image)
 make_image makes a PNG for a shop listing: up to three of your pages, fanned out like printed sheets, next to a
 big title, a subtitle and a badge. pages names what to show, separated by commas: 'shop/cv.pdf#1' is page 1 of a
-PDF you made ('#1' when left out), 'shop/b.xlsx#2' or 'shop/b.xlsx#Budget' a sheet of an Excel file, and a .png
+PDF you made ('#1' when left out), 'shop/b.xlsx#Budget' (or '#2', the second tab) a sheet of an Excel file, and a .png
 shows one of your pictures. Add a region to zoom in on a detail: 'shop/cv.pdf#1@top' (top, middle, bottom, left,
 right, center, top-left, top-right, bottom-left, bottom-right).
 - layout: photo (the default); text (no pages: the title, and the subtitle's lines split by '|' as a list, e.g.

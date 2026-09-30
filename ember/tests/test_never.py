@@ -145,7 +145,7 @@ def carry(agent: Any, approval_id: int) -> str:
 
 def fits(monkeypatch: pytest.MonkeyPatch, rule: str) -> None:
     """Whatever a request is, the policy engine takes it to fit this rule."""
-    monkeypatch.setattr(policy, "match", lambda conn, scope, row: rule)
+    monkeypatch.setattr(policy, "match", lambda conn, scope, row, read=None: rule)
 
 
 def a_use(conn: sqlite3.Connection, approval_id: int, grant: Any, now: str) -> None:

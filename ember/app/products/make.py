@@ -252,10 +252,10 @@ def image(
     try:
         if layout == "text":
             data = images.text_photo(title.strip(), lines, badge.strip(), background, accent, shape)
-            shows = "text:" + "|".join(lines)
+            shows = "text:" + "|".join([title.strip(), *lines])  # its words: the title too
         elif layout == "poster":
             data = images.poster(title.strip(), lines, background, accent, shape)
-            shows = ""
+            shows = "poster:" + "|".join([title.strip(), *lines])
         else:
             if not pages.strip():
                 raise ProductError("name the pages to show (or use layout text or poster)")
@@ -264,8 +264,8 @@ def image(
             shows = "photo:" + ",".join(sorted(keys))
     except images.ImageError as exc:
         raise ProductError(str(exc)) from None
-    if shows:  # 0.14.0: the QA registry counts another title on the same pages as the same photo
-        data = images.marked(data, shows)
+    # 0.14.0: the QA registry counts another title on the same pages as the same photo
+    data = images.marked(data, shows)
     made = Made()
     _write(jail, made, output, data)
     if layout == "poster":

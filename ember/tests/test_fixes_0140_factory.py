@@ -9,6 +9,7 @@ import io
 import json
 import struct
 import tracemalloc
+import warnings
 import zipfile
 import zlib
 from pathlib import Path
@@ -22,7 +23,7 @@ from app.agent import library, netguard, tools
 from app.agent.sandbox import Jail
 from app.integrations import etsy, qa
 from app.products import checks, images, make, sheets
-from tests.test_etsy import a_listing
+from tests.test_etsy import a_listing, listed
 from tests.test_owner_loop import owner
 from tests.test_product_tools import ctx_for, make_agent
 from tests.test_products import CV, jail, spec
@@ -247,6 +248,48 @@ def test_qa_counts_distinct_photos_and_names_the_copies(tmp_path: Path) -> None:
     assert qa.repeats((photos[0], photos[0])) == ["shop/same0.png repeats shop/same0.png"]
 
 
+def test_text_photos_with_other_words_are_other_photos(tmp_path: Path) -> None:
+    ws = jail(tmp_path)
+    names = []
+    for number, title in enumerate(("Instant download", "Edit in Word", "Printable A4", "Made in Germany", "Support")):
+        make.image(ws, f"shop/t{number}.png", "", title, layout="text")  # a title alone, on the same colours
+        names.append(f"shop/t{number}.png")
+    make.image(ws, "shop/again.png", "", "Instant download", layout="text", accent="#C0392B")  # the same words in red
+    photos = uploads(ws, [*names, "shop/again.png"])
+    looks = images.looks(ws.read_bytes, [(u.path, u.sha256) for u in photos])
+    assert qa.repeats(photos, looks) == ["shop/again.png repeats shop/t0.png"]
+
+
+def test_copies_of_one_photo_are_no_qa_fix_and_leave_the_listing_short(data_dir: Path) -> None:
+    from app.integrations import etsy_publisher
+    from tests.test_policy import a_milestone, change, reject, work_on
+
+    agent, listing_id = listed(data_dir)
+    ws = agent.roots()[0]
+    a_cv(ws)
+    for number, title in enumerate(("Modern CV", "Easy to edit", "Stand out", "Recruiter approved", "A4 + Letter")):
+        make.image(ws, f"shop/same{number}.png", "shop/cv.pdf#1", title)  # the same page under five titles
+        ws.write_bytes(f"shop/copy{number}.png", ws.read_bytes("shop/same0.png"))  # one file, five times
+    make.image(ws, "shop/top.png", "shop/cv.pdf#1@top", "Modern CV")
+    make.image(ws, "shop/bottom.png", "shop/cv.pdf#1@bottom-left", "Modern CV")
+    make.image(ws, "shop/included.png", "", "What's included", "CV in Word|CV in PDF", layout="text")
+    make.image(ws, "shop/features.png", "", "Easy to edit", "Change colours|Free fonts", layout="text")
+    goal = a_milestone(agent)
+    assert owner(agent).set_autonomy(goal, {"rule": "qa_fix", "level": "auto"}, "Stefan").status == 200
+    made = work_on(agent, goal, change(listing_id, photos=", ".join(f"shop/same{n}.png" for n in range(5))))
+    assert made[-1]["status"] == "pending"  # not a QA fix: it waits for the owner, whose card names the repeats
+    reject(agent, made[-1]["id"])
+    made = work_on(agent, goal, change(listing_id, photos=", ".join(f"shop/copy{n}.png" for n in range(5))))
+    assert made[-1]["status"] == "pending"
+    assert owner(agent).decide(made[-1]["id"], {"decision": "approve"}, "Stefan").status == 200
+    assert agent.execute_approved() == [(made[-1]["id"], "done")]
+    with agent.db.connection() as conn:
+        assert etsy_publisher.few_photos(conn, agent.scope()) == [(listing_id, 1)]  # the obligation stays open
+    distinct = "shop/same0.png, shop/top.png, shop/bottom.png, shop/included.png, shop/features.png"
+    made = work_on(agent, goal, change(listing_id, photos=distinct))
+    assert made[-1]["status"] == "approved"  # five distinct photos: a QA fix the owner unlocked
+
+
 def test_the_owners_card_names_repeated_photos(data_dir: Path) -> None:
     from app.agent import views
 
@@ -265,12 +308,24 @@ def test_the_owners_card_names_repeated_photos(data_dir: Path) -> None:
 # --- FIX NOW 22: the workshop's PDF check ----------------------------------------------------------------------
 
 
-def objects_in_a_stream(filter_value: bytes = b"/FlateDecode", line_end: bytes = b"\n", script: bool = True) -> bytes:
-    """A one-page PDF whose catalog and pages (and with ``script``, a JavaScript action it runs when it opens) sit in
-    a compressed object stream, found through a cross-reference stream whose rows are PNG-predicted."""
+def objects_in_a_stream(
+    filter_value: bytes = b"/FlateDecode",
+    line_end: bytes = b"\n",
+    script: bool = True,
+    *,
+    named: bool = True,
+    extra: bytes = b"",
+    keyword: bytes = b">>\nstream",
+    parms: bytes = b"",
+) -> bytes:
+    """A one-page PDF whose catalog and pages (and with ``script``, a JavaScript action it runs when it opens, also
+    ``named`` in the catalog's names) sit in a compressed object stream, found through a cross-reference stream whose
+    rows are PNG-predicted. ``extra`` goes into the object stream's dictionary before its /Filter; with ``parms`` (its
+    /DecodeParms), its content is in PNG 'sub' rows of 8 columns."""
     objects = {
         1: b"<< /Type /Catalog /Pages 2 0 R"
-        + (b" /OpenAction 4 0 R /Names << /JavaScript 5 0 R >>" if script else b"")
+        + (b" /OpenAction 4 0 R" if script else b"")
+        + (b" /Names << /JavaScript 5 0 R >>" if script and named else b"")
         + b" >>",
         2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
@@ -282,15 +337,11 @@ def objects_in_a_stream(filter_value: bytes = b"/FlateDecode", line_end: bytes =
         offsets.append(b"%d %d" % (number, len(body)))
         body += text + b"\n"
     head = b" ".join(offsets) + b"\n"
-    packed = zlib.compress(head + body)
+    packed = zlib.compress(predicted(head + body) if parms else head + body)
     out = b"%PDF-1.5\n%\xe2\xe3\xcf\xd3\n"
     at = {6: len(out)}
-    out += b"6 0 obj\n<< /Type /ObjStm /N 5 /First %d /Length %d /Filter %s >>\nstream" % (
-        len(head),
-        len(packed),
-        filter_value,
-    )
-    out += line_end + packed + b"\nendstream\nendobj\n"
+    out += b"6 0 obj\n<< /Type /ObjStm /N 5 /First %d /Length %d " % (len(head), len(packed))
+    out += extra + b"/Filter " + filter_value + parms + b" " + keyword + line_end + packed + b"\nendstream\nendobj\n"
     at[9] = len(out)
     out += b"9 0 obj\n/FlateDecode\nendobj\n"
     at[10] = len(out)
@@ -298,11 +349,11 @@ def objects_in_a_stream(filter_value: bytes = b"/FlateDecode", line_end: bytes =
     rows += [b"\x02" + struct.pack(">IH", 6, n) for n in range(5)]
     rows += [b"\x01" + struct.pack(">IH", at[6], 0), b"\x00" * 7, b"\x00" * 7]
     rows += [b"\x01" + struct.pack(">IH", at[9], 0), b"\x01" + struct.pack(">IH", at[10], 0)]
-    predicted, previous = b"", bytes(7)
+    up, previous = b"", bytes(7)
     for row in rows:  # PNG "up" rows, as qpdf and others write them
-        predicted += b"\x02" + bytes((a - b) & 255 for a, b in zip(row, previous, strict=True))
+        up += b"\x02" + bytes((a - b) & 255 for a, b in zip(row, previous, strict=True))
         previous = row
-    xref = zlib.compress(predicted)
+    xref = zlib.compress(up)
     out += (
         b"10 0 obj\n<< /Type /XRef /Size 11 /W [1 4 2] /Root 1 0 R /Filter /FlateDecode "
         b"/DecodeParms << /Columns 7 /Predictor 12 >> /Length %d >>\nstream\n" % len(xref)
@@ -357,6 +408,31 @@ SCRIPT = b"<< /S /JavaScript /JS (app.alert(1)) >>"
 def test_javascript_behind_a_predictor_or_a_picture_encoding_is_found(body: bytes) -> None:
     with pytest.raises(checks.Refused, match="active content"):
         checks.check("page.pdf", a_pdf_with(body))
+
+
+@pytest.mark.parametrize("extra", [b"/E /stream ", b"/E (stream) ", b"/E (>> stream) "])
+def test_a_false_stream_keyword_on_the_keywords_line_hides_nothing(extra: bytes) -> None:
+    data = objects_in_a_stream(named=False, extra=extra, keyword=b">> stream")
+    assert scripts_in(data) == 0  # pdfium reads the object stream, and counts no named script to stop it
+    with pytest.raises(checks.Refused, match="active content"):
+        checks.check("guide.pdf", data)
+
+
+@pytest.mark.parametrize(
+    "parms",
+    [
+        b"<< /Predictor 1 /Predictor 11 /Columns 8 >>",  # pdfium reads the last of two
+        b"<< /Predictor 11 /Columns 1 /Columns 8 >>",
+        b"<< /Predictor 11.0 /Columns 8 >>",
+    ],
+)
+def test_a_predictor_named_twice_or_oddly_is_refused(parms: bytes) -> None:
+    data = objects_in_a_stream(named=False, parms=b" /DecodeParms " + parms)
+    assert scripts_in(data) == 0
+    with pytest.raises(checks.Refused, match="decoding parameters in a way Ember can't check"):
+        checks.check("guide.pdf", data)
+    clean = objects_in_a_stream(script=False, parms=b" /DecodeParms << /Predictor 11 /Columns 8 >>")
+    assert scripts_in(clean) == 0 and checks.check("guide.pdf", clean) == clean
 
 
 def test_a_clean_pdf_with_object_streams_is_kept() -> None:
@@ -429,3 +505,21 @@ def zipfile_of(parts: dict[str, bytes]) -> bytes:
         for name, data in parts.items():
             archive.writestr(name, data)
     return out.getvalue()
+
+
+def test_an_office_file_holding_a_part_twice_is_refused() -> None:
+    rels = "word/_rels/document.xml.rels"
+    template = (
+        b'<Relationship Id="rId99" Target="file:///C:/evil.dotm" TargetMode="External" Type="http://schemas.'
+        b'openxmlformats.org/officeDocument/2006/relationships/attachedTemplate"/></Relationships>'
+    )
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(a_docx())) as source, zipfile.ZipFile(out, "w") as copy, warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # zipfile warns of a name it already has
+        for part in source.infolist():
+            data = source.read(part)
+            if part.filename == rels:  # a linked template first, then the clean part under the same name
+                copy.writestr(rels, data.replace(b"</Relationships>", template))
+            copy.writestr(part, data)
+    with pytest.raises(checks.Refused, match="holds a part twice"):
+        checks.check("letter.docx", out.getvalue())

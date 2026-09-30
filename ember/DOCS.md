@@ -806,7 +806,7 @@ no longer shown); a study that failed three times stops until you press
   **Autonomy** box. There you can let Ember's code carry out a few small kinds
   of request for that milestone without your click. Each is off (**Ask me**)
   until you choose otherwise:
-  - QA fixes: photos up to 5 on a live listing;
+  - QA fixes: up to 5 distinct photos (no copies) on a live listing;
   - price changes within 15% on a live listing;
   - new listings in a backed leg, once you approved 5 of its listings
     unchanged;

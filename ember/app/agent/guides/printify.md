@@ -12,7 +12,8 @@ FINDING A PRODUCT (printify_catalog, free):
 A PRODUCT NEEDS:
 1. a picture of yours (.png or .jpg, at most {MAX_MP} MP), as big as the print area allows: below {SHARP_DPI} dpi it
    prints blurry (the QA check says so), and its shape should match the print area's. make_image with layout poster
-   draws a simple typographic poster for free (shape pin is 2:3).
+   draws a simple typographic poster for free: shape pin (2:3) fits 24x36 in and A sizes (A3 is 1:1.41); portrait
+   (4:5) fits 16x20 in.
 2. variants of one print area's shape (posters of 12x18 and 24x36 in are both 2:3), with their prices in the shop's
    currency: 'variant_id: price, ...' (at most {MAX_VARIANTS}).
 3. the listing's title, description (what it is, sizes, material, made on order) and tags, as for any listing (Etsy's

@@ -72,8 +72,10 @@ ACTIVE_PDF = frozenset(
 _PDF_NAME = re.compile(rb"/([^\s/<>\[\]()%{}]{1,127})")
 _REGULAR = rb"[^\x00\t\n\x0c\r /<>\[\]()%{}]"  # a character of a PDF word (not white space or a delimiter)
 # A stream's data starts after the line its keyword is on (0.12.0: not the "stream" in "endstream"; 0.14.0: that line
-# may end in CR, LF or both, as pdfium reads it: a lone CR hid a stream).
-_PDF_STREAM = re.compile(rb"(?<!" + _REGULAR + rb")stream(?!" + _REGULAR + rb")[^\r\n]*(?:\r\n|\r|\n)")
+# may end in CR, LF or both, as pdfium reads it: a lone CR hid a stream). The keyword follows its dictionary's ">>", as
+# pdfium reads it, and only the keyword is matched: a false "stream" before it on its line (/stream) hid it.
+_PDF_STREAM = re.compile(rb">>(?:[\x00\t\n\x0c\r ]|%[^\r\n]*+)*+(stream)(?!" + _REGULAR + rb")")
+_LINE_END = re.compile(rb"[^\r\n]*(?:\r\n|\r|\n)")
 _ESCAPE = re.compile(rb"#([0-9A-Fa-f]{2})")
 # 0.12.0: the encodings a PDF stream may use. Ember decodes these to search what they hold ...
 _DECODED = {
@@ -197,15 +199,16 @@ def _pdf(data: bytes) -> bytes:
     ends: list[int] = []  # where the streams' data ended, in order
     predictable = [MAX_PREDICTED_BYTES]
     for match in _PDF_STREAM.finditer(data):
-        end = data.find(b"endstream", match.end())
+        line = _LINE_END.match(data, match.end())
+        end = data.find(b"endstream", line.end()) if line else -1
         if end < 0:
             continue  # no stream at all: pdfium reads none without an end either
         # 0.14.0: the stream's dictionary is somewhere after the last stream that ended before it. The last "N G obj"
         # before the keyword could be a false one, in a string of the dictionary itself, which hid its /Filter.
-        at = bisect.bisect_right(ends, match.start()) - 1
-        head = data[ends[at] if at >= 0 else 0 : match.start()]
+        at = bisect.bisect_right(ends, match.start(1)) - 1
+        head = data[ends[at] if at >= 0 else 0 : match.start(1)]
         bisect.insort(ends, end)
-        chunk = _decoded(head, data[match.end() : end], MAX_UNPACKED_BYTES - unpacked, predictable)
+        chunk = _decoded(head, data[line.end() : end], MAX_UNPACKED_BYTES - unpacked, predictable)
         if chunk is None:
             continue  # a picture's own encoding, or no encoding (its raw bytes were searched already)
         unpacked += len(chunk)
@@ -325,8 +328,12 @@ def _unpredicted(data: bytes, parms: bytes, predictable: list[int]) -> bytes:
     ``predictable[0]`` bytes (Python undoes about a MB a second)."""
 
     def number(key: bytes, default: int) -> int:
-        match = re.search(rb"/" + key + _KEY_END + _WS + rb"(\d+)", parms)
-        return int(match.group(1)) if match else default
+        """A whole number, named once: pdfium reads the last of two, and 1.0 or +11 as numbers too."""
+        keys = list(re.finditer(rb"/" + key + _KEY_END + _WS, parms))
+        value = re.compile(rb"\d+" + _KEY_END).match(parms, keys[0].end()) if keys else None
+        if keys and (len(keys) > 1 or value is None):
+            raise Refused("the PDF names a stream's decoding parameters in a way Ember can't check")
+        return int(value.group(0)) if value else default
 
     predictor = number(b"Predictor", 1)
     if predictor < 2 or predictor in range(3, 10):
@@ -413,11 +420,11 @@ def _web_link(value: bytes) -> bool:
 
 
 def unzipped(data: bytes, what: str, max_bytes: int = MAX_UNPACKED_BYTES) -> dict[str, bytes]:
-    """0.14.0: the parts of a zip (an Office file), by name. Before anything is unpacked: at most MAX_PARTS parts,
-    ``max_bytes`` in all by the sizes they declare, none far larger than it is packed (a zip bomb), only stored or
-    deflated. Each part is then unpacked a piece at a time, never past the size it declares: a reader that unpacks a
-    part whole (python-docx, openpyxl) took whatever a lying size let it (a 229 KB .docx took 421 MB), so give them
-    ``stored`` of these. Refuses, naming ``what``, whatever doesn't hold."""
+    """0.14.0: the parts of a zip (an Office file), by name. Before anything is unpacked: at most MAX_PARTS parts, each
+    named once, ``max_bytes`` in all by the sizes they declare, none far larger than it is packed (a zip bomb), only
+    stored or deflated. Each part is then unpacked a piece at a time, never past the size it declares: a reader that
+    unpacks a part whole (python-docx, openpyxl) took whatever a lying size let it (a 229 KB .docx took 421 MB), so
+    give them ``stored`` of these. Refuses, naming ``what``, whatever doesn't hold."""
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except (zipfile.BadZipFile, ValueError, EOFError):
@@ -426,6 +433,8 @@ def unzipped(data: bytes, what: str, max_bytes: int = MAX_UNPACKED_BYTES) -> dic
         parts = archive.infolist()
         if len(parts) > MAX_PARTS:
             raise Refused(f"{what} has too many parts")
+        if len({p.filename.lower() for p in parts}) < len(parts):  # a reader may take either copy of a part
+            raise Refused(f"{what} isn't a valid Office file: it holds a part twice")
         if sum(p.file_size for p in parts) > max_bytes:
             raise Refused(f"{what} unpacks to too much data")
         for part in parts:

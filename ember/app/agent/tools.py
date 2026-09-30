@@ -3166,7 +3166,7 @@ def _new_request(ctx: ToolContext, conn: Any, payload: str, action: dict[str, An
     made = store.insert_approval(
         conn, ctx.scope, ctx.cycle_id, ctx.now(), payload=payload, action=action_json, **fields
     )
-    ctx.state.policy_note = policy.apply(conn, ctx.scope, made, ctx.clock)  # 0.13.0: the owner's unlocks
+    ctx.state.policy_note = policy.apply(conn, ctx.scope, made, ctx.clock, ctx.workspace.read_bytes)  # 0.13.0: unlocks
     return made
 
 

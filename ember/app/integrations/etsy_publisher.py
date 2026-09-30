@@ -958,8 +958,9 @@ def few_photos(conn: sqlite3.Connection, scope: AgentScope) -> list[tuple[int, i
         if etsy_state(r) != etsy.LIVE_STATE:
             continue
         listing = recorded_listing(conn, scope, r)
-        if listing is not None and len(listing.photos) < qa.MIN_PHOTOS:
-            found.append((int(r["listing_id"]), len(listing.photos)))
+        count = qa.distinct(listing.photos) if listing is not None else qa.MIN_PHOTOS  # 0.14.0: a copied file once
+        if count < qa.MIN_PHOTOS:
+            found.append((int(r["listing_id"]), count))
     return found
 
 
