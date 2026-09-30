@@ -57,7 +57,8 @@ Scenarios (the ``scenario`` argument; the app takes it from ``EMBER_FAKE_SCENARI
 
 In a venture cycle (0.10.0) it plans venture work: a brainstorm while the tree has fewer than 8 ideas (the brainstorm
 call answers with six ideas and first-guess scores), research on the venture being researched or the heaviest idea,
-and saving what it learned to that venture with new scores. The critic of a proposed venture's case (0.13.0) doubts its
+and saving what it learned to that venture with new scores. It takes the decision desk's first READY item (0.13.0),
+aiming the cycle at its venture. The critic of a proposed venture's case (0.13.0) doubts its
 demand: it halves the agent's sales, puts the first sale a month later and would test it first.
 
 It keeps a roadmap (0.11.0): when the planner's ROADMAP says it is empty, it lays one out (a goal three months ahead,
@@ -691,6 +692,8 @@ PROMOTE_STEP = "Ask for this workshop script to be built into Ember:"
 # Venture cycles (0.10.0): the planner's VENTURES lines, the brief's focus venture, a brainstorm's tree.
 VENTURE_TASK = "Plan this venture cycle"
 VENTURE_SECTION = "VENTURES"
+READY_SECTION = "READY"  # 0.13.0: the decision desk's ranked items
+_READY_ITEM = re.compile(r"^\d+\. ((build|appraise|answer|triage|brainstorm)(?: #(\d+))?): ", re.MULTILINE)
 BRAINSTORM_STEP = "Brainstorm new ventures for my tree"
 BRAINSTORM_BELOW = 8  # the fake brainstorms while its tree has fewer ideas than this
 RESEARCH_VENTURE_STEP = "Research venture #{id}: {title}"
@@ -1555,9 +1558,15 @@ class FakeTransport:
         ]
         ideas = [v for v in tree if v[1] == "idea"]
         focus = next((v for v in tree if v[1] == "researching"), ideas[0] if ideas else None)
+        # 0.13.0: it takes the decision desk's first READY item (its venture is the focus)
+        ready = [(m[1], m[2], m[3]) for m in _READY_ITEM.finditer(section(context, READY_SECTION) or "")]
+        top = ready[0] if ready else None
+        if top is not None and top[2]:
+            vid = int(top[2])
+            focus = next((v for v in tree if v[0] == vid), (vid, top[1], f"venture #{vid}"))
         ahead, milestone = roadmap_plan(context) if state != "critical" else ([], None)
         steps = [*answer, *ahead]
-        if len(ideas) < BRAINSTORM_BELOW and state != "critical":
+        if (len(ideas) < BRAINSTORM_BELOW or (top is not None and top[1] == "brainstorm")) and state != "critical":
             steps.append(BRAINSTORM_STEP)
         if focus is not None:
             steps.append(RESEARCH_VENTURE_STEP.format(id=focus[0], title=focus[2])[:200])
@@ -1578,6 +1587,7 @@ class FakeTransport:
             "focus_milestone_id": milestone,
             "steps": steps,
             "sleep_minutes": rng.choice([60, 120, 180]),
+            "ready": top[0] if top else "none: READY lists nothing to decide now",
         }
 
     # work

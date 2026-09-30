@@ -59,11 +59,13 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
     "venture": [
         ("VENTURE CYCLE This cycle belongs to your ventures", GUIDANCE, "what a venture cycle is for, and a no"),
         ("- Work on ventures only", POINTER, "the venture cycle's tools are code's; the planner plans with them"),
-        ("- Grow the tree", GUIDANCE, "when and where to brainstorm"),
+        ("- READY lists your ventures' next decisions", POINTER, "Ember's code ranks them and checks the pick"),
+        ("- A brainstorm", GUIDANCE, "where to brainstorm (READY says when)"),
         ("- STATUS says how many research calls", POINTER, "Ember's code prices them and refuses the rest"),
-        ("- Research the heaviest ideas first", GUIDANCE, "what to research, and saving it"),
+        ("- One venture a cycle", GUIDANCE, "what research is for, and saving it"),
         ("- Decide every venture that isn't backed", POINTER, "Ember's code refuses research past the budget"),
         ("- Your owner's ideas and wishes come first", GUIDANCE, "whose ideas first"),
+        ("- ready:", SCHEMA, "the venture plan's field (0.13.0)"),
     ],
     "reflect": [
         ("REFLECT PHASE.", PROTOCOL, "the marker"),
@@ -142,6 +144,8 @@ ENFORCED: list[tuple[str, str]] = [
         "what doesn't fit waits for the next venture cycle",
         "test_ventures::test_a_venture_cycle_is_told_how_much_research_it_can_pay_for",
     ),
+    ("with fewer than 5 ideas waiting", "test_desk::test_ready_ranks_the_ventures_next_decisions"),
+    ("Research the heaviest ideas first", "test_desk::test_ready_ranks_the_ventures_next_decisions"),
 ]
 
 

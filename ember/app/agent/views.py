@@ -5,14 +5,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from ..economy import burn
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
 from . import (
     critic,
+    desk,
     digest,
     evidence,
     knockouts,
@@ -433,8 +435,10 @@ def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated
         f" WHERE {where}",
         params,
     ).fetchone()
+    picked = conn.execute("SELECT COALESCE(MAX(id), 0) FROM desk_picks").fetchone()  # 0.13.0
     return (
         f"{int(tree[0])}|{tree[1]}|{int(cycle[0])}|{int(booked[0])}|{int(claims[0])}|{int(numbers[0])}|{int(judged[0])}"
+        f"|{int(picked[0])}"
     )
 
 
@@ -467,12 +471,25 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         cases = {v["id"]: ventures.latest_case(conn, v["id"]) for v in rows if v["cases"]}  # 0.13.0
         judged = {vid: (critic.latest(conn, vid), critic.failures(conn, vid)) for vid in cases}  # 0.13.0
         # 0.13.0: what rules out a venture with a case that isn't backed yet (the owner lifts or restores each)
-        net_days = agent.economy.life.evaluate().runway.net_days
+        status = agent.economy.life.evaluate()
+        net_days = status.runway.net_days
         knocked = {
             v["id"]: knockouts.check(conn, v, cash_eur=agent.settings.venture_cash_eur, net_days=net_days)
             for v in rows
             if v["cases"] and v["stage"] in ventures.EXPLORING
         }
+        # 0.13.0: the decision desk: READY as a venture cycle would get it now, and what the last venture plans took
+        mode = burn.peek(agent.db, status).mode
+        ready_now = desk.ready(
+            conn,
+            scope,
+            mode=mode,
+            today=agent.clock.today(),
+            cash_eur=agent.settings.venture_cash_eur,
+            net_days=net_days,
+        )
+        picks = desk.recent(conn, scope, 8)
+        week = desk.decided(conn, scope, to_iso(agent.clock.now() - timedelta(days=7)))
     items = []
     for v in rows:
         m = paid.get(v["id"], ventures.Money())
@@ -555,6 +572,22 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         "case": [{"name": name, "label": label} for name, label, _ in ventures.CASE],
         "limits": {"title": ventures.LIMITS["title"], "pitch": ventures.LIMITS["pitch"], "comment": 1_000},
         "items": items,
+        "desk": {  # 0.13.0
+            "mode": mode,
+            "ready": [i.to_json() for i in ready_now],
+            "picks": [
+                {
+                    "cycle_id": p["cycle_id"],
+                    "created_at": p["created_at"],
+                    "pick": p["pick"],
+                    "venture_id": p["venture_id"],
+                    "why_not": p["why_not"],
+                    "shown": len(json.loads(p["items"])),
+                }
+                for p in picks
+            ],
+            "decided_week": week,
+        },
         "stamp": stamp,
     }
 

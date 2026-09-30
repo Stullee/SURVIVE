@@ -60,6 +60,7 @@ PLANNER_BUDGETS = {
     "review": 1_400,
     "etsy": 1_600,
     "ventures": 2_600,
+    "ready": 1_300,  # 0.13.0: a venture cycle's READY list (desk.MAX_ITEMS items)
     "roadmap": 1_800,  # 0.11.0 (and never less than ROADMAP_FLOOR, whatever the scale: 0.12.0)
     "library": 1_200,  # 0.12.0: the owner's library, when it holds documents
 }
@@ -204,6 +205,7 @@ class Snapshot:
     library: library.Shelf | None = None  # the owner's library (0.12.0): None while it is empty
     decision_wakes: bool = False  # the owner's decisions wake the agent (0.12.0, the wake_on_decision option)
     burn: str = ""  # 0.12.0: the burn mode Ember's code set from the net runway (burn.Burn.text)
+    ready: str = ""  # 0.13.0: a venture cycle's READY list, ranked by Ember's code (desk.text)
 
 
 def snapshot(
@@ -228,6 +230,7 @@ def snapshot(
     shelf: library.Shelf | None = None,
     decision_wakes: bool = False,
     burn: str = "",
+    ready: str = "",
 ) -> Snapshot:
     """What the planner, the brief and the will see; ``today`` (the owner's local date) finds the day's review and
     the day's spending on ventures."""
@@ -296,6 +299,7 @@ def snapshot(
         library=shelf,
         decision_wakes=decision_wakes,
         burn=burn,
+        ready=ready,
     )
 
 
@@ -668,6 +672,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *([("TODAY'S REVIEW", cut(s.review, b["review"]))] if s.review else []),
         ("ROADMAP", cut(roadmap_text(s), max(b["roadmap"], ROADMAP_FLOOR))),
         ("OPEN PROJECTS", cut(project_lines(s), b["projects"])),
+        *([("READY", cut(s.ready, b["ready"]))] if s.venture and s.ready else []),  # 0.13.0: the decision desk
         ("VENTURES", cut(ventures.planner_lines(s.ventures, s.venture_money, s.venture), b["ventures"])),
         ("WAITING FOR YOUR OWNER", cut(pending, b["pending"])),
         *([("MAIL", cut(mail_text(s), b["mail"]))] if s.mail is not None else []),

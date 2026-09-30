@@ -48,8 +48,9 @@ class CallProfile:
 # The largest requests the agent builds (measured in tests/test_agent_requests.py, which keeps them in step):
 # the planning call that opens a wake cycle (a venture cycle's, with its rules and the VENTURES section: 0.10.0, and
 # the ROADMAP: 0.11.0; the owner's LIBRARY, the memory headings, the last cycles' digests, the OBLIGATIONS and the
-# lessons the owner pinned, and the burn mode in STATUS: 0.12.0), and the last will. The agent never sends a bigger one.
-PLANNER_OPENING = CallProfile(input_tokens=22_200, max_tokens=1_200)
+# lessons the owner pinned, and the burn mode in STATUS: 0.12.0; the decision desk's READY: 0.13.0), and the last will.
+# The agent never sends a bigger one.
+PLANNER_OPENING = CallProfile(input_tokens=23_000, max_tokens=1_200)
 LAST_WILL = CallProfile(input_tokens=6_400, max_tokens=1_000)
 # The first work step with the largest brief, and the reflection after it (with the room the loop keeps for one
 # step's growth), measured the same way: a wake cycle is only worth starting if both fit after its plan. Measured

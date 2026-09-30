@@ -374,10 +374,12 @@ spending, so ventures get it whatever else is going on. It comes out of the
 same daily cap, so it doesn't raise what Ember spends; raise the daily cap if
 you want more research. In a venture cycle the agent:
 
+- takes one of the **decision desk**'s items (0.13.0, below), or says why it
+  takes none;
 - grows the tree with a **brainstorm**: a separate call on the planner model
   that finds six new ideas that fit you and the agent (about $0.05–0.15 with
   claude-opus-5-5), branching from a promising venture or into new ground;
-- researches the heaviest idea (up to 8 web searches instead of 3), keeps what
+- researches one venture (up to 8 web searches instead of 3), keeps what
   it learns in the venture's knowledge file (`ventures/<number>-<name>.md` in
   its workspace, which the card opens; a full one continues in
   `…-2.md`, `…-3.md`) and scores it again. In a venture cycle every research
@@ -390,6 +392,35 @@ you want more research. In a venture cycle the agent:
   research for it, and the agent brings you a business case or parks it with
   the reason. The card shows what is left. **Research next** (**more**,
   **again**) gives a venture a new budget: only you can.
+
+**Decision desk.** Ember's code ranks what the ventures need decided next
+(0.13.0), and each venture cycle's plan gets it as **READY**: at most five
+items, the most pressing first:
+
+1. **build**: a venture you backed that has no open project yet: set up its
+   first test;
+2. your wishes: a venture you asked to have researched next, an idea you added;
+3. ventures close to being parked by their stage's rule (within 7 days, or
+   with at most a quarter of their research budget left);
+4. **answer**: a proposed venture the critic says to test or park: answer its
+   flaw with evidence or new numbers, or park it;
+5. **appraise**: the other ventures being researched, with what each needs
+   next (research, evidence, numbers, a knock-out to fix, then propose or
+   park);
+6. **triage**: ideas to research or park, while fewer than 8 ventures are
+   worked on;
+7. **brainstorm**: while fewer than 5 ideas wait and fewer than 5 ventures
+   have their numbers.
+
+Within each, the highest expected net comes first (the critic's where it is
+lower), then the heaviest. The plan takes one item or says why it takes none.
+Ember's code checks the key and aims the cycle at the item's venture. It keeps
+each pick with the list it came from, and the work steps see it in their focus.
+In the focus burn mode only the build items are offered. The **Decision desk**
+box on the Ventures tab shows the list as it stands, what the last venture
+plans took (or why none), and how many ventures were decided in the last 7
+days (proposed, parked or killed; the aim is 2 a week). The desk works within
+your **Share for ventures**; it has no cap of its own.
 
 A venture cycle only researches and decides: its work steps don't carry the
 tools for making files, the workshop, the Etsy shop, email, Reddit or laying out

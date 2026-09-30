@@ -56,6 +56,7 @@ from ..version import app_version
 from . import (
     context,
     critic,
+    desk,
     digest,
     econ,
     evidence,
@@ -148,6 +149,7 @@ class Plan:
     money_path: str = ""  # how the goal leads to income (or what a learning experiment would show)
     focus_venture_id: int | None = None  # 0.10.0
     focus_milestone_id: int | None = None  # 0.11.0
+    ready: str = ""  # 0.13.0: a venture plan's READY item (its key), or "none: " and why
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -159,6 +161,7 @@ class Plan:
             "focus_milestone_id": self.focus_milestone_id,
             "steps": self.steps,
             "sleep_minutes": self.sleep_minutes,
+            **({"ready": self.ready} if self.ready else {}),
         }
 
 
@@ -204,6 +207,7 @@ class CycleRunner:
         self.etsy_on = False  # the Etsy tools and the ETSY SHOP section: set once the cycle found a shop
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
+        self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
 
     # --- the cycle ---
 
@@ -414,6 +418,7 @@ class CycleRunner:
         status = self.economy.life.evaluate()
         scope = self.economy.life.scope()
         self.net_runway_days = status.runway.net_days  # 0.13.0
+        mode = burn.peek(self.db, status)
         self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
         self._keep_stages()
         metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
@@ -422,6 +427,19 @@ class CycleRunner:
         local = self.clock.now().astimezone(self.clock.tz).strftime("%A %Y-%m-%d %H:%M %Z")
         with self.db.connection() as conn:
             fresh = news.collect(conn, self.db, self.scope, app_version())
+            # 0.13.0: the decision desk: a venture plan takes one of READY's items, or says why none
+            self.ready_items = (
+                desk.ready(
+                    conn,
+                    self.scope,
+                    mode=mode.mode,
+                    today=self.clock.today(),
+                    cash_eur=self.settings.venture_cash_eur,
+                    net_days=status.runway.net_days,
+                )
+                if venture
+                else []
+            )
             shop = ""
             if self.etsy_on and self.etsy is not None:
                 name = self.etsy.shop_name() or "your shop"
@@ -452,7 +470,8 @@ class CycleRunner:
                 venture_share=self.settings.venture_share,
                 shelf=library.shelf(conn, self.scope),
                 decision_wakes=self.settings.wake_on_decision,
-                burn=_burn_line(burn.peek(self.db, status)),
+                burn=_burn_line(mode),
+                ready=desk.text(self.ready_items),
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any], venture_id: int | None = None) -> CallResult:
@@ -515,6 +534,7 @@ class CycleRunner:
                 library.mark_seen(conn, cycle_id, shown)  # the documents this plan listed as newly studied
         if planned.changelog:
             news.mark_changelog_seen(self.db, self.scope, snap.news)
+        taken = self._take_ready(cycle_id, plan) if ctx.venture else None  # 0.13.0
         focus = None
         venture_focus = milestone_focus = ""
         with self.db.connection() as conn:
@@ -528,6 +548,8 @@ class CycleRunner:
                     plan.focus_venture_id = None
                 else:
                     venture_focus = self._venture_focus(conn, venture, cycle_id)
+                    if taken is not None and taken.venture_id == plan.focus_venture_id:
+                        venture_focus = f"Decision desk: you took {taken.key}: {taken.text}\n{venture_focus}"
             if plan.focus_milestone_id is not None:
                 milestone = roadmap.get(conn, self.scope, plan.focus_milestone_id)
                 if milestone is None or milestone["status"] != "open":
@@ -598,6 +620,18 @@ class CycleRunner:
         if ctx.state.sleep_minutes:  # set_sleep, the last call winning (the reflection's after the act phase's)
             return CycleEnd(status, note, sleep_minutes=ctx.state.sleep_minutes, sleep_reason=ctx.state.sleep_reason)
         return CycleEnd(status, note, sleep_minutes=plan.sleep_minutes)
+
+    def _take_ready(self, cycle_id: int, plan: Plan) -> desk.Item | None:
+        """0.13.0: the READY item the venture plan took (its venture becomes the cycle's focus), kept with the list it
+        came from, or why it took none."""
+        if not self.ready_items:
+            return None
+        taken, why = desk.choose(self.ready_items, plan.ready)
+        if taken is not None and taken.venture_id is not None:
+            plan.focus_venture_id = taken.venture_id
+        with self.db.transaction() as conn:
+            desk.record(conn, cycle_id, self.ready_items, taken, why, to_iso(self.clock.now()))
+        return taken
 
     def _keep_money_goal(self, books_scope: Any, runway_days: float | None) -> None:
         """0.12.0: the roadmap is never empty: Ember's code settles its money goal from the books and sets the next
@@ -944,6 +978,7 @@ class CycleRunner:
         venture = data.get("focus_venture_id")
         milestone = data.get("focus_milestone_id")
         sleep = data.get("sleep_minutes")
+        ready = " ".join(str(data.get("ready") or "").split())[:300]  # 0.13.0: a venture plan's
         return Plan(
             assessment=str(data.get("assessment") or "")[: prompts.PLAN_CHARS["assessment"]],
             goal=str(data.get("goal") or "")[: prompts.PLAN_CHARS["goal"]],
@@ -953,6 +988,7 @@ class CycleRunner:
             focus_milestone_id=milestone if isinstance(milestone, int) and not isinstance(milestone, bool) else None,
             steps=steps,
             sleep_minutes=self._clamp_sleep(sleep) if isinstance(sleep, int) and not isinstance(sleep, bool) else None,
+            ready=ready,
         )
 
     def _clamp_sleep(self, minutes: int) -> int:

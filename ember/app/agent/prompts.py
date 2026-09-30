@@ -138,18 +138,20 @@ does the research say, and what is the smallest honest test? A no backed by data
 test, is a result: park the venture with them.
 - Work on ventures only: a venture cycle has no tools for making files, the shop, email or Reddit (products and
   listings belong to ordinary cycles).
-- Grow the tree: with fewer than 5 ideas waiting, or ideas that all look alike, plan brainstorm, branching from a
-  promising venture or into new ground (services, websites, matchmaking, tools, content, marketing channels, physical
-  products). Don't limit ideas to your tools today: abilities can be added, and your owner can set things up.
+- READY lists your ventures' next decisions, ranked by Ember's code (your owner's word, deadlines, then the expected
+  net, the critic's where it is lower): take one, and the cycle is aimed at its venture.
+- A brainstorm (READY's, or when the ideas all look alike) branches from a promising venture or into new ground
+  (services, websites, matchmaking, tools, content, marketing channels, physical products).
+  Don't limit ideas to your tools today: abilities can be added, and your owner can set things up.
 - STATUS says how many research calls and brainstorms this cycle can pay for: plan no more, a brainstorm first.
-- Research the heaviest ideas first (weight), one venture a cycle (focus_venture_id): answer its next question with the
-  research calls this cycle can pay for, save its numbers (evidence) and what else you learn (venture_update learned),
-  and rescore it from the evidence.
+- One venture a cycle: answer its next question with the research calls this cycle can pay for, save its numbers
+  (evidence) and what else you learn (venture_update learned), and rescore it from the evidence.
 - Decide every venture that isn't backed within its research budget (${ventures.RESEARCH_BUDGET_USD:.2f} of research
   calls; FOCUS and VENTURES say what is left, and Ember's code refuses research past it): its business case (stage
   proposed), or parked with why.
   For a backed venture (building), plan its first test: projects, requests to your owner, upgrade requests.
-- Your owner's ideas and wishes come first: an idea they added, a venture they want researched next, their comments."""
+- Your owner's ideas and wishes come first: an idea they added, a venture they want researched next, their comments.
+- ready: the READY item you take (its key, like "appraise #3"), or "none: " and why you take none."""
 
 # The reflection is told why the work steps ended (0.9.0: a reflection that wasn't told kept trying to make files,
 # and its refused calls took the place of the journal). {ended} is filled in by reflect_prompt.
@@ -383,6 +385,13 @@ PLAN_SCHEMA: dict[str, Any] = {
     },
 }
 
+# 0.13.0: a venture cycle's plan also says which READY item it takes (the decision desk, agent/desk.py).
+VENTURE_PLAN_SCHEMA: dict[str, Any] = {
+    **PLAN_SCHEMA,
+    "required": [*PLAN_SCHEMA["required"], "ready"],
+    "properties": {**PLAN_SCHEMA["properties"], "ready": {"type": "string"}},
+}
+
 SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 1}
 CODE_TOOL = {"type": "code_execution_20250825", "name": "code_execution"}  # Bash and file operations
 # The library's study (0.12.0): the worker's model reads the owner's document once, a few parts at a time, and keeps
@@ -552,7 +561,7 @@ def plan_request(settings: Settings, context: str, venture: bool = False) -> dic
         "model": model,
         **_thinking(model, PLAN_MAX_TOKENS),
         "system": [_text(constitution(settings)), _text(knowledge()), *rules],
-        "output_config": {"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
+        "output_config": {"format": {"type": "json_schema", "schema": VENTURE_PLAN_SCHEMA if venture else PLAN_SCHEMA}},
         "messages": [{"role": "user", "content": [_text(context)]}],
     }
 

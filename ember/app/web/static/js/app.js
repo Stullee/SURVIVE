@@ -4974,6 +4974,7 @@
     }
     var items = arr(data.items).filter(function (v) { return isObject(v) && v.id !== undefined; });
     renderVentureSummary(data, items);
+    renderVentureDesk(data);
     renderVentureLegend(data);
     renderVentureTree(items);
     fillParentSelect(items);
@@ -5015,6 +5016,34 @@
       }).join("; ") + ".");
     }
     $("vt-summary").textContent = parts.join(" ");
+  }
+
+  // 0.13.0: the decision desk: what Ember's code ranks as the ventures' next decisions (a venture cycle's plan takes one
+  // or says why none), what the last venture plans took, and how many ventures were decided this week.
+  function renderVentureDesk(data) {
+    var name = agentName();
+    var d = isObject(data.desk) ? data.desk : null;
+    if (!d) { replace($("vt-desk"), []); return; }
+    var ready = arr(d.ready);
+    var picks = arr(d.picks);
+    var week = num(d.decided_week) || 0;
+    var list = ready.length ?
+      h("ol", { class: "vt-ready" }, ready.map(function (item) {
+        return h("li", null, h("strong", { text: String(item.key) }), " · " + String(item.text));
+      })) :
+      h("p", { class: "muted small", text: "Nothing to decide now" + (d.mode === "explore" ? "." : " in the " + d.mode + " burn mode: only backed ventures get venture cycles.") });
+    var taken = picks.length ?
+      h("ul", { class: "vt-picks muted small" }, picks.map(function (p) {
+        var what = p.pick ? "took " + p.pick : "took none: " + String(p.why_not);
+        return h("li", null, "Cycle #" + p.cycle_id + " " + what + " (of " + plural(num(p.shown) || 0, "item") + ") · ", timeEl(p.created_at));
+      })) : null;
+    replace($("vt-desk"), h("details", { class: "vt-desk-box" },
+      h("summary", null, h("strong", { text: "Decision desk: " }),
+        plural(ready.length, "decision") + " ready · " + plural(week, "venture") + " decided in the last 7 days (the aim: 2)"),
+      h("p", { class: "muted small", text: "Ranked by " + name + "'s code: backed ventures without a project, your wishes, " +
+        "deadlines, the critic's flags, then the expected net (the critic's where it is lower). Each venture cycle's plan takes one or says why none." }),
+      list,
+      taken));
   }
 
   function renderVentureLegend(data) {

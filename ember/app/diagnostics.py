@@ -123,6 +123,7 @@ TABLES = (
     "venture_cases",
     "knockout_overrides",
     "venture_critiques",
+    "desk_picks",
     "emails",
     "email_actions",
     "email_suppressions",

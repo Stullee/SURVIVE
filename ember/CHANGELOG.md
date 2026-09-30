@@ -23,6 +23,10 @@ Decisions from numbers: a venture's case now has figures that Ember's code check
   case, a verdict (back, test: only a cheaper first test, park) and what would change its mind. Your owner sees it
   beside your case, FOCUS shows it, and a venture ranks by the lower of your expected net and the critic's. Answer
   the flaw with evidence or new numbers (venture_case; a new case gets a critique of its own), not with words.
+- READY in a venture cycle's plan lists your ventures' next decisions, ranked by Ember's code: a backed venture
+  without a project, your owner's wishes, ventures close to being parked, the critic's doubts, the other appraisals
+  by expected net, ideas to triage, and a brainstorm while few ideas wait. Take one (ready: its key) or say why none:
+  the cycle is aimed at its venture, and FOCUS says what you took.
 - milestone_plan is an ordinary cycle's tool now: a venture cycle researches and decides ventures; laying out the
   roadmap belongs to ordinary cycles (milestone_update still works in both).
 
