@@ -420,13 +420,15 @@ def add_case(
     case: econ.Case,
     result: econ.Economics,
     now: str,
+    needs: str = "",
 ) -> int:
-    """Save a venture's numbers with Ember's code's economics of them (0.13.0); returns the case's number."""
+    """Save a venture's numbers with Ember's code's economics of them (0.13.0), and what it needs that a knock-out
+    rules out (``needs``: knockouts.NEEDS, comma-separated); returns the case's number."""
     cursor = conn.execute(
         "INSERT INTO venture_cases (venture_id, cycle_id, created_at, channel, price_eur, unit_cost_eur,"
         " monthly_costs_eur, sales_low, sales_mid, sales_high, setup_eur, owner_hours, first_sale_months, api_usd,"
         " usd_per_eur, fees_eur, net_eur, break_even, net_low, net_mid, net_high, ev_eur, ev_per_api_usd,"
-        " ev_per_hour) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " ev_per_hour, needs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             venture_id,
             cycle_id,
@@ -448,6 +450,7 @@ def add_case(
             result.ev_eur,
             result.ev_per_api_usd,
             result.ev_per_hour,
+            needs,
         ),
     )
     return int(cursor.lastrowid)
@@ -749,6 +752,7 @@ def focus_text(
     last: str = "",
     evidence: str = "",
     numbers: str = "",
+    knocked: str = "",
 ) -> str:
     """The brief's FOCUS for a venture: everything the agent knows of it, the most important first, as the brief cuts
     it from the end (0.12.0: it lost the owner's comment and the first test): the owner's word, the first test, the
@@ -778,6 +782,7 @@ def focus_text(
         f"Research for it: {count} call{'s' if count != 1 else ''} that found something (scores need "
         f"{RESEARCH_TO_SCORE}, a business case {RESEARCH_TO_PROPOSE})" + (f"; {budget}" if budget else ""),
         *([numbers] if numbers else []),  # 0.13.0
+        *([knocked] if knocked else []),  # 0.13.0: its knock-outs
         *([evidence] if evidence else []),
         f"Pitch: {_one_line(row['pitch'], FOCUS_CHARS)}",
     ]

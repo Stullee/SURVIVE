@@ -29,7 +29,7 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import etsy, executor, mailstore
 from ..integrations.mail import BODY_MAX, valid_address
-from . import library, memory, roadmap, stages, store, ventures
+from . import knockouts, library, memory, roadmap, stages, store, ventures
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
@@ -492,6 +492,39 @@ class Owner:
             what = done.get(action, "left a note on")
             events.record(self.db, "info", "owner", f"{who or 'The owner'} {what} venture #{venture_id}")
             return Reply(200, {"id": venture_id, "stage": after["stage"] if after else stage})
+
+        return _reply(run)
+
+    def override_knockout(self, venture_id: int, body: Any, who: str | None) -> Reply:
+        """0.13.0: lift a knock-out Ember's code found in a venture's case (``lift`` true), or restore it; the agent
+        hears it as the owner's note on the venture."""
+
+        def run() -> Reply:
+            data = _body(body, {"rule", "lift", "comment"})
+            rule = data.get("rule")
+            if rule not in knockouts.RULES:
+                raise OwnerError("rule", f"choose one of {', '.join(knockouts.RULES)}")
+            lift = data.get("lift")
+            if not isinstance(lift, bool):
+                raise OwnerError("lift", "lift must be true or false")
+            comment = _text(data, "comment", VENTURE_COMMENT_MAX)
+            with self.db.transaction() as conn:
+                row = ventures.get(conn, self.scope, venture_id)
+                if row is None:
+                    raise OwnerError("id", "no such venture", 404)
+                if lift == (rule in knockouts.overridden(conn, venture_id)):
+                    raise OwnerError("lift", "it is so already", 409)
+                now = self._now()
+                knockouts.set_override(conn, venture_id, rule, lift, who, comment, now)
+                said = f"{'Lifted' if lift else 'Restored'} the knock-out '{knockouts.LABELS[rule]}'" + (
+                    f": {comment}" if comment else ""
+                )
+                ventures.owner_word(conn, venture_id, now, "note", said[:VENTURE_COMMENT_MAX], who)
+            verb = "lifted" if lift else "restored"
+            events.record(
+                self.db, "info", "owner", f"{who or 'The owner'} {verb} the knock-out {rule} of venture #{venture_id}"
+            )
+            return Reply(200, {"id": venture_id, "rule": rule, "lifted": lift})
 
         return _reply(run)
 

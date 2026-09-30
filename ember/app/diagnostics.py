@@ -121,6 +121,7 @@ TABLES = (
     "evidence",
     "demand_notes",
     "venture_cases",
+    "knockout_overrides",
     "emails",
     "email_actions",
     "email_suppressions",

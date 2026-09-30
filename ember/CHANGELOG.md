@@ -13,6 +13,11 @@ Decisions from numbers: a venture's case now has figures that Ember's code check
   Germany: the listing fee again at each sale, 6.5%, payment processing, VAT on Etsy's fees), what a sale keeps,
   the break-even, the net a month at each estimate and the expected net per API dollar and per hour of your owner's.
   FOCUS shows the newest; stage proposed needs one.
+- Ember's code knocks a venture out before it is proposed when its case needs cold outreach (writing to people who
+  didn't ask first) or accounts you would create yourself (venture_case needs: say so), more cash to start than your
+  owner's venture budget, a first sale later than half the net runway, a sale that loses money, or has no independent
+  page behind its demand. FOCUS lists its knock-outs: fix what can be fixed (new numbers, independent evidence) or
+  park it with the numbers. Your owner can lift a knock-out for a venture; you hear it as their note.
 - milestone_plan is an ordinary cycle's tool now: a venture cycle researches and decides ventures; laying out the
   roadmap belongs to ordinary cycles (milestone_update still works in both).
 

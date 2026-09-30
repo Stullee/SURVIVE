@@ -44,7 +44,20 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
-from . import demand, econ, evidence, library, metrics, netguard, obligations, roadmap, stages, store, ventures
+from . import (
+    demand,
+    econ,
+    evidence,
+    knockouts,
+    library,
+    metrics,
+    netguard,
+    obligations,
+    roadmap,
+    stages,
+    store,
+    ventures,
+)
 from .memory import CAPS, HEADING_REFUSAL, MAX_APPEND_LINES, Memory, MemoryError_, heading_line
 from .sandbox import Jail, Limits, QuotaError, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
@@ -367,6 +380,12 @@ SPECS: dict[str, Spec] = {
                 "owner_hours": _s("Your owner's hours.", 6),
                 "first_sale_months": _i("Months to the first sale.", minimum=0, maximum=24),
                 "api_usd": _s("Your API spend on it (USD).", 12),
+                "needs": _s(
+                    "If it needs them: cold_outreach (people who didn't ask first), ember_accounts (accounts you'd "
+                    "create).",
+                    40,
+                    required=False,
+                ),
             },
             per_cycle=5,
             reflect=True,
@@ -1116,6 +1135,8 @@ class ToolContext:
     etsy: EtsyAccess | None = None  # the Etsy shop, when there is one
     venture: bool = False  # a venture cycle (0.10.0): brainstorm, and more research
     usd_per_eur: float = 0.0  # the owner's exchange rate (etsy_usd_per_eur; 0: none, econ assumes one), 0.13.0
+    venture_cash_eur: float = 20.0  # the owner's cash for a venture's first test (a knock-out beyond it), 0.13.0
+    net_runway_days: float | None = None  # at the cycle's start (None: it earns what it spends), 0.13.0
     library: bool = False  # the owner's library holds documents (0.12.0): its tools
     brainstorm: BrainstormFn | None = None
     draft: DraftFn | None = None  # 0.12.0
@@ -1587,8 +1608,12 @@ def _venture_case(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
         first_sale_months=args["first_sale_months"],
         api_usd=amounts["api_usd"],
     )
+    needs = [n.strip() for n in (args.get("needs") or "").split(",") if n.strip()]
+    unknown = [n for n in needs if n not in knockouts.NEEDS]
+    if unknown:
+        raise ToolError(f"needs takes {' and '.join(knockouts.NEEDS)}, not {unknown[0]!r}")
     result = econ.compute(case, ctx.usd_per_eur)
-    number = ventures.add_case(conn, venture_id, ctx.cycle_id, case, result, ctx.now())
+    number = ventures.add_case(conn, venture_id, ctx.cycle_id, case, result, ctx.now(), ",".join(sorted(set(needs))))
     rate = (
         ""
         if ctx.usd_per_eur > 0
@@ -1698,6 +1723,21 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
             gaps = ventures.proposal_gaps({**dict(row), **changes}, current)
             if gaps:
                 raise ToolError(f"venture #{vid} can't be proposed yet: a business case needs {'; '.join(gaps)}")
+            knocked = knockouts.active(
+                knockouts.check(
+                    conn,
+                    {**dict(row), **changes},
+                    cash_eur=ctx.venture_cash_eur,
+                    net_days=ctx.net_runway_days,
+                )
+            )
+            if knocked:  # 0.13.0
+                raise ToolError(
+                    f"venture #{vid} is knocked out by Ember's code: "
+                    + "; ".join(f"{k.label} ({k.why})" for k in knocked)
+                    + ". Fix what can be fixed (a new venture_case, evidence), park it with the numbers, or ask your "
+                    "owner to lift a knock-out on the Ventures tab"
+                )
             changes["proposed_at"] = ctx.now()
         changes["stage"] = stage
     if args.get("note"):

@@ -5212,6 +5212,7 @@
       filled.length && needs.length && (v.stage === "researching" || v.stage === "idea") ?
         h("p", { class: "muted small", text: "For a business case " + name + " still needs: " + needs.join(", ") + "." }) : null,
       ventureNumbers(v),
+      ventureKnockouts(v),
       ventureEvidence(v),
       h("dl", { class: "money" },
         h("div", { title: "Research calls for this venture that found web pages: its scores need one, a business case " + toPropose + "." },
@@ -5262,6 +5263,46 @@
           h("dt", { text: "Expected" }), h("dd", { text: "€" + Math.round(num(n.ev_eur)) + " a month" +
             (n.ev_per_hour === null ? "" : " · €" + num(n.ev_per_hour).toFixed(2) + " per hour of yours") })),
         h("div", null, h("dt", { text: "To start" }), h("dd", { text: eur(n.setup_eur) + " · " + num(n.owner_hours) + " h a month from you · first sale in " + n.first_sale_months + " month" + (n.first_sale_months === 1 ? "" : "s") }))));
+  }
+
+  // 0.13.0: what rules it out, checked by Ember's code; you can lift a knock-out for this venture (and restore it).
+  var KNOCKOUT_STATE = {
+    standing: { icon: "✕", label: "Stands", tone: "critical" },
+    lifted: { icon: "✓", label: "Lifted by you", tone: "" },
+  };
+
+  function ventureKnockouts(v) {
+    var ko = arr(v.knockouts);
+    if (!ko.length) return null;
+    var status = h("p", { class: "muted small", role: "status" });
+    return h("div", { class: "vt-knockouts" },
+      h("p", null, h("strong", { text: "Knock-outs: " }), agentName() + " can't propose it while one stands. Lift one if you accept it for this venture."),
+      h("ul", { class: "vt-evidence" }, ko.map(function (k) {
+        var button = h("button", { type: "button", class: "btn btn-small", text: k.overridden ? "Restore" : "Lift" });
+        button.addEventListener("click", function () { liftKnockout(button, status, v, k); });
+        return h("li", null, chip(KNOCKOUT_STATE, k.overridden ? "lifted" : "standing"), " ",
+          h("strong", { text: String(k.label) }), " · " + String(k.why) + " ", button);
+      })),
+      status);
+  }
+
+  function liftKnockout(button, status, v, k) {
+    button.disabled = true;
+    status.removeAttribute("data-kind");
+    request("POST", "api/ventures/" + v.id + "/knockouts", { rule: k.rule, lift: !k.overridden }).then(function (res) {
+      if (res.ok) {
+        status.textContent = (k.overridden ? "Restored: " : "Lifted: ") + k.label + ". " + agentName() + " hears it on its next wake.";
+        refresh();
+        return;
+      }
+      ownerFailure(res, {}, function (msg) { status.textContent = msg; status.setAttribute("data-kind", "error"); }, null);
+      button.disabled = false;
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      status.textContent = "Couldn't reach Ember, so the knock-out may or may not have changed.";
+      status.setAttribute("data-kind", "error");
+      button.disabled = false;
+    });
   }
 
   // 0.12.0: the claims its research found, each with the grade Ember's code gave its page.

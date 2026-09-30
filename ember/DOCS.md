@@ -37,6 +37,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Daily spending cap | 1.50 USD | Hard limit per day. Calls that could exceed it are refused. |
 | Spending cap per wake cycle | 0.50 USD | Hard limit per cycle. Must not exceed the daily cap. A working cycle (its plan, a work step and the reflection) can cost up to about 0.25 USD with the default models; the dashboard warns you below 1.5 times that, when most cycles would end after a step or two. |
 | Share for ventures | 25 % | This share of each day's spending goes to venture cycles, where the agent researches new ways to earn. 0 switches them off. See [Ventures](#ventures). |
+| Cash for a venture's first test (EUR) | 20 | A business case that needs more cash than this to start is knocked out: Ember's code won't propose it until you lift that knock-out on its card (see [Ventures](#ventures)). |
 | Daily study budget for the library | 0.50 USD | What the agent may spend a day studying the documents you add on the Library tab. It counts toward the daily cap, not the cycle cap. 0: nothing is studied, but the documents can still be searched and read. See [Library](#library). |
 | Default sleep | 240 min | Time between wake cycles when the agent doesn't choose. |
 | Shortest / longest sleep | 30 / 1440 min | Bounds for the sleep time the agent chooses. |
@@ -408,6 +409,22 @@ expected net a month over six months per API dollar and per hour of yours.
 The card shows the newest case; a venture is proposed only with one. Without
 your exchange rate (**Exchange rate for Etsy revenue**), USD 1.10 per EUR is
 assumed and said.
+
+**Knock-outs.** Before a venture is proposed, Ember's code checks its case
+against six knock-outs:
+- cold outreach (writing to people who didn't ask first, which is illegal
+  advertising in Germany), found in the case's words or declared by the agent;
+- accounts Ember itself would have to create;
+- more cash to start than **Cash for a venture's first test**;
+- a first sale later than half the net runway;
+- a sale that loses money after the fees;
+- no independent page behind its demand (only vendors' or affiliates' pages,
+  or no evidence at all).
+
+A knocked-out venture isn't proposed: the agent fixes what can be fixed (new
+numbers, independent evidence) or parks it with the numbers. The card lists
+its knock-outs, and you can **Lift** one for that venture if you accept it
+(and **Restore** it later); the agent hears it as your note on the venture.
 
 **Evidence.** In a venture cycle the agent saves each number its research
 finds (a price, searches a month, sales, a fee, a margin) as evidence: the

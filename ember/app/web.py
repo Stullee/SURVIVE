@@ -511,6 +511,16 @@ def decide_venture(request: Request, venture_id: ItemId, body: Annotated[Any, Bo
     return _reply(reply)
 
 
+@router.post("/api/ventures/{venture_id}/knockouts")
+def override_knockout(request: Request, venture_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    reply = actions.override_knockout(venture_id, body, _owner(request))
+    _wake_for_decision(request, reply)
+    return _reply(reply)
+
+
 @router.get("/api/roadmap")
 def roadmap(request: Request) -> JSONResponse:
     agent = _state(request).agent

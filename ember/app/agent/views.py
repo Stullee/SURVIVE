@@ -11,7 +11,20 @@ from typing import TYPE_CHECKING, Any
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
-from . import digest, evidence, library, memory, metrics, prompts, research_check, review, roadmap, store, ventures
+from . import (
+    digest,
+    evidence,
+    knockouts,
+    library,
+    memory,
+    metrics,
+    prompts,
+    research_check,
+    review,
+    roadmap,
+    store,
+    ventures,
+)
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
 if TYPE_CHECKING:
@@ -444,6 +457,13 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         digests = digest.newest_by(conn, scope, "venture_id")  # 0.12.0
         found = evidence.by_venture(conn, scope)  # 0.12.0
         cases = {v["id"]: ventures.latest_case(conn, v["id"]) for v in rows if v["cases"]}  # 0.13.0
+        # 0.13.0: what rules out a venture with a case that isn't backed yet (the owner lifts or restores each)
+        net_days = agent.economy.life.evaluate().runway.net_days
+        knocked = {
+            v["id"]: knockouts.check(conn, v, cash_eur=agent.settings.venture_cash_eur, net_days=net_days)
+            for v in rows
+            if v["cases"] and v["stage"] in ventures.EXPLORING
+        }
     items = []
     for v in rows:
         m = paid.get(v["id"], ventures.Money())
@@ -493,6 +513,10 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                 "net_usd": _usd(m.net),
                 "last_digest": digests.get(v["id"]),  # 0.12.0: the digest of the last cycle aimed at it
                 "numbers": _numbers(cases.get(v["id"])),  # 0.13.0: its newest numeric business case
+                "knockouts": [
+                    {"rule": k.rule, "label": k.label, "why": k.why, "overridden": k.overridden}
+                    for k in knocked.get(v["id"], [])
+                ],
                 # 0.12.0: its evidence: the claims by grade and the newest (see evidence.py)
                 "evidence": found.get(v["id"], {"counts": dict.fromkeys(evidence.GRADES, 0), "items": []}),
                 "projects": linked.get(v["id"], []),

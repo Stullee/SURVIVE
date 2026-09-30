@@ -24,6 +24,12 @@ configuration:
       This percent of each day's spending goes to venture cycles, where the
       agent researches new ways to earn beyond what it does now and brings you
       business cases on the Ventures tab. 0 switches venture cycles off.
+  venture_cash_eur:
+    name: Cash for a venture's first test (EUR)
+    description: >-
+      A business case that needs more cash than this to start is knocked out:
+      Ember's code won't propose it until you override that on the Ventures
+      tab.
   library_study_usd_per_day:
     name: Daily study budget for the library (USD)
     description: >-

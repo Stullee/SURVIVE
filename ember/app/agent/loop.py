@@ -56,6 +56,7 @@ from . import (
     context,
     digest,
     evidence,
+    knockouts,
     library,
     metrics,
     netguard,
@@ -199,6 +200,7 @@ class CycleRunner:
         self.publisher = publisher
         self.etsy_on = False  # the Etsy tools and the ETSY SHOP section: set once the cycle found a shop
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
+        self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
 
     # --- the cycle ---
 
@@ -236,6 +238,7 @@ class CycleRunner:
             allow_fetch=self.dry_run or self.settings.web_fetch,
             mail=tools.MailAccess(self.mailbox.address, self.settings.email_daily_limit) if self.mailbox else None,
             usd_per_eur=self.settings.etsy_usd_per_eur,  # 0.13.0: a venture case's rate (0: econ assumes one)
+            venture_cash_eur=self.settings.venture_cash_eur,  # 0.13.0: the knock-outs' cash budget
         )
         ctx.research = self._research_fn(ctx)
         ctx.draft = self._draft_fn(ctx)
@@ -407,6 +410,7 @@ class CycleRunner:
     def _snapshot(self, venture: bool = False) -> context.Snapshot:
         status = self.economy.life.evaluate()
         scope = self.economy.life.scope()
+        self.net_runway_days = status.runway.net_days  # 0.13.0
         self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
         self._keep_stages()
         metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
@@ -473,6 +477,7 @@ class CycleRunner:
         if self.library_on:
             self._study(cycle_id)
         snap = self._snapshot(ctx.venture)
+        ctx.net_runway_days = self.net_runway_days  # 0.13.0: the knock-outs' slow rule
         action = "Planning this venture cycle" if ctx.venture else "Planning this cycle"
         self._progress(cycle_id, phase="plan", current_action=action)
         request = None
@@ -638,8 +643,23 @@ class CycleRunner:
         last = digest.newest_for(conn, self.scope, "venture_id", row["id"], cycle_id)
         found = evidence.focus_line(conn, row["id"])  # 0.12.0: its claims, by their sources' grade
         numbers = ventures.numbers_text(ventures.latest_case(conn, row["id"]))  # 0.13.0
+        knocked = (  # 0.13.0: while it isn't backed
+            knockouts.text(
+                knockouts.check(conn, row, cash_eur=self.settings.venture_cash_eur, net_days=self.net_runway_days)
+            )
+            if row["stage"] in ventures.EXPLORING
+            else ""
+        )
         return ventures.focus_text(
-            row, paid, size, ventures.projects_of(conn, row["id"]), parts, last=last, evidence=found, numbers=numbers
+            row,
+            paid,
+            size,
+            ventures.projects_of(conn, row["id"]),
+            parts,
+            last=last,
+            evidence=found,
+            numbers=numbers,
+            knocked=knocked,
         )
 
     def _review(self, cycle_id: int, ctx: tools.ToolContext) -> None:

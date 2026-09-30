@@ -383,7 +383,7 @@ NUMBERS = {
     "sales_low": 1,
     "sales_mid": 6,
     "sales_high": 20,
-    "setup_eur": "50",
+    "setup_eur": "10",
     "owner_hours": "10",
     "first_sale_months": 1,
     "api_usd": "3",
@@ -418,6 +418,17 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
                     RESEARCH,
                     ("research", {"question": "Which EU suppliers ship in 3 days?"}),
                     ("venture_case", NUMBERS),  # 0.13.0: its numbers, for the focus venture
+                    (  # 0.13.0: an independent page behind its demand (a knock-out without one)
+                        "evidence",
+                        {
+                            "claim": "Stores sell 200 a month.",
+                            "metric": "sales a month",
+                            "low": "200",
+                            "unit": "orders",
+                            "region": "DE",
+                            "url": "https://example.invalid/a",
+                        },
+                    ),
                 ]
             ),
             found("https://example.invalid/a"),
