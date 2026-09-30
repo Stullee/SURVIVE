@@ -90,6 +90,10 @@ class Scheduler:
                         await asyncio.to_thread(self.agent.sync_shop)  # at most hourly, also while the agent sleeps
                     except Exception:  # noqa: BLE001 - the shop must not stop the wake cycles
                         log.exception("Checking the Etsy shop failed")
+                    try:  # 0.13.0: the agenda: what happened since the last look (an urgent event wakes the agent)
+                        await asyncio.to_thread(self.agent.check_events)
+                    except Exception:  # noqa: BLE001 - the agenda must not stop the wake cycles
+                        log.exception("Noting the agenda's events failed")
                     decision = await asyncio.to_thread(self.agent.decide)
                     if decision.run and decision.trigger:
                         self.status = f"running a {decision.trigger} cycle"

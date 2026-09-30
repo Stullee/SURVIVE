@@ -372,7 +372,7 @@
     interrupted: { icon: "↯", label: "Interrupted", tone: "warning" },
   };
 
-  var TRIGGERS = { schedule: "scheduled", owner: "woken by you", last_will: "last will" };
+  var TRIGGERS = { schedule: "scheduled", owner: "woken by you", last_will: "last will", event: "woken by an event" };
   var PHASES = { review: "Daily review", study: "Studying the library", plan: "Plan", act: "Act", reflect: "Reflect", last_will: "Last will" };
   var PURPOSES = { review: "Daily review", plan: "Plan", work: "Work", reflect: "Reflect", research: "Research",
     workshop: "Workshop", draft: "Draft", brainstorm: "Brainstorm", study: "Library study", last_will: "Last will",

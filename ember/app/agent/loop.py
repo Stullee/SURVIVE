@@ -54,6 +54,7 @@ from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox
 from ..version import app_version
 from . import (
+    agenda,
     context,
     critic,
     desk,
@@ -209,6 +210,8 @@ class CycleRunner:
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
         self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
+        self.reactive = False  # 0.13.0: a cycle an event woke (run sets it)
+        self.max_steps = settings.max_tool_steps
 
     # --- the cycle ---
 
@@ -227,6 +230,11 @@ class CycleRunner:
         return planner
 
     def run(self, trigger: str) -> CycleEnd:
+        # 0.13.0: an event's wake-up is a lean reactive cycle: no venture work, review, study or critic, few steps
+        self.reactive = trigger == "event"
+        self.max_steps = (
+            min(self.settings.max_tool_steps, agenda.REACTIVE_STEPS) if self.reactive else self.settings.max_tool_steps
+        )
         try:
             cycle_id = self.meter.open_cycle(trigger)
         except CallRefused as exc:
@@ -254,7 +262,7 @@ class CycleRunner:
         end = CycleEnd("failed", "the cycle ended unexpectedly")
         try:
             if trigger != "last_will":
-                ctx.venture = self._venture_cycle(cycle_id)
+                ctx.venture = self._venture_cycle(cycle_id) if not self.reactive else False
                 # 0.12.0: brainstorms only while the burn mode is explore
                 explore = burn.peek(self.db, self.economy.life.evaluate()).brainstorms
                 ctx.brainstorm = self._brainstorm_fn(ctx) if ctx.venture and explore else None
@@ -474,6 +482,8 @@ class CycleRunner:
                 decision_wakes=self.settings.wake_on_decision,
                 burn=_burn_line(mode),
                 ready=desk.text(self.ready_items, predictions.calibration(conn, self.scope) if venture else ""),
+                agenda=agenda.unseen(conn, self.scope),  # 0.13.0: what happened between cycles
+                reactive=self.reactive,
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any], venture_id: int | None = None) -> CallResult:
@@ -495,12 +505,13 @@ class CycleRunner:
 
     def _plan_act_reflect(self, cycle_id: int, ctx: tools.ToolContext) -> CycleEnd:
         with self.db.connection() as conn:
-            review_due = review.due(conn, self.scope, self.clock)
+            review_due = review.due(conn, self.scope, self.clock) and not self.reactive
         if review_due:
             self._review(cycle_id, ctx)
-        if self.library_on:
+        if self.library_on and not self.reactive:
             self._study(cycle_id)
-        self._critique(cycle_id)  # 0.13.0
+        if not self.reactive:
+            self._critique(cycle_id)  # 0.13.0
         snap = self._snapshot(ctx.venture)
         ctx.net_runway_days = self.net_runway_days  # 0.13.0: the knock-outs' slow rule
         action = "Planning this venture cycle" if ctx.venture else "Planning this cycle"
@@ -530,6 +541,10 @@ class CycleRunner:
         plan = self._parse_plan(text)
         if plan is None:
             return CycleEnd("failed", "the plan wasn't valid JSON")
+        shown = [int(r["id"]) for r in snap.agenda if agenda.line(r) in planner]  # 0.13.0: the events it listed
+        if shown:
+            with self.db.transaction() as conn:
+                agenda.mark_seen(conn, cycle_id, shown)
         if snap.library is not None and snap.library.new:
             shown = [i for item in snap.library.new if library.studied_line(item) in planner for i in item.ids]
             with self.db.transaction() as conn:
@@ -596,7 +611,7 @@ class CycleRunner:
             self.dry_run,
             plan.to_json(),
             focus,
-            self.settings.max_tool_steps,
+            self.max_steps,
             venture_focus=venture_focus,
             milestone_focus=milestone_focus,
             knowledge=self._knowledge(plan),
@@ -1000,7 +1015,7 @@ class CycleRunner:
         """The work steps; ``seen`` (the owner's items the plan listed and the brief showed in full) is marked once one
         is answered."""
         act = _Act()
-        max_steps = self.settings.max_tool_steps
+        max_steps = self.max_steps
         self._progress(cycle_id, phase="act", max_steps=max_steps, step=0)
         nudged = 0
         for step in range(1, max_steps + 1):

@@ -204,6 +204,7 @@ def test_dashboard_payload(ingress_client: TestClient) -> None:
         "inbox_unread": 0,
         "upgrades_new": 0,
         "ventures_proposed": 0,
+        "milestone_proposals": 0,
     }
     assert data["agent"]["cycles_enabled"] is False  # tests switch the scheduler off
     assert len(data["economy"]["days"]) == 30

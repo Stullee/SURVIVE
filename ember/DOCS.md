@@ -141,7 +141,8 @@ Haiku), counted as overhead.
 ## How the agent works
 
 The agent sleeps most of the time. When it wakes up (on its schedule, when you
-press **Wake now**, or when you write to it), it runs one **wake cycle**:
+press **Wake now**, when you write to it or decide, or when an event needs it),
+it runs one **wake cycle**:
 
 1. **Plan**: once a day it first does its [daily review](#the-daily-review).
    Then it reads its situation (balance, runway, projects, what happened
@@ -198,6 +199,32 @@ enforced in code, not only in its instructions.
 
 When its money runs low, it becomes critical and writes a **last will**, shown
 in the memorial if it dies.
+
+### Events wake it (the agenda)
+
+Between cycles, Ember's code notes in the **agenda** what happens while the agent
+sleeps (0.13.0), each thing once. It reads the Etsy shop hourly and Ember's
+mailbox every 15 minutes, also while the agent is paused or dormant:
+
+- an Etsy order of Ember's listings;
+- an email that answers one Ember sent;
+- a listing's favorites reaching 5, 10, 25, 50, 100 or more (the counts a
+  listing already had when the agenda began don't count);
+- an open milestone's last day (from 08:00 on its date).
+
+The next plan lists them under *since your last wake*. An order, a reply or a
+milestone's last day also **wakes** the agent for a short **reactive cycle**. It
+works on the event first, in at most 5 work steps, with no venture work, daily
+review, library study or critic. That happens at most **4 times a day**, at
+least **30 minutes** apart, never while dormant, and only while the day's cap
+covers a cycle. An event that can't wake the agent waits for its next cycle.
+
+To keep money for these wake-ups, a scheduled cycle leaves **a fifth of the
+daily cap** unspent until **20:00** (your time), unless the cap is too small to
+spare it. When a scheduled wake would need that share, it waits until 20:00.
+Your **Wake now**, messages and decisions are never held back. The activity
+list shows an event's cycle as *woken by an event*, and the System log shows
+what was noted.
 
 ### The daily review
 
@@ -1273,10 +1300,13 @@ at least what it spends or the runway is unknown),
 `today_api_spend_usd`, `daily_cap_usd`, `safe_mode`, `kill_switch_engaged`,
 `next_wake_at`, `cycle_running` and counts of what waits for you:
 `approvals_pending`, `approvals_todo` (approved, not yet marked done),
-`inbox_unread`, `upgrades_new` and `ventures_proposed` (business cases
-waiting for you), and of Ember's mailbox: `email_unread`
-(emails the agent hasn't read) and `email_waiting` (approved emails not sent
-yet). It never contains any text the agent wrote.
+`inbox_unread`, `upgrades_new`, `ventures_proposed` (business cases
+waiting for you) and `milestone_proposals` (new dates the agent proposed for
+your milestones), with `waiting_on_you`, their total (0.13.0), and of Ember's
+mailbox: `email_unread` (emails the agent hasn't read) and `email_waiting`
+(approved emails not sent yet). `agenda_open` counts the events no plan has
+seen yet and `event_wakes_today` the wake-ups events caused today. It never
+contains any text the agent wrote.
 In dry run the numbers are the dry run's. If the database can't be read,
 `state` is `unknown` and the numbers are empty.
 

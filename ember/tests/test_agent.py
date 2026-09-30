@@ -15,6 +15,7 @@ from app.agent import context, loop, prompts, store
 from app.agent.sandbox import Jail, Limits
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
+from app.economy import metering
 from app.economy.costs import micros_to_usd
 from app.economy.life import LifeStatus
 from app.economy.metering import Completed, NotSent, usd_cap_to_micros
@@ -495,6 +496,9 @@ def test_a_wake_needs_room_for_a_work_step_and_the_reflection(
     assert opening < 100_000 < working < usd_cap_to_micros(Settings().cycle_spend_cap_usd)
     left = working - short  # micro-USD left of today's cap
     monkeypatch.setattr(agent.economy.books, "cap_spend_on", lambda scope, day: 5_000_000 - left)
+    # 0.13.0: after 20:00, when no share of the cap is kept for event wake-ups any more (tests/test_agenda.py)
+    local = agent.clock.now().astimezone(agent.clock.tz)
+    agent.clock.advance(hours=metering.EVENT_RESERVE_HOUR - local.hour, minutes=-local.minute + 1)
     agent.decide()  # schedules the first wake-up
     agent.clock.advance(minutes=3)
     decision = agent.decide()

@@ -125,6 +125,7 @@ TABLES = (
     "venture_critiques",
     "desk_picks",
     "predictions",
+    "agenda",
     "emails",
     "email_actions",
     "email_suppressions",

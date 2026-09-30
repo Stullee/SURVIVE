@@ -25,6 +25,8 @@ from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
 from . import digest, library, obligations, review, roadmap, store, tools, ventures
+from .agenda import REACTIVE_STEPS
+from .agenda import line as agenda_line
 from .memory import Memory, heading_like, lesson_key, pins
 from .news import CHANGELOG_LIMIT, Item, News, Shown
 from .sandbox import Jail
@@ -206,6 +208,8 @@ class Snapshot:
     decision_wakes: bool = False  # the owner's decisions wake the agent (0.12.0, the wake_on_decision option)
     burn: str = ""  # 0.12.0: the burn mode Ember's code set from the net runway (burn.Burn.text)
     ready: str = ""  # 0.13.0: a venture cycle's READY list, ranked by Ember's code (desk.text)
+    agenda: list[sqlite3.Row] = field(default_factory=list)  # 0.13.0: events no plan has shown yet (agenda.py)
+    reactive: bool = False  # 0.13.0: a cycle an event woke
 
 
 def snapshot(
@@ -231,6 +235,8 @@ def snapshot(
     decision_wakes: bool = False,
     burn: str = "",
     ready: str = "",
+    agenda: list[sqlite3.Row] | None = None,
+    reactive: bool = False,
 ) -> Snapshot:
     """What the planner, the brief and the will see; ``today`` (the owner's local date) finds the day's review and
     the day's spending on ventures."""
@@ -300,6 +306,8 @@ def snapshot(
         decision_wakes=decision_wakes,
         burn=burn,
         ready=ready,
+        agenda=agenda or [],
+        reactive=reactive,
     )
 
 
@@ -658,7 +666,8 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         pending = f"{WAITING_NOTE}\n{pending}"
     head = _news_head(s)
     owner, lines, _ = _owner(s, b["news"] - json_bytes(head))
-    since = cut("\n".join(part for part in (head, owner) if part) or "Nothing new.", b["news"])
+    events = "\n".join(agenda_line(r) for r in s.agenda)  # 0.13.0: after the owner's news, cut first
+    since = cut("\n".join(part for part in (head, owner, events) if part) or "Nothing new.", b["news"])
     software = cut(s.news.changelog, b["software"])
     research = research_text(s)
     last_cycle = last_cycle_text(s)
@@ -684,11 +693,20 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *([(RESEARCH_HEADING, cut(research, b["research"]))] if research else []),
         *([("WORKSHOP", cut(workshop_text(s), b["workshop"]))] if s.proven else []),
         *([("YOUR OWNER'S LIBRARY", cut(library.planner_text(s.library), b["library"]))] if s.library else []),
-        ("TASK", f"Plan this {'venture' if s.venture else 'wake'} cycle. Reply with the JSON plan only."),
+        ("TASK", _task(s)),
     ]
     held = _held(since, f"{head}\n" if head else "", lines)
     whole = frozenset(item for item, shown_whole in held.items() if shown_whole)
     return _sections(parts), Shown(whole, bool(software) and software == s.news.changelog, frozenset(held))
+
+
+def _task(s: Snapshot) -> str:
+    if s.reactive:  # 0.13.0: an event woke it
+        return (
+            f"Plan this reactive cycle: an event woke you (Agenda in SINCE YOUR LAST WAKE). React to it first, in at "
+            f"most {REACTIVE_STEPS} steps. Reply with the JSON plan only."
+        )
+    return f"Plan this {'venture' if s.venture else 'wake'} cycle. Reply with the JSON plan only."
 
 
 def brief(

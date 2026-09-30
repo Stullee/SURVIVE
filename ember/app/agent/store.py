@@ -301,7 +301,7 @@ def pending_approval_by_payload(conn: sqlite3.Connection, scope: AgentScope, pay
 
 
 def count_rows(conn: sqlite3.Connection, table: str, scope: AgentScope, condition: str = "1") -> int:
-    if table not in {"approvals", "messages", "upgrades", "projects"}:
+    if table not in {"approvals", "messages", "upgrades", "projects", "milestones"}:
         raise ValueError("unknown table")
     where, params = scope.where()
     return int(conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {where} AND {condition}", params).fetchone()[0])

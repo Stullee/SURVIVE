@@ -60,6 +60,7 @@ from .pricing import (
     note_accurate_call,
     raise_safety_factor,
     safety_factor,
+    working_cycle_cost,
 )
 
 log = logging.getLogger(__name__)
@@ -99,6 +100,10 @@ STUDY = "study"  # 0.12.0: Ember studying its owner's library, within the owner'
 CONSOLIDATE = "consolidate"  # 0.12.0: the lessons' consolidation after the daily review
 RESEARCH_CHECK = "research_check"  # 0.12.0: the research model's check, on the agent's research questions
 CRITIC = "critic"  # 0.13.0: the independent critic of a proposed venture's case, before the plan
+# 0.13.0: until EVENT_RESERVE_HOUR (the owner's time), EVENT_RESERVE_SHARE of the daily cap is kept for the agenda's
+# event wake-ups (agent/agenda.py): a scheduled cycle's cap leaves it, and a scheduled wake that would need it waits.
+EVENT_RESERVE_SHARE = 0.20
+EVENT_RESERVE_HOUR = 20
 OUTSIDE_CYCLE_CAP = (WORKSHOP, REVIEW, STUDY, CONSOLIDATE, CRITIC)
 # 0.12.0: the cycle cap counts what a call is expected to cost (the daily cap, the balance and the last-will reserve
 # still count its worst case). A call with server tools (research) is expected to cost EXPECTED_FACTOR times the 95th
@@ -398,6 +403,17 @@ def recover_interrupted(db: Database, clock: Clock, boot_id: str) -> int:
     return len(rows)
 
 
+def event_reserve(settings: Settings, clock: Clock, trigger: str, working: int = 0) -> int:
+    """0.13.0: what a ``trigger``'s cycle leaves of the daily cap for the agenda's event wake-ups: EVENT_RESERVE_SHARE
+    of it for a scheduled cycle until EVENT_RESERVE_HOUR (the owner's time), nothing for any other, nor when the rest
+    of the cap couldn't pay for a working cycle (``working``: what one needs) anyway."""
+    if trigger != "schedule" or clock.now().astimezone(clock.tz).hour >= EVENT_RESERVE_HOUR:
+        return 0
+    daily = usd_cap_to_micros(settings.daily_spend_cap_usd)
+    held = int(daily * EVENT_RESERVE_SHARE)
+    return held if daily - held >= working else 0
+
+
 class MeteredModel:
     def __init__(
         self,
@@ -434,6 +450,11 @@ class MeteredModel:
         status = self.life.evaluate_and_persist()
         # 0.12.0: a maintenance cycle has at most its burn mode's cap (kept before the transaction: it writes meta)
         cap = burn.current(self.db, status).cycle_cap(usd_cap_to_micros(self.settings.cycle_spend_cap_usd))
+        working = working_cycle_cost(self.settings, self.db, self.life.mode) or 0
+        held = event_reserve(self.settings, self.clock, trigger, working)  # 0.13.0: the events' share of the day
+        if held:
+            today = self.books.cap_spend_on(self.life.scope(), self.clock.today())
+            cap = min(cap, max(0, usd_cap_to_micros(self.settings.daily_spend_cap_usd) - today - held))
         refusal: tuple[str, str] | None = None
         cycle_id = 0
         with self.db.transaction() as conn:

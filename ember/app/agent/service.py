@@ -24,7 +24,14 @@ from ..db import Database
 from ..economy import burn
 from ..economy.clock import from_iso, to_iso
 from ..economy.costs import micros_to_usd
-from ..economy.metering import MeteredModel, OfflineTransport, Transport, usd_cap_to_micros
+from ..economy.metering import (
+    EVENT_RESERVE_HOUR,
+    MeteredModel,
+    OfflineTransport,
+    Transport,
+    event_reserve,
+    usd_cap_to_micros,
+)
 from ..economy.pricing import opening_cost, working_cycle_cost
 from ..economy.service import Economy
 from ..integrations import etsy, etsy_publisher, etsy_revenue, mailstore
@@ -32,7 +39,7 @@ from ..integrations import executor as email_executor
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox, select_mailbox
-from . import metrics, netguard, news, store, ventures
+from . import agenda, metrics, netguard, news, store, ventures
 from .loop import NO_STEP, CycleEnd, CycleRunner
 from .memory import CAPS, Memory
 from .sandbox import Jail, SandboxError, kind_of
@@ -126,6 +133,7 @@ class Agent:
             db, self.clock, self.settings, self.scope, self.etsy.shop, lambda: self.roots()[0], self._etsy_numbers
         )
         self._shop_failed_at: datetime | None = None  # the last check of the shop that failed (sync_shop)
+        self._mail_checked_at: datetime | None = None  # 0.13.0: the last read of the mailbox between cycles
 
     # --- where things live ---
 
@@ -256,6 +264,9 @@ class Agent:
                 return Decision(False, reason=f"Waking up to {why} in a moment", wait_until=ready)
         if self.wake_requested:
             return Decision(True, "owner", "woken by the owner")
+        event = self._event_wake(now)  # 0.13.0: an order, a reply or a milestone's last day
+        if event is not None:
+            return event
         no_room = self._no_room_for_work()
         if no_room:
             return Decision(False, reason=no_room)
@@ -277,12 +288,67 @@ class Agent:
         needed = max(opening_cost(self.settings, self.db, self.mode) or 0, min(working, daily))
         scope = self.economy.life.scope()
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
+        held = event_reserve(self.settings, self.clock, "schedule", working)  # 0.13.0: kept for events until 20:00
+        if daily - today - held < needed <= daily - today:
+            evening = self.clock.day_start(self.clock.today()) + timedelta(hours=EVENT_RESERVE_HOUR)
+            reason = f"the rest of the daily cap is kept for event wake-ups until {EVENT_RESERVE_HOUR}:00"
+            self._set_time("next_wake_at", evening)
+            self.db.set_meta(self._key("next_wake_reason"), reason)
+            return Decision(False, reason=reason[0].upper() + reason[1:], wait_until=evening)
         if daily - today < needed:
             tomorrow = self._next_local_midnight(now) + timedelta(minutes=5)
             self._set_time("next_wake_at", tomorrow)
             self.db.set_meta(self._key("next_wake_reason"), "waiting for the daily cap to reset")
             return Decision(False, reason="Waiting for the daily cap to reset", wait_until=tomorrow)
         return Decision(True, "schedule", "scheduled wake-up")
+
+    def _event_wake(self, now: datetime) -> Decision | None:
+        """0.13.0: an urgent event in the agenda (an order, a reply to Ember's email, a milestone's last day) wakes the
+        agent for a reactive cycle: at most agenda.EVENT_WAKES a day, agenda.MIN_GAP apart, when the day's cap covers
+        a cycle (the events' share included). Otherwise the event waits for the next cycle's plan."""
+        with self.db.connection() as conn:
+            waiting = agenda.waking(conn, self.scope())
+            if not waiting:
+                return None
+            woken, last = agenda.wakes(conn, self.scope(), self.clock)
+        if woken >= agenda.EVENT_WAKES or (last is not None and now - last < agenda.MIN_GAP):
+            return None
+        daily = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
+        today = self.economy.books.cap_spend_on(self.economy.life.scope(), self.clock.today())
+        if daily - today < (opening_cost(self.settings, self.db, self.mode) or 0):
+            return None
+        with self.db.transaction() as conn:
+            agenda.mark_woke(conn, [int(r["id"]) for r in waiting], to_iso(now))
+        more = f" and {len(waiting) - 1} more" if len(waiting) > 1 else ""
+        return Decision(True, "event", f"woken by an event: {waiting[0]['text']}{more}"[:300])
+
+    def check_events(self) -> None:
+        """0.13.0: read the mailbox every agenda.MAIL_MINUTES between cycles, then note in the agenda what happened
+        since the last look (orders, replies, favorites, milestones due today). The scheduler calls this every round,
+        after the Etsy sync; like reading the shop, it goes on while the agent sleeps, is paused or dormant."""
+        if self.sync_blocked() or self.running_cycle:
+            return
+        now = self.clock.now()
+        scope = self.scope()
+        if self.mailbox is not None and (
+            self._mail_checked_at is None or now - self._mail_checked_at >= timedelta(minutes=agenda.MAIL_MINUTES)
+        ):
+            self._mail_checked_at = now
+            try:  # the fake mailbox of a dry run needs no network; the real one is Ember's own code
+                with netguard.sealed() if self.mailbox.simulated else contextlib.nullcontext():
+                    mailstore.fetch(self.db, self.clock, scope, self.mailbox)
+            except Exception:  # noqa: BLE001 - the mailbox must not stop the scheduler
+                log.exception("Reading the mailbox between cycles failed")
+        key = agenda.SINCE_KEY.format(mode=self.mode)
+        since = self.db.get_meta(key)
+        first = not since
+        if first:
+            since = to_iso(now)
+            self.db.set_meta(key, since)
+        with self.db.transaction() as conn:
+            noted = agenda.note(conn, scope, self.clock, str(since), first=first)
+        for text in noted:
+            events.record(self.db, "info", "agent", f"Agenda: {text}"[:300])
 
     def _gave_up_will(self, life_id: int | None) -> bool:
         return life_id is not None and self.db.get_meta(self._key("will_given_up")) == str(life_id)
@@ -681,11 +747,17 @@ class Agent:
             counts = views.badges(conn, scope)
             email_unread = mailstore.unread(conn, scope, 0)[0] if self.mailbox is not None else 0
             email_waiting = email_executor.waiting(conn, scope)
+            agenda_open = agenda.open_count(conn, scope)  # 0.13.0
+            event_wakes = agenda.wakes(conn, scope, self.clock)[0]
         wake = self._meta_time("next_wake_at") if self.blocked_reason() is None else None
         return {
             **counts,
             "email_unread": email_unread,
             "email_waiting": email_waiting,
+            # 0.13.0: everything waiting for the owner in one number, and the agenda
+            "waiting_on_you": sum(counts[name] for name in views.WAITING_ON_YOU),
+            "agenda_open": agenda_open,
+            "event_wakes_today": event_wakes,
             "next_wake_at": to_iso(wake) if wake else None,
             "cycle_running": self.running_cycle,
         }

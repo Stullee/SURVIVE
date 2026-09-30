@@ -145,6 +145,7 @@ def test_upgrade_requests_and_inbox(data_dir: Path) -> None:
         "inbox_unread": 1,
         "upgrades_new": 0,
         "ventures_proposed": 0,
+        "milestone_proposals": 0,
     }
     message_id = rows(agent, "SELECT id FROM messages WHERE sender = 'agent'")[0]["id"]
     assert who.mark_read({"up_to_id": message_id}).body == {"marked": 1}

@@ -50,6 +50,17 @@ def _usd(micros: int | None) -> float:
     return micros_to_usd(int(micros or 0))
 
 
+# 0.13.0: what the sensors' waiting_on_you adds up: everything that waits for the owner's decision or action.
+WAITING_ON_YOU = (
+    "approvals_pending",
+    "approvals_todo",
+    "inbox_unread",
+    "upgrades_new",
+    "ventures_proposed",
+    "milestone_proposals",
+)
+
+
 def badges(conn: sqlite3.Connection, scope: store.AgentScope) -> dict[str, int]:
     """What waits for the owner (also in the Home Assistant sensor, so counts only, no text)."""
     return {
@@ -64,6 +75,10 @@ def badges(conn: sqlite3.Connection, scope: store.AgentScope) -> dict[str, int]:
         "inbox_unread": store.count_rows(conn, "messages", scope, "sender = 'agent' AND read_at IS NULL"),
         "upgrades_new": store.count_rows(conn, "upgrades", scope, "status = 'new'"),
         "ventures_proposed": ventures.count(conn, scope, ("proposed",)),  # business cases waiting for the owner
+        # 0.13.0: the agent's proposed dates for the owner's milestones, until the owner accepts or rejects them
+        "milestone_proposals": store.count_rows(
+            conn, "milestones", scope, "status = 'open' AND proposed_due IS NOT NULL"
+        ),
     }
 
 

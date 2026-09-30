@@ -31,6 +31,10 @@ Decisions from numbers: a venture's case now has figures that Ember's code check
   them from its records, and a backed venture's first sale by its case's month too (as a 50% call). Your record
   (how often you met the odds you gave, the Brier score, first sales on time) is in READY, the daily review and the
   critic's view of your cases: give odds you would bet on.
+- Events wake you: an Etsy order of your listings, a reply to an email you sent or a milestone's last day wakes you
+  for a short reactive cycle (at most 5 steps, no venture work), a few times a day at most. SINCE YOUR LAST WAKE
+  lists what Ember's code noted in the agenda meanwhile (favorites milestones too): react to it first. Until 20:00,
+  scheduled cycles leave a fifth of the daily cap for these wake-ups.
 - milestone_plan is an ordinary cycle's tool now: a venture cycle researches and decides ventures; laying out the
   roadmap belongs to ordinary cycles (milestone_update still works in both).
 

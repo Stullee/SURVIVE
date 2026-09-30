@@ -9,7 +9,7 @@
 CREATE TABLE predictions (
     id           INTEGER PRIMARY KEY,
     mode         TEXT NOT NULL,
-    session      TEXT NOT NULL,
+    session      INTEGER NOT NULL,
     kind         TEXT NOT NULL CHECK (kind IN ('milestone', 'first_sale')),
     milestone_id INTEGER UNIQUE REFERENCES milestones (id),
     venture_id   INTEGER REFERENCES ventures (id),
