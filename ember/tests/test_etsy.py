@@ -1210,6 +1210,8 @@ def test_the_rebuilt_approvals_keep_every_rule(data_dir: Path) -> None:
         "approvals_no_delete",
         "approvals_request_fixed",
         "approvals_status_flow",
+        "approvals_never_on_unlock",  # 0.13.0: NEVER, in the database
+        "approvals_unlock_carries",  # 0.13.0
     }
     scope = agent.scope()
     with agent.db.transaction() as conn, pytest.raises(sqlite3.IntegrityError, match="CHECK"):
@@ -1288,6 +1290,7 @@ def test_a_0_8_shop_keeps_its_listings_through_the_0_9_migration(tmp_path: Path)
         48,
         49,
         50,
+        51,
     ]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:

@@ -666,14 +666,14 @@ class Agent:
         return None if state in ("alive", "critical", "paused", "unfunded") else f"The agent is {state}"
 
     def run_policy(self) -> None:
-        """0.13.0: the owner's unlocks (policy.py): approve the requests whose veto window passed, and revoke the
-        unlocks an unclear result, a spent budget, a missed milestone or a veto ended. Before the approved actions are
-        carried out, in the scheduler's round."""
+        """0.13.0: the owner's unlocks (policy.py): revoke the unlocks an unclear result, a spent budget, a missed
+        milestone or a veto ended, then approve the requests whose veto window passed (one held by an unlock taken
+        back waits for the owner). Before the approved actions are carried out, in the scheduler's round."""
         if self.executor_blocked():
             return
         scope = self.scope()
         with self.db.transaction() as conn:
-            happened = policy.run_due(conn, scope, self.clock) + policy.keep(conn, scope, self.clock)
+            happened = policy.keep(conn, scope, self.clock) + policy.run_due(conn, scope, self.clock)
         for line in happened:
             events.record(self.db, "info", "control", line[:300])
 

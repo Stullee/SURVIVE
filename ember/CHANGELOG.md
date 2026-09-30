@@ -41,6 +41,10 @@ Decisions from numbers: a venture's case now has figures that Ember's code check
   backed leg, deactivating a listing, email replies in threads the other person started. Such a request made in a
   cycle aimed at that milestone is approved at once, or after a 12-hour veto window: the tool's answer says which.
   An unclear result, a veto, a spent budget or a missed milestone takes the unlock back.
+- Whatever your owner unlocks, some requests always wait for their click: creating an account, moving or spending
+  money, a first contact, your first listing in the shop, a Reddit post, a request whose words touch tax, VAT, a
+  Gewerbe or a contract (those are your owner's alone), and what only your owner carries out. The tool's answer says
+  when one waits for this reason. Only your owner unlocks, and the database refuses anything else.
 - milestone_plan is an ordinary cycle's tool now: a venture cycle researches and decides ventures; laying out the
   roadmap belongs to ordinary cycles (milestone_update still works in both).
 

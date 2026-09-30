@@ -775,6 +775,18 @@ no longer shown); a study that failed three times stops until you press
   veto one of its requests. It never widens one. When you approved 5 requests
   of a kind unchanged within 30 days, the Roadmap tab suggests an unlock, and
   you decide. Ember hears each change as your note on the milestone.
+
+  **Never automatic**, whatever you unlock: creating an account, moving or
+  spending money, a first contact (someone who never wrote to Ember, § 7 UWG),
+  Ember's first listing in your shop (a new public presence needs your decision
+  and your Impressum, § 5 DDG), a post in a third-party community, a request
+  whose words touch tax, VAT, a Gewerbe or a contract, and anything only you
+  carry out. Such a request always waits for your click, and if it fits an
+  unlocked kind, its card says why it waits. Only you unlock: Ember's code
+  can only take an unlock back. The database checks this again on its own. It
+  refuses an unlock's approval of such a request, an approval that no current
+  unlock covers, and anything beyond an unlock's budget. When an unlock is
+  taken back, what it was holding waits for you.
 - **What Ember's code did**: every action it carries out (an email sent, a
   listing created, changed, renewed or deactivated, a sold listing's automatic
   renewal turned on) is kept in one journal (0.13.0). It records what the

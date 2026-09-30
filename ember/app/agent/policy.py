@@ -16,13 +16,18 @@ cycle worked for that fits a granted rule is carried by it (``apply``); every re
 candidate. Ember's code revokes a grant (``keep``) on an unclear result, a spent budget, a missed or dropped milestone
 or the owner's veto (rejecting a request during its window), and only proposes a promotion (``suggestions``): a rule
 whose requests the owner approved PROMOTE_AFTER times without changes in PROMOTE_DAYS. The owner decides.
+
+Whatever is unlocked, no unlock carries a NEVER request (never.py: an account, money, a first contact, a first
+publication, a community post, tax, VAT, a Gewerbe or a contract, what only the owner carries out), and only the owner
+unlocks. The database checks the same (migration 0051); what it refuses is undone alone and waits for the owner.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
@@ -30,6 +35,7 @@ from typing import Any
 
 from ..economy.clock import Clock, to_iso
 from ..integrations import etsy, etsy_publisher, qa
+from . import never
 from .store import AgentScope
 
 
@@ -59,6 +65,7 @@ PROMOTE_DAYS = 30
 PER_DAY, BUDGET = 3, 10  # a grant's defaults
 POLICY_BY = "Ember's code (your unlock)"
 REVOKED_BY = "Ember's code"
+CODE = (POLICY_BY, REVOKED_BY, "Ember")  # who never unlocks anything (migration 0051 names them too)
 
 
 def _action(row: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -165,6 +172,8 @@ def set_grant(
 ) -> int:
     if rule not in RULES or level not in LEVELS:
         raise ValueError("unknown rule or level")
+    if level != "manual" and by in CODE:
+        raise ValueError("only the owner unlocks (NEVER: the policies)")
     cursor = conn.execute(
         "INSERT INTO policy_grants (mode, session, milestone_id, rule, level, per_day, budget, by, why, created_at)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -182,6 +191,29 @@ def used(conn: sqlite3.Connection, grant_id: int, clock: Clock) -> tuple[int, in
         (start, grant_id),
     ).fetchone()
     return int(row[0]), int(row[1])
+
+
+def _stands(conn: sqlite3.Connection, grant_id: int) -> bool:
+    """Whether a grant still stands: the newest of its milestone and rule, and not manual (not taken back)."""
+    row = conn.execute(
+        "SELECT g.level, (SELECT MAX(h.id) FROM policy_grants h WHERE h.milestone_id = g.milestone_id"
+        " AND h.rule = g.rule) AS newest FROM policy_grants g WHERE g.id = ?",
+        (grant_id,),
+    ).fetchone()
+    return row is not None and row["level"] != "manual" and row["newest"] == grant_id
+
+
+@contextmanager
+def _refusable(conn: sqlite3.Connection) -> Iterator[None]:
+    """What the database refuses (migration 0051) is undone alone, and the request waits for the owner."""
+    conn.execute("SAVEPOINT policy_carry")
+    try:
+        yield
+    except sqlite3.IntegrityError:
+        conn.execute("ROLLBACK TO policy_carry")
+        conn.execute("RELEASE policy_carry")
+        raise
+    conn.execute("RELEASE policy_carry")
 
 
 def _approve(conn: sqlite3.Connection, approval_id: int, now: str, why: str) -> bool:
@@ -213,27 +245,31 @@ def apply(conn: sqlite3.Connection, scope: AgentScope, approval_id: int, clock: 
     granted = grant(conn, scope, int(row["milestone_id"]), rule)
     if milestone is None or milestone["status"] != "open" or granted is None:
         return ""
-    total, today = used(conn, int(granted["id"]), clock)
     label = RULES[rule].label
+    found = never.reasons(conn, row)
+    if found:
+        return f" It waits for your owner whatever they unlocked: never automatic for {never.text(found)}."
+    total, today = used(conn, int(granted["id"]), clock)
     if total >= int(granted["budget"]):
         return ""  # spent: keep() revokes it
     if today >= int(granted["per_day"]):
         return f" Your owner's unlock for {label} has carried {today} today, its limit: this one waits for them."
     unlock = f"your owner unlocked {label} for milestone #{row['milestone_id']}"
-    if granted["level"] == "auto":
-        _approve(conn, approval_id, now, f"Approved at once: {unlock} (auto).")
-        conn.execute(
-            "INSERT INTO policy_uses (approval_id, grant_id, level, created_at, approved_at)"
-            " VALUES (?, ?, 'auto', ?, ?)",
-            (approval_id, granted["id"], now, now),
-        )
+    auto = granted["level"] == "auto"
+    until = None if auto else to_iso(clock.now() + timedelta(hours=VETO_HOURS))
+    try:
+        with _refusable(conn):
+            conn.execute(
+                "INSERT INTO policy_uses (approval_id, grant_id, level, created_at, veto_until, approved_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (approval_id, granted["id"], granted["level"], now, until, now if auto else None),
+            )
+            if auto:
+                _approve(conn, approval_id, now, f"Approved at once: {unlock} (auto).")
+    except sqlite3.IntegrityError as exc:
+        return f" It waits for your owner: the database refused the unlock ({exc})."
+    if auto:
         return f" Ember's code approved it at once: {unlock} (auto)."
-    until = to_iso(clock.now() + timedelta(hours=VETO_HOURS))
-    conn.execute(
-        "INSERT INTO policy_uses (approval_id, grant_id, level, created_at, veto_until)"
-        " VALUES (?, ?, 'veto_window', ?, ?)",
-        (approval_id, granted["id"], now, until),
-    )
     return f" It is approved {VETO_HOURS} hours from now unless your owner decides first: {unlock} (veto window)."
 
 
@@ -247,12 +283,21 @@ def run_due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[s
         " AND u.level = 'veto_window' AND u.approved_at IS NULL AND u.veto_until <= ? ORDER BY u.id",
         (*params, now),
     ).fetchall():
-        if use["status"] != "pending":
-            continue  # the owner decided first
+        if use["status"] != "pending" or not _stands(conn, int(use["grant_id"])):
+            continue  # the owner decided first, or the unlock was taken back: it waits for them
+        row = conn.execute("SELECT * FROM approvals WHERE id = ?", (use["approval_id"],)).fetchone()
+        if never.reasons(conn, row):
+            continue
         why = f"Approved: no veto within {VETO_HOURS} hours (your unlock, grant #{use['grant_id']})."
-        if _approve(conn, int(use["approval_id"]), now, why):
-            conn.execute("UPDATE policy_uses SET approved_at = ? WHERE id = ?", (now, use["id"]))
-            happened.append(f"Request #{use['approval_id']} approved by your unlock: no veto within {VETO_HOURS} hours")
+        try:
+            with _refusable(conn):
+                if _approve(conn, int(use["approval_id"]), now, why):
+                    conn.execute("UPDATE policy_uses SET approved_at = ? WHERE id = ?", (now, use["id"]))
+                    happened.append(
+                        f"Request #{use['approval_id']} approved by your unlock: no veto within {VETO_HOURS} hours"
+                    )
+        except sqlite3.IntegrityError as exc:
+            happened.append(f"Request #{use['approval_id']} waits for you: the database refused the unlock ({exc})")
     return happened
 
 
@@ -344,8 +389,9 @@ def view(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, milestone_id
 
 
 def veto_until(conn: sqlite3.Connection, approval_id: int) -> str | None:
-    """When a request held for its veto window is approved (None if it isn't held)."""
+    """When a request held for its veto window is approved (None if it isn't held, or its unlock was taken back)."""
     row = conn.execute(
-        "SELECT veto_until FROM policy_uses WHERE approval_id = ? AND approved_at IS NULL", (approval_id,)
+        "SELECT veto_until, grant_id FROM policy_uses WHERE approval_id = ? AND approved_at IS NULL", (approval_id,)
     ).fetchone()
-    return str(row["veto_until"]) if row is not None and row["veto_until"] else None
+    held = row is not None and row["veto_until"] and _stands(conn, int(row["grant_id"]))
+    return str(row["veto_until"]) if held else None

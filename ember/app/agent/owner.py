@@ -555,7 +555,8 @@ class Owner:
                 if row["status"] != "open":
                     raise OwnerError("id", f"this milestone is {row['status']}", 409)
                 now = self._now()
-                policy.set_grant(conn, self.scope, milestone_id, rule, level, now, by=who or "the owner", **limits)
+                by = who if who and who not in policy.CODE else "the owner"  # names Ember's code signs with
+                policy.set_grant(conn, self.scope, milestone_id, rule, level, now, by=by, **limits)
                 label = policy.RULES[rule].label
                 said = (
                     f"Unlocked for this milestone: {label} ({level.replace('_', ' ')}, at most {limits['per_day']} a"

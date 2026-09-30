@@ -21,6 +21,7 @@ from . import (
     library,
     memory,
     metrics,
+    never,
     policy,
     predictions,
     prompts,
@@ -710,6 +711,14 @@ def _numbers(row: sqlite3.Row | None) -> dict[str, Any] | None:
     }
 
 
+def _never(conn: sqlite3.Connection, r: sqlite3.Row) -> list[str]:
+    """0.13.0: why no unlock carries a waiting request that fits a rule (never.py), in the owner's words."""
+    fits = conn.execute("SELECT 1 FROM policy_candidates WHERE approval_id = ?", (r["id"],)).fetchone()
+    if r["status"] != "pending" or fits is None:
+        return []
+    return [never.CLASSES[k] for k in never.reasons(conn, r)]
+
+
 def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope, r: sqlite3.Row) -> dict[str, Any]:
     """How an approval is carried out: by Ember's code (an email), the owner's click (Reddit) or the owner."""
     action = None
@@ -750,6 +759,7 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
         "action_class": kind.flags(),  # 0.13.0: the connector protocol's class and its flags
         "qa": shortfalls,
         "veto_until": policy.veto_until(conn, int(r["id"])),  # 0.13.0: held by the owner's unlock until then
+        "never": _never(conn, r),
         "action": action,
         "first_contact": first_contact,
         "execution": execution,
