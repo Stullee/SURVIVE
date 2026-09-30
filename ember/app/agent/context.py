@@ -326,7 +326,7 @@ def _usage_line(workspace: Jail) -> str:
 
 def status_text(s: Snapshot, dry_run: bool) -> str:
     st = s.status
-    runway = f"{st.runway.days:.1f} days" if st.runway.days is not None else (st.runway.note or "unknown")
+    runway = review.runway_text(st.runway)  # 0.12.0: and net of revenue and expenses
     lines = [
         f"Time: {s.local_time}. You are {s.agent_name}, version {s.version}."
         + (" DRY RUN (simulated money)." if dry_run else ""),

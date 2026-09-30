@@ -254,11 +254,12 @@ def test_the_venture_focus_keeps_what_matters_most_when_it_is_cut() -> None:
     # 0.12.0: the focus was cut from the end, and lost the owner's comment and the first test.
     row = {**biggest_venture(), "researched": 1}
     projects = [{"id": 10**9 + i, "title": "ä" * 80, "status": "active"} for i in range(8)]
-    text = ventures.focus_text(row, ventures.Money(10**12, 10**12), 10**9, projects)  # type: ignore[arg-type]
+    paid = ventures.Money(10**12, 10**12, 10**12, 10**12)  # 0.12.0: with refunds and expenses
+    text = ventures.focus_text(row, paid, 10**9, projects)  # type: ignore[arg-type]
     assert all(len(line) <= 400 for line in text.split("\n"))  # every field at most 220 characters
     lines = context.cut(text, context.VENTURE_FOCUS_BUDGET).split("\n")
     assert lines[0].startswith("Focus venture: #1000000000 ää") and lines[0].endswith(
-        "[researching] · spent $1000000.00 · earned $1000000.00"
+        "[researching] · spent $1000000.00 · earned $1000000.00 less $1000000.00 of expenses · net -$1000000.00"
     )
     assert lines[1] == f'Owner: your owner\'s note (2026-09-30): "{"ä" * 219}…"'
     assert lines[2:5] == [

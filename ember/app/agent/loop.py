@@ -351,7 +351,7 @@ class CycleRunner:
     def _snapshot(self, venture: bool = False) -> context.Snapshot:
         status = self.economy.life.evaluate()
         scope = self.economy.life.scope()
-        self._keep_money_goal(scope, status.runway.days)
+        self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
         self._keep_stages()
         metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
         today = self.economy.books.cap_spend_on(scope, self.clock.today())

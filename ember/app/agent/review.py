@@ -22,7 +22,7 @@ from typing import Any
 from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.ledger import Books, Scope
-from ..economy.life import LifeStatus
+from ..economy.life import LifeStatus, Runway
 from ..integrations import etsy, etsy_publisher
 from ..version import app_version
 from . import roadmap, ventures
@@ -197,6 +197,16 @@ def _header(first: date, today: date, dry_run: bool) -> str:
     return "\n".join(lines)
 
 
+def runway_text(runway: Runway) -> str:
+    """The runway as the plans and the review show it: at the API spending of the last 7 active days, and, 0.12.0,
+    net of the revenue and expenses of the same days when there were any."""
+    text = f"{runway.days:.1f} days" if runway.days is not None else (runway.note or "unknown")
+    if runway.days is None or not runway.window_net_in:
+        return text
+    net = f"{runway.net_days:.1f} days" if runway.net_days is not None else "you earn at least what you spend"
+    return f"{text} at your API spending; net of revenue and expenses, {net}"
+
+
 def _money(
     conn: sqlite3.Connection,
     scope: AgentScope,
@@ -229,7 +239,7 @@ def _money(
         f" AND {where} ORDER BY occurred_on DESC, id DESC LIMIT ?",
         (days[0]["date"], *params, MAX_SALES),
     ).fetchall()
-    runway = f"{status.runway.days:.1f} days" if status.runway.days is not None else (status.runway.note or "unknown")
+    runway = runway_text(status.runway)
     return "\n".join(
         [
             "MONEY",
@@ -379,8 +389,8 @@ def _ventures(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
             missing = ventures.missing_case(v)
             case = f" · business case: {'missing ' + ', '.join(missing) if missing else 'complete'}"
         lines.append(
-            f"#{v['id']} [{v['stage']}] {_one_line(v['title'], 80)} · {ventures.scores_text(v)} · spent"
-            f" ${micros_to_usd(m.spent):.2f} · earned ${micros_to_usd(m.earned):.2f}{case}"
+            f"#{v['id']} [{v['stage']}] {_one_line(v['title'], 80)} · {ventures.scores_text(v)} ·"
+            f" {ventures.money_text(m)}{case}"
         )
     if ideas:
         best = ", ".join(

@@ -109,10 +109,23 @@ _WORD = re.compile(r"[a-z0-9]+")
 
 @dataclass(frozen=True)
 class Money:
-    """What a venture cost (the calls whose work served it: 0.12.0) and earned (revenue for it or its projects)."""
+    """What a venture cost (the calls whose work served it: 0.12.0) and earned (revenue for it or its projects, less
+    its refunds), and, 0.12.0, its P&L: the refunds and the expenses (Etsy's fees, say) recorded for it."""
 
     spent: int = 0
     earned: int = 0
+    refunds: int = 0  # corrections of its revenue (an order refunded, say), as a positive amount
+    expenses: int = 0  # its expenses, less their corrections
+
+    @property
+    def revenue(self) -> int:
+        """Its revenue before refunds."""
+        return self.earned + self.refunds
+
+    @property
+    def net(self) -> int:
+        """What it earned less its expenses and the API calls that worked for it."""
+        return self.earned - self.expenses - self.spent
 
 
 def slug(title: str) -> str:
@@ -400,17 +413,32 @@ def money(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, Money]:
         " GROUP BY vid",
         (scope.session, 1 if scope.simulated else 0),
     ).fetchall()
-    # Revenue named for the venture, or for one of its projects (0.12.0: the owner names them when recording it).
-    earned = conn.execute(
-        "SELECT COALESCE(l.venture_id, p.venture_id) AS vid, COALESCE(SUM(l.amount_micros), 0) FROM ledger l"
+    # Revenue and expenses named for the venture, or for one of its projects (0.12.0: the owner, or Ember's code for
+    # an Etsy order, names them when recording them), with their corrections: a revenue's are its refunds.
+    booked = conn.execute(
+        "SELECT COALESCE(l.venture_id, p.venture_id) AS vid,"
+        " COALESCE(SUM(CASE WHEN l.type = 'revenue' THEN l.amount_micros ELSE 0 END), 0),"
+        " COALESCE(SUM(CASE WHEN l.type = 'revenue' AND l.corrects_id IS NOT NULL THEN -l.amount_micros ELSE 0 END),"
+        " 0),"
+        " COALESCE(SUM(CASE WHEN l.type = 'expense' THEN l.amount_micros ELSE 0 END), 0) FROM ledger l"
         " LEFT JOIN projects p ON p.id = l.project_id JOIN ventures v ON v.id = COALESCE(l.venture_id, p.venture_id)"
-        " WHERE l.type = 'revenue' AND v.mode = ? AND v.session = ? GROUP BY vid",
+        " WHERE l.type IN ('revenue', 'expense') AND v.mode = ? AND v.session = ? GROUP BY vid",
         (scope.mode, scope.session),
     ).fetchall()
     found: dict[int, Money] = {int(r[0]): Money(spent=int(r[1])) for r in spent}
-    for r in earned:
-        found[int(r[0])] = Money(found.get(int(r[0]), Money()).spent, int(r[1]))
+    for r in booked:
+        found[int(r[0])] = Money(found.get(int(r[0]), Money()).spent, int(r[1]), int(r[2]), int(r[3]))
     return found
+
+
+def money_text(m: Money) -> str:
+    """A venture's money as the plans and the review show it (0.12.0: with its expenses and what it nets)."""
+    text = f"spent {usd(m.spent)} · earned {usd(m.earned)}"
+    if m.expenses:
+        text += f" less {usd(m.expenses)} of expenses"
+    if m.earned or m.expenses:
+        text += f" · net {'-' if m.net < 0 else '+' if m.net > 0 else ''}{usd(abs(m.net))}"
+    return text
 
 
 def day_spend(conn: sqlite3.Connection, scope: AgentScope, day: date) -> tuple[int, int]:
@@ -502,8 +530,8 @@ def owner_said(row: Mapping[str, Any], limit: int = 160) -> str:
 def _head(v: Mapping[str, Any], m: Money) -> str:
     branch = f" (branch of #{v['parent_id']})" if v["parent_id"] else ""
     head = f"#{v['id']} [{v['stage']}] {_one_line(v['title'], 80)}{branch} · {scores_text(v)}"
-    if m.spent or m.earned:
-        head += f" · spent {usd(m.spent)} · earned {usd(m.earned)}"
+    if m.spent or m.earned or m.expenses:
+        head += f" · {money_text(m)}"
     rule = stage_rule(v)
     said = owner_said(v)
     return head + (f" · {rule}" if rule else "") + (f" · {said}" if said else "")
@@ -597,10 +625,7 @@ def focus_text(
     if parts and len(parts) > 1:
         kept += f"; its earlier parts: {', '.join(parts[:-1])}"
     branch = f" (branch of #{row['parent_id']})" if row["parent_id"] else ""
-    lines = [
-        f"Focus venture: #{row['id']} {row['title']}{branch} [{row['stage']}] · spent {usd(paid.spent)} · earned "
-        f"{usd(paid.earned)}"
-    ]
+    lines = [f"Focus venture: #{row['id']} {row['title']}{branch} [{row['stage']}] · {money_text(paid)}"]
     said = owner_said(row, FOCUS_CHARS)
     if said:
         lines.append(f"Owner: {said}")

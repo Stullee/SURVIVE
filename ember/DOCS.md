@@ -367,9 +367,13 @@ test, and then it offers the closest variant that keeps them. It researches
 before it builds: a research call costs about 5 cents, a product with its
 listing many times that.
 
-**Money.** A venture's cost is every model call of the cycles that worked on
-it, and of its projects' cycles; its revenue is what you record for its
-projects. Live legs show both in the tab's summary.
+**Money.** A venture's cost is what the model calls whose work served it
+cost: the work of the cycles aimed at it or its projects, and the research
+calls made for it (plans, reviews and brainstorms are overhead, counted for no
+venture). Each card shows its P&L: what it **earned** (the revenue recorded
+for it or its projects, less refunds), its **expenses** (Etsy's fees, say), what
+it **spent** and the **net**. The agent's plans and daily review show the same
+numbers. Live legs show spent and earned in the tab's summary.
 
 ## Roadmap
 
@@ -393,7 +397,7 @@ roadmap too.
 goal at its root, **Earn as much as you spend** (over the last 30 days, the
 revenue recorded less expenses at least equals the API spending), due in 90
 days, with two **decision points** under it, at a quarter and at half of the
-runway (of the 90 days at most), where the agent decides from the numbers which
+net runway (of the 90 days at most), where the agent decides from the numbers which
 projects and ventures go on, change or stop. Ember's code checks the goal from
 the books before every plan: once it is met it closes it **done** and sets the
 next, which asks for more (twice, then three times what the agent spends); past
@@ -959,6 +963,13 @@ adds room under that day's spending cap. Date it on the day it corrects: the
 runway counts it there, so a refund of old charges doesn't make the last week
 look cheap, and it isn't money coming in (it doesn't end a critical state).
 
+**Runway.** The runway is the balance divided by the average daily API
+spending of the last 7 active days; the life states go by it (see below).
+Next to it, the dashboard, the agent's plans and its daily review show the
+**net runway**: the same, with the revenue and expenses recorded for those days
+counted too (Etsy's fees make it shorter, a sale longer). While Ember earns at
+least what it spends, the net runway has no end.
+
 **Spending limits.** Before every API call Ember works out the most the call
 could cost and refuses it if that could break the per-cycle cap, the daily cap
 (per local calendar day, so up to twice the cap can be spent around midnight),
@@ -1020,6 +1031,8 @@ rest:
 
 The JSON also has `mode` (`live` or `dry_run`), `runway_known` (runway is
 reported as 365 days while it is unknown, for example before any spending),
+`net_runway_days` (the runway net of revenue and expenses; 365 while Ember earns
+at least what it spends or the runway is unknown),
 `today_api_spend_usd`, `daily_cap_usd`, `safe_mode`, `kill_switch_engaged`,
 `next_wake_at`, `cycle_running` and counts of what waits for you:
 `approvals_pending`, `approvals_todo` (approved, not yet marked done),

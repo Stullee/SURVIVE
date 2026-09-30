@@ -112,6 +112,10 @@ Your results now reach your records: what you earn counts where it belongs.
 - If your owner turns it on, Ember's code records your Etsy orders from Etsy's own numbers at each sync: a paid
   order's revenue (your lines, net), Etsy's fees on it and its refunds, for the project whose listing sold. ETSY SHOP
   says who records the week's orders. Revenue still counts only once it is recorded.
+- VENTURES, FOCUS and your daily review show what each venture nets: what it earned (less refunds), its expenses
+  (Etsy's fees) and its API spending ("earned $8.00 less $1.50 of expenses · net +$5.20"). STATUS shows your runway
+  net of the last 7 days' revenue and expenses next to the one at your API spending; the money goal's decision
+  points sit on the net one.
 
 ## 0.11.2
 

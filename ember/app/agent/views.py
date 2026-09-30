@@ -458,6 +458,11 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                 "file_bytes": size,
                 "spent_usd": _usd(m.spent),
                 "earned_usd": _usd(m.earned),
+                # 0.12.0: its P&L: revenue before refunds, the refunds, its expenses (Etsy's fees, say) and the net
+                "revenue_usd": _usd(m.revenue),
+                "refunds_usd": _usd(m.refunds),
+                "expenses_usd": _usd(m.expenses),
+                "net_usd": _usd(m.net),
                 "projects": linked.get(v["id"], []),
                 "owner_action": v["owner_action"],
                 "owner_comment": v["owner_comment"],

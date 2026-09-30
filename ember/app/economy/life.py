@@ -69,10 +69,17 @@ def mode_of(settings: Settings) -> str:
 
 @dataclass(frozen=True)
 class Runway:
+    """How long the balance lasts at the API spending of the last 7 active days (``days``; the life's states go by
+    it), and, 0.12.0, at that spending less the revenue and plus the expenses of the same days (``net_days``: None
+    while it earns at least what it spends, see ``net_note``)."""
+
     days: float | None
     note: str | None
     window_spend: int = 0
     active_days: float = 0.0
+    net_days: float | None = None
+    net_note: str | None = None
+    window_net_in: int = 0  # revenue less expenses in the same days (their corrections included)
 
 
 @dataclass
@@ -382,9 +389,17 @@ class Life:
         active = self._active_seconds(life["id"], start, now)
         days = max(1.0, active / 86_400)
         if spend <= 0:
-            return Runway(None, "No spending in the last 7 days", 0, days)
+            note = "No spending in the last 7 days"
+            return Runway(None, note, 0, days, net_note=note)
         runway = max(0, balance) / (spend / days)
-        return Runway(min(runway, RUNWAY_CAP_DAYS), None, spend, days)
+        # 0.12.0: the net runway counts what came in and what else went out in the same days (it counted neither).
+        net_in = self.books.net_revenue_between(scope, start, now)
+        burn = spend - net_in
+        if burn <= 0:
+            net_days, net_note = None, "Earning at least what it spends (last 7 days)"
+        else:
+            net_days, net_note = min(max(0, balance) / (burn / days), RUNWAY_CAP_DAYS), None
+        return Runway(min(runway, RUNWAY_CAP_DAYS), None, spend, days, net_days, net_note, net_in)
 
     def _active_seconds(self, life_id: int, start: datetime, end: datetime) -> float:
         """Seconds within [start, end] the life spent alive or critical."""

@@ -821,7 +821,10 @@
     } else {
       // The server caps the runway at a year.
       runway.textContent = days >= 365 ? "365+ days" : plural(days, "day");
-      $("kpi-runway-sub").textContent = a.runway_note || "at the last 7 days' spending";
+      var net = num(a.net_runway_days);
+      // 0.12.0: and net of the revenue and expenses of the same days, when there were any
+      $("kpi-runway-sub").textContent = (a.runway_note || "at the last 7 days' spending") + (num(a.runway_net_in_usd) ?
+        " · net of revenue and expenses: " + (isNaN(net) ? (a.net_runway_note || "–").toLowerCase() : net >= 365 ? "365+ days" : plural(net, "day")) : "");
     }
     runway.setAttribute("data-tone", !isNaN(days) && days < 2 ? "critical" : "");
 
@@ -5124,8 +5127,15 @@
         h("div", { title: "Research calls for this venture that found web pages: its scores need one, a business case " + toPropose + "." },
           h("dt", { text: "Research" }),
           h("dd", { text: researched ? researched + " call" + (researched === 1 ? "" : "s") + " with web results" : "None yet" })),
-        h("div", null, h("dt", { text: "Spent" }), h("dd", { text: usd(v.spent_usd) })),
-        h("div", null, h("dt", { text: "Earned" }), h("dd", { text: usd(v.earned_usd) })),
+        h("div", { title: "What the model calls that worked for it cost: its research and the work of the cycles aimed at it." },
+          h("dt", { text: "Spent" }), h("dd", { text: usd(v.spent_usd) })),
+        // 0.12.0: its P&L: revenue less refunds, its expenses (Etsy's fees, say) and what it nets
+        h("div", { title: "Revenue recorded for it or its projects, less refunds." }, h("dt", { text: "Earned" }),
+          h("dd", { text: usd(v.earned_usd) + (num(v.refunds_usd) > 0 ? " (" + usd(v.revenue_usd) + " less " + usd(v.refunds_usd) + " refunded)" : "") })),
+        num(v.expenses_usd) ? h("div", { title: "Etsy's fees and other expenses recorded for it or its projects." },
+          h("dt", { text: "Expenses" }), h("dd", { text: usd(v.expenses_usd) })) : null,
+        num(v.earned_usd) || num(v.expenses_usd) ? h("div", { title: "Earned, less its expenses and what it spent." },
+          h("dt", { text: "Net" }), h("dd", { text: signedUsd(v.net_usd), "data-tone": num(v.net_usd) < 0 ? "critical" : "" })) : null,
         projects.length ? h("div", null, h("dt", { text: "Projects" }), h("dd", { text: projects.map(function (p) {
           return "#" + p.id + " " + p.title + " (" + p.status + ")";
         }).join(", ") })) : null),
