@@ -58,6 +58,7 @@ class Metric:
     ceiling: bool = False  # met while not above the target, at its date; missed once above it
     venture: bool = False  # measures a venture: the milestone must name one
     history: bool = False  # needs the owner's etsy_stats_history (views and favorites kept over time)
+    code_only: bool = False  # 0.13.0: only Ember's code sets milestones with it (a listing test's bars: agent/gates.py)
     sample: str = ""  # what a miss is judged against: below min_sample, too little to judge
     min_sample: int = 0
 
@@ -148,6 +149,13 @@ CATALOGUE: dict[str, Metric] = {
         # 0.13.0 (Phase E4): Ember's Printify products, as the last Printify sync read them
         Metric("pod_products_live", "your Printify products in the shop now", "count", "printify", unit="product"),
         Metric("pod_orders", "orders of your Printify products, in all", "count", "printify", unit="order"),
+        # 0.13.0: a product line's listing test (agent/gates.py): its listings' views and favorites in all, as the last
+        # sync read them (Etsy's own counts: no history kept); only Ember's code sets milestones with them
+        Metric("views_total", "views your listings have had in all", "count", "etsy", unit="view", code_only=True),
+        Metric(
+            "favorites_total", "favorites your listings have in all", "count", "etsy", unit="favorite", code_only=True
+        ),
+        Metric("orders_total", "Etsy orders of your listings, in all", "count", "etsy", unit="order", code_only=True),
         Metric(
             "qa_clean",
             f"each live listing has at least {qa.MIN_PHOTOS} photos",
@@ -158,7 +166,7 @@ CATALOGUE: dict[str, Metric] = {
         ),
     )
 }
-NAMES = tuple(CATALOGUE)
+NAMES = tuple(name for name, m in CATALOGUE.items() if not m.code_only)  # the ones the agent can set
 # The catalogue in the tool's words, as short as it can be: every request of a work step carries it.
 HELP = (
     "listings_live counts now; the deltas, orders_observed, revenue_verified_usd (recorded revenue less "
@@ -380,6 +388,9 @@ def _read_etsy(
 ) -> Reading | Unread:
     rows = listings(conn, scope, row["project_id"], row["venture_id"])
     views = sum(int(r["views"] or 0) for r in rows)
+    if m.name in ("views_total", "favorites_total"):  # 0.13.0: Etsy's counts in all, now
+        column = "views" if m.name == "views_total" else "favorites"
+        return Reading(sum(int(r[column] or 0) for r in rows), synced, f" ({len(rows)} listings)" if rows else "")
     if m.name in ("views_delta", "favorites_delta"):
         column = "views" if m.name == "views_delta" else "favorites"
         gained = sum(int(r[column] or 0) for r in rows) - int(row["baseline"] or 0)
@@ -388,18 +399,9 @@ def _read_etsy(
     if m.name == "listings_live":
         numbers = sorted(int(r["listing_id"]) for r in live)
         return Reading(len(live), synced, f" ({_ids(numbers)})" if numbers else "")
-    if m.name == "orders_observed":
-        ours = {int(r["listing_id"]) for r in rows}
-        where, params = scope.where()
-        found = []
-        for order in conn.execute(
-            f"SELECT receipt_id, items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS} AND ordered_at >= ?"
-            " ORDER BY ordered_at",
-            (*params, str(row["created_at"])),
-        ):
-            items = json.loads(order["items"] or "[]")
-            if any(isinstance(i, dict) and i.get("listing_id") in ours for i in items):
-                found.append(int(order["receipt_id"]))
+    if m.name in ("orders_observed", "orders_total"):  # 0.13.0: orders_total counts them in all
+        since = str(row["created_at"]) if m.name == "orders_observed" else ""
+        found = orders_of(conn, scope, {int(r["listing_id"]) for r in rows}, since)
         return Reading(len(found), synced, f" (receipts {_ids(found)})" if found else "", sample=views)
     few = []  # qa_clean: the live listings with too few photos in Ember's records
     for r in live:
@@ -409,6 +411,21 @@ def _read_etsy(
             few.append(f"#{r['listing_id']} has {photos}")
     detail = f" ({', '.join(few[:6])})" if few else f" ({len(live)} live)"
     return Reading(1 if live and not few else 0, synced, detail, sample=len(live))
+
+
+def orders_of(conn: sqlite3.Connection, scope: AgentScope, ours: set[int], since: str) -> list[int]:
+    """The receipts of the (counted) Etsy orders with one of the listings ``ours``, from ``since`` on ("": all)."""
+    where, params = scope.where()
+    found = []
+    for order in conn.execute(
+        f"SELECT receipt_id, items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS} AND ordered_at >= ?"
+        " ORDER BY ordered_at",
+        (*params, since),
+    ):
+        items = json.loads(order["items"] or "[]")
+        if any(isinstance(i, dict) and i.get("listing_id") in ours for i in items):
+            found.append(int(order["receipt_id"]))
+    return found
 
 
 def _read_revenue(

@@ -121,6 +121,7 @@ TABLES = (
     "printify_orders",
     "site_pages",
     "site_downloads",
+    "listing_gates",
     "memory_versions",
     "lesson_pins",
     "research_checks",

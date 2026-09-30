@@ -632,6 +632,7 @@ close such a milestone done; the database refuses it as well. The metrics:
 | `stage_reached` | the venture reached a stage (researching, proposed, building, live) | Ember |
 | `api_spend_usd` | API spending since it was set: a ceiling, missed once passed, done at its date | Ember |
 | `qa_clean` | every live listing has at least 5 photos | Etsy and Ember |
+| `views_total`, `favorites_total`, `orders_total` | the listings' views, favorites or orders in all, as Etsy counts them now (only Ember's code sets milestones with them: the listing test below) | Etsy |
 
 A milestone linked to a project or venture counts only what belongs to it (a
 listing belongs to the project of the request that created it). Etsy's numbers
@@ -640,6 +641,25 @@ milestone for a killed venture's stage or case is closed missed. Its card on
 the Roadmap tab shows where it stands (**Checked by Ember's code**), and the
 agent's plan says what Ember's code closed since its last cycle. A milestone
 without a metric is allowed; the agent's done on it stays self-reported.
+
+**A product line's listing test.** Once a product line (a project) has its
+first listing live on Etsy, Ember's code tests it, counted from that day: one
+bar at a time (the next once the one before is closed, so a product line holds
+at most two open milestones), each a milestone it checks from Etsy's own numbers
+(no views history is needed):
+
+| Day | Bar | If missed, the agent owes |
+|---|---|---|
+| 7 | 10 views in all | fixing the titles, tags and category of its listings once |
+| 14 | 30 views and 2 favorites | parking the product line, with the numbers |
+| 21 | a first order | stopping building that product type |
+
+A miss is an obligation with that action, shown first in the agent's plan
+until it is done. A first order by day 21 sets a decision point of its own:
+**Scale it: 5 variants or a bundle**, which the agent closes when they are
+live. The test's dates never move and only you drop its milestones; a project
+that is closed takes its open ones with it. Existing product lines get theirs
+from the day this version first sees their listings live.
 
 **Forecasts Ember's code settles.** The agent can give a metric milestone its
 odds of being met by its date (0.13.0: 5 to 95%). When you back a venture, its

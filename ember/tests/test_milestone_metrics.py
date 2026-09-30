@@ -70,8 +70,9 @@ def test_the_catalogue() -> None:
         "pod_orders",
         "qa_clean",
     }
+    assert set(metrics.CATALOGUE) - set(metrics.NAMES) == {"views_total", "favorites_total", "orders_total"}
     for m in metrics.CATALOGUE.values():
-        assert m.name in metrics.help_text() or m.name.endswith("_delta"), m.name
+        assert m.code_only or m.name in metrics.help_text() or m.name.endswith("_delta"), m.name
         assert m.source in metrics.SOURCES and m.kind in ("count", "usd", "yes", "stage")
         assert (m.sample == "") == (m.min_sample == 0)
     listings, usd = metrics.CATALOGUE["listings_live"], metrics.CATALOGUE["revenue_verified_usd"]

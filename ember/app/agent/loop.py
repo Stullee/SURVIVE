@@ -64,6 +64,7 @@ from . import (
     digest,
     econ,
     evidence,
+    gates,
     knockouts,
     library,
     metrics,
@@ -514,6 +515,7 @@ class CycleRunner:
         self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
         self._keep_stages()
         metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
+        self._keep_gates()  # 0.13.0: after the grading, so a bar missed now is owed at once
         predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
         self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
@@ -777,6 +779,14 @@ class CycleRunner:
             self.db.set_meta(key, since)
         with self.db.transaction() as conn:
             happened = obligations.keep(conn, self.scope, now, since)
+        for line in happened:
+            events.record(self.db, "info", "agent", line[:300])
+
+    def _keep_gates(self) -> None:
+        """0.13.0: a product line's listing test (gates.keep): its bars as milestones once its first listing is live,
+        and what a miss or a first order asks of the agent, kept by Ember's code before every plan."""
+        with self.db.transaction() as conn:
+            happened = gates.keep(conn, self.scope, self.clock.today(), to_iso(self.clock.now()))
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
 
