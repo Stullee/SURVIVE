@@ -442,6 +442,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
     items = []
     for v in rows:
         m = paid.get(v["id"], ventures.Money())
+        left = ventures.research_left(v)  # 0.12.0: None without a research budget
         parts = ventures.knowledge_parts(workspace, v["id"], v["title"])  # 0.12.0: the newest part
         file = parts[-1] if parts else ventures.file_of(v["id"], v["title"])
         try:
@@ -467,6 +468,9 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                 "scores": {name: v[name] for name in ventures.SCORE_FIELDS},
                 "scores_by": v["scores_by"],
                 "researched": ventures.researched(v),  # research calls for it that found something (0.12.0)
+                # 0.12.0: what its research cost since its research budget began, and what is left (None: no budget)
+                "research_spent_usd": _usd(int(v["research_spent"])),
+                "research_left_usd": None if left is None else _usd(left),
                 "weight": ventures.weight(v),
                 "case": {name: v[name] for name in ventures.CASE_FIELDS},
                 "missing": ventures.missing_case(v),
@@ -500,7 +504,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         "share": agent.settings.venture_share,
         "today": {"spent_usd": _usd(spent), "ventures_usd": _usd(ventured)},
         "venture_cycles": int(cycles),
-        "decide_usd": ventures.DECIDE_USD,
+        "research_budget_usd": ventures.RESEARCH_BUDGET_USD,  # 0.12.0: each venture's, while it isn't backed
         "research_to_propose": ventures.RESEARCH_TO_PROPOSE,
         "criteria": [
             {"name": c.name, "label": c.label, "good": c.good, "factor": c.factor, "low": c.low, "high": c.high}

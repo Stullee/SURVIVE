@@ -144,7 +144,8 @@ test, is a result: park the venture with them.
 - Research the heaviest ideas first (weight), one venture a cycle (focus_venture_id): answer its next question with the
   research calls this cycle can pay for, save its numbers (evidence) and what else you learn (venture_update learned),
   and rescore it from the evidence.
-- Decide every venture that isn't backed within about ${ventures.DECIDE_USD:.0f}: its business case (stage
+- Decide every venture that isn't backed within its research budget (${ventures.RESEARCH_BUDGET_USD:.2f} of research
+  calls; FOCUS and VENTURES say what is left, and Ember's code refuses research past it): its business case (stage
   proposed), or parked with why.
   For a backed venture (building), plan its first test: projects, requests to your owner, upgrade requests.
 - Your owner's ideas and wishes come first: an idea they added, a venture they want researched next, their comments."""

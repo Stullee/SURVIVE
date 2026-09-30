@@ -85,7 +85,11 @@ MAX_ACTIVE = 8  # ventures being worked on at once (ideas don't count: the tree 
 RESEARCH_DAYS = 21
 FIRST_TEST_DAYS = 21
 MAX_VENTURES = 400  # in the whole tree, parked and killed ones included
-DECIDE_USD = 3.0  # decide a venture that isn't backed yet (propose or park) after about this much spent on it
+# 0.12.0: a venture that isn't backed has this much for research calls (their cost, from the start or since the owner
+# last asked for research on it), then a decision: Ember's code refuses more (it was "decide within about $3", a line
+# nothing checked). Only the owner grants a new budget (Research next, more or again).
+RESEARCH_BUDGET_USD = 0.60
+BUDGETED = ("idea", "researching", "proposed", "parked")  # the stages it holds in (a backed venture is being built)
 RESEARCH_CALLS = 8  # research calls in a venture cycle (3 in any other)
 # 0.12.0: research calls made for a venture that found something (venture_research), before its scores count as
 # research, and before its business case can be proposed.
@@ -195,6 +199,40 @@ def researched(values: Mapping[str, Any] | sqlite3.Row) -> int:
     return int(_value(values, "researched") or 0)
 
 
+def research_left(values: Mapping[str, Any] | sqlite3.Row) -> int | None:
+    """What is left of the venture's research budget (micros), or None in a stage without one (backed, killed)."""
+    if values["stage"] not in BUDGETED:
+        return None
+    return max(0, round(RESEARCH_BUDGET_USD * 1_000_000) - int(_value(values, "research_spent") or 0))
+
+
+def budget_text(values: Mapping[str, Any] | sqlite3.Row) -> str:
+    """Its research budget in a few words, for FOCUS and VENTURES ("" in a stage without one)."""
+    left = research_left(values)
+    if left is None:
+        return ""
+    if left <= 0:
+        return f"research budget of ${RESEARCH_BUDGET_USD:.2f} used: decide it (a business case or parked)"
+    return f"research budget: {usd(left)} of ${RESEARCH_BUDGET_USD:.2f} left"
+
+
+def research_refusal(values: Mapping[str, Any] | sqlite3.Row) -> str:
+    """Why research for the venture is refused ("" when it isn't): its research budget is used."""
+    left = research_left(values)
+    if left is None or left > 0:
+        return ""
+    spent = usd(int(_value(values, "research_spent") or 0))
+    decide = (
+        ": decide it now: its business case (stage proposed) or parked, with why in its note."
+        if values["stage"] in ("idea", "researching")
+        else "."
+    )
+    return (
+        f"venture #{values['id']} has used its research budget ({spent} of ${RESEARCH_BUDGET_USD:.2f}){decide} Only "
+        "your owner grants more research for it (Research more on the Ventures tab)"
+    )
+
+
 def proposal_gaps(values: Mapping[str, Any] | sqlite3.Row, stage: str) -> list[str]:
     """What a venture at ``stage`` still needs before it is proposed (0.12.0), with ``values`` its fields after the
     update: the researching stage, research that found something, all six scores from research and a complete
@@ -249,7 +287,10 @@ _RESEARCHED = (
     "(SELECT COUNT(*) FROM venture_research r WHERE r.venture_id = ventures.id AND r.sources > 0) AS researched,"
     # 0.12.0: when its research in this stage began (its first research call since the stage changed), or NULL
     " (SELECT MIN(r.created_at) FROM venture_research r WHERE r.venture_id = ventures.id"
-    " AND r.created_at >= ventures.stage_at) AS research_from"
+    " AND r.created_at >= ventures.stage_at) AS research_from,"
+    # 0.12.0: what its research calls cost since its research budget began (the owner's last word asking for research)
+    " (SELECT COALESCE(SUM(r.cost_micros), 0) FROM venture_research r WHERE r.venture_id = ventures.id"
+    " AND r.created_at > COALESCE(ventures.research_granted_at, '')) AS research_spent"
 )
 
 
@@ -377,14 +418,17 @@ def owner_word(
     stage: str | None = None,
 ) -> None:
     """The owner's decision or note on a venture: news for the agent again (a new owner_version), until shown. A
-    venture the owner parks is theirs to take up again (``parked_by``, 0.12.0)."""
+    venture the owner parks is theirs to take up again (``parked_by``, 0.12.0), and asking for research on one starts
+    a new research budget for it (0.12.0)."""
     if action not in OWNER_ACTIONS:
         raise ValueError("unknown owner action")
     conn.execute(
         "UPDATE ventures SET stage = COALESCE(?, stage), owner_action = ?, owner_comment = ?, owner_at = ?,"
         " owner_by = ?, owner_version = owner_version + 1, seen_cycle_id = NULL, updated_at = ?,"
-        " parked_by = CASE WHEN ? IS NULL THEN parked_by WHEN ? = 'parked' THEN 'owner' END WHERE id = ?",
-        (stage, action, comment, now, who, now, stage, stage, venture_id),
+        " parked_by = CASE WHEN ? IS NULL THEN parked_by WHEN ? = 'parked' THEN 'owner' END,"
+        # 0.12.0: asking for research on it starts a new research budget (only the owner's word can: migration 0041)
+        " research_granted_at = CASE WHEN ? = 'research' THEN ? ELSE research_granted_at END WHERE id = ?",
+        (stage, action, comment, now, who, now, stage, stage, action, now, venture_id),
     )
 
 
@@ -568,9 +612,10 @@ def planner_lines(rows: list[sqlite3.Row], paid: dict[int, Money], full: bool) -
             missing = missing_case(v)
             case = f"missing {', '.join(missing)}" if missing else "complete"
             count = researched(v)
+            budget = budget_text(v)
             lines.append(
                 f"   next question: {_one_line(v['next_question'], 160) or '-'} · research: {count} call"
-                f"{'s' if count != 1 else ''} · business case: {case}"
+                f"{'s' if count != 1 else ''}{f' · {budget}' if budget else ''} · business case: {case}"
             )
     shown = ideas[:IDEAS_SHOWN] if full else []
     for v in shown:
@@ -636,6 +681,7 @@ def focus_text(
     if rule:
         lines.append(f"Stage rule (Ember's code keeps it): {rule}")
     count = researched(row)
+    budget = budget_text(row)  # 0.12.0
     lines += [
         f"First test: {_one_line(row['first_test'], FOCUS_CHARS) or '-'}",
         f"Next question: {_one_line(row['next_question'], FOCUS_CHARS) or '-'}",
@@ -643,7 +689,7 @@ def focus_text(
         *([f"Its last cycle (Ember's code's digest): {last}"] if last else []),
         f"Scores: {scores_text(row)}",
         f"Research for it: {count} call{'s' if count != 1 else ''} that found something (scores need "
-        f"{RESEARCH_TO_SCORE}, a business case {RESEARCH_TO_PROPOSE})",
+        f"{RESEARCH_TO_SCORE}, a business case {RESEARCH_TO_PROPOSE})" + (f"; {budget}" if budget else ""),
         *([evidence] if evidence else []),
         f"Pitch: {_one_line(row['pitch'], FOCUS_CHARS)}",
     ]

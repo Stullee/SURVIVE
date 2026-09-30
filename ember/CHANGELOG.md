@@ -153,6 +153,12 @@ Your results now reach your records: what you earn counts where it belongs.
   sells what it describes) or unchecked (no research of yours returned it). FOCUS shows a venture's evidence by
   grade with the newest values; your owner sees every claim on the Ventures tab. In a venture cycle, guide has the
   ventures manual.
+- Each venture that isn't backed has a research budget: $0.60 of research calls, from its start or since your owner
+  last asked for research on it. Once it is spent, research for it is refused: decide it, a business case (stage
+  proposed) or parked with why. FOCUS and VENTURES show what is left; only your owner grants more. In a venture
+  cycle, research is always a venture's (your focus venture unless you name another). A question you asked in the
+  last 30 days that found web pages (the same words, site or page) is answered from then, free: it doesn't count
+  as research for a venture.
 
 ## 0.11.2
 

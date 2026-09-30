@@ -20,7 +20,8 @@ from tests.test_ventures import DROPSHIPPING, JOURNAL, PRINT, RESEARCH, VENTURIN
 
 
 def research(venture_id: int | None = None) -> tuple[str, dict[str, Any]]:
-    return ("research", {**RESEARCH[1], **({"venture_id": venture_id} if venture_id else {})})
+    question = f"{RESEARCH[1]['question']} (venture {venture_id})"  # 0.12.0: the same question is answered from before
+    return ("research", {"question": question, **({"venture_id": venture_id} if venture_id else {})})
 
 
 def test_each_call_names_what_its_work_served(data_dir: Path) -> None:
@@ -105,7 +106,7 @@ def test_the_history_is_attributed_from_its_cycles(tmp_path: Path) -> None:
         conn.execute(insert, (1, "plan"))
         conn.execute(insert, (2, "work"))
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [34, 35, 36, 37, 38, 39, 40]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [34, 35, 36, 37, 38, 39, 40, 41]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         got = [tuple(r) for r in conn.execute("SELECT id, venture_id, overhead FROM llm_calls ORDER BY id")]

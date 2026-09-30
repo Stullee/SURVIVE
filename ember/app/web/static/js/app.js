@@ -5216,6 +5216,11 @@
         h("div", { title: "Research calls for this venture that found web pages: its scores need one, a business case " + toPropose + "." },
           h("dt", { text: "Research" }),
           h("dd", { text: researched ? researched + " call" + (researched === 1 ? "" : "s") + " with web results" : "None yet" })),
+        // 0.12.0: what its research may still cost before the agent decides it (none once it is backed)
+        v.research_left_usd !== null && v.research_left_usd !== undefined ? h("div", {
+          title: "What research for it may still cost before " + name + " decides it: a business case or parked. Research next, more or again gives it a new budget of " + usd(data.research_budget_usd) + "." },
+          h("dt", { text: "Research budget" }),
+          h("dd", { text: num(v.research_left_usd) > 0 ? usd(v.research_left_usd) + " of " + usd(data.research_budget_usd) + " left" : "Used: " + name + " decides it now" })) : null,
         h("div", { title: "What the model calls that worked for it cost: its research and the work of the cycles aimed at it." },
           h("dt", { text: "Spent" }), h("dd", { text: usd(v.spent_usd) })),
         // 0.12.0: its P&L: revenue less refunds, its expenses (Etsy's fees, say) and what it nets
@@ -5349,7 +5354,8 @@
       back: { title: "Back this venture", submit: "Back it",
         intro: [h("p", { text: "Backing tells " + name + " to build it: it plans the first test and asks you, one step at a time, for what only you can do (accounts, money, setup)." })] },
       research: { title: "Research this next", submit: "Research next",
-        intro: [h("p", { text: name + " researches it in its next venture cycle, scores it from the evidence and brings you a business case or tells you why not." })] },
+        intro: [h("p", { text: name + " researches it in its next venture cycle, with a new research budget of " + usd((ui.vt.data || {}).research_budget_usd) +
+          ", scores it from the evidence and brings you a business case or tells you why not." })] },
       park: { title: "Park this venture?", submit: "Park",
         intro: [h("p", { text: name + " stops working on it. It stays in the tree, and you can have it researched again later." })] },
       kill: { title: "Kill this venture?", submit: "Kill", danger: true,

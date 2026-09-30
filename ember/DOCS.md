@@ -377,9 +377,16 @@ you want more research. In a venture cycle the agent:
 - researches the heaviest idea (up to 8 web searches instead of 3), keeps what
   it learns in the venture's knowledge file (`ventures/<number>-<name>.md` in
   its workspace, which the card opens; a full one continues in
-  `…-2.md`, `…-3.md`) and scores it again;
-- decides each venture within about $3: a business case for you, or parked
-  with the reason.
+  `…-2.md`, `…-3.md`) and scores it again. In a venture cycle every research
+  call is a venture's (the one it focuses on, unless it names another). A
+  question it asked in the last 30 days that found web pages (the same words,
+  site or page) is answered from that research, free, and doesn't count as
+  research for a venture;
+- decides each venture within its **research budget**: $0.60 of research
+  calls while it isn't backed. Once that is spent, Ember's code refuses more
+  research for it, and the agent brings you a business case or parks it with
+  the reason. The card shows what is left. **Research next** (**more**,
+  **again**) gives a venture a new budget: only you can.
 
 A venture cycle only researches and decides: its work steps don't carry the
 tools for making files, the workshop, the Etsy shop, email or Reddit (they

@@ -22,9 +22,9 @@ RESEARCH, ONE VENTURE A CYCLE
 2. Save each number you find (a price, searches, sales, a fee) with evidence: Ember's code grades its page. Vendor
    pages alone prove nothing.
 3. Save the rest with venture_update learned, with sources, and rescore: scores need a research call for the venture
-   (venture_id; default: the focus) that found web pages. Set the next question: the biggest unknown left.
-4. Within about $3, decide: a business case (stage proposed: from researching, 2 such calls, all six scores, a link
-   or euros in the case) or parked, with why in the note.
+   that found web pages. Set the next question: the biggest unknown left.
+4. Within its research budget (FOCUS says what is left), decide: a business case (stage proposed: from researching, 2
+   such calls, all six scores, a link or euros in the case) or parked, with why in the note.
 
 THE BUSINESS CASE
 - demand: evidence that people pay (competitors, prices, reviews, search interest), with sources

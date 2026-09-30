@@ -340,7 +340,12 @@ def test_research_costs_are_what_the_recent_calls_cost(data_dir: Path) -> None:
     with agent.db.connection() as conn:
         assert ventures.call_costs(conn, agent.scope()) == ventures.USUAL_COSTS
     fake = FakeTransport(
-        script=[plan(), ToolCalls([("research", {"question": "Who sells this?"})]), Reply("Found it."), JOURNAL]
+        script=[  # 0.12.0: a venture cycle's research is a venture's (its focus venture)
+            plan(venture=DROPSHIPPING),
+            ToolCalls([("research", {"question": "Who sells this?"})]),
+            Reply("Found it."),
+            JOURNAL,
+        ]
     )
     agent, _ = run(data_dir, fake, settings=VENTURING)
     [paid] = rows(agent, "SELECT cost_micros FROM llm_calls WHERE purpose = 'research'")
@@ -392,7 +397,9 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
                     ("venture_update", {"venture_id": DROPSHIPPING, "stage": "proposed"}),
                 ]
             ),
-            ToolCalls([RESEARCH, RESEARCH]),  # in a venture cycle, research counts for the focus venture
+            # in a venture cycle, research counts for the focus venture (0.12.0: a question asked again is answered
+            # from before and counts for none)
+            ToolCalls([RESEARCH, ("research", {"question": "Which EU suppliers ship in 3 days?"})]),
             found("https://example.invalid/a"),
             found("https://example.invalid/b"),
             ToolCalls(
@@ -453,11 +460,10 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
     assert dropshipping["scores_by"] == "research" and ventures.weight(dropshipping) == 57
     assert {name: dropshipping[name] for name in ventures.CASE_FIELDS} == CASE
     recorded = rows(agent, "SELECT venture_id, cycle_id, question, url, sources FROM venture_research ORDER BY id")
-    assert (
-        recorded
-        == [{"venture_id": DROPSHIPPING, "cycle_id": 1, "question": RESEARCH[1]["question"], "url": None, "sources": 1}]
-        * 2
-    )
+    assert recorded == [
+        {"venture_id": DROPSHIPPING, "cycle_id": 1, "question": question, "url": None, "sources": 1}
+        for question in (RESEARCH[1]["question"], "Which EU suppliers ship in 3 days?")
+    ]
     workspace, _ = agent.roots()
     knowledge = workspace.read("ventures/3-dropshipping-store.md")
     assert knowledge.startswith("# Venture #3: Dropshipping store\nPitch: A web shop selling physical products")
@@ -469,13 +475,15 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
 
 
 def test_research_counts_for_the_venture_it_names_once_it_finds_pages(data_dir: Path) -> None:
-    def research(venture_id: int | None = None) -> tuple[str, dict[str, Any]]:
-        return ("research", {**RESEARCH[1], **({"venture_id": venture_id} if venture_id else {})})
+    def research(venture_id: int | None = None, question: str = RESEARCH[1]["question"]) -> tuple[str, dict[str, Any]]:
+        return ("research", {"question": question, **({"venture_id": venture_id} if venture_id else {})})
 
     fake = FakeTransport(
         script=[
             plan(steps=["research"]),  # the day's first cycle is an ordinary one: no focus venture
-            ToolCalls([research()]),
+            ToolCalls(
+                [research(question="Who sells online?")]
+            ),  # 0.12.0: a question asked again is answered from before
             found("https://example.invalid/any"),
             Reply("Done."),
             JOURNAL,

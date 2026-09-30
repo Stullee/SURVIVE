@@ -115,6 +115,11 @@ REDDIT_NOTE = (
     "mark it done with the link. Check the subreddit's rules on AI-written content and self-promotion first."
 )
 _SITE = re.compile(r"^(?=.{4,60}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+# 0.12.0: a research question asked again within this many days is answered from before (the last REPEAT_LOOKBACK
+# research calls are compared).
+RESEARCH_REPEAT_DAYS = 30
+REPEAT_LOOKBACK = 300
+_WRAPPED = re.compile(r'<data src="research" id="([^"]+)">\n(.*)\n</data id="\1">', re.DOTALL)
 _PLAIN_NUMBER = re.compile(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")  # evidence's values (0.12.0)
 _DOCUMENT = re.compile(r"\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|epub|zip)$", re.IGNORECASE)
 # Etsy's website and its short links, with their subdomains: Etsy's API terms forbid programs reading them. Searching
@@ -982,6 +987,9 @@ class Outcome:
     # 0.12.0: a paid call (research, brainstorm, workshop) was sent: it counts toward the tool's per-cycle limit even
     # when it failed, or retries of failing calls went on spending past the limit.
     paid: bool = False
+    # 0.12.0: answered from an earlier call without a new one (a repeated research question): free, and it doesn't
+    # count toward the tool's per-cycle limit.
+    reused: bool = False
 
 
 # question, a page to read, cycle, the site searched, the venture it is for (0.12.0)
@@ -1109,7 +1117,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
                     conn, call_id, "ok" if outcome.ok else "error", outcome.summary, outcome.text, ctx.now()
                 )
             return _clip(outcome, RESULT_CHARS.get(name, MAX_RESULT_CHARS))
-        if outcome.ok or outcome.paid:
+        if (outcome.ok and not outcome.reused) or outcome.paid:
             ctx.state.counts[name] = ctx.state.counts.get(name, 0) + 1
     except (ToolError, make.ProductError) as exc:
         outcome = Outcome(False, f"Error: {_unstop(str(exc))}.", f"refused: {exc}"[:300])
@@ -2420,18 +2428,69 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     question = args["question"].strip()
     if not question:
         raise ToolError("the question is empty")
-    # 0.12.0: research counts for a venture (in a venture cycle, the focus venture unless it names another).
+    # 0.12.0: research counts for a venture: the one it names or, in a venture cycle, the focus venture (a venture
+    # cycle's research is always a venture's). A question asked again is answered from before, free; a new call for a
+    # venture that isn't backed needs what is left of its research budget.
     venture_id = args.get("venture_id")
-    if venture_id is not None:
-        with ctx.db.connection() as conn:
-            _open_venture(conn, ctx.scope, venture_id)
-    elif ctx.venture and ctx.state.focus_venture_id is not None:
-        with ctx.db.connection() as conn:
-            focus = ventures.get(conn, ctx.scope, ctx.state.focus_venture_id)
-        venture_id = focus["id"] if focus is not None and focus["stage"] != "killed" else None
+    if venture_id is None and ctx.venture:
+        if ctx.state.focus_venture_id is None:
+            raise ToolError("name the venture it researches (venture_id): a venture cycle's research is a venture's")
+        venture_id = ctx.state.focus_venture_id
+    with ctx.db.connection() as conn:
+        venture = _open_venture(conn, ctx.scope, venture_id) if venture_id is not None else None
+        earlier = _asked_before(conn, ctx, question, url, None if url else site)
+        if earlier is not None:
+            return earlier
+        refusal = ventures.research_refusal(venture) if venture is not None else ""
+        if refusal:
+            raise ToolError(refusal)
     if ctx.research is None:
         raise ToolError("research isn't available right now")
     return ctx.research(question, url, ctx.cycle_id, None if url else site, venture_id)
+
+
+def _asked_before(conn: Any, ctx: ToolContext, question: str, url: str | None, site: str | None) -> Outcome | None:
+    """The answer to the same question (its words, whatever their case and punctuation; the same page or site) asked
+    within RESEARCH_REPEAT_DAYS that found web pages, or None. It is free, doesn't count as research for a venture (no
+    call was made) and names what it repeats; its pages may be read again, like this cycle's results."""
+    since = to_iso(from_iso(ctx.now()) - timedelta(days=RESEARCH_REPEAT_DAYS))
+    rows = conn.execute(
+        "SELECT t.id, t.cycle_id, t.input, t.result, t.started_at FROM tool_calls t JOIN cycles c ON c.id = t.cycle_id"
+        " WHERE c.session = ? AND c.simulated = ? AND t.tool = 'research' AND t.status = 'ok' AND t.parent_id IS NULL"
+        " AND t.started_at >= ? AND t.summary NOT LIKE 'research (repeated)%' ORDER BY t.id DESC LIMIT ?",
+        (ctx.scope.session, 1 if ctx.scope.simulated else 0, since, REPEAT_LOOKBACK),
+    ).fetchall()
+    key = (_words(question), url, site)
+    for r in rows:
+        try:
+            before = json.loads(r["input"])
+        except ValueError:
+            continue
+        if not isinstance(before, dict) or not isinstance(before.get("question"), str):
+            continue
+        site_before = before.get("site") if not before.get("url") else None
+        if (_words(before["question"]), before.get("url"), (site_before or "").strip().lower() or None) != key:
+            continue
+        found = _WRAPPED.search(str(r["result"] or ""))
+        pages = re.findall(r"^- (https?://\S+)$", str(r["result"])[found.end() :], re.MULTILINE) if found else []
+        if not pages:  # it found nothing then: a repeat is a new try
+            continue
+        ctx.state.seen_urls.update(pages)
+        return Outcome(
+            True,
+            f"Not researched again: you asked this on {str(r['started_at'])[:10]} (cycle #{r['cycle_id']}), so this "
+            "is that answer (free; a repeat doesn't count as research for a venture: ask what it left open).\n"
+            + wrap(ctx, "research", found[2])  # as data again, with this cycle's nonce
+            + "\nSources:\n"
+            + "\n".join(f"- {u}" for u in pages),
+            f"research (repeated) of call #{r['id']}: {question[:60]}",
+            reused=True,
+        )
+    return None
+
+
+def _words(text: str) -> str:
+    return " ".join(re.findall(r"\w+", text.casefold()))
 
 
 def _on_etsy(url: str) -> bool:
