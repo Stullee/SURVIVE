@@ -589,11 +589,14 @@ def work_request(
     etsy: bool = False,
     venture: bool = False,
     library: bool = False,
+    pinterest: bool = False,
 ) -> dict[str, Any]:
     """One step of the act loop. The prefix (system, tools, brief) stays byte-identical, so it is cached; ``mail``,
-    ``etsy``, ``venture`` and ``library`` (whether Ember has a mailbox, a shop and a library, and a venture cycle's
-    tools) are the same for every step of a cycle."""
-    offered = tools.definitions(mail, workshop=workshop_on(settings), etsy=etsy, venture=venture, library=library)
+    ``etsy``, ``venture``, ``library`` and ``pinterest`` (whether Ember has a mailbox, a shop, a library and the
+    owner's Pinterest account, and a venture cycle's tools) are the same for every step of a cycle."""
+    offered = tools.definitions(
+        mail, workshop=workshop_on(settings), etsy=etsy, venture=venture, library=library, pinterest=pinterest
+    )
     return {
         "model": settings.worker_model,
         **_thinking(settings.worker_model, WORK_MAX_TOKENS),
@@ -636,6 +639,7 @@ def reflect_request(
     venture: bool = False,
     library: bool = False,
     undone: Sequence[str] = (),
+    pinterest: bool = False,
 ) -> dict[str, Any]:
     """The final turn of the same conversation (so the cached prefix is reused: its tool list stays the work's, which
     it reads from the cache at a tenth of the price); ``ended`` says why the work ended, ``undone`` which of its tool
@@ -643,7 +647,9 @@ def reflect_request(
 
     Roles must alternate: when there was no act turn at all, the reflect prompt joins the brief's turn.
     """
-    request = work_request(settings, brief, turns, mail=mail, etsy=etsy, venture=venture, library=library)
+    request = work_request(
+        settings, brief, turns, mail=mail, etsy=etsy, venture=venture, library=library, pinterest=pinterest
+    )
     messages = request["messages"]
     prompt = _text(reflect_prompt(ended, undone))
     if messages[-1]["role"] == "user":

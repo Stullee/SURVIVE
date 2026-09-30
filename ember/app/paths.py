@@ -42,3 +42,8 @@ def backups_dir() -> Path:
 def etsy_dir() -> Path:
     """The Etsy connection's tokens (mode 0600) and the cached category list."""
     return data_dir() / "etsy"
+
+
+def pinterest_dir() -> Path:
+    """0.13.0: the Pinterest connection's tokens (mode 0600)."""
+    return data_dir() / "pinterest"

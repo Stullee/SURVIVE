@@ -24,6 +24,7 @@ from .economy.life import KILLED_KEY
 from .economy.service import Economy, Reply
 from .integrations import executor as email_executor
 from .integrations.etsy import EtsyError
+from .integrations.pinterest import PinterestError
 from .logging_setup import printable
 from .paths import WEB_DIR
 from .security import USER_ID_HEADER, ingress_base_href
@@ -343,6 +344,53 @@ def etsy_disconnect(request: Request) -> JSONResponse:
         return JSONResponse({"code": "not_runnable", "error": "the agent is not running"}, status_code=409)
     agent.etsy.disconnect()
     event_log.record(_state(request).db, "info", "etsy", f"{_owner(request) or 'The owner'} disconnected the Etsy shop")
+    return JSONResponse({"disconnected": True})
+
+
+# --- Pinterest: connecting the owner's account (0.13.0, Phase E2) ---
+
+
+@router.post("/api/pinterest/connect")
+def pinterest_connect(request: Request) -> JSONResponse:
+    """Start connecting: Pinterest's page where the owner allows Ember's access (opened in the owner's browser)."""
+    agent = _state(request).agent
+    if agent is None:
+        return JSONResponse({"code": "not_runnable", "error": "the agent is not running"}, status_code=409)
+    try:
+        url = agent.pinterest.start()
+    except PinterestError as exc:
+        return JSONResponse({"error": str(exc), "field": "pinterest"}, status_code=422)
+    who = _owner(request) or "The owner"
+    event_log.record(_state(request).db, "info", "pinterest", f"{who} started connecting Pinterest")
+    return JSONResponse({"authorize_url": url})
+
+
+@router.post("/api/pinterest/finish")
+def pinterest_finish(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """Finish connecting with the address Pinterest sent the owner to."""
+    agent = _state(request).agent
+    if agent is None:
+        return JSONResponse({"code": "not_runnable", "error": "the agent is not running"}, status_code=409)
+    pasted = body.get("address") if isinstance(body, dict) else None
+    if not isinstance(pasted, str) or not pasted.strip() or len(pasted) > 4_000:
+        return JSONResponse({"error": "paste the address Pinterest sent you to", "field": "address"}, status_code=422)
+    try:
+        info = agent.pinterest.finish(pasted)
+    except PinterestError as exc:
+        return JSONResponse({"error": str(exc), "field": "address"}, status_code=422)
+    event_log.record(_state(request).db, "info", "pinterest", f"Connected the Pinterest account {info.username}")
+    _poke(request)
+    return JSONResponse({"username": info.username, "profile_url": info.url})
+
+
+@router.post("/api/pinterest/disconnect")
+def pinterest_disconnect(request: Request) -> JSONResponse:
+    agent = _state(request).agent
+    if agent is None:
+        return JSONResponse({"code": "not_runnable", "error": "the agent is not running"}, status_code=409)
+    agent.pinterest.disconnect()
+    who = _owner(request) or "The owner"
+    event_log.record(_state(request).db, "info", "pinterest", f"{who} disconnected the Pinterest account")
     return JSONResponse({"disconnected": True})
 
 

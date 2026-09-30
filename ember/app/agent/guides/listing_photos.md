@@ -2,7 +2,8 @@ MAKING LISTING PHOTOS (make_image)
 make_image makes a PNG for a shop listing: up to three of your pages, fanned out like printed sheets, next to a
 big title, a subtitle and a badge. pages names what to show, separated by commas: 'shop/cv.pdf#1' is page 1 of a
 PDF you made ('#1' when left out), and a .png shows one of your pictures (a page or spreadsheet picture).
-- shape: landscape (3000 x 2250 pixels, Etsy's 4:3 and the default), square (2400 x 2400) or portrait (2000 x 2500).
+- shape: landscape (3000 x 2250 pixels, Etsy's 4:3 and the default), square (2400 x 2400), portrait (2000 x 2500)
+  or pin (2000 x 3000, 2:3: the picture of a Pinterest pin).
 - title: what it is, in the words buyers search for (at most 80 characters; short titles look best).
 - subtitle: formats and what is included, e.g. 'A4 + US Letter · Word & PDF · editable'.
 - badge: a few words in a coloured box, e.g. 'Instant download' or 'Editable in Word'.

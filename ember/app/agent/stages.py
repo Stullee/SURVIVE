@@ -35,6 +35,11 @@ OPEN_PROJECTS = ("idea", "active", "waiting")
 NO_TEST = (
     "Its first test is met: a small launch whose result shows whether it can earn (its business case names none yet)"
 )
+# 0.13.0 (Phase E2): a venture a channel of Ember's code serves has that channel's first test, a metric Ember's code
+# checks (missed: the venture is parked, as any first test): its pins must bring buyers to the shop.
+CHANNEL_TESTS = {
+    "pinterest": ("pin_clicks", 10, "Its pins bring 10 clicks to the shop's listings (Pinterest's numbers)"),
+}
 
 
 def _day(stamp: str) -> date:
@@ -50,6 +55,10 @@ def first_test(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str
     parent = goal["id"] if goal is not None and goal["due"] >= due.isoformat() else None
     text = " ".join(str(venture["first_test"] or "").split())
     measure = f"Its first test is met: {text}" if text else NO_TEST
+    metric, target = None, None
+    channel = venture["channel"] if "channel" in venture.keys() else None  # noqa: SIM118 - a Row, not a dict
+    if channel in CHANNEL_TESTS:
+        metric, target, measure = CHANNEL_TESTS[channel]
     limit = roadmap.LIMITS["measure"]
     milestone_id = roadmap.create(
         conn,
@@ -62,6 +71,8 @@ def first_test(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str
         venture_id=int(venture["id"]),
         created_by="code",
         kind="first_test",
+        metric=metric,
+        target=target,
     )
     conn.execute(
         "UPDATE ventures SET test_milestone_id = ?, updated_at = ? WHERE id = ?", (milestone_id, now, venture["id"])

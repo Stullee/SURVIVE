@@ -11,7 +11,17 @@ from typing import TYPE_CHECKING, Any
 from ..economy import burn
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
-from ..integrations import connectors, etsy, etsy_publisher, executor, mailstore, qa, reddit
+from ..integrations import (
+    connectors,
+    etsy,
+    etsy_publisher,
+    executor,
+    mailstore,
+    pinterest,
+    pinterest_publisher,
+    qa,
+    reddit,
+)
 from . import (
     audit,
     critic,
@@ -751,6 +761,13 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
             shortfalls = qa.defects(kind.name, listing)
         except etsy.EtsyError:
             editable = None
+    if r["executor"] in ("pinterest_pin", "pinterest_delete") and action is not None:  # 0.13.0 (Phase E2)
+        execution = pinterest_publisher.execution(conn, r, scope, agent.clock, agent.settings.pinterest_pins_per_day)
+        if r["executor"] == "pinterest_pin":
+            try:
+                shortfalls = qa.defects(kind.name, pinterest.pin_from_action(action))
+            except pinterest.PinterestError:
+                shortfalls = []
     if r["executor"] == "etsy_edit" and action is not None:
         execution = etsy_publisher.edit_execution(conn, r)
         try:

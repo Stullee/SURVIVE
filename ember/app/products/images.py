@@ -16,7 +16,7 @@ from . import fonts
 from .theme import RGB, contrast, hex_rgb, readable_on, tint
 
 PREVIEW_DPI = 150
-SHAPES = {"landscape": (3000, 2250), "square": (2400, 2400), "portrait": (2000, 2500)}
+SHAPES = {"landscape": (3000, 2250), "square": (2400, 2400), "portrait": (2000, 2500), "pin": (2000, 3000)}
 SHAPE_NAMES = tuple(SHAPES)
 MAX_PIXELS = 12_000_000
 
@@ -78,7 +78,10 @@ def thumbnail(data: bytes, longest: int) -> tuple[bytes, int, int]:
 
 
 def _checked(data: bytes) -> Image.Image:
-    image = Image.open(io.BytesIO(data))
+    try:
+        image = Image.open(io.BytesIO(data))
+    except (OSError, Image.DecompressionBombError):  # 0.13.0: not a picture at all (a pin's image is checked too)
+        raise ImageError("only Ember's own PNG and JPEG pictures can be shown") from None
     if image.format not in ("PNG", "JPEG") or image.width * image.height > MAX_PIXELS:
         raise ImageError("only Ember's own PNG and JPEG pictures can be shown")
     return image

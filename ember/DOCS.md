@@ -73,6 +73,10 @@ code from Etsy's own numbers): the agent never reports its own.
 | Record Etsy revenue automatically | off | At each Etsy sync, Ember's code records the revenue of paid orders with Ember's listings placed from the day you turn it on, Etsy's fees on them and their refunds in the ledger, instead of you (see [What Ember sees](#what-ember-sees)). |
 | Exchange rate for Etsy revenue | 0 | USD per 1 EUR for orders in EUR recorded automatically (0.5 to 3; 0: orders in EUR stay yours to record). |
 | Etsy market probe for demand notes | off | A demand note also reads Etsy's search of active listings for its keywords, keeping only how many match and their price quartiles. Turn it on only once you have confirmed that Etsy's API terms allow this use (see [How a listing is made](#how-a-listing-is-made)). |
+| Pinterest | off | Lets the agent propose pins that bring buyers to your Etsy listings, which Ember makes on your Pinterest account after you approve them. See [Pinterest](#pinterest). |
+| Pinterest app ID, app secret | empty | From the Pinterest app you create for your own account. The secret is never logged or shown. |
+| Pinterest redirect URI | https://localhost/ember-pinterest | The redirect URI registered for that app, exactly as there. |
+| Pins per day | 3 | The most pins Ember makes in one day (0 to 20). |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -778,8 +782,9 @@ no longer shown); a study that failed three times stops until you press
 
   **Never automatic**, whatever you unlock: creating an account, moving or
   spending money, a first contact (someone who never wrote to Ember, § 7 UWG),
-  Ember's first listing in your shop (a new public presence needs your decision
-  and your Impressum, § 5 DDG), a post in a third-party community, a request
+  Ember's first listing in your shop and the pin that makes its first Pinterest
+  board (a new public presence needs your decision and your Impressum, § 5
+  DDG), a post in a third-party community, a request
   whose words touch tax, VAT, a Gewerbe or a contract, and anything only you
   carry out. Such a request always waits for your click, and if it fits an
   unlocked kind, its card says why it waits. Only you unlock: Ember's code
@@ -790,7 +795,8 @@ no longer shown); a study that failed three times stops until you press
 - **What Ember's code did**, below the requests on the **Approvals** tab
   (0.13.0): every action it carries out (an email sent, a listing created,
   changed, renewed or deactivated, a sold listing's automatic renewal turned
-  on), the newest first. Each one shows:
+  on, a Pinterest board or pin made or deleted), the newest first. Each one
+  shows:
   - what it acted on, and what it changed (before → after);
   - how it ended;
   - on whose decision: **You approved it**, **Your unlock**, **Your Undo**,
@@ -802,8 +808,10 @@ no longer shown); a study that failed three times stops until you press
   Undo is a request of yours, approved at once. Ember's code carries it out
   in its next round, like any change you approve, and the entry shows its
   request. Only the newest action on a listing can be undone, and not while
-  another change of it waits. An email can't be unsent. If an Undo failed
-  before anything changed, or you cancelled it, you can undo again.
+  another change of it waits. An email can't be unsent. A pin's **Delete the
+  pin** deletes it at Pinterest (a board stays: delete it at Pinterest if you
+  want). If an Undo failed before anything changed, or you cancelled it, you
+  can undo again.
 
   **Daily digest**: at the start of each day, Ember's code sums up the day
   before. It covers how many actions it carried out and on whose decision,
@@ -1160,6 +1168,69 @@ allowed is yours to confirm with Etsy's terms before you turn it on.
 The agent can search Etsy through web search to see what sells, but its
 research never reads Etsy's pages: Etsy's API terms forbid programs reading its
 site.
+
+## Pinterest
+
+People search Pinterest for ideas (planners, printables, party games) and click
+through to what they saved. With **Pinterest** on, the agent proposes pins that
+link to its live Etsy listings, you approve them, and Ember's own code makes
+them on your account through your own Pinterest app. In dry run a fake account
+(*ember-dry-run*) takes the pins, so you can try the whole flow first. Pins
+need the Etsy shop: each one links to one of Ember's live listings.
+
+### Setting it up
+
+1. Use a Pinterest **business account** (free: convert your account in its
+   settings, or create one). Add your Impressum link to the business profile
+   (its website or "about" text): a board of pins for your shop is a public
+   presence of your business (§ 5 DDG).
+2. Create an app for it at
+   [developers.pinterest.com](https://developers.pinterest.com/apps/). A new
+   app has **trial access**, which may post to your own account only: all
+   Ember needs. Note its **app ID** and **app secret**.
+3. In the app's settings, add the redirect URI
+   `https://localhost/ember-pinterest`, or whatever you set as **Pinterest
+   redirect URI**; it must match exactly. Nothing needs to answer at that
+   address.
+4. In Ember's **Configuration** tab, turn on **Show unused optional
+   configuration options**, switch **Pinterest** on, paste the app ID and the
+   secret, save and restart the app.
+5. On the dashboard, open **System → Pinterest** and press **Connect your
+   Pinterest account**. Open Pinterest's page, log in and allow access.
+   Pinterest then sends your browser to the redirect address, which shows an
+   error page: that's expected. Copy the whole address from the address bar,
+   paste it into the dashboard and press **Finish connecting**.
+
+The connection renews itself while Ember uses it (at least once a year). If it
+lapses, connect again. **Disconnect** deletes Ember's tokens (you can also
+remove the app's access in your Pinterest settings).
+
+### How a pin is made
+
+- The agent proposes a pin with `propose_pin`: one of its pictures (best 2:3,
+  2000 x 3000 pixels: `make_image` has a **pin** shape), a title (at most 100
+  characters), a description (Ember adds a line saying AI helped design it,
+  as on Etsy), alt text, the live listing it links to, and one of its boards
+  or a new board's name. The approval card shows every word, the picture's
+  path and size, and what the QA check finds short (a picture that isn't
+  portrait).
+- **Approve** and Ember makes it: a new board first when the pin names one,
+  then the pin. Pinterest charges nothing. A pin can only be approved as it is
+  or rejected (say what should change: the agent proposes a better one).
+  **Cancel** stops an approved pin before Ember makes it.
+- The pin that makes Ember's **first board** always waits for your click,
+  whatever you unlocked: it is a new public presence of yours.
+- If the picture changed after you approved, the pin isn't made. Ember never
+  makes a pin twice: if it can't tell whether Pinterest made it (a lost
+  connection), it says so and doesn't try again. At most **Pins per day** are
+  made a day; approved pins beyond that wait for the next day.
+- Every six hours while the app runs, Ember reads each pin's impressions,
+  saves and clicks to its listing. The agent's plan shows them (PINTEREST),
+  and the metrics `pins_live` and `pin_clicks` can measure a milestone. The
+  seeded venture *Pinterest for the Etsy shop* has its first test in these
+  numbers: its pins bring 10 clicks to the shop's listings.
+- **Undo** on the pin's entry under **What Ember's code did** deletes it at
+  Pinterest.
 
 ## Reddit
 

@@ -7,8 +7,9 @@ whatever is granted, and no option changes that (CLASSES):
 * first contact: writing to someone who never wrote to Ember (UWG section 7: advertising without consent);
 * money: moving money or spending it (requests of type spend_money); what an unlock may spend is its budget of
   actions, which the database holds it to as well;
-* a first publication: Ember's first listing in the shop, before anything of its went live there (a new public
-  presence needs the owner's decision and their Impressum, DDG section 5);
+* a first publication: Ember's first listing in the shop, before anything of its went live there, or the pin that
+  makes its first Pinterest board (0.13.0, Phase E2): a new public presence needs the owner's decision and their
+  Impressum, DDG section 5;
 * posts in third-party communities (Reddit): only the owner posts, from their account;
 * tax, VAT, a Gewerbe and contracts: a request whose words touch them (LEGAL_WORDS, LEGAL_PARTS);
 * what only the owner carries out: a request without an executor of Ember's code, or with one no rule covers yet;
@@ -34,13 +35,15 @@ CLASSES = {
     "account": "creating an account",
     "money": "moving or spending money",
     "first_contact": "a first contact (UWG section 7)",
-    "first_publication": "Ember's first publication in your shop (your decision and Impressum, DDG section 5)",
+    "first_publication": (
+        "Ember's first publication in your shop or on Pinterest (your decision and Impressum, DDG section 5)"
+    ),
     "community_post": "a post in a third-party community",
     "legal": "tax, VAT, a Gewerbe or a contract",
     "owner_only": "something only you carry out",
     "policy": "changing the policies",
 }
-EXECUTORS = ("email", "reddit_link", "etsy_listing", "etsy_edit")  # the executors this check knows
+EXECUTORS = ("email", "reddit_link", "etsy_listing", "etsy_edit", "pinterest_pin")  # the executors this check knows
 # The words of tax, VAT, a Gewerbe and contracts: whole words, or anywhere in a word (German compounds such as
 # Umsatzsteuer, Kleingewerbe, Kaufvertrag). Both spellings of the umlaut, as lower() leaves it.
 LEGAL_WORDS = ("tax", "taxes", "taxed", "vat", "ust", "mwst", "contract", "contracts")
@@ -57,6 +60,7 @@ def legal(text: str) -> bool:
 
 _WROTE = "SELECT 1 FROM emails WHERE mode = ? AND session = ? AND direction = 'in' AND lower(from_addr) = lower(?)"
 _PUBLISHED = "SELECT 1 FROM etsy_listings WHERE mode = ? AND session = ? AND status = 'active'"
+_BOARD = "SELECT 1 FROM pinterest_boards WHERE mode = ? AND session = ? AND status = 'active'"
 
 
 def _one(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> bool:
@@ -86,6 +90,8 @@ def reasons(conn: sqlite3.Connection, row: Mapping[str, Any]) -> list[str]:
         if not wrote:
             found.append("first_contact")
     if row["executor"] == "etsy_listing" and not _one(conn, _PUBLISHED, scope):
+        found.append("first_publication")
+    if row["executor"] == "pinterest_pin" and not _one(conn, _BOARD, scope):
         found.append("first_publication")
     if row["executor"] == "reddit_link":
         found.append("community_post")

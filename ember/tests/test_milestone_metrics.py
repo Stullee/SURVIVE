@@ -64,6 +64,8 @@ def test_the_catalogue() -> None:
         "api_spend_usd",
         "inquiries_received",  # 0.13.0 (Phase E1)
         "inquiries_answered",
+        "pins_live",  # 0.13.0 (Phase E2)
+        "pin_clicks",
         "qa_clean",
     }
     for m in metrics.CATALOGUE.values():

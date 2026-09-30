@@ -83,6 +83,7 @@ def create_app(loaded: LoadedSettings | None = None, *, dev_mode: bool | None = 
     register_secret(loaded.settings.anthropic_api_key.get_secret_value())
     register_secret(loaded.settings.email_password.get_secret_value())
     register_secret(loaded.settings.etsy_shared_secret.get_secret_value())
+    register_secret(loaded.settings.pinterest_app_secret.get_secret_value())  # 0.13.0
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

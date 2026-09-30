@@ -188,6 +188,14 @@ class Settings(BaseModel):
     # quartiles: aggregates only). Off until the owner has confirmed that Etsy's API terms allow this use; without it,
     # the owner's keyword export in the library (or research) is the source.
     etsy_market_probe: bool = False
+    # Pinterest (0.13.0, Phase E2): pins that bring buyers to the Etsy shop, from the owner's account, through their
+    # own Pinterest app (its id and secret) and a one-time connection made in the dashboard. Off until the owner turns
+    # it on (in dry run too: then a fake account stands in).
+    pinterest_enabled: bool = False
+    pinterest_app_id: str = Field(default="", max_length=100)
+    pinterest_app_secret: SecretStr = SecretStr("")
+    pinterest_redirect_uri: str = Field(default="https://localhost/ember-pinterest", min_length=1, max_length=300)
+    pinterest_pins_per_day: int = Field(default=3, ge=0, le=20)
 
     @field_validator("owner_user_ids", mode="before")
     @classmethod
@@ -199,7 +207,7 @@ class Settings(BaseModel):
             raise ValueError("a Home Assistant user ID has at most 100 characters")
         return ids
 
-    @field_validator("anthropic_api_key", "email_password", "etsy_shared_secret", mode="before")
+    @field_validator("anthropic_api_key", "email_password", "etsy_shared_secret", "pinterest_app_secret", mode="before")
     @classmethod
     def _strip_key(cls, value: Any) -> Any:
         # A key pasted with a stray space or newline would otherwise look "set"
@@ -219,6 +227,8 @@ class Settings(BaseModel):
         "email_owner_name",
         "etsy_keystring",
         "etsy_redirect_uri",
+        "pinterest_app_id",
+        "pinterest_redirect_uri",
         mode="before",
     )
     @classmethod
@@ -291,12 +301,13 @@ class Settings(BaseModel):
     def public_dict(self) -> dict[str, Any]:
         """Options safe to show in the dashboard. The API key, the passwords and Etsy's keystring (half of Ember's
         Etsy API key, 0.11.2) are replaced by flags."""
-        secret = {"anthropic_api_key", "email_password", "etsy_shared_secret", "etsy_keystring"}
+        secret = {"anthropic_api_key", "email_password", "etsy_shared_secret", "etsy_keystring", "pinterest_app_secret"}
         data = self.model_dump(mode="json", exclude=secret)
         data["anthropic_api_key_set"] = self.api_key_set
         data["email_password_set"] = self.email_password_set
         data["etsy_shared_secret_set"] = bool(self.etsy_shared_secret.get_secret_value().strip())
         data["etsy_keystring_set"] = bool(self.etsy_keystring.strip())
+        data["pinterest_app_secret_set"] = bool(self.pinterest_app_secret.get_secret_value().strip())
         return data
 
 

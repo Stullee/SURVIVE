@@ -109,6 +109,11 @@ options:
   # nothing else kept. Turn it on once you have confirmed that Etsy's API terms allow this use; otherwise add a keyword
   # export to the Library each week (see the Documentation tab).
   etsy_market_probe: false
+  # Pinterest (see the Documentation tab): pins that bring buyers to your Etsy shop, from your account. Your
+  # Pinterest app's id and secret are optional options too.
+  pinterest_enabled: false
+  pinterest_redirect_uri: https://localhost/ember-pinterest
+  pinterest_pins_per_day: 3
 
 schema:
   anthropic_api_key: password?
@@ -168,3 +173,8 @@ schema:
   etsy_auto_record_revenue: bool
   etsy_usd_per_eur: float(0,3)
   etsy_market_probe: bool
+  pinterest_enabled: bool
+  pinterest_app_id: str?
+  pinterest_app_secret: password?
+  pinterest_redirect_uri: str(1,300)
+  pinterest_pins_per_day: int(0,20)

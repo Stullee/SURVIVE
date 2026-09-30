@@ -89,6 +89,17 @@ CLASSES: dict[str, ActionClass] = {
             undo="turn it off",
         ),
         _class("etsy.auto_renew_off", "turn off a listing's automatic renewal at Etsy", {"owner_identity"}),
+        # 0.13.0 (Phase E2): Pinterest, the owner's account
+        _class(
+            "pinterest.create_pin",
+            "pin one of your listings on your Pinterest account",
+            {"reaches_people", "owner_identity"},
+            undo="delete it",
+        ),
+        _class(
+            "pinterest.create_board", "make a board on your Pinterest profile", {"reaches_people", "owner_identity"}
+        ),
+        _class("pinterest.delete_pin", "delete a pin of Ember's from Pinterest", {"owner_identity"}),
         _class(
             "reddit.post",
             "a Reddit post you publish from your account",
@@ -102,7 +113,15 @@ CLASSES: dict[str, ActionClass] = {
         _class("owner.other", "something only you can do", set(), by_owner=True),
     )
 }
-_EXECUTORS = {"email": "email.send", "etsy_listing": "etsy.create_listing", "reddit_link": "reddit.post"}
+_EXECUTORS = {
+    "email": "email.send",
+    "etsy_listing": "etsy.create_listing",
+    "reddit_link": "reddit.post",
+    "pinterest_pin": "pinterest.create_pin",  # 0.13.0 (Phase E2)
+    "pinterest_delete": "pinterest.delete_pin",  # the owner's Undo of a pin
+}
+# 0.13.0: every executor Ember's code has (the approvals table takes any short name since 0054: this is the list)
+EXECUTORS = frozenset({*_EXECUTORS, "etsy_edit"})
 _STATES = {"renew": "etsy.renew", "deactivate": "etsy.deactivate"}
 
 
@@ -133,9 +152,11 @@ def class_of(executor: str | None, action: Any = None, request_type: str | None 
 
 
 def undo_of(name: str, status: str, subject: str | None) -> dict[str, Any] | None:
-    """What would undo a finished action of class ``name`` on ``subject`` (a listing's number), or None."""
+    """What would undo a finished action of class ``name`` on ``subject`` (a listing's number, a pin's), or None."""
     if status not in ("done", "partial", "simulated") or not subject or not subject.isdigit():
         return None
+    if name == "pinterest.create_pin":  # 0.13.0 (Phase E2)
+        return {"action": "delete_pin", "pin_id": subject} if status != "partial" else None
     listing = int(subject)
     actions = {
         "etsy.create_listing": "deactivate",
@@ -158,12 +179,13 @@ def begin(
     now: str,
     subject: str | None = None,
     before: Any = None,
+    name: str | None = None,
 ) -> int:
     """An executor starts carrying out a request (in the transaction that records its own 'running' row): journaled
-    as the request's action class (``class_of``)."""
+    as the request's action class (``class_of``), or ``name`` for a step of its own (a new board before its pin)."""
     row = conn.execute("SELECT mode, session, executor, action, type FROM approvals WHERE id = ?", (approval_id,))
     request = row.fetchone()
-    name = class_of(request["executor"], request["action"], request["type"]).name
+    name = name or class_of(request["executor"], request["action"], request["type"]).name
     cursor = conn.execute(
         "INSERT INTO action_journal (mode, session, approval_id, class, subject, started_at, status, before)"
         " VALUES (?, ?, ?, ?, ?, ?, 'running', ?)",

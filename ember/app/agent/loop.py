@@ -48,10 +48,11 @@ from ..economy.metering import (
 )
 from ..economy.pricing import LAST_WILL, PLANNER_OPENING, REVIEW_CALL, working_cycle_cost
 from ..economy.service import Economy
-from ..integrations import etsy_publisher, mailstore
+from ..integrations import etsy_publisher, mailstore, pinterest_publisher
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox
+from ..integrations.pinterest_connection import PinterestConnection
 from ..version import app_version
 from . import (
     agenda,
@@ -191,6 +192,8 @@ class CycleRunner:
         mailbox: Mailbox | None = None,
         etsy: EtsyConnection | None = None,
         publisher: Publisher | None = None,
+        pinterest: PinterestConnection | None = None,
+        pins: pinterest_publisher.Publisher | None = None,
     ) -> None:
         self.db = db
         self.settings = settings
@@ -207,6 +210,9 @@ class CycleRunner:
         self.etsy = etsy
         self.publisher = publisher
         self.etsy_on = False  # the Etsy tools and the ETSY SHOP section: set once the cycle found a shop
+        self.pinterest = pinterest  # 0.13.0 (Phase E2): the owner's Pinterest account
+        self.pins = pins
+        self.pinterest_on = False  # the Pinterest tools and the PINTEREST section: with the account and a shop
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
         self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
@@ -219,6 +225,7 @@ class CycleRunner:
         """The planner's context as a wake cycle would build it now (the diagnostics report shows it): nothing is
         fetched, synced, marked or spent."""
         self.etsy_on = self.etsy is not None and self.publisher is not None and self.etsy.shop() is not None
+        self.pinterest_on = self.etsy_on and self.pinterest is not None and self.pinterest.account() is not None
         snap = self._snapshot(venture)
         planner = ""
         for scale in PLANNER_SCALES:
@@ -270,6 +277,7 @@ class CycleRunner:
                     self.library_on = ctx.library = library.totals(conn, self.scope)[0] > 0
                 self._fetch_mail(cycle_id)
                 self._sync_etsy(cycle_id, ctx)
+                self._sync_pinterest(cycle_id, ctx)
                 self._expire_requests()
             with netguard.sealed() if self.dry_run else contextlib.nullcontext():
                 end = self._last_will(cycle_id) if trigger == "last_will" else self._plan_act_reflect(cycle_id, ctx)
@@ -415,6 +423,28 @@ class CycleRunner:
             ctx.market = _market_fn(shop)
         self.etsy_on = True
 
+    def _sync_pinterest(self, cycle_id: int, ctx: tools.ToolContext) -> None:
+        """0.13.0 (Phase E2): the pins' numbers before the plan, and what the tools know of the owner's account (errors
+        are recorded and shown, and never stop the cycle). A pin links to a listing: nothing without the shop."""
+        self.pinterest_on = False
+        if self.pinterest is None or self.pins is None or not self.etsy_on:
+            return
+        account = self.pinterest.account()
+        if account is None:
+            return
+        if not self.stop.is_set():
+            self._progress(cycle_id, current_action="Checking the pins on Pinterest")
+            try:
+                # The fake account of a dry run needs no network; the owner's is reached by Ember's code only.
+                with netguard.sealed() if account.simulated else contextlib.nullcontext():
+                    self.pins.sync()
+            except Exception:  # noqa: BLE001 - Pinterest must never end a cycle
+                log.exception("Checking the pins on Pinterest failed")
+        ctx.pinterest = tools.PinterestAccess(
+            self.pinterest.username() or "your owner's account", self.settings.pinterest_pins_per_day
+        )
+        self.pinterest_on = True
+
     def _progress(self, cycle_id: int, **columns: Any) -> None:
         with self.db.transaction() as conn:
             store.update_cycle(conn, cycle_id, **columns)
@@ -460,6 +490,13 @@ class CycleRunner:
                 shop = etsy_publisher.shop_text(
                     conn, self.scope, self.clock, name, self.settings.etsy_listings_per_day, auto_revenue=auto
                 )
+            pins = ""
+            if self.pinterest_on and self.pinterest is not None:  # 0.13.0 (Phase E2)
+                account = self.pinterest.username() or "your owner's account"
+                pins = (
+                    f"Your owner's account: {account} (at most {self.settings.pinterest_pins_per_day} pins a day).\n"
+                    + pinterest_publisher.text(conn, self.scope)
+                )
             return context.snapshot(
                 conn,
                 self.scope,
@@ -476,6 +513,7 @@ class CycleRunner:
                 mail_address=self.mailbox.address if self.mailbox else None,
                 today=self.clock.today(),
                 etsy=shop,
+                pinterest=pins,
                 venture=venture,
                 venture_share=self.settings.venture_share,
                 shelf=library.shelf(conn, self.scope),
@@ -1037,6 +1075,7 @@ class CycleRunner:
                 etsy=self.etsy_on,
                 venture=ctx.venture,
                 library=self.library_on,
+                pinterest=self.pinterest_on,
             )
             if not self._affordable(cycle_id, request, brief, turns, ctx):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
@@ -1145,6 +1184,7 @@ class CycleRunner:
             ended=longest,
             venture=venture,
             library=self.library_on,
+            pinterest=self.pinterest_on,
         )
         try:
             step_worst = self.meter.quote(request, "work")
@@ -1219,6 +1259,7 @@ class CycleRunner:
             venture=ctx.venture,
             library=self.library_on,
             undone=undone,
+            pinterest=self.pinterest_on,
         )
         # 0.12.0: why the work ended is kept first, also when the reflection can't be paid for.
         self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)

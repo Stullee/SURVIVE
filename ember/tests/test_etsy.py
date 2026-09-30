@@ -938,7 +938,7 @@ def test_the_dashboard_shows_changes_and_can_cancel_them() -> None:
     # Checked by hand in a browser too (0.9.0): the change's photos and text, "Approve with changes" filled with the
     # new words, then "Waiting to be made" with "Cancel change".
     script = (paths.WEB_DIR / "static" / "js" / "app.js").read_text(encoding="utf-8")
-    assert '|| a.executor === "etsy_edit" ? a.executor : null' in script  # carried out by Ember's code
+    assert '|| a.executor === "etsy_edit" ||' in script  # carried out by Ember's code (0.13.0: and pins after it)
     assert "var CHANGE_EXECUTION = {" in script and "function etsyChangeDraft(action, payload, final)" in script
     assert 'panelButton(it, "failed", "Cancel change", true)' in script
     assert 'executor === "etsy_edit" && !a.editable' in script  # photos, files or category only: no "with changes"
@@ -1214,11 +1214,12 @@ def test_the_rebuilt_approvals_keep_every_rule(data_dir: Path) -> None:
         "approvals_unlock_carries",  # 0.13.0
     }
     scope = agent.scope()
+    # 0.13.0: any plain executor name (a new channel's needs no rebuild; NEVER leaves an unknown one to the owner)
     with agent.db.transaction() as conn, pytest.raises(sqlite3.IntegrityError, match="CHECK"):
         conn.execute(
             "INSERT INTO approvals (mode, session, life_id, cycle_id, created_at, type, title, description, payload,"
             " payload_sha256, expected_cost, expected_benefit, executor, action) VALUES (?, ?, ?, 1, 'now', 'sell',"
-            " 't', 'd', 'p', 'h', 'c', 'b', 'shopify', '{}')",
+            " 't', 'd', 'p', 'h', 'c', 'b', 'Shop-ify', '{}')",
             (scope.mode, scope.session, scope.life_id),
         )
 
@@ -1293,6 +1294,7 @@ def test_a_0_8_shop_keeps_its_listings_through_the_0_9_migration(tmp_path: Path)
         51,
         52,
         53,
+        54,
     ]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:

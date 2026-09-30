@@ -13,7 +13,9 @@ model call with Anthropic's server-side web tools, not a local fetch) or touch
 the constitution. No tool sends anything: the email tools read what Ember's
 code fetched into the database, and ``propose_email`` and ``propose_reddit_post``
 only create approval requests, which Ember's code (an email) or the owner (a
-Reddit post) carries out once the owner approves them.
+Reddit post) carries out once the owner approves them. So do ``propose_pin``
+(0.13.0: Ember's code makes the pin on the owner's Pinterest account) and the
+Etsy tools.
 
 The making tools (``make_document``, ``make_spreadsheet``, ``make_image``) turn
 the agent's text into PDF, Word, Excel and PNG files with Ember's own code
@@ -40,7 +42,7 @@ from .. import paths
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
-from ..integrations import connectors, etsy, etsy_publisher, mail, mailstore, qa, reddit
+from ..integrations import connectors, etsy, etsy_publisher, mail, mailstore, pinterest, pinterest_publisher, qa, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
@@ -93,10 +95,12 @@ CATEGORIES_SHOWN = 10  # etsy_categories' answer, shortest paths first
 DEPARTMENT = " (a whole department: too broad for a listing)"
 # Making files takes a moment: these run sealed, but outside the database transaction the other tools share.
 MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image"})
-GUIDES = ("documents", "spreadsheets", "listing_photos", "workshop", "etsy", "ventures", "email")
+GUIDES = ("documents", "spreadsheets", "listing_photos", "workshop", "etsy", "ventures", "email", "pinterest")
 WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
 # Offered only with an Etsy shop (demand_note 0.12.0: a product line's first listing needs one).
 ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing", "propose_etsy_edit", "demand_note"})
+# Offered only with the owner's Pinterest account and an Etsy shop (0.13.0, Phase E2): a pin links to a live listing.
+PINTEREST_TOOLS = frozenset({"pinterest_boards", "propose_pin"})
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "mark_opt_out", "propose_email", "inquiry_done"})
 # Offered only in venture cycles (0.10.0; evidence 0.12.0: a venture's case, which grades pages any research found;
@@ -121,6 +125,7 @@ ORDINARY_TOOLS = (
         }
     )
     | ETSY_TOOLS
+    | PINTEREST_TOOLS
     | MAIL_TOOLS
 )
 # Model calls of their own (and, 0.12.0, the Etsy market probe of a demand note): they need the network, and no
@@ -767,7 +772,12 @@ SPECS: dict[str, Spec] = {
                 "title": _s("The big title.", 80),
                 "subtitle": _s("A line under the title.", 160, required=False),
                 "badge": _s("A few words in a coloured box, e.g. 'Instant download'.", 30, required=False),
-                "shape": _s("landscape (default), square or portrait.", 10, required=False, enum=images.SHAPE_NAMES),
+                "shape": _s(
+                    "landscape (default), square, portrait (4:5) or pin (2:3, for Pinterest).",
+                    10,
+                    required=False,
+                    enum=images.SHAPE_NAMES,
+                ),
                 "accent": _s("Title and badge colour, like #2C3E50.", 7, required=False),
                 "background": _s(
                     "Background colour, like #F4EFE6 (default: a light tint of accent).", 7, required=False
@@ -966,6 +976,42 @@ SPECS: dict[str, Spec] = {
             },
             per_cycle=3,
         ),
+        Spec(
+            "pinterest_boards",
+            "Read your boards on your owner's Pinterest account and your newest pins with their numbers "
+            "(impressions, saves and clicks to their links, as Pinterest counted them at the last sync). Free.",
+            {},
+            per_cycle=3,
+        ),
+        Spec(
+            "propose_pin",
+            "Ask your owner to approve a pin on their Pinterest account: one of your pictures, with a title and a "
+            "description in the words people search for, linking to one of your live Etsy listings, on one of your "
+            "boards or a new one. After approval Ember's code makes it (free) and you hear the result; a line saying "
+            "AI helped design it is added to the description. Read guide 'pinterest' first.",
+            {
+                "listing_id": _i("The live Etsy listing it links to.", minimum=1),
+                "image": _s(
+                    "The picture: a .png or .jpg in your workspace, best 2:3 (make_image with shape pin).", 200
+                ),
+                "title": _s("What it is, in the words people search for.", pinterest.TITLE_MAX),
+                "description": _s(
+                    "What it is, for whom and how it helps, with the words people search for. Plain text.",
+                    pinterest.DESCRIPTION_CHARS,
+                ),
+                "alt_text": _s(
+                    "What the picture shows, for people who can't see it.", pinterest.ALT_MAX, required=False
+                ),
+                "board_id": _s("One of your boards (pinterest_boards lists them).", 40, required=False),
+                "board_name": _s(
+                    "Or a new board's name (made first): a theme people browse, e.g. 'Budget planners'.",
+                    pinterest.BOARD_NAME_MAX,
+                    required=False,
+                ),
+                "reason": _s("Why this pin, and what you expect from it.", 300),
+            },
+            per_cycle=2,
+        ),
     )
 }
 
@@ -989,27 +1035,37 @@ def spec_of(name: str, venture: bool) -> Spec | None:
 
 
 def definitions(
-    mail: bool = False, workshop: bool = True, etsy: bool = False, venture: bool = False, library: bool = False
+    mail: bool = False,
+    workshop: bool = True,
+    etsy: bool = False,
+    venture: bool = False,
+    library: bool = False,
+    pinterest: bool = False,
 ) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds (the
     reflection reads it from the cache at a tenth of the price; a list of its own would write the whole conversation
     again), and in every cycle of a mode, configuration and kind (the email tools only with a mailbox, the workshop
     only when the owner's options allow runs, the Etsy tools only with a shop, brainstorm only in a venture cycle
     and, 0.12.0, the tools for building and selling only in an ordinary one, the library's only while it holds
-    documents)."""
+    documents; 0.13.0: the Pinterest tools only with the owner's account and a shop)."""
     return [
         _definition(spec_of(spec.name, venture) or spec)
         for spec in SPECS.values()
-        if offered(spec.name, mail=mail, workshop=workshop, etsy=etsy, venture=venture, library=library)
+        if offered(
+            spec.name, mail=mail, workshop=workshop, etsy=etsy, venture=venture, library=library, pinterest=pinterest
+        )
     ]
 
 
-def offered(name: str, *, mail: bool, workshop: bool, etsy: bool, venture: bool, library: bool) -> bool:
+def offered(
+    name: str, *, mail: bool, workshop: bool, etsy: bool, venture: bool, library: bool, pinterest: bool = False
+) -> bool:
     """Whether tool ``name`` is offered in a cycle of this configuration and kind (``venture``: a venture cycle)."""
     return (
         (mail or name not in MAIL_TOOLS)
         and (workshop or name not in WORKSHOP_TOOLS)
         and (etsy or name not in ETSY_TOOLS)
+        and ((pinterest and etsy) or name not in PINTEREST_TOOLS)
         and (venture or name not in VENTURE_TOOLS)
         and not (venture and name in ORDINARY_TOOLS)
         and (library or name not in LIBRARY_TOOLS)
@@ -1132,6 +1188,15 @@ class EtsyAccess:
     stats_history: bool = False  # the owner keeps the listings' views over time (etsy_stats_history, 0.12.0)
 
 
+@dataclass(frozen=True)
+class PinterestAccess:
+    """What the tools know of the owner's Pinterest account (0.13.0, Phase E2): its name and the daily limit, never a
+    token or a way to reach Pinterest."""
+
+    username: str
+    daily_limit: int
+
+
 @dataclass
 class ToolContext:
     db: Database
@@ -1148,6 +1213,7 @@ class ToolContext:
     allow_fetch: bool = True  # the owner's web_fetch option (live mode)
     mail: MailAccess | None = None  # Ember's mailbox, when it has one
     etsy: EtsyAccess | None = None  # the Etsy shop, when there is one
+    pinterest: PinterestAccess | None = None  # the owner's Pinterest account, when connected (0.13.0)
     venture: bool = False  # a venture cycle (0.10.0): brainstorm, and more research
     usd_per_eur: float = 0.0  # the owner's exchange rate (etsy_usd_per_eur; 0: none, econ assumes one), 0.13.0
     venture_cash_eur: float = 20.0  # the owner's cash for a venture's first test (a knock-out beyond it), 0.13.0
@@ -1181,8 +1247,8 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
         spec = spec_of(name, ctx.venture)
         if spec is not None and ctx.venture and name in ORDINARY_TOOLS:
             raise ToolError(
-                f"{name} is not one of your tools in a venture cycle: making files, the shop, email, Reddit and laying "
-                "out the roadmap belong to ordinary cycles"
+                f"{name} is not one of your tools in a venture cycle: making files, the shop, Pinterest, email, Reddit "
+                "and laying out the roadmap belong to ordinary cycles"
             )
         if spec is None or not offered(
             name,
@@ -1191,6 +1257,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
             etsy=ctx.etsy is not None,
             venture=ctx.venture,
             library=ctx.library,
+            pinterest=ctx.pinterest is not None,
         ):
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
@@ -2750,6 +2817,8 @@ def guide_text(topic: str) -> str:
         text.replace("{MIN_PHOTOS}", str(qa.MIN_PHOTOS))
         .replace("{MAX_PHOTOS}", str(etsy.MAX_PHOTOS))
         .replace("{REPLY_WORDS}", str(qa.REPLY_WORDS))
+        .replace("{PIN_TITLE}", str(pinterest.TITLE_MAX))
+        .replace("{PIN_DESCRIPTION}", str(pinterest.DESCRIPTION_CHARS))
     )
 
 
@@ -3211,6 +3280,102 @@ def _uploads(ctx: ToolContext, paths: str, kinds: frozenset[str], limit: int, wh
     return tuple(found)
 
 
+def _account(ctx: ToolContext) -> PinterestAccess:
+    if ctx.pinterest is None:
+        raise ToolError("your owner's Pinterest account isn't connected")
+    return ctx.pinterest
+
+
+def _pinterest_boards(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    account = _account(ctx)
+    made = pinterest_publisher.boards(conn, ctx.scope)
+    head = f"Your owner's Pinterest account: {account.username} (at most {account.daily_limit} pins a day)."
+    return Outcome(True, f"{head}\n{pinterest_publisher.text(conn, ctx.scope, 12)}", f"{len(made)} boards")
+
+
+def _propose_pin(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.13.0 (Phase E2): a pin on the owner's Pinterest account, linking to one of Ember's live Etsy listings."""
+    account = _account(ctx)
+    _shop(ctx)
+    listing_id = args["listing_id"]
+    try:
+        listing = etsy_publisher.current_listing(conn, ctx.scope, listing_id)
+    except etsy.EtsyError as exc:
+        raise ToolError(f"Ember's record of #{listing_id} isn't readable ({exc})") from None
+    row = etsy_publisher.listing_row(conn, ctx.scope, listing_id)
+    if listing is None or row is None:
+        raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
+    if etsy_publisher.etsy_state(row) != etsy.LIVE_STATE:
+        raise ToolError(f"#{listing_id} isn't live at Etsy ({etsy_publisher.state_text(row)}): pin a live listing")
+    board_id = str(args.get("board_id") or "").strip() or None
+    board_name = pinterest.one_line(args.get("board_name") or "") or None
+    if (board_id is None) == (board_name is None):
+        raise ToolError("give board_id (one of your boards) or board_name (a new board), one of them")
+    made = pinterest_publisher.boards(conn, ctx.scope)
+    if board_id is not None:
+        found = next((b for b in made if b["board_id"] == board_id), None)
+        if found is None:
+            raise ToolError(f"{board_id} isn't one of your boards; pinterest_boards lists them")
+        board = f"{found['name']} ({board_id})"
+    else:
+        same = next((b for b in made if str(b["name"]).lower() == str(board_name).lower()), None)
+        if same is not None:
+            raise ToolError(f"you have a board named {same['name']!r}: give its board_id, {same['board_id']}")
+        board = f"{board_name} (a new board: Ember's code makes it first)"
+    path = args["image"].strip()
+    try:
+        data = ctx.workspace.read_bytes(path)
+    except SandboxError as exc:
+        raise ToolError(str(exc)) from None
+    try:
+        upload = pinterest.image(path, data)
+        width, height = images.png_size(data)
+    except pinterest.PinterestError as exc:
+        raise ToolError(str(exc)) from None
+    except images.ImageError:
+        raise ToolError(f"{path} isn't one of your pictures (a PNG or JPEG Ember's code can read)") from None
+    title = pinterest.one_line(args["title"])
+    if not title:
+        raise ToolError("title is empty")
+    pin = pinterest.Pin(
+        title=title,
+        description=args["description"].strip(),
+        link=etsy.listing_url(listing_id),
+        alt_text=pinterest.one_line(args.get("alt_text") or ""),
+        image=upload,
+        width=width,
+        height=height,
+        board_id=board_id,
+        board_name=board_name,
+    )
+    reason = args["reason"].strip()
+    made_id = _new_request(
+        ctx,
+        conn,
+        pinterest.payload(pin, board),
+        pin.to_action(),
+        type="publish",
+        title=_cut(f"Pin: {pin.title}", 120),
+        description=reason,
+        expected_cost="none: Pinterest charges nothing for a pin",
+        expected_benefit=reason,
+        executor="pinterest_pin",
+    )
+    if isinstance(made_id, str):
+        return Outcome(True, made_id, "duplicate pin")
+    text = (
+        f"Approval request #{made_id} is waiting for your owner. Nothing is on Pinterest yet. If they approve it, "
+        f"Ember's code makes the pin on {account.username}'s account"
+        + (f" and the board {board_name!r} first" if board_name else "")
+        + f" (at most {account.daily_limit} pins a day) and you hear the result."
+    )
+    short = qa.defects("pinterest.create_pin", pin)  # the QA registry: your owner sees it too
+    if short:
+        text += f" QA (Ember's code): {'; '.join(short)}: make one with make_image (shape pin) and propose it again."
+    text += _unlocked(ctx)
+    return Outcome(True, text, f"#{made_id} pin: {_cut(pin.title, 60)}")
+
+
 def _propose_reddit_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     try:
         action = reddit.action(args["kind"], args["subreddit"], args.get("title"), args["body"], args.get("thread_url"))
@@ -3284,4 +3449,6 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "inquiry_done": _inquiry_done,
     "propose_email": _propose_email,
     "propose_reddit_post": _propose_reddit_post,
+    "pinterest_boards": _pinterest_boards,
+    "propose_pin": _propose_pin,
 }

@@ -114,6 +114,8 @@ TABLES = (
     "etsy_listings",
     "etsy_edits",
     "etsy_orders",
+    "pinterest_boards",
+    "pinterest_pins",
     "memory_versions",
     "lesson_pins",
     "research_checks",
@@ -807,6 +809,24 @@ def _agent(state: AppState, full: bool = True) -> str:
             ),
             ("etsy_edits", ["id", "approval_id", "listing_id", "status", "result", "error"], 10),
             ("etsy_orders", ["receipt_id", "ordered_at", "status", "total", "items"], 10),
+            # 0.13.0 (Phase E2): Ember's boards and pins on the owner's Pinterest account
+            ("pinterest_boards", ["id", "approval_id", "status", "board_id", "name", "error"], 10),
+            (
+                "pinterest_pins",
+                [
+                    "id",
+                    "approval_id",
+                    "status",
+                    "pin_id",
+                    "board_id",
+                    "impressions",
+                    "saves",
+                    "clicks",
+                    "title",
+                    "error",
+                ],
+                10,
+            ),
             # The owner's library (0.12.0): titles, sizes and how far the study got; never the texts.
             (
                 "library_documents",
@@ -969,6 +989,9 @@ def _integrations(state: AppState, full: bool = True) -> str:
     # Etsy: the connection's status and Ember's listings (never a token; the orders hold no buyer data).
     shop = {k: v for k, v in agent.integrations()["etsy"].items() if k not in ("listings", "orders")}
     out.append(f"-- etsy\n{_json(shop)}")
+    # 0.13.0 (Phase E2): Pinterest: the connection's status and Ember's boards (never a token; the pins are above).
+    account = {k: v for k, v in agent.integrations()["pinterest"].items() if k != "pins"}
+    out.append(f"-- pinterest\n{_json(account)}")
     return "\n".join(out)
 
 

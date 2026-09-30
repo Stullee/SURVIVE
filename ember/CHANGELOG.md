@@ -55,6 +55,13 @@ Decisions from numbers: a venture's case now has figures that Ember's code check
   inquiries_received and inquiries_answered count them for a milestone.
 - milestone_plan is an ordinary cycle's tool now: a venture cycle researches and decides ventures; laying out the
   roadmap belongs to ordinary cycles (milestone_update still works in both).
+- Pinterest, once your owner connects their account: propose_pin proposes a pin (one of your pictures, best 2:3:
+  make_image has the shape pin; a title and a description in the words people search for; one of your live Etsy
+  listings it links to; one of your boards or a new board's name), and pinterest_boards shows your boards and your
+  pins' numbers (impressions, saves, clicks to the listing). Read the guide 'pinterest' first. After your owner
+  approves a pin, Ember's code makes the board and the pin; the pin that makes your first board always waits for
+  their click. PINTEREST in your plan shows how your pins do, and the metrics pins_live and pin_clicks measure them:
+  the venture "Pinterest for the Etsy shop" is tested by its pins' clicks.
 
 ## 0.12.0
 

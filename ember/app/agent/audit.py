@@ -7,7 +7,7 @@
   Ember's code carries out like any change: deactivating a listing it created, changing a changed listing back,
   renewing a deactivated one (Etsy's fee), turning an automatic renewal off. It is journaled like any action and
   linked to what it undoes (action_undos). Only the newest action on a listing can be undone, and not while another
-  change of it waits; an email can't be unsent;
+  change of it waits; an email can't be unsent. 0.13.0 (Phase E2): a pin's Undo deletes it at Pinterest;
 * ``digest``: one of the owner's days: what Ember's code carried out and on whose decision, what the unlocks approved,
   hold and lost, and what waited whatever was unlocked (NEVER). Written once after the day ended (owner_digests),
   shown on the Approvals tab, in the System log and in the sensors;
@@ -23,7 +23,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import connectors, etsy, etsy_publisher
+from ..integrations import connectors, etsy, etsy_publisher, pinterest
 from . import never, policy, store
 from .store import AgentScope
 
@@ -39,6 +39,7 @@ UNDO = {
         f"Etsy's listing fee for the renewal ({etsy.RENEWAL_FEE} at most), and its fees on each sale",
     ),
     "auto_renew_off": ("Turn automatic renewal off", "turn off automatic renewal of", "none"),
+    "delete_pin": ("Delete the pin", "delete", "none"),  # 0.13.0 (Phase E2)
 }
 WHO = {
     "unlock": "your unlock",
@@ -170,12 +171,18 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
         if row["status"] == "failed":
             return "nothing was done"
         if row["status"] == "unclear":
-            return "it is unclear what happened: check it at Etsy"
+            place = "Pinterest" if str(row["class"]).startswith("pinterest.") else "Etsy"
+            return f"it is unclear what happened: check it at {place}"
         return "Ember's code can't undo it"
     last = _last_undo(conn, int(row["id"]))
     if last is not None and not (last["status"] == "failed" and last["made"] == 0):
         return "it is undone" if last["status"] == "done" else "your Undo of it is under way"
     where, params = scope.where()
+    if undo["action"] == "delete_pin":  # 0.13.0 (Phase E2)
+        pin = conn.execute(
+            f"SELECT status FROM pinterest_pins WHERE {where} AND pin_id = ?", (*params, row["subject"])
+        ).fetchone()
+        return None if pin is not None and pin["status"] == "active" else "the pin isn't on Pinterest anymore"
     later = conn.execute(
         f"SELECT id FROM action_journal WHERE {where} AND subject = ? AND class LIKE 'etsy.%' AND id > ?"
         " AND status <> 'failed' ORDER BY id LIMIT 1",
@@ -256,11 +263,36 @@ def undo(conn: sqlite3.Connection, scope: AgentScope, now: str, journal_id: int,
     why = _why_not(conn, scope, row)
     if why is not None:
         raise Refused(f"this action can't be undone: {why}")
+    kind = _load(row["undo"])["action"]
+    button, verb, cost = UNDO[kind]
+    original, cycle_id = _filed_under(conn, scope, row)
+    what = connectors.CLASSES[str(row["class"])].what if str(row["class"]) in connectors.CLASSES else row["class"]
+    because = (
+        f"Your owner's Undo of action #{journal_id} ({what}, {row['finished_at'][:16].replace('T', ' ')} UTC)."
+        " Ember's code carries it out like any change they approved."
+    )
+    if kind == "delete_pin":  # 0.13.0 (Phase E2): Ember's code deletes the pin at Pinterest
+        pin_id = str(row["subject"])
+        approval_id = store.insert_approval(
+            conn,
+            scope,
+            cycle_id,
+            now,
+            project_id=original["project_id"] if original is not None else None,
+            payload=f"Delete pin {pin_id} from your Pinterest account: {pinterest.pin_url(pin_id)}",
+            action=store.canonical({"pin_id": pin_id}),
+            type="publish",
+            title=f"Undo: delete pin {pin_id}"[:120],
+            description=because,
+            expected_cost=cost,
+            expected_benefit="The pin is gone from Pinterest.",
+            executor="pinterest_delete",
+        )
+        _approve(conn, now, by, button, journal_id, approval_id)
+        return approval_id, f"delete the pin ({pin_id})"
     listing_id = int(row["subject"])
     current = etsy_publisher.current_listing(conn, scope, listing_id)
     listing = etsy_publisher.listing_row(conn, scope, listing_id)
-    kind = _load(row["undo"])["action"]
-    button, verb, cost = UNDO[kind]
     if current is None or listing is None:
         raise Refused("it isn't one of Ember's live listings")
     edit = {
@@ -269,15 +301,6 @@ def undo(conn: sqlite3.Connection, scope: AgentScope, now: str, journal_id: int,
         "auto_renew_off": etsy.Edit(listing_id=listing_id, currency=current.currency, auto_renew=False),
     }.get(kind) or _restore(conn, scope, row)
     assert edit is not None  # _why_not checked it
-    original = (
-        conn.execute("SELECT * FROM approvals WHERE id = ?", (row["approval_id"],)).fetchone()
-        if row["approval_id"] is not None
-        else None
-    )
-    cycle_id = original["cycle_id"] if original is not None else _latest_cycle(conn, scope)
-    if cycle_id is None:
-        raise Refused("Ember has no cycle yet to file it under")
-    what = connectors.CLASSES[str(row["class"])].what if str(row["class"]) in connectors.CLASSES else row["class"]
     approval_id = store.insert_approval(
         conn,
         scope,
@@ -288,14 +311,30 @@ def undo(conn: sqlite3.Connection, scope: AgentScope, now: str, journal_id: int,
         action=store.canonical(edit.to_action()),
         type="sell",
         title=f"Undo: {verb} Etsy listing #{listing_id}"[:120],
-        description=(
-            f"Your owner's Undo of action #{journal_id} ({what}, {row['finished_at'][:16].replace('T', ' ')} UTC)."
-            " Ember's code carries it out like any change they approved."
-        ),
+        description=because,
         expected_cost=cost[:300],
         expected_benefit="The listing is as it was before that action.",
         executor="etsy_edit",
     )
+    _approve(conn, now, by, button, journal_id, approval_id)
+    return approval_id, f"{button.lower()} (Etsy listing #{listing_id})"
+
+
+def _filed_under(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> tuple[sqlite3.Row | None, int]:
+    """The request an action carried out (None: Ember's code acted on its own) and the cycle an Undo is filed under."""
+    original = (
+        conn.execute("SELECT * FROM approvals WHERE id = ?", (row["approval_id"],)).fetchone()
+        if row["approval_id"] is not None
+        else None
+    )
+    cycle_id = original["cycle_id"] if original is not None else _latest_cycle(conn, scope)
+    if cycle_id is None:
+        raise Refused("Ember has no cycle yet to file it under")
+    return original, int(cycle_id)
+
+
+def _approve(conn: sqlite3.Connection, now: str, by: str, button: str, journal_id: int, approval_id: int) -> None:
+    """The Undo's request is the owner's, approved at once, and linked to what it undoes."""
     conn.execute(
         "UPDATE approvals SET status = 'approved', decided_at = ?, decided_by = ?, decision_comment = ?,"
         " version = version + 1 WHERE id = ? AND status = 'pending'",
@@ -305,7 +344,6 @@ def undo(conn: sqlite3.Connection, scope: AgentScope, now: str, journal_id: int,
         "INSERT INTO action_undos (journal_id, approval_id, by, created_at) VALUES (?, ?, ?, ?)",
         (journal_id, approval_id, by[:60], now),
     )
-    return approval_id, f"{button.lower()} (Etsy listing #{listing_id})"
 
 
 # --- the daily digest ---

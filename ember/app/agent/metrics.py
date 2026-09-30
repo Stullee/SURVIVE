@@ -28,7 +28,7 @@ from typing import Any
 from .. import events
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import etsy, etsy_publisher, mailstore, qa
+from ..integrations import etsy, etsy_publisher, mailstore, pinterest_publisher, qa
 from . import ventures
 from .store import AgentScope
 
@@ -38,7 +38,7 @@ MAX_USD = Decimal("100000")
 MICROS = 1_000_000
 # A venture's stages in the order they are reached; parked and killed aren't reached.
 STAGES = ("idea", "researching", "proposed", "building", "live")
-SOURCES = {"etsy": "Etsy", "owner": "your owner's records", "ember": "Ember's records"}
+SOURCES = {"etsy": "Etsy", "owner": "your owner's records", "ember": "Ember's records", "pinterest": "Pinterest"}
 
 
 @dataclass(frozen=True)
@@ -136,6 +136,9 @@ CATALOGUE: dict[str, Metric] = {
             unit="email",
             since_set=True,
         ),
+        # 0.13.0 (Phase E2): Ember's pins, as the last Pinterest sync read them
+        Metric("pins_live", "your pins live on Pinterest now", "count", "pinterest", unit="pin"),
+        Metric("pin_clicks", "clicks your pins brought to their links, in all", "count", "pinterest", unit="click"),
         Metric(
             "qa_clean",
             f"each live listing has at least {qa.MIN_PHOTOS} photos",
@@ -153,7 +156,7 @@ HELP = (
     "expenses), research_calls_ok (found something), inquiries_received and inquiries_answered (people's "
     "emails; your answers) and api_spend_usd (a ceiling) count from when it is set; "
     f"case_complete and stage_reached are a venture's; qa_clean: {qa.MIN_PHOTOS}+ photos on each live "
-    "listing"
+    "listing; pins_live and pin_clicks: Pinterest, now"
 )
 
 
@@ -318,6 +321,9 @@ def read(
         return _read_revenue(conn, books.ledger, project_id, venture_id, books.clock.local_day(since).isoformat(), now)
     if m.name == "api_spend_usd":
         return _read_spend(conn, scope, project_id, venture_id, since, now)
+    if m.name in ("pins_live", "pin_clicks"):  # 0.13.0 (Phase E2)
+        live, clicks = pinterest_publisher.totals(conn, scope)
+        return Reading(live if m.name == "pins_live" else clicks, now, "")
     if m.name in ("inquiries_received", "inquiries_answered"):
         received, answered = mailstore.counts(conn, scope, since)
         return Reading(received if m.name == "inquiries_received" else answered, now, "")

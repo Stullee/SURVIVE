@@ -275,3 +275,30 @@ configuration:
       many match and their price quartiles. Turn it on only once you have
       confirmed that Etsy's API terms allow this use; otherwise add a keyword
       export to the Library each week.
+  pinterest_enabled:
+    name: Pinterest
+    description: >-
+      Let Ember propose pins that bring buyers to your Etsy shop, from your
+      Pinterest account. Each pin waits for your approval; your first board
+      always does. Connect the account in the dashboard (System, Pinterest).
+      In dry run a fake account stands in.
+  pinterest_app_id:
+    name: Pinterest app ID
+    description: >-
+      The ID of the app you created for your own account at
+      developers.pinterest.com.
+  pinterest_app_secret:
+    name: Pinterest app secret
+    description: >-
+      The secret of that app. Stored by Home Assistant; Ember never logs or
+      displays it.
+  pinterest_redirect_uri:
+    name: Pinterest redirect URI
+    description: >-
+      The redirect URI registered for your Pinterest app, exactly as there. It
+      doesn't need to open: after you allow access, copy the address your
+      browser shows into the dashboard.
+  pinterest_pins_per_day:
+    name: Pins per day
+    description: >-
+      At most this many approved pins a day; more wait for the next day.

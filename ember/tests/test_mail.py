@@ -261,6 +261,7 @@ def test_a_0_3_database_keeps_its_approvals_through_the_migration(tmp_path: Path
         51,
         52,
         53,
+        54,
     ]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
@@ -317,7 +318,7 @@ def test_approval_actions_and_email_actions_follow_the_rules(db_agent: Agent) ->
         " 'contact', 't', 'd', 'p', 'h', 'none', 'b', ?, ?)"
     )
     where = (scope.mode, scope.session, scope.life_id, cycle_id)
-    for executor, action in (("email", None), (None, "{}"), ("fax", "{}"), ("email", "not json")):
+    for executor, action in (("email", None), (None, "{}"), ("Fax!", "{}"), ("email", "not json")):
         with pytest.raises(sqlite3.IntegrityError), db_agent.db.transaction() as conn:
             conn.execute(base, (*where, executor, action))
     with db_agent.db.transaction() as conn:

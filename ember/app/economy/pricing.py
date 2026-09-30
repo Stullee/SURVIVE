@@ -48,19 +48,19 @@ class CallProfile:
 # The largest requests the agent builds (measured in tests/test_agent_requests.py, which keeps them in step):
 # the planning call that opens a wake cycle (a venture cycle's, with its rules and the VENTURES section: 0.10.0, and
 # the ROADMAP: 0.11.0; the owner's LIBRARY, the memory headings, the last cycles' digests, the OBLIGATIONS and the
-# lessons the owner pinned, and the burn mode in STATUS: 0.12.0; the decision desk's READY with the forecasts' record:
-# 0.13.0), and the last will. The agent never sends a bigger one.
-PLANNER_OPENING = CallProfile(input_tokens=23_200, max_tokens=1_200)
+# lessons the owner pinned, and the burn mode in STATUS: 0.12.0; the decision desk's READY with the forecasts' record
+# and PINTEREST: 0.13.0), and the last will. The agent never sends a bigger one.
+PLANNER_OPENING = CallProfile(input_tokens=23_800, max_tokens=1_200)
 LAST_WILL = CallProfile(input_tokens=6_400, max_tokens=1_000)
 # The first work step with the largest brief, and the reflection after it (with the room the loop keeps for one
 # step's growth), measured the same way: a wake cycle is only worth starting if both fit after its plan. Measured
-# with the most tools (an ordinary cycle's with a mailbox's, a shop's and the library's too: a venture cycle carries
-# fewer, 0.12.0) and the library's learnings (0.12.0: and the Etsy renewals, mark_opt_out, and the milestones'
-# metrics, budgets, waits and milestone_plan; the OBLIGATIONS and obligation_done; the reflection with the most tool
-# calls its cycle didn't do; the rules without what Ember's code enforces or another text already says; draft; the
-# lessons the owner pinned; demand_note and a listing's project_id; 0.13.0: a milestone's odds).
-WORK = CallProfile(input_tokens=32_400, max_tokens=2_000, cache_ttls=("5m",))
-REFLECT = CallProfile(input_tokens=44_000, max_tokens=2_000, cache_ttls=("5m",))
+# with the most tools (an ordinary cycle's with a mailbox's, a shop's, the library's and, 0.13.0, Pinterest's too: a
+# venture cycle carries fewer, 0.12.0) and the library's learnings (0.12.0: and the Etsy renewals, mark_opt_out, and
+# the milestones' metrics, budgets, waits and milestone_plan; the OBLIGATIONS and obligation_done; the reflection with
+# the most tool calls its cycle didn't do; the rules without what Ember's code enforces or another text already says;
+# draft; the lessons the owner pinned; demand_note and a listing's project_id; 0.13.0: a milestone's odds).
+WORK = CallProfile(input_tokens=33_800, max_tokens=2_000, cache_ttls=("5m",))
+REFLECT = CallProfile(input_tokens=45_600, max_tokens=2_000, cache_ttls=("5m",))
 # The daily review (0.7.1), measured the same way: the constitution, the knowledge, the review rules (with the
 # venture tree's: 0.10.0, and the roadmap's: 0.11.0, with verdicts on milestones: 0.12.0) and a full scorecard.
 REVIEW_CALL = CallProfile(input_tokens=14_900, max_tokens=2_200)

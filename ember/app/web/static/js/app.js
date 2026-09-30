@@ -583,6 +583,7 @@
     section("system", [d.system, d.mode], ["system-facts", "options"], function () { renderSystem(d); });
     section("email", [d.integrations, minute], ["email-facts", "email-never"], function () { renderEmail(d); });
     section("etsy", [d.integrations, d.mode, minute], ["etsy-facts", "etsy-listings", "etsy-orders"], function () { renderEtsy(d); });
+    section("pinterest", [d.integrations, d.mode, minute], ["pinterest-facts", "pinterest-pins"], function () { renderPinterest(d); });
     section("transitions", [d.transitions], ["transitions"], function () { renderTransitions(arr(d.transitions)); });
     section("events", [d.events], ["events"], function () { renderEvents(arr(d.events)); });
     section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d, agent); });
@@ -2131,19 +2132,25 @@
   // Without a parsed action they are shown like any other request.
   function executorOf(a) {
     if (!isObject(a.action)) return null;
-    return a.executor === "email" || a.executor === "reddit_link" || a.executor === "etsy_listing" || a.executor === "etsy_edit" ? a.executor : null;
+    return a.executor === "email" || a.executor === "reddit_link" || a.executor === "etsy_listing" || a.executor === "etsy_edit" ||
+      a.executor === "pinterest_pin" || a.executor === "pinterest_delete" ? a.executor : null;
   }
 
   // A new Etsy listing, or a change to a live one: Ember's code makes both after approval.
   function isEtsy(a) { var e = executorOf(a); return e === "etsy_listing" || e === "etsy_edit"; }
 
+  // 0.13.0 (Phase E2): a pin, or the owner's Undo of one: Ember's code carries both out after approval.
+  function isPinterest(a) { var e = executorOf(a); return e === "pinterest_pin" || e === "pinterest_delete"; }
+
   var APPROVAL_GROUPS = [
     { key: "pending", title: "Waiting for your decision", match: function (s) { return s === "pending"; } },
-    { key: "todo", title: "Approved, to carry out", match: function (s, a) { return isApproved(s) && !(a && (executorOf(a) === "email" || isEtsy(a))); } },
+    { key: "todo", title: "Approved, to carry out", match: function (s, a) { return isApproved(s) && !(a && (executorOf(a) === "email" || isEtsy(a) || isPinterest(a))); } },
     { key: "sending", label: "Approved emails", title: function () { return "Approved emails, " + agentName() + " sends them"; },
       match: function (s, a) { return isApproved(s) && !!a && executorOf(a) === "email"; } },
     { key: "listing", label: "Approved listings and changes", title: function () { return "Approved Etsy listings and changes, " + agentName() + " makes them"; },
       match: function (s, a) { return isApproved(s) && !!a && isEtsy(a); } },
+    { key: "pinning", label: "Approved pins", title: function () { return "Approved pins, " + agentName() + " makes them"; },
+      match: function (s, a) { return isApproved(s) && !!a && isPinterest(a); } },
     { key: "closed", title: "Closed", match: function () { return true; } },
   ];
 
@@ -2274,7 +2281,7 @@
   // Where an approved email is ("" for other requests). Approved without an execution row yet: waiting.
   function executionStatus(a) {
     var executor = executorOf(a);
-    if (executor !== "email" && executor !== "etsy_listing" && executor !== "etsy_edit") return "";
+    if (executor !== "email" && executor !== "etsy_listing" && executor !== "etsy_edit" && !isPinterest(a)) return "";
     if (isObject(a.execution) && typeof a.execution.status === "string" && a.execution.status) return a.execution.status;
     return isApproved(a.status) ? "waiting" : "";
   }
@@ -2341,7 +2348,7 @@
     return [
       h("div", { class: "item-head" },
         h("h3", { text: a.title || "Untitled request" }), plainChip(APPROVAL_TYPES[a.type] || sentence(String(a.type || "other").replace(/_/g, " "))),
-        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : "Reddit") : null,
+        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : isPinterest(a) ? "Pinterest" : "Reddit") : null,
         statusChip, a.simulated ? testTag() : null),
       a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
       actionFlags(a.action_class),
@@ -2358,6 +2365,7 @@
       a.status === "pending" && executor === "reddit_link" ? h("p", { class: "send-note", text: "After you approve, you post it yourself: this card then offers a button that opens Reddit with it filled in, and Copy buttons." }) : null,
       a.status === "pending" && executor === "etsy_listing" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this listing in your Etsy shop itself: a draft, its photos and files, then live. Etsy charges USD 0.20 per listing." }) : null,
       a.status === "pending" && executor === "etsy_edit" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this change to the live listing itself. Etsy charges nothing for it." }) : null,
+      a.status === "pending" && executor === "pinterest_pin" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this pin on your Pinterest account itself (a new board first, if it names one), exactly as shown. Pinterest charges nothing for it; your Undo deletes it." }) : null,
       executionView(a, email),
       final ? h("div", { class: "final-wrap" },
         h("h4", { class: "small-head", text: executor === "email" ? "Your version of the body (" + name + " sends this)" : executor === "etsy_listing" ? "Your version (" + name + " lists this)" : executor === "etsy_edit" ? "Your version (" + name + " makes this change)" : "Your version (the agent must use this)" }),
@@ -2487,6 +2495,7 @@
     if (!st) return null;
     if (executorOf(a) === "etsy_listing") return listingExecutionView(a, st);
     if (executorOf(a) === "etsy_edit") return changeExecutionView(a, st);
+    if (isPinterest(a)) return pinExecutionView(a, st);
     var ex = isObject(a.execution) ? a.execution : {};
     var name = agentName();
     var limit = limitText(email);
@@ -2502,6 +2511,32 @@
     else detail = [ex.error ? String(ex.error) : ""];
     return h("div", { class: "execution", "data-status": st },
       h("p", { class: "execution-head" }, chip(EXECUTION, st, sentence(st.replace(/_/g, " ")))),
+      h("p", { class: "execution-detail" }, detail));
+  }
+
+  // 0.13.0 (Phase E2): a pin, or the owner's Undo of one, as Ember's code carries it out.
+  var PIN_EXECUTION = {
+    waiting: { icon: "◔", label: "Waiting", tone: "accent" },
+    waiting_limit: { icon: "◔", label: "Waiting for tomorrow's limit", tone: "warning" },
+    running: { icon: "●", label: "At Pinterest now", tone: "accent" },
+    active: { icon: "✓", label: "Pinned", tone: "good" },
+    deleted: { icon: "–", label: "Deleted", tone: "" },
+    failed: { icon: "✕", label: "Not done", tone: "critical" },
+    unclear: { icon: "!", label: "Unclear: check Pinterest", tone: "critical" },
+  };
+
+  function pinExecutionView(a, st) {
+    var ex = isObject(a.execution) ? a.execution : {};
+    var name = agentName();
+    var detail;
+    if (st === "waiting") detail = [name + (executorOf(a) === "pinterest_delete" ? " deletes it" : " makes it") + " by itself shortly; it checks every few minutes."];
+    else if (st === "waiting_limit") detail = [name + " has made its pins for today, so this one waits for tomorrow's limit."];
+    else if (st === "running") detail = ex.started_at ? ["At Pinterest since ", timeEl(ex.started_at), "."] : ["At Pinterest now."];
+    else if (st === "active") detail = ["Pinned ", timeEl(ex.finished_at || ex.started_at), ex.url && !a.simulated ? [": ", pinterestLink(ex.url, ex.url)] : "."];
+    else if (ex.result) detail = [endSentence(sentence(ex.result))];
+    else detail = [ex.error ? endSentence(String(ex.error)) : st === "deleted" ? "Deleted at Pinterest." : ""];
+    return h("div", { class: "execution", "data-status": st },
+      h("p", { class: "execution-head" }, chip(PIN_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
       h("p", { class: "execution-detail" }, detail));
   }
 
@@ -2564,6 +2599,8 @@
     if (a.status === "pending") {
       // A Reddit draft is posted by the owner, who can still edit it on Reddit: no separate "with changes".
       if (executor === "reddit_link") return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
+      // 0.13.0: a pin is approved as it is (the agent proposes a better one after a rejection).
+      if (isPinterest(a)) return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
       // A change of photos, files or category only has no words to change.
       if (executor === "etsy_edit" && !a.editable) return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
       return [panelButton(it, "approve", "Approve"), panelButton(it, "approve_with_changes", "Approve with changes"), panelButton(it, "reject", "Reject", true)];
@@ -2578,6 +2615,10 @@
         return ls === "waiting" || ls === "waiting_limit" ? [panelButton(it, "failed", "Cancel listing", true)] : [];
       }
       if (executor === "etsy_edit") return executionStatus(a) === "waiting" ? [panelButton(it, "failed", "Cancel change", true)] : [];
+      if (isPinterest(a)) {
+        var ps = executionStatus(a);
+        return ps === "waiting" || ps === "waiting_limit" ? [panelButton(it, "failed", "Cancel", true)] : [];
+      }
       var tools = [];
       if (executor === "reddit_link") {
         tools.push(redditLink(a.reddit_url) || h("span", { class: "muted small no-link", text: "No Reddit link (it isn't a www.reddit.com address): copy the text instead." }));
@@ -2612,6 +2653,8 @@
         approveIntro = name + " then creates this listing in your Etsy shop itself, with the photos and files shown, and publishes it (Etsy charges USD 0.20). You hear the result on this card.";
       } else if (executor === "etsy_edit") {
         approveIntro = name + " then changes the live listing at Etsy itself, exactly as shown (Etsy charges nothing for it). You hear the result on this card.";
+      } else if (executor === "pinterest_pin") {
+        approveIntro = name + " then makes this pin on your Pinterest account itself, exactly as shown (a new board first, if it names one). You hear the result on this card; your Undo deletes it.";
       }
       var specs = {
         approve: { title: executor === "email" ? "Approve this email" : "Approve this request", submit: "Approve",
@@ -2659,6 +2702,7 @@
         if (executor === "reddit_link") return "Approved. Post it with the button below, then mark it done or failed.";
         if (executor === "etsy_listing") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " creates the listing itself; this card shows when it's live.";
         if (executor === "etsy_edit") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " changes the listing itself; this card shows when it's done.";
+        if (executor === "pinterest_pin") return "Approved. " + name + " makes the pin itself; this card shows when it's live.";
         if (mode === "approve_with_changes" && st === "approved") return "Approved as it was (the text was unchanged). Carry it out, then mark it done or failed.";
         if (mode === "approve_with_changes") return "Approved with your changes. Carry it out with your version, then mark it done or failed.";
         return "Approved. Carry it out, then mark it done or failed.";
@@ -2674,6 +2718,16 @@
         url: url + "close",
         body: function (v) { return { outcome: "failed", expected_version: version, result_note: v.result_note }; },
         done: function () { return "Cancelled. " + name + " won't create this listing."; },
+      };
+    }
+    if (isPinterest(a) && failed) {
+      return {
+        mode: mode, title: "Cancel this?", submit: "Cancel", danger: true, cancelLabel: "Keep it",
+        intro: [h("p", { text: name + " won't carry it out. The request is marked failed, and " + name + " sees that on its next wake." })],
+        fields: [{ name: "result_note", label: "Why (" + name + " reads it)", rows: 2, max: 2000, required: true, value: "Cancelled before it reached Pinterest.", missing: "Say why you cancel it." }],
+        url: url + "close",
+        body: function (v) { return { outcome: "failed", expected_version: version, result_note: v.result_note }; },
+        done: function () { return "Cancelled. " + name + " won't carry it out."; },
       };
     }
     if (executor === "etsy_edit" && failed) {
@@ -3603,31 +3657,32 @@
     return b;
   }
 
-  // Connecting is two steps: Etsy's page (in a new tab), then the address it sends you to, pasted here. The
-  // controls are built once, so a refresh of the dashboard never loses a pasted address.
-  function etsyConnectArea(e) {
-    var c = ui.etsyConnect;
+  // Connecting is two steps: the service's page (in a new tab), then the address it sends you to, pasted here. The
+  // controls are built once, so a refresh of the dashboard never loses a pasted address. 0.13.0: Etsy's and
+  // Pinterest's (w: the words and addresses of each).
+  function connectArea(key, e, w) {
+    var c = ui[key];
     if (!c) {
-      c = ui.etsyConnect = { url: null };
+      c = ui[key] = { url: null };
       c.status = h("p", { class: "form-status small", role: "status" });
-      c.start = h("button", { type: "button", class: "btn btn-primary", text: "Connect your Etsy shop" });
+      c.start = h("button", { type: "button", class: "btn btn-primary", text: w.start });
       c.linkBox = h("div", { class: "etsy-step", hidden: true });
-      var addressId = "etsy-address";
+      var addressId = w.id + "-address";
       c.address = h("input", { type: "url", id: addressId, autocomplete: "off", spellcheck: "false", placeholder: "The whole address, with its code and state" });
       c.finish = h("button", { type: "button", class: "btn btn-primary", text: "Finish connecting" });
       c.pasteBox = h("div", { class: "etsy-step field", hidden: true },
-        h("label", { for: addressId, text: "2. Paste the address Etsy sent you to" }),
-        h("p", { class: "hint", text: "After you allow access, Etsy opens your redirect address. It may show an error page: that's fine. Copy the whole address from the address bar and paste it here." }),
+        h("label", { for: addressId, text: "2. Paste the address " + w.name + " sent you to" }),
+        h("p", { class: "hint", text: "After you allow access, " + w.name + " opens your redirect address. It may show an error page: that's fine. Copy the whole address from the address bar and paste it here." }),
         c.address, h("div", { class: "form-actions" }, c.finish));
       c.disconnect = h("button", { type: "button", class: "btn btn-danger", text: "Disconnect" });
       c.start.addEventListener("click", function () {
         c.start.disabled = true;
-        c.status.textContent = "Asking Ember for Etsy's page…";
-        request("POST", "api/etsy/connect", {}).then(function (res) {
+        c.status.textContent = "Asking Ember for " + w.name + "'s page…";
+        request("POST", w.api + "connect", {}).then(function (res) {
           if (!res.ok) throw httpError(res);
           c.url = String(res.data.authorize_url || "");
-          replace(c.linkBox, [h("p", null, h("strong", { text: "1. Allow Ember's access at Etsy: " }), etsyLink(c.url, "open Etsy's page")),
-            h("p", { class: "muted small", text: "Log in as the shop's owner and allow access. The page is valid for 15 minutes." })]);
+          replace(c.linkBox, [h("p", null, h("strong", { text: "1. Allow Ember's access at " + w.name + ": " }), w.link(c.url, "open " + w.name + "'s page")),
+            h("p", { class: "muted small", text: "Log in as " + w.who + " and allow access. The page is valid for 15 minutes." })]);
           c.linkBox.hidden = false;
           c.pasteBox.hidden = false;
           c.status.textContent = "";
@@ -3640,9 +3695,9 @@
         if (!address) { c.status.textContent = "Paste the address first."; return; }
         c.finish.disabled = true;
         c.status.textContent = "Connecting…";
-        request("POST", "api/etsy/finish", { address: address }).then(function (res) {
+        request("POST", w.api + "finish", { address: address }).then(function (res) {
           if (!res.ok) throw httpError(res);
-          c.status.textContent = "Connected to " + asText(res.data.shop_name) + ".";
+          c.status.textContent = "Connected to " + w.connected(res.data) + ".";
           c.address.value = "";
           c.linkBox.hidden = c.pasteBox.hidden = true;
           refresh();
@@ -3651,8 +3706,8 @@
         }).then(function () { c.finish.disabled = false; });
       });
       c.disconnect.addEventListener("click", function () {
-        if (!window.confirm("Disconnect the Etsy shop? Ember can't create listings until you connect it again. Listings already on Etsy stay there.")) return;
-        request("POST", "api/etsy/disconnect", {}).then(function (res) {
+        if (!window.confirm(w.confirm)) return;
+        request("POST", w.api + "disconnect", {}).then(function (res) {
           if (!res.ok) throw httpError(res);
           c.status.textContent = "Disconnected.";
           refresh();
@@ -3661,13 +3716,96 @@
       c.wrap = h("div", { class: "etsy-connect" });
     }
     var connected = e.status === "ok";
-    c.start.textContent = connected ? "Connect again" : "Connect your Etsy shop";
+    c.start.textContent = connected ? "Connect again" : w.start;
     var canConnect = e.status === "ok" || e.status === "not_connected";
     replace(c.wrap, [
       canConnect ? h("div", { class: "form-actions" }, c.start, connected ? c.disconnect : null) : null,
       c.linkBox, c.pasteBox, c.status,
     ]);
     return c.wrap;
+  }
+
+  function etsyConnectArea(e) {
+    return connectArea("etsyConnect", e, {
+      id: "etsy",
+      name: "Etsy",
+      api: "api/etsy/",
+      start: "Connect your Etsy shop",
+      who: "the shop's owner",
+      link: etsyLink,
+      connected: function (data) { return asText(data.shop_name); },
+      confirm: "Disconnect the Etsy shop? Ember can't create listings until you connect it again. Listings already on Etsy stay there.",
+    });
+  }
+
+  // ---- System -> Pinterest (0.13.0, Phase E2): the owner's account, connecting it, Ember's boards and pins.
+
+  var PIN_STATUS = {
+    running: { icon: "●", label: "Being made", tone: "accent" },
+    active: { icon: "✓", label: "Live", tone: "good" },
+    deleted: { icon: "–", label: "Deleted", tone: "" },
+    failed: { icon: "✕", label: "Not pinned", tone: "critical" },
+    unclear: { icon: "!", label: "Unclear", tone: "critical" },
+  };
+
+  // A link only to www.pinterest.com over https; anything else is shown as text.
+  function pinterestLink(value, text) {
+    var url;
+    try { url = new URL(String(value)); } catch (e) { url = null; }
+    if (!url || !/^https:$/.test(url.protocol) || url.hostname !== "www.pinterest.com" || url.port || url.username || url.password) {
+      return h("span", { class: "link-text", text: text || String(value || "–") });
+    }
+    var a = document.createElement("a");
+    a.setAttribute("href", url.href);
+    a.setAttribute("rel", "noopener noreferrer");
+    a.setAttribute("target", "_blank");
+    append(a, [text || url.href, h("span", { class: "visually-hidden", text: " (opens in a new tab)" })]);
+    return a;
+  }
+
+  function renderPinterest(d) {
+    var p = isObject(d.integrations) && isObject(d.integrations.pinterest) ? d.integrations.pinterest : null;
+    var shown = !!p && p.status !== "disabled";  // off (the default), or an older server: no card
+    $("pinterest-card").hidden = !shown;
+    if (!shown) { replace($("pinterest-facts"), []); replace($("pinterest-connect"), []); replace($("pinterest-pins"), []); return; }
+    var fake = p.mode === "fake";
+    var reason = p.reason ? String(p.reason) : null;
+    if (!reason && p.status === "not_configured") reason = "Not set up: see the Documentation tab, 'Pinterest'.";
+    var boards = arr(p.boards);
+    replace($("pinterest-facts"), [
+      h("dt", { text: "Status" }), h("dd", null, chip(ETSY_STATUS, p.status, sentence(String(p.status || "unknown").replace(/_/g, " ")))),
+      reason && (p.status !== "ok" || fake) ? [h("dt", { text: fake ? "Mode" : "Why" }), h("dd", { class: "pre-line", text: reason })] : null,
+      h("dt", { text: "Account" }), h("dd", null, p.username ? (fake ? h("span", { text: String(p.username) + " (fake)" }) : pinterestLink(p.profile_url, String(p.username))) : "–"),
+      p.connected_at ? [h("dt", { text: "Connected" }), h("dd", null, timeEl(p.connected_at, fmtDateTime(p.connected_at)))] : null,
+      h("dt", { text: "Boards" }), h("dd", { text: boards.length ? boards.map(function (b) { return asText(b.name); }).join(", ") : "None yet: the first waits for your decision" }),
+      h("dt", { text: "Pins a day" }), h("dd", { text: "at most " + count(p.daily_limit) }),
+      p.last_sync_at ? [h("dt", { text: "Numbers from" }), h("dd", null, timeEl(p.last_sync_at, fmtDateTime(p.last_sync_at) + " (" + relTime(p.last_sync_at) + ")"))] : null,
+      p.last_error ? [h("dt", { text: "Last error" }), h("dd", { class: "fact-error" }, h("span", { "aria-hidden": "true", text: "✕ " }), String(p.last_error))] : null,
+    ]);
+    replace($("pinterest-connect"), fake ? [] : [connectArea("pinterestConnect", p, {
+      id: "pinterest",
+      name: "Pinterest",
+      api: "api/pinterest/",
+      start: "Connect your Pinterest account",
+      who: "the account's owner",
+      link: pinterestLink,
+      connected: function (data) { return asText(data.username); },
+      confirm: "Disconnect the Pinterest account? Ember can't make pins until you connect it again. Pins already on Pinterest stay there.",
+    })]);
+    var pins = arr(p.pins);
+    replace($("pinterest-pins"), pins.length ? h("div", { class: "table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, ["Pin", "Status", "Impressions", "Saves", "Clicks"].map(function (c) { return h("th", { scope: "col", text: c }); }))),
+      h("tbody", null, pins.map(function (q) {
+        var numbers = function (v) { return q.synced_at && v !== null && v !== undefined ? count(v) : "–"; };
+        return h("tr", null,
+          h("td", null, q.url && !fake ? pinterestLink(q.url, asText(q.title)) : h("span", { text: asText(q.title) }),
+            h("span", { class: "muted small", text: " → " }), fake ? h("span", { class: "muted small", text: "a listing" }) : etsyLink(q.link, "its listing"),
+            q.status !== "active" && q.result ? h("p", { class: "muted small pre-line", text: asText(q.result) }) : null),
+          h("td", null, chip(PIN_STATUS, q.status, sentence(String(q.status || "?")))),
+          h("td", { class: "num", text: numbers(q.impressions) }),
+          h("td", { class: "num", text: numbers(q.saves) }),
+          h("td", { class: "num", text: numbers(q.clicks) }));
+      })))) : h("p", { class: "muted", text: "None yet. When you approve a pin the agent proposed, Ember makes it here." }));
   }
 
   function renderTransitions(list) {
