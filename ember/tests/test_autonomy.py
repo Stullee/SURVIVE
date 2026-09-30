@@ -328,7 +328,8 @@ def test_a_rewrite_that_keeps_half_and_other_changes_need_no_read(data_dir: Path
 
 def test_memory_read_reads_every_file_whole_and_is_free() -> None:
     spec = agent_tools.SPECS["memory_read"]
-    assert spec.reflect and spec.fields["file"].enum == ("strategy", "identity", "lessons")
+    # 0.12.0: while working only: nothing reads a tool's answer after the reflection's one reply (test_tool_sets)
+    assert not spec.reflect and spec.fields["file"].enum == ("strategy", "identity", "lessons")
     assert "Free." in spec.description and "memory_read" in agent_tools.SPECS["memory_update"].description
     assert "memory_read" not in agent_tools.CALLING_TOOLS  # no model call: it costs nothing
     heading = len("lessons.md, 4,000 of 4,000 bytes, whole:\n") + len(

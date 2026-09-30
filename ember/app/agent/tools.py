@@ -87,6 +87,14 @@ MAIL_TOOLS = frozenset({"email_inbox", "email_read", "mark_opt_out", "propose_em
 VENTURE_TOOLS = frozenset({"brainstorm"})
 # Offered only while the owner's library holds documents (0.12.0).
 LIBRARY_TOOLS = frozenset({"knowledge_search", "library_read"})
+# Offered only in ordinary cycles (0.12.0): a venture cycle researches and decides, so its prompt no longer carries
+# the tools for building and selling (making and looking at files, the workshop, the shop, email and Reddit). They
+# belong to ordinary cycles, like the legs they serve.
+ORDINARY_TOOLS = (
+    frozenset({"make_document", "make_spreadsheet", "make_image", "look", "workshop", "propose_reddit_post"})
+    | ETSY_TOOLS
+    | MAIL_TOOLS
+)
 # Model calls of their own: they need the network, and no database transaction is held meanwhile.
 CALLING_TOOLS = frozenset({"research", "workshop", "brainstorm"})
 FIRST_CONTACT = (
@@ -210,7 +218,6 @@ SPECS: dict[str, Spec] = {
             "Read one of your memory files whole: strategy, identity or lessons (your plans see parts). Free.",
             {"file": _s("Which file.", 10, enum=("strategy", "identity", "lessons"))},
             per_cycle=6,
-            reflect=True,
         ),
         Spec(
             "project_create",
@@ -346,7 +353,6 @@ SPECS: dict[str, Spec] = {
             "Search what you learned from your owner's library (the documents they gave you) and its texts. Free.",
             {"query": _s("Words to look for, e.g. 'etsy tags long-tail'.", 200)},
             per_cycle=10,
-            reflect=True,
         ),
         Spec(
             "library_read",
@@ -786,19 +792,29 @@ SPECS: dict[str, Spec] = {
 def definitions(
     mail: bool = False, workshop: bool = True, etsy: bool = False, venture: bool = False, library: bool = False
 ) -> list[dict[str, Any]]:
-    """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds, and in
-    every cycle of a mode and configuration (the email tools only with a mailbox, the workshop only when the
-    owner's options allow runs, the Etsy tools only with a shop, brainstorm only in a venture cycle, the library's
-    only while it holds documents)."""
+    """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds (the
+    reflection reads it from the cache at a tenth of the price; a list of its own would write the whole conversation
+    again), and in every cycle of a mode, configuration and kind (the email tools only with a mailbox, the workshop
+    only when the owner's options allow runs, the Etsy tools only with a shop, brainstorm only in a venture cycle
+    and, 0.12.0, the tools for building and selling only in an ordinary one, the library's only while it holds
+    documents)."""
     return [
         _definition(spec)
         for spec in SPECS.values()
-        if (mail or spec.name not in MAIL_TOOLS)
-        and (workshop or spec.name not in WORKSHOP_TOOLS)
-        and (etsy or spec.name not in ETSY_TOOLS)
-        and (venture or spec.name not in VENTURE_TOOLS)
-        and (library or spec.name not in LIBRARY_TOOLS)
+        if offered(spec.name, mail=mail, workshop=workshop, etsy=etsy, venture=venture, library=library)
     ]
+
+
+def offered(name: str, *, mail: bool, workshop: bool, etsy: bool, venture: bool, library: bool) -> bool:
+    """Whether tool ``name`` is offered in a cycle of this configuration and kind (``venture``: a venture cycle)."""
+    return (
+        (mail or name not in MAIL_TOOLS)
+        and (workshop or name not in WORKSHOP_TOOLS)
+        and (etsy or name not in ETSY_TOOLS)
+        and (venture or name not in VENTURE_TOOLS)
+        and not (venture and name in ORDINARY_TOOLS)
+        and (library or name not in LIBRARY_TOOLS)
+    )
 
 
 def _definition(spec: Spec) -> dict[str, Any]:
@@ -943,19 +959,24 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
         )
     try:
         spec = SPECS.get(name)
-        if (
-            spec is None
-            or (name in MAIL_TOOLS and ctx.mail is None)
-            or (name in WORKSHOP_TOOLS and not ctx.workshop)
-            or (name in ETSY_TOOLS and ctx.etsy is None)
-            or (name in VENTURE_TOOLS and not ctx.venture)
-            or (name in LIBRARY_TOOLS and not ctx.library)
+        if spec is not None and ctx.venture and name in ORDINARY_TOOLS:
+            raise ToolError(
+                f"{name} is not one of your tools in a venture cycle: making files, the shop, email and Reddit belong "
+                "to ordinary cycles"
+            )
+        if spec is None or not offered(
+            name,
+            mail=ctx.mail is not None,
+            workshop=bool(ctx.workshop),
+            etsy=ctx.etsy is not None,
+            venture=ctx.venture,
+            library=ctx.library,
         ):
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
             raise ToolError(
-                f"{name} can't be used while reflecting; only journal, memory, projects, ventures, the roadmap, sleep, "
-                "messages and upgrade requests"
+                f"{name} can't be used while reflecting; only journal, memory updates, projects, ventures, the "
+                "roadmap, sleep, messages and upgrade requests (nothing reads a tool's answer after this last reply)"
             )
         if phase == "act" and not spec.act:
             raise ToolError(f"{name} is for the reflect phase at the end of the cycle")

@@ -31,8 +31,10 @@ def test_every_whole_text_fits_in_one_reply() -> None:
 
 
 def test_the_venture_brief_leaves_the_quick_fixes_to_the_rules() -> None:
+    # 0.12.0: Ember's code makes a cycle with the owner's message waiting an ordinary one (test_obligations), and a
+    # venture cycle has no tools for building or selling (test_tool_sets)
     assert "ordinary cycle" not in context.VENTURE_BRIEF
-    assert "make the quick fixes they ask for" in prompts.VENTURE_RULES
+    assert "quick fix" not in prompts.VENTURE_RULES
 
 
 def shop(agent: object) -> str:

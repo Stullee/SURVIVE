@@ -50,12 +50,7 @@ refused tool comes back as an error you can react to.
   only for decisions, money, and what only a person can do (accounts, identity, payments); never ask them to look
   things up, collect material or make a pre-selection for you. Waiting for your owner is never a reason to stop:
   work on another experiment meanwhile.
-- You make finished files yourself: make_document (a PDF and an editable Word copy), make_spreadsheet (Excel) and
-  make_image (listing photos); read their guide first, and look at the pictures before you show your work. Never
-  hand your owner design or build work (Canva, formatting, files made from your spec).
-- What your make_ tools can't do (charts, PowerPoint files, pictures drawn by code, data work), your workshop can:
-  it has code written and run for you and keeps the script. When a workshop script proves itself, file
-  request_upgrade with workshop_script, so it becomes one of your own tools.
+{building}
 - When a missing ability blocks a way to earn (a kind of file, a platform, a tool), don't work around it with your
   owner's time: file request_upgrade saying what is missing, what you would do with it and what it could earn.
 - VENTURES are your growing tree of ways to earn beyond what you do now: new markets, platforms, business models, and
@@ -82,6 +77,22 @@ refused tool comes back as an error you can react to.
 - Keep notes short. Your workspace and memory are your only long-term memory besides your journal. Your strategy
   lives in memory (strategy), the only strategy you see when planning: keep it there, short, not only in a file.
 When you are done, reply with a short report of what you did (no tool call)."""
+
+# 0.12.0: only where the tools for building are offered (an ordinary cycle's work steps and the reflection after them).
+BUILDING_RULES = """\
+- You make finished files yourself: make_document (a PDF and an editable Word copy), make_spreadsheet (Excel) and
+  make_image (listing photos); read their guide first, and look at the pictures before you show your work. Never
+  hand your owner design or build work (Canva, formatting, files made from your spec).
+- What your make_ tools can't do (charts, PowerPoint files, pictures drawn by code, data work), your workshop can:
+  it has code written and run for you and keeps the script. When a workshop script proves itself, file
+  request_upgrade with workshop_script, so it becomes one of your own tools.
+"""
+
+
+def operating_rules(building: bool) -> str:
+    """How a wake cycle works, with the rules for building files when those tools are offered (0.12.0)."""
+    return OPERATING_RULES.replace("{building}\n", BUILDING_RULES if building else "")
+
 
 PLANNER_RULES = """PLANNING
 Decide what this wake cycle should achieve, following your owner's standing instructions. Take into account what
@@ -118,8 +129,8 @@ testing new ways to earn beyond what you do now, so that several legs carry you 
 venture that can become profitable, and judge it by the evidence: what would have to be true for it to pay, what
 does the research say, and what is the smallest honest test? A no backed by data, with the numbers and the closest
 test, is a result: park the venture with them.
-- Answer your owner's messages first, as always, and make the quick fixes they ask for. Then work on ventures only:
-  other products and listings for a leg you already run belong to ordinary cycles.
+- Ember's code runs a venture cycle only while nothing in OBLIGATIONS presses. Work on ventures only: a venture
+  cycle has no tools for making files, the shop, email or Reddit (products and listings belong to ordinary cycles).
 - Grow the tree: with fewer than 5 ideas waiting, or ideas that all look alike, plan brainstorm, branching from a
   promising venture or into new ground (services, websites, matchmaking, tools, content, marketing channels, physical
   products). Don't limit ideas to your tools today: abilities can be added, and your owner can set things up.
@@ -471,16 +482,19 @@ def work_request(
 ) -> dict[str, Any]:
     """One step of the act loop. The prefix (system, tools, brief) stays byte-identical, so it is cached; ``mail``,
     ``etsy``, ``venture`` and ``library`` (whether Ember has a mailbox, a shop and a library, and a venture cycle's
-    brainstorm) are the same for every step of a cycle."""
+    tools) are the same for every step of a cycle."""
+    offered = tools.definitions(mail, workshop=workshop_on(settings), etsy=etsy, venture=venture, library=library)
     return {
         "model": settings.worker_model,
         **_thinking(settings.worker_model, WORK_MAX_TOKENS),
         "system": [
             _text(constitution(settings)),
             _text(knowledge()),
-            _text(OPERATING_RULES, cache_control={"type": "ephemeral"}),
+            _text(
+                operating_rules(any(d["name"] in tools.MAKERS for d in offered)), cache_control={"type": "ephemeral"}
+            ),
         ],
-        "tools": tools.definitions(mail, workshop=workshop_on(settings), etsy=etsy, venture=venture, library=library),
+        "tools": offered,
         "tool_choice": {"type": "none"} if final else {"type": "auto"},
         "cache_control": {"type": "ephemeral"},
         "messages": [{"role": "user", "content": [_text(brief)]}, *turns],
@@ -513,8 +527,9 @@ def reflect_request(
     library: bool = False,
     undone: Sequence[str] = (),
 ) -> dict[str, Any]:
-    """The final turn of the same conversation (so the cached prefix is reused); ``ended`` says why the work ended,
-    ``undone`` which of its tool calls were not done (0.12.0).
+    """The final turn of the same conversation (so the cached prefix is reused: its tool list stays the work's, which
+    it reads from the cache at a tenth of the price); ``ended`` says why the work ended, ``undone`` which of its tool
+    calls were not done (0.12.0).
 
     Roles must alternate: when there was no act turn at all, the reflect prompt joins the brief's turn.
     """

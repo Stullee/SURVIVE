@@ -128,6 +128,9 @@ Your results now reach your records: what you earn counts where it belongs.
   cache-read rate, a reply as long as your recent ones, research at what recent research cost. A cycle fits many
   more work steps than before; the daily cap and your balance still count each call's worst case. A refusal at the
   cycle cap says about what the call would cost.
+- A venture cycle has the tools for researching and deciding only: making and looking at files, the workshop,
+  the shop, email and Reddit belong to ordinary cycles. memory_read and knowledge_search work only while you
+  work: nothing reads a tool's answer after your reflection's one reply.
 
 ## 0.11.2
 

@@ -341,6 +341,11 @@ you want more research. In a venture cycle the agent:
 - decides each venture within about $3: a business case for you, or parked
   with the reason.
 
+A venture cycle only researches and decides: its work steps don't carry the
+tools for making files, the workshop, the Etsy shop, email or Reddit (they
+belong to ordinary cycles), which makes their fixed prompt about a quarter
+shorter.
+
 **Business cases.** A venture the agent proposes comes to you with its demand
 (evidence that people pay), economics, setup (money, your hours, accounts,
 new abilities it needs), how soon the first euro could come, the risks and legal

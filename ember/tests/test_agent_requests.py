@@ -48,11 +48,12 @@ def longest_undone() -> list[str]:
 
 def first_step_and_reflection(brief: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """The first work step, and the reflection after it with the room the loop keeps for one step's growth (with the
-    most tools: a mailbox's, a shop's, a venture cycle's and the library's too, and the most undone calls)."""
+    most tools: an ordinary cycle's with a mailbox's, a shop's and the library's too, and the most undone calls; a
+    venture cycle has fewer, 0.12.0)."""
     grown = [{"role": "assistant", "content": [{"type": "text", "text": "x" * loop.STEP_GROWTH_BYTES}]}]
     longest = "ä" * prompts.ENDED_CHARS  # why the work ended, at its longest
     return (
-        prompts.work_request(SETTINGS, brief, [], mail=True, etsy=True, venture=True, library=True),
+        prompts.work_request(SETTINGS, brief, [], mail=True, etsy=True, library=True),
         prompts.reflect_request(
             SETTINGS,
             brief,
@@ -61,7 +62,6 @@ def first_step_and_reflection(brief: str) -> tuple[dict[str, Any], dict[str, Any
             mail=True,
             etsy=True,
             ended=longest,
-            venture=True,
             library=True,
             undone=longest_undone(),
         ),
