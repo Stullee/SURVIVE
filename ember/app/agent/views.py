@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
-from . import library, metrics, review, roadmap, store, ventures
+from . import digest, library, metrics, review, roadmap, store, ventures
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
 if TYPE_CHECKING:
@@ -305,6 +305,7 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
         stamp = _roadmap_stamp(conn, scope, simulated, today.isoformat())
         total = roadmap.count(conn, scope)
         overhead = roadmap.overhead(conn, scope)
+        digests = digest.newest_by(conn, scope, "milestone_id")  # 0.12.0
     items = []
     for m in rows:
         due = roadmap.parse_day(m["due"]) or today
@@ -338,6 +339,7 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
                 "updated_at": m["updated_at"],
                 "cycles": cycles,
                 "spent_usd": _usd(spent),  # 0.12.0: the work of its cycles; their plans are overhead
+                "last_digest": digests.get(m["id"]),  # 0.12.0: the digest of the last cycle aimed at it
                 # 0.12.0: what it may cost, and its wait
                 "budget_usd": _usd(m["budget_micros"]) if m["budget_micros"] else None,
                 "cash_eur": f"{m['cash_cents'] / 100:.2f}" if m["cash_cents"] else None,
@@ -384,7 +386,8 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
 
 
 def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated: int) -> str:
-    """Changes when the tree or its money may have: a venture changed, or a wake cycle ended."""
+    """Changes when the tree or its money may have: a venture changed, a wake cycle ended, or (0.12.0: its P&L)
+    something was recorded in the ledger."""
     where, params = scope.where()
     tree = conn.execute(
         f"SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM ventures WHERE {where}", params
@@ -393,7 +396,8 @@ def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated
         "SELECT COALESCE(MAX(id), 0) FROM cycles WHERE simulated = ? AND session = ? AND status <> 'running'",
         (simulated, scope.session),
     ).fetchone()
-    return f"{int(tree[0])}|{tree[1]}|{int(cycle[0])}"
+    booked = conn.execute("SELECT COALESCE(MAX(id), 0) FROM ledger").fetchone()
+    return f"{int(tree[0])}|{tree[1]}|{int(cycle[0])}|{int(booked[0])}"
 
 
 def ventures_view(agent: Agent) -> dict[str, Any]:
@@ -420,6 +424,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
             (simulated, scope.session),
         ).fetchone()[0]
         stamp = _ventures_stamp(conn, scope, simulated)
+        digests = digest.newest_by(conn, scope, "venture_id")  # 0.12.0
     items = []
     for v in rows:
         m = paid.get(v["id"], ventures.Money())
@@ -463,6 +468,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                 "refunds_usd": _usd(m.refunds),
                 "expenses_usd": _usd(m.expenses),
                 "net_usd": _usd(m.net),
+                "last_digest": digests.get(v["id"]),  # 0.12.0: the digest of the last cycle aimed at it
                 "projects": linked.get(v["id"], []),
                 "owner_action": v["owner_action"],
                 "owner_comment": v["owner_comment"],
@@ -694,8 +700,10 @@ def cycle_detail(agent: Agent, cycle_id: int) -> dict[str, Any] | None:
         ).fetchall()
         tool_rows = conn.execute("SELECT * FROM tool_calls WHERE cycle_id = ? ORDER BY id", (cycle_id,)).fetchall()
         summary = _activity(conn, c)
+        written = conn.execute("SELECT text FROM cycle_digests WHERE cycle_id = ?", (cycle_id,)).fetchone()
     return {
         "cycle": summary,
+        "digest": written["text"] if written else None,  # 0.12.0: what it did and didn't, from Ember's records
         "plan": json.loads(c["plan"]) if c["plan"] else None,
         "calls": [
             {

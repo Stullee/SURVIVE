@@ -146,10 +146,18 @@ press **Wake now**, or when you write to it), it runs one **wake cycle**:
    those tools can't make (charts, PowerPoint files, data work), it has code
    written and run in its [workshop](#the-workshop).
 3. **Reflect**: it writes a journal entry, updates its memory and chooses how
-   long to sleep.
+   long to sleep. It is told which of the cycle's tool calls were not done
+   (refused, failed, skipped or cut off), so it can't report them as done.
+
+When a cycle ends, however it ends, Ember's code writes its **digest** from its
+records: what it was aimed at, its goal, what its tools did and what they
+didn't, how its work ended, whether it reflected and what it cost. The next
+plans see the last two digests, and a work step aimed at a milestone or venture
+sees the digest of the last cycle aimed at it: a journal can claim work that
+never happened, a digest can't.
 
 Every call and every tool use is shown on the dashboard (click a cycle under
-**Activity** for the details). In dry run the fake model doesn't understand
+**Activity** for the details, its digest first). In dry run the fake model doesn't understand
 your messages, so its replies in the **Inbox** are canned (the Inbox says so
 above the message box); with dry run off, Claude reads and answers them. The
 agent can't reach the internet except through Anthropic's web search (and page

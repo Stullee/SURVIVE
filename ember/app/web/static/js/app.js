@@ -1752,8 +1752,12 @@
   function cycleDetailView(data) {
     var calls = arr(data.calls);
     var tools = arr(data.tools).slice().sort(function (a, b) { return (num(a.seq) || 0) - (num(b.seq) || 0); });
-    var parts = [h("section", { class: "detail-part" }, h("h3", { text: "Plan" }),
-      isObject(data.plan) ? planView(data.plan) : h("p", { class: "muted", text: "No plan was recorded." }))];
+    var parts = [
+      // 0.12.0: the digest Ember's code wrote when the cycle ended: what it did and didn't do
+      data.digest ? h("section", { class: "detail-part" }, h("h3", { text: "Digest (by Ember's code)" }),
+        h("p", { class: "pre-line", text: asText(data.digest) })) : null,
+      h("section", { class: "detail-part" }, h("h3", { text: "Plan" }),
+        isObject(data.plan) ? planView(data.plan) : h("p", { class: "muted", text: "No plan was recorded." }))];
     var shown = {};
     calls.forEach(function (call) {
       var own = tools.filter(function (t) { return t.llm_call_id !== null && t.llm_call_id !== undefined && String(t.llm_call_id) === String(call.id); });
@@ -5141,6 +5145,7 @@
         }).join(", ") })) : null),
       ventureWord(v),
       v.notes ? h("details", { class: "notes" }, h("summary", { text: "Notes" }), h("pre", { class: "notes-text", text: asText(v.notes) })) : null,
+      lastDigest(v),
       ventureKnowledge(v),
       h("p", { class: "muted small" }, (v.created_by === "owner" ? "Added by " + (v.entered_by || "you") : "Added by " + name) + " ",
         timeEl(v.created_at), " · updated ", timeEl(v.updated_at)),
@@ -5757,9 +5762,16 @@
       milestoneProposal(m),
       milestoneWord(m),
       m.notes ? h("details", { class: "notes" }, h("summary", { text: "Notes" }), h("pre", { class: "notes-text", text: asText(m.notes) })) : null,
+      lastDigest(m),
       h("p", { class: "muted small" }, (m.created_by === "owner" ? "Added by " + (m.entered_by || "you") : m.created_by === "code" ? "Set by Ember's code" : "Planned by " + name) + " ",
         timeEl(m.created_at), closed && m.closed_at ? [" · closed ", timeEl(m.closed_at)] : [" · updated ", timeEl(m.updated_at)]),
     ];
+  }
+
+  // 0.12.0: the digest Ember's code wrote of the last cycle aimed at a milestone or venture
+  function lastDigest(x) {
+    if (!x.last_digest) return null;
+    return h("details", { class: "notes" }, h("summary", { text: "Its last cycle" }), h("pre", { class: "notes-text", text: asText(x.last_digest) }));
   }
 
   var MILESTONE_WORDS = { added: "You added this milestone", note: "Your note", drop: "You dropped it",

@@ -754,9 +754,11 @@ def focus_text(
     parent: Mapping[str, Any] | None,
     spent: Mapping[int, int] | None = None,
     replaced: Mapping[str, Any] | None = None,
+    last: str = "",
 ) -> str:
     """The brief's FOCUS for the plan's milestone: what it takes to be done and how to close it first (a cut takes
-    the end), then what it leads to and serves, the owner's word and the notes."""
+    the end), then (0.12.0) the digest of the last cycle aimed at it (``last``), what it leads to and serves, the
+    owner's word and the notes."""
     due = _due(row)
     checked = metrics.status_text(row)
     lines = [
@@ -770,6 +772,8 @@ def focus_text(
         else "Measure met: close it done, with the evidence. Out of reach by its date: move it (why; twice at most, "
         "and your owner decides on theirs), or close it missed once the date has passed.",
     ]
+    if last:
+        lines.append(f"Its last cycle (Ember's code's digest): {last}")
     if parent is not None:
         lines.append(f"Leads to: #{parent['id']} {_q(parent['title'], 100)} (due {parent['due']}, {parent['status']})")
     if replaced is not None:  # 0.12.0: what it stands for, and what that one asked

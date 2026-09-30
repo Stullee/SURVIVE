@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from app.agent import context, library, loop, prompts, roadmap, tools, ventures
+from app.agent import context, digest, library, loop, prompts, roadmap, tools, ventures
 from app.agent.news import CHANGELOG_LIMIT, News
 from app.config import Settings
 from app.economy.estimate import plan_request
@@ -38,15 +38,30 @@ def biggest_planner_context() -> str:
     return "\n\n".join([*parts, "== TASK ==\nPlan this wake cycle. Reply with the JSON plan only."])
 
 
+def longest_undone() -> list[str]:
+    """What the reflection is shown of its cycle's undone tool calls, at its longest (0.12.0)."""
+    row = {"tool": "ä" * 64, "status": "interrupted", "summary": "ä" * 400, "input": json.dumps({"title": "ä" * 400})}
+    return [digest.undone_line(row)] * digest.UNDONE_SHOWN + [f"and {10**6} more"]  # type: ignore[arg-type]
+
+
 def first_step_and_reflection(brief: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """The first work step, and the reflection after it with the room the loop keeps for one step's growth (with the
-    most tools: a mailbox's, a shop's, a venture cycle's and the library's too)."""
+    most tools: a mailbox's, a shop's, a venture cycle's and the library's too, and the most undone calls)."""
     grown = [{"role": "assistant", "content": [{"type": "text", "text": "x" * loop.STEP_GROWTH_BYTES}]}]
     longest = "ä" * prompts.ENDED_CHARS  # why the work ended, at its longest
     return (
         prompts.work_request(SETTINGS, brief, [], mail=True, etsy=True, venture=True, library=True),
         prompts.reflect_request(
-            SETTINGS, brief, grown, [], mail=True, etsy=True, ended=longest, venture=True, library=True
+            SETTINGS,
+            brief,
+            grown,
+            [],
+            mail=True,
+            etsy=True,
+            ended=longest,
+            venture=True,
+            library=True,
+            undone=longest_undone(),
         ),
     )
 

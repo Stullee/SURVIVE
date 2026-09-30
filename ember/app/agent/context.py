@@ -24,7 +24,7 @@ from ..economy.costs import micros_to_usd
 from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
-from . import library, review, roadmap, store, ventures
+from . import digest, library, review, roadmap, store, ventures
 from .memory import Memory, heading_like
 from .news import CHANGELOG_LIMIT, Item, News, Shown
 from .sandbox import Jail
@@ -53,7 +53,7 @@ PLANNER_BUDGETS = {
     "strategy": 2_000,
     "identity": 600,
     "lessons": 1_300,
-    "journal": 600,  # YOUR LAST CYCLE (0.12.0: the handoff and the last goal; unused before)
+    "journal": 1_700,  # YOUR LAST CYCLE (0.12.0: the handoff, the last journal and the last 2 cycles' digests)
     "workspace": 900,
     "research": RESEARCH_BUDGET,
     "workshop": 800,
@@ -82,7 +82,7 @@ BRIEF_BUDGET = 6_500
 KNOWLEDGE_HEADING = "WHAT YOU LEARNED (from your owner's library)"
 KNOWLEDGE_BUDGET = 1_800
 VENTURE_FOCUS_BUDGET = 1_900  # a venture's FOCUS in the brief
-MILESTONE_FOCUS_BUDGET = 700  # a milestone's FOCUS in the brief (0.11.0)
+MILESTONE_FOCUS_BUDGET = 1_100  # a milestone's FOCUS in the brief (0.11.0; 0.12.0: with its last cycle's digest)
 VENTURE_BRIEF = (
     "This is a venture cycle: read guide 'ventures' first, research as often as this cycle can pay for (STATUS), "
     "grow the tree with brainstorm (first, if you plan one), save what you learn with venture_update (learned, with "
@@ -162,6 +162,7 @@ class Snapshot:
     pending: list[sqlite3.Row] = field(default_factory=list)
     last_cycle: sqlite3.Row | None = None
     last_journal: sqlite3.Row | None = None
+    digests: list[str] = field(default_factory=list)  # the last cycles' digests, newest first (0.12.0)
     memory: dict[str, str] = field(default_factory=dict)
     workspace: list[str] = field(default_factory=list)
     workspace_usage: str = ""  # 0.12.0: what the workspace holds of its limits, for STATUS
@@ -249,6 +250,7 @@ def snapshot(
         pending=[r for r in store.queue(conn, "approvals", scope, 20) if r["status"] == "pending"],
         last_cycle=last_cycle,
         last_journal=journal[0] if journal else None,
+        digests=digest.latest(conn, scope),
         memory=memory.read_all(),
         workspace=files,
         workspace_usage=_usage_line(workspace),
@@ -379,17 +381,22 @@ def _news_head(s: Snapshot) -> str:
 
 
 def last_cycle_text(s: Snapshot) -> str:
-    """0.12.0: the plan's YOUR LAST CYCLE: what it set out to do, the handoff its reflection left for this cycle, and
-    its journal's summary (the agent's words, JSON-quoted). The handoff never reached a plan before."""
+    """0.12.0: the plan's YOUR LAST CYCLE: the handoff its reflection left for this cycle and its journal's summary
+    (the agent's words, JSON-quoted; the handoff never reached a plan before), then the digests Ember's code wrote of
+    the last two cycles (what they did and didn't do: a journal can claim work that never happened). Without a
+    digest (a cycle from before 0.12.0), the last cycle's goal."""
     lines = []
     journal = s.last_journal
     if journal is not None and journal["handoff"]:
         lines.append(f"Your handoff to this cycle: {json.dumps(journal['handoff'], ensure_ascii=False)}")
     goal = _plan_goal(s.last_cycle)
-    if goal:
+    if goal and not s.digests:
         lines.append(f"Its goal: {json.dumps(goal, ensure_ascii=False)}")
     if journal is not None:
         lines.append(f"Its journal: {json.dumps(journal['summary'], ensure_ascii=False)}")
+    if s.digests:
+        lines.append("What your last cycles did, from Ember's records (newest first):")
+        lines += s.digests
     return "\n".join(lines)
 
 

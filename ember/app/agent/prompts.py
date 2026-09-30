@@ -12,6 +12,7 @@ The constitution is the owner's fixed text; only ``{agent_name}`` is filled in
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import cache
 from typing import Any
 
@@ -157,10 +158,18 @@ WORK_ENDED = {
 ENDED_CHARS = 120  # the longest reason shown
 
 
-def reflect_prompt(ended: str = "") -> str:
-    """The reflect phase's instructions, saying why the work steps ended (``ended``: the act phase's end reason)."""
+def reflect_prompt(ended: str = "", undone: Sequence[str] = ()) -> str:
+    """The reflect phase's instructions, saying why the work steps ended (``ended``: the act phase's end reason) and,
+    0.12.0, which of its tool calls were not done (Ember's code's list: they can't be reported as done)."""
     why = WORK_ENDED.get(ended) or " ".join(ended.split())[:ENDED_CHARS]
-    return REFLECT_PROMPT.replace("{ended}", why)
+    text = REFLECT_PROMPT.replace("{ended}", why)
+    if undone:
+        text += (
+            " Not done in this cycle (refused, failed, skipped or cut off; never write or save them as done): "
+            + "; ".join(undone)
+            + "."
+        )
+    return text
 
 
 REVIEW_RULES = """DAILY REVIEW
@@ -505,14 +514,16 @@ def reflect_request(
     ended: str = "",
     venture: bool = False,
     library: bool = False,
+    undone: Sequence[str] = (),
 ) -> dict[str, Any]:
-    """The final turn of the same conversation (so the cached prefix is reused); ``ended`` says why the work ended.
+    """The final turn of the same conversation (so the cached prefix is reused); ``ended`` says why the work ended,
+    ``undone`` which of its tool calls were not done (0.12.0).
 
     Roles must alternate: when there was no act turn at all, the reflect prompt joins the brief's turn.
     """
     request = work_request(settings, brief, turns, mail=mail, etsy=etsy, venture=venture, library=library)
     messages = request["messages"]
-    prompt = _text(reflect_prompt(ended))
+    prompt = _text(reflect_prompt(ended, undone))
     if messages[-1]["role"] == "user":
         messages[-1] = {"role": "user", "content": [*messages[-1]["content"], *pending_results, prompt]}
     else:

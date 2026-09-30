@@ -96,6 +96,7 @@ TABLES = (
     "ledger",
     "llm_calls",
     "cycles",
+    "cycle_digests",
     "lives",
     "life_transitions",
     "tool_calls",

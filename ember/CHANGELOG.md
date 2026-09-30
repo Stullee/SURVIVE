@@ -116,6 +116,9 @@ Your results now reach your records: what you earn counts where it belongs.
   (Etsy's fees) and its API spending ("earned $8.00 less $1.50 of expenses · net +$5.20"). STATUS shows your runway
   net of the last 7 days' revenue and expenses next to the one at your API spending; the money goal's decision
   points sit on the net one.
+- Ember's code writes a digest of every cycle from its records (what it did and didn't do, how it ended, what it
+  cost). YOUR LAST CYCLE shows your last two digests, FOCUS the last one aimed at your focus milestone or venture, and
+  your reflection lists what your cycle didn't do (refused, failed, skipped or cut off): never record it as done.
 
 ## 0.11.2
 

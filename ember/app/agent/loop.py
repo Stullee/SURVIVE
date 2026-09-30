@@ -48,7 +48,21 @@ from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox
 from ..version import app_version
-from . import context, library, metrics, netguard, news, prompts, review, roadmap, stages, store, tools, ventures
+from . import (
+    context,
+    digest,
+    library,
+    metrics,
+    netguard,
+    news,
+    prompts,
+    review,
+    roadmap,
+    stages,
+    store,
+    tools,
+    ventures,
+)
 from .memory import Memory
 from .sandbox import Jail, SandboxError
 from .store import AgentScope
@@ -262,6 +276,11 @@ class CycleRunner:
             if not store.has_journal(conn, cycle_id):
                 summary = f"Cycle ended {end.status}" + (f": {end.note}" if end.note else "")
                 store.write_journal(conn, self.scope, cycle_id, "system", summary, _code_journal(conn, cycle_id), now)
+            # 0.12.0: every cycle's digest, from its records (the guard may have closed it already: say how it ended)
+            row = conn.execute("SELECT status, note FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
+            ended = row is not None and row["status"] != "running"
+            status = row["status"] if ended else "failed" if end.status == "skipped" else end.status
+            digest.write(conn, cycle_id, status, row["note"] if ended else end.note, now)
             if end.sleep_minutes is not None:
                 store.update_cycle(conn, cycle_id, sleep_minutes=end.sleep_minutes)
             store.update_cycle(conn, cycle_id, phase=None, current_action=None)
@@ -460,7 +479,7 @@ class CycleRunner:
                 if venture is None or venture["stage"] not in ventures.OPEN_STAGES:
                     plan.focus_venture_id = None
                 else:
-                    venture_focus = self._venture_focus(conn, venture)
+                    venture_focus = self._venture_focus(conn, venture, cycle_id)
             if plan.focus_milestone_id is not None:
                 milestone = roadmap.get(conn, self.scope, plan.focus_milestone_id)
                 if milestone is None or milestone["status"] != "open":
@@ -471,7 +490,10 @@ class CycleRunner:
                     replaced = (
                         roadmap.get(conn, self.scope, milestone["replaces_id"]) if milestone["replaces_id"] else None
                     )
-                    milestone_focus = roadmap.focus_text(milestone, self.clock.today(), parent, spent, replaced)
+                    last = digest.newest_for(conn, self.scope, "milestone_id", milestone["id"], cycle_id)
+                    milestone_focus = roadmap.focus_text(
+                        milestone, self.clock.today(), parent, spent, replaced, last=last
+                    )
         ctx.state.focus_project_id = plan.focus_project_id
         ctx.state.focus_venture_id = plan.focus_venture_id
         self._progress(
@@ -551,15 +573,17 @@ class CycleRunner:
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
 
-    def _venture_focus(self, conn: Any, row: Any) -> str:
-        """The brief's FOCUS for the plan's venture: its record, money, projects and knowledge file."""
+    def _venture_focus(self, conn: Any, row: Any, cycle_id: int) -> str:
+        """The brief's FOCUS for the plan's venture: its record, money, projects and knowledge file, and (0.12.0) the
+        digest of the last cycle aimed at it."""
         paid = ventures.money(conn, self.scope).get(row["id"], ventures.Money())
         parts = ventures.knowledge_parts(self.workspace, row["id"], row["title"])
         try:
             size = self.workspace.size_of(parts[-1], "text") if parts else None
         except SandboxError:
             size = None
-        return ventures.focus_text(row, paid, size, ventures.projects_of(conn, row["id"]), parts)
+        last = digest.newest_for(conn, self.scope, "venture_id", row["id"], cycle_id)
+        return ventures.focus_text(row, paid, size, ventures.projects_of(conn, row["id"]), parts, last=last)
 
     def _review(self, cycle_id: int, ctx: tools.ToolContext) -> None:
         """The daily review, before the first plan of the day. It never ends the cycle: a review the budget can't
@@ -924,6 +948,8 @@ class CycleRunner:
             # which answer the tool calls before it, and let the reflect prompt replace the rest.
             kept = [b for b in turns.pop()["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
             pending = [*kept, *pending]
+        with self.db.connection() as conn:
+            undone = digest.undone(conn, cycle_id)  # 0.12.0: what its work didn't do, so it isn't reported as done
         request = prompts.reflect_request(
             self.settings,
             brief,
@@ -934,6 +960,7 @@ class CycleRunner:
             ended=act.end_reason,
             venture=ctx.venture,
             library=self.library_on,
+            undone=undone,
         )
         # 0.12.0: why the work ended is kept first, also when the reflection can't be paid for.
         self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)
