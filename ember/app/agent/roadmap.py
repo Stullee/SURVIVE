@@ -240,6 +240,7 @@ def create(
     budget_micros: int | None = None,
     cash_cents: int | None = None,
     owner_minutes: int | None = None,
+    replaces: Mapping[str, Any] | None = None,
 ) -> int:
     """A new open milestone; one the owner adds is news for the agent (owner_action 'added'). With a metric (0.12.0),
     Ember's code checks it (metrics.grade)."""
@@ -258,8 +259,11 @@ def create(
         "updated_at": now,
         "title": title,
         "measure": measure,
-        "first_due": due,
+        # 0.12.0: a replacement keeps the first date and the moves of the milestone it replaces (``replaced_moves``)
+        "first_due": replaces["first_due"] if replaces is not None else due,
         "due": due,
+        "moves": replaced_moves(replaces) if replaces is not None else 0,
+        "replaces_id": replaces["id"] if replaces is not None else None,
         "owner_action": "added" if owner else None,
         "owner_at": now if owner else None,
         "owner_by": entered_by if owner else None,
@@ -276,6 +280,37 @@ def create(
     marks = ", ".join("?" for _ in columns)
     cursor = conn.execute(f"INSERT INTO milestones ({names}) VALUES ({marks})", tuple(columns.values()))
     return int(cursor.lastrowid)
+
+
+REPLACE_DAYS = 30  # a new milestone much like one dropped or missed this recently names it (0.12.0)
+_TITLE_WORD = re.compile(r"[a-z0-9äöüß]+")
+
+
+def replaced_moves(old: Mapping[str, Any]) -> int:
+    """The moves a replacement starts with (0.12.0): a dropped milestone's and one more, as the replacement moves its
+    date again; a missed one's as they were (the miss is on record, and a new attempt is honest)."""
+    return int(old["moves"] or 0) + (1 if old["status"] == "dropped" else 0)
+
+
+def _words(title: str) -> set[str]:
+    return set(_TITLE_WORD.findall(title.lower()))
+
+
+def like_closed(conn: sqlite3.Connection, scope: AgentScope, title: str, today: date) -> sqlite3.Row | None:
+    """0.12.0: a milestone of the agent's dropped or missed in the last REPLACE_DAYS whose title is much like
+    ``title`` (most of their words shared): the one a new milestone of that title replaces."""
+    words = _words(title)
+    where, params = scope.where()
+    since = (today - timedelta(days=REPLACE_DAYS)).isoformat()
+    for row in conn.execute(
+        f"SELECT * FROM milestones WHERE {where} AND created_by = 'agent' AND status IN ('dropped', 'missed')"
+        " AND closed_at >= ? ORDER BY closed_at DESC, id DESC",
+        (*params, since),
+    ):
+        old = _words(row["title"])
+        if words and old and len(words & old) / len(words | old) >= 0.6:
+            return row
+    return None
 
 
 def money_goal_title(level: int) -> str:
@@ -561,6 +596,11 @@ def _checked(row: Mapping[str, Any]) -> str:
     return f" · {text}" if text else ""
 
 
+def _replaces(row: Mapping[str, Any]) -> str:
+    """The milestone a replacement stands for (0.12.0), as a short clause."""
+    return f" · replaces #{row['replaces_id']}" if _column(row, "replaces_id") else ""
+
+
 def milestone_line(
     row: Mapping[str, Any],
     today: date,
@@ -575,7 +615,7 @@ def milestone_line(
     if detail and not _column(row, "metric"):
         line += f" · measure: {_q(row['measure'], 160)}"
     line += _checked(row) + _money(row, spent) + _waits(row, today)
-    line += _links(row, open_ids) + _moved(row) + _proposed(row) + owner_said(row)
+    line += _links(row, open_ids) + _moved(row) + _replaces(row) + _proposed(row) + owner_said(row)
     return line + (_last_note(row) if detail else "")
 
 
@@ -643,7 +683,7 @@ def goal_line(row: Mapping[str, Any], today: date, spent: Mapping[int, int] | No
     measure = _checked(row) or f" · measure: {_q(row['measure'], 90)}"
     return (
         f"#{row['id']} {_q(row['title'], 70)} · due {_day(due)} ({when(due, today)}){measure}{_money(row, spent)}"
-        f"{_waits(row, today)}{links}{_moved(row)}{_proposed(row)}{said}"
+        f"{_waits(row, today)}{links}{_moved(row)}{_replaces(row)}{_proposed(row)}{said}"
     )
 
 
@@ -711,7 +751,11 @@ def planner_text(
 
 
 def focus_text(
-    row: Mapping[str, Any], today: date, parent: Mapping[str, Any] | None, spent: Mapping[int, int] | None = None
+    row: Mapping[str, Any],
+    today: date,
+    parent: Mapping[str, Any] | None,
+    spent: Mapping[int, int] | None = None,
+    replaced: Mapping[str, Any] | None = None,
 ) -> str:
     """The brief's FOCUS for the plan's milestone: what it takes to be done and how to close it first (a cut takes
     the end), then what it leads to and serves, the owner's word and the notes."""
@@ -730,6 +774,11 @@ def focus_text(
     ]
     if parent is not None:
         lines.append(f"Leads to: #{parent['id']} {_q(parent['title'], 100)} (due {parent['due']}, {parent['status']})")
+    if replaced is not None:  # 0.12.0: what it stands for, and what that one asked
+        lines.append(
+            f"Replaces: #{replaced['id']} {_q(replaced['title'], 80)} ({replaced['status']} "
+            f"{str(replaced['closed_at'] or '')[:10]}), whose measure was {_q(replaced['measure'], 160)}"
+        )
     serves = _links({**dict(row), "parent_id": None})
     if serves:
         lines.append(f"Serves: {serves.removeprefix(' · ')}")

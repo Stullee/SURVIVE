@@ -237,7 +237,7 @@ def test_the_0_11_tree_and_roadmap_come_through_the_rebuild(tmp_path: Path) -> N
         conn.execute(insert, (3, 1, "agent", "Mine"))
         before = [tuple(r) for r in conn.execute("SELECT * FROM ventures")]
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == [30, 31, 32]
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [30, 31, 32, 33]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         after = [tuple(r)[: len(before[0])] for r in conn.execute("SELECT * FROM ventures")]

@@ -105,6 +105,8 @@ Your results now reach your records: what you earn counts where it belongs.
   the same call or a milestone's number, all or none.
 - Your daily review judges each milestone overdue or due this week (milestones: hit, miss, extend or park), and
   Ember's code applies each verdict with milestone_update's rules; the day's plans see what came of them.
+- A milestone much like one you dropped or missed in the last 30 days names it (milestone_plan: replaces): it keeps
+  that one's first date and moves (one more for a dropped one, never beyond two), and ROADMAP shows what it replaces.
 
 ## 0.11.2
 

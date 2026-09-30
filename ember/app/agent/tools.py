@@ -391,6 +391,7 @@ SPECS: dict[str, Spec] = {
                         "due": _s("YYYY-MM-DD, at most a year ahead.", 10),
                         "venture_id": _i("The venture it serves.", required=False),
                         "project_id": _i("The project it serves.", required=False),
+                        "replaces": _i("The dropped or missed milestone it takes the place of.", required=False),
                         "budget_usd": _s("API spending you plan for it (fixed).", 10, required=False),
                         "cash_eur": _s("Cash it needs from your owner (fixed).", 10, required=False),
                         "owner_hours": _s("Your owner's hours it needs (fixed).", 6, required=False),
@@ -1615,6 +1616,13 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
     same = roadmap.open_by_title(conn, ctx.scope, title)
     if same is not None:
         raise ToolError(f"open milestone #{same['id']} already has this title")
+    replaces = _replaced(ctx, args, conn, title, today)
+    if replaces is not None:  # 0.12.0: it serves what the one it replaces served, unless it says otherwise
+        for name in ("parent_id", "venture_id", "project_id"):
+            if args.get(name) is None and replaces[name] is not None:
+                linked = roadmap.get(conn, ctx.scope, replaces[name]) if name == "parent_id" else True
+                if linked is not None and (name != "parent_id" or linked["status"] == "open"):
+                    args = {**args, name: replaces[name]}
     parent_id = args.get("parent_id")
     if parent_id is not None:
         _parent(conn, ctx.scope, parent_id, due)
@@ -1645,6 +1653,7 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
         target=checked[1] if checked else None,
         baseline=checked[2] if checked else None,
         **costs,
+        replaces=replaces,
     )
     leads = f", leading to #{parent_id}" if parent_id is not None else ""
     close = (
@@ -1653,10 +1662,52 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
         if checked
         else "When its measure is met, close it with milestone_update (done, with the evidence)."
     )
+    instead = ""
+    if replaces is not None:
+        moves = roadmap.replaced_moves(replaces)
+        instead = (
+            f" It replaces #{replaces['id']} ({replaces['status']}; its measure was "
+            f"{json.dumps(' '.join(replaces['measure'].split())[:160], ensure_ascii=False)}), first due "
+            f"{replaces['first_due']}, moved {moves} time{'s' if moves != 1 else ''}."
+        )
     return milestone_id, (
         f"Milestone #{milestone_id} is on your roadmap{leads}, due {due.isoformat()} ({roadmap.when(due, today)}). "
         + close
+        + instead
     )
+
+
+def _replaced(ctx: ToolContext, args: dict[str, Any], conn: Any, title: str, today: date) -> Any:
+    """0.12.0: the dropped or missed milestone a new one replaces (it names it in replaces), or None. Dropping and
+    creating a milestone again reset its moves and let its measure soften unseen: one much like a milestone dropped
+    or missed lately must name it, and a dropped one's replacement can't move it beyond the limit."""
+    number = args.get("replaces")
+    if number is None:
+        like = roadmap.like_closed(conn, ctx.scope, title, today)
+        if like is not None:
+            raise ToolError(
+                f"milestone #{like['id']} {json.dumps(like['title'], ensure_ascii=False)} was {like['status']} on "
+                f"{str(like['closed_at'])[:10]}: if this one takes its place, name it in replaces (it keeps its first "
+                "date and moves); if not, give it a title of its own"
+            )
+        return None
+    old = roadmap.get(conn, ctx.scope, number)
+    if old is None:
+        raise ToolError(f"there is no milestone #{number}")
+    if old["status"] not in ("dropped", "missed"):
+        raise ToolError(f"milestone #{number} is {old['status']}: a milestone replaces one that was dropped or missed")
+    if old["created_by"] != "agent":
+        who = "your owner's" if old["created_by"] == "owner" else "Ember's code's"
+        raise ToolError(f"milestone #{number} was {who}: only your own are replaced")
+    taken = conn.execute("SELECT id FROM milestones WHERE replaces_id = ? AND status = 'open'", (number,)).fetchone()
+    if taken is not None:
+        raise ToolError(f"open milestone #{taken['id']} replaces #{number} already")
+    if roadmap.replaced_moves(old) > roadmap.MAX_MOVES:
+        raise ToolError(
+            f"milestone #{number} was dropped after moving {old['moves']} times: replacing it would move it once more, "
+            f"beyond {roadmap.MAX_MOVES}. Aim for a goal of its own, or ask your owner"
+        )
+    return old
 
 
 # What a "done" names as its evidence (0.12.0): a number, a reference (#123) or a link or file. "Done." closed one.

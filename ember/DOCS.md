@@ -445,7 +445,12 @@ reason, and every move is counted: the card and the timeline show where it was
 first due. A milestone ends **done** (with the evidence), **missed** (why, and
 what now; only once its date has passed) or **dropped** (why), and is final
 then. Dropping a milestone drops the open milestones that lead to it too, so no
-step is left behind looking like a goal of its own. A done the agent closes must name its
+step is left behind looking like a goal of its own. A new milestone much like
+one the agent dropped or missed in the last 30 days must name it (**replaces**):
+it keeps that one's first date and moves (one more for a dropped one, never
+beyond two), the agent is shown the measure it replaces, and its card says
+**replaces #n**: dropping and starting again can't reset the count or soften
+the measure unseen. A done the agent closes must name its
 evidence (a number, or a reference such as a request, a link or a file), and it
 shows as **self-reported**: the agent's word, not checked from Ember's records,
 also in its daily review. Ember keeps who closed each milestone (the agent,

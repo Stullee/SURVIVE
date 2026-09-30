@@ -5715,7 +5715,8 @@
         chip(MILESTONE_STATE, m.horizon, sentence(String(m.horizon || "unknown"))),
         m.created_by === "owner" ? plainChip("Your milestone") : m.created_by === "code" ? plainChip("Set by Ember's code") : null,
         m.simulated ? testTag() : null),
-      h("p", { class: "muted small", text: "#" + m.id + (parent ? " · leads to #" + parent.id + " " + parent.title : "") }),
+      h("p", { class: "muted small", text: "#" + m.id + (parent ? " · leads to #" + parent.id + " " + parent.title : "") +
+        (m.replaces_id ? " · replaces #" + m.replaces_id : "") }),
       h("dl", { class: "item-grid" },
         h("div", null, h("dt", { text: "Due" }), h("dd", { text: due })),
         h("div", null, h("dt", { text: "Done when" }), h("dd", { class: "pre-line", text: asText(m.measure) })),

@@ -344,6 +344,7 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
                 "owner_hours": m["owner_minutes"] / 60 if m["owner_minutes"] else None,
                 "wait_for": m["wait_for"],
                 "check_at": m["check_at"],
+                "replaces_id": m["replaces_id"],  # 0.12.0: the dropped or missed milestone it takes the place of
                 "waiting": roadmap.waiting(m, today) if m["status"] == "open" else False,
                 "owner_action": m["owner_action"],
                 "owner_comment": m["owner_comment"],
