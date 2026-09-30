@@ -1326,19 +1326,37 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         raise ToolError("nothing to change")
     if changes:
         ventures.update(conn, vid, ctx.now(), **changes)
-    saved = ""
-    if learned:
-        path = ventures.file_of(vid, row["title"])
-        head = "" if ctx.workspace.exists(path) else ventures.knowledge_head(row)
-        size = ctx.workspace.write(
-            path, f"{head}\n### {ctx.clock.today().isoformat()}, cycle #{ctx.cycle_id}\n{learned}\n", append=True
-        )
-        saved = f" What you learned is in {path} ({size:,} B)."
+    saved = _save_learned(ctx, row, learned) if learned else ""
     transition = f"{current} → {changes['stage']}" if "stage" in changes else "updated"
     after = " Your owner sees its business case on the Ventures tab." if changes.get("stage") == "proposed" else ""
     if scores:
         after += f" Now {ventures.scores_text({**dict(row), **changes})}."
     return Outcome(True, f"Venture #{vid}: {transition}.{saved}{after}", f"venture #{vid} {transition}")
+
+
+def _save_learned(ctx: ToolContext, row: Any, learned: str) -> str:
+    """0.12.0: a venture's findings, appended to its knowledge file; a full file continues in its next part. A write
+    that fails anyway is reported, and the rest of the update stays saved (a full file failed the whole update, scores
+    and stage too, and counted against the agent)."""
+    entry = f"\n### {ctx.clock.today().isoformat()}, cycle #{ctx.cycle_id}\n{learned}\n"
+    parts = ventures.knowledge_parts(ctx.workspace, row["id"], row["title"])
+    path = parts[-1] if parts else ventures.file_of(row["id"], row["title"])
+    head = "" if parts else ventures.knowledge_head(row)
+    try:
+        try:
+            size = ctx.workspace.write(path, head + entry, append=True)
+        except QuotaError:
+            used = ctx.workspace.size_of(path, "text") or 0
+            if not parts or used + len(entry.encode("utf-8")) <= ctx.workspace.limits.max_file_bytes:
+                raise  # the workspace is full, not the file
+            if len(parts) >= ventures.KNOWLEDGE_PARTS:
+                raise SandboxError(f"all {ventures.KNOWLEDGE_PARTS} parts of the knowledge file are full") from None
+            path = ventures.file_of(row["id"], row["title"], len(parts) + 1)
+            size = ctx.workspace.write(path, f"{ventures.knowledge_head(row)}(Continued from {parts[-1]}.)\n{entry}")
+    except SandboxError as exc:
+        return f" What you learned was NOT saved ({exc}); the rest of the update was: save it again once there is room."
+    continued = f", continued from {parts[-1]}" if parts and path != parts[-1] else ""
+    return f" What you learned is in {path} ({size:,} B{continued})."
 
 
 def _brainstorm(ctx: ToolContext, args: dict[str, Any]) -> Outcome:

@@ -34,6 +34,7 @@ from datetime import date
 from typing import Any
 
 from ..economy.costs import micros_to_usd
+from .sandbox import Jail, SandboxError
 from .store import AgentScope
 
 STAGES = ("idea", "researching", "proposed", "building", "live", "parked", "killed")
@@ -121,9 +122,27 @@ def slug(title: str) -> str:
     return name or "venture"
 
 
-def file_of(venture_id: int, title: str) -> str:
-    """The venture's knowledge file in the agent's workspace (its title never changes, so neither does the path)."""
-    return f"ventures/{venture_id}-{slug(title)}.md"
+def file_of(venture_id: int, title: str, part: int = 1) -> str:
+    """The venture's knowledge file in the agent's workspace (its title never changes, so neither does the path). A full
+    one continues in part 2, 3, ... (0.12.0: a full file made every venture_update fail, scores and stage too)."""
+    return f"ventures/{venture_id}-{slug(title)}{f'-{part}' if part > 1 else ''}.md"
+
+
+KNOWLEDGE_PARTS = 9  # parts of a venture's knowledge file (64 KB each)
+
+
+def knowledge_parts(workspace: Jail, venture_id: int, title: str) -> list[str]:
+    """The parts of a venture's knowledge file that exist, the first first (the last is the one written to)."""
+    found = []
+    for part in range(1, KNOWLEDGE_PARTS + 1):
+        path = file_of(venture_id, title, part)
+        try:
+            if workspace.size_of(path, "text") is None:
+                break
+        except SandboxError:
+            break
+        found.append(path)
+    return found
 
 
 IDEAS_FILE = "ventures/ideas.md"  # every brainstorm's ideas, as they came
@@ -537,13 +556,21 @@ def tree_text(rows: list[sqlite3.Row], limit: int = 120) -> str:
     return "\n".join(lines) or "The tree is empty."
 
 
-def focus_text(row: Mapping[str, Any], paid: Money, file_size: int | None, projects: list[sqlite3.Row]) -> str:
+def focus_text(
+    row: Mapping[str, Any],
+    paid: Money,
+    file_size: int | None,
+    projects: list[sqlite3.Row],
+    parts: list[str] | None = None,
+) -> str:
     """The brief's FOCUS for a venture: everything the agent knows of it, the most important first, as the brief cuts
     it from the end (0.12.0: it lost the owner's comment and the first test): the owner's word, the first test, the
     next question and the knowledge file, then the scores, the pitch and the rest of the business case, each field at
     most FOCUS_CHARS characters."""
-    file = file_of(row["id"], row["title"])
+    file = parts[-1] if parts else file_of(row["id"], row["title"])  # ``parts``: the knowledge file's (0.12.0)
     kept = f"{file} ({file_size:,} B)" if file_size is not None else f"{file} (not written yet)"
+    if parts and len(parts) > 1:
+        kept += f"; its earlier parts: {', '.join(parts[:-1])}"
     branch = f" (branch of #{row['parent_id']})" if row["parent_id"] else ""
     lines = [
         f"Focus venture: #{row['id']} {row['title']}{branch} [{row['stage']}] · spent {usd(paid.spent)} · earned "

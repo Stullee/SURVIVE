@@ -408,7 +408,8 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
     items = []
     for v in rows:
         m = paid.get(v["id"], ventures.Money())
-        file = ventures.file_of(v["id"], v["title"])
+        parts = ventures.knowledge_parts(workspace, v["id"], v["title"])  # 0.12.0: the newest part
+        file = parts[-1] if parts else ventures.file_of(v["id"], v["title"])
         try:
             size = workspace.size_of(file, "text")
         except SandboxError:

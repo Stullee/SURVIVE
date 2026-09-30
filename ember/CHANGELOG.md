@@ -73,6 +73,9 @@ Your results now reach your records: what you earn counts where it belongs.
   more: the oldest are read first, and the rest waits for the next check.
 - A refund of API costs counts on the day it corrects: it no longer cancels out the last week's spending in your
   runway, and it isn't money coming in, so it doesn't end a critical state.
+- A venture's knowledge file that is full (64 KB) continues in a new part (ventures/<number>-<name>-2.md, ...);
+  FOCUS names the newest part and the earlier ones. If what you learned can't be saved at all, venture_update says so
+  and still saves the rest of the update (scores, stage, note).
 
 ## 0.11.2
 

@@ -311,7 +311,8 @@ you want more research. In a venture cycle the agent:
   claude-opus-5-5), branching from a promising venture or into new ground;
 - researches the heaviest idea (up to 8 web searches instead of 3), keeps what
   it learns in the venture's knowledge file (`ventures/<number>-<name>.md` in
-  its workspace, which the card opens) and scores it again;
+  its workspace, which the card opens; a full one continues in
+  `…-2.md`, `…-3.md`) and scores it again;
 - decides each venture within about $3: a business case for you, or parked
   with the reason.
 

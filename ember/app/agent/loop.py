@@ -516,11 +516,12 @@ class CycleRunner:
     def _venture_focus(self, conn: Any, row: Any) -> str:
         """The brief's FOCUS for the plan's venture: its record, money, projects and knowledge file."""
         paid = ventures.money(conn, self.scope).get(row["id"], ventures.Money())
+        parts = ventures.knowledge_parts(self.workspace, row["id"], row["title"])
         try:
-            size = self.workspace.size_of(ventures.file_of(row["id"], row["title"]), "text")
+            size = self.workspace.size_of(parts[-1], "text") if parts else None
         except SandboxError:
             size = None
-        return ventures.focus_text(row, paid, size, ventures.projects_of(conn, row["id"]))
+        return ventures.focus_text(row, paid, size, ventures.projects_of(conn, row["id"]), parts)
 
     def _review(self, cycle_id: int) -> None:
         """The daily review, before the first plan of the day. It never ends the cycle: a review the budget can't
