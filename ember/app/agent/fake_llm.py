@@ -694,10 +694,11 @@ ROADMAP_SECTION = "ROADMAP"
 ROADMAP_STEP = "Lay out my roadmap: a goal for the next three months, this month's milestone and this week's"
 MOVE_MILESTONE_STEP = "Move overdue milestone #{id} a week"
 CLOSE_MILESTONE_STEP = "Close overdue milestone #{id}"
+DECIDE_MILESTONE_STEP = "Decide at overdue milestone #{id}"  # 0.12.0: a decision point Ember's code set never moves
 _EMPTY_ROADMAP = "Roadmap check: your roadmap is empty"
 _MILESTONE_LINE = re.compile(r'^#(\d+) "(?:[^"\\]|\\.)*" · due \w+ (\d{4}-\d{2}-\d{2}) \(([^)]*)\)(.*)$', re.MULTILINE)
 _MILESTONE_MADE = re.compile(r"Milestone #(\d+) is on your roadmap")
-_OVERDUE_STEP = re.compile(r"(move|close) overdue milestone #(\d+)")
+_OVERDUE_STEP = re.compile(r"(move|close|decide at) overdue milestone #(\d+)")
 _TODAY = re.compile(r"^Time: [A-Za-z]+ (\d{4}-\d{2}-\d{2}) ", re.MULTILINE)
 VENTURE_IDEAS: tuple[tuple[str, str], ...] = (
     (
@@ -866,6 +867,8 @@ def roadmap_plan(text: str) -> tuple[list[str], int | None]:
         return [], focus
     tried = " · moved " in late[4] or " · you proposed " in late[4]  # 0.12.0: a proposal waits for the owner
     step = CLOSE_MILESTONE_STEP if tried else MOVE_MILESTONE_STEP
+    if " · set by Ember's code" in late[4]:  # 0.12.0: a decision point: its date never moves
+        step = DECIDE_MILESTONE_STEP
     return [step.format(id=late[1])], int(late[1])
 
 
@@ -1904,6 +1907,13 @@ class FakeTransport:
         if step is None or today is None:
             return None
         milestone_id = int(step[2])
+        if step[1] == "decide at":  # 0.12.0: the agent closes a decision point with its decision
+            return "milestone_update", {
+                "milestone_id": milestone_id,
+                "status": "done",
+                "result": f"Dry run: go on as planned (decision point #{milestone_id}); the fake model can't weigh "
+                "the numbers.",
+            }
         if step[1] == "move":
             return "milestone_update", {
                 "milestone_id": milestone_id,

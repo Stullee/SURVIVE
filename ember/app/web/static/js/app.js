@@ -5707,7 +5707,9 @@
       h("dl", { class: "item-grid" },
         h("div", null, h("dt", { text: "Due" }), h("dd", { text: due })),
         h("div", null, h("dt", { text: "Done when" }), h("dd", { class: "pre-line", text: asText(m.measure) })),
-        closed ? h("div", null, h("dt", { text: (MILESTONE_RESULT[m.state] || "Result") + (selfReported(m) ? " (self-reported)" : "") }),
+        m.checked ? h("div", null, h("dt", { text: "Checked by Ember's code" }), h("dd", { text: asText(m.checked) })) : null,
+        closed ? h("div", null, h("dt", { text: (MILESTONE_RESULT[m.state] || "Result") + (selfReported(m) ? " (self-reported)" :
+          m.closed_by === "code" && m.metric ? " (checked by Ember's code)" : "") }),
           h("dd", { class: "pre-line", text: asText(m.result) || "–" })) : null,
         m.venture_id ? h("div", null, h("dt", { text: "Venture" }),
           h("dd", { text: "#" + m.venture_id + (m.venture_title ? " " + m.venture_title : "") })) : null,

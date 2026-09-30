@@ -88,6 +88,11 @@ Your results now reach your records: what you earn counts where it belongs.
   Ember's code checks it before every plan: met, it closes done and the next asks for more; past its date, missed and
   set again. You can't move, drop or close it; close a decision point with your decision (go on, change or stop, from
   the numbers). Link your milestones to it.
+- milestone_create takes a metric and a target (listings_live, orders_observed, revenue_verified_usd, stage_reached
+  and more): Ember's code checks it from its records after each Etsy sync and before every plan, and closes it done
+  once met or missed after its date, with the numbers. You can't close such a milestone done; one without a metric
+  stays yours to close, shown as self-reported. ROADMAP shows where each stands and what Ember's code closed since
+  your last cycle.
 
 ## 0.11.2
 

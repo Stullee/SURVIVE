@@ -379,6 +379,34 @@ or close the goal, nor move a decision point; it closes a decision point with
 its decision. You can drop the goal: then Ember's code sets no more, and the
 roadmap's goals are yours and the agent's.
 
+**Milestones Ember's code checks.** A milestone can name a **metric** and a
+target, and then Ember's code checks it from its records, with no model call:
+after each Etsy sync and before every plan. It closes the milestone **done**
+once the target is met, with the numbers as its evidence, and **missed** once
+its date has passed without it, with the numbers too (and, for orders and
+favorites, whether the listings had too few views to judge). The agent can't
+close such a milestone done; the database refuses it as well. The metrics:
+
+| Metric | What it counts | From |
+|---|---|---|
+| `listings_live` | the agent's listings live on Etsy now | Etsy |
+| `views_delta`, `favorites_delta` | views or favorites gained since it was set (only while `etsy_stats_history` is on) | Etsy |
+| `orders_observed` | Etsy orders of the agent's listings since it was set | Etsy |
+| `revenue_verified_usd` | revenue less expenses you recorded since it was set | your records |
+| `research_calls_ok` | research calls that found something since it was set | Ember |
+| `case_complete` | the venture's business case is complete (researched, scored, filled in) | Ember |
+| `stage_reached` | the venture reached a stage (researching, proposed, building, live) | Ember |
+| `api_spend_usd` | API spending since it was set: a ceiling, missed once passed, done at its date | Ember |
+| `qa_clean` | every live listing has at least 5 photos | Etsy and Ember |
+
+A milestone linked to a project or venture counts only what belongs to it (a
+listing belongs to the project of the request that created it). Etsy's numbers
+count only from a sync after the milestone was set and at most 3 hours old; a
+milestone for a killed venture's stage or case is closed missed. Its card on
+the Roadmap tab shows where it stands (**Checked by Ember's code**), and the
+agent's plan says what Ember's code closed since its last cycle. A milestone
+without a metric is allowed; the agent's done on it stays self-reported.
+
 **Honest by design.** What a milestone promises (its title and its measure)
 can't be changed once it is written. Its date can move twice at most, with the
 reason, and every move is counted: the card and the timeline show where it was

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import etsy, etsy_publisher, executor, mailstore, reddit
-from . import library, review, roadmap, store, ventures
+from . import library, metrics, review, roadmap, store, ventures
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
 if TYPE_CHECKING:
@@ -181,7 +181,9 @@ def _roadmap_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated:
     """Changes when the roadmap or its effort may have: a milestone changed, a wake cycle ended, or a new day began."""
     where, params = scope.where()
     row = conn.execute(
-        f"SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM milestones WHERE {where}", params
+        "SELECT COUNT(*), COALESCE(MAX(updated_at), '') || COALESCE(MAX(checked_at), '') FROM milestones"
+        f" WHERE {where}",
+        params,
     ).fetchone()
     cycle = conn.execute(
         "SELECT COALESCE(MAX(id), 0) FROM cycles WHERE simulated = ? AND session = ? AND status <> 'running'",
@@ -325,6 +327,9 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
                 "result": m["result"],
                 "closed_at": m["closed_at"],
                 "closed_by": m["closed_by"],  # "agent": its word only, shown as self-reported (0.12.0)
+                # 0.12.0: a metric Ember's code checks it by, its target and where it stands
+                "metric": m["metric"],
+                "checked": metrics.progress_text(m) or None,
                 "notes": m["notes"],
                 "created_by": m["created_by"],
                 "entered_by": m["entered_by"],

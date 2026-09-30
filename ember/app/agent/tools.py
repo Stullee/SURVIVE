@@ -43,7 +43,7 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
-from . import library, netguard, roadmap, store, ventures
+from . import library, metrics, netguard, roadmap, store, ventures
 from .memory import CAPS, HEADING_REFUSAL, Memory, MemoryError_, heading_line
 from .sandbox import Jail, QuotaError, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
@@ -349,12 +349,29 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "milestone_create",
-            "Put a milestone on your roadmap: what you will reach by a date, with a measure you can check ('3 listings "
-            "live'). Goals for the next months, milestones leading to them (parent_id), this week's steps. Title and "
-            f"measure are final; a date can move. At most {roadmap.MAX_OPEN - roadmap.OWNER_SLOTS} open. Free.",
+            "Put a milestone on your roadmap: what you will reach by a date and how you will know. With a metric, "
+            "Ember's code checks it and closes it (done once met, missed after its date); without, your done is "
+            "self-reported. Goals for the next months, milestones leading to them (parent_id), this week's steps. "
+            f"Title, measure and metric are final; a date can move. At most {roadmap.MAX_OPEN - roadmap.OWNER_SLOTS} "
+            "open. Free.",
             {
                 "title": _s("What you will reach.", roadmap.LIMITS["title"]),
-                "measure": _s("How you will know: a number or a fact you can check.", roadmap.LIMITS["measure"]),
+                "measure": _s(
+                    "How you will know: a number or a fact you can check (optional with a metric).",
+                    roadmap.LIMITS["measure"],
+                    required=False,
+                ),
+                "metric": _s(
+                    f"Checked by Ember's code, for the linked project or venture (else all): {metrics.HELP}.",
+                    24,
+                    required=False,
+                    enum=metrics.NAMES,
+                ),
+                "target": _s(
+                    "A number (USD for *_usd) or, for stage_reached, a stage; none for case_complete, qa_clean.",
+                    12,
+                    required=False,
+                ),
                 "due": _s("YYYY-MM-DD, at most a year ahead.", 10),
                 "parent_id": _i("The milestone it leads to (due no earlier).", required=False),
                 "venture_id": _i("The venture it serves.", required=False),
@@ -834,6 +851,7 @@ class EtsyAccess:
     currency: str
     daily_limit: int
     categories: tuple[tuple[int, str], ...]
+    stats_history: bool = False  # the owner keeps the listings' views over time (etsy_stats_history, 0.12.0)
 
 
 @dataclass
@@ -1421,11 +1439,58 @@ def _parent(conn: Any, scope: AgentScope, parent_id: int, due: date, milestone_i
     return parent
 
 
+def _metric(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tuple[metrics.Metric, int, int | None] | None:
+    """0.12.0: the metric Ember's code checks a new milestone by, its target and baseline (views or favorites now,
+    for what is gained from now on); refused when it can't be checked, or is met already."""
+    name = args.get("metric")
+    if not name:
+        return None
+    m = metrics.CATALOGUE[name]
+    project_id, venture_id = args.get("project_id"), args.get("venture_id")
+    if m.venture and venture_id is None:
+        raise ToolError(f"{name} measures a venture: give venture_id")
+    if m.etsy and ctx.etsy is None:
+        raise ToolError(f"{name} is read from your Etsy shop, which isn't set up")
+    if m.history and not (ctx.etsy and ctx.etsy.stats_history):
+        raise ToolError(
+            f"{name} needs the views history, which your owner hasn't turned on (the etsy_stats_history option): "
+            "choose listings_live or orders_observed, or ask your owner"
+        )
+    try:
+        target = metrics.parse_target(m, args.get("target"))
+    except metrics.TargetError as exc:
+        raise ToolError(str(exc)) from None
+    row = {
+        "metric": name,
+        "target": target,
+        "baseline": None,
+        "created_at": ctx.now(),
+        "project_id": project_id,
+        "venture_id": venture_id,
+    }
+    baseline = None
+    if m.history:
+        baseline = metrics.listing_counts(conn, ctx.scope, row, "views" if name == "views_delta" else "favorites")
+    elif not m.since_set:  # how things are now: a target met already is no milestone
+        books = metrics.Books(None, ctx.clock, ctx.db.get_meta(etsy_publisher.meta_key(ctx.scope.mode, "last_sync_at")))
+        now = metrics.read(conn, ctx.scope, row, books, ctx.now(), new=True)
+        if isinstance(now, metrics.Reading) and now.value >= target:
+            raise ToolError(
+                f"{name} is {metrics.amount(m, now.value)} already{now.detail}, so a target of "
+                f"{metrics.target_text(m, target)} is met at once: aim further"
+            )
+    return m, target, baseline
+
+
 def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     title = " ".join(args["title"].split())
-    measure = " ".join(args["measure"].split())
-    if not title or not measure:
-        raise ToolError("the title and the measure can't be empty")
+    measure = " ".join((args.get("measure") or "").split())
+    if not title:
+        raise ToolError("the title can't be empty")
+    if args.get("target") and not args.get("metric"):
+        raise ToolError("target is a metric's: set metric too")
+    if not measure and not args.get("metric"):
+        raise ToolError("say how you will know it is reached: a measure, or a metric Ember's code checks")
     today = ctx.clock.today()
     due = _due_date(args["due"], today)
     places = roadmap.MAX_OPEN - roadmap.OWNER_SLOTS  # 0.12.0: the last places are your owner's
@@ -1446,23 +1511,35 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         _open_venture(conn, ctx.scope, args["venture_id"])
     if args.get("project_id") is not None:
         _open_project(conn, ctx.scope, args["project_id"])
+    checked = _metric(ctx, args, conn)
+    if checked is not None and not measure:
+        measure = metrics.measure_text(checked[0], checked[1], args.get("project_id"), args.get("venture_id"))
     milestone_id = roadmap.create(
         conn,
         ctx.scope,
         title=title,
-        measure=measure,
+        measure=measure[: roadmap.LIMITS["measure"]],
         due=due.isoformat(),
         now=ctx.now(),
         cycle_id=ctx.cycle_id,
         parent_id=parent_id,
         venture_id=args.get("venture_id"),
         project_id=args.get("project_id"),
+        metric=checked[0].name if checked else None,
+        target=checked[1] if checked else None,
+        baseline=checked[2] if checked else None,
     )
     leads = f", leading to #{parent_id}" if parent_id is not None else ""
+    close = (
+        f"Ember's code checks {checked[0].name} ({metrics.target_text(checked[0], checked[1])}) from its records and "
+        "closes it: done once met, missed if its date passes first."
+        if checked
+        else "When its measure is met, close it with milestone_update (done, with the evidence)."
+    )
     return Outcome(
         True,
         f"Milestone #{milestone_id} is on your roadmap{leads}, due {due.isoformat()} ({roadmap.when(due, today)}). "
-        "When its measure is met, close it with milestone_update (done, with the evidence).",
+        + close,
         f"milestone #{milestone_id} {title[:60]}, due {due.isoformat()}",
     )
 
@@ -1485,6 +1562,11 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         raise ToolError("close a milestone or move its date, not both")
     if result and not status:
         raise ToolError("result is for closing a milestone: set status too")
+    if status == "done" and row["metric"]:  # 0.12.0: Ember's code closes it from its records
+        raise ToolError(
+            f"{metrics.status_text(row)}. Ember's code closes milestone #{mid} done once its metric is met: work "
+            "toward it; if it is out of reach, move its date (why) or drop it (why)"
+        )
     if row["created_by"] == "code":  # 0.12.0: the money goal and its decision points
         if args.get("due") and args["due"] != row["due"]:
             raise ToolError(f"Ember's code set the date of milestone #{mid}: it doesn't move")

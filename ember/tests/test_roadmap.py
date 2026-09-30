@@ -601,13 +601,16 @@ def test_what_the_owner_drops_is_theirs_and_every_closed_milestone_names_its_clo
 
 
 def test_the_fake_model_never_calls_a_milestone_done() -> None:
-    """It can't check a measure; its done "to show the flow" taught the dry run that one sentence closes one."""
+    """It can't check a measure; its done "to show the flow" taught the dry run that one sentence closes one. Its one
+    done (0.12.0) closes a decision point Ember's code set, with its decision: no measure is claimed there."""
     import inspect
 
     from app.agent import fake_llm
 
     source = inspect.getsource(fake_llm)
-    assert '"status": "done"' not in source and "to show the flow" not in source
+    assert source.count('"status": "done"') == 1 and "to show the flow" not in source
+    decide = source.index('if step[1] == "decide at":')
+    assert decide < source.index('"status": "done"') < source.index('if step[1] == "move":')
 
 
 def test_every_goal_survives_the_roadmaps_cut_at_every_scale() -> None:

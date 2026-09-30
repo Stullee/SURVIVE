@@ -48,7 +48,7 @@ from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox
 from ..version import app_version
-from . import context, library, netguard, news, prompts, review, roadmap, store, tools, ventures
+from . import context, library, metrics, netguard, news, prompts, review, roadmap, store, tools, ventures
 from .memory import Memory
 from .sandbox import Jail, SandboxError
 from .store import AgentScope
@@ -336,6 +336,7 @@ class CycleRunner:
             currency=self.etsy.currency() or "USD",
             daily_limit=self.settings.etsy_listings_per_day,
             categories=tuple(self.etsy.categories()),
+            stats_history=self.settings.etsy_stats_history,
         )
         self.etsy_on = True
 
@@ -351,6 +352,7 @@ class CycleRunner:
         status = self.economy.life.evaluate()
         scope = self.economy.life.scope()
         self._keep_money_goal(scope, status.runway.days)
+        metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
         local = self.clock.now().astimezone(self.clock.tz).strftime("%A %Y-%m-%d %H:%M %Z")
         with self.db.connection() as conn:

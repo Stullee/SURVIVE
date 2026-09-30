@@ -27,6 +27,7 @@ from collections.abc import Mapping
 from datetime import date, timedelta
 from typing import Any
 
+from . import metrics
 from .store import AgentScope
 
 STATUSES = ("open", "done", "missed", "dropped")
@@ -224,8 +225,12 @@ def create(
     project_id: int | None = None,
     created_by: str = "agent",
     entered_by: str | None = None,
+    metric: str | None = None,
+    target: int | None = None,
+    baseline: int | None = None,
 ) -> int:
-    """A new open milestone; one the owner adds is news for the agent (owner_action 'added')."""
+    """A new open milestone; one the owner adds is news for the agent (owner_action 'added'). With a metric (0.12.0),
+    Ember's code checks it (metrics.grade)."""
     owner = created_by == "owner"
     columns = {
         "mode": scope.mode,
@@ -247,6 +252,9 @@ def create(
         "owner_at": now if owner else None,
         "owner_by": entered_by if owner else None,
         "owner_version": 1 if owner else 0,
+        "metric": metric,
+        "target": target,
+        "baseline": baseline,
     }
     names = ", ".join(columns)
     marks = ", ".join("?" for _ in columns)
@@ -475,13 +483,28 @@ def owner_said(row: Mapping[str, Any]) -> str:
     return f" · {words}{comment}"
 
 
+def _checked(row: Mapping[str, Any]) -> str:
+    """How Ember's code checks a milestone with a metric, and where it stands (0.12.0), as a short clause."""
+    text = metrics.status_text(row)
+    return f" · {text}" if text else ""
+
+
 def milestone_line(row: Mapping[str, Any], today: date, detail: bool, open_ids: set[int] | None = None) -> str:
-    """One milestone for the planner: its number, title, date, and (with ``detail``) its measure."""
+    """One milestone for the planner: its number, title, date, and (with ``detail``) its measure; with a metric, where
+    it stands."""
     due = _due(row)
     line = f"#{row['id']} {_q(row['title'], 100)} · due {_day(due)} ({when(due, today)})"
-    if detail:
+    if detail and not _column(row, "metric"):
         line += f" · measure: {_q(row['measure'], 160)}"
-    return line + _links(row, open_ids) + _moved(row) + _proposed(row) + owner_said(row)
+    return line + _checked(row) + _links(row, open_ids) + _moved(row) + _proposed(row) + owner_said(row)
+
+
+def _column(row: Mapping[str, Any], name: str) -> Any:
+    """A column that rows built by hand (tests, older callers) may not have."""
+    try:
+        return row[name]
+    except (IndexError, KeyError):
+        return None
 
 
 def checks(rows: list[Mapping[str, Any]], today: date) -> list[str]:
@@ -522,17 +545,40 @@ def goal_line(row: Mapping[str, Any], today: date) -> str:
         said = " · your owner's" + (f": {_q(row['owner_comment'], 60)}" if row["owner_comment"] else "")
     elif row["created_by"] == "code":
         said = " · set by Ember's code"
+    measure = _checked(row) or f" · measure: {_q(row['measure'], 90)}"
     return (
-        f"#{row['id']} {_q(row['title'], 70)} · due {_day(due)} ({when(due, today)}) · measure: "
-        f"{_q(row['measure'], 90)}{links}{_moved(row)}{_proposed(row)}{said}"
+        f"#{row['id']} {_q(row['title'], 70)} · due {_day(due)} ({when(due, today)}){measure}{links}{_moved(row)}"
+        f"{_proposed(row)}{said}"
     )
 
 
-def planner_text(rows: list[Mapping[str, Any]], closed: list[Mapping[str, Any]], today: date) -> str:
-    """The ROADMAP section: a count by horizon and the checks, then the goals (the open milestones that lead to no
-    other: what the rest is for) one line each, so a cut never takes them (0.12.0: with 18 milestones, the cut took
-    all 3 goals at every budget); then the other open milestones by horizon (the measure shown for what is overdue
-    or due this week), and what was closed lately."""
+def code_closed(closed: list[Mapping[str, Any]], since: str | None) -> list[str]:
+    """0.12.0: what Ember's code closed from its records since ``since`` (the end of the last cycle): a done to build
+    on, a miss to decide on."""
+    fresh = [
+        r
+        for r in closed
+        if _column(r, "closed_by") == "code"
+        and r["status"] in ("done", "missed")
+        and (since is None or r["closed_at"] >= since)
+    ]
+    if not fresh:
+        return []
+    listed = "; ".join(f"#{r['id']} {_q(r['title'], 60)} {r['status']}" for r in fresh[:4])
+    missed = " For a miss, decide what now: aim again (a new milestone), change the approach, or let it go."
+    return [
+        f"Roadmap check: since your last cycle, Ember's code closed from its records: {listed}."
+        + (missed if any(r["status"] == "missed" for r in fresh) else "")
+    ]
+
+
+def planner_text(
+    rows: list[Mapping[str, Any]], closed: list[Mapping[str, Any]], today: date, since: str | None = None
+) -> str:
+    """The ROADMAP section: a count by horizon and the checks (what Ember's code closed since ``since`` among them),
+    then the goals (the open milestones that lead to no other: what the rest is for) one line each, so a cut never
+    takes them (0.12.0: with 18 milestones, the cut took all 3 goals at every budget); then the other open milestones
+    by horizon (the measure shown for what is overdue or due this week), and what was closed lately."""
     open_ids = {int(r["id"]) for r in rows}
     goals = [r for r in rows if r["parent_id"] not in open_ids]
     groups: dict[str, list[Mapping[str, Any]]] = {}
@@ -543,7 +589,7 @@ def planner_text(rows: list[Mapping[str, Any]], closed: list[Mapping[str, Any]],
     head = f"Today: {today:%A} {today.isoformat()}. " + (
         f"{len(rows)} open milestone{'s' if len(rows) != 1 else ''}: {tally}." if rows else "No open milestones."
     )
-    lines = [head, *checks(rows, today)]
+    lines = [head, *checks(rows, today), *code_closed(closed, since)]
     if goals:
         lines.append("Goals (the rest leads to them):")
         lines.extend(goal_line(r, today) for r in goals)
@@ -569,13 +615,17 @@ def focus_text(row: Mapping[str, Any], today: date, parent: Mapping[str, Any] | 
     """The brief's FOCUS for the plan's milestone: what it takes to be done and how to close it first (a cut takes
     the end), then what it leads to and serves, the owner's word and the notes."""
     due = _due(row)
+    checked = metrics.status_text(row)
     lines = [
         f"Focus milestone: #{row['id']} {_q(row['title'])} [{row['status']}] · due {_day(due)} ({when(due, today)})"
         + _moved(row)
         + _proposed(row),
         f"Measure of done: {_q(row['measure'])}",
-        "Measure met: close it done, with the evidence. Out of reach by its date: move it (why; twice at most, and "
-        "your owner decides on theirs), or close it missed once the date has passed.",
+        f"{checked}. It closes it done once met, missed if its date passes first. Out of reach by its date: move it "
+        "(why; twice at most), or drop it (why)."
+        if checked
+        else "Measure met: close it done, with the evidence. Out of reach by its date: move it (why; twice at most, "
+        "and your owner decides on theirs), or close it missed once the date has passed.",
     ]
     if parent is not None:
         lines.append(f"Leads to: #{parent['id']} {_q(parent['title'], 100)} (due {parent['due']}, {parent['status']})")

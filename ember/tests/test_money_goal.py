@@ -136,3 +136,13 @@ def test_the_fake_agent_plans_with_the_money_goal(data_dir: Path) -> None:
     failed = rows(agent, "SELECT tool, result FROM tool_calls WHERE result LIKE 'Error: the tool failed%'")
     assert failed == []
     assert milestones(agent)[0]["title"] == "Earn as much as you spend"
+
+
+def test_the_fake_agent_decides_at_an_overdue_decision_point(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(), cycles=2)
+    agent.clock.advance(days=23)  # the first decision point, due in 22 days, is overdue
+    agent.run_cycle("schedule")
+    decided = milestones(agent)[1]
+    assert (decided["title"], decided["status"], decided["closed_by"]) == (roadmap.DECISION_TITLE, "done", "agent")
+    failed = rows(agent, "SELECT tool, result FROM tool_calls WHERE result LIKE 'Error%'")
+    assert not [f for f in failed if f["tool"] == "milestone_update"], failed

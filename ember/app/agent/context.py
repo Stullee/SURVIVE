@@ -280,8 +280,10 @@ def _closed_lately(conn: sqlite3.Connection, scope: AgentScope, today: date | No
 
 
 def roadmap_text(s: Snapshot) -> str:
-    """The planner's ROADMAP (0.11.0), counted from the owner's today."""
-    return roadmap.planner_text(s.roadmap, s.roadmap_closed, s.today or date.today())
+    """The planner's ROADMAP (0.11.0), counted from the owner's today; what Ember's code closed since the last cycle
+    ended is a check of its own (0.12.0)."""
+    since = dict(s.last_cycle).get("ended_at") if s.last_cycle is not None else None
+    return roadmap.planner_text(s.roadmap, s.roadmap_closed, s.today or date.today(), since)
 
 
 def _safe_listing(workspace: Jail, shown: int = 19, budget: int = 900) -> list[str]:

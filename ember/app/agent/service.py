@@ -30,7 +30,7 @@ from ..integrations import executor as email_executor
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox, select_mailbox
-from . import netguard, news, store, ventures
+from . import metrics, netguard, news, store, ventures
 from .loop import NO_STEP, CycleEnd, CycleRunner
 from .memory import CAPS, Memory
 from .sandbox import Jail, SandboxError, kind_of
@@ -574,6 +574,10 @@ class Agent:
             return
         self._shop_failed_at = now  # until the check worked
         error = self.publisher.sync()  # first: failing categories must not keep the listings' numbers old
+        if error is None:  # 0.12.0: Ember's code checks the milestones with a metric against the fresh numbers
+            metrics.grade_all(
+                self.db, self.scope(), self.economy.life.scope(), self.clock, self.settings.etsy_stats_history
+            )
         # The fake shop of a dry run needs no network; the owner's is reached by Ember's code only.
         with netguard.sealed() if shop.simulated else contextlib.nullcontext():
             self.etsy.refresh_categories(shop)
