@@ -390,11 +390,24 @@ you want more research. In a venture cycle the agent:
   **again**) gives a venture a new budget: only you can.
 
 A venture cycle only researches and decides: its work steps don't carry the
-tools for making files, the workshop, the Etsy shop, email or Reddit (they
-belong to ordinary cycles). With the shorter rules of 0.12.0, which no longer
+tools for making files, the workshop, the Etsy shop, email, Reddit or laying out
+the roadmap (they belong to ordinary cycles). With the shorter rules of 0.12.0, which no longer
 repeat what Ember's code enforces or what the constitution, your knowledge
 file or a tool's description already says, a venture cycle's fixed prompt is
 about 30% shorter than in 0.11.
+
+**Numbers.** A business case comes with numbers (0.13.0): the agent gives
+the price, the cost per sale, the fixed costs a month, its low, likely and high
+estimate of sales a month (P10, P50, P90), the cash to start, your hours a
+month, the months to the first sale and its own API spend on it. Ember's code
+works out the rest the same way for every venture: the fees (Etsy's for
+Germany: the listing fee again at each sale, 6.5% of the sale, payment
+processing of 4% and €0.30, and VAT on Etsy's fees), what a sale keeps, the
+sales a month that break even, the net a month at each estimate, and the
+expected net a month over six months per API dollar and per hour of yours.
+The card shows the newest case; a venture is proposed only with one. Without
+your exchange rate (**Exchange rate for Etsy revenue**), USD 1.10 per EUR is
+assumed and said.
 
 **Evidence.** In a venture cycle the agent saves each number its research
 finds (a price, searches a month, sales, a fee, a margin) as evidence: the
@@ -990,7 +1003,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.12.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.13.0 (by /u/your name)`.
 
 ## Diagnostics
 

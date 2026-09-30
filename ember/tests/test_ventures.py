@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.agent import context, prompts, tools, ventures
+from app.agent import context, econ, prompts, tools, ventures
 from app.agent.fake_llm import FakeTransport, Plan, Raw, Reply, ToolCalls, request_kind, validate_request
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
@@ -374,6 +374,20 @@ CASE = {
     "first_test": "10 products, 50 EUR of ads: 3 sales in two weeks means go.",
 }
 RESEARCH = ("research", {"question": "What do dropshipping stores earn?"})
+# 0.13.0: a business case's numbers (venture_case)
+NUMBERS = {
+    "channel": "other",
+    "price_eur": "25",
+    "unit_cost_eur": "12",
+    "monthly_costs_eur": "29",
+    "sales_low": 1,
+    "sales_mid": 6,
+    "sales_high": 20,
+    "setup_eur": "50",
+    "owner_hours": "10",
+    "first_sale_months": 1,
+    "api_usd": "3",
+}
 
 
 def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
@@ -399,7 +413,13 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
             ),
             # in a venture cycle, research counts for the focus venture (0.12.0: a question asked again is answered
             # from before and counts for none)
-            ToolCalls([RESEARCH, ("research", {"question": "Which EU suppliers ship in 3 days?"})]),
+            ToolCalls(
+                [
+                    RESEARCH,
+                    ("research", {"question": "Which EU suppliers ship in 3 days?"}),
+                    ("venture_case", NUMBERS),  # 0.13.0: its numbers, for the focus venture
+                ]
+            ),
             found("https://example.invalid/a"),
             found("https://example.invalid/b"),
             ToolCalls(
@@ -435,7 +455,7 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
     assert updates[1]["status"] == "error" and updates[1]["result"] == (
         "Error: venture #3 can't be proposed yet: a business case needs the researching stage first; 2 research "
         "calls for it that found something (it has 0); scores for revenue, doability, difficulty, risk, speed, cost; "
-        "demand, economics, setup, first_euro, risks, first_test filled in."
+        "demand, economics, setup, first_euro, risks, first_test filled in; its numbers (venture_case)."
     )
     research = tool_results(agent, "research")
     assert [r["status"] for r in research] == ["ok", "ok"]
@@ -577,7 +597,7 @@ def test_a_venture_starts_live_only_where_ember_already_earns(data_dir: Path) ->
 
 
 def test_a_business_case_needs_research_scores_and_a_source_or_euros() -> None:
-    row = {**dict.fromkeys(ventures.CASE_FIELDS, "x"), **SCORES, "scores_by": "research", "researched": 2}
+    row = {**dict.fromkeys(ventures.CASE_FIELDS, "x"), **SCORES, "scores_by": "research", "researched": 2, "cases": 1}
     assert ventures.proposal_gaps(row, "researching") == ["a source link or an amount in euros in its business case"]
     for evidence in ("https://example.invalid/a", "25 EUR", "€25", "12,50 €", "EUR 9", "about 40 euros", "5 Euro"):
         assert ventures.proposal_gaps({**row, "economics": evidence}, "researching") == [], evidence
@@ -597,6 +617,11 @@ def test_the_database_refuses_scores_and_cases_without_research(data_dir: Path) 
     now = to_iso(agent.clock.now())
     with pytest.raises(sqlite3.IntegrityError, match="scores from research need research"), agent.db.transaction() as c:
         ventures.update(c, DROPSHIPPING, now, revenue=4, scores_by="research")
+    with pytest.raises(sqlite3.IntegrityError, match="needs its numbers"), agent.db.transaction() as c:
+        ventures.update(c, DROPSHIPPING, now, stage="proposed")  # 0.13.0
+    case = econ.Case("etsy_digital", 4.9, 0, 0, (1, 5, 15), 0, 2, 1, 2)
+    with agent.db.transaction() as c:
+        ventures.add_case(c, DROPSHIPPING, None, case, econ.compute(case), now)
     with pytest.raises(sqlite3.IntegrityError, match="two research calls"), agent.db.transaction() as c:
         ventures.update(c, DROPSHIPPING, now, stage="proposed")
     with pytest.raises(sqlite3.IntegrityError, match="has no research yet"), agent.db.transaction() as c:

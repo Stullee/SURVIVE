@@ -28,7 +28,7 @@ RESEARCH, ONE VENTURE A CYCLE
 
 THE BUSINESS CASE
 - demand: evidence that people pay (competitors, prices, reviews, search interest), with sources
-- economics: price, cost per sale, fees, margin, monthly costs, sales a month to break even (euros)
+- economics: its numbers go in venture_case (price, costs, sales low/likely/high); Ember's code adds the rest
 - setup: what it takes and who does what: money, your owner's hours (setup, then weekly), accounts, registrations,
   abilities Ember needs (name the upgrade)
 - first_euro: how soon, and why; risks: what could go wrong, legal duties, how you handle each

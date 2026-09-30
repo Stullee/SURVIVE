@@ -35,6 +35,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.costs import micros_to_usd
+from . import econ
 from .sandbox import Jail, SandboxError
 from .store import AgentScope
 
@@ -235,8 +236,8 @@ def research_refusal(values: Mapping[str, Any] | sqlite3.Row) -> str:
 
 def proposal_gaps(values: Mapping[str, Any] | sqlite3.Row, stage: str) -> list[str]:
     """What a venture at ``stage`` still needs before it is proposed (0.12.0), with ``values`` its fields after the
-    update: the researching stage, research that found something, all six scores from research and a complete
-    business case that names a source or an amount in euros. Empty when it can be proposed."""
+    update: the researching stage, research that found something, all six scores from research, a complete business
+    case that names a source or an amount in euros and (0.13.0) its numbers. Empty when it can be proposed."""
     gaps = []
     if stage != "researching":
         gaps.append("the researching stage first")
@@ -253,6 +254,8 @@ def proposal_gaps(values: Mapping[str, Any] | sqlite3.Row, stage: str) -> list[s
         gaps.append(f"{', '.join(missing)} filled in")
     elif not any(_EVIDENCE.search(str(_value(values, name) or "")) for name in CASE_FIELDS):
         gaps.append("a source link or an amount in euros in its business case")
+    if not int(_value(values, "cases") or 0):  # 0.13.0
+        gaps.append("its numbers (venture_case)")
     return gaps
 
 
@@ -290,7 +293,9 @@ _RESEARCHED = (
     " AND r.created_at >= ventures.stage_at) AS research_from,"
     # 0.12.0: what its research calls cost since its research budget began (the owner's last word asking for research)
     " (SELECT COALESCE(SUM(r.cost_micros), 0) FROM venture_research r WHERE r.venture_id = ventures.id"
-    " AND r.created_at > COALESCE(ventures.research_granted_at, '')) AS research_spent"
+    " AND r.created_at > COALESCE(ventures.research_granted_at, '')) AS research_spent,"
+    # 0.13.0: its numeric business cases (venture_cases; the newest counts)
+    " (SELECT COUNT(*) FROM venture_cases c WHERE c.venture_id = ventures.id) AS cases"
 )
 
 
@@ -406,6 +411,87 @@ def add_research(
     )
     row = conn.execute("SELECT COUNT(*) FROM venture_research WHERE venture_id = ? AND sources > 0", (venture_id,))
     return int(row.fetchone()[0])
+
+
+def add_case(
+    conn: sqlite3.Connection,
+    venture_id: int,
+    cycle_id: int | None,
+    case: econ.Case,
+    result: econ.Economics,
+    now: str,
+) -> int:
+    """Save a venture's numbers with Ember's code's economics of them (0.13.0); returns the case's number."""
+    cursor = conn.execute(
+        "INSERT INTO venture_cases (venture_id, cycle_id, created_at, channel, price_eur, unit_cost_eur,"
+        " monthly_costs_eur, sales_low, sales_mid, sales_high, setup_eur, owner_hours, first_sale_months, api_usd,"
+        " usd_per_eur, fees_eur, net_eur, break_even, net_low, net_mid, net_high, ev_eur, ev_per_api_usd,"
+        " ev_per_hour) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            venture_id,
+            cycle_id,
+            now,
+            case.channel,
+            case.price_eur,
+            case.unit_cost_eur,
+            case.monthly_costs_eur,
+            *case.sales,
+            case.setup_eur,
+            case.owner_hours,
+            case.first_sale_months,
+            case.api_usd,
+            result.usd_per_eur,
+            result.fees_eur,
+            result.net_eur,
+            result.break_even,
+            *result.net,
+            result.ev_eur,
+            result.ev_per_api_usd,
+            result.ev_per_hour,
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def latest_case(conn: sqlite3.Connection, venture_id: int) -> sqlite3.Row | None:
+    """A venture's newest numeric business case (0.13.0), or None."""
+    return conn.execute(
+        "SELECT * FROM venture_cases WHERE venture_id = ? ORDER BY id DESC LIMIT 1", (venture_id,)
+    ).fetchone()
+
+
+def case_of(row: Mapping[str, Any]) -> tuple[econ.Case, econ.Economics]:
+    """A stored case as the agent gave it and as Ember's code computed it."""
+    case = econ.Case(
+        channel=str(row["channel"]),
+        price_eur=float(row["price_eur"]),
+        unit_cost_eur=float(row["unit_cost_eur"]),
+        monthly_costs_eur=float(row["monthly_costs_eur"]),
+        sales=(int(row["sales_low"]), int(row["sales_mid"]), int(row["sales_high"])),
+        setup_eur=float(row["setup_eur"]),
+        owner_hours=float(row["owner_hours"]),
+        first_sale_months=int(row["first_sale_months"]),
+        api_usd=float(row["api_usd"]),
+    )
+    result = econ.Economics(
+        usd_per_eur=float(row["usd_per_eur"]),
+        fees_eur=float(row["fees_eur"]),
+        net_eur=float(row["net_eur"]),
+        break_even=None if row["break_even"] is None else float(row["break_even"]),
+        net=(float(row["net_low"]), float(row["net_mid"]), float(row["net_high"])),
+        ev_eur=float(row["ev_eur"]),
+        ev_per_api_usd=None if row["ev_per_api_usd"] is None else float(row["ev_per_api_usd"]),
+        ev_per_hour=None if row["ev_per_hour"] is None else float(row["ev_per_hour"]),
+    )
+    return case, result
+
+
+def numbers_text(row: Mapping[str, Any] | None) -> str:
+    """A venture's numbers for FOCUS: "" without a case."""
+    if row is None:
+        return ""
+    case, result = case_of(row)
+    return f"Numbers (case #{row['id']}, {str(row['created_at'])[:10]}): {result.text(case)}"
 
 
 def owner_word(
@@ -662,12 +748,13 @@ def focus_text(
     parts: list[str] | None = None,
     last: str = "",
     evidence: str = "",
+    numbers: str = "",
 ) -> str:
     """The brief's FOCUS for a venture: everything the agent knows of it, the most important first, as the brief cuts
     it from the end (0.12.0: it lost the owner's comment and the first test): the owner's word, the first test, the
     next question and the knowledge file, the digest of the last cycle aimed at it (``last``), the scores, its
-    evidence by grade (``evidence``, 0.12.0), then the pitch and the rest of the business case, each field at most
-    FOCUS_CHARS characters."""
+    numbers (``numbers``, 0.13.0), its evidence by grade (``evidence``, 0.12.0), then the pitch and the rest of the
+    business case, each field at most FOCUS_CHARS characters."""
     file = parts[-1] if parts else file_of(row["id"], row["title"])  # ``parts``: the knowledge file's (0.12.0)
     kept = f"{file} ({file_size:,} B)" if file_size is not None else f"{file} (not written yet)"
     if parts and len(parts) > 1:
@@ -690,6 +777,7 @@ def focus_text(
         f"Scores: {scores_text(row)}",
         f"Research for it: {count} call{'s' if count != 1 else ''} that found something (scores need "
         f"{RESEARCH_TO_SCORE}, a business case {RESEARCH_TO_PROPOSE})" + (f"; {budget}" if budget else ""),
+        *([numbers] if numbers else []),  # 0.13.0
         *([evidence] if evidence else []),
         f"Pitch: {_one_line(row['pitch'], FOCUS_CHARS)}",
     ]

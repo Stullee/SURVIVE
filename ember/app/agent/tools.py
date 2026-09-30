@@ -44,7 +44,7 @@ from ..integrations import etsy, etsy_publisher, mail, mailstore, reddit
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make
-from . import demand, evidence, library, metrics, netguard, obligations, roadmap, stages, store, ventures
+from . import demand, econ, evidence, library, metrics, netguard, obligations, roadmap, stages, store, ventures
 from .memory import CAPS, HEADING_REFUSAL, MAX_APPEND_LINES, Memory, MemoryError_, heading_line
 from .sandbox import Jail, Limits, QuotaError, SandboxError, kind_of
 from .store import OPEN_STATUSES, AgentScope
@@ -84,15 +84,27 @@ WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's option
 ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing", "propose_etsy_edit", "demand_note"})
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "mark_opt_out", "propose_email"})
-# Offered only in venture cycles (0.10.0; evidence 0.12.0: a venture's case, which grades pages any research found).
-VENTURE_TOOLS = frozenset({"brainstorm", "evidence"})
+# Offered only in venture cycles (0.10.0; evidence 0.12.0: a venture's case, which grades pages any research found;
+# venture_case 0.13.0: its numbers).
+VENTURE_TOOLS = frozenset({"brainstorm", "evidence", "venture_case"})
 # Offered only while the owner's library holds documents (0.12.0).
 LIBRARY_TOOLS = frozenset({"knowledge_search", "library_read"})
 # Offered only in ordinary cycles (0.12.0): a venture cycle researches and decides, so its prompt no longer carries
 # the tools for building and selling (making and looking at files, the workshop, the shop, email and Reddit). They
-# belong to ordinary cycles, like the legs they serve.
+# belong to ordinary cycles, like the legs they serve. 0.13.0: so does laying out the roadmap (milestone_plan).
 ORDINARY_TOOLS = (
-    frozenset({"make_document", "make_spreadsheet", "make_image", "look", "workshop", "draft", "propose_reddit_post"})
+    frozenset(
+        {
+            "make_document",
+            "make_spreadsheet",
+            "make_image",
+            "look",
+            "workshop",
+            "draft",
+            "propose_reddit_post",
+            "milestone_plan",
+        }
+    )
     | ETSY_TOOLS
     | MAIL_TOOLS
 )
@@ -121,6 +133,16 @@ _SITE = re.compile(r"^(?=.{4,60}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-
 RESEARCH_REPEAT_DAYS = 30
 REPEAT_LOOKBACK = 300
 _WRAPPED = re.compile(r'<data src="research" id="([^"]+)">\n(.*)\n</data id="\1">', re.DOTALL)
+MAX_SALES = 100_000  # a month, in a numeric business case (0.13.0)
+# 0.13.0: the largest amount each number of a venture_case takes (euros, hours or dollars).
+CASE_LIMITS = {
+    "price_eur": 100_000,
+    "unit_cost_eur": 100_000,
+    "monthly_costs_eur": 1_000_000,
+    "setup_eur": 1_000_000,
+    "owner_hours": 744,
+    "api_usd": 10_000,
+}
 _PLAIN_NUMBER = re.compile(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")  # evidence's values (0.12.0)
 _DOCUMENT = re.compile(r"\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|epub|zip)$", re.IGNORECASE)
 # Etsy's website and its short links, with their subdomains: Etsy's API terms forbid programs reading them. Searching
@@ -328,14 +350,35 @@ SPECS: dict[str, Spec] = {
             reflect=True,
         ),
         Spec(
+            "venture_case",
+            "Put numbers on a venture's business case (euros, a month unless said). Ember's code adds the fees "
+            "(Etsy's for Germany), net per sale, break-even, the net at your low, likely and high sales, and the "
+            "expected net per API dollar and per hour of your owner's. stage proposed needs one. Free.",
+            {
+                "venture_id": _i("Default: the focus venture.", required=False),
+                "channel": _s("Where it sells (other: its fees in unit_cost_eur).", 13, enum=econ.CHANNELS),
+                "price_eur": _s("Price per sale.", 12),
+                "unit_cost_eur": _s("Cost per sale (0 for a download).", 12),
+                "monthly_costs_eur": _s("Fixed costs.", 12),
+                "sales_low": _i("Sales, your P10.", minimum=0, maximum=MAX_SALES),
+                "sales_mid": _i("P50.", minimum=0, maximum=MAX_SALES),
+                "sales_high": _i("P90.", minimum=0, maximum=MAX_SALES),
+                "setup_eur": _s("Cash to start.", 12),
+                "owner_hours": _s("Your owner's hours.", 6),
+                "first_sale_months": _i("Months to the first sale.", minimum=0, maximum=24),
+                "api_usd": _s("Your API spend on it (USD).", 12),
+            },
+            per_cycle=5,
+            reflect=True,
+        ),
+        Spec(
             "venture_update",
             "Update a venture. learned: what you found out, with sources, saved to its knowledge file. Scores from 1 "
             "to 5 weigh it in your tree: rescore it from the evidence once research for it found web pages. The six "
             "business case fields (demand to first_test): stage proposed puts it before your owner on the Ventures "
-            f"tab and needs the researching stage, {ventures.RESEARCH_TO_PROPOSE} such research calls, all six scores "
-            "and all six fields, with a "
-            "source link or euros. Only your owner backs a venture (building) or kills it; park one with a note "
-            "saying why. Free.",
+            f"tab and needs the researching stage, {ventures.RESEARCH_TO_PROPOSE} such research calls, all six scores, "
+            "all six fields with a source link or euros, and its numbers (venture_case). Only your owner backs a "
+            "venture (building) or kills it; park one with a note saying why. Free.",
             {
                 "venture_id": _i("The venture's number."),
                 "learned": _s("What you found out, with sources (saved with the date).", 2_000, required=False),
@@ -1072,6 +1115,7 @@ class ToolContext:
     mail: MailAccess | None = None  # Ember's mailbox, when it has one
     etsy: EtsyAccess | None = None  # the Etsy shop, when there is one
     venture: bool = False  # a venture cycle (0.10.0): brainstorm, and more research
+    usd_per_eur: float = 0.0  # the owner's exchange rate (etsy_usd_per_eur; 0: none, econ assumes one), 0.13.0
     library: bool = False  # the owner's library holds documents (0.12.0): its tools
     brainstorm: BrainstormFn | None = None
     draft: DraftFn | None = None  # 0.12.0
@@ -1101,8 +1145,8 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
         spec = spec_of(name, ctx.venture)
         if spec is not None and ctx.venture and name in ORDINARY_TOOLS:
             raise ToolError(
-                f"{name} is not one of your tools in a venture cycle: making files, the shop, email and Reddit belong "
-                "to ordinary cycles"
+                f"{name} is not one of your tools in a venture cycle: making files, the shop, email, Reddit and laying "
+                "out the roadmap belong to ordinary cycles"
             )
         if spec is None or not offered(
             name,
@@ -1514,6 +1558,47 @@ def _value(text: str, name: str) -> float:
     if not _PLAIN_NUMBER.fullmatch(plain):
         raise ToolError(f"{name} must be a plain number like 1200 or 4.5")
     return float(plain.replace(",", ""))
+
+
+def _venture_case(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.13.0: a venture's numbers; Ember's code computes the economics (econ.py) and keeps both."""
+    venture_id = args.get("venture_id", ctx.state.focus_venture_id)
+    if venture_id is None:
+        raise ToolError("name the venture (venture_id): this cycle has no focus venture")
+    _open_venture(conn, ctx.scope, venture_id)
+    amounts = {}
+    for name, most in CASE_LIMITS.items():
+        amounts[name] = _value(args[name], name)
+        if not 0 <= amounts[name] <= most:
+            raise ToolError(f"{name} must be between 0 and {most:,}")
+    if amounts["price_eur"] <= 0:
+        raise ToolError("price_eur must be above 0")
+    sales = (args["sales_low"], args["sales_mid"], args["sales_high"])
+    if not sales[0] <= sales[1] <= sales[2]:
+        raise ToolError("sales must rise: sales_low (P10) <= sales_mid (P50) <= sales_high (P90)")
+    case = econ.Case(
+        channel=args["channel"],
+        price_eur=amounts["price_eur"],
+        unit_cost_eur=amounts["unit_cost_eur"],
+        monthly_costs_eur=amounts["monthly_costs_eur"],
+        sales=sales,
+        setup_eur=amounts["setup_eur"],
+        owner_hours=amounts["owner_hours"],
+        first_sale_months=args["first_sale_months"],
+        api_usd=amounts["api_usd"],
+    )
+    result = econ.compute(case, ctx.usd_per_eur)
+    number = ventures.add_case(conn, venture_id, ctx.cycle_id, case, result, ctx.now())
+    rate = (
+        ""
+        if ctx.usd_per_eur > 0
+        else f" (at an assumed USD {econ.DEFAULT_USD_PER_EUR:.2f} per EUR: your owner set no exchange rate)"
+    )
+    return Outcome(
+        True,
+        f"Saved the numbers of venture #{venture_id} as case #{number}{rate}. {result.text(case)}",
+        f"case #{number} for venture #{venture_id}: EUR {result.ev_eur:.0f} a month expected",
+    )
 
 
 # --- ventures (0.10.0) ---
@@ -3080,6 +3165,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "write_journal": _write_journal,
     "research": _research,
     "evidence": _evidence,
+    "venture_case": _venture_case,
     "demand_note": _demand_note,
     "draft": _draft,
     "knowledge_search": _knowledge_search,

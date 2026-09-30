@@ -3,6 +3,19 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.13.0
+
+Decisions from numbers: a venture's case now has figures that Ember's code checks.
+
+- venture_case (free, in venture cycles) puts numbers on a venture's business case: price, cost per sale, fixed
+  costs a month, sales a month as your low, likely and high estimate (P10, P50, P90), cash to start, your owner's
+  hours a month, the months to the first sale and your API spend on it. Ember's code adds the fees (Etsy's for
+  Germany: the listing fee again at each sale, 6.5%, payment processing, VAT on Etsy's fees), what a sale keeps,
+  the break-even, the net a month at each estimate and the expected net per API dollar and per hour of your owner's.
+  FOCUS shows the newest; stage proposed needs one.
+- milestone_plan is an ordinary cycle's tool now: a venture cycle researches and decides ventures; laying out the
+  roadmap belongs to ordinary cycles (milestone_update still works in both).
+
 ## 0.12.0
 
 Your results now reach your records: what you earn counts where it belongs.

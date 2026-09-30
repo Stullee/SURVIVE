@@ -235,6 +235,7 @@ class CycleRunner:
             # A fetched PDF has no size limit, so reading pages costs real money only if the owner allows it.
             allow_fetch=self.dry_run or self.settings.web_fetch,
             mail=tools.MailAccess(self.mailbox.address, self.settings.email_daily_limit) if self.mailbox else None,
+            usd_per_eur=self.settings.etsy_usd_per_eur,  # 0.13.0: a venture case's rate (0: econ assumes one)
         )
         ctx.research = self._research_fn(ctx)
         ctx.draft = self._draft_fn(ctx)
@@ -636,8 +637,9 @@ class CycleRunner:
             size = None
         last = digest.newest_for(conn, self.scope, "venture_id", row["id"], cycle_id)
         found = evidence.focus_line(conn, row["id"])  # 0.12.0: its claims, by their sources' grade
+        numbers = ventures.numbers_text(ventures.latest_case(conn, row["id"]))  # 0.13.0
         return ventures.focus_text(
-            row, paid, size, ventures.projects_of(conn, row["id"]), parts, last=last, evidence=found
+            row, paid, size, ventures.projects_of(conn, row["id"]), parts, last=last, evidence=found, numbers=numbers
         )
 
     def _review(self, cycle_id: int, ctx: tools.ToolContext) -> None:

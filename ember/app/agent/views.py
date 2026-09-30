@@ -399,7 +399,7 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
 
 def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated: int) -> str:
     """Changes when the tree or its money may have: a venture changed, a wake cycle ended, something was recorded in
-    the ledger (0.12.0: its P&L) or a claim was saved as evidence (0.12.0)."""
+    the ledger (0.12.0: its P&L), a claim was saved as evidence (0.12.0) or a numeric case (0.13.0)."""
     where, params = scope.where()
     tree = conn.execute(
         f"SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM ventures WHERE {where}", params
@@ -410,7 +410,11 @@ def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated
     ).fetchone()
     booked = conn.execute("SELECT COALESCE(MAX(id), 0) FROM ledger").fetchone()
     claims = conn.execute(f"SELECT COALESCE(MAX(id), 0) FROM evidence WHERE {where}", params).fetchone()
-    return f"{int(tree[0])}|{tree[1]}|{int(cycle[0])}|{int(booked[0])}|{int(claims[0])}"
+    numbers = conn.execute(
+        f"SELECT COALESCE(MAX(c.id), 0) FROM venture_cases c JOIN ventures ON ventures.id = c.venture_id WHERE {where}",
+        params,
+    ).fetchone()
+    return f"{int(tree[0])}|{tree[1]}|{int(cycle[0])}|{int(booked[0])}|{int(claims[0])}|{int(numbers[0])}"
 
 
 def ventures_view(agent: Agent) -> dict[str, Any]:
@@ -439,6 +443,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         stamp = _ventures_stamp(conn, scope, simulated)
         digests = digest.newest_by(conn, scope, "venture_id")  # 0.12.0
         found = evidence.by_venture(conn, scope)  # 0.12.0
+        cases = {v["id"]: ventures.latest_case(conn, v["id"]) for v in rows if v["cases"]}  # 0.13.0
     items = []
     for v in rows:
         m = paid.get(v["id"], ventures.Money())
@@ -487,6 +492,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                 "expenses_usd": _usd(m.expenses),
                 "net_usd": _usd(m.net),
                 "last_digest": digests.get(v["id"]),  # 0.12.0: the digest of the last cycle aimed at it
+                "numbers": _numbers(cases.get(v["id"])),  # 0.13.0: its newest numeric business case
                 # 0.12.0: its evidence: the claims by grade and the newest (see evidence.py)
                 "evidence": found.get(v["id"], {"counts": dict.fromkeys(evidence.GRADES, 0), "items": []}),
                 "projects": linked.get(v["id"], []),
@@ -514,6 +520,34 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         "limits": {"title": ventures.LIMITS["title"], "pitch": ventures.LIMITS["pitch"], "comment": 1_000},
         "items": items,
         "stamp": stamp,
+    }
+
+
+def _numbers(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    """A venture's newest numeric business case for its card (0.13.0): the agent's numbers and Ember's code's."""
+    if row is None:
+        return None
+    case, result = ventures.case_of(row)
+    return {
+        "id": row["id"],
+        "created_at": row["created_at"],
+        "channel": case.channel,
+        "price_eur": case.price_eur,
+        "unit_cost_eur": case.unit_cost_eur,
+        "monthly_costs_eur": case.monthly_costs_eur,
+        "sales": list(case.sales),
+        "setup_eur": case.setup_eur,
+        "owner_hours": case.owner_hours,
+        "first_sale_months": case.first_sale_months,
+        "api_usd": case.api_usd,
+        "fees_eur": result.fees_eur,
+        "net_eur": result.net_eur,
+        "break_even": result.break_even,
+        "net": list(result.net),
+        "ev_eur": result.ev_eur,
+        "ev_per_api_usd": result.ev_per_api_usd,
+        "ev_per_hour": result.ev_per_hour,
+        "text": result.text(case),
     }
 
 

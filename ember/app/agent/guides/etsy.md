@@ -17,7 +17,8 @@ A LISTING NEEDS:
    not single vague words, and not the title's words over and over.
 5. category_id: from etsy_categories.
 6. price: in the shop's currency, from what comparable listings cost (research first). Fees: USD 0.20 a listing,
-   6.5% of each sale, payment processing (Germany: 4% + 0.30 EUR an order); a 3.00 EUR sale keeps about 2.36 EUR.
+   6.5% of each sale, payment processing (Germany: 4% + 0.30 EUR an order), VAT on Etsy's fees; a 3.00 EUR sale keeps
+   about 2.13 EUR.
 7. description: the first two lines sell it (what it is, the benefit); then exactly what is included (files,
    pages, sizes), how to open, edit and print it, that it is a digital download (nothing is shipped), and for
    personal use only. Plain text, short paragraphs.

@@ -120,6 +120,7 @@ TABLES = (
     "research_sources",
     "evidence",
     "demand_notes",
+    "venture_cases",
     "emails",
     "email_actions",
     "email_suppressions",

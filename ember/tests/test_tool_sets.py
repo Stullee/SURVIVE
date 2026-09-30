@@ -50,7 +50,10 @@ def test_a_venture_cycle_refuses_them(data_dir: Path) -> None:
     assert ends[0].status == "completed" and rows(agent, "SELECT venture FROM cycles") == [{"venture": 1}]
     [made] = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'make_document'")
     assert made["status"] == "error"
-    refusal = "make_document is not one of your tools in a venture cycle: making files, the shop, email and Reddit"
+    refusal = (
+        "make_document is not one of your tools in a venture cycle: making files, the shop, email, Reddit and laying "
+        "out the roadmap belong to ordinary cycles"
+    )
     assert refusal in made["result"]
     work = [r for r in fake.sent if request_kind(r) == "work"]
     assert work and all(not names(r) & tools.ORDINARY_TOOLS for r in work)

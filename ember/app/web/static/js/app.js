@@ -5211,6 +5211,7 @@
       })) : null,
       filled.length && needs.length && (v.stage === "researching" || v.stage === "idea") ?
         h("p", { class: "muted small", text: "For a business case " + name + " still needs: " + needs.join(", ") + "." }) : null,
+      ventureNumbers(v),
       ventureEvidence(v),
       h("dl", { class: "money" },
         h("div", { title: "Research calls for this venture that found web pages: its scores need one, a business case " + toPropose + "." },
@@ -5240,6 +5241,27 @@
       h("p", { class: "muted small" }, (v.created_by === "owner" ? "Added by " + (v.entered_by || "you") : "Added by " + name) + " ",
         timeEl(v.created_at), " · updated ", timeEl(v.updated_at)),
     ];
+  }
+
+  // 0.13.0: its numbers: the agent's estimates and what Ember's code makes of them (fees, break-even, net a month).
+  function ventureNumbers(v) {
+    var n = isObject(v.numbers) ? v.numbers : null;
+    if (!n) return null;
+    var eur = function (x) { return x === null || x === undefined ? "–" : "€" + num(x).toFixed(2); };
+    var sales = arr(n.sales);
+    var net = arr(n.net);
+    return h("div", { class: "vt-numbers" },
+      h("p", null, h("strong", { text: "Numbers: " }), "case #" + n.id + " · ", timeEl(n.created_at)),
+      h("dl", { class: "item-grid" },
+        h("div", null, h("dt", { text: "A sale" }), h("dd", { text: eur(n.price_eur) + " keeps " + eur(n.net_eur) +
+          " (fees " + eur(n.fees_eur) + ", cost " + eur(n.unit_cost_eur) + ")" })),
+        h("div", null, h("dt", { text: "Break-even" }), h("dd", { text: n.break_even === null ? "none: a sale doesn't cover its costs" : num(n.break_even).toFixed(1) + " sales a month" })),
+        h("div", { title: "Low, likely and high sales a month (the agent's P10, P50 and P90)" }, h("dt", { text: "A month" }),
+          h("dd", { text: sales.join(" / ") + " sales: " + net.map(function (x) { return "€" + Math.round(num(x)); }).join(" / ") })),
+        h("div", { title: "Expected net a month over six months, the months before the first sale earning nothing" },
+          h("dt", { text: "Expected" }), h("dd", { text: "€" + Math.round(num(n.ev_eur)) + " a month" +
+            (n.ev_per_hour === null ? "" : " · €" + num(n.ev_per_hour).toFixed(2) + " per hour of yours") })),
+        h("div", null, h("dt", { text: "To start" }), h("dd", { text: eur(n.setup_eur) + " · " + num(n.owner_hours) + " h a month from you · first sale in " + n.first_sale_months + " month" + (n.first_sale_months === 1 ? "" : "s") }))));
   }
 
   // 0.12.0: the claims its research found, each with the grade Ember's code gave its page.
