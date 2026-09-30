@@ -66,6 +66,7 @@ from . import (
     netguard,
     news,
     obligations,
+    predictions,
     prompts,
     research_check,
     review,
@@ -422,6 +423,7 @@ class CycleRunner:
         self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
         self._keep_stages()
         metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
+        predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
         self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
         local = self.clock.now().astimezone(self.clock.tz).strftime("%A %Y-%m-%d %H:%M %Z")
@@ -471,7 +473,7 @@ class CycleRunner:
                 shelf=library.shelf(conn, self.scope),
                 decision_wakes=self.settings.wake_on_decision,
                 burn=_burn_line(mode),
-                ready=desk.text(self.ready_items),
+                ready=desk.text(self.ready_items, predictions.calibration(conn, self.scope) if venture else ""),
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any], venture_id: int | None = None) -> CallResult:
@@ -812,7 +814,7 @@ class CycleRunner:
             case_row = ventures.latest_case(conn, int(venture["id"])) if venture is not None else None
             if venture is None or case_row is None:
                 return
-            case_text = critic.case_text(conn, venture, case_row)
+            case_text = critic.case_text(conn, venture, case_row, predictions.calibration(conn, self.scope))
         vid, case_id = int(venture["id"]), int(case_row["id"])
         request = prompts.critic_request(self.settings, case_text)
         try:

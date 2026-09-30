@@ -29,7 +29,7 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import etsy, executor, mailstore
 from ..integrations.mail import BODY_MAX, valid_address
-from . import knockouts, library, memory, roadmap, stages, store, ventures
+from . import knockouts, library, memory, predictions, roadmap, stages, store, ventures
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
@@ -481,6 +481,9 @@ class Owner:
                 # 0.12.0: a backed venture's first test becomes a milestone; a parked or killed one's milestones go.
                 if action == "back" and after is not None:
                     stages.first_test(conn, self.scope, after, self.clock.today(), now)
+                    # 0.13.0: its case's first sale, as a prediction Ember's code settles
+                    case = ventures.latest_case(conn, venture_id)
+                    predictions.add_first_sale(conn, self.scope, venture_id, case, self.clock.today(), now)
                 elif action in ("park", "kill"):
                     stages.drop_milestones(
                         conn, self.scope, venture_id, now, f"Your owner {stage} venture #{venture_id}.", "owner"

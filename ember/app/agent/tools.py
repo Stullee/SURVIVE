@@ -53,6 +53,7 @@ from . import (
     metrics,
     netguard,
     obligations,
+    predictions,
     roadmap,
     stages,
     store,
@@ -509,6 +510,12 @@ SPECS: dict[str, Spec] = {
                             required=False,
                         ),
                         "due": _s("YYYY-MM-DD, at most a year ahead.", 10),
+                        "likely": _i(
+                            "With a metric: your odds (%) it is met by this date. Ember's code settles them.",
+                            minimum=predictions.LIKELY[0],
+                            maximum=predictions.LIKELY[1],
+                            required=False,
+                        ),
                         "venture_id": _i("The venture it serves.", required=False),
                         "project_id": _i("The project it serves.", required=False),
                         "replaces": _i("The dropped or missed milestone it takes the place of.", required=False),
@@ -2024,6 +2031,9 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
     if args.get("project_id") is not None:
         _open_project(conn, ctx.scope, args["project_id"])
     checked = _metric(ctx, args, conn)
+    likely = args.get("likely")
+    if likely is not None and checked is None:
+        raise ToolError("likely is for a milestone with a metric: Ember's code settles your odds by it")
     costs = {
         "budget_micros": _amount(args.get("budget_usd"), "budget_usd", 1_000, 1_000_000),
         "cash_cents": _amount(args.get("cash_eur"), "cash_eur", 100_000, 100),
@@ -2048,6 +2058,10 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
         **costs,
         replaces=replaces,
     )
+    if likely is not None:  # 0.13.0: the agent's odds, settled by Ember's code (the prediction ledger)
+        predictions.add_milestone(
+            conn, ctx.scope, milestone_id, likely, f"milestone #{milestone_id}: {measure}", due.isoformat(), ctx.now()
+        )
     leads = f", leading to #{parent_id}" if parent_id is not None else ""
     close = (
         f"Ember's code checks {checked[0].name} ({metrics.target_text(checked[0], checked[1])}) from its records and "
@@ -2063,10 +2077,12 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
             f"{json.dumps(' '.join(replaces['measure'].split())[:160], ensure_ascii=False)}), first due "
             f"{replaces['first_due']}, moved {moves} time{'s' if moves != 1 else ''}."
         )
+    odds = f" Your odds of {likely}% by then are kept: Ember's code settles them." if likely is not None else ""
     return milestone_id, (
         f"Milestone #{milestone_id} is on your roadmap{leads}, due {due.isoformat()} ({roadmap.when(due, today)}). "
         + close
         + instead
+        + odds
     )
 
 

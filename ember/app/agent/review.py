@@ -25,7 +25,7 @@ from ..economy.ledger import Books, Scope
 from ..economy.life import LifeStatus, Runway
 from ..integrations import etsy, etsy_publisher
 from ..version import app_version
-from . import prompts, roadmap, ventures
+from . import predictions, prompts, roadmap, ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
 
 WINDOW_DAYS = 7
@@ -179,6 +179,7 @@ def scorecard(
         _etsy(conn, scope, since),
         _project_lines(conn, projects, clock, since),
         roadmap.review_text(conn, scope, today, since),
+        predictions.review_text(conn, scope, since),  # 0.13.0: the forecasts against the results
         _ventures(conn, scope, since),
         _decisions(conn, scope, since),
         _cycles(conn, scope, since),

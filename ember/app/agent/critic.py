@@ -50,9 +50,12 @@ def due(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def case_text(conn: sqlite3.Connection, venture: Mapping[str, Any], case_row: Mapping[str, Any]) -> str:
-    """What the critic reads: the venture's pitch and business case, its numbers with Ember's code's economics, and
-    its evidence by grade (the newest CLAIMS_SHOWN)."""
+def case_text(
+    conn: sqlite3.Connection, venture: Mapping[str, Any], case_row: Mapping[str, Any], record: str = ""
+) -> str:
+    """What the critic reads: the venture's pitch and business case, its numbers with Ember's code's economics, its
+    evidence by grade (the newest CLAIMS_SHOWN) and the record of the agent's forecasts (``record``,
+    predictions.calibration)."""
     case, result = ventures.case_of(case_row)
     prose = "\n".join(f"{label}: {' '.join(str(venture[name] or '-').split())}" for name, label, _ in ventures.CASE)
     claims = evidence.of_venture(conn, int(venture["id"]), CLAIMS_SHOWN)
@@ -66,7 +69,9 @@ def case_text(conn: sqlite3.Connection, venture: Mapping[str, Any], case_row: Ma
         f"{case.setup_eur:.2f}, the owner's hours {case.owner_hours:g} a month, first sale in {case.first_sale_months} "
         f"months, API spend USD {case.api_usd:.2f} a month.\nEmber's code's economics of them: {result.text(case)}\n\n"
         f"Evidence: {sum(graded.values())} claims ({graded['independent']} independent, {graded['marketing']} "
-        f"marketing, {graded['unchecked']} unchecked)" + (f"; the newest:\n{listed}" if listed else ".")
+        f"marketing, {graded['unchecked']} unchecked)"
+        + (f"; the newest:\n{listed}" if listed else ".")
+        + (f"\n\nThe agent's forecasts, settled by Ember's code: {record}." if record else "")
     )
 
 

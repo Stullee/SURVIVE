@@ -124,6 +124,7 @@ TABLES = (
     "knockout_overrides",
     "venture_critiques",
     "desk_picks",
+    "predictions",
     "emails",
     "email_actions",
     "email_suppressions",

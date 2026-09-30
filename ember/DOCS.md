@@ -601,6 +601,25 @@ the Roadmap tab shows where it stands (**Checked by Ember's code**), and the
 agent's plan says what Ember's code closed since its last cycle. A milestone
 without a metric is allowed; the agent's done on it stays self-reported.
 
+**Forecasts Ember's code settles.** The agent can give a metric milestone its
+odds of being met by its date (0.13.0: 5 to 95%). When you back a venture, its
+business case's months to the first sale become a 50% call. Ember's code settles
+both from its records before every plan, with no model call:
+
+- a milestone call **came true** if the milestone was met by its first date (a
+  date moved later doesn't move the call). It **didn't** once that date has
+  passed or the milestone was missed. It is **void** if the milestone was
+  dropped first;
+- a first sale came true once an Etsy order of the venture's listings, or
+  revenue recorded for it, falls within its time.
+
+A call never changes, and a settled one is final. The record in a few words
+(how often the milestones given odds were met against the odds given, with the
+Brier score, where a coin toss scores 0.25, and how many first sales came on
+time) reaches the agent's triage in READY, the critic and the daily review. You
+see it on the Roadmap tab, with each call on its milestone's card, on the
+Ventures tab's Decision desk, and on a backed venture's card.
+
 **Money, time and waiting.** A milestone can carry what it may cost: the API
 spending the agent plans for it, the cash it needs from you (EUR) and your
 hours. These are set with it and can't be raised later: the plan shows "spent

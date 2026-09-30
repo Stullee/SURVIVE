@@ -21,6 +21,7 @@ from . import (
     library,
     memory,
     metrics,
+    predictions,
     prompts,
     research_check,
     review,
@@ -206,7 +207,8 @@ def dashboard(agent: Agent) -> dict[str, Any]:
 
 
 def _roadmap_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated: int, today: str) -> str:
-    """Changes when the roadmap or its effort may have: a milestone changed, a wake cycle ended, or a new day began."""
+    """Changes when the roadmap or its effort may have: a milestone changed, a wake cycle ended, a new day began, or
+    (0.13.0) a prediction was made or settled."""
     where, params = scope.where()
     row = conn.execute(
         "SELECT COUNT(*), COALESCE(MAX(updated_at), '') || COALESCE(MAX(checked_at), '') FROM milestones"
@@ -217,7 +219,10 @@ def _roadmap_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated:
         "SELECT COALESCE(MAX(id), 0) FROM cycles WHERE simulated = ? AND session = ? AND status <> 'running'",
         (simulated, scope.session),
     ).fetchone()
-    return f"{int(row[0])}|{row[1]}|{int(cycle[0])}|{today}"
+    called = conn.execute(
+        f"SELECT COUNT(*), COALESCE(MAX(settled_at), '') FROM predictions WHERE {where}", params
+    ).fetchone()
+    return f"{int(row[0])}|{row[1]}|{int(cycle[0])}|{today}|{int(called[0])}|{called[1]}"
 
 
 def _library_stamp(conn: sqlite3.Connection, scope: store.AgentScope) -> str:
@@ -334,9 +339,12 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
         total = roadmap.count(conn, scope)
         overhead = roadmap.overhead(conn, scope)
         digests = digest.newest_by(conn, scope, "milestone_id")  # 0.12.0
+        odds = predictions.of_milestones(conn, [int(m["id"]) for m in rows])  # 0.13.0: the agent's odds on them
+        record = predictions.calibration(conn, scope)
     items = []
     for m in rows:
         due = roadmap.parse_day(m["due"]) or today
+        called = odds.get(int(m["id"]))
         cycles, spent = effort.get(m["id"], (0, 0))
         items.append(
             {
@@ -386,12 +394,15 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
                 "proposed_due": m["proposed_due"],
                 "proposed_note": m["proposed_note"],
                 "proposed_at": m["proposed_at"],
+                # 0.13.0: the agent's odds that it is met by its first date, and how Ember's code settled them
+                "prediction": _prediction(called),
                 "simulated": m["mode"] == "dry_run",
             }
         )
     return {
         "mode": agent.mode,
         "today": today.isoformat(),
+        "forecasts": record or None,  # 0.13.0: the record of the agent's forecasts (predictions.calibration)
         "overhead_usd": _usd(overhead),  # 0.12.0: plans, reviews, brainstorms and the rest no milestone is charged
         "horizons": [
             {"key": roadmap.OVERDUE[0], "label": roadmap.OVERDUE[1]},
@@ -490,6 +501,14 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         )
         picks = desk.recent(conn, scope, 8)
         week = desk.decided(conn, scope, to_iso(agent.clock.now() - timedelta(days=7)))
+        record = predictions.calibration(conn, scope)  # 0.13.0: the forecasts' record
+        sales = {  # 0.13.0: each backed venture's first sale, as its case predicted it (the newest)
+            int(r["venture_id"]): r
+            for r in conn.execute(
+                "SELECT * FROM predictions WHERE mode = ? AND session = ? AND kind = 'first_sale' ORDER BY id",
+                (scope.mode, scope.session),
+            ).fetchall()
+        }
     items = []
     for v in rows:
         m = paid.get(v["id"], ventures.Money())
@@ -542,6 +561,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                 # 0.13.0: the critic's review of that case, and the expected net it ranks by (the lower of the two)
                 "critique": _critique(*judged.get(v["id"], (None, 0))),
                 "ranking_ev_eur": critic.ranking_ev(cases.get(v["id"]), judged.get(v["id"], (None, 0))[0]),
+                "first_sale": _prediction(sales.get(v["id"])),  # 0.13.0: its case's first sale, settled by code
                 "knockouts": [
                     {"rule": k.rule, "label": k.label, "why": k.why, "overridden": k.overridden}
                     for k in knocked.get(v["id"], [])
@@ -587,8 +607,25 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                 for p in picks
             ],
             "decided_week": week,
+            "forecasts": record or None,  # 0.13.0
         },
         "stamp": stamp,
+    }
+
+
+def _prediction(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    """A prediction for the tabs (0.13.0): its odds, when it is due, and how Ember's code settled it."""
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "kind": row["kind"],
+        "claim": row["claim"],
+        "likely": round(float(row["probability"]) * 100),
+        "due": row["due"],
+        "status": row["status"],
+        "result": row["result"],
+        "settled_at": row["settled_at"],
     }
 
 

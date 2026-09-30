@@ -60,7 +60,7 @@ PLANNER_BUDGETS = {
     "review": 1_400,
     "etsy": 1_600,
     "ventures": 2_600,
-    "ready": 1_300,  # 0.13.0: a venture cycle's READY list (desk.MAX_ITEMS items)
+    "ready": 1_550,  # 0.13.0: a venture cycle's READY list (desk.MAX_ITEMS items) and the forecasts' record
     "roadmap": 1_800,  # 0.11.0 (and never less than ROADMAP_FLOOR, whatever the scale: 0.12.0)
     "library": 1_200,  # 0.12.0: the owner's library, when it holds documents
 }

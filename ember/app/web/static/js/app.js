@@ -5042,6 +5042,7 @@
         plural(ready.length, "decision") + " ready · " + plural(week, "venture") + " decided in the last 7 days (the aim: 2)"),
       h("p", { class: "muted small", text: "Ranked by " + name + "'s code: backed ventures without a project, your wishes, " +
         "deadlines, the critic's flags, then the expected net (the critic's where it is lower). Each venture cycle's plan takes one or says why none." }),
+      d.forecasts ? h("p", { class: "muted small", text: name + "'s forecasts, settled by Ember's code: " + String(d.forecasts) + "." }) : null,
       list,
       taken));
   }
@@ -5242,6 +5243,7 @@
         h("p", { class: "muted small", text: "For a business case " + name + " still needs: " + needs.join(", ") + "." }) : null,
       ventureNumbers(v),
       ventureCritique(v),
+      isObject(v.first_sale) ? h("dl", { class: "item-grid" }, predictionRow(v.first_sale, "First sale, as its case said")) : null,
       ventureKnockouts(v),
       ventureEvidence(v),
       h("dl", { class: "money" },
@@ -5758,6 +5760,9 @@
     if (moved) parts.push(plural(moved, "open milestone") + " moved from " + (moved === 1 ? "its" : "their") + " first date.");
     var waiting = open.filter(function (m) { return m.waiting; }).length;
     if (waiting) parts.push(plural(waiting, "open milestone") + " waiting.");
+    if (data.forecasts) {  // 0.13.0: the prediction ledger's record, settled by Ember's code
+      parts.push(name + "'s forecasts, settled by Ember's code: " + String(data.forecasts) + ".");
+    }
     if (data.overhead_usd !== undefined && data.overhead_usd !== null) {
       parts.push("Overhead (plans, reviews, brainstorms, library study): " + usd(data.overhead_usd) + ".");
     }
@@ -5970,6 +5975,22 @@
 
   var MILESTONE_RESULT = { done: "Evidence", missed: "Why, and what now", dropped: "Why it was dropped" };
 
+  // 0.13.0: a prediction Ember's code settles (the agent's odds on a milestone, or a backed venture's first sale).
+  var PREDICTION_STATE = {
+    open: { icon: "…", label: "Open", tone: "" },
+    hit: { icon: "✓", label: "Came true", tone: "good" },
+    miss: { icon: "✕", label: "Didn't", tone: "critical" },
+    void: { icon: "–", label: "Void", tone: "" },
+  };
+
+  function predictionRow(p, label) {
+    if (!isObject(p)) return null;
+    return h("div", { title: "Ember's code settles it from its records: " + String(p.claim) },
+      h("dt", { text: label }),
+      h("dd", null, num(p.likely) + "% by " + fmtDay(p.due) + " ", chip(PREDICTION_STATE, p.status),
+        p.result ? " " + String(p.result) : ""));
+  }
+
   function milestoneView(m) {
     var name = agentName();
     var parent = m.parent_id !== null && m.parent_id !== undefined ? ui.rm.byId[String(m.parent_id)] : null;
@@ -5988,6 +6009,7 @@
         h("div", null, h("dt", { text: "Due" }), h("dd", { text: due })),
         h("div", null, h("dt", { text: "Done when" }), h("dd", { class: "pre-line", text: asText(m.measure) })),
         m.checked ? h("div", null, h("dt", { text: "Checked by Ember's code" }), h("dd", { text: asText(m.checked) })) : null,
+        predictionRow(m.prediction, name + "'s odds"),
         closed ? h("div", null, h("dt", { text: (MILESTONE_RESULT[m.state] || "Result") + (selfReported(m) ? " (self-reported)" :
           m.closed_by === "code" && m.metric ? " (checked by Ember's code)" : "") }),
           h("dd", { class: "pre-line", text: asText(m.result) || "–" })) : null,

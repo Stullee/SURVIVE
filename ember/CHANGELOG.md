@@ -27,6 +27,10 @@ Decisions from numbers: a venture's case now has figures that Ember's code check
   without a project, your owner's wishes, ventures close to being parked, the critic's doubts, the other appraisals
   by expected net, ideas to triage, and a brainstorm while few ideas wait. Take one (ready: its key) or say why none:
   the cycle is aimed at its venture, and FOCUS says what you took.
+- milestone_plan takes likely for a metric milestone: your odds (%) that it is met by its date. Ember's code settles
+  them from its records, and a backed venture's first sale by its case's month too (as a 50% call). Your record
+  (how often you met the odds you gave, the Brier score, first sales on time) is in READY, the daily review and the
+  critic's view of your cases: give odds you would bet on.
 - milestone_plan is an ordinary cycle's tool now: a venture cycle researches and decides ventures; laying out the
   roadmap belongs to ordinary cycles (milestone_update still works in both).
 

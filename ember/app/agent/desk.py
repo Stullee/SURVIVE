@@ -167,12 +167,14 @@ def ready(
     return [item for _, item in ranked[:MAX_ITEMS]]
 
 
-def text(items: list[Item]) -> str:
-    """The plan's READY section ("" without items)."""
+def text(items: list[Item], record: str = "") -> str:
+    """The plan's READY section ("" without items), with the record of the agent's forecasts (``record``,
+    predictions.calibration: 0.13.0) for its triage."""
     if not items:
         return ""
     lines = [f"{n}. {item.key}: {item.text}" for n, item in enumerate(items, 1)]
-    return "Ranked by Ember's code. Take one (ready: its key), or say why none:\n" + "\n".join(lines)
+    forecasts = f"\nYour forecasts, settled by Ember's code: {record}." if record else ""
+    return "Ranked by Ember's code. Take one (ready: its key), or say why none:\n" + "\n".join(lines) + forecasts
 
 
 def choose(items: list[Item], answer: str) -> tuple[Item | None, str]:
