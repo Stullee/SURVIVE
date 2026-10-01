@@ -561,15 +561,16 @@ def workbook_text(data: bytes) -> str:
         book.close()
 
 
-def picture(data: bytes, which: str = "") -> Image.Image:
-    """One sheet of an Excel file drawn as a table (its first rows and columns), for listing photos: the first sheet,
-    or the one ``which`` names by number (from 1) or name. Formulas show their result where the preview's can."""
+def picture(data: bytes, which: str = "") -> tuple[int, Image.Image]:
+    """One sheet of an Excel file drawn as a table (its first rows and columns), for listing photos, with its number
+    (from 1): the first sheet, or the one ``which`` names by number or name. Formulas show their result where the
+    preview's can."""
     book = _book(data)
     try:
         names = book.sheetnames
         if not which:
             index = 0
-        elif which.isdigit():
+        elif re.fullmatch(r"[0-9]{1,4}", which):  # 0.14.0: ASCII digits only ('²' is a name)
             index = int(which) - 1
         else:
             index = next((i for i, n in enumerate(names) if n.lower() == which.lower()), -1)
@@ -617,7 +618,7 @@ def picture(data: bytes, which: str = "") -> Image.Image:
                 _row(draw, [text], [width], x, y, row_h, font, colour, scale)
             x += width
         y += row_h
-    return image
+    return index + 1, image
 
 
 def _colour(color: Any) -> RGB | None:

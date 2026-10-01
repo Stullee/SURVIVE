@@ -13,6 +13,7 @@ with ``Jail.write_bytes``. Every problem the agent can fix comes back as a Produ
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 
@@ -184,7 +185,7 @@ def spreadsheet(jail: Jail, source: str, output: str) -> Made:
 def _pictures(jail: Jail, pages: str, height: int) -> tuple[list[images.Image.Image], list[str]]:
     """The pages to show, separated by commas: 'shop/cv.pdf#2' (a PDF page; '#1' when left out), 'shop/b.xlsx#2' or
     'shop/b.xlsx#Budget' (0.14.0: a sheet, by number or name; the first when left out) or a PNG or JPEG, each with an
-    optional region to zoom in on ('@top', 0.14.0); and each as one way of writing it (what the photo shows)."""
+    optional region to zoom in on ('@top', 0.14.0); and what each shows, whatever its name (for the photo's note)."""
     refs = [ref.strip() for ref in pages.split(",") if ref.strip()]
     if not 1 <= len(refs) <= MAX_LISTING_PAGES:
         raise ProductError(f"pages must name 1 to {MAX_LISTING_PAGES} pages, separated by commas")
@@ -205,21 +206,24 @@ def _pictures(jail: Jail, pages: str, height: int) -> tuple[list[images.Image.Im
         region = images.REGIONS.get(name, images.FULL)
         if part and kind in ("png", "jpg"):
             raise ProductError(f"{ref}: a picture has no pages; name it alone ('{path}')")
-        if part and kind == "pdf" and not part.isdigit():
+        if part and kind == "pdf" and not re.fullmatch(r"[0-9]{1,4}", part):
             raise ProductError(f"{ref}: a PDF's page is a number ('{path}#2')")
-        keys.append(f"{path}#{part.strip().lower() or 1}@{name or 'all'}")
         if path not in files:
             files[path] = jail.read_bytes(path)
+        number = int(part or 1) if kind == "pdf" else 1
         try:
             if kind == "pdf":
-                shown.extend(images.pdf_pages(files[path], [int(part or 1)], height=height, region=region))
+                shown.extend(images.pdf_pages(files[path], [number], height=height, region=region))
             elif kind == "xlsx":
-                shown.append(images.cropped(sheets.picture(files[path], part.strip()), region))
+                number, picture = sheets.picture(files[path], part.strip())
+                shown.append(images.cropped(picture, region))
             else:
                 picture = images.open_png(files[path], longest=2 * height)
                 shown.append(images.cropped(picture, region))
         except (images.ImageError, sheets.SheetError, checks.Refused) as exc:
             raise ProductError(f"{ref}: {exc}") from None
+        # what it shows, however it is named: the file's content (a copy is the same file), the page or sheet's number
+        keys.append(f"{hashlib.sha256(files[path]).hexdigest()}#{number}@{name or 'all'}")
     return shown, keys
 
 

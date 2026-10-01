@@ -64,12 +64,15 @@ def distinct(photos: Sequence[Upload], looks: Sequence[str] | None = None) -> in
 
 
 def _alike(one: str, other: str) -> bool:
-    """Two looks ('mark.hash'): the same things shown, or nearly the same pixels. Two photos make_image noted as
-    showing different things differ, however alike their pixels (titles alone on the same colours)."""
+    """Two looks ('mark.hash'): the same things shown, or nearly the same pixels. Two text photos or posters
+    make_image noted as showing different words differ, however alike their pixels (titles alone on the same colours).
+    0.14.0: other photos are compared by their pixels too (a page under another name or title is no new photo)."""
     one_mark, _, one_bits = one.rpartition(".")
     other_mark, _, other_bits = other.rpartition(".")
-    if one_mark and other_mark:
-        return one_mark == other_mark
+    if one_mark and one_mark == other_mark:
+        return True
+    if one_mark and other_mark and not one_mark.startswith("photo-") and not other_mark.startswith("photo-"):
+        return False
     try:
         return len(one_bits) == len(other_bits) and (int(one_bits, 16) ^ int(other_bits, 16)).bit_count() < ALIKE_BITS
     except ValueError:

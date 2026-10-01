@@ -145,8 +145,9 @@ def cropped(image: Image.Image, where: tuple[float, float, float, float]) -> Ima
 
 def marked(data: bytes, shows: str) -> bytes:
     """0.14.0: a PNG with a note of what it shows (a hash of ``shows``, no file names) after its header: two photos of
-    the same page with other words on them are the same photo to a buyer."""
-    chunk = b"tEXt" + MARK.encode() + b"\0" + hashlib.sha256(shows.encode()).hexdigest()[:16].encode()
+    the same page with other words on them are the same photo to a buyer. The note starts with the layout ('photo-')."""
+    note = f"{shows.partition(':')[0]}-{hashlib.sha256(shows.encode()).hexdigest()[:16]}"
+    chunk = b"tEXt" + MARK.encode() + b"\0" + note.encode()
     return data[:33] + struct.pack(">I", len(chunk) - 4) + chunk + struct.pack(">I", zlib.crc32(chunk)) + data[33:]
 
 

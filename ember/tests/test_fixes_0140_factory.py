@@ -260,6 +260,46 @@ def test_text_photos_with_other_words_are_other_photos(tmp_path: Path) -> None:
     assert qa.repeats(photos, looks) == ["shop/again.png repeats shop/t0.png"]
 
 
+def test_one_page_under_other_names_is_one_photo(tmp_path: Path) -> None:
+    ws = jail(tmp_path)
+    a_cv(ws)
+    three_sheets(ws)
+    make.spreadsheet(ws, "b.json", "shop/b.xlsx")
+    ws.write_bytes("shop/cv-b.pdf", ws.read_bytes("shop/cv.pdf"))  # what workspace_write's copy makes
+    refs = ["shop/cv.pdf#1", "shop/cv.pdf#01", "shop/cv.pdf#0001", "shop/cv-b.pdf#1", "shop/cv.pdf"]
+    refs += ["shop/b.xlsx#Costs", "shop/b.xlsx#COSTS", "shop/b.xlsx#3"]
+    names = []
+    for number, ref in enumerate(refs):
+        make.image(ws, f"shop/n{number}.png", ref, f"Title {number}", badge="Instant download")
+        names.append(f"shop/n{number}.png")
+    photos = uploads(ws, names)
+    looks = images.looks(ws.read_bytes, [(u.path, u.sha256) for u in photos])
+    assert qa.distinct(photos, looks) == 2
+    # Another make_image photo of the same page that its note doesn't match (a PDF made again) looks the same.
+    marks = {look.rpartition(".")[0] for look in looks}
+    assert len(marks) == 2 and all(mark.startswith("photo-") for mark in marks)
+    renoted = Image.open(io.BytesIO(ws.read_bytes(names[0])))
+    out = io.BytesIO()
+    renoted.save(out, "PNG")
+    ws.write_bytes("shop/again.png", images.marked(out.getvalue(), "photo:another"))
+    again = (photos[0], *uploads(ws, ["shop/again.png"]))
+    assert qa.repeats(again, images.looks(ws.read_bytes, [(u.path, u.sha256) for u in again])) == [
+        "shop/again.png repeats shop/n0.png"
+    ]
+
+
+@pytest.mark.parametrize("page", ["\u00b2", "\u0661", "1.0"])
+def test_a_page_in_other_digits_is_refused_clearly(tmp_path: Path, page: str) -> None:
+    ws = jail(tmp_path)
+    a_cv(ws)
+    three_sheets(ws)
+    make.spreadsheet(ws, "b.json", "shop/b.xlsx")
+    with pytest.raises(make.ProductError, match="a PDF's page is a number"):
+        make.image(ws, "shop/x.png", f"shop/cv.pdf#{page}", "T")
+    with pytest.raises(make.ProductError, match="the workbook has no sheet"):
+        make.image(ws, "shop/x.png", f"shop/b.xlsx#{page}", "T")
+
+
 def test_copies_of_one_photo_are_no_qa_fix_and_leave_the_listing_short(data_dir: Path) -> None:
     from app.integrations import etsy_publisher
     from tests.test_policy import a_milestone, change, reject, work_on
