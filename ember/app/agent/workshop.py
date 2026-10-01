@@ -349,9 +349,11 @@ def report(run: Run, wrap: Any) -> tuple[bool, str, str]:
         lines.append("Not kept: " + "; ".join(f"{name}: {why}" for name, why in run.refused) + ".")
     if run.failure:
         lines.append(f"Problem: {run.failure}.")
-    elif run.kept and not made(run):
-        back = {PurePosixPath(path).name for path, _ in run.kept}
-        lost = [n for n in dict.fromkeys(_NAMED.findall(run.answer)) if PurePosixPath(n).name not in back][:5]
+    elif run.kept and not made(run) and not run.refused:
+        # A refused file came back: the "Not kept" line says why, so no advice to run it again.
+        known = {PurePosixPath(n).name for n in [*(path for path, _ in run.kept), *run.inputs]}
+        named = dict.fromkeys(PurePosixPath(n).name for n in _NAMED.findall(run.answer))
+        lost = [n for n in named if n not in known][:5]
         lines.append(
             "Only the script came back"
             + (f" ({', '.join(lost)} didn't)" if lost else "")

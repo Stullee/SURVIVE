@@ -877,7 +877,9 @@ no longer shown); a study that failed three times stops until you press
   passed. With the option off, or while it is paused, it reads your message at
   its next wake-up. Your reply also marks its earlier messages read; while
   five of its messages are unread, it can't write to you, and it sends at most
-  two messages a day that answer none of yours (Ember's code counts them). A
+  two messages a day that answer none of yours (Ember's code counts them),
+  plus one per promise that reports it kept (naming its #number) so it can
+  close it. A
   message that promises something shows the promise under it, and whether it
   was kept. Never send
   passwords: messages are stored and sent to Anthropic, and the agent can't log
@@ -1427,7 +1429,8 @@ The report is **shareable** by default: it leaves out other people's text (the
 emails the agent read, the web pages it researched and the emails it wrote to
 others, with their subjects and senders' names wherever they are quoted), and
 keeps only their length. Every email address is masked (`[email 1]`, and
-`[Ember's address]`), and so are one-time codes (`[masked]`), the tokens in
+`[Ember's address]`), and so are one-time codes (`[masked]`; in a table, only
+when the code word is in the same cell), the tokens in
 links (`https://example.com/verify?[…]`) and the words you removed from your
 messages (`[removed]`, see below). It never contains the API key, the mailbox
 password, Etsy's keystring, secret or tokens, or an email's text. It does hold
@@ -1545,8 +1548,8 @@ calls in a row that didn't need it. The dashboard lists them with **Reset
 estimates**, for when you know why it happened (a price you corrected, say).
 A call whose bill is uncertain (the connection or the answer broke off) is
 charged to the balance at its worst case until you correct it, but counts
-toward the caps only with what it is known to cost. A server error before the
-answer began costs nothing.
+toward the caps only with what it is known to cost. A 500, 502, 503, 504 or 529
+error before the answer began costs nothing.
 As an outside safety net, give Ember its own
 [Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
 API key and set a monthly spend limit there.

@@ -332,15 +332,20 @@ def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
     made = products(conn, scope, limit)
     if not made:  # 0.14.0: it said one waited for the owner's decision when none was proposed
         clause, params = scope.where()
-        waiting, approved = conn.execute(
+        waiting, approved, closed = conn.execute(
             f"SELECT COUNT(*) FILTER (WHERE status = 'pending'), COUNT(*) FILTER (WHERE status IN {APPROVED}"
-            " AND NOT EXISTS (SELECT 1 FROM printify_products p WHERE p.approval_id = approvals.id))"
+            " AND NOT EXISTS (SELECT 1 FROM printify_products p WHERE p.approval_id = approvals.id)),"
+            " COUNT(*) FILTER (WHERE status IN ('rejected', 'withdrawn', 'expired'))"
             f" FROM approvals WHERE {clause} AND executor = 'printify_product'",
             params,
         ).fetchone()
         if not waiting and not approved:
+            if closed:
+                return f"No product of yours yet, and none waiting ({closed} rejected, withdrawn or expired)."
             return "No product of yours yet, and none proposed yet."
         parts = [f"{approved} approved, not created yet"] if approved else []
+        if closed:
+            parts.append(f"{closed} rejected, withdrawn or expired")
         if waiting:
             parts.append(
                 f"{waiting} {'proposals wait' if waiting != 1 else 'proposal waits'} for your owner's decision"

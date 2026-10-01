@@ -31,7 +31,7 @@ MIN_PRICE = 0.000001
 # 0.13.0: the website's address (https, a host and at most a path: no query, no fragment) and its email address.
 # 0.14.0: the path names a folder, not a file: its last part has no dot (a home page's index.html is taken off).
 _SITE_URL = re.compile(
-    r"^https://[A-Za-z0-9.-]{1,190}(?::\d{1,5})?(?:/(?:[A-Za-z0-9._~-]*/)*(?:[A-Za-z0-9_~-]*|index\.html?))?$"
+    r"^https://[A-Za-z0-9.-]{1,190}(?::\d{1,5})?(?:/(?:[A-Za-z0-9._~-]*/)*(?:[A-Za-z0-9_~-]*|(?i:index\.html?)))?$"
 )
 _SITE_EMAIL = re.compile(r"^[^@\s<>\"']{1,64}@[^@\s<>\"']{1,190}\.[A-Za-z]{2,63}$")
 

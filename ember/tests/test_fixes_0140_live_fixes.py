@@ -41,6 +41,7 @@ def test_a_home_page_file_in_site_url_is_taken_off_the_address() -> None:
     who = website.owner(settings)
     assert who.url == "https://ember-ai.de" == website.address(settings)
     assert website.address(Settings(site_url="https://example.org/shop/index.htm")) == "https://example.org/shop"
+    assert website.address(Settings(site_url="https://example.org/INDEX.HTML")) == "https://example.org"
     files = site.build([home(), site.check("bewerbungs-tracker", "Tracker", "A tracker.", "Text.\n")], who)
     assert (
         b'<link rel="canonical" href="https://ember-ai.de/bewerbungs-tracker.html">' in files["bewerbungs-tracker.html"]
@@ -74,11 +75,31 @@ def test_a_workshop_run_with_only_its_script_back_is_not_ok() -> None:
     )
     ok, text, summary = workshop.report(run_, lambda source, body: body)
     assert not ok and workshop.made(run_) == []
-    assert "Only the script came back (shop/posters/bauhaus_geometric_no1.png, preview.png didn't)" in text
+    assert "Only the script came back (bauhaus_geometric_no1.png, preview.png didn't)" in text
     assert "every file must be saved into $OUTPUT_DIR" in text and summary.endswith("only its script")
     run_.kept.append(("workshop/out/poster.png", 150_000))
     ok, text, _ = workshop.report(run_, lambda source, body: body)
     assert ok and "Only the script" not in text
+
+
+def test_a_refused_file_is_not_reported_as_lost() -> None:
+    script = "workshop/scripts/x-1.py"
+    run_ = workshop.Run(
+        task="Render a poster",
+        script_used=None,
+        inputs=["workshop/in/logo.png"],
+        kept=[(script, 900)],
+        refused=[("poster.png", "larger than 40 MP")],
+        script_path=script,
+        answer="Used logo.png. Saved poster.png to $OUTPUT_DIR/poster.png",
+        cost=890_000,
+    )
+    ok, text, _ = workshop.report(run_, lambda source, body: body)
+    assert not ok and "Not kept: poster.png: larger than 40 MP." in text and "Only the script" not in text
+    run_.refused.clear()
+    run_.answer += " and $OUTPUT_DIR/thumb.png, thumb.png"
+    _, text, _ = workshop.report(run_, lambda source, body: body)
+    assert "Only the script came back (poster.png, thumb.png didn't)" in text  # names, once each; no input
 
 
 def test_the_task_says_files_go_into_the_output_folder() -> None:
@@ -98,7 +119,12 @@ def test_printify_says_whether_a_proposal_waits(data_dir: Path) -> None:
     with agent.db.transaction() as conn:
         conn.execute("UPDATE approvals SET status = 'withdrawn' WHERE executor = 'printify_product'")
     with agent.db.connection() as conn:
-        assert printify_publisher.text(conn, agent.scope()) == "No product of yours yet, and none proposed yet."
+        assert printify_publisher.text(conn, agent.scope()) == (
+            "No product of yours yet, and none waiting (1 rejected, withdrawn or expired)."
+        )
+    fresh, _ = make_agent(data_dir / "fresh", [])
+    with fresh.db.connection() as conn:
+        assert printify_publisher.text(conn, fresh.scope()) == "No product of yours yet, and none proposed yet."
 
 
 def test_printify_says_an_approved_product_is_not_created_yet(data_dir: Path) -> None:
@@ -189,6 +215,7 @@ def test_a_number_in_the_next_cell_is_not_a_code() -> None:
     row = "9 | 55 | ok | 893929 | - | workshop/scripts/verify-and-fix-the-9.py | Verify and fix the existing file"
     assert privacy.Masker()(row) == row
     assert privacy.Masker()("Your verification code | is 483920") == "Your verification code | is 483920"
+    assert privacy.Masker()("| Verification code | 483920 |") == "| Verification code | 483920 |"  # DOCS says so
     assert privacy.Masker()("Your verification code is 483920") == f"Your verification code is {privacy.CODE}"
 
 
