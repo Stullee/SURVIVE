@@ -319,11 +319,18 @@ def listings(
         f" LEFT JOIN projects p ON p.id = COALESCE(a.project_id, y.project_id) WHERE {where}"
         " AND l.listing_id IS NOT NULL ORDER BY l.id"
     )
-    mine = "p.id AS for_project, COALESCE(p.venture_id, y.venture_id) AS for_venture"
-    rows = conn.execute(f"SELECT l.*, 0 AS printify, {mine} FROM etsy_listings l{joins}", params).fetchall()
+    # 0.14.0: a listing of a product line with no venture (a closed one the upgrade couldn't link) counts for its
+    # channel's venture, as ventures.adopt would link it: the Etsy leg, or the print-on-demand venture.
+    mine = (
+        "p.id AS for_project, COALESCE(p.venture_id, y.venture_id, (SELECT v.id FROM ventures v WHERE"
+        " v.mode = l.mode AND v.session = l.session AND v.stage NOT IN ('parked', 'killed') AND {leg}"
+        " ORDER BY v.id LIMIT 1)) AS for_venture"
+    )
+    etsy_leg = mine.format(leg="v.parent_id IS NULL AND v.title = '{}'".format(ventures.ETSY_LEG.replace("'", "''")))
+    rows = conn.execute(f"SELECT l.*, 0 AS printify, {etsy_leg} FROM etsy_listings l{joins}", params).fetchall()
     rows += conn.execute(
         "SELECT l.id, l.approval_id, l.listing_id, l.title, l.status, l.state, l.views, l.favorites, l.synced_at,"
-        f" 1 AS printify, {mine} FROM printify_products l{joins}",
+        f" 1 AS printify, {mine.format(leg="v.channel = 'printify'")} FROM printify_products l{joins}",
         params,
     ).fetchall()
     if project_id:

@@ -758,3 +758,112 @@ def test_the_migration_keeps_the_catalog_adds_order_tax_and_links_product_lines(
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("UPDATE printify_orders SET tax_cents = -1")
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+# --- review round 2 --------------------------------------------------------------------------------------------------
+
+
+def test_a_printify_only_line_that_misses_day_7_is_owed_what_it_can_do(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    pod = venture_titled(agent, "Print on demand in the Etsy shop")
+    project = pod_line(agent, pod)
+    shop_line = project_of(agent, rows(agent, "SELECT id FROM approvals WHERE executor = 'etsy_listing'")[0]["id"])
+    scope, now = agent.scope(), to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        gates.keep(conn, scope, agent.clock.today(), now)
+        [bar] = gates.started(conn, scope)[project]
+        said = gates._owe(conn, scope, bar, gates.BY_KEY["day7_views"], "Posters", now)
+        assert gates._printify_only(conn, scope, project) and not gates._printify_only(conn, scope, shop_line)
+    # propose_etsy_edit refuses the listings Printify made: the obligation names what the agent can do.
+    [what] = [
+        r["what"] for r in rows(agent, f"SELECT what FROM obligations WHERE milestone_id = {bar['milestone_id']}")
+    ]
+    assert "message_owner" in what and "propose_etsy_edit" not in what
+    assert said.startswith("Obligation: ask your owner once")
+
+
+def test_a_closed_line_s_printify_listing_still_counts_for_the_print_on_demand_venture(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    pod = venture_titled(agent, "Print on demand in the Etsy shop")
+    project = pod_line(agent, None)
+    with agent.db.transaction() as conn:  # closed: the upgrade can't link it (a closed project is final)
+        conn.execute(f"UPDATE projects SET status = 'succeeded' WHERE id = {project}")
+    with agent.db.connection() as conn:
+        assert [r["listing_id"] for r in metrics.listings(conn, agent.scope(), None, pod)] == [800_000_123]
+        assert stages.sold(conn, agent.scope(), pod, ventures.Money())
+
+
+def test_an_active_printify_listing_means_ember_earns_somewhere(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE etsy_listings SET status = 'draft'")
+    with agent.db.connection() as conn:
+        assert not tools._earning(conn, agent.scope())
+    pod_line(agent, None)
+    with agent.db.connection() as conn:
+        assert tools._earning(conn, agent.scope())
+
+
+def test_the_approval_card_names_etsy_s_fees_and_offsite_ads(data_dir: Path) -> None:
+    agent, _, request = proposed(data_dir)
+    [row] = rows(agent, f"SELECT * FROM approvals WHERE id = {request}")
+    assert "Etsy's fees counted: the 0.20 USD listing fee, 6.5%, 4% + 0.30 for payments" in row["payload"]
+    assert "Not counted: Offsite Ads" in row["payload"]
+    with agent.db.connection() as conn:
+        assert never.reasons(conn, row) == ["first_publication"]
+
+
+def test_a_stale_product_whose_prices_were_never_checked_isn_t_said_to_be_publishable(data_dir: Path) -> None:
+    agent, request = approved(data_dir)
+
+    def crash(product: Any, costs: Any) -> Any:
+        raise RuntimeError("the app stopped")
+
+    agent.pod._margins = crash  # made at Printify, then nothing checked its prices
+    assert agent.execute_approved() == [(request, "unclear")]
+    agent.clock.advance(hours=printify_publisher.PUBLISH_HOURS)
+    agent.pod.sync(force=True)
+    [made] = made_rows(agent)
+    assert (made["status"], made["error"]) == ("failed", printify_publisher.STALE)
+    [why] = [e for e in events(agent) if printify_publisher.STALE in e]
+    assert "never checked against the margin: Undo deletes it" in why and "and publish it" not in why
+
+
+def test_a_stale_product_gone_at_printify_offers_no_undo(data_dir: Path) -> None:
+    agent, request = approved(data_dir)
+    account = agent.printify.account()
+    account.publish = lambda shop, product_id: None  # accepted, but no Etsy listing comes
+    assert agent.execute_approved() == [(request, "publishing")]
+    agent.clock.advance(hours=printify_publisher.PUBLISH_HOURS)
+    agent.pod.sync(force=True)
+    [product_id] = list(account.state["products"])
+    account.delete(4242, product_id)  # the owner deleted it at Printify
+    agent.pod.sync(force=True)
+    [made] = made_rows(agent)
+    assert (made["status"], made["error"]) == ("deleted", printify_publisher.STALE)
+    entry = next(e for e in agent.dashboard()["audit"]["feed"] if e["class"] == "printify.create_product")
+    assert entry["undo"]["why_not"] == "the product isn't at Printify anymore"
+
+
+def test_printify_s_bill_is_recorded_with_the_revenue_option(data_dir: Path) -> None:
+    agent, request = approved(data_dir)
+    agent.execute_approved()
+    account = agent.printify.account()
+    [product_id] = list(account.state["products"])
+    account.sell(product_id)
+    account.state["orders"][0]["tax_cents"] = 236
+    assert agent.pod.sync(force=True) is None
+    scope = agent.scope()
+    off = agent.settings.model_copy(update={"etsy_auto_record_revenue": False})
+    assert printify_publisher.record_costs(agent.db, agent.clock, agent.economy, scope, off) == []
+    on = agent.settings.model_copy(update={"etsy_auto_record_revenue": True, "etsy_usd_per_eur": 1.10})
+    agent._etsy_numbers(scope, on)  # after each Etsy sync, with the orders' revenue
+    project = project_of(agent, request)
+    venture = rows(agent, f"SELECT venture_id FROM projects WHERE id = {project}")[0]["venture_id"]
+    [entry] = rows(agent, "SELECT * FROM ledger WHERE source LIKE 'Printify order %'")
+    assert (entry["type"], entry["project_id"], entry["venture_id"]) == ("expense", project, venture)
+    assert (entry["orig_amount"], entry["orig_currency"], entry["simulated"]) == ("14.76", "EUR", 1)
+    assert entry["amount_micros"] == 16_240_000  # 14.76 EUR at 1.10
+    [order] = agent.integrations()["printify"]["orders"]
+    assert order["recorded"] and order["key"] == entry["idempotency_key"]
+    assert printify_publisher.record_costs(agent.db, agent.clock, agent.economy, scope, on) == []  # once

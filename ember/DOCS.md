@@ -70,7 +70,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Etsy listings per day | 3 | The most listings Ember creates in one day (0 to 20). |
 | Keep a history of the listings' numbers | off | A daily record of each listing's views and favorites, so the plans see how each changed. Turn it on only once you have confirmed that Etsy's API terms allow it (see [What Ember sees](#what-ember-sees)). |
 | Renew listings that sell | on | Once a listing has sold, Ember turns on Etsy's automatic renewal for it (USD 0.20 every four months), once per listing (see [How a listing is made](#how-a-listing-is-made)). |
-| Record Etsy revenue automatically | off | At each Etsy sync, Ember's code records the revenue of paid orders with Ember's listings placed from the day you turn it on, Etsy's fees on them and their refunds in the ledger, instead of you (see [What Ember sees](#what-ember-sees)). |
+| Record Etsy revenue automatically | off | At each Etsy sync, Ember's code records the revenue of paid orders with Ember's listings placed from the day you turn it on, Etsy's fees on them and their refunds in the ledger, instead of you, and what Printify bills for its orders (see [What Ember sees](#what-ember-sees)). |
 | Exchange rate for Etsy revenue | 0 | USD per 1 EUR for orders in EUR recorded automatically (0.5 to 3; 0: orders in EUR stay yours to record). |
 | Etsy market probe for demand notes | off | A demand note also reads Etsy's search of active listings for its keywords, keeping only how many match and their price quartiles. Turn it on only once you have confirmed that Etsy's API terms allow this use (see [How a listing is made](#how-a-listing-is-made)). |
 | Pinterest | off | Lets the agent propose pins that bring buyers to your Etsy listings, which Ember makes on your Pinterest account after you approve them. See [Pinterest](#pinterest). |
@@ -666,7 +666,8 @@ at most two open milestones), each a milestone it checks from Etsy's own numbers
 | 21 | a first order | stopping building that product type |
 
 A miss is an obligation with that action, shown first in the agent's plan
-until it is done. A first order by day 21 sets a decision point of its own:
+until it is done. Ember can't edit the listings Printify made, so a product
+line live only through Printify owes asking you once to fix them at day 7. A first order by day 21 sets a decision point of its own:
 **Scale it: 5 variants or a bundle**, which the agent closes when they are
 live. The test's dates never move and only you drop its milestones; a project
 that is closed takes its open ones with it. Existing product lines get theirs
@@ -1358,7 +1359,10 @@ it made and what their orders cost you.
   Printify orders of its products: what making and shipping each one costs
   you, with the tax Printify bills. **Record the cost** on an order opens the
   expense form filled in, for the product's project and venture (it can be
-  recorded once). The sale itself is an order in your Etsy shop: its revenue,
+  recorded once). With **Record Etsy revenue automatically** on, Ember's code
+  records that cost itself at each Etsy sync, for orders from the day you
+  turned it on (EUR at your exchange rate). A cancelled order's cost recorded
+  before is yours to correct. The sale itself is an order in your Etsy shop: its revenue,
   with the shipping the buyer paid, is recorded as for any listing of Ember's.
 - The agent's plan shows each product with what its prices keep and the orders
   (PRINTIFY); the metrics `pod_products_live` (products whose listing is live

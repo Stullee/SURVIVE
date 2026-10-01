@@ -256,6 +256,12 @@ class Terms:
 
 
 DEFAULT_TERMS = Terms()
+# 0.14.0: Etsy's fees the check counts, for the approval card (econ's fee table); Offsite Ads aren't counted
+FEES_SAID = (
+    f"Etsy's fees counted: the {econ.LISTING_FEE_USD:.2f} USD listing fee, {econ.TRANSACTION_SHARE * 100:g}%, "
+    f"{econ.PROCESSING_SHARE * 100:g}% + {econ.PROCESSING_EUR:.2f} for payments, and {econ.FEE_VAT * 100:g}% on the "
+    "first two. Not counted: Offsite Ads (12-15% of a sale they bring)."
+)
 
 
 def terms(settings: Settings) -> Terms:
@@ -308,6 +314,7 @@ def payload(
         # 0.14.0: what the check assumes (no word the NEVER list reads as legal: the fee model is in the docs)
         f"Published only if each price keeps {MIN_MARGIN * 100:.0f}% after Etsy's fees, making and shipping "
         f"({sale.said()}).",
+        FEES_SAID,
         f"Title: {product.title}",
         f"Tags: {', '.join(product.tags)}",
         "",

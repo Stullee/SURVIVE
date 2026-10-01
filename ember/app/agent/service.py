@@ -241,6 +241,8 @@ class Agent:
         """0.12.0: the orders' revenue, Etsy's fees and refunds in the ledger after a sync, when the owner turned that
         on (etsy_revenue)."""
         etsy_revenue.record(self.db, self.clock, self.economy, scope, settings)
+        # 0.14.0: and Printify's bill for its orders, under the same option (as the Printify sync last read them)
+        printify_publisher.record_costs(self.db, self.clock, self.economy, scope, settings)
 
     def _rotate_dry_run_folders(self) -> None:
         session = str(self.economy.life.session())

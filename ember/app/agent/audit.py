@@ -190,7 +190,8 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
         ).fetchone()
         # 0.14.0: one that reached no Etsy listing (STALE) is still at Printify, to delete
         live = product is not None and (
-            product["status"] in printify_publisher.LIVE or product["error"] == printify_publisher.STALE
+            product["status"] in printify_publisher.LIVE
+            or (product["status"] == "failed" and product["error"] == printify_publisher.STALE)
         )
         return None if live else "the product isn't at Printify anymore"
     later = conn.execute(

@@ -44,6 +44,11 @@ class Gate:
     missed: str  # what the agent owes when it is missed
 
 
+# 0.14.0: a product line live only through Printify can't use propose_etsy_edit (it edits Ember's own listings)
+PRINTIFY_FIX = (
+    "ask your owner once (message_owner) to fix the titles, tags and category of its Printify listings, with yours,"
+    " then let them run"
+)
 PARK = "park the product line (its project) with the numbers, unless your owner says otherwise"
 GATES = (
     Gate(
@@ -178,16 +183,26 @@ def _next_bar(
 
 def _owe(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row, gate: Gate, project: str, now: str) -> str:
     """The obligation a missed bar leaves: its action, with the numbers."""
+    missed = gate.missed
+    if gate.key == "day7_views" and _printify_only(conn, scope, int(row["project_id"])):
+        missed = PRINTIFY_FIX
     what = (
         f"milestone #{row['milestone_id']} {_title(gate.title, project)!r} was missed ({str(row['result'])[:160]}): "
-        f"{gate.missed}"
+        f"{missed}"
     )
     conn.execute(
         "INSERT INTO obligations (mode, session, kind, what, due, created_at, milestone_id)"
         " VALUES (?, ?, 'miss', ?, ?, ?, ?)",
         (scope.mode, scope.session, what[:400], now[:10], now, row["milestone_id"]),
     )
-    return f"Obligation: {gate.missed.split(':')[0]} (project #{row['project_id']}, milestone #{row['milestone_id']})"
+    return f"Obligation: {missed.split(':')[0]} (project #{row['project_id']}, milestone #{row['milestone_id']})"
+
+
+def _printify_only(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> bool:
+    """Whether a product line's live listings are all ones Printify made (0.14.0)."""
+    rows = etsy_publisher.live_rows(metrics.listings(conn, scope, None, None), {})
+    mine = [r for r in rows if r["for_project"] and int(r["for_project"]) == project_id]
+    return bool(mine) and all(r["printify"] for r in mine)
 
 
 def _scale(

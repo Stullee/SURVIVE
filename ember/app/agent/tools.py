@@ -1770,10 +1770,15 @@ def project_net(conn: Any, scope: AgentScope, project_id: int) -> tuple[int, int
 
 
 def _earning(conn: Any, scope: AgentScope) -> bool:
-    """Whether Ember already earns somewhere (0.12.0): an active Etsy listing, or revenue its owner recorded (the
-    live scope counts real money only). What a venture created as live needs."""
+    """Whether Ember already earns somewhere (0.12.0): an active Etsy listing (0.14.0: or one Printify made), or
+    revenue its owner recorded (the live scope counts real money only). What a venture created as live needs."""
     where, params = scope.where()
     if conn.execute(f"SELECT 1 FROM etsy_listings WHERE {where} AND status = 'active' LIMIT 1", params).fetchone():
+        return True
+    if conn.execute(
+        f"SELECT 1 FROM printify_products WHERE {where} AND status = 'active' AND listing_id IS NOT NULL LIMIT 1",
+        params,
+    ).fetchone():
         return True
     simulated = "" if scope.simulated else " AND simulated = 0"
     revenue = conn.execute(f"SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type = 'revenue'{simulated}")

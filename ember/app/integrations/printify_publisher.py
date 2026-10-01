@@ -32,7 +32,8 @@ import threading
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import timedelta
-from typing import Any
+from decimal import Decimal
+from typing import TYPE_CHECKING, Any
 
 from PIL import Image
 
@@ -42,6 +43,8 @@ from ..agent.store import AgentScope
 from ..config import Settings
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
+from ..economy.costs import micros_to_usd
+from ..economy.ledger import PreparedEntry
 from ..products import images
 from . import connectors, etsy
 from .printify import (
@@ -66,6 +69,9 @@ from .printify import (
     terms,
 )
 
+if TYPE_CHECKING:
+    from ..economy.service import Economy
+
 log = logging.getLogger(__name__)
 
 APPROVED = "('approved', 'approved_with_changes')"
@@ -89,6 +95,7 @@ PROBE_DAYS = 1
 _PROBING = threading.Lock()  # a probe, and the sync's cleaning up after one, one at a time
 SHOWN = 10  # blueprints a catalog search shows
 CANCELED = "('canceled', 'cancelled')"  # an order's status that doesn't count (SQL)
+ORDERS_KEPT = 200  # 0.14.0: the newest orders whose cost Ember's code records (etsy_auto_record_revenue)
 
 
 def meta_key(mode: str, name: str) -> str:
@@ -476,6 +483,67 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
     return found
 
 
+COST_NOTE = "Printify: making, shipping and tax of order {order} ({titles})"  # as the owner's button says
+
+
+def record_costs(db: Database, clock: Clock, economy: Economy, scope: AgentScope, settings: Settings) -> list[int]:
+    """0.14.0: Printify's bill for each order of Ember's products in the ledger, under its product's project and
+    venture, when the owner turned on etsy_auto_record_revenue (as its sale's revenue is recorded): orders from the
+    day it was turned on, not cancelled, that nobody recorded yet. An order in EUR needs the owner's exchange rate;
+    other currencies stay the owner's. An entry that would kill the agent or leave it unfunded waits for the owner,
+    who is told once. Returns the entries recorded."""
+    if not settings.etsy_auto_record_revenue:
+        return []
+    from . import etsy_revenue  # here: it imports etsy_publisher, which imports this module
+
+    since = db.get_meta(etsy_revenue.SINCE_KEY) or clock.today().isoformat()
+    rate = Decimal(str(settings.etsy_usd_per_eur)) if settings.etsy_usd_per_eur else None
+    with db.connection() as conn:
+        orders = [o for o in orders_json(conn, scope, ORDERS_KEPT) if not o["recorded"] and o["cost_cents"] > 0]
+    recorded: list[int] = []
+    for order in orders:
+        amount = etsy_revenue._usd(order["cost_cents"], str(order["currency"]), rate)
+        if str(order["status"]).lower() in ("canceled", "cancelled") or amount is None:
+            continue
+        try:
+            if clock.local_day(order["created_at"]).isoformat() < since:
+                continue  # from before it was turned on: the owner's
+        except ValueError:
+            continue
+        micros, euros, fx = amount
+        prepared = PreparedEntry(
+            type="expense",
+            amount_micros=micros,
+            simulated=scope.mode == "dry_run",
+            source=f"Printify order {order['order_id']}",
+            note=COST_NOTE.format(order=order["order_id"], titles=order["titles"][:80]),
+            occurred_on=etsy_revenue._day(clock, order["created_at"]),
+            day_given=True,
+            idempotency_key=order["key"],
+            orig_amount=euros,
+            orig_currency="EUR" if euros is not None else None,
+            fx_rate=fx,
+            project_id=order["project_id"],
+            venture_id=order["venture_id"],
+            created_by="etsy",  # the shop's numbers: the ledger knows no other integration
+        )
+        result = economy.record_integration(prepared)
+        if result.entry_id is not None:
+            recorded.append(result.entry_id)
+        elif result.held is not None and not db.get_meta(etsy_revenue.HELD_KEY + prepared.idempotency_key):
+            db.set_meta(etsy_revenue.HELD_KEY + prepared.idempotency_key, result.held)
+            state = "kill the agent" if result.held == "dead" else "leave the agent without money to run"
+            events.record(
+                db,
+                "warning",
+                "ledger",
+                f"Ember's code did not record the cost of Printify order {order['order_id']}"
+                f" (${micros_to_usd(micros):.2f}): it would {state}. Record it yourself when you decide: Printify"
+                " card, Record the cost.",
+            )
+    return recorded
+
+
 def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
     """Ember's products in the shop now, and the orders of its products in all (the metrics pod_products_live and
     pod_orders): Printify's records at the last sync."""
@@ -665,6 +733,7 @@ class Publisher:
             connectors.begin(conn, approval_id, stamp)
         # Committed: from here on this product is never made a second time, whatever happens.
         made = None
+        prices: list[list[int]] | None = None  # 0.14.0: kept on an unclear publish: its prices were checked
         try:
             image_id = account.upload(product.image.path.rsplit("/", 1)[-1], data)
             made = account.create(shop, product, image_id)
@@ -686,7 +755,7 @@ class Publisher:
             if not isinstance(exc, PrintifyError):
                 log.exception("Creating the product of request #%d failed", approval_id)
             note = f"It is unclear what Printify made ({error}). Ember won't try again; check your Printify products."
-            return self._after(approval_id, "unclear", made.product_id if made else None, None, None, note, error)
+            return self._after(approval_id, "unclear", made.product_id if made else None, None, prices, note, error)
         listing_id = None
         try:
             listing_id = account.product(shop, made.product_id).listing_id  # known at once only sometimes
@@ -909,8 +978,8 @@ class Publisher:
             where, params = scope.where()
             with self.db.connection() as conn:
                 mine = conn.execute(
-                    f"SELECT approval_id, product_id, status, currency, finished_at, error FROM printify_products"
-                    f" WHERE {where} AND product_id IS NOT NULL",
+                    "SELECT approval_id, product_id, status, currency, finished_at, error, prices"
+                    f" FROM printify_products WHERE {where} AND product_id IS NOT NULL",
                     params,
                 ).fetchall()
             error = None
@@ -979,10 +1048,11 @@ class Publisher:
             hours=PUBLISH_HOURS
         ):
             where = "published at Printify" if found.visible else "at Printify, unpublished"
-            why = (
-                f"{STALE} within {PUBLISH_HOURS} hours: product {row['product_id']} is {where}. Check it there "
-                "(Etsy may want a production partner) and publish it, or Undo deletes it"
-            )
+            if row["prices"]:
+                then = "Check it there (Etsy may want a production partner) and publish it, or Undo deletes it"
+            else:  # 0.14.0: the app stopped before its prices were checked: they may keep less than 15%
+                then = "Its prices were never checked against the margin: Undo deletes it"
+            why = f"{STALE} within {PUBLISH_HOURS} hours: product {row['product_id']} is {where}. {then}"
             with self.db.transaction() as conn:
                 conn.execute(
                     "UPDATE printify_products SET status = 'failed', error = ?, result = ? WHERE approval_id = ?",

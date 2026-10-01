@@ -258,8 +258,9 @@ configuration:
     description: >-
       On: at each Etsy sync, Ember's code records the revenue of paid orders
       of Ember's listings placed from the day you turn it on, Etsy's fees on
-      them and their refunds in the ledger (shown as made by Ember's code), so
-      its balance and goals see them without waiting for you. Off: you record
+      them, their refunds and what Printify bills for its orders in the ledger
+      (shown as made by Ember's code), so its balance and goals see them
+      without waiting for you. Off: you record
       them (System, Etsy). Entries you made stay yours.
   etsy_usd_per_eur:
     name: Exchange rate for Etsy revenue (USD per 1 EUR)
