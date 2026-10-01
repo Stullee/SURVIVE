@@ -570,8 +570,9 @@ from the upgrade, so none is parked at once. A venture parked this way says **Pa
 the reason in its notes; like one you parked, only you take it up again. Only
 you back or kill a venture: the database refuses it from anyone else. A venture
 that is parked or killed takes its open milestones with it (when the agent or
-Ember's code parked it, yours stay yours to drop), and the open bars of its
-product lines' listing tests, which ends those tests. Each card shows its stage's
+Ember's code parked it, yours stay yours to drop). When you or Ember's code
+park or kill it, the open bars of its product lines' listing tests go too, which
+ends those tests; the agent's own park leaves them open. Each card shows its stage's
 rule, and so does the agent's plan.
 
 **Add idea** puts your own idea into the tree, optionally as a branch of an
@@ -676,7 +677,8 @@ until it is done. A first order by day 21 sets a decision point of its own:
 **Scale it: 5 variants or a bundle**, which the agent closes when they are
 live. The test's dates never move, except that a bar opening on or after its
 day is due the day after it opens. Only you drop its milestones: your drop
-ends that product line's test, and so does parking its venture. A project that
+ends that product line's test, and so does your or Ember's code's park of its
+venture. A project that
 is closed takes its open ones with it. Existing product lines get theirs from
 the day this version first sees their listings live.
 

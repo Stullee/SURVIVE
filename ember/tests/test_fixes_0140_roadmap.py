@@ -382,6 +382,15 @@ def test_code_parks_a_venture_with_its_projects_bars(data_dir: Path) -> None:
     assert (bar["status"], bar["closed_by"]) == ("dropped", "code")
 
 
+def test_the_agents_park_leaves_its_projects_bars_open(data_dir: Path) -> None:
+    agent, project = started(data_dir)
+    moved = call(agent, "project_update", project_id=project, venture_id=DROPSHIPPING)
+    assert moved.ok, moved.text
+    parked = call(agent, "venture_update", venture_id=DROPSHIPPING, stage="parked", note="not now")
+    assert parked.ok, parked.text
+    assert bars(agent)["day7_views"]["status"] == "open"  # the agent can't end a listing test by a park
+
+
 # --- X14: the print-on-demand venture's prose first test becomes a first order ---
 
 
@@ -576,3 +585,26 @@ def test_a_goal_that_a_listing_is_live_hints_at_listings_live(data_dir: Path) ->
     assert live.ok and hint in live.text, live.text  # a hint, not a refusal
     other = call(agent, "milestone_plan", milestones=[dict(title="3 drafts", measure="3 drafts", due=day(agent, 7))])
     assert other.ok and hint not in other.text, other.text
+
+
+def test_a_goal_of_orders_hints_at_orders_observed(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    hint = "metric orders_observed (with project_id or venture_id) lets Ember's code count them"
+    for words in ("Get 3 orders on Etsy", "Make 5 sales on the shop"):
+        sold = call(agent, "milestone_plan", milestones=[dict(title=words, measure=words, due=day(agent, 7))])
+        assert sold.ok and hint in sold.text, sold.text  # a hint, not a refusal
+    pins = call(agent, "milestone_plan", milestones=[dict(title="3 sales from pins", measure="x", due=day(agent, 7))])
+    assert pins.ok and hint not in pins.text, pins.text
+
+
+def test_the_focus_says_who_confirms_a_first_test_and_what_a_drop_costs(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]))
+    test = create(
+        agent, title="First test", measure="3 replies", due=day(agent, 7), created_by="code", kind="first_test"
+    )
+    text = roadmap.focus_text(milestone(agent, test), agent.clock.today(), None)
+    assert "Measure met: send your owner the evidence; their drop confirms it." in text
+    goal = create(agent, title="Views", measure="10 views", due=day(agent, 7), metric="views_total", target=10)
+    assert "or drop it (why; your odds on it count as missed)" in roadmap.focus_text(
+        milestone(agent, goal), agent.clock.today(), None
+    )

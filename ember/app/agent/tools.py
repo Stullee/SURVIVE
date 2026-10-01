@@ -2240,6 +2240,7 @@ _ELSEWHERE = re.compile(
     r"\b(?:pins?|pinterest|website|site|blog|posts?|reddit|instagram|tiktok|youtube|videos?)\b", re.IGNORECASE
 )
 _LIVE = re.compile(r"\b(?:live|listed)\b", re.IGNORECASE)  # 0.14.0: "X live" goals, self-graded: a hint, not a refusal
+_SOLD = re.compile(r"\b\d+\s+(?:orders?|sales?)\b", re.IGNORECASE)  # 0.14.0: "3 sales" goals: a hint as well
 
 
 def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tuple[int, str]:
@@ -2330,6 +2331,11 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
     if checked is None and ctx.etsy is not None and _LIVE.search(words) and not _ELSEWHERE.search(words):
         close += (
             " If it means listings live on Etsy, metric listings_live (with project_id) lets Ember's code check it."
+        )
+    if checked is None and ctx.etsy is not None and _SOLD.search(words) and not _ELSEWHERE.search(words):
+        close += (
+            " If it means orders in the Etsy shop, metric orders_observed (with project_id or venture_id) lets "
+            "Ember's code count them."
         )
     instead = ""
     if replaces is not None:

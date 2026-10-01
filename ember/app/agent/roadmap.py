@@ -790,10 +790,15 @@ def focus_text(
         + _proposed(row),
         f"Measure of done: {_q(row['measure'])}",
         f"{checked}. It closes it done once met, missed if its date passes first. Out of reach by its date: move it "
-        "(why; twice at most), or drop it (why)."
+        "(why; twice at most), or drop it (why; your odds on it count as missed)."
         if checked
-        else "Measure met: close it done, with the evidence. Out of reach by its date: move it (why; twice at most, "
-        "and your owner decides on theirs), or close it missed once the date has passed.",
+        else (
+            "Measure met: send your owner the evidence; their drop confirms it."
+            if dict(row).get("kind") == "first_test"
+            else "Measure met: close it done, with the evidence."
+        )
+        + " Out of reach by its date: move it (why; twice at most, and your owner decides on theirs), or close it "
+        "missed once the date has passed.",
     ]
     if last:
         lines.append(f"Its last cycle (Ember's code's digest): {last}")
