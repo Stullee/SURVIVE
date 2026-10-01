@@ -35,7 +35,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Agent name | Ember | What the agent calls itself. |
 | Starting balance | 20 USD | Your first grant, recorded once when the agent is born. |
 | Daily spending cap | 1.50 USD | Hard limit per day. Calls that could exceed it are refused. |
-| Spending cap per wake cycle | 0.50 USD | Hard limit per cycle. Must not exceed the daily cap. A working cycle (its plan, a work step and the reflection) can cost up to about 0.25 USD with the default models; the dashboard warns you below 1.5 times that, when most cycles would end after a step or two. |
+| Spending cap per wake cycle | 0.50 USD | Hard limit per cycle. Must not exceed the daily cap (if it does, Ember uses the daily cap). A working cycle (its plan, a work step and the reflection) can cost up to about 0.25 USD with the default models; the dashboard warns you below 1.5 times that, when most cycles would end after a step or two. |
 | Share for ventures | 25 % | This share of each day's spending goes to venture cycles, where the agent researches new ways to earn. 0 switches them off. See [Ventures](#ventures). |
 | Cash for a venture's first test (EUR) | 20 | A business case that needs more cash than this to start is knocked out: Ember's code won't propose it until you lift that knock-out on its card (see [Ventures](#ventures)). |
 | Daily study budget for the library | 0.50 USD | What the agent may spend a day studying the documents you add on the Library tab. It counts toward the daily cap, not the cycle cap. 0: nothing is studied, but the documents can still be searched and read. See [Library](#library). |
@@ -98,11 +98,22 @@ Default prices (USD per million tokens, from Anthropic's pricing page on
 To use another model (for example a cheaper worker), add its prices to the
 table. The planner, the worker and the workshop model must be listed there.
 
-If the options are inconsistent (for example a cycle cap above the daily cap),
-Ember starts in **safe mode**: built-in defaults, dry run forced on, and the
-problem shown at the top of the dashboard. A mailbox that is switched on but
-incomplete doesn't cause safe mode: the dashboard's **System** panel says what
-is missing, and Ember works without it.
+Home Assistant checks each option's range and form when you save (a website
+name of at most 60 characters, an https website address, and so on). It can't
+check whether options fit together, so Ember corrects that at start, toward
+spending less, and the top of the dashboard shows each correction until you fix
+the options: a cycle cap above the daily cap counts as the daily cap, a longest
+sleep below the shortest as the shortest, the default sleep is kept between the
+two, an exchange rate below 0.5 counts as none, and a name, model or redirect URI
+made of spaces only counts as its default. Any other invalid option
+(for example a model missing from the price table) starts **safe mode**:
+built-in defaults, dry run forced on, and the problem shown at the top of the
+dashboard. Safe mode keeps your **Owner user IDs** and never lifts the kill
+switch (a new **Kill switch reset** applies at the first start with valid
+options). If it can't read **Owner user IDs** at all, Ember answers no one: each
+user gets a page that says so, with their user ID. A mailbox that is switched on
+but incomplete doesn't cause safe mode: the dashboard's **System** panel says
+what is missing, and Ember works without it.
 
 ## Choosing models
 
@@ -1638,7 +1649,8 @@ automation, for example:
   an Ingress session on purpose gets through too, so set **Owner user IDs**:
   then Ember answers only the users named there, and every other user gets
   "This Ember answers only its owner" for everything (the dashboard, its
-  actions, the diagnostics, emails and workspace files). Home Assistant's
+  actions, the diagnostics, emails and workspace files). Safe mode keeps the
+  option; if it can't read it, Ember answers no one. Home Assistant's
   Supervisor names the signed-in user in the first `X-Remote-User-Id` header,
   which a browser can't set, so the check can't be talked around. Find your ID
   in the dashboard's banner while the option is empty, or under **Settings →

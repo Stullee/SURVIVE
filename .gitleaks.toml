@@ -23,5 +23,13 @@ description = "Fake examples"
 regexTarget = "match"
 regexes = [
   '''^aaaaaa-0bbbbb-ccccCc$''',
+  '''^aaaaaa-0bbbbb-ccccCd$''',
   '''^abcdef-123abc-XyZabc$''',
 ]
+
+# Words, not passwords: a generated password has a digit, and kebab-case names such as
+# forged-sender-counts or Upload-before-delete (finding ids in an analysis) have none.
+[[rules.allowlists]]
+description = "Three words of six letters"
+regexTarget = "match"
+regexes = ['''^[A-Za-z]{6}-[A-Za-z]{6}-[A-Za-z]{6}$''']

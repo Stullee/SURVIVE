@@ -7,3 +7,8 @@
 0f4732f73fb2e0267b2b972a3742894f6667dda8:ember/tests/test_live_day_fixes.py:generated-password-6-6-6:19
 0f4732f73fb2e0267b2b972a3742894f6667dda8:ember/tests/test_live_day_fixes.py:generated-password-6-6-6:69
 0f4732f73fb2e0267b2b972a3742894f6667dda8:ember/tests/test_live_day_fixes.py:generated-password-6-6-6:73
+#
+# The analysis of 0.13.0 (work in progress, on the branch claude/codebase-analysis-2u9ytr) names three
+# Printify request states after the word "token" in a fix check; gitleaks' generic-api-key rule takes
+# them for a key.
+24a525e3937e04a6768b7dd823862c5eae95252a:analysis-0.13.0-wip/raw/review-channels.json:generic-api-key:275

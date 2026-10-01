@@ -49,21 +49,22 @@ def test_blank_key_counts_as_not_set(write_options: Callable[[dict], Path]) -> N
     assert load_settings().settings.api_key_set is False
 
 
-def test_cycle_cap_above_daily_cap_is_rejected(write_options: Callable[[dict], Path]) -> None:
+def test_cycle_cap_above_daily_cap_is_corrected(write_options: Callable[[dict], Path]) -> None:
+    # 0.14.0: corrected (and shown on the dashboard) instead of safe mode, which Home Assistant's schema can't prevent.
     write_options({"daily_spend_cap_usd": 0.5, "cycle_spend_cap_usd": 1.0, "dry_run": False})
     loaded = load_settings()
-    assert loaded.safe_mode
-    assert any("cycle_spend_cap_usd" in e for e in loaded.errors)
-    # Safe mode: defaults, and dry run is forced on even though the owner turned it off.
-    assert loaded.settings.dry_run is True
-    assert loaded.settings.daily_spend_cap_usd == Settings().daily_spend_cap_usd
+    assert not loaded.safe_mode
+    assert any("cycle_spend_cap_usd" in c for c in loaded.corrections)
+    assert loaded.settings.dry_run is False
+    assert loaded.settings.cycle_spend_cap_usd == loaded.settings.daily_spend_cap_usd == 0.5
 
 
 def test_sleep_bounds_are_checked(write_options: Callable[[dict], Path]) -> None:
     write_options({"min_sleep_minutes": 60, "wake_interval_minutes": 30, "max_sleep_minutes": 120})
     loaded = load_settings()
-    assert loaded.safe_mode
-    assert any("wake_interval_minutes" in e for e in loaded.errors)
+    assert not loaded.safe_mode  # 0.14.0: corrected
+    assert any("wake_interval_minutes" in c for c in loaded.corrections)
+    assert loaded.settings.wake_interval_minutes == 60
 
 
 def test_models_must_have_prices(write_options: Callable[[dict], Path]) -> None:

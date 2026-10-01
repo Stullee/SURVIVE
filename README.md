@@ -232,8 +232,16 @@ committed in 0.4.0, which has to be changed where it is used.
 3. Database changes go in a new migration, `ember/app/migrations/000N_name.sql`
    (numbered without gaps, never edit a released one). Ember backs up the
    database to `/data/backups` before applying it.
-4. Run the checks, commit, and push to the branch Home Assistant tracks.
-5. In Home Assistant, the app shows an update (reload the store to see it sooner).
+4. Run the checks, commit, and push the commit to a candidate branch first (for
+   example `release/0.2.0`): CI runs on every push. Wait until every CI job is
+   green on that exact commit (tests and lint, the secret scan, both image
+   builds). The secret scan reads every branch on GitHub, so a finding on any
+   branch makes it red.
+5. Only then fast-forward the branch Home Assistant tracks to that commit, push
+   it, and tag it: `git tag v0.2.0 <commit> && git push origin v0.2.0`. A push
+   to the tracked branch is the release, so never push a commit there that CI
+   hasn't passed.
+6. In Home Assistant, the app shows an update (reload the store to see it sooner).
    Updating rebuilds the image on the device.
 
 The Docker base image is pinned in `ember/Dockerfile`

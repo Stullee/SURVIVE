@@ -155,15 +155,15 @@ schema:
   wake_on_decision: bool
   worker_effort: list(default|high|medium|low)
   workshop: bool
-  workshop_model: str?
-  strategy_model: str?
-  research_model: str?
+  workshop_model: str(,100)?
+  strategy_model: str(,100)?
+  research_model: str(,100)?
   workshop_run_cap_usd: float(0.05,100)
   workshop_runs_per_day: int(0,50)
   code_execution_usd_per_hour: float(0,100)
   kill_switch_reset: int(0,1000000)
   owner_user_ids:
-    - str
+    - str(,100)
   log_level: list(debug|info|warning|error)
   email_enabled: bool
   email_address: str?
@@ -175,7 +175,7 @@ schema:
   email_owner_name: str?
   email_daily_limit: int(0,20)
   etsy_enabled: bool
-  etsy_keystring: str?
+  etsy_keystring: str(,100)?
   etsy_shared_secret: password?
   etsy_redirect_uri: str(1,300)
   etsy_listings_per_day: int(0,20)
@@ -185,7 +185,7 @@ schema:
   etsy_usd_per_eur: float(0,3)
   etsy_market_probe: bool
   pinterest_enabled: bool
-  pinterest_app_id: str?
+  pinterest_app_id: str(,100)?
   pinterest_app_secret: password?
   pinterest_redirect_uri: str(1,300)
   pinterest_pins_per_day: int(0,20)
@@ -195,12 +195,12 @@ schema:
   printify_currency: list(EUR|USD|GBP)
   printify_products_per_day: int(0,10)
   site_enabled: bool
-  site_name: str?
+  site_name: str(,60)?
   site_language: list(de|en)
-  site_url: url?
-  site_owner_name: str?
-  site_address: str?
-  site_email: email?
-  site_phone: str?
-  site_vat_id: str?
-  site_host: str?
+  site_url: 'match(^(?=.{0,200}$)(?:https://[A-Za-z0-9.-]{1,190}(?::\d{1,5})?(?:/[A-Za-z0-9._~/-]*)?)?$)?'
+  site_owner_name: str(,100)?
+  site_address: str(,300)?
+  site_email: 'match(^(?=.{0,254}$)(?:[^@\s<>"'']{1,64}@[^@\s<>"'']{1,190}\.[A-Za-z]{2,63})?$)?'
+  site_phone: str(,40)?
+  site_vat_id: str(,20)?
+  site_host: str(,200)?

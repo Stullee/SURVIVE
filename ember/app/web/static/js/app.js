@@ -733,7 +733,11 @@
       list.push({ kind: "error", icon: "✕", title: "Spending is stopped after a bookkeeping error. Restart the app; the System log has the details.", items: [String(sys.economy_broken)] });
     }
     if (arr(sys.config_errors).length) {
-      list.push({ kind: "error", icon: "✕", title: "Invalid app options. Running in safe mode (built-in defaults, dry run on). Fix them in the app's Configuration tab.", items: sys.config_errors });
+      list.push({ kind: "error", icon: "✕", title: "Invalid app options. Running in safe mode (built-in defaults, dry run on; your owner user IDs and the kill switch are kept). Fix them in the app's Configuration tab.", items: sys.config_errors });
+    }
+    // 0.14.0: options that don't fit together are corrected (toward spending less) instead of starting safe mode.
+    if (arr(sys.config_corrections).length) {
+      list.push({ kind: "error", icon: "✕", title: "Some app options don't fit together, so " + name + " corrected them until you fix them in the app's Configuration tab.", items: sys.config_corrections });
     }
     if (arr(sys.price_warnings).length) {
       list.push({ kind: "warning", icon: "!", title: "Some prices in the app options look too low, so costs would be under-counted. Check the price table in the app's Configuration tab.", items: sys.price_warnings });
@@ -937,7 +941,7 @@
     setBadge("badge-roadmap", c.overdue, "▲", "overdue milestones");
     setBadge("badge-roadmap-proposals", c.proposals, "◔", "proposed dates waiting for your decision");
     var sys = d.system;
-    setBadge("badge-system", arr(sys.config_errors).length + (isObject(sys.database) && sys.database.ok === false ? 1 : 0) + (sys.economy_broken ? 1 : 0), "!", "need attention");
+    setBadge("badge-system", arr(sys.config_errors).length + arr(sys.config_corrections).length + (isObject(sys.database) && sys.database.ok === false ? 1 : 0) + (sys.economy_broken ? 1 : 0), "!", "need attention");
   }
 
   function isUnread(m) { return isObject(m) && m.sender === "agent" && !m.read_at; }

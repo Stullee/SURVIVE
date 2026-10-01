@@ -52,6 +52,7 @@ class AppState:
             "dev_mode": self.dev_mode,
             "safe_mode": self.loaded.safe_mode,
             "config_errors": list(self.loaded.errors),
+            "config_corrections": list(self.loaded.corrections),  # 0.14.0
             "config_source": self.loaded.source,
             "options": settings.public_dict(),
             "database": {"ok": self.db_error is None, "error": self.db_error, "schema_version": schema_version},

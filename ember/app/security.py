@@ -17,7 +17,8 @@ can open the panel through (its admins, and anyone who opens an Ingress session
 on purpose), and the Supervisor names that user in the first ``X-Remote-User-Id``
 header, which a browser can't set. Once the ``owner_user_ids`` option names the
 owner, every other user gets 403 for everything but the static files, the
-watchdog's health check and the REST sensor's numbers.
+watchdog's health check and the REST sensor's numbers. Safe mode keeps the
+option (0.14.0); when it can't be read there, Ember answers no one at all.
 
 In local development (``EMBER_DEV_MODE``) there is no Ingress proxy, so any
 client may connect, but only with a ``localhost`` Host header: that stops a
@@ -53,6 +54,12 @@ OPEN_PATHS = frozenset({"/api/health", "/api/sensors"})  # no user behind them, 
 NOT_OWNER = (
     "This Ember answers only its owner: the Home Assistant users in its owner_user_ids option (the app's Configuration"
     " tab)."
+)
+# 0.14.0: safe mode whose owner_user_ids option couldn't be read answers no one, and says so with the caller's user ID.
+SAFE_MODE_LOCKED = (
+    "Ember is in safe mode: its options are invalid (the app's Log tab names them), and its owner_user_ids option"
+    " couldn't be read, so it answers no one. Fix the options in the app's Configuration tab, with your user ID in"
+    " owner_user_ids, and restart the app."
 )
 DEV_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "[::1]"})
 
@@ -90,14 +97,17 @@ def is_local_host_header(value: str | None) -> bool:
 
 
 class AccessPolicy:
-    def __init__(self, dev_mode: bool = False, owner_ids: Iterable[str] = ()) -> None:
+    def __init__(self, dev_mode: bool = False, owner_ids: Iterable[str] = (), locked: bool = False) -> None:
         self.dev_mode = dev_mode
         self.owner_ids = frozenset(owner_ids)
+        self.locked = locked  # 0.14.0: safe mode without a readable owner_user_ids: no one is the owner
 
     def is_owner(self, user_id: str | None) -> bool:
         """Whether a request comes from Ember's owner: a user named in owner_user_ids, or anyone while the option is
-        empty (the dashboard warns) or in local development (no Ingress, no users)."""
-        return self.dev_mode or not self.owner_ids or user_id in self.owner_ids
+        empty (the dashboard warns) or in local development (no Ingress, no users). No one while locked."""
+        if self.dev_mode:
+            return True
+        return not self.locked and (not self.owner_ids or user_id in self.owner_ids)
 
     def owner_allows(self, path: str, user_id: str | None) -> bool:
         return path.startswith("/static/") or path in OPEN_PATHS or self.is_owner(user_id)
@@ -148,10 +158,11 @@ class SecurityMiddleware:
         user_id = (_header(scope, USER_ID_HEADER) or "").strip() or None
         if not self.policy.owner_allows(path, user_id):
             self._report_stranger(user_id, path)
+            code, text = ("safe_mode_locked", SAFE_MODE_LOCKED) if self.policy.locked else ("not_owner", NOT_OWNER)
             if path.startswith("/api/"):
-                await _json(send, 403, {"code": "not_owner", "error": NOT_OWNER})
+                await _json(send, 403, {"code": code, "error": text})
             else:
-                await _plain(send, 403, f"{NOT_OWNER}\nYour user ID: {printable(user_id or '(none)', 100)}".encode())
+                await _plain(send, 403, f"{text}\nYour user ID: {printable(user_id or '(none)', 100)}".encode())
             return
 
         async def send_with_headers(message: Message) -> None:
@@ -186,9 +197,10 @@ class SecurityMiddleware:
             return
         self._strangers.add(key)
         log.warning(
-            "Refused a request to %s from Home Assistant user %s: not in owner_user_ids",
+            "Refused a request to %s from Home Assistant user %s: %s",
             printable(path, 100),
             printable(key, 100),
+            "safe mode couldn't read owner_user_ids" if self.policy.locked else "not in owner_user_ids",
         )
 
 
