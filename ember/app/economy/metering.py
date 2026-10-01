@@ -50,7 +50,7 @@ from .estimate import (
     plan_request,
     worst_case_micros,
 )
-from .ledger import Books
+from .ledger import OUTSIDE_CYCLE_CAP, Books
 from .life import Life, LifeStatus
 from .pricing import (
     SAFETY_FADE_DAYS,
@@ -107,7 +107,10 @@ CRITIC = "critic"  # 0.13.0: the independent critic of a proposed venture's case
 # event wake-ups (agent/agenda.py): a scheduled cycle's cap leaves it, and a scheduled wake that would need it waits.
 EVENT_RESERVE_SHARE = 0.20
 EVENT_RESERVE_HOUR = 20
-OUTSIDE_CYCLE_CAP = (WORKSHOP, REVIEW, STUDY, CONSOLIDATE, CRITIC)
+# The purposes outside the cycle cap (WORKSHOP, REVIEW, STUDY, CONSOLIDATE, CRITIC) are ledger.OUTSIDE_CYCLE_CAP, one
+# list for the guard and the books (0.14.0: the books counted the critic and the consolidation toward the cycle cap).
+# 0.14.0: they still keep the burn mode and the event reserve: a maintenance cycle's cap bounds every call in it, and
+# until EVENT_RESERVE_HOUR a scheduled cycle's calls, all of them, leave the events' share of the day.
 # 0.12.0: the cycle cap counts what a call is expected to cost (the daily cap, the balance and the last-will reserve
 # still count its worst case). A call with server tools (research) is expected to cost EXPECTED_FACTOR times the 95th
 # percentile of the last EXPECTED_WINDOW ones on its model, once there are EXPECTED_SAMPLES; so is a reflection at
@@ -508,12 +511,8 @@ class MeteredModel:
         self._fade_factors()  # 0.14.0
         status = self.life.evaluate_and_persist()
         # 0.12.0: a maintenance cycle has at most its burn mode's cap (kept before the transaction: it writes meta)
-        cap = burn.current(self.db, status).cycle_cap(usd_cap_to_micros(self.settings.cycle_spend_cap_usd))
-        working = working_cycle_cost(self.settings, self.db, self.life.mode) or 0
-        held = event_reserve(self.settings, self.clock, trigger, working)  # 0.13.0: the events' share of the day
-        if held:
-            today = self.books.cap_spend_on(self.life.scope(), self.clock.today())
-            cap = min(cap, max(0, usd_cap_to_micros(self.settings.daily_spend_cap_usd) - today - held))
+        mode = burn.current(self.db, status)
+        cap = self.opening_cap(trigger, mode)
         refusal: tuple[str, str] | None = None
         cycle_id = 0
         with self.db.transaction() as conn:
@@ -524,7 +523,7 @@ class MeteredModel:
                 cycle_id = int(
                     conn.execute(
                         "INSERT INTO cycles (life_id, boot_id, started_at, status, trigger, simulated, cap_micros,"
-                        " session, app_version) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?)",
+                        " session, app_version, burn_mode) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)",
                         (
                             status.life_id,
                             self.boot_id,
@@ -534,6 +533,7 @@ class MeteredModel:
                             cap,
                             self.life.session(),
                             app_version()[:40],
+                            mode.mode,  # 0.14.0: the guard keeps the mode the cycle opened in
                         ),
                     ).lastrowid
                 )
@@ -551,6 +551,42 @@ class MeteredModel:
                 f"Estimates for {purpose} calls on {model} are now scaled by {factor}: {SAFETY_FADE_DAYS} days"
                 " without a change.",
             )
+
+    def opening_cap(self, trigger: str, mode: burn.Burn) -> int:
+        """What a ``trigger``'s cycle opened now in burn ``mode`` may spend (reads only): the options' cycle cap, at
+        most the mode's (maintenance), and for a scheduled cycle until EVENT_RESERVE_HOUR at most the day's rest less
+        the events' share (0.13.0)."""
+        cap = mode.cycle_cap(usd_cap_to_micros(self.settings.cycle_spend_cap_usd))
+        held = self.held_for_events(trigger)  # 0.13.0: the events' share of the day
+        if held:
+            today = self.books.cap_spend_on(self.life.scope(), self.clock.today())
+            cap = min(cap, max(0, usd_cap_to_micros(self.settings.daily_spend_cap_usd) - today - held))
+        return cap
+
+    def held_for_events(self, trigger: str) -> int:
+        """What a ``trigger``'s cycle leaves of the day for event wake-ups now (``event_reserve``); 0.14.0: every call
+        of a scheduled cycle leaves it, not only its cap."""
+        if trigger != "schedule":
+            return 0
+        working = working_cycle_cost(self.settings, self.db, self.life.mode) or 0
+        return event_reserve(self.settings, self.clock, trigger, working)
+
+    def cycle_room(self, cycle_id: int | None, mode: burn.Burn) -> tuple[int, str]:
+        """0.14.0: (what the cycle may still spend under the cap in force, as its plan is judged; why that is below
+        the options' cycle cap: "maintenance" for the burn mode's cap, "events" for the event reserve, or ""). With no
+        cycle (the diagnostics' preview), a scheduled cycle's, opened now in burn ``mode``."""
+        if cycle_id is None:
+            trigger, opened, room = "schedule", mode.mode, self.opening_cap("schedule", mode)
+        else:
+            with self.db.connection() as conn:
+                cycle = conn.execute("SELECT trigger, burn_mode FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
+            if cycle is None:
+                return 0, ""
+            trigger, opened, room = cycle["trigger"], cycle["burn_mode"], self.rooms(cycle_id, "plan")[0]
+        if opened == burn.MAINTENANCE:
+            return room, "maintenance"
+        cut = self.held_for_events(trigger) and room < usd_cap_to_micros(self.settings.cycle_spend_cap_usd)
+        return room, "events" if cut else ""
 
     def close_cycle(self, cycle_id: int, status: str = "completed", note: str | None = None) -> bool:
         """End a running cycle. Returns False if it had already ended (e.g. stopped after an overrun)."""
@@ -744,29 +780,41 @@ class MeteredModel:
     def rooms(
         self, cycle_id: int, purpose: str = "work", keep: int = 0, keep_money: int | None = None
     ) -> tuple[int, int]:
-        """0.12.0: (the room under the call's own cap: the cycle cap, a workshop run's cap, or the daily cap for a
-        review or a study, less ``keep`` where it limits a later call too; the room under the daily cap and the
-        balance, keeping the last-will reserve, less ``keep_money``, ``keep`` if not given). The cycle cap counts
-        expected costs, the rest worst cases."""
+        """0.12.0: (the room under the call's own cap: the cycle cap, a workshop run's cap, or the daily cap for the
+        other calls outside the cycle cap, less ``keep`` where it limits a later call too; the room under the daily
+        cap and the balance, keeping the last-will reserve, less ``keep_money``, ``keep`` if not given). The cycle cap
+        counts expected costs, the rest worst cases. 0.14.0: in a maintenance cycle every call's own room is also the
+        cycle cap's, and until EVENT_RESERVE_HOUR a scheduled cycle's calls leave the event reserve (``_money_refusal``
+        says how)."""
         keep_money = keep if keep_money is None else keep_money
         status = self.life.evaluate()
         scope = self.life.scope()
         with self.db.connection() as conn:
-            cycle = conn.execute("SELECT cap_micros FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
+            cycle = conn.execute(
+                "SELECT cap_micros, trigger, burn_mode FROM cycles WHERE id = ?", (cycle_id,)
+            ).fetchone()
         if cycle is None:
             return 0, 0
-        spent, reserved = self.books.cycle_spend(cycle_id, outside_cap=False)
+        every = cycle["burn_mode"] == burn.MAINTENANCE  # 0.14.0: its cap bounds every call in it
+        spent, reserved = self.books.cycle_spend(cycle_id, outside_cap=False, every_purpose=every)
         pending = self.books.pending(scope)
         daily_cap = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
         today = self.books.cap_spend_on(scope, self.clock.today())
-        if purpose == WORKSHOP:
+        held = self.held_for_events(cycle["trigger"])  # 0.14.0
+        in_cycle_cap = purpose not in OUTSIDE_CYCLE_CAP or every
+        cycle_room = cycle["cap_micros"] - spent - reserved
+        if purpose not in OUTSIDE_CYCLE_CAP:
+            # 0.14.0: what the calls outside the cycle cap spent before comes out of the day's rest less the reserve
+            own_cap = min(cycle_room, daily_cap - held - today - pending) if held else cycle_room
+        elif purpose == WORKSHOP:
             own_cap = usd_cap_to_micros(self.settings.workshop_run_cap_usd)
-        elif purpose in (REVIEW, STUDY):
-            own_cap = daily_cap  # only the daily cap and the balance limit it (a study also its own budget: loop.py)
         else:
-            own_cap = cycle["cap_micros"] - spent - reserved
-        in_cap = keep if purpose not in OUTSIDE_CYCLE_CAP else 0  # a workshop run's own cap isn't the reflection's
-        money = min(daily_cap - today - pending - keep_money, status.balance - pending - keep_money)
+            own_cap = daily_cap  # only the daily cap and the balance limit it (a study also its own budget: loop.py)
+        if every:
+            own_cap = min(own_cap, cycle_room)
+        in_cap = keep if in_cycle_cap else 0  # a workshop run's own cap isn't the reflection's
+        outside = held if purpose in OUTSIDE_CYCLE_CAP else 0  # they count their worst case against the reserve
+        money = min(daily_cap - outside - today - pending - keep_money, status.balance - pending - keep_money)
         if purpose != "last_will" and status.last_will_at is None:
             money = min(
                 money, status.balance - pending - (last_will_reserve(self.settings, self.db, self.life.mode) or 0)
@@ -962,8 +1010,14 @@ class MeteredModel:
         call's ``expected`` cost (with ``allowance`` more for a reflection: 0.12.0), the rest its worst case, what it
         holds (``estimate``). 0.14.0: a workshop run's cap is checked against the request as priced (``priced``,
         without a raised safety factor: that locked the workshop at its cap after one overrun); the factor and what
-        recent runs cost make it hold more of the day instead."""
+        recent runs cost make it hold more of the day instead.
+
+        0.14.0: a maintenance cycle's cap bounds every call in it, those outside the cycle cap by their worst case
+        (a workshop run, the daily review, a study). Until EVENT_RESERVE_HOUR a scheduled cycle's calls leave the
+        events' share of the day: the calls under the cycle cap by their expected cost, like the cycle cap that left
+        it when the cycle opened, and the others by their worst case."""
         scope = self.life.scope()
+        every = cycle["burn_mode"] == burn.MAINTENANCE
         if purpose == WORKSHOP:
             run_cap = usd_cap_to_micros(self.settings.workshop_run_cap_usd)
             own = estimate if priced is None else priced
@@ -973,12 +1027,14 @@ class MeteredModel:
                     f" (this call up to ${micros_to_usd(own):.4f})",
                     "cap",
                 ), False
-        elif purpose not in OUTSIDE_CYCLE_CAP:
-            spent, reserved = self.books.cycle_spend(cycle["id"], outside_cap=False)
+        if purpose not in OUTSIDE_CYCLE_CAP or every:
+            spent, reserved = self.books.cycle_spend(cycle["id"], outside_cap=False, every_purpose=every)
             if spent + reserved + expected > cycle["cap_micros"] + allowance:
                 return (
-                    f"the cycle cap of ${micros_to_usd(cycle['cap_micros']):.2f} would be exceeded"
-                    f" (spent ${micros_to_usd(spent + reserved):.4f}, this call about ${micros_to_usd(expected):.4f})",
+                    f"the cycle cap of ${micros_to_usd(cycle['cap_micros']):.2f}"
+                    + (" (maintenance: every call counts)" if every else "")
+                    + f" would be exceeded (spent ${micros_to_usd(spent + reserved):.4f}, this call about"
+                    f" ${micros_to_usd(expected):.4f})",
                     "cap",
                 ), False
         daily_cap = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
@@ -988,6 +1044,17 @@ class MeteredModel:
             return (
                 f"the daily cap of ${micros_to_usd(daily_cap):.2f} would be exceeded"
                 f" (today ${micros_to_usd(today + pending):.4f}, this call up to ${micros_to_usd(estimate):.4f})",
+                "cap",
+            ), False
+        for_events = self.held_for_events(cycle["trigger"])
+        outside = purpose in OUTSIDE_CYCLE_CAP
+        counted, over = (estimate, 0) if outside else (expected, allowance)
+        if for_events and today + pending + counted > daily_cap - for_events + over:
+            return (
+                f"${micros_to_usd(for_events):.2f} of the daily cap is kept for event wake-ups until"
+                f" {EVENT_RESERVE_HOUR}:00 (today ${micros_to_usd(today + pending):.4f} of"
+                f" ${micros_to_usd(daily_cap):.2f}, this call {'up to' if outside else 'about'}"
+                f" ${micros_to_usd(counted):.4f})",
                 "cap",
             ), False
         available = status.balance - pending

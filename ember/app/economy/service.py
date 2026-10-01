@@ -369,6 +369,7 @@ class Economy:
                 " ORDER BY id DESC LIMIT 20",
                 (self.mode,),
             ).fetchall()
+        burning = burn.peek(self.db, status)
         revive = None
         if status.revive_needed is not None:
             revive = {
@@ -396,8 +397,10 @@ class Economy:
             "net_runway_note": status.runway.net_note or status.runway.note,
             "runway_net_in_usd": micros_to_usd(status.runway.window_net_in),
             # 0.12.0: the burn mode Ember's code sets from the net runway
-            "burn_mode": burn.peek(self.db, status).mode,
-            "burn_text": burn.peek(self.db, status).text(),
+            "burn_mode": burning.mode,
+            "burn_text": burning.text(),
+            # 0.14.0: when it moves down next at today's burn ("" if not within burn.PROJECTED_DAYS)
+            "burn_next": burn.projected_text(burning, now.astimezone(self.clock.tz)),
             "today_spend_usd": micros_to_usd(self.books.cap_spend_on(scope, self.clock.today())),
             "daily_cap_usd": self.settings.daily_spend_cap_usd,
             "cycle_cap_usd": self.settings.cycle_spend_cap_usd,

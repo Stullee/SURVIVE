@@ -38,7 +38,7 @@ from ..economy.estimate import Unpriceable
 from ..economy.metering import WORKSHOP, CallFailed, CallRefused, FilesError, MeteredModel, usd_cap_to_micros
 from ..products import checks
 from . import netguard, prompts, store
-from .sandbox import NAME, Jail, SandboxError, kind_of
+from .sandbox import MAX_DEPTH, NAME, Jail, SandboxError, kind_of
 from .store import AgentScope
 from .tools import WORKSHOP_INPUT_MB, WORKSHOP_INPUTS
 
@@ -127,9 +127,11 @@ class Workshop:
         self._check_allowed()
         folder = (folder or DEFAULT_FOLDER).strip().strip("/")
         try:
-            self.jail.parts(folder, want_file=False)
+            levels = self.jail.parts(folder, want_file=False)
         except SandboxError as exc:
             raise WorkshopError(f"folder: {exc}") from None
+        if len(levels) >= MAX_DEPTH:  # 0.14.0: its files go inside it, so this is refused before the run is paid for
+            raise WorkshopError(f"folder: at most {MAX_DEPTH - 1} folder levels, so that its files fit inside it")
         inputs = self._inputs(files, script)
         run = Run(task=task, script_used=script, inputs=[path for path, _, _ in inputs])
         uploaded: list[str] = []

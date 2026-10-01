@@ -43,6 +43,9 @@ _API_SPEND_TYPES = "('api_cost', 'api_cost_correction')"
 _MONEY_IN = (
     "((type IN ('owner_grant', 'revenue') AND corrects_id IS NULL) OR (type = 'adjustment' AND amount_micros > 0))"
 )
+# The calls that don't count toward the cycle cap (metering.py says why; 0.14.0: one list for the guard and the books,
+# the critic's and the consolidation's are the daily cap's only, as documented).
+OUTSIDE_CYCLE_CAP = ("workshop", "review", "study", "consolidate", "critic")
 _ENTRY_COLUMNS = (
     "id, ts, occurred_on, type, amount_micros, simulated, source, note, llm_call_id, corrects_id,"
     " orig_amount, orig_currency, fx_rate, created_by, entered_by, project_id, venture_id"
@@ -390,11 +393,13 @@ class Books:
                 (mark, *params),
             ).fetchone()
 
-    def cycle_spend(self, cycle_id: int, outside_cap: bool = True) -> tuple[int, int]:
+    def cycle_spend(self, cycle_id: int, outside_cap: bool = True, every_purpose: bool = False) -> tuple[int, int]:
         """(charged, reserved-and-pending) micros of one cycle; for the cycle cap without the calls that don't count
-        toward it (workshop runs, the daily review and the library's study: ``outside_cap=False``), and then with
-        what an uncertain call is known to cost rather than its worst case (0.12.0, as ``cap_spend_on``)."""
-        workshop = "" if outside_cap else " AND purpose NOT IN ('workshop', 'review', 'study')"
+        toward it (OUTSIDE_CYCLE_CAP: ``outside_cap=False``; 0.14.0: with them all in a maintenance cycle,
+        ``every_purpose``), and then with what an uncertain call is known to cost rather than its worst case (0.12.0,
+        as ``cap_spend_on``)."""
+        outside = ", ".join(f"'{purpose}'" for purpose in OUTSIDE_CYCLE_CAP)
+        workshop = "" if outside_cap or every_purpose else f" AND purpose NOT IN ({outside})"
         charged = "cost_micros" if outside_cap else "floor_micros"
         with self.db.connection() as conn:
             row = conn.execute(

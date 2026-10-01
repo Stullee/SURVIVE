@@ -143,7 +143,8 @@ test, is a result: park the venture with them.
 - A brainstorm (READY's, or when the ideas all look alike) branches from a promising venture or into new ground
   (services, websites, matchmaking, tools, content, marketing channels, physical products).
   Don't limit ideas to your tools today: abilities can be added, and your owner can set things up.
-- STATUS says how many research calls and brainstorms this cycle can pay for: plan no more, a brainstorm first.
+- STATUS says how many research calls and brainstorms (in the explore burn mode only) this cycle can pay for: plan no
+  more, a brainstorm first.
 - One venture a cycle: answer its next question with the research calls this cycle can pay for, save its numbers
   (evidence) and what else you learn (venture_update learned), and rescore it from the evidence.
 - Decide every venture that isn't backed within its research budget (${ventures.RESEARCH_BUDGET_USD:.2f} of research
@@ -596,20 +597,24 @@ def work_request(
     pinterest: bool = False,
     printify: bool = False,
     site: bool = False,
+    workshop: bool = True,
+    brainstorm: bool = True,
 ) -> dict[str, Any]:
     """One step of the act loop. The prefix (system, tools, brief) stays byte-identical, so it is cached; ``mail``,
     ``etsy``, ``venture``, ``library``, ``pinterest``, ``printify`` and ``site`` (whether Ember has a mailbox, a shop, a
     library, the owner's Pinterest and Printify accounts and their website, and a venture cycle's tools) are the same
-    for every step of a cycle."""
+    for every step of a cycle, and so are ``workshop`` and ``brainstorm`` (0.14.0: whether the burn mode leaves the
+    cycle workshop runs, which the owner's options must allow too, and brainstorms)."""
     offered = tools.definitions(
         mail,
-        workshop=workshop_on(settings),
+        workshop=workshop_on(settings) and workshop,
         etsy=etsy,
         venture=venture,
         library=library,
         pinterest=pinterest,
         printify=printify,
         site=site,
+        brainstorm=brainstorm,
     )
     return {
         "model": settings.worker_model,
@@ -656,6 +661,8 @@ def reflect_request(
     pinterest: bool = False,
     printify: bool = False,
     site: bool = False,
+    workshop: bool = True,
+    brainstorm: bool = True,
 ) -> dict[str, Any]:
     """The final turn of the same conversation (so the cached prefix is reused: its tool list stays the work's, which
     it reads from the cache at a tenth of the price); ``ended`` says why the work ended, ``undone`` which of its tool
@@ -674,6 +681,8 @@ def reflect_request(
         pinterest=pinterest,
         printify=printify,
         site=site,
+        workshop=workshop,
+        brainstorm=brainstorm,
     )
     messages = request["messages"]
     prompt = _text(reflect_prompt(ended, undone))

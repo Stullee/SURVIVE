@@ -608,13 +608,19 @@ def call_costs(conn: sqlite3.Connection, scope: AgentScope) -> dict[str, int]:
     return found
 
 
-def room_text(cycle_cap: float, costs: dict[str, int]) -> str:
-    """For a venture cycle's STATUS: what its research and brainstorms can cost, and how many of them that is."""
+def room_text(cycle_cap: float, costs: dict[str, int], brainstorms: bool = True) -> str:
+    """For a venture cycle's STATUS: what its research and brainstorms can cost, and how many of them that is
+    (0.14.0: research only, where the burn mode allows no brainstorm)."""
     room = round(cycle_cap * ROOM_SHARE * 1_000_000)
     research = max(costs.get("research") or USUAL_COSTS["research"], 1)
     brainstorm = max(costs.get("brainstorm") or USUAL_COSTS["brainstorm"], 1)
     calls = min(RESEARCH_CALLS, room // research)
     after = min(RESEARCH_CALLS, max(0, room - brainstorm) // research)
+    if not brainstorms:
+        return (
+            f"A research call costs about {usd(research)} (lately): this cycle's ${cycle_cap:.2f} pays for about"
+            f" {usd(room)} of them after planning, the work steps and the reflection, so about {calls} research calls."
+        )
     return (
         f"A research call costs about {usd(research)} and a brainstorm about {usd(brainstorm)} (lately): this"
         f" cycle's ${cycle_cap:.2f} pays for about {usd(room)} of them after planning, the work steps and the"

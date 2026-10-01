@@ -396,7 +396,7 @@ def test_the_migration_keeps_the_calls_and_their_guard(tmp_path: Path) -> None:
         conn.execute(insert, (423, "ok", 1_837_601, 348_191))
         conn.execute(insert, (424, "pending", 0, 348_191))
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "b") == [ours[0].version]
+    assert ours[0].version in migrate(db_file, backup_dir=tmp_path / "b")  # with the other 0.14.0 migrations
     db = Database(db_file)
     assert [(r["id"], r["iterations"], r["overrun"]) for r in llm_calls(db)] == [(423, None, 0), (424, None, 0)]
     with db.transaction() as conn, pytest.raises(sqlite3.IntegrityError, match="finalized call cannot change"):

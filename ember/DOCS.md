@@ -38,7 +38,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Spending cap per wake cycle | 0.50 USD | Hard limit per cycle. Must not exceed the daily cap (if it does, Ember uses the daily cap). A working cycle (its plan, a work step and the reflection) can cost up to about 0.25 USD with the default models; the dashboard warns you below 1.5 times that, when most cycles would end after a step or two. |
 | Share for ventures | 25 % | This share of each day's spending goes to venture cycles, where the agent researches new ways to earn. 0 switches them off. See [Ventures](#ventures). |
 | Cash for a venture's first test (EUR) | 20 | A business case that needs more cash than this to start is knocked out: Ember's code won't propose it until you lift that knock-out on its card (see [Ventures](#ventures)). |
-| Daily study budget for the library | 0.50 USD | What the agent may spend a day studying the documents you add on the Library tab. It counts toward the daily cap, not the cycle cap. 0: nothing is studied, but the documents can still be searched and read. See [Library](#library). |
+| Daily study budget for the library | 0.50 USD | What the agent may spend a day studying the documents you add on the Library tab. It counts toward the daily cap, not the cycle cap (except in the maintenance [burn mode](#money)). 0: nothing is studied, but the documents can still be searched and read. See [Library](#library). |
 | Default sleep | 240 min | Time between wake cycles when the agent doesn't choose. |
 | Shortest / longest sleep | 30 / 1440 min | Bounds for the sleep time the agent chooses. |
 | Tool steps per cycle | 15 | Maximum tool calls in one cycle. While the agent works, the overview counts them ("tool step 3 (at most 15)"); they aren't the steps of its plan. |
@@ -61,7 +61,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Emails per day | 3 | The most emails Ember sends in one day (0 to 20). |
 | Workshop | on | Lets the agent have code written and run in Anthropic's sandbox. See [The workshop](#the-workshop). |
 | Workshop model | empty | The model that writes the workshop's code. Empty: the worker model. |
-| Workshop cap per run | 0.75 USD | The most one workshop run may be priced at, and what Ember keeps of the daily cap for each run (more after costlier runs). Runs count toward the daily cap, not the cycle cap. |
+| Workshop cap per run | 0.75 USD | The most one workshop run may be priced at, and what Ember keeps of the daily cap for each run (more after costlier runs). Runs count toward the daily cap, not the cycle cap. No runs in the maintenance [burn mode](#money). |
 | Workshop runs per day | 6 | The most workshop runs in one day (0 switches the workshop off). |
 | Sandbox price | 0.05 USD per hour | What Anthropic charges per hour of sandbox time beyond its free hours. |
 | Etsy shop | off | Lets the agent propose listings for your Etsy shop, which Ember creates after you approve them. See [Etsy](#etsy). |
@@ -245,7 +245,9 @@ covers a cycle. An event that can't wake the agent waits for its next cycle.
 
 To keep money for these wake-ups, a scheduled cycle leaves **a fifth of the
 daily cap** unspent until **20:00** (your time), unless the cap is too small to
-spare it. When a scheduled wake would need that share, it waits until 20:00.
+spare it. Every call of that cycle leaves it, workshop runs, the daily review,
+library study and the critic too. When a scheduled wake would need that share,
+it waits until 20:00.
 Your **Wake now**, messages and decisions are never held back. The activity
 list shows an event's cycle as *woken by an event*, and the System log shows
 what was noted.
@@ -275,9 +277,10 @@ what it changed, keep the lesson. The next review shows whether it did. You can
 read every review, with the numbers it judged, under **Mind → Daily reviews**.
 
 A review is one call on the planner model (about $0.02–0.05 with
-claude-sonnet-5). It counts toward the daily cap, not the cycle cap, so the
-cycle it opens can still do its work. If the day's budget can't cover it, it is
-tried at the next cycle.
+claude-sonnet-5). It counts toward the daily cap, not the cycle cap, and
+leaves what the cycle it opens needs to do its work (in the maintenance burn
+mode the cycle's $0.40 bounds it too). If the day's budget can't cover it, it
+is tried at the next cycle.
 
 **Lessons.** The agent's lessons file holds 4,000 bytes. When it is full, a
 new lesson pushes the oldest out: those without numbers first, so a no backed by
@@ -318,7 +321,9 @@ whole file in one call of its own (up to about 24,000 characters, a few cents
 to a dime on claude-sonnet-5), from the agent's brief and the workspace files it
 names; the file is saved in the workspace and never read back through the
 conversation. Drafts count toward the cycle cap like research, at most 3 a
-cycle, in ordinary cycles only.
+cycle, in ordinary cycles only. An append that the file's 64 KB might not hold
+is refused before it is paid for; a paid draft that still doesn't fit is saved
+as a new file next to it.
 
 The agent can **look** at a picture (a page or a listing photo) before it shows
 you anything, and it reads a short guide for each tool. The PDFs embed their
@@ -388,7 +393,8 @@ can still cost more than all of this; Ember then books what it cost, makes no
 more workshop calls in that cycle, and raises the workshop's estimates. Runs
 count toward the daily cap and the balance but not the cycle cap (one run can
 cost more than a whole cycle may), and **runs per day** limits how often the
-agent uses it. Switch it off with **Workshop** or 0 runs per day.
+agent uses it. Until 20:00 they leave the event wake-ups' share of the daily
+cap, and there are no runs in the maintenance burn mode. Switch it off with **Workshop** or 0 runs per day.
 
 **How Ember grows.** A script proves itself when the agent runs it again, or
 when its files go into a request you approved. The planner then reminds the
@@ -436,9 +442,10 @@ you want more research. In a venture cycle the agent:
 
 - takes one of the **decision desk**'s items (0.13.0, below), or says why it
   takes none;
-- grows the tree with a **brainstorm**: a separate call on the planner model
-  that finds six new ideas that fit you and the agent (about $0.05–0.15 with
-  claude-opus-5-5), branching from a promising venture or into new ground;
+- in the explore burn mode, grows the tree with a **brainstorm**: a separate
+  call on the planner model that finds six new ideas that fit you and the agent
+  (about $0.05–0.15 with claude-opus-5-5), branching from a promising venture or
+  into new ground;
 - researches one venture (up to 8 web searches instead of 3), keeps what
   it learns in the venture's knowledge file (`ventures/<number>-<name>.md` in
   its workspace, which the card opens; a full one continues in
@@ -775,7 +782,9 @@ naming the part of the document it comes from. The text never has to be read
 or analysed again. Studying costs a few cents for a typical page (a long guide
 of 100 pages about $0.30 with the default models); the **Daily study budget**
 option limits it (0.50 USD a day by default, counted toward the daily cap), and
-a long document is studied over several cycles or days. Each card shows how far
+a long document is studied over several cycles or days. A document keeps at
+most 60 learnings: once they are full its study ends, and its card says which
+parts weren't studied (the agent can still read them). Each card shows how far
 the study got, what it cost and, when you open it, what the agent learned.
 
 **Used where it matters.** Each plan sees what was newly learned; each work
@@ -1524,16 +1533,22 @@ runway, and the agent's plans say which mode it is in:
 - **explore**: more than 30 days (or it earns what it spends): as your options
   allow;
 - **focus**: 15 to 30 days: the tests already running go on (venture cycles
-  only while a venture is backed or live), with no brainstorms;
-- **maintenance**: under 15 days: one scheduled cycle a day, of at most $0.40,
-  and no venture cycles (your messages and decisions still wake it);
+  only while a venture is backed or live), with no brainstorms and no new ideas
+  but those you bring;
+- **maintenance**: under 15 days: one scheduled cycle a day, of at most $0.40
+  with every call counted (the daily review and library study too), no workshop
+  runs and no venture cycles (your messages and decisions still wake it);
 - **dormant**: once its last will is written and its runway is critical: no
   model calls until money comes in (a sale or your grant); **Wake now** still
   runs a cycle.
 
 A mode moves down at once and up only 20% past its threshold, so it doesn't
 flicker. Each change is in the System log, and the dashboard's runway shows the
-mode when it holds the agent back (sensor attribute `burn_mode`). The Etsy shop
+mode when it holds the agent back (sensor attribute `burn_mode`). The dashboard
+and the agent's plans also say when the mode moves down next at today's burn
+(for example *maintenance from about 10-03*), if that is within 30 days. The
+agent's plans state the cycle cap in force, and why it is lower than your
+option (maintenance, or the event wake-ups' share until 20:00). The Etsy shop
 is read on its schedule also while the agent is paused, dormant or waiting for
 money, so a sale is still seen and recorded; only the kill switch or the end of
 a life stops it.
@@ -1556,7 +1571,8 @@ its cap for its reflection (at least 1.5 times the 95th percentile of the
 recent reflections), and a reflection may go over the cycle cap by what a cache
 miss would add, and by what calls of its cycle cost beyond their worst case.
 Workshop runs have their own cap per run instead of the cycle cap, and the
-daily review counts only toward the daily cap. A small reserve is always kept
+daily review, library study, the lessons' consolidation and the critic count
+only toward the daily cap (in maintenance the cycle's $0.40 bounds them all). A small reserve is always kept
 so the agent can write its last will. The worst case of a call with Anthropic's
 server tools (the workshop, research) is priced under assumptions the request
 can't enforce (how much a code run prints, how long a search result is), so

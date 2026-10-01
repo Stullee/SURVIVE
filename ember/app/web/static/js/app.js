@@ -835,7 +835,9 @@
       $("kpi-runway-sub").textContent = (a.runway_note || "at the last 7 days' spending") + (num(a.runway_net_in_usd) ?
         " · net of revenue and expenses: " + (isNaN(net) ? (a.net_runway_note || "–").toLowerCase() : net >= 365 ? "365+ days" : plural(net, "day")) : "") +
         // 0.12.0: the burn mode Ember's code sets from the net runway, when it holds the agent back
-        (a.burn_mode && a.burn_mode !== "explore" ? " · burn mode " + a.burn_mode : "");
+        (a.burn_mode && a.burn_mode !== "explore" ? " · burn mode " + a.burn_mode : "") +
+        // 0.14.0: and when it moves down next at today's burn (named as the burn mode in explore too)
+        (a.burn_next ? (a.burn_mode && a.burn_mode !== "explore" ? ", " : " · burn mode ") + asText(a.burn_next) : "");
     }
     runway.setAttribute("data-tone", !isNaN(days) && days < 2 ? "critical" : "");
 
@@ -6815,7 +6817,9 @@
   function documentView(d) {
     var name = agentName();
     var study;
-    if (d.study === "done") study = plural(num(d.learnings) || 0, "learning") + (num(d.study_usd) > 0 ? " · cost " + usd(d.study_usd) : "");
+    if (d.study === "done") study = plural(num(d.learnings) || 0, "learning") + (num(d.study_usd) > 0 ? " · cost " + usd(d.study_usd) : "") +
+      // 0.14.0: a study that ended when its learnings were full says which parts it didn't read
+      (d.study_note ? " · " + asText(d.study_note) : "");
     else if (d.study === "failed") study = "Stopped after " + plural(num(d.studied_parts) || 0, "part") + " of " + (num(d.parts) || 0) + (d.study_note ? ": " + asText(d.study_note) : ".");
     else if (num(d.studied_parts) > 0) study = "Studied " + d.studied_parts + " of " + plural(num(d.parts) || 0, "part") + " so far (" + plural(num(d.learnings) || 0, "learning") + ")";
     else study = name + " studies it in its next wake cycles, within the daily study budget.";
