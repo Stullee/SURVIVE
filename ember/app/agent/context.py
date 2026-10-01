@@ -106,7 +106,7 @@ BRIEF_BUDGET = 6_500
 # 0.12.0: the learnings from the owner's library that match the plan (Ember's code picks them), on top of the brief.
 KNOWLEDGE_HEADING = "WHAT YOU LEARNED (from your owner's library)"
 KNOWLEDGE_BUDGET = 1_800
-VENTURE_FOCUS_BUDGET = 1_900  # a venture's FOCUS in the brief
+VENTURE_FOCUS_BUDGET = 2_400  # a venture's FOCUS in the brief (0.14.0: 1,900 cut its numbers and pitch)
 MILESTONE_FOCUS_BUDGET = 1_100  # a milestone's FOCUS in the brief (0.11.0; 0.12.0: with its last cycle's digest)
 VENTURE_BRIEF = (
     "This is a venture cycle: read guide 'ventures' first, research as often as this cycle can pay for (STATUS), "

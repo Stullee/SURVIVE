@@ -129,11 +129,52 @@ def test_a_ventures_focus_keeps_its_knock_outs_critic_evidence_and_pitch() -> No
         critic=critic,
     )
     text = f"Decision desk: you took appraise #4: knocked out: fix its case (cash, slow)\n{text}"
-    assert context.json_bytes(text) > context.VENTURE_FOCUS_BUDGET
     kept = context.cut(text, context.VENTURE_FOCUS_BUDGET)
     for line in ("Knock-outs (", "fatal flaw: Route posters", "Evidence: 4 claims", "Pitch: ", "Numbers (case #7"):
         assert line in kept, line
     assert kept.index("Knock-outs (") < kept.index("First test: ")  # what rules it out comes first
+
+
+def test_a_ventures_focus_keeps_its_pitch_with_every_field_at_its_longest() -> None:
+    # Review: with the owner's word, the first test and the next question at 220 characters, the knock-outs at 440
+    # and a 300-character flaw, the 1,900-byte cut still dropped the numbers, the evidence and the pitch.
+    row = {
+        "id": 4,
+        "parent_id": 1,
+        "stage": "researching",
+        "title": "T" * 80,
+        "pitch": "p " * 200,
+        "next_question": "q " * 200,
+        "notes": "n " * 200,
+        **{name: "c " * 200 for name, _, _ in ventures.CASE},
+        **{score.name: 3 for score in ventures.SCORES},
+        "scores_by": "research",
+        "owner_action": "note",
+        "owner_comment": "o " * 200,
+        "owner_at": "2026-09-29T08:00:00Z",
+        "created_by": "agent",
+        "created_at": "2026-09-27T08:00:00Z",
+        "researched": 3,
+        "research_from": "2026-09-27T08:00:00Z",
+    }
+    text = ventures.focus_text(
+        row,  # type: ignore[arg-type]
+        ventures.Money(),
+        2_300,
+        [],
+        ["ventures/4-t.md"],
+        evidence="Evidence: 9 claims (3 independent, 3 marketing, 3 unchecked); the newest: " + "e " * 200,
+        numbers="Numbers (case #7, 2026-09-29): " + "n " * 150,
+        knocked="Knock-outs (Ember's code; it isn't proposed while one stands): " + "k " * 300,
+        critic=("Critic (a separate call on case #7): test; fatal flaw: " + "f " * 150, "Critic's numbers: x"),
+    )
+    text = f"Decision desk: you took appraise #4: knocked out: fix its case (cash, slow)\n{text}"
+    kept = context.cut(text, context.VENTURE_FOCUS_BUDGET)
+    for line in ("Owner: ", "Knock-outs (", "fatal flaw: f", "First test: ", "Numbers (case", "Evidence: 9", "Pitch: "):
+        assert line in kept, line
+    assert (
+        context.json_bytes(text[: text.index("\nKnowledge file")]) < context.VENTURE_FOCUS_BUDGET - 50
+    )  # with room to spare
 
 
 def test_a_missed_bars_action_survives_the_obligation_line(data_dir: Path) -> None:
@@ -276,6 +317,16 @@ def test_scores_and_the_business_case_are_a_venture_cycles(data_dir: Path) -> No
     [refused] = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'venture_update'")
     assert refused["status"] == "error"
     assert "revenue is set in a venture cycle; here venture_update takes venture_id, learned" in refused["result"]
+    # The owner's news of an added idea, which any cycle can see, no longer asks for a score.
+    added = {
+        "id": 9,
+        "title": "Grant finder",
+        "pitch": "Grants.",
+        "owner_action": "added",
+        "parent_id": None,
+        "owner_comment": "",
+    }
+    assert ventures.news_line(added).endswith('"Grants.". Research it; a venture cycle scores it.')
 
 
 # --- X9: one call's texts fit a reply ---

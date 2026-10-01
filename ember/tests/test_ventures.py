@@ -725,7 +725,7 @@ def test_the_owner_adds_ideas_and_decides_and_the_agent_hears_it(data_dir: Path)
     text = planner_texts(fake)[0]
     assert (
         'Your owner added a venture idea (a branch of #5), venture #9 "Grant finder": "Grants for clubs.". Research'
-        " and score it." in text
+        " it; a venture cycle scores it." in text
     )
     assert (
         'Your owner backed venture #3 "Dropshipping store": it is building now. Its first test is milestone #1 on your'
