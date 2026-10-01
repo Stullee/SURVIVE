@@ -193,8 +193,8 @@ it runs one **wake cycle**:
    long to sleep. It is told which of the cycle's tool calls were not done
    (refused, failed, skipped or cut off), so it can't report them as done.
 
-When a cycle ends, however it ends, Ember's code writes its **digest** from its
-records: what it was aimed at, its goal, what its tools did and what they
+When a cycle ends, however it ends (even when the app stopped during it),
+Ember's code writes its **digest** from its records: what it was aimed at, its goal, what its tools did and what they
 didn't, how its work ended, whether it reflected and what it cost. The next
 plans see the last two digests, and a work step aimed at a milestone or venture
 sees the digest of the last cycle aimed at it: a journal can claim work that

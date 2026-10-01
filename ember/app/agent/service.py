@@ -51,7 +51,7 @@ from ..integrations.pinterest_connection import PinterestConnection
 from ..integrations.printify_connection import PrintifyConnection
 from ..products import site
 from . import agenda, audit, metrics, netguard, news, policy, store, ventures, website
-from .loop import NO_STEP, CycleEnd, CycleRunner
+from .loop import NO_STEP, CycleEnd, CycleRunner, recover_records
 from .memory import CAPS, Memory
 from .sandbox import Jail, SandboxError, kind_of
 from .store import AgentScope
@@ -212,6 +212,11 @@ class Agent:
         now = self.clock.now()
         with self.db.transaction() as conn:
             store.interrupt_open_tool_calls(conn, to_iso(now))
+        try:  # 0.14.0: a cycle the app died in gets its journal and digest, as one that ends gets them
+            with self.db.transaction() as conn:
+                recover_records(conn, self.scope(), to_iso(now))
+        except Exception:  # noqa: BLE001 - the records must never keep the agent from starting
+            log.exception("Could not write the records of an interrupted cycle")
         if self.economy.health.lock_held:  # (another process holding the data folder may be sending right now)
             self.executor.recover()  # an email that was being sent may have gone out: it is never sent again
             self.publisher.recover()  # a listing that was being created may exist: it is never created again

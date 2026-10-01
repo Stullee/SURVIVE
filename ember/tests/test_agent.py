@@ -368,9 +368,10 @@ def test_tools_allowed_in_each_phase(data_dir: Path) -> None:
     assert (results[2]["phase"], results[2]["status"]) == ("reflect", "ok")
 
 
-def test_a_journal_written_while_working_ends_the_cycle_without_a_reflection(data_dir: Path) -> None:
-    # In live use the model wrote its journal at the end of its work in almost every cycle, and every such call
-    # was refused and paid for. Now it counts, and the separate reflect call is skipped.
+def test_a_journal_written_while_working_ends_the_work_and_the_reflection_writes_it(data_dir: Path) -> None:
+    # In live use the model wrote its journal at the end of its work in almost every cycle. 0.12.0 let it count and
+    # skipped the reflection, so no cycle reflected any more; 0.14.0: the journal is the reflection's, and the work
+    # ends with the reply that tried it.
     agent, _ = make_agent(
         data_dir,
         [
@@ -379,12 +380,13 @@ def test_a_journal_written_while_working_ends_the_cycle_without_a_reflection(dat
                 ("write_journal", {"summary": "Drafted the post", "entry": "What worked..."}),
                 ("set_sleep", {"minutes": 600, "reason": "Waiting for the owner"}),
             ),
-            text("Done."),
+            tools(("write_journal", {"summary": "Drafted the post", "entry": "What worked, what didn't."})),
         ],
     )
     end = agent.run_cycle("schedule")
     assert (end.status, end.sleep_minutes) == ("completed", 600)
-    assert [r["purpose"] for r in rows(agent, "SELECT purpose FROM llm_calls ORDER BY id")] == ["plan", "work", "work"]
+    purposes = [r["purpose"] for r in rows(agent, "SELECT purpose FROM llm_calls ORDER BY id")]
+    assert purposes == ["plan", "work", "reflect"]
     assert rows(agent, "SELECT author, summary FROM journal") == [{"author": "agent", "summary": "Drafted the post"}]
 
 
