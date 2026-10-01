@@ -552,6 +552,8 @@ class CycleRunner:
                     f"Your owner's account: {account} (at most {self.settings.pinterest_pins_per_day} pins a day).\n"
                     + pinterest_publisher.text(conn, self.scope)
                 )
+            elif self.pinterest is not None:  # 0.14.0: switched on, but not set up
+                pins = _waiting(self.pinterest.status(), "Pinterest")
             pod = ""
             if self.printify_on and self.printify is not None:  # 0.13.0 (Phase E4)
                 known = self.printify.describe().get("shop") or {}
@@ -560,6 +562,8 @@ class CycleRunner:
                     f" at most {self.settings.printify_products_per_day} products a day).\n"
                     + printify_publisher.text(conn, self.scope)
                 )
+            elif self.printify is not None:  # 0.14.0: switched on, but not set up
+                pod = _waiting(self.printify.status(), "Printify")
             site_text = website.planner_text(conn, self.scope, website.owner(self.settings)) if self.site_on else ""
             return context.snapshot(
                 conn,
@@ -793,8 +797,10 @@ class CycleRunner:
     def _keep_stages(self) -> None:
         """0.12.0: the rules of the ventures' stages (a first test for each backed venture, research without a business
         case and a missed first test parked), kept by Ember's code before every plan (stages.keep)."""
+        # 0.14.0: a channel's venture gets its first test once the channel is set up (its tools are on)
+        ready = [name for name, on in (("pinterest", self.pinterest_on), ("printify", self.printify_on)) if on]
         with self.db.transaction() as conn:
-            happened = stages.keep(conn, self.scope, self.clock.today(), to_iso(self.clock.now()))
+            happened = stages.keep(conn, self.scope, self.clock.today(), to_iso(self.clock.now()), ready)
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
 
@@ -1752,6 +1758,19 @@ def _market_fn(shop: Any) -> Callable[[str], Any]:
             return shop.market(keywords)
 
     return probe
+
+
+def _waiting(status: tuple[str, str | None], name: str) -> str:
+    """0.14.0: the one line of a channel switched on but not set up ("" otherwise), so the agent knows it waits for
+    the owner rather than asking for it again."""
+    state, reason = status
+    if state in ("ok", "disabled"):
+        return ""
+    why = (reason or state.replace("_", " ")).rstrip(".")
+    return (
+        f"Switched on, but it waits for your owner's setup ({why}): no {name} tools until then. A venture it serves "
+        "starts its first test only then."
+    )
 
 
 def _step(text: str) -> str:

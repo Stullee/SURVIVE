@@ -34,6 +34,13 @@ SOURCE_MAX = 20_000
 LANGUAGES = ("de", "en")
 ZIP_TIME = (2026, 1, 1, 0, 0, 0)  # every file's time in the download, so the same site is the same file
 _EMAIL = re.compile(r"^[^@\s<>\"']{1,64}@[^@\s<>\"']{1,190}\.[A-Za-z]{2,63}$")
+# 0.14.0: the Impressum's address is where the owner can be found (a street, then the postcode with the town), never a
+# PO box; a phone number is its second quick way to reach them (the site has no contact form); a business ID in the
+# VAT ID's option is a Wirtschafts-Identifikationsnummer (§ 139c AO: DE, 9 digits, a dash and 5 digits).
+_POSTCODE = re.compile(r"^(?:[A-Z]{1,2}-)?\d{4,5} +\S")
+_PO_BOX = re.compile(r"\b(?:postfach|postbox|p\.? ?o\.? ?box)\b", re.IGNORECASE)
+_PHONE = re.compile(r"^\+?[0-9 ()/.-]{6,40}$")
+_BUSINESS_ID = re.compile(r"^DE\d{9}-\d{5}$")
 _PRINT_ONLY = (markup.Space, markup.Photo, markup.Lines, markup.PageBreak)
 
 
@@ -70,10 +77,16 @@ class Owner:
         found = []
         if not self.legal_name:
             found.append("site_owner_name is missing")
-        if len(self.address) < 2:
+        if not any(_POSTCODE.match(line) for line in self.address[1:]):  # 0.14.0: the street comes first
             found.append("site_address needs the street and the postcode with the town")
+        elif any(_PO_BOX.search(line) for line in self.address):
+            found.append("site_address must be where you can be found (street, postcode and town), not a PO box")
         if not _EMAIL.match(self.email):
             found.append("site_email is missing")
+        if not self.phone:
+            found.append("site_phone is missing: the Impressum needs a second quick way to reach you besides email")
+        elif not _PHONE.match(self.phone) or sum(c.isdigit() for c in self.phone) < 6:
+            found.append("site_phone must be a phone number, like +49 30 1234567")
         return found
 
 
@@ -287,7 +300,12 @@ def impressum(owner: Owner) -> str:
         "<h2>Kontakt</h2>",
         f"<p>{'<br>'.join(contact)}</p>",
     ]
-    if owner.vat_id:
+    if _BUSINESS_ID.match(owner.vat_id.replace(" ", "")):
+        parts += [
+            "<h2>Wirtschafts-Identifikationsnummer</h2>",
+            f"<p>Wirtschafts-Identifikationsnummer gemäß § 139c Abgabenordnung: {_e(owner.vat_id)}</p>",
+        ]
+    elif owner.vat_id:
         parts += [
             "<h2>Umsatzsteuer-ID</h2>",
             f"<p>Umsatzsteuer-Identifikationsnummer gemäß § 27a Umsatzsteuergesetz: {_e(owner.vat_id)}</p>",
@@ -319,7 +337,8 @@ def datenschutz(owner: Owner) -> str:
             "Inhalte von anderen Anbietern (keine Schriften, Skripte, Karten oder Videos).</p>",
             f"<p>{host} technisch notwendige Daten (IP-Adresse, Zeitpunkt, aufgerufene Seite, Browser) in seinen "
             "Server-Protokollen, um die Seite auszuliefern und ihren Betrieb zu sichern (Art. 6 Abs. 1 lit. f "
-            "DSGVO).</p>",
+            "DSGVO). Die Protokolle werden gelöscht, sobald sie dafür nicht mehr nötig sind; die genaue Frist richtet "
+            "sich nach den Vorgaben des Anbieters.</p>",
             "<h2>Wenn Sie uns schreiben</h2>",
             "<p>Schreiben Sie uns eine E-Mail, verarbeiten wir Ihre Angaben, um Ihre Anfrage zu beantworten (Art. 6 "
             "Abs. 1 lit. b und f DSGVO), und löschen sie, wenn sie dafür nicht mehr nötig sind und keine "

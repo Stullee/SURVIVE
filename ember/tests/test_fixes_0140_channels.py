@@ -1,0 +1,301 @@
+"""0.14.0: the channels' small defects. A library upload had the dashboard's 10-second timeout, so a large file over
+remote access failed (perhaps after the server stored it); Pinterest's refresh-token lifetime was assumed, not read,
+and nothing renewed an unused connection; an approved pin was made even when its listing had stopped being live while
+it waited; the Impressum could list an email address as its only contact, and the privacy page didn't say how long
+the server logs are kept; a channel switched on but not set up was invisible to the agent, and a channel venture's
+first test ran while its channel couldn't be used."""
+
+from __future__ import annotations
+
+import base64
+import re
+from datetime import timedelta
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+httpx2 = pytest.importorskip("httpx2")
+
+from app.agent import library, stages  # noqa: E402
+from app.agent.fake_llm import FakeTransport, request_kind  # noqa: E402
+from app.agent.service import Agent  # noqa: E402
+from app.economy.clock import Clock, from_iso, to_iso  # noqa: E402
+from app.integrations.pinterest import FakePinterest, TokenFile  # noqa: E402
+from app.integrations.pinterest_connection import PinterestConnection  # noqa: E402
+from app.integrations.pinterest_live import DEFAULT_REFRESH_DAYS, connect  # noqa: E402
+from app.products import site  # noqa: E402
+from tests.test_agent import rows  # noqa: E402
+from tests.test_library import GUIDE, a_pdf  # noqa: E402
+from tests.test_loop_shapes import run  # noqa: E402
+from tests.test_owner_api import post  # noqa: E402
+from tests.test_owner_loop import owner  # noqa: E402
+from tests.test_pinterest import (  # noqa: E402
+    LISTING,
+    LIVE,
+    PINNING,
+    live_account,
+    mock,
+    pin_rows,
+    proposed,
+    some_tokens,
+)
+from tests.test_site import WHO, home  # noqa: E402
+from tests.test_ventures import PINTEREST, VENTURING, plan, planner_texts, venture  # noqa: E402
+
+APP_JS = Path(__file__).parents[1] / "app" / "web" / "static" / "js" / "app.js"
+DAY = 86_400
+
+
+# --- FIX 26j: a library upload's timeout fits its size -------------------------------------------------------------
+
+
+def test_a_library_upload_has_a_timeout_that_fits_its_size() -> None:
+    script = APP_JS.read_text(encoding="utf-8")
+    assert 'request("POST", "api/library", body, { timeout: uploadTimeout(' in script
+    formula = "Math.min(UPLOAD_TIMEOUT_MAX_MS, REQUEST_TIMEOUT_MS + Math.ceil(chars / UPLOAD_CHARS_PER_SECOND) * 1000)"
+    assert f"return {formula};" in script
+    value = {k: int(v) for k, v in re.findall(r"var (UPLOAD_\w+|REQUEST_TIMEOUT_MS) = (\d+);", script)}
+    chars = -(-library.FILE_BYTES // 3) * 4  # the largest file, base64-encoded: about 10.7 million characters
+    per_second, most = value["UPLOAD_CHARS_PER_SECOND"], value["UPLOAD_TIMEOUT_MAX_MS"]
+    waits = min(most, value["REQUEST_TIMEOUT_MS"] + -(-chars // per_second) * 1000)
+    assert chars * 8 / 1_000_000 < waits / 1000 <= 180  # it arrives at 1 Mbit/s upstream; bounded at three minutes
+    # After a timeout the server may have stored it: the list is loaded again, and the owner told so.
+    assert 'err.kind === "timeout"' in script and "it may have been added all the same" in script
+
+
+def test_a_retried_upload_is_stored_once(ingress_client: Any) -> None:
+    upload = {"file_name": "Tags.pdf", "file_data": base64.b64encode(a_pdf(GUIDE)).decode()}
+    assert post(ingress_client, "api/library", upload).status_code == 201
+    again = post(ingress_client, "api/library", upload)  # the owner's retry after a timeout
+    assert again.status_code == 409 and again.json()["error"].startswith("this text is in the library already: #1")
+    assert [d["id"] for d in ingress_client.get("api/library").json()["items"]] == [1]
+
+
+# --- FIX 26k: Pinterest's refresh-token lifetime, read from its answer ------------------------------------------
+
+
+def test_the_refresh_token_s_lifetime_is_read_from_pinterest_s_answer(tmp_path: Path) -> None:
+    answer = {
+        "access_token": "pina_fresh-access",
+        "refresh_token": "pinr_fresh-refresh",
+        "expires_in": 30 * DAY,
+        "refresh_token_expires_in": 60 * DAY,
+    }
+    server, transport = mock({("POST", "/v5/oauth/token"): answer, ("GET", "/v5/user_account"): {"username": "p"}})
+    now = from_iso("2026-10-01T09:00:00Z")
+    clock = Clock(lambda: now)
+    store = TokenFile(tmp_path / "tokens.json")
+    connect(LIVE, clock, store, "the-code", "the-verifier", transport)
+    saved = store.load()
+    assert saved is not None
+    assert from_iso(saved.expires_at) == now + timedelta(days=30)
+    assert from_iso(saved.refresh_expires_at) == now + timedelta(days=60)
+    # Without it, the documented default (not a year).
+    del answer["refresh_token_expires_in"], answer["expires_in"]
+    connect(LIVE, clock, store, "the-code", "the-verifier", transport)
+    saved = store.load()
+    assert saved is not None and DEFAULT_REFRESH_DAYS == 60
+    assert from_iso(saved.refresh_expires_at) == now + timedelta(days=60)
+    assert from_iso(saved.expires_at) == now + timedelta(hours=1)
+
+
+def test_a_renewal_without_a_new_refresh_token_keeps_its_end(tmp_path: Path) -> None:
+    ends = to_iso(Clock().now() + timedelta(days=20))
+    renew = {"access_token": "pina_renewed", "expires_in": 30 * DAY}  # no new refresh token: the old one stays
+    account, _ = live_account(
+        tmp_path,
+        {("POST", "/v5/oauth/token"): renew, ("GET", "/v5/user_account"): {"username": "plannershop"}},
+        expires_at=to_iso(Clock().now()),
+        refresh_expires_at=ends,
+    )
+    account.info()
+    saved = account.tokens.load()
+    assert saved is not None and saved.access_token == "pina_renewed" and saved.refresh_expires_at == ends
+
+
+def test_an_unused_connection_is_renewed_before_it_lapses(data_dir: Path, tmp_path: Path) -> None:
+    renew = {
+        "access_token": "pina_renewed",
+        "refresh_token": "pinr_renewed",
+        "expires_in": 30 * DAY,
+        "refresh_token_expires_in": 60 * DAY,
+    }
+    soon = to_iso(Clock().now() + timedelta(days=3))
+    account, server = live_account(tmp_path, {("POST", "/v5/oauth/token"): renew}, refresh_expires_at=soon)
+    agent, _ = run(data_dir, FakeTransport(), settings=PINNING)
+    agent.pins.account = lambda: account  # no pins: the sync reads nothing, but keeps the connection
+    assert agent.pins.sync(force=True) is None
+    assert server.form(0) == {"grant_type": "refresh_token", "refresh_token": "pinr_r3fresh-t0ken-value"}
+    saved = account.tokens.load()
+    assert saved is not None and saved.refresh_token == "pinr_renewed"
+    assert from_iso(saved.refresh_expires_at) > Clock().now() + timedelta(days=59)
+    agent.pins.sync(force=True)
+    assert len(server.requests) == 1  # renewed once: it lasts 60 days again
+    assert FakePinterest(Clock(), None, lambda s: None).keep_alive() is None  # the dry run's account needs nothing
+
+
+def test_a_connection_made_under_0130_learns_pinterest_s_lifetime(tmp_path: Path) -> None:
+    renew = {
+        "access_token": "pina_renewed",
+        "refresh_token": "pinr_renewed",
+        "expires_in": 30 * DAY,
+        "refresh_token_expires_in": 60 * DAY,
+    }
+    # 0.13.0 stored a year for the refresh token; its access token expired while no pin was made.
+    account, server = live_account(
+        tmp_path, {("POST", "/v5/oauth/token"): renew}, expires_at=to_iso(Clock().now() - timedelta(days=1))
+    )
+    account.keep_alive()
+    saved = account.tokens.load()
+    assert saved is not None and saved.access_token == "pina_renewed"
+    assert from_iso(saved.refresh_expires_at) < account.clock.now() + timedelta(days=61)
+    account.keep_alive()  # fresh again: nothing to renew
+    assert len(server.requests) == 1
+
+
+def test_a_lapsed_connection_says_so(data_dir: Path, tmp_path: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport())
+    store = TokenFile(tmp_path / "tokens.json")
+    connection = PinterestConnection(agent.db, agent.clock, LIVE, "live", 0, store)
+    tokens = some_tokens(agent.clock, expires=timedelta(days=30))
+    tokens.refresh_expires_at = to_iso(agent.clock.now() + timedelta(days=60))
+    store.save(tokens)
+    agent.clock.advance(days=45)  # the access token expired, the refresh token still renews it
+    assert connection.status() == ("ok", None) and connection.account() is not None
+    agent.clock.advance(days=16)  # unused for 61 days (the app was off): the connection ended
+    status, reason = connection.status()
+    assert status == "not_connected" and reason == (
+        "The connection expired: connect your account again (System, Pinterest)."
+    )
+    assert connection.account() is None
+
+
+# --- FIX 26l: a pin's listing, checked again before the pin is made ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ("UPDATE etsy_listings SET state = 'inactive'", f"#{LISTING} isn't live at Etsy any more (deactivated)"),
+        ("UPDATE etsy_listings SET status = 'failed'", f"#{LISTING} isn't one of your live listings any more"),
+    ],
+)
+def test_an_approved_pin_whose_listing_stopped_being_live_is_not_made(data_dir: Path, change: str, reason: str) -> None:
+    agent, _, request = proposed(data_dir)
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
+    with agent.db.transaction() as conn:
+        conn.execute(change)
+    assert agent.execute_approved() == [(request, "failed")]
+    [row] = pin_rows(agent)
+    assert row["pin_id"] is None and row["error"] == reason
+    closed = rows(agent, f"SELECT status, result_note FROM approvals WHERE id = {request}")[0]
+    assert closed == {"status": "failed", "result_note": f"Not pinned: {reason}"}
+    assert agent.pinterest.account().state["boards"] == {}  # nothing reached Pinterest
+    assert rows(agent, f"SELECT status FROM action_journal WHERE approval_id = {request}") == [{"status": "failed"}]
+
+
+# --- FIX 26m: the Impressum ----------------------------------------------------------------------------------------
+
+
+def test_an_impressum_with_email_as_its_only_contact_is_not_built() -> None:
+    email_only = site.Owner(**{**WHO.__dict__, "phone": ""})
+    with pytest.raises(site.SiteError, match="site_phone is missing: the Impressum needs a second quick way"):
+        site.build([home()], email_only)
+    with pytest.raises(site.SiteError, match="site_phone must be a phone number"):
+        site.build([home()], site.Owner(**{**WHO.__dict__, "phone": "call me"}))
+    imprint = site.build([home()], WHO)["impressum.html"].decode()
+    assert "Telefon: +49 30 1234567" in imprint
+
+
+def test_the_impressum_needs_a_postal_address() -> None:
+    for lines, message in (
+        (("Stefan Muster", "Berlin"), "site_address needs the street and the postcode with the town"),
+        (("Musterstraße 1", "Berlin"), "site_address needs the street and the postcode with the town"),
+        (("12345 Berlin", "Musterstraße 1"), "site_address needs the street and the postcode with the town"),
+        (
+            ("Postfach 12 34", "12345 Berlin"),
+            r"site_address must be where you can be found \(street, postcode and town",
+        ),
+    ):
+        with pytest.raises(site.SiteError, match=message):
+            site.build([home()], site.Owner(**{**WHO.__dict__, "address": lines}))
+    for lines in (("Musterstraße 1", "12345 Berlin"), ("c/o Studio", "Hauptstr. 5a", "1010 Wien")):
+        assert site.build([home()], site.Owner(**{**WHO.__dict__, "address": lines}))
+
+
+def test_a_business_id_is_named_as_one() -> None:
+    imprint = site.build([home()], site.Owner(**{**WHO.__dict__, "vat_id": "DE123456789-00001"}))["impressum.html"]
+    text = imprint.decode()
+    assert "Wirtschafts-Identifikationsnummer gemäß § 139c Abgabenordnung: DE123456789-00001" in text
+    assert "Umsatzsteuer" not in text
+    vat = site.build([home()], site.Owner(**{**WHO.__dict__, "vat_id": "DE123456789"}))["impressum.html"].decode()
+    assert "Umsatzsteuer-Identifikationsnummer gemäß § 27a Umsatzsteuergesetz: DE123456789" in vat
+
+
+def test_the_privacy_page_says_how_long_the_server_logs_are_kept() -> None:
+    privacy = site.build([home()], WHO)["datenschutz.html"].decode()
+    assert "Server-Protokollen" in privacy and "Die Protokolle werden gelöscht, sobald sie dafür nicht mehr" in privacy
+    assert "die genaue Frist richtet sich nach den Vorgaben des Anbieters" in privacy
+
+
+# --- X21: a channel switched on but not set up ------------------------------------------------------------------
+
+
+def not_set_up(agent: Agent) -> FakePinterest | None:
+    """Pinterest on as in the live report: no app ID, no secret (the fake account put aside)."""
+    fake = agent.pinterest._fake
+    agent.pinterest.mode, agent.pinterest._fake = "live", None
+    return fake
+
+
+def test_the_agent_hears_that_a_channel_waits_for_its_owner(data_dir: Path) -> None:
+    fake = FakeTransport()
+    agent, _ = run(data_dir, fake, cycles=0, settings=PINNING.model_copy(update={"printify_enabled": True}))
+    not_set_up(agent)
+    agent.printify.mode, agent.printify._fake = "live", None  # Printify on, no token
+    agent.run_cycle("schedule")
+    plan_request = next(r for r in fake.sent if request_kind(r) == "plan")
+    text = plan_request["messages"][0]["content"][0]["text"]
+    line = (
+        "\n== PINTEREST ==\nSwitched on, but it waits for your owner's setup (pinterest_app_id is missing; "
+        "pinterest_app_secret is missing): no Pinterest tools until then. A venture it serves starts its first test "
+        "only then.\n"
+    )
+    assert line in text
+    assert "\n== PRINTIFY ==\nSwitched on, but it waits for your owner's setup (printify_api_token is missing):" in text
+    work = next(r for r in fake.sent if request_kind(r) == "work")
+    assert not {t["name"] for t in work["tools"]} & {"propose_pin", "pinterest_boards"}
+    agent.pinterest._fake = FakePinterest(agent.clock, None, lambda s: None)
+    agent.pinterest.mode = "dry_run"  # set up: its section is the account's again
+    agent.run_cycle("schedule")
+    text = [r for r in fake.sent if request_kind(r) == "plan"][-1]["messages"][0]["content"][0]["text"]
+    assert "== PINTEREST ==\nYour owner's account: ember-dry-run" in text and "setup (pinterest_app_id" not in text
+
+
+def test_a_channel_venture_s_first_test_waits_for_its_channel(data_dir: Path) -> None:
+    settings = VENTURING.model_copy(update={"pinterest_enabled": True})
+    transport = FakeTransport(script=[plan(steps=[])])
+    agent, _ = run(data_dir, transport, settings=settings)
+    fake = not_set_up(agent)
+    assert owner(agent).decide_venture(PINTEREST, {"action": "back"}, "Stefan").status == 200
+    assert venture(agent, PINTEREST)["test_milestone_id"] is None  # its clock doesn't run yet
+    agent.clock.advance(days=40)
+    agent.run_cycle("schedule")
+    backed = venture(agent, PINTEREST)
+    assert (backed["stage"], backed["test_milestone_id"]) == ("building", None)  # not parked for a missed test
+    # The agent isn't asked to plan a first test that Ember's code sets.
+    assert "it is building now. Its first test starts once Pinterest is set up." in planner_texts(transport)[-1]
+    agent.pinterest.mode, agent.pinterest._fake = "dry_run", fake  # the owner set it up
+    agent.run_cycle("schedule")
+    test = venture(agent, PINTEREST)["test_milestone_id"]
+    assert test is not None
+    [row] = rows(agent, f"SELECT metric, target, due FROM milestones WHERE id = {test}")
+    assert (row["metric"], row["target"]) == ("pin_clicks", 10)
+    assert row["due"] == (agent.clock.today() + timedelta(days=stages.FIRST_TEST_DAYS)).isoformat()
+
+
+def test_a_venture_without_a_channel_still_gets_its_test_when_backed(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
+    assert owner(agent).decide_venture(3, {"action": "back"}, "Stefan").status == 200  # dropshipping: no channel
+    assert venture(agent, 3)["test_milestone_id"] is not None

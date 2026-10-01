@@ -84,7 +84,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Printify products per day | 2 | The most products Ember creates in one day (0 to 10). |
 | Website | off | Lets the agent write the pages of a small website of yours, which Ember builds and you publish. See [Website](#website). |
 | Website name, language, address | empty, de, empty | The site's name in its header (empty: your name), the language of its pages, and where you publish it (https, for its sitemap). |
-| Your full name, address, email, phone, VAT ID (Impressum) | empty | Your data for the site's Impressum and privacy page: name, address and email are needed, phone and VAT ID optional. Never in the diagnostics report. |
+| Your full name, address, email, phone, VAT ID (Impressum) | empty | Your data for the site's Impressum and privacy page: name, address (not a PO box), email and phone are needed; the VAT ID (or your Wirtschafts-Identifikationsnummer) is optional. Never in the diagnostics report. |
 | Your web host (privacy page) | empty | The company hosting your site, named on the privacy page. |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
@@ -543,8 +543,11 @@ euros. The tab's badge counts the ones waiting. On each card:
 - **Back it**: the agent builds it: its first test becomes a milestone on the
   roadmap (**First test: …**, set by Ember's code, due in 21 days, with the
   business case's first test as its measure), and it asks you for what only you
-  can do (accounts, money, setup), one step at a time. The venture goes live
-  only once that first test is met (or you drop it on the Roadmap tab).
+  can do (accounts, money, setup), one step at a time. A venture of a channel
+  Ember's code serves (Pinterest, Printify) gets its first test only once that
+  channel is set up, so its 21 days don't run out during your setup. The
+  venture goes live only once that first test is met (or you drop it on the
+  Roadmap tab).
 - **Research next** (or **Research more**, **Research again**): it goes first
   in the next venture cycle.
 - **Park**, **Kill** or **Note**, each with an optional comment (a note needs
@@ -744,8 +747,11 @@ your own. The agent can't fetch Etsy's pages itself (Etsy's API terms forbid
 programs reading its site), but you can: open the page, select its text, copy
 it and paste it into **Add**. You can also upload files: text, Markdown, a saved
 web page (HTML), PDF or Word (.docx), up to 8 MB each; each file becomes a
-document. Give a document a source (its link), the venture or project it is
-for, and a note on what to use it for, if you like.
+document. A large file takes a while over a slow connection: the dashboard
+waits longer for a larger file, up to three minutes. If no answer comes in
+time, look at the list before you add it again (Ember refuses a second copy of
+the same text). Give a document a source (its link), the venture or project it
+is for, and a note on what to use it for, if you like.
 
 **Studied once, kept for good.** At the start of its next wake cycles, before
 it plans, the agent studies each new document: it reads it a few thousand
@@ -1239,9 +1245,12 @@ need the Etsy shop: each one links to one of Ember's live listings.
    error page: that's expected. Copy the whole address from the address bar,
    paste it into the dashboard and press **Finish connecting**.
 
-The connection renews itself while Ember uses it (at least once a year). If it
-lapses, connect again. **Disconnect** deletes Ember's tokens (you can also
-remove the app's access in your Pinterest settings).
+The connection lasts as long as Pinterest says when it is made (60 days from
+its last use if Pinterest doesn't say). Every six hours while the app runs,
+Ember renews it in time, pins or no pins. If it lapses anyway (the app was off
+too long), **System → Pinterest** says so: connect again. **Disconnect**
+deletes Ember's tokens (you can also remove the app's access in your Pinterest
+settings).
 
 ### How a pin is made
 
@@ -1258,7 +1267,8 @@ remove the app's access in your Pinterest settings).
   **Cancel** stops an approved pin before Ember makes it.
 - The pin that makes Ember's **first board** always waits for your click,
   whatever you unlocked: it is a new public presence of yours.
-- If the picture changed after you approved, the pin isn't made. Ember never
+- If the picture changed after you approved, or its listing is no longer live
+  (as Ember's last look at the shop says), the pin isn't made. Ember never
   makes a pin twice: if it can't tell whether Pinterest made it (a lost
   connection), it says so and doesn't try again. At most **Pins per day** are
   made a day; approved pins beyond that wait for the next day.
@@ -1266,7 +1276,9 @@ remove the app's access in your Pinterest settings).
   saves and clicks to its listing. The agent's plan shows them (PINTEREST),
   and the metrics `pins_live` and `pin_clicks` can measure a milestone. The
   seeded venture *Pinterest for the Etsy shop* has its first test in these
-  numbers: its pins bring 10 clicks to the shop's listings.
+  numbers: its pins bring 10 clicks to the shop's listings. Until Pinterest is
+  set up and connected, the agent's plan says it waits for you, and that first
+  test doesn't start.
 - **Undo** on the pin's entry under **What Ember's code did** deletes it at
   Pinterest.
 
@@ -1370,11 +1382,16 @@ host. The agent's plan shows the pages and what you haven't published yet
 
 In the app's **Configuration** tab, switch **Website** on and fill in **Your
 full name**, **Your address** (street, then postcode and town, separated by a
-comma), **Your email address** and, if you have them, **Your phone number**
-and **Your VAT ID**: the Impressum needs them, and the dashboard says which one
-is missing. Set **Website address** to where you will publish it (for its
-sitemap), **Website name** to your shop's name and **Your web host** to the
-company hosting it. Save and restart the app.
+comma; where you can be found, not a PO box), **Your email address**, **Your
+phone number** (the Impressum needs a second quick way to reach you besides
+email, and the site has no contact form) and, if you have one, **Your VAT ID**
+(or your Wirtschafts-Identifikationsnummer, as DE123456789-00001: the
+Impressum names it as one). Without the first four Ember doesn't build the
+site, and the dashboard says what is missing. The Impressum has no place for a
+register entry (Handelsregister): if you have one, add it to the downloaded
+`impressum.html` yourself. Set **Website address** to where you will publish
+it (for its sitemap), **Website name** to your shop's name and **Your web
+host** to the company hosting it. Save and restart the app.
 
 ## Reddit
 

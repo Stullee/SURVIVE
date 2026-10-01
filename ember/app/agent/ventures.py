@@ -842,10 +842,13 @@ def news_line(row: Mapping[str, Any]) -> str:
     elif action == "research":
         line = f"Your owner wants {name} researched next (it is {row['stage']} now)"
     elif action == "back":
-        test = _value(row, "test_milestone_id")
+        test, channel = _value(row, "test_milestone_id"), _value(row, "channel")
         line = f"Your owner backed {name}: it is building now. " + (
             f"Its first test is milestone #{test} on your roadmap: meet it, then it goes live"
             if test
+            # 0.14.0: Ember's code sets a channel's first test once the owner has set the channel up (stages.keep)
+            else f"Its first test starts once {str(channel).title()} is set up"
+            if channel
             else "Plan its first test with them"
         )
     elif action == "park":

@@ -25,6 +25,7 @@ import re
 import tempfile
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -178,6 +179,8 @@ class Account(Protocol):
 
     def pin_stats(self, pin_id: str) -> PinStats: ...
 
+    def keep_alive(self) -> None: ...  # 0.14.0: renew the connection before it lapses unused
+
 
 class FakePinterest:
     """The dry run's account: boards and pins kept in the database (``on_change``), numbers that grow a little each
@@ -197,6 +200,9 @@ class FakePinterest:
 
     def info(self) -> AccountInfo:
         return AccountInfo("ember-dry-run", "https://www.pinterest.com/ember-dry-run/")
+
+    def keep_alive(self) -> None:
+        return None  # the dry run's account never lapses
 
     def create_board(self, name: str, description: str) -> Board:
         if any(b["name"].lower() == name.lower() for b in self.state["boards"].values()):
@@ -244,6 +250,13 @@ class Tokens:
     refresh_expires_at: str
     username: str
     connected_at: str
+
+
+def lapsed(tokens: Tokens, now: datetime) -> bool:
+    """0.14.0: whether the connection has ended: its access token expired and its refresh token can't renew it."""
+    if from_iso(tokens.expires_at) > now:
+        return False
+    return not tokens.refresh_token or from_iso(tokens.refresh_expires_at) <= now
 
 
 class TokenFile:

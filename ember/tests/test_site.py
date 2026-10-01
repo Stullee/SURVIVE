@@ -31,9 +31,10 @@ OWNER = {
     "site_owner_name": "Stefan Muster",
     "site_address": "Musterstraße 1, 12345 Berlin",
     "site_email": "shop@example.org",
+    "site_phone": "+49 30 1234567",  # 0.14.0: needed
 }
 SITE = ROOMY.model_copy(update=OWNER)
-WHO = site.Owner("Stefan Muster", ("Musterstraße 1", "12345 Berlin"), "shop@example.org")
+WHO = site.Owner("Stefan Muster", ("Musterstraße 1", "12345 Berlin"), "shop@example.org", "+49 30 1234567")
 HOME = "# Planners that work\n\nA <script>alert(1)</script> **weekly** planner. [Shop](https://www.etsy.com/shop/x)\n"
 
 
@@ -102,7 +103,7 @@ def test_the_site_is_escaped_scriptless_and_self_contained() -> None:
     assert 'rel="canonical"' not in page and "sitemap" not in files["robots.txt"].decode().lower()  # no address
     imprint = files["impressum.html"].decode()
     assert "Angaben gemäß § 5 DDG" in imprint and "Stefan Muster<br>Musterstraße 1<br>12345 Berlin" in imprint
-    assert "mailto:shop@example.org" in imprint and "Umsatzsteuer" not in imprint and "Telefon" not in imprint
+    assert "mailto:shop@example.org" in imprint and "Umsatzsteuer" not in imprint and "Telefon: +49" in imprint
     assert '<meta name="robots" content="noindex">' in imprint and '<html lang="de">' in imprint
     privacy = files["datenschutz.html"].decode()
     assert "keine Cookies" in privacy and "Stefan Muster" in privacy and "der Anbieter, bei dem" in privacy

@@ -10,7 +10,9 @@ stage has a rule (``RULES``): what completes it, and when Ember's code parks the
 * proposed: the owner's decision (back, park or kill).
 * building: when the owner backs a venture, its first test becomes a milestone Ember's code sets (``first_test``, due
   in FIRST_TEST_DAYS, its date fixed); the venture goes live once that is met (the database refuses it before), and is
-  parked when it is missed (closed missed, or still open FIRST_TEST_GRACE_DAYS after its date).
+  parked when it is missed (closed missed, or still open FIRST_TEST_GRACE_DAYS after its date). 0.14.0: a venture a
+  channel of Ember's code serves (CHANNEL_TESTS) gets its first test only once that channel is set up: its clock
+  doesn't run while the owner hasn't connected it.
 * idea (0.13.0, triage): an idea of the agent's is researched (researching) or parked within TRIAGE_DAYS of coming up;
   Ember's code parks it then. The owner's ideas wait for them.
 * live (0.13.0, scale): a live venture that earns more than it costs (its P&L: revenue less expenses and the API calls
@@ -26,7 +28,7 @@ backs or kills one (migration 0030). A venture parked or killed takes its open m
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from datetime import date, timedelta
 from typing import Any
 
@@ -165,10 +167,19 @@ def scale(
     return milestone_id
 
 
-def keep(conn: sqlite3.Connection, scope: AgentScope, today: date, now: str) -> list[str]:
-    """Before every plan: a first test for each backed venture that has none, and the stages' rules (research without
-    a business case, a missed first test; 0.13.0: an idea no one took up, a live venture that sells nothing or earns
-    more than it costs). Returns what happened, for the events."""
+def waits_for_channel(venture: Mapping[str, Any], ready: Collection[str]) -> bool:
+    """0.14.0: whether a venture's first test waits for its channel to be set up (``ready``: the channels that are)."""
+    channel = venture["channel"] if "channel" in venture.keys() else None  # noqa: SIM118 - a Row, not a dict
+    return channel in CHANNEL_TESTS and channel not in ready
+
+
+def keep(
+    conn: sqlite3.Connection, scope: AgentScope, today: date, now: str, ready: Collection[str] = tuple(CHANNEL_TESTS)
+) -> list[str]:
+    """Before every plan: a first test for each backed venture that has none (0.14.0: a channel's venture once its
+    channel is ``ready``), and the stages' rules (research without a business case, a missed first test; 0.13.0: an
+    idea no one took up, a live venture that sells nothing or earns more than it costs). Returns what happened, for
+    the events."""
     happened = []
     paid = ventures.money(conn, scope)
     for v in ventures.all_ventures(conn, scope):
@@ -204,6 +215,8 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, today: date, now: str) -> 
             continue
         test = roadmap.get(conn, scope, v["test_milestone_id"]) if v["test_milestone_id"] else None
         if test is None:
+            if waits_for_channel(v, ready):
+                continue
             made = first_test(conn, scope, v, today, now)
             happened.append(f"Ember's code set the first test of venture #{v['id']} as milestone #{made}")
             continue

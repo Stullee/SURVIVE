@@ -13,6 +13,10 @@
   var REQUEST_TIMEOUT_MS = 10000;
   // The diagnostics report gathers the whole system, which may take longer than a dashboard poll.
   var DIAGNOSTICS_TIMEOUT_MS = 30000;
+  // 0.14.0: a library upload travels base64-encoded (8 MB become about 11 MB), so its timeout grows with its size: a
+  // second more per 100 kB (a slow phone connection), at most three minutes.
+  var UPLOAD_CHARS_PER_SECOND = 100000;
+  var UPLOAD_TIMEOUT_MAX_MS = 180000;
   // Narrower balance charts have no room for grant labels; the tooltip and the table still show them.
   var GRANT_LABEL_MIN_WIDTH = 480;
 
@@ -6952,6 +6956,10 @@
     });
   }
 
+  function uploadTimeout(chars) {
+    return Math.min(UPLOAD_TIMEOUT_MAX_MS, REQUEST_TIMEOUT_MS + Math.ceil(chars / UPLOAD_CHARS_PER_SECOND) * 1000);
+  }
+
   function submitLibraryForm() {
     if (ui.lib.saving) return;
     var name = agentName();
@@ -6983,6 +6991,7 @@
     var jobs = files.length ? files.map(function (f) { return { file: f }; }) : [{ text: text }];
     var added = [];
     var failed = [];
+    var unsure = [];  // no answer in time: the server may have stored it all the same
     ui.lib.saving = true;
     $("lib-form-save").disabled = true;
     var chain = Promise.resolve();
@@ -6992,7 +7001,9 @@
         var ready = job.file ? readFileBase64(job.file).then(function (data) {
           return Object.assign({}, base, { file_name: job.file.name, file_data: data }, jobs.length === 1 && common.title ? { title: common.title } : {});
         }) : Promise.resolve(Object.assign({}, base, { text: job.text }, common.title ? { title: common.title } : {}));
-        return ready.then(function (body) { return request("POST", "api/library", body); }).then(function (res) {
+        return ready.then(function (body) {
+          return request("POST", "api/library", body, { timeout: uploadTimeout((body.file_data || body.text || "").length) });
+        }).then(function (res) {
           var data = isObject(res.data) ? res.data : {};
           if (res.status === 201) { added.push("#" + data.id + " " + asText(data.title)); return; }
           var msg = typeof data.error === "string" && data.error ? endSentence(sentence(data.error)) : httpError(res).message;
@@ -7000,6 +7011,7 @@
         });
       }).catch(function (err) {
         if (!(err instanceof RequestError)) console.error(err);
+        if (err instanceof RequestError && err.kind === "timeout") { unsure.push(job.file ? job.file.name : "the text"); return; }
         failed.push((job.file ? job.file.name + ": " : "") + "couldn't reach " + name + " (" + errorText(err) + ")");
       });
     });
@@ -7008,13 +7020,15 @@
       $("lib-form-save").disabled = false;
       if (added.length) {  // the For choice stays: the next document is often for the same venture
         ["text", "files", "title", "source", "note"].forEach(function (k) { $("lib-form-" + k).value = ""; });
-        if (!failed.length) openLibraryForm(false);
-        loadLibrary();
+        if (!failed.length && !unsure.length) openLibraryForm(false);
       }
+      if (added.length || unsure.length) loadLibrary();
       var parts = [];
       if (added.length) parts.push("Added " + added.join(", ") + ". " + name + " studies " + (added.length === 1 ? "it" : "them") + " in its next wake cycles.");
       if (failed.length) parts.push("Not added: " + failed.join("; ") + (/[.!?]$/.test(failed[failed.length - 1]) ? "" : "."));
-      setStatusText("lib-status", parts.join(" "), failed.length ? "error" : "ok");
+      // A second copy is refused, so a retry can't store it twice; the list shows whether it arrived.
+      if (unsure.length) parts.push("No answer in time for " + unsure.join(", ") + ": it may have been added all the same. Check the list below before you add it again.");
+      setStatusText("lib-status", parts.join(" "), failed.length || unsure.length ? "error" : "ok");
     });
   }
 

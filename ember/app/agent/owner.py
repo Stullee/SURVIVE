@@ -506,7 +506,9 @@ class Owner:
                 after = ventures.get(conn, self.scope, venture_id)
                 # 0.12.0: a backed venture's first test becomes a milestone; a parked or killed one's milestones go.
                 if action == "back" and after is not None:
-                    stages.first_test(conn, self.scope, after, self.clock.today(), now)
+                    # 0.14.0: a channel's venture gets it before the next plan, once its channel is set up (stages.keep)
+                    if not stages.waits_for_channel(after, ()):
+                        stages.first_test(conn, self.scope, after, self.clock.today(), now)
                     # 0.13.0: its case's first sale, as a prediction Ember's code settles
                     case = ventures.latest_case(conn, venture_id)
                     predictions.add_first_sale(conn, self.scope, venture_id, case, self.clock.today(), now)
