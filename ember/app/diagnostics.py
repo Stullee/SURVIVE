@@ -984,7 +984,7 @@ def _integrations(state: AppState, full: bool = True) -> str:
     with state.db.connection() as conn:
         emails = conn.execute(
             "SELECT id, direction, received_at, from_addr, to_addr, subject, length(body) AS body_chars, body_cut,"
-            " approval_id, read_by_agent_at AS opened_by_agent FROM emails"
+            " approval_id, read_by_agent_at AS opened_by_agent, bulk, authenticated FROM emails"  # 0.14.0: the flags
             f" WHERE {where} ORDER BY id DESC LIMIT 15",
             params,
         ).fetchall()
@@ -1005,6 +1005,8 @@ def _integrations(state: AppState, full: bool = True) -> str:
         "body_cut",
         "approval_id",
         "opened_by_agent",
+        "bulk",
+        "authenticated",
     ]
     if not full:
         emails = [{**dict(e), "subject": f"[{len(e['subject'] or ''):,} characters]"} for e in emails]

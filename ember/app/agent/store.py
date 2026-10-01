@@ -15,7 +15,6 @@ from datetime import timedelta
 from typing import Any
 
 from ..economy.clock import from_iso, to_iso
-from . import never
 
 OPEN_STATUSES = ("idea", "active", "waiting")
 CLOSED_STATUSES = ("succeeded", "failed", "abandoned")
@@ -386,6 +385,8 @@ def insert_approval(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, 
             focus[1] if focus else None,
         ),
     )
+    from . import never  # 0.14.0: here, not at the top: never imports mailstore, which imports this module
+
     words = never.act_words(fields.get("executor"), fields.get("action"))
     if words is not None:  # 0.14.0: what it says, as NEVER reads it (the database can't normalise text)
         conn.execute("INSERT INTO act_words (approval_id, words) VALUES (?, ?)", (cursor.lastrowid, words))
@@ -395,6 +396,8 @@ def insert_approval(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, 
 def keep_act_words(conn: sqlite3.Connection) -> int:
     """0.14.0: the normalised act of the email requests stored before Ember's code kept it (at startup), so NEVER
     reads look-alike letters in them too. How many it kept."""
+    from . import never
+
     rows = conn.execute(
         "SELECT id, executor, action FROM approvals a WHERE executor = 'email'"
         " AND NOT EXISTS (SELECT 1 FROM act_words w WHERE w.approval_id = a.id)"

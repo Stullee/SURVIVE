@@ -81,8 +81,8 @@ def she_wrote(agent: Any) -> None:
     with agent.db.transaction() as conn:
         conn.execute(
             "INSERT INTO emails (mode, session, life_id, direction, uidvalidity, uid, message_id, from_addr, to_addr,"
-            " subject, received_at, body) VALUES (?, ?, ?, 'in', 1, 1, '<q1@example.org>', ?, 'ember@example.org',"
-            " 'A question', ?, 'Do you make A5 planners?')",
+            " subject, received_at, body, authenticated, bulk) VALUES (?, ?, ?, 'in', 1, 1, '<q1@example.org>', ?,"
+            " 'ember@example.org', 'A question', ?, 'Do you make A5 planners?', 1, 0)",  # 0.14.0: verified
             (scope.mode, scope.session, scope.life_id, WROTE, to_iso(agent.clock.now())),
         )
 

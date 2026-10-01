@@ -99,7 +99,9 @@ def _orders(conn: sqlite3.Connection, scope: AgentScope, since: str, now: str) -
 
 
 def _mail(conn: sqlite3.Connection, scope: AgentScope, since: str, now: str) -> list[str]:
-    """Emails that arrived: an answer to one Ember sent (reply), or a person writing to Ember first (inquiry)."""
+    """Emails that arrived: an answer to one Ember sent (reply), or a person writing to Ember first (inquiry). 0.14.0:
+    either only a person's email (mailstore.person) from someone who didn't ask to stop, so an out-of-office, a bounce
+    or a forged sender wakes no one (the next plan's MAIL section still shows it)."""
     where, params = scope.where()
     sent = {
         str(r["message_id"])
@@ -114,14 +116,15 @@ def _mail(conn: sqlite3.Connection, scope: AgentScope, since: str, now: str) -> 
     waiting = {int(r["id"]) for r in mailstore.inquiries(conn, scope)}
     noted = []
     for mail in conn.execute(
-        f"SELECT id, from_addr, subject, in_reply_to, references_, received_at, read_by_agent_at FROM emails"
-        f" WHERE {where} AND direction = 'in' AND received_at >= ? ORDER BY id",
+        f"SELECT id, from_addr, subject, in_reply_to, references_, received_at, read_by_agent_at,"
+        f" {mailstore.person()} AS person FROM emails WHERE {where} AND direction = 'in' AND received_at >= ?"
+        " ORDER BY id",
         (*params, since),
     ):
         answers = {mail["in_reply_to"], *str(mail["references_"] or "").split()}
         subject = json.dumps(" ".join(str(mail["subject"] or "").split())[:80], ensure_ascii=False)
         sender = str(mail["from_addr"])
-        if answers & sent:
+        if answers & sent and mail["person"] and not mailstore.is_suppressed(conn, scope, sender):
             kind, text = "reply", f"Email #{mail['id']} from {sender} answers one you sent: {subject}"
         elif (
             int(mail["id"]) in waiting

@@ -41,8 +41,8 @@ def an_agent(data_dir: Path) -> Any:
         scope, now = agent.scope(), to_iso(agent.clock.now())
         conn.execute(
             "INSERT INTO emails (mode, session, life_id, direction, uidvalidity, uid, message_id, from_addr, to_addr,"
-            " subject, received_at, body) VALUES (?, ?, ?, 'in', 1, 1, '<q1@example.org>', ?, 'ember@example.org',"
-            " 'A question', ?, 'Do you make A5 planners?')",
+            " subject, received_at, body, bulk, authenticated) VALUES (?, ?, ?, 'in', 1, 1, '<q1@example.org>', ?,"
+            " 'ember@example.org', 'A question', ?, 'Do you make A5 planners?', 0, 1)",  # 0.14.0: a verified person
             (scope.mode, scope.session, scope.life_id, WROTE, now),
         )
         cycle = conn.execute("SELECT MAX(id) FROM cycles").fetchone()[0]

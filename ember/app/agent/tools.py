@@ -172,8 +172,8 @@ DRAFT_BYTES = DRAFT_MAX_TOKENS * 4  # 0.14.0: the room a draft needs in a file (
 DRAFT_SOURCES = 5  # workspace files a draft builds on
 DRAFT_SOURCE_CHARS = 24_000  # their text, together
 FIRST_CONTACT = (
-    "First email to this address: Ember has never received mail from it. Cold advertising emails are illegal in "
-    "Germany (§ 7 UWG)."
+    "First email to this address: Ember never received an email from it whose sender was verified. Cold advertising "
+    "emails are illegal in Germany (§ 7 UWG)."
 )
 REDDIT_NOTE = (
     "After you approve, the dashboard opens Reddit with this text filled in: post it from your own account, then "
@@ -3115,7 +3115,12 @@ def _email_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     if row["direction"] == "out":
         lead = f"Email #{row['id']}, sent by Ember after your owner approved request #{row['approval_id']}."
     else:
-        lead = f"Email #{row['id']}, received {_local(ctx, row['received_at'])}. The sender is unverified."
+        lead = f"Email #{row['id']}, received {_local(ctx, row['received_at'])}. " + (
+            "Your mail provider verified its sender."  # 0.14.0: the test mailstore.person() makes
+            if row["authenticated"] == 1 and row["bulk"] == 0
+            else "Not a verified person's (an unverified sender, a list or a machine): no obligation, and it doesn't"
+            " count as them having written."
+        )
         if row["read_by_agent_at"] is None:
             mailstore.mark_read(conn, row["id"], ctx.now(), ctx.cycle_id)
         if mailstore.is_suppressed(conn, ctx.scope, row["from_addr"]):
@@ -3145,11 +3150,11 @@ def _mark_opt_out(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
 
 def _inquiry_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     """0.13.0 (Phase E1): a person's email that needs no answer leaves OBLIGATIONS."""
-    box = _mail(ctx)
+    _mail(ctx)
     row = mailstore.email(conn, ctx.scope, args["email_id"])
     if row is None:
         raise ToolError(f"there is no email #{args['email_id']}")
-    if not any(r["id"] == row["id"] for r in mailstore.inquiries(conn, ctx.scope, box.address)):
+    if not mailstore.is_inquiry(conn, ctx.scope, row["id"]):
         raise ToolError(f"email #{row['id']} doesn't wait for an answer (OBLIGATIONS lists those that do)")
     mailstore.close_inquiry(conn, row["id"], args["reason"].strip(), "agent", ctx.now())
     return Outcome(True, f"Email #{row['id']} needs no answer: closed.", f"#{row['id']}: closed")
@@ -3236,7 +3241,7 @@ def _propose_email(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
         f"sends it once, with its AI footer (at most {box.daily_limit} emails a day), and you hear the result."
     )
     if first:
-        text += " This person never wrote to you, so your owner is warned that it is a first contact."
+        text += " No verified email from this person reached you, so your owner is warned that it is a first contact."
     short = qa.defects(connectors.class_of("email", action).name, action)  # 0.13.0: an answer's checks
     if short:
         text += f" QA (Ember's code): {'; '.join(short)}; your owner sees it too."

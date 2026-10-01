@@ -31,15 +31,23 @@ def waiting(agent: Any) -> list[int]:
         return [int(r["id"]) for r in mailstore.inquiries(conn, agent.scope())]
 
 
-def inbound(agent: Any, sender: str, bulk: int | None = 0, minutes: int = 1, subject: str = "A question") -> int:
-    """An email that arrived ``minutes`` from now (its bulk flag as the mailbox read it; None: stored before 0.13.0)."""
+def inbound(
+    agent: Any,
+    sender: str,
+    bulk: int | None = 0,
+    minutes: int = 1,
+    subject: str = "A question",
+    authenticated: int | None = 1,
+) -> int:
+    """An email that arrived ``minutes`` from now (its bulk flag as the mailbox read it; None: stored before 0.13.0;
+    0.14.0: whether the provider verified its sender, None: stored before 0.14.0)."""
     scope = agent.scope()
     when = to_iso(agent.clock.now() + timedelta(minutes=minutes))
     with agent.db.transaction() as conn:
         cursor = conn.execute(
             "INSERT INTO emails (mode, session, life_id, direction, uidvalidity, uid, message_id, from_addr, to_addr,"
-            " subject, received_at, body, bulk) VALUES (?, ?, ?, 'in', 9, (SELECT COALESCE(MAX(uid), 100) + 1 FROM"
-            " emails), ?, ?, 'ember@example.invalid', ?, ?, 'Hello?', ?)",
+            " subject, received_at, body, bulk, authenticated) VALUES (?, ?, ?, 'in', 9, (SELECT COALESCE(MAX(uid),"
+            " 100) + 1 FROM emails), ?, ?, 'ember@example.invalid', ?, ?, 'Hello?', ?, ?)",
             (
                 scope.mode,
                 scope.session,
@@ -49,6 +57,7 @@ def inbound(agent: Any, sender: str, bulk: int | None = 0, minutes: int = 1, sub
                 subject,
                 when,
                 bulk,
+                authenticated,
             ),
         )
     return int(cursor.lastrowid)
@@ -73,7 +82,7 @@ def test_a_person_s_email_waits_until_ember_answers_or_closes_it(data_dir: Path)
     # What never counts: a newsletter, mail stored before 0.13.0, a machine, someone who asked to stop
     inbound(agent, "news@list.example", bulk=1)
     inbound(agent, "old@example.org", bulk=None)
-    inbound(agent, "MAILER-DAEMON@mail.example")
+    inbound(agent, "MAILER-DAEMON@mail.example", authenticated=None)  # 0.13.0 stored it as bulk 0, with no verdict
     stopped = inbound(agent, "gone@example.org")
     with agent.db.transaction() as conn:
         mailstore.suppress(conn, agent.scope(), "gone@example.org", to_iso(agent.clock.now()), "asked", stopped)

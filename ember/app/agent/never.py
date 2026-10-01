@@ -4,7 +4,9 @@ The policy engine (policy.py) lets the owner unlock small, safe requests. Some k
 whatever is granted, and no option changes that (CLASSES):
 
 * account creation: big platforms block automated sign-ups, and Anthropic's usage policy forbids them;
-* first contact: writing to someone who never wrote to Ember (UWG section 7: advertising without consent);
+* first contact: writing to someone who never wrote to Ember (UWG section 7: advertising without consent); 0.14.0:
+  only a person's email counts as having written (mailstore.person: its sender verified by the mail provider, no
+  list's, machine's or Ember's own), since anyone can put any address in From:;
 * money: moving money or spending it (requests of type spend_money); what an unlock may spend is its budget of
   actions, which the database holds it to as well;
 * a first publication: Ember's first listing in the shop, before anything of its went live there, the pin that
@@ -36,6 +38,8 @@ import string
 import unicodedata
 from collections.abc import Mapping
 from typing import Any
+
+from ..integrations import mailstore
 
 CLASSES = {
     "account": "creating an account",
@@ -133,7 +137,7 @@ def legal(conn: sqlite3.Connection, row: Mapping[str, Any]) -> bool:
     return _legal(f" {kept['words'] if kept else ''} {raw} ")
 
 
-_WROTE = "SELECT 1 FROM emails WHERE mode = ? AND session = ? AND direction = 'in' AND lower(from_addr) = lower(?)"
+_WROTE = f"SELECT 1 FROM emails WHERE mode = ? AND session = ? AND {mailstore.person()} AND lower(from_addr) = lower(?)"
 _PUBLISHED = "SELECT 1 FROM etsy_listings WHERE mode = ? AND session = ? AND status = 'active'"
 _BOARD = "SELECT 1 FROM pinterest_boards WHERE mode = ? AND session = ? AND status = 'active'"
 _PRODUCT = "SELECT 1 FROM printify_products WHERE mode = ? AND session = ? AND status IN ('publishing', 'active')"
