@@ -501,6 +501,7 @@ def _order(receipt: Any) -> Order | None:
                     "title": str(t.get("title") or "")[:140],
                     "quantity": _int(t.get("quantity")) or 1,
                     "price_cents": _cents(t.get("price")) or 0,
+                    "shipping_cents": _cents(t.get("shipping_cost")) or 0,  # 0.14.0: what the buyer paid for it
                 }
             )
     refunds = [r for r in receipt.get("refunds") or [] if isinstance(r, dict)]

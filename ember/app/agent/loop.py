@@ -490,11 +490,15 @@ class CycleRunner:
                 log.exception("Checking the products at Printify failed")
         currency = self.settings.printify_currency
         ctx.printify = tools.PrintifyAccess(shop.title, currency, self.settings.printify_products_per_day)
-        catalog = printify_publisher.Catalog(self.db, self.clock, self.scope.mode, lambda: account)
+        # 0.14.0: with the shop, for a cost probe (an unpublished product that tells what making costs)
+        catalog = printify_publisher.Catalog(
+            self.db, self.clock, self.scope.mode, lambda: account, lambda: shop.shop_id
+        )
+        rate = self.settings.etsy_usd_per_eur
 
         def look(search: str | None, blueprint_id: int | None, provider_id: int | None) -> str:
             with sealed():
-                return catalog.answer(search, blueprint_id, provider_id, currency)
+                return catalog.answer(search, blueprint_id, provider_id, currency, rate)
 
         ctx.catalog = look
         self.printify_on = True

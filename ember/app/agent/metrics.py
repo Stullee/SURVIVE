@@ -310,13 +310,20 @@ def _ids(numbers: list[int], shown: int = 8) -> str:
 def listings(
     conn: sqlite3.Connection, scope: AgentScope, project_id: int | None, venture_id: int | None
 ) -> list[sqlite3.Row]:
-    """Ember's listings on Etsy (with their numbers at the last sync), those of the project or venture if given."""
+    """Ember's listings on Etsy (with their numbers at the last sync), those of the project or venture if given.
+    0.14.0: with the listings Printify made of Ember's products (``printify`` 1), whose numbers Etsy's sync keeps too:
+    the metrics, a product line's listing test and the ventures' rules left them out."""
     where, params = scope.where("l")
-    rows = conn.execute(
-        "SELECT l.*, p.id AS for_project, COALESCE(p.venture_id, y.venture_id) AS for_venture FROM etsy_listings l"
+    joins = (
         " JOIN approvals a ON a.id = l.approval_id LEFT JOIN cycles y ON y.id = a.cycle_id"
         f" LEFT JOIN projects p ON p.id = COALESCE(a.project_id, y.project_id) WHERE {where}"
-        " AND l.listing_id IS NOT NULL ORDER BY l.id",
+        " AND l.listing_id IS NOT NULL ORDER BY l.id"
+    )
+    mine = "p.id AS for_project, COALESCE(p.venture_id, y.venture_id) AS for_venture"
+    rows = conn.execute(f"SELECT l.*, 0 AS printify, {mine} FROM etsy_listings l{joins}", params).fetchall()
+    rows += conn.execute(
+        "SELECT l.id, l.approval_id, l.listing_id, l.title, l.status, l.state, l.views, l.favorites, l.synced_at,"
+        f" 1 AS printify, {mine} FROM printify_products l{joins}",
         params,
     ).fetchall()
     if project_id:
@@ -405,6 +412,8 @@ def _read_etsy(
         return Reading(len(found), synced, f" (receipts {_ids(found)})" if found else "", sample=views)
     few = []  # qa_clean: the live listings with too few photos in Ember's records
     for r in live:
+        if r["printify"]:
+            continue  # 0.14.0: its photos are Printify's mockups, not in Ember's records
         listing = etsy_publisher.recorded_listing(conn, scope, r)
         photos = len(listing.photos) if listing is not None else 0
         if photos < qa.MIN_PHOTOS:

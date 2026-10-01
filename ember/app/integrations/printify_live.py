@@ -131,20 +131,22 @@ class LiveAccount:
         return [Provider(int(p["id"]), str(p.get("title") or "")[:200]) for p in _ids(rows)]
 
     def variants(self, blueprint_id: int, provider_id: int) -> list[Variant]:
-        """The variants with a front print area that ship to Germany (their first item's shipping)."""
+        """The variants with a front print area that ship to Germany (their first item's shipping, in the currency
+        Printify states for it: 0.14.0, it was taken to be the printify_currency option's)."""
         base = f"/catalog/blueprints/{blueprint_id}/print_providers/{provider_id}"
         data = self._call("GET", f"{base}/variants.json")
         shipping = self._call("GET", f"{base}/shipping.json")
-        costs: dict[int, int] = {}
+        costs: dict[int, tuple[int, str]] = {}
         profiles = shipping.get("profiles") if isinstance(shipping, dict) else None
         for country in (SHIP_TO, EVERYWHERE):  # a profile naming Germany wins over the rest of the world's
             for profile in profiles if isinstance(profiles, list) else []:
                 if not isinstance(profile, dict) or country not in (profile.get("countries") or []):
                     continue
-                cost = (profile.get("first_item") or {}).get("cost")
+                first = profile.get("first_item") if isinstance(profile.get("first_item"), dict) else {}
+                cost, currency = first.get("cost"), str(first.get("currency") or "")[:3].upper()
                 for variant_id in profile.get("variant_ids") or []:
                     if isinstance(variant_id, int) and isinstance(cost, int):
-                        costs.setdefault(variant_id, cost)
+                        costs.setdefault(variant_id, (cost, currency))
         found = []
         for v in _ids(data.get("variants") if isinstance(data, dict) else None):
             front = next(
@@ -157,7 +159,8 @@ class LiveAccount:
                 width, height = int(front["width"]), int(front["height"])
             except (KeyError, TypeError, ValueError):
                 continue
-            found.append(Variant(int(v["id"]), str(v.get("title") or "")[:100], width, height, costs[v["id"]]))
+            cost, currency = costs[v["id"]]
+            found.append(Variant(int(v["id"]), str(v.get("title") or "")[:100], width, height, cost, currency))
         return found
 
     def upload(self, name: str, data: bytes) -> str:
@@ -207,9 +210,10 @@ class LiveAccount:
             for order in rows if isinstance(rows, list) else []:
                 if not isinstance(order, dict):
                     continue
-                for line in order.get("line_items") or []:
-                    if isinstance(line, dict) and line.get("product_id"):
-                        found.append(_line(order, line))
+                items = [i for i in order.get("line_items") or [] if isinstance(i, dict) and i.get("product_id")]
+                bill = sum(_number(i.get("cost")) + _number(i.get("shipping_cost")) for i in items)
+                for line in items:
+                    found.append(_line(order, line, bill))
             if not isinstance(data, dict) or not data.get("next_page_url"):
                 break
         return found
@@ -219,15 +223,20 @@ def _number(value: Any) -> int:
     return int(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0
 
 
-def _line(order: dict[str, Any], line: dict[str, Any]) -> OrderLine:
+def _line(order: dict[str, Any], line: dict[str, Any], bill: int) -> OrderLine:
+    """A line of an order, with its share of the order's tax (0.14.0: by what it costs of the order's ``bill``)."""
+    cost, shipping = _number(line.get("cost")), _number(line.get("shipping_cost"))
+    tax = _number(order.get("total_tax"))
     return OrderLine(
         order_id=str(order.get("id") or "")[:40],
         product_id=str(line["product_id"])[:40],
         quantity=_number(line.get("quantity")),
-        cost_cents=_number(line.get("cost")),
-        shipping_cents=_number(line.get("shipping_cost")),
+        cost_cents=cost,
+        shipping_cents=shipping,
         status=str(line.get("status") or order.get("status") or "")[:40],
         created_at=str(order.get("created_at") or "")[:40],
+        tax_cents=round(tax * (cost + shipping) / bill) if bill else 0,
+        currency=str(order.get("currency") or "")[:3].upper(),
     )
 
 

@@ -983,3 +983,33 @@ def seed(conn: sqlite3.Connection, scope: AgentScope, now: str) -> int:
         (ids["etsy"], *params),
     )
     return len(ids)
+
+
+ETSY_LEG = next(title for key, _, title, *_ in SEEDS if key == "etsy")
+
+
+def adopt(
+    conn: sqlite3.Connection, scope: AgentScope, project_id: int, cycle_id: int, channel: str, now: str
+) -> int | None:
+    """0.14.0: a product line that sells in the Etsy shop belongs to a venture. A project without one joins its cycle's
+    venture, or else the channel's: the Etsy leg for an Etsy listing, the print-on-demand venture ('printify') for a
+    Printify product; never a parked or killed one. Its sales counted for no venture, so a leg that sold was parked as
+    one that sold nothing. Returns the venture it joined, or None."""
+    project = conn.execute("SELECT venture_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if project is None or project["venture_id"] is not None:
+        return None
+    where, params = scope.where()
+    cycle = conn.execute("SELECT venture_id FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
+    leg = conn.execute(
+        f"SELECT id FROM ventures WHERE {where} AND (channel = ? OR (? = 'etsy' AND title = ? AND parent_id IS NULL))"
+        " ORDER BY id LIMIT 1",
+        (*params, channel, channel, ETSY_LEG),
+    ).fetchone()
+    for venture_id in (cycle["venture_id"] if cycle else None, leg["id"] if leg else None):
+        venture = get(conn, scope, venture_id) if venture_id else None
+        if venture is not None and venture["stage"] not in ("parked", "killed"):
+            conn.execute(
+                "UPDATE projects SET venture_id = ?, updated_at = ? WHERE id = ?", (venture["id"], now, project_id)
+            )
+            return int(venture["id"])
+    return None

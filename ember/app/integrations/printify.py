@@ -17,6 +17,12 @@ token for Ember (Printify: My profile, Connections) and sets it in the options w
 * the sync reads the Etsy listing Printify made and the Printify orders of Ember's products: what they cost to make
   and ship, which the owner pays at Printify.
 
+0.14.0: the margin is checked with econ's fee model (the one the whole app uses: the listing fee, 6.5%, payment
+processing and VAT on Etsy's fees), and Printify's bill (making and shipping) carries VAT too, as for a seller without
+a VAT ID. The check assumes the price alone pays the shipping (as if the listing shipped free): shipping a buyer pays
+is revenue on top of it. Amounts carry the currency Printify states where it states one; shipping in another currency
+is converted at the owner's exchange rate, or refused without one.
+
 In dry run (with Printify switched on) a fake account stands in, with a small catalog, its state kept in the database
 per dry-run session: nothing reaches Printify.
 """
@@ -32,6 +38,7 @@ from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from pathlib import PurePosixPath
 from typing import Any, Protocol
 
+from ..agent import econ
 from ..config import Settings
 from ..economy.clock import Clock, to_iso
 from .etsy import Upload
@@ -43,12 +50,10 @@ IMAGE_MAX_BYTES = 15 * 1024 * 1024
 MAX_VARIANTS = 20  # a product's variants, in one proposal
 SHAPE_TOLERANCE = 0.03  # a product's variants share one print area's shape (height to width) within this
 PRINT_DPI = 300  # a print area's pixels are for this resolution (below qa.SHARP_DPI a print looks blurry)
-# A price must keep this share of itself after Etsy's fees (ETSY_SHARE and ETSY_FIXED_CENTS: the 6.5% transaction fee,
-# payment processing of about 4% plus a fixed part, and the listing fee), what Printify charges to make the variant, and
-# its shipping to Germany.
+# A price must keep this share of itself after Etsy's fees (0.14.0: econ.fees, the app's one fee model), what Printify
+# charges to make the variant and its shipping to Germany, with VAT on that bill (BILL_VAT).
 MIN_MARGIN = Decimal("0.15")
-ETSY_SHARE = Decimal("0.105")
-ETSY_FIXED_CENTS = 50
+BILL_VAT = Decimal(str(econ.FEE_VAT))  # 0.14.0: Printify bills VAT to a seller without a VAT ID, as Etsy does
 SHIP_TO = "DE"
 # Added to every product's description, as to every Etsy listing's (the design is the AI's part; the product is made by
 # the print provider).
@@ -91,6 +96,7 @@ class Variant:
     width: int  # the front print area's pixels (at PRINT_DPI)
     height: int
     shipping_cents: int  # the first item's shipping to SHIP_TO, as Printify charges it
+    currency: str = ""  # 0.14.0: the currency Printify states for it ("": none stated)
 
 
 @dataclass(frozen=True)
@@ -111,6 +117,7 @@ class Product:
     area_height: int
     currency: str
     position: str = "front"
+    billed_in: str = ""  # 0.14.0: the currency Printify states for the variants ("": printify_currency's)
 
     def to_action(self) -> dict[str, Any]:
         data = asdict(self)
@@ -159,6 +166,7 @@ def product_from_action(raw: str | dict[str, Any]) -> Product:
             area_height=int(data["area_height"]),
             currency=str(data["currency"]),
             position=str(data.get("position") or "front"),
+            billed_in=str(data.get("billed_in") or ""),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise PrintifyError(f"the product isn't readable ({type(exc).__name__})") from None
@@ -203,21 +211,51 @@ def money(cents: int, currency: str) -> str:
     return f"{cents / 100:.2f} {currency}"
 
 
-def kept(price_cents: int, cost_cents: int, shipping_cents: int) -> int:
-    """What a sale at this price keeps after Etsy's fees, making and shipping (cents)."""
-    left = Decimal(price_cents) * (1 - ETSY_SHARE) - ETSY_FIXED_CENTS - cost_cents - shipping_cents
+def convert(cents: int, currency: str, to: str, usd_per_eur: float = 0.0) -> int:
+    """0.14.0: an amount Printify states in ``currency`` ("": none stated), in ``to``: between USD and EUR at the
+    owner's rate (etsy_usd_per_eur), rounded up (it is a cost). It was taken to be in printify_currency's currency.
+    Raises PrintifyError when it can't be converted."""
+    if not currency or currency == to:
+        return cents
+    pair = {currency, to} == {"USD", "EUR"}
+    if not pair or usd_per_eur <= 0:
+        why = "your owner set no exchange rate (etsy_usd_per_eur)" if pair else "Ember's code can't convert it"
+        raise PrintifyError(f"Printify states it in {currency}, not {to} (printify_currency), and {why}")
+    rate = Decimal(str(usd_per_eur))
+    value = Decimal(cents) / rate if currency == "USD" else Decimal(cents) * rate
+    return int(value.to_integral_value(rounding=ROUND_CEILING))
+
+
+def fees(price_cents: int, currency: str = "EUR", usd_per_eur: float = 0.0) -> Decimal:
+    """0.14.0: Etsy's fees on a sale at this price (cents), by econ.fees: the listing fee (USD 0.20, at the owner's
+    rate or econ's assumed one), 6.5%, payment processing (4% and 0.30) and VAT on Etsy's fees. It was about 10.5% and
+    0.50, less than the fee model the rest of the app uses."""
+    rate = 1.0 if currency == "USD" else usd_per_eur if usd_per_eur > 0 else econ.DEFAULT_USD_PER_EUR
+    return Decimal(str(econ.fees("etsy_physical", price_cents / 100, rate))) * 100
+
+
+def kept(
+    price_cents: int, cost_cents: int, shipping_cents: int, currency: str = "EUR", usd_per_eur: float = 0.0
+) -> int:
+    """What a sale at this price keeps after Etsy's fees, making and shipping, with VAT on Printify's bill (cents)."""
+    bill = Decimal(cost_cents + shipping_cents) * (1 + BILL_VAT)
+    left = Decimal(price_cents) - fees(price_cents, currency, usd_per_eur) - bill
     return int(left.to_integral_value(rounding=ROUND_HALF_UP))
 
 
-def keeps(price_cents: int, cost_cents: int, shipping_cents: int) -> bool:
-    """Whether a price keeps MIN_MARGIN of itself after Etsy's fees, making and shipping."""
-    return kept(price_cents, cost_cents, shipping_cents) >= Decimal(price_cents) * MIN_MARGIN
+def keeps(
+    price_cents: int, cost_cents: int, shipping_cents: int, currency: str = "EUR", usd_per_eur: float = 0.0
+) -> bool:
+    """Whether a price keeps MIN_MARGIN of itself after Etsy's fees, making and shipping (with VAT)."""
+    return kept(price_cents, cost_cents, shipping_cents, currency, usd_per_eur) >= Decimal(price_cents) * MIN_MARGIN
 
 
-def least_price(cost_cents: int, shipping_cents: int) -> int:
-    """The lowest price (cents, up to the next 10) that keeps MIN_MARGIN."""
-    need = (Decimal(cost_cents + shipping_cents + ETSY_FIXED_CENTS)) / (1 - ETSY_SHARE - MIN_MARGIN)
-    return int((need / 10).to_integral_value(rounding=ROUND_CEILING)) * 10
+def least_price(cost_cents: int, shipping_cents: int, currency: str = "EUR", usd_per_eur: float = 0.0) -> int:
+    """The lowest price (cents, a multiple of 10) that keeps MIN_MARGIN."""
+    price = max(100, (cost_cents + shipping_cents) // 10 * 10)
+    while not keeps(price, cost_cents, shipping_cents, currency, usd_per_eur):
+        price += 10  # counted up from what it costs, so it holds whatever econ's fee table is
+    return price
 
 
 def payload(product: Product, blueprint: str, provider: str, variants: dict[int, str]) -> str:
@@ -232,6 +270,9 @@ def payload(product: Product, blueprint: str, provider: str, variants: dict[int,
             f" (shipping {money(shipping.get(v, 0), product.currency)})"
             for v, c in product.prices
         ),
+        # 0.14.0: what the check assumes (no word the NEVER list reads as legal: the fee model is in the docs)
+        f"Published only if each price keeps {MIN_MARGIN * 100:.0f}% after Etsy's fees, making and shipping (as if "
+        "the price alone pays the shipping).",
         f"Title: {product.title}",
         f"Tags: {', '.join(product.tags)}",
         "",
@@ -270,6 +311,8 @@ class OrderLine:
     shipping_cents: int
     status: str
     created_at: str
+    tax_cents: int = 0  # 0.14.0: the line's share of the tax Printify bills on the order
+    currency: str = ""  # 0.14.0: the order's currency, if Printify states one
 
 
 class Account(Protocol):
@@ -368,7 +411,7 @@ class FakePrintify:
         found = FAKE_CATALOG["variants"].get(f"{blueprint_id}:{provider_id}")
         if found is None:
             raise Gone("this provider doesn't make it")
-        return [Variant(int(v), str(t), int(w), int(h), int(s)) for v, t, w, h, _cost, s in found]
+        return [Variant(int(v), str(t), int(w), int(h), int(s), "EUR") for v, t, w, h, _cost, s in found]
 
     def _cost(self, blueprint_id: int, provider_id: int, variant_id: int) -> int:
         for v, _title, _w, _h, cost, _ship in FAKE_CATALOG["variants"].get(f"{blueprint_id}:{provider_id}", []):

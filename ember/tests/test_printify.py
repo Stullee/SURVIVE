@@ -19,7 +19,7 @@ from PIL import Image
 
 httpx2 = pytest.importorskip("httpx2")
 
-from app.agent import metrics, never, stages, tools  # noqa: E402
+from app.agent import econ, metrics, never, stages, tools  # noqa: E402
 from app.agent.fake_llm import FakeTransport, request_kind  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
@@ -86,8 +86,9 @@ def test_prices_margins_and_the_picture_are_checked() -> None:
     ):
         with pytest.raises(PrintifyError, match=message):
             printify.parse_prices(text)
-    # A price keeps 15% of itself after Etsy's fees (10.5% and 0.50), making and shipping.
-    assert printify.kept(2490, 790, 450) == int((Decimal(2490) * Decimal("0.895") - 50 - 790 - 450).to_integral_value())
+    # A price keeps 15% of itself after Etsy's fees (0.14.0: econ's, with VAT), making and shipping (with VAT).
+    fees = Decimal(str(econ.fees("etsy_physical", 24.90, econ.DEFAULT_USD_PER_EUR))) * 100
+    assert printify.kept(2490, 790, 450) == round(2490 - fees - Decimal(1240) * Decimal("1.19"))
     assert printify.keeps(2490, 790, 450) and not printify.keeps(1290, 790, 450)
     least = printify.least_price(790, 450)
     assert least % 10 == 0 and printify.keeps(least, 790, 450) and not printify.keeps(least - 10, 790, 450)
@@ -183,8 +184,8 @@ def test_the_catalog_is_read_with_the_print_areas_and_german_shipping() -> None:
     assert account.blueprints() == [printify.Blueprint(POSTER, "Matte Vertical Posters", "X")]
     assert account.providers(POSTER) == [printify.Provider(SENSARIA, "Sensaria")]
     assert account.variants(POSTER, SENSARIA) == [
-        printify.Variant(SMALL, "12x18 in", 3600, 5400, 450),  # Germany's own profile wins
-        printify.Variant(LARGE, "24x36 in", 7200, 10800, 990),  # the rest of the world's
+        printify.Variant(SMALL, "12x18 in", 3600, 5400, 450, "EUR"),  # Germany's own profile wins
+        printify.Variant(LARGE, "24x36 in", 7200, 10800, 990),  # the rest of the world's (0.14.0: no currency stated)
     ]
     first = server.requests[0]
     assert first.headers["authorization"] == "Bearer pr1ntify-t0ken-value-xyz"

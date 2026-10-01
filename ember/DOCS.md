@@ -1155,9 +1155,9 @@ Every hour while the app runs, also while the agent sleeps between wake cycles
 their state, when they end and whether they renew themselves, views (Etsy
 counts them once a day) and favorites, and the orders
 that hold them: date, status, Ember's lines and which listing, never who bought.
-An order's amount is only Ember's lines: their price times quantity, less their
-share of a coupon and of any refund; tax, shipping and your own products in the
-same receipt don't count, and Etsy's fees are recorded on their own (below). Every sync
+An order's amount is only Ember's lines: their price times quantity and the
+shipping the buyer paid for them, less their share of a coupon and of any
+refund; tax and your own products in the same receipt don't count, and Etsy's fees are recorded on their own (below). Every sync
 reads the receipts that changed lately, so an order refunded or cancelled after
 it was read is updated, and it stops counting. Etsy's
 categories are fetched again every day. Etsy's API terms allow showing its
@@ -1308,31 +1308,45 @@ it made and what their orders cost you.
 ### How a product is made
 
 - The agent looks through Printify's catalog (`printify_catalog`: products,
-  who makes them, their sizes with the print area and the shipping to Germany)
-  and proposes a product with `propose_printify_product`: one of its pictures,
+  who makes them, their sizes with the print area, the shipping to Germany and
+  what making each costs with its least price) and proposes a product with `propose_printify_product`: one of its pictures,
   the variants (sizes of one shape) with their prices, and the listing's title,
   description and tags. Ember adds a line saying AI helped design it, as on
   Etsy. The approval card shows every word, each price with its shipping, and
   what the QA check finds short (a picture that prints blurry below 150 dpi, or
   whose shape leaves part of the print area blank).
+- To show what making costs, Ember creates an unpublished product of the
+  variants with a blank picture, reads its costs and deletes it at once (at
+  most once a day for a product and provider). It is never published. If its
+  delete fails, the next sync deletes it.
+- Amounts Printify states in another currency than **Printify currency** are
+  converted at **Exchange rate for Etsy revenue** (USD and EUR only); without
+  it, no product of them can be proposed. **Printify currency** must be your
+  Etsy shop's currency.
 - **Approve** and Ember uploads the picture, creates the product at Printify
   (not published yet) and reads what each variant costs to make. It publishes
   the product to your Etsy shop only if every price keeps **15%** of itself
-  after Etsy's fees (about 10.5% and 0.50), making and shipping. Otherwise it
-  deletes the unpublished product and the card says, for each price, what it
-  would need. A product can only be approved as it is or rejected; **Cancel**
+  after Etsy's fees (the listing fee, 6.5%, payment processing and 19% VAT on
+  Etsy's fees), making and shipping (with 19% VAT on Printify's bill), as if
+  the price alone paid the shipping. Otherwise it deletes the unpublished
+  product and the card says, for each price, what it would need (if the delete
+  fails, the card says so and names the product to delete at Printify). A product can only be approved as it is or rejected; **Cancel**
   stops it before Ember starts.
 - Printify then publishes the listing in your shop (it can take a few
   minutes); the card shows the listing once the sync has read it. At most
   **Printify products per day** are created a day.
 - If the picture changed after you approved, nothing is created. Ember never
   creates a product twice: if it can't tell what Printify made (a lost
-  connection), it says so and doesn't try again.
+  connection), it says so and doesn't try again. The sync then reads the
+  product: if Printify published it, Ember tracks its listing (with **Undo**).
+  A product with no Etsy listing 24 hours after it was sent fails with the
+  reason: check it at Printify.
 - Every hour while the app runs, Ember reads its products' state and the
   Printify orders of its products: what making and shipping each one costs
-  you. **Record the cost** on an order opens the expense form filled in (it can
-  be recorded once). The sale itself is an order in your Etsy shop: its revenue
-  is recorded as for any listing of Ember's.
+  you, with the tax Printify bills. **Record the cost** on an order opens the
+  expense form filled in, for the product's project and venture (it can be
+  recorded once). The sale itself is an order in your Etsy shop: its revenue,
+  with the shipping the buyer paid, is recorded as for any listing of Ember's.
 - The agent's plan shows each product with what its prices keep and the orders
   (PRINTIFY); the metrics `pod_products_live` and `pod_orders` can measure a
   milestone. The seeded venture *Print on demand in the Etsy shop* has its first
