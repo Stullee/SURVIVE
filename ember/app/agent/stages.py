@@ -173,13 +173,36 @@ def waits_for_channel(venture: Mapping[str, Any], ready: Collection[str]) -> boo
     return channel in CHANNEL_TESTS and channel not in ready
 
 
+def restart_test(
+    conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any], test: Mapping[str, Any], now: str
+) -> str:
+    """0.14.0: a channel venture's open first test, set before the owner had set its channel up (as 0.13.0 did when
+    they backed it), is dropped: its date can't move, and its clock shouldn't run until then. ``keep`` sets a new one
+    once the channel is set up. Returns what happened, for the events."""
+    vid, name = int(venture["id"]), str(venture["channel"]).capitalize()
+    why = f"{name} isn't set up yet: a new first test starts once it is."
+    conn.execute(
+        "UPDATE milestones SET status = 'dropped', result = ?, closed_at = ?, closed_by = 'code', updated_at = ?"
+        " WHERE id = ? AND status = 'open'",
+        (f"Venture #{vid}'s channel {why}", now, now, test["id"]),
+    )
+    conn.execute("UPDATE ventures SET test_milestone_id = NULL, updated_at = ? WHERE id = ?", (now, vid))
+    return f"Ember's code dropped milestone #{test['id']}, the first test of venture #{vid}: {why}"
+
+
 def keep(
-    conn: sqlite3.Connection, scope: AgentScope, today: date, now: str, ready: Collection[str] = tuple(CHANNEL_TESTS)
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    today: date,
+    now: str,
+    ready: Collection[str] = tuple(CHANNEL_TESTS),
+    unset: Collection[str] = (),
 ) -> list[str]:
     """Before every plan: a first test for each backed venture that has none (0.14.0: a channel's venture once its
-    channel is ``ready``), and the stages' rules (research without a business case, a missed first test; 0.13.0: an
-    idea no one took up, a live venture that sells nothing or earns more than it costs). Returns what happened, for
-    the events."""
+    channel is ``ready``; while the owner hasn't set the channel up (``unset``), an open first test Ember's code set
+    earlier is dropped, and a new one comes once it is), and the stages' rules (research without a business case, a
+    missed first test; 0.13.0: an idea no one took up, a live venture that sells nothing or earns more than it costs).
+    Returns what happened, for the events."""
     happened = []
     paid = ventures.money(conn, scope)
     for v in ventures.all_ventures(conn, scope):
@@ -214,9 +237,12 @@ def keep(
         if v["stage"] != "building":
             continue
         test = roadmap.get(conn, scope, v["test_milestone_id"]) if v["test_milestone_id"] else None
+        if waits_for_channel(v, ready):
+            # 0.14.0: no first test runs, nor is missed, while its channel can't be used
+            if test is not None and test["status"] == "open" and test["created_by"] == "code" and v["channel"] in unset:
+                happened.append(restart_test(conn, scope, v, test, now))
+            continue
         if test is None:
-            if waits_for_channel(v, ready):
-                continue
             made = first_test(conn, scope, v, today, now)
             happened.append(f"Ember's code set the first test of venture #{v['id']} as milestone #{made}")
             continue

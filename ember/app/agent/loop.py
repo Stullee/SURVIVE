@@ -222,6 +222,7 @@ class CycleRunner:
         self.printify = printify  # 0.13.0 (Phase E4): the owner's Printify account
         self.pod = pod
         self.printify_on = False  # the Printify tools and the PRINTIFY section: with the account, its shop and ours
+        self.printify_waits = ""  # 0.14.0: why Printify's tools are off although it is set up (its shop isn't known)
         self.site_on = settings.site_enabled  # 0.13.0 (Phase E3): the owner's website: its tool and WEBSITE section
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
@@ -462,7 +463,7 @@ class CycleRunner:
         """0.13.0 (Phase E4): the products' state and orders before the plan, and what the tools know of the owner's
         Printify account (errors are recorded and shown, and never stop the cycle). Its products become listings in
         the shop: nothing without it, nor while it can't be told which Printify shop sells there."""
-        self.printify_on = False
+        self.printify_on, self.printify_waits = False, ""
         if self.printify is None or self.pod is None or not self.etsy_on:
             return
         account = self.printify.account()
@@ -474,12 +475,14 @@ class CycleRunner:
             with sealed():
                 shop = self.printify.shop()
         except PrintifyError as exc:
-            events.record(self.db, "warning", "printify", f"Printify's shop isn't known: {exc}"[:300])
+            self.printify_waits = f"Printify's shop isn't known: {exc}"
+            events.record(self.db, "warning", "printify", self.printify_waits[:300])
             return
         except Exception:  # noqa: BLE001 - Printify must never end a cycle
             log.exception("Finding the Printify shop failed")
             return
         if shop is None:
+            self.printify_waits = "Printify's shop isn't known"
             return
         if not self.stop.is_set():
             self._progress(cycle_id, current_action="Checking the products at Printify")
@@ -553,7 +556,7 @@ class CycleRunner:
                     + pinterest_publisher.text(conn, self.scope)
                 )
             elif self.pinterest is not None:  # 0.14.0: switched on, but not set up
-                pins = _waiting(self.pinterest.status(), "Pinterest")
+                pins = _waiting("Pinterest", self.pinterest.status(), self._etsy_state())
             pod = ""
             if self.printify_on and self.printify is not None:  # 0.13.0 (Phase E4)
                 known = self.printify.describe().get("shop") or {}
@@ -563,7 +566,7 @@ class CycleRunner:
                     + printify_publisher.text(conn, self.scope)
                 )
             elif self.printify is not None:  # 0.14.0: switched on, but not set up
-                pod = _waiting(self.printify.status(), "Printify")
+                pod = _waiting("Printify", self.printify.status(), self._etsy_state(), self.printify_waits)
             site_text = website.planner_text(conn, self.scope, website.owner(self.settings)) if self.site_on else ""
             return context.snapshot(
                 conn,
@@ -797,12 +800,25 @@ class CycleRunner:
     def _keep_stages(self) -> None:
         """0.12.0: the rules of the ventures' stages (a first test for each backed venture, research without a business
         case and a missed first test parked), kept by Ember's code before every plan (stages.keep)."""
-        # 0.14.0: a channel's venture gets its first test once the channel is set up (its tools are on)
+        # 0.14.0: a channel's venture gets its first test once the channel is set up (its tools are on), and one set
+        # while the owner hadn't set it up yet starts again then
         ready = [name for name, on in (("pinterest", self.pinterest_on), ("printify", self.printify_on)) if on]
+        unset = [
+            name
+            for name, channel in (("pinterest", self.pinterest), ("printify", self.printify))
+            if channel is not None and _unset(channel.status(), self._etsy_state())
+        ]
         with self.db.transaction() as conn:
-            happened = stages.keep(conn, self.scope, self.clock.today(), to_iso(self.clock.now()), ready)
+            happened = stages.keep(conn, self.scope, self.clock.today(), to_iso(self.clock.now()), ready, unset)
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
+
+    def _etsy_state(self) -> str:
+        """0.14.0: the Etsy shop's state (ok, disabled, not_configured or not_connected): a channel's pins and
+        products need it."""
+        if self.etsy is None:
+            return "disabled"
+        return self.etsy.status()[0]
 
     def _venture_focus(self, conn: Any, row: Any, cycle_id: int) -> str:
         """The brief's FOCUS for the plan's venture: its record, money, projects and knowledge file, and (0.12.0) the
@@ -1760,13 +1776,27 @@ def _market_fn(shop: Any) -> Callable[[str], Any]:
     return probe
 
 
-def _waiting(status: tuple[str, str | None], name: str) -> str:
-    """0.14.0: the one line of a channel switched on but not set up ("" otherwise), so the agent knows it waits for
-    the owner rather than asking for it again."""
+def _unset(status: tuple[str, str | None], etsy: str) -> bool:
+    """0.14.0: whether a channel switched on waits for its owner's setup: its own, or the Etsy shop's it needs."""
+    return status[0] in ("not_configured", "not_connected") or (status[0] == "ok" and etsy != "ok")
+
+
+def _waiting(name: str, status: tuple[str, str | None], etsy: str, why: str = "") -> str:
+    """0.14.0: the one line of a channel switched on whose tools are off ("" when it is switched off, or nothing says
+    why), so the agent knows it waits for the owner rather than asking for it again: the channel's own setup, the Etsy
+    shop it needs, or (``why``) what else stopped it."""
     state, reason = status
-    if state in ("ok", "disabled"):
+    if state == "disabled":
         return ""
-    why = (reason or state.replace("_", " ")).rstrip(".")
+    if state != "ok":
+        why = (reason or state.replace("_", " ")).rstrip(".")
+        if state == "not_configured" and name == "Pinterest":
+            why += ", then System, Pinterest, Connect"
+    elif etsy != "ok":
+        why = "the Etsy shop isn't connected"
+    if not why:
+        return ""
+    why = why.rstrip(".")
     return (
         f"Switched on, but it waits for your owner's setup ({why}): no {name} tools until then. A venture it serves "
         "starts its first test only then."

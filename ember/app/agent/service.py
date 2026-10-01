@@ -173,6 +173,17 @@ class Agent:
 
     # --- where things live ---
 
+    def channels_ready(self) -> list[str]:
+        """0.14.0: the channels set up now, from the options and connections (no network): a channel venture's first
+        test waits for its channel (stages.waits_for_channel). A pin or a product needs the Etsy shop too."""
+        if self.etsy.shop() is None:
+            return []
+        return [
+            name
+            for name, channel in (("pinterest", self.pinterest), ("printify", self.printify))
+            if channel.account() is not None
+        ]
+
     def scope(self) -> AgentScope:
         status = self.economy.life.evaluate()
         return AgentScope(self.mode, self.economy.life.session(), status.life_id or 0)

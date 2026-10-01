@@ -19,6 +19,7 @@ import base64
 import binascii
 import re
 import sqlite3
+from collections.abc import Collection
 from datetime import timedelta
 from typing import Any
 
@@ -106,12 +107,21 @@ def _reply(fn: Any) -> Reply:
 
 
 class Owner:
-    def __init__(self, db: Database, clock: Clock, economy: Economy, scope: AgentScope, agent_name: str) -> None:
+    def __init__(
+        self,
+        db: Database,
+        clock: Clock,
+        economy: Economy,
+        scope: AgentScope,
+        agent_name: str,
+        ready: Collection[str] = (),
+    ) -> None:
         self.db = db
         self.clock = clock
         self.economy = economy
         self.scope = scope
         self.agent_name = agent_name
+        self.ready = ready  # 0.14.0: the channels set up now (a channel venture's first test waits for its channel)
 
     def _now(self) -> str:
         return to_iso(self.clock.now())
@@ -506,8 +516,8 @@ class Owner:
                 after = ventures.get(conn, self.scope, venture_id)
                 # 0.12.0: a backed venture's first test becomes a milestone; a parked or killed one's milestones go.
                 if action == "back" and after is not None:
-                    # 0.14.0: a channel's venture gets it before the next plan, once its channel is set up (stages.keep)
-                    if not stages.waits_for_channel(after, ()):
+                    # 0.14.0: a channel's venture only once its channel is set up (else stages.keep sets it then)
+                    if not stages.waits_for_channel(after, self.ready):
                         stages.first_test(conn, self.scope, after, self.clock.today(), now)
                     # 0.13.0: its case's first sale, as a prediction Ember's code settles
                     case = ventures.latest_case(conn, venture_id)

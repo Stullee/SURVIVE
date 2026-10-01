@@ -34,10 +34,11 @@ SOURCE_MAX = 20_000
 LANGUAGES = ("de", "en")
 ZIP_TIME = (2026, 1, 1, 0, 0, 0)  # every file's time in the download, so the same site is the same file
 _EMAIL = re.compile(r"^[^@\s<>\"']{1,64}@[^@\s<>\"']{1,190}\.[A-Za-z]{2,63}$")
-# 0.14.0: the Impressum's address is where the owner can be found (a street, then the postcode with the town), never a
-# PO box; a phone number is its second quick way to reach them (the site has no contact form); a business ID in the
-# VAT ID's option is a Wirtschafts-Identifikationsnummer (§ 139c AO: DE, 9 digits, a dash and 5 digits).
+# 0.14.0: the Impressum's address is where the owner can be found (a street with its number, then the postcode with
+# the town), never a PO box; a phone number, if given, is one; a business ID in the VAT ID's option is a
+# Wirtschafts-Identifikationsnummer (§ 139c AO: DE, 9 digits, a dash and 5 digits).
 _POSTCODE = re.compile(r"^(?:[A-Z]{1,2}-)?\d{4,5} +\S")
+_STREET = re.compile(r"(?=.*[^\W\d_]).*\d")
 _PO_BOX = re.compile(r"\b(?:postfach|postbox|p\.? ?o\.? ?box)\b", re.IGNORECASE)
 _PHONE = re.compile(r"^\+?[0-9 ()/.-]{6,40}$")
 _BUSINESS_ID = re.compile(r"^DE\d{9}-\d{5}$")
@@ -77,15 +78,14 @@ class Owner:
         found = []
         if not self.legal_name:
             found.append("site_owner_name is missing")
-        if not any(_POSTCODE.match(line) for line in self.address[1:]):  # 0.14.0: the street comes first
+        town = next((i for i, line in enumerate(self.address) if i and _POSTCODE.match(line)), 0)
+        if not any(_STREET.match(line) for line in self.address[:town]):  # 0.14.0: the street and its number first
             found.append("site_address needs the street and the postcode with the town")
         elif any(_PO_BOX.search(line) for line in self.address):
             found.append("site_address must be where you can be found (street, postcode and town), not a PO box")
         if not _EMAIL.match(self.email):
             found.append("site_email is missing")
-        if not self.phone:
-            found.append("site_phone is missing: the Impressum needs a second quick way to reach you besides email")
-        elif not _PHONE.match(self.phone) or sum(c.isdigit() for c in self.phone) < 6:
+        if self.phone and (not _PHONE.match(self.phone) or sum(c.isdigit() for c in self.phone) < 6):
             found.append("site_phone must be a phone number, like +49 30 1234567")
         return found
 

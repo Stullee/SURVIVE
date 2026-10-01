@@ -19,11 +19,13 @@ httpx2 = pytest.importorskip("httpx2")
 
 from app.agent import library, stages  # noqa: E402
 from app.agent.fake_llm import FakeTransport, request_kind  # noqa: E402
+from app.agent.owner import Owner  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.economy.clock import Clock, from_iso, to_iso  # noqa: E402
 from app.integrations.pinterest import FakePinterest, TokenFile  # noqa: E402
 from app.integrations.pinterest_connection import PinterestConnection  # noqa: E402
 from app.integrations.pinterest_live import DEFAULT_REFRESH_DAYS, connect  # noqa: E402
+from app.integrations.printify import PrintifyError  # noqa: E402
 from app.products import site  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_library import GUIDE, a_pdf  # noqa: E402
@@ -199,13 +201,17 @@ def test_an_approved_pin_whose_listing_stopped_being_live_is_not_made(data_dir: 
 
 
 def test_an_impressum_with_email_as_its_only_contact_is_not_built() -> None:
-    email_only = site.Owner(**{**WHO.__dict__, "phone": ""})
-    with pytest.raises(site.SiteError, match="site_phone is missing: the Impressum needs a second quick way"):
+    email_only = site.Owner(WHO.legal_name, (), WHO.email)
+    with pytest.raises(site.SiteError, match="site_address needs the street and the postcode with the town"):
         site.build([home()], email_only)
+    with pytest.raises(site.SiteError, match="site_owner_name is missing"):
+        site.build([home()], site.Owner("", WHO.address, WHO.email))
+    # The phone stays optional (name, postal address and email are what § 5 DDG asks), but if given it is one.
+    assert "Telefon" not in site.build([home()], WHO)["impressum.html"].decode()
     with pytest.raises(site.SiteError, match="site_phone must be a phone number"):
         site.build([home()], site.Owner(**{**WHO.__dict__, "phone": "call me"}))
-    imprint = site.build([home()], WHO)["impressum.html"].decode()
-    assert "Telefon: +49 30 1234567" in imprint
+    imprint = site.build([home()], site.Owner(**{**WHO.__dict__, "phone": "+49 30 1234567"}))["impressum.html"]
+    assert "Telefon: +49 30 1234567" in imprint.decode()
 
 
 def test_the_impressum_needs_a_postal_address() -> None:
@@ -213,6 +219,7 @@ def test_the_impressum_needs_a_postal_address() -> None:
         (("Stefan Muster", "Berlin"), "site_address needs the street and the postcode with the town"),
         (("Musterstraße 1", "Berlin"), "site_address needs the street and the postcode with the town"),
         (("12345 Berlin", "Musterstraße 1"), "site_address needs the street and the postcode with the town"),
+        (("c/o Studio", "12345 Berlin"), "site_address needs the street and the postcode with the town"),
         (
             ("Postfach 12 34", "12345 Berlin"),
             r"site_address must be where you can be found \(street, postcode and town",
@@ -259,8 +266,8 @@ def test_the_agent_hears_that_a_channel_waits_for_its_owner(data_dir: Path) -> N
     text = plan_request["messages"][0]["content"][0]["text"]
     line = (
         "\n== PINTEREST ==\nSwitched on, but it waits for your owner's setup (pinterest_app_id is missing; "
-        "pinterest_app_secret is missing): no Pinterest tools until then. A venture it serves starts its first test "
-        "only then.\n"
+        "pinterest_app_secret is missing, then System, Pinterest, Connect): no Pinterest tools until then. A venture "
+        "it serves starts its first test only then.\n"
     )
     assert line in text
     assert "\n== PRINTIFY ==\nSwitched on, but it waits for your owner's setup (printify_api_token is missing):" in text
@@ -299,3 +306,58 @@ def test_a_venture_without_a_channel_still_gets_its_test_when_backed(data_dir: P
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     assert owner(agent).decide_venture(3, {"action": "back"}, "Stefan").status == 200  # dropshipping: no channel
     assert venture(agent, 3)["test_milestone_id"] is not None
+
+
+def test_the_agent_hears_why_a_set_up_channel_s_tools_are_off(data_dir: Path, monkeypatch: Any) -> None:
+    fake = FakeTransport()
+    agent, _ = run(data_dir, fake, cycles=0, settings=PINNING.model_copy(update={"printify_enabled": True}))
+
+    def unknown() -> None:
+        raise PrintifyError("no shop of yours is connected to Etsy at Printify: connect one, or set printify_shop_id")
+
+    monkeypatch.setattr(agent.printify, "shop", unknown)  # a token, but Printify's shop isn't connected to Etsy
+    agent.run_cycle("schedule")
+    text = [r for r in fake.sent if request_kind(r) == "plan"][-1]["messages"][0]["content"][0]["text"]
+    assert (
+        "== PRINTIFY ==\nSwitched on, but it waits for your owner's setup (Printify's shop isn't known: no shop" in text
+    )
+    agent.etsy.mode, agent.etsy._fake = "live", None  # the Etsy shop isn't set up: neither channel can work
+    agent.run_cycle("schedule")
+    text = [r for r in fake.sent if request_kind(r) == "plan"][-1]["messages"][0]["content"][0]["text"]
+    for name in ("PINTEREST", "PRINTIFY"):
+        assert f"== {name} ==\nSwitched on, but it waits for your owner's setup (the Etsy shop isn't connected)" in text
+
+
+def test_a_first_test_set_before_its_channel_was_set_up_starts_again(data_dir: Path) -> None:
+    """The live case: venture #2 was backed under 0.13.0 (its first test set at once) while Pinterest wasn't set up."""
+    settings = VENTURING.model_copy(update={"pinterest_enabled": True})
+    transport = FakeTransport(script=[plan(steps=[])])
+    agent, _ = run(data_dir, transport, settings=settings)
+    fake = not_set_up(agent)
+    assert owner(agent).decide_venture(PINTEREST, {"action": "back"}, "Stefan").status == 200
+    with agent.db.transaction() as conn:  # as 0.13.0 did when the owner backed it
+        old = stages.first_test(conn, agent.scope(), venture(agent, PINTEREST), agent.clock.today(), "2026-09-30")
+    agent.clock.advance(days=30)
+    agent.run_cycle("schedule")
+    backed = venture(agent, PINTEREST)
+    assert (backed["stage"], backed["test_milestone_id"]) == ("building", None)  # not parked for a missed test
+    [row] = rows(agent, f"SELECT status, closed_by, result FROM milestones WHERE id = {old}")
+    assert (row["status"], row["closed_by"]) == ("dropped", "code") and "Pinterest isn't set up yet" in row["result"]
+    agent.pinterest.mode, agent.pinterest._fake = "dry_run", fake  # the owner set it up
+    agent.run_cycle("schedule")
+    test = venture(agent, PINTEREST)["test_milestone_id"]
+    assert test is not None and test != old
+    [row] = rows(agent, f"SELECT status, due FROM milestones WHERE id = {test}")
+    assert row["status"] == "open"
+    assert row["due"] == (agent.clock.today() + timedelta(days=stages.FIRST_TEST_DAYS)).isoformat()
+
+
+def test_a_channel_venture_backed_while_its_channel_is_ready_gets_its_test_at_once(data_dir: Path) -> None:
+    settings = VENTURING.model_copy(update={"pinterest_enabled": True})
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=settings)
+    assert agent.channels_ready() == ["pinterest"]
+    ready = Owner(agent.db, agent.clock, agent.economy, agent.scope(), "Ember", agent.channels_ready())
+    assert ready.decide_venture(PINTEREST, {"action": "back"}, "Stefan").status == 200
+    assert venture(agent, PINTEREST)["test_milestone_id"] is not None
+    not_set_up(agent)
+    assert agent.channels_ready() == []
