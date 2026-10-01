@@ -446,8 +446,9 @@ configuration:
   live_enabled:
     name: Ember live (on your website)
     description: >-
-      A page on your website (live.html) where people can follow Ember, and a
-      banner with its numbers for your home page (live/banner.svg). Ember's code
+      A page on your website where people can follow Ember, and a banner with
+      its numbers for your home page, in German (live.html) and in English
+      (en/live.html). Ember's code
       makes them from its own numbers, never from emails or customers' data,
       and uploads them over the SFTP login above every 15 minutes (sooner when
       its state changes), without asking you each time. Uses the website
@@ -456,9 +457,10 @@ configuration:
   live_banner:
     name: "Live: banner for your home page"
     description: >-
-      The banner image (live/banner.svg): state, balance and runway, linking to
-      the live page. Put it on your home page once (the Documentation tab and
-      the dashboard show the HTML).
+      The banner images (live/banner.svg, live/banner-en.svg): state, balance
+      and runway, each linking to the live page in its language. Put each on
+      its home page once (the Documentation tab and the dashboard show the
+      HTML).
   live_show_money:
     name: "Live: balance and spending"
     description: >-

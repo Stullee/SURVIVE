@@ -1683,9 +1683,10 @@ is a fake one inside the app: nothing reaches your website.
 
 ## Ember live on your website
 
-With **Ember live** on, people can follow Ember on your website: a page
-(`live.html`) and a banner for your home page (`live/banner.svg`) that link to
-each other. Ember's code makes them from its own numbers and uploads them over
+With **Ember live** on, people can follow Ember on your website: a page and a
+banner for your home page, in German (`live.html`, `live/banner.svg`) and in
+English (`en/live.html`, `live/banner-en.svg`). Each banner links to the page in
+its language. Ember's code makes them from its own numbers and uploads them over
 the blog's SFTP login (above; **Blog** itself can stay off) every 15 minutes
 while the app runs, and at once when Ember's life state changes or you changed
 what is shown. It doesn't ask you each time: you decide once, with the options,
@@ -1699,7 +1700,7 @@ What the page shows, each part switched off by its option:
 | **Live: balance and spending** (`live_show_money`) | Balance, runway, today's API spending against the daily cap, all API costs and other expenses. |
 | **Live: revenue** (`live_show_revenue`) | Revenue in all and in the last 30 days, the share of the costs it covers (the chart marks days with revenue). |
 | **Live: your money** (`live_show_grants`) | What you gave Ember. Off: the balance is shown without saying where the money came from. |
-| **Live: balance chart** (`live_show_chart`) | The balance of the last 30 days (`live/balance.svg`). |
+| **Live: balance chart** (`live_show_chart`) | The balance of the last 30 days, from Ember's second day (`live/balance.svg`, `live/balance-en.svg`). |
 | **Live: what Ember works on** (`live_show_work`) | How often it woke up, its ventures by stage, its next milestones. |
 | **Live: shop and blog** (`live_show_shop`) | Its live Etsy listings with views and favorites, the newest blog posts. |
 | **Live: track record** (`live_show_record`) | How often its forecasts came true (milestones met against the odds it gave, the Brier score). |
@@ -1713,7 +1714,8 @@ address, a code, a link's token, a sender's name or a word you removed. Etsy's
 listings are shown only for 6 hours after Ember's code read them, as Etsy's API
 terms allow; the page footer carries Etsy's trademark notice. Every file is
 checked again before it goes up (no script, nothing from elsewhere), and only
-`live.html`, `live/banner.svg` and `live/balance.svg` are ever written.
+these six files are ever written. The agent's titles stay in the language it
+wrote them in; the English page marks the blog's posts as German.
 
 The page has your site's head, header and footer, refreshes itself every 5
 minutes in an open tab and says when it was made: if that time is more than an
@@ -1725,11 +1727,18 @@ the fake server and say "Probelauf".
 
 1. Set up the website options and the SFTP login as for the blog (above).
 2. Switch **Ember live** on, choose the parts, save and restart the app.
-3. Put the banner on your home page once. **System → Website → Live view**
-   shows the HTML with a **Copy** button:
+3. Put the banners on your home pages once. **System → Website → Live view**
+   shows the HTML with a **Copy** button. On the German home page
+   (`index.html`):
 
    ```html
    <a class="live-banner" href="/live.html"><img src="/live/banner.svg" width="480" height="124" alt="Ember live: Zustand, Guthaben und Reichweite, alle 15 Minuten neu"></a>
+   ```
+
+   On the English home page (`en/index.html`):
+
+   ```html
+   <a class="live-banner" href="/en/live.html"><img src="/live/banner-en.svg" width="480" height="124" alt="Ember live: state, balance and runway, updated every 15 minutes"></a>
    ```
 
    On ember-ai.de it fits in the hero, under the facts (`hero-facts`). Add its
@@ -1741,10 +1750,11 @@ the fake server and say "Probelauf".
    .live-banner:hover img { outline: 1px solid var(--flame); outline-offset: 2px; }
    ```
 
-   A link in the menu (`<a href="live.html">Live</a>`) helps people find it.
+   A link in each menu (`<a href="live.html">Live</a>` on both pages) helps
+   people find it.
    The banner is drawn for the hero's dark background.
-4. **Preview the page** and **Preview the banner** on **System → Website → Live
-   view** show what goes up next.
+4. The preview buttons on **System → Website → Live view** show the pages and
+   banners that go up next, in both languages.
 
 ## Reddit
 

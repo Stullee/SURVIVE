@@ -891,7 +891,14 @@ def blog_preview(request: Request, approval_id: ItemId) -> Response:
 
 # 0.16.0: Ember live on the owner's website: its files as they would go up now. The page loads the site's stylesheet,
 # font and pictures from the site, and its chart from here; nothing runs.
-_LIVE_NAMES = {"live.html": live.PAGE, "banner.svg": live.BANNER, "balance.svg": live.CHART}
+_LIVE_NAMES = {
+    "live.html": live.PAGE,
+    "banner.svg": live.BANNER,
+    "balance.svg": live.CHART,
+    "live-en.html": live.PAGE_EN,
+    "banner-en.svg": live.BANNER_EN,
+    "balance-en.svg": live.CHART_EN,
+}
 
 
 @router.get("/api/live/preview/{name}")
@@ -909,7 +916,8 @@ def live_preview(request: Request, name: Annotated[str, Path(max_length=20)]) ->
     if path.endswith(".svg"):
         headers["content-security-policy"] = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
         return Response(data, media_type="image/svg+xml", headers=headers)
-    data = data.replace(f'src="/{live.CHART}"'.encode(), b'src="balance.svg"')
+    for chart in (live.CHART, live.CHART_EN):  # the chart from here: the site has the last uploaded one
+        data = data.replace(f'src="/{chart}"'.encode(), f'src="{chart.rsplit("/", 1)[1]}"'.encode())
     policy = "default-src 'none'; img-src 'self'"
     site_url = urlsplit(agent.settings.site_url.strip())
     if site_url.scheme == "https" and site_url.hostname and not site_url.username:  # the site's look, from the site

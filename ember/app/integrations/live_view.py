@@ -187,16 +187,19 @@ def snapshot(agent: Agent) -> live.Snapshot:
             " AND synced_at >= ? ORDER BY id DESC LIMIT ?",
             (*params, fresh, LISTINGS_SHOWN),
         ):
-            note = []
-            if row["views"] is not None:
-                note.append(f"{live.number(int(row['views']))} Aufrufe")
-            if row["favorites"] is not None:
-                note.append(f"{live.number(int(row['favorites']))} Favoriten")
-            listings.append(live.Item(str(row["title"])[:140], etsy.listing_url(row["listing_id"]), ", ".join(note)))
+            views, favorites = row["views"], row["favorites"]
+            listings.append(
+                live.Item(
+                    str(row["title"])[:140],
+                    etsy.listing_url(row["listing_id"]),
+                    int(views) if views is not None else None,
+                    int(favorites) if favorites is not None else None,
+                )
+            )
         if agent.settings.blog_enabled:
             for row in site_publisher.posts(conn, scope)[:POSTS_SHOWN]:
                 url = f"/blog/{row['slug']}.html"
-                posts.append(live.Item(str(row["title"])[:140], url, live.blog.date_de(str(row["day"]))))
+                posts.append(live.Item(str(row["title"])[:140], url, day=str(row["day"])))
         settled = conn.execute(
             f"SELECT kind, probability, status FROM predictions WHERE {where} AND status IN ('hit', 'miss')", params
         ).fetchall()
@@ -306,8 +309,7 @@ class LiveView:
         settings = self.agent.settings
         owner = site_publisher.owner_of(settings)
         if not settings.live_enabled:
-            name = settings.agent_name
-            return {live.PAGE: live.render_off(owner, name), live.BANNER: live.render_banner_off(name)}
+            return live.render_all_off(owner, settings.agent_name)
         return live.render(snapshot(self.agent), parts_of(settings), owner)
 
     def run(self) -> str | None:
@@ -379,9 +381,11 @@ class LiveView:
             "reason": "; ".join(trouble) or None,
             "simulated": self.mode == "dry_run",
             "url": f"{owner.url}/{live.PAGE}" if owner.url else None,
+            "url_en": f"{owner.url}/{live.PAGE_EN}" if owner.url else None,
             "uploaded_at": uploaded,
             "every_minutes": live.UPLOAD_MINUTES,
             "last_error": self._meta("error") or None,
             "parts": {name: bool(value) for name, value in shown.__dict__.items()},
             "snippet": live.snippet(settings.agent_name) if shown.banner else None,
+            "snippet_en": live.snippet(settings.agent_name, "en") if shown.banner else None,
         }

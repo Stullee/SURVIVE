@@ -7,8 +7,8 @@
 
 Ember live: your owner can let people follow you on their website.
 
-- With your owner's live view on, Ember's code uploads a page (live.html) and a banner for their home page every 15
-  minutes, made from your numbers: your state and age, balance, runway, today's spending and the daily cap, revenue,
+- With your owner's live view on, Ember's code uploads a page and a banner for their home page every 15 minutes, in
+  German and in English, made from your numbers: your state and age, balance, runway, today's spending and the daily cap, revenue,
   your owner's grants, the balance of the last 30 days, how often you woke up, your ventures by stage and your next
   milestones, your live Etsy listings and blog posts, and how often your odds came true. Your owner chooses which of
   these are shown. If you die, it shows your life in numbers and your last will.

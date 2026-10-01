@@ -4183,23 +4183,23 @@
     ["chart", "chart"], ["work", "work"], ["shop", "shop and blog"], ["record", "track record"], ["memorial", "memorial"],
   ];
 
-  function liveSnippetArea(text) {
-    var c = ui.liveSnippet;
+  function liveSnippetArea(lang, text) {
+    ui.liveSnippet = ui.liveSnippet || {};
+    var c = ui.liveSnippet[lang];
     if (!c) {
-      c = ui.liveSnippet = {};
+      c = ui.liveSnippet[lang] = {};
       c.code = h("pre", { class: "snippet mono", tabindex: "0" });
       c.status = h("p", { class: "form-status small", role: "status" });
       c.button = h("button", { type: "button", class: "btn btn-small", text: "Copy the HTML" });
       c.button.addEventListener("click", function () {
-        copyText(c.code.textContent, c.code, function () { c.status.textContent = "Copied. Paste it into your home page once."; }, function (selected) {
+        copyText(c.code.textContent, c.code, function () { c.status.textContent = "Copied. Paste it into that home page once."; }, function (selected) {
           c.status.textContent = selected ? "The browser didn't allow copying. The HTML is selected: press Ctrl+C (Cmd+C on a Mac)." : "The browser didn't allow copying: select the HTML and copy it.";
         });
       });
     }
     if (c.code.textContent !== text) c.code.textContent = text;
-    return [h("h4", { class: "small-head", text: "The banner on your home page" }),
-      h("p", { class: "muted small", text: "Put this once into your home page (in the hero, under the facts) and add the banner's style to your stylesheet (see the Documentation tab). It links to the live page; the picture changes by itself." }),
-      c.code, h("div", { class: "form-actions" }, c.button), c.status];
+    var where = lang === "en" ? "English home page (en/index.html)" : "German home page (index.html)";
+    return [h("h4", { class: "small-head", text: "The banner on your " + where }), c.code, h("div", { class: "form-actions" }, c.button), c.status];
   }
 
   function renderLive(d) {
@@ -4213,17 +4213,21 @@
     replace($("live-facts"), [
       h("dt", { text: "Status" }), h("dd", null, chip(LIVE_STATUS, l.status, sentence(String(l.status || "unknown").replace(/_/g, " ")))),
       l.status === "not_ready" && l.reason ? [h("dt", { text: "Why" }), h("dd", { class: "pre-line", text: sentence(String(l.reason)) + "." })] : null,
-      h("dt", { text: "Page" }), h("dd", null, l.url && !l.simulated ? siteLink(l.url, asText(l.url)) : h("span", { text: l.simulated ? "Dry run: uploaded to the fake server" : "Not set (site_url)" })),
+      h("dt", { text: "Pages" }), h("dd", null, l.url && !l.simulated ? [siteLink(l.url, asText(l.url)), h("br"), siteLink(l.url_en, asText(l.url_en))] : h("span", { text: l.simulated ? "Dry run: uploaded to the fake server" : "Not set (site_url)" })),
       h("dt", { text: "Uploaded" }), h("dd", null, l.uploaded_at ? timeEl(l.uploaded_at, fmtDateTime(l.uploaded_at) + " (" + relTime(l.uploaded_at) + ")") : h("span", { text: "Not yet" })),
       l.status === "ok" ? [h("dt", { text: "Shows" }), h("dd", { text: on.length ? sentence(on.join(", ")) + "." : "Only its state." })] : null,
       l.status === "ok" && off.length ? [h("dt", { text: "Hidden" }), h("dd", { text: sentence(off.join(", ")) + "." })] : null,
       l.last_error ? [h("dt", { text: "Last upload" }), h("dd", { class: "pre-line", text: "Failed: " + endSentence(String(l.last_error)) })] : null,
     ]);
     if (l.status === "off") { replace($("live-actions"), h("p", { class: "muted small", text: "Off: the page on your site says so. Switch it on with live_enabled." })); return; }
+    function previewLink(href, text) { return h("a", { class: "btn", href: href, target: "_blank", rel: "noopener", text: text }); }
     var preview = h("div", { class: "form-actions" },
-      h("a", { class: "btn", href: "api/live/preview/live.html", target: "_blank", rel: "noopener", text: "Preview the page" }),
-      parts.banner ? h("a", { class: "btn", href: "api/live/preview/banner.svg", target: "_blank", rel: "noopener", text: "Preview the banner" }) : null);
-    replace($("live-actions"), [preview, l.snippet ? liveSnippetArea(asText(l.snippet)) : null]);
+      previewLink("api/live/preview/live.html", "Preview the page"), previewLink("api/live/preview/live-en.html", "English page"),
+      parts.banner ? [previewLink("api/live/preview/banner.svg", "Banner"), previewLink("api/live/preview/banner-en.svg", "English banner")] : null);
+    var how = l.snippet ? h("p", { class: "muted small", text: "Put each banner once into its home page (in the hero, under the facts) and add the banner's style to your stylesheet (see the Documentation tab). It links to the live page in the same language; the picture changes by itself." }) : null;
+    replace($("live-actions"), [preview, how,
+      l.snippet ? liveSnippetArea("de", asText(l.snippet)) : null,
+      l.snippet_en ? liveSnippetArea("en", asText(l.snippet_en)) : null]);
   }
 
   // What an order cost you at Printify is an expense only you record: the form opens filled in, and its key records it

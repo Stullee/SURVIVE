@@ -56,7 +56,8 @@ def snapshot(**changes: object) -> live.Snapshot:
         "cycles_today": 4,
         "ventures": (("live", 'Vorlagen <script>alert("x")</script>'),),
         "milestones": (("Erster Verkauf", "2026-10-12"),),
-        "listings": (live.Item("Lebenslauf-Vorlage", "https://www.etsy.com/listing/1", "48 Aufrufe"),),
+        "listings": (live.Item("Lebenslauf-Vorlage", "https://www.etsy.com/listing/1", views=48, favorites=3),),
+        "posts": (live.Item("Lebenslauf schreiben", "/blog/lebenslauf.html", day="2026-09-28"),),
         "met": 3,
         "settled": 5,
         "odds": 0.62,
@@ -91,10 +92,34 @@ def test_the_page_is_the_site_s_template_with_every_part_shown() -> None:
     assert "keine Daten von Kundinnen und Kunden" in page
 
 
+def test_the_english_page_and_banner() -> None:
+    files = live.render(snapshot(), live.Parts(), OWNER)
+    assert live.check(files, OWNER) == []
+    page = text_of(files[live.PAGE_EN])
+    assert page.startswith('<!doctype html>\n<html lang="en">') and 'content="en_US"' in page
+    assert '<link rel="canonical" href="https://example.org/en/live.html">' in page
+    assert "As of <time" in page and "October 1, 2026, 14:05 Berlin time" in page
+    assert "<strong>Alive</strong> · Day 12" in page and "<dd>$11.40</dd>" in page and "<dd>14 days</dd>" in page
+    assert "<h2>What it is working on</h2>" in page and "(48 views, 3 favorites)" in page
+    assert "(September 28, 2026, in German)" in page and "3 of 5 (60%)" in page
+    assert '<img src="/live/balance-en.svg"' in page and '<a href="/en/#money">more about the money</a>' in page
+    assert '<a href="/live.html" hreflang="de" lang="de">DE' in page and "Impressum" in page
+    banner = text_of(files[live.BANNER_EN])
+    assert 'lang="en"' in banner and "$11.40 · lasts 14 days" in banner and "See it live →" in banner
+    assert "September 2, 2026" in text_of(files[live.CHART_EN])
+    assert live.snippet("Ember", "en") == (
+        '<a class="live-banner" href="/en/live.html"><img src="/live/banner-en.svg" width="480" height="124" '
+        'alt="Ember live: state, balance and runway, updated every 15 minutes"></a>'
+    )
+    off = live.render_all_off(OWNER, "Ember")
+    assert sorted(off) == sorted([live.PAGE, live.BANNER, live.PAGE_EN, live.BANNER_EN])
+    assert "The live view is switched off right now." in text_of(off[live.PAGE_EN])
+
+
 def test_the_owner_s_options_hide_parts() -> None:
     parts = live.Parts(banner=False, money=False, revenue=False, grants=False, chart=False, work=False, shop=False)
     files = live.render(snapshot(), parts, OWNER)
-    assert sorted(files) == [live.PAGE]
+    assert sorted(files) == sorted([live.PAGE, live.PAGE_EN])
     page = text_of(files[live.PAGE])
     assert "11,40" not in page and "Einnahmen" not in page and "Woran es arbeitet" not in page
     assert "Im Shop" not in page and "balance.svg" not in page
@@ -158,7 +183,7 @@ def test_it_goes_up_every_15_minutes_and_at_once_when_the_state_changes(data_dir
     agent = agent_with(data_dir)
     assert agent.publish_live() == "done"
     fake = agent.blog.fake
-    assert fake is not None and sorted(fake.files) == [live.PAGE, live.BANNER]  # the chart from its second day
+    assert fake is not None and sorted(fake.files) == sorted([live.PAGE, live.BANNER, live.PAGE_EN, live.BANNER_EN])
     page = fake.files[live.PAGE].decode()
     assert "Probelauf: alle Zahlen sind Testgeld." in page and "Aufgewacht" not in page
     assert "The live view is on: uploaded" in json.dumps(rows(agent, "SELECT message FROM events"))
@@ -230,6 +255,9 @@ def test_the_owner_s_website_card_preview_and_check(live_client: TestClient) -> 
     assert page.headers["content-security-policy"].startswith("sandbox allow-same-origin; default-src 'none';")
     banner = live_client.get("api/live/preview/banner.svg")
     assert banner.status_code == 200 and banner.headers["content-type"] == "image/svg+xml"
+    english = live_client.get("api/live/preview/live-en.html")
+    assert english.status_code == 200 and '<html lang="en">' in english.text
+    assert live_client.get("api/live/preview/banner-en.svg").status_code == 200
     assert live_client.get("api/live/preview/index.html").status_code == 404
 
 
@@ -276,4 +304,4 @@ def test_only_live_listings_read_in_the_last_6_hours_are_shown(data_dir: Path) -
             )
     shown = live_view.snapshot(agent).listings
     assert [item.text for item in shown] == ["Vorlage 1"]
-    assert shown[0].url.endswith("/1001") and shown[0].note == "5 Aufrufe, 1 Favoriten"
+    assert shown[0].url.endswith("/1001") and (shown[0].views, shown[0].favorites) == (5, 1)
