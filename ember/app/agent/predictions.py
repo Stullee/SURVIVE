@@ -5,11 +5,11 @@ or the critic whether they could be trusted. Now Ember's code keeps two kinds of
 
 * milestone: a metric milestone the agent gives a likelihood (milestone_plan's ``likely``, LIKELY percent): hit once
   the milestone is met by its first date (a date moved later doesn't move the prediction), miss once that date has
-  passed without it or it was missed, void when the owner or Ember's code dropped it first (0.14.0: the agent's own
+  passed without it or it was missed, void when the owner or Ember's code dropped it first (0.15.0: the agent's own
   drop is a miss: dropping a losing call voided it);
 * first_sale: when the owner backs a venture, its newest business case's days to the first sale, as a 50% call
   (the case's middle estimate): hit once an Etsy order of its listings or revenue for it is recorded by then, miss
-  after (0.14.0: FIRST_SALE_GRACE_DAYS after, so that a sale made in time but recorded late still counts).
+  after (0.15.0: FIRST_SALE_GRACE_DAYS after, so that a sale made in time but recorded late still counts).
 
 ``settle`` runs before every plan, after the metrics are read, with no model call. ``calibration`` is their record in
 a few words: how often the milestones given odds were met against the odds given (with the Brier score), and how many
@@ -34,7 +34,7 @@ from .store import AgentScope
 LIKELY = (5, 95)  # the odds a milestone takes, in percent
 FIRST_SALE_ODDS = 0.5  # a business case's days to the first sale: its middle estimate
 FIRST_SALE_MIN_DAYS = 14  # even "this month" gets two weeks
-FIRST_SALE_GRACE_DAYS = 7  # 0.14.0: a sale by its date, recorded this much later, still counts
+FIRST_SALE_GRACE_DAYS = 7  # 0.15.0: a sale by its date, recorded this much later, still counts
 MIN_SETTLED = 5  # settled milestone predictions before the calibration says which way the odds lean
 LEAN = 0.10  # a gap this big between the odds given and the share met is a lean
 CALIBRATION_CHARS = 240
@@ -68,7 +68,7 @@ def add_first_sale(
         return None
     if conn.execute("SELECT 1 FROM predictions WHERE case_id = ?", (case_row["id"],)).fetchone() is not None:
         return None
-    days = max(FIRST_SALE_MIN_DAYS, int(case_row["first_sale_days"]))  # 0.14.0: the case's days
+    days = max(FIRST_SALE_MIN_DAYS, int(case_row["first_sale_days"]))  # 0.15.0: the case's days
     due = today + timedelta(days=days)
     claim = f"venture #{venture_id}'s first sale within {days} days of being backed (case #{case_row['id']})"
     cursor = conn.execute(
@@ -95,7 +95,7 @@ def _milestone(conn: sqlite3.Connection, p: Mapping[str, Any], clock: Clock, tod
             return "hit", f"milestone #{m['id']} was met on {closed.isoformat()}"
         return "miss", f"milestone #{m['id']} was met only on {closed.isoformat()}, after {due.isoformat()}"
     if m["status"] == "dropped" and closed is not None and closed <= due:
-        if m["closed_by"] == "agent":  # 0.14.0: dropping a losing call no longer voids it
+        if m["closed_by"] == "agent":  # 0.15.0: dropping a losing call no longer voids it
             return "miss", f"milestone #{m['id']} was dropped by you on {closed.isoformat()}, before its date"
         return "void", f"milestone #{m['id']} was dropped on {closed.isoformat()}, before its date"
     if m["status"] == "missed" or today > due:

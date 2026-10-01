@@ -42,15 +42,15 @@ WRITE_SECONDS = 60.0
 READ_SECONDS = 300.0  # the longest silence between two stream events
 TOTAL_SECONDS = 1_800.0  # the longest a whole call may take
 SERVER_TOOL_ALLOWANCE = 3_000  # tokens per server tool definition, which count_tokens can't size (0.12.0: 1,000)
-# 0.14.0: tokens per file handed to code execution (a container_upload block). count_tokens refused them without the
+# 0.15.0: tokens per file handed to code execution (a container_upload block). count_tokens refused them without the
 # code execution tool, which it doesn't size either; the file goes into the container, not the prompt.
 UPLOAD_ALLOWANCE = 200
-COUNTS_KEPT = 16  # 0.14.0: counts remembered, by what was counted (a work step's guard counted one request 8 times)
+COUNTS_KEPT = 16  # 0.15.0: counts remembered, by what was counted (a work step's guard counted one request 8 times)
 FILE_SECONDS = 120.0  # one Files API request (the workshop's inputs and outputs)
 UPLOAD_EXPIRY_SECONDS = 3_600  # the workshop's inputs are gone within the hour, even if deleting them fails
 _COUNT_FIELDS = ("model", "messages", "system", "tools", "tool_choice", "thinking", "output_config", "cache_control")
 _SERVER_TOOL_PREFIXES = ("web_search_", "web_fetch_", "code_execution_")
-# Refusals before anything is generated. 0.14.0: a server error before the stream opened is one too, as 529 is (live:
+# Refusals before anything is generated. 0.15.0: a server error before the stream opened is one too, as 529 is (live:
 # a 503 was booked at the worst case, $0.15, and warned the owner for good). After the stream opened, the cost is
 # unknown: the guard books the worst case.
 _REJECTED_STATUSES = frozenset({400, 401, 402, 403, 404, 409, 413, 422, 429, 500, 502, 503, 504, 529})
@@ -148,7 +148,7 @@ class AnthropicTransport:
     # --- sizing: a free endpoint with its own rate limit ---
 
     def count_tokens(self, request: Mapping[str, Any]) -> int:
-        """The prompt's size in tokens, with a margin; a rough upper bound if counting fails. 0.14.0: what was counted
+        """The prompt's size in tokens, with a margin; a rough upper bound if counting fails. 0.15.0: what was counted
         once is answered from memory, a rough bound too: the budget guard sizes one request several times (a work step
         sent 8 count requests for its 2 requests), and each could wait for retries or fail on its own."""
         body = {k: request[k] for k in _COUNT_FIELDS if k in request}
@@ -166,7 +166,7 @@ class AnthropicTransport:
 
     def _count(self, request: Mapping[str, Any], body: dict[str, Any]) -> int:
         """One count_tokens request for ``body`` (``request``'s counted fields)."""
-        # 0.14.0: a file for code execution (container_upload) is refused without the code execution tool, which isn't
+        # 0.15.0: a file for code execution (container_upload) is refused without the code execution tool, which isn't
         # counted (below): every workshop request with files fell back to the rough count. Each counts as an allowance.
         uploads = 0
         messages = []

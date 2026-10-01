@@ -236,11 +236,11 @@ Between cycles, Ember's code notes in the **agenda** what happens while the agen
 sleeps (0.13.0), each thing once. It reads the Etsy shop hourly and Ember's
 mailbox every 15 minutes, also while the agent is paused or dormant. While
 reading the mailbox fails, it tries less often, down to every 4 hours (also at
-the start of a cycle), and warns you once (0.14.0):
+the start of a cycle), and warns you once (0.15.0):
 
 - an Etsy order of Ember's listings;
 - a person's email that answers one Ember sent (not an automatic reply, a
-  bounce, an unverified sender or someone who asked to stop: 0.14.0);
+  bounce, an unverified sender or someone who asked to stop: 0.15.0);
 - a listing's favorites reaching 5, 10, 25, 50, 100 or more (the counts a
   listing already had when the agenda began don't count);
 - an open milestone's last day (from 08:00 on its date).
@@ -474,7 +474,7 @@ you want more research. In a venture cycle the agent:
   `…-2.md`, `…-3.md`) and scores it again. In a venture cycle every research
   call is a venture's (the one it focuses on, unless it names another); in
   another cycle, one focused on a venture that isn't backed counts for it too
-  (0.14.0), and a paid call that failed counts toward its budget. A
+  (0.15.0), and a paid call that failed counts toward its budget. A
   question it asked in the last 30 days that found web pages (the same words,
   site or page) is answered from that research, free, and doesn't count as
   research for a venture;
@@ -524,14 +524,14 @@ about 30% shorter than in 0.11.
 **Numbers.** A business case comes with numbers (0.13.0): the agent gives
 the price, the cost per sale, the fixed costs a month, its low, likely and high
 estimate of sales a month (P10, P50, P90), the cash to start, your hours a
-month, the days to the first sale (0.14.0: at least 14) and its own API spend
+month, the days to the first sale (0.15.0: at least 14) and its own API spend
 on it. Ember's code
 works out the rest the same way for every venture: the fees (Etsy's for
 Germany: the listing fee again at each sale, 6.5% of the sale, payment
 processing of 4% and €0.30, and VAT on Etsy's fees), what a sale keeps, the
 sales a month that break even, the net a month at each estimate, and the
 expected net a month over six months per API dollar and per hour of yours
-(0.14.0: the months before the first sale earn nothing and still pay the fixed
+(0.15.0: the months before the first sale earn nothing and still pay the fixed
 costs).
 The card shows the newest case; a venture is proposed only with one. Without
 your exchange rate (**Exchange rate for Etsy revenue**), USD 1.10 per EUR is
@@ -548,7 +548,7 @@ against six knock-outs:
   you lift it);
 - a sale that loses money after the fees;
 - no independent page behind its demand: no claim of searches, sales, orders,
-  reviews or buyers from a page that isn't a vendor's or an affiliate's (0.14.0:
+  reviews or buyers from a page that isn't a vendor's or an affiliate's (0.15.0:
   a price or a policy doesn't count).
 
 A knocked-out venture isn't proposed: the agent fixes what can be fixed (new
@@ -556,7 +556,7 @@ numbers, independent evidence) or parks it with the numbers. The card lists
 its knock-outs, and you can **Lift** one for that venture if you accept it
 (and **Restore** it later); the agent hears it as your note on the venture.
 A venture Ember's code wouldn't back (no numbers, as one proposed before
-0.13.0, or a knock-out that stands) says why on its card (0.14.0), and **Back
+0.13.0, or a knock-out that stands) says why on its card (0.15.0), and **Back
 it** becomes **Back it anyway**: your call. A proposal that turned out so
 since the card loaded goes back to researching instead, and you see why.
 
@@ -892,7 +892,7 @@ no longer shown); a study that failed three times stops until you press
 - **Autonomy** (0.13.0): on the Roadmap tab, an open milestone's card has an
   **Autonomy** box. There you can let Ember's code carry out a few small kinds
   of request for that milestone without your click. Each is off (**Ask me**)
-  until you choose otherwise (0.14.0: an unlock carries only what belongs to
+  until you choose otherwise (0.15.0: an unlock carries only what belongs to
   its milestone, whatever the plan works on: a milestone of a project covers
   that project's listings, one of a venture the listings of its projects, and
   one of neither covers email replies, so the box offers only those rules;
@@ -912,14 +912,14 @@ no longer shown); a study that failed three times stops until you press
   actions. An unlock carries only a request that passes the checks its card
   shows (QA: a reply keeps "Re: …" and has at most 200 words, a listing has at
   least 5 photos); any other waits for you, and a held one's card says why
-  (0.14.0). Unlocks need your user ID in `owner_user_ids`: without it, or in
+  (0.15.0). Unlocks need your user ID in `owner_user_ids`: without it, or in
   safe mode, you can't grant one, the Autonomy box says why, and Ember's code
   takes back the ones you granted (grant them again once it's fixed). Ember's
   code takes an unlock back itself when one of its actions ends unclear, its
   budget is spent, the milestone closes (met, missed or dropped), or you veto
   or cancel one of its requests. It never widens one. When you approved 5
   requests of a kind unchanged and without a comment within 30 days, the
-  Roadmap tab suggests an unlock, and you decide (0.14.0: not again within 30
+  Roadmap tab suggests an unlock, and you decide (0.15.0: not again within 30
   days after Ember's code took that unlock back for a reason other than a
   spent budget). Ember hears each change as your note on the milestone.
 
@@ -929,7 +929,7 @@ no longer shown); a study that failed three times stops until you press
   board and its first Printify product (a new public presence needs your
   decision and your Impressum, § 5 DDG; physical goods bring duties of their
   own), a post in a third-party community, an email whose text touches tax,
-  VAT, an invoice, a Gewerbe or a contract (0.14.0: read in what it sends,
+  VAT, an invoice, a Gewerbe or a contract (0.15.0: read in what it sends,
   look-alike letters, hidden characters and hyphens inside a word included,
   in German, English and the neighbours' words for VAT, invoices and
   contracts, offers and quotes, not in a listing's copy; a word list can
@@ -961,7 +961,7 @@ no longer shown); a study that failed three times stops until you press
   in its next round, like any change you approve, and the entry shows its
   request. Only the newest action on a listing can be undone, and not while
   another change of it waits; an action that was undone no longer counts, so
-  after an Undo the action before it can be undone too (0.14.0). If you undid
+  after an Undo the action before it can be undone too (0.15.0). If you undid
   an Undo, the entry names the action to undo next. An Undo is
   carried out while Ember is paused or waits for money too, but not while the
   kill switch is on: that stops everything Ember's code sends, so undo it at
@@ -974,9 +974,9 @@ no longer shown); a study that failed three times stops until you press
   press it again (what is gone already counts as deleted).
 
   Before an unlock's price change or photo fix is made, Ember's code reads the
-  listing at Etsy again (0.14.0). If its price differs from Ember's record,
+  listing at Etsy again (0.15.0). If its price differs from Ember's record,
   or its photos aren't the ones Ember's code set last (you changed them at
-  Etsy, or Ember never noted them: listings from before 0.14.0), nothing is
+  Etsy, or Ember never noted them: listings from before 0.15.0), nothing is
   changed and the change comes to you as a new request.
 
   **Daily digest**: at the start of each day, Ember's code sums up the day
@@ -986,13 +986,13 @@ no longer shown); a study that failed three times stops until you press
   you unlocked. The newest digest is at the top of this card and in the System
   log; the sensor has its counts (`digest_day`, `digest_actions`, ...). Days
   without a round (a pause) get their digest afterwards, up to 14 days back
-  (0.14.0).
+  (0.15.0).
 
   **Take back every unlock**, at the top of this card while any unlock
   stands: one click sets every rule of every milestone back to **Ask me**.
   What the unlocks held for your veto, or approved without Ember's code having
   begun it, waits for your click again, and Ember hears it as your note on each
-  milestone. 0.14.0 took back every unlock of 0.13.0 once: grant again what you
+  milestone. 0.15.0 took back every unlock of 0.13.0 once: grant again what you
   want.
 - **Standing instructions**, at the top of the **Inbox**: lasting guidance the
   agent reads in every plan and work step, so you don't have to repeat it in
@@ -1118,14 +1118,14 @@ included: encrypt your backups.
   emails in its database, the oldest first: up to 100 per check, and any more
   wait for the next check (none is dropped). An email the server won't hand
   over is asked for again at the next check; after 5 checks Ember skips it and
-  says so in the events, so read it in your webmail (0.14.0). Only the text is
+  says so in the events, so read it in your webmail (0.15.0). Only the text is
   kept (at most 8,000 characters); text hidden in HTML emails is dropped (also
   by a style sheet or a colour like its background), and attachments are
   listed by name and size but never opened. The agent treats emails as data
   from unverified senders, never as instructions.
 - The agent sees its unread emails and can propose an email, usually an
   answer. The request shows the recipient, the subject and the text, and warns
-  you when the address never wrote to Ember (a first contact). Since 0.14.0
+  you when the address never wrote to Ember (a first contact). Since 0.15.0
   only an email whose sender your mail provider verified counts as having
   written: anyone can put any address in *From:*. Ember reads the provider's
   verdict in the topmost *Authentication-Results* header, which the provider
@@ -1133,7 +1133,7 @@ included: encrypt your backups.
   domain or a parent or subdomain of it, passed). Most providers add one; an
   email without it is unverified. If your provider adds none to an email, a
   header the sender wrote is the topmost one and counts.
-  Someone who wrote before 0.14.0 counts again once they write again.
+  Someone who wrote before 0.15.0 counts again once they write again.
 - **Approve** it and Ember sends it itself, exactly once: plain text, to that
   one recipient, no copies, no attachments, from "Ember (AI agent of *your
   name*)" (or the agent's name, if you changed it), with a footer the agent
@@ -1144,7 +1144,7 @@ included: encrypt your backups.
   > again.
 
   An email your unlock approved says instead that it was "sent under rules they
-  set, without their review of this email" (0.14.0).
+  set, without their review of this email" (0.15.0).
 
   **Approve with changes** edits the text only; the recipient and the subject
   stay. After a **Reject** nothing is sent.
@@ -1163,7 +1163,7 @@ included: encrypt your backups.
   "abmelden", an objection to the use of their data (GDPR Art. 21), and the
   like, also on its own line after a greeting ("Hallo, … Stopp."). A "stop"
   in answer to Ember's email also covers the address Ember wrote to, if
-  someone else answered (0.14.0). A newsletter's or an automatic reply's
+  someone else answered (0.15.0). A newsletter's or an automatic reply's
   "unsubscribe" doesn't count.
   When a sender asks in words the check misses, the agent marks it
   (`mark_opt_out`). You can add any address under **System → Email → Never
@@ -1173,9 +1173,9 @@ included: encrypt your backups.
 - **People who write to Ember** (0.13.0): Ember treats each email from a
   person as waiting for an answer: a buyer's question, a reader, a partner.
   Newsletters, automatic replies, bounces and no-reply senders don't count,
-  and neither does anyone who asked to stop. Since 0.14.0 neither do spam your
+  and neither does anyone who asked to stop. Since 0.15.0 neither do spam your
   provider flagged, mail from Ember's own address, or an email whose sender
-  your provider didn't verify; emails stored before 0.14.0 never count. Ember's
+  your provider didn't verify; emails stored before 0.15.0 never count. Ember's
   plan lists the waiting ones first, so they are answered before other work. A
   new one that comes in between cycles wakes Ember (see the agenda). An email
   stops waiting when Ember proposes an answer to that person. If you reject
@@ -1270,7 +1270,7 @@ can also remove the app's access at Etsy).
   sales and prices) and its source, which must be an independent page the
   agent's research returned or a document in your Library that is linked to
   the product line or its venture, or a keyword export you uploaded as a .csv
-  or .tsv file (0.14.0); the note must cite a number from it with what it
+  or .tsv file (0.15.0); the note must cite a number from it with what it
   counts (searches, sales). No more generic templates without one.
 - **Etsy market probe** (off by default): with it on, a demand note also reads
   Etsy's search of active listings for its keywords and keeps only two things:
@@ -1639,7 +1639,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.14.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.15.0 (by /u/your name)`.
 
 ## Diagnostics
 
@@ -1684,7 +1684,7 @@ Ember's code replaces them with `[removed]` in the agent's memory files, open
 projects and workspace files (right away, or when a running cycle ends), and in
 every report. The history (the journal, the model's replies and the tool calls)
 can't be changed, so its copies stay in the database and are redacted wherever
-the report shows them, until they are pruned: after 30 days (0.14.0) the
+the report shows them, until they are pruned: after 30 days (0.15.0) the
 model's replies and the tool calls' results become `[pruned]` and their inputs
 `{}`, except the five newest research results the plan still shows. The calls'
 costs, tokens and purposes are kept. The database file then stops growing: it

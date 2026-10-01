@@ -29,7 +29,7 @@ def sold(agent: Any, *receipts: int) -> None:
 
 
 def replied(agent: Any, uid: int) -> None:
-    """A reply to the email Ember sent (sent first), come in now: urgent (0.14.0: an order no longer wakes it)."""
+    """A reply to the email Ember sent (sent first), come in now: urgent (0.15.0: an order no longer wakes it)."""
     scope = agent.scope()
     now = to_iso(agent.clock.now())
     with agent.db.transaction() as conn:
@@ -55,7 +55,7 @@ def test_a_reply_wakes_the_agent_for_a_lean_reactive_cycle(data_dir: Path) -> No
     agent.check_events()  # the agenda begins: what came before is history
     assert rows(agent, "SELECT COUNT(*) AS n FROM agenda WHERE baseline = 0") == [{"n": 0}]
     agent.clock.advance(minutes=10)
-    sold(agent, 71)  # 0.14.0: an order is noted for the next plan, and wakes no one
+    sold(agent, 71)  # 0.15.0: an order is noted for the next plan, and wakes no one
     agent.check_events()
     replied(agent, 7)
     agent.check_events()
@@ -135,7 +135,7 @@ def test_replies_favorites_and_a_milestones_last_day_are_noted(data_dir: Path) -
             "INSERT INTO emails (mode, session, life_id, direction, uidvalidity, uid, message_id, in_reply_to,"
             " from_addr, to_addr, subject, sent_at, received_at, body, bulk, authenticated) VALUES (?, ?, ?, 'in', 1,"
             " 7, '<r1@ann>', '<m1@ember>', 'ann@example.org', 'ember@example.org', 'Re: Your planner', ?, ?, 'Thanks!',"
-            " 0, 1)",  # 0.14.0: a verified person's reply (a machine's or a forged one wakes no one)
+            " 0, 1)",  # 0.15.0: a verified person's reply (a machine's or a forged one wakes no one)
             (scope.mode, scope.session, scope.life_id, now, now),
         )
         today = agent.clock.today().isoformat()

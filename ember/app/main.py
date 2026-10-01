@@ -145,7 +145,7 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
     )
     for error in loaded.errors:
         _record(state, "error", "config", f"Invalid option: {error}")
-    for correction in loaded.corrections:  # 0.14.0
+    for correction in loaded.corrections:  # 0.15.0
         _record(state, "error", "config", f"Options corrected: {correction}")
     if loaded.safe_mode:
         kept = safe_mode_keeps(loaded.owner_unknown)
@@ -176,7 +176,7 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
 
 
 def _hold_kill_switch(state: AppState, loaded: LoadedSettings) -> None:
-    """0.14.0: options that don't validate never lift a kill switch (safe mode runs dry, but the kill switch is one flag
+    """0.15.0: options that don't validate never lift a kill switch (safe mode runs dry, but the kill switch is one flag
     for every mode). While one is on, the reset marker stays at the last valid options' value, so the owner's change
     applies at the first start with valid options. While none is on, a reset read cleanly is stored as a valid start
     stores it: it lifts nothing, and a kill made in this session is lifted only by a reset changed after it. A reset

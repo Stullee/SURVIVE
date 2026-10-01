@@ -61,7 +61,7 @@ class Clock:
         return datetime.combine(day, time(0), self.tz).astimezone(UTC)
 
     def at(self, day: date, hour: int) -> datetime:
-        """0.14.0: the UTC moment of ``hour`` o'clock on the owner's local ``day``. The day's start plus that many hours
+        """0.15.0: the UTC moment of ``hour`` o'clock on the owner's local ``day``. The day's start plus that many hours
         is an hour off on the days the clocks change."""
         return datetime.combine(day, time(hour), self.tz).astimezone(UTC)
 

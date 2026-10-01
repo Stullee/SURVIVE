@@ -47,7 +47,7 @@ def turned_on(agent: Any, rate: float = 1.1) -> None:
 
 
 def entries(agent: Any) -> list[dict[str, Any]]:
-    """The orders' entries (0.14.0: not the listing fees, which Ember's code records whatever the option)."""
+    """The orders' entries (0.15.0: not the listing fees, which Ember's code records whatever the option)."""
     return rows(
         agent,
         "SELECT id, type, amount_micros, simulated, source, note, corrects_id, orig_amount, orig_currency, fx_rate,"
@@ -82,7 +82,7 @@ def test_a_paid_order_and_its_fees_are_recorded_once(data_dir: Path) -> None:
         "venture_id": shown["venture_id"],
     }
     assert shown["project_id"] is not None
-    # 0.48, and 6.5% of 4.50 and USD 0.20 (at 1.1) with 19% VAT (0.14.0)
+    # 0.48, and 6.5% of 4.50 and USD 0.20 (at 1.1) with 19% VAT (0.15.0)
     assert (fees["type"], fees["amount_micros"], fees["orig_amount"]) == ("expense", 1_140_000, "1.04")
     assert fees["project_id"] == shown["project_id"] and fees["note"].startswith("Etsy's fees on order 71")
     assert agent.economy.status().balance == before + 4_950_000 - 1_140_000

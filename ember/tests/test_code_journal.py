@@ -19,7 +19,7 @@ def test_a_journal_that_comes_fifth_is_written(data_dir: Path) -> None:
         script=[
             plan(steps=["look around"]),
             Reply("Done."),
-            ToolCalls([sleep] * 4 + [JOURNAL, sleep]),  # 0.14.0: the journal is the reflection's
+            ToolCalls([sleep] * 4 + [JOURNAL, sleep]),  # 0.15.0: the journal is the reflection's
         ]
     )
     agent, ends = run(data_dir, fake)

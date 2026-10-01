@@ -80,7 +80,7 @@ class Scheduler:
                 await asyncio.to_thread(self.economy.tick)
                 if time.monotonic() - self._last_prune > PRUNE_EVERY_SECONDS:
                     await asyncio.to_thread(self.db.prune_events, KEEP_EVENTS)
-                    try:  # 0.14.0: and the old texts of the model calls and tool calls (db.TEXT_DAYS)
+                    try:  # 0.15.0: and the old texts of the model calls and tool calls (db.TEXT_DAYS)
                         await asyncio.to_thread(self.db.prune_texts, self.economy.clock.now())
                     except Exception:  # noqa: BLE001 - pruning must not stop the wake cycles
                         log.exception("Pruning old texts failed")
@@ -108,7 +108,7 @@ class Scheduler:
                         end = await asyncio.to_thread(self.agent.run_cycle, decision.trigger)
                         if end.status in ("completed", "idle") or end.rerun:
                             continue  # decide again right away (the next wake-up is set now)
-                        # 0.14.0: after a refused, failed or stopped cycle, a round before the next decision: a wake
+                        # 0.15.0: after a refused, failed or stopped cycle, a round before the next decision: a wake
                         # that ignored its back-off ran a refused cycle every round until midnight.
                         self.status = f"after a {end.status} cycle"
                     else:

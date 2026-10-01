@@ -61,7 +61,7 @@ OFFICE = {
 PAGE = 100  # items per page Etsy returns at most
 RECEIPT_PAUSE = 1.1  # seconds between pages of orders: Etsy allows about one a second per shop there
 ORDER_PAGES = 5  # pages of orders a sync reads
-CATCH_UP_PAGES = 100  # 0.14.0: and after a gap of more than a month (10,000 receipts)
+CATCH_UP_PAGES = 100  # 0.15.0: and after a gap of more than a month (10,000 receipts)
 _REFRESH_LOCK = threading.Lock()
 
 
@@ -343,7 +343,7 @@ class LiveShop:
         return found
 
     def listing(self, listing_id: int) -> RemoteListing | None:
-        """0.14.0: one listing, read on its own (getListing, as the shop's owner): whether the batch answers for
+        """0.15.0: one listing, read on its own (getListing, as the shop's owner): whether the batch answers for
         expired or inactive listings was never checked. None when Etsy says there is none (HTTP 404)."""
         try:
             data = self._call("GET", f"/v3/application/listings/{listing_id}")
@@ -359,7 +359,7 @@ class LiveShop:
     def orders(self, since: datetime) -> list[Order]:
         found: list[Order] = []
         offset = 0
-        # Five pages cover a sync's 30 days; 0.14.0: a catch-up after a longer gap reads on until the answer ends.
+        # Five pages cover a sync's 30 days; 0.15.0: a catch-up after a longer gap reads on until the answer ends.
         pages = ORDER_PAGES if self.clock.now() - since <= timedelta(days=31) else CATCH_UP_PAGES
         while offset < PAGE * pages:
             data = self._call(
@@ -523,7 +523,7 @@ def _order(receipt: Any) -> Order | None:
                     "title": str(t.get("title") or "")[:140],
                     "quantity": _int(t.get("quantity")) or 1,
                     "price_cents": _cents(t.get("price")) or 0,
-                    "shipping_cents": _cents(t.get("shipping_cost")) or 0,  # 0.14.0: what the buyer paid for it
+                    "shipping_cents": _cents(t.get("shipping_cost")) or 0,  # 0.15.0: what the buyer paid for it
                 }
             )
     refunds = [r for r in receipt.get("refunds") or [] if isinstance(r, dict)]
@@ -551,7 +551,7 @@ def _cents(money: Any) -> int | None:
 
 
 def _price(money: Any) -> str | None:
-    """0.14.0: Etsy's money as a price ("4.50"), None when it isn't one."""
+    """0.15.0: Etsy's money as a price ("4.50"), None when it isn't one."""
     cents = _cents(money)
     return None if cents is None else f"{Decimal(cents) / 100:.2f}"
 

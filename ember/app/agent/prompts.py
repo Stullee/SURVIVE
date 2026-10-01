@@ -427,7 +427,7 @@ STUDY_SCHEMA: dict[str, Any] = {
     },
 }
 
-# 0.14.0: per sampling of the run's loop (the API applies it to each, and a run may sample 10 times): the script, a fix
+# 0.15.0: per sampling of the run's loop (the API applies it to each, and a run may sample 10 times): the script, a fix
 # or the answer. 8,000 priced per sampling made one run's worst case $1.27 with claude-sonnet-5.
 WORKSHOP_MAX_TOKENS = 3_000
 # 0.12.0: once a day, after the daily review, the lessons are consolidated: Ember's code checks the answer, keeps what
@@ -603,7 +603,7 @@ def work_request(
     """One step of the act loop. The prefix (system, tools, brief) stays byte-identical, so it is cached; ``mail``,
     ``etsy``, ``venture``, ``library``, ``pinterest``, ``printify`` and ``site`` (whether Ember has a mailbox, a shop, a
     library, the owner's Pinterest and Printify accounts and their website, and a venture cycle's tools) are the same
-    for every step of a cycle, and so are ``workshop`` and ``brainstorm`` (0.14.0: whether the burn mode leaves the
+    for every step of a cycle, and so are ``workshop`` and ``brainstorm`` (0.15.0: whether the burn mode leaves the
     cycle workshop runs, which the owner's options must allow too, and brainstorms)."""
     offered = tools.definitions(
         mail,

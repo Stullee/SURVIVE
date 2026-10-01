@@ -38,7 +38,7 @@ ANSWER = {
 AGENTS = econ.Case("etsy_digital", 4.9, 0.0, 0.0, (2, 10, 30), 10.0, 2.0, 30, 3.0)  # test_knockouts.case's numbers
 THEIRS = econ.Case(
     "etsy_digital", 4.9, 0.0, 0.0, (0, 4, 12), 10.0, 2.0, 61, 3.0
-)  # its setup, hours and API: the agent's (0.14.0: its 2 months in days)
+)  # its setup, hours and API: the agent's (0.15.0: its 2 months in days)
 
 
 def proposed(agent: Agent) -> None:
@@ -98,7 +98,7 @@ def test_the_critic_reviews_a_proposed_case_before_the_plan(data_dir: Path) -> N
         f"The critic on venture #{DROPSHIPPING} (case #1): test; expected EUR {got.ev_eur:.0f} a month by its numbers."
     )
     brief = [r for r in fake.sent if request_kind(r) == "work"][-1]["messages"][0]["content"][0]["text"]
-    # 0.14.0: the verdict and the flaw near the top of FOCUS, its numbers further down
+    # 0.15.0: the verdict and the flaw near the top of FOCUS, its numbers further down
     assert f"\nCritic (a separate call on case #1): test; fatal flaw: {ANSWER['fatal_flaw']}\n" in brief
     assert "\nCritic's numbers: a sale keeps EUR " in brief
     shown = card(agent)

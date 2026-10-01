@@ -599,13 +599,13 @@ Don't reset the workshop's overshoot scaling again, and don't raise caps or top 
 
 ---
 
-## 10. 0.14.0 patch notes
+## 10. 0.15.0 patch notes
 
-*Added 2026-10-01, for the release on `claude/youthful-curie-p5h0eu`. 0.14.0 was built as 17 work packages, each reviewed in up to two rounds and merged into one branch. These notes are taken from each package's final report. The raw review files in `analysis-0.13.0/raw/` stay on the analysis branch: they hold private live data and are not in this repository.*
+*Added 2026-10-01, for the release on `claude/youthful-curie-p5h0eu`. 0.15.0 was built as 17 work packages, each reviewed in up to two rounds and merged into one branch. These notes are taken from each package's final report. The raw review files in `analysis-0.13.0/raw/` stay on the analysis branch: they hold private live data and are not in this repository.*
 
 ### Summary
 
-0.14.0 is the fix release this analysis asked for. It covers phase 0 of section 6 in full, the FIX NOW rows of phases 1 and 2, and phase 3's rows 9, 10, 11 and 21 (the loopholes in 0.6), but not phase 3's re-keying, new rules or scorecard. It also fixes the eleven faults in your live diagnostics of 2026-10-01 (LIVE 1-11).
+0.15.0 is the fix release this analysis asked for. It covers phase 0 of section 6 in full, the FIX NOW rows of phases 1 and 2, and phase 3's rows 9, 10, 11 and 21 (the loopholes in 0.6), but not phase 3's re-keying, new rules or scorecard. It also fixes the eleven faults in your live diagnostics of 2026-10-01 (LIVE 1-11).
 
 - **Findings:** 78 in all: FIX NOW rows 1-25, row 26's 14 small defects, 28 other findings (X1-X28) and LIVE 1-11.
   - **75 fixed.**
@@ -618,7 +618,7 @@ Don't reset the workshop's overshoot scaling again, and don't raise caps or top 
 
 ### Fix log: FIX NOW rows 1-26 (section 5)
 
-| # | What was wrong | Status | What 0.14.0 does |
+| # | What was wrong | Status | What 0.15.0 does |
 |---|---|---|---|
 | 1 | Workshop calls had no provable ceiling; the caps held only up to a guess | ✔ fixed | A workshop call holds the largest of: its raised worst case, the cap per run, and 1.5 × the p95 of what recent runs are known to cost (last 20 runs, 14 days, since your last Reset). That amount must fit the daily cap and the balance. The quote prices 10 rounds of up to 3,000 tokens (`WORKSHOP_MAX_TOKENS` 8,000 → 3,000). Token counting works for requests with files. Each call's rounds and overruns are stored (`llm_calls.iterations`, `.overrun`) and shown in the diagnostics. Research is priced per round too; its ceiling stays empirical. Default `workshop_run_cap_usd` 0.50 → 0.75 |
 | 2 | Any overrun stopped the cycle, skipped the reflection, called the plan done and shortened the sleep | ✔ fixed | Only a call that counts toward the cycle cap and went over by more than 10% or $0.02 stops the cycle. Otherwise that kind of call is refused for the rest of the cycle and the plan goes on. The reflection always runs. A stopped cycle's digest and journal say where it stopped. The next wake follows the chosen sleep, as after a completed cycle |
@@ -629,7 +629,7 @@ Don't reset the workshop's overshoot scaling again, and don't raise caps or top 
 | 7 | CI red on both releases (secret-scan false positive) | ✔ fixed | The test's fake is allowlisted, and so are the analysis branch's false positives. A test-order flake in the Tests job is fixed (secrets are now redacted longest first). README's release steps require green CI on the exact commit and a `vX.Y.Z` tag. *Not yet seen green on GitHub: this branch hasn't been pushed* |
 | 8 | Code milestones filled the agent's 16 and your 4 places | ✔ fixed | Only the agent's and your milestones count. A product line's test holds one open bar at a time (day 14: 30 views first, then 2 favorites). A bar that opens on or after its day is due the next day. *Done as one bar at a time, not as the single "listing test" milestone the row proposed* |
 | 9 | Kill switch kept unlocks; take-back left approved actions to run; unlocks without owner identity; no QA; the email footer claimed your approval | ✔ fixed | (a) An unlock's email says it was "sent under rules they set, without their review of this email". (b) Taking back an unlock sends what it approved and nothing began back to you; cancelling such a request counts as a veto. (c) The kill switch takes back every unlock, so its reset approves nothing. (d) Unlocks act only while `owner_user_ids` names you and the app isn't in safe mode; otherwise Ember's code takes them all back. (e) An unlock approves only what passes its QA. The upgrade took back every 0.13.0 unlock once (there were none live) |
-| 10 | The unauthenticated `From:` counted as "wrote"; bounces, auto-replies and Ember's own address woke cycles or became obligations | ✔ fixed | Each email stores your provider's Authentication-Results verdict (the topmost header). Only verified mail that isn't from a list, a machine or Ember's own address counts. One predicate serves inquiries, metrics, wakes and NEVER's first-contact rule. Mail from before 0.14.0 doesn't count. *Limit: the header's authserv-id isn't checked* |
+| 10 | The unauthenticated `From:` counted as "wrote"; bounces, auto-replies and Ember's own address woke cycles or became obligations | ✔ fixed | Each email stores your provider's Authentication-Results verdict (the topmost header). Only verified mail that isn't from a list, a machine or Ember's own address counts. One predicate serves inquiries, metrics, wakes and NEVER's first-contact rule. Mail from before 0.15.0 doesn't count. *Limit: the header's authserv-id isn't checked* |
 | 11 | Event wakes bypassed your settings and the guards | ✔ fixed | The no-room, crash-loop and back-off guards run first. New option `wake_on_events` (on by default). Orders and the last day of a milestone Ember's code grades no longer wake, also for rows noted before the upgrade |
 | 12 | The product factory couldn't do the workshop's paid jobs; `make_image` 4 a cycle; QA counted files | ✔ fixed | A picture of every sheet; `file.xlsx#2` or `#Name`; a free copy (`workspace_write` mode copy); `workspace_read` of PDF, Word and Excel (cells with formula results); 10 zoom regions; text-only photos; a typographic poster at print size (6000 px). `make_image` runs 10 times a cycle. QA counts distinct photos: the same page under another name, a copy, or a near-identical picture (difference hash) counts once, and the card names repeats |
 | 13 | Fixed section budgets cut the review's advice, the first test, the venture's knock-outs and a missed bar's action | ✔ fixed | Two-pass budgets: unused room goes to cut sections by priority, within the same total. The review's focus, lesson and advice come first. FOCUS puts knock-outs and the critic's verdict and flaw first (its budget 1,900 → 2,400 bytes). A missed bar's obligation names the action first. *When every section is full, ROADMAP can still cut a first test: no package reordered ROADMAP itself* |
@@ -662,7 +662,7 @@ Don't reset the workshop's overshoot scaling again, and don't raise caps or top 
 
 ### Other findings fixed (sections 0, 3, 4, 8 and the raw reviews)
 
-| # | Where | What was wrong | What 0.14.0 does |
+| # | Where | What was wrong | What 0.15.0 does |
 |---|---|---|---|
 | X1 | 3(a) | Maintenance's $0.40 and the 20:00 event reserve didn't bind the workshop, review or study | In maintenance every call counts toward $0.40 and there is no workshop tool. Until 20:00 every call of a scheduled cycle leaves the event reserve |
 | X2 | 3(a), 4 | Critic and consolidation counted toward the cycle cap | They count toward the daily cap only (one shared list of purposes outside the cycle cap) |
@@ -695,7 +695,7 @@ Don't reset the workshop's overshoot scaling again, and don't raise caps or top 
 
 ### LIVE 1-11 (your live report of 2026-10-01)
 
-| # | What was wrong | Status | What 0.14.0 does |
+| # | What was wrong | Status | What 0.15.0 does |
 |---|---|---|---|
 | LIVE 1 | `site_url` ends in `/index.html`, so every page's address became `.../index.html/<page>.html` and search engines couldn't index the site | ✔ fixed | A trailing `index.html` or `index.htm` (any case) is dropped from the address. Any other file name in `site_url` is refused |
 | LIVE 2 | Workshop run #7 ($0.89) showed "ok" though only its script came back | ✔ fixed | A run is ok only if a real file came back. The result names the missing files and where to save them |
@@ -716,7 +716,7 @@ Don't reset the workshop's overshoot scaling again, and don't raise caps or top 
 - **Row 26m, the Impressum.** A register entry (Handelsregister) would need a new option, which the freeze didn't allow: add it to the downloaded `impressum.html` by hand. A missing phone is warned about (on the Website card and in the agent's plan), not refused.
 - **LIVE 7, the code mask.** Exempting years or "pin + noun" would let a real 4-digit PIN through to a report you may share. The trade-off goes the other way too: a code whose code word sits in the neighbouring table cell is no longer masked. DOCS says so.
 
-**Deliberately not in 0.14.0** (section 6's later phases and section 4's open items):
+**Deliberately not in 0.15.0** (section 6's later phases and section 4's open items):
 - **Phase 1:** the cheap "reply" purpose that answers your message without a full cycle. Your messages, rejections and venture decisions as agenda items. Coalescing your clicks (X7) is done.
 - **Phase 3:**
   - re-keying unlocks per venture or product line and action class, with a daily limit, an action budget and an end date (21a keys them to what a milestone covers, nothing more);
@@ -763,7 +763,7 @@ Don't reset the workshop's overshoot scaling again, and don't raise caps or top 
 10. **Unlocks:** the loopholes of 0.6 are closed. Section 6's advice still holds: don't unlock before phase 3. Don't unlock email replies at all yet: they would cover every thread, and contacts from before the upgrade count as first contacts again until they write.
 11. **Home Assistant sensor:** if an automation reads the sensor's `digest` attribute, switch it to `digest_day` or the counts (`digest_actions`, `digest_failed`, `digest_taken_back`).
 12. **Old figures:** orders Ember read before the upgrade keep the old, lower Etsy fee figure; check them against your Etsy payment account. The warning about call #293 is from before LIVE 4: correct its cost on the dashboard if you want it gone.
-13. **Release it as README now says:** push to a candidate branch, wait for every CI job to be green on that commit, then move the tracked branch and tag `v0.14.0`. Then keep the 72-hour hold (section 8), and measure phase 0's watch items before the next behaviour release.
+13. **Release it as README now says:** push to a candidate branch, wait for every CI job to be green on that commit, then move the tracked branch and tag `v0.15.0`. Then keep the 72-hour hold (section 8), and measure phase 0's watch items before the next behaviour release.
 
 ### Behaviour changes to know
 
@@ -778,7 +778,7 @@ Don't reset the workshop's overshoot scaling again, and don't raise caps or top 
 - **Code milestones don't take your places.** The money goal, decision points, first tests and bars no longer use your 4 places or the agent's 16. Each product line holds one open bar at a time. On upgrade, a line can still hold both open day-14 bars from 0.13.0.
 - **The agent can't close a first test "done".** You confirm a prose test by dropping it on the Roadmap tab, after the agent sends you the evidence.
 - **Your clicks wake one cycle**, a few minutes after your last one and at most every 30 minutes. While a request waits, Ember sleeps at most 4 hours (not 60 minutes). After you decide the last one, its own chosen sleep stands, so it may see your decision later. Orders and favorites no longer wake it.
-- **Mail:** contacts who wrote before 0.14.0 have no verdict, so an email to them shows the first-contact warning until they write again. Machine mail no longer wakes Ember or becomes an obligation.
+- **Mail:** contacts who wrote before 0.15.0 have no verdict, so an email to them shows the first-contact warning until they write again. Machine mail no longer wakes Ember or becomes an obligation.
 - **Etsy money:** listing fees are booked automatically: don't record them yourself. A refund that leaves the live agent without money pauses it with a reason. You can grant funds and resume, or resume without funds.
 - **Printify:** you may see a blank `ember-cost-probe.png` in your Printify media library. Delete any product named "Ember cost probe (not for sale)". The Pinterest venture's (#2) first test, milestone #14, is dropped automatically; a fresh 21-day test starts once you finish the Pinterest setup.
 - **Privacy:** the shareable diagnostics hide Library texts. After 30 days, old tool inputs, results and model replies are pruned in the database (costs and tokens stay).

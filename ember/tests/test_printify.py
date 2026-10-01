@@ -86,7 +86,7 @@ def test_prices_margins_and_the_picture_are_checked() -> None:
     ):
         with pytest.raises(PrintifyError, match=message):
             printify.parse_prices(text)
-    # A price keeps 15% of itself after Etsy's fees (0.14.0: econ's, with VAT), making and shipping (with VAT).
+    # A price keeps 15% of itself after Etsy's fees (0.15.0: econ's, with VAT), making and shipping (with VAT).
     fees = Decimal(str(econ.fees("etsy_physical", 24.90, econ.DEFAULT_USD_PER_EUR))) * 100
     assert printify.kept(2490, 790, 450) == round(2490 - fees - Decimal(1240) * Decimal("1.19"))
     assert printify.keeps(2490, 790, 450) and not printify.keeps(1290, 790, 450)
@@ -185,7 +185,7 @@ def test_the_catalog_is_read_with_the_print_areas_and_german_shipping() -> None:
     assert account.providers(POSTER) == [printify.Provider(SENSARIA, "Sensaria")]
     assert account.variants(POSTER, SENSARIA) == [
         printify.Variant(SMALL, "12x18 in", 3600, 5400, 450, "EUR"),  # Germany's own profile wins
-        printify.Variant(LARGE, "24x36 in", 7200, 10800, 990),  # the rest of the world's (0.14.0: no currency stated)
+        printify.Variant(LARGE, "24x36 in", 7200, 10800, 990),  # the rest of the world's (0.15.0: no currency stated)
     ]
     first = server.requests[0]
     assert first.headers["authorization"] == "Bearer pr1ntify-t0ken-value-xyz"

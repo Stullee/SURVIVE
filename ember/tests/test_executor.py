@@ -206,7 +206,7 @@ def test_a_stop_reply_cancels_the_waiting_email_and_blocks_new_ones(data_dir: Pa
     for _ in range(4):  # the reader's "stop" arrives in the fifth wake cycle, before the email went out
         agent.run_cycle("schedule")
     stop = rows(agent, "SELECT address, reason, email_id FROM email_suppressions")
-    assert stop == [{"address": READER, "reason": 'wrote "Stop"', "email_id": 3}]  # 0.14.0: Ember sent nothing yet
+    assert stop == [{"address": READER, "reason": 'wrote "Stop"', "email_id": 3}]  # 0.15.0: Ember sent nothing yet
     assert agent.execute_approved() == [(approval_id, "failed")] and agent.mailbox.sent == []  # type: ignore[union-attr]
     failed = approval(agent, approval_id)
     assert (failed["status"], failed["result_note"]) == ("failed", "Not sent: the recipient asked not to get emails")

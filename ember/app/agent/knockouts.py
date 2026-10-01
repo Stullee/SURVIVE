@@ -4,14 +4,14 @@ What ruled a venture out was the agent's judgement, and a dropshipping case that
 owner. Now each business case is checked against six knock-outs:
 
 * cold_outreach: it needs writing to people who didn't ask first (illegal advertising in Germany, UWG section 7): the
-  case says so (``needs``) or its words do (0.14.0: not where they rule it out, "no cold outreach", and in German too);
+  case says so (``needs``) or its words do (0.15.0: not where they rule it out, "no cold outreach", and in German too);
 * ember_accounts: it needs accounts Ember itself would create (big platforms block automated sign-ups, and
   Anthropic's usage policy forbids them): the case says so;
 * cash: it needs more cash to start than the owner's venture budget (the ``venture_cash_eur`` option);
-* slow: its first sale comes later than half the net runway (0.14.0: in days, at least econ.MIN_FIRST_SALE_DAYS; whole
+* slow: its first sale comes later than half the net runway (0.15.0: in days, at least econ.MIN_FIRST_SALE_DAYS; whole
   months knocked out every case below about 61 days of runway, and 0 months passed);
 * losing: a sale loses money (its net per sale, after the fees, is not above 0);
-* vendor_only: no independent page backs its demand (0.14.0: a claim of searches, sales, orders, reviews or buyers,
+* vendor_only: no independent page backs its demand (0.15.0: a claim of searches, sales, orders, reviews or buyers,
   evidence.demand_shown; any one independent claim lifted it, a policy or a price too).
 
 A knock-out is reversible: it goes when the case changes (new numbers, new evidence), and the owner can override one
@@ -39,7 +39,7 @@ LABELS = {
     "vendor_only": "no independent source for its demand",
 }
 NEEDS = ("cold_outreach", "ember_accounts")  # what a case says it needs (venture_case's ``needs``)
-# Words of a case that plan writing to people who didn't ask first (the owner can override a wrong match). 0.14.0:
+# Words of a case that plan writing to people who didn't ask first (the owner can override a wrong match). 0.15.0:
 # "reach out to", "writing to", "send emails to" and German too ("Firmen anschreiben", "wir rufen Firmen an").
 _WHO = (
     r"(?:local |small |german |potential |target |selected |the |\d[\d.,]*\+? )*(?:hr |hiring |shop |store )?"
@@ -74,7 +74,7 @@ _COLD = re.compile(
     r"|\b(?:kontaktier(?:e|en|t)|akquirier(?:e|en|t)|mailen)\s+" + _GAP + _WEN + r"\b",
     re.IGNORECASE,
 )
-# 0.14.0: words that rule it out: a negation right before, with nothing but such small words between ("no cold
+# 0.15.0: words that rule it out: a negation right before, with nothing but such small words between ("no cold
 # outreach", "we will not do any cold calls"), or right after ("cold outreach: none", "cold calls are not needed"),
 # and a part of a sentence that calls it illegal.
 _NOT_BEFORE = re.compile(
@@ -121,7 +121,7 @@ def _cut(text: str, ends: str) -> int:
 
 
 def cold_words(text: str) -> str:
-    """The first words of ``text`` that plan cold outreach ("" without any): 0.14.0, not where a negation right before
+    """The first words of ``text`` that plan cold outreach ("" without any): 0.15.0, not where a negation right before
     them or the words right after rule it out, nor where a part of a sentence calls them illegal."""
     for found in _COLD.finditer(text):
         head = text[: found.start()]
@@ -182,12 +182,12 @@ def check(
     if case is not None:
         if float(case["setup_eur"]) > cash_eur:
             found.append(("cash", f"EUR {float(case['setup_eur']):.0f} to start, the budget is EUR {cash_eur:.0f}"))
-        days = max(int(case["first_sale_days"]), econ.MIN_FIRST_SALE_DAYS)  # 0.14.0: days, not whole months
+        days = max(int(case["first_sale_days"]), econ.MIN_FIRST_SALE_DAYS)  # 0.15.0: days, not whole months
         if net_days is not None and days > net_days / 2:
             found.append(("slow", f"its first sale in {days} days, half the runway is {net_days / 2:.0f} days"))
         if float(case["net_eur"]) <= 0:
             found.append(("losing", f"a sale keeps EUR {float(case['net_eur']):.2f} after fees and its cost"))
-    if not evidence.demand_shown(conn, vid):  # 0.14.0: a demand number, not any independent claim
+    if not evidence.demand_shown(conn, vid):  # 0.15.0: a demand number, not any independent claim
         graded = evidence.counts(conn, vid)
         what = (
             f"no independent page shows demand (searches, sales, orders, reviews, buyers): its claims are "

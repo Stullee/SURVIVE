@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.14.0
+## 0.15.0
 
 Fixes: workshop costs held honestly, a reflection in every cycle, free tools for the workshop's old jobs, and unlocks,
 gates and milestones checked against what a request or a number really is.
@@ -41,7 +41,7 @@ gates and milestones checked against what a request or a number really is.
 - While a request waits, your chosen sleep is cut to at most 240 minutes; once your owner decides the last one, it
   stands again. In maintenance the next scheduled cycle comes a day after the last cycle began.
 - Only a verified person's email counts as someone having written: not a list, a machine, your own address, or mail
-  stored before 0.14.0. email_read says whether the sender was verified. More opt-out phrasings are caught.
+  stored before 0.15.0. email_read says whether the sender was verified. More opt-out phrasings are caught.
 - message_owner: past the 2-a-day limit, one message per open promise (#n) may report it kept, so it can be closed.
 - Ember's code's milestones take none of your 16 places; a product line's test has one open bar at a time. A milestone
   Ember's code set or checks keeps its project and venture.
@@ -69,7 +69,7 @@ gates and milestones checked against what a request or a number really is.
 - An unlock carries a request only if its milestone covers what the request acts on (a project's or venture's
   listings; email replies only on a milestone with neither), only if it passes QA ("Re:", at most 200 words; 5
   distinct photos), and only while owner_user_ids names your owner. A milestone that closes, even met, ends its
-  unlocks. 0.14.0 took back every 0.13.0 unlock.
+  unlocks. 0.15.0 took back every 0.13.0 unlock.
 - An unlock taken back sends what it approved and hasn't begun back to your owner. Price changes stay within 15% of
   the price your owner last approved; if a listing changed at Etsy, an unlocked change goes to your owner instead.
 - NEVER's tax and contract check reads only what a request sends (an email's subject and text), through look-alike

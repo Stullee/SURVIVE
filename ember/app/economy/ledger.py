@@ -43,7 +43,7 @@ _API_SPEND_TYPES = "('api_cost', 'api_cost_correction')"
 _MONEY_IN = (
     "((type IN ('owner_grant', 'revenue') AND corrects_id IS NULL) OR (type = 'adjustment' AND amount_micros > 0))"
 )
-# The calls that don't count toward the cycle cap (metering.py says why; 0.14.0: one list for the guard and the books,
+# The calls that don't count toward the cycle cap (metering.py says why; 0.15.0: one list for the guard and the books,
 # the critic's and the consolidation's are the daily cap's only, as documented).
 OUTSIDE_CYCLE_CAP = ("workshop", "review", "study", "consolidate", "critic")
 _ENTRY_COLUMNS = (
@@ -395,7 +395,7 @@ class Books:
 
     def cycle_spend(self, cycle_id: int, outside_cap: bool = True, every_purpose: bool = False) -> tuple[int, int]:
         """(charged, reserved-and-pending) micros of one cycle; for the cycle cap without the calls that don't count
-        toward it (OUTSIDE_CYCLE_CAP: ``outside_cap=False``; 0.14.0: with them all in a maintenance cycle,
+        toward it (OUTSIDE_CYCLE_CAP: ``outside_cap=False``; 0.15.0: with them all in a maintenance cycle,
         ``every_purpose``), and then with what an uncertain call is known to cost rather than its worst case (0.12.0,
         as ``cap_spend_on``)."""
         outside = ", ".join(f"'{purpose}'" for purpose in OUTSIDE_CYCLE_CAP)

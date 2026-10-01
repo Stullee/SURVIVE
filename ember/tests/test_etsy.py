@@ -1252,7 +1252,7 @@ def test_a_0_8_shop_keeps_its_listings_through_the_0_9_migration(tmp_path: Path)
             " title) VALUES ('live', 0, 3, 'then', 'now', 'active', 4584845289, 'CV')"
         )
     old.close()
-    # every migration after 0.8.0's (0.14.0: whatever their number, as new ones come)
+    # every migration after 0.8.0's (0.15.0: whatever their number, as new ones come)
     assert migrate(db_file, backup_dir=tmp_path / "backups") == [
         m.version for m in discover_migrations() if m.version >= 11
     ]

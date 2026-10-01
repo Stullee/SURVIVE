@@ -90,7 +90,7 @@ RESULT_CHARS = {"memory_read": 4_400}  # 0.12.0: a memory file whole (lessons: 4
 # 8,000 characters, emails of 5,000 and listing descriptions of 4,000, which no reply could hold.
 WORK_MAX_TOKENS = 2_000
 ONE_REPLY_CHARS = int(WORK_MAX_TOKENS * 1.7) - 900  # 2,500
-# 0.14.0: one call's texts together, beside its JSON and a line of text (a request_approval's could total 5,240).
+# 0.15.0: one call's texts together, beside its JSON and a line of text (a request_approval's could total 5,240).
 CALL_CHARS = int(WORK_MAX_TOKENS * 1.7) - 400  # 3,000
 WRITE_CHARS = ONE_REPLY_CHARS
 DESCRIPTION_CHARS = min(etsy.DESCRIPTION_CHARS, ONE_REPLY_CHARS - 500)  # a listing's other fields come with it
@@ -170,7 +170,7 @@ WORKSHOP_INPUT_MB = 10  # their size together
 # ONE_REPLY_CHARS of a text, and every part written through the conversation is read again by each later step.
 DRAFT_MAX_TOKENS = 8_000
 DRAFT_CHARS = DRAFT_MAX_TOKENS * 3  # what a draft holds at least (3 characters a token)
-DRAFT_BYTES = DRAFT_MAX_TOKENS * 4  # 0.14.0: the room a draft needs in a file (4 bytes a token)
+DRAFT_BYTES = DRAFT_MAX_TOKENS * 4  # 0.15.0: the room a draft needs in a file (4 bytes a token)
 DRAFT_SOURCES = 5  # workspace files a draft builds on
 DRAFT_SOURCE_CHARS = 24_000  # their text, together
 FIRST_CONTACT = (
@@ -222,7 +222,7 @@ class Field:
     minimum: int | None = None
     maximum: int | None = None
     cut: bool = False  # too long: cut to max_len with a note instead of refusing (for notes, not content)
-    remedy: str = ""  # 0.14.0: what to do when it is too long, said in the refusal
+    remedy: str = ""  # 0.15.0: what to do when it is too long, said in the refusal
     items: tuple[tuple[str, Field], ...] = ()  # an array's objects: their fields, in order
 
 
@@ -673,7 +673,7 @@ SPECS: dict[str, Spec] = {
             per_cycle=5,
             reflect=True,
         ),
-        # 0.14.0: the reflection's only. Written during the work, it skipped the reflection: live, every cycle since
+        # 0.15.0: the reflection's only. Written during the work, it skipped the reflection: live, every cycle since
         # 0.12.0 did, and none checked its undone calls, wrote a lesson or updated the strategy.
         Spec(
             "write_journal",
@@ -799,7 +799,7 @@ SPECS: dict[str, Spec] = {
                 "accent": _s("Title and badge colour, like #2C3E50.", 7, required=False),
                 "background": _s("Background colour (default: a light tint of accent).", 7, required=False),
             },
-            per_cycle=etsy.MAX_PHOTOS,  # 0.14.0: a listing's photos in one cycle (4 was fewer than qa.MIN_PHOTOS)
+            per_cycle=etsy.MAX_PHOTOS,  # 0.15.0: a listing's photos in one cycle (4 was fewer than qa.MIN_PHOTOS)
         ),
         Spec(
             "look",
@@ -1082,7 +1082,7 @@ VENTURE_VARIANTS: dict[str, Spec] = {
 }
 
 
-# 0.14.0: an ordinary cycle's venture_update, without the scores and the business case: they are a venture cycle's
+# 0.15.0: an ordinary cycle's venture_update, without the scores and the business case: they are a venture cycle's
 # work (with evidence and venture_case), and an ordinary step's prompt holds every channel's tools within 0.11.1's size.
 ORDINARY_VENTURE_FIELDS = ("venture_id", "learned", "stage", "next_question", "note")
 ORDINARY_VARIANTS: dict[str, Spec] = {
@@ -1117,7 +1117,7 @@ def definitions(
     only when the owner's options allow runs, the Etsy tools only with a shop, brainstorm only in a venture cycle
     and, 0.12.0, the tools for building and selling only in an ordinary one, the library's only while it holds
     documents; 0.13.0: the Pinterest and Printify tools, and their manuals, only with the owner's account and a
-    shop, and the website's only when the owner switched it on; 0.14.0: brainstorm only when the burn mode allows
+    shop, and the website's only when the owner switched it on; 0.15.0: brainstorm only when the burn mode allows
     it)."""
     channels = {"pinterest": pinterest and etsy, "printify": printify and etsy, "website": site}
     return [
@@ -1175,7 +1175,7 @@ def offered(
     brainstorm: bool = True,
 ) -> bool:
     """Whether tool ``name`` is offered in a cycle of this configuration and kind (``venture``: a venture cycle;
-    ``brainstorm``: the burn mode allows brainstorms, 0.14.0)."""
+    ``brainstorm``: the burn mode allows brainstorms, 0.15.0)."""
     return (
         (mail or name not in MAIL_TOOLS)
         and (workshop or name not in WORKSHOP_TOOLS)
@@ -1198,7 +1198,7 @@ def _object_schema(fields: dict[str, Field]) -> dict[str, Any]:
     properties: dict[str, Any] = {}
     for name, f in fields.items():
         prop: dict[str, Any] = {"type": f.type}
-        if f.description:  # 0.14.0: none where its name and values say it all (the prompt's size)
+        if f.description:  # 0.15.0: none where its name and values say it all (the prompt's size)
             prop["description"] = f.description
         if f.type == "array":  # 0.12.0: a list of objects
             prop.update(minItems=1, maxItems=f.max_len, items=_object_schema(dict(f.items)))
@@ -1325,8 +1325,8 @@ class PrintifyAccess:
     shop_title: str
     currency: str
     daily_limit: int
-    buyer_ships: bool = False  # 0.14.0: the owner's printify_buyer_pays_shipping
-    bill_vat: bool = True  # 0.14.0: the owner's printify_bill_vat
+    buyer_ships: bool = False  # 0.15.0: the owner's printify_buyer_pays_shipping
+    bill_vat: bool = True  # 0.15.0: the owner's printify_bill_vat
 
 
 CatalogFn = Callable[[str | None, int | None, int | None], str]  # search, blueprint, provider: the catalog's answer
@@ -1356,7 +1356,7 @@ class ToolContext:
     usd_per_eur: float = 0.0  # the owner's exchange rate (etsy_usd_per_eur; 0: none, econ assumes one), 0.13.0
     venture_cash_eur: float = 20.0  # the owner's cash for a venture's first test (a knock-out beyond it), 0.13.0
     net_runway_days: float | None = None  # at the cycle's start (None: it earns what it spends), 0.13.0
-    unlocks_off: str = ""  # 0.14.0: why the owner's unlocks don't act now (policy.off; "" when they do)
+    unlocks_off: str = ""  # 0.15.0: why the owner's unlocks don't act now (policy.off; "" when they do)
     library: bool = False  # the owner's library holds documents (0.12.0): its tools
     brainstorm: BrainstormFn | None = None
     draft: DraftFn | None = None  # 0.12.0
@@ -1412,7 +1412,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
         if ctx.state.counts.get(name, 0) >= limit:
             more = f" ({ventures.RESEARCH_CALLS} in a venture cycle)" if name == "research" and not ctx.venture else ""
             raise ToolError(f"{name} can be used at most {limit} times per cycle{more}")
-        if spec is not SPECS[name] and isinstance(raw_input, dict):  # 0.14.0: say why, not just "unknown field"
+        if spec is not SPECS[name] and isinstance(raw_input, dict):  # 0.15.0: say why, not just "unknown field"
             other = sorted(set(raw_input) & set(SPECS[name].fields) - set(spec.fields))
             if other:
                 raise ToolError(f"{other[0]} is set in a venture cycle; here {name} takes {', '.join(spec.fields)}")
@@ -1477,7 +1477,7 @@ def skip(
 
 
 def validate(spec: Spec, raw: Any, notes: list[str] | None = None) -> dict[str, Any]:
-    """The checked arguments; a too-long ``cut`` field is shortened and described in ``notes``. 0.14.0: a call whose
+    """The checked arguments; a too-long ``cut`` field is shortened and described in ``notes``. 0.15.0: a call whose
     texts together are longer than one reply holds (CALL_CHARS) is refused, with their lengths."""
     args = _checked(spec.fields, raw, notes)
     sizes = {
@@ -1516,7 +1516,7 @@ def _checked(fields: dict[str, Field], raw: Any, notes: list[str] | None, where:
             if _BAD_CHARS.search(value):
                 raise ToolError(f"{name} contains control or direction characters")
             if f.max_len and len(value) > f.max_len:
-                if not f.cut:  # 0.14.0: with the numbers (and what to do), so the next try fits
+                if not f.cut:  # 0.15.0: with the numbers (and what to do), so the next try fits
                     remedy = f": {f.remedy}" if f.remedy else ""
                     raise ToolError(f"{name} is too long: {len(value):,} of {f.max_len:,} characters{remedy}")
                 if notes is not None:
@@ -1616,7 +1616,7 @@ def _workspace_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
 
 
 def _product_text(path: str, data: bytes) -> str | None:
-    """0.14.0: what a PDF, Word or Excel file says (an Excel file's cells, sheet by sheet), read by Ember's code within
+    """0.15.0: what a PDF, Word or Excel file says (an Excel file's cells, sheet by sheet), read by Ember's code within
     bounds; None for a picture or a presentation. The workshop was paid to read them."""
     kind = path.rsplit(".", 1)[-1].lower()
     try:
@@ -1639,7 +1639,7 @@ def _product(path: str, data: bytes) -> str:
     if kind in ("png", "jpg"):
         try:
             width, height = images.png_size(data)
-        except images.ImageError as exc:  # 0.14.0: it said "the tool failed"
+        except images.ImageError as exc:  # 0.15.0: it said "the tool failed"
             raise ToolError(f"{path} can't be read: {exc}") from None
         return f"a {kind.upper()} picture, {width} x {height} pixels, {size} (use look to see it)"
     names = {"docx": "a Word document", "xlsx": "an Excel workbook", "pptx": "a PowerPoint presentation"}
@@ -1667,7 +1667,7 @@ def _workspace_write(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
 
 
 def _copy(ctx: ToolContext, source: str, path: str) -> Outcome:
-    """0.14.0: a copy of a workspace file (the workshop was paid to copy one into shop/). A product file stays the
+    """0.15.0: a copy of a workspace file (the workshop was paid to copy one into shop/). A product file stays the
     kind it is: its bytes are Ember's code's or were checked when the workshop made them."""
     if source.rsplit(".", 1)[-1].lower() != path.rsplit(".", 1)[-1].lower():
         raise ToolError("a copy keeps its file ending")
@@ -2025,7 +2025,7 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
 
 
 def _tested(conn: Any, scope: AgentScope, row: Any) -> bool:
-    """Whether a backed venture's first test is met (0.12.0), or the owner dropped it. 0.14.0: met as Ember's code or
+    """Whether a backed venture's first test is met (0.12.0), or the owner dropped it. 0.15.0: met as Ember's code or
     the owner closed it, never on the agent's word alone."""
     test = roadmap.get(conn, scope, row["test_milestone_id"]) if row["test_milestone_id"] else None
     return test is not None and (
@@ -2079,7 +2079,7 @@ def _draft(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         raise ToolError(f"{path} doesn't exist yet: create it first")
     limit = ctx.workspace.limits.max_file_bytes
     size = (ctx.workspace.size_of(path) or 0) if mode == "append" else 0
-    if limit - size < DRAFT_BYTES:  # 0.14.0: refused before it is paid for, not after
+    if limit - size < DRAFT_BYTES:  # 0.15.0: refused before it is paid for, not after
         raise ToolError(
             f"{path} holds {size // 1024} KB and a draft may add {DRAFT_BYTES // 1024} KB, more than the "
             f"{limit // 1024} KB a file holds: draft the rest into a new file, with {path} as a source"
@@ -2104,7 +2104,7 @@ def _draft(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     cost = f"(cost ${micros_to_usd(drafted.cost_micros):.4f})"
     moved = ""
     if mode == "append" and size + len(drafted.text.encode("utf-8")) > limit:
-        # 0.14.0: a paid draft longer than the file's room is kept in a file of its own, not thrown away
+        # 0.15.0: a paid draft longer than the file's room is kept in a file of its own, not thrown away
         path, mode, moved = _free_name(ctx.workspace, path), "create", f" It didn't fit in {path} ({limit // 1024} KB)."
     try:
         size = ctx.workspace.write(path, drafted.text, append=mode == "append", create_only=mode == "create")
@@ -2126,7 +2126,7 @@ def _draft(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
 
 
 def _free_name(workspace: Jail, path: str) -> str:
-    """0.14.0: the first of <name>-2.md, <name>-3.md, ... next to ``path`` that can be written and doesn't exist yet
+    """0.15.0: the first of <name>-2.md, <name>-3.md, ... next to ``path`` that can be written and doesn't exist yet
     (``path`` itself if none of the first 98 is: then the write is refused as before)."""
     stem, _, suffix = path.rpartition(".")  # a text file's name always has its suffix
     for number in range(2, 100):
@@ -2278,15 +2278,15 @@ def _milestone_plan(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     return Outcome(True, "\n".join(line for _, line in made), summary[:300])
 
 
-# 0.14.0: a number of views or favorites of the shop's listings in a milestone's words, which Ember's code counts on
+# 0.15.0: a number of views or favorites of the shop's listings in a milestone's words, which Ember's code counts on
 # Etsy (not a pin's, a post's or the website's)
 _COUNTED = re.compile(r"\b\d[\d.,]*\s+(views?|favou?rites?)\b", re.IGNORECASE)
 _SHOP = re.compile(r"\b(?:listings?|etsy|shop)\b", re.IGNORECASE)
 _ELSEWHERE = re.compile(
     r"\b(?:pins?|pinterest|website|site|blog|posts?|reddit|instagram|tiktok|youtube|videos?)\b", re.IGNORECASE
 )
-_LIVE = re.compile(r"\b(?:live|listed)\b", re.IGNORECASE)  # 0.14.0: "X live" goals, self-graded: a hint, not a refusal
-_SOLD = re.compile(r"\b\d+\s+(?:orders?|sales?)\b", re.IGNORECASE)  # 0.14.0: "3 sales" goals: a hint as well
+_LIVE = re.compile(r"\b(?:live|listed)\b", re.IGNORECASE)  # 0.15.0: "X live" goals, self-graded: a hint, not a refusal
+_SOLD = re.compile(r"\b\d+\s+(?:orders?|sales?)\b", re.IGNORECASE)  # 0.15.0: "3 sales" goals: a hint as well
 
 
 def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tuple[int, str]:
@@ -2302,7 +2302,7 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
         raise ToolError("say how you will know it is reached: a measure, or a metric Ember's code checks")
     words = f"{title} {measure}"
     counted = _COUNTED.search(words) if not args.get("metric") and ctx.etsy is not None else None
-    if counted is not None and _SHOP.search(words) and not _ELSEWHERE.search(words):  # 0.14.0: code has the number
+    if counted is not None and _SHOP.search(words) and not _ELSEWHERE.search(words):  # 0.15.0: code has the number
         name = "views_total" if counted[1].lower().startswith("view") else "favorites_total"
         raise ToolError(
             f"Ember's code counts your listings' {name.split('_')[0]} in all on Etsy: set metric {name} and target "
@@ -2311,7 +2311,7 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
     today = ctx.clock.today()
     due = _due_date(args["due"], today)
     places = roadmap.MAX_OPEN - roadmap.OWNER_SLOTS  # 0.12.0: the last places are your owner's
-    if roadmap.placed(conn, ctx.scope) >= places:  # 0.14.0: Ember's code's milestones take none
+    if roadmap.placed(conn, ctx.scope) >= places:  # 0.15.0: Ember's code's milestones take none
         raise ToolError(
             f"{places} of your and your owner's milestones are open already, and the other {roadmap.OWNER_SLOTS} of "
             f"the {roadmap.MAX_OPEN} places are kept for your owner: close or drop one first"
@@ -2492,7 +2492,7 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
             f"{metrics.status_text(row)}. Ember's code closes milestone #{mid} done once its metric is met: work "
             "toward it; if it is out of reach, move its date (why) or drop it (why)"
         )
-    if status == "done" and row["kind"] == "first_test":  # 0.14.0: a venture goes live on it
+    if status == "done" and row["kind"] == "first_test":  # 0.15.0: a venture goes live on it
         raise ToolError(
             f"milestone #{mid} is a first test, met as Ember's code checks it or your owner confirms it: tell your "
             "owner what shows it is met (message_owner), and your owner confirms it on the Roadmap tab"
@@ -2559,7 +2559,7 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     for name, check in (("venture_id", _open_venture), ("project_id", _open_project)):
         value = args.get(name)
         if value is not None and value != row[name]:
-            if row["created_by"] == "code" or row["metric"]:  # 0.14.0: links decide what Ember's code counts
+            if row["created_by"] == "code" or row["metric"]:  # 0.15.0: links decide what Ember's code counts
                 who = "set" if row["created_by"] == "code" else "checks"
                 raise ToolError(
                     f"Ember's code {who} milestone #{mid}: what Ember's code counts for it is fixed, so it stays "
@@ -2626,7 +2626,7 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
             after = f" Dropped with it, as they led to it: {_numbers(dropped)}."
         called = predictions.of_milestones(conn, [mid]).get(mid)
         if called is not None and called["status"] == "open":
-            after += f" Your odds on it ({float(called['probability']):.0%}) count as a miss."  # 0.14.0
+            after += f" Your odds on it ({float(called['probability']):.0%}) count as a miss."  # 0.15.0
     elif status:
         what = status
         waiting = [k["id"] for k in roadmap.children(conn, mid) if k["status"] == "open"]
@@ -2692,7 +2692,7 @@ def _library_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
             state = {"done": f"{counts.get(r['id'], 0)} learnings", "waiting": "not studied yet"}.get(
                 r["study"], "not studied"
             )
-            if r["study"] == "done" and r["study_note"]:  # 0.14.0: its learnings were full before its last part
+            if r["study"] == "done" and r["study_note"]:  # 0.15.0: its learnings were full before its last part
                 state += f" · {r['study_note']}"
             links = "".join(
                 f" · {name} #{r[f'{name}_id']}" for name in ("venture", "project") if r[f"{name}_id"] is not None
@@ -2829,7 +2829,7 @@ def _promise(ctx: ToolContext, args: dict[str, Any]) -> tuple[str, str] | None:
 
 
 def _reports_promise(ctx: ToolContext, conn: Any, text: str) -> bool:
-    """0.14.0: whether the message names an open promise (#n) that the owner hasn't heard about since it was made: the
+    """0.15.0: whether the message names an open promise (#n) that the owner hasn't heard about since it was made: the
     daily cap lets it through, so obligation_done can close it (live: the cap refused the very message obligation_done
     asked for). Only a message that makes no promise itself, so one report can't open the way for the next."""
     where, params = ctx.scope.where()
@@ -2948,7 +2948,7 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         raise ToolError("the question is empty")
     # 0.12.0: research counts for a venture: the one it names or, in a venture cycle, the focus venture (a venture
     # cycle's research is always a venture's). A question asked again is answered from before, free; a new call for a
-    # venture that isn't backed needs what is left of its research budget. 0.14.0: in any other cycle too, research
+    # venture that isn't backed needs what is left of its research budget. 0.15.0: in any other cycle too, research
     # counts for a focus venture that has a research budget (it escaped the budget, while its cost was the venture's).
     venture_id = args.get("venture_id")
     if venture_id is None and ctx.venture:
@@ -3198,7 +3198,7 @@ def _email_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
         lead = f"Email #{row['id']}, sent by Ember after your owner approved request #{row['approval_id']}."
     else:
         lead = f"Email #{row['id']}, received {_local(ctx, row['received_at'])}. " + (
-            "Your mail provider verified its sender."  # 0.14.0: the test mailstore.person() makes
+            "Your mail provider verified its sender."  # 0.15.0: the test mailstore.person() makes
             if row["authenticated"] == 1 and row["bulk"] == 0
             else "Not a verified person's (an unverified sender, a list or a machine): no obligation, and it doesn't"
             " count as them having written."
@@ -3254,7 +3254,7 @@ def _new_request(ctx: ToolContext, conn: Any, payload: str, action: dict[str, An
     made = store.insert_approval(
         conn, ctx.scope, ctx.cycle_id, ctx.now(), payload=payload, action=action_json, **fields
     )
-    # the owner's unlocks (0.14.0: none while they are off; photos that repeat one another count once)
+    # the owner's unlocks (0.15.0: none while they are off; photos that repeat one another count once)
     ctx.state.policy_note = policy.apply(conn, ctx.scope, made, ctx.clock, ctx.unlocks_off, ctx.workspace.read_bytes)
     return made
 
@@ -3266,7 +3266,7 @@ def _unlocked(ctx: ToolContext) -> str:
 
 
 def _at_once(conn: Any, made: int, note: str, then: str) -> str | None:
-    """0.14.0: the answer for a request an unlock approved at once (None if it waits): what happened first, not that it
+    """0.15.0: the answer for a request an unlock approved at once (None if it waits): what happened first, not that it
     waits for the owner."""
     row = conn.execute("SELECT status FROM approvals WHERE id = ?", (made,)).fetchone()
     return f"Approval request #{made}:{note}{then}" if row is not None and row["status"] == "approved" else None
@@ -3390,7 +3390,7 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
             f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "
             f"{demand.DAYS} days first (demand_note: the keywords buyers search and what shows they buy)"
         )
-    joined = ventures.adopt(conn, ctx.scope, project_id, ctx.cycle_id, "etsy", ctx.now())  # 0.14.0
+    joined = ventures.adopt(conn, ctx.scope, project_id, ctx.cycle_id, "etsy", ctx.now())  # 0.15.0
     made = _new_request(
         ctx,
         conn,
@@ -3416,7 +3416,7 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
         f"Nothing is on Etsy yet. If they approve it, Ember's code creates the listing in {shop.shop_name} (at most "
         f"{shop.daily_limit} a day) and you hear the result."
     )
-    looks = images.looks(ctx.workspace.read_bytes, [(u.path, u.sha256) for u in listing.photos])  # 0.14.0
+    looks = images.looks(ctx.workspace.read_bytes, [(u.path, u.sha256) for u in listing.photos])  # 0.15.0
     short = qa.defects("etsy.create_listing", listing, looks)  # 0.13.0: the QA registry; your owner sees it too
     if short:
         text += f" QA (Ember's code): {'; '.join(short)}: make more with make_image and change the request."
@@ -3425,7 +3425,7 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
 
 
 def _joined(project_id: int, venture_id: int | None) -> str:
-    """0.14.0: what the agent hears when a product line joined a venture (ventures.adopt)."""
+    """0.15.0: what the agent hears when a product line joined a venture (ventures.adopt)."""
     return f" Project #{project_id} is part of venture #{venture_id} now: its sales count there." if venture_id else ""
 
 
@@ -3652,7 +3652,7 @@ def _propose_pin(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
         width, height = images.png_size(data)
     except pinterest.PinterestError as exc:
         raise ToolError(str(exc)) from None
-    except images.ImageError as exc:  # 0.14.0: what is wrong with it (a print-size poster was "not a picture")
+    except images.ImageError as exc:  # 0.15.0: what is wrong with it (a print-size poster was "not a picture")
         raise ToolError(f"{path} can't be used: {exc}") from None
     title = pinterest.one_line(args["title"])
     if not title:
@@ -3741,7 +3741,7 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
     if unknown is not None:
         raise ToolError(f"variant {unknown} isn't one provider #{provider_id} makes of #{blueprint_id}")
     chosen = [by_id[v] for v, _ in prices]
-    # 0.14.0: Printify's currency was never read, nor compared with the shop's: a price's margin is checked in one,
+    # 0.15.0: Printify's currency was never read, nor compared with the shop's: a price's margin is checked in one,
     # with what Printify states in another converted at the owner's rate
     if _shop(ctx).currency != access.currency:
         raise ToolError(
@@ -3752,7 +3752,7 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
     if len(billed) > 1:
         raise ToolError(f"Printify states these variants in {' and '.join(sorted(billed))}: one product each")
     billed_in, rate = billed.pop(), ctx.usd_per_eur
-    if access.currency not in ("EUR", "USD"):  # 0.14.0: Etsy's USD listing fee converts only to EUR
+    if access.currency not in ("EUR", "USD"):  # 0.15.0: Etsy's USD listing fee converts only to EUR
         raise ToolError(f"Ember's code checks a margin in EUR or USD only, not {access.currency}")
     sale = printify.Terms(access.currency, rate, access.buyer_ships, access.bill_vat)
     try:
@@ -3777,7 +3777,7 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
         width, height = images.png_size(data)
     except printify.PrintifyError as exc:
         raise ToolError(str(exc)) from None
-    except images.ImageError as exc:  # 0.14.0: what is wrong with it (a print-size poster was "not a picture")
+    except images.ImageError as exc:  # 0.15.0: what is wrong with it (a print-size poster was "not a picture")
         raise ToolError(f"{path} can't be used: {exc}") from None
     try:
         title = etsy.check_title(args["title"])
@@ -3795,7 +3795,7 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
             f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "
             f"{demand.DAYS} days first (demand_note: the keywords buyers search and what shows they buy)"
         )
-    # 0.14.0: what making costs, when printify_catalog read it: a price that keeps too little costs no approval
+    # 0.15.0: what making costs, when printify_catalog read it: a price that keeps too little costs no approval
     costs = printify_publisher.costs_of(conn, ctx.scope.mode, blueprint_id, provider_id, ctx.clock.now())
     low, currency = [], access.currency
     for v, price in prices:

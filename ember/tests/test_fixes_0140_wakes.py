@@ -1,4 +1,4 @@
-"""0.14.0: wake-ups behind the guards (the analysis of 0.13.0, FIX NOW 11, 25 and 26, X7, X12 and X13).
+"""0.15.0: wake-ups behind the guards (the analysis of 0.13.0, FIX NOW 11, 25 and 26, X7, X12 and X13).
 
 Event wake-ups ran before the no-room, crash-loop and back-off guards and ignored the owner's wake settings; an order, a
 listing's favorites or a milestone Ember's code checks itself woke a paid cycle. Wake now while the last will was due

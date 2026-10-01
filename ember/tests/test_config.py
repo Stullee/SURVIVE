@@ -50,7 +50,7 @@ def test_blank_key_counts_as_not_set(write_options: Callable[[dict], Path]) -> N
 
 
 def test_cycle_cap_above_daily_cap_is_corrected(write_options: Callable[[dict], Path]) -> None:
-    # 0.14.0: corrected (and shown on the dashboard) instead of safe mode, which Home Assistant's schema can't prevent.
+    # 0.15.0: corrected (and shown on the dashboard) instead of safe mode, which Home Assistant's schema can't prevent.
     write_options({"daily_spend_cap_usd": 0.5, "cycle_spend_cap_usd": 1.0, "dry_run": False})
     loaded = load_settings()
     assert not loaded.safe_mode
@@ -62,7 +62,7 @@ def test_cycle_cap_above_daily_cap_is_corrected(write_options: Callable[[dict], 
 def test_sleep_bounds_are_checked(write_options: Callable[[dict], Path]) -> None:
     write_options({"min_sleep_minutes": 60, "wake_interval_minutes": 30, "max_sleep_minutes": 120})
     loaded = load_settings()
-    assert not loaded.safe_mode  # 0.14.0: corrected
+    assert not loaded.safe_mode  # 0.15.0: corrected
     assert any("wake_interval_minutes" in c for c in loaded.corrections)
     assert loaded.settings.wake_interval_minutes == 60
 

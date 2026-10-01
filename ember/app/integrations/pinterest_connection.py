@@ -126,7 +126,7 @@ class PinterestConnection:
         tokens = self.tokens.load()
         if tokens is None:
             return "not_connected", "Connect your account: System, Pinterest, Connect."
-        if pinterest.lapsed(tokens, self.clock.now()):  # 0.14.0: unused for too long (the app was off)
+        if pinterest.lapsed(tokens, self.clock.now()):  # 0.15.0: unused for too long (the app was off)
             return "not_connected", "The connection expired: connect your account again (System, Pinterest)."
         return "ok", None
 

@@ -27,7 +27,7 @@ from tests.test_ventures import JOURNAL, plan, tool_results  # noqa: E402
 
 
 def a_milestone(agent: Any, title: str = "Ten sales") -> int:
-    """An open milestone of the shop's product line (0.14.0: an unlock carries only what its milestone covers, the
+    """An open milestone of the shop's product line (0.15.0: an unlock carries only what its milestone covers, the
     project of the first listing); without a listing, of no project (it covers email replies)."""
     due = (agent.clock.today() + timedelta(days=30)).isoformat()
     with agent.db.transaction() as conn:

@@ -1,4 +1,4 @@
--- 0.14.0: the burn mode a wake cycle opened in (economy/burn.py), written once when the row is made, like its cap. A
+-- 0.15.0: the burn mode a wake cycle opened in (economy/burn.py), written once when the row is made, like its cap. A
 -- maintenance cycle's cap bounds every call in it (workshop runs, the daily review, the library's study and the
 -- lessons' consolidation too), so the budget guard reads the mode the cycle opened in, not the mode now: a cycle's
 -- rules don't change halfway through it. Rows from before stay empty (their calls are judged as before).
@@ -9,7 +9,7 @@ CREATE TRIGGER cycles_burn_mode_fixed BEFORE UPDATE OF burn_mode ON cycles
 WHEN NEW.burn_mode IS NOT OLD.burn_mode
 BEGIN SELECT RAISE(ABORT, 'cycles: the burn mode a cycle opened in is fixed'); END;
 
--- 0.14.0: a document's study ends once its learnings are full (agent/library.py MAX_LEARNINGS): the study calls after
+-- 0.15.0: a document's study ends once its learnings are full (agent/library.py MAX_LEARNINGS): the study calls after
 -- that kept nothing and were still paid for. Its study is then 'done' with fewer parts read than it has, and its
 -- study_note says so; 'waiting' and 'failed' still mean parts are left. The table is rebuilt (SQLite can't change a
 -- CHECK) with its rows and their ids; its indexes stay as they were.

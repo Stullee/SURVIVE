@@ -102,7 +102,7 @@ def parse(answer: Any, agents: econ.Case) -> tuple[dict[str, str], econ.Case] | 
         sales=(sales[0], sales[1], sales[2]),
         setup_eur=agents.setup_eur,
         owner_hours=agents.owner_hours,
-        first_sale_days=round(first * econ.DAYS_A_MONTH),  # 0.14.0: its months, in days like the agent's
+        first_sale_days=round(first * econ.DAYS_A_MONTH),  # 0.15.0: its months, in days like the agent's
         api_usd=agents.api_usd,
     )
     return {"verdict": str(answer["verdict"]), **texts}, case
@@ -185,7 +185,7 @@ def ranking_ev(case_row: Mapping[str, Any] | None, critique: Mapping[str, Any] |
 
 def text(critique: Mapping[str, Any] | None, case_row: Mapping[str, Any] | None) -> tuple[str, str]:
     """FOCUS's critic lines ("" without a critique of the newest case): its verdict and the fatal flaw, then its
-    numbers and what would change its mind (0.14.0: two lines, so the flaw comes near the top of FOCUS)."""
+    numbers and what would change its mind (0.15.0: two lines, so the flaw comes near the top of FOCUS)."""
     if critique is None or case_row is None:
         return "", ""
     return (

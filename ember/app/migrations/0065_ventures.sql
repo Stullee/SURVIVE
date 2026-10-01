@@ -1,4 +1,4 @@
--- 0.14.0: venture gates that can't be gamed, and an expected net that counts the months before the first sale.
+-- 0.15.0: venture gates that can't be gamed, and an expected net that counts the months before the first sale.
 --
 -- A business case gives the days to its first sale (whole months couldn't tell 10 days from 25, and 0 was a
 -- loophole): cases saved before keep their months, in days too. The expected net now counts the fixed costs of the

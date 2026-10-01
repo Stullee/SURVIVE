@@ -5,7 +5,7 @@ header such as "On ... wrote:" or "-----Original Message-----" on) and their sig
 footer ('Reply "stop" ...') in a quoted reply never counts. It asks when one of its first lines is only a word like
 "stop", "unsubscribe" or "abmelden" (or a short line with "stop" and only words like "please", "no" or "now", not a
 question), when the subject is one, or when one of its lines or its subject holds a phrase such as "remove me", "don't
-email me", "keine E-Mails mehr", "désinscrire", "darme de baja", "non scrivetemi" or "afmelden". 0.14.0: its first lines
+email me", "keine E-Mails mehr", "désinscrire", "darme de baja", "non scrivetemi" or "afmelden". 0.15.0: its first lines
 are the first FIRST_LINES after a greeting (only the very first counted, so "Hello,\nPlease stop." was missed), and more
 phrases count. A false alarm only means Ember doesn't write to that sender again (they can write first); a miss would
 break the law (GDPR Art. 21, UWG § 7), so the phrases lean towards asking. The agent marks what this misses
@@ -19,7 +19,7 @@ import unicodedata
 
 OWN_CHARS = 2_000  # of the text: an opt-out comes first
 REASON_CHARS = 60
-FIRST_LINES = 3  # 0.14.0: the own lines, after a greeting, in which a short "stop" asks
+FIRST_LINES = 3  # 0.15.0: the own lines, after a greeting, in which a short "stop" asks
 SHORT_WORDS = 4
 _REPLY_START = re.compile(
     r"^(?:"
@@ -73,7 +73,7 @@ _PHRASES = re.compile(
     # English
     r"unsubscrib\w*|opt(?:ing)?[ -]?out|remove me|take me off|"
     r"(?:do not|don'?t|dont|never) (?:e-?mail|mail|contact|write(?: to)?|message|send) (?:me\b|us(?= *(?:[.!,;]|$)))|"
-    # 0.14.0
+    # 0.15.0
     r"(?:please|kindly) stop(?: (?:it|this|that|now|(?:e-?mailing|mailing|contacting|writing|messaging|spamming)"
     r"(?: (?:me|us))?))?(?= *(?:[.!,;]|$))|stop(?: it)?(?: please)?[.!,;]? (?:i'?m|we'?re|i am|we are) not interested|"
     r"leave me alone(?= *(?:[.!,;]|$))|"
@@ -100,7 +100,7 @@ _PHRASES = re.compile(
     r"(?:schreiben|mailen|kontaktieren) sie mich (?:bitte )?nicht|"
     r"(?:schreiben sie|mailen sie|schreib|schreibt|mail|mailt) mir (?:bitte )?nicht mehr|"
     r"(?:melden sie|meldet) mich (?:bitte )?(?:hier |davon |dort )?ab\b|"
-    # 0.14.0
+    # 0.15.0
     r"nicht mehr (?:an)?ge(?:schrieben|mailt)|nicht mehr (?:angemailt|kontaktiert)|"
     r"(?:entfernen|streichen|loschen|austragen) sie mich(?! nicht\b)|nehmen sie mich (?:bitte )?(?:aus|von)\b|"
     r"stoppen sie|"
@@ -128,7 +128,7 @@ _PHRASES = re.compile(
     r")"
 )
 _STOP = frozenset({"stop", "stopp", "stoppen", "aufhoren"})
-# 0.14.0: the only other words a short line with "stop" may have to ask ("No, stop.", "Stop it now please"): not
+# 0.15.0: the only other words a short line with "stop" may have to ask ("No, stop.", "Stop it now please"): not
 # "don't stop", "stop by", "full stop", "stop! I love it"
 _WITH_STOP = frozenset(
     {"please", "pls", "plz", "bitte", "no", "nein", "thanks", "thank", "you", "danke", "now", "jetzt", "sofort", "just",
@@ -138,7 +138,7 @@ _WITH_STOP = frozenset(
      "mails", "e-mail", "email", "mail", "emailing", "e-mailing", "mailing", "writing", "contacting", "messaging",
      "sending", "spamming", "ember", "hey", "kindly", "me", "us"}
 )  # fmt: skip
-# 0.14.0: a line that only greets ("Hello Ember,", "Hallo,", "Sehr geehrte Damen und Herren,")
+# 0.15.0: a line that only greets ("Hello Ember,", "Hallo,", "Sehr geehrte Damen und Herren,")
 _GREETING = re.compile(
     r"^(?:hi|hello|hey|dear|hallo|moin|servus|liebe[rs]?|sehr geehrte[rs]?|guten (?:morgen|tag|abend)|"
     r"good (?:morning|afternoon|evening)|bonjour|salut|hola|ciao|buongiorno|hoi|beste|ola|dzien dobry|witam)\b"
@@ -178,7 +178,7 @@ def own_lines(body: str) -> list[tuple[str, str]]:
 
 
 def _asks_alone(plain: str) -> bool:
-    """Whether a line is only a word that asks ("Stop.", "Unsubscribe"), or a short one with "stop" that asks (0.14.0:
+    """Whether a line is only a word that asks ("Stop.", "Unsubscribe"), or a short one with "stop" that asks (0.15.0:
     one with other words than _WITH_STOP, or a question, doesn't)."""
     bare = _bare(plain)
     words = set(bare.split())
@@ -193,7 +193,7 @@ def opt_out(subject: str | None, body: str | None) -> str | None:
     lines = own_lines(body or "")
     topic = _SUBJECT_PREFIX.sub("", _plain(subject or ""))
     counted = 0
-    for written, plain in lines:  # the first lines, a greeting aside (0.14.0: only the first line counted)
+    for written, plain in lines:  # the first lines, a greeting aside (0.15.0: only the first line counted)
         if _asks_alone(plain):
             return written[:REASON_CHARS]
         if len(plain.split()) > SHORT_WORDS or not _GREETING.match(plain):

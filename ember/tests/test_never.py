@@ -32,7 +32,7 @@ from tests.test_policy import change, price_of, work_on  # noqa: E402
 _numbers = itertools.count(1)
 WROTE = "lena@example.org"  # she wrote to Ember
 LEGAL = "tax, VAT, a Gewerbe or a contract"
-LISTING = 900_000_001  # a listing of Ember's product line (0.14.0: an unlock carries only what its milestone covers)
+LISTING = 900_000_001  # a listing of Ember's product line (0.15.0: an unlock carries only what its milestone covers)
 
 
 def an_agent(data_dir: Path) -> Any:
@@ -42,7 +42,7 @@ def an_agent(data_dir: Path) -> Any:
         conn.execute(
             "INSERT INTO emails (mode, session, life_id, direction, uidvalidity, uid, message_id, from_addr, to_addr,"
             " subject, received_at, body, bulk, authenticated) VALUES (?, ?, ?, 'in', 1, 1, '<q1@example.org>', ?,"
-            " 'ember@example.org', 'A question', ?, 'Do you make A5 planners?', 0, 1)",  # 0.14.0: a verified person
+            " 'ember@example.org', 'A question', ?, 'Do you make A5 planners?', 0, 1)",  # 0.15.0: a verified person
             (scope.mode, scope.session, scope.life_id, WROTE, now),
         )
         cycle = conn.execute("SELECT MAX(id) FROM cycles").fetchone()[0]
@@ -67,7 +67,7 @@ def line_of(agent: Any) -> int:
 
 
 def a_milestone(agent: Any, level: str | None = None, *, line: bool = True, **limits: int) -> int:
-    """An open milestone; with a level, every rule unlocked for it at that level by the owner. 0.14.0: of the product
+    """An open milestone; with a level, every rule unlocked for it at that level by the owner. 0.15.0: of the product
     line (it covers its listings), or with ``line=False`` of none (it covers email replies)."""
     due = (agent.clock.today() + timedelta(days=30)).isoformat()
     now = to_iso(agent.clock.now())
@@ -92,7 +92,7 @@ def request(
     words: str = "Sells better.",
     project_id: int | None = None,
 ) -> int:
-    """A request stored as the tools store one, for a milestone (its shape doesn't matter to NEVER). 0.14.0: a new
+    """A request stored as the tools store one, for a milestone (its shape doesn't matter to NEVER). 0.15.0: a new
     listing of the product line (or of ``project_id``), and what an email says kept as Ember's code keeps it
     (never.act_words)."""
     n = next(_numbers)
@@ -136,7 +136,7 @@ def an_email(to: str, words: str = "Yes, in A5 too.") -> dict[str, Any]:
 
 
 def never_requests(agent: Any, goal: int, replies: int) -> dict[str, tuple[int, list[str]]]:
-    """A request of each NEVER kind, and the other ways into one, with the classes each falls in. 0.14.0: emails for
+    """A request of each NEVER kind, and the other ways into one, with the classes each falls in. 0.15.0: emails for
     the milestone of replies; words of tax and contracts in what a reply says (a request's text is no act)."""
     first = an_email(f"new{next(_numbers)}@example.org")
     return {
@@ -214,7 +214,7 @@ def test_no_unlock_carries_a_never_request_whatever_the_rule_or_level(
                 assert reasons_of(conn, approval_id) == classes, kind
             for approval_id in (*controls.values(), *replies.values()):
                 assert reasons_of(conn, approval_id) == []
-        # 0.14.0: a request no milestone covers (what only the owner carries out, a community post) no unlock carries
+        # 0.15.0: a request no milestone covers (what only the owner carries out, a community post) no unlock carries
         covered = {r["approval_id"] for r in rows(agent, "SELECT approval_id FROM approvals_scope")}
         assert {kind for kind, (approval_id, _) in kinds.items() if approval_id not in covered} == {
             "account",
@@ -225,7 +225,7 @@ def test_no_unlock_carries_a_never_request_whatever_the_rule_or_level(
         for rule in policy.RULES:
             fits(monkeypatch, rule)
             for kind, (approval_id, _) in kinds.items():
-                said = carry(agent, approval_id)  # 0.14.0: the agent isn't told which kind (the owner's card says it)
+                said = carry(agent, approval_id)  # 0.15.0: the agent isn't told which kind (the owner's card says it)
                 expected = " It waits for your owner whatever they unlocked (never automatic)."
                 assert said == (expected if approval_id in covered else ""), (kind, rule, level)
             for approval_id in (controls[rule], replies[rule]):  # the checks don't stop what they shouldn't
@@ -353,7 +353,7 @@ def test_an_unlock_taken_back_or_spent_carries_nothing_more(data_dir: Path, monk
         grant = conn.execute(
             "SELECT * FROM policy_grants WHERE milestone_id = ? AND rule = 'deactivate'", (missed,)
         ).fetchone()
-    assert f"milestone #{missed}" not in carry(agent, late)  # 0.14.0: another milestone's unlock may carry it
+    assert f"milestone #{missed}" not in carry(agent, late)  # 0.15.0: another milestone's unlock may carry it
     with (
         pytest.raises(sqlite3.IntegrityError, match="no standing unlock carries this request"),
         agent.db.transaction() as conn,
@@ -419,7 +419,7 @@ VOCABULARY += (
 def test_the_database_reads_a_request_as_the_code_does(data_dir: Path) -> None:
     """Random requests of every type, executor and wording, read before and after Ember's first listing, board and
     Printify product went live: the code's NEVER classes (never.py) are exactly the database's (the view
-    approvals_never), class by class. 0.14.0: every executor of Ember's code (Pinterest, Printify and the Undo's too)
+    approvals_never), class by class. 0.15.0: every executor of Ember's code (Pinterest, Printify and the Undo's too)
     and one it doesn't know."""
     agent = an_agent(data_dir)
     goal = a_milestone(agent)
@@ -438,7 +438,7 @@ def test_the_database_reads_a_request_as_the_code_does(data_dir: Path) -> None:
         words = "".join(
             rng.choice(VOCABULARY) + rng.choice(("", " ", " ", "-", "\n", ", ")) for _ in range(rng.randint(1, 6))
         )
-        if executor == "email" and isinstance(action, dict):  # 0.14.0: NEVER reads what a reply says
+        if executor == "email" and isinstance(action, dict):  # 0.15.0: NEVER reads what a reply says
             action["body"] = words
         made.append(request(agent, goal, type=rng.choice(types), executor=executor, action=action, words=words))
     seen: set[str] = set()
@@ -491,7 +491,7 @@ def test_the_database_reads_a_request_as_the_code_does(data_dir: Path) -> None:
 
 def test_a_price_change_in_words_of_tax_waits_for_the_owner(data_dir: Path) -> None:
     """Through the agent's own tool: an auto unlock carries a small price change, never one whose reason is VAT.
-    0.14.0: the reason is no act (nothing of it is sent): NEVER reads what a request says or sends, so the price
+    0.15.0: the reason is no act (nothing of it is sent): NEVER reads what a request says or sends, so the price
     change is carried; a reply in words of tax waits (test_fixes_0140_unlock_keying)."""
     agent, listing_id = listed(data_dir)
     due = (agent.clock.today() + timedelta(days=30)).isoformat()

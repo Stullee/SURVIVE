@@ -179,7 +179,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "script_bytes": len((r["script_text"] or "").encode("utf-8")),
                 "simulated": r["mode"] == "dry_run",
             }
-            for r in store.upgrades_for_owner(conn, scope)  # 0.14.0: every new one
+            for r in store.upgrades_for_owner(conn, scope)  # 0.15.0: every new one
         ]
         will = store.last_will(conn, scope.life_id) if scope.life_id else None
         counts = badges(conn, scope)
@@ -203,10 +203,10 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "mind": {**agent.memory_files(), "journal": journal, "reviews": reviews, "lesson_pins": pinned},
         "models": models,
         "approvals": approvals,
-        # 0.13.0: what Ember's code did, the owner's Undo, the daily digest (0.14.0: and why unlocks are off, if so)
+        # 0.13.0: what Ember's code did, the owner's Undo, the daily digest (0.15.0: and why unlocks are off, if so)
         "audit": {**audit_view, "unlocks_off": agent.unlocks_off()},
         "inbox": inbox,
-        "inbox_before": inbox_before,  # 0.14.0: older messages load on request (api/inbox?before=)
+        "inbox_before": inbox_before,  # 0.15.0: older messages load on request (api/inbox?before=)
         "upgrades": upgrades,
         "instructions": instructions,
         "last_will": {"text": will["text"], "cut_off": bool(will["cut_off"])} if will else None,
@@ -249,7 +249,7 @@ def _inbox(conn: sqlite3.Connection, scope: store.AgentScope, rows: list[sqlite3
 
 
 def inbox_page(agent: Agent, before: int, limit: int = store.INBOX_PAGE) -> dict[str, Any]:
-    """0.14.0: the Inbox's messages older than message ``before`` (the dashboard brings the newest), and the message
+    """0.15.0: the Inbox's messages older than message ``before`` (the dashboard brings the newest), and the message
     the next page begins before (None: there are no older ones)."""
     scope = agent.scope()
     with agent.db.connection() as conn:
@@ -467,7 +467,7 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
         "today": today.isoformat(),
         "forecasts": record or None,  # 0.13.0: the record of the agent's forecasts (predictions.calibration)
         "autonomy_levels": list(policy.LEVELS),  # 0.13.0
-        "unlocks_off": agent.unlocks_off(),  # 0.14.0: why no unlock acts or may be granted now ("" when one may)
+        "unlocks_off": agent.unlocks_off(),  # 0.15.0: why no unlock acts or may be granted now ("" when one may)
         "autonomy_suggestions": promotions,
         "overhead_usd": _usd(overhead),  # 0.12.0: plans, reviews, brainstorms and the rest no milestone is charged
         "horizons": [
@@ -555,7 +555,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
             for v in rows
             if v["cases"] and v["stage"] in ventures.EXPLORING
         }
-        # 0.14.0: why Ember's code wouldn't back an unbacked venture: the owner's Back then confirms it
+        # 0.15.0: why Ember's code wouldn't back an unbacked venture: the owner's Back then confirms it
         unbacked = {
             v["id"]: stages.backing_problem(conn, v, cash_eur=agent.settings.venture_cash_eur, net_days=net_days)
             for v in rows
@@ -740,7 +740,7 @@ def _numbers(row: sqlite3.Row | None) -> dict[str, Any] | None:
         "sales": list(case.sales),
         "setup_eur": case.setup_eur,
         "owner_hours": case.owner_hours,
-        "first_sale_days": case.first_sale_days,  # 0.14.0: days, not months
+        "first_sale_days": case.first_sale_days,  # 0.15.0: days, not months
         "api_usd": case.api_usd,
         "fees_eur": result.fees_eur,
         "net_eur": result.net_eur,
@@ -754,7 +754,7 @@ def _numbers(row: sqlite3.Row | None) -> dict[str, Any] | None:
 
 
 def _looks(agent: Agent, r: sqlite3.Row, photos: tuple[etsy.Upload, ...]) -> list[str] | None:
-    """0.14.0: what a waiting request's photos look like (images.look), so its card names the ones that repeat
+    """0.15.0: what a waiting request's photos look like (images.look), so its card names the ones that repeat
     another."""
     if r["status"] != "pending":
         return None
@@ -796,7 +796,7 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
         try:
             listing = etsy.listing_from_action(action)
             editable = etsy.editable(listing)
-            shortfalls = qa.defects(kind.name, listing, _looks(agent, r, listing.photos))  # 0.14.0: copies named
+            shortfalls = qa.defects(kind.name, listing, _looks(agent, r, listing.photos))  # 0.15.0: copies named
         except etsy.EtsyError:
             editable = None
     if r["executor"] in ("pinterest_pin", "pinterest_delete") and action is not None:  # 0.13.0 (Phase E2)
@@ -826,9 +826,9 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
         "executor": r["executor"],
         "action_class": kind.flags(),  # 0.13.0: the connector protocol's class and its flags
         "qa": shortfalls,
-        # 0.13.0: held by the owner's unlock until then (0.14.0: not while unlocks are off, as nothing is approved)
+        # 0.13.0: held by the owner's unlock until then (0.15.0: not while unlocks are off, as nothing is approved)
         "veto_until": None if agent.unlocks_off() else policy.veto_until(conn, int(r["id"])),
-        "unlock_ended": policy.ended(conn, int(r["id"])),  # 0.14.0: why it waits for the owner after all
+        "unlock_ended": policy.ended(conn, int(r["id"])),  # 0.15.0: why it waits for the owner after all
         "never": _never(conn, r),
         "action": action,
         "first_contact": first_contact,

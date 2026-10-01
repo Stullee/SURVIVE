@@ -17,7 +17,7 @@ from ..products import site
 from .store import AgentScope
 
 _ADDRESS_LINES = re.compile(r"\n|\\n|,")  # the options' text field has one line: commas separate the address's
-# 0.14.0: a home page's file name ends the address the owner gave (live: https://ember-ai.de/index.html made every page
+# 0.15.0: a home page's file name ends the address the owner gave (live: https://ember-ai.de/index.html made every page
 # https://ember-ai.de/index.html/<name>.html): the site's address is its folder.
 _HOME_FILE = re.compile(r"/index\.html?$", re.IGNORECASE)
 
@@ -126,7 +126,7 @@ def state(conn: sqlite3.Connection, scope: AgentScope, who: site.Owner) -> dict[
             for r in rows
         ],
         "problem": problem,
-        "advice": who.advice(),  # 0.14.0: what it lacks but can be built without
+        "advice": who.advice(),  # 0.15.0: what it lacks but can be built without
         "downloaded_at": last["downloaded_at"] if last is not None else None,
         "changed": changed,
     }
@@ -144,7 +144,7 @@ def planner_text(conn: sqlite3.Connection, scope: AgentScope, who: site.Owner) -
         lines = [f"Changed since your owner downloaded it ({now['downloaded_at'][:10]}): {', '.join(now['changed'])}."]
     else:
         lines = [f"Your owner downloaded it as it is ({now['downloaded_at'][:10]})."]
-    if not now["problem"]:  # 0.14.0: what the owner can add, once nothing is missing
+    if not now["problem"]:  # 0.15.0: what the owner can add, once nothing is missing
         lines += [f"Ask your owner: {a}." for a in now["advice"]]
     if who.url:
         lines.append(f"Its address: {who.url.rstrip('/')}/ (a page is there as <name>.html).")

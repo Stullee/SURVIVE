@@ -646,7 +646,7 @@ def _verdicts(row: sqlite3.Row) -> list[dict[str, Any]]:
 
 def planner_text(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     """Today's review for the planner: the focus, the lesson and the advice first, then the stop and change verdicts
-    (with the project's title) and those on milestones, and the projects to continue on one line (0.14.0: the verdicts
+    (with the project's title) and those on milestones, and the projects to continue on one line (0.15.0: the verdicts
     came first, and the cut took the advice)."""
     lines = [f"Your review of today ({row['day']}), made before your first plan:"]
     if row["focus"]:

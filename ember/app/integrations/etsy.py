@@ -553,7 +553,7 @@ class RemoteListing:
     favorites: int | None
     ends_at: str | None = None  # 0.12.0: when the listing ends at Etsy (it lasts four months), and
     auto_renew: bool | None = None  # whether Etsy renews it then
-    price: str | None = None  # 0.14.0: its price at Etsy ("4.50"; None if Etsy didn't say)
+    price: str | None = None  # 0.15.0: its price at Etsy ("4.50"; None if Etsy didn't say)
 
 
 @dataclass(frozen=True)
@@ -562,7 +562,7 @@ class Order:
     ordered_at: str
     total_cents: int  # what the buyer paid for the whole receipt: tax, shipping and the owner's products included
     currency: str
-    # listing_id, title, quantity, price_cents (a unit's); 0.14.0: shipping_cents (the line's, as the buyer paid it)
+    # listing_id, title, quantity, price_cents (a unit's); 0.15.0: shipping_cents (the line's, as the buyer paid it)
     items: list[dict[str, Any]] = field(default_factory=list)
     # 0.12.0: what Ember's share of a receipt is worth needs its status, the items' price before the coupon
     # (items_cents: every line's price times quantity), the coupon and what was refunded.
@@ -581,7 +581,7 @@ DEAD_ORDERS = frozenset({"canceled", "fully refunded"})
 COUNTED_ORDERS = "COALESCE(status, 'paid') NOT IN ('canceled', 'fully refunded')"  # SQL, on etsy_orders
 
 
-# Etsy's fees on a sale, from econ's table (0.12.0: Etsy's fees were never booked; 0.14.0: the ledger left out the
+# Etsy's fees on a sale, from econ's table (0.12.0: Etsy's fees were never booked; 0.15.0: the ledger left out the
 # listing fee a sale renews and the VAT on fees, which the venture cases count, so it booked 15-29% less). The payment
 # processing fee is read from the order's payment; these aren't in it.
 TRANSACTION_FEE = Decimal(str(econ.TRANSACTION_SHARE))
@@ -608,7 +608,7 @@ def fees_share(
 
 def order_net(order: Order, lines: list[dict[str, Any]]) -> int:
     """What Ember's ``lines`` of a receipt earned, in cents (0.12.0: the whole receipt was stored): their price times
-    quantity and (0.14.0) the shipping the buyer paid for them, less their share of the coupon and of the refunds. Tax
+    quantity and (0.15.0) the shipping the buyer paid for them, less their share of the coupon and of the refunds. Tax
     and the owner's own products don't count; Etsy's fees are booked on their own. The shipping was left out, while
     Printify's shipping of a product it makes is a cost."""
     if order.status in DEAD_ORDERS:
@@ -637,7 +637,7 @@ class Shop(Protocol):
 
     def listings(self, listing_ids: list[int]) -> list[RemoteListing]: ...
 
-    # 0.14.0: one listing whatever its state (the batch may leave out expired or inactive ones); None if there is none
+    # 0.15.0: one listing whatever its state (the batch may leave out expired or inactive ones); None if there is none
     def listing(self, listing_id: int) -> RemoteListing | None: ...
 
     def orders(self, since: datetime) -> list[Order]: ...

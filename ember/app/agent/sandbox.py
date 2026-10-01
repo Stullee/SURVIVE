@@ -168,7 +168,7 @@ class Jail:
                 )
         allowed = KINDS[kinds]
         if want_file and Path(parts[-1]).suffix.lower() not in allowed:
-            if not Path(parts[-1]).suffix and self._is_folder(parts):  # 0.14.0: it said "only text files"
+            if not Path(parts[-1]).suffix and self._is_folder(parts):  # 0.15.0: it said "only text files"
                 raise SandboxError(f"{text} is a folder: workspace_list lists it")
             if kinds == "text":
                 extra = (

@@ -9,7 +9,7 @@ SQLite, and the model has no tool that sends (an approved email is sent by ``exe
 * Incoming mail is untrusted data. Headers are decoded and stripped of control characters; the text prefers
   the plain part, and HTML becomes text without what a reader wouldn't see (hidden text is a common way to
   smuggle instructions to an AI); attachments are listed by name and size, never opened; sizes are capped.
-  0.14.0: each email keeps whether the receiving mail provider verified its sender (``_authenticated``) and
+  0.15.0: each email keeps whether the receiving mail provider verified its sender (``_authenticated``) and
   whether it is a list's or a machine's (``_bulk``, ``_machine``): only a verified person's email counts as someone
   writing. The hidden-text filter is best-effort: it knows the common ways, not every way CSS can hide text.
 * An outgoing message is plain text for exactly one recipient, who is also the envelope recipient (never
@@ -70,16 +70,16 @@ _SOURCE_SPACE = re.compile(r"\s+")
 _SPACES = re.compile(r"[ \t\f\v\xa0\u2000-\u200a\u202f\u205f\u3000]+")
 _HIDDEN_STYLE = re.compile(
     r"display:none|visibility:(?:hidden|collapse)|font-size:0(?:\.0*)?[a-z%]*(?:;|!|$)"
-    # 0.14.0: an opacity below 0.05 too
+    # 0.15.0: an opacity below 0.05 too
     r"|opacity:(?:0*\.?0*|0*\.0[0-4]\d*|0*[0-4](?:\.\d*)?%|0*\.\d+%)(?:;|!|$)"
-    # 0.14.0: text of 2px or less, far off the screen, clipped away, or hidden from Outlook's reader
+    # 0.15.0: text of 2px or less, far off the screen, clipped away, or hidden from Outlook's reader
     r"|font-size:(?:[0-2](?:\.\d*)?|3(?:\.0*)?)(?:px|pt)(?:;|!|$)|mso-hide:all|clip:rect\((?:0(?:px)?,?){4}\)"
     r"|font-size:(?:0?\.(?:[01]\d*|20*)r?em|(?:1?\d|20)(?:\.\d*)?%)(?:;|!|$)|transform:scale[xy]?\(0(?:\.0*)?[,)]"
     r"|(?:left|top|right|text-indent|margin(?:-left|-top)?):-(?:(?:\d{4,}|[3-9]\d\d)(?:\.\d*)?[a-z%]*"
     r"|(?:\d{3,}|[5-9]\d)(?:\.\d*)?r?em)(?:;|!|$)"
 )
 _COLOUR_ARGS = re.compile(r"((?:rgb|hsl)a?\()([^()]*)\)")
-FAINT = 0.05  # 0.14.0: text with less opacity (or a colour with less alpha) can't be read
+FAINT = 0.05  # 0.15.0: text with less opacity (or a colour with less alpha) can't be read
 _ZERO_BOX = re.compile(r"(?:^|;)(?:max-)?(?:height|width):(?:0(?:\.0*)?[a-z%]*|1px)(?:;|!|$)")
 _CSS_CHARS = 100_000  # of each of an email's <style> elements (without comments), read for the rules that hide text
 _KEY_RULES = 50  # rules kept per class, id or tag they select (a real email has a few)
@@ -237,10 +237,10 @@ class IncomingMail:
     # 0.12.0: a newsletter, a mailing list or an automatic reply (by its headers): its "unsubscribe" is about Ember
     # leaving it, never someone asking Ember to stop writing.
     bulk: bool = False
-    # 0.14.0: a machine's (a bounce, a report, a no-reply sender, the provider's spam): no person's, like bulk, but a
+    # 0.15.0: a machine's (a bounce, a report, a no-reply sender, the provider's spam): no person's, like bulk, but a
     # "stop" in it still counts (see _machine).
     machine: bool = False
-    # 0.14.0: the receiving mail provider verified the sender (see _authenticated); False without its verdict.
+    # 0.15.0: the receiving mail provider verified the sender (see _authenticated); False without its verdict.
     authenticated: bool = False
 
     def attachments_json(self) -> str:
@@ -253,7 +253,7 @@ class FetchResult:
     last_uid: int  # the highest UID dealt with: the next fetch starts after it
     uidvalidity: int | None
     waiting: int = 0  # new emails not fetched yet (beyond the limit, or out of time): the next fetch reads them
-    refused: int | None = None  # 0.14.0: the UID the server didn't hand over; the fetch ended before it
+    refused: int | None = None  # 0.15.0: the UID the server didn't hand over; the fetch ended before it
 
 
 @dataclass(frozen=True)
@@ -322,7 +322,7 @@ def _bulk(msg: Message) -> bool:
     return precedence in ("bulk", "list", "junk") or not submitted.startswith("no")
 
 
-# 0.14.0: the addresses of machines (bounces, no-reply and notification senders), whatever follows the name.
+# 0.15.0: the addresses of machines (bounces, no-reply and notification senders), whatever follows the name.
 _MACHINE = re.compile(
     r"^(?:mailer-daemon|postmaster|no[-_.]?reply|do[-_.]?not[-_.]?reply|bounces?|notifications?|transactions?)"
     r"(?:[-_.+][^@]*)?@",
@@ -331,7 +331,7 @@ _MACHINE = re.compile(
 
 
 def _machine(msg: Message, sender: str) -> bool:
-    """0.14.0: whether an email is a machine's rather than a person's: X-Auto-Response-Suppress, a delivery or read
+    """0.15.0: whether an email is a machine's rather than a person's: X-Auto-Response-Suppress, a delivery or read
     report, an empty Return-Path (a bounce), the provider's spam flag, or a machine's sender address. It is no
     person's email, but unlike bulk its "stop" still counts: a missed opt-out would break the law, a false one only
     means Ember doesn't write there. A sender can only make its own email count less, never more."""
@@ -348,7 +348,7 @@ def _machine(msg: Message, sender: str) -> bool:
 
 
 def _authenticated(msg: Message, sender: str) -> bool:
-    """0.14.0: whether the receiving mail provider verified the sender. Its verdict is the topmost
+    """0.15.0: whether the receiving mail provider verified the sender. Its verdict is the topmost
     Authentication-Results header, the one its receiving server added (any below it may come from the sender): dmarc
     pass, or dkim or spf pass for the From: domain (or a parent or subdomain of it), unless dmarc failed. No
     verdict: unverified."""
@@ -438,7 +438,7 @@ def _attachments(msg: EmailMessage) -> list[dict[str, Any]]:
 class _HtmlText(HTMLParser):
     """HTML as a reader sees it: text only, without scripts, styles and anything hidden; links keep their host.
 
-    0.14.0: hidden also by the rules of the email's <style> elements (the simple ones, outside @media), and by a text
+    0.15.0: hidden also by the rules of the email's <style> elements (the simple ones, outside @media), and by a text
     colour the same as its background (white on white), from a style or from a rule. This is best-effort: rules
     with other selectors (attributes, pseudo-classes, @media), colours in units or names Ember doesn't know, and text
     hidden by layout (behind another element, outside a box) still show."""
@@ -505,7 +505,7 @@ class _HtmlText(HTMLParser):
         )
 
     def _read_sheet(self) -> None:
-        """0.14.0: keeps the rules of a style sheet. Each is kept under one class, id or tag it selects, at most
+        """0.15.0: keeps the rules of a style sheet. Each is kept under one class, id or tag it selects, at most
         _KEY_RULES of them, so a style sheet can't make reading slow. More hiding rules than that hide all they
         select (rather than let an email hide text past them)."""
         rules, page, unknown = _css_rules(_CSS_COMMENT.sub("", self.css))
@@ -570,7 +570,7 @@ def _hides_style(style: str) -> bool:
 
 
 def _css_rules(css: str) -> tuple[list[tuple[str | None, frozenset[str], str | None, str]], str | None, bool]:
-    """0.14.0: the rules of a style sheet (without comments) that hide what they select or set its colour or
+    """0.15.0: the rules of a style sheet (without comments) that hide what they select or set its colour or
     background, as (tag, classes, id, declarations); the page's background a rule for body or html sets (None
     without one); and whether a rule Ember can't read sets a background (so the page's isn't known). Only rules outside
     an at-rule count (an @media block's apply on some screens only), and only simple selectors: the last part of each
@@ -640,7 +640,7 @@ def _background(style: str, values: dict[str, str]) -> str | None:
 
 
 def _squeeze(style: str) -> str:
-    """A style in lower case without spaces. 0.14.0: a colour's arguments split by spaces or "/" ("rgb(255 255 255 /
+    """A style in lower case without spaces. 0.15.0: a colour's arguments split by spaces or "/" ("rgb(255 255 255 /
     50%)") are split by commas."""
     style = _COLOUR_ARGS.sub(lambda m: m[1] + ",".join(re.split(r"[\s,/]+", m[2].strip())) + ")", style.lower())
     return re.sub(r"\s+", "", style)
@@ -653,7 +653,7 @@ def _share(text: str, whole: float) -> float | None:
 
 
 def _colour(text: str) -> str | None:
-    """A CSS colour as #rrggbb, or "transparent" (None: not one Ember knows). 0.14.0: hsl(), #rgba, #rrggbbaa,
+    """A CSS colour as #rrggbb, or "transparent" (None: not one Ember knows). 0.15.0: hsl(), #rgba, #rrggbbaa,
     percentages and the space syntax; one with an alpha below FAINT is transparent."""
     text = _squeeze(text)
     if text in ("transparent", *_COLOURS):
@@ -791,7 +791,7 @@ class LiveMailbox:
                 typ, data = conn.uid("FETCH", str(uid), "(BODY.PEEK[])" if whole else "(BODY.PEEK[HEADER])")
             raw = _literal(data) if typ == "OK" else None
             if raw is None:
-                # 0.14.0: the server refused it or sent nothing. It was stored empty and passed for good (an opt-out
+                # 0.15.0: the server refused it or sent nothing. It was stored empty and passed for good (an opt-out
                 # in it too): now the fetch ends before it, and the next one asks again (mailstore.fetch gives up
                 # after REFUSED_TRIES).
                 refused = uid
@@ -863,7 +863,7 @@ def _literal(data: Any) -> bytes | None:
 # --- the dry-run mailbox ---
 
 FAKE_ADDRESS = "ember@example.invalid"
-# 0.14.0: what a mail provider adds to an email whose sender it verified
+# 0.15.0: what a mail provider adds to an email whose sender it verified
 _VERIFIED = "mx.example.invalid; dkim=pass header.d={domain}; dmarc=pass header.from={domain}"
 
 

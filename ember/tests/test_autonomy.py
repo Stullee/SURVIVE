@@ -391,7 +391,7 @@ def test_a_message_wakes_the_agent_within_the_wake_limit(data_dir: Path) -> None
     agent, _ = make_agent(data_dir, [plan(steps=[], sleep=600), plan(steps=[], sleep=600)])
     request, pokes = request_for(agent, Settings())
     send(agent, "Hello!")
-    # 0.14.0: one cycle for the owner's messages and decisions, a few minutes after the last one
+    # 0.15.0: one cycle for the owner's messages and decisions, a few minutes after the last one
     assert web._wake_for_message(request) == "soon"
     assert not agent.wake_requested and agent.message_waiting and pokes == ["x"] and not agent.decide().run
     agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())
@@ -403,7 +403,7 @@ def test_a_message_wakes_the_agent_within_the_wake_limit(data_dir: Path) -> None
     assert web._wake_for_message(request) == "soon"
     assert not agent.wake_requested and agent.message_waiting and pokes == ["x", "x"]
     agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())
-    assert not agent.decide().run  # 0.14.0: OWNER_GAP after the last wake for the owner's news
+    assert not agent.decide().run  # 0.15.0: OWNER_GAP after the last wake for the owner's news
     agent.clock.advance(seconds=(service.OWNER_GAP - service.OWNER_QUIET).total_seconds())
     assert agent.decide().trigger == "owner" and not agent.message_waiting
     messages = [e["message"] for e in agent.db.recent_events(20)]
@@ -436,7 +436,7 @@ def test_a_message_during_a_cycle_wakes_the_agent_after_it(data_dir: Path) -> No
     assert web._wake_for_message(request) == "after_cycle" and agent.message_waiting and pokes == []
     assert agent.agent_fields()["next_wake_reason"] == "to read your message"
     agent.running_cycle = False  # it ended without reading the message
-    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())  # 0.14.0: once the owner has been quiet
+    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())  # 0.15.0: once the owner has been quiet
     assert agent.decide().trigger == "owner" and not agent.message_waiting
     assert agent.run_cycle("owner").status == "idle"
     assert "Please look at the new draft." in first_text(transport.sent[-1])
@@ -454,7 +454,7 @@ def test_a_message_soon_after_a_wake_waits_for_the_owners_quiet_period(data_dir:
     agent.clock.advance(seconds=20)
     send(agent, "And one more thing.")
     assert web._wake_for_message(request) == "soon"
-    quiet = agent.clock.now() + service.OWNER_QUIET  # 0.14.0: longer than the minute between wake-ups
+    quiet = agent.clock.now() + service.OWNER_QUIET  # 0.15.0: longer than the minute between wake-ups
     decision = agent.decide()
     assert not decision.run and decision.wait_until == quiet
     assert agent.agent_fields()["next_wake_at"] == to_iso(quiet)
@@ -494,7 +494,7 @@ def test_a_message_is_stored_even_when_no_wake_follows(ingress_client: TestClien
 def test_a_message_wakes_the_running_app(ingress_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     state = ingress_client.app.state.ember  # type: ignore[attr-defined]
     state.agent.cycles_enabled = True  # as in the real app
-    monkeypatch.setattr(service, "OWNER_QUIET", timedelta(0))  # 0.14.0: no quiet period to wait out here
+    monkeypatch.setattr(service, "OWNER_QUIET", timedelta(0))  # 0.15.0: no quiet period to wait out here
     response = post(ingress_client, "api/inbox", {"text": "Can you look at the drafts?"})
     assert response.status_code == 201 and response.json()["wake"] == "soon"
     deadline = time.monotonic() + 20
@@ -581,5 +581,5 @@ def test_a_message_wakes_the_agent_before_its_scheduled_wake(data_dir: Path) -> 
     assert agent._meta_time("next_wake_at") > agent.clock.now() + timedelta(minutes=500)
     send(agent, "Are you there?")
     assert web._wake_for_message(request) == "soon"
-    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())  # 0.14.0: a few minutes, not 500
+    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())  # 0.15.0: a few minutes, not 500
     assert agent.decide().trigger == "owner"

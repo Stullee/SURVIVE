@@ -4,7 +4,7 @@ Owner entries are validated, checked for replays and for surprises (an
 unusually large amount, or a change that would make the agent critical or kill
 it), and only then written, together with the life-state evaluation, in one
 transaction. The ledger's writers are this module (owner entries and, 0.12.0,
-the entries from Etsy's numbers the owner turned on, and 0.14.0, Etsy's listing
+the entries from Etsy's numbers the owner turned on, and 0.15.0, Etsy's listing
 fees) and the budget guard (API costs); nothing else writes money.
 """
 
@@ -69,7 +69,7 @@ TYPE_LABELS = {
 
 
 # 0.12.0: an entry from an integration's numbers may make the agent critical (that is what its money says), but it
-# never kills the agent or leaves it unfunded: that entry waits for the owner (0.14.0: a fact pauses the agent instead).
+# never kills the agent or leaves it unfunded: that entry waits for the owner (0.15.0: a fact pauses the agent instead).
 HELD_STATES = frozenset({"dead", "unfunded"})
 
 
@@ -248,7 +248,7 @@ class Economy:
         asked to confirm it, so it is never written twice (its key, which the owner's button for it uses too) and
         never when it would kill the agent or leave it unfunded. In dry run it is test money: the fake shop's.
 
-        0.14.0: a ``fact`` (a refund of revenue Ember's code recorded, a listing fee Etsy charged) is written all the
+        0.15.0: a ``fact`` (a refund of revenue Ember's code recorded, a listing fee Etsy charged) is written all the
         same: held back, it left the agent spending money it didn't have. When it leaves the agent without money,
         Ember's code pauses the agent with the reason instead of letting it die: the owner grants funds, or resumes it
         and lets the money decide. In dry run the switch would outlast the test, so the test life's money decides."""
@@ -343,7 +343,7 @@ class Economy:
         run = workshop_run_cost(self.settings, self.db, self.mode, scaled=False)
         if run is not None and self.settings.workshop and self.settings.workshop_runs_per_day:
             model = self.settings.workshop_model or self.settings.worker_model
-            # 0.14.0: a run's cap bounds its price; what it holds of the day can be more (its raised estimate, what
+            # 0.15.0: a run's cap bounds its price; what it holds of the day can be more (its raised estimate, what
             # recent runs cost), and the warning says which
             scaled = workshop_run_cost(self.settings, self.db, self.mode) or run
             simulated = self.mode == "dry_run"
@@ -414,7 +414,7 @@ class Economy:
             # 0.12.0: the burn mode Ember's code sets from the net runway
             "burn_mode": burning.mode,
             "burn_text": burning.text(),
-            # 0.14.0: when it moves down next at today's burn ("" if not within burn.PROJECTED_DAYS)
+            # 0.15.0: when it moves down next at today's burn ("" if not within burn.PROJECTED_DAYS)
             "burn_next": burn.projected_text(burning, now.astimezone(self.clock.tz)),
             "today_spend_usd": micros_to_usd(self.books.cap_spend_on(scope, self.clock.today())),
             "daily_cap_usd": self.settings.daily_spend_cap_usd,

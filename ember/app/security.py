@@ -18,7 +18,7 @@ on purpose), and the Supervisor names that user in the first ``X-Remote-User-Id`
 header, which a browser can't set. Once the ``owner_user_ids`` option names the
 owner, every other user gets 403 for everything but the static files, the
 watchdog's health check and the REST sensor's numbers. Safe mode keeps the
-option (0.14.0); when it can't be read there, Ember answers no one at all.
+option (0.15.0); when it can't be read there, Ember answers no one at all.
 
 In local development (``EMBER_DEV_MODE``) there is no Ingress proxy, so any
 client may connect, but only with a ``localhost`` Host header: that stops a
@@ -55,7 +55,7 @@ NOT_OWNER = (
     "This Ember answers only its owner: the Home Assistant users in its owner_user_ids option (the app's Configuration"
     " tab)."
 )
-# 0.14.0: safe mode whose owner_user_ids option couldn't be read answers no one, and says so with the caller's user ID.
+# 0.15.0: safe mode whose owner_user_ids option couldn't be read answers no one, and says so with the caller's user ID.
 SAFE_MODE_LOCKED = (
     "Ember is in safe mode: its options are invalid (the app's Log tab names them), and its owner_user_ids option"
     " couldn't be read, so it answers no one. Fix the options in the app's Configuration tab, with your user ID in"
@@ -100,7 +100,7 @@ class AccessPolicy:
     def __init__(self, dev_mode: bool = False, owner_ids: Iterable[str] = (), locked: bool = False) -> None:
         self.dev_mode = dev_mode
         self.owner_ids = frozenset(owner_ids)
-        self.locked = locked  # 0.14.0: safe mode without a readable owner_user_ids: no one is the owner
+        self.locked = locked  # 0.15.0: safe mode without a readable owner_user_ids: no one is the owner
 
     def is_owner(self, user_id: str | None) -> bool:
         """Whether a request comes from Ember's owner: a user named in owner_user_ids, or anyone while the option is

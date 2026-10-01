@@ -132,7 +132,7 @@ class LiveAccount:
 
     def variants(self, blueprint_id: int, provider_id: int) -> list[Variant]:
         """The variants with a front print area that ship to Germany (their first item's shipping, in the currency
-        Printify states for it: 0.14.0, it was taken to be the printify_currency option's)."""
+        Printify states for it: 0.15.0, it was taken to be the printify_currency option's)."""
         base = f"/catalog/blueprints/{blueprint_id}/print_providers/{provider_id}"
         data = self._call("GET", f"{base}/variants.json")
         shipping = self._call("GET", f"{base}/shipping.json")
@@ -224,7 +224,7 @@ def _number(value: Any) -> int:
 
 
 def _line(order: dict[str, Any], line: dict[str, Any], bill: int) -> OrderLine:
-    """A line of an order, with its share of the order's tax (0.14.0: by what it costs of the order's ``bill``)."""
+    """A line of an order, with its share of the order's tax (0.15.0: by what it costs of the order's ``bill``)."""
     cost, shipping = _number(line.get("cost")), _number(line.get("shipping_cost"))
     tax = _number(order.get("total_tax"))
     return OrderLine(

@@ -1,4 +1,4 @@
-"""0.14.0, the planner package: the plan's section budgets share what they leave unused (FIX NOW 13), the steering comes
+"""0.15.0, the planner package: the plan's section budgets share what they leave unused (FIX NOW 13), the steering comes
 first where a cut takes the end (the day's review, a venture's FOCUS, a missed bar's obligation), the Inbox and WAITING
 FOR YOUR OWNER are lists rather than windows, the release notes are read in full over the next plans (FIX NOW 24), an
 ordinary step's fixed prompt holds every channel of the owner's within 0.11.1's size (X15), and one call's texts fit a

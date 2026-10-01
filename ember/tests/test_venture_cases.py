@@ -27,7 +27,7 @@ def test_the_numbers_are_worked_out_the_same_way_for_every_venture() -> None:
     assert (got.fees_eur, got.net_eur) == (0.87, 2.13)
     assert got.break_even == 1.3  # the API spend (USD 3 a month) is its only fixed cost
     assert got.net == (1.54, 18.59, 61.22)
-    # Swanson's rule (30/40/30) over six months; 0.14.0: the 30 days before the first sale earn nothing and still pay
+    # Swanson's rule (30/40/30) over six months; 0.15.0: the 30 days before the first sale earn nothing and still pay
     # the fixed costs (the API spend)
     before = 30 / econ.DAYS_A_MONTH
     expected = 0.3 * 1.54 + 0.4 * 18.59 + 0.3 * 61.22

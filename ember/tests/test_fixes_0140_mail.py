@@ -1,4 +1,4 @@
-"""0.14.0 (FIX NOW 10, 23 and X25): Ember's mail.
+"""0.15.0 (FIX NOW 10, 23 and X25): Ember's mail.
 
 Only a person's email counts as someone having written: its sender verified by the receiving mail provider (the
 topmost Authentication-Results header), and no list's, machine's or Ember's own. That one test decides a first contact

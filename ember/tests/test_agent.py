@@ -24,7 +24,7 @@ from tests.economy_helpers import ScriptedTransport, make_economy
 
 _ids = itertools.count(1)
 # No venture cycles (0.10.0): these tests follow the ordinary cycle; tests/test_ventures.py has the venture ones.
-# 0.14.0: an owner named in owner_user_ids, as the owner's unlocks act only then
+# 0.15.0: an owner named in owner_user_ids, as the owner's unlocks act only then
 ROOMY = Settings(
     starting_balance_usd=50,
     daily_spend_cap_usd=5,
@@ -377,7 +377,7 @@ def test_tools_allowed_in_each_phase(data_dir: Path) -> None:
 
 def test_a_journal_written_while_working_ends_the_work_and_the_reflection_writes_it(data_dir: Path) -> None:
     # In live use the model wrote its journal at the end of its work in almost every cycle. 0.12.0 let it count and
-    # skipped the reflection, so no cycle reflected any more; 0.14.0: the journal is the reflection's, and the work
+    # skipped the reflection, so no cycle reflected any more; 0.15.0: the journal is the reflection's, and the work
     # ends with the reply that tried it.
     agent, _ = make_agent(
         data_dir,

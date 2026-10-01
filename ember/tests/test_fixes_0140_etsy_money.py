@@ -1,4 +1,4 @@
-"""0.14.0: Etsy's money booked right, listings missing from Etsy's answer, and orders and ledger paging.
+"""0.15.0: Etsy's money booked right, listings missing from Etsy's answer, and orders and ledger paging.
 
 * The ledger's fee model left out the USD 0.20 listing fee each sale renews and the VAT on fees, which the venture
   cases count (15-29% too little), and the listing fees Ember's listings cost were never booked at all.
@@ -161,7 +161,7 @@ def test_the_owner_publishing_a_draft_of_embers_books_its_listing_fee(
     item = shop.state["listings"]["900000001"]
     item["state"], item["live_since"] = "active", to_iso(agent.clock.now())
     assert agent.publisher.sync(force=True) is None and agent.publisher.sync(force=True) is None
-    assert [f["note"] for f in listing_fees(agent)] == [  # 0.14.0 at first: never booked
+    assert [f["note"] for f in listing_fees(agent)] == [  # 0.15.0 at first: never booked
         "Etsy's listing fee for listing 900000001: the owner published it"
     ]
 
@@ -486,7 +486,7 @@ def test_a_catch_up_reads_the_fees_of_every_order_it_stores(data_dir: Path) -> N
     for _ in range(3):
         assert agent.publisher.sync(force=True) is None
     fees = rows(agent, "SELECT receipt_id, fees_cents FROM etsy_orders ORDER BY receipt_id")
-    assert len(fees) == 15 and all(f["fees_cents"] for f in fees)  # 0.14.0 at first: five kept no fees for good
+    assert len(fees) == 15 and all(f["fees_cents"] for f in fees)  # 0.15.0 at first: five kept no fees for good
     asked: list[Any] = []
     shop.orders = lambda since: asked.append(since) or []  # type: ignore[method-assign]
     assert agent.publisher.sync(force=True) is None

@@ -58,7 +58,7 @@ def _cap(text: str | None, limit: int) -> str | None:
 
 
 def footer(settings: Settings, unlocked: bool = False) -> str:
-    """The AI footer. 0.14.0: an email an unlock of the owner's approved says so (the owner didn't review it)."""
+    """The AI footer. 0.15.0: an email an unlock of the owner's approved says so (the owner didn't review it)."""
     agent, owner = settings.agent_name, settings.email_owner_name or "its owner"
     how = (
         "and sent under rules they set, without their review of this email"
@@ -256,7 +256,7 @@ class Executor:
                 return "waiting_limit"
             try:
                 action = parse_action(row["action"])
-                unlocked = row["decided_by"] == policy.POLICY_BY  # 0.14.0: the footer says who approved it
+                unlocked = row["decided_by"] == policy.POLICY_BY  # 0.15.0: the footer says who approved it
                 message, message_id = build_message(
                     action, email_body(row, action), self.mailbox.address, self.settings, now, unlocked
                 )

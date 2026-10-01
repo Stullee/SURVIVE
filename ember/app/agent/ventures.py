@@ -45,7 +45,7 @@ ACTIVE_STAGES = ("researching", "proposed", "building", "live")  # worked on: wh
 EXPLORING = ("idea", "researching", "proposed")  # not backed yet: what venture cycles find out about
 # What the agent may set: backing (building) and killing are the owner's decisions.
 AGENT_STAGES = ("idea", "researching", "proposed", "live", "parked")
-# 0.14.0: not live: "Ember earns somewhere" let any new venture skip the owner's backing. A venture goes live once the
+# 0.15.0: not live: "Ember earns somewhere" let any new venture skip the owner's backing. A venture goes live once the
 # owner backed it and its first test is met (the seeded Etsy leg starts live by Ember's code).
 AGENT_START_STAGES = ("idea", "researching")
 # The business case: each must be filled in before a venture can be proposed. (name, label, characters)
@@ -614,7 +614,7 @@ def call_costs(conn: sqlite3.Connection, scope: AgentScope) -> dict[str, int]:
 
 def room_text(cycle_cap: float, costs: dict[str, int], brainstorms: bool = True) -> str:
     """For a venture cycle's STATUS: what its research and brainstorms can cost, and how many of them that is
-    (0.14.0: research only, where the burn mode allows no brainstorm)."""
+    (0.15.0: research only, where the burn mode allows no brainstorm)."""
     room = round(cycle_cap * ROOM_SHARE * 1_000_000)
     research = max(costs.get("research") or USUAL_COSTS["research"], 1)
     brainstorm = max(costs.get("brainstorm") or USUAL_COSTS["brainstorm"], 1)
@@ -804,10 +804,10 @@ def focus_text(
     """The brief's FOCUS for a venture: everything the agent knows of it, the most important first, as the brief cuts
     it from the end (0.12.0: it lost the owner's comment and the first test): the owner's word, its knock-outs
     (``knocked``) and the critic's verdict and flaw (``critic``: that line and the one with its numbers), the first
-    test and the next question, its numbers (``numbers``), its evidence by grade (``evidence``) and the pitch (0.14.0:
+    test and the next question, its numbers (``numbers``), its evidence by grade (``evidence``) and the pitch (0.15.0:
     these came after the scores, and a case with a critique lost them), then the knowledge file, the digest of the
     last cycle aimed at it (``last``), the scores, the critic's numbers and the rest of the business case. Each field
-    is at most FOCUS_CHARS characters (0.14.0: the knock-outs, the critic's verdict and the evidence too; the owner's
+    is at most FOCUS_CHARS characters (0.15.0: the knock-outs, the critic's verdict and the evidence too; the owner's
     card shows them whole), so VENTURE_FOCUS_BUDGET holds everything up to the pitch, each field at its longest."""
     file = parts[-1] if parts else file_of(row["id"], row["title"])  # ``parts``: the knowledge file's (0.12.0)
     kept = f"{file} ({file_size:,} B)" if file_size is not None else f"{file} (not written yet)"
@@ -855,7 +855,7 @@ def news_line(row: Mapping[str, Any]) -> str:
     action = row["owner_action"]
     if action == "added":
         branch = f" (a branch of #{row['parent_id']})" if row["parent_id"] else ""
-        # 0.14.0: "Research and score it", but only a venture cycle's venture_update takes scores
+        # 0.15.0: "Research and score it", but only a venture cycle's venture_update takes scores
         line = f"Your owner added a venture idea{branch}, {name}: {_q(row['pitch'])}. "
         line += "Research it; a venture cycle scores it"
     elif action == "research":
@@ -866,7 +866,7 @@ def news_line(row: Mapping[str, Any]) -> str:
             f"Its first test is milestone #{test} on your roadmap: it goes live once Ember's code or your owner "
             "finds it met"
             if test
-            # 0.14.0: Ember's code sets a channel's first test once the owner has set the channel up (stages.keep)
+            # 0.15.0: Ember's code sets a channel's first test once the owner has set the channel up (stages.keep)
             else f"Its first test starts once {str(channel).title()} is set up"
             if channel
             else "Plan its first test with them"
@@ -1014,7 +1014,7 @@ ETSY_LEG = next(title for key, _, title, *_ in SEEDS if key == "etsy")
 def adopt(
     conn: sqlite3.Connection, scope: AgentScope, project_id: int, cycle_id: int, channel: str, now: str
 ) -> int | None:
-    """0.14.0: a product line that sells in the Etsy shop belongs to a venture. A project without one joins its cycle's
+    """0.15.0: a product line that sells in the Etsy shop belongs to a venture. A project without one joins its cycle's
     venture, or else the channel's: the Etsy leg for an Etsy listing, the print-on-demand venture ('printify') for a
     Printify product; never a parked or killed one. Its sales counted for no venture, so a leg that sold was parked as
     one that sold nothing. Returns the venture it joined, or None."""

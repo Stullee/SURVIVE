@@ -1,4 +1,4 @@
-"""0.14.0, the money guard (FIX NOW 1, 2a, 26b; X4, X18): a workshop call's worst case was a guess, not a ceiling
+"""0.15.0, the money guard (FIX NOW 1, 2a, 26b; X4, X18): a workshop call's worst case was a guess, not a ceiling
 (live, #423 was quoted $0.35 and cost $1.84), any overrun stopped the whole cycle and its reflection, the safety factor
 couldn't cover a 5x miss nor come down for a rare purpose, and one work step sent 8 count_tokens requests."""
 
@@ -67,7 +67,7 @@ def test_a_run_like_423_cant_take_the_day_past_its_cap(data_dir: Path) -> None:
 def test_a_workshop_call_holds_the_tail_of_recent_runs(data_dir: Path) -> None:
     clock = FakeClock()
     economy = make_economy(data_dir, OWNER, clock=clock)
-    model = economy.metered(FakeTransport(script=[Overrun()]))  # 0.14.0: the fake can overrun like #423
+    model = economy.metered(FakeTransport(script=[Overrun()]))  # 0.15.0: the fake can overrun like #423
     cycle = model.open_cycle("test")
     assert model.reservation(workshop(OWNER), WORKSHOP) == 1_500_000  # nothing seen yet: the cap per run
     result = model.call(cycle, WORKSHOP, workshop(OWNER))
@@ -85,7 +85,7 @@ def test_a_workshop_call_holds_the_tail_of_recent_runs(data_dir: Path) -> None:
 
 
 def test_uncertain_workshop_calls_dont_raise_the_next_hold(data_dir: Path) -> None:
-    # Review of 0.14.0: an uncertain answer was booked at its hold, and the hold then grew from what calls were booked
+    # Review of 0.15.0: an uncertain answer was booked at its hold, and the hold then grew from what calls were booked
     # at: $0.07 of cheap runs was charged as $12.19, and the workshop locked itself.
     economy = make_economy(data_dir, OWNER)
     odd = [Completed(message(1_000, 200, unknown_field=5)) for _ in range(4)]
@@ -278,7 +278,7 @@ def test_a_cycle_an_overrun_stopped_reflects_and_sleeps_as_chosen(data_dir: Path
 
 
 def test_after_an_overrun_stop_a_waiting_request_still_cuts_the_sleep(data_dir: Path) -> None:
-    # Review of 0.14.0: the chosen sleep after an overrun skipped what a completed cycle's gets (the cut while a
+    # Review of 0.15.0: the chosen sleep after an overrun skipped what a completed cycle's gets (the cut while a
     # request waits, a milestone's check, maintenance's one cycle a day)
     big = tools(("workspace_write", {"path": "notes/a.md", "mode": "create", "content": "a"}))
     big.response["usage"]["output_tokens"] = 60_000
@@ -396,7 +396,7 @@ def test_the_migration_keeps_the_calls_and_their_guard(tmp_path: Path) -> None:
         conn.execute(insert, (423, "ok", 1_837_601, 348_191))
         conn.execute(insert, (424, "pending", 0, 348_191))
     old.close()
-    assert ours[0].version in migrate(db_file, backup_dir=tmp_path / "b")  # with the other 0.14.0 migrations
+    assert ours[0].version in migrate(db_file, backup_dir=tmp_path / "b")  # with the other 0.15.0 migrations
     db = Database(db_file)
     assert [(r["id"], r["iterations"], r["overrun"]) for r in llm_calls(db)] == [(423, None, 0), (424, None, 0)]
     with db.transaction() as conn, pytest.raises(sqlite3.IntegrityError, match="finalized call cannot change"):

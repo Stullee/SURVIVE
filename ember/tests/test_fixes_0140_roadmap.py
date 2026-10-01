@@ -1,4 +1,4 @@
-"""0.14.0 (FIX NOW 8 and 20, X10, X14, X23, X24): the roadmap's places and integrity.
+"""0.15.0 (FIX NOW 8 and 20, X10, X14, X23, X24): the roadmap's places and integrity.
 
 Milestones Ember's code set took the agent's 16 places and the owner's 4, so the day-14 bars filled the roadmap and
 the owner's own "Add milestone" was refused. The agent could move a bar or a metric milestone to another project, void
@@ -505,7 +505,7 @@ def test_a_first_sale_recorded_late_still_counts(data_dir: Path) -> None:
         for vid in (DROPSHIPPING, PRINT):
             ventures.add_case(conn, vid, None, this_month, econ.compute(this_month), to_iso(agent.clock.now()))
     for vid in (DROPSHIPPING, PRINT):
-        # 0.14.0 (ventures): a venture with a knock-out standing is backed only with the owner's confirmation
+        # 0.15.0 (ventures): a venture with a knock-out standing is backed only with the owner's confirmation
         assert owner(agent).decide_venture(vid, {"action": "back", "confirm": True}, "Stefan").status == 200
     due = (agent.clock.today() + timedelta(days=predictions.FIRST_SALE_MIN_DAYS)).isoformat()
     agent.clock.advance(days=predictions.FIRST_SALE_MIN_DAYS + 2)

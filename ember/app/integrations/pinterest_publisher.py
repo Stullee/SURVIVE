@@ -36,7 +36,7 @@ APPROVED = "('approved', 'approved_with_changes')"
 CLOSED_BY = "Ember"
 SYNC_HOURS = 6
 INTERRUPTED = "the app stopped while making the pin"
-DELETE_INTERRUPTED = "the app stopped while deleting it"  # 0.14.0: the owner's Undo of a pin
+DELETE_INTERRUPTED = "the app stopped while deleting it"  # 0.15.0: the owner's Undo of a pin
 GONE = "Deleted at Pinterest, not by Ember's code"
 LISTING_LINK = re.compile(r"^https://www\.etsy\.com/listing/(\d{1,18})$")  # etsy.listing_url: what propose_pin links
 
@@ -92,7 +92,7 @@ def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
 
 
 def created_today(conn: sqlite3.Connection, clock: Clock, scope: AgentScope) -> int:
-    """The pins started today, for pinterest_pins_per_day. 0.14.0: not one that failed before any pin request was sent
+    """The pins started today, for pinterest_pins_per_day. 0.15.0: not one that failed before any pin request was sent
     (no board: its checks refused it, such as a listing no longer live), so it doesn't hold a valid pin back a day."""
     where, params = scope.where()
     start = to_iso(clock.day_start(clock.today()))
@@ -183,7 +183,7 @@ class Publisher:
         self._lock = threading.Lock()  # one run (or sync) at a time in this process
 
     def run(self, undos: bool = False) -> list[tuple[int, str]]:
-        """Carry out the approved pins (and the owner's Undos of pins) that are due; with ``undos`` (0.14.0: while the
+        """Carry out the approved pins (and the owner's Undos of pins) that are due; with ``undos`` (0.15.0: while the
         agent is paused or waits for money), only the Undos."""
         account = self.account()
         if account is None or not self._lock.acquire(blocking=False):
@@ -217,7 +217,7 @@ class Publisher:
 
     @staticmethod
     def _listing(conn: sqlite3.Connection, scope: AgentScope, link: str, now: str) -> None:
-        """0.14.0: the listing a pin links to must still be Ember's and live (as Ember's Etsy records say, and not past
+        """0.15.0: the listing a pin links to must still be Ember's and live (as Ember's Etsy records say, and not past
         its end without renewing) when the pin is made: an approved pin can wait days for its turn. Raises
         PinterestError with why it isn't."""
         found = LISTING_LINK.match(link)
@@ -432,7 +432,7 @@ class Publisher:
         return "done"
 
     def recover(self) -> int:
-        """Rows left 'running' by a crash: unclear, never retried. 0.14.0: the owner's Undo of a pin too (its journal
+        """Rows left 'running' by a crash: unclear, never retried. 0.15.0: the owner's Undo of a pin too (its journal
         entry was left 'running', the Undo "under way" for good): unclear, and the owner may press it again."""
         with self.db.transaction() as conn:
             left = conn.execute("SELECT approval_id, board_id FROM pinterest_pins WHERE status = 'running'").fetchall()
@@ -477,7 +477,7 @@ class Publisher:
                 ).fetchall()
             error = None
             try:
-                account.keep_alive()  # 0.14.0: with or without pins, the connection is renewed before it lapses
+                account.keep_alive()  # 0.15.0: with or without pins, the connection is renewed before it lapses
             except PinterestError as exc:
                 error = str(exc)[:300]
             for row in live if error is None else []:

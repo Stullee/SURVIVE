@@ -1,4 +1,4 @@
-"""0.14.0, the product factory: print-size pictures (FIX NOW 6), the workshop's jobs done by Ember's code (FIX NOW
+"""0.15.0, the product factory: print-size pictures (FIX NOW 6), the workshop's jobs done by Ember's code (FIX NOW
 12), the workshop's PDF check (FIX NOW 22) and Office files that unpack to too much (FIX NOW 26).
 """
 

@@ -1,4 +1,4 @@
-"""0.14.0: the shareable report and the sensor keep private things private, building the report changes nothing, the
+"""0.15.0: the shareable report and the sensor keep private things private, building the report changes nothing, the
 report shows whether observations run, and old texts are pruned.
 
 - The shareable report printed the Library's study replies and library_read results; masking senders' names overwrote
@@ -517,7 +517,7 @@ def test_pruning_is_the_only_change_history_allows(data_dir: Path, sql: str) -> 
 
 
 def test_the_migration_keeps_the_history_and_its_guards(tmp_path: Path) -> None:
-    """A database from before 0.14.0 with a cycle's calls: the rows stay as they were, and only pruning changes them."""
+    """A database from before 0.15.0 with a cycle's calls: the rows stay as they were, and only pruning changes them."""
     db_file = tmp_path / "ember.db"
     ours = next(m for m in dbmod.discover_migrations() if m.name == "privacy")
     before_ours = [m for m in dbmod.discover_migrations() if m.version < ours.version]

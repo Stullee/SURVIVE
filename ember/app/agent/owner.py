@@ -44,7 +44,7 @@ CODE_CANCELLED = "Cancelled by the owner before Ember's code carried it out"
 AS_IS_EXECUTORS = ("pinterest_pin", "pinterest_delete", "printify_product", "printify_delete")
 TAKEN_BACK = "you took back every unlock"  # 0.13.0: the owner's switch
 TAKEN_BACK_NOTE = "Took back every unlock: your requests wait for me again"
-KILLED = "you used the kill switch"  # 0.14.0: it takes back every unlock too
+KILLED = "you used the kill switch"  # 0.15.0: it takes back every unlock too
 KILLED_NOTE = "Used the kill switch, which took back every unlock: your requests wait for me again"
 DECISIONS = {"approve": "approved", "approve_with_changes": "approved_with_changes", "reject": "rejected"}
 OUTCOMES = ("done", "failed")
@@ -124,8 +124,8 @@ class Owner:
         self.economy = economy
         self.scope = scope
         self.agent_name = agent_name
-        self.unlocks_off = unlocks_off  # 0.14.0: why no unlock may be granted now (policy.off), "" when one may
-        self.ready = ready  # 0.14.0: the channels set up now (a channel venture's first test waits for its channel)
+        self.unlocks_off = unlocks_off  # 0.15.0: why no unlock may be granted now (policy.off), "" when one may
+        self.ready = ready  # 0.15.0: the channels set up now (a channel venture's first test waits for its channel)
 
     def _now(self) -> str:
         return to_iso(self.clock.now())
@@ -520,7 +520,7 @@ class Owner:
                 if row["stage"] not in allowed:
                     raise OwnerError("action", f"this venture is {row['stage']}", 409)
                 now = self._now()
-                # 0.14.0: Back checks it as Ember's code would propose it: no numbers or a standing knock-out stop it,
+                # 0.15.0: Back checks it as Ember's code would propose it: no numbers or a standing knock-out stop it,
                 # unless the owner confirms (their call). A proposal that doesn't hold goes back to researching.
                 why = ""
                 if action == "back" and not confirm:
@@ -542,7 +542,7 @@ class Owner:
                 after = ventures.get(conn, self.scope, venture_id)
                 # 0.12.0: a backed venture's first test becomes a milestone; a parked or killed one's milestones go.
                 if action == "back" and after is not None:
-                    # 0.14.0: a channel's venture only once its channel is set up (else stages.keep sets it then)
+                    # 0.15.0: a channel's venture only once its channel is set up (else stages.keep sets it then)
                     if not stages.waits_for_channel(after, self.ready):
                         stages.first_test(conn, self.scope, after, self.clock.today(), now)
                     # 0.13.0: its case's first sale, as a prediction Ember's code settles
@@ -606,7 +606,7 @@ class Owner:
                 raise OwnerError("rule", f"choose one of {', '.join(policy.RULES)}")
             if level not in policy.LEVELS:
                 raise OwnerError("level", f"choose one of {', '.join(policy.LEVELS)}")
-            if level != "manual" and self.unlocks_off:  # 0.14.0: only the owner, known by their user ID, unlocks
+            if level != "manual" and self.unlocks_off:  # 0.15.0: only the owner, known by their user ID, unlocks
                 raise OwnerError(
                     "level",
                     f"No unlock while {self.unlocks_off}: put your Home Assistant user ID in owner_user_ids"
@@ -625,7 +625,7 @@ class Owner:
                     raise OwnerError("id", "no such milestone", 404)
                 if row["status"] != "open":
                     raise OwnerError("id", f"this milestone is {row['status']}", 409)
-                if level != "manual" and not policy.fits(conn, milestone_id, rule):  # 0.14.0: it would carry nothing
+                if level != "manual" and not policy.fits(conn, milestone_id, rule):  # 0.15.0: it would carry nothing
                     need = "no project or venture" if rule == "email_reply" else "a project or venture"
                     raise OwnerError("rule", f"this milestone never covers {rule}: it needs a milestone of {need}", 409)
                 now = self._now()
@@ -665,7 +665,7 @@ class Owner:
 
     def undo(self, journal_id: int, who: str | None) -> Reply:
         """0.13.0: undo an action of Ember's code on a listing: a request of the owner's, approved at once, which
-        Ember's code carries out in its next round (audit.undo). 0.14.0: also while the agent is paused or waits for
+        Ember's code carries out in its next round (audit.undo). 0.15.0: also while the agent is paused or waits for
         money; refused once the kill switch is on (or the life is over), where it would wait for good."""
 
         def run() -> Reply:
@@ -723,7 +723,7 @@ class Owner:
                         raise OwnerError(
                             "due", f"the milestone it leads to is due {parent['due']}: choose that or earlier"
                         )
-                if roadmap.placed(conn, self.scope) >= roadmap.MAX_OPEN:  # 0.14.0: Ember's code's take no place
+                if roadmap.placed(conn, self.scope) >= roadmap.MAX_OPEN:  # 0.15.0: Ember's code's take no place
                     raise OwnerError(
                         "title", f"{roadmap.MAX_OPEN} of your and the agent's milestones are open already", 409
                     )
@@ -933,7 +933,7 @@ def kill(db: Database, economy: Economy, agent_name: str, body: Any, who: str | 
 
     The metering refuses every further model call of a killed agent, so a running
     cycle ends at its next call; the process keeps running so the dashboard stays up.
-    0.14.0: it takes back every unlock in the same transaction, so its reset approves nothing an unlock held.
+    0.15.0: it takes back every unlock in the same transaction, so its reset approves nothing an unlock held.
     """
 
     def run() -> Reply:

@@ -4,7 +4,7 @@ Revenue only ever came from the owner, so a sale counted nowhere (the balance, t
 venture's earnings) until the owner recorded it by hand. When the owner turns on ``etsy_auto_record_revenue``, every
 Etsy sync that worked records, for each order with Ember's listings:
 
-* its revenue once it is paid: Ember's lines with their shipping (0.14.0), net of tax, the coupon and refunds (what
+* its revenue once it is paid: Ember's lines with their shipping (0.15.0), net of tax, the coupon and refunds (what
   the sync stores);
 * Etsy's fees on it, as an expense of the same project, once the sync has read them from the order's payment;
 * its refunds: when an order whose revenue Ember's code recorded earns less now (partly or fully refunded, or
@@ -17,10 +17,10 @@ An order in EUR needs the owner's exchange
 rate (``etsy_usd_per_eur``), and its fees and refunds keep the rate its revenue was recorded at; other currencies are
 the owner's to convert. Etsy's fees on an order refunded later stay recorded: what Etsy credits back is the owner's to
 correct. Fees that would kill the agent or leave it unfunded wait for the owner, who is told once
-(``Economy.record_integration``). 0.14.0: a refund is a fact, so it is recorded all the same (held back, it left the
+(``Economy.record_integration``). 0.15.0: a refund is a fact, so it is recorded all the same (held back, it left the
 agent spending money the buyer got back); if it leaves the agent without money, Ember's code pauses it with the reason.
 
-0.14.0: whatever the option, each sync also records the listing fees Etsy charged for Ember's listings (USD 0.20: for
+0.15.0: whatever the option, each sync also records the listing fees Etsy charged for Ember's listings (USD 0.20: for
 publishing one, for a renewal Ember made or one Etsy made), noted where they happened
 (``etsy_publisher.listing_fee_due``). They are Ember's own spending, like its API calls, and were never recorded; they
 are facts too.
@@ -59,11 +59,11 @@ OPTION_KEY = "integrations.etsy.auto_revenue"  # the option as last seen, for th
 SINCE_KEY = "integrations.etsy.auto_revenue_since"  # the owner's day it was turned on: its orders from then on
 HELD_KEY = "integrations.etsy.revenue_held."  # + an entry's key: the owner was told it waits for them
 REVENUE_NOTE = "Ember's lines of the order with their shipping, net of tax, the coupon and refunds (Etsy's numbers)"
-FEES_NOTE = (  # the owner's button's too (0.14.0: the listing fee a sale renews and the VAT on fees were left out)
+FEES_NOTE = (  # the owner's button's too (0.15.0: the listing fee a sale renews and the VAT on fees were left out)
     "Etsy's fees on order {receipt}: payment processing, the 6.5% transaction fee, USD 0.20 a unit sold and 19% VAT"
     " on those two"
 )
-LISTING_FEE_NOTE = "Etsy's listing fee for listing {listing}: {why}"  # 0.14.0
+LISTING_FEE_NOTE = "Etsy's listing fee for listing {listing}: {why}"  # 0.15.0
 
 
 @dataclass
@@ -82,7 +82,7 @@ def refund_key(receipt_id: int, left_micros: int) -> str:
 
 def record(db: Database, clock: Clock, economy: Economy, scope: AgentScope, settings: Settings) -> Done:
     """What Etsy's numbers say about the orders with Ember's listings, in the ledger (see the module's text): after
-    each sync that worked, when the owner turned it on (0.14.0: the listing fees whatever the option)."""
+    each sync that worked, when the owner turned it on (0.15.0: the listing fees whatever the option)."""
     done = Done()
     _listing_fees(db, clock, economy, scope, done)
     if not settings.etsy_auto_record_revenue:
@@ -266,7 +266,7 @@ def _refund(db: Database, order: sqlite3.Row) -> PreparedEntry | None:
 
 
 def _listing_fees(db: Database, clock: Clock, economy: Economy, scope: AgentScope, done: Done) -> None:
-    """0.14.0: the listing fees Etsy charged for Ember's listings in this mode and session, as expenses of the listing's
+    """0.15.0: the listing fees Etsy charged for Ember's listings in this mode and session, as expenses of the listing's
     project (one of an ended dry-run session is dropped)."""
     with db.connection() as conn:
         due = conn.execute(
@@ -325,7 +325,7 @@ def _write(db: Database, economy: Economy, prepared: PreparedEntry, done: Done, 
         return
     db.set_meta(told, result.held)
     state = "kill the agent" if result.held == "dead" else "leave the agent without money to run"
-    events.record(  # only an order's fees wait for the owner (0.14.0: refunds and listing fees are facts)
+    events.record(  # only an order's fees wait for the owner (0.15.0: refunds and listing fees are facts)
         db,
         "warning",
         "ledger",

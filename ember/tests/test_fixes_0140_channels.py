@@ -1,4 +1,4 @@
-"""0.14.0: the channels' small defects. A library upload had the dashboard's 10-second timeout, so a large file over
+"""0.15.0: the channels' small defects. A library upload had the dashboard's 10-second timeout, so a large file over
 remote access failed (perhaps after the server stored it); Pinterest's refresh-token lifetime was assumed, not read,
 and nothing renewed an unused connection; an approved pin was made even when its listing had stopped being live while
 it waited; the Impressum could list an email address as its only contact, and the privacy page didn't say how long
@@ -314,7 +314,7 @@ def test_the_agent_hears_that_a_channel_waits_for_its_owner(data_dir: Path) -> N
     assert "== PINTEREST ==\nYour owner's account: ember-dry-run" in text and "setup (pinterest_app_id" not in text
 
 
-# 0.14.0 (ventures): these ventures have no numbers yet, so the owner backs them with confirm ("Back it anyway").
+# 0.15.0 (ventures): these ventures have no numbers yet, so the owner backs them with confirm ("Back it anyway").
 
 
 def test_a_channel_venture_s_first_test_waits_for_its_channel(data_dir: Path) -> None:

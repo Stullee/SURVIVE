@@ -179,7 +179,7 @@ class Account(Protocol):
 
     def pin_stats(self, pin_id: str) -> PinStats: ...
 
-    def keep_alive(self) -> None: ...  # 0.14.0: renew the connection before it lapses unused
+    def keep_alive(self) -> None: ...  # 0.15.0: renew the connection before it lapses unused
 
 
 class FakePinterest:
@@ -253,7 +253,7 @@ class Tokens:
 
 
 def lapsed(tokens: Tokens, now: datetime) -> bool:
-    """0.14.0: whether the connection has ended: its access token expired and its refresh token can't renew it."""
+    """0.15.0: whether the connection has ended: its access token expired and its refresh token can't renew it."""
     if from_iso(tokens.expires_at) > now:
         return False
     return not tokens.refresh_token or from_iso(tokens.refresh_expires_at) <= now

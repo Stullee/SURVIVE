@@ -28,7 +28,7 @@ from . import never, policy, store
 from .store import AgentScope
 
 FEED = 30  # entries on the Approvals tab
-MISSED_DAYS = 14  # 0.14.0: the days a digest is written for afterwards, when rounds didn't run (a pause)
+MISSED_DAYS = 14  # 0.15.0: the days a digest is written for afterwards, when rounds didn't run (a pause)
 # What the owner's Undo does, by what would undo an action (connectors.undo_of): the button, the request's title and
 # what it costs.
 UNDO = {
@@ -43,8 +43,8 @@ UNDO = {
     "delete_pin": ("Delete the pin", "delete", "none"),  # 0.13.0 (Phase E2)
     "delete_product": ("Delete the product", "delete", "none"),  # 0.13.0 (Phase E4)
 }
-REPEATABLE = ("delete_pin", "delete_product")  # 0.14.0: an Undo that may be repeated after it ended unclear
-# 0.14.0: the agent's states in which Ember's code carries out the owner's Undo: also while paused or waiting for
+REPEATABLE = ("delete_pin", "delete_product")  # 0.15.0: an Undo that may be repeated after it ended unclear
+# 0.15.0: the agent's states in which Ember's code carries out the owner's Undo: also while paused or waiting for
 # money (an Undo costs no API money), never once the kill switch is on (it stops everything Ember's code sends).
 UNDO_WHILE = ("alive", "critical", "paused", "unfunded")
 WHO = {
@@ -144,7 +144,7 @@ def _last_undo(conn: sqlite3.Connection, journal_id: int) -> sqlite3.Row | None:
 
 
 def _undone(conn: sqlite3.Connection, journal_id: int) -> tuple[int, int]:
-    """0.14.0: how many Undos in a row were done from an action on (its Undo, that Undo's Undo, ...), and the newest
+    """0.15.0: how many Undos in a row were done from an action on (its Undo, that Undo's Undo, ...), and the newest
     entry of that chain."""
     done, head = 0, journal_id
     while (last := _last_undo(conn, head)) is not None and last["status"] == "done":
@@ -163,7 +163,7 @@ def _place(row: sqlite3.Row) -> str:
 
 
 def _later(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> int | None:
-    """0.14.0: the later action on a listing the owner must undo before this one (None: none). Each action after this
+    """0.15.0: the later action on a listing the owner must undo before this one (None: none). Each action after this
     one starts a chain of Undos (an Undo, the Undo of that Undo, ...): an odd number of them done leaves the action
     undone, an even number leaves it in effect, and then the chain's newest entry is the one to undo. An action
     nothing can undo (a renewal) doesn't change what an Undo changes back, and doesn't count."""
@@ -231,12 +231,12 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
     last = _last_undo(conn, int(row["id"]))
     if last is not None and last["status"] == "done":
         done, head = _undone(conn, int(row["id"]))
-        if done % 2 == 0:  # 0.14.0: its Undo was undone in turn: it is in effect again
+        if done % 2 == 0:  # 0.15.0: its Undo was undone in turn: it is in effect again
             return f"its Undo was undone: undo #{head} to undo it again"
         return "it is undone"
     if last is not None and last["status"] != "failed":
         return "your Undo of it is under way"
-    # 0.14.0: an Undo that ended with something made is no longer "under way" for good; a delete that ended unclear
+    # 0.15.0: an Undo that ended with something made is no longer "under way" for good; a delete that ended unclear
     # may be repeated (what is gone already counts as deleted)
     if last is not None and last["made"] and not (last["ended"] == "unclear" and undo["action"] in REPEATABLE):
         return f"your Undo of it ended {last['ended']}: check it at {_place(row)}"
@@ -250,7 +250,7 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
         product = conn.execute(
             f"SELECT status, error FROM printify_products WHERE {where} AND product_id = ?", (*params, row["subject"])
         ).fetchone()
-        # 0.14.0: one that reached no Etsy listing (STALE) is still at Printify, to delete
+        # 0.15.0: one that reached no Etsy listing (STALE) is still at Printify, to delete
         live = product is not None and (
             product["status"] in printify_publisher.LIVE
             or (product["status"] == "failed" and product["error"] == printify_publisher.STALE)
@@ -458,7 +458,7 @@ def digest(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, day: date)
     by = Counter(_who(r) for r in actions)
     trouble = Counter(str(r["status"]) for r in actions if r["status"] in ("failed", "partial", "unclear"))
     where, params = scope.where("a")
-    # 0.14.0: what Ember's code carried out before the journal began (0.13.0) is only in the requests it closed: the
+    # 0.15.0: what Ember's code carried out before the journal began (0.13.0) is only in the requests it closed: the
     # first digest after the upgrade said "carried out nothing" for a day of 5 listings and 3 changes.
     for r in conn.execute(
         f"SELECT a.status, a.decided_by FROM approvals a WHERE {where} AND a.closed_by = ? AND a.closed_at >= ?"
@@ -543,7 +543,7 @@ def _digest_text(day: date, data: dict[str, Any], clock: Clock) -> str:
 
 
 def write_due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[str]:
-    """Yesterday's digest, written once (at the first round of the owner's day), and (0.14.0) one for each day since
+    """Yesterday's digest, written once (at the first round of the owner's day), and (0.15.0) one for each day since
     the newest digest that has none, MISSED_DAYS at most (a pause stops the rounds that write them); the texts written
     now."""
     yesterday = clock.today() - timedelta(days=1)

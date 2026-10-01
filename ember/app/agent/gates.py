@@ -5,7 +5,7 @@ A product line (a project) whose first listing is live on Etsy is tested from th
 30 views and 2 favorites by day 14, and a first order by day 21. Ember's code sets each bar as a milestone linked to
 the project, so its metric counts only its listings, one bar at a time: the next once the one before is closed, each
 due on its day from the start. Etsy's own numbers grade them: the listings' views, favorites and orders in all, as the
-last sync read them (no views history is kept for this). 0.14.0: day 14's favorites are a bar once its views are met
+last sync read them (no views history is kept for this). 0.15.0: day 14's favorites are a bar once its views are met
 (a miss of the views misses the day-14 bar), so a product line holds one open milestone at a time; these take none of
 the agent's or the owner's places (roadmap.placed). A bar dropped (by the owner, or with a parked venture) ends the
 product line's test: no next bar is set.
@@ -13,7 +13,7 @@ product line's test: no next bar is set.
 A missed bar is an obligation with its action: fix the titles, tags and category once (day 7); park the product line
 with the numbers (day 14: one obligation for its two bars); stop building that product type (day 21). A first order by
 day 21 is met with its own action: scale it (5 variants or a bundle), a decision point Ember's code sets for the agent
-to close. Their dates never move (0.14.0: a bar that opens on or after its day is due the day after it opens) and only
+to close. Their dates never move (0.15.0: a bar that opens on or after its day is due the day after it opens) and only
 the owner drops them; a closed project takes its open ones with it.
 
 The bars are milestones of the kind 'first_test' (a product line's first test; listing_gates names each one's bar),
@@ -47,7 +47,7 @@ class Gate:
     missed: str  # what the agent owes when it is missed
 
 
-# 0.14.0: a product line live only through Printify can't use propose_etsy_edit (it edits Ember's own listings)
+# 0.15.0: a product line live only through Printify can't use propose_etsy_edit (it edits Ember's own listings)
 PRINTIFY_FIX = (
     "ask your owner once (message_owner) to fix the titles, tags and category of its Printify listings, with yours,"
     " then let them run"
@@ -95,7 +95,7 @@ GATES = (
     ),
 )
 BY_KEY = {g.key: g for g in GATES}
-BARS = ("day7_views", "day14_views", "day14_favorites", "day21_sale")  # one after the other (0.14.0: one at a time)
+BARS = ("day7_views", "day14_views", "day14_favorites", "day21_sale")  # one after the other (0.15.0: one at a time)
 SCALE_TITLE = "Scale it: 5 variants or a bundle"
 SCALE_MEASURE = (
     "A buyer ordered by day 21: the product line has 5 variants or a bundle live (you close it when they are live)"
@@ -151,7 +151,7 @@ def _record(
 def _set(
     conn: sqlite3.Connection, scope: AgentScope, project: Any, gate: Gate, start: date, today: date, now: str
 ) -> int:
-    """One bar as a milestone of Ember's code, due on its day from the start. 0.14.0: a bar that opens on or after its
+    """One bar as a milestone of Ember's code, due on its day from the start. 0.15.0: a bar that opens on or after its
     day (the one before was graded then) is due the next day, so a sync can read it by its date."""
     due = max(start + timedelta(days=gate.day), today + timedelta(days=1)).isoformat()
     goal = roadmap.money_goal(conn, scope)
@@ -176,7 +176,7 @@ def _set(
 def _next_bar(
     conn: sqlite3.Connection, scope: AgentScope, project: Any, rows: list[sqlite3.Row], today: date, now: str
 ) -> list[int]:
-    """The next bar of a product line's test, once the one before is closed (the first one at its start). 0.14.0: none
+    """The next bar of a product line's test, once the one before is closed (the first one at its start). 0.15.0: none
     once a bar was dropped (the test ended), and day 14's favorites only once its views are met."""
     have = {r["gate"]: r for r in rows}
     if any(r["status"] == "dropped" for r in rows):
@@ -195,7 +195,7 @@ def _next_bar(
 
 
 def _owe(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row, gate: Gate, project: str, now: str) -> str:
-    """The obligation a missed bar leaves: its action first, then the numbers (0.14.0: the plan's line is cut at
+    """The obligation a missed bar leaves: its action first, then the numbers (0.15.0: the plan's line is cut at
     obligations.LINE_CHARS, and the action came after the numbers; a product line live only through Printify owes
     asking the owner, PRINTIFY_FIX)."""
     missed = gate.missed
@@ -214,7 +214,7 @@ def _owe(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row, gate: Ga
 
 
 def _printify_only(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> bool:
-    """Whether a product line's live listings are all ones Printify made (0.14.0)."""
+    """Whether a product line's live listings are all ones Printify made (0.15.0)."""
     rows = etsy_publisher.live_rows(metrics.listings(conn, scope, None, None), {})
     mine = [r for r in rows if r["for_project"] and int(r["for_project"]) == project_id]
     return bool(mine) and all(r["printify"] for r in mine)

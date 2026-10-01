@@ -1,4 +1,4 @@
-"""0.14.0: reflection in every cycle, and a stopped cycle that keeps its handoff (FIX NOW 14, 2, 26; X6).
+"""0.15.0: reflection in every cycle, and a stopped cycle that keeps its handoff (FIX NOW 14, 2, 26; X6).
 
 Live, every cycle since 0.12.0 wrote its journal in a work step, which skipped the reflection: nothing checked the
 undone calls, wrote lessons or updated the strategy. A cycle the budget guard stopped was recorded as "the plan was

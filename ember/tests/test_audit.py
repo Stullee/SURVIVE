@@ -238,7 +238,7 @@ def test_the_daily_digest(data_dir: Path) -> None:
     old = price_of(agent, listing_id)
     made = work_on(agent, goal, change(listing_id, price=f"{old * Decimal('0.95'):.2f}"))  # carried by the unlock
     assert agent.execute_approved() == [(made[-1]["id"], "done")]
-    waited = spending(agent, listing_id, f"{old:.2f}")  # 0.14.0: a reason's words are no act; money is NEVER
+    waited = spending(agent, listing_id, f"{old:.2f}")  # 0.15.0: a reason's words are no act; money is NEVER
     assert rows(agent, f"SELECT status FROM approvals WHERE id = {waited}") == [{"status": "pending"}]
     reject(agent, waited)
     missed = a_milestone(agent, "Thirty sales")
@@ -268,7 +268,7 @@ def test_the_daily_digest(data_dir: Path) -> None:
     )
     sensors = agent.sensor_fields()
     assert (sensors["digest_day"], sensors["digest_actions"], sensors["unlocks"]) == (day.isoformat(), 2, 2)
-    assert "digest" not in sensors  # 0.14.0: the open sensor gets the digest's counts, not its text
+    assert "digest" not in sensors  # 0.15.0: the open sensor gets the digest's counts, not its text
     assert agent.dashboard()["audit"]["digest"]["day"] == day.isoformat()
     assert any(e["message"].startswith(f"Daily digest: {day.isoformat()}: ") for e in agent_events(agent))
     with agent.db.connection() as conn:

@@ -148,7 +148,7 @@ ENFORCED: list[tuple[str, str]] = [
     ("Research the heaviest ideas first", "test_desk::test_ready_ranks_the_ventures_next_decisions"),
 ]
 
-# 0.14.0: what the constitution said that Ember's code does otherwise: gone from every text, with the test that proves
+# 0.15.0: what the constitution said that Ember's code does otherwise: gone from every text, with the test that proves
 # what the code does. The constitution is scanned too.
 CONTRADICTED: list[tuple[str, str]] = [
     ("everything else your owner carries out", "test_etsy::test_an_approved_listing_goes_live_in_the_fake_shop"),
@@ -286,7 +286,7 @@ def test_no_sentence_is_said_twice_in_one_request() -> None:
 def test_the_fixed_prompt_is_smaller() -> None:
     """The fixed part of a work step (its system text and tool definitions) against 0.11.1's 45,866 bytes: a venture
     cycle's at least 30% smaller, an ordinary cycle's no bigger; the reflection reads its work's from the cache.
-    0.14.0: with every channel of the owner's on (it was 48.5 KB with Printify on, measured without)."""
+    0.15.0: with every channel of the owner's on (it was 48.5 KB with Printify on, measured without)."""
 
     def fixed(venture: bool) -> int:
         request = prompts.work_request(

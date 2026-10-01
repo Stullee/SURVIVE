@@ -1,4 +1,4 @@
--- 0.14.0: old texts are pruned. Only the event log was pruned, so the tool calls' inputs and results and the model's
+-- 0.15.0: old texts are pruned. Only the event log was pruned, so the tool calls' inputs and results and the model's
 -- replies grew without limit (3.3 MB in 3 days). After db.TEXT_DAYS Ember's code sets them to '[pruned]'
 -- (db.prune_texts). The rows stay, and the model calls (their costs, tokens and purpose) are never touched. The guards
 -- that kept this history from changing now allow that one change and nothing else: a finished tool call's input to

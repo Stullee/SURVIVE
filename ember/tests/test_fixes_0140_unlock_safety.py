@@ -1,4 +1,4 @@
-"""0.14.0: the unlock loopholes closed before any unlock is granted (FIX NOW 9), and the constitution's account of
+"""0.15.0: the unlock loopholes closed before any unlock is granted (FIX NOW 9), and the constitution's account of
 what Ember's code carries out (FIX NOW 26e).
 
 An automatic email's footer said the owner approved it before sending. Taking back every unlock, or Ember's own
@@ -403,7 +403,7 @@ def test_an_unlock_does_not_carry_a_reply_that_fails_its_qa(data_dir: Path) -> N
 
 
 def distinct_photos(photo: dict[str, Any], count: int) -> list[dict[str, Any]]:
-    """``count`` photos like ``photo``, each its own file (0.14.0, the factory: QA counts distinct photos)."""
+    """``count`` photos like ``photo``, each its own file (0.15.0, the factory: QA counts distinct photos)."""
     stem = str(photo["path"]).rsplit(".", 1)[0]
     return [{**photo, "path": f"{stem}-{n}.png", "sha256": f"{n:064x}"} for n in range(1, count + 1)]
 
@@ -413,7 +413,7 @@ def test_an_unlock_does_not_carry_a_listing_with_one_photo(data_dir: Path, monke
     goal = a_milestone(agent)
     unlock(agent, goal, "listing_variant")
     first = rows(agent, "SELECT action, project_id FROM approvals WHERE executor = 'etsy_listing'")[0]
-    action, line = json.loads(first["action"]), first["project_id"]  # 0.14.0: a listing of the milestone's line
+    action, line = json.loads(first["action"]), first["project_id"]  # 0.15.0: a listing of the milestone's line
     fits(monkeypatch, "listing_variant")
     one_photo = request(
         agent, goal, executor="etsy_listing", action={**action, "photos": action["photos"][:1]}, project_id=line
@@ -424,7 +424,7 @@ def test_an_unlock_does_not_carry_a_listing_with_one_photo(data_dir: Path, monke
         " It waits for your owner: an unlock carries only what passes QA (1 photo, fewer than 5 (Etsy shows up to 10))."
     )
     assert status_of(agent, one_photo)["status"] == "pending"
-    photos = distinct_photos(action["photos"][0], 5)  # 0.14.0 (factory): copies of one photo count once
+    photos = distinct_photos(action["photos"][0], 5)  # 0.15.0 (factory): copies of one photo count once
     five = request(agent, goal, executor="etsy_listing", action={**action, "photos": photos}, project_id=line)
     with agent.db.transaction() as conn:
         assert "approved it at once" in policy.apply(conn, agent.scope(), five, agent.clock)
@@ -436,9 +436,9 @@ def test_a_held_request_that_fails_its_qa_is_not_approved(data_dir: Path, monkey
     goal = a_milestone(agent)
     unlock(agent, goal, "listing_variant", "veto_window")
     first = rows(agent, "SELECT action, project_id FROM approvals WHERE executor = 'etsy_listing'")[0]
-    action, line = json.loads(first["action"]), first["project_id"]  # 0.14.0: a listing of the milestone's line
+    action, line = json.loads(first["action"]), first["project_id"]  # 0.15.0: a listing of the milestone's line
     fits(monkeypatch, "listing_variant")
-    photos = distinct_photos(action["photos"][0], 5)  # 0.14.0 (factory): copies of one photo count once
+    photos = distinct_photos(action["photos"][0], 5)  # 0.15.0 (factory): copies of one photo count once
     held = request(agent, goal, executor="etsy_listing", action={**action, "photos": photos}, project_id=line)
     with agent.db.transaction() as conn:
         assert "unless your owner decides first" in policy.apply(conn, agent.scope(), held, agent.clock)
@@ -542,7 +542,7 @@ def test_the_upgrade_takes_back_every_unlock_and_stops_what_it_approved(tmp_path
         got = conn.execute(
             "SELECT id, status, decided_by, closed_by, result_note FROM approvals ORDER BY id"
         ).fetchall()
-        closed = "Approved by your unlock, which was taken back (the upgrade to 0.14.0) before Ember's code carried it"
+        closed = "Approved by your unlock, which was taken back (the upgrade to 0.15.0) before Ember's code carried it"
         assert [tuple(r) for r in got] == [
             (1, "pending", None, None, None),  # approved at once, not begun: it waits for the owner
             (2, "approved", policy.POLICY_BY, None, None),  # begun: it runs on, exactly once

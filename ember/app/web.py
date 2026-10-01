@@ -408,8 +408,8 @@ def _owner_actions(request: Request) -> owner_side.Owner | None:
         state.economy,
         state.agent.scope(),
         state.loaded.settings.agent_name,
-        unlocks_off=state.agent.unlocks_off(),  # 0.14.0: no unlock without owner_user_ids, or in safe mode
-        ready=state.agent.channels_ready(),  # 0.14.0: a channel venture's first test waits for its channel
+        unlocks_off=state.agent.unlocks_off(),  # 0.15.0: no unlock without owner_user_ids, or in safe mode
+        ready=state.agent.channels_ready(),  # 0.15.0: a channel venture's first test waits for its channel
     )
 
 
@@ -448,7 +448,7 @@ def _poke_executor(request: Request, reply: Reply) -> None:
 
 @router.get("/api/inbox")
 def inbox(request: Request, before: int = Query(ge=1, le=2**62), limit: int = Query(30, ge=1, le=200)) -> JSONResponse:
-    """0.14.0: the Inbox's messages older than message ``before``, newest first (the dashboard brings the newest, and
+    """0.15.0: the Inbox's messages older than message ``before``, newest first (the dashboard brings the newest, and
     every message of the owner's still waiting for an answer)."""
     agent = _state(request).agent
     if agent is None:
@@ -469,7 +469,7 @@ def send_message(request: Request, body: Annotated[Any, Body()] = None) -> JSONR
 
 def _wake_for_message(request: Request) -> str | None:
     """The owner wrote: wake the agent to read it (the wake_on_message option). "now" if a wake is on its way (Wake
-    now); "soon", or "after_cycle" while a cycle runs, if it follows (0.14.0: one cycle a few minutes after the owner's
+    now); "soon", or "after_cycle" while a cycle runs, if it follows (0.15.0: one cycle a few minutes after the owner's
     last message or decision, Agent.wake_for_message); None if none follows (the option is off, the agent is paused,
     ...): the message waits for the next wake."""
     state = _state(request)
@@ -490,7 +490,7 @@ def _wake_for_decision(request: Request, reply: Any) -> None:
     state = _state(request)
     agent = state.agent
     if reply.status == 200 and agent is not None:
-        agent.lift_sleep_cut()  # 0.14.0: no request waits any more: the sleep the agent chose stands
+        agent.lift_sleep_cut()  # 0.15.0: no request waits any more: the sleep the agent chose stands
     if reply.status != 200 or agent is None or not state.loaded.settings.wake_on_decision:
         return
     wake = agent.wake_for_decision()

@@ -31,10 +31,10 @@ FETCH_BUDGET_SECONDS = 30.0
 # checks, never dropped (the newest 20 were kept and the rest lost for good).
 FETCH_ROUNDS = 5
 ERROR_CHARS = 300
-# 0.14.0: a mailbox that keeps failing (a changed password, a locked account) is read less often: the wait between
+# 0.15.0: a mailbox that keeps failing (a changed password, a locked account) is read less often: the wait between
 # reads doubles with each failed read in a row after the first, up to BACKOFF_MINUTES; a read that works resets it.
 BACKOFF_MINUTES = 240
-REFUSED_TRIES = 5  # 0.14.0: checks in a row the server may refuse an email before Ember skips it
+REFUSED_TRIES = 5  # 0.15.0: checks in a row the server may refuse an email before Ember skips it
 
 
 def meta_key(mode: str, name: str) -> str:
@@ -81,7 +81,7 @@ def fetch(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, budget: fl
         events.record(db, "info", "email", "A sender asked not to get emails; Ember won't write to them again")
     failures = _int(db.get_meta(meta_key(scope.mode, "failures")))
     if result.error is not None:
-        # 0.14.0: one warning while the same error goes on (it was one every 15 minutes), and a longer wait
+        # 0.15.0: one warning while the same error goes on (it was one every 15 minutes), and a longer wait
         if not failures or result.error != db.get_meta(meta_key(scope.mode, "last_error")):
             events.record(db, "warning", "email", f"Checking Ember's mailbox failed: {result.error}")
         db.set_meta(meta_key(scope.mode, "last_error"), result.error)
@@ -111,12 +111,12 @@ def _store(db: Database, scope: Scope, mailbox: Mailbox, fetched: FetchResult, n
             words = opt_out(mail.subject, mail.body) if mail.from_addr and not own and not mail.bulk else None
             if words is None:
                 continue
-            # 0.14.0: "replied" only to an email Ember sent (live: a provider's own mail was said to reply)
+            # 0.15.0: "replied" only to an email Ember sent (live: a provider's own mail was said to reply)
             answered = _answered(conn, scope, mail)
             how = "replied" if answered else "wrote"
             if suppress(conn, scope, mail.from_addr, now, f'{how} "{words}"', email_id):
                 result.suppressed.append(mail.from_addr)
-            # 0.14.0: a stop in answer to Ember's email covers the address Ember wrote to as well (a colleague may
+            # 0.15.0: a stop in answer to Ember's email covers the address Ember wrote to as well (a colleague may
             # answer for info@); it was only the sender's.
             reason = f"an answer to Ember's email to this address asked to stop (email #{email_id})"
             for to in answered:
@@ -141,7 +141,7 @@ def _answered(conn: sqlite3.Connection, scope: Scope, mail: IncomingMail) -> lis
 
 
 def _refused(db: Database, mode: str, fetched: FetchResult) -> int:
-    """0.14.0: where the next fetch starts. An email the server didn't hand over is asked for again at the next check,
+    """0.15.0: where the next fetch starts. An email the server didn't hand over is asked for again at the next check,
     and skipped with a warning once it was refused REFUSED_TRIES times in a row."""
     key = meta_key(mode, "refused")
     if fetched.refused is None:
@@ -163,14 +163,14 @@ def _refused(db: Database, mode: str, fetched: FetchResult) -> int:
 
 
 def wait_minutes(db: Database, mode: str, every: int) -> int:
-    """0.14.0: the minutes between reads of the mailbox between cycles: ``every``, doubled for each failed read in a
+    """0.15.0: the minutes between reads of the mailbox between cycles: ``every``, doubled for each failed read in a
     row after the first, at most BACKOFF_MINUTES."""
     failures = _int(db.get_meta(meta_key(mode, "failures")))
     return min(every * 2 ** min(max(failures - 1, 0), 10), max(every, BACKOFF_MINUTES))
 
 
 def due(db: Database, clock: Clock, mode: str, every: int) -> bool:
-    """0.14.0: whether the mailbox may be read now: always while it works or failed once, else once wait_minutes have
+    """0.15.0: whether the mailbox may be read now: always while it works or failed once, else once wait_minutes have
     passed since the last failed read (so the read at the start of each cycle backs off too)."""
     failed_at = db.get_meta(meta_key(mode, "failed_at"))
     if _int(db.get_meta(meta_key(mode, "failures"))) < 2 or not failed_at:
@@ -185,7 +185,7 @@ def _int(value: str | None) -> int:
 def store_incoming(
     conn: sqlite3.Connection, scope: Scope, mail: IncomingMail, uidvalidity: int, now: str, own: str = ""
 ) -> int | None:
-    """Store one fetched email once; returns its id, or None if it is already stored. 0.14.0: a machine's mail and
+    """Store one fetched email once; returns its id, or None if it is already stored. 0.15.0: a machine's mail and
     mail from Ember's own address (``own``) are stored as no person's (bulk), like a list's: Ember can't answer its
     own address, and nothing could close it."""
     where, params = scope.where()
@@ -219,8 +219,8 @@ def store_incoming(
             mail.body,
             1 if mail.body_cut else 0,
             mail.attachments_json(),
-            1 if mail.bulk or mail.machine or own_mail else 0,  # no inquiry (0.14.0: nor a machine's or Ember's own)
-            1 if mail.authenticated else 0,  # 0.14.0: the receiving provider verified the sender
+            1 if mail.bulk or mail.machine or own_mail else 0,  # no inquiry (0.15.0: nor a machine's or Ember's own)
+            1 if mail.authenticated else 0,  # 0.15.0: the receiving provider verified the sender
         ),
     )
     return int(cursor.lastrowid) if cursor.rowcount == 1 else None
@@ -300,9 +300,9 @@ def is_suppressed(conn: sqlite3.Connection, scope: Scope, address: str) -> bool:
 
 
 def person(alias: str = "") -> str:
-    """0.14.0: the one test of a person's email, for all that rests on someone having written (the first-contact
+    """0.15.0: the one test of a person's email, for all that rests on someone having written (the first-contact
     guard, inquiries and their metrics, answers in their thread, event wakes): received, its sender verified by the
-    receiving mail provider (authenticated), and no list's, machine's or Ember's own (bulk). Mail stored before 0.14.0
+    receiving mail provider (authenticated), and no list's, machine's or Ember's own (bulk). Mail stored before 0.15.0
     has no verdict (NULL) and never counts. The database's NEVER view (approvals_never) reads the same."""
     e = f"{alias}." if alias else ""
     return f"({e}direction = 'in' AND {e}authenticated = 1 AND {e}bulk = 0)"
@@ -332,7 +332,7 @@ _ANSWERED = (
 
 
 def inquiries(conn: sqlite3.Connection, scope: Scope) -> list[sqlite3.Row]:
-    """The emails of people that wait for an answer, the oldest first: a person's (``person``: 0.14.0, verified, and
+    """The emails of people that wait for an answer, the oldest first: a person's (``person``: 0.15.0, verified, and
     no list's, machine's or Ember's own), from someone who didn't ask to stop, neither answered nor closed."""
     where, params = scope.where("e")
     return conn.execute(

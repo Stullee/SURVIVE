@@ -1,4 +1,4 @@
-"""0.14.0: Printify's money records, currency, reconciliation and metrics (FIX NOW 16, X22).
+"""0.15.0: Printify's money records, currency, reconciliation and metrics (FIX NOW 16, X22).
 
 A POD sale was booked lopsidedly: the margin check used a looser fee model than econ's and no VAT, the shipping a buyer
 paid was dropped from revenue while Printify's shipping was a cost, and Printify's bill was overhead while the sale
@@ -793,7 +793,7 @@ def test_a_closed_line_s_printify_listing_still_counts_for_the_print_on_demand_v
         assert stages.sold(conn, agent.scope(), pod, ventures.Money())
 
 
-# 0.14.0 (ventures): the agent can no longer create a venture live (venture_create takes idea or researching only), so
+# 0.15.0 (ventures): the agent can no longer create a venture live (venture_create takes idea or researching only), so
 # "Ember earns somewhere" (tools._earning, which an active Printify listing would have met) is gone.
 
 

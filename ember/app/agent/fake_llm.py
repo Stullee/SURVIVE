@@ -10,7 +10,7 @@ What the rest of Ember can rely on:
 * Answers are shaped like real Messages API responses, and their usage is priced by metering exactly as
   real usage would be. Only usage keys metering knows are reported, and the priced cost never exceeds the budget
   guard's worst-case estimate: the prompt is at most ``rough_token_count(request) - 1`` tokens, the output at most
-  ``max_tokens``, one search per research call. 0.14.0: a research or workshop answer reports its samplings in
+  ``max_tokens``, one search per research call. 0.15.0: a research or workshop answer reports its samplings in
   ``usage.iterations`` (their tokens add up to the usage), and a test's :class:`Overrun` turn makes a call cost more
   than its worst case, as a live workshop run did (the loop re-read far more than its allowances).
 * Prompt caching is simulated (prefix hashes, 5-minute TTL on an injectable clock, per-model minimums),
@@ -118,7 +118,7 @@ USAGE_KEYS = frozenset(
         "service_tier",
         "inference_geo",
         "output_tokens_details",
-        "iterations",  # 0.14.0: research and workshop answers
+        "iterations",  # 0.15.0: research and workshop answers
     }
 )
 _ITERATION_FIELDS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
@@ -232,7 +232,7 @@ class Fail:
 
 @dataclass(frozen=True)
 class Overrun:
-    """0.14.0: answer as the scenario would, with ``cache_write`` more tokens written to the cache and ``cache_read``
+    """0.15.0: answer as the scenario would, with ``cache_write`` more tokens written to the cache and ``cache_read``
     more read from it: a server-side loop (of ``samplings`` samplings) that looked at far more than its allowances, so
     the call costs more than its worst case. The defaults are live workshop run #423's ($1.84 against $0.35)."""
 
@@ -1011,7 +1011,7 @@ class _Draft:
     output_tokens: int | None = None  # forced, e.g. a reply cut off at max_tokens
     stop_details: dict[str, Any] | None = None
     note: str = ""
-    overrun: Overrun | None = None  # 0.14.0: a test's overrunning server-side loop
+    overrun: Overrun | None = None  # 0.15.0: a test's overrunning server-side loop
 
 
 class FakeTransport:
@@ -1163,7 +1163,7 @@ class FakeTransport:
             }
         usage["input_tokens"] += draft.extra_input_tokens
         usage["output_tokens"] = output
-        if draft.overrun is not None:  # 0.14.0: what a live loop re-read beyond every allowance
+        if draft.overrun is not None:  # 0.15.0: what a live loop re-read beyond every allowance
             usage["cache_creation_input_tokens"] = (
                 usage.get("cache_creation_input_tokens", 0) + draft.overrun.cache_write
             )
@@ -1180,7 +1180,7 @@ class FakeTransport:
             )
         elif kind == "workshop":
             usage["server_tool_use"] = {"code_execution_requests": draft.code_execution_requests}
-        if kind in ("research", "workshop"):  # 0.14.0: a server tool's loop reports its samplings
+        if kind in ("research", "workshop"):  # 0.15.0: a server tool's loop reports its samplings
             uses = sum(1 for b in draft.content if b.get("type") == "server_tool_use")
             samplings = draft.overrun.samplings if draft.overrun is not None else min(MAX_SERVER_ITERATIONS, 1 + uses)
             usage["iterations"] = _iterations(usage, samplings, draft.extra_input_tokens)
@@ -2862,7 +2862,7 @@ def _scripted(turn: Turn, rng: random.Random) -> _Draft:
 
 
 def _iterations(usage: Mapping[str, Any], samplings: int, later_input: int) -> list[dict[str, Any]]:
-    """0.14.0: ``usage`` as the ``samplings`` samplings of a server-side loop report it (``usage.iterations``): the
+    """0.15.0: ``usage`` as the ``samplings`` samplings of a server-side loop report it (``usage.iterations``): the
     first reads the prompt and writes the cache, the later ones read what the tools added (``later_input``) and the
     cache, and each writes a share of the output. Each field adds up to the usage's own."""
     items = [{"type": "message", **dict.fromkeys(_ITERATION_FIELDS, 0)} for _ in range(max(1, samplings))]

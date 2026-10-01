@@ -1,4 +1,4 @@
-"""0.14.0 (caps-modes): every call obeys the burn mode and the event reserve; STATUS tells the real cap; refuse before
+"""0.15.0 (caps-modes): every call obeys the burn mode and the event reserve; STATUS tells the real cap; refuse before
 paying.
 
 * Workshop runs, reviews and studies ignored the maintenance cap and the 20:00 event reserve: in a maintenance cycle a
@@ -79,7 +79,7 @@ def test_a_critic_or_a_consolidation_leaves_the_cycle_cap_alone(data_dir: Path, 
     assert model.rooms(cycle, "work")[0] == 500_000
     result = model.call(cycle, purpose, request(max_tokens=20_000))
     assert result.cost_micros == 2_000 + 200_000
-    assert model.rooms(cycle, "work")[0] == 500_000  # before 0.14.0: $0.298 after a $0.20 critic
+    assert model.rooms(cycle, "work")[0] == 500_000  # before 0.15.0: $0.298 after a $0.20 critic
     assert economy.books.cycle_spend(cycle, outside_cap=False) == (0, 0)
     assert economy.books.cycle_spend(cycle)[0] == result.cost_micros  # the cycle's reports still show it
     assert model.rooms(cycle, purpose)[0] == 10_000_000  # its own cap is the daily cap, like the review's
@@ -103,7 +103,7 @@ def test_a_scheduled_cycles_calls_outside_the_cycle_cap_leave_the_event_reserve(
     cycle = model.open_cycle("schedule")
     assert cap_of(economy, cycle) == 600_000  # $7 - $5 - the $1.40 kept for event wake-ups
     for purpose in (metering.WORKSHOP, metering.REVIEW, metering.STUDY, metering.CRITIC):
-        assert model.rooms(cycle, purpose)[1] == 600_000, purpose  # before 0.14.0: $2.00
+        assert model.rooms(cycle, purpose)[1] == 600_000, purpose  # before 0.15.0: $2.00
     for purpose in (metering.WORKSHOP, metering.REVIEW):
         with pytest.raises(CallRefused) as refused:  # $0.70 at most: it fits its own cap, not the day's rest
             model.call(cycle, purpose, request(max_tokens=70_000))
@@ -148,7 +148,7 @@ def test_a_maintenance_cycles_cap_bounds_every_call_in_it(data_dir: Path, monkey
     with economy.db.connection() as conn:
         assert conn.execute("SELECT burn_mode FROM cycles WHERE id = ?", (cycle,)).fetchone()[0] == "maintenance"
     for purpose in (metering.WORKSHOP, metering.REVIEW, metering.STUDY):
-        assert model.rooms(cycle, purpose)[0] == 400_000, purpose  # before 0.14.0: $1.50 and $7.00
+        assert model.rooms(cycle, purpose)[0] == 400_000, purpose  # before 0.15.0: $1.50 and $7.00
     review = model.call(cycle, metering.REVIEW, request(max_tokens=15_000))
     assert review.cost_micros == 102_000
     assert economy.books.cycle_spend(cycle, outside_cap=False, every_purpose=True)[0] == 102_000
@@ -189,7 +189,7 @@ def test_a_maintenance_cycles_review_leaves_what_the_cycle_needs_to_work(
     [cycle] = rows(agent, "SELECT id, cap_micros FROM cycles ORDER BY id DESC LIMIT 1")
     assert cycle["cap_micros"] == 400_000
     kinds = [request_kind(r) for r in list(fake.sent)[before:]]
-    assert "plan" in kinds and "review" not in kinds  # before 0.14.0 the review took the room the work needed
+    assert "plan" in kinds and "review" not in kinds  # before 0.15.0 the review took the room the work needed
     assert rows(agent, "SELECT id FROM llm_calls WHERE purpose = 'review'") == []
 
 
@@ -204,7 +204,7 @@ def test_status_says_the_event_reserve_cut_the_cycles_cap(data_dir: Path) -> Non
     status = section(planner_texts(fake)[0], "STATUS")
     assert (
         "This cycle may spend up to $0.60 (until 20:00 a fifth of today's cap is kept for event wake-ups)." in status
-    )  # before 0.14.0: "up to $1.00"
+    )  # before 0.15.0: "up to $1.00"
     assert rows(agent, "SELECT cap_micros FROM cycles") == [{"cap_micros": 600_000}]
 
 
@@ -221,12 +221,12 @@ def test_the_focus_mode_offers_no_brainstorm(data_dir: Path, monkeypatch: pytest
     agent, _ = run(data_dir, fake, cycles=0, settings=VENTURING)
     with agent.db.transaction() as conn:
         ventures.update(conn, DROPSHIPPING, "2026-09-01T12:00:00Z", first_test="Sell 3 stores' worth of samples")
-    # 0.14.0 (ventures): a venture without numbers is backed only with the owner's confirmation
+    # 0.15.0 (ventures): a venture without numbers is backed only with the owner's confirmation
     assert owner(agent).decide_venture(DROPSHIPPING, {"action": "back", "confirm": True}, "Stefan").status == 200
     agent.run_cycle("schedule")
     assert rows(agent, "SELECT venture FROM cycles") == [{"venture": 1}]
     names = work_tools(fake)
-    assert names and all("brainstorm" not in n and "evidence" in n for n in names)  # before 0.14.0: offered
+    assert names and all("brainstorm" not in n and "evidence" in n for n in names)  # before 0.15.0: offered
     status = section(planner_texts(fake)[0], "STATUS")
     assert "A research call costs about" in status and "brainstorm" not in status.split("Burn mode", 1)[0]
     assert "or a brainstorm and" not in status
@@ -299,7 +299,7 @@ def test_a_draft_append_that_may_not_fit_is_refused_before_it_is_paid_for(data_d
     assert call["status"] == "error"
     assert "drafts/guide.md holds 40 KB and a draft may add 31 KB, more than the 64 KB a file holds" in call["result"]
     assert "draft the rest into a new file, with drafts/guide.md as a source" in call["result"]
-    assert rows(agent, "SELECT id FROM llm_calls WHERE purpose = 'draft'") == []  # before 0.14.0: paid, then refused
+    assert rows(agent, "SELECT id FROM llm_calls WHERE purpose = 'draft'") == []  # before 0.15.0: paid, then refused
 
 
 def test_a_paid_draft_that_doesnt_fit_is_kept_in_a_file_of_its_own(
@@ -333,7 +333,7 @@ def test_a_workshop_folder_too_deep_for_its_files_is_refused_before_the_run(data
     [answer] = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'workshop'")
     assert answer["status"] == "error"
     assert "folder: at most 3 folder levels, so that its files fit inside it" in answer["result"]
-    assert rows(agent, "SELECT id FROM llm_calls WHERE purpose = 'workshop'") == []  # before 0.14.0: paid for
+    assert rows(agent, "SELECT id FROM llm_calls WHERE purpose = 'workshop'") == []  # before 0.15.0: paid for
 
 
 # --- X27: a document's study ends once its learnings are full ---
@@ -351,7 +351,7 @@ def test_a_long_document_stops_being_studied_once_its_learnings_are_full(data_di
         agent.run_cycle("schedule")
     document = rows(agent, "SELECT study, studied_parts, study_note, studied_at FROM library_documents")[0]
     assert document["study"] == "done" and document["studied_at"] is not None
-    assert 0 < document["studied_parts"] < parts  # before 0.14.0: studied to the end, the last calls keeping nothing
+    assert 0 < document["studied_parts"] < parts  # before 0.15.0: studied to the end, the last calls keeping nothing
     assert document["study_note"] == (
         f"Its {library.MAX_LEARNINGS} learnings are full, the most a document keeps: parts "
         f"{document['studied_parts'] + 1}-{parts} weren't studied (library_read reads them)."
@@ -374,7 +374,7 @@ def test_a_document_already_full_ends_without_a_call(data_dir: Path, monkeypatch
     kept = rows(agent, "SELECT COUNT(*) AS n FROM learnings")[0]["n"]
     before = rows(agent, "SELECT study, studied_parts FROM library_documents")[0]
     assert before["study"] == "waiting" and kept > 0
-    monkeypatch.setattr(library, "MAX_LEARNINGS", kept)  # as full as a document from before 0.14.0 could be
+    monkeypatch.setattr(library, "MAX_LEARNINGS", kept)  # as full as a document from before 0.15.0 could be
     paid = rows(agent, "SELECT COUNT(*) AS n FROM llm_calls WHERE purpose = 'study'")[0]["n"]
     agent.run_cycle("schedule")
     assert rows(agent, "SELECT COUNT(*) AS n FROM llm_calls WHERE purpose = 'study'")[0]["n"] == paid

@@ -1,4 +1,4 @@
-"""0.14.0: faults the owner's live diagnostics of 2026-10-01 showed: a site address that named its home page's file, a
+"""0.15.0: faults the owner's live diagnostics of 2026-10-01 showed: a site address that named its home page's file, a
 workshop run "ok" with only its script back, a PRINTIFY line about a request that didn't exist, a 503 booked at the
 worst case, a sleep cut that outlived the request it waited for, length refusals without numbers, a one-time-code mask
 across table cells, upgrade requests the agent couldn't see, a kept promise the message cap blocked, a folder read as
@@ -246,7 +246,7 @@ def test_the_plan_lists_open_upgrade_requests(data_dir: Path) -> None:
     planner = fake.sent[-1]["messages"][0]["content"][0]["text"]  # type: ignore[attr-defined]
     assert f"== WAITING FOR YOUR OWNER ==\n{line}" in planner
     with agent.db.transaction() as conn:
-        conn.execute("UPDATE upgrades SET status = 'released', released_version = '0.14.0'")
+        conn.execute("UPDATE upgrades SET status = 'released', released_version = '0.15.0'")
     with agent.db.connection() as conn:
         assert context.open_upgrades(conn, agent.scope()) == []
 

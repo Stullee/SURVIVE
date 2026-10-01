@@ -9,7 +9,7 @@ E1): an answer to someone who wrote keeps their thread's subject and is short (R
 is portrait, about 2:3 (PIN_RATIO); (Phase E4) a Printify product's picture prints sharp (SHARP_DPI) and fills its
 print area (SHAPE_SHARE).
 
-0.14.0: photos count as distinct pictures. The agent met MIN_PHOTOS with near-copies of one page, and the owner had to
+0.15.0: photos count as distinct pictures. The agent met MIN_PHOTOS with near-copies of one page, and the owner had to
 say so twice. A copy of an earlier photo adds no photo, and the check names it: the same file, or with ``looks``
 (images.look), a photo make_image made of the same pages or lines, or one whose pixels look the same.
 """
@@ -27,13 +27,13 @@ REPLY_WORDS = 200  # an email answer's words at most (the footer Ember adds not 
 PIN_RATIO = (1.3, 1.7)  # a pin's image, height to width: portrait, about 2:3 (1000 x 1500) shows best
 SHARP_DPI = 150  # a printed picture below this looks blurry
 SHAPE_SHARE = 0.1  # a picture whose shape differs more from its print area's leaves part of it blank
-ALIKE_BITS = 10  # 0.14.0: pictures whose difference hashes differ in fewer of their 512 bits look the same (a copy
+ALIKE_BITS = 10  # 0.15.0: pictures whose difference hashes differ in fewer of their 512 bits look the same (a copy
 # resized, re-encoded or in another colour differs in about 4; another page under the same title in 16 or more)
 _THREAD = re.compile(r"^\s*(?:re|aw|antw|sv|rif)\s*(?:\[\d+\])?\s*:", re.IGNORECASE)
 
 
 def photo_defect(count: int, repeated: Sequence[str] = ()) -> str:
-    """What falls short of MIN_PHOTOS ("" when nothing does); 0.14.0: ``count`` distinct photos, and the ones that
+    """What falls short of MIN_PHOTOS ("" when nothing does); 0.15.0: ``count`` distinct photos, and the ones that
     repeat another (repeats) named."""
     copies = f"{', '.join(repeated)}: a copy adds no photo" if repeated else ""
     if count >= MIN_PHOTOS:
@@ -44,7 +44,7 @@ def photo_defect(count: int, repeated: Sequence[str] = ()) -> str:
 
 
 def repeats(photos: Sequence[Upload], looks: Sequence[str] | None = None) -> list[str]:
-    """0.14.0: the photos that repeat an earlier one, as 'b.png repeats a.png': the same file (its SHA-256) or, with
+    """0.15.0: the photos that repeat an earlier one, as 'b.png repeats a.png': the same file (its SHA-256) or, with
     ``looks`` (images.look, in the same order, "" where unknown), one that shows or looks the same."""
     marks = list(looks or ())
     found = []
@@ -59,14 +59,14 @@ def repeats(photos: Sequence[Upload], looks: Sequence[str] | None = None) -> lis
 
 
 def distinct(photos: Sequence[Upload], looks: Sequence[str] | None = None) -> int:
-    """0.14.0: how many of the photos are not copies of an earlier one (repeats)."""
+    """0.15.0: how many of the photos are not copies of an earlier one (repeats)."""
     return len(photos) - len(repeats(photos, looks))
 
 
 def _alike(one: str, other: str) -> bool:
     """Two looks ('mark.hash'): the same things shown, or nearly the same pixels. Two text photos or posters
     make_image noted as showing different words differ, however alike their pixels (titles alone on the same colours).
-    0.14.0: other photos are compared by their pixels too (a page under another name or title is no new photo)."""
+    0.15.0: other photos are compared by their pixels too (a page under another name or title is no new photo)."""
     one_mark, _, one_bits = one.rpartition(".")
     other_mark, _, other_bits = other.rpartition(".")
     if one_mark and one_mark == other_mark:
@@ -146,7 +146,7 @@ CHECKS: dict[str, tuple[Callable[..., str], ...]] = {
 }
 
 
-_LOOKING = frozenset({_listing_photos, _edit_photos})  # the checks that see the photos' looks (0.14.0)
+_LOOKING = frozenset({_listing_photos, _edit_photos})  # the checks that see the photos' looks (0.15.0)
 
 
 def defects(action_class: str, subject: Any, looks: Sequence[str] | None = None) -> list[str]:

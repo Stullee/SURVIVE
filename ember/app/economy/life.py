@@ -10,7 +10,7 @@ this order of precedence:
   it starved (see :meth:`Life.starve`). A dead life never changes again; an
   owner grant large enough for a fresh start begins a new life ("revival").
 * killed / paused: the owner's switches (the kill switch UI arrives in phase 4).
-  0.14.0: Ember's code also pauses the agent when a fact from Etsy's numbers
+  0.15.0: Ember's code also pauses the agent when a fact from Etsy's numbers
   (a refund, a listing fee) leaves it without money; while it stays paused
   that isn't death, so the owner decides.
 * unfunded: nothing to spend and nothing spent yet; the agent waits for money.
@@ -56,7 +56,7 @@ SESSION_KEY = "economy.dry_run.session_mark"  # newest ledger id when the dry-ru
 SESSION_NO_KEY = "economy.dry_run.session_no"  # counts dry-run sessions (the agent's records are kept per session)
 PAUSED_KEY = "control.paused"
 KILLED_KEY = "control.killed"
-# 0.14.0: why Ember's code paused the agent: a fact from Etsy's numbers (a refund, a listing fee) left it without money.
+# 0.15.0: why Ember's code paused the agent: a fact from Etsy's numbers (a refund, a listing fee) left it without money.
 # While it stays paused, that is not death: the owner decides (a grant, or resuming it, which clears this).
 MONEY_PAUSE_KEY = "control.paused_for_money"
 
@@ -328,7 +328,7 @@ class Life:
                 return base, None
             return self._revival(base, scope, life)
 
-        # 0.14.0: paused by Ember's code for a fact that left it without money: the owner decides, not the balance
+        # 0.15.0: paused by Ember's code for a fact that left it without money: the owner decides, not the balance
         held = self.mode == "live" and self.flag(PAUSED_KEY) and bool(self.db.get_meta(MONEY_PAUSE_KEY))
         if spent and settled <= 0 and not held:
             reason = f"ran out of money (balance ${micros_to_usd(balance):.2f})"
@@ -484,7 +484,7 @@ class Life:
         with self.db.transaction():
             self.db.set_meta(key, "1" if on else "0")
             if key == PAUSED_KEY and not on:
-                self.db.set_meta(MONEY_PAUSE_KEY, "")  # 0.14.0: resumed, the money decides again
+                self.db.set_meta(MONEY_PAUSE_KEY, "")  # 0.15.0: resumed, the money decides again
             return self.evaluate_and_persist()
 
 

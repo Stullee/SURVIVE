@@ -7,7 +7,7 @@ document of the owner's library, such as the keyword export the owner adds each 
 market probe on (``etsy_market_probe``), Etsy's numbers for the keywords: how many active listings match and the
 quartiles of the first ones' prices. The probe keeps only these aggregates, never another seller's listing.
 
-0.14.0: any library document was a source, even a removed one, and no number was needed (live, a general Etsy guide
+0.15.0: any library document was a source, even a removed one, and no number was needed (live, a general Etsy guide
 "backed" a product line). Now a library document counts when it is linked to the product line or its venture, or is
 a keyword or market export the owner uploaded as a table (.csv, .tsv), and the demand cites a number found in it; a
 page must be independent (not a vendor's or an affiliate's), and the demand must give a number.
@@ -31,7 +31,7 @@ DAYS = 14  # how old a demand note may be when its product line's first listing 
 # doesn't: the next is still its first).
 LISTED = ("pending", "approved", "approved_with_changes", "done")
 _LIBRARY = re.compile(r"^library #(\d+)$", re.IGNORECASE)
-# 0.14.0: a separator joins groups of 3 digits only (1,200 and 12.500,00), so the columns of a comma export
+# 0.15.0: a separator joins groups of 3 digits only (1,200 and 12.500,00), so the columns of a comma export
 # ("1200,450") stay two numbers
 _NUMBER = re.compile(r"(?<!\d)(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d{1,2})?(?!\d)")
 _YEAR = re.compile(r"^(?:19|20)\d\d$")
@@ -59,7 +59,7 @@ def numbers(text: str) -> set[str]:
 
 
 def cells(text: str, file_name: str) -> str:
-    """0.14.0: an export's text with its cells apart (a .tsv by tabs; a .csv by the delimiter it uses), so a
+    """0.15.0: an export's text with its cells apart (a .tsv by tabs; a .csv by the delimiter it uses), so a
     column's number doesn't run into the next one's."""
     if not file_name.lower().endswith(EXPORTS):
         return text
@@ -73,7 +73,7 @@ def cells(text: str, file_name: str) -> str:
 
 
 def cited(said: str, text: str) -> bool:
-    """0.14.0: whether the demand ``said`` cites a number of ``text`` with a demand word near it ("850 searches a
+    """0.15.0: whether the demand ``said`` cites a number of ``text`` with a demand word near it ("850 searches a
     month"): "13 tags" in a general guide doesn't show demand, nor a year ("searches in 2026"; "2000 searches"
     does)."""
     found = numbers(text)
@@ -90,7 +90,7 @@ def source_problem(conn: sqlite3.Connection, scope: AgentScope, source: str, pro
     """Why ``source`` can't back a demand note for the project with the demand ``said`` ("" when it can): it must be
     an independent page from the research results (as the evidence store grades one), or a document of the owner's
     library ('library #12') that is linked to the product line or its venture, or is an export the owner uploaded;
-    0.14.0: the demand cites a number found in the document, or gives one from the page."""
+    0.15.0: the demand cites a number found in the document, or gives one from the page."""
     found = _LIBRARY.match(source)
     if found:
         number = int(found[1])

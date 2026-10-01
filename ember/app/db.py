@@ -36,7 +36,7 @@ _MIGRATION_NAME = re.compile(r"^(\d{4})_([a-z0-9_]+)\.sql$")
 _TRANSACTION_STATEMENT = re.compile(r"^(BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b", re.IGNORECASE)
 _LEADING_COMMENTS = re.compile(r"^(?:\s+|--[^\n]*(?:\n|$)|/\*.*?\*/)*", re.DOTALL)
 MAX_BACKUPS = 10
-# 0.14.0: how long tool calls' inputs and results and the model's replies are kept whole; at least
+# 0.15.0: how long tool calls' inputs and results and the model's replies are kept whole; at least
 # tools.RESEARCH_REPEAT_DAYS (a question asked again within them is answered from its first call).
 TEXT_DAYS = 30
 PRUNED = "[pruned]"  # what such a text becomes then (the only change the history's guards allow)
@@ -349,7 +349,7 @@ class Database:
             return cur.rowcount
 
     def prune_texts(self, now: datetime, days: int = TEXT_DAYS) -> int:
-        """0.14.0: the large texts older than ``days`` become PRUNED: a finished tool call's input ('{}') and result,
+        """0.15.0: the large texts older than ``days`` become PRUNED: a finished tool call's input ('{}') and result,
         and what the model wrote in a call. A session's newest research calls stay whole (the plan's RECENT RESEARCH).
         The rows stay, and the model calls with their costs, tokens and purpose are never touched. Returns how many
         rows were pruned now (at most PRUNE_BATCH of each kind)."""

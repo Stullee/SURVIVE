@@ -1,4 +1,4 @@
--- 0.14.0: only a person's email counts as someone having written to Ember. Anyone can put any address in From:, so
+-- 0.15.0: only a person's email counts as someone having written to Ember. Anyone can put any address in From:, so
 -- a forged or a machine's email made its sender "someone who wrote": an email to them was no first contact for NEVER,
 -- and it became an inquiry that woke the agent. Each email now keeps the verdict of the receiving mail provider
 -- (authenticated: the topmost Authentication-Results header says dmarc, or dkim or spf of the From: domain, pass;
@@ -14,7 +14,7 @@ BEGIN SELECT RAISE(ABORT, 'emails: a stored email cannot change'); END;
 
 -- NEVER (0051, 0054, 0055), again: a first contact is an email to an address no person's email came from
 -- (mailstore.person: received, authenticated = 1, bulk = 0). The view and the triggers that read it are dropped and
--- made again, as 0.14.0's NEVER of the words (the migration before this one) left them but for that.
+-- made again, as 0.15.0's NEVER of the words (the migration before this one) left them but for that.
 DROP TRIGGER approvals_never_on_unlock;
 DROP TRIGGER policy_uses_never;
 DROP VIEW approvals_never;

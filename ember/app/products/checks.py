@@ -7,7 +7,7 @@ made them, in Anthropic's sandbox, so their bytes are the agent's choice. Before
 * a PDF is refused if anything in it can act on its own: JavaScript, launch or submit actions, embedded files, rich
   media, XFA forms, links that open other files, an action when it opens other than going to a page, links that
   aren't web or mail links (compressed object streams are searched too, and since 0.12.0 a stream Ember can't decode
-  is refused, as is an encrypted file). 0.14.0: JavaScript still hid in an object stream whose encoding was named
+  is refused, as is an encrypted file). 0.15.0: JavaScript still hid in an object stream whose encoding was named
   indirectly (/Filter 5 0 R), escaped (/Fil#74er) or twice, behind a PNG predictor, a "stream" line ending in a lone
   CR, a false "obj" or "endstream" inside the data, or a picture encoding after Flate. Now a stream's dictionary is
   everything since the stream before it, its encoding must be named directly and once, predictors are undone, a
@@ -20,7 +20,7 @@ made them, in Anthropic's sandbox, so their bytes are the agent's choice. Before
 * anything else (SVG, archives, programs, fonts, ...) is refused, and so is a file that can't be read whole (0.12.0: a
   malformed Office file escaped the checks and its run went unrecorded).
 
-``unzipped`` (0.14.0) reads an Office file within bounds for anyone who opens one (the workshop's check, the owner's
+``unzipped`` (0.15.0) reads an Office file within bounds for anyone who opens one (the workshop's check, the owner's
 library, workspace_read): a small .docx could make Ember unpack gigabytes.
 
 ``check`` returns what to save, or raises Refused with the reason, in words the agent can act on.
@@ -48,8 +48,8 @@ KEPT = frozenset({*TEXT_EXTENSIONS, *PICTURES, ".pdf", *OFFICE})
 MAX_TEXT_BYTES = 64 * 1024
 MAX_PDF_PAGES = 300
 MAX_UNPACKED_BYTES = 100 * 1024 * 1024  # what the streams of a PDF or the parts of an Office file may unpack to
-READ_BYTES = 50_000_000  # 0.14.0: at most what an Office file Ember reads (library, workspace_read) unpacks to
-MAX_PREDICTED_BYTES = 4 * 1024 * 1024  # 0.14.0: a PDF's streams whose predictor Ember undoes (about 1 s a MB)
+READ_BYTES = 50_000_000  # 0.15.0: at most what an Office file Ember reads (library, workspace_read) unpacks to
+MAX_PREDICTED_BYTES = 4 * 1024 * 1024  # 0.15.0: a PDF's streams whose predictor Ember undoes (about 1 s a MB)
 MAX_PARTS = 3_000
 MAX_RATIO = 200  # an Office part that unpacks to more than this many times its size is a zip bomb
 # PDF names that make a file act on its own (a name's #xx escapes are decoded before the comparison).
@@ -71,7 +71,7 @@ ACTIVE_PDF = frozenset(
 )
 _PDF_NAME = re.compile(rb"/([^\s/<>\[\]()%{}]{1,127})")
 _REGULAR = rb"[^\x00\t\n\x0c\r /<>\[\]()%{}]"  # a character of a PDF word (not white space or a delimiter)
-# A stream's data starts after the line its keyword is on (0.12.0: not the "stream" in "endstream"; 0.14.0: that line
+# A stream's data starts after the line its keyword is on (0.12.0: not the "stream" in "endstream"; 0.15.0: that line
 # may end in CR, LF or both, as pdfium reads it: a lone CR hid a stream). The keyword follows its dictionary's ">>", as
 # pdfium reads it, and only the keyword is matched: a false "stream" before it on its line (/stream) hid it.
 _PDF_STREAM = re.compile(rb">>(?:[\x00\t\n\x0c\r ]|%[^\r\n]*+)*+(stream)(?!" + _REGULAR + rb")")
@@ -88,7 +88,7 @@ _DECODED = {
 }
 # ... and these picture encodings stay as they are, on pictures only (as the last encoding).
 _PICTURE_FILTERS = frozenset({"DCTDecode", "DCT", "JPXDecode", "JBIG2Decode", "CCITTFaxDecode", "CCF"})
-# 0.14.0: a stream's /Filter and /DecodeParms, read as pdfium reads them (white space and comments between).
+# 0.15.0: a stream's /Filter and /DecodeParms, read as pdfium reads them (white space and comments between).
 _WS = rb"(?:[\x00\t\n\x0c\r ]|%[^\r\n]*)*"
 _KEY_END = rb"(?!" + _REGULAR + rb")"
 _FILTER = re.compile(rb"/Filter" + _KEY_END + _WS)
@@ -172,7 +172,7 @@ def _picture(data: bytes, expected: str) -> bytes:
         with Image.open(io.BytesIO(data)) as image:
             if image.format != expected:
                 raise Refused(f"the file is a {image.format or 'unknown'} picture, not {expected}")
-            if images.too_large(image.width, image.height):  # 0.14.0: the size, as Ember's tools say it
+            if images.too_large(image.width, image.height):  # 0.15.0: the size, as Ember's tools say it
                 raise Refused(f"the picture is {images.too_large(image.width, image.height)}")
             pixels = image.convert("RGBA" if expected == "PNG" and image.mode in ("RGBA", "LA", "P") else "RGB")
             pixels.load()
@@ -203,7 +203,7 @@ def _pdf(data: bytes) -> bytes:
         end = data.find(b"endstream", line.end()) if line else -1
         if end < 0:
             continue  # no stream at all: pdfium reads none without an end either
-        # 0.14.0: the stream's dictionary is somewhere after the last stream that ended before it. The last "N G obj"
+        # 0.15.0: the stream's dictionary is somewhere after the last stream that ended before it. The last "N G obj"
         # before the keyword could be a false one, in a string of the dictionary itself, which hid its /Filter.
         at = bisect.bisect_right(ends, match.start(1)) - 1
         head = data[ends[at] if at >= 0 else 0 : match.start(1)]
@@ -227,7 +227,7 @@ def _pdf(data: bytes) -> bytes:
         raise Refused("the PDF can't be opened") from None
     if not 1 <= pages <= MAX_PDF_PAGES:
         raise Refused(f"the PDF has {pages} pages; at most {MAX_PDF_PAGES}")
-    if active:  # 0.14.0: what a viewer finds, whatever the search above missed
+    if active:  # 0.15.0: what a viewer finds, whatever the search above missed
         raise Refused(f"the PDF has active content ({', '.join(active)}), which Ember never keeps")
     return data
 
@@ -249,7 +249,7 @@ def _decoded(head: bytes, raw: bytes, room: int, predictable: list[int]) -> byte
     bytes are searched with the file), or a picture in its own encoding. Refuses an encoding Ember can't decode (it
     hid JavaScript from the search) and a stream that doesn't decode.
 
-    0.14.0: ``head`` is everything since the stream before it, its #xx escapes decoded. Every /Filter and
+    0.15.0: ``head`` is everything since the stream before it, its #xx escapes decoded. Every /Filter and
     /DecodeParms in it must say the same, directly (an indirect one hid an object stream). A stream decodes to its end
     (a false "endstream" inside it cut it short), and a PNG or TIFF predictor is undone, except on a picture (it hid
     the names in an object stream): at most ``predictable[0]`` bytes more, which is lowered by what is undone."""
@@ -301,7 +301,7 @@ def _decoded(head: bytes, raw: bytes, room: int, predictable: list[int]) -> byte
 
 
 def _one_value(head: bytes, key: re.Pattern[bytes], value: re.Pattern[bytes], what: str) -> bytes | None:
-    """0.14.0: the value of a stream's /Filter or /DecodeParms: None when it has none; refused when it is named
+    """0.15.0: the value of a stream's /Filter or /DecodeParms: None when it has none; refused when it is named
     indirectly, in a form Ember doesn't read, or twice with different values."""
     values = set()
     for match in key.finditer(head):
@@ -324,7 +324,7 @@ def _parameters(value: bytes | None, filters: bytes, count: int) -> list[bytes |
 
 
 def _unpredicted(data: bytes, parms: bytes, predictable: list[int]) -> bytes:
-    """0.14.0: a stream's data with its PNG (10-15) or TIFF (2) predictor undone, as pdfium does; refused past
+    """0.15.0: a stream's data with its PNG (10-15) or TIFF (2) predictor undone, as pdfium does; refused past
     ``predictable[0]`` bytes (Python undoes about a MB a second)."""
 
     def number(key: bytes, default: int) -> int:
@@ -420,7 +420,7 @@ def _web_link(value: bytes) -> bool:
 
 
 def unzipped(data: bytes, what: str, max_bytes: int = MAX_UNPACKED_BYTES) -> dict[str, bytes]:
-    """0.14.0: the parts of a zip (an Office file), by name. Before anything is unpacked: at most MAX_PARTS parts, each
+    """0.15.0: the parts of a zip (an Office file), by name. Before anything is unpacked: at most MAX_PARTS parts, each
     named once, ``max_bytes`` in all by the sizes they declare, none far larger than it is packed (a zip bomb), only
     stored or deflated. Each part is then unpacked a piece at a time, never past the size it declares: a reader that
     unpacks a part whole (python-docx, openpyxl) took whatever a lying size let it (a 229 KB .docx took 421 MB), so
@@ -456,7 +456,7 @@ def unzipped(data: bytes, what: str, max_bytes: int = MAX_UNPACKED_BYTES) -> dic
 
 
 def stored(parts: dict[str, bytes]) -> bytes:
-    """0.14.0: parts ``unzipped`` read, as a zip again, not compressed: what a reader unpacks from it is what was
+    """0.15.0: parts ``unzipped`` read, as a zip again, not compressed: what a reader unpacks from it is what was
     checked."""
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as archive:

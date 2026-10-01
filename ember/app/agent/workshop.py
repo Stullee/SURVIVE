@@ -14,7 +14,7 @@ Money: every call goes through the budget guard. A workshop call has its own cap
 daily cap and the balance, not toward the cycle cap. The Files API is free: inputs are uploaded for one run (and
 expire within the hour), and every file is deleted from Anthropic once the run is over.
 
-0.14.0: a run's worst case is a price, not a ceiling: nothing bounds what its code runs print or look at (live, a run
+0.15.0: a run's worst case is a price, not a ceiling: nothing bounds what its code runs print or look at (live, a run
 cost $1.84 against $0.35). So a call is refused when its price is above what is left of the cap per run, and it
 holds at least that cap, or what recent runs cost if that is more, of the daily cap and the balance
 (metering.workshop_reservation). A call can still cost more than all of that; the guard books it, refuses further
@@ -73,7 +73,7 @@ MIME_TYPES = {
 }
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 _WORD = re.compile(r"[a-z0-9]+")
-# 0.14.0: the file names a helper's answer mentions (it said it made a poster that never came back).
+# 0.15.0: the file names a helper's answer mentions (it said it made a poster that never came back).
 _NAMED = re.compile(r"[\w./-]+\.(?:png|jpe?g|pdf|docx|xlsx|pptx|csv|txt|md|json|html)\b", re.IGNORECASE)
 
 
@@ -132,7 +132,7 @@ class Workshop:
             levels = self.jail.parts(folder, want_file=False)
         except SandboxError as exc:
             raise WorkshopError(f"folder: {exc}") from None
-        if len(levels) >= MAX_DEPTH:  # 0.14.0: its files go inside it, so this is refused before the run is paid for
+        if len(levels) >= MAX_DEPTH:  # 0.15.0: its files go inside it, so this is refused before the run is paid for
             raise WorkshopError(f"folder: at most {MAX_DEPTH - 1} folder levels, so that its files fit inside it")
         inputs = self._inputs(files, script)
         run = Run(task=task, script_used=script, inputs=[path for path, _, _ in inputs])
@@ -195,7 +195,7 @@ class Workshop:
     def _prompt(task: str, inputs: list[tuple[str, str, bytes]], script: str | None) -> str:
         given = [name for path, name, _ in inputs if path != script]
         lines = [task.strip(), "", f"Files handed over: {', '.join(given)}." if given else "No files handed over."]
-        # 0.14.0: a path in the task is a file name in $OUTPUT_DIR (run #7 saved its poster elsewhere: lost)
+        # 0.15.0: a path in the task is a file name in $OUTPUT_DIR (run #7 saved its poster elsewhere: lost)
         lines.append(
             "A path in the task names a file: save it by its file name at the top of $OUTPUT_DIR "
             "(e.g. $OUTPUT_DIR/x.png), or it is lost."
@@ -214,7 +214,7 @@ class Workshop:
         done: list[Any] = []
         for attempt in range(1 + MAX_CONTINUATIONS):
             try:
-                # 0.14.0: the cap is checked against the request as priced; what the call holds of the day can be more
+                # 0.15.0: the cap is checked against the request as priced; what the call holds of the day can be more
                 quote = self.meter.quote(request, WORKSHOP, scaled=False)
                 held = self.meter.reservation(request, WORKSHOP)
             except Unpriceable as exc:
@@ -348,7 +348,7 @@ class Workshop:
 
 
 def made(run: Run) -> list[tuple[str, int]]:
-    """0.14.0: the files the run kept besides its script (live: run #7 was "ok" with only its script back, $0.89)."""
+    """0.15.0: the files the run kept besides its script (live: run #7 was "ok" with only its script back, $0.89)."""
     return [(path, size) for path, size in run.kept if path != run.script_path]
 
 

@@ -35,7 +35,7 @@ def register_secret(value: str) -> None:
 
 
 def redact(text: str) -> str:
-    # 0.14.0: the longest first, so a secret that contains another is masked whole, whatever the set's order.
+    # 0.15.0: the longest first, so a secret that contains another is masked whole, whatever the set's order.
     for secret in sorted(_secrets, key=len, reverse=True):
         if secret in text:
             text = text.replace(secret, "***")

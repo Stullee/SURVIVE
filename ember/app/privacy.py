@@ -3,7 +3,7 @@
 Two tools, for the diagnostics report above all (the owner shares it to get help):
 
 - ``Masker`` masks email addresses, one-time codes and the tokens in links (a login link, an OAuth code) in a text,
-  and leaves out other people's text (emails, web pages) unless the owner asks for everything. 0.14.0: a sender's
+  and leaves out other people's text (emails, web pages) unless the owner asks for everything. 0.15.0: a sender's
   name is masked only when it looks like a person's (``person_like``), only whole, and never inside an address.
 - ``Redactor`` finds the words the owner removed. When the owner removes the text of a message (a password sent by
   mistake), its secret-looking words are registered as salted hashes, never as text (``register``). Any text can then
@@ -31,7 +31,7 @@ _CODE_WORDS = (
 )
 _CODE = r"(?:\d{4,8}|\d{3}[ -]\d{3}|(?-i:(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,10}))"
 # Not a code: part of a word, a date or time, an amount, a number or an id ("#12"). Between the word and the
-# code: no digit and no "[", so a code already masked ends the search as the code did. 0.14.0: and no "|", a table's
+# code: no digit and no "[", so a code already masked ends the search as the code did. 0.15.0: and no "|", a table's
 # cell border (live: a workshop run's cost was masked, its task's "verify" being in the next cell).
 _NOT_AFTER = r"(?<![\w.,:#$€£/-])"
 _NOT_BEFORE = r"(?![\w]|[.,:/-]\d)"
@@ -42,9 +42,9 @@ _URL = re.compile(r"(?i:https?)://[^\s\"'<>()\[\]{}⏎|]+")
 _SEGMENT = re.compile(r"[A-Za-z0-9_-]{20,}")
 _UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 _PHONE = re.compile(r"(?:\+|0)\d{7,}")
-# Links and addresses in one pass (0.14.0), so what one of them masks can't break the other.
+# Links and addresses in one pass (0.15.0), so what one of them masks can't break the other.
 _LINKS = re.compile(f"(?P<url>{_URL.pattern})|(?P<address>{_EMAIL.pattern})")
-# 0.14.0: a person's name, as a sender's display name gives it: two to four words of letters ("Anne-Marie O'Neil").
+# 0.15.0: a person's name, as a sender's display name gives it: two to four words of letters ("Anne-Marie O'Neil").
 _NAME_WORD = re.compile(r"[^\W\d_]+(?:['’.-][^\W\d_]+)*\.?")
 # Words that make a sender's name a company's or a team's, not a person's ("Etsy Support", "The Printify Team").
 _COMPANY = (
@@ -110,7 +110,7 @@ def _words(text: str) -> list[tuple[int, int]]:
 
 
 def person_like(name: str | None, own_address: str = "", sender: str = "") -> bool:
-    """0.14.0: whether a sender's display name looks like a person's: two to four words of letters, none a company's
+    """0.15.0: whether a sender's display name looks like a person's: two to four words of letters, none a company's
     word and none a label of Ember's own mail domain. The report masked every name, so a brand ("Pinterest"), an
     ordinary word ("mailbox", the live report's own provider) and a company ("Etsy Support") were replaced wherever
     they appeared, in the owner's own instructions too. A word that is a label of the sender's own domain is a
@@ -200,7 +200,7 @@ class Masker:
     def __post_init__(self) -> None:
         words = sorted((w for w in self.others if w.strip()), key=len, reverse=True)  # the longest first
         if words and not self.full:
-            # 0.14.0: other people's words in one pass with the links and addresses, whole only (never a part of an
+            # 0.15.0: other people's words in one pass with the links and addresses, whole only (never a part of an
             # address, a host name or a word), so a name can't break an address and a subject takes its address along.
             quoted = "|".join(rf"(?<![\w@.-]){re.escape(w)}(?![\w@-]|\.\w)" for w in words)
             self._pattern = re.compile(f"(?P<quoted>{quoted})|{_LINKS.pattern}")

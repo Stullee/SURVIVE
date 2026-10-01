@@ -1,4 +1,4 @@
--- 0.14.0: unlocks keyed to what a request acts on; NEVER's words read in what a request says; a veto window that ends
+-- 0.15.0: unlocks keyed to what a request acts on; NEVER's words read in what a request says; a veto window that ends
 -- with its milestone; an unclear Undo of a pin or product that can be repeated.
 --
 -- An unlock followed the plan's focus: a request was carried by the grant of the milestone its cycle aimed at, whatever

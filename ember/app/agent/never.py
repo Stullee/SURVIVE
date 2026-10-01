@@ -4,7 +4,7 @@ The policy engine (policy.py) lets the owner unlock small, safe requests. Some k
 whatever is granted, and no option changes that (CLASSES):
 
 * account creation: big platforms block automated sign-ups, and Anthropic's usage policy forbids them;
-* first contact: writing to someone who never wrote to Ember (UWG section 7: advertising without consent); 0.14.0:
+* first contact: writing to someone who never wrote to Ember (UWG section 7: advertising without consent); 0.15.0:
   only a person's email counts as having written (mailstore.person: its sender verified by the mail provider, no
   list's, machine's or Ember's own), since anyone can put any address in From:;
 * money: moving money or spending it (requests of type spend_money); what an unlock may spend is its budget of
@@ -14,7 +14,7 @@ whatever is granted, and no option changes that (CLASSES):
   duties of the owner's own): a new public presence needs the owner's decision and their Impressum, DDG section 5;
 * posts in third-party communities (Reddit): only the owner posts, from their account;
 * tax, VAT, a Gewerbe and contracts: a request whose own act says words that touch them (LEGAL_WORDS,
-  LEGAL_PREFIXES, LEGAL_PARTS, invoices). 0.14.0: the act is what is sent or said (an email's subject and text), never a
+  LEGAL_PREFIXES, LEGAL_PARTS, invoices). 0.15.0: the act is what is sent or said (an email's subject and text), never a
   listing's product copy or disclaimer ("Mietvertrag" in a checklist's copy is no contract), and its text is
   normalised first (``normalise``), so look-alike letters, invisible characters and other spellings don't slip past;
 * what only the owner carries out: a request without an executor of Ember's code, or with one no rule covers yet;
@@ -24,7 +24,7 @@ whatever is granted, and no option changes that (CLASSES):
 database checks the same again on its own (migration 0051: the view ``approvals_never`` and its triggers), whatever
 the code does: an unlock can't hold or approve such a request, can't approve one no standing unlock carries or go
 beyond its budget, and Ember's code can't grant an unlock. Both read a request the same way, down to the letters
-(SQLite's ``lower()`` lowers A to Z only), and test_never checks they agree. 0.14.0: the database can't normalise
+(SQLite's ``lower()`` lowers A to Z only), and test_never checks they agree. 0.15.0: the database can't normalise
 text, so Ember's code keeps the normalised act of each request it stores (``act_words``, in the table act_words),
 and both read that and the act's own words lowered.
 """
@@ -58,7 +58,7 @@ CLASSES = {
 EXECUTORS = ("email", "reddit_link", "etsy_listing", "etsy_edit", "pinterest_pin", "printify_product")
 # The words of tax, VAT, a Gewerbe and contracts: whole words, the start of a word, or anywhere in a word (German
 # compounds such as Umsatzsteuer, Kleingewerbe, Kaufvertrag). Both spellings of the umlaut, as lower() leaves it.
-# 0.14.0: tax status, invoices and legal acts in German and English, VAT's, invoices' and contracts' names in the
+# 0.15.0: tax status, invoices and legal acts in German and English, VAT's, invoices' and contracts' names in the
 # neighbours' languages. Not "btw" (in English: by the way), and "angebot" only at a word's start (no Sonderangebot).
 # An offer or a quote is an act too. "rechnung" anywhere in a word (Schlussrechnung), but not "berechnung" (a sum).
 LEGAL_WORDS = ("tax", "taxes", "taxed", "taxable", "taxation", "vat", "ust", "mwst", "gst", "iva", "tva", "agb")
@@ -71,7 +71,7 @@ _LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 _WORDS = re.compile(rf"[^a-z](?:{'|'.join(LEGAL_WORDS)})[^a-z]")
 _PREFIXES = re.compile(rf"[^a-z](?:{'|'.join(LEGAL_PREFIXES)})")
 _INVOICES = re.compile(r"[^e]rechnung")
-# 0.14.0: Cyrillic and Greek capitals that look like Latin ones, folded before casefolding (Greek Ν is N, though ν
+# 0.15.0: Cyrillic and Greek capitals that look like Latin ones, folded before casefolding (Greek Ν is N, though ν
 # looks like v), and the small letters that look like Latin ones after it.
 _CAPITALS = str.maketrans("АВЕКМНОРСТХЅІЈҮҺԚԜӀΑΒΕΖΗΙΚΜΝΟΡΤΥΧ", "ABEKMHOPCTXSIJYHQWIABEZHIKMNOPTYX")
 _LOOKALIKES = str.maketrans(
@@ -80,11 +80,11 @@ _LOOKALIKES = str.maketrans(
 )
 _GONE = {"Cc", "Cf", "Cn", "Co", "Cs", "Me", "Mn"}  # controls, invisible formats, unassigned, combining marks
 _BLANKS = {"ᅟ", "ᅠ", "ㅤ", "ﾠ", "⠀"}  # letters and signs that show nothing
-_DASHED = re.compile(r"(?<=[a-z])[-\u2010-\u2015]+(?=[a-z])")  # 0.14.0: a dash inside a word (Steu-er)
+_DASHED = re.compile(r"(?<=[a-z])[-\u2010-\u2015]+(?=[a-z])")  # 0.15.0: a dash inside a word (Steu-er)
 
 
 def normalise(text: str) -> str:
-    """0.14.0: a text as NEVER reads it: compatibility forms folded (NFKC: ｔａｘ, 𝐭𝐚𝐱), casefolded, accents and
+    """0.15.0: a text as NEVER reads it: compatibility forms folded (NFKC: ｔａｘ, 𝐭𝐚𝐱), casefolded, accents and
     invisible characters out (a soft hyphen or zero-width space inside a word joins it again), look-alike letters as
     the Latin ones, every space a plain one."""
     text = unicodedata.normalize("NFKD", unicodedata.normalize("NFKC", text).translate(_CAPITALS).casefold())
@@ -106,7 +106,7 @@ def _legal(words: str) -> bool:
 
 
 def act_text(executor: str | None, action: Any) -> str:
-    """0.14.0: what a request says or sends, the words NEVER reads: an email's subject and text ("" for the rest, a
+    """0.15.0: what a request says or sends, the words NEVER reads: an email's subject and text ("" for the rest, a
     listing's copy included). As the database reads them: a part that isn't text counts as empty."""
     if executor != "email":
         return ""
@@ -120,7 +120,7 @@ def act_text(executor: str | None, action: Any) -> str:
 
 
 def act_words(executor: str | None, action: Any) -> str | None:
-    """0.14.0: a request's act, normalised, as Ember's code keeps it for the database (None: it says nothing)."""
+    """0.15.0: a request's act, normalised, as Ember's code keeps it for the database (None: it says nothing)."""
     text = act_text(executor, action)
     if not text.strip():
         return None

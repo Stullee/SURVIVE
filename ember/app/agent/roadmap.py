@@ -17,7 +17,7 @@ for the agent like a decision. A milestone the owner added is theirs (0.12.0, mi
 it, and its new date for one is a proposal the owner accepts or rejects. The last ``OWNER_SLOTS`` open places are kept
 for the owner. Dates are the owner's local days.
 
-0.14.0: only the agent's and the owner's milestones take the roadmap's places (``placed``). Ember's code's have a bound
+0.15.0: only the agent's and the owner's milestones take the roadmap's places (``placed``). Ember's code's have a bound
 of their own: one money goal with its two decision points, one first test or scale point for each backed venture, and
 one bar or scale point at a time for each product line's listing test (agent/gates.py).
 """
@@ -41,7 +41,7 @@ LIMITS = {"title": 100, "measure": 300, "result": 600, "notes": 2_000, "comment"
 NOTE_CHARS = 300
 MAX_OPEN = 20  # the agent's and the owner's open milestones at once: a roadmap every plan can read
 OWNER_SLOTS = 4  # the last open places, kept for the owner: the agent adds milestones while fewer than 16 are open
-PLACED_BY = ("agent", "owner")  # 0.14.0: whose milestones take a place (Ember's code's are bounded by what it keeps)
+PLACED_BY = ("agent", "owner")  # 0.15.0: whose milestones take a place (Ember's code's are bounded by what it keeps)
 MAX_MOVES = 2  # how often a milestone's date can move
 MAX_MILESTONES = 2_000  # in all, closed ones included
 AHEAD_DAYS = 366  # how far ahead a milestone can be dated
@@ -178,7 +178,7 @@ def count(conn: sqlite3.Connection, scope: AgentScope, status: str | None = None
 
 
 def placed(conn: sqlite3.Connection, scope: AgentScope) -> int:
-    """0.14.0: the open milestones that take a place of MAX_OPEN: the agent's and the owner's."""
+    """0.15.0: the open milestones that take a place of MAX_OPEN: the agent's and the owner's."""
     where, params = scope.where()
     marks = ", ".join("?" for _ in PLACED_BY)
     row = conn.execute(
@@ -404,7 +404,7 @@ def keep_money_goal(
     dropped = conn.execute(
         f"SELECT 1 FROM milestones WHERE {where} AND kind = 'money_goal' AND status = 'dropped' LIMIT 1", params
     ).fetchone()
-    if dropped is not None:  # 0.14.0: the goal and its decision points take none of the agent's or owner's places
+    if dropped is not None:  # 0.15.0: the goal and its decision points take none of the agent's or owner's places
         return happened
     level = _money_level(conn, scope)
     due = today + timedelta(days=MONEY_GOAL_DAYS)
@@ -473,7 +473,7 @@ def owner_word(
     )
     if action != "drop":
         return []
-    # 0.14.0: the first tests under it (a venture's, a product line's bars) go on, leading to no goal: the owner's drop
+    # 0.15.0: the first tests under it (a venture's, a product line's bars) go on, leading to no goal: the owner's drop
     # of the money goal brought them back one by one, and ended a backed venture's test without a word on it
     conn.execute(
         "UPDATE milestones SET parent_id = NULL, updated_at = ? WHERE parent_id = ? AND status = 'open'"
@@ -710,7 +710,7 @@ def goal_line(row: Mapping[str, Any], today: date, spent: Mapping[int, int] | No
 
 def code_closed(closed: list[Mapping[str, Any]], since: str | None) -> list[str]:
     """0.12.0: what Ember's code closed from its records since ``since`` (the end of the last cycle): a done to build
-    on, a miss to decide on (0.14.0: a missed bar of a product line's listing test has its action in OBLIGATIONS)."""
+    on, a miss to decide on (0.15.0: a missed bar of a product line's listing test has its action in OBLIGATIONS)."""
     fresh = [
         r
         for r in closed

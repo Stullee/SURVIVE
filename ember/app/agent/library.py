@@ -149,7 +149,7 @@ def _decode(data: bytes) -> str:
 
 
 def pdf_text(data: bytes) -> str:
-    """A PDF's text, page by page (0.14.0: workspace_read reads the agent's PDFs with it too)."""
+    """A PDF's text, page by page (0.15.0: workspace_read reads the agent's PDFs with it too)."""
     try:
         pdf = pdfium.PdfDocument(data)
     except pdfium.PdfiumError as exc:
@@ -175,7 +175,7 @@ def pdf_text(data: bytes) -> str:
 
 
 def word_text(data: bytes) -> str:
-    """A Word file's text: its paragraphs, then its tables' rows. 0.14.0: its parts are unpacked within bounds first
+    """A Word file's text: its paragraphs, then its tables' rows. 0.15.0: its parts are unpacked within bounds first
     (a 229 KB upload unpacked to 421 MB), and whatever breaks the reader (malformed XML answered 500) is a
     LibraryError. workspace_read reads the agent's Word files with it too."""
     try:
@@ -193,7 +193,7 @@ def word_text(data: bytes) -> str:
 
 
 def _rows(table: Any) -> list[str]:
-    """A Word table's rows, then the tables inside its cells (0.14.0: a CV's layout table hid its tables' text)."""
+    """A Word table's rows, then the tables inside its cells (0.15.0: a CV's layout table hid its tables' text)."""
     lines = [" | ".join(cell.text.strip() for cell in row.cells) for row in table.rows]
     for row in table.rows:
         for cell in row.cells:
@@ -520,7 +520,7 @@ def save_study(
     llm_call_id: int | None = None,
 ) -> int:
     """A study call's learnings (new ones only, up to MAX_LEARNINGS for the document) and progress; the summary is
-    the first call's. Returns how many learnings were added. 0.14.0: once its learnings are full the study ends (the
+    the first call's. Returns how many learnings were added. 0.15.0: once its learnings are full the study ends (the
     calls after that kept nothing and were paid for), and its note says which parts weren't studied."""
     known = {_key(r["text"]) for r in learnings_of(conn, document["id"])}
     room = MAX_LEARNINGS - len(known)
@@ -558,7 +558,7 @@ def save_study(
 
 
 def full_note(studied: int, parts: int) -> str:
-    """0.14.0: why a study ended before its last part."""
+    """0.15.0: why a study ended before its last part."""
     return (
         f"Its {MAX_LEARNINGS} learnings are full, the most a document keeps: parts {studied + 1}-{parts} weren't "
         "studied (library_read reads them)."
@@ -566,7 +566,7 @@ def full_note(studied: int, parts: int) -> str:
 
 
 def end_full(conn: sqlite3.Connection, document: Mapping[str, Any], now: str) -> bool:
-    """0.14.0: end the study of a document whose learnings are full already (from before 0.14.0, or after the owner's
+    """0.15.0: end the study of a document whose learnings are full already (from before 0.15.0, or after the owner's
     new try), before a call is paid for. Returns whether it did."""
     if len(learnings_of(conn, document["id"])) < MAX_LEARNINGS:
         return False

@@ -225,22 +225,22 @@ class CycleRunner:
         self.printify = printify  # 0.13.0 (Phase E4): the owner's Printify account
         self.pod = pod
         self.printify_on = False  # the Printify tools and the PRINTIFY section: with the account, its shop and ours
-        self.printify_waits = ""  # 0.14.0: why Printify's tools are off although it is set up (its shop isn't known)
+        self.printify_waits = ""  # 0.15.0: why Printify's tools are off although it is set up (its shop isn't known)
         self.site_on = settings.site_enabled  # 0.13.0 (Phase E3): the owner's website: its tool and WEBSITE section
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
-        self.news_kept: frozenset[news.Item] = frozenset()  # 0.14.0: the owner's news marked seen once the cycle ends
+        self.news_kept: frozenset[news.Item] = frozenset()  # 0.15.0: the owner's news marked seen once the cycle ends
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
         self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
         self.reactive = False  # 0.13.0: a cycle an event woke (run sets it)
         self.max_steps = settings.max_tool_steps
-        # 0.14.0: why the owner's unlocks don't act in this cycle (policy.off; the service knows safe mode)
+        # 0.15.0: why the owner's unlocks don't act in this cycle (policy.off; the service knows safe mode)
         self.unlocks_off = policy.off(settings.owner_user_ids, False) if unlocks_off is None else unlocks_off
 
     # --- the cycle ---
 
     def planner_preview(self, venture: bool) -> str:
         """The planner's context as a wake cycle would build it now (the diagnostics report shows it): nothing is
-        fetched, synced, marked or spent. 0.14.0: and nothing kept: Ember's code's keepers run in a cycle only (they
+        fetched, synced, marked or spent. 0.15.0: and nothing kept: Ember's code's keepers run in a cycle only (they
         ran here, outside the cycle's lock, and parked ventures and closed milestones when the report was made). So
         what they would change now (an obligation, a grade, a settled forecast) shows only after the next cycle."""
         self.etsy_on = self.etsy is not None and self.publisher is not None and self.etsy.shop() is not None
@@ -259,7 +259,7 @@ class CycleRunner:
     def run(self, trigger: str) -> CycleEnd:
         # 0.13.0: an event's wake-up is a lean reactive cycle: no venture work, review, study or critic, few steps
         self.reactive = trigger == "event"
-        self.news_kept = frozenset()  # 0.14.0: set by the first work step (a cycle that plans no work keeps none)
+        self.news_kept = frozenset()  # 0.15.0: set by the first work step (a cycle that plans no work keeps none)
         self.max_steps = (
             min(self.settings.max_tool_steps, agenda.REACTIVE_STEPS) if self.reactive else self.settings.max_tool_steps
         )
@@ -283,14 +283,14 @@ class CycleRunner:
             mail=tools.MailAccess(self.mailbox.address, self.settings.email_daily_limit) if self.mailbox else None,
             usd_per_eur=self.settings.etsy_usd_per_eur,  # 0.13.0: a venture case's rate (0: econ assumes one)
             venture_cash_eur=self.settings.venture_cash_eur,  # 0.13.0: the knock-outs' cash budget
-            unlocks_off=self.unlocks_off,  # 0.14.0
+            unlocks_off=self.unlocks_off,  # 0.15.0
         )
         ctx.research = self._research_fn(ctx)
         ctx.draft = self._draft_fn(ctx)
         end = CycleEnd("failed", "the cycle ended unexpectedly")
         try:
             mode = self._cycle_burn(cycle_id)
-            # 0.14.0: no workshop runs in maintenance (a run costs about what the whole cycle may)
+            # 0.15.0: no workshop runs in maintenance (a run costs about what the whole cycle may)
             ctx.workshop = self._workshop_fn(ctx) if prompts.workshop_on(self.settings) and mode.workshop else None
             if trigger != "last_will":
                 ctx.venture = self._venture_cycle(cycle_id) if not self.reactive else False
@@ -339,13 +339,13 @@ class CycleRunner:
         with self.db.transaction() as conn:
             store.interrupt_open_tool_calls(conn, now, cycle_id)
             # 0.12.0: every cycle's digest, from its records, and its journal if the agent wrote none. The guard may
-            # have closed it already (an overrun): 0.14.0: both say how it really ended (the journal named the refusal
+            # have closed it already (an overrun): 0.15.0: both say how it really ended (the journal named the refusal
             # that followed the stop, or "completed").
             row = conn.execute("SELECT status, note FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
             ended = row is not None and row["status"] != "running"
             status = row["status"] if ended else "failed" if end.status == "skipped" else end.status
             write_records(conn, self.scope, cycle_id, status, row["note"] if ended else end.note, now)
-            if status in ("completed", "idle"):  # 0.14.0: the owner's news its work saw (_act)
+            if status in ("completed", "idle"):  # 0.15.0: the owner's news its work saw (_act)
                 news.mark_seen(conn, cycle_id, self.news_kept)
             if end.sleep_minutes is not None:
                 store.update_cycle(conn, cycle_id, sleep_minutes=end.sleep_minutes)
@@ -358,7 +358,7 @@ class CycleRunner:
         if not closed and final != end.status:
             end.status = final  # the guard already stopped it (an overrun)
         spent, _ = self.economy.books.cycle_spend(cycle_id)
-        # 0.14.0: the sleep it chose (the scheduler may cut it: the dashboard's next wake says)
+        # 0.15.0: the sleep it chose (the scheduler may cut it: the dashboard's next wake says)
         tail = f"; chose {end.sleep_minutes} min of sleep" if end.sleep_minutes else ""
         level = "info" if final in ("completed", "idle") else "warning"
         events.record(
@@ -370,7 +370,7 @@ class CycleRunner:
         )
 
     def _cycle_burn(self, cycle_id: int) -> burn.Burn:
-        """0.14.0: the burn mode the cycle opened in (its row), the one the money guard uses too."""
+        """0.15.0: the burn mode the cycle opened in (its row), the one the money guard uses too."""
         with self.db.connection() as conn:
             row = conn.execute("SELECT burn_mode FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
         if row is None or row["burn_mode"] is None:
@@ -419,7 +419,7 @@ class CycleRunner:
             events.record(self.db, "info", "agent", f"Request #{r['id']} expired: no decision in {days} days")
 
     def _fetch_mail(self, cycle_id: int) -> None:
-        """New mail before the plan (errors are recorded and shown, and never stop the cycle). 0.14.0: not while a
+        """New mail before the plan (errors are recorded and shown, and never stop the cycle). 0.15.0: not while a
         failing mailbox's wait (mailstore.due) runs."""
         if self.mailbox is None or self.stop.is_set():
             return
@@ -523,7 +523,7 @@ class CycleRunner:
             self.settings.printify_buyer_pays_shipping,
             self.settings.printify_bill_vat,
         )
-        # 0.14.0: with the shop, for a cost probe (an unpublished product that tells what making costs)
+        # 0.15.0: with the shop, for a cost probe (an unpublished product that tells what making costs)
         catalog = printify_publisher.Catalog(
             self.db, self.clock, self.scope.mode, lambda: account, lambda: shop.shop_id
         )
@@ -560,7 +560,7 @@ class CycleRunner:
         scope = self.economy.life.scope()
         self.net_runway_days = status.runway.net_days  # 0.13.0
         mode = burn.peek(self.db, status)
-        room, why = self.meter.cycle_room(cycle_id, mode)  # 0.14.0: the cap in force, not the options'
+        room, why = self.meter.cycle_room(cycle_id, mode)  # 0.15.0: the cap in force, not the options'
         if keep:
             self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
             self._keep_stages()
@@ -602,7 +602,7 @@ class CycleRunner:
                     f"Your owner's account: {account} (at most {self.settings.pinterest_pins_per_day} pins a day).\n"
                     + pinterest_publisher.text(conn, self.scope)
                 )
-            elif self.pinterest is not None:  # 0.14.0: switched on, but not set up
+            elif self.pinterest is not None:  # 0.15.0: switched on, but not set up
                 pins = _waiting("Pinterest", self.pinterest.status(), self._etsy_state())
             pod = ""
             if self.printify_on and self.printify is not None:  # 0.13.0 (Phase E4)
@@ -612,7 +612,7 @@ class CycleRunner:
                     f" at most {self.settings.printify_products_per_day} products a day).\n"
                     + printify_publisher.text(conn, self.scope)
                 )
-            elif self.printify is not None:  # 0.14.0: switched on, but not set up
+            elif self.printify is not None:  # 0.15.0: switched on, but not set up
                 pod = _waiting("Printify", self.printify.status(), self._etsy_state(), self.printify_waits)
             site_text = website.planner_text(conn, self.scope, website.owner(self.settings)) if self.site_on else ""
             return context.snapshot(
@@ -784,7 +784,7 @@ class CycleRunner:
             self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)
             status = "failed" if act.end_reason.startswith("failed") else "refused"
             return CycleEnd(status, act.end_reason.removeprefix(f"{status}: ") or None)
-        # 0.14.0: every cycle that worked reflects (the journal is the reflection's: one written during the work
+        # 0.15.0: every cycle that worked reflects (the journal is the reflection's: one written during the work
         # skipped it).
         reflected = self._reflect(cycle_id, ctx, brief, act)
         status = "completed"
@@ -850,7 +850,7 @@ class CycleRunner:
     def _keep_stages(self) -> None:
         """0.12.0: the rules of the ventures' stages (a first test for each backed venture, research without a business
         case and a missed first test parked), kept by Ember's code before every plan (stages.keep)."""
-        # 0.14.0: a channel's venture gets its first test once the channel is set up (its tools are on), and one set
+        # 0.15.0: a channel's venture gets its first test once the channel is set up (its tools are on), and one set
         # while the owner hadn't set it up yet (or switched it off since) starts again then
         ready = [name for name, on in (("pinterest", self.pinterest_on), ("printify", self.printify_on)) if on]
         unset = [
@@ -865,7 +865,7 @@ class CycleRunner:
             events.record(self.db, "info", "agent", line[:300])
 
     def _etsy_state(self) -> str:
-        """0.14.0: the Etsy shop's state (ok, disabled, not_configured or not_connected): a channel's pins and
+        """0.15.0: the Etsy shop's state (ok, disabled, not_configured or not_connected): a channel's pins and
         products need it."""
         if self.etsy is None:
             return "disabled"
@@ -930,7 +930,7 @@ class CycleRunner:
         except Unpriceable as exc:
             log.warning("The daily review can't be priced (%s); skipped", exc)
             return
-        # 0.14.0: it leaves what the cycle needs to work after it, as the study does (in maintenance the cycle's cap
+        # 0.15.0: it leaves what the cycle needs to work after it, as the study does (in maintenance the cycle's cap
         # bounds the review too, and a review that took most of it left no plan)
         working = working_cycle_cost(self.settings, self.db, self.economy.life.mode) or 0
         if quote > self.meter.headroom(cycle_id, REVIEW, keep=working):
@@ -1081,7 +1081,7 @@ class CycleRunner:
                 document = library.next_to_study(conn, self.scope)
                 if document is None:
                     return
-                if library.end_full(conn, document, to_iso(self.clock.now())):  # 0.14.0: nothing more to keep
+                if library.end_full(conn, document, to_iso(self.clock.now())):  # 0.15.0: nothing more to keep
                     continue
                 parts = library.next_parts(conn, document)
                 known = library.learnings_of(conn, document["id"])
@@ -1203,7 +1203,7 @@ class CycleRunner:
 
     def _act(self, cycle_id: int, ctx: tools.ToolContext, brief: str, seen: frozenset[news.Item]) -> _Act:
         """The work steps; ``seen`` (the owner's items the plan listed and the brief showed in full) is marked once one
-        is answered (0.14.0: the owner's messages; the rest once the cycle ends normally)."""
+        is answered (0.15.0: the owner's messages; the rest once the cycle ends normally)."""
         act = _Act()
         max_steps = self.max_steps
         self._progress(cycle_id, phase="act", max_steps=max_steps, step=0)
@@ -1248,7 +1248,7 @@ class CycleRunner:
                 break
             act.steps += 1
             if act.steps == 1:  # the brief reached the model
-                # 0.14.0: the owner's messages now (an answer needs them seen), the rest of their news once the cycle
+                # 0.15.0: the owner's messages now (an answer needs them seen), the rest of their news once the cycle
                 # ends normally (_write_report): a stopped cycle took their comment on an approval with it.
                 self.news_kept = frozenset(item for item in seen if item[0] != "message")
                 with self.db.transaction() as conn:
@@ -1279,7 +1279,7 @@ class CycleRunner:
             if stop == "tool_use" and uses:
                 act.pending = self._run_tools(ctx, uses, result.call_id, "act")
                 if any(u.get("name") == "write_journal" for u in uses):
-                    # 0.14.0: the agent's work is over (the journal is the last thing it does): its reflection
+                    # 0.15.0: the agent's work is over (the journal is the last thing it does): its reflection
                     # writes it. The step after it only reported.
                     act.end_reason = "done"
                     break
@@ -1492,7 +1492,7 @@ class CycleRunner:
             except CallRefused as exc:  # a state or system refusal ends the cycle at its next call
                 return tools.Outcome(False, f"Error: research refused ({exc.reason}).", "refused")
             except CallFailed as exc:
-                # 0.14.0: a failed call that was paid counts toward the venture's research budget too
+                # 0.15.0: a failed call that was paid counts toward the venture's research budget too
                 if venture_id is not None and exc.result.cost_micros > 0:
                     with self.db.transaction() as conn:
                         ventures.add_research(
@@ -1528,7 +1528,7 @@ class CycleRunner:
                     {"role": "assistant", "content": response.get("content") or []},
                 ]
                 try:
-                    # 0.14.0: the continuation leaves the reflection's money too (it was sent unchecked)
+                    # 0.15.0: the continuation leaves the reflection's money too (it was sent unchecked)
                     if self.meter.affordable(
                         follow, "research", cycle_id, ctx.state.reflect_reserve, ctx.state.reflect_money
                     )[0]:
@@ -1542,7 +1542,7 @@ class CycleRunner:
                         )
                 except (Unpriceable, CallRefused):
                     pass
-                except CallFailed as exc:  # 0.14.0: paid, so it counts toward the budget too
+                except CallFailed as exc:  # 0.15.0: paid, so it counts toward the budget too
                     cost += exc.result.cost_micros
             answer = _text_of(response)
             digest = answer[:RESEARCH_DIGEST_CHARS] or "Nothing useful was found."
@@ -1870,12 +1870,12 @@ def _market_fn(shop: Any) -> Callable[[str], Any]:
 
 
 def _unset(status: tuple[str, str | None], etsy: str) -> bool:
-    """0.14.0: whether a channel switched on waits for its owner's setup: its own, or the Etsy shop's it needs."""
+    """0.15.0: whether a channel switched on waits for its owner's setup: its own, or the Etsy shop's it needs."""
     return status[0] in ("not_configured", "not_connected") or (status[0] == "ok" and etsy != "ok")
 
 
 def _waiting(name: str, status: tuple[str, str | None], etsy: str, why: str = "") -> str:
-    """0.14.0: the one line of a channel switched on whose tools are off ("" when it is switched off, or nothing says
+    """0.15.0: the one line of a channel switched on whose tools are off ("" when it is switched off, or nothing says
     why), so the agent knows it waits for the owner rather than asking for it again: the channel's own setup or the Etsy
     shop it needs. What else stopped a set-up channel (``why``) is given as it is, with no claim on the owner."""
     state, reason = status
@@ -1942,7 +1942,7 @@ def _sources(response: dict[str, Any]) -> list[str]:
 
 def write_records(conn: Any, scope: AgentScope, cycle_id: int, status: str, note: str | None, now: str) -> None:
     """What Ember's code writes of a cycle that ended ``status`` (``note``: why): its journal, when the agent wrote
-    none, then its digest (0.12.0). Both say how it really ended (0.14.0)."""
+    none, then its digest (0.12.0). Both say how it really ended (0.15.0)."""
     if not store.has_journal(conn, cycle_id):
         summary = f"Cycle ended {status}" + (f": {note}" if note else "")
         store.write_journal(conn, scope, cycle_id, "system", summary, _code_journal(conn, cycle_id, status), now)
@@ -1950,7 +1950,7 @@ def write_records(conn: Any, scope: AgentScope, cycle_id: int, status: str, note
 
 
 def recover_records(conn: Any, scope: AgentScope, now: str) -> None:
-    """0.14.0: the journal and digest of the cycles the app died in (stopped from outside, a crash, a power cut), which
+    """0.15.0: the journal and digest of the cycles the app died in (stopped from outside, a crash, a power cut), which
     the budget guard marked interrupted at this start. They got neither, and the next plan saw the cycle before them.
     Only the ones since the scope's last cycle that ended otherwise: older ones are history."""
     session = (scope.session, 1 if scope.simulated else 0)
@@ -1968,7 +1968,7 @@ def recover_records(conn: Any, scope: AgentScope, now: str) -> None:
 def _code_journal(conn: Any, cycle_id: int, status: str = "completed") -> str:
     """0.12.0: the journal of a cycle whose reflection wrote none, built by Ember's code from its records: the goal,
     what its tools did (and what was refused or skipped, so it isn't taken for done) and what it cost. It was only
-    "Goal: …". 0.14.0: of a cycle that ended ``status`` before its work did, where its work stopped and its plan's
+    "Goal: …". 0.15.0: of a cycle that ended ``status`` before its work did, where its work stopped and its plan's
     steps, as its digest says."""
     row = conn.execute("SELECT * FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
     try:
@@ -2119,7 +2119,7 @@ def _picture_bytes(block: dict[str, Any]) -> int:
 
 
 def _burn_line(mode: burn.Burn, clock: Clock) -> str:
-    """STATUS's burn mode (0.12.0), when it holds the agent back or (0.14.0) is projected to within
+    """STATUS's burn mode (0.12.0), when it holds the agent back or (0.15.0) is projected to within
     burn.PROJECTED_DAYS: nothing in explore otherwise."""
     projected = burn.projected_text(mode, clock.now().astimezone(clock.tz))
     if mode.mode == burn.EXPLORE and not projected:
@@ -2128,13 +2128,13 @@ def _burn_line(mode: burn.Burn, clock: Clock) -> str:
 
 
 def _offered(ctx: tools.ToolContext) -> dict[str, bool]:
-    """0.14.0: the tools the burn mode leaves this cycle (the workshop not in maintenance, brainstorm only in
+    """0.15.0: the tools the burn mode leaves this cycle (the workshop not in maintenance, brainstorm only in
     explore), the same for every step and the reflection, so the cache holds."""
     return {"workshop": ctx.workshop is not None, "brainstorm": ctx.brainstorm is not None}
 
 
 def _cap_note(why: str) -> str:
-    """0.14.0: why STATUS's cycle cap is below the owner's option (metering.cycle_room says which)."""
+    """0.15.0: why STATUS's cycle cap is below the owner's option (metering.cycle_room says which)."""
     if why == "maintenance":
         return f" (maintenance: ${burn.MAINTENANCE_CYCLE_USD:.2f} a cycle, every call counted)"
     if why == "events":

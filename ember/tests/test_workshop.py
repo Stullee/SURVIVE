@@ -502,7 +502,7 @@ def test_the_owner_hears_when_the_workshop_cap_is_below_one_run(data_dir: Path) 
     assert any(
         "workshop cap per run ($0.75) is below one workshop run with claude-opus-5-5" in w for w in economy.warnings()
     )
-    economy.settings = opus.model_copy(update={"workshop_run_cap_usd": 2.5})  # 0.14.0: output priced per sampling
+    economy.settings = opus.model_copy(update={"workshop_run_cap_usd": 2.5})  # 0.15.0: output priced per sampling
     assert not any("workshop" in w for w in economy.warnings())
     economy.settings = ROOMY
     assert not any("workshop" in w for w in economy.warnings())  # the worker model's run fits the default cap

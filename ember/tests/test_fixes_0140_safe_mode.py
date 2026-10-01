@@ -1,4 +1,4 @@
-"""0.14.0 (FIX NOW 3, 4, 5 and 7): safe mode keeps the owner's identity and the kill switch; every option's bound is in
+"""0.15.0 (FIX NOW 3, 4, 5 and 7): safe mode keeps the owner's identity and the kill switch; every option's bound is in
 config.yaml, where Home Assistant checks it when the owner saves; the rules between options that it can't check are
 corrected instead of starting safe mode; and the secret scan's allowlist covers the tests' fake passwords."""
 

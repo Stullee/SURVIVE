@@ -5,7 +5,7 @@ extra empty rows to fill in, totals, a chart and a "How to use" sheet. Values ar
 is a formula, allowed only with common functions and references to cells of this workbook: a file for strangers
 never gets links, other workbooks, DDE ("cmd|...") or functions that reach outside Excel.
 
-0.14.0: any Excel file in the workspace can be read too (``workbook_text``: its cells, sheet by sheet, for
+0.15.0: any Excel file in the workspace can be read too (``workbook_text``: its cells, sheet by sheet, for
 workspace_read) and drawn (``picture``: one sheet, for make_image's 'file.xlsx#2'). The workshop was paid for both.
 """
 
@@ -442,7 +442,7 @@ def _chart(ws: Any, sheet: Sheet, top: int, first: int, last: int) -> None:
 
 
 def preview(spec: Spec, max_rows: int = 18, index: int = 0) -> bytes:
-    """A PNG of a sheet's table (the first unless ``index`` names another, 0.14.0), for listing photos and the
+    """A PNG of a sheet's table (the first unless ``index`` names another, 0.15.0), for listing photos and the
     dashboard.
 
     Formulas show their result when the preview can work it out (arithmetic, SUM, AVERAGE, MIN, MAX, COUNT, ROUND
@@ -498,7 +498,7 @@ def preview(spec: Spec, max_rows: int = 18, index: int = 0) -> bytes:
     return buffer.getvalue()
 
 
-# --- any Excel file: read and drawn (0.14.0) ---
+# --- any Excel file: read and drawn (0.15.0) ---
 
 READ_ROWS = 2_000  # a sheet's rows read (MAX_ROWS of data under a title and a header)
 READ_COLUMNS = MAX_COLUMNS
@@ -570,7 +570,7 @@ def picture(data: bytes, which: str = "") -> tuple[int, Image.Image]:
         names = book.sheetnames
         if not which:
             index = 0
-        elif re.fullmatch(r"[0-9]{1,4}", which):  # 0.14.0: ASCII digits only ('²' is a name)
+        elif re.fullmatch(r"[0-9]{1,4}", which):  # 0.15.0: ASCII digits only ('²' is a name)
             index = int(which) - 1
         else:
             index = next((i for i, n in enumerate(names) if n.lower() == which.lower()), -1)
@@ -813,7 +813,7 @@ class _Results:
 
 
 class _Grid(_Results):
-    """0.14.0: the values of any Excel file's sheet, by (row, column): formulas worked out as the preview does,
+    """0.15.0: the values of any Excel file's sheet, by (row, column): formulas worked out as the preview does,
     over whole ranges (text in them is left out, as Excel does)."""
 
     def __init__(self, cells: dict[tuple[int, int], Any]) -> None:

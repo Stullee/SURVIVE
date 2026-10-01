@@ -709,7 +709,7 @@ def test_answers_report_only_usage_keys_the_guard_knows() -> None:
         assert ("stop_details" in response) == (response["stop_reason"] == "refusal")
         usage = response["usage"]
         assert set(usage) <= allowed
-        # 0.14.0: a server tool's loop reports its samplings, and they add up to the usage
+        # 0.15.0: a server tool's loop reports its samplings, and they add up to the usage
         assert ("iterations" in usage) == (kind in ("research", "workshop"))
         for key in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"):
             assert sum(i[key] for i in usage.get("iterations", [])) == (

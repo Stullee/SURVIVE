@@ -15,7 +15,7 @@ Germany) is kept in printify_catalog for CATALOG_DAYS, so the agent's proposal i
 The sync (at most every SYNC_MINUTES) reads the Etsy listing of each product being published, notes a product deleted
 at Printify, and keeps the Printify orders of Ember's products: what making and shipping them costs the owner.
 
-0.14.0: what each variant costs to make is kept in the catalog too ('costs'), from every product Ember's code creates
+0.15.0: what each variant costs to make is kept in the catalog too ('costs'), from every product Ember's code creates
 and from a cost probe: an unpublished product Ember's code creates only to read its costs, and deletes at once (never
 published). So the agent sees a product's costs and least prices before it proposes one. The sync also reads a product
 whose publish was unclear, or that reached no Etsy listing: it takes the listing Printify made, or fails the product
@@ -80,14 +80,14 @@ SYNC_MINUTES = 60
 CATALOG_DAYS = {"blueprints": 7, "providers": 7, "variants": 1, "costs": 7}
 LIVE = ("publishing", "active")
 INTERRUPTED = "the app stopped while creating the product"
-DELETE_INTERRUPTED = "the app stopped while deleting it"  # 0.14.0: the owner's Undo of a product
+DELETE_INTERRUPTED = "the app stopped while deleting it"  # 0.15.0: the owner's Undo of a product
 GONE = "Deleted at Printify, not by Ember's code"
-# 0.14.0: a product published at Printify whose Etsy listing isn't there PUBLISH_HOURS later failed with STALE (the sync
+# 0.15.0: a product published at Printify whose Etsy listing isn't there PUBLISH_HOURS later failed with STALE (the sync
 # still takes the listing if it comes); the cost probe's product, never published, made at most once in PROBE_DAYS
 # for a product and provider, whatever came of it.
 PUBLISH_HOURS = 24
 STALE = "Printify didn't publish it to Etsy"
-STALE_DAYS = 30  # 0.14.0: a product that failed as STALE is read again until then (its listing may come late)
+STALE_DAYS = 30  # 0.15.0: a product that failed as STALE is read again until then (its listing may come late)
 PROBE_TITLE = "Ember cost probe (not for sale)"
 PROBE_PICTURE = "ember-cost-probe.png"
 PROBE_VARIANTS = 100
@@ -96,7 +96,7 @@ PROBE_DAYS = 1
 _PROBING = threading.Lock()  # a probe, and the sync's cleaning up after one, one at a time
 SHOWN = 10  # blueprints a catalog search shows
 CANCELED = "('canceled', 'cancelled')"  # an order's status that doesn't count (SQL)
-ORDERS_KEPT = 200  # 0.14.0: the newest orders whose cost Ember's code records (etsy_auto_record_revenue)
+ORDERS_KEPT = 200  # 0.15.0: the newest orders whose cost Ember's code records (etsy_auto_record_revenue)
 
 
 def meta_key(mode: str, name: str) -> str:
@@ -142,7 +142,7 @@ def names(conn: sqlite3.Connection, mode: str, blueprint_id: int, provider_id: i
 def costs_of(
     conn: sqlite3.Connection, mode: str, blueprint_id: int, provider_id: int, now: Any = None
 ) -> dict[int, int]:
-    """0.14.0: what each variant a provider makes of a product costs to make (cents, in the currency Printify states
+    """0.15.0: what each variant a provider makes of a product costs to make (cents, in the currency Printify states
     for the variants), as Printify last said ({}: not known; with ``now``, only if still fresh)."""
     data = cached(conn, mode, "costs", f"{blueprint_id}:{provider_id}", now)
     return {int(v): int(c) for v, c in data["costs"]} if data else {}
@@ -158,7 +158,7 @@ def keep_costs(
     probed: str = "",
     error: str = "",
 ) -> None:
-    """0.14.0: add what Printify said variants cost to make (a product Ember's code created, or a probe: when it was
+    """0.15.0: add what Printify said variants cost to make (a product Ember's code created, or a probe: when it was
     made, and why it failed) to the catalog."""
     key = f"{blueprint_id}:{provider_id}"
     data = cached(conn, mode, "costs", key, from_iso(now)) or {"probed": "", "error": "", "costs": []}
@@ -170,7 +170,7 @@ def keep_costs(
 
 
 def clean_probe(db: Database, mode: str, account: Account, shop: int) -> None:
-    """0.14.0: delete what a cost probe left at Printify (its delete failed), or tell the owner once when it can't be
+    """0.15.0: delete what a cost probe left at Printify (its delete failed), or tell the owner once when it can't be
     known (the app stopped, or Printify's answer was lost, while it was being created). Not while a probe runs."""
     if _PROBING.acquire(blocking=False):
         try:
@@ -219,7 +219,7 @@ class Catalog:
         self.clock = clock
         self.mode = mode
         self.account = account
-        self.shop_id = shop_id  # 0.14.0: the shop a cost probe is made in (None: no probe)
+        self.shop_id = shop_id  # 0.15.0: the shop a cost probe is made in (None: no probe)
 
     def _read(self, kind: str, key: str, fetch: Callable[[Account], list[Any]]) -> list[Any]:
         now = self.clock.now()
@@ -250,14 +250,14 @@ class Catalog:
             "variants",
             f"{blueprint_id}:{provider_id}",
             lambda a: [
-                [v.variant_id, v.title, v.width, v.height, v.shipping_cents, v.currency]  # 0.14.0: with its currency
+                [v.variant_id, v.title, v.width, v.height, v.shipping_cents, v.currency]  # 0.15.0: with its currency
                 for v in a.variants(blueprint_id, provider_id)
             ],
         )
         return [Variant(*v) for v in rows]
 
     def costs(self, blueprint_id: int, provider_id: int, found: list[Variant]) -> tuple[dict[int, int], str]:
-        """0.14.0: what the variants cost to make, as kept, or read now by a cost probe (at most once in PROBE_DAYS):
+        """0.15.0: what the variants cost to make, as kept, or read now by a cost probe (at most once in PROBE_DAYS):
         the costs, and why some aren't known ("" when all are)."""
         now = self.clock.now()
         wanted = [v.variant_id for v in found[:PROBE_VARIANTS]]
@@ -365,7 +365,7 @@ class Catalog:
         found_variants = self.variants(blueprint_id, provider_id)
         if not found_variants:
             return f"Provider #{provider_id} makes nothing of product #{blueprint_id} that ships to Germany."
-        # 0.14.0: shipping in the currency Printify states (converted to printify_currency's), and what making costs
+        # 0.15.0: shipping in the currency Printify states (converted to printify_currency's), and what making costs
         # with the least price that keeps the margin (a cost probe reads it)
         costs, unknown = self.costs(blueprint_id, provider_id, found_variants)
         sale = Terms(currency, usd_per_eur, buyer_ships, bill_vat)
@@ -386,7 +386,7 @@ class Catalog:
                 line += f", making {money(making, currency)}"
                 try:
                     line += f", least price {money(least_price(making, shipping, sale), currency)}"
-                except PrintifyError as exc:  # 0.14.0: a currency whose fees can't be reckoned
+                except PrintifyError as exc:  # 0.15.0: a currency whose fees can't be reckoned
                     refused = str(exc)
             lines.append(line)
         joined = "\n".join(lines)
@@ -447,7 +447,7 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
     """The Printify orders of Ember's products, newest first: what making and shipping each costs the owner, and
     whether that cost is in the ledger."""
     where, params = scope.where("o")
-    # 0.14.0: with the tax Printify bills, and the project (and its venture) the product belongs to, as its sale's
+    # 0.15.0: with the tax Printify bills, and the project (and its venture) the product belongs to, as its sale's
     # revenue (the cost was the owner's overhead)
     rows = conn.execute(
         "SELECT o.order_id, o.currency, o.status, MIN(o.created_at) AS created_at, SUM(o.quantity) AS quantity,"
@@ -488,7 +488,7 @@ COST_NOTE = "Printify: making, shipping and tax of order {order} ({titles})"  # 
 
 
 def record_costs(db: Database, clock: Clock, economy: Economy, scope: AgentScope, settings: Settings) -> list[int]:
-    """0.14.0: Printify's bill for each order of Ember's products in the ledger, under its product's project and
+    """0.15.0: Printify's bill for each order of Ember's products in the ledger, under its product's project and
     venture, when the owner turned on etsy_auto_record_revenue (as its sale's revenue is recorded): orders from the
     day it was turned on, not cancelled, that nobody recorded yet. An order in EUR needs the owner's exchange rate;
     other currencies stay the owner's. An entry that would kill the agent or leave it unfunded waits for the owner,
@@ -549,7 +549,7 @@ def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
     """Ember's products in the shop now, and the orders of its products in all (the metrics pod_products_live and
     pod_orders): Printify's records at the last sync."""
     where, params = scope.where()
-    live = conn.execute(  # 0.14.0: live at Etsy as the Etsy sync last read it (an expired listing isn't)
+    live = conn.execute(  # 0.15.0: live at Etsy as the Etsy sync last read it (an expired listing isn't)
         f"SELECT COUNT(*) FROM printify_products WHERE {where} AND status = 'active' AND COALESCE(state, ?) = ?",
         (*params, etsy.LIVE_STATE, etsy.LIVE_STATE),
     )
@@ -617,7 +617,7 @@ def execution(
 def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
     """The plan's PRINTIFY: Ember's newest products with their prices, costs and numbers, and the orders."""
     made = products(conn, scope, limit)
-    if not made:  # 0.14.0: it said one waited for the owner's decision when none was proposed
+    if not made:  # 0.15.0: it said one waited for the owner's decision when none was proposed
         clause, params = scope.where()
         waiting, approved, closed = conn.execute(
             f"SELECT COUNT(*) FILTER (WHERE status = 'pending'), COUNT(*) FILTER (WHERE status IN {APPROVED}"
@@ -642,7 +642,7 @@ def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
     for r in made:
         where = f"Etsy #{r['listing_id']}" if r["listing_id"] else "no Etsy listing yet"
         numbers = f", {r['views'] or 0} views, {r['favorites'] or 0} favorites" if r["synced_at"] else ""
-        why = f": {r['error'][:80]}" if r["status"] == "failed" and r["error"] else ""  # 0.14.0
+        why = f": {r['error'][:80]}" if r["status"] == "failed" and r["error"] else ""  # 0.15.0
         lines.append(f"- {r['title'][:60]} ({r['status']}, {where}{numbers}){why}")
         for variant, price, cost, shipping, left in json.loads(r["prices"]) if r["prices"] else []:
             currency = str(r["currency"])
@@ -679,7 +679,7 @@ class Publisher:
         self._lock = threading.Lock()  # one run (or sync) at a time in this process
 
     def run(self, undos: bool = False) -> list[tuple[int, str]]:
-        """Carry out the approved products (and the owner's Undos of products) that are due; with ``undos`` (0.14.0:
+        """Carry out the approved products (and the owner's Undos of products) that are due; with ``undos`` (0.15.0:
         while the agent is paused or waits for money), only the Undos."""
         account = self.account()
         if account is None or not self._lock.acquire(blocking=False):
@@ -741,7 +741,7 @@ class Publisher:
             try:
                 product = product_from_action(row["action"])
                 data = self._image(product)
-                if product.currency != currency:  # 0.14.0: its cents would be sent as prices in another currency
+                if product.currency != currency:  # 0.15.0: its cents would be sent as prices in another currency
                     raise PrintifyError(
                         f"its prices are in {product.currency}, but printify_currency is {currency} now: propose it "
                         "again"
@@ -754,7 +754,7 @@ class Publisher:
             connectors.begin(conn, approval_id, stamp)
         # Committed: from here on this product is never made a second time, whatever happens.
         made = None
-        prices: list[list[int]] | None = None  # 0.14.0: kept on an unclear publish: its prices were checked
+        prices: list[list[int]] | None = None  # 0.15.0: kept on an unclear publish: its prices were checked
         try:
             image_id = account.upload(product.image.path.rsplit("/", 1)[-1], data)
             made = account.create(shop, product, image_id)
@@ -791,7 +791,7 @@ class Publisher:
         return self._after(approval_id, status, made.product_id, listing_id, prices, note, simulated=account.simulated)
 
     def _created(self, approval_id: int, product: Product, made: Made) -> None:
-        """0.14.0: the product's number, kept at once (a crash or a failed delete no longer loses it), and what each
+        """0.15.0: the product's number, kept at once (a crash or a failed delete no longer loses it), and what each
         variant costs to make, kept in the catalog for the next proposal."""
         with self.db.transaction() as conn:
             conn.execute(
@@ -803,7 +803,7 @@ class Publisher:
                 keep_costs(conn, mode, product.blueprint_id, product.provider_id, made.costs, now)
 
     def _margins(self, product: Product, costs: dict[int, int]) -> tuple[list[list[int]], list[str]]:
-        """Each variant's price, cost, shipping and what it keeps; and the prices that keep too little (0.14.0: by
+        """Each variant's price, cost, shipping and what it keeps; and the prices that keep too little (0.15.0: by
         econ's fee model, with VAT on Etsy's fees and on Printify's bill)."""
         shipping = dict(product.shipping)
         prices, short = [], []
@@ -815,14 +815,14 @@ class Publisher:
             if cost is None:
                 short.append(f"Printify didn't say what variant {variant} costs")
                 continue
-            try:  # 0.14.0: in the currency Printify states, as the proposal's shipping was
+            try:  # 0.15.0: in the currency Printify states, as the proposal's shipping was
                 cost = convert(cost, product.billed_in, currency, rate)
             except PrintifyError as exc:
                 short.append(f"what variant {variant} costs: {exc}")
                 continue
             try:
                 left = kept(price, cost, ship, sale)
-            except PrintifyError as exc:  # 0.14.0: a currency whose fees can't be reckoned
+            except PrintifyError as exc:  # 0.15.0: a currency whose fees can't be reckoned
                 short.append(f"variant {variant}: {exc}")
                 continue
             prices.append([variant, price, cost, ship, left])
@@ -837,7 +837,7 @@ class Publisher:
     @staticmethod
     def _discard(account: Account, shop: int, product_id: str) -> str:
         """Delete a product that wasn't published (it is invisible in the shop either way): what happened, for the
-        note (0.14.0: it said the product was deleted when the delete failed)."""
+        note (0.15.0: it said the product was deleted when the delete failed)."""
         try:
             account.delete(shop, product_id)
         except Gone:
@@ -968,7 +968,7 @@ class Publisher:
         return "done"
 
     def recover(self) -> int:
-        """Rows left 'running' by a crash: unclear, never retried. 0.14.0: the owner's Undo of a product too (its
+        """Rows left 'running' by a crash: unclear, never retried. 0.15.0: the owner's Undo of a product too (its
         journal entry was left 'running', the Undo "under way" for good): unclear, and the owner may press it again."""
         with self.db.transaction() as conn:
             left = conn.execute(
@@ -999,7 +999,7 @@ class Publisher:
 
     def sync(self, force: bool = False) -> str | None:
         """Read the Etsy listing of each product being published, note the products deleted at Printify, and keep the
-        Printify orders of Ember's products, at most every SYNC_MINUTES. Returns an error, or None. 0.14.0: also a
+        Printify orders of Ember's products, at most every SYNC_MINUTES. Returns an error, or None. 0.15.0: also a
         product whose publish was unclear, or that reached no Etsy listing (see ``_reconcile``)."""
         account = self.account()
         if account is None or not self._lock.acquire(blocking=False):
@@ -1021,11 +1021,11 @@ class Publisher:
                 shop = self.shop_id()
                 if shop is None:
                     raise PrintifyError("it can't be told which Printify shop sells through Etsy")
-                clean_probe(self.db, scope.mode, account, shop)  # 0.14.0: what a failed delete of a probe left
+                clean_probe(self.db, scope.mode, account, shop)  # 0.15.0: what a failed delete of a probe left
                 for row in mine:
                     try:
                         self._reconcile(account, shop, row, now)
-                    except PrintifyError as exc:  # 0.14.0: one product read can't keep the orders from being kept
+                    except PrintifyError as exc:  # 0.15.0: one product read can't keep the orders from being kept
                         log.warning("Reading Printify product %s failed: %s", row["product_id"], exc)
                         error = f"product {row['product_id']}: {exc}"[:300]
                 ours = {str(r["product_id"]): str(r["currency"]) for r in mine}
@@ -1048,7 +1048,7 @@ class Publisher:
                                 max(0, line.cost_cents),
                                 max(0, line.shipping_cents),
                                 max(0, line.tax_cents),
-                                line.currency or ours[line.product_id],  # 0.14.0: Printify's, when it states one
+                                line.currency or ours[line.product_id],  # 0.15.0: Printify's, when it states one
                                 line.status or "?",
                                 line.created_at or to_iso(now),
                                 to_iso(now),
@@ -1063,7 +1063,7 @@ class Publisher:
             self._lock.release()
 
     def _reconcile(self, account: Account, shop: int, row: sqlite3.Row, now: Any) -> None:
-        """A product the sync reads: publishing or live, and (0.14.0) one whose publish was unclear or that reached no
+        """A product the sync reads: publishing or live, and (0.15.0) one whose publish was unclear or that reached no
         Etsy listing (STALE). The listing Printify made makes it active; a product gone at Printify is deleted; one
         with no listing PUBLISH_HOURS after it was sent fails with the reason. Nothing is ever sent again."""
         stale = row["status"] == "failed" and row["error"] == STALE
@@ -1084,7 +1084,7 @@ class Publisher:
             where = "published at Printify" if found.visible else "at Printify, unpublished"
             if row["prices"]:
                 then = "Check it there (Etsy may want a production partner) and publish it, or Undo deletes it"
-            else:  # 0.14.0: the app stopped before its prices were checked: they may keep less than 15%
+            else:  # 0.15.0: the app stopped before its prices were checked: they may keep less than 15%
                 then = "Its prices were never checked against the margin: Undo deletes it"
             why = f"{STALE} within {PUBLISH_HOURS} hours: product {row['product_id']} is {where}. {then}"
             with self.db.transaction() as conn:
@@ -1092,12 +1092,12 @@ class Publisher:
                     "UPDATE printify_products SET status = 'failed', error = ?, result = ? WHERE approval_id = ?",
                     (STALE, why, row["approval_id"]),
                 )
-                # 0.14.0: the product is at Printify: its journal entry offers the Undo that deletes it
+                # 0.15.0: the product is at Printify: its journal entry offers the Undo that deletes it
                 self._journal(conn, row, account.simulated, {"product_id": row["product_id"]}, why)
             events.record(self.db, "warning", "printify", f"Request #{row['approval_id']}: {why}"[:300])
 
     def _adopt(self, row: sqlite3.Row, listing_id: int, simulated: bool) -> None:
-        """A product found in the shop: active with its Etsy listing. 0.14.0: one whose publish was unclear (or that
+        """A product found in the shop: active with its Etsy listing. 0.15.0: one whose publish was unclear (or that
         failed for want of a listing) gets its journal entry now, with the Undo that deletes it."""
         url = etsy.listing_url(listing_id)
         with self.db.transaction() as conn:
@@ -1113,7 +1113,7 @@ class Publisher:
         events.record(self.db, "info", "printify", f"Request #{row['approval_id']}: live in the shop: {url}")
 
     def _journal(self, conn: sqlite3.Connection, row: sqlite3.Row, simulated: bool, after: Any, note: str) -> bool:
-        """0.14.0: a journal entry with the Undo that deletes the product, unless it has one. Whether it was added."""
+        """0.15.0: a journal entry with the Undo that deletes the product, unless it has one. Whether it was added."""
         if conn.execute(
             "SELECT 1 FROM action_journal WHERE approval_id = ? AND status IN ('done', 'simulated')",
             (row["approval_id"],),

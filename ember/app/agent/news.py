@@ -29,7 +29,7 @@ from .store import REQUEST_DAYS, AgentScope
 from .ventures import news_line
 
 # Bytes (JSON-escaped): the planner's YOUR SOFTWARE section holds this much uncut, and only then counts it as read.
-# 0.14.0: longer notes come in parts of this size, one a plan (the agent read 1,937 of 0.13.0's 8,456 characters).
+# 0.15.0: longer notes come in parts of this size, one a plan (the agent read 1,937 of 0.13.0's 8,456 characters).
 CHANGELOG_LIMIT = 2_000
 CONTINUED = "Your release notes, continued:\n"
 MORE = "\n…(the rest of these notes comes in your next plan)"
@@ -45,7 +45,7 @@ def changelog_key(mode: str) -> str:
 
 
 def changelog_at_key(mode: str) -> str:
-    """0.14.0: how far the agent has read the notes of its upgrade: "<seen>><running>@<character>"."""
+    """0.15.0: how far the agent has read the notes of its upgrade: "<seen>><running>@<character>"."""
     return f"agent.{mode}.changelog_at"
 
 
@@ -115,7 +115,7 @@ def changelog_news(changelog: Path, seen: str | None, running: str) -> str:
 
 
 def changelog_part(text: str, at: int = 0) -> tuple[str, int | None]:
-    """0.14.0: the part of the unread notes ``text`` from character ``at`` on that one plan shows, at most
+    """0.15.0: the part of the unread notes ``text`` from character ``at`` on that one plan shows, at most
     CHANGELOG_LIMIT bytes (whole lines while one fits, saying the rest comes next), and where the next part begins
     (None: this part ends the notes). The plan saw their first 2 KB, and the whole version counted as read."""
     if not 0 <= at < len(text.rstrip()):  # past their end (the notes changed): from the start
@@ -147,12 +147,12 @@ def changelog_part(text: str, at: int = 0) -> tuple[str, int | None]:
 class News:
     decided: list[sqlite3.Row] = field(default_factory=list)
     upgrades: list[sqlite3.Row] = field(default_factory=list)
-    changelog: str = ""  # the part of the unread release notes this plan shows (0.14.0: ``changelog_part``)
+    changelog: str = ""  # the part of the unread release notes this plan shows (0.15.0: ``changelog_part``)
     running_version: str = ""
     ventures: list[sqlite3.Row] = field(default_factory=list)  # the owner's word on a venture (0.10.0)
     milestones: list[sqlite3.Row] = field(default_factory=list)  # the owner's word on a milestone (0.11.0)
-    changelog_next: int | None = None  # 0.14.0: where the next part begins (None: this one ends the notes)
-    changelog_from: str = ""  # 0.14.0: the version the notes begin after ("" when none was read before)
+    changelog_next: int | None = None  # 0.15.0: where the next part begins (None: this one ends the notes)
+    changelog_from: str = ""  # 0.15.0: the version the notes begin after ("" when none was read before)
 
     def approval_lines(self) -> list[str]:
         lines = []
@@ -307,7 +307,7 @@ def mark_seen(conn: sqlite3.Connection, cycle_id: int, items: Iterable[Item]) ->
 
 
 def mark_changelog_seen(db: Database, scope: AgentScope, news: News) -> None:
-    """After a plan that showed its part of the notes whole: the next plan shows the next part (0.14.0), and after the
+    """After a plan that showed its part of the notes whole: the next plan shows the next part (0.15.0), and after the
     last part they aren't shown again until the next version."""
     if not news.changelog or parse_version(news.running_version) is None:
         return

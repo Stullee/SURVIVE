@@ -108,8 +108,8 @@ CRITIC = "critic"  # 0.13.0: the independent critic of a proposed venture's case
 EVENT_RESERVE_SHARE = 0.20
 EVENT_RESERVE_HOUR = 20
 # The purposes outside the cycle cap (WORKSHOP, REVIEW, STUDY, CONSOLIDATE, CRITIC) are ledger.OUTSIDE_CYCLE_CAP, one
-# list for the guard and the books (0.14.0: the books counted the critic and the consolidation toward the cycle cap).
-# 0.14.0: they still keep the burn mode and the event reserve: a maintenance cycle's cap bounds every call in it, and
+# list for the guard and the books (0.15.0: the books counted the critic and the consolidation toward the cycle cap).
+# 0.15.0: they still keep the burn mode and the event reserve: a maintenance cycle's cap bounds every call in it, and
 # until EVENT_RESERVE_HOUR a scheduled cycle's calls, all of them, leave the events' share of the day.
 # 0.12.0: the cycle cap counts what a call is expected to cost (the daily cap, the balance and the last-will reserve
 # still count its worst case). A call with server tools (research) is expected to cost EXPECTED_FACTOR times the 95th
@@ -118,10 +118,10 @@ EVENT_RESERVE_HOUR = 20
 EXPECTED_FACTOR = Decimal("1.5")
 EXPECTED_WINDOW = 20
 EXPECTED_SAMPLES = 5
-# 0.14.0: a workshop call holds at least what the workshop calls of the last WORKSHOP_TAIL_DAYS cost (see
+# 0.15.0: a workshop call holds at least what the workshop calls of the last WORKSHOP_TAIL_DAYS cost (see
 # workshop_reservation).
 WORKSHOP_TAIL_DAYS = 14
-# 0.14.0: an overrun stops the cycle only when its call counts toward the cycle cap and it is more than
+# 0.15.0: an overrun stops the cycle only when its call counts toward the cycle cap and it is more than
 # OVERRUN_TOLERANCE of the estimate or more than OVERRUN_TOLERANCE_MICROS. Otherwise the cycle goes on without further
 # calls of that purpose. Live, a workshop run $0.0025 (0.7%) over its estimate stopped a cycle mid-plan, and the
 # reflection with it; stopping saves nothing once the money is spent.
@@ -318,10 +318,10 @@ class Reservation:
     price: ModelPrice
     search_price: Decimal
     geo: Decimal
-    estimate: int  # what is held of the daily cap and the balance (0.14.0: a workshop call's reservation)
+    estimate: int  # what is held of the daily cap and the balance (0.15.0: a workshop call's reservation)
     container_price: Decimal = Decimal(0)  # USD per hour of a code execution container
     started: datetime | None = None
-    quote: int | None = None  # 0.14.0: the priced worst case, if less than ``estimate``: an overrun is judged by it
+    quote: int | None = None  # 0.15.0: the priced worst case, if less than ``estimate``: an overrun is judged by it
 
 
 @dataclass
@@ -343,7 +343,7 @@ class _Settlement:
     us_inference: bool = False
     expected: int = 0  # the estimate, adjusted for a price multiplier learned from this response
     request_id: str | None = None
-    iterations: int | None = None  # 0.14.0: the samplings of a server tool's loop, if the answer says
+    iterations: int | None = None  # 0.15.0: the samplings of a server tool's loop, if the answer says
 
 
 # --- the process lock ---
@@ -435,7 +435,7 @@ def event_reserve(settings: Settings, clock: Clock, trigger: str, working: int =
 def workshop_reservation(
     db: Database, settings: Settings, clock: Clock, simulated: bool, model: str, quote: int, mode: str
 ) -> int:
-    """0.14.0: what a workshop call on ``model`` holds of the daily cap and the balance: its worst case (``quote``),
+    """0.15.0: what a workshop call on ``model`` holds of the daily cap and the balance: its worst case (``quote``),
     the owner's cap per run, or EXPECTED_FACTOR times the 95th percentile of what the workshop calls on ``model`` cost
     in the last WORKSHOP_TAIL_DAYS days (since the owner last reset the estimates), whichever is most.
 
@@ -455,7 +455,7 @@ def workshop_reservation(
 def workshop_tail_ends(
     db: Database, clock: Clock, simulated: bool, model: str, mode: str, above: int
 ) -> datetime | None:
-    """0.14.0: when the last of the recent workshop calls on ``model`` that alone make a hold of more than ``above``
+    """0.15.0: when the last of the recent workshop calls on ``model`` that alone make a hold of more than ``above``
     leaves the tail of workshop_reservation (None if none does)."""
     costly = [ts for ts, cost in _workshop_tail(db, clock, simulated, model, mode) if cost * EXPECTED_FACTOR > above]
     return from_iso(max(costly)) + timedelta(days=WORKSHOP_TAIL_DAYS) if costly else None
@@ -508,7 +508,7 @@ class MeteredModel:
         """Start a wake cycle with this cycle's spending cap. Raises CallRefused."""
         if not _TRIGGER.match(trigger):
             raise ValueError("bad trigger name")
-        self._fade_factors()  # 0.14.0
+        self._fade_factors()  # 0.15.0
         status = self.life.evaluate_and_persist()
         # 0.12.0: a maintenance cycle has at most its burn mode's cap (kept before the transaction: it writes meta)
         mode = burn.current(self.db, status)
@@ -533,7 +533,7 @@ class MeteredModel:
                             cap,
                             self.life.session(),
                             app_version()[:40],
-                            mode.mode,  # 0.14.0: the guard keeps the mode the cycle opened in
+                            mode.mode,  # 0.15.0: the guard keeps the mode the cycle opened in
                         ),
                     ).lastrowid
                 )
@@ -542,7 +542,7 @@ class MeteredModel:
         return cycle_id
 
     def _fade_factors(self) -> None:
-        """0.14.0: raised safety factors unchanged for SAFETY_FADE_DAYS come down (pricing.fade_safety_factors)."""
+        """0.15.0: raised safety factors unchanged for SAFETY_FADE_DAYS come down (pricing.fade_safety_factors)."""
         for purpose, model, factor in fade_safety_factors(self.db, self.life.mode, self.clock.today()):
             events.record(
                 self.db,
@@ -564,7 +564,7 @@ class MeteredModel:
         return cap
 
     def held_for_events(self, trigger: str) -> int:
-        """What a ``trigger``'s cycle leaves of the day for event wake-ups now (``event_reserve``); 0.14.0: every call
+        """What a ``trigger``'s cycle leaves of the day for event wake-ups now (``event_reserve``); 0.15.0: every call
         of a scheduled cycle leaves it, not only its cap."""
         if trigger != "schedule":
             return 0
@@ -572,7 +572,7 @@ class MeteredModel:
         return event_reserve(self.settings, self.clock, trigger, working)
 
     def cycle_room(self, cycle_id: int | None, mode: burn.Burn) -> tuple[int, str]:
-        """0.14.0: (what the cycle may still spend under the cap in force, as its plan is judged; why that is below
+        """0.15.0: (what the cycle may still spend under the cap in force, as its plan is judged; why that is below
         the options' cycle cap: "maintenance" for the burn mode's cap, "events" for the event reserve, or ""). With no
         cycle (the diagnostics' preview), a scheduled cycle's, opened now in burn ``mode``."""
         if cycle_id is None:
@@ -630,7 +630,7 @@ class MeteredModel:
     ) -> int:
         """The worst case the guard would price ``request`` at as a ``purpose`` call now (reads only), with
         ``extra_tokens`` more of prompt (what the conversation may still grow by); ``scaled=False``: without its safety
-        factor, what a workshop run's cap is checked against (0.14.0). Raises Unpriceable."""
+        factor, what a workshop run's cap is checked against (0.15.0). Raises Unpriceable."""
         plan, price = self._plan(request, extra_tokens)
         return self._estimate(
             plan,
@@ -642,7 +642,7 @@ class MeteredModel:
         )
 
     def reservation(self, request: Mapping[str, Any], purpose: str = "work") -> int:
-        """0.14.0: what the guard would hold of the daily cap and the balance for ``request`` as a ``purpose`` call now
+        """0.15.0: what the guard would hold of the daily cap and the balance for ``request`` as a ``purpose`` call now
         (reads only): its worst case, a workshop call's at least its cap per run and what recent runs cost
         (workshop_reservation). Raises Unpriceable."""
         return self._held(purpose, str(request.get("model") or ""), self.quote(request, purpose))
@@ -686,7 +686,7 @@ class MeteredModel:
         """0.12.0: (whether ``request`` fits now as a ``purpose`` call, its expected cost, its worst case), as the guard
         will judge it: its expected cost under its own cap (the cycle cap) less ``keep``, its worst case under the
         daily cap and the balance less ``keep_money`` (``keep`` if not given). A reflection may overdraw the cycle
-        cap by one cache miss, and (0.14.0) by what calls of its cycle cost beyond their worst case. Raises
+        cap by one cache miss, and (0.15.0) by what calls of its cycle cost beyond their worst case. Raises
         Unpriceable."""
         worst = self.quote(request, purpose, extra_tokens)
         expected, allowance = worst, 0
@@ -783,7 +783,7 @@ class MeteredModel:
         """0.12.0: (the room under the call's own cap: the cycle cap, a workshop run's cap, or the daily cap for the
         other calls outside the cycle cap, less ``keep`` where it limits a later call too; the room under the daily
         cap and the balance, keeping the last-will reserve, less ``keep_money``, ``keep`` if not given). The cycle cap
-        counts expected costs, the rest worst cases. 0.14.0: in a maintenance cycle every call's own room is also the
+        counts expected costs, the rest worst cases. 0.15.0: in a maintenance cycle every call's own room is also the
         cycle cap's, and until EVENT_RESERVE_HOUR a scheduled cycle's calls leave the event reserve (``_money_refusal``
         says how)."""
         keep_money = keep if keep_money is None else keep_money
@@ -795,16 +795,16 @@ class MeteredModel:
             ).fetchone()
         if cycle is None:
             return 0, 0
-        every = cycle["burn_mode"] == burn.MAINTENANCE  # 0.14.0: its cap bounds every call in it
+        every = cycle["burn_mode"] == burn.MAINTENANCE  # 0.15.0: its cap bounds every call in it
         spent, reserved = self.books.cycle_spend(cycle_id, outside_cap=False, every_purpose=every)
         pending = self.books.pending(scope)
         daily_cap = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
         today = self.books.cap_spend_on(scope, self.clock.today())
-        held = self.held_for_events(cycle["trigger"])  # 0.14.0
+        held = self.held_for_events(cycle["trigger"])  # 0.15.0
         in_cycle_cap = purpose not in OUTSIDE_CYCLE_CAP or every
         cycle_room = cycle["cap_micros"] - spent - reserved
         if purpose not in OUTSIDE_CYCLE_CAP:
-            # 0.14.0: what the calls outside the cycle cap spent before comes out of the day's rest less the reserve
+            # 0.15.0: what the calls outside the cycle cap spent before comes out of the day's rest less the reserve
             own_cap = min(cycle_room, daily_cap - held - today - pending) if held else cycle_room
         elif purpose == WORKSHOP:
             own_cap = usd_cap_to_micros(self.settings.workshop_run_cap_usd)
@@ -875,9 +875,9 @@ class MeteredModel:
                 assert plan is not None and price is not None
                 priced = self._estimate(plan, price, search_price, geo, container_price, None)
                 quote = self._estimate(plan, price, search_price, geo, container_price, purpose)
-                estimate = self._held(purpose, plan.model, quote)  # 0.14.0: a workshop call holds more
+                estimate = self._held(purpose, plan.model, quote)  # 0.15.0: a workshop call holds more
                 # 0.12.0: the cycle cap counts the expected cost (a reflection may overdraw it by one cache miss, and
-                # 0.14.0: by what calls of its cycle cost beyond their worst case)
+                # 0.15.0: by what calls of its cycle cost beyond their worst case)
                 expected, allowance = quote, 0
                 if purpose not in OUTSIDE_CYCLE_CAP:
                     expected, miss = self._expected(plan, price, purpose, cycle_id, quote)
@@ -945,14 +945,14 @@ class MeteredModel:
         if cycle is None:
             return None
         if cycle["status"] == "stopped" and cycle["note"] == OVERRUN_STOP:
-            # 0.14.0: the reflection is never refused for an overrun (its worst case is a ceiling of its own, and the
+            # 0.15.0: the reflection is never refused for an overrun (its worst case is a ceiling of its own, and the
             # caps and the balance still count it); the rest is, as a cap ends the work, so the cycle still reflects.
             if purpose != "reflect":
                 return (f"wake cycle #{cycle['id']} was stopped: {OVERRUN_STOP}", "cap")
         elif cycle["status"] != "running":
             return (f"wake cycle #{cycle['id']} is {cycle['status']}", "request")
         if purpose != "reflect":
-            # 0.14.0: a purpose that cost more than its worst case makes no more calls in this cycle
+            # 0.15.0: a purpose that cost more than its worst case makes no more calls in this cycle
             overran = conn.execute(
                 "SELECT id FROM llm_calls WHERE cycle_id = ? AND purpose = ? AND overrun = 1 LIMIT 1",
                 (cycle["id"], purpose),
@@ -986,7 +986,7 @@ class MeteredModel:
         return int((Decimal(base) * factor).to_integral_value(rounding=ROUND_CEILING))
 
     def _overrun_excess(self, cycle_id: int) -> int:
-        """0.14.0: what the calls of the cycle that count toward its cap cost beyond their worst case."""
+        """0.15.0: what the calls of the cycle that count toward its cap cost beyond their worst case."""
         outside = ", ".join("?" for _ in OUTSIDE_CYCLE_CAP)
         with self.db.connection() as conn:
             row = conn.execute(
@@ -1008,11 +1008,11 @@ class MeteredModel:
     ) -> tuple[tuple[str, str] | None, bool]:
         """(refusal, is it starvation) for the caps, the balance and the last-will reserve: the cycle cap counts the
         call's ``expected`` cost (with ``allowance`` more for a reflection: 0.12.0), the rest its worst case, what it
-        holds (``estimate``). 0.14.0: a workshop run's cap is checked against the request as priced (``priced``,
+        holds (``estimate``). 0.15.0: a workshop run's cap is checked against the request as priced (``priced``,
         without a raised safety factor: that locked the workshop at its cap after one overrun); the factor and what
         recent runs cost make it hold more of the day instead.
 
-        0.14.0: a maintenance cycle's cap bounds every call in it, those outside the cycle cap by their worst case
+        0.15.0: a maintenance cycle's cap bounds every call in it, those outside the cycle cap by their worst case
         (a workshop run, the daily review, a study). Until EVENT_RESERVE_HOUR a scheduled cycle's calls leave the
         events' share of the day: the calls under the cycle cap by their expected cost, like the cycle cap that left
         it when the cycle opened, and the others by their worst case."""
@@ -1218,7 +1218,7 @@ class MeteredModel:
         samplings = None
         if isinstance(iterations, list) and iterations:
             summed = Usage()
-            # 0.14.0: how many times the API sampled the model in the call (a server tool's loop), kept with the call.
+            # 0.15.0: how many times the API sampled the model in the call (a server tool's loop), kept with the call.
             # The SDK (1.8.0) passes them on as a list of entries; a sampling's has type "message".
             samplings = sum(1 for i in iterations if isinstance(i, Mapping) and i.get("type") in (None, "message"))
             for item in iterations:
@@ -1257,7 +1257,7 @@ class MeteredModel:
         # A multiplier first learned from this answer (US-only inference) isn't an estimation error.
         expected = int((Decimal(quote) * multiplier / res.geo).to_integral_value(rounding=ROUND_CEILING))
         uncertain = bool(notes)
-        # 0.14.0: an uncertain answer (an unknown usage field, say) is charged at its worst case; one without its usage
+        # 0.15.0: an uncertain answer (an unknown usage field, say) is charged at its worst case; one without its usage
         # at what it held, as a workshop run's worst case is no ceiling
         cost = max(known, quote if usage_read else res.estimate) if uncertain else known
         return _Settlement(
@@ -1366,7 +1366,7 @@ class MeteredModel:
                 scaled = f"estimates for {purpose} calls on {res.model} are now scaled by {factor}"
                 excess = s.floor - s.expected
                 small = excess <= s.expected * OVERRUN_TOLERANCE and excess <= OVERRUN_TOLERANCE_MICROS
-                if purpose in OUTSIDE_CYCLE_CAP or small:  # 0.14.0: the cycle goes on
+                if purpose in OUTSIDE_CYCLE_CAP or small:  # 0.15.0: the cycle goes on
                     events.record(
                         self.db,
                         "warning",

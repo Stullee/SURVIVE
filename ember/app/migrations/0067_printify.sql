@@ -1,4 +1,4 @@
--- 0.14.0: Printify's money records and metrics (integrations/printify_publisher.py).
+-- 0.15.0: Printify's money records and metrics (integrations/printify_publisher.py).
 --
 -- What an order costs the owner at Printify includes the tax Printify bills on it (its share for each of Ember's lines).
 ALTER TABLE printify_orders ADD COLUMN tax_cents INTEGER NOT NULL DEFAULT 0 CHECK (tax_cents >= 0);

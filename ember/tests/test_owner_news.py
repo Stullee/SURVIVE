@@ -515,7 +515,7 @@ def test_a_long_changelog_keeps_its_newest_lines_and_fits_the_planner_whole(tmp_
     ]
     path.write_text("\n\n".join(versions), encoding="utf-8")
     notes = news.changelog_news(path, "0.7.0", "0.9.0")
-    assert notes.endswith("- Änderung 59 in 0.8.")  # 0.14.0: whole; a plan shows a part of it
+    assert notes.endswith("- Änderung 59 in 0.8.")  # 0.15.0: whole; a plan shows a part of it
     text_, after = news.changelog_part(notes)
     assert text_.startswith("Your software was upgraded from 0.7.0 to 0.9.0. What changed:\n\n## 0.9.0\n")
     assert text_.endswith(" in 0.8.\n…(the rest of these notes comes in your next plan)") and after is not None

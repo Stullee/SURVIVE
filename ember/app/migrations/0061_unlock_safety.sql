@@ -1,4 +1,4 @@
--- 0.14.0: the unlock loopholes closed before any unlock (agent/policy.py). An unlock taken back, by the owner, the kill
+-- 0.15.0: the unlock loopholes closed before any unlock (agent/policy.py). An unlock taken back, by the owner, the kill
 -- switch or Ember's code, stopped only what it held: what it had approved still ran, maybe a day later (an email or a
 -- listing waiting for the daily limit). Now Ember's code puts such a request back to waiting for the owner, with the
 -- reason, until an executor began it (its journal entry, committed before anything is sent). The owner's decisions
@@ -33,12 +33,12 @@ END;
 -- waits at a time): this one is closed.
 INSERT INTO policy_grants (mode, session, milestone_id, rule, level, per_day, budget, by, why, created_at)
 SELECT g.mode, g.session, g.milestone_id, g.rule, 'manual', g.per_day, g.budget, 'Ember''s code',
-    'the upgrade to 0.14.0', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    'the upgrade to 0.15.0', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 FROM policy_grants g
 WHERE g.level <> 'manual'
     AND g.id = (SELECT MAX(h.id) FROM policy_grants h WHERE h.milestone_id = g.milestone_id AND h.rule = g.rule);
 UPDATE approvals SET status = 'pending', decided_at = NULL, decided_by = NULL, version = version + 1,
-    seen_cycle_id = NULL, decision_comment = 'Approved by your unlock, which was taken back (the upgrade to 0.14.0)'
+    seen_cycle_id = NULL, decision_comment = 'Approved by your unlock, which was taken back (the upgrade to 0.15.0)'
         || ' before Ember''s code carried it out: it waits for you.'
 WHERE status = 'approved' AND decided_by = 'Ember''s code (your unlock)'
     AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = approvals.id)
@@ -50,7 +50,7 @@ WHERE status = 'approved' AND decided_by = 'Ember''s code (your unlock)'
     );
 UPDATE approvals SET status = 'failed', closed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), closed_by = 'Ember''s code',
     version = version + 1, seen_cycle_id = NULL,
-    result_note = 'Approved by your unlock, which was taken back (the upgrade to 0.14.0) before Ember''s code carried it'
+    result_note = 'Approved by your unlock, which was taken back (the upgrade to 0.15.0) before Ember''s code carried it'
         || ' out: it waits for you. The same request waits as #' || (
             SELECT p.id FROM approvals p WHERE p.mode = approvals.mode AND p.session = approvals.session
                 AND p.payload_sha256 = approvals.payload_sha256 AND p.status = 'pending'

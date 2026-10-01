@@ -228,7 +228,7 @@ def test_api_key_never_in_responses(client_factory: Callable, write_options: Cal
 
 
 def test_safe_mode_is_reported(client_factory: Callable, write_options: Callable) -> None:
-    write_options({"planner_model": "claude-unknown-9"})  # 0.14.0: a cycle cap above the daily cap is corrected
+    write_options({"planner_model": "claude-unknown-9"})  # 0.15.0: a cycle cap above the daily cap is corrected
     with client_factory(load_settings()) as client:
         system = client.get("/api/dashboard").json()["system"]
         events = client.get("/api/events").json()

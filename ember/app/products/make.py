@@ -3,9 +3,9 @@
 * ``document``: a Markdown file (with settings and ``:::`` layout lines, see markup.py) becomes a PDF, an editable
   Word file next to it and pictures of its first pages: ``shop/cv.pdf``, ``shop/cv.docx``, ``shop/cv-page1.png``.
 * ``spreadsheet``: a JSON spec becomes an Excel file and a picture of each table: ``shop/budget.xlsx``,
-  ``shop/budget-preview.png`` (0.14.0: and ``shop/budget-sheet2.png`` for the second sheet, and so on).
-* ``image``: a listing photo made of pages of Ember's own PDFs, sheets of its Excel files or pictures (0.14.0: or a
-  region of one, zoomed in), with a title, a subtitle and a badge; (0.14.0) a text photo, or a poster at print size.
+  ``shop/budget-preview.png`` (0.15.0: and ``shop/budget-sheet2.png`` for the second sheet, and so on).
+* ``image``: a listing photo made of pages of Ember's own PDFs, sheets of its Excel files or pictures (0.15.0: or a
+  region of one, zoomed in), with a title, a subtitle and a badge; (0.15.0) a text photo, or a poster at print size.
 
 The agent never writes the bytes of these files: Ember's code makes them from the agent's text and writes them
 with ``Jail.write_bytes``. Every problem the agent can fix comes back as a ProductError naming what to change.
@@ -24,7 +24,7 @@ PAGE_PREVIEWS = 4  # pictures of the first pages of a document
 PREVIEW_DPI = 100  # an A4 page is 827 x 1169 pixels
 MAX_LISTING_PAGES = 3
 _COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
-# 0.14.0: 'shop/cv.pdf#2' (a page), 'shop/b.xlsx#2' or 'shop/b.xlsx#Budget' (a sheet), 'shop/p.png', each with an
+# 0.15.0: 'shop/cv.pdf#2' (a page), 'shop/b.xlsx#2' or 'shop/b.xlsx#Budget' (a sheet), 'shop/p.png', each with an
 # optional region to zoom in on: 'shop/cv.pdf#1@top'.
 _PAGE_REF = re.compile(
     r"^(?P<path>.+?\.(?P<kind>pdf|xlsx|png|jpg))(?:#(?P<part>[^@#]{1,31}))?(?:@(?P<region>[a-z-]+))?$", re.IGNORECASE
@@ -140,7 +140,7 @@ def _sentence(text: str) -> str:
 
 
 def spreadsheet(jail: Jail, source: str, output: str) -> Made:
-    """Make ``output`` (an Excel file) from the JSON spec ``source``, and a picture of each table (0.14.0)."""
+    """Make ``output`` (an Excel file) from the JSON spec ``source``, and a picture of each table (0.15.0)."""
     base = _base(output, ".xlsx", "output")
     if not source.lower().endswith(".json"):
         raise ProductError("source must be the .json file you wrote the spreadsheet spec in")
@@ -148,7 +148,7 @@ def spreadsheet(jail: Jail, source: str, output: str) -> Made:
     try:
         spec = sheets.parse(text, jail.read)
         data = sheets.build(spec)
-        # 0.14.0: a picture of each sheet (the workshop was paid $1.84 to draw three); the first keeps its old name.
+        # 0.15.0: a picture of each sheet (the workshop was paid $1.84 to draw three); the first keeps its old name.
         pictures = [sheets.preview(spec, index=index) for index in range(len(spec.sheets))]
     except sheets.SheetError as exc:
         raise ProductError(f"{source}: {exc}") from None
@@ -184,8 +184,8 @@ def spreadsheet(jail: Jail, source: str, output: str) -> Made:
 
 def _pictures(jail: Jail, pages: str, height: int) -> tuple[list[images.Image.Image], list[str]]:
     """The pages to show, separated by commas: 'shop/cv.pdf#2' (a PDF page; '#1' when left out), 'shop/b.xlsx#2' or
-    'shop/b.xlsx#Budget' (0.14.0: a sheet, by number or name; the first when left out) or a PNG or JPEG, each with an
-    optional region to zoom in on ('@top', 0.14.0); and what each shows, whatever its name (for the photo's note)."""
+    'shop/b.xlsx#Budget' (0.15.0: a sheet, by number or name; the first when left out) or a PNG or JPEG, each with an
+    optional region to zoom in on ('@top', 0.15.0); and what each shows, whatever its name (for the photo's note)."""
     refs = [ref.strip() for ref in pages.split(",") if ref.strip()]
     if not 1 <= len(refs) <= MAX_LISTING_PAGES:
         raise ProductError(f"pages must name 1 to {MAX_LISTING_PAGES} pages, separated by commas")
@@ -239,7 +239,7 @@ def image(
     shape: str = "landscape",
     layout: str = "photo",
 ) -> Made:
-    """Make ``output`` (a PNG listing photo) showing ``pages`` next to a title, a subtitle and a badge; 0.14.0: or,
+    """Make ``output`` (a PNG listing photo) showing ``pages`` next to a title, a subtitle and a badge; 0.15.0: or,
     with layout 'text', the title and the subtitle's lines (separated by '|') as a list, or with layout 'poster', a
     poster at print size."""
     _base(output, ".png", "output")
@@ -268,7 +268,7 @@ def image(
             shows = "photo:" + ",".join(sorted(keys))
     except images.ImageError as exc:
         raise ProductError(str(exc)) from None
-    # 0.14.0: the QA registry counts another title on the same pages as the same photo
+    # 0.15.0: the QA registry counts another title on the same pages as the same photo
     data = images.marked(data, shows)
     made = Made()
     _write(jail, made, output, data)

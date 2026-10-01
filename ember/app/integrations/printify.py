@@ -17,7 +17,7 @@ token for Ember (Printify: My profile, Connections) and sets it in the options w
 * the sync reads the Etsy listing Printify made and the Printify orders of Ember's products: what they cost to make
   and ship, which the owner pays at Printify.
 
-0.14.0: the margin is checked with econ's fee model (the one the whole app uses: the listing fee, 6.5%, payment
+0.15.0: the margin is checked with econ's fee model (the one the whole app uses: the listing fee, 6.5%, payment
 processing and VAT on Etsy's fees), and Printify's bill (making and shipping) carries VAT too, as for a seller without
 a VAT ID (the owner's option printify_bill_vat). Who pays the shipping is the owner's option too
 (printify_buyer_pays_shipping, as their Etsy shipping profile charges it): by default the check assumes the price alone
@@ -52,10 +52,10 @@ IMAGE_MAX_BYTES = 15 * 1024 * 1024
 MAX_VARIANTS = 20  # a product's variants, in one proposal
 SHAPE_TOLERANCE = 0.03  # a product's variants share one print area's shape (height to width) within this
 PRINT_DPI = 300  # a print area's pixels are for this resolution (below qa.SHARP_DPI a print looks blurry)
-# A price must keep this share of itself after Etsy's fees (0.14.0: econ.fees, the app's one fee model), what Printify
+# A price must keep this share of itself after Etsy's fees (0.15.0: econ.fees, the app's one fee model), what Printify
 # charges to make the variant and its shipping to Germany, with VAT on that bill (BILL_VAT).
 MIN_MARGIN = Decimal("0.15")
-BILL_VAT = Decimal(str(econ.FEE_VAT))  # 0.14.0: Printify bills VAT to a seller without a VAT ID, as Etsy does
+BILL_VAT = Decimal(str(econ.FEE_VAT))  # 0.15.0: Printify bills VAT to a seller without a VAT ID, as Etsy does
 SHIP_TO = "DE"
 # Added to every product's description, as to every Etsy listing's (the design is the AI's part; the product is made by
 # the print provider).
@@ -98,7 +98,7 @@ class Variant:
     width: int  # the front print area's pixels (at PRINT_DPI)
     height: int
     shipping_cents: int  # the first item's shipping to SHIP_TO, as Printify charges it
-    currency: str = ""  # 0.14.0: the currency Printify states for it ("": none stated)
+    currency: str = ""  # 0.15.0: the currency Printify states for it ("": none stated)
 
 
 @dataclass(frozen=True)
@@ -119,7 +119,7 @@ class Product:
     area_height: int
     currency: str
     position: str = "front"
-    billed_in: str = ""  # 0.14.0: the currency Printify states for the variants ("": printify_currency's)
+    billed_in: str = ""  # 0.15.0: the currency Printify states for the variants ("": printify_currency's)
 
     def to_action(self) -> dict[str, Any]:
         data = asdict(self)
@@ -214,7 +214,7 @@ def money(cents: int, currency: str) -> str:
 
 
 def convert(cents: int, currency: str, to: str, usd_per_eur: float = 0.0) -> int:
-    """0.14.0: an amount Printify states in ``currency`` ("": none stated), in ``to``: between USD and EUR at the
+    """0.15.0: an amount Printify states in ``currency`` ("": none stated), in ``to``: between USD and EUR at the
     owner's rate (etsy_usd_per_eur), rounded up (it is a cost). It was taken to be in printify_currency's currency.
     Raises PrintifyError when it can't be converted."""
     if not currency or currency == to:
@@ -229,7 +229,7 @@ def convert(cents: int, currency: str, to: str, usd_per_eur: float = 0.0) -> int
 
 
 def fees(price_cents: int, currency: str = "EUR", usd_per_eur: float = 0.0) -> Decimal:
-    """0.14.0: Etsy's fees on a sale at this price (cents), by econ.fees: the listing fee (USD 0.20, at the owner's
+    """0.15.0: Etsy's fees on a sale at this price (cents), by econ.fees: the listing fee (USD 0.20, at the owner's
     rate or econ's assumed one), 6.5%, payment processing (4% and 0.30) and VAT on Etsy's fees. It was about 10.5% and
     0.50, less than the fee model the rest of the app uses. Raises PrintifyError for a currency other than EUR or USD
     (the listing fee can't be converted to it)."""
@@ -241,7 +241,7 @@ def fees(price_cents: int, currency: str = "EUR", usd_per_eur: float = 0.0) -> D
 
 @dataclass(frozen=True)
 class Terms:
-    """0.14.0: how a sale is reckoned, from the owner's options: the currency, the exchange rate, whether the buyer pays
+    """0.15.0: how a sale is reckoned, from the owner's options: the currency, the exchange rate, whether the buyer pays
     the shipping on top of the price, and whether Printify's bill carries VAT."""
 
     currency: str = "EUR"
@@ -256,7 +256,7 @@ class Terms:
 
 
 DEFAULT_TERMS = Terms()
-# 0.14.0: Etsy's fees the check counts, for the approval card (econ's fee table); Offsite Ads aren't counted
+# 0.15.0: Etsy's fees the check counts, for the approval card (econ's fee table); Offsite Ads aren't counted
 FEES_SAID = (
     f"Etsy's fees counted: the {econ.LISTING_FEE_USD:.2f} USD listing fee, {econ.TRANSACTION_SHARE * 100:g}%, "
     f"{econ.PROCESSING_SHARE * 100:g}% + {econ.PROCESSING_EUR:.2f} for payments, and {econ.FEE_VAT * 100:g}% on the "
@@ -311,7 +311,7 @@ def payload(
             f" (shipping {money(shipping.get(v, 0), product.currency)})"
             for v, c in product.prices
         ),
-        # 0.14.0: what the check assumes (no word the NEVER list reads as legal: the fee model is in the docs)
+        # 0.15.0: what the check assumes (no word the NEVER list reads as legal: the fee model is in the docs)
         f"Published only if each price keeps {MIN_MARGIN * 100:.0f}% after Etsy's fees, making and shipping "
         f"({sale.said()}).",
         FEES_SAID,
@@ -353,8 +353,8 @@ class OrderLine:
     shipping_cents: int
     status: str
     created_at: str
-    tax_cents: int = 0  # 0.14.0: the line's share of the tax Printify bills on the order
-    currency: str = ""  # 0.14.0: the order's currency, if Printify states one
+    tax_cents: int = 0  # 0.15.0: the line's share of the tax Printify bills on the order
+    currency: str = ""  # 0.15.0: the order's currency, if Printify states one
 
 
 class Account(Protocol):

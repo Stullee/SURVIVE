@@ -69,7 +69,7 @@ def test_the_catalogue() -> None:
         "pod_products_live",  # 0.13.0 (Phase E4)
         "pod_orders",
         "qa_clean",
-        "views_total",  # 0.14.0: the agent's goals too
+        "views_total",  # 0.15.0: the agent's goals too
         "favorites_total",
     }
     assert set(metrics.CATALOGUE) - set(metrics.NAMES) == {"orders_total"}

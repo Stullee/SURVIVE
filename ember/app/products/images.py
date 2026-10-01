@@ -4,7 +4,7 @@ pypdfium2 draws PDF pages (it loads its native library through ctypes, which a s
 module is imported at startup, before any tool runs; see app.agent.tools). Pillow composes listing photos from
 Ember's own pages and previews only: no image the agent didn't make ever reaches Pillow.
 
-0.14.0: one limit for every picture Ember's code reads (MAX_PIXELS, the workshop's check included): at 12 MP a
+0.15.0: one limit for every picture Ember's code reads (MAX_PIXELS, the workshop's check included): at 12 MP a
 print-size poster (3510 x 4950 = 17.4 MP for A3 at Printify) couldn't be proposed, looked at or read, and the refusal
 hid why. A picture is reduced while it is decoded where it can be (a JPEG at 1/2 to 1/8 of its size), so a large one
 doesn't take its full size in memory twice. make_image zooms in on a region of a page (REGIONS), makes text photos
@@ -30,7 +30,7 @@ from .theme import RGB, contrast, hex_rgb, readable_on, tint
 PREVIEW_DPI = 150
 SHAPES = {"landscape": (3000, 2250), "square": (2400, 2400), "portrait": (2000, 2500), "pin": (2000, 3000)}
 SHAPE_NAMES = tuple(SHAPES)
-MAX_PIXELS = 40_000_000  # 0.14.0: 12 MP until then
+MAX_PIXELS = 40_000_000  # 0.15.0: 12 MP until then
 LAYOUTS = ("photo", "text", "poster")
 POSTER_SIDE = 6_000  # a poster's longer side: 150 dpi or more on every poster Printify prints (A1, 24 x 36 in)
 # A region of a page or picture make_image zooms in on ('shop/cv.pdf#1@top'): left, top, right, bottom, as fractions.
@@ -74,7 +74,7 @@ def pdf_pages(
     dpi: int = PREVIEW_DPI,
     region: tuple[float, float, float, float] = FULL,
 ) -> list[Image.Image]:
-    """Pages of a PDF as images, at ``dpi`` or scaled to ``height`` pixels; with a region (0.14.0), only that part of
+    """Pages of a PDF as images, at ``dpi`` or scaled to ``height`` pixels; with a region (0.15.0), only that part of
     each page, drawn at ``height`` pixels itself."""
     left, top, right, bottom = region
     document = pypdfium2.PdfDocument(pdf)
@@ -97,7 +97,7 @@ def pdf_pages(
 
 
 def pdf_active(pdf: bytes) -> list[str]:
-    """0.14.0: what pdfium, Chrome's PDF engine, finds in a PDF that acts on its own: JavaScript, embedded files, XFA
+    """0.15.0: what pdfium, Chrome's PDF engine, finds in a PDF that acts on its own: JavaScript, embedded files, XFA
     forms. The workshop's check asks it too, after its own search of the file's bytes."""
     document = pypdfium2.PdfDocument(pdf)
     try:
@@ -137,14 +137,14 @@ def thumbnail(data: bytes, longest: int) -> tuple[bytes, int, int]:
 
 
 def cropped(image: Image.Image, where: tuple[float, float, float, float]) -> Image.Image:
-    """0.14.0: the part of a picture a region names (REGIONS)."""
+    """0.15.0: the part of a picture a region names (REGIONS)."""
     left, top, right, bottom = where
     w, h = image.size
     return image.crop((round(left * w), round(top * h), max(round(right * w), 1), max(round(bottom * h), 1)))
 
 
 def marked(data: bytes, shows: str) -> bytes:
-    """0.14.0: a PNG with a note of what it shows (a hash of ``shows``, no file names) after its header: two photos of
+    """0.15.0: a PNG with a note of what it shows (a hash of ``shows``, no file names) after its header: two photos of
     the same page with other words on them are the same photo to a buyer. The note starts with the layout ('photo-')."""
     note = f"{shows.partition(':')[0]}-{hashlib.sha256(shows.encode()).hexdigest()[:16]}"
     chunk = b"tEXt" + MARK.encode() + b"\0" + note.encode()
@@ -152,7 +152,7 @@ def marked(data: bytes, shows: str) -> bytes:
 
 
 def look(data: bytes) -> str:
-    """0.14.0: what a picture looks like, as 'mark.hash': what make_image noted it shows (``marked``; empty if none),
+    """0.15.0: what a picture looks like, as 'mark.hash': what make_image noted it shows (``marked``; empty if none),
     and its difference hash in hex: for each of LOOK_SIZE x LOOK_SIZE cells of it in grey, whether it is brighter than
     the next one to its right, and than the next one below it. A copy (resized, re-encoded, another colour or badge)
     has nearly the same bits; the same layout with other pages or words doesn't."""
@@ -172,7 +172,7 @@ def look(data: bytes) -> str:
 
 
 def looks(read: Callable[[str], bytes], photos: Sequence[tuple[str, str]]) -> list[str]:
-    """0.14.0: the look of each (path, SHA-256) photo, for the QA registry; "" where the file is gone, has changed or
+    """0.15.0: the look of each (path, SHA-256) photo, for the QA registry; "" where the file is gone, has changed or
     can't be read."""
     found = []
     for path, sha256 in photos:
@@ -196,7 +196,7 @@ def looks(read: Callable[[str], bytes], photos: Sequence[tuple[str, str]]) -> li
 
 
 def _reduced(data: bytes, longest: int) -> Image.Image:
-    """0.14.0: a picture no wider or higher than ``longest``, in RGB. A JPEG is decoded at 1/2 to 1/8 of its size
+    """0.15.0: a picture no wider or higher than ``longest``, in RGB. A JPEG is decoded at 1/2 to 1/8 of its size
     where that is enough, and a picture is reduced before it is converted."""
     image = _checked(data)
 
@@ -220,14 +220,14 @@ def _decoded(decode: Callable[[], Image.Image]) -> Image.Image:
 
 
 def too_large(width: int, height: int) -> str:
-    """0.14.0: why a picture this size isn't read, in numbers ("" when it is read)."""
+    """0.15.0: why a picture this size isn't read, in numbers ("" when it is read)."""
     if width * height <= MAX_PIXELS:
         return ""
     return f"{width} x {height} = {width * height / 1_000_000:.1f} MP, more than {MAX_PIXELS // 1_000_000} MP"
 
 
 def _checked(data: bytes) -> Image.Image:
-    """A PNG or JPEG, opened (not decoded yet). 0.14.0: a picture too large says its size (it said it wasn't one of
+    """A PNG or JPEG, opened (not decoded yet). 0.15.0: a picture too large says its size (it said it wasn't one of
     Ember's pictures)."""
     try:
         image = Image.open(io.BytesIO(data), formats=("PNG", "JPEG"))
@@ -407,7 +407,7 @@ def text_photo(
     accent: str | None = None,
     shape: str = "landscape",
 ) -> bytes:
-    """0.14.0: a listing photo of words alone (what is included, the features): a title, its lines as a list, and a
+    """0.15.0: a listing photo of words alone (what is included, the features): a title, its lines as a list, and a
     badge."""
     if shape not in SHAPES:
         raise ImageError(f"shape must be one of {', '.join(SHAPES)}")
@@ -449,7 +449,7 @@ def text_photo(
 
 
 def poster_size(shape: str) -> tuple[int, int]:
-    """0.14.0: a poster's pixels: the shape's proportions, POSTER_SIDE on the longer side."""
+    """0.15.0: a poster's pixels: the shape's proportions, POSTER_SIDE on the longer side."""
     width, height = SHAPES[shape]
     scale = POSTER_SIDE / max(width, height)
     return round(width * scale), round(height * scale)
@@ -462,7 +462,7 @@ def poster(
     accent: str | None = None,
     shape: str = "portrait",
 ) -> bytes:
-    """0.14.0: a typographic poster at print size: a large title, an accent rule and lines of text, in the shape's
+    """0.15.0: a typographic poster at print size: a large title, an accent rule and lines of text, in the shape's
     proportions (drawn by Ember's code: a simple poster needs no workshop run)."""
     if shape not in SHAPES:
         raise ImageError(f"shape must be one of {', '.join(SHAPES)}")

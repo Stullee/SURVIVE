@@ -1,4 +1,4 @@
-"""0.14.0 (FIX NOW 18, 19; X26, X28): venture gates that can't be gamed, and an expected net that counts the months
+"""0.15.0 (FIX NOW 18, 19; X26, X28): venture gates that can't be gamed, and an expected net that counts the months
 before the first sale.
 
 * A demand note's Library source counts only when it isn't removed, is linked to the product line or its venture (or
@@ -200,7 +200,7 @@ def check(agent: Agent, net_days: float | None = 100.0) -> list[knockouts.KnockO
 def test_a_proposal_from_before_the_gates_goes_back_to_researching(tmp_path: Path) -> None:
     db_file = tmp_path / "ember.db"
     every = discover_migrations()
-    mine = [m for m in every if m.name == "ventures"][-1]  # 0.14.0's (0.10.0's has the name too)
+    mine = [m for m in every if m.name == "ventures"][-1]  # 0.15.0's (0.10.0's has the name too)
     migrate(db_file, [m for m in every if m.version < mine.version], backup_dir=tmp_path / "backups")
     old = Database(db_file)
     with old.transaction() as conn:

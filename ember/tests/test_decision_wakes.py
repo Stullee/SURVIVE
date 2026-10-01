@@ -52,7 +52,7 @@ def test_the_owners_decision_wakes_ember_to_act_on_it(data_dir: Path) -> None:
     assert decided.status == 200
     web._wake_for_decision(request, decided)
     assert decided.body["wake"] == "soon" and not agent.wake_requested and pokes == ["x"]
-    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())  # 0.14.0: once the owner has been quiet
+    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())  # 0.15.0: once the owner has been quiet
     assert agent.decide().trigger == "owner"
     assert "The owner's decision woke the agent" in [e["message"] for e in agent.db.recent_events(10)]
     assert agent.run_cycle("owner").status == "idle"
@@ -70,7 +70,7 @@ def test_a_decision_during_a_cycle_wakes_ember_after_it_unless_it_saw_it(data_di
     assert decided.body["wake"] == "after_cycle" and agent.message_waiting and pokes == []
     assert agent.agent_fields()["next_wake_reason"] == "to act on your decision"
     agent.running_cycle = False  # it ended without seeing the decision
-    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())  # 0.14.0: once the owner has been quiet
+    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())  # 0.15.0: once the owner has been quiet
     assert agent.decide().trigger == "owner" and not agent.message_waiting
     assert agent.run_cycle("owner").status == "idle"
     assert rows(agent, "SELECT seen_cycle_id FROM approvals")[0]["seen_cycle_id"] == 2  # seen now

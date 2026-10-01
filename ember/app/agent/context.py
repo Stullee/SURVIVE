@@ -72,7 +72,7 @@ PLANNER_BUDGETS = {
 # 0.12.0: the ROADMAP isn't scaled down with the other sections (its checks and goals come first, and the cut took
 # every goal once the budget shrank).
 ROADMAP_FLOOR = 1_800
-# 0.14.0: what the sections leave of their budgets goes to the sections that were cut, in this order (the day's review
+# 0.15.0: what the sections leave of their budgets goes to the sections that were cut, in this order (the day's review
 # lost its advice and ROADMAP a first test while 8.6 KB went unused). The plan stays within the budgets' sum.
 SPARE_ORDER = (
     "review",
@@ -96,7 +96,7 @@ WAITING_NOTE = "Your owner's decision on these wakes you: don't wait for it, wor
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
 # room for one whole message of plain text at the owner's limit of 2,000 characters.
 OWNER_BUDGET = 2_300
-OPEN_UPGRADES = 5  # 0.14.0: the open upgrade requests WAITING FOR YOUR OWNER lists
+OPEN_UPGRADES = 5  # 0.15.0: the open upgrade requests WAITING FOR YOUR OWNER lists
 QUOTE_CAP = 300  # characters of each text quoted in a decision or upgrade line, when the owner's news is shortened
 SHORTEST_QUOTE = 40  # no quoted text is shortened below this; if that isn't enough, the last lines are cut
 # The owner's (standing instructions and news), the mail and the research sections (and their headings) come on top
@@ -107,9 +107,9 @@ BRIEF_BUDGET = 6_500
 # 0.12.0: the learnings from the owner's library that match the plan (Ember's code picks them), on top of the brief.
 KNOWLEDGE_HEADING = "WHAT YOU LEARNED (from your owner's library)"
 KNOWLEDGE_BUDGET = 1_800
-VENTURE_FOCUS_BUDGET = 2_400  # a venture's FOCUS in the brief (0.14.0: 1,900 cut its numbers and pitch)
+VENTURE_FOCUS_BUDGET = 2_400  # a venture's FOCUS in the brief (0.15.0: 1,900 cut its numbers and pitch)
 MILESTONE_FOCUS_BUDGET = 1_100  # a milestone's FOCUS in the brief (0.11.0; 0.12.0: with its last cycle's digest)
-BRAINSTORM_BRIEF = "grow the tree with brainstorm (first, if you plan one), "  # 0.14.0: only in explore
+BRAINSTORM_BRIEF = "grow the tree with brainstorm (first, if you plan one), "  # 0.15.0: only in explore
 VENTURE_BRIEF = (
     "This is a venture cycle: read guide 'ventures' first, research as often as this cycle can pay for (STATUS), "
     f"{BRAINSTORM_BRIEF}save each number your research finds with evidence and "
@@ -197,17 +197,17 @@ class Snapshot:
     agent_name: str
     today_spend: int
     daily_cap: float
-    cycle_cap: float  # 0.14.0: what this cycle may still spend under the cap in force (metering.cycle_room)
-    cap_note: str = ""  # 0.14.0: why that is below the owner's option ("" if it isn't)
-    brainstorm: bool = True  # 0.14.0: the burn mode allows brainstorms (explore)
+    cycle_cap: float  # 0.15.0: what this cycle may still spend under the cap in force (metering.cycle_room)
+    cap_note: str = ""  # 0.15.0: why that is below the owner's option ("" if it isn't)
+    brainstorm: bool = True  # 0.15.0: the burn mode allows brainstorms (explore)
     projects: list[sqlite3.Row] = field(default_factory=list)
     project_money: dict[int, tuple[int, int]] = field(default_factory=dict)
     owner_messages: list[sqlite3.Row] = field(default_factory=list)
     pending: list[sqlite3.Row] = field(default_factory=list)
-    upgrades: list[sqlite3.Row] = field(default_factory=list)  # 0.14.0: its open upgrade requests, newest first
+    upgrades: list[sqlite3.Row] = field(default_factory=list)  # 0.15.0: its open upgrade requests, newest first
     last_cycle: sqlite3.Row | None = None
     last_journal: sqlite3.Row | None = None
-    handoff: sqlite3.Row | None = None  # 0.14.0: the newest handoff the agent wrote (its cycle_id and handoff)
+    handoff: sqlite3.Row | None = None  # 0.15.0: the newest handoff the agent wrote (its cycle_id and handoff)
     digests: list[str] = field(default_factory=list)  # the last cycles' digests, newest first (0.12.0)
     obligations: str = ""  # 0.12.0: what the agent owes (OBLIGATIONS), bounded: never cut in the plan
     memory: dict[str, str] = field(default_factory=dict)
@@ -222,8 +222,8 @@ class Snapshot:
     proven: list[tuple[str, str]] = field(default_factory=list)  # workshop scripts worth building in: (path, why)
     review: str = ""  # today's daily review, as the planner sees it ("" before it is made)
     etsy: str = ""  # the ETSY SHOP section ("" without a shop)
-    pinterest: str = ""  # the PINTEREST section ("" while off; 0.14.0: one line while not set up), 0.13.0
-    printify: str = ""  # the PRINTIFY section ("" while off; 0.14.0: one line while not set up), 0.13.0
+    pinterest: str = ""  # the PINTEREST section ("" while off; 0.15.0: one line while not set up), 0.13.0
+    printify: str = ""  # the PRINTIFY section ("" while off; 0.15.0: one line while not set up), 0.13.0
     website: str = ""  # the WEBSITE section ("" while the owner's website is off), 0.13.0
     ventures: list[sqlite3.Row] = field(default_factory=list)  # the venture tree (0.10.0)
     venture_money: dict[int, ventures.Money] = field(default_factory=dict)
@@ -319,7 +319,7 @@ def snapshot(
         projects=projects,
         project_money=money,
         owner_messages=store.open_messages(conn, scope, 8),
-        pending=store.pending_requests(conn, scope),  # 0.14.0: every one, not those among the newest 20 requests
+        pending=store.pending_requests(conn, scope),  # 0.15.0: every one, not those among the newest 20 requests
         upgrades=open_upgrades(conn, scope),
         last_cycle=last_cycle,
         last_journal=journal[0] if journal else None,
@@ -471,7 +471,7 @@ def last_cycle_text(s: Snapshot, budget: int = PLANNER_BUDGETS["journal"]) -> st
     the last two cycles (what they did and didn't do: a journal can claim work that never happened). Without a
     digest (a cycle from before 0.12.0), the last cycle's goal.
 
-    0.14.0: after a cycle that left no handoff (stopped, failed, killed or idle), the last handoff the agent wrote,
+    0.15.0: after a cycle that left no handoff (stopped, failed, killed or idle), the last handoff the agent wrote,
     with its cycle. No journal line for a journal Ember's code wrote: its digest says more. Within ``budget`` bytes,
     each digest is cut to its own share: the section's cut took the older one down to its goal."""
     lines = []
@@ -508,7 +508,7 @@ def _author(journal: Mapping[str, Any]) -> str:
 
 
 def _shares(sizes: list[int], room: int) -> list[int]:
-    """0.14.0: ``room`` shared out: the smallest first, each at most its size and an equal part of what is left."""
+    """0.15.0: ``room`` shared out: the smallest first, each at most its size and an equal part of what is left."""
     shares = [0] * len(sizes)
     left = room
     for n, i in enumerate(sorted(range(len(sizes)), key=lambda i: sizes[i])):
@@ -732,7 +732,7 @@ def _unheaded(body: str) -> str:
 
 
 def open_upgrades(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
-    """0.14.0: the agent's upgrade requests the owner hasn't released or declined, newest first (live: it paid to
+    """0.15.0: the agent's upgrade requests the owner hasn't released or declined, newest first (live: it paid to
     test whether upgrade #3 was in, as it couldn't see its status)."""
     where, params = scope.where()
     return conn.execute(
@@ -788,7 +788,7 @@ def _planner_texts(s: Snapshot, dry_run: bool, journal: int = PLANNER_BUDGETS["j
 
 
 def _allot(texts: dict[str, str], budgets: dict[str, int], used: int) -> dict[str, str]:
-    """0.14.0: each text cut to its budget; then what is left of all the budgets (``used``: the bytes of the sections
+    """0.15.0: each text cut to its budget; then what is left of all the budgets (``used``: the bytes of the sections
     cut on their own) widens the cut ones, in SPARE_ORDER. The sections never hold more than the budgets' sum."""
     shown = {key: cut(text, budgets[key]) for key, text in texts.items()}
     spare = sum(budgets.values()) - used - sum(json_bytes(text) for text in shown.values() if text)
@@ -922,7 +922,7 @@ def brief(
 
 
 def _venture_brief(s: Snapshot) -> str:
-    """The brief's VENTURE CYCLE: without brainstorms outside explore (0.14.0: the focus mode's brief still asked for
+    """The brief's VENTURE CYCLE: without brainstorms outside explore (0.15.0: the focus mode's brief still asked for
     one, and the tool refused it)."""
     return VENTURE_BRIEF if s.brainstorm else VENTURE_BRIEF.replace(BRAINSTORM_BRIEF, "")
 

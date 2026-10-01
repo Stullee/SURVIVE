@@ -34,7 +34,7 @@ def test_cache_writes_are_priced_at_the_highest_ttl() -> None:
 
 def test_server_tool_loops_without_caching() -> None:
     plan = plan_request(base(tools=[search(2)]), input_tokens=1_000)
-    # Up to 10 samplings, each writing up to max_tokens (0.14.0: it limits each sampling, not the loop); sampling k
+    # Up to 10 samplings, each writing up to max_tokens (0.15.0: it limits each sampling, not the loop); sampling k
     # re-reads the prompt, every result (16,000 tokens each since 0.12.0) and what the k-1 before it wrote.
     assert SEARCH_RESULT_ALLOWANCE_TOKENS == 16_000
     later = 9 * (1_000 + 2 * 16_000) + 1_000 * (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9)

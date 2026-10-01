@@ -34,7 +34,7 @@ SOURCE_MAX = 20_000
 LANGUAGES = ("de", "en")
 ZIP_TIME = (2026, 1, 1, 0, 0, 0)  # every file's time in the download, so the same site is the same file
 _EMAIL = re.compile(r"^[^@\s<>\"']{1,64}@[^@\s<>\"']{1,190}\.[A-Za-z]{2,63}$")
-# 0.14.0: the Impressum's address is where the owner can be found (a street ending in its number, then the postcode
+# 0.15.0: the Impressum's address is where the owner can be found (a street ending in its number, then the postcode
 # with the town), never a PO box or a Packstation; a phone number, if given, is one; a business ID in the VAT ID's
 # option is a Wirtschafts-Identifikationsnummer (§ 139c AO: DE, 9 digits, a dash and 5 digits).
 _POSTCODE = re.compile(r"^(?:[A-Z]{1,2}-)?\d{4,5} +\S")
@@ -79,7 +79,7 @@ class Owner:
         if not self.legal_name:
             found.append("site_owner_name is missing")
         town = next((i for i, line in enumerate(self.address) if i and _POSTCODE.match(line)), 0)
-        if not any(_STREET.match(line) for line in self.address[:town]):  # 0.14.0: the street and its number first
+        if not any(_STREET.match(line) for line in self.address[:town]):  # 0.15.0: the street and its number first
             found.append("site_address needs the street and the postcode with the town")
         elif any(_PO_BOX.search(line) for line in self.address):
             found.append("site_address must be where you can be found (street, postcode and town), not a PO box")
@@ -90,7 +90,7 @@ class Owner:
         return found
 
     def advice(self) -> list[str]:
-        """0.14.0: what the Impressum should have but can be built without. The site has no contact form, so without
+        """0.15.0: what the Impressum should have but can be built without. The site has no contact form, so without
         a phone the email is its only way to reach the owner."""
         return [] if self.phone else ["site_phone is empty: the Impressum's only contact is the email (add a phone)"]
 

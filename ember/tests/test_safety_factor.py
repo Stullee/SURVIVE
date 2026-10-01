@@ -41,7 +41,7 @@ def test_a_raised_factor_comes_down_after_calls_that_did_not_need_it(data_dir: P
     assert pricing.raise_safety_factor(economy_db, MODEL, 13_200, 12_000, "live", "work") == Decimal("1.21")
     for _ in range(SAFETY_DECAY_AFTER - 1):
         assert pricing.note_accurate_call(economy_db, MODEL, "live", "work") is None
-    # 0.14.0: half of the excess comes off (after 3 calls; 0.05 after 25 before)
+    # 0.15.0: half of the excess comes off (after 3 calls; 0.05 after 25 before)
     assert pricing.note_accurate_call(economy_db, MODEL, "live", "work") == Decimal("1.11")
     pricing.raise_safety_factor(economy_db, MODEL, 12_000, 12_000, "live", "work")  # an overrun starts the count over
     for _ in range(SAFETY_DECAY_AFTER - 1):

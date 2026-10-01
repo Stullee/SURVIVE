@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 TIMEOUT = httpx2.Timeout(connect=10.0, read=60.0, write=120.0, pool=10.0)
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 ACCESS_SECONDS = 3_600
-# 0.14.0: a refresh token lasts as long as Pinterest's answer says (refresh_token_expires_in); when it doesn't say,
+# 0.15.0: a refresh token lasts as long as Pinterest's answer says (refresh_token_expires_in); when it doesn't say,
 # DEFAULT_REFRESH_DAYS (a continuous refresh token's 60 days from its last use: DOCS.md). The sync renews an unused
 # connection RENEW_BEFORE its refresh token ends.
 DEFAULT_REFRESH_DAYS = 60
@@ -212,7 +212,7 @@ class LiveAccount:
             raise NotSent(f"Pinterest didn't renew the connection ({exc}): connect it again") from None
         tokens.access_token = str(data["access_token"])
         tokens.expires_at = to_iso(now + _seconds(data, "expires_in", ACCESS_SECONDS))
-        if data.get("refresh_token"):  # 0.14.0: a new refresh token lasts as Pinterest says; an old one keeps its end
+        if data.get("refresh_token"):  # 0.15.0: a new refresh token lasts as Pinterest says; an old one keeps its end
             tokens.refresh_token = str(data["refresh_token"])
             refresh = _seconds(data, "refresh_token_expires_in", DEFAULT_REFRESH_DAYS * 86_400)
             tokens.refresh_expires_at = to_iso(now + refresh)
@@ -220,7 +220,7 @@ class LiveAccount:
         return tokens
 
     def keep_alive(self) -> None:
-        """0.14.0: renew a connection Ember hasn't used for a while (the sync calls it every SYNC_HOURS, with or
+        """0.15.0: renew a connection Ember hasn't used for a while (the sync calls it every SYNC_HOURS, with or
         without pins): an expired access token as a call would (so a connection made under 0.13.0, with its assumed
         year, learns Pinterest's lifetime), and any access token RENEW_BEFORE its refresh token ends. Once a renewal
         gave no new refresh token, the access token outlives the old one: it isn't renewed early again."""

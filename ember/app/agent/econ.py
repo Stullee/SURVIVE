@@ -11,7 +11,7 @@ and Ember's code computes the rest the same way for every venture:
 * net per sale and the sales a month that break even (the fixed costs and Ember's API spend on it);
 * the net a month at the low, likely and high sales (the agent's P10, P50 and P90), and the expected net: Swanson's
   rule (30% low, 40% likely, 30% high) over a six-month horizon, whose months before the first sale earn nothing and
-  still pay the fixed costs (0.14.0: they cost nothing, so a slow, losing case showed a profit);
+  still pay the fixed costs (0.15.0: they cost nothing, so a slow, losing case showed a profit);
 * the expected net per API dollar and per hour of the owner's time: what ranks ventures (the decision desk).
 
 These are estimates of the agent's estimates: the case shows which numbers they came from.
@@ -31,7 +31,7 @@ DEFAULT_USD_PER_EUR = 1.10  # when the owner set no exchange rate (etsy_usd_per_
 HORIZON_MONTHS = 6  # what the expected net is judged over: the months before the first sale earn nothing
 MAX_FIRST_SALE_MONTHS = 24  # the critic's months to the first sale
 DAYS_A_MONTH = 30.4
-# 0.14.0: the agent gives the days to the first sale (whole months couldn't tell 10 days from 25), and fewer than
+# 0.15.0: the agent gives the days to the first sale (whole months couldn't tell 10 days from 25), and fewer than
 # MIN_FIRST_SALE_DAYS count as that many: a new listing needs its first weeks, and 0 was a loophole.
 MIN_FIRST_SALE_DAYS = 14
 MAX_FIRST_SALE_DAYS = 730
@@ -49,7 +49,7 @@ class Case:
     sales: tuple[int, int, int]  # a month: low, likely, high (P10, P50, P90)
     setup_eur: float
     owner_hours: float  # the owner's hours a month
-    first_sale_days: int  # 0.14.0: days, not months
+    first_sale_days: int  # 0.15.0: days, not months
     api_usd: float  # Ember's API spend on it a month
 
     @property
@@ -109,7 +109,7 @@ def compute(case: Case, usd_per_eur: float | None = None) -> Economics:
     break_even = fixed / net_eur if net_eur > 0 else None
     net = tuple(round(n * net_eur - fixed, 2) for n in case.sales)
     expected = sum(w * n for w, n in zip(WEIGHTS, net, strict=True))
-    before = case.presale_months  # 0.14.0: they pay the fixed costs too
+    before = case.presale_months  # 0.15.0: they pay the fixed costs too
     ev = round(((HORIZON_MONTHS - before) * expected - before * fixed - case.setup_eur) / HORIZON_MONTHS, 2)
     return Economics(
         usd_per_eur=rate,

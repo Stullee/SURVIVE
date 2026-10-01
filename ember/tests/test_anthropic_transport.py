@@ -111,7 +111,7 @@ def test_a_spend_limit_is_described() -> None:
 
 @pytest.mark.parametrize("status", [500, 502, 503, 504])
 def test_server_errors_before_the_stream_are_rejected(status: int) -> None:
-    """0.14.0: like 529, nothing was generated (live: a 503 was booked at the worst case)."""
+    """0.15.0: like 529, nothing was generated (live: a 503 was booked at the worst case)."""
     outcome = transport(Server(error(status, "api_error"))).send(REQUEST)
     assert isinstance(outcome, Rejected) and outcome.status == status
 

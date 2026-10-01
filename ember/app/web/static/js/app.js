@@ -13,7 +13,7 @@
   var REQUEST_TIMEOUT_MS = 10000;
   // The diagnostics report gathers the whole system, which may take longer than a dashboard poll.
   var DIAGNOSTICS_TIMEOUT_MS = 30000;
-  // 0.14.0: a library upload travels base64-encoded (8 MB become about 11 MB), so its timeout grows with its size: a
+  // 0.15.0: a library upload travels base64-encoded (8 MB become about 11 MB), so its timeout grows with its size: a
   // second more per 100 kB (a slow phone connection), at most three minutes.
   var UPLOAD_CHARS_PER_SECOND = 100000;
   var UPLOAD_TIMEOUT_MAX_MS = 180000;
@@ -63,7 +63,7 @@
     instructions: { editing: false, saving: false, secretWarned: null },
     markingRead: false,
     killBusy: false,
-    // 0.14.0: the Inbox's older messages, loaded on request: those pages, the message the next one begins before (null:
+    // 0.15.0: the Inbox's older messages, loaded on request: those pages, the message the next one begins before (null:
     // no older ones) and the dashboard's page they follow (a new message moves it: they load again, or a gap would open).
     older: { messages: [], next: null, after: null },
   };
@@ -742,7 +742,7 @@
     if (arr(sys.config_errors).length) {
       list.push({ kind: "error", icon: "✕", title: "Invalid app options. Running in safe mode (built-in defaults, dry run on; your owner user IDs and the kill switch are kept). Fix them in the app's Configuration tab.", items: sys.config_errors });
     }
-    // 0.14.0: options that don't fit together are corrected (toward spending less) instead of starting safe mode.
+    // 0.15.0: options that don't fit together are corrected (toward spending less) instead of starting safe mode.
     if (arr(sys.config_corrections).length) {
       list.push({ kind: "error", icon: "✕", title: "Some app options don't fit together, so " + name + " corrected them until you fix them in the app's Configuration tab.", items: sys.config_corrections });
     }
@@ -843,7 +843,7 @@
         " · net of revenue and expenses: " + (isNaN(net) ? (a.net_runway_note || "–").toLowerCase() : net >= 365 ? "365+ days" : plural(net, "day")) : "") +
         // 0.12.0: the burn mode Ember's code sets from the net runway, when it holds the agent back
         (a.burn_mode && a.burn_mode !== "explore" ? " · burn mode " + a.burn_mode : "") +
-        // 0.14.0: and when it moves down next at today's burn (named as the burn mode in explore too)
+        // 0.15.0: and when it moves down next at today's burn (named as the burn mode in explore too)
         (a.burn_next ? (a.burn_mode && a.burn_mode !== "explore" ? ", " : " · burn mode ") + asText(a.burn_next) : "");
     }
     runway.setAttribute("data-tone", !isNaN(days) && days < 2 ? "critical" : "");
@@ -959,7 +959,7 @@
   function decisionWake(res, name) {
     var wake = res && isObject(res.data) && typeof res.data.wake === "string" ? res.data.wake : "";
     if (wake === "now" || wake === "soon") ui.fastPollUntil = Date.now() + WAKE_FAST_POLL_MS;
-    // 0.14.0: one cycle for what you send and decide, a few minutes after your last click
+    // 0.15.0: one cycle for what you send and decide, a few minutes after your last click
     return wake === "now" ? name + " is waking up to act on it."
       : wake === "after_cycle" ? name + " acts on it after the cycle it is working on, a few minutes after your last click."
       : wake === "soon" ? name + " wakes up for it soon (a few minutes, or up to 30 after the last such wake), with anything else you send or decide meanwhile."
@@ -1458,7 +1458,7 @@
   var LEDGER_PAGE = 100;
   var LEDGER_NEWEST = 20;
 
-  // 0.14.0: a page of entries (newest first, at most `size`) followed by the older ones kept under it, or null when
+  // 0.15.0: a page of entries (newest first, at most `size`) followed by the older ones kept under it, or null when
   // entries may lie between them. The older pages were merged with each poll's newest 20 as they came, so the entries
   // new ones pushed out of those 20 were in neither list, and the tab skipped them without a sign.
   function ledgerJoin(page, kept, size) {
@@ -1562,7 +1562,7 @@
       request("GET", "api/ledger?limit=" + LEDGER_PAGE + "&before=" + encodeURIComponent(String(lastId))).then(function (res) {
         if (!res.ok || !isObject(res.data)) throw httpError(res);
         var got = arr(res.data.entries);
-        ui.ledgerOlder = arr(ui.ledgerShown).concat(got);  // 0.14.0: with the entries shown above them
+        ui.ledgerOlder = arr(ui.ledgerShown).concat(got);  // 0.15.0: with the entries shown above them
         if (got.length < LEDGER_PAGE) ui.ledgerEnd = true;
         if (ui.data) safely("ledger", function () { renderLedger(ui.data); });
       }).catch(function (err) {
@@ -2270,7 +2270,7 @@
 
   function auditItem(e, killed) {
     var undo = isObject(e.undo) ? e.undo : {};
-    // 0.14.0: an Undo approved before the kill switch went on waits until it is off
+    // 0.15.0: an Undo approved before the kill switch went on waits until it is off
     var waits = killed && undone && /^(approved|pending)$/.test(String(undone.status)) ? " It waits until the kill switch is off." : "";
     var undone = isObject(undo.request) ? undo.request : null;
     var button = null;
@@ -2421,7 +2421,7 @@
       a.veto_until && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "⏱ " }),
         h("strong", { text: "Your unlock: " }), name + "'s code approves it on " + fmtDateTime(a.veto_until) + " unless you decide first.") : null,
       a.status === "pending" && a.decision_comment ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "↩ " }),
-        String(a.decision_comment)) : null,  // 0.14.0: an unlock taken back before its approval ran
+        String(a.decision_comment)) : null,  // 0.15.0: an unlock taken back before its approval ran
       a.unlock_ended && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "⏱ " }),
         h("strong", { text: "It waits for you: " }), String(a.unlock_ended) + ".") : null,
       arr(a.never).length && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "🔒 " }),
@@ -3171,7 +3171,7 @@
       (open ? (late ? " · overdue" : " · open") : " · closed" + (o.result ? ": " + asText(o.result) : "")));
   }
 
-  // 0.14.0: the dashboard brings the newest messages and every one of yours still waiting for an answer; older ones
+  // 0.15.0: the dashboard brings the newest messages and every one of yours still waiting for an answer; older ones
   // load on request, a page at a time.
   var INBOX_PAGE = 30;
 
@@ -3292,7 +3292,7 @@
       if (res.status === 201 || res.ok) {
         box.value = "";
         composerCount();
-        // With the wake_on_message option the message wakes the agent (0.14.0: one cycle a few minutes after your last
+        // With the wake_on_message option the message wakes the agent (0.15.0: one cycle a few minutes after your last
         // message or decision). Without it (or while paused, ...) it waits for the next wake.
         var wake = isObject(res.data) && typeof res.data.wake === "string" ? res.data.wake : "";
         var when = wake === "now" ? " is waking up to read it."
@@ -3733,7 +3733,7 @@
           h("td", null, timeEl(o.ordered_at, fmtDateTime(o.ordered_at))),
           // 0.12.0: only Ember's lines, net of tax, shipping, the coupon and refunds (before, the whole receipt).
           h("td", { class: "num", text: asText(o.total) + (o.whole_receipt ? " (whole receipt)" : "") }),
-          // 0.14.0: an order with many lines is kept without their titles
+          // 0.15.0: an order with many lines is kept without their titles
           h("td", { text: arr(o.items).map(function (i) { return asText(i.title || "#" + i.listing_id) + (num(i.quantity) > 1 ? " × " + i.quantity : ""); }).join("; ") }),
           h("td", { text: o.status ? asText(o.status) : "–" }),
           h("td", null, orderRevenueCell(o, fake)));
@@ -3746,7 +3746,7 @@
     var refunded = o.status === "fully refunded" || o.status === "canceled";
     if (o.recorded) {
       var by = o.recorded_by === "etsy" ? "Recorded by Ember's code" : "Recorded";  // 0.12.0: from Etsy's numbers
-      // 0.14.0: a partial refund asks for a correction too (only a full refund or a cancellation did)
+      // 0.15.0: a partial refund asks for a correction too (only a full refund or a cancellation did)
       var said = h("span", { class: "muted small", text: o.correction_due ? by + ", then " + o.status + ": correct entry #" + o.entry_id + " (Ember's lines earn " + asText(o.total) + " now)" : refunded ? by + ", then " + o.status + ", and corrected" : by });
       if (o.fees_recordable) return [said, " ", recordFeesButton(o, fake)];  // 0.12.0: Etsy's fees on it
       return o.fees_recorded ? [said, h("span", { class: "muted small", text: " · fees recorded" })] : said;
@@ -3778,7 +3778,7 @@
   }
 
   // 0.12.0: Ember's share of Etsy's fees on a recorded order (its processing fee, read from the payment, the 6.5%
-  // transaction fee and, 0.14.0, the listing fee a sale renews and the VAT on fees), as an expense of the same project:
+  // transaction fee and, 0.15.0, the listing fee a sale renews and the VAT on fees), as an expense of the same project:
   // the form opens filled in, and its key records it once.
   function recordFeesButton(o, fake) {
     var cents = num(o.fees_cents);
@@ -4047,7 +4047,7 @@
   }
 
   // What an order cost you at Printify is an expense only you record: the form opens filled in, and its key records it
-  // once. Only EUR and USD can be recorded here. 0.14.0: as an expense of the product's project and venture, like its
+  // once. Only EUR and USD can be recorded here. 0.15.0: as an expense of the product's project and venture, like its
   // sale's revenue (it was overhead), with the tax Printify bills.
   function printifyCostCell(o, fake) {
     if (o.recorded) return h("span", { class: "muted small", text: "Recorded" });
@@ -5749,7 +5749,7 @@
       ventureCritique(v),
       isObject(v.first_sale) ? h("dl", { class: "item-grid" }, predictionRow(v.first_sale, "First sale, as its case said")) : null,
       ventureKnockouts(v),
-      // 0.14.0: why Ember's code wouldn't back it; your Back confirms it anyway
+      // 0.15.0: why Ember's code wouldn't back it; your Back confirms it anyway
       v.backing_problem ? h("p", { class: "muted small", text: "Ember's code wouldn't back it: " + String(v.backing_problem) + "." }) : null,
       ventureEvidence(v),
       h("dl", { class: "money" },
@@ -6006,7 +6006,7 @@
       var version = num(it.row.owner_version);
       if (!isNaN(version)) body.expected_version = version;
       if (values.comment) body.comment = values.comment;
-      if (mode === "back" && it.row.backing_problem) body.confirm = true;  // 0.14.0: you saw why code wouldn't
+      if (mode === "back" && it.row.backing_problem) body.confirm = true;  // 0.15.0: you saw why code wouldn't
       return body;
     };
     spec.done = function (res) {
@@ -6494,7 +6494,7 @@
   // missed milestone or a veto.
   var AUTONOMY_LEVELS = { manual: "Ask me (manual)", veto_window: "Run unless I veto within 12 h", auto: "Run at once (auto)" };
 
-  // 0.14.0: an unlock carries only what belongs to its milestone, whatever the plan works on.
+  // 0.15.0: an unlock carries only what belongs to its milestone, whatever the plan works on.
   function autonomyScope(m) {
     if (m.project_id) return "on the listings of its project (" + (m.project_title || "#" + m.project_id) + ")";
     if (m.venture_id) return "on the listings of its venture's projects (" + (m.venture_title || "#" + m.venture_id) + ")";
@@ -6502,10 +6502,10 @@
   }
 
   function milestoneAutonomy(m) {
-    // 0.14.0: a rule the milestone never covers isn't offered (one still unlocked from before shows, to take back)
+    // 0.15.0: a rule the milestone never covers isn't offered (one still unlocked from before shows, to take back)
     var rules = arr(m.autonomy).filter(function (r) { return r.fits !== false || r.level !== "manual"; });
     if (!rules.length) return null;
-    var off = ui.rm.data && ui.rm.data.unlocks_off ? String(ui.rm.data.unlocks_off) : "";  // 0.14.0
+    var off = ui.rm.data && ui.rm.data.unlocks_off ? String(ui.rm.data.unlocks_off) : "";  // 0.15.0
     var on = rules.filter(function (r) { return r.level !== "manual"; }).length;
     var status = h("p", { class: "muted small", role: "status" });
     return h("div", { class: "rm-autonomy" }, h("details", null,
@@ -6931,7 +6931,7 @@
     var name = agentName();
     var study;
     if (d.study === "done") study = plural(num(d.learnings) || 0, "learning") + (num(d.study_usd) > 0 ? " · cost " + usd(d.study_usd) : "") +
-      // 0.14.0: a study that ended when its learnings were full says which parts it didn't read
+      // 0.15.0: a study that ended when its learnings were full says which parts it didn't read
       (d.study_note ? " · " + asText(d.study_note) : "");
     else if (d.study === "failed") study = "Stopped after " + plural(num(d.studied_parts) || 0, "part") + " of " + (num(d.parts) || 0) + (d.study_note ? ": " + asText(d.study_note) : ".");
     else if (num(d.studied_parts) > 0) study = "Studied " + d.studied_parts + " of " + plural(num(d.parts) || 0, "part") + " so far (" + plural(num(d.learnings) || 0, "learning") + ")";

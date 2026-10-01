@@ -10,7 +10,7 @@ stage has a rule (``RULES``): what completes it, and when Ember's code parks the
 * proposed: the owner's decision (back, park or kill).
 * building: when the owner backs a venture, its first test becomes a milestone Ember's code sets (``first_test``, due
   in FIRST_TEST_DAYS, its date fixed); the venture goes live once that is met (the database refuses it before), and is
-  parked when it is missed (closed missed, or still open FIRST_TEST_GRACE_DAYS after its date). 0.14.0: a venture a
+  parked when it is missed (closed missed, or still open FIRST_TEST_GRACE_DAYS after its date). 0.15.0: a venture a
   channel of Ember's code serves (CHANNEL_TESTS) gets its first test only once that channel is set up: its clock
   doesn't run while the owner hasn't connected it.
 * idea (0.13.0, triage): an idea of the agent's is researched (researching) or parked within TRIAGE_DAYS of coming up;
@@ -22,7 +22,7 @@ For a venture already in the stage when a rule came, the rule counts from then (
 
 Ember's code parks reversibly (``parked_by`` 'code'): only the owner takes such a venture up again, and only the owner
 backs or kills one (migration 0030). A venture parked or killed takes its open milestones with it
-(``drop_milestones``): all of them when the owner parked or killed it, else all but the owner's; 0.14.0: and the bars
+(``drop_milestones``): all of them when the owner parked or killed it, else all but the owner's; 0.15.0: and the bars
 of its projects' listing tests.
 """
 
@@ -97,7 +97,7 @@ def drop_milestones(
     conn: sqlite3.Connection, scope: AgentScope, venture_id: int, now: str, result: str, by: str
 ) -> list[int]:
     """A venture parked or killed takes its open milestones with it, and the open steps leading to them: all of them
-    when the owner parked or killed it (``by`` 'owner'), else all but the owner's (which stay theirs to drop). 0.14.0:
+    when the owner parked or killed it (``by`` 'owner'), else all but the owner's (which stay theirs to drop). 0.15.0:
     when the owner or Ember's code parks or kills it, also the bars Ember's code set for its projects (their listing
     tests end with it). The agent's own park leaves them open: it can't end a listing test. Returns their numbers."""
     where, params = scope.where()
@@ -139,7 +139,7 @@ def park(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any]
 def backing_problem(
     conn: sqlite3.Connection, venture: Mapping[str, Any], *, cash_eur: float, net_days: float | None
 ) -> str:
-    """0.14.0: why a proposal can't be backed as it stands ("" when it can): it has no numbers (proposed before they
+    """0.15.0: why a proposal can't be backed as it stands ("" when it can): it has no numbers (proposed before they
     were needed) or a knock-out stands. Such a proposal goes back to researching (``reopen``)."""
     if not ventures.latest_case(conn, int(venture["id"])):
         if venture["stage"] == "proposed":
@@ -152,7 +152,7 @@ def backing_problem(
 
 
 def reopen(conn: sqlite3.Connection, venture: Mapping[str, Any], now: str, why: str, said: str | None = None) -> None:
-    """0.14.0: Ember's code sends a proposal back to researching (``why``, kept in its notes): a venture proposed
+    """0.15.0: Ember's code sends a proposal back to researching (``why``, kept in its notes): a venture proposed
     before the gates, or one knocked out since, isn't backed as it stands. What the owner ``said`` with their Back is
     kept there too."""
     note = f"Back to researching by Ember's code: {why}."
@@ -201,7 +201,7 @@ def scale(
 
 
 def waits_for_channel(venture: Mapping[str, Any], ready: Collection[str]) -> bool:
-    """0.14.0: whether a venture's first test waits for its channel to be set up (``ready``: the channels that are)."""
+    """0.15.0: whether a venture's first test waits for its channel to be set up (``ready``: the channels that are)."""
     channel = venture["channel"] if "channel" in venture.keys() else None  # noqa: SIM118 - a Row, not a dict
     return channel in CHANNEL_TESTS and channel not in ready
 
@@ -209,7 +209,7 @@ def waits_for_channel(venture: Mapping[str, Any], ready: Collection[str]) -> boo
 def restart_test(
     conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any], test: Mapping[str, Any], now: str
 ) -> str:
-    """0.14.0: a channel venture's open first test, set before the owner had set its channel up (as 0.13.0 did when
+    """0.15.0: a channel venture's open first test, set before the owner had set its channel up (as 0.13.0 did when
     they backed it) or running when they switched it off, is dropped: its date can't move, and its clock shouldn't run
     until then. ``keep`` sets a new one once the channel is ready. Returns what happened, for the events."""
     vid, name = int(venture["id"]), str(venture["channel"]).capitalize()
@@ -231,7 +231,7 @@ def keep(
     ready: Collection[str] = tuple(CHANNEL_TESTS),
     unset: Collection[str] = (),
 ) -> list[str]:
-    """Before every plan: a first test for each backed venture that has none (0.14.0: a channel's venture once its
+    """Before every plan: a first test for each backed venture that has none (0.15.0: a channel's venture once its
     channel is ``ready``; while the owner hasn't set the channel up (``unset``), an open first test Ember's code set
     earlier is dropped, and a new one comes once it is), and the stages' rules (research without a business case, a
     missed first test; 0.13.0: an idea no one took up, a live venture that sells nothing or earns more than it costs).
@@ -271,7 +271,7 @@ def keep(
             continue
         test = roadmap.get(conn, scope, v["test_milestone_id"]) if v["test_milestone_id"] else None
         if waits_for_channel(v, ready):
-            # 0.14.0: no first test runs, nor is missed, while its channel can't be used
+            # 0.15.0: no first test runs, nor is missed, while its channel can't be used
             if test is not None and test["status"] == "open" and test["created_by"] == "code" and v["channel"] in unset:
                 happened.append(restart_test(conn, scope, v, test, now))
             continue

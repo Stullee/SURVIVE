@@ -1,4 +1,4 @@
-"""0.14.0 (FIX NOW 21, X11, X20): unlocks keyed to what a request acts on, not to the plan's focus; the end of a
+"""0.15.0 (FIX NOW 21, X11, X20): unlocks keyed to what a request acts on, not to the plan's focus; the end of a
 milestone ends its unlock, also for what it held; NEVER's words of tax, VAT, a Gewerbe and contracts read in what a
 request says or sends, normalised; a price band measured from the approved price; an unlock's change that Etsy's
 listing doesn't match waits for the owner; Undo without dead ends, while paused, and after a crash; a daily digest of
@@ -46,7 +46,7 @@ def unlock(agent: Any, milestone_id: int, rule: str, level: str = "auto") -> Non
 
 
 def unlocked_before(agent: Any, milestone_id: int, rule: str, level: str = "auto") -> None:
-    """An unlock the owner could give before 0.14.0 refused one the milestone never covers."""
+    """An unlock the owner could give before 0.15.0 refused one the milestone never covers."""
     with agent.db.transaction() as conn:
         policy.set_grant(conn, agent.scope(), milestone_id, rule, level, to_iso(agent.clock.now()), by="Stefan")
 
@@ -82,7 +82,7 @@ def she_wrote(agent: Any) -> None:
         conn.execute(
             "INSERT INTO emails (mode, session, life_id, direction, uidvalidity, uid, message_id, from_addr, to_addr,"
             " subject, received_at, body, authenticated, bulk) VALUES (?, ?, ?, 'in', 1, 1, '<q1@example.org>', ?,"
-            " 'ember@example.org', 'A question', ?, 'Do you make A5 planners?', 1, 0)",  # 0.14.0: verified
+            " 'ember@example.org', 'A question', ?, 'Do you make A5 planners?', 1, 0)",  # 0.15.0: verified
             (scope.mode, scope.session, scope.life_id, WROTE, to_iso(agent.clock.now())),
         )
 
@@ -297,7 +297,7 @@ def test_never_reads_what_a_request_says_normalised(data_dir: Path) -> None:
         with agent.db.connection() as conn:
             found = never.reasons(conn, conn.execute("SELECT * FROM approvals WHERE id = ?", (reply,)).fetchone())
         assert (found, legal_in_db(agent, reply)) == (["legal"], 1), words
-    for words in HARMLESS:  # 0.14.0: "btw" is "by the way", a Sonderangebot no offer of a contract
+    for words in HARMLESS:  # 0.15.0: "btw" is "by the way", a Sonderangebot no offer of a contract
         reply = a_reply(agent, words)
         with agent.db.connection() as conn:
             found = never.reasons(conn, conn.execute("SELECT * FROM approvals WHERE id = ?", (reply,)).fetchone())
@@ -650,7 +650,7 @@ def test_a_photo_fix_waits_for_the_owner_when_etsy_has_other_photos_as_many(data
     [back] = rows(agent, f"SELECT id, description FROM approvals WHERE id > {fix['id']} AND executor = 'etsy_edit'")
     assert "its photos at Etsy aren't the ones Ember set last (1 now, 1 then)" in back["description"]
     reject(agent, back["id"])
-    # A listing whose photos Ember's code never saw at Etsy (set before 0.14.0) waits for the owner
+    # A listing whose photos Ember's code never saw at Etsy (set before 0.15.0) waits for the owner
     with agent.db.transaction() as conn:
         conn.execute("DELETE FROM etsy_photo_ids")
     last = work_on(agent, line, change(listing_id, photos=", ".join(photos)))[-1]
@@ -695,7 +695,7 @@ def test_a_rule_a_milestone_never_covers_cant_be_unlocked_on_it(data_dir: Path) 
 
 
 def test_an_email_request_stored_before_the_upgrade_is_read_normalised_after_a_restart(data_dir: Path) -> None:
-    """21c: a reply stored without its normalised act (before 0.14.0) gets it at startup: look-alikes count."""
+    """21c: a reply stored without its normalised act (before 0.15.0) gets it at startup: look-alikes count."""
     agent, _ = listed(data_dir)
     she_wrote(agent)
     reply = a_reply(agent, "RECHΝUNG folgt.")

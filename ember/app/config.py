@@ -7,7 +7,7 @@ makes sure the API key can never leak through ``repr``, logs or the API.
 
 If the options are invalid the app does not crash: it starts in *safe mode*
 (built-in defaults, dry-run forced on) and shows the errors in the dashboard.
-0.14.0: safe mode keeps the owner's identity and the kill switch's reset, and
+0.15.0: safe mode keeps the owner's identity and the kill switch's reset, and
 the rules between options that the schema can't check are corrected instead.
 """
 
@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 # and switch every spending limit off.
 MIN_PRICE = 0.000001
 # 0.13.0: the website's address (https, a host and at most a path: no query, no fragment) and its email address.
-# 0.14.0: with their lengths, and empty allowed: config.yaml's schema has the same patterns (a test checks), so Home
+# 0.15.0: with their lengths, and empty allowed: config.yaml's schema has the same patterns (a test checks), so Home
 # Assistant refuses a bad value when the owner saves it, instead of Ember starting in safe mode. The path names a
 # folder, not a file: its last part has no dot (a home page's index.html or index.htm, in any case, is taken off).
 _SITE_URL = re.compile(
@@ -145,18 +145,18 @@ class Settings(BaseModel):
     web_search_usd_per_1000: float = Field(default=10.0, ge=MIN_PRICE, le=1_000)
     dry_run: bool = True
     web_fetch: bool = False
-    # A message from the owner wakes the agent to read it (0.14.0: one cycle a few minutes after their last message or
+    # A message from the owner wakes the agent to read it (0.15.0: one cycle a few minutes after their last message or
     # decision).
     wake_on_message: bool = True
     # 0.12.0: the owner's decision on a request, venture or milestone wakes the agent to act on it, like a message.
     wake_on_decision: bool = True
-    # 0.14.0: an urgent event in the agenda (a reply, an inquiry, a milestone's last day) wakes the agent for a short
+    # 0.15.0: an urgent event in the agenda (a reply, an inquiry, a milestone's last day) wakes the agent for a short
     # reactive cycle. Off: it waits for the next cycle's plan.
     wake_on_events: bool = True
     # Effort for the work steps and the reflection ("default" sends none, which means high). Not sent to Haiku 4.5.
     worker_effort: Literal["default", "high", "medium", "low"] = "default"
     # The workshop (0.7.0): code the agent has written and run in Anthropic's sandbox. A run has its own cap and
-    # counts toward the daily cap, not the cycle cap (the daily cap still bounds it, whatever this cap says). 0.14.0:
+    # counts toward the daily cap, not the cycle cap (the daily cap still bounds it, whatever this cap says). 0.15.0:
     # each call of a run holds at least this cap of the daily cap and the balance, and a run priced above it is
     # refused; the default rose from 0.50 as a run's output is priced per sampling (about $0.60 with Sonnet 5).
     # Container time costs this much per hour after Anthropic's free hours (1,550 a month per organization); Ember
@@ -218,7 +218,7 @@ class Settings(BaseModel):
     # Printify (0.13.0, Phase E4): physical products with Ember's designs, made on order and sold in the owner's Etsy
     # shop through Printify's Etsy connection, with the owner's personal access token. Off until the owner turns it on
     # (in dry run too: then a fake account stands in). printify_shop_id 0: the one Printify shop connected to Etsy;
-    # printify_currency: the currency of the prices and costs Printify shows for it. 0.14.0: who pays the shipping
+    # printify_currency: the currency of the prices and costs Printify shows for it. 0.15.0: who pays the shipping
     # (as the shop's Etsy shipping profile charges it) and whether Printify's bill carries VAT, for the margin check.
     printify_enabled: bool = False
     printify_api_token: SecretStr = SecretStr("")
@@ -390,7 +390,7 @@ class LoadedSettings:
     settings: Settings
     errors: list[str] = field(default_factory=list)
     source: str = "defaults"
-    # 0.14.0: rules between options that Ember corrected instead of starting safe mode (see _corrected), and, in safe
+    # 0.15.0: rules between options that Ember corrected instead of starting safe mode (see _corrected), and, in safe
     # mode, whether owner_user_ids couldn't be read (then Ember answers no one, app/security.py) and whether
     # kill_switch_reset couldn't be (then its value is never stored, app/main.py).
     corrections: list[str] = field(default_factory=list)
@@ -432,7 +432,7 @@ def load_settings(path: Path | None = None) -> LoadedSettings:
 
 
 def _corrected(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """0.14.0: the rules between options that Home Assistant's schema can't check, corrected instead of starting safe
+    """0.15.0: the rules between options that Home Assistant's schema can't check, corrected instead of starting safe
     mode: the cycle cap at most the daily cap, the longest sleep at least the shortest (the shortest wins, as when
     Ember sleeps), the default sleep between them, and an exchange rate below 0.5 as none. Each correction spends no
     more than the owner's options would; the dashboard shows it until the options are fixed. A required text of spaces
@@ -479,14 +479,14 @@ def _corrected(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
 
 
 def safe_mode_keeps(owner_unknown: bool) -> str:
-    """0.14.0: what safe mode keeps of the owner's options, for its log line and its event."""
+    """0.15.0: what safe mode keeps of the owner's options, for its log line and its event."""
     if owner_unknown:
         return "owner_user_ids couldn't be read, so Ember answers no one; the kill switch is kept"
     return "owner_user_ids and the kill switch are kept"
 
 
 def _safe_mode(errors: list[str], raw: dict[str, Any] | None) -> LoadedSettings:
-    """Built-in defaults with dry run forced on. 0.14.0: but the owner's identity and the kill switch's reset, each read
+    """Built-in defaults with dry run forced on. 0.15.0: but the owner's identity and the kill switch's reset, each read
     on its own, so one bad option neither opens the dashboard to every user nor lifts a kill switch (app/main.py
     never lifts one in safe mode). If owner_user_ids can't be read, Ember answers no one (owner_unknown)."""
     for error in errors:

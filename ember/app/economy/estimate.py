@@ -14,7 +14,7 @@ so far. Each tool result is assumed to add at most an allowance of tokens:
 web_fetch is bounded by its ``max_content_tokens`` (required), web search
 results by ``SEARCH_RESULT_ALLOWANCE_TOKENS``. When the request uses prompt
 caching, the API caches the loop's context itself, so later samplings read it
-from the cache and what is new is written once. 0.14.0: ``max_tokens`` limits
+from the cache and what is new is written once. 0.15.0: ``max_tokens`` limits
 each sampling, not the loop (live, a workshop run wrote 12,439 output tokens
 with ``max_tokens`` 8,000), so the loop's output is priced as 10 times
 ``max_tokens``, and each sampling adds its output to what the next ones read.
@@ -30,7 +30,7 @@ view). Its container is billed by time, not tokens: the worst case adds
 longest call the transport lets run plus the idle minutes before the container
 is put away. A request may name the container of the call it continues.
 
-What can't be bounded (0.14.0): nothing in a request limits the size of a code
+What can't be bounded (0.15.0): nothing in a request limits the size of a code
 run's result (printed output, a file or a picture looked at) or of a web search
 result. Live, one workshop run wrote 540,865 tokens to the cache, about ten
 times what these allowances allow, and cost 5.3 times its estimate. So for a
@@ -213,7 +213,7 @@ def worst_case_micros(
     prompt = plan.input_tokens
     looped = bool(plan.tool_uses or plan.code_runs)
     samplings = MAX_SERVER_ITERATIONS if looped else 1
-    output = samplings * plan.max_output_tokens  # 0.14.0: max_tokens limits each sampling of a server tool's loop
+    output = samplings * plan.max_output_tokens  # 0.15.0: max_tokens limits each sampling of a server tool's loop
     tokens = prompt * first_rate + output * dec(price.output)
     if looped:
         allowance = max(
@@ -225,7 +225,7 @@ def worst_case_micros(
         pending = (plan.pending_searches + plan.pending_fetches) * allowance
         pending += plan.pending_code_runs * CODE_RESULT_ALLOWANCE_TOKENS
         results = (plan.search_uses + plan.fetch_uses) * allowance + pending
-        # 0.14.0: what each sampling adds for the next ones to read: its output, and one code run's result.
+        # 0.15.0: what each sampling adds for the next ones to read: its output, and one code run's result.
         step = plan.max_output_tokens + (CODE_RESULT_ALLOWANCE_TOKENS if plan.code_execution else 0)
         later = samplings - 1
         # Sampling k (2 to 10) reads the prompt, the results and what the k-1 samplings before it added.

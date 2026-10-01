@@ -150,7 +150,7 @@ CATALOGUE: dict[str, Metric] = {
         Metric("pod_products_live", "your Printify products in the shop now", "count", "printify", unit="product"),
         Metric("pod_orders", "orders of your Printify products, in all", "count", "printify", unit="order"),
         # 0.13.0: a product line's listing test (agent/gates.py): its listings' views and favorites in all, as the last
-        # sync read them (Etsy's own counts: no history kept). 0.14.0: the agent sets them too (its views goals were
+        # sync read them (Etsy's own counts: no history kept). 0.15.0: the agent sets them too (its views goals were
         # self-reported), refused when met already; orders_total stays Ember's code's (orders_observed is the agent's)
         Metric("views_total", "views your listings have had in all", "count", "etsy", unit="view"),
         Metric("favorites_total", "favorites your listings have in all", "count", "etsy", unit="favorite"),
@@ -310,7 +310,7 @@ def listings(
     conn: sqlite3.Connection, scope: AgentScope, project_id: int | None, venture_id: int | None
 ) -> list[sqlite3.Row]:
     """Ember's listings on Etsy (with their numbers at the last sync), those of the project or venture if given.
-    0.14.0: with the listings Printify made of Ember's products (``printify`` 1), whose numbers Etsy's sync keeps too:
+    0.15.0: with the listings Printify made of Ember's products (``printify`` 1), whose numbers Etsy's sync keeps too:
     the metrics, a product line's listing test and the ventures' rules left them out."""
     where, params = scope.where("l")
     joins = (
@@ -318,7 +318,7 @@ def listings(
         f" LEFT JOIN projects p ON p.id = COALESCE(a.project_id, y.project_id) WHERE {where}"
         " AND l.listing_id IS NOT NULL ORDER BY l.id"
     )
-    # 0.14.0: a listing of a product line with no venture (a closed one the upgrade couldn't link) counts for its
+    # 0.15.0: a listing of a product line with no venture (a closed one the upgrade couldn't link) counts for its
     # channel's venture, as ventures.adopt would link it: the Etsy leg, or the print-on-demand venture.
     mine = (
         "p.id AS for_project, COALESCE(p.venture_id, y.venture_id, (SELECT v.id FROM ventures v WHERE"
@@ -419,9 +419,9 @@ def _read_etsy(
     few = []  # qa_clean: the live listings with too few photos in Ember's records
     for r in live:
         if r["printify"]:
-            continue  # 0.14.0: its photos are Printify's mockups, not in Ember's records
+            continue  # 0.15.0: its photos are Printify's mockups, not in Ember's records
         listing = etsy_publisher.recorded_listing(conn, scope, r)
-        photos = qa.distinct(listing.photos) if listing is not None else 0  # 0.14.0: a copied file counts once
+        photos = qa.distinct(listing.photos) if listing is not None else 0  # 0.15.0: a copied file counts once
         if photos < qa.MIN_PHOTOS:
             few.append(f"#{r['listing_id']} has {photos}")
     detail = f" ({', '.join(few[:6])})" if few else f" ({len(live)} live)"
@@ -498,7 +498,7 @@ def _evidence(m: Metric, reading: Reading, target: int, books: Books) -> str:
 def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str]:
     """Check every open metric milestone (no model call): record where it stands (``progress``, ``checked_at``, and
     the day's observation), close it done once met and missed once its date has passed without it (a ceiling: missed
-    once passed, done at its date). A killed venture's milestones were dropped with it (agent/stages.py). 0.14.0: past
+    once passed, done at its date). A killed venture's milestones were dropped with it (agent/stages.py). 0.15.0: past
     its date, Etsy's numbers read only after it (a sync gap) don't meet it: its last reading by then decides, and
     without one it is missed (a bar met days late was graded done). Returns what happened, for the events."""
     now = to_iso(books.clock.now())
@@ -513,7 +513,7 @@ def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str
         past = today.isoformat() > row["due"]
         judged: Reading | None = reading
         if m.etsy and past and books.clock.local_day(reading.at).isoformat() > row["due"]:
-            # 0.14.0: Etsy read only after its date (a sync gap): its last reading by then decides; a later one can
+            # 0.15.0: Etsy read only after its date (a sync gap): its last reading by then decides; a later one can
             # only show a miss (a bar met days late was graded done). Orders carry their own date: those placed by
             # the end of its due day count, however late a sync fetched them
             if m.name in ("orders_observed", "orders_total"):
@@ -562,7 +562,7 @@ def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str
 
 
 def _by_its_date(row: Mapping[str, Any], books: Books) -> Reading | None:
-    """0.14.0: a milestone's last reading on or before its due day, the owner's local day (None: none by then)."""
+    """0.15.0: a milestone's last reading on or before its due day, the owner's local day (None: none by then)."""
     at = row["checked_at"]
     if row["progress"] is None or not at or books.clock.local_day(str(at)).isoformat() > row["due"]:
         return None
@@ -572,7 +572,7 @@ def _by_its_date(row: Mapping[str, Any], books: Books) -> Reading | None:
 def _orders_by_its_date(
     conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any], books: Books, reading: Reading
 ) -> Reading:
-    """0.14.0: the milestone's Etsy orders placed by the end of its due day, the owner's local day."""
+    """0.15.0: the milestone's Etsy orders placed by the end of its due day, the owner's local day."""
     rows = listings(conn, scope, row["project_id"], row["venture_id"])
     since = str(row["created_at"]) if row["metric"] == "orders_observed" else ""
     until = books.clock.day_bounds(date.fromisoformat(str(row["due"])))[1]

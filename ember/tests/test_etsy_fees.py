@@ -23,7 +23,7 @@ LINES = [
 
 def test_embers_share_of_the_fees() -> None:
     order = etsy.Order(71, "2026-09-02T10:00:00Z", 900, "EUR", LINES, items_cents=900)
-    # half the processing fee; 0.14.0: 6.5% of 4.50 and USD 0.20 (at 1.10), with 19% VAT on both (29.25 + 18.18)
+    # half the processing fee; 0.15.0: 6.5% of 4.50 and USD 0.20 (at 1.10), with 19% VAT on both (29.25 + 18.18)
     assert etsy.fees_share(order, LINES[:1], 48) == 24 + 56
     coupon = etsy.Order(72, "2026-09-02T10:00:00Z", 800, "EUR", LINES, items_cents=900, discount_cents=100)
     assert etsy.fees_share(coupon, LINES[:1], 48) == 24 + 53  # on the 4.00 the line earned after its coupon share

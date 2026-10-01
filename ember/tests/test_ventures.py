@@ -265,7 +265,7 @@ def test_the_venture_focus_keeps_what_matters_most_when_it_is_cut() -> None:
     assert lines[2:4] == [
         f"First test: {'ä' * 219}…",
         f"Next question: {'ä' * 219}…",
-    ]  # 0.14.0: then the pitch, before the knowledge file (here no room is left for it)
+    ]  # 0.15.0: then the pitch, before the knowledge file (here no room is left for it)
     ordered = [line.split(":")[0] for line in text.split("\n")]
     assert ordered == [
         "Focus venture",
@@ -593,7 +593,7 @@ def test_only_the_owner_takes_a_venture_out_of_their_park(data_dir: Path) -> Non
 
 
 def test_a_venture_never_starts_live_on_the_agents_word(data_dir: Path) -> None:
-    # 0.14.0: it could once Ember earned anywhere, skipping the owner's backing
+    # 0.15.0: it could once Ember earned anywhere, skipping the owner's backing
     live = ("venture_create", {"title": "Etsy shop in English", "pitch": "The shop's English leg.", "stage": "live"})
     fake = FakeTransport(script=[plan(steps=["add a leg"]), ToolCalls([live]), Reply("Done."), JOURNAL])
     fake.script.extend([plan(steps=["add a leg"]), ToolCalls([live]), Reply("Done."), JOURNAL])
