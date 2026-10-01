@@ -108,8 +108,9 @@ def test_replies_favorites_and_a_milestones_last_day_are_noted(data_dir: Path) -
         )
         conn.execute(
             "INSERT INTO emails (mode, session, life_id, direction, uidvalidity, uid, message_id, in_reply_to,"
-            " from_addr, to_addr, subject, sent_at, received_at, body) VALUES (?, ?, ?, 'in', 1, 7, '<r1@ann>',"
-            " '<m1@ember>', 'ann@example.org', 'ember@example.org', 'Re: Your planner', ?, ?, 'Thanks!')",
+            " from_addr, to_addr, subject, sent_at, received_at, body, bulk, authenticated) VALUES (?, ?, ?, 'in', 1,"
+            " 7, '<r1@ann>', '<m1@ember>', 'ann@example.org', 'ember@example.org', 'Re: Your planner', ?, ?, 'Thanks!',"
+            " 0, 1)",  # 0.14.0: a verified person's reply (a machine's or a forged one wakes no one)
             (scope.mode, scope.session, scope.life_id, now, now),
         )
         today = agent.clock.today().isoformat()

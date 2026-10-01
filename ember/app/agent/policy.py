@@ -34,7 +34,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from ..economy.clock import Clock, to_iso
-from ..integrations import etsy, etsy_publisher, qa
+from ..integrations import etsy, etsy_publisher, mailstore, qa
 from . import never
 from .store import AgentScope
 
@@ -77,17 +77,19 @@ def _action(row: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def _started_by_them(conn: sqlite3.Connection, scope: AgentScope, action: Mapping[str, Any]) -> bool:
-    """An email answers someone in a thread they started: its thread's first message is theirs."""
+    """An email answers someone in a thread they started: its thread's first message is theirs, a person's email
+    (0.14.0: mailstore.person, its sender verified)."""
     to = str(action.get("to") or "").lower()
     chain = str(action.get("references") or action.get("in_reply_to") or "").split()
     if not to or not chain:
         return False
     where, params = scope.where()
     root = conn.execute(
-        f"SELECT direction, from_addr FROM emails WHERE {where} AND message_id = ? ORDER BY id LIMIT 1",
+        f"SELECT {mailstore.person()} AS person, from_addr FROM emails WHERE {where} AND message_id = ?"
+        " ORDER BY id LIMIT 1",
         (*params, chain[0]),
     ).fetchone()
-    return root is not None and root["direction"] == "in" and str(root["from_addr"]).lower() == to
+    return root is not None and bool(root["person"]) and str(root["from_addr"]).lower() == to
 
 
 def _clean_approvals(conn: sqlite3.Connection, scope: AgentScope, venture_id: int) -> int:

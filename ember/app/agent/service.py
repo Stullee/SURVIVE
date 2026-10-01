@@ -361,15 +361,17 @@ class Agent:
         return Decision(True, "event", f"woken by an event: {waiting[0]['text']}{more}"[:300])
 
     def check_events(self) -> None:
-        """0.13.0: read the mailbox every agenda.MAIL_MINUTES between cycles, then note in the agenda what happened
-        since the last look (orders, replies, favorites, milestones due today). The scheduler calls this every round,
-        after the Etsy sync; like reading the shop, it goes on while the agent sleeps, is paused or dormant."""
+        """0.13.0: read the mailbox every agenda.MAIL_MINUTES between cycles (0.14.0: less often while reading it
+        fails, mailstore.wait_minutes), then note in the agenda what happened since the last look (orders, replies,
+        favorites, milestones due today). The scheduler calls this every round, after the Etsy sync; like reading the
+        shop, it goes on while the agent sleeps, is paused or dormant."""
         if self.sync_blocked() or self.running_cycle:
             return
         now = self.clock.now()
         scope = self.scope()
+        every = mailstore.wait_minutes(self.db, self.mode, agenda.MAIL_MINUTES)  # 0.14.0: longer while it fails
         if self.mailbox is not None and (
-            self._mail_checked_at is None or now - self._mail_checked_at >= timedelta(minutes=agenda.MAIL_MINUTES)
+            self._mail_checked_at is None or now - self._mail_checked_at >= timedelta(minutes=every)
         ):
             self._mail_checked_at = now
             try:  # the fake mailbox of a dry run needs no network; the real one is Ember's own code

@@ -9,6 +9,9 @@ SQLite, and the model has no tool that sends (an approved email is sent by ``exe
 * Incoming mail is untrusted data. Headers are decoded and stripped of control characters; the text prefers
   the plain part, and HTML becomes text without what a reader wouldn't see (hidden text is a common way to
   smuggle instructions to an AI); attachments are listed by name and size, never opened; sizes are capped.
+  0.14.0: each email keeps whether the receiving mail provider verified its sender (``_authenticated``) and
+  whether it is a list's or a machine's (``_bulk``, ``_machine``): only a verified person's email counts as someone
+  writing. The hidden-text filter is best-effort: it knows the common ways, not every way CSS can hide text.
 * An outgoing message is plain text for exactly one recipient, who is also the envelope recipient (never
   taken from the headers). The email package refuses line breaks in header values.
 
@@ -66,8 +69,17 @@ _SOURCE_SPACE = re.compile(r"\s+")
 _SPACES = re.compile(r"[ \t\f\v\xa0\u2000-\u200a\u202f\u205f\u3000]+")
 _HIDDEN_STYLE = re.compile(
     r"display:none|visibility:(?:hidden|collapse)|font-size:0(?:\.0*)?[a-z%]*(?:;|!|$)|opacity:0?(?:\.0*)?%?(?:;|!|$)"
+    # 0.14.0: text of 2px or less, far off the screen, clipped away, or hidden from Outlook's reader
+    r"|font-size:(?:[01](?:\.\d*)?|2(?:\.0*)?)(?:px|pt)(?:;|!|$)|mso-hide:all|clip:rect\((?:0(?:px)?,?){4}\)"
+    r"|(?:left|top|right|text-indent|margin(?:-left|-top)?):-(?:\d{4,}|[5-9]\d\d)(?:\.\d*)?[a-z%]*(?:;|!|$)"
 )
-_ZERO_BOX = re.compile(r"(?:max-)?(?:height|width):0(?:\.0*)?[a-z%]*(?:;|!|$)")
+_ZERO_BOX = re.compile(r"(?:^|;)(?:max-)?(?:height|width):(?:0(?:\.0*)?[a-z%]*|1px)(?:;|!|$)")
+_CSS_CHARS = 100_000  # of an email's <style> elements, read for the rules that hide text
+_CSS_RULES = 200  # of those rules, at most (a real email has a few)
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_SELECTOR = re.compile(r"^([a-z][a-z0-9]*)?((?:[.#][a-z0-9_-]+)*)$")
+_COLOURS = {"white": "#ffffff", "black": "#000000"}
+_WHITE = "#ffffff"  # an email's page, unless its style sheet sets a background
 _SKIP = frozenset({"script", "style", "head", "title", "template", "noscript", "svg", "math", "iframe", "object"})
 # Elements that start a new paragraph (a blank line) or a new line.
 _PARAGRAPH = frozenset({"blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "ol", "p", "pre", "table", "ul"})
@@ -213,6 +225,11 @@ class IncomingMail:
     # 0.12.0: a newsletter, a mailing list or an automatic reply (by its headers): its "unsubscribe" is about Ember
     # leaving it, never someone asking Ember to stop writing.
     bulk: bool = False
+    # 0.14.0: a machine's (a bounce, a report, a no-reply sender, the provider's spam): no person's, like bulk, but a
+    # "stop" in it still counts (see _machine).
+    machine: bool = False
+    # 0.14.0: the receiving mail provider verified the sender (see _authenticated); False without its verdict.
+    authenticated: bool = False
 
     def attachments_json(self) -> str:
         return json.dumps(self.attachments, ensure_ascii=False)
@@ -224,6 +241,7 @@ class FetchResult:
     last_uid: int  # the highest UID dealt with: the next fetch starts after it
     uidvalidity: int | None
     waiting: int = 0  # new emails not fetched yet (beyond the limit, or out of time): the next fetch reads them
+    refused: int | None = None  # 0.14.0: the UID the server didn't hand over; the fetch ended before it
 
 
 @dataclass(frozen=True)
@@ -277,6 +295,8 @@ def parse_message(raw: bytes, uid: int, *, headers_only: bool = False, size: int
         body_cut=cut,
         attachments=attachments,
         bulk=_bulk(msg),
+        machine=_machine(msg, from_addr),
+        authenticated=_authenticated(msg, from_addr),
     )
 
 
@@ -288,6 +308,74 @@ def _bulk(msg: Message) -> bool:
     precedence = (_header(msg, "Precedence", 20) or "").lower()
     submitted = (_header(msg, "Auto-Submitted", 40) or "no").lower()
     return precedence in ("bulk", "list", "junk") or not submitted.startswith("no")
+
+
+# 0.14.0: the addresses of machines (bounces, no-reply and notification senders), whatever follows the name.
+_MACHINE = re.compile(
+    r"^(?:mailer-daemon|postmaster|no[-_.]?reply|do[-_.]?not[-_.]?reply|bounces?|notifications?|transactions?)"
+    r"(?:[-_.+][^@]*)?@",
+    re.IGNORECASE,
+)
+
+
+def _machine(msg: Message, sender: str) -> bool:
+    """0.14.0: whether an email is a machine's rather than a person's: X-Auto-Response-Suppress, a delivery or read
+    report, an empty Return-Path (a bounce), the provider's spam flag, or a machine's sender address. It is no
+    person's email, but unlike bulk its "stop" still counts: a missed opt-out would break the law, a false one only
+    means Ember doesn't write there. A sender can only make its own email count less, never more."""
+    if (_header(msg, "X-Auto-Response-Suppress", 20) or "none").lower() != "none" or _MACHINE.match(sender):
+        return True
+    if any((_header(msg, name, 10) or "").lower().startswith("yes") for name in ("X-Spam-Flag", "X-Spam-Status")):
+        return True
+    return_path = _header(msg, "Return-Path", 320)
+    if return_path is not None and not return_path.strip("<> "):
+        return True
+    with contextlib.suppress(Exception):
+        return msg.get_content_type() == "multipart/report"
+    return False
+
+
+def _authenticated(msg: Message, sender: str) -> bool:
+    """0.14.0: whether the receiving mail provider verified the sender. Its verdict is the topmost
+    Authentication-Results header, the one its receiving server added (any below it may come from the sender): dmarc
+    pass, or dkim or spf pass for the From: domain (or a domain of the same organisation), unless dmarc failed. No
+    verdict: unverified."""
+    try:
+        verdicts = msg.get_all("Authentication-Results") or []
+    except Exception:  # noqa: BLE001 - a header the parser can't decode is no verdict
+        return False
+    if not verdicts or "@" not in sender:
+        return False
+    domain = sender.rsplit("@", 1)[1].lower()
+    text = one_line(verdicts[0], 4_000).lower()
+    while "(" in text:  # comments, nested ones too (they may hold a ";")
+        shorter = re.sub(r"\([^()]*\)", " ", text)
+        if shorter == text:
+            break
+        text = shorter
+    passed = False
+    for result in text.split(";"):
+        method, _, rest = result.strip().partition("=")
+        words = rest.split()
+        if method == "dmarc" and words[:1] == ["fail"]:
+            return False  # the domain says the email isn't its own
+        if not words or words[0] != "pass":
+            continue
+        found = dict(w.split("=", 1) for w in words[1:] if "=" in w)
+        props = {k: v.strip('"').rpartition("@")[2] for k, v in found.items()}
+        if method == "dmarc" and props.get("header.from", domain) == domain:
+            passed = True
+        signer = {"dkim": props.get("header.d") or props.get("header.i"), "spf": props.get("smtp.mailfrom")}.get(method)
+        if signer and _organisation(signer) == _organisation(domain):
+            passed = True
+    return passed
+
+
+def _organisation(domain: str) -> str:
+    """A domain's organisation (example.org for mail.example.org, example.co.uk for mail.example.co.uk), roughly."""
+    labels = domain.strip(".").split(".")
+    second = len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in ("co", "com", "org", "net", "ac", "gov", "or")
+    return ".".join(labels[-3:] if second else labels[-2:])
 
 
 def _header(msg: Message, name: str, limit: int) -> str | None:
@@ -336,15 +424,22 @@ def _attachments(msg: EmailMessage) -> list[dict[str, Any]]:
 
 
 class _HtmlText(HTMLParser):
-    """HTML as a reader sees it: text only, without scripts, styles and anything hidden; links keep their host."""
+    """HTML as a reader sees it: text only, without scripts, styles and anything hidden; links keep their host.
+
+    0.14.0: hidden also by the rules of the email's <style> elements (the simple ones, outside @media), and by a text
+    colour the same as its background (white on white)."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self.size = 0
-        self.stack: list[tuple[str, bool, str | None]] = []  # (tag, hides its content, a link's host)
+        # (tag, hides its content, a link's host, its background: None when it has none, "" when it isn't known)
+        self.stack: list[tuple[str, bool, str | None, str | None]] = []
         self.hidden = 0  # open elements that hide their content
         self.overflow = False
+        self.css = ""  # the style sheet being read
+        self.rules: list[tuple[str | None, frozenset[str], str | None]] = []  # (tag, classes, id) that hide
+        self.page: str = _WHITE
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self._break(tag)
@@ -353,19 +448,45 @@ class _HtmlText(HTMLParser):
         if len(self.stack) >= _MAX_DEPTH:
             self.overflow = True  # deeper than any real email: drop the rest rather than guess what is hidden
             return
-        hides = tag in _SKIP or _hides(attrs)
         host = _link_host(attrs) if tag == "a" else None
-        self.stack.append((tag, hides, host))
+        if self.hidden:  # inside a hidden element: hidden whatever it says
+            self.stack.append((tag, False, host, None))
+            return
+        values = {name.lower(): (value or "") for name, value in attrs}
+        style = re.sub(r"\s+", "", values.get("style", "").lower())
+        background = _background(style, values) if style or "bgcolor" in values or "background" in values else None
+        hides = tag in _SKIP or self._hides(tag, values, style, background)
+        self.stack.append((tag, hides, host, background))
         self.hidden += hides
+
+    def _hides(self, tag: str, values: dict[str, str], style: str, background: str | None) -> bool:
+        if "hidden" in values or values.get("aria-hidden", "").strip().lower() == "true" or _hides_style(style):
+            return True
+        classes, ident = frozenset(values.get("class", "").lower().split()), values.get("id", "").strip().lower()
+        if any(t in (None, tag) and c <= classes and i in (None, ident) for t, c, i in self.rules):
+            return True
+        declared = _declared(style, "color") if "color" in style else ""
+        if not declared and "color" not in values:
+            return False
+        colour = _colour(declared or values.get("color", ""))  # <font color> too
+        if colour == "transparent":
+            return True
+        if background is None:  # the nearest one behind it
+            background = next((b for *_, b in reversed(self.stack) if b is not None), self.page)
+        return _alike(colour, background)
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self._break(tag)
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "style" and self.css:
+            self.rules = (self.rules + _css_rules(self.css))[:_CSS_RULES]
+            self.page = "" if "background" in self.css else self.page  # the page may not be white
+            self.css = ""
         bottom = max(0, len(self.stack) - _END_TAG_SEARCH)
         for index in range(len(self.stack) - 1, bottom - 1, -1):
             if self.stack[index][0] == tag:
-                for open_tag, hides, host in reversed(self.stack[index:]):
+                for open_tag, hides, host, _ in reversed(self.stack[index:]):
                     if hides:
                         self.hidden -= 1
                     elif open_tag == "a" and host:
@@ -375,9 +496,12 @@ class _HtmlText(HTMLParser):
         self._break(tag)
 
     def handle_data(self, data: str) -> None:
+        if self.stack and self.stack[-1][0] == "style":
+            self.css = (self.css + data.lower())[:_CSS_CHARS]
+            return
         # As in a browser: line breaks in the source are spaces, except inside <pre>.
         self._add(
-            data if any(tag == "pre" for tag, _, _ in self.stack[-_END_TAG_SEARCH:]) else _SOURCE_SPACE.sub(" ", data)
+            data if any(tag == "pre" for tag, *_ in self.stack[-_END_TAG_SEARCH:]) else _SOURCE_SPACE.sub(" ", data)
         )
 
     def _break(self, tag: str) -> None:
@@ -395,12 +519,86 @@ class _HtmlText(HTMLParser):
             self.size += len(text)
 
 
-def _hides(attrs: list[tuple[str, str | None]]) -> bool:
-    values = {name.lower(): (value or "") for name, value in attrs}
-    if "hidden" in values or values.get("aria-hidden", "").strip().lower() == "true":
-        return True
-    style = re.sub(r"\s+", "", values.get("style", "").lower())
+def _hides_style(style: str) -> bool:
+    """Whether CSS declarations (lower case, without spaces) hide an element's content."""
     return bool(_HIDDEN_STYLE.search(style) or ("overflow:hidden" in style and _ZERO_BOX.search(style)))
+
+
+def _css_rules(css: str) -> list[tuple[str | None, frozenset[str], str | None]]:
+    """0.14.0: the rules of a style sheet that hide what they select, as (tag, classes, id). Only rules outside an
+    at-rule count (an @media block's apply on some screens only), and only simple selectors: the last part of each
+    (".b" of ".a .b", but not the "td" of ".a td", which would hide every cell), without pseudo-classes or
+    attributes."""
+    css = _CSS_COMMENT.sub("", css)
+    found: list[tuple[str | None, frozenset[str], str | None]] = []
+    depth, head, start = 0, "", 0
+    for index, char in enumerate(css):
+        if char == "{":
+            if depth == 0:
+                head, body = css[start:index].strip(), index + 1
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth == 0:
+                if not head.startswith("@") and _hides_style(re.sub(r"\s+", "", css[body:index])):
+                    found += [s for s in map(_selector, head.split(",")) if s is not None]
+                start = index + 1
+        elif char == ";" and depth == 0:
+            start = index + 1  # @import and @charset
+    return found
+
+
+def _selector(text: str) -> tuple[str | None, frozenset[str], str | None] | None:
+    if any(c in text for c in ":[*"):
+        return None
+    parts = re.split(r"[\s>+~]+", text.strip())
+    match = _SELECTOR.match(parts[-1])
+    if match is None or not match[0] or (len(parts) > 1 and not match[2]):
+        return None
+    ids = re.findall(r"#([a-z0-9_-]+)", match[2])
+    classes = frozenset(re.findall(r"\.([a-z0-9_-]+)", match[2]))
+    return None if len(ids) > 1 else (match[1], classes, ids[0] if ids else None)
+
+
+def _declared(style: str, name: str) -> str:
+    """The last value a style (lower case, without spaces) gives a property, "" without one."""
+    values = re.findall(rf"(?:^|;){re.escape(name)}:([^;]*)", style)
+    return values[-1].removesuffix("!important") if values else ""
+
+
+def _background(style: str, values: dict[str, str]) -> str | None:
+    """An element's own background colour: None without one, "" when it isn't known (a picture or a gradient)."""
+    if values.get("background") or "url(" in style or "gradient(" in style or "background-image:" in style:
+        return ""
+    declared = _declared(style, "background-color") or _declared(style, "background") or values.get("bgcolor", "")
+    if not declared:
+        return None
+    colour = _colour(declared)
+    return colour if colour not in (None, "transparent") else ""
+
+
+def _colour(text: str) -> str | None:
+    """A CSS colour as #rrggbb, or "transparent" (None: not one Ember knows)."""
+    text = re.sub(r"\s+", "", text.lower())
+    if text in ("transparent", *_COLOURS):
+        return _COLOURS.get(text, text)
+    if re.fullmatch(r"#[0-9a-f]{3}", text):
+        return "#" + "".join(c * 2 for c in text[1:])
+    if re.fullmatch(r"#[0-9a-f]{6}", text):
+        return text
+    rgb = re.fullmatch(r"rgba?\((\d{1,3}),(\d{1,3}),(\d{1,3})(?:,([\d.]+))?\)", text)
+    if rgb is None:
+        return None
+    if rgb[4] is not None and float(rgb[4] or 0) == 0:
+        return "transparent"
+    return "#" + "".join(f"{min(int(n), 255):02x}" for n in rgb.groups()[:3])
+
+
+def _alike(colour: str | None, background: str | None) -> bool:
+    """Whether text of this colour can't be read on this background (both known and nearly the same)."""
+    if not colour or not background or colour == "transparent":
+        return False
+    return max(abs(int(colour[i : i + 2], 16) - int(background[i : i + 2], 16)) for i in (1, 3, 5)) <= 8
 
 
 def _link_host(attrs: list[tuple[str, str | None]]) -> str | None:
@@ -495,21 +693,25 @@ class LiveMailbox:
         wanted = found[:limit]  # the oldest first: the rest waits for the next fetch, none is dropped (0.12.0)
         last = after_uid
         mails: list[IncomingMail] = []
+        refused = None
         for uid in wanted:
             if deadline is not None and time.monotonic() > deadline:
                 break  # the rest comes with the next fetch
-            _, data = conn.uid("FETCH", str(uid), "(RFC822.SIZE)")
+            typ, data = conn.uid("FETCH", str(uid), "(RFC822.SIZE)")
             size = _fetched_size(data)
-            if size is None or size > MAX_MESSAGE_BYTES:
-                _, data = conn.uid("FETCH", str(uid), "(BODY.PEEK[HEADER])")
-                raw = _literal(data)
-                mail = parse_message(raw or b"", uid, headers_only=True, size=size)
-            else:
-                _, data = conn.uid("FETCH", str(uid), "(BODY.PEEK[])")  # PEEK: nothing is marked read
-                mail = parse_message((_literal(data) or b"")[: MAX_MESSAGE_BYTES + 1], uid)
-            mails.append(mail)
+            whole = typ == "OK" and size is not None and size <= MAX_MESSAGE_BYTES
+            if typ == "OK":  # PEEK: nothing is marked read
+                typ, data = conn.uid("FETCH", str(uid), "(BODY.PEEK[])" if whole else "(BODY.PEEK[HEADER])")
+            raw = _literal(data) if typ == "OK" else None
+            if raw is None:
+                # 0.14.0: the server refused it or sent nothing. It was stored empty and passed for good (an opt-out
+                # in it too): now the fetch ends before it, and the next one asks again (mailstore.fetch gives up
+                # after REFUSED_TRIES).
+                refused = uid
+                break
+            mails.append(parse_message(raw[: MAX_MESSAGE_BYTES + 1], uid, headers_only=not whole, size=size))
             last = uid
-        return FetchResult(mails, last, validity, len(found) - len(mails))
+        return FetchResult(mails, last, validity, len(found) - len(mails), refused)
 
     def send(self, message: EmailMessage, to: str) -> SendResult:
         check_outgoing(message, to)
@@ -574,6 +776,8 @@ def _literal(data: Any) -> bytes | None:
 # --- the dry-run mailbox ---
 
 FAKE_ADDRESS = "ember@example.invalid"
+# 0.14.0: what a mail provider adds to an email whose sender it verified
+_VERIFIED = "mx.example.invalid; dkim=pass header.d={domain}; dmarc=pass header.from={domain}"
 
 
 @dataclass(frozen=True)
@@ -590,6 +794,7 @@ def _reader(address: str) -> EmailMessage:
     msg["Subject"] = "Is your meal planner available in German?"
     msg["Date"] = "Mon, 28 Sep 2026 08:12:00 +0200"
     msg["Message-ID"] = "<planner-question-1@example.org>"
+    msg["Authentication-Results"] = _VERIFIED.format(domain="example.org")
     msg.set_content(
         "Hi Ember,\n\nsomeone shared your printable weekly meal planner in a parents' forum and I like it a lot. "
         "Is there a German version? My parents would use it too, but they don't read English well.\n\n"
@@ -606,6 +811,7 @@ def _newsletter(address: str) -> EmailMessage:
     msg["Subject"] = "Maker Weekly #212: five ways to sell printables"
     msg["Date"] = "Wed, 30 Sep 2026 06:00:00 +0000"
     msg["Message-ID"] = "<issue-212@makerweekly.example>"
+    msg["Authentication-Results"] = _VERIFIED.format(domain="makerweekly.example")
     msg["List-Unsubscribe"] = "<https://makerweekly.example/unsubscribe>"
     msg.set_content(
         "<html><head><title>Maker Weekly</title><style>h1 { color: #333 }</style></head><body>"
@@ -631,6 +837,7 @@ def _stop(address: str) -> EmailMessage:
     msg["Subject"] = "Re: Is your meal planner available in German?"
     msg["Date"] = "Fri, 02 Oct 2026 19:40:00 +0200"
     msg["Message-ID"] = "<planner-question-2@example.org>"
+    msg["Authentication-Results"] = _VERIFIED.format(domain="example.org")
     msg["In-Reply-To"] = "<planner-question-1@example.org>"
     msg["References"] = "<planner-question-1@example.org>"
     msg.set_content(

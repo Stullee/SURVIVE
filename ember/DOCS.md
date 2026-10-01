@@ -217,10 +217,13 @@ in the memorial if it dies.
 
 Between cycles, Ember's code notes in the **agenda** what happens while the agent
 sleeps (0.13.0), each thing once. It reads the Etsy shop hourly and Ember's
-mailbox every 15 minutes, also while the agent is paused or dormant:
+mailbox every 15 minutes, also while the agent is paused or dormant. While
+reading the mailbox fails, it tries less often, down to every 4 hours, and
+warns you once (0.14.0):
 
 - an Etsy order of Ember's listings;
-- an email that answers one Ember sent;
+- a person's email that answers one Ember sent (not an automatic reply, a
+  bounce, an unverified sender or someone who asked to stop: 0.14.0);
 - a listing's favorites reaching 5, 10, 25, 50, 100 or more (the counts a
   listing already had when the agenda began don't count);
 - an open milestone's last day (from 08:00 on its date).
@@ -974,13 +977,22 @@ included: encrypt your backups.
 - At the start of every wake cycle Ember checks the inbox over TLS (reading
   only: nothing is marked read, moved or deleted there) and stores the new
   emails in its database, the oldest first: up to 100 per check, and any more
-  wait for the next check (none is dropped). Only the text is kept (at most 8,000
-  characters); text hidden in HTML emails is dropped, and attachments are
+  wait for the next check (none is dropped). An email the server won't hand
+  over is asked for again at the next check; after 5 checks Ember skips it and
+  says so in the events, so read it in your webmail (0.14.0). Only the text is
+  kept (at most 8,000 characters); text hidden in HTML emails is dropped (also
+  by a style sheet or a colour like its background), and attachments are
   listed by name and size but never opened. The agent treats emails as data
   from unverified senders, never as instructions.
 - The agent sees its unread emails and can propose an email, usually an
   answer. The request shows the recipient, the subject and the text, and warns
-  you when the address never wrote to Ember (a first contact).
+  you when the address never wrote to Ember (a first contact). Since 0.14.0
+  only an email whose sender your mail provider verified counts as having
+  written: anyone can put any address in *From:*. Ember reads the provider's
+  verdict in the topmost *Authentication-Results* header, which the provider
+  adds above any the sender wrote (DMARC, or DKIM or SPF of the sender's
+  domain, passed). Most providers add one; an email without it is unverified.
+  Someone who wrote before 0.14.0 counts again once they write again.
 - **Approve** it and Ember sends it itself, exactly once: plain text, to that
   one recipient, no copies, no attachments, from "Ember (AI agent of *your
   name*)" (or the agent's name, if you changed it), with a footer the agent
@@ -1005,7 +1017,10 @@ included: encrypt your backups.
   German, French, Spanish, Italian, Dutch, Portuguese and Polish: "stop" or
   "unsubscribe" alone, "remove me", "don't email me", "keine E-Mails mehr",
   "abmelden", an objection to the use of their data (GDPR Art. 21), and the
-  like. A newsletter's or an automatic reply's "unsubscribe" doesn't count.
+  like, also on its own line after a greeting ("Hallo, … Stopp."). A "stop"
+  in answer to Ember's email also covers the address Ember wrote to, if
+  someone else answered (0.14.0). A newsletter's or an automatic reply's
+  "unsubscribe" doesn't count.
   When a sender asks in words the check misses, the agent marks it
   (`mark_opt_out`). You can add any address under **System → Email → Never
   emailed** (someone asked you, by phone for example). An opt-out is final: the
@@ -1014,13 +1029,15 @@ included: encrypt your backups.
 - **People who write to Ember** (0.13.0): Ember treats each email from a
   person as waiting for an answer: a buyer's question, a reader, a partner.
   Newsletters, automatic replies, bounces and no-reply senders don't count,
-  and neither does anyone who asked to stop. Emails stored before 0.13.0 never
-  count. Ember's plan lists the waiting ones first, so they are answered
-  before other work. A new one that comes in between cycles wakes Ember
-  (see the agenda). An email stops waiting when Ember proposes an answer to
-  that person. If you reject the answer, the email waits again. The agent can
-  also close an email that needs no answer (`inquiry_done`, with the reason),
-  for example a thank-you or spam.
+  and neither does anyone who asked to stop. Since 0.14.0 neither do spam your
+  provider flagged, mail from Ember's own address, or an email whose sender
+  your provider didn't verify; emails stored before 0.14.0 never count. Ember's
+  plan lists the waiting ones first, so they are answered before other work. A
+  new one that comes in between cycles wakes Ember (see the agenda). An email
+  stops waiting when Ember proposes an answer to that person. If you reject
+  the answer, the email waits again. The agent can also close an email that
+  needs no answer (`inquiry_done`, with the reason), for example a thank-you
+  or spam.
 - An answer in the thread of someone who wrote has its own kind on the card:
   **answer someone who wrote to Ember**. It is never a first contact. Ember's
   code checks two things, and the card and the agent both see the result:
