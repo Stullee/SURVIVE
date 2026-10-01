@@ -147,19 +147,33 @@ def _place(row: sqlite3.Row) -> str:
     return {"pinterest": "Pinterest", "printify": "Printify"}.get(str(row["class"]).split(".")[0], "Etsy")
 
 
-# 0.14.0: an entry of the journal after action {row} that no longer counts as a later action on its listing: an Undo of
-# an action after {row} too (the two cancel out), or an action an Undo undid that nothing undid. After an Undo, the
-# action before it can be undone too.
-_UNDONE = (
-    "EXISTS (SELECT 1 FROM action_undos v JOIN approvals b ON b.id = v.approval_id WHERE v.journal_id = {entry}"
-    " AND b.status = 'done')"
-)
-_CANCELLED = (
-    "(EXISTS (SELECT 1 FROM action_undos u WHERE u.approval_id = j.approval_id AND u.journal_id > {row})"
-    " OR EXISTS (SELECT 1 FROM action_undos u JOIN approvals a ON a.id = u.approval_id JOIN action_journal k"
-    " ON k.approval_id = u.approval_id WHERE u.journal_id = j.id AND a.status = 'done'"
-    f" AND NOT {_UNDONE.format(entry='k.id')}))"
-)
+def _later(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> int | None:
+    """0.14.0: the later action on a listing the owner must undo before this one (None: none). Each action after this
+    one starts a chain of Undos (an Undo, the Undo of that Undo, ...): an odd number of them done leaves the action
+    undone, an even number leaves it in effect, and then the chain's newest entry is the one to undo. An action
+    nothing can undo (a renewal) doesn't change what an Undo changes back, and doesn't count."""
+    where, params = scope.where("j")
+    rows = conn.execute(
+        "SELECT j.id, j.class, j.subject, u.journal_id AS undoes, a.status AS request FROM action_journal j"
+        " LEFT JOIN action_undos u ON u.approval_id = j.approval_id LEFT JOIN approvals a ON a.id = j.approval_id"
+        f" WHERE {where} AND j.subject = ? AND j.class LIKE 'etsy.%' AND j.id > ? AND j.status <> 'failed'"
+        " ORDER BY j.id",
+        (*params, row["subject"], row["id"]),
+    ).fetchall()
+    ids = {r["id"] for r in rows}
+    undone_by: dict[int, sqlite3.Row] = {}
+    for r in rows:
+        if r["undoes"] in ids and r["request"] == "done":
+            undone_by.setdefault(r["undoes"], r)
+    for r in rows:
+        if r["undoes"] in ids or connectors.undo_of(str(r["class"]), "done", r["subject"]) is None:
+            continue
+        head, done = r, 0
+        while head["id"] in undone_by:
+            head, done = undone_by[head["id"]], done + 1
+        if done % 2 == 0:
+            return int(head["id"])
+    return None
 
 
 def _listing(raw: str | None) -> etsy.Listing | None:
@@ -220,14 +234,9 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
         ).fetchone()
         live = product is not None and product["status"] in printify_publisher.LIVE
         return None if live else "the product isn't at Printify anymore"
-    journal_where, journal_params = scope.where("j")
-    later = conn.execute(
-        f"SELECT j.id FROM action_journal j WHERE {journal_where} AND j.subject = ? AND j.class LIKE 'etsy.%'"
-        f" AND j.id > ? AND j.status <> 'failed' AND NOT {_CANCELLED.format(row='?')} ORDER BY j.id LIMIT 1",
-        (*journal_params, row["subject"], row["id"], row["id"]),
-    ).fetchone()
+    later = _later(conn, scope, row)
     if later is not None:
-        return f"a later action changed this listing (#{later['id']}): undo that one first"
+        return f"a later action changed this listing (#{later}): undo that one first"
     listing_id = int(row["subject"])
     waiting = etsy_publisher.open_edit(conn, scope, listing_id)
     if waiting is not None:

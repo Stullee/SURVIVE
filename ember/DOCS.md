@@ -816,10 +816,12 @@ no longer shown); a study that failed three times stops until you press
   time it will be approved, and you can still reject it. **Run at once**
   approves it when it is made. Each rule has a daily limit and a budget of
   actions. Ember's code takes an unlock back itself when one of its actions
-  ends unclear, its budget is spent, the milestone is missed or dropped, or you
-  veto one of its requests. It never widens one. When you approved 5 requests
-  of a kind unchanged within 30 days, the Roadmap tab suggests an unlock, and
-  you decide. Ember hears each change as your note on the milestone.
+  ends unclear, its budget is spent, the milestone closes (met, missed or
+  dropped), or you veto one of its requests. It never widens one. When you
+  approved 5 requests of a kind unchanged and without a comment within 30
+  days, the Roadmap tab suggests an unlock, and you decide (0.14.0: not again
+  within 30 days after Ember's code took that unlock back for a reason other
+  than a spent budget). Ember hears each change as your note on the milestone.
 
   **Never automatic**, whatever you unlock: creating an account, moving or
   spending money, a first contact (someone who never wrote to Ember, § 7 UWG),
@@ -828,9 +830,11 @@ no longer shown); a study that failed three times stops until you press
   decision and your Impressum, § 5 DDG; physical goods bring duties of their
   own), a post in a third-party community, an email whose text touches tax,
   VAT, an invoice, a Gewerbe or a contract (0.14.0: read in what it sends,
-  look-alike letters and hidden characters included, not in a listing's
-  copy), and anything only you
-  carry out. Such a request always waits for your click, and if it fits an
+  look-alike letters, hidden characters and hyphens inside a word included,
+  in German, English and the neighbours' words for VAT, invoices and
+  contracts, not in a listing's copy; a word list can still miss a phrasing
+  or catch a harmless word, such as a licence in a reply), and anything only
+  you carry out. Such a request always waits for your click, and if it fits an
   unlocked kind, its card says why it waits. Only you unlock: Ember's code
   can only take an unlock back. The database checks this again on its own. It
   refuses an unlock's approval of such a request, an approval that no current

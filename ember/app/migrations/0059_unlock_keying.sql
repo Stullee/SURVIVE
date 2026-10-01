@@ -76,18 +76,20 @@ FROM (
         r.words GLOB '*steuer*' OR r.words GLOB '*gewerbe*' OR r.words GLOB '*finanzamt*' OR r.words GLOB '*vertrag*'
             OR r.words GLOB '*verträg*' OR r.words GLOB '*vertrÄg*' OR r.words GLOB '*contract*'
             OR r.words GLOB '*auftrag*' OR r.words GLOB '*aufträg*' OR r.words GLOB '*auftrÄg*'
-            OR r.words GLOB '*angebot*' OR r.words GLOB '*vereinbarung*' OR r.words GLOB '*lizenz*'
+            OR r.words GLOB '*vereinbarung*' OR r.words GLOB '*lizenz*'
             OR r.words GLOB '*widerruf*' OR r.words GLOB '*einfuhr*' OR r.words GLOB '*verzoll*'
             OR r.words GLOB '*[^a-z]invoic*' OR r.words GLOB '*[^a-z]agreement*' OR r.words GLOB '*[^a-z]licen*'
             OR r.words GLOB '*[^a-z]rechnung*' OR r.words GLOB '*[^a-z]ustg*' OR r.words GLOB '*[^a-z]umsatzst*'
             OR r.words GLOB '*[^a-z]mehrwertst*' OR r.words GLOB '*[^a-z]kleinunternehm*'
+            OR r.words GLOB '*[^a-z]angebot*' OR r.words GLOB '*[^a-z]factur*' OR r.words GLOB '*[^a-z]fattur*'
+            OR r.words GLOB '*[^a-z]faktur*' OR r.words GLOB '*[^a-z]contrat*' OR r.words GLOB '*[^a-z]impuest*'
+            OR r.words GLOB '*[^a-z]impot*'
             OR r.words GLOB '*[^a-z]tax[^a-z]*' OR r.words GLOB '*[^a-z]taxes[^a-z]*'
             OR r.words GLOB '*[^a-z]taxed[^a-z]*' OR r.words GLOB '*[^a-z]taxable[^a-z]*'
             OR r.words GLOB '*[^a-z]taxation[^a-z]*' OR r.words GLOB '*[^a-z]vat[^a-z]*'
             OR r.words GLOB '*[^a-z]ust[^a-z]*' OR r.words GLOB '*[^a-z]mwst[^a-z]*'
             OR r.words GLOB '*[^a-z]gst[^a-z]*' OR r.words GLOB '*[^a-z]iva[^a-z]*'
-            OR r.words GLOB '*[^a-z]tva[^a-z]*' OR r.words GLOB '*[^a-z]btw[^a-z]*'
-            OR r.words GLOB '*[^a-z]agb[^a-z]*' OR r.words GLOB '*[^a-z]customs[^a-z]*' AS legal,
+            OR r.words GLOB '*[^a-z]tva[^a-z]*' OR r.words GLOB '*[^a-z]agb[^a-z]*' OR r.words GLOB '*[^a-z]customs[^a-z]*' AS legal,
         r.executor IS NULL OR r.executor NOT IN (
             'email', 'reddit_link', 'etsy_listing', 'etsy_edit', 'pinterest_pin', 'printify_product'
         ) AS owner_only

@@ -54,29 +54,34 @@ CLASSES = {
 EXECUTORS = ("email", "reddit_link", "etsy_listing", "etsy_edit", "pinterest_pin", "printify_product")
 # The words of tax, VAT, a Gewerbe and contracts: whole words, the start of a word, or anywhere in a word (German
 # compounds such as Umsatzsteuer, Kleingewerbe, Kaufvertrag). Both spellings of the umlaut, as lower() leaves it.
-# 0.14.0: tax status, invoices and legal acts in German and English, and VAT's names in the neighbours' languages.
-LEGAL_WORDS = ("tax", "taxes", "taxed", "taxable", "taxation", "vat", "ust", "mwst", "gst", "iva", "tva", "btw", "agb")
+# 0.14.0: tax status, invoices and legal acts in German and English, VAT's, invoices' and contracts' names in the
+# neighbours' languages. Not "btw" (in English: by the way), and "angebot" only at a word's start (no Sonderangebot).
+LEGAL_WORDS = ("tax", "taxes", "taxed", "taxable", "taxation", "vat", "ust", "mwst", "gst", "iva", "tva", "agb")
 LEGAL_WORDS += ("customs",)
 LEGAL_PREFIXES = ("invoic", "agreement", "licen", "rechnung", "ustg", "umsatzst", "mehrwertst", "kleinunternehm")
+LEGAL_PREFIXES += ("angebot", "factur", "fattur", "faktur", "contrat", "impuest", "impot")
 LEGAL_PARTS = ("steuer", "gewerbe", "finanzamt", "vertrag", "verträg", "vertrÄg", "contract", "auftrag", "aufträg")
-LEGAL_PARTS += ("auftrÄg", "angebot", "vereinbarung", "lizenz", "widerruf", "einfuhr", "verzoll")
+LEGAL_PARTS += ("auftrÄg", "vereinbarung", "lizenz", "widerruf", "einfuhr", "verzoll")
 _LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 _WORDS = re.compile(rf"[^a-z](?:{'|'.join(LEGAL_WORDS)})[^a-z]")
 _PREFIXES = re.compile(rf"[^a-z](?:{'|'.join(LEGAL_PREFIXES)})")
-# 0.14.0: Cyrillic, Greek and other letters that look like Latin ones (after casefolding), and what they look like.
+# 0.14.0: Cyrillic and Greek capitals that look like Latin ones, folded before casefolding (Greek Ν is N, though ν
+# looks like v), and the small letters that look like Latin ones after it.
+_CAPITALS = str.maketrans("АВЕКМНОРСТХЅІЈҮҺԚԜӀΑΒΕΖΗΙΚΜΝΟΡΤΥΧ", "ABEKMHOPCTXSIJYHQWIABEZHIKMNOPTYX")
 _LOOKALIKES = str.maketrans(
     "авеікјмнорсѕтухһԁӏԛԝүαβεζηικμνορτυχıɑɡ",
     "abeikjmhopcstyxhdlqwyabeznikmvoptuxiag",
 )
 _GONE = {"Cc", "Cf", "Cn", "Co", "Cs", "Me", "Mn"}  # controls, invisible formats, unassigned, combining marks
 _BLANKS = {"ᅟ", "ᅠ", "ㅤ", "ﾠ", "⠀"}  # letters and signs that show nothing
+_DASHED = re.compile(r"(?<=[a-z])[-\u2010-\u2015]+(?=[a-z])")  # 0.14.0: a dash inside a word (Steu-er)
 
 
 def normalise(text: str) -> str:
     """0.14.0: a text as NEVER reads it: compatibility forms folded (NFKC: ｔａｘ, 𝐭𝐚𝐱), casefolded, accents and
     invisible characters out (a soft hyphen or zero-width space inside a word joins it again), look-alike letters as
     the Latin ones, every space a plain one."""
-    text = unicodedata.normalize("NFKD", unicodedata.normalize("NFKC", text).casefold())
+    text = unicodedata.normalize("NFKD", unicodedata.normalize("NFKC", text).translate(_CAPITALS).casefold())
     kept = (
         " " if ch.isspace() else ch
         for ch in text
@@ -110,7 +115,11 @@ def act_text(executor: str | None, action: Any) -> str:
 def act_words(executor: str | None, action: Any) -> str | None:
     """0.14.0: a request's act, normalised, as Ember's code keeps it for the database (None: it says nothing)."""
     text = act_text(executor, action)
-    return normalise(text) if text.strip() else None
+    if not text.strip():
+        return None
+    words = normalise(text)
+    joined = _DASHED.sub("", words)  # both, so non-taxable still reads as taxable
+    return words if joined == words else f"{words} {joined}"
 
 
 def legal(conn: sqlite3.Connection, row: Mapping[str, Any]) -> bool:

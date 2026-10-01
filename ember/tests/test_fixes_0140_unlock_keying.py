@@ -249,7 +249,6 @@ EVASIONS = (
     "Double taxation.",
     "IVA incluida.",
     "TVA non applicable.",
-    "Prijzen incl. BTW.",
     "Die St\u0435uer zahlen Sie.",  # a Cyrillic e
     "Die Ste\u00aduer zahlen Sie.",  # a soft hyphen
     "Die Ste\u200buer zahlen Sie.",  # a zero-width space
@@ -260,7 +259,17 @@ EVASIONS = (
     "Zoll und Einfuhrabgaben trägt der Käufer.",
     "Mit Lizenz für gewerbliche Nutzung.",
     "A commercial licence is included.",
+    "RECH\u039dUNG folgt.",  # Greek capital Nu
+    "CO\u039dTRACT accepted.",
+    "KLEI\u039dU\u039dTER\u039dEHMER.",
+    "Die Steu-er zahlen Sie.",
+    "Une facture suivra.",
+    "Le contrat est sign\u00e9.",
+    "Fattura in arrivo.",
+    "Faktura f\u00f8lger.",
+    "Ihr Angebot nehmen wir an.",
 )
+HARMLESS = ("Btw, the A5 file is attached.", "Sonderangebot: 2 f\u00fcr 1", "Your T-Shirt ships today.")
 
 
 def legal_in_db(agent: Any, approval_id: int) -> int:
@@ -275,6 +284,11 @@ def test_never_reads_what_a_request_says_normalised(data_dir: Path) -> None:
         with agent.db.connection() as conn:
             found = never.reasons(conn, conn.execute("SELECT * FROM approvals WHERE id = ?", (reply,)).fetchone())
         assert (found, legal_in_db(agent, reply)) == (["legal"], 1), words
+    for words in HARMLESS:  # 0.14.0: "btw" is "by the way", a Sonderangebot no offer of a contract
+        reply = a_reply(agent, words)
+        with agent.db.connection() as conn:
+            found = never.reasons(conn, conn.execute("SELECT * FROM approvals WHERE id = ?", (reply,)).fetchone())
+        assert (found, legal_in_db(agent, reply)) == ([], 0), words
     assert (never.normalise("\uff33t\u0435\u00adu\u0435r\u2060"), never.normalise("A\u00a0b\nc")) == ("steuer", "a b c")
     # A listing's product copy and its disclaimer are no act: "Mietvertrag" in a checklist is no contract
     copy = "Umzugs-Checkliste: Mietvertrag kündigen, Nachsendeauftrag stellen. Keine Rechts- oder Steuerberatung."
@@ -415,6 +429,39 @@ def test_after_an_undo_the_action_before_it_can_be_undone(data_dir: Path) -> Non
         f"a later action changed this listing (#{deactivated['id']}): undo that one first"
     )
     assert deactivated["undo"]["why_not"] is None
+
+
+def test_undoing_an_undo_of_an_undo_still_leads_back_to_the_first_action(data_dir: Path) -> None:
+    agent, listing_id = listed(data_dir)
+    line = goal(agent, "Ten sales", project_id=LINE)
+    unlock(agent, line, "price_change")
+    made = work_on(agent, line, change(listing_id, price="4.28"))[-1]
+    assert agent.execute_approved() == [(made["id"], "done")]
+    for n in range(3):  # undo the change, undo that Undo, undo it again: the price is back as listed
+        request = undo(agent, feed(agent)[0]["id"])
+        assert agent.execute_approved() == [(request, "done")]
+        if n == 1:  # two Undos done: the change is in effect again, and the newest Undo is the one to undo
+            newest = feed(agent)[0]
+            assert next(e for e in feed(agent) if e["class"] == "etsy.create_listing")["undo"]["why_not"] == (
+                f"a later action changed this listing (#{newest['id']}): undo that one first"
+            )
+            assert newest["undo"]["why_not"] is None
+    assert price_of(agent, listing_id) == Decimal("4.50")
+    created = next(e for e in feed(agent) if e["class"] == "etsy.create_listing")
+    assert created["undo"]["why_not"] is None  # before: "undo #2 first", and #2 "it is undone": a dead end
+    # A renewal nothing can undo doesn't stand in the way either
+    renewal = a_request(agent, "etsy_edit", {"listing_id": listing_id, "state": "renew"}, title="Renew it")
+    assert owner(agent).decide(renewal, {"decision": "reject"}, "Owner").status == 200
+    with agent.db.transaction() as conn:  # journaled as if it had been carried out (only the entry matters here)
+        now = to_iso(agent.clock.now())
+        connectors.begin(conn, renewal, now, subject=str(listing_id), name="etsy.renew")
+        connectors.finish(conn, renewal, "done", now)
+    assert feed(agent)[0]["class"] == "etsy.renew"
+    created = next(e for e in feed(agent) if e["class"] == "etsy.create_listing")
+    assert created["undo"]["why_not"] is None  # before: "a later action changed this listing (#6)"
+    request = undo(agent, created["id"])
+    assert agent.execute_approved() == [(request, "done")]
+    assert agent.etsy.shop().state["listings"][str(listing_id)]["state"] == etsy.STATES["deactivate"]
 
 
 def test_the_owner_s_undo_runs_while_paused_and_is_refused_once_killed(data_dir: Path) -> None:
