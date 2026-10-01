@@ -128,6 +128,11 @@ options:
   # and privacy page, its name and its address are optional options too.
   site_enabled: false
   site_language: de
+  # Your blog (see the Documentation tab): posts and a link page the agent writes, in your own site's design, uploaded
+  # by Ember over SFTP after you approve each one. Your SFTP host, user, password, the server's key and the site's
+  # folder are optional options too.
+  blog_enabled: false
+  blog_sftp_port: 22
 
 schema:
   anthropic_api_key: password?
@@ -210,3 +215,10 @@ schema:
   site_phone: str(,40)?
   site_vat_id: str(,20)?
   site_host: str(,200)?
+  blog_enabled: bool
+  blog_sftp_host: 'match(^(?=.{0,200}$)(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,198}[A-Za-z0-9])?)?$)?'
+  blog_sftp_port: int(1,65535)
+  blog_sftp_user: str(,100)?
+  blog_sftp_password: password?
+  blog_sftp_host_key: str(,800)?
+  blog_sftp_folder: str(,200)?

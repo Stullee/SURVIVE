@@ -54,10 +54,11 @@ from ..integrations import (
     printify_publisher,
     qa,
     reddit,
+    site_publisher,
 )
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
-from ..products import checks, images, make, sheets, site
+from ..products import blog, checks, images, make, sheets, site
 from ..products.site import Owner as SiteOwner
 from . import (
     demand,
@@ -122,6 +123,7 @@ GUIDES = (
     "pinterest",
     "printify",
     "website",
+    "blog",
 )
 WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
 # Offered only with an Etsy shop (demand_note 0.12.0: a product line's first listing needs one).
@@ -132,6 +134,8 @@ PINTEREST_TOOLS = frozenset({"pinterest_boards", "propose_pin"})
 PRINTIFY_TOOLS = frozenset({"printify_catalog", "propose_printify_product"})
 # Offered only when the owner switched their website on (0.13.0, Phase E3): its pages.
 SITE_TOOLS = frozenset({"site_page"})
+# Offered only when the owner switched their blog on (0.14.0): posts and the link page, uploaded once they approve.
+BLOG_TOOLS = frozenset({"propose_blog_post", "propose_link_page"})
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "mark_opt_out", "propose_email", "inquiry_done"})
 # Offered only in venture cycles (0.10.0; evidence 0.12.0: a venture's case, which grades pages any research found;
@@ -159,6 +163,7 @@ ORDINARY_TOOLS = (
     | PINTEREST_TOOLS
     | PRINTIFY_TOOLS
     | SITE_TOOLS
+    | BLOG_TOOLS
     | MAIL_TOOLS
 )
 # Model calls of their own (and, 0.12.0, the Etsy market probe of a demand note): they need the network, and no
@@ -1065,6 +1070,42 @@ SPECS: dict[str, Spec] = {
             },
             per_cycle=4,
         ),
+        Spec(
+            "propose_blog_post",
+            "Propose a post for your owner's blog on their own website, from a Markdown file in your workspace: its "
+            "front matter (slug, title, description, lead and the product it recommends) and its text. Ember's code "
+            "renders it in the site's design; your owner previews it and approves it or not; then Ember's code "
+            "uploads it and adds it to the blog's list. The same slug again replaces that post (a waiting request "
+            "for it is withdrawn). Read guide 'blog' first. Free.",
+            {
+                "source": _s("The Markdown file in your workspace, e.g. 'blog/bewerbung-nachfassen.md'.", 200),
+                "reason": _s("Why this post now, and what you expect from it.", 300),
+            },
+            per_cycle=2,
+        ),
+        Spec(
+            "propose_link_page",
+            "Propose the link page of your owner's website (links.html, the address on their profiles): a "
+            "one-sentence bio and the buttons in order, the first highlighted. It replaces the whole page; once your "
+            "owner approves it, Ember's code uploads it. Read guide 'blog' first. Free.",
+            {
+                "bio": _s("One sentence under the site's name: who makes what, for whom.", blog.BIO_MAX),
+                "links": _a(
+                    "The buttons, in order (the first is the main one).",
+                    blog.LINKS_MAX,
+                    {
+                        "label": _s("The button's text.", blog.LABEL_MAX),
+                        "note": _s("A short line under it (optional).", blog.NOTE_MAX, required=False),
+                        "url": _s(
+                            "An https address, a page of the site (like /blog/) or mailto: your owner's address.",
+                            blog.URL_MAX,
+                        ),
+                    },
+                ),
+                "reason": _s("Why change it now.", 300),
+            },
+            per_cycle=1,
+        ),
     )
 }
 
@@ -1110,6 +1151,7 @@ def definitions(
     printify: bool = False,
     site: bool = False,
     brainstorm: bool = True,
+    blog: bool = False,
 ) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds (the
     reflection reads it from the cache at a tenth of the price; a list of its own would write the whole conversation
@@ -1117,9 +1159,9 @@ def definitions(
     only when the owner's options allow runs, the Etsy tools only with a shop, brainstorm only in a venture cycle
     and, 0.12.0, the tools for building and selling only in an ordinary one, the library's only while it holds
     documents; 0.13.0: the Pinterest and Printify tools, and their manuals, only with the owner's account and a
-    shop, and the website's only when the owner switched it on; 0.15.0: brainstorm only when the burn mode allows
-    it)."""
-    channels = {"pinterest": pinterest and etsy, "printify": printify and etsy, "website": site}
+    shop, and the website's only when the owner switched it on; 0.14.0: the blog's too; 0.15.0: brainstorm only when
+    the burn mode allows it)."""
+    channels = {"pinterest": pinterest and etsy, "printify": printify and etsy, "website": site, "blog": blog}
     return [
         _definition(_channel_guides(spec_of(spec.name, venture) or spec, channels))
         for spec in SPECS.values()
@@ -1134,6 +1176,7 @@ def definitions(
             printify=printify,
             site=site,
             brainstorm=brainstorm,
+            blog=blog,
         )
     ]
 
@@ -1173,6 +1216,7 @@ def offered(
     printify: bool = False,
     site: bool = False,
     brainstorm: bool = True,
+    blog: bool = False,
 ) -> bool:
     """Whether tool ``name`` is offered in a cycle of this configuration and kind (``venture``: a venture cycle;
     ``brainstorm``: the burn mode allows brainstorms, 0.15.0)."""
@@ -1183,6 +1227,7 @@ def offered(
         and ((pinterest and etsy) or name not in PINTEREST_TOOLS)
         and ((printify and etsy) or name not in PRINTIFY_TOOLS)
         and (site or name not in SITE_TOOLS)
+        and (blog or name not in BLOG_TOOLS)
         and (venture or name not in VENTURE_TOOLS)
         and (brainstorm or name != "brainstorm")
         and not (venture and name in ORDINARY_TOOLS)
@@ -1332,6 +1377,14 @@ class PrintifyAccess:
 CatalogFn = Callable[[str | None, int | None, int | None], str]  # search, blueprint, provider: the catalog's answer
 
 
+@dataclass(frozen=True)
+class BlogAccess:
+    """0.14.0: the owner's blog, when they switched it on: the site's data and what keeps it from being published."""
+
+    owner: blog.Owner
+    problems: tuple[str, ...] = ()
+
+
 @dataclass
 class ToolContext:
     db: Database
@@ -1352,6 +1405,7 @@ class ToolContext:
     printify: PrintifyAccess | None = None  # the owner's Printify account, when set up (0.13.0)
     catalog: CatalogFn | None = None  # Printify's catalog (0.13.0): kept by Ember's code, read at Printify when old
     site: SiteOwner | None = None  # the owner's data, when they switched their website on (0.13.0): its pages
+    blog: BlogAccess | None = None  # the owner's blog, when they switched it on (0.14.0)
     venture: bool = False  # a venture cycle (0.10.0): brainstorm, and more research
     usd_per_eur: float = 0.0  # the owner's exchange rate (etsy_usd_per_eur; 0: none, econ assumes one), 0.13.0
     venture_cash_eur: float = 20.0  # the owner's cash for a venture's first test (a knock-out beyond it), 0.13.0
@@ -1399,6 +1453,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
             pinterest=ctx.pinterest is not None,
             printify=ctx.printify is not None,
             site=ctx.site is not None,
+            blog=ctx.blog is not None,
         ):
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
@@ -3107,6 +3162,8 @@ def guide_text(topic: str) -> str:
         .replace("{PIN_TITLE}", str(pinterest.TITLE_MAX))
         .replace("{PIN_DESCRIPTION}", str(pinterest.DESCRIPTION_CHARS))
         .replace("{SITE_PAGES}", str(site.MAX_PAGES))
+        .replace("{BLOG_BODY_MIN}", str(blog.BODY_MIN))
+        .replace("{BLOG_LINKS}", str(blog.LINKS_MAX))
     )
 
 
@@ -3895,6 +3952,165 @@ def _site_page(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     return Outcome(True, "\n".join(lines), f"{'wrote' if new else 'rewrote'} page {page.slug}")
 
 
+def _blog(ctx: ToolContext) -> BlogAccess:
+    if ctx.blog is None:
+        raise ToolError("your owner hasn't switched their blog on")
+    if ctx.blog.problems:
+        raise ToolError(f"your owner's blog can't be published yet: {'; '.join(ctx.blog.problems)}. Tell them")
+    return ctx.blog
+
+
+def _withdraw_older(ctx: ToolContext, conn: Any, executor: str, slug: str | None, what: str) -> list[int]:
+    """0.14.0: a waiting request for the same page is replaced by the new one (an approved one is about to go up)."""
+    replaced = []
+    for r in site_publisher.waiting_for(conn, ctx.scope, executor, slug):
+        if r["status"] != "pending":
+            raise ToolError(
+                f"request #{r['id']} for {what} is approved and about to be uploaded: propose a change after you heard "
+                "it is online"
+            )
+        why = f"replaced by a new version of {what}"
+        store.withdraw_request(conn, ctx.scope, int(r["id"]), why, ctx.cycle_id, ctx.now())
+        replaced.append(int(r["id"]))
+    return replaced
+
+
+def _propose_blog_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.14.0: a post for the owner's blog, rendered by Ember's code now (the owner previews exactly this page) and
+    uploaded with the blog's list once they approve it."""
+    access = _blog(ctx)
+    path = args["source"].strip()
+    if not path.lower().endswith((".md", ".txt")):
+        raise ToolError("source must be the .md (or .txt) file you wrote the post in")
+    try:
+        source = ctx.workspace.read(path)
+    except SandboxError as exc:
+        raise ToolError(str(exc)) from None
+    try:
+        post = blog.read_post(source, access.owner)
+    except blog.BlogError as exc:
+        raise ToolError(f"{path}: {exc}") from None
+    earlier = site_publisher.known(conn, ctx.scope, post.slug)
+    day = str(earlier["day"]) if earlier is not None else ctx.clock.today().isoformat()
+    page = blog.render_post(post, day, access.owner)
+    found = blog.audit(page, access.owner)
+    if found:  # never: the page is escaped text in a fixed template
+        raise ToolError(f"the page didn't pass Ember's check ({'; '.join(found)})")
+    url = f"{access.owner.url}/{post.path}"
+    lines = [
+        f"{'Update of the' if earlier is not None else 'New'} blog post {url}"
+        + (f" (online since {earlier['day']}; its date stays)" if earlier is not None else ""),
+        f"Title: {post.title}",
+        f"Description (search results): {post.description}",
+        f"Lead: {post.lead}",
+    ]
+    if post.product_url:
+        lines.append(f"Recommends: {post.product_name} ({post.product_url})")
+    lines += ["", "Ember's code uploads exactly the page your preview shows, and adds it to the blog's list.", ""]
+    head = "\n".join(lines)
+    room = 7_900 - len(head)
+    body = post.body if len(post.body) <= room else post.body[: room - 60].rstrip() + "\n\n[... the preview shows all]"
+    payload = head + body
+    action = {
+        "path": post.path,
+        "slug": post.slug,
+        "title": post.title,
+        "description": post.description,
+        "date": day,
+        "sha256": blog.sha256(page),
+    }
+    if store.pending_approval_by_payload(conn, ctx.scope, store.sha256(payload)) is None:
+        replaced = _withdraw_older(ctx, conn, site_publisher.POST, post.slug, post.path)
+    else:
+        replaced = []
+    reason = args["reason"].strip()
+    made = _new_request(
+        ctx,
+        conn,
+        payload,
+        action,
+        type="publish",
+        title=_cut(f"Blog post: {post.title}", 120),
+        description=reason,
+        expected_cost="none: the upload to your web host is free",
+        expected_benefit=reason,
+        executor=site_publisher.POST,
+    )
+    if isinstance(made, str):
+        return Outcome(True, made, "duplicate blog post")
+    site_publisher.propose(conn, ctx.scope, made, post.path, page)
+    text = (
+        f"Approval request #{made} is waiting for your owner: they preview the page and approve it or not. Nothing "
+        f"is online yet. If they approve it, Ember's code uploads {post.path} and adds it to the blog's list "
+        f"({access.owner.url}/blog/), and you hear the result."
+    )
+    if earlier is not None:
+        text += f" It replaces the post online since {earlier['day']} (its date stays)."
+    if replaced:
+        text += f" It replaces request {', '.join(f'#{n}' for n in replaced)} (withdrawn)."
+    text += "".join(f" Note: {note}." for note in post.notes)
+    text += _unlocked(ctx)
+    return Outcome(True, text, f"#{made} blog post: {post.slug}")
+
+
+def _propose_link_page(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.14.0: the owner's link page as a whole, rendered now and uploaded once they approve it."""
+    access = _blog(ctx)
+    try:
+        bio, links = blog.read_links(args["bio"], args["links"], access.owner)
+    except blog.BlogError as exc:
+        raise ToolError(str(exc)) from None
+    page = blog.render_links(bio, links, access.owner)
+    found = blog.audit(page, access.owner)
+    if found:
+        raise ToolError(f"the page didn't pass Ember's check ({'; '.join(found)})")
+    url = f"{access.owner.url}/{blog.LINKS}"
+    payload = "\n".join(
+        [
+            f"The link page {url}, as a whole:",
+            f"Bio: {bio}",
+            *(
+                f"{i}. {link.label}" + (f" ({link.note})" if link.note else "") + f" -> {link.url}"
+                for i, link in enumerate(links, 1)
+            ),
+        ]
+    )
+    action = {
+        "path": blog.LINKS,
+        "bio": bio,
+        "links": [{"label": x.label, "note": x.note, "url": x.url} for x in links],
+        "sha256": blog.sha256(page),
+    }
+    if store.pending_approval_by_payload(conn, ctx.scope, store.sha256(payload)) is None:
+        replaced = _withdraw_older(ctx, conn, site_publisher.LINKS, None, "the link page")
+    else:
+        replaced = []
+    reason = args["reason"].strip()
+    made = _new_request(
+        ctx,
+        conn,
+        payload,
+        action,
+        type="publish",
+        title=_cut(f"Link page: {len(links)} links", 120),
+        description=reason,
+        expected_cost="none: the upload to your web host is free",
+        expected_benefit=reason,
+        executor=site_publisher.LINKS,
+    )
+    if isinstance(made, str):
+        return Outcome(True, made, "duplicate link page")
+    site_publisher.propose(conn, ctx.scope, made, blog.LINKS, page)
+    text = (
+        f"Approval request #{made} is waiting for your owner: they preview the page and approve it or not. If they "
+        f"approve it, Ember's code uploads it as {url} and you hear the result."
+    )
+    if replaced:
+        text += f" It replaces request {', '.join(f'#{n}' for n in replaced)} (withdrawn)."
+    text += _unlocked(ctx)
+    return Outcome(True, text, f"#{made} link page")
+
+
 def _propose_reddit_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     try:
         action = reddit.action(args["kind"], args["subreddit"], args.get("title"), args["body"], args.get("thread_url"))
@@ -3973,4 +4189,6 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "printify_catalog": _printify_catalog,
     "propose_printify_product": _propose_printify_product,
     "site_page": _site_page,
+    "propose_blog_post": _propose_blog_post,
+    "propose_link_page": _propose_link_page,
 }

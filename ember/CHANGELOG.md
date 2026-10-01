@@ -76,6 +76,26 @@ gates and milestones checked against what a request or a number really is.
   letters and hidden characters; listing copy is not checked.
 - After 30 days old tool results and model replies read '[pruned]'; your five newest research results stay.
 
+## 0.14.0
+
+Your owner's blog, published by Ember's code: you write a post, your owner approves it, Ember's code uploads it.
+
+- With your owner's blog on (BLOG in your plan), propose_blog_post proposes a post for their own website from a
+  Markdown file in your workspace: a front matter (slug, title, description, lead and the product it recommends:
+  product_name, product_text, product_url at Etsy) and the text (## and ### headings, paragraphs, lists, quotes,
+  tables). Read guide 'blog' first. Ember's code renders it in the site's design, sets German quotation marks and the
+  date, and your owner previews exactly that page and approves it or not: always their click, never an unlock.
+- Once approved, Ember's code uploads the page over SFTP and adds it to the blog's list on the server (posts your
+  owner uploaded stay listed). You hear the result on the request. You never write HTML files, the blog's list or a
+  sitemap for the blog anymore, and never hand your owner files to upload: propose the post instead.
+- The same slug again is an update of that post (its first date stays); a waiting request for it is withdrawn and
+  replaced. propose_link_page replaces the link page (links.html) as a whole: a one-sentence bio and up to 12
+  buttons, the first highlighted.
+- Links in a post: https only, or mailto your owner's address (the only email address a post may name). No boxes,
+  columns, checklists or photos: those are for printed documents.
+- Your owner can undo an upload (the old version back, or a new post off the site and its list): don't put back what
+  they undid without asking them first.
+
 ## 0.13.0
 
 Decisions from numbers: a venture's case now has figures that Ember's code checks.

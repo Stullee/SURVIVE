@@ -603,6 +603,8 @@ Don't reset the workshop's overshoot scaling again, and don't raise caps or top 
 
 *Added 2026-10-01, for the release on `claude/youthful-curie-p5h0eu`. 0.15.0 was built as 17 work packages, each reviewed in up to two rounds and merged into one branch. These notes are taken from each package's final report. The raw review files in `analysis-0.13.0/raw/` stay on the analysis branch: they hold private live data and are not in this repository.*
 
+*Version number: another session released its own 0.14.0 meanwhile (the blog on your website, uploaded over SFTP after your approval, branch `claude/zen-cannon-v75uxs`). These fixes were therefore released as 0.15.0, and 0.15.0 also contains that 0.14.0. Its migration keeps its number (`0059_blog`); the ten migrations of these fixes follow it as `0060`-`0069`.*
+
 ### Summary
 
 0.15.0 is the fix release this analysis asked for. It covers phase 0 of section 6 in full, the FIX NOW rows of phases 1 and 2, and phase 3's rows 9, 10, 11 and 21 (the loopholes in 0.6), but not phase 3's re-keying, new rules or scorecard. It also fixes the eleven faults in your live diagnostics of 2026-10-01 (LIVE 1-11).
@@ -612,7 +614,7 @@ Don't reset the workshop's overshoot scaling again, and don't raise caps or top 
   - **3 partial:** row 21 (email-reply unlocks aren't scoped to a thread), row 26m (no field for a register entry) and LIVE 7 (some numbers near "pin" are still masked).
   - **0 not fixed** of those listed. What was left out on purpose is under "Partial and not done".
 - **Tests:** 1,479 → **2,121**, all passing. `ruff check` is clean.
-- **Size (before these notes):** 64 commits, 158 files, about +17,600 / −2,300 lines, 10 migrations (`0059`-`0068`). They run on their own at the upgrade.
+- **Size (before these notes):** 64 commits, 158 files, about +17,600 / −2,300 lines, 10 migrations (`0060`-`0069`, after 0.14.0's `0059_blog`). They run on their own at the upgrade.
 - **New options:** 3: `wake_on_events`, `printify_buyer_pays_shipping` and `printify_bill_vat`. Row 11 asked for `wake_on_events`. The two Printify options state what the margin check can't know (who pays the shipping, whether Printify's bill carries VAT). Section 6's freeze asked for no other options, and none were added.
 - **What the money guard now promises.** A workshop run is held at its cap per run, at least, against the daily cap and the balance. A run can still cost more than anything seen before (the code-run output and the size of a search result have no bound). Ember then books the real cost, makes no more workshop runs in that cycle and raises its estimates. DOCS says this plainly.
 

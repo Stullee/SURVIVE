@@ -593,6 +593,7 @@
     section("pinterest", [d.integrations, d.mode, minute], ["pinterest-facts", "pinterest-pins"], function () { renderPinterest(d); });
     section("printify", [d.integrations, d.mode, minute], ["printify-facts", "printify-products", "printify-orders"], function () { renderPrintify(d); });
     section("site", [d.integrations, d.mode, minute], ["site-facts", "site-actions", "site-pages"], function () { renderSite(d); });
+    section("blog", [d.integrations, d.mode, minute], ["blog-facts", "blog-posts"], function () { renderBlog(d); });
     section("transitions", [d.transitions], ["transitions"], function () { renderTransitions(arr(d.transitions)); });
     section("events", [d.events], ["events"], function () { renderEvents(arr(d.events)); });
     section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d, agent); });
@@ -2188,7 +2189,8 @@
     if (!isObject(a.action)) return null;
     return a.executor === "email" || a.executor === "reddit_link" || a.executor === "etsy_listing" || a.executor === "etsy_edit" ||
       a.executor === "pinterest_pin" || a.executor === "pinterest_delete" ||
-      a.executor === "printify_product" || a.executor === "printify_delete" ? a.executor : null;
+      a.executor === "printify_product" || a.executor === "printify_delete" ||
+      a.executor === "site_post" || a.executor === "site_links" || a.executor === "site_restore" ? a.executor : null;
   }
 
   // A new Etsy listing, or a change to a live one: Ember's code makes both after approval.
@@ -2200,8 +2202,12 @@
   // 0.13.0 (Phase E4): a Printify product, or the owner's Undo of one: Ember's code carries both out after approval.
   function isPrintify(a) { var e = executorOf(a); return e === "printify_product" || e === "printify_delete"; }
 
+  // 0.14.0: a page for the owner's website (a blog post, the link page), or the owner's Undo of an upload: Ember's code
+  // uploads it after approval.
+  function isSite(a) { var e = executorOf(a); return e === "site_post" || e === "site_links" || e === "site_restore"; }
+
   // What Ember's code carries out exactly as approved: approve or reject, and cancel before it starts.
-  function isAsIs(a) { return isPinterest(a) || isPrintify(a); }
+  function isAsIs(a) { return isPinterest(a) || isPrintify(a) || isSite(a); }
 
   var APPROVAL_GROUPS = [
     { key: "pending", title: "Waiting for your decision", match: function (s) { return s === "pending"; } },
@@ -2214,6 +2220,8 @@
       match: function (s, a) { return isApproved(s) && !!a && isPinterest(a); } },
     { key: "printing", label: "Approved products", title: function () { return "Approved Printify products, " + agentName() + " makes them"; },
       match: function (s, a) { return isApproved(s) && !!a && isPrintify(a); } },
+    { key: "uploading", label: "Approved pages", title: function () { return "Approved pages for your website, " + agentName() + " uploads them"; },
+      match: function (s, a) { return isApproved(s) && !!a && isSite(a); } },
     { key: "closed", title: "Closed", match: function () { return true; } },
   ];
 
@@ -2414,7 +2422,7 @@
     return [
       h("div", { class: "item-head" },
         h("h3", { text: a.title || "Untitled request" }), plainChip(APPROVAL_TYPES[a.type] || sentence(String(a.type || "other").replace(/_/g, " "))),
-        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : isPinterest(a) ? "Pinterest" : isPrintify(a) ? "Printify" : "Reddit") : null,
+        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : isPinterest(a) ? "Pinterest" : isPrintify(a) ? "Printify" : isSite(a) ? "Website" : "Reddit") : null,
         statusChip, a.simulated ? testTag() : null),
       a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
       actionFlags(a.action_class),
@@ -2437,6 +2445,9 @@
       a.status === "pending" && executor === "etsy_edit" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this change to the live listing itself. Etsy charges nothing for it." }) : null,
       a.status === "pending" && executor === "pinterest_pin" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this pin on your Pinterest account itself (a new board first, if it names one), exactly as shown. Pinterest charges nothing for it; your Undo deletes it." }) : null,
       a.status === "pending" && executor === "printify_product" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this product at Printify and publishes it to your Etsy shop, exactly as shown, if every price keeps 15% after Etsy's fees, making and shipping; otherwise it deletes it there and says what each price needs. Printify charges you for making and shipping each order; your Undo deletes the product." }) : null,
+      a.status === "pending" && (executor === "site_post" || executor === "site_links") ? h("p", { class: "send-note", text: "After you approve, " + name + " uploads exactly the page the preview shows to your website over SFTP" + (executor === "site_post" ? ", and adds it to the blog's list" : "") + ". It touches nothing else on your server; your Undo puts back what it replaced." }) : null,
+      executor === "site_post" || executor === "site_links" ? h("p", { class: "form-actions" }, h("a", { class: "btn btn-small", href: "api/blog/preview/" + encodeURIComponent(String(a.id)), target: "_blank", rel: "noopener", text: "Preview the page" }),
+        h("span", { class: "muted small", text: " In a tab of its own, with your site's look (loaded from your site); it runs nothing." })) : null,
       executionView(a, email),
       final ? h("div", { class: "final-wrap" },
         h("h4", { class: "small-head", text: executor === "email" ? "Your version of the body (" + name + " sends this)" : executor === "etsy_listing" ? "Your version (" + name + " lists this)" : executor === "etsy_edit" ? "Your version (" + name + " makes this change)" : "Your version (the agent must use this)" }),
@@ -2568,6 +2579,7 @@
     if (executorOf(a) === "etsy_edit") return changeExecutionView(a, st);
     if (isPinterest(a)) return pinExecutionView(a, st);
     if (isPrintify(a)) return productExecutionView(a, st);
+    if (isSite(a)) return siteExecutionView(a, st);
     var ex = isObject(a.execution) ? a.execution : {};
     var name = agentName();
     var limit = limitText(email);
@@ -2636,6 +2648,44 @@
     else detail = [ex.error ? endSentence(String(ex.error)) : st === "deleted" ? "Deleted at Printify." : ""];
     return h("div", { class: "execution", "data-status": st },
       h("p", { class: "execution-head" }, chip(PRODUCT_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
+      h("p", { class: "execution-detail" }, detail));
+  }
+
+  // 0.14.0: a page for the owner's website, or their Undo of an upload, as Ember's code carries it out.
+  var SITE_EXECUTION = {
+    waiting: { icon: "◔", label: "Waiting", tone: "accent" },
+    running: { icon: "●", label: "Uploading", tone: "accent" },
+    done: { icon: "✓", label: "Done", tone: "good" },
+    partial: { icon: "!", label: "Partly done", tone: "warning" },
+    failed: { icon: "✕", label: "Not done", tone: "critical" },
+    unclear: { icon: "!", label: "Unclear: check your site", tone: "critical" },
+  };
+
+  // A link only to an https address without a user name (the owner's own site, from their options).
+  function siteLink(value, text) {
+    var url;
+    try { url = new URL(String(value)); } catch (e) { url = null; }
+    if (!url || !/^https:$/.test(url.protocol) || url.username || url.password) {
+      return h("span", { class: "link-text", text: text || String(value || "–") });
+    }
+    var a = document.createElement("a");
+    a.setAttribute("href", url.href);
+    a.setAttribute("rel", "noopener noreferrer");
+    a.setAttribute("target", "_blank");
+    append(a, [text || url.href, h("span", { class: "visually-hidden", text: " (opens in a new tab)" })]);
+    return a;
+  }
+
+  function siteExecutionView(a, st) {
+    var ex = isObject(a.execution) ? a.execution : {};
+    var name = agentName();
+    var detail;
+    if (st === "waiting") detail = [name + (executorOf(a) === "site_restore" ? " undoes it" : " uploads it") + " by itself shortly; it checks every few minutes." + (ex.error ? " The last connection failed: " + endSentence(String(ex.error)) : "")];
+    else if (st === "running") detail = ex.started_at ? ["Uploading since ", timeEl(ex.started_at), "."] : ["Uploading now."];
+    else if (ex.result) detail = [endSentence(sentence(ex.result)), ex.url && !a.simulated ? [" ", siteLink(ex.url, "Open the page")] : null];
+    else detail = [ex.error ? endSentence(String(ex.error)) : ""];
+    return h("div", { class: "execution", "data-status": st },
+      h("p", { class: "execution-head" }, chip(SITE_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
       h("p", { class: "execution-detail" }, detail));
   }
 
@@ -2756,6 +2806,8 @@
         approveIntro = name + " then makes this pin on your Pinterest account itself, exactly as shown (a new board first, if it names one). You hear the result on this card; your Undo deletes it.";
       } else if (executor === "printify_product") {
         approveIntro = name + " then creates this product at Printify and publishes it to your Etsy shop, exactly as shown, if every price keeps its margin after what Printify charges to make and ship it. You hear the result on this card; your Undo deletes it.";
+      } else if (executor === "site_post" || executor === "site_links") {
+        approveIntro = name + " then uploads exactly the page you previewed to your website" + (executor === "site_post" ? " and adds it to the blog's list" : "") + ". You hear the result on this card; your Undo puts back what it replaced.";
       }
       var specs = {
         approve: { title: executor === "email" ? "Approve this email" : "Approve this request", submit: "Approve",
@@ -2805,6 +2857,7 @@
         if (executor === "etsy_edit") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " changes the listing itself; this card shows when it's done.";
         if (executor === "pinterest_pin") return "Approved. " + name + " makes the pin itself; this card shows when it's live.";
         if (executor === "printify_product") return "Approved. " + name + " creates the product itself; this card shows when it's in the shop.";
+        if (executor === "site_post" || executor === "site_links") return "Approved. " + name + " uploads the page itself; this card shows when it's online.";
         if (mode === "approve_with_changes" && st === "approved") return "Approved as it was (the text was unchanged). Carry it out, then mark it done or failed.";
         if (mode === "approve_with_changes") return "Approved with your changes. Carry it out with your version, then mark it done or failed.";
         return "Approved. Carry it out, then mark it done or failed.";
@@ -2826,7 +2879,7 @@
       return {
         mode: mode, title: "Cancel this?", submit: "Cancel", danger: true, cancelLabel: "Keep it",
         intro: [h("p", { text: name + " won't carry it out. The request is marked failed, and " + name + " sees that on its next wake." })],
-        fields: [{ name: "result_note", label: "Why (" + name + " reads it)", rows: 2, max: 2000, required: true, value: isPrintify(a) ? "Cancelled before it reached Printify." : "Cancelled before it reached Pinterest.", missing: "Say why you cancel it." }],
+        fields: [{ name: "result_note", label: "Why (" + name + " reads it)", rows: 2, max: 2000, required: true, value: isPrintify(a) ? "Cancelled before it reached Printify." : isSite(a) ? "Cancelled before it was uploaded." : "Cancelled before it reached Pinterest.", missing: "Say why you cancel it." }],
         url: url + "close",
         body: function (v) { return { outcome: "failed", expected_version: version, result_note: v.result_note }; },
         done: function () { return "Cancelled. " + name + " won't carry it out."; },
@@ -4044,6 +4097,66 @@
           h("td", null, h("span", { text: asText(p.title) }), h("p", { class: "muted small", text: asText(p.description) })),
           h("td", null, timeEl(p.updated_at, fmtDateTime(p.updated_at))));
       })))) : h("p", { class: "muted", text: "None yet: the agent writes the home page first." }));
+  }
+
+  // 0.14.0: the blog on the owner's website. The agent proposes posts and the link page; each waits for the owner's
+  // approval (with a preview), then Ember's code uploads exactly that page over SFTP. The password is never shown.
+  var BLOG_STATUS = {
+    ok: { icon: "✓", label: "Ready", tone: "good" },
+    not_ready: { icon: "○", label: "Not ready", tone: "warning" },
+  };
+
+  function blogCheckArea() {
+    var c = ui.blogCheck;
+    if (!c) {
+      c = ui.blogCheck = {};
+      c.status = h("p", { class: "form-status small", role: "status" });
+      c.button = h("button", { type: "button", class: "btn", text: "Check the connection" });
+      c.button.addEventListener("click", function () {
+        c.button.disabled = true;
+        c.status.textContent = "Logging in to your server…";
+        request("POST", "api/blog/check", {}).then(function (res) {
+          if (!res.ok) throw httpError(res);
+          var r = isObject(res.data) ? res.data : {};
+          c.status.textContent = "It works" + (r.simulated ? " (dry run: the fake server)" : "") + ": " +
+            (r.index ? plural(num(r.posts) || 0, "post") + " in the blog's list" : "no blog list on the server yet") +
+            (r.links ? " and a link page" : "") + ". Server key: " + asText(r.fingerprint) + ".";
+          refresh();
+        }).catch(function (err) {
+          c.status.textContent = "Not working: " + errorText(err) + ".";
+        }).then(function () { c.button.disabled = false; });
+      });
+    }
+    return [h("div", { class: "form-actions" }, c.button), c.status];
+  }
+
+  function renderBlog(d) {
+    var b = isObject(d.integrations) && isObject(d.integrations.blog) ? d.integrations.blog : null;
+    var shown = !!b && b.status !== "disabled";  // off (the default), or an older server: no card
+    $("blog-card").hidden = !shown;
+    if (!shown) { replace($("blog-facts"), []); replace($("blog-actions"), []); replace($("blog-posts"), []); return; }
+    var posts = arr(b.posts);
+    var server = b.host ? asText(b.user || "?") + " at " + asText(b.host) + ":" + asText(b.port) + (b.folder ? ", folder " + asText(b.folder) : "") : "Not set (blog_sftp_host)";
+    var page = isObject(b.links_page) ? b.links_page : null;
+    replace($("blog-facts"), [
+      h("dt", { text: "Status" }), h("dd", null, chip(BLOG_STATUS, b.status, sentence(String(b.status || "unknown").replace(/_/g, " ")))),
+      b.status !== "ok" && b.reason ? [h("dt", { text: "Why" }), h("dd", { class: "pre-line", text: sentence(String(b.reason)) + "." })] : null,
+      h("dt", { text: "Website" }), h("dd", null, b.url ? siteLink(b.url, asText(b.url)) : h("span", { text: "Not set (site_url)" })),
+      h("dt", { text: "Server" }), h("dd", { text: b.simulated ? "Dry run: a fake server, nothing leaves the app" : server }),
+      b.simulated ? null : [h("dt", { text: "Password" }), h("dd", { text: b.password_set ? "Set (never shown)" : "Not set (blog_sftp_password)" })],
+      h("dt", { text: "Server key" }), h("dd", { class: "mono", text: b.host_key ? asText(b.host_key) + (b.simulated ? "" : b.host_key_pinned_by_owner ? " (yours, from the options)" : " (kept since the first connection)") : "Not pinned yet: the first connection keeps the key it sees" }),
+      b.last_error ? [h("dt", { text: "Last connection" }), h("dd", { class: "pre-line", text: "Failed: " + endSentence(String(b.last_error)) })] : null,
+      h("dt", { text: "Link page" }), h("dd", { text: page ? "Uploaded by " + agentName() + " on " + asText(page.day) + " (request #" + asText(page.approval_id) + ")" : "Yours: " + agentName() + " hasn't changed it" }),
+    ]);
+    replace($("blog-actions"), blogCheckArea());
+    replace($("blog-posts"), posts.length ? h("div", { class: "table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, ["Post", "Date", "Published by"].map(function (c) { return h("th", { scope: "col", text: c }); }))),
+      h("tbody", null, posts.map(function (q) {
+        return h("tr", null,
+          h("td", null, q.url && !b.simulated ? siteLink(q.url, asText(q.title)) : h("span", { text: asText(q.title) }), h("p", { class: "muted small", text: asText(q.slug) })),
+          h("td", { text: asText(q.day) }),
+          h("td", { text: q.approval_id ? agentName() + " (#" + asText(q.approval_id) + ")" : "You" }));
+      })))) : h("p", { class: "muted", text: "None known yet: " + agentName() + "'s code reads the blog's list at the first upload, or when you check the connection." }));
   }
 
   // What an order cost you at Printify is an expense only you record: the form opens filled in, and its key records it

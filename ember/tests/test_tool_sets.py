@@ -18,7 +18,15 @@ from tests.test_agent_requests import SETTINGS
 from tests.test_loop_shapes import run
 from tests.test_ventures import JOURNAL, VENTURING, plan
 
-EVERYTHING = {"mail": True, "etsy": True, "library": True, "pinterest": True, "printify": True, "site": True}
+EVERYTHING = {
+    "mail": True,
+    "etsy": True,
+    "library": True,
+    "pinterest": True,
+    "printify": True,
+    "site": True,
+    "blog": True,
+}
 
 
 def names(request: dict[str, Any]) -> set[str]:

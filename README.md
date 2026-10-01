@@ -139,7 +139,10 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   The container talks to `api.anthropic.com` and, if the owner sets up Ember's
   mailbox, to the configured IMAP and SMTP hosts, over verified TLS, from
   Ember's own code only (`ember/app/integrations/mail.py`, never a tool
-  handler).
+  handler). With the blog on (0.14.0), Ember's code also uploads the pages the
+  owner approved over SFTP to the owner's web host, only to a server showing the
+  pinned key and only a post, the blog's list and the link page
+  (`ember/app/integrations/sftp.py`, `site_publisher.py`).
 - **Outside actions.** The agent has no tool that sends or posts anything. An
   email it proposes is sent by Ember's code only after the owner approves it,
   exactly as approved, once, to one recipient, with a footer saying an AI wrote
@@ -270,7 +273,8 @@ ember/                       the app
     web.py, web/             routes, dashboard HTML/CSS/JS, vendored Chart.js
     economy/                 ledger, life states, cost estimates, budget guard (metering.py)
     agent/                   the wake cycle, tools, context, fake model (constitution.md: the fixed prompt core)
-    integrations/            Ember's mailbox (IMAP/SMTP), the executor of approved emails, Reddit links
+    integrations/            Ember's mailbox (IMAP/SMTP), the executor of approved emails, Reddit links,
+                             Etsy, Pinterest, Printify, the blog's SFTP uploads
   tests/
 ```
 

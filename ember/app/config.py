@@ -40,6 +40,8 @@ _SITE_URL = re.compile(
     r"(?:/(?:[A-Za-z0-9._~-]*/)*(?:[A-Za-z0-9_~-]*|(?i:index\.html?)))?)?$"
 )
 _SITE_EMAIL = re.compile(r"""^(?=.{0,254}$)(?:[^@\s<>"']{1,64}@[^@\s<>"']{1,190}\.[A-Za-z]{2,63})?$""")
+# 0.14.0's SFTP host name, bounded the same way (empty allowed, its length in the pattern).
+_HOST = re.compile(r"^(?=.{0,200}$)(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,198}[A-Za-z0-9])?)?$")
 
 
 class ModelPrice(BaseModel):
@@ -241,6 +243,19 @@ class Settings(BaseModel):
     site_phone: str = Field(default="", max_length=40)
     site_vat_id: str = Field(default="", max_length=20)
     site_host: str = Field(default="", max_length=200)
+    # The blog on the owner's own website (0.14.0): posts and a link page the agent writes, rendered by Ember's code in
+    # the site's design (with the site_* data above: its name, address, the owner's name and town, the email) and
+    # uploaded by Ember's code over SFTP once the owner approved them. The login is the owner's; blog_sftp_host_key
+    # pins the server's key (empty: the first one seen is kept); blog_sftp_folder is the website's folder on the
+    # server (empty: the one the login opens). Off until the owner turns it on (in dry run too: a fake server stands
+    # in).
+    blog_enabled: bool = False
+    blog_sftp_host: str = Field(default="", max_length=200)
+    blog_sftp_port: int = Field(default=22, ge=1, le=65535)
+    blog_sftp_user: str = Field(default="", max_length=100)
+    blog_sftp_password: SecretStr = SecretStr("")
+    blog_sftp_host_key: str = Field(default="", max_length=800)
+    blog_sftp_folder: str = Field(default="", max_length=200)
 
     @field_validator("owner_user_ids", mode="before")
     @classmethod
@@ -258,6 +273,7 @@ class Settings(BaseModel):
         "etsy_shared_secret",
         "pinterest_app_secret",
         "printify_api_token",
+        "blog_sftp_password",
         mode="before",
     )
     @classmethod
@@ -289,6 +305,10 @@ class Settings(BaseModel):
         "site_phone",
         "site_vat_id",
         "site_host",
+        "blog_sftp_host",
+        "blog_sftp_user",
+        "blog_sftp_host_key",
+        "blog_sftp_folder",
         mode="before",
     )
     @classmethod
@@ -317,6 +337,8 @@ class Settings(BaseModel):
             )
         if self.site_email and not _SITE_EMAIL.match(self.site_email):
             problems.append("site_email must be an email address, like shop@example.org")
+        if self.blog_sftp_host and not _HOST.match(self.blog_sftp_host):  # 0.14.0
+            problems.append("blog_sftp_host must be a host name like ssh.example.org, without a user or a path")
         names = [p.model for p in self.price_table]
         if len(names) != len(set(names)):
             problems.append("price_table lists the same model more than once")
@@ -374,6 +396,7 @@ class Settings(BaseModel):
             "etsy_keystring",
             "pinterest_app_secret",
             "printify_api_token",
+            "blog_sftp_password",
         }
         data = self.model_dump(mode="json", exclude=secret)
         data["anthropic_api_key_set"] = self.api_key_set
@@ -382,6 +405,7 @@ class Settings(BaseModel):
         data["etsy_keystring_set"] = bool(self.etsy_keystring.strip())
         data["pinterest_app_secret_set"] = bool(self.pinterest_app_secret.get_secret_value().strip())
         data["printify_api_token_set"] = bool(self.printify_api_token.get_secret_value().strip())
+        data["blog_sftp_password_set"] = bool(self.blog_sftp_password.get_secret_value().strip())
         return data
 
 

@@ -87,6 +87,10 @@ code from Etsy's own numbers): the agent never reports its own.
 | Website name, language, address | empty, de, empty | The site's name in its header (empty: your name), the language of its pages, and where you publish it (https, for its sitemap): the site's folder address like https://example.org, not a page's file name (a trailing /index.html is dropped). |
 | Your full name, address, email, phone, VAT ID (Impressum) | empty | Your data for the site's Impressum and privacy page: name, address (street, postcode and town; not a PO box) and email are needed; phone and VAT ID (or your Wirtschafts-Identifikationsnummer) optional. Never in the diagnostics report. |
 | Your web host (privacy page) | empty | The company hosting your site, named on the privacy page. |
+| Blog (published by Ember) | off | Lets the agent write blog posts and the link page for your own website, which Ember's code uploads over SFTP after you approve each one. Uses the website address, your name, the town in your address and your email above. See [Blog](#blog). |
+| SFTP server, port, user, password | empty, 22, empty, empty | Your web host's SFTP login (at STRATO: Customer login → Your package → Databases and webspace → SFTP & SSH). Only Ember's code uses it, never the agent; the password is never logged or shown. |
+| SFTP server key | empty | The server's key fingerprint (`SHA256:...`) or public key line, so Ember connects only to your server. Empty: the key seen at the first connection is kept (and shown on the dashboard). |
+| Website folder on the server | empty | The folder your domain shows, e.g. `/ember-ai.de`. Empty: the folder the login opens. |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -1604,6 +1608,78 @@ it (for its sitemap; the folder address, not a page's file name), **Website
 name** to your shop's name and **Your web host** to the company hosting it.
 Save and restart the app.
 
+## Blog
+
+With **Blog** on, the agent writes posts for the blog on your own website and
+its link page (the one address on your profiles, `links.html`), and Ember's
+code publishes each one after you approve it. Your site stays yours: its home
+pages, Impressum, privacy page and stylesheet are the ones you uploaded.
+Ember's code writes three kinds of file there and nothing else: a post
+(`blog/<name>.html`), the blog's list of posts (`blog/index.html`) and the link
+page (`links.html`).
+
+How a post is made:
+
+1. The agent writes it in Markdown in its workspace (a front matter with the
+   page's name, title, description, a lead and the product it recommends, then
+   the text: headings, paragraphs, lists, quotes and tables), and proposes it.
+2. Ember's code renders it in your site's design (the same header, footer and
+   Content-Security-Policy as your home page: no script, nothing from
+   elsewhere). Every word the agent wrote is shown as text, never as code; its
+   links can only be https addresses and your own email address (the address
+   in **Your email address**). German quotation marks and dates are set by
+   Ember's code, not the agent.
+3. On the **Approvals** tab you see the request, and **Preview the page** opens
+   exactly the page that would go up, in a tab of its own with your site's look
+   (its stylesheet is loaded from your site; the preview runs nothing).
+   Approve it or reject it with a comment; a page is approved as it is (the
+   agent proposes a better one after a rejection). Unlocks never approve one:
+   a page under your name always waits for your click.
+4. Approved, Ember's code connects to your server over SFTP and uploads that
+   page, then the blog's list with it: the list as it is on your server, with
+   the post added (posts you uploaded yourself stay listed; its heading and
+   introduction stay yours). A post's update keeps its first date. If the list
+   on your server isn't in the blog template's form, nothing is uploaded and the
+   request says why. Each file goes up under a temporary name, is renamed over
+   the old one and read back. The request then shows the result and the link.
+
+Each upload is listed under **What Ember's code did** (Approvals tab) with the
+pages before and after. Its **Undo** puts back what it replaced: the previous
+version of the page, or, for a new post, no file and the list without it. An
+Undo only works on the newest change of a page, and only while the page on your
+server is still the one Ember's code uploaded (a page you changed yourself is
+never overwritten by an Undo).
+
+Without a connection (your host is down, the password is wrong) an approved
+request waits: Ember's code tries again every 30 minutes and gives up after 24
+hours (the request then fails; nothing was uploaded). **System → Blog** shows
+the state, the server and its key, the posts on your site and **Check the
+connection**, which logs in and reads the blog's list. In a dry run the server
+is a fake one inside the app: nothing reaches your website.
+
+### Setting it up
+
+1. Fill in the website options: **Website address** (e.g.
+   `https://ember-ai.de`), **Your full name**, **Your address** (the footer names
+   the town) and **Your email address**. The blog uses them; **Website** itself
+   can stay off.
+2. Upload your site once yourself, with its stylesheet and a blog list in the
+   blog template's form (`blog/index.html`). The blog's pages link `/style.css`,
+   `/fonts/poppins-bold.woff2`, `/flame.svg` and the favicons, and the home
+   page's sections `#ablauf`, `#produkte` and `#kontakt`.
+3. Switch **Blog** on and fill in the SFTP login. At STRATO it is in the
+   customer login under **Ihr Paket → Datenbanken und Webspace → SFTP & SSH**:
+   a server of your package (like `50xxxxxx03.ssh.w2.strato.hosting`), port 22,
+   a user (like `su15xxx9`) and its password (you can create an SFTP access of
+   its own there for Ember). If your domain shows a folder other than the one
+   the login opens, set **Website folder on the server**.
+4. Optionally pin the server's key: copy its fingerprint (`SHA256:...`) from
+   your host's help pages or from an SFTP program's first connection into **SFTP
+   server key**. Left empty, the first connection keeps the key it sees: compare
+   it on **System → Blog** with your host's.
+5. Save, restart the app, and press **Check the connection** on **System →
+   Blog**.
+
 ## Reddit
 
 Since late 2025 Reddit approves every new API app by hand, so Ember has no
@@ -1930,6 +2006,15 @@ automation, for example:
   Etsy, Ember's code also talks to `https://api.etsy.com`, and nothing else
   there; its tokens are kept in `/data/etsy/tokens.json`, readable only by
   Ember, and never appear in the database, the logs or the diagnostics.
+- With **Blog** on, Ember's code also connects over SFTP to the server in the
+  options, only after you approved a page, and only to a server that shows the
+  pinned key (yours, or the one seen at the first connection): another key gets
+  nothing, not even the login. It writes a post, the blog's list and the link
+  page and nothing else, each page checked again before it goes up (no script,
+  no style attribute, no address but your site's, https and your email, and
+  exactly the site's Content-Security-Policy). The SFTP password is used only by
+  Ember's code, never written to logs, the database, the dashboard or the
+  diagnostics.
 - The agent never writes the bytes of a PDF, Word, Excel or picture file: it
   writes text, and Ember's own code makes the file from it, without any network
   or other programs. Spreadsheets only get formulas with common functions that

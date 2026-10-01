@@ -17,7 +17,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from app.agent.owner import KILL_RESET_KEY
-from app.config import _SITE_EMAIL, _SITE_URL, ModelPrice, Settings, _corrected, load_settings
+from app.config import _HOST, _SITE_EMAIL, _SITE_URL, ModelPrice, Settings, _corrected, load_settings
 from app.economy.life import KILLED_KEY
 from app.security import NOT_OWNER, SAFE_MODE_LOCKED, AccessPolicy
 from tests.test_owner_api import CSRF, grant
@@ -318,7 +318,7 @@ def test_every_bound_in_config_py_is_in_the_schema() -> None:
         assert match, f"{name}: Home Assistant can't read {rule!r}"
         bounds = {type(m).__name__: m for m in field.metadata}
         if match.group("match") is not None:
-            pattern = {"site_url": _SITE_URL, "site_email": _SITE_EMAIL}[name].pattern
+            pattern = {"site_url": _SITE_URL, "site_email": _SITE_EMAIL, "blog_sftp_host": _HOST}[name].pattern
             assert match.group("match") == pattern, name
             assert f"(?=.{{0,{bounds['MaxLen'].max_length}}}$)" in pattern, name  # the length is in the pattern
         elif rule.startswith("str"):
@@ -353,6 +353,11 @@ def test_every_bound_in_config_py_is_in_the_schema() -> None:
         ("site_email", "x" * 64 + "@" + "y" * 186 + ".org"),
         ("site_name", "x" * 60),
         ("site_name", "x" * 61),
+        ("blog_sftp_host", "ssh.example.org"),
+        ("blog_sftp_host", "user@ssh.example.org"),
+        ("blog_sftp_host", "a" * 200),
+        ("blog_sftp_host", "a" * 201),
+        ("blog_sftp_host", ""),
         ("site_vat_id", "DE123456789"),
         ("site_vat_id", "DE 123 456 789 000 000 0"),
         ("owner_user_ids[]", "x" * 100),

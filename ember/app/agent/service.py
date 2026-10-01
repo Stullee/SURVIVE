@@ -42,6 +42,8 @@ from ..integrations import (
     pinterest,
     pinterest_publisher,
     printify_publisher,
+    sftp,
+    site_publisher,
 )
 from ..integrations import executor as email_executor
 from ..integrations.etsy_connection import EtsyConnection
@@ -49,7 +51,7 @@ from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox, select_mailbox
 from ..integrations.pinterest_connection import PinterestConnection
 from ..integrations.printify_connection import PrintifyConnection
-from ..products import site
+from ..products import blog, site
 from . import agenda, audit, metrics, netguard, news, policy, store, ventures, website
 from .loop import NO_STEP, CycleEnd, CycleRunner, recover_records
 from .memory import CAPS, Memory
@@ -180,6 +182,9 @@ class Agent:
             self.printify.shop_id,
             lambda: self.roots()[0],
         )
+        # 0.14.0: the blog on the owner's website: the pages they approved, uploaded over SFTP by Ember's code (a fake
+        # server in dry run).
+        self.blog = site_publisher.Publisher(db, self.clock, self.settings, self.scope, self.mode)
         self._shop_failed_at: datetime | None = None  # the last check of the shop that failed (sync_shop)
         self._mail_checked_at: datetime | None = None  # 0.13.0: the last read of the mailbox between cycles
 
@@ -246,6 +251,7 @@ class Agent:
             self.publisher.recover()  # a listing that was being created may exist: it is never created again
             self.pins.recover()  # so may a pin (0.13.0)
             self.pod.recover()  # and a Printify product
+            self.blog.recover()  # and an upload to the owner's website (0.14.0)
         if self.mode == "dry_run":
             self._rotate_dry_run_folders()
         workspace, memory_root = self.roots()
@@ -944,7 +950,7 @@ class Agent:
                 return []
             return self.publisher.run(undos=True) + self.pins.run(undos=True) + self._pod_run(undos=True)
         done = self.executor.run() if self.mailbox is not None else []
-        return done + self.publisher.run() + self.pins.run() + self._pod_run()
+        return done + self.publisher.run() + self.pins.run() + self._pod_run() + self._blog_run()
 
     def _pod_run(self, undos: bool = False) -> list[tuple[int, str]]:
         """The approved Printify products (the fake account of a dry run needs no network)."""
@@ -953,6 +959,11 @@ class Agent:
             return []
         with netguard.sealed() if account.simulated else contextlib.nullcontext():
             return self.pod.run(undos)
+
+    def _blog_run(self) -> list[tuple[int, str]]:
+        """0.14.0: the approved uploads to the owner's website (the fake server of a dry run needs no network)."""
+        with netguard.sealed() if self.mode == "dry_run" else contextlib.nullcontext():
+            return self.blog.run()
 
     def sync_shop(self) -> None:
         """Read the Etsy shop's listings and orders (at most hourly) and its categories (daily) while Ember runs, not
@@ -1019,13 +1030,62 @@ class Agent:
                 waiting=etsy_publisher.waiting(conn, scope),
             )
             home = website.describe(conn, scope, self.settings)  # 0.13.0 (Phase E3)
+            posts = site_publisher.posts(conn, scope) if self.settings.blog_enabled else []
         return {
             "email": email_executor.integration(self.db, self.clock, self.settings, self.mode, scope, self.mailbox),
             "etsy": shop,
             "pinterest": self.pinterest.describe(scope),  # 0.13.0 (Phase E2)
             "printify": self.printify.describe(scope),  # 0.13.0 (Phase E4)
             "site": home,
+            "blog": self._blog_card(scope, posts),  # 0.14.0
         }
+
+    def _blog_card(self, scope: AgentScope, posts: list[Any]) -> dict[str, Any]:
+        """0.14.0: the dashboard's Blog card (never the password: only whether it is set)."""
+        if not self.settings.blog_enabled:
+            return {"status": "disabled"}
+        problems = site_publisher.problems(self.settings, self.mode)
+        owner = site_publisher.owner_of(self.settings)
+        page = site_publisher.links(self.db, self.mode)
+        return {
+            "status": "not_ready" if problems else "ok",
+            "reason": "; ".join(problems) or None,
+            "simulated": self.mode == "dry_run",
+            "url": owner.url or None,
+            "host": self.settings.blog_sftp_host or None,
+            "port": self.settings.blog_sftp_port,
+            "user": self.settings.blog_sftp_user or None,
+            "folder": self.settings.blog_sftp_folder or None,
+            "password_set": bool(self.settings.blog_sftp_password.get_secret_value()),
+            "host_key": self.blog.host_key(),
+            "host_key_pinned_by_owner": bool(self.settings.blog_sftp_host_key.strip()),
+            "last_error": self.db.get_meta(site_publisher.meta_key(self.mode, "last_error")) or None,
+            "posts": [
+                {
+                    "slug": r["slug"],
+                    "title": r["title"],
+                    "day": r["day"],
+                    "approval_id": r["approval_id"],
+                    "url": f"{owner.url}/{blog.post_path(str(r['slug']))}" if owner.url else None,
+                }
+                for r in posts
+            ],
+            "read_at": posts[0]["seen_at"] if posts else None,
+            "links_page": {"day": page.get("day"), "approval_id": page.get("approval_id")} if page else None,
+        }
+
+    def blog_check(self) -> dict[str, Any]:
+        """0.14.0: the owner's "Check the connection" (logs in, pins the server's key the first time, reads the blog's
+        list). Raises sftp.SftpError or blog.BlogError with what is wrong."""
+        if not self.settings.blog_enabled:
+            raise sftp.NotSent("the blog is off: switch it on in the app's options (blog_enabled)")
+        with netguard.sealed() if self.mode == "dry_run" else contextlib.nullcontext():
+            return self.blog.check()
+
+    def blog_page(self, approval_id: int) -> tuple[str, bytes] | None:
+        """0.14.0: the page an upload request carries, for the owner's preview."""
+        with self.db.connection() as conn:
+            return site_publisher.page(conn, self.scope(), approval_id)
 
     def agent_fields(self) -> dict[str, Any]:
         blocked = self.blocked_reason()
