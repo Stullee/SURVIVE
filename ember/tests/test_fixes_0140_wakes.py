@@ -301,6 +301,40 @@ def test_a_message_while_dormant_promises_no_wake(data_dir: Path, monkeypatch: p
     assert agent.decide().reason.startswith("Dormant: ")  # only Wake now runs a cycle
 
 
+def test_a_restart_in_the_quiet_period_keeps_the_owners_wake(data_dir: Path) -> None:
+    agent, transport = make_agent(data_dir, [plan(steps=[], sleep=600), plan(steps=[], sleep=600)])
+    assert agent.run_cycle("schedule").status == "idle"
+    request, _ = request_for(agent, Settings())
+    send(agent, "Please read this")
+    assert web._wake_for_message(request) == "soon"
+    restarted = Agent(agent.db, agent.loaded, agent.economy, transport=transport, cycles_enabled=True)
+    restarted.recover()  # the owner restarts the app right after the click
+    decision = restarted.decide()
+    assert not decision.run and decision.wait_until == agent.clock.now() + service.OWNER_QUIET
+    restarted.clock.advance(minutes=6)
+    assert restarted.decide().trigger == "owner"  # not the agent's 600 minutes
+    assert restarted.run_cycle("owner").status == "idle"
+    assert not restarted.decide().run and restarted._meta_time("owner_wake_at") is None
+
+
+def test_clicks_a_few_minutes_apart_wake_at_most_15_minutes_after_the_first(data_dir: Path) -> None:
+    agent, _ = make_agent(data_dir, [plan(steps=[], sleep=600), plan(steps=[], sleep=600)])
+    assert agent.run_cycle("schedule").status == "idle"
+    request, _ = request_for(agent, Settings())
+    first = agent.clock.now()
+    woke = None
+    for n in range(15):  # a message every 4 minutes for an hour
+        send(agent, f"One more thing ({n})")
+        web._wake_for_message(request)
+        decision = agent.decide()
+        if decision.run:
+            woke = agent.clock.now()
+            break
+        agent.clock.advance(minutes=4)
+    assert woke is not None and woke <= first + service.OWNER_QUIET_MAX + timedelta(minutes=4)
+    assert agent.run_cycle("owner").status == "idle"
+
+
 # --- X12: maintenance's one cycle a day, after a failed cycle too ---
 
 
@@ -318,6 +352,10 @@ def test_maintenance_keeps_one_cycle_a_day_after_a_failed_cycle(
     assert agent.agent_fields()["next_wake_at"] == to_iso(started + timedelta(days=1))
     agent.clock.advance(days=1)
     assert agent.decide().trigger == "schedule"
+
+
+def test_maintenance_tells_the_agent_that_any_wake_up_starts_a_new_day() -> None:
+    assert "your owner's or an event's wake-up starts a new day" in burn.MEANING[burn.MAINTENANCE]
 
 
 # --- X13: a waiting request cuts the sleep to four hours, as the notes say ---

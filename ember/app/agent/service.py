@@ -66,6 +66,7 @@ WAKE_NOW_MIN_GAP = timedelta(seconds=60)
 # 0.14.0: the owner's messages and decisions wake one cycle for all of them, this long after the last one (two
 # approvals 83 seconds apart started two cycles: $2.57 in 8 minutes). Wake now stays immediate.
 OWNER_QUIET = timedelta(minutes=5)
+OWNER_QUIET_MAX = timedelta(minutes=15)  # and at most this long after the first, however often the owner clicks
 # 0.14.0: while a request waits for the owner, the longest sleep (or the default sleep, if longer). It was the default
 # sleep alone: 60 minutes at the owner's options, not the 240 the notes said.
 WAITING_SLEEP_MINUTES = 240
@@ -126,10 +127,11 @@ class Agent:
         self.last_wake_request: datetime | None = None
         # The owner wrote (or, 0.12.0, decided): wake for it once one can, if the agent hasn't seen it by then (a cycle
         # running, the minute between wake-ups, and 0.14.0, OWNER_QUIET after the owner's last one: quiet_until).
-        # waiting_for: which of the two.
+        # waiting_for: which of the two. 0.14.0: kept in meta too (owner_wake_*), so a restart keeps the promised wake.
         self.message_waiting = False
         self.waiting_for = "message"
         self.quiet_until: datetime | None = None
+        self.quiet_by: datetime | None = None  # 0.14.0: OWNER_QUIET_MAX after the first message or decision
         self.running_cycle = False
         self._lock = threading.Lock()  # one cycle at a time in this process
         # Ember's mailbox: the fake one in dry run (its inbox grows with the session's wake cycles), the
@@ -244,6 +246,12 @@ class Agent:
         if wake is not None and wake < now + BOOT_GRACE:
             # Give the owner a minute to pause after an update or restart.
             self._set_time("next_wake_at", now + BOOT_GRACE)
+        quiet = self._meta_time("owner_wake_at")  # 0.14.0: a wake for the owner's news a restart would have dropped
+        if quiet is not None:
+            self.message_waiting = True
+            self.waiting_for = self.db.get_meta(self._key("owner_wake_for")) or "message"
+            self.quiet_until = max(quiet, now + BOOT_GRACE)
+            self.quiet_by = self._meta_time("owner_wake_by")
 
     def _etsy_numbers(self, scope: AgentScope, settings: Settings) -> None:
         """0.12.0: the orders' revenue, Etsy's fees and refunds in the ledger after a sync, when the owner turned that
@@ -441,8 +449,9 @@ class Agent:
 
     def _maintenance_day(self, wake: datetime) -> datetime | None:
         """0.14.0: in the maintenance burn mode, one cycle a day after a failed, stopped or refused cycle too (its
-        back-off woke the agent 30 minutes later): no scheduled wake before a day after the last cycle began. Returns
-        that moment (kept as the next wake) when it is later than ``wake``; None otherwise."""
+        back-off woke the agent 30 minutes later): no scheduled wake before a day after the last cycle began. Any cycle
+        counts (the owner's and events' too), as a completed one's sleep always did (``_after``). Returns that moment
+        (kept as the next wake) when it is later than ``wake``; None otherwise."""
         with self.db.connection() as conn:
             last = conn.execute(
                 "SELECT MAX(started_at) FROM cycles WHERE simulated = ? AND session = ?",
@@ -476,7 +485,7 @@ class Agent:
             return 429, {"code": "too_soon", "error": "wait a minute between wake-ups"}
         self.last_wake_request = now
         self.wake_requested = True
-        self.message_waiting = False  # the cycle this wakes reads every message the agent hasn't seen
+        self._owner_wake_done()  # the cycle this wakes reads every message the agent hasn't seen
         woke = "message" if by_message else "decision" if by_decision else ""
         said = f"The owner's {woke} woke the agent" if woke else "The owner woke the agent"
         events.record(self.db, "info", "agent", said)
@@ -505,11 +514,24 @@ class Agent:
         # cycle of its own: nine messages, nine cycles in an hour). Dormant, only Wake now runs a cycle.
         if self.blocked_reason() or burn.peek(self.db, self.economy.life.evaluate()).mode == burn.DORMANT:
             return None
+        now = self.clock.now()
         if not self.message_waiting or what == "message":  # a message waiting says so first
             self.waiting_for = what
+        if not self.message_waiting or self.quiet_by is None:
+            self.quiet_by = now + OWNER_QUIET_MAX
         self.message_waiting = True
-        self.quiet_until = self.clock.now() + OWNER_QUIET
+        self.quiet_until = min(now + OWNER_QUIET, self.quiet_by)
+        self._set_time("owner_wake_at", self.quiet_until)
+        self._set_time("owner_wake_by", self.quiet_by)
+        self.db.set_meta(self._key("owner_wake_for"), self.waiting_for)
         return "after_cycle" if self.running_cycle else "soon"
+
+    def _owner_wake_done(self) -> None:
+        """0.14.0: no wake waits for the owner's messages and decisions any more (in memory and in meta)."""
+        self.message_waiting = False
+        self.quiet_until = self.quiet_by = None
+        self._set_time("owner_wake_at", None)
+        self._set_time("owner_wake_by", None)
 
     def _wake_for_waiting_message(self, now: datetime) -> datetime | None:
         """For ``decide``: wake for the owner's messages and decisions (0.14.0: once they have been quiet for
@@ -518,7 +540,7 @@ class Agent:
         with self.db.connection() as conn:
             unread = store.unseen(conn, "messages", self.scope(), 1) or news.decided_unseen(conn, self.scope())
         if not unread:
-            self.message_waiting = False
+            self._owner_wake_done()
             return None
         if self.quiet_until is not None and now < self.quiet_until:
             return self.quiet_until
@@ -528,7 +550,7 @@ class Agent:
         if status == 429 and self.last_wake_request is not None:
             return self.last_wake_request + WAKE_NOW_MIN_GAP
         if body.get("code") != "cycle_running":  # woken (or it can't be: the message waits for the next wake)
-            self.message_waiting = False
+            self._owner_wake_done()
         return None
 
     # --- running ---
