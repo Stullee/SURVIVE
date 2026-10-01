@@ -366,7 +366,7 @@ configuration:
   site_phone:
     name: Your phone number (Impressum)
     description: >-
-      Needed for the Impressum: a second quick way to reach you besides email.
+      Optional, recommended: a second quick way to reach you besides email (the site has no contact form).
   site_vat_id:
     name: Your VAT ID (Impressum)
     description: >-

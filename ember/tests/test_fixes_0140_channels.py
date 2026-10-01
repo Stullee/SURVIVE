@@ -17,11 +17,12 @@ import pytest
 
 httpx2 = pytest.importorskip("httpx2")
 
-from app.agent import library, stages  # noqa: E402
+from app.agent import library, stages, website  # noqa: E402
 from app.agent.fake_llm import FakeTransport, request_kind  # noqa: E402
 from app.agent.owner import Owner  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.economy.clock import Clock, from_iso, to_iso  # noqa: E402
+from app.integrations import pinterest_publisher  # noqa: E402
 from app.integrations.pinterest import FakePinterest, TokenFile  # noqa: E402
 from app.integrations.pinterest_connection import PinterestConnection  # noqa: E402
 from app.integrations.pinterest_live import DEFAULT_REFRESH_DAYS, connect  # noqa: E402
@@ -42,7 +43,7 @@ from tests.test_pinterest import (  # noqa: E402
     proposed,
     some_tokens,
 )
-from tests.test_site import WHO, home  # noqa: E402
+from tests.test_site import SITE, WHO, home  # noqa: E402
 from tests.test_ventures import PINTEREST, VENTURING, plan, planner_texts, venture  # noqa: E402
 
 APP_JS = Path(__file__).parents[1] / "app" / "web" / "static" / "js" / "app.js"
@@ -181,6 +182,10 @@ def test_a_lapsed_connection_says_so(data_dir: Path, tmp_path: Path) -> None:
     [
         ("UPDATE etsy_listings SET state = 'inactive'", f"#{LISTING} isn't live at Etsy any more (deactivated)"),
         ("UPDATE etsy_listings SET status = 'failed'", f"#{LISTING} isn't one of your live listings any more"),
+        (
+            "UPDATE etsy_listings SET auto_renew = 0, ends_at = '2000-01-31T00:00:00Z'",
+            f"#{LISTING} isn't live at Etsy any more (it ended on 2000-01-31)",
+        ),
     ],
 )
 def test_an_approved_pin_whose_listing_stopped_being_live_is_not_made(data_dir: Path, change: str, reason: str) -> None:
@@ -195,6 +200,8 @@ def test_an_approved_pin_whose_listing_stopped_being_live_is_not_made(data_dir: 
     assert closed == {"status": "failed", "result_note": f"Not pinned: {reason}"}
     assert agent.pinterest.account().state["boards"] == {}  # nothing reached Pinterest
     assert rows(agent, f"SELECT status FROM action_journal WHERE approval_id = {request}") == [{"status": "failed"}]
+    with agent.db.connection() as conn:  # a pin refused before sending doesn't use one of the day's pins
+        assert pinterest_publisher.created_today(conn, agent.clock, agent.scope()) == 0
 
 
 # --- FIX 26m: the Impressum ----------------------------------------------------------------------------------------
@@ -214,20 +221,47 @@ def test_an_impressum_with_email_as_its_only_contact_is_not_built() -> None:
     assert "Telefon: +49 30 1234567" in imprint.decode()
 
 
+def test_an_impressum_without_a_phone_is_flagged(data_dir: Path) -> None:
+    """The site has no contact form: without a phone the email is the Impressum's only contact, so the card and the
+    plan say so (the phone stays optional)."""
+    assert WHO.advice() == ["site_phone is empty: the Impressum's only contact is the email (add a phone)"]
+    assert site.Owner(**{**WHO.__dict__, "phone": "+49 30 1234567"}).advice() == []
+    agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=SITE)
+    with agent.db.transaction() as conn:
+        website.save(conn, agent.scope(), home(), None, "2026-09-30T10:00:00Z")
+    with agent.db.connection() as conn:
+        card = website.describe(conn, agent.scope(), SITE)
+        text = website.planner_text(conn, agent.scope(), website.owner(SITE))
+    assert card["status"] == "ok" and card["advice"] == WHO.advice()
+    assert "Ask your owner: site_phone is empty: the Impressum's only contact is the email (add a phone)." in text
+    script = APP_JS.read_text(encoding="utf-8")
+    assert 'arr(s.advice).length ? [h("dt", { text: "Advice" })' in script
+    with agent.db.connection() as conn:
+        phoned = SITE.model_copy(update={"site_phone": "+49 30 1234567"})
+        assert website.describe(conn, agent.scope(), phoned)["advice"] == []
+
+
 def test_the_impressum_needs_a_postal_address() -> None:
     for lines, message in (
         (("Stefan Muster", "Berlin"), "site_address needs the street and the postcode with the town"),
         (("Musterstraße 1", "Berlin"), "site_address needs the street and the postcode with the town"),
         (("12345 Berlin", "Musterstraße 1"), "site_address needs the street and the postcode with the town"),
         (("c/o Studio", "12345 Berlin"), "site_address needs the street and the postcode with the town"),
+        (("Firma 2000 GmbH", "12345 Berlin"), "site_address needs the street and the postcode with the town"),
         (
             ("Postfach 12 34", "12345 Berlin"),
             r"site_address must be where you can be found \(street, postcode and town",
         ),
+        (("Packstation 123", "12345 Berlin"), r"site_address must be where you can be found"),
     ):
         with pytest.raises(site.SiteError, match=message):
             site.build([home()], site.Owner(**{**WHO.__dict__, "address": lines}))
-    for lines in (("Musterstraße 1", "12345 Berlin"), ("c/o Studio", "Hauptstr. 5a", "1010 Wien")):
+    for lines in (
+        ("Musterstraße 1", "12345 Berlin"),
+        ("c/o Studio", "Hauptstr. 5a", "1010 Wien"),
+        ("Am Markt 3-5", "12345 Berlin"),
+        ("Musterstr.1", "12345 Berlin"),
+    ):
         assert site.build([home()], site.Owner(**{**WHO.__dict__, "address": lines}))
 
 
@@ -318,9 +352,8 @@ def test_the_agent_hears_why_a_set_up_channel_s_tools_are_off(data_dir: Path, mo
     monkeypatch.setattr(agent.printify, "shop", unknown)  # a token, but Printify's shop isn't connected to Etsy
     agent.run_cycle("schedule")
     text = [r for r in fake.sent if request_kind(r) == "plan"][-1]["messages"][0]["content"][0]["text"]
-    assert (
-        "== PRINTIFY ==\nSwitched on, but it waits for your owner's setup (Printify's shop isn't known: no shop" in text
-    )
+    assert "== PRINTIFY ==\nSwitched on, but no Printify tools this cycle: Printify's shop isn't known: no shop" in text
+    assert "starts its first test only then" not in text.split("== PRINTIFY ==")[1].split("==")[0]
     agent.etsy.mode, agent.etsy._fake = "live", None  # the Etsy shop isn't set up: neither channel can work
     agent.run_cycle("schedule")
     text = [r for r in fake.sent if request_kind(r) == "plan"][-1]["messages"][0]["content"][0]["text"]
@@ -342,7 +375,7 @@ def test_a_first_test_set_before_its_channel_was_set_up_starts_again(data_dir: P
     backed = venture(agent, PINTEREST)
     assert (backed["stage"], backed["test_milestone_id"]) == ("building", None)  # not parked for a missed test
     [row] = rows(agent, f"SELECT status, closed_by, result FROM milestones WHERE id = {old}")
-    assert (row["status"], row["closed_by"]) == ("dropped", "code") and "Pinterest isn't set up yet" in row["result"]
+    assert (row["status"], row["closed_by"]) == ("dropped", "code") and "Pinterest isn't set up" in row["result"]
     agent.pinterest.mode, agent.pinterest._fake = "dry_run", fake  # the owner set it up
     agent.run_cycle("schedule")
     test = venture(agent, PINTEREST)["test_milestone_id"]
@@ -361,3 +394,26 @@ def test_a_channel_venture_backed_while_its_channel_is_ready_gets_its_test_at_on
     assert venture(agent, PINTEREST)["test_milestone_id"] is not None
     not_set_up(agent)
     assert agent.channels_ready() == []
+
+
+def test_a_first_test_running_when_the_channel_is_switched_off_starts_again(data_dir: Path, monkeypatch: Any) -> None:
+    """Switched off mid-test, the channel's test isn't left to pass its date and be missed the moment it is back."""
+    settings = VENTURING.model_copy(update={"pinterest_enabled": True})
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=settings)
+    ready = Owner(agent.db, agent.clock, agent.economy, agent.scope(), "Ember", agent.channels_ready())
+    assert ready.decide_venture(PINTEREST, {"action": "back"}, "Stefan").status == 200
+    old = venture(agent, PINTEREST)["test_milestone_id"]
+    assert old is not None
+    on = agent.pinterest.status, agent.pinterest.account
+    monkeypatch.setattr(agent.pinterest, "status", lambda: ("disabled", None))  # the owner switched it off
+    monkeypatch.setattr(agent.pinterest, "account", lambda: None)
+    agent.clock.advance(days=40)
+    agent.run_cycle("schedule")
+    [row] = rows(agent, f"SELECT status, closed_by FROM milestones WHERE id = {old}")
+    assert (row["status"], row["closed_by"]) == ("dropped", "code")
+    assert (venture(agent, PINTEREST)["stage"], venture(agent, PINTEREST)["test_milestone_id"]) == ("building", None)
+    monkeypatch.setattr(agent.pinterest, "status", on[0])  # and on again
+    monkeypatch.setattr(agent.pinterest, "account", on[1])
+    agent.run_cycle("schedule")
+    backed = venture(agent, PINTEREST)
+    assert backed["stage"] == "building" and backed["test_milestone_id"] not in (None, old)

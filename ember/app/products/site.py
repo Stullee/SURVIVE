@@ -34,12 +34,12 @@ SOURCE_MAX = 20_000
 LANGUAGES = ("de", "en")
 ZIP_TIME = (2026, 1, 1, 0, 0, 0)  # every file's time in the download, so the same site is the same file
 _EMAIL = re.compile(r"^[^@\s<>\"']{1,64}@[^@\s<>\"']{1,190}\.[A-Za-z]{2,63}$")
-# 0.14.0: the Impressum's address is where the owner can be found (a street with its number, then the postcode with
-# the town), never a PO box; a phone number, if given, is one; a business ID in the VAT ID's option is a
-# Wirtschafts-Identifikationsnummer (§ 139c AO: DE, 9 digits, a dash and 5 digits).
+# 0.14.0: the Impressum's address is where the owner can be found (a street ending in its number, then the postcode
+# with the town), never a PO box or a Packstation; a phone number, if given, is one; a business ID in the VAT ID's
+# option is a Wirtschafts-Identifikationsnummer (§ 139c AO: DE, 9 digits, a dash and 5 digits).
 _POSTCODE = re.compile(r"^(?:[A-Z]{1,2}-)?\d{4,5} +\S")
-_STREET = re.compile(r"(?=.*[^\W\d_]).*\d")
-_PO_BOX = re.compile(r"\b(?:postfach|postbox|p\.? ?o\.? ?box)\b", re.IGNORECASE)
+_STREET = re.compile(r"[^\W\d_].*[\s.]\d+ ?[a-zA-Z]?(?: ?[-/] ?\d+ ?[a-zA-Z]?)*$")
+_PO_BOX = re.compile(r"\b(?:postfach|postbox|p\.? ?o\.? ?box|packstation|postfiliale)\b", re.IGNORECASE)
 _PHONE = re.compile(r"^\+?[0-9 ()/.-]{6,40}$")
 _BUSINESS_ID = re.compile(r"^DE\d{9}-\d{5}$")
 _PRINT_ONLY = (markup.Space, markup.Photo, markup.Lines, markup.PageBreak)
@@ -88,6 +88,11 @@ class Owner:
         if self.phone and (not _PHONE.match(self.phone) or sum(c.isdigit() for c in self.phone) < 6):
             found.append("site_phone must be a phone number, like +49 30 1234567")
         return found
+
+    def advice(self) -> list[str]:
+        """0.14.0: what the Impressum should have but can be built without. The site has no contact form, so without
+        a phone the email is its only way to reach the owner."""
+        return [] if self.phone else ["site_phone is empty: the Impressum's only contact is the email (add a phone)"]
 
 
 def check(slug: str, title: str, description: str, source: str, menu: str = "") -> Page:

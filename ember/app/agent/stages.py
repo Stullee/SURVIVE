@@ -177,10 +177,10 @@ def restart_test(
     conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any], test: Mapping[str, Any], now: str
 ) -> str:
     """0.14.0: a channel venture's open first test, set before the owner had set its channel up (as 0.13.0 did when
-    they backed it), is dropped: its date can't move, and its clock shouldn't run until then. ``keep`` sets a new one
-    once the channel is set up. Returns what happened, for the events."""
+    they backed it) or running when they switched it off, is dropped: its date can't move, and its clock shouldn't run
+    until then. ``keep`` sets a new one once the channel is ready. Returns what happened, for the events."""
     vid, name = int(venture["id"]), str(venture["channel"]).capitalize()
-    why = f"{name} isn't set up yet: a new first test starts once it is."
+    why = f"{name} isn't set up (or is switched off): a new first test starts once it is ready."
     conn.execute(
         "UPDATE milestones SET status = 'dropped', result = ?, closed_at = ?, closed_by = 'code', updated_at = ?"
         " WHERE id = ? AND status = 'open'",

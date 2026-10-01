@@ -91,11 +91,15 @@ def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
 
 
 def created_today(conn: sqlite3.Connection, clock: Clock, scope: AgentScope) -> int:
+    """The pins started today, for pinterest_pins_per_day. 0.14.0: not one that failed before any pin request was sent
+    (no board: its checks refused it, such as a listing no longer live), so it doesn't hold a valid pin back a day."""
     where, params = scope.where()
     start = to_iso(clock.day_start(clock.today()))
     return int(
         conn.execute(
-            f"SELECT COUNT(*) FROM pinterest_pins WHERE {where} AND started_at >= ?", (*params, start)
+            f"SELECT COUNT(*) FROM pinterest_pins WHERE {where} AND started_at >= ?"
+            " AND NOT (status = 'failed' AND board_id IS NULL)",
+            (*params, start),
         ).fetchone()[0]
     )
 
@@ -210,9 +214,10 @@ class Publisher:
             ]
 
     @staticmethod
-    def _listing(conn: sqlite3.Connection, scope: AgentScope, link: str) -> None:
-        """0.14.0: the listing a pin links to must still be Ember's and live (as Ember's Etsy records say) when the pin
-        is made: an approved pin can wait days for its turn. Raises PinterestError with why it isn't."""
+    def _listing(conn: sqlite3.Connection, scope: AgentScope, link: str, now: str) -> None:
+        """0.14.0: the listing a pin links to must still be Ember's and live (as Ember's Etsy records say, and not past
+        its end without renewing) when the pin is made: an approved pin can wait days for its turn. Raises
+        PinterestError with why it isn't."""
         found = LISTING_LINK.match(link)
         listing_id = int(found.group(1)) if found else 0
         row = etsy_publisher.listing_row(conn, scope, listing_id)
@@ -220,6 +225,8 @@ class Publisher:
             raise PinterestError(f"#{listing_id} isn't one of your live listings any more")
         if etsy_publisher.etsy_state(row) != etsy.LIVE_STATE:
             raise PinterestError(f"#{listing_id} isn't live at Etsy any more ({etsy_publisher.state_text(row)})")
+        if not row["auto_renew"] and row["ends_at"] and from_iso(row["ends_at"]) <= from_iso(now):
+            raise PinterestError(f"#{listing_id} isn't live at Etsy any more (it ended on {row['ends_at'][:10]})")
 
     def _image(self, pin: Pin) -> bytes:
         try:
@@ -241,7 +248,7 @@ class Publisher:
                 return "waiting_limit"
             try:
                 pin = pin_from_action(row["action"])
-                self._listing(conn, scope, pin.link)
+                self._listing(conn, scope, pin.link, stamp)
                 image = self._image(pin)
             except PinterestError as exc:
                 self._start(conn, scope, approval_id, stamp, str(row["title"])[:100], "")

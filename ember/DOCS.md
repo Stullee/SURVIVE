@@ -1271,17 +1271,19 @@ settings).
 - The pin that makes Ember's **first board** always waits for your click,
   whatever you unlocked: it is a new public presence of yours.
 - If the picture changed after you approved, or its listing is no longer live
-  (as Ember's last look at the shop says), the pin isn't made. Ember never
-  makes a pin twice: if it can't tell whether Pinterest made it (a lost
-  connection), it says so and doesn't try again. At most **Pins per day** are
-  made a day; approved pins beyond that wait for the next day.
+  (as Ember's last look at the shop says, or past its end without renewing),
+  the pin isn't made. Ember never makes a pin twice: if it can't tell whether
+  Pinterest made it (a lost connection), it says so and doesn't try again. At
+  most **Pins per day** are made a day (a pin refused before anything was
+  sent doesn't count); approved pins beyond that wait for the next day.
 - Every six hours while the app runs, Ember reads each pin's impressions,
   saves and clicks to its listing. The agent's plan shows them (PINTEREST),
   and the metrics `pins_live` and `pin_clicks` can measure a milestone. The
   seeded venture *Pinterest for the Etsy shop* has its first test in these
   numbers: its pins bring 10 clicks to the shop's listings. Until Pinterest (and
   the Etsy shop) is set up and connected, the agent's plan says it waits for
-  you and why, and that first test doesn't start.
+  you and why, and that first test doesn't start. If you switch Pinterest off
+  during the test, the test is dropped, and a new one starts when it is back.
 - **Undo** on the pin's entry under **What Ember's code did** deletes it at
   Pinterest.
 
@@ -1385,9 +1387,10 @@ host. The agent's plan shows the pages and what you haven't published yet
 
 In the app's **Configuration** tab, switch **Website** on and fill in **Your
 full name**, **Your address** (street, then postcode and town, separated by a
-comma; where you can be found, not a PO box), **Your email address** and, if
-you have them, **Your phone number** (recommended: the site has no contact
-form, so it is the Impressum's second quick way to reach you) and **Your VAT
+comma; where you can be found, not a PO box or Packstation), **Your email
+address** and, if you have them, **Your phone number** (recommended: the site
+has no contact form, so it is the Impressum's second quick way to reach you;
+the Website card and the agent's plan remind you while it is empty) and **Your VAT
 ID** (or your Wirtschafts-Identifikationsnummer, as DE123456789-00001: the
 Impressum names it as one). Without the first three Ember doesn't build the
 site, and the dashboard says what is missing. The Impressum has no place for a

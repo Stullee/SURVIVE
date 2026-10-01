@@ -3922,6 +3922,7 @@
     replace($("site-facts"), [
       h("dt", { text: "Status" }), h("dd", null, chip(SITE_STATUS, s.status, sentence(String(s.status || "unknown").replace(/_/g, " ")))),
       !ready && s.reason ? [h("dt", { text: "Why" }), h("dd", { class: "pre-line", text: sentence(String(s.reason)) + "." })] : null,
+      arr(s.advice).length ? [h("dt", { text: "Advice" }), h("dd", { text: arr(s.advice).map(function (a) { return sentence(asText(a)) + "."; }).join(" ") })] : null,
       h("dt", { text: "Pages" }), h("dd", { text: count(pages.length) + " of " + count(s.max_pages) }),
       h("dt", { text: "Address" }), h("dd", { text: s.url ? asText(s.url) : "Not set (site_url): the site has no sitemap" }),
       h("dt", { text: "Downloaded" }), h("dd", null, s.downloaded_at ? timeEl(s.downloaded_at, fmtDateTime(s.downloaded_at) + " (" + relTime(s.downloaded_at) + ")") : h("span", { text: "Never" })),

@@ -801,12 +801,13 @@ class CycleRunner:
         """0.12.0: the rules of the ventures' stages (a first test for each backed venture, research without a business
         case and a missed first test parked), kept by Ember's code before every plan (stages.keep)."""
         # 0.14.0: a channel's venture gets its first test once the channel is set up (its tools are on), and one set
-        # while the owner hadn't set it up yet starts again then
+        # while the owner hadn't set it up yet (or switched it off since) starts again then
         ready = [name for name, on in (("pinterest", self.pinterest_on), ("printify", self.printify_on)) if on]
         unset = [
             name
             for name, channel in (("pinterest", self.pinterest), ("printify", self.printify))
-            if channel is not None and _unset(channel.status(), self._etsy_state())
+            if channel is not None
+            and (channel.status()[0] == "disabled" or _unset(channel.status(), self._etsy_state()))
         ]
         with self.db.transaction() as conn:
             happened = stages.keep(conn, self.scope, self.clock.today(), to_iso(self.clock.now()), ready, unset)
@@ -1783,8 +1784,8 @@ def _unset(status: tuple[str, str | None], etsy: str) -> bool:
 
 def _waiting(name: str, status: tuple[str, str | None], etsy: str, why: str = "") -> str:
     """0.14.0: the one line of a channel switched on whose tools are off ("" when it is switched off, or nothing says
-    why), so the agent knows it waits for the owner rather than asking for it again: the channel's own setup, the Etsy
-    shop it needs, or (``why``) what else stopped it."""
+    why), so the agent knows it waits for the owner rather than asking for it again: the channel's own setup or the Etsy
+    shop it needs. What else stopped a set-up channel (``why``) is given as it is, with no claim on the owner."""
     state, reason = status
     if state == "disabled":
         return ""
@@ -1794,6 +1795,8 @@ def _waiting(name: str, status: tuple[str, str | None], etsy: str, why: str = ""
             why += ", then System, Pinterest, Connect"
     elif etsy != "ok":
         why = "the Etsy shop isn't connected"
+    elif why:  # set up, but its shop wasn't reached: the reason says whether the owner must act
+        return f"Switched on, but no {name} tools this cycle: {why.rstrip('.')}."
     if not why:
         return ""
     why = why.rstrip(".")
