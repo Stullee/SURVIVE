@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import paths, web
-from app.agent import context, fake_llm, loop, news, prompts
+from app.agent import context, fake_llm, loop, news, prompts, service
 from app.agent import tools as agent_tools
 from app.agent.memory import CAPS, SEEDS
 from app.agent.owner import INSTRUCTIONS_MAX, Owner
@@ -388,17 +388,22 @@ def request_for(agent: Agent, settings: Settings) -> tuple[Any, list[str]]:
 
 
 def test_a_message_wakes_the_agent_within_the_wake_limit(data_dir: Path) -> None:
-    agent, _ = make_agent(data_dir, [plan(steps=[], sleep=600)])
+    agent, _ = make_agent(data_dir, [plan(steps=[], sleep=600), plan(steps=[], sleep=600)])
     request, pokes = request_for(agent, Settings())
-    assert web._wake_for_message(request) == "now"
-    assert agent.wake_requested and pokes == ["x"] and agent.decide().trigger == "owner"
+    send(agent, "Hello!")
+    # 0.14.0: one cycle for the owner's messages and decisions, a few minutes after the last one
+    assert web._wake_for_message(request) == "soon"
+    assert not agent.wake_requested and agent.message_waiting and pokes == ["x"] and not agent.decide().run
+    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())
+    assert agent.decide().trigger == "owner" and agent.wake_requested and not agent.message_waiting
     assert web._wake_for_message(request) == "now"  # the wake is still on its way: it reads this one too
     assert pokes == ["x"]
     assert agent.run_cycle("owner").status == "idle" and not agent.wake_requested
-    assert web._wake_for_message(request) == "soon"  # within the minute between wake-ups: it wakes once it passed
+    send(agent, "And another thing.")
+    assert web._wake_for_message(request) == "soon"
     assert not agent.wake_requested and agent.message_waiting and pokes == ["x", "x"]
-    agent.clock.advance(seconds=61)
-    assert web._wake_for_message(request) == "now" and pokes == ["x", "x", "x"] and not agent.message_waiting
+    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())
+    assert agent.decide().trigger == "owner" and not agent.message_waiting
     messages = [e["message"] for e in agent.db.recent_events(20)]
     assert messages.count("The owner's message woke the agent") == 2
     # Wake now shares the limit.
@@ -421,7 +426,7 @@ def send(agent: Agent, words: str) -> None:
     assert owner(agent).send_message({"text": words}, "Stefan").status == 201
 
 
-def test_a_message_during_a_cycle_wakes_the_agent_right_after_it(data_dir: Path) -> None:
+def test_a_message_during_a_cycle_wakes_the_agent_after_it(data_dir: Path) -> None:
     agent, transport = make_agent(data_dir, [plan(steps=[], sleep=600), plan(steps=[], sleep=600)])
     request, pokes = request_for(agent, Settings())
     agent.running_cycle = True  # a cycle is working (it planned before the message came)
@@ -429,6 +434,7 @@ def test_a_message_during_a_cycle_wakes_the_agent_right_after_it(data_dir: Path)
     assert web._wake_for_message(request) == "after_cycle" and agent.message_waiting and pokes == []
     assert agent.agent_fields()["next_wake_reason"] == "to read your message"
     agent.running_cycle = False  # it ended without reading the message
+    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())  # 0.14.0: once the owner has been quiet
     assert agent.decide().trigger == "owner" and not agent.message_waiting
     assert agent.run_cycle("owner").status == "idle"
     assert "Please look at the new draft." in first_text(transport.sent[-1])
@@ -437,20 +443,20 @@ def test_a_message_during_a_cycle_wakes_the_agent_right_after_it(data_dir: Path)
     assert messages.count("The owner's message woke the agent") == 1
 
 
-def test_a_message_within_the_minute_wakes_the_agent_once_it_has_passed(data_dir: Path) -> None:
+def test_a_message_soon_after_a_wake_waits_for_the_owners_quiet_period(data_dir: Path) -> None:
     agent, transport = make_agent(data_dir, [plan(steps=[], sleep=600), plan(steps=[], sleep=600)])
     request, _ = request_for(agent, Settings())
     send(agent, "Hello!")
-    assert web._wake_for_message(request) == "now"
-    woken = agent.last_wake_request
-    assert woken is not None and agent.run_cycle(agent.decide().trigger or "").status == "idle"
+    assert agent.request_wake()[0] == 202  # Wake now: at once
+    assert agent.run_cycle(agent.decide().trigger or "").status == "idle"
     agent.clock.advance(seconds=20)
     send(agent, "And one more thing.")
     assert web._wake_for_message(request) == "soon"
+    quiet = agent.clock.now() + service.OWNER_QUIET  # 0.14.0: longer than the minute between wake-ups
     decision = agent.decide()
-    assert not decision.run and decision.wait_until == woken + timedelta(minutes=1)
-    assert agent.agent_fields()["next_wake_at"] == to_iso(woken + timedelta(minutes=1))
-    agent.clock.advance(seconds=41)
+    assert not decision.run and decision.wait_until == quiet
+    assert agent.agent_fields()["next_wake_at"] == to_iso(quiet)
+    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())
     assert agent.decide().trigger == "owner"
     assert agent.run_cycle("owner").status == "idle"
     assert "And one more thing." in first_text(transport.sent[-1]) and not agent.message_waiting
@@ -483,11 +489,12 @@ def test_a_message_is_stored_even_when_no_wake_follows(ingress_client: TestClien
     assert refused["field"] == "text" and "wake" not in refused  # no wake for a message that wasn't stored
 
 
-def test_a_message_wakes_the_running_app(ingress_client: TestClient) -> None:
+def test_a_message_wakes_the_running_app(ingress_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     state = ingress_client.app.state.ember  # type: ignore[attr-defined]
     state.agent.cycles_enabled = True  # as in the real app
+    monkeypatch.setattr(service, "OWNER_QUIET", timedelta(0))  # 0.14.0: no quiet period to wait out here
     response = post(ingress_client, "api/inbox", {"text": "Can you look at the drafts?"})
-    assert response.status_code == 201 and response.json()["wake"] == "now"
+    assert response.status_code == 201 and response.json()["wake"] == "soon"
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         cycles = ingress_client.get("api/dashboard").json()["activity"]
@@ -570,4 +577,7 @@ def test_a_message_wakes_the_agent_before_its_scheduled_wake(data_dir: Path) -> 
     agent.run_cycle("schedule")
     request, _ = request_for(agent, Settings())
     assert agent._meta_time("next_wake_at") > agent.clock.now() + timedelta(minutes=500)
-    assert web._wake_for_message(request) == "now" and agent.decide().trigger == "owner"
+    send(agent, "Are you there?")
+    assert web._wake_for_message(request) == "soon"
+    agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())  # 0.14.0: a few minutes, not 500
+    assert agent.decide().trigger == "owner"

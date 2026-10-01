@@ -5,18 +5,20 @@ milestone's last day waited for the next scheduled cycle, up to the longest slee
 as it sees them (``note``: after each round's Etsy sync, and after reading the mailbox every MAIL_MINUTES, also while
 the agent sleeps), once each:
 
-* order: an Etsy order of Ember's listings (urgent);
+* order: an Etsy order of Ember's listings (0.14.0: not urgent, Ember's code records it);
 * reply: an email that answers one Ember sent (urgent);
 * inquiry: a person writes to Ember first (0.13.0, Phase E1): an email that waits for an answer (mailstore.inquiries),
   unread and come in after the last cycle ended (a cycle's MAIL section already showed what came before; urgent);
 * favorites: a listing's favorites reaching one of FAVORITE_STEPS (the counts a listing had when the agenda began are
   a baseline, never shown);
-* milestone_due: an open milestone due today, from CHECK_HOUR (urgent: its last day).
+* milestone_due: an open milestone due today, from CHECK_HOUR (urgent: its last day; 0.14.0: not one Ember's code
+  checks itself, a metric's or the money goal: that is bookkeeping).
 
 The next plan lists what it hasn't seen in SINCE YOUR LAST WAKE. An urgent event wakes the agent for a lean reactive
 cycle (no venture work, no review, study or critic, at most REACTIVE_STEPS work steps): at most EVENT_WAKES a day,
-MIN_GAP apart, never while dormant. What can't wake it waits in the agenda for the next cycle. Until 20:00, a share of
-the daily cap is kept for these wakes (metering.event_reserve): a scheduled cycle can't spend it.
+MIN_GAP apart, never while dormant, and (0.14.0) only with the owner's wake_on_events option and behind the schedule's
+guards (agent/service.py). What can't wake it waits in the agenda for the next cycle. Until 20:00, a share of the daily
+cap is kept for these wakes (metering.event_reserve): a scheduled cycle can't spend it.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from . import metrics
 from .store import AgentScope
 
 KINDS = ("order", "reply", "inquiry", "favorites", "milestone_due")
-URGENT = frozenset({"order", "reply", "inquiry", "milestone_due"})
+URGENT = frozenset({"reply", "inquiry", "milestone_due"})  # 0.14.0: an order no longer wakes the agent
 EVENT_WAKES = 4  # a day
 MIN_GAP = timedelta(minutes=30)  # between two event wake-ups
 REACTIVE_STEPS = 5  # a reactive cycle's work steps at most
@@ -45,12 +47,29 @@ TEXT_CHARS = 300
 
 
 def _add(
-    conn: sqlite3.Connection, scope: AgentScope, kind: str, key: str, text: str, now: str, baseline: bool = False
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    kind: str,
+    key: str,
+    text: str,
+    now: str,
+    baseline: bool = False,
+    urgent: bool = True,
 ) -> bool:
+    """``urgent``: False keeps an event of an urgent kind from waking the agent (0.14.0)."""
     cursor = conn.execute(
         "INSERT OR IGNORE INTO agenda (mode, session, kind, key, text, urgent, baseline, noted_at)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (scope.mode, scope.session, kind, key[:100], text[:TEXT_CHARS], int(kind in URGENT), int(baseline), now),
+        (
+            scope.mode,
+            scope.session,
+            kind,
+            key[:100],
+            text[:TEXT_CHARS],
+            int(kind in URGENT and urgent),
+            int(baseline),
+            now,
+        ),
     )
     return cursor.rowcount == 1
 
@@ -140,12 +159,16 @@ def _milestones(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, now: 
     where, params = scope.where()
     noted = []
     for m in conn.execute(
-        f"SELECT id, title, due FROM milestones WHERE {where} AND status = 'open' AND due = ? ORDER BY id",
+        f"SELECT id, title, due, metric, kind FROM milestones WHERE {where} AND status = 'open' AND due = ?"
+        " ORDER BY id",
         (*params, today),
     ):
         title = json.dumps(" ".join(str(m["title"]).split())[:80], ensure_ascii=False)
         text = f"Milestone #{m['id']} {title} is due today: its last day"
-        if _add(conn, scope, "milestone_due", f"{m['id']}:{m['due']}", text, now):
+        # 0.14.0: Ember's code checks a metric's milestone (a listing test's bars too) and the money goal itself: their
+        # last day is bookkeeping, noted for the next plan, and wakes no one
+        checked = m["metric"] is not None or m["kind"] == "money_goal"
+        if _add(conn, scope, "milestone_due", f"{m['id']}:{m['due']}", text, now, urgent=not checked):
             noted.append(text)
     return noted
 

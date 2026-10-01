@@ -101,11 +101,16 @@ class Scheduler:
                     decision = await asyncio.to_thread(self.agent.decide)
                     if decision.run and decision.trigger:
                         self.status = f"running a {decision.trigger} cycle"
-                        await asyncio.to_thread(self.agent.run_cycle, decision.trigger)
-                        continue  # decide again right away (the next wake-up is set now)
-                    self.status = decision.reason or "waiting"
-                    if decision.wait_until is not None:
-                        timeout = _seconds_until(decision.wait_until, self.economy.clock.now())
+                        end = await asyncio.to_thread(self.agent.run_cycle, decision.trigger)
+                        if end.status in ("completed", "idle") or end.rerun:
+                            continue  # decide again right away (the next wake-up is set now)
+                        # 0.14.0: after a refused, failed or stopped cycle, a round before the next decision: a wake
+                        # that ignored its back-off ran a refused cycle every round until midnight.
+                        self.status = f"after a {end.status} cycle"
+                    else:
+                        self.status = decision.reason or "waiting"
+                        if decision.wait_until is not None:
+                            timeout = _seconds_until(decision.wait_until, self.economy.clock.now())
                 self.last_error = None
             except asyncio.CancelledError:
                 raise

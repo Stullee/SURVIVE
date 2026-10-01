@@ -63,6 +63,12 @@ BOOT_GRACE = timedelta(seconds=60)
 CRASH_LOOP = 3
 MAX_WILL_ATTEMPTS = 3
 WAKE_NOW_MIN_GAP = timedelta(seconds=60)
+# 0.14.0: the owner's messages and decisions wake one cycle for all of them, this long after the last one (two
+# approvals 83 seconds apart started two cycles: $2.57 in 8 minutes). Wake now stays immediate.
+OWNER_QUIET = timedelta(minutes=5)
+# 0.14.0: while a request waits for the owner, the longest sleep (or the default sleep, if longer). It was the default
+# sleep alone: 60 minutes at the owner's options, not the 240 the notes said.
+WAITING_SLEEP_MINUTES = 240
 SLEEP_REASON_CHARS = 200  # of the agent's reason for its sleep, in the next wake's reason
 SHOP_RETRY = timedelta(minutes=etsy_publisher.SYNC_MINUTES)  # after a failed check of the Etsy shop
 CHECK_HOUR = 8  # the owner's hour a waiting milestone's check wakes the agent, on its day (0.12.0)
@@ -118,10 +124,12 @@ class Agent:
         self.meter: MeteredModel = economy.metered(self.transport)
         self.wake_requested = False
         self.last_wake_request: datetime | None = None
-        # The owner wrote (or, 0.12.0, decided) while no wake could start (a cycle running, or the minute between
-        # wake-ups): wake for it once one can, if the agent hasn't seen it by then. waiting_for: which of the two.
+        # The owner wrote (or, 0.12.0, decided): wake for it once one can, if the agent hasn't seen it by then (a cycle
+        # running, the minute between wake-ups, and 0.14.0, OWNER_QUIET after the owner's last one: quiet_until).
+        # waiting_for: which of the two.
         self.message_waiting = False
         self.waiting_for = "message"
+        self.quiet_until: datetime | None = None
         self.running_cycle = False
         self._lock = threading.Lock()  # one cycle at a time in this process
         # Ember's mailbox: the fake one in dry run (its inbox grows with the session's wake cycles), the
@@ -292,27 +300,31 @@ class Agent:
             if retry is None or now >= retry or self.wake_requested:
                 return Decision(True, "last_will", "the last will is due")
             return Decision(False, reason="The last will is due; retrying later", wait_until=retry)
+        mode = burn.current(self.db, status).mode
         # 0.12.0: dormant, no model calls until money comes in; only the owner's Wake now runs a cycle
-        if burn.current(self.db, status).mode == burn.DORMANT and not self.wake_requested:
+        if mode == burn.DORMANT and not self.wake_requested:
             return Decision(False, reason=f"Dormant: {burn.MEANING[burn.DORMANT]}; Wake now runs a cycle")
         if self.message_waiting and not self.wake_requested:
-            ready = self._wake_for_waiting_message()
+            ready = self._wake_for_waiting_message(now)
             if ready is not None:
                 why = "read the owner's message" if self.waiting_for == "message" else "act on the owner's decision"
-                return Decision(False, reason=f"Waking up to {why} in a moment", wait_until=ready)
+                return Decision(False, reason=f"Waking up to {why} in a few minutes", wait_until=ready)
         if self.wake_requested:
             return Decision(True, "owner", "woken by the owner")
-        event = self._event_wake(now)  # 0.13.0: an order, a reply or a milestone's last day
-        if event is not None:
-            return event
         no_room = self._no_room_for_work()
         if no_room:
             return Decision(False, reason=no_room)
+        event = self._event_wake(now)  # 0.13.0: a reply, an inquiry or a milestone's last day
+        if event is not None:
+            return event
         wake = self._meta_time("next_wake_at")
         if wake is None:
             wake = now + FIRST_WAKE_DELAY
             self._set_time("next_wake_at", wake)
             self.db.set_meta(self._key("next_wake_reason"), "first wake-up")
+        held = self._maintenance_day(wake) if mode == burn.MAINTENANCE else None
+        if held is not None:
+            wake = held
         if now < wake:
             return Decision(
                 False, reason=self.db.get_meta(self._key("next_wake_reason")) or "sleeping", wait_until=wake
@@ -328,7 +340,7 @@ class Agent:
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
         held = event_reserve(self.settings, self.clock, "schedule", working)  # 0.13.0: kept for events until 20:00
         if daily - today - held < needed <= daily - today:
-            evening = self.clock.day_start(self.clock.today()) + timedelta(hours=EVENT_RESERVE_HOUR)
+            evening = self.clock.at(self.clock.today(), EVENT_RESERVE_HOUR)  # 0.14.0: 20:00 on DST days too
             reason = f"the rest of the daily cap is kept for event wake-ups until {EVENT_RESERVE_HOUR}:00"
             self._set_time("next_wake_at", evening)
             self.db.set_meta(self._key("next_wake_reason"), reason)
@@ -341,15 +353,22 @@ class Agent:
         return Decision(True, "schedule", "scheduled wake-up")
 
     def _event_wake(self, now: datetime) -> Decision | None:
-        """0.13.0: an urgent event in the agenda (an order, a reply to Ember's email, a milestone's last day) wakes the
-        agent for a reactive cycle: at most agenda.EVENT_WAKES a day, agenda.MIN_GAP apart, when the day's cap covers
-        a cycle (the events' share included). Otherwise the event waits for the next cycle's plan."""
+        """0.13.0: an urgent event in the agenda (a reply to Ember's email, an inquiry, a milestone's last day) wakes
+        the agent for a reactive cycle: at most agenda.EVENT_WAKES a day, agenda.MIN_GAP apart, when the day's cap
+        covers a cycle (the events' share included). Otherwise the event waits for the next cycle's plan. 0.14.0: only
+        with the owner's wake_on_events option, and behind the schedule's guards: not in a crash loop, nor while the
+        agent backs off after a failed, stopped or refused cycle (backoff_until, set by ``_after``)."""
+        if not self.settings.wake_on_events:
+            return None
         with self.db.connection() as conn:
             waiting = agenda.waking(conn, self.scope())
             if not waiting:
                 return None
             woken, last = agenda.wakes(conn, self.scope(), self.clock)
         if woken >= agenda.EVENT_WAKES or (last is not None and now - last < agenda.MIN_GAP):
+            return None
+        backoff = self._meta_time("backoff_until")
+        if (backoff is not None and now < backoff) or self._crash_loop():
             return None
         daily = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
         today = self.economy.books.cap_spend_on(self.economy.life.scope(), self.clock.today())
@@ -420,6 +439,25 @@ class Agent:
             ).fetchall()
         return len(rows) == CRASH_LOOP and all(r["status"] == "interrupted" for r in rows)
 
+    def _maintenance_day(self, wake: datetime) -> datetime | None:
+        """0.14.0: in the maintenance burn mode, one cycle a day after a failed, stopped or refused cycle too (its
+        back-off woke the agent 30 minutes later): no scheduled wake before a day after the last cycle began. Returns
+        that moment (kept as the next wake) when it is later than ``wake``; None otherwise."""
+        with self.db.connection() as conn:
+            last = conn.execute(
+                "SELECT MAX(started_at) FROM cycles WHERE simulated = ? AND session = ?",
+                (1 if self.mode == "dry_run" else 0, self.economy.life.session()),
+            ).fetchone()[0]
+        if last is None:
+            return None
+        day = min(burn.MAINTENANCE_SLEEP_MINUTES, self.settings.max_sleep_minutes)
+        held = from_iso(last) + timedelta(minutes=day)
+        if held <= wake:
+            return None
+        self._set_time("next_wake_at", held)
+        self.db.set_meta(self._key("next_wake_reason"), "the burn mode is maintenance: one cycle a day")
+        return held
+
     def _next_local_midnight(self, now: datetime) -> datetime:
         local = now.astimezone(self.clock.tz)
         return self.clock.day_start(local.date() + timedelta(days=1))
@@ -447,9 +485,10 @@ class Agent:
     def wake_for_message(self) -> str | None:
         """The owner sent a message (with the wake_on_message option): wake the agent to read it.
 
-        "now" if a wake is on its way; "after_cycle" or "soon" while a cycle runs or the agent woke less than a minute
-        ago: it wakes for the message once the cycle has ended and the minute has passed (``decide``); None if it
-        can't run (paused, dead, ...): then it reads the message at its next wake.
+        "now" if a wake is on its way (Wake now); "soon", or "after_cycle" while a cycle runs: 0.14.0, it wakes for the
+        message OWNER_QUIET after the owner's last message or decision, once the cycle has ended and the minute has
+        passed (``decide``), unless a cycle saw them all by then; None if it can't run (paused, dormant, dead, ...):
+        then it reads the message at its next wake.
         """
         return self._wake_for_owner("message")
 
@@ -462,26 +501,27 @@ class Agent:
     def _wake_for_owner(self, what: str) -> str | None:
         if self.wake_requested:  # woken and not started yet: that cycle sees it
             return "now"
-        status, body = self.request_wake(by_message=what == "message", by_decision=what == "decision")
-        if status == 202:
-            return "now"
-        code = body.get("code")
-        if code in ("cycle_running", "too_soon"):
-            if not self.message_waiting or what == "message":  # a message waiting says so first
-                self.waiting_for = what
-            self.message_waiting = True
-            return "after_cycle" if code == "cycle_running" else "soon"
-        return None
+        # 0.14.0: one cycle for the owner's messages and decisions, OWNER_QUIET after the last one (each started a
+        # cycle of its own: nine messages, nine cycles in an hour). Dormant, only Wake now runs a cycle.
+        if self.blocked_reason() or burn.peek(self.db, self.economy.life.evaluate()).mode == burn.DORMANT:
+            return None
+        if not self.message_waiting or what == "message":  # a message waiting says so first
+            self.waiting_for = what
+        self.message_waiting = True
+        self.quiet_until = self.clock.now() + OWNER_QUIET
+        return "after_cycle" if self.running_cycle else "soon"
 
-    def _wake_for_waiting_message(self) -> datetime | None:
-        """For ``decide``: wake for a message or decision that couldn't wake the agent when it came. Returns when that
-        can be while it is still too soon; None once the agent is woken, or when the agent has seen all of the owner's
-        news (the cycle that was running saw it: no second cycle for it)."""
+    def _wake_for_waiting_message(self, now: datetime) -> datetime | None:
+        """For ``decide``: wake for the owner's messages and decisions (0.14.0: once they have been quiet for
+        OWNER_QUIET). Returns when that can be while it is still too soon; None once the agent is woken, or when the
+        agent has seen all of the owner's news (a cycle that ran meanwhile saw it: no second cycle for it)."""
         with self.db.connection() as conn:
             unread = store.unseen(conn, "messages", self.scope(), 1) or news.decided_unseen(conn, self.scope())
         if not unread:
             self.message_waiting = False
             return None
+        if self.quiet_until is not None and now < self.quiet_until:
+            return self.quiet_until
         status, body = self.request_wake(
             by_message=self.waiting_for == "message", by_decision=self.waiting_for == "decision"
         )
@@ -498,8 +538,9 @@ class Agent:
             return CycleEnd("skipped", "a cycle is already running", skipped=True)
         self.running_cycle = True
         try:
-            if trigger == "owner":
-                self.wake_requested = False
+            # 0.14.0: whatever its trigger, the cycle starting now is the one a Wake now asked for (it reads every
+            # message). The last will's cycle left it standing, so the will ran again at once, past its retry time.
+            self.wake_requested = False
             scope = self.scope()
             workspace, memory_root = self.roots()
             runner = CycleRunner(
@@ -604,7 +645,7 @@ class Agent:
                 params,
             ).fetchall()
         for row in rows:
-            moment = self.clock.day_start(date.fromisoformat(row["check_at"])) + timedelta(hours=CHECK_HOUR)
+            moment = self.clock.at(date.fromisoformat(row["check_at"]), CHECK_HOUR)  # 0.14.0: 08:00 on DST days too
             if moment > now:
                 return moment, int(row["id"])
         return None
@@ -660,8 +701,9 @@ class Agent:
                 if end.sleep_reason:  # the agent's words, quoted (the dashboard shows them as text)
                     reason += f": {json.dumps(end.sleep_reason[:SLEEP_REASON_CHARS], ensure_ascii=False)}"
                 # 0.12.0: waiting for the owner is no reason to sleep long (it slept 12 hours for an approval): while
-                # its requests wait, it wakes by the default interval at the latest, to work on something else.
-                cap = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes)
+                # its requests wait, it wakes within WAITING_SLEEP_MINUTES (0.14.0; or the default interval, if longer)
+                # at the latest, to work on something else.
+                cap = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes, WAITING_SLEEP_MINUTES)
                 with self.db.connection() as conn:
                     waiting = store.count_rows(conn, "approvals", self.scope(), "status = 'pending'")
                 if waiting and minutes > cap:
@@ -684,6 +726,9 @@ class Agent:
             reason = f"after a {end.status} cycle, backing off"
         self._set_time("next_wake_at", now + timedelta(minutes=minutes))
         self.db.set_meta(self._key("next_wake_reason"), reason)
+        # 0.14.0: an event waits out the back-off too (decide may hold the schedule longer: maintenance, the reserve)
+        backoff = None if end.status in ("completed", "idle") else self._meta_time("next_wake_at")
+        self._set_time("backoff_until", backoff)
 
     # --- approved actions Ember carries out itself ---
 
@@ -819,6 +864,7 @@ class Agent:
         if self.message_waiting:  # it wakes for the owner's message as soon as it can (decide)
             now = self.clock.now()
             soon = max(now, self.last_wake_request + WAKE_NOW_MIN_GAP) if self.last_wake_request else now
+            soon = max(soon, self.quiet_until or soon)  # 0.14.0: once the owner has been quiet for a few minutes
             if wake is None or soon < wake:
                 why = "to read your message" if self.waiting_for == "message" else "to act on your decision"
                 wake, reason = soon, why

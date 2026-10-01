@@ -946,9 +946,10 @@
   function decisionWake(res, name) {
     var wake = res && isObject(res.data) && typeof res.data.wake === "string" ? res.data.wake : "";
     if (wake === "now" || wake === "soon") ui.fastPollUntil = Date.now() + WAKE_FAST_POLL_MS;
+    // 0.14.0: one cycle for what you send and decide, a few minutes after your last click
     return wake === "now" ? name + " is waking up to act on it."
-      : wake === "after_cycle" ? name + " acts on it as soon as the cycle it is working on ends."
-      : wake === "soon" ? name + " woke up less than a minute ago and wakes again for it in a moment."
+      : wake === "after_cycle" ? name + " acts on it after the cycle it is working on, a few minutes after your last click."
+      : wake === "soon" ? name + " wakes up for it in a few minutes, with anything else you send or decide meanwhile."
       : name + " sees it on its next wake.";
   }
 
@@ -3199,12 +3200,12 @@
       if (res.status === 201 || res.ok) {
         box.value = "";
         composerCount();
-        // With the wake_on_message option the message wakes the agent: now, as soon as the running cycle ends, or once
-        // the minute between wake-ups has passed. Without it (or while paused, ...) it waits for the next wake.
+        // With the wake_on_message option the message wakes the agent (0.14.0: one cycle a few minutes after your last
+        // message or decision). Without it (or while paused, ...) it waits for the next wake.
         var wake = isObject(res.data) && typeof res.data.wake === "string" ? res.data.wake : "";
         var when = wake === "now" ? " is waking up to read it."
-          : wake === "after_cycle" ? " reads it as soon as the cycle it is working on ends."
-          : wake === "soon" ? " woke up less than a minute ago and wakes again for it in a moment."
+          : wake === "after_cycle" ? " reads it after the cycle it is working on, a few minutes after your last message."
+          : wake === "soon" ? " wakes up for it in a few minutes, with anything else you send meanwhile."
           : " reads it on its next wake.";
         if (wake === "now" || wake === "soon") ui.fastPollUntil = Date.now() + WAKE_FAST_POLL_MS;
         setComposerStatus("Sent. " + agentName() + when, "ok");
