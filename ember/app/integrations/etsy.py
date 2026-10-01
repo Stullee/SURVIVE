@@ -40,6 +40,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlencode, urlsplit
 
+from ..agent import econ
 from ..config import Settings
 from ..economy.clock import Clock, from_iso, to_iso
 from ..logging_setup import register_secret
@@ -579,19 +580,29 @@ DEAD_ORDERS = frozenset({"canceled", "fully refunded"})
 COUNTED_ORDERS = "COALESCE(status, 'paid') NOT IN ('canceled', 'fully refunded')"  # SQL, on etsy_orders
 
 
-# Etsy's transaction fee on an item's price (0.12.0: Etsy's fees were never booked). The payment processing fee is read
-# from the order's payment; this one isn't in it.
-TRANSACTION_FEE = Decimal("0.065")
+# Etsy's fees on a sale, from econ's table (0.12.0: Etsy's fees were never booked; 0.14.0: the ledger left out the
+# listing fee a sale renews and the VAT on fees, which the venture cases count, so it booked 15-29% less). The payment
+# processing fee is read from the order's payment; these aren't in it.
+TRANSACTION_FEE = Decimal(str(econ.TRANSACTION_SHARE))
+LISTING_FEE_CENTS = Decimal(str(econ.LISTING_FEE_USD)) * 100  # in USD
+FEE_VAT = Decimal(str(econ.FEE_VAT))
 
 
-def fees_share(order: Order, lines: list[dict[str, Any]], processing_cents: int) -> int:
-    """Ember's share of Etsy's fees on an order, in cents: its lines' share of the payment's processing fee (by their
-    price) and the transaction fee on what they earned."""
+def fees_share(
+    order: Order, lines: list[dict[str, Any]], processing_cents: int, usd_per_eur: float = econ.DEFAULT_USD_PER_EUR
+) -> int:
+    """Ember's share of Etsy's fees on an order, in cents of its currency: its lines' share of the payment's processing
+    fee (by their price), the transaction fee on what they earned, the listing fee each unit sold renews (USD 0.20, at
+    ``usd_per_eur`` in another currency) and the VAT on those two."""
     gross = sum(int(i.get("price_cents") or 0) * int(i.get("quantity") or 1) for i in lines)
     whole = order.items_cents or gross
     share = gross / whole if whole else 1.0
     transaction = Decimal(order_net(order, lines)) * TRANSACTION_FEE
-    return max(0, round(processing_cents * share) + int(transaction.to_integral_value(rounding=ROUND_HALF_UP)))
+    listing = LISTING_FEE_CENTS * sum(int(i.get("quantity") or 1) for i in lines)
+    if order.currency != "USD":
+        listing /= Decimal(str(usd_per_eur))
+    etsys = (transaction + listing) * (1 + FEE_VAT)
+    return max(0, round(processing_cents * share) + int(etsys.to_integral_value(rounding=ROUND_HALF_UP)))
 
 
 def order_net(order: Order, lines: list[dict[str, Any]]) -> int:
@@ -622,6 +633,9 @@ class Shop(Protocol):
     def activate(self, listing_id: int) -> str: ...
 
     def listings(self, listing_ids: list[int]) -> list[RemoteListing]: ...
+
+    # 0.14.0: one listing whatever its state (the batch may leave out expired or inactive ones); None if there is none
+    def listing(self, listing_id: int) -> RemoteListing | None: ...
 
     def orders(self, since: datetime) -> list[Order]: ...
 
@@ -892,28 +906,26 @@ class FakeShop:
         return market(200 + seed % 48_000, results)
 
     def listings(self, listing_ids: list[int]) -> list[RemoteListing]:
-        found = []
-        for listing_id in listing_ids:
-            item = self.state["listings"].get(str(listing_id))
-            if item is None:
-                continue
-            if self._roll(item):
-                self._on_change(self.state)
-            views, favorites = self._interest(listing_id, item)
-            found.append(
-                RemoteListing(
-                    listing_id,
-                    item["state"],
-                    item["title"],
-                    listing_url(listing_id),
-                    views,
-                    favorites,
-                    item.get("ends_at"),
-                    bool(item.get("auto_renew")),
-                    f"{Decimal(int(item['price_cents'])) / 100:.2f}",
-                )
-            )
-        return found
+        return [found for found in map(self.listing, listing_ids) if found is not None]
+
+    def listing(self, listing_id: int) -> RemoteListing | None:
+        item = self.state["listings"].get(str(listing_id))
+        if item is None:
+            return None
+        if self._roll(item):
+            self._on_change(self.state)
+        views, favorites = self._interest(listing_id, item)
+        return RemoteListing(
+            listing_id,
+            item["state"],
+            item["title"],
+            listing_url(listing_id),
+            views,
+            favorites,
+            item.get("ends_at"),
+            bool(item.get("auto_renew")),
+            f"{Decimal(int(item['price_cents'])) / 100:.2f}",
+        )
 
     def _roll(self, item: dict[str, Any]) -> bool:
         """A live listing past its end: renewed for four months at a time when it renews itself, else expired.

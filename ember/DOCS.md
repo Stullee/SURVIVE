@@ -1309,21 +1309,34 @@ that hold them: date, status, Ember's lines and which listing, never who bought.
 An order's amount is only Ember's lines: their price times quantity, less their
 share of a coupon and of any refund; tax, shipping and your own products in the
 same receipt don't count, and Etsy's fees are recorded on their own (below). Every sync
-reads the receipts that changed lately, so an order refunded or cancelled after
-it was read is updated, and it stops counting. Etsy's
+reads the receipts that changed since the last sync that worked, or since the
+oldest paid order whose fees it hasn't read yet (at least 30 days back, at most
+a year), so an order refunded or cancelled after it was read
+is updated, and it stops counting. A listing Etsy's answer leaves out is read on
+its own; one Etsy says there is none of counts as removed, and one that can't be
+read counts as expired once its end passed and it doesn't renew itself, else as
+unknown, and neither as live. A sync that fails says so under
+**Last error**, also for an order that couldn't be stored. Etsy's
 categories are fetched again every day. Etsy's API terms allow showing its
 listings for 6 hours after they were read and its other content for a day. The
 agent sees these numbers in every plan and in its daily review. **System →
 Etsy** lists the listings and orders and says when the numbers were read;
 **Record as revenue** opens the revenue form filled in from a paid order in EUR
 or USD (an order can't be recorded twice; convert another currency yourself).
-If an order you recorded is refunded later, the list asks you to correct that
-entry. Revenue still counts only when you record it. Once an order's revenue
+If an order you recorded is refunded later, in part or in full, the list keeps
+it and asks you to correct that entry until you have. Revenue still counts only
+when you record it. Once an order's revenue
 is recorded, **Record Etsy's fees** opens the expense form for the same
 project, filled in with Ember's share of Etsy's fees on it: its share of the
-payment processing fee (Ember reads the order's payment once) and Etsy's 6.5%
-transaction fee on what its lines earned. Check it against your Etsy payment
-account (VAT on fees, Offsite Ads) and change the amount before you save.
+payment processing fee (Ember reads the order's payment once), Etsy's 6.5%
+transaction fee on what its lines earned, the listing fee each unit sold renews
+(USD 0.20) and 19% VAT on those two, as the venture cases count them. Check it
+against your Etsy payment account (Offsite Ads, a VAT ID) and change the amount
+before you save. Etsy's listing fees for Ember's listings, its own and the ones Printify
+made of its products (USD 0.20 when one goes live, also a draft you publish, when Ember renews one, and at
+each renewal Etsy makes), are Ember's
+own spending: Ember's code records them in the ledger at the next sync,
+whatever the option below, so don't record them yourself.
 
 **Record Etsy revenue automatically** (off by default) lets Ember's code do
 this at each sync, from Etsy's numbers, for the orders placed from the day you
@@ -1339,9 +1352,12 @@ Orders in EUR need **Exchange rate for Etsy revenue** (USD per 1 EUR, for
 example 1.08; 0 leaves them to you), and an order's fees and refunds keep the
 rate its revenue was recorded at; other currencies stay yours to convert.
 Etsy's fees on an order refunded later stay recorded: correct them with what
-Etsy credited back. An entry that would kill Ember or leave it without money to
-run is never recorded automatically: the System log tells you once, and the
-order's button asks you as usual. The System log also notes each time you turn
+Etsy credited back. Fees that would kill Ember or leave it without money to
+run are never recorded automatically: the System log tells you once, and the
+order's button asks you as usual. A refund is recorded all the same (held
+back, it left Ember spending money the buyer got back); if it leaves Ember
+without money, Ember's code pauses it and says why: grant funds and resume
+it, or resume it and let it end. The System log also notes each time you turn
 the option on or off or change the rate.
 
 Every day Ember's code also keeps a record of how the shop does (the first
@@ -1732,7 +1748,7 @@ session. Each time you switch dry run on, a new session starts from scratch.
 |---|---|
 | alive | Running normally. |
 | critical | Less than 2 days of runway (balance divided by the average daily spending of the last 7 active days), or it couldn't afford its next planning call. It stays critical until runway is back to 4 days *and* money came in (a grant, revenue or an adjustment that adds; a refund of API costs doesn't count). The first time, it writes a last will. |
-| paused | You paused it. Nothing runs until you resume. |
+| paused | You paused it, or Ember's code did because a refund or an Etsy listing fee left it without money (the reason says so; in dry run the test balance decides). Nothing runs until you resume. |
 | unfunded | No money yet and nothing spent: grant funds to start. |
 | dead | The balance ran out, or it could no longer afford even its last will. No model calls. The dashboard shows a memorial. A grant large enough for a fresh start begins a new life (the dashboard shows the amount needed); resuming alone never revives. |
 

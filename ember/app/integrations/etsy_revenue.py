@@ -15,8 +15,16 @@ order is recorded once, whoever comes first, and an order the owner recorded sta
 An order in EUR needs the owner's exchange
 rate (``etsy_usd_per_eur``), and its fees and refunds keep the rate its revenue was recorded at; other currencies are
 the owner's to convert. Etsy's fees on an order refunded later stay recorded: what Etsy credits back is the owner's to
-correct. An entry that would kill the agent or leave it unfunded waits for the owner, who is told once
-(``Economy.record_integration``). In dry run the orders are the fake shop's, so their entries are test money.
+correct. Fees that would kill the agent or leave it unfunded wait for the owner, who is told once
+(``Economy.record_integration``). 0.14.0: a refund is a fact, so it is recorded all the same (held back, it left the
+agent spending money the buyer got back); if it leaves the agent without money, Ember's code pauses it with the reason.
+
+0.14.0: whatever the option, each sync also records the listing fees Etsy charged for Ember's listings (USD 0.20: for
+publishing one, for a renewal Ember made or one Etsy made), noted where they happened
+(``etsy_publisher.listing_fee_due``). They are Ember's own spending, like its API calls, and were never recorded; they
+are facts too.
+
+In dry run the orders and listings are the fake shop's, so their entries are test money.
 """
 
 from __future__ import annotations
@@ -31,6 +39,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING
 
 from .. import events
+from ..agent import econ
 from ..agent.store import AgentScope
 from ..config import Settings
 from ..db import Database
@@ -38,7 +47,7 @@ from ..economy.clock import Clock
 from ..economy.costs import micros_to_usd
 from ..economy.ledger import MAX_BACKDATE_DAYS, PreparedEntry, decimal_text, dollars_to_micros
 from . import etsy
-from .etsy_publisher import fee_key, order_project, revenue_key
+from .etsy_publisher import FEE_DUE_KEY, fee_key, order_project, revenue_key
 
 if TYPE_CHECKING:
     from ..economy.service import Economy
@@ -49,7 +58,11 @@ OPTION_KEY = "integrations.etsy.auto_revenue"  # the option as last seen, for th
 SINCE_KEY = "integrations.etsy.auto_revenue_since"  # the owner's day it was turned on: its orders from then on
 HELD_KEY = "integrations.etsy.revenue_held."  # + an entry's key: the owner was told it waits for them
 REVENUE_NOTE = "Ember's lines of the order, net of tax, shipping, the coupon and refunds (Etsy's numbers)"
-FEES_NOTE = "Etsy's fees on order {receipt}: payment processing and the 6.5% transaction fee"  # the owner's button's
+FEES_NOTE = (  # the owner's button's too (0.14.0: the listing fee a sale renews and the VAT on fees were left out)
+    "Etsy's fees on order {receipt}: payment processing, the 6.5% transaction fee, USD 0.20 a unit sold and 19% VAT"
+    " on those two"
+)
+LISTING_FEE_NOTE = "Etsy's listing fee for listing {listing}: {why}"  # 0.14.0
 
 
 @dataclass
@@ -68,8 +81,9 @@ def refund_key(receipt_id: int, left_micros: int) -> str:
 
 def record(db: Database, clock: Clock, economy: Economy, scope: AgentScope, settings: Settings) -> Done:
     """What Etsy's numbers say about the orders with Ember's listings, in the ledger (see the module's text): after
-    each sync that worked, when the owner turned it on."""
+    each sync that worked, when the owner turned it on (0.14.0: the listing fees whatever the option)."""
     done = Done()
+    _listing_fees(db, clock, economy, scope, done)
     if not settings.etsy_auto_record_revenue:
         return done
     rate = Decimal(str(settings.etsy_usd_per_eur)) if settings.etsy_usd_per_eur else None
@@ -92,7 +106,7 @@ def record(db: Database, clock: Clock, economy: Economy, scope: AgentScope, sett
         for step in (_fees, _refund):
             prepared = step(db, order)
             if prepared is not None:
-                _write(db, economy, prepared, done)
+                _write(db, economy, prepared, done, fact=step is _refund)
     if done.recorded or done.held:
         log.info(
             "Etsy's numbers: %d ledger entries recorded, %d waiting for the owner", len(done.recorded), len(done.held)
@@ -250,8 +264,55 @@ def _refund(db: Database, order: sqlite3.Row) -> PreparedEntry | None:
     )
 
 
-def _write(db: Database, economy: Economy, prepared: PreparedEntry, done: Done) -> None:
-    result = economy.record_integration(prepared)
+def _listing_fees(db: Database, clock: Clock, economy: Economy, scope: AgentScope, done: Done) -> None:
+    """0.14.0: the listing fees Etsy charged for Ember's listings in this mode and session, as expenses of the listing's
+    project (one of an ended dry-run session is dropped)."""
+    with db.connection() as conn:
+        due = conn.execute(
+            "SELECT key, value FROM meta WHERE substr(key, 1, ?) = ? ORDER BY key",
+            (len(FEE_DUE_KEY), FEE_DUE_KEY),
+        ).fetchall()
+    for row in due:
+        fee = json.loads(row["value"])
+        if fee["mode"] != scope.mode:
+            continue  # recorded when that mode runs again
+        if fee["session"] == scope.session:
+            with db.connection() as conn:
+                project_id, venture_id = order_project(conn, scope, [{"listing_id": fee["listing_id"]}])
+            prepared = PreparedEntry(
+                type="expense",
+                amount_micros=dollars_to_micros(Decimal(str(econ.LISTING_FEE_USD)) * int(fee["fees"])),
+                simulated=scope.mode == "dry_run",
+                source=f"Etsy listing {fee['listing_id']}",
+                note=LISTING_FEE_NOTE.format(listing=fee["listing_id"], why=fee["why"]),
+                occurred_on=_day(clock, fee["at"]),
+                day_given=True,
+                idempotency_key=row["key"][len(FEE_DUE_KEY) :],
+                project_id=project_id,
+                venture_id=venture_id,
+                created_by="etsy",
+            )
+            _write(db, economy, prepared, done, fact=True)
+            with db.connection() as conn:
+                refused = _entry(conn, prepared.idempotency_key) is None
+            if refused:  # kept for the next sync; the owner is told once
+                told = HELD_KEY + prepared.idempotency_key
+                if not db.get_meta(told):
+                    db.set_meta(told, "refused")
+                    events.record(
+                        db,
+                        "warning",
+                        "ledger",
+                        f"The ledger refused {prepared.note} (${micros_to_usd(prepared.amount_micros):.2f}). Ember's"
+                        " code tries again at each sync.",
+                    )
+                continue
+        with db.transaction() as conn:
+            conn.execute("DELETE FROM meta WHERE key = ?", (row["key"],))
+
+
+def _write(db: Database, economy: Economy, prepared: PreparedEntry, done: Done, fact: bool = False) -> None:
+    result = economy.record_integration(prepared, fact)
     if result.entry_id is not None:
         done.recorded.append(result.entry_id)
         return
@@ -262,16 +323,12 @@ def _write(db: Database, economy: Economy, prepared: PreparedEntry, done: Done) 
     if db.get_meta(told):
         return
     db.set_meta(told, result.held)
-    what = {
-        "revenue": "a refund of Etsy order revenue",
-        "expense": "Etsy's fees on an order",
-    }[prepared.type]
     state = "kill the agent" if result.held == "dead" else "leave the agent without money to run"
-    events.record(
+    events.record(  # only an order's fees wait for the owner (0.14.0: refunds and listing fees are facts)
         db,
         "warning",
         "ledger",
-        f"Ember's code did not record {what} (${micros_to_usd(abs(prepared.amount_micros)):.2f},"
+        f"Ember's code did not record Etsy's fees on an order (${micros_to_usd(abs(prepared.amount_micros)):.2f},"
         f" {prepared.source or prepared.note}): it would {state}. Record it yourself when you decide: System tab,"
         " Etsy orders.",
     )
