@@ -38,7 +38,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Spending cap per wake cycle | 0.50 USD | Hard limit per cycle. Must not exceed the daily cap. A working cycle (its plan, a work step and the reflection) can cost up to about 0.25 USD with the default models; the dashboard warns you below 1.5 times that, when most cycles would end after a step or two. |
 | Share for ventures | 25 % | This share of each day's spending goes to venture cycles, where the agent researches new ways to earn. 0 switches them off. See [Ventures](#ventures). |
 | Cash for a venture's first test (EUR) | 20 | A business case that needs more cash than this to start is knocked out: Ember's code won't propose it until you lift that knock-out on its card (see [Ventures](#ventures)). |
-| Daily study budget for the library | 0.50 USD | What the agent may spend a day studying the documents you add on the Library tab. It counts toward the daily cap, not the cycle cap. 0: nothing is studied, but the documents can still be searched and read. See [Library](#library). |
+| Daily study budget for the library | 0.50 USD | What the agent may spend a day studying the documents you add on the Library tab. It counts toward the daily cap, not the cycle cap (except in the maintenance [burn mode](#money)). 0: nothing is studied, but the documents can still be searched and read. See [Library](#library). |
 | Default sleep | 240 min | Time between wake cycles when the agent doesn't choose. |
 | Shortest / longest sleep | 30 / 1440 min | Bounds for the sleep time the agent chooses. |
 | Tool steps per cycle | 15 | Maximum tool calls in one cycle. While the agent works, the overview counts them ("tool step 3 (at most 15)"); they aren't the steps of its plan. |
@@ -61,7 +61,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Emails per day | 3 | The most emails Ember sends in one day (0 to 20). |
 | Workshop | on | Lets the agent have code written and run in Anthropic's sandbox. See [The workshop](#the-workshop). |
 | Workshop model | empty | The model that writes the workshop's code. Empty: the worker model. |
-| Workshop cap per run | 0.50 USD | The most one workshop run may cost. Runs count toward the daily cap, not the cycle cap. |
+| Workshop cap per run | 0.50 USD | The most one workshop run may cost. Runs count toward the daily cap, not the cycle cap. No runs in the maintenance [burn mode](#money). |
 | Workshop runs per day | 6 | The most workshop runs in one day (0 switches the workshop off). |
 | Sandbox price | 0.05 USD per hour | What Anthropic charges per hour of sandbox time beyond its free hours. |
 | Etsy shop | off | Lets the agent propose listings for your Etsy shop, which Ember creates after you approve them. See [Etsy](#etsy). |
@@ -266,9 +266,10 @@ what it changed, keep the lesson. The next review shows whether it did. You can
 read every review, with the numbers it judged, under **Mind → Daily reviews**.
 
 A review is one call on the planner model (about $0.02–0.05 with
-claude-sonnet-5). It counts toward the daily cap, not the cycle cap, so the
-cycle it opens can still do its work. If the day's budget can't cover it, it is
-tried at the next cycle.
+claude-sonnet-5). It counts toward the daily cap, not the cycle cap, and
+leaves what the cycle it opens needs to do its work (in the maintenance burn
+mode the cycle's $0.40 bounds it too). If the day's budget can't cover it, it
+is tried at the next cycle.
 
 **Lessons.** The agent's lessons file holds 4,000 bytes. When it is full, a
 new lesson pushes the oldest out: those without numbers first, so a no backed by
@@ -372,7 +373,8 @@ $0.02–0.15. Before each call Ember reserves the worst case (about $0.35 with
 claude-sonnet-5), so a run needs that much room. Runs have their own **cap per
 run**, count toward the daily cap and the balance but not the cycle cap (one
 run can cost more than a whole cycle may), and **runs per day** limits how
-often the agent uses it. Switch it off with **Workshop** or 0 runs per day.
+often the agent uses it. Until 20:00 they leave the event wake-ups' share of the
+daily cap, and there are no runs in the maintenance burn mode. Switch it off with **Workshop** or 0 runs per day.
 
 **How Ember grows.** A script proves itself when the agent runs it again, or
 when its files go into a request you approved. The planner then reminds the
@@ -420,9 +422,10 @@ you want more research. In a venture cycle the agent:
 
 - takes one of the **decision desk**'s items (0.13.0, below), or says why it
   takes none;
-- grows the tree with a **brainstorm**: a separate call on the planner model
-  that finds six new ideas that fit you and the agent (about $0.05–0.15 with
-  claude-opus-5-5), branching from a promising venture or into new ground;
+- in the explore burn mode, grows the tree with a **brainstorm**: a separate
+  call on the planner model that finds six new ideas that fit you and the agent
+  (about $0.05–0.15 with claude-opus-5-5), branching from a promising venture or
+  into new ground;
 - researches one venture (up to 8 web searches instead of 3), keeps what
   it learns in the venture's knowledge file (`ventures/<number>-<name>.md` in
   its workspace, which the card opens; a full one continues in
@@ -1510,7 +1513,8 @@ runway, and the agent's plans say which mode it is in:
 - **explore**: more than 30 days (or it earns what it spends): as your options
   allow;
 - **focus**: 15 to 30 days: the tests already running go on (venture cycles
-  only while a venture is backed or live), with no brainstorms;
+  only while a venture is backed or live), with no brainstorms and no new ideas
+  but those you bring;
 - **maintenance**: under 15 days: one scheduled cycle a day, of at most $0.40
   with every call counted (the daily review and library study too), no workshop
   runs and no venture cycles (your messages and decisions still wake it);

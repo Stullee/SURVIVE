@@ -277,11 +277,11 @@ class CycleRunner:
         )
         ctx.research = self._research_fn(ctx)
         ctx.draft = self._draft_fn(ctx)
-        mode = burn.peek(self.db, self.economy.life.evaluate())  # the cycle's: open_cycle has just kept it
-        # 0.14.0: no workshop runs in maintenance (a run costs about what the whole cycle may)
-        ctx.workshop = self._workshop_fn(ctx) if prompts.workshop_on(self.settings) and mode.workshop else None
         end = CycleEnd("failed", "the cycle ended unexpectedly")
         try:
+            mode = self._cycle_burn(cycle_id)
+            # 0.14.0: no workshop runs in maintenance (a run costs about what the whole cycle may)
+            ctx.workshop = self._workshop_fn(ctx) if prompts.workshop_on(self.settings) and mode.workshop else None
             if trigger != "last_will":
                 ctx.venture = self._venture_cycle(cycle_id) if not self.reactive else False
                 # 0.12.0: brainstorms only while the burn mode is explore
@@ -356,6 +356,14 @@ class CycleRunner:
             f"Cycle #{cycle_id} {final}: ${micros_to_usd(spent):.4f}" + (f" ({end.note})" if end.note else "") + tail,
             {"cycle_id": cycle_id},
         )
+
+    def _cycle_burn(self, cycle_id: int) -> burn.Burn:
+        """0.14.0: the burn mode the cycle opened in (its row), the one the money guard uses too."""
+        with self.db.connection() as conn:
+            row = conn.execute("SELECT burn_mode FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
+        if row is None or row["burn_mode"] is None:
+            return burn.peek(self.db, self.economy.life.evaluate())
+        return burn.Burn(row["burn_mode"], None)
 
     def _venture_cycle(self, cycle_id: int) -> bool:
         """Whether this is a venture cycle: venture cycles have had less than the owner's share of the day's spending

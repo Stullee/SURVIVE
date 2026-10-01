@@ -832,8 +832,8 @@
         " · net of revenue and expenses: " + (isNaN(net) ? (a.net_runway_note || "–").toLowerCase() : net >= 365 ? "365+ days" : plural(net, "day")) : "") +
         // 0.12.0: the burn mode Ember's code sets from the net runway, when it holds the agent back
         (a.burn_mode && a.burn_mode !== "explore" ? " · burn mode " + a.burn_mode : "") +
-        // 0.14.0: and when it moves down next at today's burn
-        (a.burn_next ? " · " + asText(a.burn_next) : "");
+        // 0.14.0: and when it moves down next at today's burn (named as the burn mode in explore too)
+        (a.burn_next ? (a.burn_mode && a.burn_mode !== "explore" ? ", " : " · burn mode ") + asText(a.burn_next) : "");
     }
     runway.setAttribute("data-tone", !isNaN(days) && days < 2 ? "critical" : "");
 

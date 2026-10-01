@@ -3,7 +3,8 @@ the last week's API spending less its net revenue), not by a line in the prompt 
 steered a whole live week).
 
 * explore: more than 30 days of net runway, or it earns at least what it spends: as the owner's options allow;
-* focus: 15 to 30 days: the tests already running go on (a venture backed or live), no brainstorms, no new ideas;
+* focus: 15 to 30 days: the tests already running go on (a venture backed or live), no brainstorms, and new ideas
+  only those the owner brings (0.14.0: venture_create stays offered for them);
 * maintenance: under 15 days: one scheduled cycle a day of at most $0.40 (0.14.0: every call in it counted, the
   daily review and the library's study too), with no workshop runs and no venture cycles;
 * dormant: the last will is written and the runway is critical: no model calls until money comes in (only the owner's
@@ -35,7 +36,7 @@ PROJECTED_DAYS = 30  # 0.14.0: a change further off than this isn't projected
 KEY = "burn_mode.{mode}.{life}"
 MEANING = {
     EXPLORE: "as your owner's options allow",
-    FOCUS: "finish the tests already running (a venture backed or live); no brainstorms, no new ideas",
+    FOCUS: "finish the tests already running (a venture backed or live); no brainstorms, new ideas only your owner's",
     MAINTENANCE: (
         f"one cycle a day of at most ${MAINTENANCE_CYCLE_USD:.2f}, every call counted, no workshop runs or venture"
         " cycles: earn or cut costs"

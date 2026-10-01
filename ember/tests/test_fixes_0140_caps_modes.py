@@ -25,12 +25,12 @@ from typing import Any
 
 import pytest
 
-from app.agent import context, library, prompts, tools, ventures
+from app.agent import context, library, loop, prompts, tools, ventures
 from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls, request_kind
 from app.agent.service import Agent
 from app.config import Settings
 from app.db import discover_migrations, migrate
-from app.economy import burn, ledger, metering, pricing
+from app.economy import burn, ledger, metering
 from app.economy.metering import CallRefused, Completed
 from tests.economy_helpers import START, ScriptedTransport, make_economy, message, metered, request
 from tests.test_agent import ROOMY, rows
@@ -181,15 +181,15 @@ def test_a_maintenance_cycles_review_leaves_what_the_cycle_needs_to_work(
 ) -> None:
     agent, fake = next_day(data_dir)
     monkeypatch.setattr(burn, "_raw", lambda status: burn.MAINTENANCE)
+    # the cycle's work needs nearly all of the $0.40: a review would fit the cap, but not next to the work
+    monkeypatch.setattr(loop, "working_cycle_cost", lambda *args: 390_000)
     before = len(fake.sent)
     agent.run_cycle("schedule")
     [cycle] = rows(agent, "SELECT id, cap_micros FROM cycles ORDER BY id DESC LIMIT 1")
-    working = pricing.working_cycle_cost(agent.settings, agent.db, "dry_run") or 0
-    assert cycle["cap_micros"] == 400_000 and working > 0
+    assert cycle["cap_micros"] == 400_000
     kinds = [request_kind(r) for r in list(fake.sent)[before:]]
-    assert "plan" in kinds  # before 0.14.0 the review took the $0.40 cycle's room and left no plan
-    for review in rows(agent, "SELECT estimate_micros FROM llm_calls WHERE purpose = 'review'"):
-        assert review["estimate_micros"] <= cycle["cap_micros"] - working
+    assert "plan" in kinds and "review" not in kinds  # before 0.14.0 the review took the room the work needed
+    assert rows(agent, "SELECT id FROM llm_calls WHERE purpose = 'review'") == []
 
 
 # --- X3: STATUS says the cap in force; the focus mode offers no brainstorm ---
@@ -271,7 +271,7 @@ def test_status_and_the_dashboard_show_the_projection(data_dir: Path, monkeypatc
     agent.run_cycle("schedule")
     expected = (agent.clock.now() + timedelta(days=3.3)).strftime("%m-%d")
     status = section(planner_texts(fake)[0], "STATUS")
-    assert f"no brainstorms, no new ideas; maintenance from about {expected} at today's burn." in status
+    assert f"no brainstorms, new ideas only your owner's; maintenance from about {expected} at today's burn." in status
     assert agent.economy.dashboard()["agent"]["burn_next"] == f"maintenance from about {expected} at today's burn"
 
 
