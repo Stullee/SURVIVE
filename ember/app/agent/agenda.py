@@ -195,11 +195,15 @@ def unseen(conn: sqlite3.Connection, scope: AgentScope, limit: int = SHOWN) -> l
 
 
 def waking(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
-    """The urgent events that haven't woken the agent and no plan has shown yet."""
+    """The urgent events that haven't woken the agent and no plan has shown yet. 0.14.0: not an order, nor the last
+    day of a milestone Ember's code checks, noted as urgent before 0.14.0 (an event never changes)."""
     where, params = scope.where()
+    kinds = ", ".join(f"'{k}'" for k in sorted(URGENT))
     return conn.execute(
         f"SELECT * FROM agenda WHERE {where} AND baseline = 0 AND urgent = 1 AND seen_cycle_id IS NULL"
-        " AND woke_at IS NULL ORDER BY id",
+        f" AND woke_at IS NULL AND kind IN ({kinds}) AND NOT (kind = 'milestone_due' AND EXISTS ("
+        " SELECT 1 FROM milestones m WHERE m.id = CAST(substr(agenda.key, 1, instr(agenda.key, ':') - 1) AS INTEGER)"
+        " AND (m.metric IS NOT NULL OR m.kind = 'money_goal'))) ORDER BY id",
         params,
     ).fetchall()
 

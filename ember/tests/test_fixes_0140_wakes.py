@@ -170,6 +170,35 @@ def test_orders_favorites_and_the_milestones_code_checks_are_noted_without_a_wak
     assert waking == [own, decision]
 
 
+def test_orders_and_milestones_noted_as_urgent_before_0_14_0_wake_no_one(data_dir: Path) -> None:
+    agent, _ = make_agent(data_dir, [])
+    metric = due_today(agent, "Three listings live", metric="listings_live", target=3)
+    goal = due_today(agent, "Earn what you spend", created_by="code", kind="money_goal")
+    own = due_today(agent, "Ask two shops")
+    scope, now = agent.scope(), to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:  # as 0.13.0 noted them: urgent, and an event never changes
+        for kind, key in (("order", "71"), *(("milestone_due", f"{m}:x") for m in (metric, goal, own))):
+            conn.execute(
+                "INSERT INTO agenda (mode, session, kind, key, text, urgent, noted_at) VALUES (?, ?, ?, ?, 'x', 1, ?)",
+                (scope.mode, scope.session, kind, key, now),
+            )
+        waking = [r["key"] for r in agenda.waking(conn, scope)]
+    assert waking == [f"{own}:x"]
+
+
+def test_the_email_guide_says_an_answer_may_wake_the_agent() -> None:
+    guide = (Path(service.__file__).parent / "guides" / "email.md").read_text()
+    assert "may wake you when it arrives" in guide  # the owner's option and the guards decide
+
+
+def test_a_cycle_without_room_ends_an_earlier_back_off(data_dir: Path) -> None:
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=0.04, venture_share=0)
+    agent, _ = make_agent(data_dir, [plan()], settings)
+    agent._set_time("backoff_until", agent.clock.now() + timedelta(hours=2))  # from an earlier failed cycle
+    assert agent.run_cycle("schedule").note == loop.NO_STEP
+    assert agent._meta_time("backoff_until") is None
+
+
 # --- FIX NOW 25: Wake now runs the last will once, and the scheduler waits a round after a refusal ---
 
 
@@ -333,6 +362,57 @@ def test_clicks_a_few_minutes_apart_wake_at_most_15_minutes_after_the_first(data
         agent.clock.advance(minutes=4)
     assert woke is not None and woke <= first + service.OWNER_QUIET_MAX + timedelta(minutes=4)
     assert agent.run_cycle("owner").status == "idle"
+
+
+def test_messages_7_minutes_apart_wake_a_cycle_every_30_minutes_at_most(data_dir: Path) -> None:
+    agent, _ = make_agent(data_dir, [plan(steps=[], sleep=600)] * 12)
+    assert agent.run_cycle("schedule").status == "idle"
+    request, _ = request_for(agent, Settings())
+    starts = []
+    for minute in range(100):  # nine messages in an hour (09-28: nine cycles), then quiet
+        if minute % 7 == 0 and minute < 63:
+            send(agent, f"One more thing ({minute})")
+            web._wake_for_message(request)
+        decision = agent.decide()
+        if decision.run:
+            assert decision.trigger == "owner"
+            starts.append(minute)
+            assert agent.run_cycle("owner").status == "idle"
+        agent.clock.advance(minutes=1)
+    assert starts == [5, 35, 65]  # three cycles; the last one read the last message (minute 56)
+    assert not agent.message_waiting
+    assert agent.request_wake()[0] == 202  # Wake now stays immediate
+
+
+def test_a_scheduled_wake_before_the_quiet_period_ends_reads_the_message(data_dir: Path) -> None:
+    agent, transport = make_agent(data_dir, [plan(steps=[], sleep=600)])
+    assert agent.decide().wait_until == agent.clock.now() + service.FIRST_WAKE_DELAY
+    request, _ = request_for(agent, Settings())
+    send(agent, "Hello!")
+    assert web._wake_for_message(request) == "soon"
+    decision = agent.decide()  # the schedule comes first: the dashboard shows when it really wakes
+    assert not decision.run and decision.wait_until == agent.clock.now() + service.FIRST_WAKE_DELAY
+    assert agent.agent_fields()["next_wake_at"] == to_iso(decision.wait_until)
+    agent.clock.advance(minutes=3)
+    assert agent.decide().trigger == "schedule"
+    assert agent.run_cycle("schedule").status == "idle"
+    agent.clock.advance(minutes=5)
+    assert not agent.decide().run and not agent.message_waiting  # it read the message: no second cycle
+    assert len(transport.sent) == 1
+
+
+def test_a_restart_after_the_owner_switched_the_wake_off_drops_it(data_dir: Path) -> None:
+    agent, transport = make_agent(data_dir, [plan(steps=[], sleep=600)])
+    assert agent.run_cycle("schedule").status == "idle"
+    request, _ = request_for(agent, Settings())
+    send(agent, "Please read this")
+    assert web._wake_for_message(request) == "soon"
+    off = Settings(**{**ROOMY.model_dump(), "wake_on_message": False, "wake_on_decision": False})
+    restarted = Agent(agent.db, LoadedSettings(off), agent.economy, transport=transport, cycles_enabled=True)
+    restarted.recover()  # changing an option restarts the app
+    restarted.clock.advance(minutes=6)
+    assert not restarted.decide().run and not restarted.message_waiting
+    assert restarted._meta_time("owner_wake_at") is None
 
 
 # --- X12: maintenance's one cycle a day, after a failed cycle too ---

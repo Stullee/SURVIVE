@@ -403,6 +403,8 @@ def test_a_message_wakes_the_agent_within_the_wake_limit(data_dir: Path) -> None
     assert web._wake_for_message(request) == "soon"
     assert not agent.wake_requested and agent.message_waiting and pokes == ["x", "x"]
     agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())
+    assert not agent.decide().run  # 0.14.0: OWNER_GAP after the last wake for the owner's news
+    agent.clock.advance(seconds=(service.OWNER_GAP - service.OWNER_QUIET).total_seconds())
     assert agent.decide().trigger == "owner" and not agent.message_waiting
     messages = [e["message"] for e in agent.db.recent_events(20)]
     assert messages.count("The owner's message woke the agent") == 2

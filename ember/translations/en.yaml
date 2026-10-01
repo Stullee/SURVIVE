@@ -114,8 +114,8 @@ configuration:
     name: Wake Ember when you write
     description: >-
       On: a message you send in the Inbox wakes the agent to read it, 5
-      minutes after your last message or decision, so one cycle reads them
-      all. Off: it reads your message at its next scheduled wake-up.
+      minutes after your last message or decision (at least 30 minutes
+      after the last such wake), so one cycle reads them all. Off: it reads your message at its next scheduled wake-up.
   wake_on_decision:
     name: Wake Ember when you decide
     description: >-

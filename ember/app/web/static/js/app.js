@@ -949,7 +949,7 @@
     // 0.14.0: one cycle for what you send and decide, a few minutes after your last click
     return wake === "now" ? name + " is waking up to act on it."
       : wake === "after_cycle" ? name + " acts on it after the cycle it is working on, a few minutes after your last click."
-      : wake === "soon" ? name + " wakes up for it in a few minutes, with anything else you send or decide meanwhile."
+      : wake === "soon" ? name + " wakes up for it soon (a few minutes, or up to 30 after the last such wake), with anything else you send or decide meanwhile."
       : name + " sees it on its next wake.";
   }
 
@@ -3205,7 +3205,7 @@
         var wake = isObject(res.data) && typeof res.data.wake === "string" ? res.data.wake : "";
         var when = wake === "now" ? " is waking up to read it."
           : wake === "after_cycle" ? " reads it after the cycle it is working on, a few minutes after your last message."
-          : wake === "soon" ? " wakes up for it in a few minutes, with anything else you send meanwhile."
+          : wake === "soon" ? " wakes up for it soon (a few minutes, or up to 30 after the last such wake), with anything else you send meanwhile."
           : " reads it on its next wake.";
         if (wake === "now" || wake === "soon") ui.fastPollUntil = Date.now() + WAKE_FAST_POLL_MS;
         setComposerStatus("Sent. " + agentName() + when, "ok");

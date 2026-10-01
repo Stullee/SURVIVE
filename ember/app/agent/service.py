@@ -67,6 +67,7 @@ WAKE_NOW_MIN_GAP = timedelta(seconds=60)
 # approvals 83 seconds apart started two cycles: $2.57 in 8 minutes). Wake now stays immediate.
 OWNER_QUIET = timedelta(minutes=5)
 OWNER_QUIET_MAX = timedelta(minutes=15)  # and at most this long after the first, however often the owner clicks
+OWNER_GAP = timedelta(minutes=30)  # between two such cycles (nine messages 7 minutes apart started nine cycles)
 # 0.14.0: while a request waits for the owner, the longest sleep (or the default sleep, if longer). It was the default
 # sleep alone: 60 minutes at the owner's options, not the 240 the notes said.
 WAITING_SLEEP_MINUTES = 240
@@ -247,7 +248,11 @@ class Agent:
             # Give the owner a minute to pause after an update or restart.
             self._set_time("next_wake_at", now + BOOT_GRACE)
         quiet = self._meta_time("owner_wake_at")  # 0.14.0: a wake for the owner's news a restart would have dropped
-        if quiet is not None:
+        # (unless the owner switched that wake off: changing an option restarts the app)
+        on = {"message": self.settings.wake_on_message, "decision": self.settings.wake_on_decision}
+        if quiet is not None and not on.get(self.db.get_meta(self._key("owner_wake_for")) or "message", True):
+            self._owner_wake_done()
+        elif quiet is not None:
             self.message_waiting = True
             self.waiting_for = self.db.get_meta(self._key("owner_wake_for")) or "message"
             self.quiet_until = max(quiet, now + BOOT_GRACE)
@@ -312,13 +317,20 @@ class Agent:
         # 0.12.0: dormant, no model calls until money comes in; only the owner's Wake now runs a cycle
         if mode == burn.DORMANT and not self.wake_requested:
             return Decision(False, reason=f"Dormant: {burn.MEANING[burn.DORMANT]}; Wake now runs a cycle")
+        ready = None
         if self.message_waiting and not self.wake_requested:
             ready = self._wake_for_waiting_message(now)
-            if ready is not None:
-                why = "read the owner's message" if self.waiting_for == "message" else "act on the owner's decision"
-                return Decision(False, reason=f"Waking up to {why} in a few minutes", wait_until=ready)
         if self.wake_requested:
             return Decision(True, "owner", "woken by the owner")
+        decision = self._decide_schedule(now, mode)
+        # 0.14.0: the owner's wake is one more reason to wake, not a hold: a cycle that comes first reads their news
+        if ready is not None and not decision.run and (decision.wait_until is None or ready < decision.wait_until):
+            why = "read the owner's message" if self.waiting_for == "message" else "act on the owner's decision"
+            return Decision(False, reason=f"Waking up to {why} soon", wait_until=ready)
+        return decision
+
+    def _decide_schedule(self, now: datetime, mode: str) -> Decision:
+        """For ``decide``: an event's or the schedule's wake (the owner's aside)."""
         no_room = self._no_room_for_work()
         if no_room:
             return Decision(False, reason=no_room)
@@ -495,9 +507,9 @@ class Agent:
         """The owner sent a message (with the wake_on_message option): wake the agent to read it.
 
         "now" if a wake is on its way (Wake now); "soon", or "after_cycle" while a cycle runs: 0.14.0, it wakes for the
-        message OWNER_QUIET after the owner's last message or decision, once the cycle has ended and the minute has
-        passed (``decide``), unless a cycle saw them all by then; None if it can't run (paused, dormant, dead, ...):
-        then it reads the message at its next wake.
+        message OWNER_QUIET after the owner's last message or decision (and OWNER_GAP after the last such wake), once
+        the cycle has ended and the minute has passed (``decide``), unless a cycle saw them all by then; None if it
+        can't run (paused, dormant, dead, ...): then it reads the message at its next wake.
         """
         return self._wake_for_owner("message")
 
@@ -544,11 +556,16 @@ class Agent:
             return None
         if self.quiet_until is not None and now < self.quiet_until:
             return self.quiet_until
+        last = self._meta_time("owner_woke_at")  # 0.14.0: OWNER_GAP between two cycles for the owner's news
+        if last is not None and now < last + OWNER_GAP:
+            return last + OWNER_GAP
         status, body = self.request_wake(
             by_message=self.waiting_for == "message", by_decision=self.waiting_for == "decision"
         )
         if status == 429 and self.last_wake_request is not None:
             return self.last_wake_request + WAKE_NOW_MIN_GAP
+        if status == 202:
+            self._set_time("owner_woke_at", now)
         if body.get("code") != "cycle_running":  # woken (or it can't be: the message waits for the next wake)
             self._owner_wake_done()
         return None
@@ -710,6 +727,7 @@ class Agent:
             return
         no_room = self._no_room_for_work()
         if no_room:  # no scheduled wake until the owner wakes the agent or raises the cap (decide)
+            self._set_time("backoff_until", None)  # 0.14.0: no room holds events; an older back-off would outlive it
             self._set_time("next_wake_at", None)
             self.db.set_meta(self._key("next_wake_reason"), no_room)
             return
@@ -887,6 +905,8 @@ class Agent:
             now = self.clock.now()
             soon = max(now, self.last_wake_request + WAKE_NOW_MIN_GAP) if self.last_wake_request else now
             soon = max(soon, self.quiet_until or soon)  # 0.14.0: once the owner has been quiet for a few minutes
+            last = self._meta_time("owner_woke_at")  # and OWNER_GAP after the last cycle for their news
+            soon = max(soon, last + OWNER_GAP) if last else soon
             if wake is None or soon < wake:
                 why = "to read your message" if self.waiting_for == "message" else "to act on your decision"
                 wake, reason = soon, why

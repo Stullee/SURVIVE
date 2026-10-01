@@ -48,7 +48,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Web search price | 10 USD per 1,000 | Charged per search on top of tokens. |
 | Dry run | on | Fake model, no API calls, no cost. |
 | Let the agent read whole web pages | off | Off: live research is web search only. On: it can also read pages from its search results (about $0.01–0.02 each). PDFs and other documents are always refused, because they have no size limit, and so are Etsy's pages, because Etsy's API terms forbid programs reading its site (searching it is fine). |
-| Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, 5 minutes after your last message or decision (at most 15 after the first), so one cycle reads them all (after a running cycle, unless that cycle saw them; not while the agent is paused or dormant). **Wake now** is immediate. Off: it reads your message at its next scheduled wake-up. |
+| Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, 5 minutes after your last message or decision (at most 15 after the first, and at least 30 after the last such wake), so one cycle reads them all (after a running cycle, unless that cycle saw them; not while the agent is paused or dormant). **Wake now** is immediate. Off: it reads your message at its next scheduled wake-up. |
 | Wake Ember when you decide | on | Your decision on one of its requests (approve, reject, mark done or failed), on a venture (back, park, kill) or on a milestone wakes the agent to act on it, the same way as a message. Off: it sees your decision at its next scheduled wake-up. Either way, while a request waits for you the agent sleeps at most 4 hours (or the **Default sleep**, if that is longer), and works on other things meanwhile. |
 | Wake Ember for events | on | A reply to Ember's email, a new email from a person or the last day of a milestone that Ember's code doesn't check itself wakes the agent for a short cycle (see [the agenda](#events-wake-it-the-agenda)). Off: they wait for its next scheduled wake-up. |
 | Worker effort | default | How thoroughly the model works in each step. `medium` or `low` write shorter answers and use fewer tool calls, which costs less but may do a worse job. Not used for Haiku. |
@@ -879,8 +879,9 @@ no longer shown); a study that failed three times stops until you press
   when you press **Save**.
 - **Inbox**: the agent's messages to you, and yours to it. Your message wakes
   it to read it (see the option **Wake Ember when you write**): 5 minutes after
-  your last message or decision (at most 15 after the first, and a restart
-  keeps the wake), so one cycle reads all of them. If it is in
+  your last message or decision (at most 15 after the first, at least 30
+  after the last wake for your news, and a restart keeps the wake), so one
+  cycle reads all of them. A cycle that comes first reads them too. If it is in
   the middle of a cycle, it wakes after the cycle, unless that cycle already
   saw them. With the option off, or while it is paused or dormant, it reads
   your message at its next wake-up. **Wake now** wakes it at once. Your reply
