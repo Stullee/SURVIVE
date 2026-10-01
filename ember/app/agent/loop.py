@@ -225,6 +225,7 @@ class CycleRunner:
         self.printify_on = False  # the Printify tools and the PRINTIFY section: with the account, its shop and ours
         self.site_on = settings.site_enabled  # 0.13.0 (Phase E3): the owner's website: its tool and WEBSITE section
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
+        self.news_kept: frozenset[news.Item] = frozenset()  # 0.14.0: the owner's news marked seen once the cycle ends
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
         self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
         self.reactive = False  # 0.13.0: a cycle an event woke (run sets it)
@@ -251,6 +252,7 @@ class CycleRunner:
     def run(self, trigger: str) -> CycleEnd:
         # 0.13.0: an event's wake-up is a lean reactive cycle: no venture work, review, study or critic, few steps
         self.reactive = trigger == "event"
+        self.news_kept = frozenset()  # 0.14.0: set by the first work step (a cycle that plans no work keeps none)
         self.max_steps = (
             min(self.settings.max_tool_steps, agenda.REACTIVE_STEPS) if self.reactive else self.settings.max_tool_steps
         )
@@ -328,14 +330,15 @@ class CycleRunner:
         now = to_iso(self.clock.now())
         with self.db.transaction() as conn:
             store.interrupt_open_tool_calls(conn, now, cycle_id)
-            if not store.has_journal(conn, cycle_id):
-                summary = f"Cycle ended {end.status}" + (f": {end.note}" if end.note else "")
-                store.write_journal(conn, self.scope, cycle_id, "system", summary, _code_journal(conn, cycle_id), now)
-            # 0.12.0: every cycle's digest, from its records (the guard may have closed it already: say how it ended)
+            # 0.12.0: every cycle's digest, from its records, and its journal if the agent wrote none. The guard may
+            # have closed it already (an overrun): 0.14.0: both say how it really ended (the journal named the refusal
+            # that followed the stop, or "completed").
             row = conn.execute("SELECT status, note FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
             ended = row is not None and row["status"] != "running"
             status = row["status"] if ended else "failed" if end.status == "skipped" else end.status
-            digest.write(conn, cycle_id, status, row["note"] if ended else end.note, now)
+            write_records(conn, self.scope, cycle_id, status, row["note"] if ended else end.note, now)
+            if status in ("completed", "idle"):  # 0.14.0: the owner's news its work saw (_act)
+                news.mark_seen(conn, cycle_id, self.news_kept)
             if end.sleep_minutes is not None:
                 store.update_cycle(conn, cycle_id, sleep_minutes=end.sleep_minutes)
             store.update_cycle(conn, cycle_id, phase=None, current_action=None)
@@ -742,8 +745,9 @@ class CycleRunner:
             self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)
             status = "failed" if act.end_reason.startswith("failed") else "refused"
             return CycleEnd(status, act.end_reason.removeprefix(f"{status}: ") or None)
-        # A journal written during the work is the reflection: the separate reflect call would only be refused.
-        reflected = ctx.state.journal_written or self._reflect(cycle_id, ctx, brief, act)
+        # 0.14.0: every cycle that worked reflects (the journal is the reflection's: one written during the work
+        # skipped it).
+        reflected = self._reflect(cycle_id, ctx, brief, act)
         status = "completed"
         note = act.end_reason if act.end_reason not in ("", "done") else None
         if act.end_reason.startswith("refused"):
@@ -1144,7 +1148,7 @@ class CycleRunner:
 
     def _act(self, cycle_id: int, ctx: tools.ToolContext, brief: str, seen: frozenset[news.Item]) -> _Act:
         """The work steps; ``seen`` (the owner's items the plan listed and the brief showed in full) is marked once one
-        is answered."""
+        is answered (0.14.0: the owner's messages; the rest once the cycle ends normally)."""
         act = _Act()
         max_steps = self.max_steps
         self._progress(cycle_id, phase="act", max_steps=max_steps, step=0)
@@ -1189,8 +1193,11 @@ class CycleRunner:
                 break
             act.steps += 1
             if act.steps == 1:  # the brief reached the model
+                # 0.14.0: the owner's messages now (an answer needs them seen), the rest of their news once the cycle
+                # ends normally (_write_report): a stopped cycle took their comment on an approval with it.
+                self.news_kept = frozenset(item for item in seen if item[0] != "message")
                 with self.db.transaction() as conn:
-                    news.mark_seen(conn, cycle_id, seen)
+                    news.mark_seen(conn, cycle_id, [item for item in seen if item[0] == "message"])
             act.turns = turns
             act.pending = []
             response = result.response or {}
@@ -1216,6 +1223,11 @@ class CycleRunner:
                 self._save_text(result.call_id, text, response)
             if stop == "tool_use" and uses:
                 act.pending = self._run_tools(ctx, uses, result.call_id, "act")
+                if any(u.get("name") == "write_journal" for u in uses):
+                    # 0.14.0: the agent's work is over (the journal is the last thing it does): its reflection
+                    # writes it. The step after it only reported.
+                    act.end_reason = "done"
+                    break
                 if step == max_steps:
                     act.end_reason = "step limit reached"
                 continue
@@ -1439,6 +1451,7 @@ class CycleRunner:
                 )
             response = result.response or {}
             cost = result.cost_micros
+            partial = ""
             if response.get("stop_reason") == "pause_turn":
                 follow = dict(request)
                 follow["messages"] = [
@@ -1446,10 +1459,19 @@ class CycleRunner:
                     {"role": "assistant", "content": response.get("content") or []},
                 ]
                 try:
-                    more = self._call(cycle_id, "research", follow, venture_id)
-                    response = more.response or response
-                    cost += more.cost_micros
-                except (CallRefused, CallFailed):
+                    # 0.14.0: the continuation leaves the reflection's money too (it was sent unchecked)
+                    if self.meter.affordable(
+                        follow, "research", cycle_id, ctx.state.reflect_reserve, ctx.state.reflect_money
+                    )[0]:
+                        more = self._call(cycle_id, "research", follow, venture_id)
+                        response = more.response or response
+                        cost += more.cost_micros
+                    else:
+                        partial = (
+                            "\n(The search paused and wasn't continued: that would use the money kept for your"
+                            " reflection. This answer may be partial.)"
+                        )
+                except (Unpriceable, CallRefused, CallFailed):
                     pass
             answer = _text_of(response)
             digest = answer[:RESEARCH_DIGEST_CHARS] or "Nothing useful was found."
@@ -1484,7 +1506,7 @@ class CycleRunner:
                 )
             return tools.Outcome(
                 True,
-                f"{body}{source_text}{counted}\n(cost ${micros_to_usd(cost):.4f})",
+                f"{body}{source_text}{counted}{partial}\n(cost ${micros_to_usd(cost):.4f})",
                 f"research: {question[:80]}",
             )
 
@@ -1818,11 +1840,37 @@ def _sources(response: dict[str, Any]) -> list[str]:
     return urls
 
 
-def _code_journal(conn: Any, cycle_id: int) -> str:
+def write_records(conn: Any, scope: AgentScope, cycle_id: int, status: str, note: str | None, now: str) -> None:
+    """What Ember's code writes of a cycle that ended ``status`` (``note``: why): its journal, when the agent wrote
+    none, then its digest (0.12.0). Both say how it really ended (0.14.0)."""
+    if not store.has_journal(conn, cycle_id):
+        summary = f"Cycle ended {status}" + (f": {note}" if note else "")
+        store.write_journal(conn, scope, cycle_id, "system", summary, _code_journal(conn, cycle_id, status), now)
+    digest.write(conn, cycle_id, status, note, now)
+
+
+def recover_records(conn: Any, scope: AgentScope, now: str) -> None:
+    """0.14.0: the journal and digest of the cycles the app died in (stopped from outside, a crash, a power cut), which
+    the budget guard marked interrupted at this start. They got neither, and the next plan saw the cycle before them.
+    Only the ones since the scope's last cycle that ended otherwise: older ones are history."""
+    session = (scope.session, 1 if scope.simulated else 0)
+    killed = conn.execute(
+        "SELECT id, status, note FROM cycles c WHERE status = 'interrupted' AND session = ? AND simulated = ?"
+        " AND life_id = ? AND NOT EXISTS (SELECT 1 FROM cycle_digests d WHERE d.cycle_id = c.id)"
+        " AND id > (SELECT COALESCE(MAX(id), 0) FROM cycles WHERE session = ? AND simulated = ?"
+        " AND status <> 'interrupted') ORDER BY id",
+        (*session, scope.life_id, *session),
+    ).fetchall()
+    for row in killed:
+        write_records(conn, scope, int(row["id"]), str(row["status"]), row["note"], now)
+
+
+def _code_journal(conn: Any, cycle_id: int, status: str = "completed") -> str:
     """0.12.0: the journal of a cycle whose reflection wrote none, built by Ember's code from its records: the goal,
     what its tools did (and what was refused or skipped, so it isn't taken for done) and what it cost. It was only
-    "Goal: …"."""
-    row = conn.execute("SELECT plan FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
+    "Goal: …". 0.14.0: of a cycle that ended ``status`` before its work did, where its work stopped and its plan's
+    steps, as its digest says."""
+    row = conn.execute("SELECT * FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
     try:
         plan = json.loads(row["plan"]) if row and row["plan"] else {}
     except ValueError:
@@ -1832,6 +1880,8 @@ def _code_journal(conn: Any, cycle_id: int) -> str:
         "Written by Ember's code: the reflection wrote no journal.",
         f"Goal: {goal}" if goal else "No plan was made.",
     ]
+    if goal and status not in ("completed", "idle"):
+        lines += digest.ended(row, status)
     calls = conn.execute(
         "SELECT tool, status, summary FROM tool_calls WHERE cycle_id = ? AND parent_id IS NULL ORDER BY id", (cycle_id,)
     ).fetchall()

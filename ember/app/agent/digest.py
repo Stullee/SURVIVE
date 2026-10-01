@@ -51,6 +51,7 @@ _TARGET_KEYS = (
 )
 NOT_DONE = ("error", "skipped", "interrupted", "started")
 BOOKKEEPING = frozenset({"write_journal", "set_sleep"})  # not listed as done: the reflection line says it
+STEP_CHARS = 60  # a plan step, as the digest of a cycle that ended before its plan was done lists it (0.14.0)
 
 
 def build(conn: sqlite3.Connection, cycle_id: int, status: str, note: str | None) -> tuple[str, int]:
@@ -77,7 +78,7 @@ def build(conn: sqlite3.Connection, cycle_id: int, status: str, note: str | None
         " AND phase IN ('act', 'reflect') ORDER BY id",
         (cycle_id,),
     ).fetchall()
-    undone = [c for c in calls if c["status"] in NOT_DONE]
+    undone = [c for c in calls if c["status"] in NOT_DONE and not _early_journal(c)]
     done = [c for c in calls if c["status"] == "ok" and c["tool"] not in BOOKKEEPING]
     if undone:
         lines.append(f"Not done ({len(undone)}): {_listed([undone_line(c) for c in undone])}")
@@ -86,8 +87,7 @@ def build(conn: sqlite3.Connection, cycle_id: int, status: str, note: str | None
     if not undone and not done and goal:
         lines.append("No tool was used for the work.")
     if cycle is not None and goal:
-        reason = cycle["act_end_reason"] or ""
-        lines.append(f"Work ended: {ENDED.get(reason) or _flat(reason, 120)}.")
+        lines += ended(cycle, status)
     lines.append(_reflection(conn, cycle_id))
     return "\n".join(lines)[:MAX_CHARS], len(undone)
 
@@ -109,6 +109,7 @@ def undone(conn: sqlite3.Connection, cycle_id: int) -> list[str]:
         f" AND phase = 'act' AND status IN ({', '.join(repr(s) for s in NOT_DONE)}) ORDER BY id",
         (cycle_id,),
     ).fetchall()
+    calls = [c for c in calls if c["tool"] != "write_journal"]  # 0.14.0: tried during the work (_early_journal)
     shown = [undone_line(c) for c in calls[:UNDONE_SHOWN]]
     if len(calls) > UNDONE_SHOWN:
         shown.append(f"and {len(calls) - UNDONE_SHOWN} more")
@@ -163,6 +164,39 @@ def _goal(cycle: sqlite3.Row | None) -> str:
         return ""
     goal = plan.get("goal") if isinstance(plan, dict) else None
     return _flat(goal, 200) if isinstance(goal, str) else ""
+
+
+def ended(cycle: sqlite3.Row, status: str) -> list[str]:
+    """How the cycle's work ended: its end reason (loop's). 0.14.0: a cycle without one that didn't complete ended
+    before its work did (the budget guard stopped it, an error, a restart): that, and the plan's steps. It said "the
+    plan was done". The code journal says it too."""
+    reason = cycle["act_end_reason"] or ""
+    if reason or status in ("completed", "idle"):
+        return [f"Work ended: {ENDED.get(reason) or _flat(reason, 120)}."]
+    where = (
+        f" at work step {cycle['step']} of {cycle['max_steps']}" if cycle["phase"] == "act" and cycle["step"] else ""
+    )
+    lines = [f"Work ended: {status}{where}, before its plan was done."]
+    steps = _steps(cycle)
+    if steps:
+        quoted = (f"{n}. {json.dumps(_flat(step, STEP_CHARS), ensure_ascii=False)}" for n, step in enumerate(steps, 1))
+        lines.append(f"Its plan's steps (not all done): {'; '.join(quoted)}")
+    return lines
+
+
+def _steps(cycle: sqlite3.Row) -> list[str]:
+    try:
+        plan = json.loads(cycle["plan"]) if cycle["plan"] else {}
+    except ValueError:
+        return []
+    steps = plan.get("steps") if isinstance(plan, dict) else None
+    return [s for s in steps if isinstance(s, str)] if isinstance(steps, list) else []
+
+
+def _early_journal(call: sqlite3.Row) -> bool:
+    """0.14.0: a journal tried during the work. It is refused (the reflection's) and ends the work: the reflection
+    writes it, so it isn't work left undone."""
+    return bool(call["tool"] == "write_journal" and call["phase"] == "act")
 
 
 def _reflection(conn: sqlite3.Connection, cycle_id: int) -> str:

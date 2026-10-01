@@ -14,17 +14,19 @@ JOURNAL = ("write_journal", {"summary": "Looked around", "entry": "Listed the wo
 
 
 def test_a_journal_that_comes_fifth_is_written(data_dir: Path) -> None:
+    sleep = ("set_sleep", {"minutes": 60, "reason": "Nothing more to do today."})
     fake = FakeTransport(
         script=[
             plan(steps=["look around"]),
-            ToolCalls([("workspace_list", {})] * 4 + [JOURNAL, ("workspace_list", {})]),
+            Reply("Done."),
+            ToolCalls([sleep] * 4 + [JOURNAL, sleep]),  # 0.14.0: the journal is the reflection's
         ]
     )
     agent, ends = run(data_dir, fake)
     assert ends[0].status == "completed"
     assert rows(agent, "SELECT author, summary FROM journal") == [{"author": "agent", "summary": "Looked around"}]
-    listed = tool_results(agent, "workspace_list")
-    assert [r["status"] for r in listed] == ["ok"] * 4 + ["skipped"]  # the limit still holds for the others
+    slept = tool_results(agent, "set_sleep")
+    assert [r["status"] for r in slept] == ["ok"] * 4 + ["skipped"]  # the limit still holds for the others
 
 
 def test_a_cycle_without_a_journal_gets_one_from_its_records(data_dir: Path) -> None:

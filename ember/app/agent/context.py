@@ -186,6 +186,7 @@ class Snapshot:
     pending: list[sqlite3.Row] = field(default_factory=list)
     last_cycle: sqlite3.Row | None = None
     last_journal: sqlite3.Row | None = None
+    handoff: sqlite3.Row | None = None  # 0.14.0: the newest handoff the agent wrote (its cycle_id and handoff)
     digests: list[str] = field(default_factory=list)  # the last cycles' digests, newest first (0.12.0)
     obligations: str = ""  # 0.12.0: what the agent owes (OBLIGATIONS), bounded: never cut in the plan
     memory: dict[str, str] = field(default_factory=dict)
@@ -276,6 +277,12 @@ def snapshot(
         (scope.session, 1 if scope.simulated else 0),
     ).fetchone()
     journal = store.journal(conn, scope, 5)
+    where, params = scope.where()
+    handoff = conn.execute(
+        f"SELECT cycle_id, handoff FROM journal WHERE {where} AND author = 'agent'"
+        " AND handoff IS NOT NULL AND handoff <> '' ORDER BY id DESC LIMIT 1",
+        params,
+    ).fetchone()
     files = _safe_listing(workspace)
     standing = store.standing_instructions(conn, scope)
     return Snapshot(
@@ -294,6 +301,7 @@ def snapshot(
         pending=[r for r in store.queue(conn, "approvals", scope, 20) if r["status"] == "pending"],
         last_cycle=last_cycle,
         last_journal=journal[0] if journal else None,
+        handoff=handoff,
         digests=digest.latest(conn, scope),
         obligations=obligations.text(conn, scope, today) if today is not None else "",
         memory=memory.read_all(),
@@ -435,24 +443,56 @@ def _news_head(s: Snapshot) -> str:
     return "\n".join(lines)
 
 
-def last_cycle_text(s: Snapshot) -> str:
+def last_cycle_text(s: Snapshot, budget: int = PLANNER_BUDGETS["journal"]) -> str:
     """0.12.0: the plan's YOUR LAST CYCLE: the handoff its reflection left for this cycle and its journal's summary
     (the agent's words, JSON-quoted; the handoff never reached a plan before), then the digests Ember's code wrote of
     the last two cycles (what they did and didn't do: a journal can claim work that never happened). Without a
-    digest (a cycle from before 0.12.0), the last cycle's goal."""
+    digest (a cycle from before 0.12.0), the last cycle's goal.
+
+    0.14.0: after a cycle that left no handoff (stopped, failed, killed or idle), the last handoff the agent wrote,
+    with its cycle. No journal line for a journal Ember's code wrote: its digest says more. Within ``budget`` bytes,
+    each digest is cut to its own share: the section's cut took the older one down to its goal."""
     lines = []
     journal = s.last_journal
-    if journal is not None and journal["handoff"]:
+    written = journal is not None and _author(journal) != "system"
+    if written and journal["handoff"]:
         lines.append(f"Your handoff to this cycle: {json.dumps(journal['handoff'], ensure_ascii=False)}")
+    elif s.handoff is not None:
+        lines.append(
+            f"Your last handoff, from cycle #{s.handoff['cycle_id']} (the cycles after it left none): "
+            + json.dumps(s.handoff["handoff"], ensure_ascii=False)
+        )
     goal = _plan_goal(s.last_cycle)
     if goal and not s.digests:
         lines.append(f"Its goal: {json.dumps(goal, ensure_ascii=False)}")
-    if journal is not None:
+    if written:
         lines.append(f"Its journal: {json.dumps(journal['summary'], ensure_ascii=False)}")
     if s.digests:
         lines.append("What your last cycles did, from Ember's records (newest first):")
-        lines += s.digests
+        digests = s.digests
+        room = budget - json_bytes("\n".join(lines))  # its quotes' 2 bytes hold a digest's line break
+        sizes = [json_bytes(d) for d in digests]
+        if sum(sizes) > room:
+            digests = [
+                d if size <= share else cut(d, share)
+                for d, size, share in zip(digests, sizes, _shares(sizes, room), strict=True)
+            ]
+        lines += digests
     return "\n".join(lines)
+
+
+def _author(journal: Mapping[str, Any]) -> str:
+    return str(journal["author"]) if "author" in journal.keys() else "agent"  # noqa: SIM118 - a Row's "in" sees values
+
+
+def _shares(sizes: list[int], room: int) -> list[int]:
+    """0.14.0: ``room`` shared out: the smallest first, each at most its size and an equal part of what is left."""
+    shares = [0] * len(sizes)
+    left = room
+    for n, i in enumerate(sorted(range(len(sizes)), key=lambda i: sizes[i])):
+        shares[i] = min(sizes[i], left // (len(sizes) - n))
+        left -= shares[i]
+    return shares
 
 
 def _plan_goal(cycle: Mapping[str, Any] | None) -> str:
@@ -689,7 +729,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
     since = cut("\n".join(part for part in (head, owner, events) if part) or "Nothing new.", b["news"])
     software = cut(s.news.changelog, b["software"])
     research = research_text(s)
-    last_cycle = last_cycle_text(s)
+    last_cycle = last_cycle_text(s, b["journal"])
     parts = [
         ("STATUS", cut(status_text(s, dry_run), b["status"])),
         *([(obligations.HEADING, s.obligations)] if s.obligations else []),  # 0.12.0: first, never cut

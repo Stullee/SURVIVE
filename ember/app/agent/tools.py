@@ -681,11 +681,12 @@ SPECS: dict[str, Spec] = {
             per_cycle=5,
             reflect=True,
         ),
+        # 0.14.0: the reflection's only. Written during the work, it skipped the reflection: live, every cycle since
+        # 0.12.0 did, and none checked its undone calls, wrote a lesson or updated the strategy.
         Spec(
             "write_journal",
-            "Write this cycle's journal entry once, as the last thing you do: a one-line summary, a candid entry "
-            "(what you did, what worked, what didn't) and next, for your next plan. Written during your work, it ends "
-            "the cycle without a separate reflection.",
+            "Write this cycle's journal entry once, in your reflection at the end of the cycle: a one-line summary, a "
+            "candid entry (what you did, what worked, what didn't) and next, for your next plan.",
             {
                 "summary": _s("One line.", 240, cut=True),
                 "entry": _s("The entry.", 2_000),
@@ -693,6 +694,7 @@ SPECS: dict[str, Spec] = {
             },
             per_cycle=1,
             reflect=True,
+            act=False,
         ),
         Spec(
             "draft",
