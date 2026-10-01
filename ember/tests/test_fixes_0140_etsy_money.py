@@ -28,14 +28,21 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app.agent import econ  # noqa: E402
+from app.config import Settings  # noqa: E402
+from app.db import discover_migrations, migrate  # noqa: E402
 from app.economy import life  # noqa: E402
 from app.economy.clock import from_iso, to_iso  # noqa: E402
+from app.economy.ledger import PreparedEntry  # noqa: E402
+from app.economy.service import Recorded  # noqa: E402
 from app.integrations import etsy, etsy_live, etsy_publisher, etsy_revenue  # noqa: E402
+from tests.economy_helpers import make_economy  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import a_change, call, listed, live_shop, shop_context  # noqa: E402
 from tests.test_etsy_revenue import LINE, LISTING, order, shop_with, turned_on  # noqa: E402
+from tests.test_life import spend  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
+from tests.test_printify import proposed as printify_proposed  # noqa: E402
 
 APP_JS = Path(__file__).parents[1] / "app" / "web" / "static" / "js" / "app.js"
 
@@ -46,6 +53,11 @@ def listing_fees(agent: Any) -> list[dict[str, Any]]:
         "SELECT type, amount_micros, source, note, project_id FROM ledger WHERE created_by = 'etsy'"
         " AND source LIKE 'Etsy listing %' ORDER BY id",
     )
+
+
+def rows_of(economy: Any, sql: str) -> list[dict[str, Any]]:
+    with economy.db.connection() as conn:
+        return [dict(r) for r in conn.execute(sql)]
 
 
 def stored(agent: Any) -> dict[str, Any]:
@@ -104,7 +116,88 @@ def test_the_listing_fees_embers_listings_cost_are_booked_once(data_dir: Path) -
     assert not rows(agent, f"SELECT key FROM meta WHERE key LIKE '{etsy_publisher.FEE_DUE_KEY}%'")  # none waits
 
 
-def test_a_refund_is_recorded_and_pauses_the_agent_it_leaves_without_money(data_dir: Path) -> None:
+def test_the_listing_fees_of_printifys_listings_are_booked_too(data_dir: Path) -> None:
+    agent, _, request = printify_proposed(data_dir)
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
+    assert agent.execute_approved() == [(request, "active")]
+    pod = rows(agent, "SELECT listing_id FROM printify_products")[0]["listing_id"]
+    shop = agent.etsy.shop()
+    batch = shop.listings
+    ends = [to_iso(agent.clock.now() + timedelta(days=etsy.LISTING_DAYS))]
+
+    def with_pod(ids: list[int]) -> list[etsy.RemoteListing]:  # the dry run's fake shop doesn't know Printify's
+        return [*batch(ids), etsy.RemoteListing(pod, "active", "Poster", etsy.listing_url(pod), 3, 1, ends[0], True)]
+
+    shop.listings = with_pod
+    assert agent.publisher.sync(force=True) is None and agent.publisher.sync(force=True) is None
+    project = rows(agent, f"SELECT project_id FROM approvals WHERE id = {request}")[0]["project_id"]
+    fees = [f for f in listing_fees(agent) if f["source"] == f"Etsy listing {pod}"]
+    assert [(f["note"], f["project_id"]) for f in fees] == [  # 0.13.0: none
+        (f"Etsy's listing fee for listing {pod}: Printify published it", project)
+    ]
+    assert rows(agent, "SELECT ends_at, auto_renew FROM printify_products") == [{"ends_at": ends[0], "auto_renew": 1}]
+    # Etsy renews it at its end: a fee.
+    agent.clock.advance(days=etsy.LISTING_DAYS + 1)
+    ends[0] = to_iso(from_iso(ends[0]) + timedelta(days=etsy.LISTING_DAYS))
+    assert agent.publisher.sync(force=True) is None and agent.publisher.sync(force=True) is None
+    fees = [f["note"] for f in listing_fees(agent) if f["source"] == f"Etsy listing {pod}"]
+    assert fees[1:] == [f"Etsy's listing fee for listing {pod}: Etsy renewed it until {ends[0][:10]}"]
+
+
+def test_a_listing_fee_the_ledger_refuses_waits_for_the_next_sync(data_dir: Path) -> None:
+    agent, listing_id = listed(data_dir)
+    record = agent.economy.record_integration
+    agent.economy.record_integration = lambda prepared, fact=False: Recorded()  # an IntegrityError, say
+    assert agent.publisher.sync(force=True) is None and agent.publisher.sync(force=True) is None
+    assert listing_fees(agent) == []
+    assert len(rows(agent, f"SELECT key FROM meta WHERE key LIKE '{etsy_publisher.FEE_DUE_KEY}%'")) == 1  # 0.13.0: lost
+    told = [e["message"] for e in agent.db.recent_events(limit=50) if e["message"].startswith("The ledger refused")]
+    assert told == [
+        f"The ledger refused Etsy's listing fee for listing {listing_id}: it went live ($0.20). Ember's"
+        " code tries again at each sync."
+    ]  # once
+    agent.economy.record_integration = record
+    assert agent.publisher.sync(force=True) is None
+    assert [f["note"] for f in listing_fees(agent)] == [f"Etsy's listing fee for listing {listing_id}: it went live"]
+    assert not rows(agent, f"SELECT key FROM meta WHERE key LIKE '{etsy_publisher.FEE_DUE_KEY}%'")
+
+
+def test_printifys_listings_keep_their_end_after_the_upgrade(tmp_path: Path) -> None:
+    db_file = tmp_path / "ember.db"
+    migrate(db_file, [m for m in discover_migrations() if m.version <= 58], backup_dir=tmp_path / "backups")
+    old = sqlite3.connect(db_file)
+    with old:
+        old.execute(
+            "INSERT INTO lives (id, mode, born_at, started_reason, state) VALUES (1, 'live', 'then', 'born', 'alive')"
+        )
+        old.execute(
+            "INSERT INTO cycles (id, life_id, boot_id, started_at, status, trigger, simulated, cap_micros)"
+            " VALUES (1, 1, 'b', 'then', 'completed', 'schedule', 0, 1)"
+        )
+        old.execute(
+            "INSERT INTO approvals (id, mode, session, life_id, cycle_id, created_at, type, title, description,"
+            " payload, payload_sha256, expected_cost, expected_benefit, status, closed_at, closed_by, version,"
+            " executor, action) VALUES (1, 'live', 0, 1, 1, 'then', 'sell', 'Printify product: Poster', 'd', 'p',"
+            " 'h', 'c', 'b', 'done', 'now', 'Ember', 2, 'printify_product', '{}')"
+        )
+        old.execute(
+            "INSERT INTO printify_products (mode, session, approval_id, listing_id, title, currency, status,"
+            " started_at, finished_at, state, synced_at) VALUES ('live', 0, 1, 800000001, 'Poster', 'EUR', 'active',"
+            " 'then', 'then', 'active', 'then')"
+        )
+    old.close()
+    [ours] = [m for m in discover_migrations() if m.name == "etsy_money"]
+    assert ours.version in migrate(db_file, backup_dir=tmp_path / "backups")
+    upgraded = sqlite3.connect(db_file)
+    upgraded.row_factory = sqlite3.Row
+    [row] = [dict(r) for r in upgraded.execute("SELECT listing_id, state, ends_at, auto_renew FROM printify_products")]
+    assert row == {"listing_id": 800000001, "state": "active", "ends_at": None, "auto_renew": None}
+    with pytest.raises(sqlite3.IntegrityError):
+        upgraded.execute("UPDATE printify_products SET auto_renew = 2")
+    upgraded.close()
+
+
+def test_a_refund_is_recorded_even_when_it_leaves_the_agent_without_money(data_dir: Path) -> None:
     agent, _ = listed(data_dir)
     turned_on(agent)
     shop_with(agent, [order(agent, 71)])
@@ -116,30 +209,55 @@ def test_a_refund_is_recorded_and_pauses_the_agent_it_leaves_without_money(data_
     assert agent.publisher.sync(force=True) is None
     [refund] = rows(agent, "SELECT id, amount_micros FROM ledger WHERE created_by = 'etsy' AND corrects_id IS NOT NULL")
     assert refund["amount_micros"] == -4_950_000  # 0.13.0: held back, and the agent kept spending it
+    # Test money: the test life's balance decides; the switch, which the live agent shares, stays off.
     status = agent.economy.status()
-    assert status.balance < 0 and status.state == "paused" and status.life_id is not None
-    assert status.reason.startswith(f"Paused by Ember's code: entry #{refund['id']} from Etsy's numbers left it")
-    assert rows(agent, "SELECT ended_at FROM lives ORDER BY id DESC LIMIT 1") == [{"ended_at": None}]  # not dead
-    warnings = [e["message"] for e in agent.db.recent_events(limit=20) if e["level"] == "warning"]
+    assert status.balance < 0 and status.state == "dead"
+    assert agent.db.get_meta(life.PAUSED_KEY) != "1" and not agent.db.get_meta(life.MONEY_PAUSE_KEY)
+
+
+def a_fact(economy: Any) -> PreparedEntry:
+    """A listing fee from Etsy's numbers, real money, a dollar more than the agent has."""
+    return PreparedEntry(
+        type="expense",
+        amount_micros=economy.status().balance + 1_000_000,
+        simulated=False,
+        source="Etsy listing 1",
+        note="Etsy's listing fee for listing 1: it went live",
+        occurred_on=economy.clock.today().isoformat(),
+        day_given=True,
+        idempotency_key=uuid.uuid4().hex,
+        created_by="etsy",
+    )
+
+
+def test_a_fact_that_leaves_the_live_agent_without_money_pauses_it(data_dir: Path) -> None:
+    economy = make_economy(data_dir, Settings(dry_run=False))
+    spend(economy, 1_000)
+    assert economy.status().state in ("alive", "critical")
+    entry_id = economy.record_integration(a_fact(economy), fact=True).entry_id
+    assert entry_id is not None  # 0.13.0: held back
+    status = economy.status()
+    assert status.balance < 0 and status.state == "paused"
+    assert status.reason.startswith(f"Paused by Ember's code: entry #{entry_id} from Etsy's numbers left it")
+    assert rows_of(economy, "SELECT ended_at FROM lives WHERE mode = 'live'") == [{"ended_at": None}]  # not dead
+    warnings = [e["message"] for e in economy.db.recent_events(limit=20) if e["level"] == "warning"]
     assert any(m.startswith("Paused by Ember's code") for m in warnings), warnings
-    # The owner decides: a grant, then resuming it.
-    owner_entry(agent.economy, "grant", "10.00", test_money=True)
-    assert agent.economy.status().state == "paused"
-    assert agent.economy.set_paused(False).state in ("alive", "critical")
-    assert not agent.db.get_meta(life.MONEY_PAUSE_KEY)
+    # Dry run keeps the owner's switch, but not the reason, and the test life's balance decides.
+    dry = make_economy(data_dir, Settings(dry_run=True), clock=economy.clock)
+    assert (dry.status().state, dry.status().reason) == ("paused", life.REASONS["paused"])
+    # Back in live, the owner decides: a grant, then resuming it.
+    owner_entry(economy, "grant", "10.00")
+    assert economy.status().state == "paused"
+    assert economy.set_paused(False).state in ("alive", "critical")
+    assert not economy.db.get_meta(life.MONEY_PAUSE_KEY)
 
 
 def test_resuming_without_money_lets_the_agent_end(data_dir: Path) -> None:
-    agent, _ = listed(data_dir)
-    turned_on(agent)
-    shop_with(agent, [order(agent, 71)])
-    assert agent.publisher.sync(force=True) is None
-    balance = agent.economy.status().balance
-    owner_entry(agent.economy, "expense", f"{(balance - 1_000_000) / 1_000_000:.2f}", test_money=True)
-    shop_with(agent, [order(agent, 71, status="canceled")])
-    assert agent.publisher.sync(force=True) is None
-    assert agent.economy.status().state == "paused"
-    assert agent.economy.set_paused(False).state == "dead"
+    economy = make_economy(data_dir, Settings(dry_run=False))
+    spend(economy, 1_000)
+    assert economy.record_integration(a_fact(economy), fact=True).entry_id is not None
+    assert economy.status().state == "paused"
+    assert economy.set_paused(False).state == "dead"
 
 
 def test_a_partial_refund_of_an_order_the_owner_recorded_asks_for_a_correction(data_dir: Path) -> None:

@@ -769,29 +769,26 @@ class Publisher:
         skipped = []
         with self.db.transaction() as conn:
             for item in remote:
-                conn.execute(
-                    "UPDATE printify_products SET state = ?, views = ?, favorites = ?, synced_at = ?"
-                    f" WHERE {where} AND listing_id = ?",
-                    (item.state[:20], item.views, item.favorites, stamp, *params, item.listing_id),
-                )
-                _renewed(conn, scope, item, stamp)
-                conn.execute(
-                    "UPDATE etsy_listings SET state = ?, views = ?, favorites = ?, ends_at = ?, auto_renew = ?,"
-                    f" synced_at = ? WHERE {where} AND listing_id = ?",
-                    (
-                        item.state[:20],
-                        item.views,
-                        item.favorites,
-                        item.ends_at,
-                        None if item.auto_renew is None else int(item.auto_renew),
-                        stamp,
-                        *params,
-                        item.listing_id,
-                    ),
-                )
+                for table in LISTING_TABLES:
+                    _renewed(conn, scope, table, item, stamp)
+                    conn.execute(
+                        f"UPDATE {table} SET state = ?, views = ?, favorites = ?, ends_at = ?, auto_renew = ?,"
+                        f" synced_at = ? WHERE {where} AND listing_id = ?",
+                        (
+                            item.state[:20],
+                            item.views,
+                            item.favorites,
+                            item.ends_at,
+                            None if item.auto_renew is None else int(item.auto_renew),
+                            stamp,
+                            *params,
+                            item.listing_id,
+                        ),
+                    )
             # 0.14.0: a live listing Etsy's answers left out isn't counted as live any more (it was, for good): removed
             # when Etsy says there is none, expired once its end passed without renewing itself, else unknown until a
             # later sync reads it. It keeps when it was last seen.
+            # (Printify's listings aren't: the dry run's fake shop has none of them, so all would count as removed.)
             for listing_id, removed in unseen.items():
                 conn.execute(
                     "UPDATE etsy_listings SET state = CASE WHEN ? THEN 'removed' WHEN ends_at <= ?"
@@ -1376,15 +1373,26 @@ def listing_fee_due(
     )
 
 
-def _renewed(conn: sqlite3.Connection, scope: AgentScope, item: etsy.RemoteListing, now: str) -> None:
+# 0.14.0: Ember's listings at Etsy: its own, and the ones Printify made of its products (0.13.0), which the sync keeps
+# alike (state, views, end), and whose listing fees are Ember's too.
+LISTING_TABLES = ("etsy_listings", "printify_products")
+
+
+def _renewed(conn: sqlite3.Connection, scope: AgentScope, table: str, item: etsy.RemoteListing, now: str) -> None:
     """0.14.0: a renewal Etsy made (a listing that renews itself, at its end; or the owner's, at Etsy), seen as its end
-    moving on from one that had passed: a listing fee for each four months (a renewal Ember made is noted with it)."""
+    moving on from one that had passed: a listing fee for each four months (a renewal Ember made is noted with it). A
+    listing Printify made is first seen live here: the fee for publishing it (Ember's own are noted in ``_after``)."""
     where, params = scope.where()
     row = conn.execute(
-        f"SELECT ends_at FROM etsy_listings WHERE {where} AND listing_id = ? AND status = 'active'",
+        f"SELECT ends_at, synced_at FROM {table} WHERE {where} AND listing_id = ? AND status = 'active'",
         (*params, item.listing_id),
     ).fetchone()
-    if row is None or not row["ends_at"] or not item.ends_at or not row["ends_at"] <= now < item.ends_at:
+    if row is None:
+        return
+    if table == "printify_products" and row["synced_at"] is None and item.state == etsy.LIVE_STATE:
+        listing_fee_due(conn, scope.mode, scope.session, item.listing_id, "listed", now, "Printify published it")
+        return
+    if not row["ends_at"] or not item.ends_at or not row["ends_at"] <= now < item.ends_at:
         return
     days = (from_iso(item.ends_at) - from_iso(row["ends_at"])).days
     fees = max(1, round(days / etsy.LISTING_DAYS)) if item.auto_renew else 1

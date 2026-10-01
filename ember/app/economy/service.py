@@ -242,7 +242,7 @@ class Economy:
         0.14.0: a ``fact`` (a refund of revenue Ember's code recorded, a listing fee Etsy charged) is written all the
         same: held back, it left the agent spending money it didn't have. When it leaves the agent without money,
         Ember's code pauses the agent with the reason instead of letting it die: the owner grants funds, or resumes it
-        and lets the money decide."""
+        and lets the money decide. In dry run the switch would outlast the test, so the test life's money decides."""
         with self.db.transaction() as conn:
             if conn.execute("SELECT 1 FROM ledger WHERE idempotency_key = ?", (prepared.idempotency_key,)).fetchone():
                 return Recorded()
@@ -263,7 +263,7 @@ class Economy:
                 return Recorded(held=worse)
             conn.execute("RELEASE integration_entry")
             events.record(self.db, "info", "ledger", _describe(prepared, entry_id), {"entry_id": entry_id})
-            if worse in HELD_STATES:
+            if worse in HELD_STATES and not prepared.simulated:  # test money never pauses the real agent
                 reason = (
                     f"Paused by Ember's code: entry #{entry_id} from Etsy's numbers left it without money (balance"
                     f" ${micros_to_usd(after.balance):.2f}). Grant funds and resume it, or resume it to let it end"

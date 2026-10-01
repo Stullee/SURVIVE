@@ -293,6 +293,20 @@ def _listing_fees(db: Database, clock: Clock, economy: Economy, scope: AgentScop
                 created_by="etsy",
             )
             _write(db, economy, prepared, done, fact=True)
+            with db.connection() as conn:
+                refused = _entry(conn, prepared.idempotency_key) is None
+            if refused:  # kept for the next sync; the owner is told once
+                told = HELD_KEY + prepared.idempotency_key
+                if not db.get_meta(told):
+                    db.set_meta(told, "refused")
+                    events.record(
+                        db,
+                        "warning",
+                        "ledger",
+                        f"The ledger refused {prepared.note} (${micros_to_usd(prepared.amount_micros):.2f}). Ember's"
+                        " code tries again at each sync.",
+                    )
+                continue
         with db.transaction() as conn:
             conn.execute("DELETE FROM meta WHERE key = ?", (row["key"],))
 

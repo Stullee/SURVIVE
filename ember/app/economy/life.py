@@ -329,7 +329,7 @@ class Life:
             return self._revival(base, scope, life)
 
         # 0.14.0: paused by Ember's code for a fact that left it without money: the owner decides, not the balance
-        held = self.flag(PAUSED_KEY) and bool(self.db.get_meta(MONEY_PAUSE_KEY))
+        held = self.mode == "live" and self.flag(PAUSED_KEY) and bool(self.db.get_meta(MONEY_PAUSE_KEY))
         if spent and settled <= 0 and not held:
             reason = f"ran out of money (balance ${micros_to_usd(balance):.2f})"
             return replace(base, state="dead", reason=reason, runway=Runway(0.0, "Out of money")), None
@@ -354,7 +354,8 @@ class Life:
         if self.flag(KILLED_KEY):
             state, reason = "killed", REASONS["killed"]
         elif self.flag(PAUSED_KEY):
-            state, reason = "paused", (self.db.get_meta(MONEY_PAUSE_KEY) or REASONS["paused"])
+            why = self.db.get_meta(MONEY_PAUSE_KEY) if self.mode == "live" else None  # only live entries set it
+            state, reason = "paused", (why or REASONS["paused"])
         elif not spent and balance <= 0:
             state, reason = "unfunded", REASONS["unfunded"]
         elif critical_since is not None:
