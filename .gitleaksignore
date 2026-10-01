@@ -12,3 +12,7 @@
 # Printify request states after the word "token" in a fix check; gitleaks' generic-api-key rule takes
 # them for a key.
 24a525e3937e04a6768b7dd823862c5eae95252a:analysis-0.13.0-wip/raw/review-channels.json:generic-api-key:275
+
+# 0.14.0: not a secret. gitleaks' generic-api-key rule read the listing test's metric key "day14_favorites" in
+# ember/app/agent/gates.py (`if key == "day14_favorites" and views ...`) as a key.
+c439af23bfa58de9dee375ca99dbf90267cf59ce:ember/app/agent/gates.py:generic-api-key:185
