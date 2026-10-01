@@ -21,7 +21,6 @@ import json
 import math
 import re
 import sqlite3
-import zipfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
@@ -32,6 +31,7 @@ from typing import Any
 import docx
 import pypdfium2 as pdfium
 
+from ..products import checks
 from . import store
 from .store import AgentScope
 
@@ -148,7 +148,8 @@ def _decode(data: bytes) -> str:
         return data.decode("cp1252", errors="replace")
 
 
-def _pdf_text(data: bytes) -> str:
+def pdf_text(data: bytes) -> str:
+    """A PDF's text, page by page (0.14.0: workspace_read reads the agent's PDFs with it too)."""
     try:
         pdf = pdfium.PdfDocument(data)
     except pdfium.PdfiumError as exc:
@@ -173,15 +174,32 @@ def _pdf_text(data: bytes) -> str:
     return "\n\n".join(pages)
 
 
-def _docx_text(data: bytes) -> str:
+def word_text(data: bytes) -> str:
+    """A Word file's text: its paragraphs, then its tables' rows. 0.14.0: its parts are unpacked within bounds first
+    (a 229 KB upload unpacked to 421 MB), and whatever breaks the reader (malformed XML answered 500) is a
+    LibraryError. workspace_read reads the agent's Word files with it too."""
     try:
-        document = docx.Document(io.BytesIO(data))
-    except (zipfile.BadZipFile, KeyError, ValueError) as exc:
+        parts = checks.unzipped(data, "it", checks.READ_BYTES)
+    except checks.Refused as exc:
+        raise LibraryError("file", f"this Word file can't be read: {exc}") from exc
+    try:
+        document = docx.Document(io.BytesIO(checks.stored(parts)))
+        lines = [p.text for p in document.paragraphs]
+        for table in document.tables:
+            lines.extend(_rows(table))
+    except Exception as exc:  # noqa: BLE001 - whatever breaks the reader, the file can't be read
         raise LibraryError("file", "this Word file can't be read (only .docx files can)") from exc
-    lines = [p.text for p in document.paragraphs]
-    for table in document.tables:
-        lines.extend(" | ".join(cell.text.strip() for cell in row.cells) for row in table.rows)
     return "\n\n".join(lines)
+
+
+def _rows(table: Any) -> list[str]:
+    """A Word table's rows, then the tables inside its cells (0.14.0: a CV's layout table hid its tables' text)."""
+    lines = [" | ".join(cell.text.strip() for cell in row.cells) for row in table.rows]
+    for row in table.rows:
+        for cell in row.cells:
+            for inner in cell.tables:
+                lines.extend(_rows(inner))
+    return lines
 
 
 def from_file(name: str, data: bytes) -> tuple[str, str]:
@@ -194,9 +212,9 @@ def from_file(name: str, data: bytes) -> tuple[str, str]:
         raise LibraryError("file", f"a file can have at most {FILE_BYTES // 1_000_000} MB")
     title = path.stem
     if suffix == ".pdf":
-        text = _pdf_text(data)
+        text = pdf_text(data)
     elif suffix == ".docx":
-        text = _docx_text(data)
+        text = word_text(data)
     elif suffix in (".html", ".htm"):
         text, page_title = html_text(_decode(data))
         title = page_title or title

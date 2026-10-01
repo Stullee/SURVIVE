@@ -3,7 +3,8 @@
 Every action waited for the owner (about 46 clicks a day live), also the small, safe ones. Now the owner can grant a
 milestone they back autonomy for a few rules (RULES), all off by default:
 
-* qa_fix: a change that only brings a live listing of Ember's up to the QA registry's photos (qa.MIN_PHOTOS);
+* qa_fix: a change that only brings a live listing of Ember's up to the QA registry's photos (qa.MIN_PHOTOS;
+  0.14.0: distinct photos, none a copy of another);
 * price_change: a change of a live listing's price only, within PRICE_BAND;
 * listing_variant: a new listing in a backed leg (its venture building or live) once the owner approved
   VARIANTS_FIRST of that leg's listings without changes;
@@ -33,7 +34,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
@@ -42,6 +43,7 @@ from typing import Any
 
 from ..economy.clock import Clock, to_iso
 from ..integrations import connectors, etsy, etsy_publisher, mailstore, qa
+from ..products import images
 from . import never
 from .store import AgentScope
 
@@ -95,17 +97,23 @@ def off(owner_ids: Sequence[str], safe_mode: bool) -> str:
     return "" if owner_ids else "owner_user_ids names no one"
 
 
-def short(row: Mapping[str, Any]) -> list[str]:
-    """0.14.0: what a request falls short of by its class's QA (qa.CHECKS, as its tool and card show it)."""
+def short(row: Mapping[str, Any], read: Callable[[str], bytes] | None = None) -> list[str]:
+    """0.14.0: what a request falls short of by its class's QA (qa.CHECKS, as its tool and card show it; ``read`` reads
+    a workspace file, so photos that repeat one another count once)."""
     action = _action(row)
     if action is None:
         return ["its action isn't readable"]
     kind = connectors.class_of(row["executor"], action, row["type"]).name
     try:
         if row["executor"] == "etsy_listing":
-            return qa.defects(kind, etsy.listing_from_action(action))
+            listing = etsy.listing_from_action(action)
+            looks = images.looks(read, [(u.path, u.sha256) for u in listing.photos]) if read else None
+            return qa.defects(kind, listing, looks)
         if row["executor"] == "etsy_edit":
-            return qa.defects(kind, etsy.edit_from_action(action))
+            edit = etsy.edit_from_action(action)
+            photos = edit.photos or ()
+            looks = images.looks(read, [(u.path, u.sha256) for u in photos]) if read and photos else None
+            return qa.defects(kind, edit, looks)
     except etsy.EtsyError as exc:
         return [str(exc)]
     return qa.defects(kind, action)
@@ -169,8 +177,10 @@ def approved_price(conn: sqlite3.Connection, scope: AgentScope, listing_id: int)
     return None
 
 
-def match(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any]) -> str | None:
-    """The rule a request fits, or None."""
+def match(
+    conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any], read: Callable[[str], bytes] | None = None
+) -> str | None:
+    """The rule a request fits, or None. ``read`` reads a workspace file (0.14.0: a photo that repeats another)."""
     action = _action(row)
     if action is None:
         return None
@@ -194,7 +204,10 @@ def match(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any]) -
                 return None
             return "price_change" if old > 0 and abs(new / old - 1) <= PRICE_BAND else None
         if parts == ["photos"] and edit.photos is not None:
-            return "qa_fix" if len(current.photos) < qa.MIN_PHOTOS <= len(edit.photos) else None
+            # 0.14.0: distinct photos, as the QA registry counts them: copies of one photo fix nothing.
+            looks = images.looks(read, [(u.path, u.sha256) for u in edit.photos]) if read else None
+            copies = qa.repeats(edit.photos, looks)
+            return "qa_fix" if qa.distinct(current.photos) < qa.MIN_PHOTOS <= len(edit.photos) and not copies else None
         return None
     if row["executor"] == "etsy_listing" and row["venture_id"] is not None:
         leg = conn.execute("SELECT stage FROM ventures WHERE id = ?", (row["venture_id"],)).fetchone()
@@ -369,12 +382,20 @@ def _approve(conn: sqlite3.Connection, approval_id: int, now: str, why: str) -> 
     )
 
 
-def apply(conn: sqlite3.Connection, scope: AgentScope, approval_id: int, clock: Clock, off: str = "") -> str:
+def apply(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    approval_id: int,
+    clock: Clock,
+    off: str = "",
+    read: Callable[[str], bytes] | None = None,
+) -> str:
     """A request just made: kept as a candidate if it fits a rule, and carried by the grant of the milestone it belongs
     to (0.14.0: by what it acts on, ``carrier``), if one stands and has room (0.14.0: and unlocks act, ``off`` empty,
-    and it passes NEVER and its QA). Returns what the agent is told ("" when nothing changes)."""
+    and it passes NEVER and its QA). ``read`` reads a workspace file (0.14.0: a photo that repeats another). Returns
+    what the agent is told ("" when nothing changes)."""
     row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
-    rule = match(conn, scope, row) if row is not None and row["status"] == "pending" else None
+    rule = match(conn, scope, row, read) if row is not None and row["status"] == "pending" else None
     if row is None or rule is None:
         return ""
     now = to_iso(clock.now())
@@ -390,7 +411,7 @@ def apply(conn: sqlite3.Connection, scope: AgentScope, approval_id: int, clock: 
         return f" It waits for your owner: unlocks are off while {off}."
     if never.reasons(conn, row):  # 0.14.0: which kind is the owner's to see (it named the words to avoid)
         return " It waits for your owner whatever they unlocked (never automatic)."
-    falls = short(row)
+    falls = short(row, read)
     if falls:
         return f" It waits for your owner: an unlock carries only what passes QA ({'; '.join(falls)})."
     total, today = used(conn, int(granted["id"]), clock)

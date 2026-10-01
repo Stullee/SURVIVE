@@ -406,7 +406,7 @@ def _read_etsy(
     few = []  # qa_clean: the live listings with too few photos in Ember's records
     for r in live:
         listing = etsy_publisher.recorded_listing(conn, scope, r)
-        photos = len(listing.photos) if listing is not None else 0
+        photos = qa.distinct(listing.photos) if listing is not None else 0  # 0.14.0: a copied file counts once
         if photos < qa.MIN_PHOTOS:
             few.append(f"#{r['listing_id']} has {photos}")
     detail = f" ({', '.join(few[:6])})" if few else f" ({len(live)} live)"

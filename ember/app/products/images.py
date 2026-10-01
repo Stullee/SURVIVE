@@ -1,15 +1,27 @@
-"""Pictures of products: page previews of a PDF, and listing photos that show pages with a title.
+"""Pictures of products: page previews of a PDF, listing photos that show pages with a title, text photos and posters.
 
 pypdfium2 draws PDF pages (it loads its native library through ctypes, which a sealed thread may not do, so this
 module is imported at startup, before any tool runs; see app.agent.tools). Pillow composes listing photos from
 Ember's own pages and previews only: no image the agent didn't make ever reaches Pillow.
+
+0.14.0: one limit for every picture Ember's code reads (MAX_PIXELS, the workshop's check included): at 12 MP a
+print-size poster (3510 x 4950 = 17.4 MP for A3 at Printify) couldn't be proposed, looked at or read, and the refusal
+hid why. A picture is reduced while it is decoded where it can be (a JPEG at 1/2 to 1/8 of its size), so a large one
+doesn't take its full size in memory twice. make_image zooms in on a region of a page (REGIONS), makes text photos
+and posters at print size, and notes in each photo what it shows (``marked``). With that and a difference hash of its
+pixels (``look``), the QA registry counts distinct photos, not copies.
 """
 
 from __future__ import annotations
 
+import hashlib
 import io
+import struct
+import zlib
+from collections.abc import Callable, Sequence
 
 import pypdfium2
+import pypdfium2.raw as pdfium_c
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from . import fonts
@@ -18,7 +30,29 @@ from .theme import RGB, contrast, hex_rgb, readable_on, tint
 PREVIEW_DPI = 150
 SHAPES = {"landscape": (3000, 2250), "square": (2400, 2400), "portrait": (2000, 2500), "pin": (2000, 3000)}
 SHAPE_NAMES = tuple(SHAPES)
-MAX_PIXELS = 12_000_000
+MAX_PIXELS = 40_000_000  # 0.14.0: 12 MP until then
+LAYOUTS = ("photo", "text", "poster")
+POSTER_SIDE = 6_000  # a poster's longer side: 150 dpi or more on every poster Printify prints (A1, 24 x 36 in)
+# A region of a page or picture make_image zooms in on ('shop/cv.pdf#1@top'): left, top, right, bottom, as fractions.
+REGIONS = {
+    "top": (0.0, 0.0, 1.0, 0.45),
+    "middle": (0.0, 0.275, 1.0, 0.725),
+    "bottom": (0.0, 0.55, 1.0, 1.0),
+    "left": (0.0, 0.0, 0.55, 1.0),
+    "right": (0.45, 0.0, 1.0, 1.0),
+    "center": (0.2, 0.2, 0.8, 0.8),
+    "top-left": (0.0, 0.0, 0.55, 0.55),
+    "top-right": (0.45, 0.0, 1.0, 0.55),
+    "bottom-left": (0.0, 0.45, 0.55, 1.0),
+    "bottom-right": (0.45, 0.45, 1.0, 1.0),
+}
+FULL = (0.0, 0.0, 1.0, 1.0)
+LOOK_SIZE = 16  # a picture's difference hash (look) compares LOOK_SIZE x LOOK_SIZE cells across and down
+LOOK_BITS = 2 * LOOK_SIZE * LOOK_SIZE
+MARK = "ember-shows"  # a PNG text chunk: a hash of what a photo make_image made shows (its pages or lines)
+_LOOKS: dict[str, str] = {}  # looks by the picture's SHA-256 (a request card shows the same photos again and again)
+# Pillow's own guard against decompression bombs stays above the limit: it warns above Image.MAX_IMAGE_PIXELS (89 MP)
+# and refuses twice that, so it never refuses a picture within MAX_PIXELS (tests/test_fixes_0140_factory.py).
 
 
 class ImageError(ValueError):
@@ -33,8 +67,16 @@ def page_count(pdf: bytes) -> int:
         document.close()
 
 
-def pdf_pages(pdf: bytes, numbers: list[int], height: int | None = None, dpi: int = PREVIEW_DPI) -> list[Image.Image]:
-    """Pages of a PDF as images, at ``dpi`` or scaled to ``height`` pixels."""
+def pdf_pages(
+    pdf: bytes,
+    numbers: list[int],
+    height: int | None = None,
+    dpi: int = PREVIEW_DPI,
+    region: tuple[float, float, float, float] = FULL,
+) -> list[Image.Image]:
+    """Pages of a PDF as images, at ``dpi`` or scaled to ``height`` pixels; with a region (0.14.0), only that part of
+    each page, drawn at ``height`` pixels itself."""
+    left, top, right, bottom = region
     document = pypdfium2.PdfDocument(pdf)
     try:
         images = []
@@ -43,13 +85,30 @@ def pdf_pages(pdf: bytes, numbers: list[int], height: int | None = None, dpi: in
                 raise ImageError(f"the PDF has {len(document)} page(s), not a page {number}")
             page = document[number - 1]
             try:
-                scale = (height / page.get_height()) if height else dpi / 72
-                images.append(page.render(scale=scale).to_pil().convert("RGB"))
+                width, tall = page.get_width(), page.get_height()
+                scale = (height / (tall * (bottom - top))) if height else dpi / 72
+                crop = (left * width, (1 - bottom) * tall, (1 - right) * width, top * tall)
+                images.append(page.render(scale=scale, crop=crop).to_pil().convert("RGB"))
             finally:
                 page.close()
         return images
     finally:
         document.close()
+
+
+def pdf_active(pdf: bytes) -> list[str]:
+    """0.14.0: what pdfium, Chrome's PDF engine, finds in a PDF that acts on its own: JavaScript, embedded files, XFA
+    forms. The workshop's check asks it too, after its own search of the file's bytes."""
+    document = pypdfium2.PdfDocument(pdf)
+    try:
+        counts = {
+            "JavaScript": pdfium_c.FPDFDoc_GetJavaScriptActionCount(document.raw),
+            "embedded files": pdfium_c.FPDFDoc_GetAttachmentCount(document.raw),
+            "XFA": pdfium_c.FPDF_GetXFAPacketCount(document.raw),
+        }
+    finally:
+        document.close()
+    return [name for name, count in counts.items() if count > 0]
 
 
 def png(image: Image.Image) -> bytes:
@@ -58,9 +117,10 @@ def png(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
-def open_png(data: bytes) -> Image.Image:
-    """One of Ember's own pictures (PNG or JPEG), checked before it is decoded."""
-    return _checked(data).convert("RGB")
+def open_png(data: bytes, longest: int | None = None) -> Image.Image:
+    """One of Ember's own pictures (PNG or JPEG), checked before it is decoded; with ``longest``, no wider or higher
+    than that."""
+    return _reduced(data, longest) if longest else _decoded(lambda: _checked(data).convert("RGB"))
 
 
 def png_size(data: bytes) -> tuple[int, int]:
@@ -72,18 +132,111 @@ def png_size(data: bytes) -> tuple[int, int]:
 def thumbnail(data: bytes, longest: int) -> tuple[bytes, int, int]:
     """A PNG no wider or higher than ``longest`` pixels (for the model to look at) of a PNG or JPEG, and its
     size."""
-    image = _checked(data).convert("RGB")
-    image.thumbnail((longest, longest), Image.Resampling.LANCZOS)
+    image = _reduced(data, longest)
     return png(image), image.width, image.height
 
 
-def _checked(data: bytes) -> Image.Image:
+def cropped(image: Image.Image, where: tuple[float, float, float, float]) -> Image.Image:
+    """0.14.0: the part of a picture a region names (REGIONS)."""
+    left, top, right, bottom = where
+    w, h = image.size
+    return image.crop((round(left * w), round(top * h), max(round(right * w), 1), max(round(bottom * h), 1)))
+
+
+def marked(data: bytes, shows: str) -> bytes:
+    """0.14.0: a PNG with a note of what it shows (a hash of ``shows``, no file names) after its header: two photos of
+    the same page with other words on them are the same photo to a buyer. The note starts with the layout ('photo-')."""
+    note = f"{shows.partition(':')[0]}-{hashlib.sha256(shows.encode()).hexdigest()[:16]}"
+    chunk = b"tEXt" + MARK.encode() + b"\0" + note.encode()
+    return data[:33] + struct.pack(">I", len(chunk) - 4) + chunk + struct.pack(">I", zlib.crc32(chunk)) + data[33:]
+
+
+def look(data: bytes) -> str:
+    """0.14.0: what a picture looks like, as 'mark.hash': what make_image noted it shows (``marked``; empty if none),
+    and its difference hash in hex: for each of LOOK_SIZE x LOOK_SIZE cells of it in grey, whether it is brighter than
+    the next one to its right, and than the next one below it. A copy (resized, re-encoded, another colour or badge)
+    has nearly the same bits; the same layout with other pages or words doesn't."""
+    image = _checked(data)
+    mark = str(image.info.get(MARK, "")) if image.format == "PNG" else ""
+    grey = _reduced(data, 512).convert("L")
+    across = grey.resize((LOOK_SIZE + 1, LOOK_SIZE), Image.Resampling.BOX).tobytes()
+    down = grey.resize((LOOK_SIZE, LOOK_SIZE + 1), Image.Resampling.BOX).tobytes()
+    bits = 0
+    for row in range(LOOK_SIZE):
+        for column in range(LOOK_SIZE):
+            at = row * (LOOK_SIZE + 1) + column
+            bits = bits << 1 | (across[at] > across[at + 1])
+    for at in range(LOOK_SIZE * LOOK_SIZE):
+        bits = bits << 1 | (down[at] > down[at + LOOK_SIZE])
+    return f"{mark}.{bits:0{LOOK_BITS // 4}x}"
+
+
+def looks(read: Callable[[str], bytes], photos: Sequence[tuple[str, str]]) -> list[str]:
+    """0.14.0: the look of each (path, SHA-256) photo, for the QA registry; "" where the file is gone, has changed or
+    can't be read."""
+    found = []
+    for path, sha256 in photos:
+        if sha256 not in _LOOKS:
+            try:
+                data = read(path)
+            except (OSError, ValueError):  # the workspace's own errors are ValueErrors
+                found.append("")
+                continue
+            if hashlib.sha256(data).hexdigest() != sha256:
+                found.append("")
+                continue
+            try:
+                _LOOKS[sha256] = look(data)
+            except ImageError:
+                _LOOKS[sha256] = ""
+            if len(_LOOKS) > 1_000:
+                _LOOKS.pop(next(iter(_LOOKS)))
+        found.append(_LOOKS[sha256])
+    return found
+
+
+def _reduced(data: bytes, longest: int) -> Image.Image:
+    """0.14.0: a picture no wider or higher than ``longest``, in RGB. A JPEG is decoded at 1/2 to 1/8 of its size
+    where that is enough, and a picture is reduced before it is converted."""
+    image = _checked(data)
+
+    def reduce() -> Image.Image:
+        image.draft("RGB", (longest, longest))
+        shown = image if image.mode in ("RGB", "L", "RGBA", "LA") else image.convert("RGB")  # (a palette: nearest)
+        shown.thumbnail((longest, longest), Image.Resampling.LANCZOS, reducing_gap=3.0)
+        return shown.convert("RGB")
+
+    return _decoded(reduce)
+
+
+def _decoded(decode: Callable[[], Image.Image]) -> Image.Image:
+    """What ``decode`` makes of a picture; a picture that breaks the decoder (cut short, damaged) is an ImageError."""
     try:
-        image = Image.open(io.BytesIO(data))
-    except (OSError, Image.DecompressionBombError):  # 0.13.0: not a picture at all (a pin's image is checked too)
-        raise ImageError("only Ember's own PNG and JPEG pictures can be shown") from None
-    if image.format not in ("PNG", "JPEG") or image.width * image.height > MAX_PIXELS:
-        raise ImageError("only Ember's own PNG and JPEG pictures can be shown")
+        return decode()
+    except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as exc:
+        if isinstance(exc, ImageError):
+            raise
+        raise ImageError("it can't be read whole (damaged or cut short)") from None
+
+
+def too_large(width: int, height: int) -> str:
+    """0.14.0: why a picture this size isn't read, in numbers ("" when it is read)."""
+    if width * height <= MAX_PIXELS:
+        return ""
+    return f"{width} x {height} = {width * height / 1_000_000:.1f} MP, more than {MAX_PIXELS // 1_000_000} MP"
+
+
+def _checked(data: bytes) -> Image.Image:
+    """A PNG or JPEG, opened (not decoded yet). 0.14.0: a picture too large says its size (it said it wasn't one of
+    Ember's pictures)."""
+    try:
+        image = Image.open(io.BytesIO(data), formats=("PNG", "JPEG"))
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+        raise ImageError(f"it has far more than {MAX_PIXELS // 1_000_000} MP (Pillow refused to read it)") from None
+    except OSError:  # 0.13.0: not a picture at all (a pin's image is checked too)
+        raise ImageError("it isn't a PNG or JPEG picture Ember's code can read") from None
+    if too_large(image.width, image.height):
+        raise ImageError(f"it is {too_large(image.width, image.height)}")
     return image
 
 
@@ -237,3 +390,102 @@ def listing(
 
 def _visible(color: RGB, background: RGB) -> bool:
     return contrast(color, background) >= 2.5
+
+
+def _colours(background: str | None, accent: str | None) -> tuple[RGB, RGB, RGB]:
+    """Accent, background and ink: the accent's light tint when no background is given, and ink readable on it."""
+    accent_rgb: RGB = hex_rgb(accent) if accent else (44, 62, 80)
+    bg: RGB = hex_rgb(background) if background else tint(accent_rgb, 0.88)
+    return accent_rgb, bg, readable_on(bg)
+
+
+def text_photo(
+    title: str,
+    lines: list[str],
+    badge: str = "",
+    background: str | None = None,
+    accent: str | None = None,
+    shape: str = "landscape",
+) -> bytes:
+    """0.14.0: a listing photo of words alone (what is included, the features): a title, its lines as a list, and a
+    badge."""
+    if shape not in SHAPES:
+        raise ImageError(f"shape must be one of {', '.join(SHAPES)}")
+    width, height = SHAPES[shape]
+    accent_rgb, bg, ink = _colours(background, accent)
+    canvas = Image.new("RGB", (width, height), bg)
+    draw = ImageDraw.Draw(canvas)
+    margin = int(min(width, height) * 0.08)
+    box_w = width - 2 * margin
+    title_font, title_lines = _fit(draw, title, "display", "B", int(height * 0.1), box_w, 3)
+    y = margin
+    for line in title_lines:
+        draw.text((margin, y), line, font=title_font, fill=accent_rgb if _visible(accent_rgb, bg) else ink)
+        y += int(title_font.size * 1.12)
+    y += int(title_font.size * 0.3)
+    draw.rectangle([margin, y, margin + int(box_w * 0.18), y + max(6, height // 180)], fill=accent_rgb)
+    y += int(title_font.size * 0.6)
+    room = height - margin - y - (int(height * 0.12) if badge else 0)
+    size = int(min(height * 0.06, room / max(1, len(lines)) / 1.5))
+    font = _font("sans", "", max(24, size))
+    bullet = max(8, font.size // 3)
+    for line in lines:
+        shown = _wrap(draw, line, font, box_w - 2 * bullet)[:2]
+        top = y + font.size * 0.35
+        draw.rectangle([margin, top, margin + bullet, top + bullet], fill=accent_rgb)
+        for part in shown:
+            draw.text((margin + 2 * bullet, y), part, font=font, fill=ink)
+            y += int(font.size * 1.25)
+        y += int(font.size * 0.25)
+    if badge:
+        badge_font = _font("sans", "B", max(28, int(height * 0.035)))
+        pad_x, pad_y = int(badge_font.size * 0.8), int(badge_font.size * 0.45)
+        text_w = draw.textlength(badge, font=badge_font)
+        box = (margin, height - margin - badge_font.size - 2 * pad_y, int(margin + text_w + 2 * pad_x), height - margin)
+        draw.rounded_rectangle(box, radius=int(badge_font.size * 0.6), fill=accent_rgb)
+        draw.text((box[0] + pad_x, box[1] + pad_y - badge_font.size * 0.08), badge, font=badge_font,
+                  fill=readable_on(accent_rgb))  # fmt: skip
+    return png(canvas)
+
+
+def poster_size(shape: str) -> tuple[int, int]:
+    """0.14.0: a poster's pixels: the shape's proportions, POSTER_SIDE on the longer side."""
+    width, height = SHAPES[shape]
+    scale = POSTER_SIDE / max(width, height)
+    return round(width * scale), round(height * scale)
+
+
+def poster(
+    title: str,
+    lines: list[str],
+    background: str | None = None,
+    accent: str | None = None,
+    shape: str = "portrait",
+) -> bytes:
+    """0.14.0: a typographic poster at print size: a large title, an accent rule and lines of text, in the shape's
+    proportions (drawn by Ember's code: a simple poster needs no workshop run)."""
+    if shape not in SHAPES:
+        raise ImageError(f"shape must be one of {', '.join(SHAPES)}")
+    width, height = poster_size(shape)
+    accent_rgb, bg, ink = _colours(background, accent)
+    canvas = Image.new("RGB", (width, height), bg)
+    draw = ImageDraw.Draw(canvas)
+    margin = int(min(width, height) * 0.09)
+    box_w = width - 2 * margin
+    title_font, title_lines = _fit(draw, title, "display", "B", int(height * 0.16), box_w, 5)
+    y = margin
+    for line in title_lines:
+        draw.text((margin, y), line, font=title_font, fill=accent_rgb if _visible(accent_rgb, bg) else ink)
+        y += int(title_font.size * 1.08)
+    y += int(title_font.size * 0.25)
+    draw.rectangle([margin, y, margin + int(box_w * 0.3), y + max(8, height // 120)], fill=accent_rgb)
+    if lines:
+        font = _font("sans", "", max(24, int(height * 0.028)))
+        shown = [part for line in lines for part in _wrap(draw, line, font, box_w)][:12]
+        y = height - margin - int(font.size * 1.35) * len(shown)
+        for part in shown:
+            draw.text((margin, y), part, font=font, fill=ink)
+            y += int(font.size * 1.35)
+    out = io.BytesIO()
+    canvas.save(out, "PNG", compress_level=6)  # optimize would take seconds at this size
+    return out.getvalue()

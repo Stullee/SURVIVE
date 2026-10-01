@@ -164,9 +164,9 @@ def test_reading_a_product_says_what_it_is(data_dir: Path) -> None:
     ctx.workspace.write("d.md", "# One\n::: pagebreak\n# Two\n")
     make.document(ctx.workspace, "d.md", "shop/d.pdf")
     read = tools.HANDLERS["workspace_read"]
-    assert read(ctx, {"path": "shop/d.pdf"}, None).text == (
-        f"shop/d.pdf is a PDF with 2 pages, {ctx.workspace.size_of('shop/d.pdf') / 1024:,.0f} KB. Its source is the "
-        "text you made it from."
+    size = f"{ctx.workspace.size_of('shop/d.pdf') / 1024:,.0f} KB"
+    assert read(ctx, {"path": "shop/d.pdf"}, None).text.startswith(  # 0.14.0: and its text
+        f"shop/d.pdf (a PDF with 2 pages, {size}; its text, characters 0–8 of 8)\n<data "
     )
     assert "a PNG picture, 827 x 1170 pixels" in read(ctx, {"path": "shop/d-page1.png"}, None).text
     assert "a Word document" in read(ctx, {"path": "shop/d.docx"}, None).text

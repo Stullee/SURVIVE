@@ -177,7 +177,7 @@ def test_a_venture_cycle_has_its_own_tools_and_texts() -> None:
     every = {d["name"]: d for d in tools.definitions(mail=True, etsy=True, pinterest=True, printify=True, site=True)}
     assert every["guide"]["input_schema"]["properties"]["topic"]["enum"] == list(tools.GUIDES)
     writing = venture["workspace_write"]["description"]
-    assert "make_" not in writing and "draft" not in writing and "delete works for any file" in writing
+    assert "make_" not in writing and "draft" not in writing and "delete and copy work for any file" in writing
     assert "with draft, or in parts" in ordinary["workspace_write"]["description"]
     assert tools.spec_of("guide", venture=True) is tools.VENTURE_VARIANTS["guide"]
     assert tools.spec_of("guide", venture=False) is tools.SPECS["guide"]

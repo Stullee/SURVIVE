@@ -43,8 +43,9 @@ def replied(agent: Any, uid: int) -> None:
             )
         conn.execute(
             "INSERT INTO emails (mode, session, life_id, direction, uidvalidity, uid, message_id, in_reply_to,"
-            " from_addr, to_addr, subject, sent_at, received_at, body, bulk, authenticated) VALUES (?, ?, ?, 'in', 1, ?,"
-            " ?, '<m1@ember>', 'ann@example.org', 'ember@example.org', 'Re: Your planner', ?, ?, 'Thanks!', 0, 1)",
+            " from_addr, to_addr, subject, sent_at, received_at, body, bulk, authenticated)"
+            " VALUES (?, ?, ?, 'in', 1, ?, ?, '<m1@ember>', 'ann@example.org', 'ember@example.org', 'Re: Your planner',"
+            " ?, ?, 'Thanks!', 0, 1)",
             (scope.mode, scope.session, scope.life_id, uid, f"<r{uid}@ann>", now, now),
         )
 

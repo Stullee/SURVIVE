@@ -24,6 +24,7 @@ from ..integrations import (
     qa,
     reddit,
 )
+from ..products import images
 from . import (
     audit,
     critic,
@@ -728,6 +729,15 @@ def _numbers(row: sqlite3.Row | None) -> dict[str, Any] | None:
     }
 
 
+def _looks(agent: Agent, r: sqlite3.Row, photos: tuple[etsy.Upload, ...]) -> list[str] | None:
+    """0.14.0: what a waiting request's photos look like (images.look), so its card names the ones that repeat
+    another."""
+    if r["status"] != "pending":
+        return None
+    workspace, _ = agent.roots()
+    return images.looks(workspace.read_bytes, [(u.path, u.sha256) for u in photos])
+
+
 def _never(conn: sqlite3.Connection, r: sqlite3.Row) -> list[str]:
     """0.13.0: why no unlock carries a waiting request that fits a rule (never.py), in the owner's words."""
     fits = conn.execute("SELECT 1 FROM policy_candidates WHERE approval_id = ?", (r["id"],)).fetchone()
@@ -762,7 +772,7 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
         try:
             listing = etsy.listing_from_action(action)
             editable = etsy.editable(listing)
-            shortfalls = qa.defects(kind.name, listing)
+            shortfalls = qa.defects(kind.name, listing, _looks(agent, r, listing.photos))  # 0.14.0: copies named
         except etsy.EtsyError:
             editable = None
     if r["executor"] in ("pinterest_pin", "pinterest_delete") and action is not None:  # 0.13.0 (Phase E2)
@@ -785,7 +795,7 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
         try:
             edit = etsy.edit_from_action(action)
             editable = etsy.edit_editable(edit)  # None: no words or price change
-            shortfalls = qa.defects(kind.name, edit)
+            shortfalls = qa.defects(kind.name, edit, _looks(agent, r, edit.photos or ()))
         except etsy.EtsyError:
             editable = None
     return {

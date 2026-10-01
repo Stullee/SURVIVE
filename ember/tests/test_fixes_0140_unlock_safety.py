@@ -402,6 +402,12 @@ def test_an_unlock_does_not_carry_a_reply_that_fails_its_qa(data_dir: Path) -> N
     assert (passing["status"], passing["decided_by"]) == ("approved", policy.POLICY_BY)
 
 
+def distinct_photos(photo: dict[str, Any], count: int) -> list[dict[str, Any]]:
+    """``count`` photos like ``photo``, each its own file (0.14.0, the factory: QA counts distinct photos)."""
+    stem = str(photo["path"]).rsplit(".", 1)[0]
+    return [{**photo, "path": f"{stem}-{n}.png", "sha256": f"{n:064x}"} for n in range(1, count + 1)]
+
+
 def test_an_unlock_does_not_carry_a_listing_with_one_photo(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     agent, _ = listed(data_dir)  # a listing is live: a new one isn't Ember's first publication
     goal = a_milestone(agent)
@@ -418,7 +424,7 @@ def test_an_unlock_does_not_carry_a_listing_with_one_photo(data_dir: Path, monke
         " It waits for your owner: an unlock carries only what passes QA (1 photo, fewer than 5 (Etsy shows up to 10))."
     )
     assert status_of(agent, one_photo)["status"] == "pending"
-    photos = (action["photos"] * 5)[:5]
+    photos = distinct_photos(action["photos"][0], 5)  # 0.14.0 (factory): copies of one photo count once
     five = request(agent, goal, executor="etsy_listing", action={**action, "photos": photos}, project_id=line)
     with agent.db.transaction() as conn:
         assert "approved it at once" in policy.apply(conn, agent.scope(), five, agent.clock)
@@ -432,9 +438,8 @@ def test_a_held_request_that_fails_its_qa_is_not_approved(data_dir: Path, monkey
     first = rows(agent, "SELECT action, project_id FROM approvals WHERE executor = 'etsy_listing'")[0]
     action, line = json.loads(first["action"]), first["project_id"]  # 0.14.0: a listing of the milestone's line
     fits(monkeypatch, "listing_variant")
-    held = request(
-        agent, goal, executor="etsy_listing", action={**action, "photos": (action["photos"] * 5)[:5]}, project_id=line
-    )
+    photos = distinct_photos(action["photos"][0], 5)  # 0.14.0 (factory): copies of one photo count once
+    held = request(agent, goal, executor="etsy_listing", action={**action, "photos": photos}, project_id=line)
     with agent.db.transaction() as conn:
         assert "unless your owner decides first" in policy.apply(conn, agent.scope(), held, agent.clock)
     monkeypatch.setattr("app.integrations.qa.MIN_PHOTOS", 6)

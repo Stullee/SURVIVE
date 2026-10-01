@@ -324,11 +324,17 @@ agent's workspace:
   planners, worksheets, guides, and CV and letter templates. At most 40 pages.
 - **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
-  sheet, plus a picture of its first sheet. Formulas may only use common
+  sheet, plus a picture of each sheet. Formulas may only use common
   functions and cells of the same workbook: no links to other files or the web.
-- **Listing photos** (`make_image`): up to three pages or pictures, fanned out
-  next to a title, a subtitle and a badge, in Etsy's 4:3 size (3000 x 2250) or
-  square or portrait.
+- **Listing photos** (`make_image`): up to three pages, sheets or pictures (or a
+  zoomed-in region of one), fanned out next to a title, a subtitle and a badge,
+  in Etsy's 4:3 size (3000 x 2250) or square or portrait; or a photo of words
+  alone (what is included), or a simple typographic poster at print size. Up to
+  10 a cycle, a whole listing's photos.
+
+The agent reads the text of its PDF, Word and Excel files and copies files
+itself, for free (the workshop was paid for this). Pictures may have up to
+40 megapixels, enough for a print-size poster.
 
 A long text (a guide, a planner's pages) no longer goes through the agent's
 replies 2,500 characters at a time: with **draft** the worker model writes the
@@ -849,7 +855,7 @@ no longer shown); a study that failed three times stops until you press
   one of neither covers email replies, so the box offers only those rules;
   it ends when its milestone closes, also when it is met, and what it held
   waits for you):
-  - QA fixes: photos up to 5 on a live listing;
+  - QA fixes: up to 5 distinct photos (no copies) on a live listing;
   - price changes within 15% of the price you last approved on a live listing
     (several automatic changes can't add up past it);
   - new listings in a backed leg, once you approved 5 of its listings

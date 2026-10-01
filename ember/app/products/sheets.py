@@ -1,9 +1,12 @@
-"""Spreadsheets: a JSON spec the agent writes, made into an Excel file and a picture of its first table.
+"""Spreadsheets: a JSON spec the agent writes, made into an Excel file and a picture of each of its tables.
 
 The spec names sheets, columns (title, width, number format, dropdown choices), rows (or a CSV file of rows),
 extra empty rows to fill in, totals, a chart and a "How to use" sheet. Values are data; a text starting with "="
 is a formula, allowed only with common functions and references to cells of this workbook: a file for strangers
 never gets links, other workbooks, DDE ("cmd|...") or functions that reach outside Excel.
+
+0.14.0: any Excel file in the workspace can be read too (``workbook_text``: its cells, sheet by sheet, for
+workspace_read) and drawn (``picture``: one sheet, for make_image's 'file.xlsx#2'). The workshop was paid for both.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.chart import BarChart, LineChart, PieChart, Reference
 from openpyxl.formula.tokenizer import Token, Tokenizer
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -24,7 +27,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from PIL import Image, ImageDraw, ImageFont
 
-from . import fonts
+from . import checks, fonts
 from .theme import RGB, hex_rgb, readable_on, rgb_hex, tint
 
 MAX_SHEETS = 8
@@ -438,13 +441,14 @@ def _chart(ws: Any, sheet: Sheet, top: int, first: int, last: int) -> None:
 # --- the picture ---
 
 
-def preview(spec: Spec, max_rows: int = 18) -> bytes:
-    """A PNG of the first sheet's table, for listing photos and the dashboard.
+def preview(spec: Spec, max_rows: int = 18, index: int = 0) -> bytes:
+    """A PNG of a sheet's table (the first unless ``index`` names another, 0.14.0), for listing photos and the
+    dashboard.
 
     Formulas show their result when the preview can work it out (arithmetic, SUM, AVERAGE, MIN, MAX, COUNT, ROUND
     and ABS over this sheet's cells); any other formula is shown as written, in italics.
     """
-    sheet = spec.sheets[0]
+    sheet = spec.sheets[index]
     values = _Results(sheet)
     scale = 2
     col_px = [max(60, int(c.width * 7.5)) * scale for c in sheet.columns]
@@ -492,6 +496,169 @@ def preview(spec: Spec, max_rows: int = 18) -> bytes:
     buffer = io.BytesIO()
     image.save(buffer, "PNG", optimize=True)
     return buffer.getvalue()
+
+
+# --- any Excel file: read and drawn (0.14.0) ---
+
+READ_ROWS = 2_000  # a sheet's rows read (MAX_ROWS of data under a title and a header)
+READ_COLUMNS = MAX_COLUMNS
+TEXT_CHARS = 200_000  # a workbook's text at most (workspace_read shows it a part at a time)
+PICTURE_ROWS = 30
+PICTURE_COLUMNS = 12
+_FORMAT_KEYS = {code: key for key, code in FORMATS.items()}
+
+
+def _book(data: bytes) -> Any:
+    """An Excel file opened to read: its parts unpacked within bounds first (checks.unzipped)."""
+    parts = checks.unzipped(data, "the Excel file", checks.READ_BYTES)
+    try:
+        return load_workbook(io.BytesIO(checks.stored(parts)), read_only=True, data_only=False)
+    except Exception:  # noqa: BLE001 - whatever breaks the reader, the file can't be read
+        raise SheetError("the Excel file can't be read") from None
+
+
+def _cells(sheet: Any, rows: int, columns: int) -> dict[tuple[int, int], Any]:
+    """A sheet's cells that hold something, by (row, column), both from 1."""
+    found = {}
+    for r, row in enumerate(sheet.iter_rows(max_row=rows, max_col=columns), start=1):
+        for c, cell in enumerate(row, start=1):
+            if cell.value is not None:
+                found[(r, c)] = cell
+    return found
+
+
+def workbook_text(data: bytes) -> str:
+    """An Excel file's cells as text, sheet by sheet and row by row: values as they are, a formula as written with
+    its result when Ember's code can work it out."""
+    book = _book(data)
+    try:
+        out: list[str] = []
+        size = 0
+        for number, sheet in enumerate(book.worksheets, start=1):
+            cells = _cells(sheet, READ_ROWS, READ_COLUMNS)
+            grid = _Grid({key: cell.value for key, cell in cells.items()})
+            rows = sorted({r for r, _ in cells})
+            columns = max((c for _, c in cells), default=0)
+            out.append(f"Sheet {number} '{sheet.title}' ({len(rows)} rows with values, {columns} columns):")
+            for r in rows:
+                shown = []
+                for c in range(1, columns + 1):
+                    value = cells[(r, c)].value if (r, c) in cells else None
+                    text = _plain(value)
+                    if isinstance(value, str) and value.startswith("="):
+                        result = grid.value(r, c)
+                        if not isinstance(result, str):
+                            text += f" → {_plain(result)}"
+                    shown.append(text)
+                out.append(f"{r}: " + " | ".join(shown).rstrip(" |"))
+                size += len(out[-1]) + 1
+                if size > TEXT_CHARS:
+                    out.append("… (the rest is cut)")
+                    return "\n".join(out)
+            out.append("")
+        return "\n".join(out).strip()
+    finally:
+        book.close()
+
+
+def picture(data: bytes, which: str = "") -> tuple[int, Image.Image]:
+    """One sheet of an Excel file drawn as a table (its first rows and columns), for listing photos, with its number
+    (from 1): the first sheet, or the one ``which`` names by number or name. Formulas show their result where the
+    preview's can."""
+    book = _book(data)
+    try:
+        names = book.sheetnames
+        if not which:
+            index = 0
+        elif re.fullmatch(r"[0-9]{1,4}", which):  # 0.14.0: ASCII digits only ('²' is a name)
+            index = int(which) - 1
+        else:
+            index = next((i for i, n in enumerate(names) if n.lower() == which.lower()), -1)
+        if not 0 <= index < len(names):
+            listed = ", ".join(f"{i} '{n}'" for i, n in enumerate(names, start=1))
+            raise SheetError(f"the workbook has no sheet {which!r}; its sheets are {listed}")
+        cells = _cells(book.worksheets[index], READ_ROWS, READ_COLUMNS)
+    finally:
+        book.close()
+    grid = _Grid({key: cell.value for key, cell in cells.items()})
+    shown = {key: cell for key, cell in cells.items() if key[0] <= PICTURE_ROWS and key[1] <= PICTURE_COLUMNS}
+    last_row = max((r for r, _ in shown), default=1)
+    last_column = max((c for _, c in shown), default=1)
+    texts = {}
+    for (r, c), cell in shown.items():
+        value = grid.value(r, c)
+        unknown = isinstance(value, str) and value.startswith("=")
+        texts[(r, c)] = (_cell_text(value, cell.number_format), unknown)
+    scale = 2
+    widths = []
+    for c in range(1, last_column + 1):
+        longest = max((len(texts[(r, c)][0]) for r in range(1, last_row + 1) if (r, c) in texts), default=4)
+        widths.append(min(360, max(60, int(longest * 7.5) + 16)) * scale)
+    row_h = 22 * scale
+    margin = 12 * scale
+    image = Image.new("RGB", (sum(widths) + 2 * margin, last_row * row_h + 2 * margin), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    body = ImageFont.truetype(str(fonts.path("sans", "")), 11 * scale)
+    bold = ImageFont.truetype(str(fonts.path("sans", "B")), 11 * scale)
+    italic = ImageFont.truetype(str(fonts.path("sans", "I")), 10 * scale)
+    line = (218, 220, 224)
+    y = margin
+    for r in range(1, last_row + 1):
+        x = margin
+        for c, width in enumerate(widths, start=1):
+            cell = shown.get((r, c))
+            fill = _colour(cell.fill.fgColor) if cell is not None and cell.fill.patternType == "solid" else None
+            if fill is not None:
+                draw.rectangle([x, y, x + width, y + row_h], fill=fill)
+            draw.rectangle([x, y, x + width, y + row_h], outline=line, width=1)
+            if cell is not None:
+                text, unknown = texts[(r, c)]
+                font = italic if unknown else bold if cell.font.b else body
+                colour = _colour(cell.font.color) or (readable_on(fill) if fill is not None else (34, 34, 34))
+                _row(draw, [text], [width], x, y, row_h, font, colour, scale)
+            x += width
+        y += row_h
+    return index + 1, image
+
+
+def _colour(color: Any) -> RGB | None:
+    """An Excel colour given as RGB (a theme's colour is left out: the picture doesn't know the theme)."""
+    value = getattr(color, "rgb", None) if getattr(color, "type", None) == "rgb" else None
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9A-Fa-f]{8}", value):
+        return None
+    return hex_rgb("#" + value[2:])
+
+
+def _plain(value: Any) -> str:
+    """A value as text to read: a whole number without its ".0", a date without its midnight."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and not isinstance(value, bool):
+        return str(int(value)) if value.is_integer() else f"{value:.6f}".rstrip("0")
+    if isinstance(value, dt.datetime) and value.time() == dt.time():
+        return value.date().isoformat()
+    return str(value)
+
+
+def _cell_text(value: Any, number_format: str) -> str:
+    """A cell's value as Excel shows it, near enough: in its number format, or the nearest of FORMATS."""
+    if isinstance(value, dt.datetime | dt.date):
+        shown = {"dd.mm.yyyy": "%d.%m.%Y", "mm/dd/yyyy": "%m/%d/%Y"}.get(number_format, "%Y-%m-%d")
+        return value.strftime(shown)
+    return _shown(value, _FORMAT_KEYS.get(number_format) or _format_key(number_format))
+
+
+def _format_key(number_format: str) -> str:
+    """The nearest of FORMATS for a number format Ember didn't write."""
+    if "%" in number_format:
+        return "percent"
+    if "€" in number_format:
+        return "eur"
+    if "$" in number_format:
+        return "usd"
+    if number_format in ("0", "#,##0"):
+        return "integer"
+    return "number" if re.search(r"0\.00", number_format) else "general"
 
 
 class _Unknown(Exception):
@@ -643,6 +810,72 @@ class _Results:
                     return _call(text, args), rest[1:]
                 raise _Unknown
         raise _Unknown
+
+
+class _Grid(_Results):
+    """0.14.0: the values of any Excel file's sheet, by (row, column): formulas worked out as the preview does,
+    over whole ranges (text in them is left out, as Excel does)."""
+
+    def __init__(self, cells: dict[tuple[int, int], Any]) -> None:
+        self.cells = cells
+        self.cache: dict[tuple[int, int], Any] = {}
+        self.busy: set[tuple[int, int]] = set()
+
+    def value(self, row: int, column: int) -> Any:
+        value = self.cells.get((row, column))
+        if not (isinstance(value, str) and value.startswith("=")):
+            return value
+        try:
+            return self._formula((row, column))
+        except (_Unknown, ZeroDivisionError, OverflowError, RecursionError):
+            return value
+
+    def _formula(self, key: tuple[int, int]) -> float:
+        if key in self.cache:
+            return self.cache[key]
+        if key in self.busy or len(self.busy) > 50:
+            raise _Unknown
+        self.busy.add(key)
+        try:
+            result, rest = self._sum(_tokens(str(self.cells[key])[1:]))
+            if rest:
+                raise _Unknown
+        finally:
+            self.busy.discard(key)
+        self.cache[key] = result
+        return result
+
+    def _at(self, text: str) -> float | None:
+        match = _CELL.fullmatch(text)
+        if match is None:
+            raise _Unknown
+        key = (int(match.group(2)), _column_index(match.group(1)) + 1)
+        value = self.cells.get(key)
+        if value is None:
+            return None
+        if isinstance(value, str) and value.startswith("="):
+            return self._formula(key)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return float(value)
+        raise _Unknown
+
+    def _range(self, text: str) -> list[float]:
+        start, end = (_CELL.fullmatch(part) for part in text.split(":"))
+        if start is None or end is None:
+            raise _Unknown
+        rows = range(int(start.group(2)), int(end.group(2)) + 1)
+        columns = range(_column_index(start.group(1)), _column_index(end.group(1)) + 1)
+        if len(rows) * len(columns) > READ_ROWS * 4:
+            raise _Unknown
+        found = []
+        for row in rows:
+            for column in columns:
+                value = self.cells.get((row, column + 1))
+                if isinstance(value, str) and value.startswith("="):
+                    found.append(self._formula((row, column + 1)))
+                elif isinstance(value, int | float) and not isinstance(value, bool):
+                    found.append(float(value))
+        return found
 
 
 def _tokens(text: str) -> list[tuple[str, str]]:
