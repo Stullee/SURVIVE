@@ -4,7 +4,8 @@ Revenue only ever came from the owner, so a sale counted nowhere (the balance, t
 venture's earnings) until the owner recorded it by hand. When the owner turns on ``etsy_auto_record_revenue``, every
 Etsy sync that worked records, for each order with Ember's listings:
 
-* its revenue once it is paid: Ember's lines, net of tax, shipping, the coupon and refunds (what the sync stores);
+* its revenue once it is paid: Ember's lines with their shipping (0.14.0), net of tax, the coupon and refunds (what
+  the sync stores);
 * Etsy's fees on it, as an expense of the same project, once the sync has read them from the order's payment;
 * its refunds: when an order whose revenue Ember's code recorded earns less now (partly or fully refunded, or
   cancelled), a correction of that entry down to what the order earns now.
@@ -57,7 +58,7 @@ log = logging.getLogger(__name__)
 OPTION_KEY = "integrations.etsy.auto_revenue"  # the option as last seen, for the audit of its changes
 SINCE_KEY = "integrations.etsy.auto_revenue_since"  # the owner's day it was turned on: its orders from then on
 HELD_KEY = "integrations.etsy.revenue_held."  # + an entry's key: the owner was told it waits for them
-REVENUE_NOTE = "Ember's lines of the order, net of tax, shipping, the coupon and refunds (Etsy's numbers)"
+REVENUE_NOTE = "Ember's lines of the order with their shipping, net of tax, the coupon and refunds (Etsy's numbers)"
 FEES_NOTE = (  # the owner's button's too (0.14.0: the listing fee a sale renews and the VAT on fees were left out)
     "Etsy's fees on order {receipt}: payment processing, the 6.5% transaction fee, USD 0.20 a unit sold and 19% VAT"
     " on those two"

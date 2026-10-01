@@ -214,12 +214,15 @@ class Settings(BaseModel):
     # Printify (0.13.0, Phase E4): physical products with Ember's designs, made on order and sold in the owner's Etsy
     # shop through Printify's Etsy connection, with the owner's personal access token. Off until the owner turns it on
     # (in dry run too: then a fake account stands in). printify_shop_id 0: the one Printify shop connected to Etsy;
-    # printify_currency: the currency of the prices and costs Printify shows for it.
+    # printify_currency: the currency of the prices and costs Printify shows for it. 0.14.0: who pays the shipping
+    # (as the shop's Etsy shipping profile charges it) and whether Printify's bill carries VAT, for the margin check.
     printify_enabled: bool = False
     printify_api_token: SecretStr = SecretStr("")
     printify_shop_id: int = Field(default=0, ge=0, le=999_999_999_999)
     printify_currency: Literal["EUR", "USD", "GBP"] = "EUR"
     printify_products_per_day: int = Field(default=2, ge=0, le=10)
+    printify_buyer_pays_shipping: bool = False
+    printify_bill_vat: bool = True
     # The owner's website (0.13.0, Phase E3): pages the agent writes, built by Ember's code into a static site that the
     # owner previews, downloads and publishes (Ember never does). Its Impressum and privacy page are made from these:
     # the owner's name, address (lines separated by commas), email and, if they have them, phone and VAT ID; their web

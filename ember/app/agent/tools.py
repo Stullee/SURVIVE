@@ -1004,7 +1004,8 @@ SPECS: dict[str, Spec] = {
         Spec(
             "printify_catalog",
             "Look through Printify's catalog of products made on order: search finds products, blueprint_id who "
-            "makes one, and with provider_id its variants, print area and shipping to Germany. Free.",
+            "makes one, and with provider_id its variants, print area, shipping to Germany, what making costs and "
+            "the least price. Free.",
             {
                 "search": _s("Words in the product's name, e.g. 'poster matte'.", 60, required=False),
                 "blueprint_id": _i("A product's number, from a search.", required=False, minimum=1),
@@ -1317,6 +1318,8 @@ class PrintifyAccess:
     shop_title: str
     currency: str
     daily_limit: int
+    buyer_ships: bool = False  # 0.14.0: the owner's printify_buyer_pays_shipping
+    bill_vat: bool = True  # 0.14.0: the owner's printify_bill_vat
 
 
 CatalogFn = Callable[[str | None, int | None, int | None], str]  # search, blueprint, provider: the catalog's answer
@@ -3357,6 +3360,7 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
             f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "
             f"{demand.DAYS} days first (demand_note: the keywords buyers search and what shows they buy)"
         )
+    joined = ventures.adopt(conn, ctx.scope, project_id, ctx.cycle_id, "etsy", ctx.now())  # 0.14.0
     made = _new_request(
         ctx,
         conn,
@@ -3376,7 +3380,7 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
     then = f" Ember's code creates it in {shop.shop_name} (at most {shop.daily_limit} a day) and you hear the result."
     done = _at_once(conn, made, note, then)
     if done is not None:
-        return Outcome(True, done, f"#{made} Etsy listing: {_cut(listing.title, 60)}")
+        return Outcome(True, done + _joined(project_id, joined), f"#{made} Etsy listing: {_cut(listing.title, 60)}")
     text = (
         f"Approval request #{made} is waiting for your owner, in the category {category} (#{listing.taxonomy_id}). "
         f"Nothing is on Etsy yet. If they approve it, Ember's code creates the listing in {shop.shop_name} (at most "
@@ -3386,8 +3390,13 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
     short = qa.defects("etsy.create_listing", listing, looks)  # 0.13.0: the QA registry; your owner sees it too
     if short:
         text += f" QA (Ember's code): {'; '.join(short)}: make more with make_image and change the request."
-    text += note
+    text += _joined(project_id, joined) + note
     return Outcome(True, text, f"#{made} Etsy listing: {_cut(listing.title, 60)}")
+
+
+def _joined(project_id: int, venture_id: int | None) -> str:
+    """0.14.0: what the agent hears when a product line joined a venture (ventures.adopt)."""
+    return f" Project #{project_id} is part of venture #{venture_id} now: its sales count there." if venture_id else ""
 
 
 def _demand_note(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
@@ -3702,6 +3711,24 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
     if unknown is not None:
         raise ToolError(f"variant {unknown} isn't one provider #{provider_id} makes of #{blueprint_id}")
     chosen = [by_id[v] for v, _ in prices]
+    # 0.14.0: Printify's currency was never read, nor compared with the shop's: a price's margin is checked in one,
+    # with what Printify states in another converted at the owner's rate
+    if _shop(ctx).currency != access.currency:
+        raise ToolError(
+            f"the Etsy shop sells in {_shop(ctx).currency}, but printify_currency is {access.currency}: no product can "
+            "be proposed until your owner makes them one"
+        )
+    billed = {v.currency for v in chosen}
+    if len(billed) > 1:
+        raise ToolError(f"Printify states these variants in {' and '.join(sorted(billed))}: one product each")
+    billed_in, rate = billed.pop(), ctx.usd_per_eur
+    if access.currency not in ("EUR", "USD"):  # 0.14.0: Etsy's USD listing fee converts only to EUR
+        raise ToolError(f"Ember's code checks a margin in EUR or USD only, not {access.currency}")
+    sale = printify.Terms(access.currency, rate, access.buyer_ships, access.bill_vat)
+    try:
+        shipping = {v.variant_id: printify.convert(v.shipping_cents, billed_in, access.currency, rate) for v in chosen}
+    except printify.PrintifyError as exc:
+        raise ToolError(f"its shipping: {exc}") from None
     shape = chosen[0].height / chosen[0].width
     other = next((v for v in chosen if abs(v.height / v.width - shape) / shape > printify.SHAPE_TOLERANCE), None)
     if other is not None:
@@ -3738,6 +3765,20 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
             f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "
             f"{demand.DAYS} days first (demand_note: the keywords buyers search and what shows they buy)"
         )
+    # 0.14.0: what making costs, when printify_catalog read it: a price that keeps too little costs no approval
+    costs = printify_publisher.costs_of(conn, ctx.scope.mode, blueprint_id, provider_id, ctx.clock.now())
+    low, currency = [], access.currency
+    for v, price in prices:
+        cost = printify.convert(costs[v], billed_in, currency, rate) if v in costs else None
+        if cost is not None and not printify.keeps(price, cost, shipping[v], sale):
+            least = printify.least_price(cost, shipping[v], sale)
+            low.append(f"variant {v} at {printify.money(price, currency)}: at least {printify.money(least, currency)}")
+    if low:
+        raise ToolError(
+            f"{'; '.join(low)}: below that a price keeps less than {printify.MIN_MARGIN * 100:.0f}% after Etsy's "
+            f"fees, making and shipping ({sale.said()})"
+        )
+    joined = ventures.adopt(conn, ctx.scope, project_id, ctx.cycle_id, "printify", ctx.now())
     product = printify.Product(
         title=title,
         description=description,
@@ -3745,20 +3786,21 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
         blueprint_id=blueprint_id,
         provider_id=provider_id,
         prices=prices,
-        shipping=tuple((v.variant_id, v.shipping_cents) for v in chosen),
+        shipping=tuple((v.variant_id, shipping[v.variant_id]) for v in chosen),
         image=upload,
         width=width,
         height=height,
         area_width=area.width,
         area_height=area.height,
         currency=access.currency,
+        billed_in=billed_in,
     )
     blueprint, provider = printify_publisher.names(conn, ctx.scope.mode, blueprint_id, provider_id)
     reason = args["reason"].strip()
     made = _new_request(
         ctx,
         conn,
-        printify.payload(product, blueprint, provider, {v.variant_id: v.title for v in chosen}),
+        printify.payload(product, blueprint, provider, {v.variant_id: v.title for v in chosen}, sale),
         product.to_action(),
         project_id=project_id,
         type="sell",
@@ -3782,7 +3824,7 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
     short = qa.defects("printify.create_product", product)  # the QA registry: your owner sees it too
     if short:
         text += f" QA (Ember's code): {'; '.join(short)}."
-    text += _unlocked(ctx)
+    text += _joined(project_id, joined) + _unlocked(ctx)
     return Outcome(True, text, f"#{made} Printify product: {_cut(product.title, 60)}", project_id=project_id)
 
 

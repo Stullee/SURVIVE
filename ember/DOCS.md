@@ -71,7 +71,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Etsy listings per day | 3 | The most listings Ember creates in one day (0 to 20). |
 | Keep a history of the listings' numbers | off | A daily record of each listing's views and favorites, so the plans see how each changed. Turn it on only once you have confirmed that Etsy's API terms allow it (see [What Ember sees](#what-ember-sees)). |
 | Renew listings that sell | on | Once a listing has sold, Ember turns on Etsy's automatic renewal for it (USD 0.20 every four months), once per listing (see [How a listing is made](#how-a-listing-is-made)). |
-| Record Etsy revenue automatically | off | At each Etsy sync, Ember's code records the revenue of paid orders with Ember's listings placed from the day you turn it on, Etsy's fees on them and their refunds in the ledger, instead of you (see [What Ember sees](#what-ember-sees)). |
+| Record Etsy revenue automatically | off | At each Etsy sync, Ember's code records the revenue of paid orders with Ember's listings placed from the day you turn it on, Etsy's fees on them and their refunds in the ledger, instead of you, and what Printify bills for its orders (see [What Ember sees](#what-ember-sees)). |
 | Exchange rate for Etsy revenue | 0 | USD per 1 EUR for orders in EUR recorded automatically (0.5 to 3; 0: orders in EUR stay yours to record). |
 | Etsy market probe for demand notes | off | A demand note also reads Etsy's search of active listings for its keywords, keeping only how many match and their price quartiles. Turn it on only once you have confirmed that Etsy's API terms allow this use (see [How a listing is made](#how-a-listing-is-made)). |
 | Pinterest | off | Lets the agent propose pins that bring buyers to your Etsy listings, which Ember makes on your Pinterest account after you approve them. See [Pinterest](#pinterest). |
@@ -713,6 +713,10 @@ The metrics:
 | `qa_clean` | every live listing has at least 5 photos | Etsy and Ember |
 | `views_total`, `favorites_total`, `orders_total` | the listings' views, favorites or orders in all, as Etsy counts them now (only Ember's code sets milestones with `orders_total`: the listing test below; a milestone of the agent's that names a number of its listings' views or favorites must use the first two) | Etsy |
 
+The Etsy listings Printify made for Ember's products count in these metrics
+too, and so in the listing test and the venture rules below; `qa_clean`
+leaves them out (their photos are Printify's mockups).
+
 A milestone linked to a project or venture counts only what belongs to it (a
 listing belongs to the project of the request that created it), and the links
 of a milestone Ember's code set or checks never change. Etsy's numbers
@@ -736,7 +740,8 @@ of the roadmap's 20 places:
 | 21 | a first order | stopping building that product type |
 
 A miss is an obligation with that action, shown first in the agent's plan
-until it is done. A first order by day 21 sets a decision point of its own:
+until it is done. Ember can't edit the listings Printify made, so a product
+line live only through Printify owes asking you once to fix them at day 7. A first order by day 21 sets a decision point of its own:
 **Scale it: 5 variants or a bundle**, which the agent closes when they are
 live. The test's dates never move, except that a bar opening on or after its
 day is due the day after it opens. Only you drop its milestones: your drop
@@ -1306,9 +1311,10 @@ Every hour while the app runs, also while the agent sleeps between wake cycles
 their state, when they end and whether they renew themselves, views (Etsy
 counts them once a day) and favorites, and the orders
 that hold them: date, status, Ember's lines and which listing, never who bought.
-An order's amount is only Ember's lines: their price times quantity, less their
-share of a coupon and of any refund; tax, shipping and your own products in the
-same receipt don't count, and Etsy's fees are recorded on their own (below). Every sync
+An order's amount is only Ember's lines: their price times quantity and the
+shipping the buyer paid for them, less their share of a coupon and of any
+refund; tax and your own products in the same receipt don't count, and Etsy's
+fees are recorded on their own (below). Every sync
 reads the receipts that changed since the last sync that worked, or since the
 oldest paid order whose fees it hasn't read yet (at least 30 days back, at most
 a year), so an order refunded or cancelled after it was read
@@ -1468,6 +1474,12 @@ product always waits for your decision, whatever you unlocked.
    **Printify currency** to the currency your Printify shop shows its prices
    and costs in, save and restart the app. If you have more than one Printify
    shop connected to Etsy, set **Printify shop** to its number too.
+4. Check two options for the margin check. Switch **Buyers pay Printify
+   shipping** on if the Etsy shipping profile of Printify's products charges
+   the buyer for shipping (Printify's default); off, Ember prices as if the
+   price alone pays it. **Printify bills VAT** (on by default): switch it off
+   only if you can reclaim the VAT on Printify's bill. Ask a Steuerberater
+   about your VAT status; this is not tax advice.
 
 **System → Printify** on the dashboard shows the shop Ember found, the products
 it made and what their orders cost you.
@@ -1475,34 +1487,57 @@ it made and what their orders cost you.
 ### How a product is made
 
 - The agent looks through Printify's catalog (`printify_catalog`: products,
-  who makes them, their sizes with the print area and the shipping to Germany)
-  and proposes a product with `propose_printify_product`: one of its pictures,
+  who makes them, their sizes with the print area, the shipping to Germany and
+  what making each costs with its least price) and proposes a product with `propose_printify_product`: one of its pictures,
   the variants (sizes of one shape) with their prices, and the listing's title,
   description and tags. Ember adds a line saying AI helped design it, as on
   Etsy. The approval card shows every word, each price with its shipping, and
   what the QA check finds short (a picture that prints blurry below 150 dpi, or
   whose shape leaves part of the print area blank).
+- To show what making costs, Ember creates an unpublished product of the
+  variants with a blank picture, reads its costs and deletes it at once (at
+  most once a day for a product and provider). It is never published. If its
+  delete fails, the next sync deletes it.
+- Amounts Printify states in another currency than **Printify currency** are
+  converted at **Exchange rate for Etsy revenue** (USD and EUR only); without
+  it, no product of them can be proposed. **Printify currency** must be your
+  Etsy shop's currency.
 - **Approve** and Ember uploads the picture, creates the product at Printify
   (not published yet) and reads what each variant costs to make. It publishes
   the product to your Etsy shop only if every price keeps **15%** of itself
-  after Etsy's fees (about 10.5% and 0.50), making and shipping. Otherwise it
-  deletes the unpublished product and the card says, for each price, what it
-  would need. A product can only be approved as it is or rejected; **Cancel**
+  after Etsy's fees (the listing fee, 6.5%, payment processing and 19% VAT on
+  Etsy's fees), making and shipping (with 19% VAT on Printify's bill if
+  **Printify bills VAT** is on). If **Buyers pay Printify shipping** is on,
+  the shipping is revenue too (with Etsy's fees on it) and the 15% is of price
+  and shipping; otherwise the price alone pays the shipping. Prices in GBP
+  can't be checked (EUR and USD only). Otherwise it deletes the unpublished
+  product and the card says, for each price, what it would need (if the delete
+  fails, the card says so and names the product to delete at Printify). A product can only be approved as it is or rejected; **Cancel**
   stops it before Ember starts.
 - Printify then publishes the listing in your shop (it can take a few
   minutes); the card shows the listing once the sync has read it. At most
   **Printify products per day** are created a day.
 - If the picture changed after you approved, nothing is created. Ember never
   creates a product twice: if it can't tell what Printify made (a lost
-  connection), it says so and doesn't try again.
+  connection), it says so and doesn't try again. The sync then reads the
+  product: if Printify published it, Ember tracks its listing (with **Undo**).
+  A product with no Etsy listing 24 hours after it was sent fails with the
+  reason: check it at Printify.
 - Every hour while the app runs, Ember reads its products' state and the
   Printify orders of its products: what making and shipping each one costs
-  you. **Record the cost** on an order opens the expense form filled in (it can
-  be recorded once). The sale itself is an order in your Etsy shop: its revenue
-  is recorded as for any listing of Ember's.
+  you, with the tax Printify bills. **Record the cost** on an order opens the
+  expense form filled in, for the product's project and venture (it can be
+  recorded once). With **Record Etsy revenue automatically** on, Ember's code
+  records that cost itself at each Etsy sync, for orders from the day you
+  turned it on (EUR at your exchange rate). A cancelled order's cost recorded
+  before is yours to correct. The sale itself is an order in your Etsy shop: its revenue,
+  with the shipping the buyer paid, is recorded as for any listing of Ember's.
 - The agent's plan shows each product with what its prices keep and the orders
-  (PRINTIFY); the metrics `pod_products_live` and `pod_orders` can measure a
-  milestone. The seeded venture *Print on demand in the Etsy shop* has its first
+  (PRINTIFY); the metrics `pod_products_live` (products whose listing is live
+  on Etsy) and `pod_orders` can measure a milestone. A product line without a
+  venture joins the cycle's venture when the agent proposes for it, or else
+  the print-on-demand venture (the Etsy leg for an Etsy listing); it never
+  joins a parked or killed one. The seeded venture *Print on demand in the Etsy shop* has its first
   test in them: a first order.
 - **Undo** on the product's entry under **What Ember's code did** deletes it at
   Printify.

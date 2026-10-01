@@ -7,7 +7,8 @@ FINDING A PRODUCT (printify_catalog, free):
 1. search words ('poster matte', 'mug') list products (blueprint_id).
 2. blueprint_id lists who makes it (provider_id): a provider in Europe ships faster and cheaper to Germany.
 3. blueprint_id and provider_id list its variants (variant_id), each with its print area (the pixels your picture fills
-   at 300 dpi) and its shipping to Germany.
+   at 300 dpi), its shipping to Germany, what making it costs and its least price (Ember's code reads the costs from
+   an unpublished product it deletes at once).
 
 A PRODUCT NEEDS:
 1. a picture of yours (.png or .jpg, at most {MAX_MP} MP), as big as the print area allows: below {SHARP_DPI} dpi it
@@ -20,9 +21,10 @@ A PRODUCT NEEDS:
    rules). Ember's code adds a line saying AI helped design it.
 4. its project (a product line): a new product line's first product needs a demand note, as a listing does.
 
-PRICES: what making a variant costs is known only once Ember's code creates it. Each price must keep {MIN_MARGIN}% of
-itself after Etsy's fees (about 10.5% and 0.50), making and shipping, or the product isn't published and you hear what
-each price needs. Printing on demand costs a lot: price at 2.5 to 3 times making and shipping.
+PRICES: each price must keep {MIN_MARGIN}% of what the buyer pays after Etsy's fees, making and shipping (who pays
+shipping and VAT: your owner's options, the catalog says which). A price below its variant's least price is refused;
+with making unknown, a price that keeps too little isn't published. Printing on demand costs a lot: price at 2.5 to 3
+times making and shipping.
 
 RULES: only your own designs (no brands, characters, famous people, lyrics or anyone's art: those are others' rights),
 and no health or safety claims. Your owner's first product always waits for their decision: physical goods bring them

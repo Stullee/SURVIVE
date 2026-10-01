@@ -4042,7 +4042,8 @@
   }
 
   // What an order cost you at Printify is an expense only you record: the form opens filled in, and its key records it
-  // once. Only EUR and USD can be recorded here.
+  // once. Only EUR and USD can be recorded here. 0.14.0: as an expense of the product's project and venture, like its
+  // sale's revenue (it was overhead), with the tax Printify bills.
   function printifyCostCell(o, fake) {
     if (o.recorded) return h("span", { class: "muted small", text: "Recorded" });
     if (o.currency !== "EUR" && o.currency !== "USD") return h("span", { class: "muted small", text: "In " + asText(o.currency) + ": convert it and record it yourself" });
@@ -4051,10 +4052,12 @@
     b.addEventListener("click", function () {
       openLedgerForm("expense", isNaN(cents) ? null : (cents / 100).toFixed(2), {
         currency: o.currency,
-        note: "Printify: making and shipping order " + o.order_id + " (" + asText(o.titles).slice(0, 80) + ")",
+        note: "Printify: making, shipping and tax of order " + o.order_id + " (" + asText(o.titles).slice(0, 80) + ")",
         day: String(o.created_at || "").slice(0, 10),
         idKey: String(o.key || ""),
         testMoney: fake,
+        projectId: o.project_id || null,
+        ventureId: o.venture_id || null,
       });
     });
     return b;

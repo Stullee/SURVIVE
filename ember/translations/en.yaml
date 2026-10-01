@@ -271,8 +271,9 @@ configuration:
     description: >-
       On: at each Etsy sync, Ember's code records the revenue of paid orders
       of Ember's listings placed from the day you turn it on, Etsy's fees on
-      them and their refunds in the ledger (shown as made by Ember's code), so
-      its balance and goals see them without waiting for you. Off: you record
+      them, their refunds and what Printify bills for its orders in the ledger
+      (shown as made by Ember's code), so its balance and goals see them
+      without waiting for you. Off: you record
       them (System, Etsy). Entries you made stay yours.
   etsy_usd_per_eur:
     name: Exchange rate for Etsy revenue (USD per 1 EUR)
@@ -341,6 +342,16 @@ configuration:
     description: >-
       At most this many approved products are created a day; more wait for
       the next day.
+  printify_buyer_pays_shipping:
+    name: Buyers pay Printify shipping
+    description: >-
+      On if your Etsy shipping profile for Printify's products charges the
+      buyer for shipping. Off: Ember prices as if the price alone pays it.
+  printify_bill_vat:
+    name: Printify bills VAT
+    description: >-
+      On if Printify adds VAT to its bill and you can't reclaim it (for
+      example as a Kleinunternehmer). Used for the margin check.
   site_enabled:
     name: Website
     description: >-

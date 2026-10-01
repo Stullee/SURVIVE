@@ -562,7 +562,8 @@ class Order:
     ordered_at: str
     total_cents: int  # what the buyer paid for the whole receipt: tax, shipping and the owner's products included
     currency: str
-    items: list[dict[str, Any]] = field(default_factory=list)  # listing_id, title, quantity, price_cents (a unit's)
+    # listing_id, title, quantity, price_cents (a unit's); 0.14.0: shipping_cents (the line's, as the buyer paid it)
+    items: list[dict[str, Any]] = field(default_factory=list)
     # 0.12.0: what Ember's share of a receipt is worth needs its status, the items' price before the coupon
     # (items_cents: every line's price times quantity), the coupon and what was refunded.
     status: str = "paid"
@@ -607,14 +608,16 @@ def fees_share(
 
 def order_net(order: Order, lines: list[dict[str, Any]]) -> int:
     """What Ember's ``lines`` of a receipt earned, in cents (0.12.0: the whole receipt was stored): their price times
-    quantity, less their share of the coupon and of the refunds. Tax, shipping and the owner's own products don't
-    count; Etsy's fees are booked on their own."""
+    quantity and (0.14.0) the shipping the buyer paid for them, less their share of the coupon and of the refunds. Tax
+    and the owner's own products don't count; Etsy's fees are booked on their own. The shipping was left out, while
+    Printify's shipping of a product it makes is a cost."""
     if order.status in DEAD_ORDERS:
         return 0
     gross = sum(int(i.get("price_cents") or 0) * int(i.get("quantity") or 1) for i in lines)
+    shipping = sum(int(i.get("shipping_cents") or 0) for i in lines)
     whole = order.items_cents or gross
     share = gross / whole if whole else 1.0
-    return max(0, gross - round((order.discount_cents + order.refunded_cents) * share))
+    return max(0, gross + shipping - round((order.discount_cents + order.refunded_cents) * share))
 
 
 class Shop(Protocol):

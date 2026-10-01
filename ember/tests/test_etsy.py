@@ -440,7 +440,9 @@ def test_listings_orders_and_categories_are_read(tmp_path: Path) -> None:
     )
     order, cancelled, unpaid = shop.orders(Clock().now() - timedelta(days=30))
     assert (order.receipt_id, order.total_cents, order.currency, order.status) == (91, 450, "EUR", "paid")
-    assert order.items == [{"listing_id": 555, "title": "Planner", "quantity": 1, "price_cents": 0}]  # never who bought
+    assert order.items == [
+        {"listing_id": 555, "title": "Planner", "quantity": 1, "price_cents": 0, "shipping_cents": 0}
+    ]  # never who bought
     assert "someone@example.org" not in json.dumps(order.__dict__)
     # 0.12.0: cancelled and unpaid receipts come too (a stored order learns it), and by change, not by creation.
     assert (cancelled.status, cancelled.paid, unpaid.status, unpaid.paid) == ("canceled", False, "unpaid", False)
@@ -1250,6 +1252,7 @@ def test_a_0_8_shop_keeps_its_listings_through_the_0_9_migration(tmp_path: Path)
             " title) VALUES ('live', 0, 3, 'then', 'now', 'active', 4584845289, 'CV')"
         )
     old.close()
+    # every migration after 0.8.0's (0.14.0: whatever their number, as new ones come)
     assert migrate(db_file, backup_dir=tmp_path / "backups") == [
         m.version for m in discover_migrations() if m.version >= 11
     ]

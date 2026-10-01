@@ -248,9 +248,13 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
         return None if pin is not None and pin["status"] == "active" else "the pin isn't on Pinterest anymore"
     if undo["action"] == "delete_product":  # 0.13.0 (Phase E4)
         product = conn.execute(
-            f"SELECT status FROM printify_products WHERE {where} AND product_id = ?", (*params, row["subject"])
+            f"SELECT status, error FROM printify_products WHERE {where} AND product_id = ?", (*params, row["subject"])
         ).fetchone()
-        live = product is not None and product["status"] in printify_publisher.LIVE
+        # 0.14.0: one that reached no Etsy listing (STALE) is still at Printify, to delete
+        live = product is not None and (
+            product["status"] in printify_publisher.LIVE
+            or (product["status"] == "failed" and product["error"] == printify_publisher.STALE)
+        )
         return None if live else "the product isn't at Printify anymore"
     later = _later(conn, scope, row)
     if later is not None:
