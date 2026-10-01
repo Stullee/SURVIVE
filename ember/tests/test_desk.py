@@ -57,7 +57,9 @@ def test_ready_ranks_the_ventures_next_decisions(data_dir: Path) -> None:
         ventures.add_research(conn, DROPSHIPPING, 1, None, "q", None, 1, 460_000, now)  # $0.14 of $0.60 left
     actions = owner(agent)
     assert actions.decide_venture(RECRUITING, {"action": "research"}, "Stefan").status == 200  # the owner's wish
-    assert actions.decide_venture(PRINT, {"action": "back"}, "Stefan").status == 200  # backed, no project yet
+    assert (
+        actions.decide_venture(PRINT, {"action": "back", "confirm": True}, "Stefan").status == 200
+    )  # backed, no project yet
     assert keys(agent) == [
         f"build #{PRINT}",
         f"appraise #{RECRUITING}",  # the owner's wish

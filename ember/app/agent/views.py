@@ -41,6 +41,7 @@ from . import (
     research_check,
     review,
     roadmap,
+    stages,
     store,
     ventures,
 )
@@ -535,6 +536,12 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
             for v in rows
             if v["cases"] and v["stage"] in ventures.EXPLORING
         }
+        # 0.14.0: why Ember's code wouldn't back an unbacked venture: the owner's Back then confirms it
+        unbacked = {
+            v["id"]: stages.backing_problem(conn, v, cash_eur=agent.settings.venture_cash_eur, net_days=net_days)
+            for v in rows
+            if v["stage"] in (*ventures.EXPLORING, "parked")
+        }
         # 0.13.0: the decision desk: READY as a venture cycle would get it now, and what the last venture plans took
         mode = burn.peek(agent.db, status).mode
         ready_now = desk.ready(
@@ -612,6 +619,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                     {"rule": k.rule, "label": k.label, "why": k.why, "overridden": k.overridden}
                     for k in knocked.get(v["id"], [])
                 ],
+                "backing_problem": unbacked.get(v["id"]) or None,
                 # 0.12.0: its evidence: the claims by grade and the newest (see evidence.py)
                 "evidence": found.get(v["id"], {"counts": dict.fromkeys(evidence.GRADES, 0), "items": []}),
                 "projects": linked.get(v["id"], []),

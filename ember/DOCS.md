@@ -504,9 +504,10 @@ A knocked-out venture isn't proposed: the agent fixes what can be fixed (new
 numbers, independent evidence) or parks it with the numbers. The card lists
 its knock-outs, and you can **Lift** one for that venture if you accept it
 (and **Restore** it later); the agent hears it as your note on the venture.
-If you back a proposal that has no numbers (one proposed before 0.13.0) or a
-knock-out that stands now, it goes back to researching instead and you see why
-(0.14.0); back it from there if you still want it.
+A venture Ember's code wouldn't back (no numbers, as one proposed before
+0.13.0, or a knock-out that stands) says why on its card (0.14.0), and **Back
+it** becomes **Back it anyway**: your call. A proposal that turned out so
+since the card loaded goes back to researching instead, and you see why.
 
 **Critic.** The agent argues its own cases, so before its next plan after a
 venture is proposed, a separate call on the **Model for venture plans and
@@ -1117,8 +1118,8 @@ can also remove the app's access at Etsy).
   sales and prices) and its source, which must be an independent page the
   agent's research returned or a document in your Library that is linked to
   the product line or its venture, or a keyword export you uploaded as a .csv
-  or .tsv file (0.14.0); the note must cite a number from it. No more generic
-  templates without one.
+  or .tsv file (0.14.0); the note must cite a number from it with what it
+  counts (searches, sales). No more generic templates without one.
 - **Etsy market probe** (off by default): with it on, a demand note also reads
   Etsy's search of active listings for its keywords and keeps only two things:
   how many listings match, and the price quartiles of the first ones (never

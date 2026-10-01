@@ -91,6 +91,12 @@ _DEMAND = re.compile(
     r"|nachfrage|umsatz)\b",
     re.IGNORECASE,
 )
+# ... but not a price, a tax, a cost, a policy, a minimum or shipping of them ("average sales price", "minimum orders")
+_NOT_DEMAND = re.compile(
+    r"\b(?:prices?|pricing|tax\w*|costs?|fees?|polic(?:y|ies)|minimum|min\.|shipping|delivery|returns?|margins?"
+    r"|preis\w*|steuer\w*|kosten|gebühr\w*|mindest\w*|versand\w*|liefer\w*|rückgabe\w*|marge)\b",
+    re.IGNORECASE,
+)
 # Affiliates: a link that pays whoever sends a buyer.
 _AFFILIATE_PARAMS = frozenset({"ref", "aff", "affiliate", "aff_id", "affid", "partner", "via", "tag", "irclickid"})
 _AFFILIATE_PATH = re.compile(r"/(?:go|recommends|aff|affiliate|refer|out)/", re.IGNORECASE)
@@ -224,7 +230,11 @@ def demand_shown(conn: sqlite3.Connection, venture_id: int) -> bool:
     rows = conn.execute(
         "SELECT metric, unit, url FROM evidence WHERE venture_id = ? AND source = 'independent'", (venture_id,)
     )
-    return any(_DEMAND.search(f"{r['metric']} {r['unit']}") and not vendor(r["url"]) for r in rows)
+    return any(_demand(f"{r['metric']} {r['unit']}") and not vendor(r["url"]) for r in rows)
+
+
+def _demand(words: str) -> bool:
+    return bool(_DEMAND.search(words)) and not _NOT_DEMAND.search(words)
 
 
 def by_venture(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, dict[str, Any]]:

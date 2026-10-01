@@ -40,38 +40,55 @@ LABELS = {
 }
 NEEDS = ("cold_outreach", "ember_accounts")  # what a case says it needs (venture_case's ``needs``)
 # Words of a case that plan writing to people who didn't ask first (the owner can override a wrong match). 0.14.0:
-# "reach out to", "writing to" and German too ("Firmen anschreiben"), a few words between verb and whom.
+# "reach out to", "writing to", "send emails to" and German too ("Firmen anschreiben", "wir rufen Firmen an").
 _WHO = (
     r"(?:local |small |german |potential |target |selected |the |\d[\d.,]*\+? )*(?:hr |hiring |shop |store )?"
     r"(?:businesses|companies|firms|shops|stores|owners|leads|prospects|agencies|managers|recruiters|founders|ceos"
     r"|decision[- ]makers)\b"
 )
+_WEN = (
+    r"(?:\d[\d.,]*\+?\s+)?(?:firmen|unternehmen|betriebe|händler|geschäfte|läden|shops|ladenbesitzer\w*|inhaber\w*"
+    r"|personaler\w*|entscheider\w*|neukunden|agenturen|praxen)"
+)
+_ART = r"(?:die|den|diese|alle|viele|lokale\w*|kleine\w*|regionale\w*|ausgewählte\w*)"  # before whom
+_HOW = r"(?:per|mit|via|über|telefonisch|direkt|gezielt|aktiv|e-?mail|linkedin|xing|telefon)"
 _COLD = re.compile(
     r"\bcold[- ](?:e-?mails?|call(?:s|ing)?|outreach|messages?|dms?|pitch(?:es)?)\b|\bkaltakquise\b"
     r"|\b(?:e-?mail(?:s|ing)?|contact(?:s|ing)?|messag(?:e|es|ing)|dm(?:s|ing)?|phon(?:es|ing)|call(?:s|ing)?) "
     + _WHO
-    + r"|\b(?:writ(?:e|es|ing)|wrote|reach(?:es|ing)? out) to "
+    + r"|\b(?:writ(?:e|es|ing)|wrote|reach(?:es|ing)? out|send(?:s|ing)? (?:e-?mails?|messages?|dms?|letters?)) to "
     + _WHO
     + r"|\blead (?:lists?|generation)\b"
-    r"|\b(?:firmen|unternehmen|betriebe|händler|geschäfte|läden|shops|ladenbesitzer\w*|inhaber\w*|personaler\w*"
-    r"|entscheider\w*|neukunden|agenturen|praxen)\s+(?:(?:per|mit|via|über|telefonisch|direkt|gezielt|aktiv|e-?mail"
-    r"|linkedin|xing|telefon)\s+)*(?:an(?:zu)?schreiben|an(?:zu)?rufen|(?:zu )?kontaktieren|an(?:zu)?sprechen|anmailen"
-    r"|akquirieren)\b",
+    r"|\b" + _WEN + r"\s+(?:" + _HOW + r"\s+)*(?:an(?:zu)?schreiben|an(?:zu)?rufen|(?:zu )?kontaktieren"
+    r"|an(?:zu)?sprechen|anmailen|akquirieren)\b"
+    # a main clause: "wir rufen Firmen an", "wir schreiben Unternehmen per E-Mail an", "wir kontaktieren Firmen"
+    r"|\b(?:rufen|ruft|rufe|schreiben|schreibt|schreibe|sprechen|spricht|spreche)\s+(?:"
+    + _ART
+    + r"\s+){0,2}"
+    + _WEN
+    + r"\b[^.;:!?,\n]{0,40}?\san(?=\s*(?:[.;:!?,\n]|$|und\b|oder\b))"
+    r"|\b(?:kontaktier(?:e|en|t)|akquirier(?:e|en|t)|mailen)\s+(?:" + _ART + r"\s+){0,2}" + _WEN + r"\b",
     re.IGNORECASE,
 )
-# 0.14.0: words that rule it out, just before ("no cold outreach", "we never email businesses") or just after ("cold
-# outreach: none", "cold calls are not needed"), and a part of a sentence that calls it illegal.
-_NOT = re.compile(
-    r"\b(?:no|not|never|without|avoid\w*|instead of|rather than|kein\w*|nicht|nie|niemals|ohne|statt)\b|n't\b",
+# 0.14.0: words that rule it out: a negation right before, with nothing but such small words between ("no cold
+# outreach", "we will not do any cold calls"), or right after ("cold outreach: none", "cold calls are not needed"),
+# and a part of a sentence that calls it illegal.
+_NOT_BEFORE = re.compile(
+    r"(?:^|\s)(?:no|not|never|without|avoid\w*|instead of|rather than|kein\w*|nicht|nie|niemals|ohne|statt|\w+n't)"
+    r"(?:\s+(?:do|does|did|doing|will|would|we|i|they|any|a|an|use|using|make|making|send|sending|need|plan|to|be"
+    r"|more|also|direkt|auch|wir|ich|eine?n?))*\s*$",
     re.IGNORECASE,
 )
 _NOT_AFTER = re.compile(
     r"^[\s:\u2013\u2014-]*(?:(?:is|are|was|were|will be|would be|ist|sind|wird|werden)\s+)?"
-    r"(?:no|none|not|never|nicht|kein\w*|nie)\b|^\s*(?:is|are|was|were|wo|do|does)n't\b",
+    r"(?:(?:none|no|nein|kein\w*|nie)\b|(?:not|never|nicht)\s+(?:needed|necessary|required|planned|used|done|part"
+    r"|an option|nötig|notwendig|geplant|vorgesehen|erforderlich|erlaubt|allowed|permitted)\b)"
+    r"|^\s*(?:is|are|was|were|wo|do|does)n't\s+(?:needed|necessary|required|planned|used|done|part|an option)\b",
     re.IGNORECASE,
 )
 _UNLAWFUL = re.compile(
-    r"\b(?:illegal|unlawful|forbidden|prohibited|banned|not allowed|verboten|unzulässig|untersagt|rechtswidrig)\b",
+    r"(?<!not )(?<!nicht )\b(?:illegal|unlawful|forbidden|prohibited|banned|not allowed|verboten|unzulässig|untersagt"
+    r"|rechtswidrig)\b",
     re.IGNORECASE,
 )
 _CLAUSE_END = ".;:!?,\n"  # where a part of a sentence ends
@@ -95,15 +112,17 @@ def _cut(text: str, ends: str) -> int:
 
 
 def cold_words(text: str) -> str:
-    """The first words of ``text`` that plan cold outreach ("" without any): 0.14.0, not where the few words before
+    """The first words of ``text`` that plan cold outreach ("" without any): 0.14.0, not where a negation right before
     them or the words right after rule it out, nor in a part of a sentence that calls it illegal."""
     for found in _COLD.finditer(text):
         head = text[: found.start()]
         before = head[max(head.rfind(c) for c in _CLAUSE_END) + 1 :]
         tail = text[found.end() :]
         clause = before + found[0] + tail[: _cut(tail, _CLAUSE_END)]
-        near = " ".join(before.split()[-4:])
-        if _NOT.search(near) or _NOT_AFTER.search(tail[: _cut(tail, _SENTENCE_END)]) or _UNLAWFUL.search(clause):
+        near = " ".join(before.split()[-6:])
+        if _NOT_BEFORE.search(near) or re.search(r"\b(?:nicht|kein\w*)\b", found[0], re.IGNORECASE):
+            continue
+        if _NOT_AFTER.search(tail[: _cut(tail, _SENTENCE_END)]) or _UNLAWFUL.search(clause):
             continue
         return found[0]
     return ""

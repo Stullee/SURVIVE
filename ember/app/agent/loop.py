@@ -1441,8 +1441,10 @@ class CycleRunner:
                     more = self._call(cycle_id, "research", follow, venture_id)
                     response = more.response or response
                     cost += more.cost_micros
-                except (CallRefused, CallFailed):
+                except CallRefused:
                     pass
+                except CallFailed as exc:  # 0.14.0: paid, so it counts toward the budget too
+                    cost += exc.result.cost_micros
             answer = _text_of(response)
             digest = answer[:RESEARCH_DIGEST_CHARS] or "Nothing useful was found."
             sources = _sources(response)

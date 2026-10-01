@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 from app.agent import demand, desk, econ, evidence, knockouts, stages, store, tools, ventures
-from app.agent.fake_llm import Fail, FakeTransport, Reply, ToolCalls
+from app.agent.fake_llm import Fail, FakeTransport, Raw, Reply, ToolCalls
 from app.agent.service import Agent
 from app.db import Database, discover_migrations, migrate
 from app.economy.clock import to_iso
@@ -91,10 +91,13 @@ def test_a_library_document_backs_a_demand_note_only_when_linked_or_an_export_wi
     guide = document(agent, text=SEO_GUIDE)  # live: a general Etsy guide "backed" a product line
     said = "Landlords search 1,200 times a month for a statement template."
     assert "isn't linked to project #1 or its venture" in problem(agent, f"library #{guide}", said)
-    linked = document(agent, text=SEO_GUIDE + " Linked.", project_id=project)
+    text = SEO_GUIDE + " Statement templates: 850 searches a month in 2026, at 4.99 EUR."
+    linked = document(agent, text=text, project_id=project)
     assert "cite a number from library #" in problem(agent, f"library #{linked}", "Landlords must do this by law.")
     assert "cite a number from library #" in problem(agent, f"library #{linked}", said)  # 1,200 isn't in it
-    assert problem(agent, f"library #{linked}", "A title of 140 characters and all 13 tags.") == ""
+    for not_demand in ("A title of 140 characters and all 13 tags.", "Searched a lot in 2026.", "499 sales a month."):
+        assert "cite a number from library #" in problem(agent, f"library #{linked}", not_demand), not_demand
+    assert problem(agent, f"library #{linked}", "Statement templates: 850 searches a month.") == ""
     upload = {"file_name": "keywords.csv", "file_data": base64.b64encode(EXPORT.encode()).decode()}
     export = document(agent, **upload)  # the owner's keyword export: a table, linked to nothing
     assert problem(agent, f"library #{export}", said) == ""  # 1,200 = 1.200
@@ -146,6 +149,9 @@ def test_vendors_are_matched_on_any_domain_and_only_demand_lifts_vendor_only(dat
     assert claim(agent, "https://example.invalid/a-policy", "policy requirement") == "independent"
     assert claim(agent, "https://www.etsy.com/listing/1/poster", "price") == "independent"
     assert claim(agent, "https://example.invalid/supplier-faq", "minimum order", "units") == "independent"
+    for metric in ("average sales price", "sales tax", "minimum orders", "return policy for customers"):
+        assert claim(agent, "https://example.invalid/guide", metric) == "independent"
+    assert claim(agent, "https://example.invalid/faq", "shipping time to customers", "days") == "independent"
     [vendor_only] = [(k.rule, k.why) for k in check(agent)]
     assert vendor_only[0] == "vendor_only" and "no independent page shows demand" in vendor_only[1]
     assert claim(agent, "https://example.invalid/forum", "monthly searches", "searches") == "independent"
@@ -243,16 +249,34 @@ def test_the_owners_back_sends_a_knocked_out_proposal_back_to_researching_first(
         ventures.update(
             conn, DROPSHIPPING, now, stage="proposed", proposed_at=now, scores_by="research", **SCORES, **CASE
         )
-    refused = owner(agent).decide_venture(DROPSHIPPING, {"action": "back"}, "Stefan")
-    assert refused.status == 409 and refused.body["field"] == "action"
-    assert refused.body["error"].startswith(
-        f"venture #{DROPSHIPPING} isn't backed as proposed: it is knocked out (cash beyond the budget: EUR 50 to start"
-    )
-    assert "Ember's code put it back in researching: back it from there if you still want it" in refused.body["error"]
+    stale = {"action": "back", "expected_version": 99}
+    assert owner(agent).decide_venture(DROPSHIPPING, stale, "Stefan").status == 409  # nothing changes
+    assert rows(agent, f"SELECT stage FROM ventures WHERE id = {DROPSHIPPING}")[0]["stage"] == "proposed"
+    sent_back = owner(agent).decide_venture(DROPSHIPPING, {"action": "back"}, "Stefan")
+    assert sent_back.status == 200 and sent_back.body["stage"] == "researching"
+    assert sent_back.body["not_backed"].startswith("it is knocked out (cash beyond the budget: EUR 50 to start")
     [row] = rows(agent, f"SELECT stage, notes, owner_action FROM ventures WHERE id = {DROPSHIPPING}")
     assert row["stage"] == "researching" and row["owner_action"] is None
     assert "Back to researching by Ember's code: it is knocked out (cash beyond the budget: EUR 50" in row["notes"]
-    backed = owner(agent).decide_venture(DROPSHIPPING, {"action": "back"}, "Stefan")  # the owner's call, knowing it
+    # a second Back from researching is checked too: refused, nothing changes, until the owner confirms it
+    refused = owner(agent).decide_venture(DROPSHIPPING, {"action": "back"}, "Stefan")
+    assert refused.status == 409 and refused.body["field"] == "confirm"
+    assert "wouldn't back venture" in refused.body["error"] and "cash beyond the budget" in refused.body["error"]
+    assert rows(agent, f"SELECT stage FROM ventures WHERE id = {DROPSHIPPING}")[0]["stage"] == "researching"
+    backed = owner(agent).decide_venture(DROPSHIPPING, {"action": "back", "confirm": True}, "Stefan")
+    assert backed.status == 200 and backed.body["stage"] == "building"  # the owner's call, knowing it
+
+
+def test_the_owners_back_on_a_venture_without_numbers_needs_their_confirmation(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
+    with agent.db.transaction() as conn:  # dropshipping #3 after the upgrade: researching, with no case
+        conn.execute(f"UPDATE ventures SET stage = 'researching' WHERE id = {DROPSHIPPING}")
+    [card] = [v for v in agent.ventures()["items"] if v["id"] == DROPSHIPPING]
+    assert "no numbers" in card["backing_problem"]
+    refused = owner(agent).decide_venture(DROPSHIPPING, {"action": "back"}, "Stefan")
+    assert refused.status == 409 and refused.body["field"] == "confirm" and "no numbers" in refused.body["error"]
+    assert rows(agent, f"SELECT stage FROM ventures WHERE id = {DROPSHIPPING}")[0]["stage"] == "researching"
+    backed = owner(agent).decide_venture(DROPSHIPPING, {"action": "back", "confirm": True}, "Stefan")
     assert backed.status == 200 and backed.body["stage"] == "building"
 
 
@@ -310,6 +334,27 @@ def test_an_ordinary_cycles_research_counts_toward_its_focus_ventures_budget(
     assert spent == [{"venture_id": DROPSHIPPING, "sources": 1}, {"venture_id": DROPSHIPPING, "sources": 0}]
 
 
+def test_a_paid_failure_of_researchs_continuation_counts_toward_the_budget(data_dir: Path) -> None:
+    found_it = research_found("https://example.invalid/sellers").response
+    paused = Raw({**found_it, "content": found_it["content"][:1], "stop_reason": "pause_turn"})  # a search under way
+    failing = Fail(Interrupted("stream broke", partial_usage={"input_tokens": 1_000, "output_tokens": 50}))
+    fake = FakeTransport(
+        script=[
+            plan(venture=DROPSHIPPING),
+            ToolCalls([research("Who sells it?")]),
+            paused,
+            failing,
+            Reply("Done."),
+            JOURNAL,
+        ]
+    )
+    agent, _ = run(data_dir, fake, settings=VENTURING)
+    calls = rows(agent, "SELECT cost_micros FROM llm_calls WHERE purpose = 'research' ORDER BY id")
+    assert len(calls) == 2 and calls[1]["cost_micros"] > 0
+    [spent] = rows(agent, "SELECT cost_micros FROM venture_research")
+    assert spent["cost_micros"] == calls[0]["cost_micros"] + calls[1]["cost_micros"]
+
+
 def test_research_in_an_ordinary_cycle_for_a_backed_venture_stays_unbound(data_dir: Path) -> None:
     fake = FakeTransport(
         script=[
@@ -322,7 +367,7 @@ def test_research_in_an_ordinary_cycle_for_a_backed_venture_stays_unbound(data_d
     )
 
     def backed(agent: Agent) -> None:
-        assert owner(agent).decide_venture(DROPSHIPPING, {"action": "back"}, "Stefan").status == 200
+        assert owner(agent).decide_venture(DROPSHIPPING, {"action": "back", "confirm": True}, "Stefan").status == 200
 
     agent, _ = run(data_dir, fake, before=backed, settings=ORDINARY)
     assert [r["status"] for r in tool_results(agent, "research")] == ["ok"]
@@ -389,6 +434,18 @@ def test_slow_compares_the_first_sale_in_days_with_half_the_runway(data_dir: Pat
         ("We have no website yet, so we cold call shops.", True),
         ("We have no website yet so we cold call shops.", True),  # a "no" far before doesn't rule it out
         ("Cold emails are illegal in Germany (UWG 7), but we call 30 firms.", True),
+        # review: German main clauses, a negation of something else, words after that don't rule it out
+        ("Wir rufen Firmen an.", True),
+        ("Wir schreiben Unternehmen per E-Mail an.", True),
+        ("Wir kontaktieren Firmen direkt.", True),
+        ("Without paid ads we cold call 50 shops a day.", True),
+        ("Cold calls are not expensive, so we start there.", True),
+        ("Cold outreach is not optional for this model.", True),
+        ("Cold emails are not illegal if they are B2B, so we send them.", True),
+        ("Send emails to 100 companies.", True),
+        ("Wir rufen Firmen nicht an.", False),
+        ("We will not do any cold outreach.", False),
+        ("Wir sprechen über Firmen an der Uni.", False),
     ],
 )
 def test_cold_outreach_words_read_negations_and_german(words: str, cold: bool) -> None:

@@ -708,7 +708,9 @@ def test_the_owner_adds_ideas_and_decides_and_the_agent_hears_it(data_dir: Path)
     assert who.add_venture({"title": "New", "pitch": "x", "parent_id": 99}, None).status == 404
     assert who.add_venture({"title": "Two\nlines", "pitch": "x"}, None).body["field"] == "title"
     assert who.add_venture({"title": "No pitch"}, None).body["field"] == "pitch"
-    backed = who.decide_venture(DROPSHIPPING, {"action": "back", "comment": "Go, I make the accounts."}, "Stefan")
+    backed = who.decide_venture(
+        DROPSHIPPING, {"action": "back", "comment": "Go, I make the accounts.", "confirm": True}, "Stefan"
+    )
     assert backed.status == 200 and backed.body == {"id": DROPSHIPPING, "stage": "building"}
     assert who.decide_venture(DROPSHIPPING, {"action": "back"}, None).status == 409  # already building
     assert who.decide_venture(FIVERR, {"action": "kill"}, None).body["stage"] == "killed"

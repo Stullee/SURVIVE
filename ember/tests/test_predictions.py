@@ -88,7 +88,7 @@ def test_a_backed_ventures_first_sale_is_a_prediction_the_critic_and_triage_read
         ventures.add_case(conn, PRINT, None, made, econ.compute(made), to_iso(agent.clock.now()))
     actions = owner(agent)
     for vid in (DROPSHIPPING, PRINT):
-        assert actions.decide_venture(vid, {"action": "back"}, "Stefan").status == 200
+        assert actions.decide_venture(vid, {"action": "back", "confirm": True}, "Stefan").status == 200
     today = agent.clock.today()
     assert rows(agent, "SELECT venture_id, claim, probability, due FROM predictions ORDER BY id") == [
         {

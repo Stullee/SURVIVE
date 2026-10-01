@@ -69,7 +69,9 @@ def test_focus_goes_on_with_the_tests_already_running(data_dir: Path, monkeypatc
     assert rows(agent, "SELECT venture FROM cycles") == [{"venture": 0}]  # nothing backed or live: no venture cycle
     with agent.db.transaction() as conn:
         ventures.update(conn, DROPSHIPPING, "2026-09-01T12:00:00Z", first_test="Sell 3 stores' worth of samples")
-    assert owner(agent).decide_venture(DROPSHIPPING, {"action": "back"}, "Stefan").status == 200  # a test runs
+    assert (
+        owner(agent).decide_venture(DROPSHIPPING, {"action": "back", "confirm": True}, "Stefan").status == 200
+    )  # a test runs
     agent.run_cycle("schedule")
     assert rows(agent, "SELECT venture FROM cycles ORDER BY id")[-1] == {"venture": 1}
     [refused] = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'brainstorm'")

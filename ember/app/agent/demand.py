@@ -29,13 +29,40 @@ DAYS = 14  # how old a demand note may be when its product line's first listing 
 # doesn't: the next is still its first).
 LISTED = ("pending", "approved", "approved_with_changes", "done")
 _LIBRARY = re.compile(r"^library #(\d+)$", re.IGNORECASE)
-_NUMBER = re.compile(r"\d[\d.,]*")
+_NUMBER = re.compile(r"\d(?:[\d.,]*\d)?")
+_YEAR = re.compile(r"^(?:19|20)\d\d$")
+# what a cited number counts: searches, sales, orders, reviews, buyers, listings (a word near it, in the note)
+_DEMAND_WORDS = re.compile(
+    r"\b(?:search\w*|sales|sold|sell\w*|orders?|reviews?|buyers?|customers?|downloads?|favou?rites|purchases|demand"
+    r"|listings|results|month\w*|suchanfragen|suchvolumen|gesucht|verkäufe|verkauft|bestellungen|bewertungen|käufer"
+    r"|kunden|nachfrage|treffer|angebote|monat\w*)\b",
+    re.IGNORECASE,
+)
 EXPORTS = (".csv", ".tsv")  # a keyword or market export the owner uploaded: a table
 
 
+def _digits(number: str) -> str:
+    """A number as digits only (1,200 and 1.200 are both 1200), "" for one digit, a year or a decimal's cents: 4.99
+    is 4, not 499."""
+    whole = re.sub(r"[.,]\d{1,2}$", "", number)
+    digits = re.sub(r"\D", "", whole)
+    return "" if len(digits) < 2 or _YEAR.match(number) else digits
+
+
 def numbers(text: str) -> set[str]:
-    """The numbers of two digits or more in ``text``, as digits only (1,200 and 1.200 are both 1200)."""
-    return {digits for digits in (re.sub(r"\D", "", n) for n in _NUMBER.findall(text)) if len(digits) >= 2}
+    """The numbers of two digits or more in ``text``, as digits only (not years, nor a decimal's cents)."""
+    return {digits for digits in (_digits(n) for n in _NUMBER.findall(text)) if digits}
+
+
+def cited(said: str, text: str) -> bool:
+    """0.14.0: whether the demand ``said`` cites a number of ``text`` with a demand word near it ("850 searches a
+    month"): a year or "13 tags" in a general guide doesn't show demand."""
+    found = numbers(text)
+    for match in _NUMBER.finditer(said):
+        near = said[max(0, match.start() - 40) : match.end() + 40]
+        if _digits(match[0]) in found and _DEMAND_WORDS.search(near):
+            return True
+    return False
 
 
 def source_problem(conn: sqlite3.Connection, scope: AgentScope, source: str, project_id: int, said: str | None) -> str:
@@ -57,8 +84,11 @@ def source_problem(conn: sqlite3.Connection, scope: AgentScope, source: str, pro
                 f"library #{number} isn't linked to project #{project_id} or its venture, nor a keyword or market "
                 "export your owner uploaded (.csv or .tsv): it can't show this product line's demand"
             )
-        if not numbers(said or "") & numbers(library.full_text(conn, number)):
-            return f"cite a number from library #{number} in demand (searches, sales, prices): none of yours is in it"
+        if not cited(said or "", library.full_text(conn, number)):
+            return (
+                f"cite a number from library #{number} in demand, with what it counts (searches, sales, orders): "
+                "none of yours is in it"
+            )
         return ""
     if source.startswith(("https://", "http://")):
         graded = evidence.grade(conn, scope, source)

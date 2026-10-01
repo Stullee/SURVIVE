@@ -484,7 +484,7 @@ class Owner:
         """Back, park, kill or have researched next one of the agent's ventures, or leave a note on it."""
 
         def run() -> Reply:
-            data = _body(body, {"action", "comment", "expected_version"})
+            data = _body(body, {"action", "comment", "expected_version", "confirm"})
             action = data.get("action")
             if action not in VENTURE_ACTIONS:
                 raise OwnerError("action", "choose research, back, park, kill or note")
@@ -492,9 +492,11 @@ class Owner:
             expected = data.get("expected_version")
             if expected is not None and (not isinstance(expected, int) or isinstance(expected, bool)):
                 raise OwnerError("expected_version", "expected_version must be a number")
+            confirm = data.get("confirm", False)
+            if not isinstance(confirm, bool):
+                raise OwnerError("confirm", "confirm must be true or false")
             allowed, stage = VENTURE_ACTIONS[action]
-            if action == "back":
-                self._checked_proposal(venture_id)  # 0.14.0
+            net_days = self.economy.life.evaluate().runway.net_days if action == "back" else None
             with self.db.transaction() as conn:
                 row = ventures.get(conn, self.scope, venture_id)
                 if row is None:
@@ -504,6 +506,24 @@ class Owner:
                 if row["stage"] not in allowed:
                     raise OwnerError("action", f"this venture is {row['stage']}", 409)
                 now = self._now()
+                # 0.14.0: Back checks it as Ember's code would propose it: no numbers or a standing knock-out stop it,
+                # unless the owner confirms (their call). A proposal that doesn't hold goes back to researching.
+                why = ""
+                if action == "back" and not confirm:
+                    cash = self.economy.settings.venture_cash_eur
+                    why = stages.backing_problem(conn, row, cash_eur=cash, net_days=net_days)
+                if why and row["stage"] != "proposed":
+                    raise OwnerError(
+                        "confirm",
+                        f"Ember's code wouldn't back venture #{venture_id}: {why}. Back it with confirm to back it "
+                        "anyway, or lift the knock-out on its card first",
+                        409,
+                    )
+                if why:
+                    stages.reopen(conn, row, now, why)
+                    said = f"Ember's code put venture #{venture_id} back in researching when it was backed: {why}"
+                    events.record(self.db, "info", "owner", said[:300])
+                    return Reply(200, {"id": venture_id, "stage": "researching", "not_backed": why})
                 ventures.owner_word(conn, venture_id, now, action, comment, who, stage)
                 after = ventures.get(conn, self.scope, venture_id)
                 # 0.12.0: a backed venture's first test becomes a milestone; a parked or killed one's milestones go.
@@ -525,28 +545,6 @@ class Owner:
             return Reply(200, {"id": venture_id, "stage": after["stage"] if after else stage})
 
         return _reply(run)
-
-    def _checked_proposal(self, venture_id: int) -> None:
-        """0.14.0: a proposal is backed as Ember's code checked it. One without numbers (proposed before the gates) or
-        with a standing knock-out goes back to researching instead, and the owner hears why (OwnerError): they back it
-        from there if they still want it."""
-        net_days = self.economy.life.evaluate().runway.net_days  # the knock-outs' slow rule
-        with self.db.transaction() as conn:
-            row = ventures.get(conn, self.scope, venture_id)
-            if row is None or row["stage"] != "proposed":
-                return
-            why = stages.backing_problem(conn, row, cash_eur=self.economy.settings.venture_cash_eur, net_days=net_days)
-            if why:
-                stages.reopen(conn, row, self._now(), why)
-        if why:
-            said = f"Ember's code put venture #{venture_id} back in researching: {why}"
-            events.record(self.db, "info", "agent", said[:300])
-            raise OwnerError(
-                "action",
-                f"venture #{venture_id} isn't backed as proposed: {why}. Ember's code put it back in researching: back "
-                "it from there if you still want it (lift a knock-out on its card first if you accept it)",
-                409,
-            )
 
     def override_knockout(self, venture_id: int, body: Any, who: str | None) -> Reply:
         """0.13.0: lift a knock-out Ember's code found in a venture's case (``lift`` true), or restore it; the agent
