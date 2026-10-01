@@ -23,6 +23,7 @@ from ..integrations import (
     printify_publisher,
     qa,
     reddit,
+    site_publisher,
 )
 from . import (
     audit,
@@ -778,6 +779,8 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
                 shortfalls = qa.defects(kind.name, printify.product_from_action(action))
             except printify.PrintifyError:
                 shortfalls = []
+    if r["executor"] in site_publisher.EXECUTORS and action is not None:  # 0.14.0: the blog on the owner's website
+        execution = site_publisher.execution(conn, r, agent.db, agent.settings)
     if r["executor"] == "etsy_edit" and action is not None:
         execution = etsy_publisher.edit_execution(conn, r)
         try:

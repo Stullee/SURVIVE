@@ -475,7 +475,8 @@ def test_the_dashboard_and_sensor_contract(ingress_client: TestClient, monkeypat
 
     data = ingress_client.get("api/dashboard").json()
     email = data["integrations"]["email"]
-    assert set(data["integrations"]) == {"email", "etsy", "pinterest", "printify", "site"} and set(email) == EMAIL_KEYS
+    assert set(data["integrations"]) == {"email", "etsy", "pinterest", "printify", "site", "blog"}
+    assert set(email) == EMAIL_KEYS
     assert data["integrations"]["site"] == {"status": "disabled"}  # 0.13.0: the website is off by default
     assert (email["available"], email["mode"], email["status"]) == (True, "fake", "ok")
     assert (email["address"], email["unread"], email["sent_today"], email["daily_limit"]) == (

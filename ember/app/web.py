@@ -10,7 +10,7 @@ import contextlib
 import html
 import re
 from typing import Annotated, Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Body, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
@@ -26,9 +26,11 @@ from .economy.service import Economy, Reply
 from .integrations import executor as email_executor
 from .integrations.etsy import EtsyError
 from .integrations.pinterest import PinterestError
+from .integrations.sftp import SftpError
 from .logging_setup import printable
 from .paths import WEB_DIR
-from .products import site
+from .products import blog, site
+from .products.blog import BlogError
 from .products.site import SiteError
 from .security import USER_ID_HEADER, ingress_base_href
 from .state import AppState
@@ -836,6 +838,52 @@ def site_download(request: Request) -> Response:
             "cache-control": "no-store",
         },
     )
+
+
+# 0.14.0: the blog on the owner's website: the page an upload request carries (the owner previews exactly what goes
+# up, in a sandbox that runs nothing and loads only the site's own stylesheet, font and pictures from the site), and
+# their check of the SFTP login.
+BLOG_PREVIEW_POLICY = "sandbox; default-src 'none'; frame-ancestors 'none'"
+
+
+@router.get("/api/blog/preview/{approval_id}")
+def blog_preview(request: Request, approval_id: ItemId) -> Response:
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    found = agent.blog_page(approval_id)
+    if found is None:
+        return PlainTextResponse("There is no such page.", status_code=404)
+    data, policy = found[1], BLOG_PREVIEW_POLICY
+    site_url = urlsplit(agent.settings.site_url.strip())
+    if site_url.scheme == "https" and site_url.hostname and not site_url.username:  # the site's look, from the site
+        origin = f"https://{site_url.netloc}"
+        data, policy = blog.preview(data, origin), blog.preview_policy(origin)
+    return Response(
+        data,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "content-security-policy": policy,
+            "x-content-type-options": "nosniff",
+            "cache-control": "no-store",
+        },
+    )
+
+
+@router.post("/api/blog/check")
+def blog_check(request: Request) -> JSONResponse:
+    """Log in to the owner's server (pinning its key the first time) and read the blog's list."""
+    agent = _state(request).agent
+    if agent is None:
+        return JSONResponse({"code": "not_runnable", "error": "the agent is not running"}, status_code=409)
+    try:
+        result = agent.blog_check()
+    except (SftpError, BlogError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    who = _owner(request) or "The owner"
+    found = f"{result['posts']} posts in the blog's list" if result["index"] else "no blog list yet"
+    event_log.record(_state(request).db, "info", "website", f"{who} checked the SFTP connection: it works ({found})")
+    return JSONResponse(result)
 
 
 @router.get("/api/diagnostics")

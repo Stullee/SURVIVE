@@ -23,7 +23,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import connectors, etsy, etsy_publisher, pinterest, printify_publisher
+from ..integrations import connectors, etsy, etsy_publisher, pinterest, printify_publisher, site_publisher
 from . import never, policy, store
 from .store import AgentScope
 
@@ -41,6 +41,7 @@ UNDO = {
     "auto_renew_off": ("Turn automatic renewal off", "turn off automatic renewal of", "none"),
     "delete_pin": ("Delete the pin", "delete", "none"),  # 0.13.0 (Phase E2)
     "delete_product": ("Delete the product", "delete", "none"),  # 0.13.0 (Phase E4)
+    "restore_site": ("Put back what it replaced", "undo", "none"),  # 0.14.0: the old version back, a new post gone
 }
 WHO = {
     "unlock": "your unlock",
@@ -57,6 +58,7 @@ _PARTS = (
     ("photos", "Photos"),
     ("files", "Files"),
     ("auto_renew", "Automatic renewal"),
+    ("pages", "Pages on your website"),  # 0.14.0: each page's SHA-256 (none: no file)
 )
 
 
@@ -91,6 +93,8 @@ def _short(part: str, value: Any, currency: str) -> str:
         value = ", ".join(str(t) for t in value)
     if part == "auto_renew":
         return "on" if value else "off"
+    if part == "pages" and isinstance(value, dict):
+        return ", ".join(f"{name} ({str(digest)[:8] if digest else 'none'})" for name, digest in sorted(value.items()))
     if part == "price" and currency:
         value = f"{value} {currency}"
     text = " ".join(str(value).split())
@@ -172,7 +176,8 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
         if row["status"] == "failed":
             return "nothing was done"
         if row["status"] == "unclear":
-            place = {"pinterest": "Pinterest", "printify": "Printify"}.get(str(row["class"]).split(".")[0], "Etsy")
+            places = {"pinterest": "Pinterest", "printify": "Printify", "site": "your website"}
+            place = places.get(str(row["class"]).split(".")[0], "Etsy")
             return f"it is unclear what happened: check it at {place}"
         return "Ember's code can't undo it"
     last = _last_undo(conn, int(row["id"]))
@@ -184,6 +189,8 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
             f"SELECT status FROM pinterest_pins WHERE {where} AND pin_id = ?", (*params, row["subject"])
         ).fetchone()
         return None if pin is not None and pin["status"] == "active" else "the pin isn't on Pinterest anymore"
+    if undo["action"] == "restore_site":  # 0.14.0
+        return site_publisher.why_not(conn, scope, row)
     if undo["action"] == "delete_product":  # 0.13.0 (Phase E4)
         product = conn.execute(
             f"SELECT status FROM printify_products WHERE {where} AND product_id = ?", (*params, row["subject"])
@@ -316,6 +323,28 @@ def undo(conn: sqlite3.Connection, scope: AgentScope, now: str, journal_id: int,
         )
         _approve(conn, now, by, button, journal_id, approval_id)
         return approval_id, f"delete the product ({product_id})"
+    if kind == "restore_site":  # 0.14.0: Ember's code puts back what the upload replaced on the owner's website
+        path = str(row["subject"])
+        approval_id = store.insert_approval(
+            conn,
+            scope,
+            cycle_id,
+            now,
+            project_id=original["project_id"] if original is not None else None,
+            payload=(
+                f"Undo request #{row['approval_id']} on your website: {path} goes back to how it was before it (a new"
+                " post is taken off the server and the blog's list)."
+            ),
+            action=store.canonical({"approval_id": row["approval_id"], "path": path}),
+            type="publish",
+            title=f"Undo: {path} on your website"[:120],
+            description=because,
+            expected_cost=cost,
+            expected_benefit="Your website is as it was before that upload.",
+            executor="site_restore",
+        )
+        _approve(conn, now, by, button, journal_id, approval_id)
+        return approval_id, f"undo the upload of {path}"
     listing_id = int(row["subject"])
     current = etsy_publisher.current_listing(conn, scope, listing_id)
     listing = etsy_publisher.listing_row(conn, scope, listing_id)

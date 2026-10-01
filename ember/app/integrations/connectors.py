@@ -109,6 +109,20 @@ CLASSES: dict[str, ActionClass] = {
             undo="delete it",
         ),
         _class("printify.delete_product", "delete a product of Ember's at Printify", {"owner_identity"}),
+        # 0.14.0: the blog on the owner's website, uploaded over SFTP (site_publisher.py)
+        _class(
+            "site.publish_post",
+            "publish a blog post on your website (with the blog's list)",
+            {"reaches_people", "owner_identity"},
+            undo="take it down, or put back the version it replaced",
+        ),
+        _class(
+            "site.publish_links",
+            "change the link page on your website",
+            {"reaches_people", "owner_identity"},
+            undo="put back the page it replaced",
+        ),
+        _class("site.restore", "put back what an upload to your website replaced", {"owner_identity"}),
         _class(
             "reddit.post",
             "a Reddit post you publish from your account",
@@ -130,6 +144,9 @@ _EXECUTORS = {
     "pinterest_delete": "pinterest.delete_pin",  # the owner's Undo of a pin
     "printify_product": "printify.create_product",  # 0.13.0 (Phase E4)
     "printify_delete": "printify.delete_product",  # the owner's Undo of a product
+    "site_post": "site.publish_post",  # 0.14.0
+    "site_links": "site.publish_links",
+    "site_restore": "site.restore",  # the owner's Undo of an upload
 }
 # 0.13.0: every executor Ember's code has (the approvals table takes any short name since 0054: this is the list)
 EXECUTORS = frozenset({*_EXECUTORS, "etsy_edit"})
@@ -166,6 +183,8 @@ def undo_of(name: str, status: str, subject: str | None) -> dict[str, Any] | Non
     """What would undo a finished action of class ``name`` on ``subject`` (a listing's number, a pin's), or None."""
     if status not in ("done", "partial", "simulated") or not subject:
         return None
+    if name in ("site.publish_post", "site.publish_links"):  # 0.14.0: subject is the page's path on the server
+        return {"action": "restore_site", "path": subject}
     if name == "printify.create_product":  # 0.13.0 (Phase E4): Printify's numbers are hexadecimal
         return {"action": "delete_product", "product_id": subject} if re.fullmatch(r"[0-9a-f]{1,40}", subject) else None
     if not subject.isdigit():

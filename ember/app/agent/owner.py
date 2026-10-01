@@ -40,7 +40,16 @@ LISTING_CANCELLED = "Cancelled by the owner before it was listed"
 CHANGE_CANCELLED = "Cancelled by the owner before the listing was changed"
 # 0.13.0 (Phase E2, E4): what Ember's code carries out as approved, with no version of the owner's
 CODE_CANCELLED = "Cancelled by the owner before Ember's code carried it out"
-AS_IS_EXECUTORS = ("pinterest_pin", "pinterest_delete", "printify_product", "printify_delete")
+AS_IS_EXECUTORS = (
+    "pinterest_pin",
+    "pinterest_delete",
+    "printify_product",
+    "printify_delete",
+    "site_post",  # 0.14.0: the page as it was rendered and previewed
+    "site_links",
+    "site_restore",
+)
+_AS_IS_WHAT = {"pinterest": ("a pin", "pins"), "printify": ("a product", "products"), "site": ("a page", "pages")}
 TAKEN_BACK = "you took back every unlock"  # 0.13.0: the owner's switch
 TAKEN_BACK_NOTE = "Took back every unlock: your requests wait for me again"
 DECISIONS = {"approve": "approved", "approve_with_changes": "approved_with_changes", "reject": "rejected"}
@@ -139,8 +148,8 @@ class Owner:
                 if row["status"] != "pending":
                     raise OwnerError("id", f"this request is already {row['status']}", 409)
                 status = DECISIONS[decision]
-                if row["executor"] in AS_IS_EXECUTORS and final is not None:  # 0.13.0 (Phase E2, E4)
-                    what = "a pin" if row["executor"].startswith("pinterest") else "a product"
+                if row["executor"] in AS_IS_EXECUTORS and final is not None:  # 0.13.0 (Phase E2, E4), 0.14.0
+                    what = _AS_IS_WHAT[row["executor"].split("_")[0]][0]
                     raise OwnerError("decision", f"approve {what} as it is, or reject it and say what should change")
                 unchanged = row["payload"]
                 if row["executor"] == "email" and final is not None:
@@ -220,13 +229,14 @@ class Owner:
                     started = conn.execute(
                         "SELECT 1 FROM pinterest_pins WHERE approval_id = ?"
                         " UNION ALL SELECT 1 FROM printify_products WHERE approval_id = ?"
+                        " UNION ALL SELECT 1 FROM site_uploads WHERE approval_id = ? AND status <> 'proposed'"
                         " UNION ALL SELECT 1 FROM action_journal WHERE approval_id = ?",
-                        (approval_id, approval_id, approval_id),
+                        (approval_id, approval_id, approval_id, approval_id),
                     ).fetchone()
                     if started:
                         raise OwnerError("id", "Ember is already carrying this out; it reports the result", 409)
                     if outcome == "done":
-                        what = "pins" if row["executor"].startswith("pinterest") else "products"
+                        what = _AS_IS_WHAT[row["executor"].split("_")[0]][1]
                         raise OwnerError("outcome", f"Ember carries approved {what} out itself; to stop one, cancel it")
                     note = note or CODE_CANCELLED
                 elif outcome == "failed" and note is None:

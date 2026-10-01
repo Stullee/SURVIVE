@@ -84,7 +84,8 @@ def test_options_match_settings_defaults() -> None:
     # Only the optional options ("?") have no default: the API key, the mailbox's address, password and owner, the
     # workshop's model (the worker model when empty), the strategy and research models (0.12.0: the planner and the
     # worker model when empty), the Etsy app's keystring and shared secret, and (0.13.0) the Pinterest app's id and
-    # secret, the Printify token and the website's texts (the owner's data for its Impressum among them).
+    # secret, the Printify token and the website's texts (the owner's data for its Impressum among them), and (0.14.0)
+    # the blog's SFTP login.
     optional = {key for key, rule in schema.items() if isinstance(rule, str) and rule.endswith("?")}
     assert optional == {
         "anthropic_api_key",
@@ -107,10 +108,15 @@ def test_options_match_settings_defaults() -> None:
         "site_phone",
         "site_vat_id",
         "site_host",
+        "blog_sftp_host",
+        "blog_sftp_user",
+        "blog_sftp_password",
+        "blog_sftp_host_key",
+        "blog_sftp_folder",
     }
     assert set(options) == fields - optional
     assert schema["anthropic_api_key"] == schema["email_password"] == schema["etsy_shared_secret"] == "password?"
-    assert schema["pinterest_app_secret"] == schema["printify_api_token"] == "password?"
+    assert schema["pinterest_app_secret"] == schema["printify_api_token"] == schema["blog_sftp_password"] == "password?"
     for key, value in options.items():
         if key == "price_table":
             continue

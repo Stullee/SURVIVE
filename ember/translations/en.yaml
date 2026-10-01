@@ -377,3 +377,40 @@ configuration:
       Optional: the name and address of the company that hosts your website,
       e.g. 'Strato AG, Otto-Ostrowski-Straße 7, 10249 Berlin'. The privacy page
       names it.
+  blog_enabled:
+    name: Blog (published by Ember)
+    description: >-
+      Let the agent write blog posts and the link page for your own website.
+      Ember's code renders them in your site's design and, after you approve
+      each one, uploads exactly that page over SFTP (your options below). It
+      never touches your home pages, Impressum, privacy page or stylesheet,
+      and your Undo puts back what an upload replaced. Uses the website
+      options above (address, name, email).
+  blog_sftp_host:
+    name: SFTP server
+    description: >-
+      Your web host's SFTP server. At STRATO: customer login, Ihr Paket,
+      Datenbanken und Webspace, SFTP & SSH (like 50xxxxxx03.ssh.w2.strato.hosting).
+  blog_sftp_port:
+    name: SFTP port
+    description: >-
+      Usually 22.
+  blog_sftp_user:
+    name: SFTP user
+    description: >-
+      Your SFTP login name (at STRATO: the user listed there, like su15xxx9).
+  blog_sftp_password:
+    name: SFTP password
+    description: >-
+      Only Ember's code uses it, never the agent; it is never shown or logged.
+  blog_sftp_host_key:
+    name: SFTP server key (optional)
+    description: >-
+      The server's key fingerprint (SHA256:...) or public key line, so Ember
+      connects only to your server. Empty: the key seen at the first
+      connection is kept and shown in the dashboard.
+  blog_sftp_folder:
+    name: Website folder on the server (optional)
+    description: >-
+      The folder your domain shows, e.g. /ember-ai.de. Empty: the folder the
+      login opens.

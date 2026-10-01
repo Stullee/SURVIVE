@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.13.0"
+version: "0.14.0"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -125,6 +125,11 @@ options:
   # and privacy page, its name and its address are optional options too.
   site_enabled: false
   site_language: de
+  # Your blog (see the Documentation tab): posts and a link page the agent writes, in your own site's design, uploaded
+  # by Ember over SFTP after you approve each one. Your SFTP host, user, password, the server's key and the site's
+  # folder are optional options too.
+  blog_enabled: false
+  blog_sftp_port: 22
 
 schema:
   anthropic_api_key: password?
@@ -204,3 +209,10 @@ schema:
   site_phone: str?
   site_vat_id: str?
   site_host: str?
+  blog_enabled: bool
+  blog_sftp_host: str?
+  blog_sftp_port: port
+  blog_sftp_user: str?
+  blog_sftp_password: password?
+  blog_sftp_host_key: str?
+  blog_sftp_folder: str?

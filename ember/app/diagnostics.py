@@ -121,6 +121,8 @@ TABLES = (
     "printify_orders",
     "site_pages",
     "site_downloads",
+    "site_uploads",
+    "blog_posts",
     "listing_gates",
     "memory_versions",
     "lesson_pins",
@@ -1021,6 +1023,8 @@ def _integrations(state: AppState, full: bool = True) -> str:
     out.append(f"-- printify\n{_json(pod)}")
     # 0.13.0 (Phase E3): the website's state and pages (the texts are the agent's; the owner's data is never in it).
     out.append(f"-- website\n{_json(agent.integrations()['site'])}")
+    # 0.14.0: the blog: its state, the SFTP server and its key, and the posts on the site (never the password).
+    out.append(f"-- blog\n{_json(agent.integrations()['blog'])}")
     return "\n".join(out)
 
 
