@@ -791,6 +791,7 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
         "action_class": kind.flags(),  # 0.13.0: the connector protocol's class and its flags
         "qa": shortfalls,
         "veto_until": policy.veto_until(conn, int(r["id"])),  # 0.13.0: held by the owner's unlock until then
+        "unlock_ended": policy.ended(conn, int(r["id"])),  # 0.14.0: why it waits for the owner after all
         "never": _never(conn, r),
         "action": action,
         "first_contact": first_contact,

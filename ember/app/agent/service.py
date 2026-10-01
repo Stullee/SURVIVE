@@ -717,27 +717,40 @@ class Agent:
         scope = self.scope()
         with self.db.transaction() as conn:
             happened = policy.keep(conn, scope, self.clock) + policy.run_due(conn, scope, self.clock)
-            digest = audit.write_due(conn, scope, self.clock)
+            digests = audit.write_due(conn, scope, self.clock)
         for line in happened:
             events.record(self.db, "info", "control", line[:300])
-        if digest is not None:
-            events.record(self.db, "info", "control", f"Daily digest: {digest}"[:300])
+        for text in digests:
+            events.record(self.db, "info", "control", f"Daily digest: {text}"[:300])
+
+    def undo_blocked(self) -> str | None:
+        """0.14.0: why the owner's Undo isn't carried out now (None if it may be): also while the agent is paused or
+        waits for money (an Undo costs no API money, and the owner asked for it); not once the kill switch is on."""
+        if not self.cycles_enabled:
+            return "Wake cycles are switched off (EMBER_SCHEDULER=off)"
+        if not self.economy.health.lock_held:
+            return "Another Ember process is using the data folder"
+        state = self.economy.life.evaluate().state
+        return None if state in audit.UNDO_WHILE else f"The agent is {state}"
 
     def execute_approved(self) -> list[tuple[int, str]]:
         """Send the approved emails, create the approved Etsy listings and (0.13.0) pins and Printify products that are
-        due (the scheduler calls this before every decision)."""
+        due (the scheduler calls this before every decision). 0.14.0: while the agent is paused or waits for money,
+        only the owner's Undo."""
         if self.executor_blocked():
-            return []
+            if self.undo_blocked():
+                return []
+            return self.publisher.run(undos=True) + self.pins.run(undos=True) + self._pod_run(undos=True)
         done = self.executor.run() if self.mailbox is not None else []
         return done + self.publisher.run() + self.pins.run() + self._pod_run()
 
-    def _pod_run(self) -> list[tuple[int, str]]:
+    def _pod_run(self, undos: bool = False) -> list[tuple[int, str]]:
         """The approved Printify products (the fake account of a dry run needs no network)."""
         account = self.printify.account()
         if account is None:
             return []
         with netguard.sealed() if account.simulated else contextlib.nullcontext():
-            return self.pod.run()
+            return self.pod.run(undos)
 
     def sync_shop(self) -> None:
         """Read the Etsy shop's listings and orders (at most hourly) and its categories (daily) while Ember runs, not

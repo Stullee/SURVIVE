@@ -36,10 +36,11 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from datetime import date, timedelta
+from decimal import Decimal
 from typing import Any
 
 from .. import events
-from ..agent import netguard
+from ..agent import netguard, store
 from ..agent.sandbox import Jail, SandboxError
 from ..agent.store import AgentScope
 from ..config import Settings
@@ -250,34 +251,37 @@ class Publisher:
 
     # --- approved listings ---
 
-    def run(self) -> list[tuple[int, str]]:
+    def run(self, undos: bool = False) -> list[tuple[int, str]]:
+        """Carry out the approved listings, then the approved changes; with ``undos`` (0.14.0: while the agent is
+        paused or waits for money), only the owner's Undo."""
         shop = self.shop()
         if shop is None or not self._lock.acquire(blocking=False):
             return []
         try:
             scope = self.scope()
             done = []
-            for approval_id in self._approved(scope, "etsy_listing", "etsy_listings"):
+            for approval_id in [] if undos else self._approved(scope, "etsy_listing", "etsy_listings"):
                 outcome = self._one(shop, scope, approval_id)
                 done.append((approval_id, outcome))
                 if outcome == "waiting_limit":
                     break  # the rest waits for tomorrow too, in order
-            for approval_id in self._approved(scope, "etsy_edit", "etsy_edits"):  # changes have no daily limit
+            for approval_id in self._approved(scope, "etsy_edit", "etsy_edits", undos):  # changes: no daily limit
                 done.append((approval_id, self._change(shop, scope, approval_id)))
             return done
         finally:
             self._lock.release()
 
-    def _approved(self, scope: AgentScope, executor: str, table: str) -> list[int]:
+    def _approved(self, scope: AgentScope, executor: str, table: str, undos: bool = False) -> list[int]:
         """The approved requests of ``executor`` that Ember's code hasn't started (no row in ``table``), oldest
-        first."""
+        first; with ``undos``, only the owner's Undo."""
         where, params = scope.where()
+        undo = " AND EXISTS (SELECT 1 FROM action_undos u WHERE u.approval_id = approvals.id)" if undos else ""
         with self.db.connection() as conn:
             return [
                 r[0]
                 for r in conn.execute(
                     f"SELECT id FROM approvals WHERE {where} AND executor = ? AND status IN {APPROVED}"
-                    f" AND NOT EXISTS (SELECT 1 FROM {table} x WHERE x.approval_id = approvals.id) ORDER BY id",
+                    f" AND NOT EXISTS (SELECT 1 FROM {table} x WHERE x.approval_id = approvals.id){undo} ORDER BY id",
                     (*params, executor),
                 )
             ]
@@ -430,6 +434,7 @@ class Publisher:
     # --- approved changes to live listings (0.9.0) ---
 
     def _change(self, shop: Shop, scope: AgentScope, approval_id: int) -> str:
+        differs = self._differs(shop, scope, approval_id)
         stamp = to_iso(self.clock.now())
         where, params = scope.where()
         with self.db.transaction() as conn:
@@ -453,8 +458,68 @@ class Publisher:
                 self._start_change(conn, scope, approval_id, listing_id, stamp)
                 return self._change_failed(conn, approval_id, str(exc))
             self._start_change(conn, scope, approval_id, edit.listing_id, stamp, before)
+            if differs:
+                return self._send_back(conn, scope, row, differs)
         # Committed: from here on this change is never made a second time, whatever happens.
         return self._make(shop, scope, approval_id, edit, before, photos, files)
+
+    def _differs(self, shop: Shop, scope: AgentScope, approval_id: int) -> str | None:
+        """0.14.0: before an unlock's price change or photo fix, Etsy's listing is read again: how it differs from
+        Ember's record in what the change touches, or None. Ember's record doesn't know what the owner changed at
+        Etsy, and a photo change replaces every photo, theirs too."""
+        with self.db.connection() as conn:
+            row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
+            carried = conn.execute(
+                "SELECT 1 FROM policy_uses WHERE approval_id = ? AND approved_at IS NOT NULL", (approval_id,)
+            ).fetchone()
+            if row is None or carried is None:
+                return None  # the owner's own decision
+            try:
+                edit = approved_edit(row)
+                before = current_listing(conn, scope, edit.listing_id)
+            except EtsyError:
+                return None  # _change says why it can't be made
+        if before is None or edit.parts() not in (["price"], ["photos"]):
+            return None
+        try:
+            with _guard(shop):
+                if edit.photos is not None:
+                    at_etsy = len(shop.photo_ids(edit.listing_id))
+                    if at_etsy == len(before.photos):
+                        return None
+                    return f"it has {at_etsy} photos at Etsy, {len(before.photos)} in Ember's record"
+                found = [r.price for r in shop.listings([edit.listing_id]) if r.listing_id == edit.listing_id]
+        except Exception as exc:  # noqa: BLE001 - what can't be read isn't checked: the owner decides
+            error = str(exc) if isinstance(exc, EtsyError) else type(exc).__name__
+            return f"Etsy's listing couldn't be read to check it: {error}"
+        price = found[0] if found else None
+        if price is not None and Decimal(price) == Decimal(before.price):
+            return None
+        return f"its price at Etsy is {price or 'unknown'}, {before.price} in Ember's record"
+
+    def _send_back(self, conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row, differs: str) -> str:
+        """0.14.0: an unlock's change that Etsy's listing doesn't match isn't made: nothing is sent, and the owner gets
+        it as a new request of theirs to decide."""
+        waiting = store.pending_approval_by_payload(conn, scope, row["payload_sha256"])
+        if waiting is None:
+            why = f"Sent back to you by Ember's code: Etsy's listing differs from Ember's record ({differs})."
+            waiting = store.insert_approval(
+                conn,
+                scope,
+                int(row["cycle_id"]),
+                to_iso(self.clock.now()),
+                project_id=row["project_id"],
+                type=row["type"],
+                title=row["title"],
+                description=f"{why}\n\n{row['description']}"[:2000],
+                payload=row["payload"],
+                expected_cost=row["expected_cost"],
+                expected_benefit=row["expected_benefit"],
+                executor=row["executor"],
+                action=row["action"],
+            )
+        why = f"Etsy's listing differs from Ember's record ({differs}): request #{waiting} waits for your owner"
+        return self._change_failed(conn, int(row["id"]), why)
 
     def _make(
         self,

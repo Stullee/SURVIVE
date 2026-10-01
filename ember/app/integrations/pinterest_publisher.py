@@ -35,6 +35,7 @@ APPROVED = "('approved', 'approved_with_changes')"
 CLOSED_BY = "Ember"
 SYNC_HOURS = 6
 INTERRUPTED = "the app stopped while making the pin"
+DELETE_INTERRUPTED = "the app stopped while deleting it"  # 0.14.0: the owner's Undo of a pin
 GONE = "Deleted at Pinterest, not by Ember's code"
 
 
@@ -175,15 +176,16 @@ class Publisher:
         self.workspace = workspace
         self._lock = threading.Lock()  # one run (or sync) at a time in this process
 
-    def run(self) -> list[tuple[int, str]]:
-        """Carry out the approved pins (and the owner's Undos of pins) that are due."""
+    def run(self, undos: bool = False) -> list[tuple[int, str]]:
+        """Carry out the approved pins (and the owner's Undos of pins) that are due; with ``undos`` (0.14.0: while the
+        agent is paused or waits for money), only the Undos."""
         account = self.account()
         if account is None or not self._lock.acquire(blocking=False):
             return []
         try:
             scope = self.scope()
             done = []
-            for approval_id in self._approved(scope, "pinterest_pin"):
+            for approval_id in [] if undos else self._approved(scope, "pinterest_pin"):
                 outcome = self._one(account, scope, approval_id)
                 done.append((approval_id, outcome))
                 if outcome == "waiting_limit":
@@ -408,17 +410,30 @@ class Publisher:
         return "done"
 
     def recover(self) -> int:
-        """Rows left 'running' by a crash: unclear, never retried."""
+        """Rows left 'running' by a crash: unclear, never retried. 0.14.0: the owner's Undo of a pin too (its journal
+        entry was left 'running', the Undo "under way" for good): unclear, and the owner may press it again."""
         with self.db.transaction() as conn:
             left = conn.execute("SELECT approval_id, board_id FROM pinterest_pins WHERE status = 'running'").fetchall()
             conn.execute(
                 "UPDATE pinterest_boards SET status = 'unclear', finished_at = ?, error = ? WHERE status = 'running'",
                 (to_iso(self.clock.now()), INTERRUPTED),
             )
+            deleting = conn.execute(
+                "SELECT j.approval_id, j.subject FROM action_journal j JOIN approvals a ON a.id = j.approval_id"
+                " WHERE j.status = 'running' AND a.executor = 'pinterest_delete'"
+            ).fetchall()
+            for row in deleting:
+                note = (
+                    f"It is unclear whether pin {row['subject']} was deleted ({DELETE_INTERRUPTED}). Ember won't try"
+                    " again on its own: check Pinterest, or press Delete the pin again (a pin gone already counts as"
+                    " deleted)."
+                )
+                connectors.finish(conn, row["approval_id"], "unclear", to_iso(self.clock.now()), note=note)
+                self._close(conn, row["approval_id"], "failed", note, None)
         for row in left:
             note = f"It is unclear whether the pin was made ({INTERRUPTED}). Ember won't try again; check the board."
             self._after(row["approval_id"], "unclear", None, row["board_id"], note, INTERRUPTED)
-        return len(left)
+        return len(left) + len(deleting)
 
     # --- how the pins do ---
 

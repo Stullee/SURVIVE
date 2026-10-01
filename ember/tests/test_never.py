@@ -19,7 +19,7 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import never, policy, roadmap  # noqa: E402
+from app.agent import never, policy, roadmap, store  # noqa: E402
 from app.agent.fake_llm import FakeTransport  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
@@ -27,11 +27,11 @@ from tests.test_etsy import listed  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
 from tests.test_policy import change, price_of, work_on  # noqa: E402
-from tests.test_ventures import tool_results  # noqa: E402
 
 _numbers = itertools.count(1)
 WROTE = "lena@example.org"  # she wrote to Ember
 LEGAL = "tax, VAT, a Gewerbe or a contract"
+LISTING = 900_000_001  # a listing of Ember's product line (0.14.0: an unlock carries only what its milestone covers)
 
 
 def an_agent(data_dir: Path) -> Any:
@@ -44,17 +44,38 @@ def an_agent(data_dir: Path) -> Any:
             " 'A question', ?, 'Do you make A5 planners?')",
             (scope.mode, scope.session, scope.life_id, WROTE, now),
         )
+        cycle = conn.execute("SELECT MAX(id) FROM cycles").fetchone()[0]
+        line = store.create_project(
+            conn, scope, cycle_id=cycle, title="A5 planners", hypothesis="They sell.", next_step="", status="active",
+            now=now,
+        )  # fmt: skip
+        listing = store.insert_approval(
+            conn, scope, cycle, now, project_id=line, type="sell", title="Etsy listing: A5 planner", description="d",
+            payload="p", expected_cost="USD 0.20", expected_benefit="b", executor="etsy_listing", action="{}",
+        )  # fmt: skip
+        conn.execute(
+            "INSERT INTO etsy_listings (mode, session, approval_id, started_at, finished_at, status, listing_id, title)"
+            " VALUES (?, ?, ?, ?, ?, 'draft', ?, 'A5 planner')",
+            (scope.mode, scope.session, listing, now, now, LISTING),
+        )
     return agent
 
 
-def a_milestone(agent: Any, level: str | None = None, **limits: int) -> int:
-    """An open milestone; with a level, every rule unlocked for it at that level by the owner."""
+def line_of(agent: Any) -> int:
+    return int(rows(agent, "SELECT id FROM projects WHERE title = 'A5 planners'")[0]["id"])
+
+
+def a_milestone(agent: Any, level: str | None = None, *, line: bool = True, **limits: int) -> int:
+    """An open milestone; with a level, every rule unlocked for it at that level by the owner. 0.14.0: of the product
+    line (it covers its listings), or with ``line=False`` of none (it covers email replies)."""
     due = (agent.clock.today() + timedelta(days=30)).isoformat()
     now = to_iso(agent.clock.now())
+    project_id = line_of(agent) if line else None
     with agent.db.transaction() as conn:
         goal = roadmap.create(
-            conn, agent.scope(), title=f"Goal {next(_numbers)}", measure="10 orders", due=due, now=now
-        )
+            conn, agent.scope(), title=f"Goal {next(_numbers)}", measure="10 orders", due=due, now=now,
+            project_id=project_id,
+        )  # fmt: skip
         for rule in policy.RULES if level else ():
             policy.set_grant(conn, agent.scope(), goal, rule, level, now, by="Stefan", **limits)
     return goal
@@ -69,17 +90,20 @@ def request(
     action: Any = None,
     words: str = "Sells better.",
 ) -> int:
-    """A request stored as the tools store one, for a milestone (its shape doesn't matter to NEVER)."""
+    """A request stored as the tools store one, for a milestone (its shape doesn't matter to NEVER). 0.14.0: a new
+    listing of the product line, and what an email says kept as Ember's code keeps it (never.act_words)."""
     n = next(_numbers)
     if executor is not None and action is None:
-        action = {"listing_id": 900_000_001, "currency": "EUR", "price": "9.50"}
+        action = {"listing_id": LISTING, "currency": "EUR", "price": "9.50"}
     scope = agent.scope()
+    project_id = line_of(agent) if executor == "etsy_listing" else None
+    raw = None if action is None else json.dumps(action, ensure_ascii=False)
     with agent.db.transaction() as conn:
         cycle = conn.execute("SELECT MAX(id) FROM cycles").fetchone()[0]
         cursor = conn.execute(
             "INSERT INTO approvals (mode, session, life_id, cycle_id, created_at, type, title, description, payload,"
-            " payload_sha256, expected_cost, expected_benefit, executor, action, milestone_id)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none', 'more sales', ?, ?, ?)",
+            " payload_sha256, expected_cost, expected_benefit, executor, action, milestone_id, project_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none', 'more sales', ?, ?, ?, ?)",
             (
                 scope.mode,
                 scope.session,
@@ -92,10 +116,14 @@ def request(
                 f"Request {n}: {words}",
                 f"sha-{n}",
                 executor,
-                None if action is None else json.dumps(action, ensure_ascii=False),
+                raw,
                 milestone_id,
+                project_id,
             ),
         )
+        kept = never.act_words(executor, raw)
+        if kept is not None:
+            conn.execute("INSERT INTO act_words (approval_id, words) VALUES (?, ?)", (cursor.lastrowid, kept))
     return int(cursor.lastrowid)
 
 
@@ -103,17 +131,18 @@ def an_email(to: str, words: str = "Yes, in A5 too.") -> dict[str, Any]:
     return {"to": to, "subject": "Re: A question", "body": words, "in_reply_to": "<q1@example.org>"}
 
 
-def never_requests(agent: Any, goal: int) -> dict[str, tuple[int, list[str]]]:
-    """A request of each NEVER kind, and the other ways into one, with the classes each falls in."""
+def never_requests(agent: Any, goal: int, replies: int) -> dict[str, tuple[int, list[str]]]:
+    """A request of each NEVER kind, and the other ways into one, with the classes each falls in. 0.14.0: emails for
+    the milestone of replies; words of tax and contracts in what a reply says (a request's text is no act)."""
     first = an_email(f"new{next(_numbers)}@example.org")
     return {
         "account": (request(agent, goal, type="create_account", executor=None), ["account", "owner_only"]),
         "account, by Ember's code": (request(agent, goal, type="create_account"), ["account"]),
         "money": (request(agent, goal, type="spend_money", executor=None), ["money", "owner_only"]),
         "money, by Ember's code": (request(agent, goal, type="spend_money"), ["money"]),
-        "first contact": (request(agent, goal, type="contact", executor="email", action=first), ["first_contact"]),
+        "first contact": (request(agent, replies, type="contact", executor="email", action=first), ["first_contact"]),
         "first contact, no address": (
-            request(agent, goal, type="contact", executor="email", action={"subject": "Hi"}),
+            request(agent, replies, type="contact", executor="email", action={"subject": "Hi"}),
             ["first_contact"],
         ),
         "first publication": (
@@ -124,14 +153,16 @@ def never_requests(agent: Any, goal: int) -> dict[str, tuple[int, list[str]]]:
             request(agent, goal, type="publish", executor="reddit_link", action={"subreddit": "planners"}),
             ["community_post"],
         ),
-        "VAT": (request(agent, goal, words="The price now includes VAT."), ["legal"]),
-        "Umsatzsteuer": (request(agent, goal, words="Ohne Umsatzsteuer, Kleinunternehmer."), ["legal"]),
-        "a contract in a reply": (  # the body is in the request's text too, as the email tool writes it
-            request(agent, goal, type="contact", executor="email", action=an_email(WROTE), words="Sign the CONTRACT."),
-            ["legal"],
-        ),
+        "VAT": (reply(agent, replies, "The price now includes VAT."), ["legal"]),
+        "Umsatzsteuer": (reply(agent, replies, "Ohne Umsatzsteuer, Kleinunternehmer."), ["legal"]),
+        "a contract in a reply": (reply(agent, replies, "Sign the CONTRACT."), ["legal"]),
         "owner only": (request(agent, goal, type="other", executor=None), ["owner_only"]),
     }
+
+
+def reply(agent: Any, milestone_id: int, words: str = "Yes, in A5 too.") -> int:
+    """A reply to Lena in the thread she started, saying ``words``."""
+    return request(agent, milestone_id, type="contact", executor="email", action=an_email(WROTE, words), words=words)
 
 
 def reasons_of(conn: sqlite3.Connection, approval_id: int) -> list[str]:
@@ -170,26 +201,29 @@ def test_no_unlock_carries_a_never_request_whatever_the_rule_or_level(
     agent = an_agent(data_dir)
     scope, now = agent.scope(), to_iso(agent.clock.now())
     for level in ("veto_window", "auto"):
-        goal = a_milestone(agent, level)
-        kinds = never_requests(agent, goal)
+        goal, answers = a_milestone(agent, level), a_milestone(agent, level, line=False)
+        kinds = never_requests(agent, goal, answers)
         controls = {rule: request(agent, goal) for rule in policy.RULES}  # the same, with nothing NEVER in them
-        replies = {
-            rule: request(agent, goal, type="contact", executor="email", action=an_email(WROTE))
-            for rule in policy.RULES
-        }
+        replies = {rule: reply(agent, answers) for rule in policy.RULES}
         with agent.db.connection() as conn:
             for kind, (approval_id, classes) in kinds.items():
                 assert reasons_of(conn, approval_id) == classes, kind
             for approval_id in (*controls.values(), *replies.values()):
                 assert reasons_of(conn, approval_id) == []
+        # 0.14.0: a request no milestone covers (what only the owner carries out, a community post) no unlock carries
+        covered = {r["approval_id"] for r in rows(agent, "SELECT approval_id FROM approvals_scope")}
+        assert {kind for kind, (approval_id, _) in kinds.items() if approval_id not in covered} == {
+            "account",
+            "money",
+            "community post",
+            "owner only",
+        }
         for rule in policy.RULES:
             fits(monkeypatch, rule)
-            for kind, (approval_id, classes) in kinds.items():
-                said = carry(agent, approval_id)
-                assert said == (
-                    f" It waits for your owner whatever they unlocked: never automatic for "
-                    f"{'; '.join(never.CLASSES[c] for c in classes)}."
-                ), (kind, rule, level)
+            for kind, (approval_id, _) in kinds.items():
+                said = carry(agent, approval_id)  # 0.14.0: the agent isn't told which kind (the owner's card says it)
+                expected = " It waits for your owner whatever they unlocked (never automatic)."
+                assert said == (expected if approval_id in covered else ""), (kind, rule, level)
             for approval_id in (controls[rule], replies[rule]):  # the checks don't stop what they shouldn't
                 assert ("approved it at once" if level == "auto" else "unless your owner decides first") in carry(
                     agent, approval_id
@@ -233,8 +267,8 @@ def test_no_unlock_carries_a_never_request_whatever_the_rule_or_level(
 def test_each_check_of_the_database_holds_on_its_own(data_dir: Path) -> None:
     """Were the check of the uses gone, the check of the approvals would still refuse, and the other way round."""
     agent = an_agent(data_dir)
-    goal = a_milestone(agent, "auto")
-    vat = request(agent, goal, words="Plus VAT.")
+    goal = a_milestone(agent, "auto", line=False)
+    vat = reply(agent, goal, "Plus VAT.")
     now = to_iso(agent.clock.now())
     with agent.db.connection() as conn:
         grant = conn.execute(
@@ -315,7 +349,7 @@ def test_an_unlock_taken_back_or_spent_carries_nothing_more(data_dir: Path, monk
         grant = conn.execute(
             "SELECT * FROM policy_grants WHERE milestone_id = ? AND rule = 'deactivate'", (missed,)
         ).fetchone()
-    assert carry(agent, late) == ""
+    assert f"milestone #{missed}" not in carry(agent, late)  # 0.14.0: another milestone's unlock may carry it
     with (
         pytest.raises(sqlite3.IntegrityError, match="no standing unlock carries this request"),
         agent.db.transaction() as conn,
@@ -370,6 +404,10 @@ VOCABULARY = (
     "Finanzamt", "Kaufvertrag", "VERTRÄGE", "Verträge", "Vertrag", "contract", "Contracts", "contractor",
     "subcontract", "Steuerung", "ÜSTEUER", "planner", "printable", "A5", "ä", "Ö", "invoice", "price", "€", "USD",
 )  # fmt: skip
+VOCABULARY += (
+    "§ 19 UStG", "Rechnung", "Auftrag", "St\u0435uer", "Ste\u00aduer", "\uff34\uff21\uff38", "IVA", "TAXABLE",
+    "Lizenz", "licence", "Zoll", "customs", "Angebot",
+)  # fmt: skip
 
 
 def test_the_database_reads_a_request_as_the_code_does(data_dir: Path) -> None:
@@ -392,6 +430,8 @@ def test_the_database_reads_a_request_as_the_code_does(data_dir: Path) -> None:
         words = "".join(
             rng.choice(VOCABULARY) + rng.choice(("", " ", " ", "-", "\n", ", ")) for _ in range(rng.randint(1, 6))
         )
+        if executor == "email" and isinstance(action, dict):  # 0.14.0: NEVER reads what a reply says
+            action["body"] = words
         made.append(request(agent, goal, type=rng.choice(types), executor=executor, action=action, words=words))
     seen: set[str] = set()
 
@@ -429,17 +469,19 @@ def test_the_database_reads_a_request_as_the_code_does(data_dir: Path) -> None:
 
 
 def test_a_price_change_in_words_of_tax_waits_for_the_owner(data_dir: Path) -> None:
-    """Through the agent's own tool: an auto unlock carries a small price change, never one whose reason is VAT."""
+    """Through the agent's own tool: an auto unlock carries a small price change, never one whose reason is VAT.
+    0.14.0: the reason is no act (nothing of it is sent): NEVER reads what a request says or sends, so the price
+    change is carried; a reply in words of tax waits (test_fixes_0140_unlock_keying)."""
     agent, listing_id = listed(data_dir)
     due = (agent.clock.today() + timedelta(days=30)).isoformat()
+    line = rows(agent, "SELECT project_id FROM approvals WHERE executor = 'etsy_listing'")[0]["project_id"]
     with agent.db.transaction() as conn:
         goal = roadmap.create(
-            conn, agent.scope(), title="Ten sales", measure="10 orders", due=due, now=to_iso(agent.clock.now())
-        )
+            conn, agent.scope(), title="Ten sales", measure="10 orders", due=due, now=to_iso(agent.clock.now()),
+            project_id=line,
+        )  # fmt: skip
     assert owner(agent).set_autonomy(goal, {"rule": "price_change", "level": "auto"}, "Stefan").status == 200
     old = price_of(agent, listing_id)
     made = work_on(agent, goal, change(listing_id, price=f"{old * Decimal('0.95'):.2f}", reason="Etsy adds VAT now."))
-    assert (made[-1]["status"], made[-1]["decided_by"]) == ("pending", None)
-    said = tool_results(agent, "propose_etsy_edit")[-1]["result"]
-    assert f"It waits for your owner whatever they unlocked: never automatic for {LEGAL}." in said
-    assert next(a for a in agent.dashboard()["approvals"] if a["id"] == made[-1]["id"])["never"] == [LEGAL]
+    assert (made[-1]["status"], made[-1]["decided_by"]) == ("approved", policy.POLICY_BY)
+    assert next(a for a in agent.dashboard()["approvals"] if a["id"] == made[-1]["id"])["never"] == []

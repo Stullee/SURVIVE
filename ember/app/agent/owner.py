@@ -617,9 +617,16 @@ class Owner:
 
     def undo(self, journal_id: int, who: str | None) -> Reply:
         """0.13.0: undo an action of Ember's code on a listing: a request of the owner's, approved at once, which
-        Ember's code carries out in its next round (audit.undo)."""
+        Ember's code carries out in its next round (audit.undo). 0.14.0: also while the agent is paused or waits for
+        money; refused once the kill switch is on (or the life is over), where it would wait for good."""
 
         def run() -> Reply:
+            state = self.economy.life.evaluate().state
+            if state not in audit.UNDO_WHILE:
+                stopped = "the kill switch is on" if state == "killed" else f"the agent is {state}"
+                raise OwnerError(
+                    "id", f"Ember's code carries nothing out while {stopped}, an Undo neither: undo it by hand", 409
+                )
             with self.db.transaction() as conn:
                 try:
                     approval_id, what = audit.undo(conn, self.scope, self._now(), journal_id, _signed(who))

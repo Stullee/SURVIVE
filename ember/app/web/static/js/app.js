@@ -2365,6 +2365,8 @@
       actionFlags(a.action_class),
       a.veto_until && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "⏱ " }),
         h("strong", { text: "Your unlock: " }), name + "'s code approves it on " + fmtDateTime(a.veto_until) + " unless you decide first.") : null,
+      a.unlock_ended && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "⏱ " }),
+        h("strong", { text: "It waits for you: " }), String(a.unlock_ended) + ".") : null,
       arr(a.never).length && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "🔒 " }),
         h("strong", { text: "Never automatic: " }), arr(a.never).join("; ") + ". It waits for you, whatever you unlocked.") : null,
       arr(a.qa).length ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
@@ -6386,6 +6388,13 @@
   // missed milestone or a veto.
   var AUTONOMY_LEVELS = { manual: "Ask me (manual)", veto_window: "Run unless I veto within 12 h", auto: "Run at once (auto)" };
 
+  // 0.14.0: an unlock carries only what belongs to its milestone, whatever the plan works on.
+  function autonomyScope(m) {
+    if (m.project_id) return "on the listings of its project (" + (m.project_title || "#" + m.project_id) + ")";
+    if (m.venture_id) return "on the listings of its venture's projects (" + (m.venture_title || "#" + m.venture_id) + ")";
+    return "email replies only: it names no project or venture, so no listing is its";
+  }
+
   function milestoneAutonomy(m) {
     var rules = arr(m.autonomy);
     if (!rules.length) return null;
@@ -6393,8 +6402,8 @@
     var status = h("p", { class: "muted small", role: "status" });
     return h("div", { class: "rm-autonomy" }, h("details", null,
       h("summary", null, h("strong", { text: "Autonomy: " }), on ? plural(on, "rule") + " unlocked" : "all manual"),
-      h("p", { class: "muted small", text: "What " + agentName() + "'s code may carry out for this milestone without your click. " +
-        "It takes back an unlock itself on an unclear result, a spent budget, a missed milestone or your veto." }),
+      h("p", { class: "muted small", text: "What " + agentName() + "'s code may carry out for this milestone without your click, " +
+        autonomyScope(m) + ". It takes back an unlock itself on an unclear result, a spent budget, the milestone's end or your veto." }),
       h("ul", { class: "vt-evidence" }, rules.map(function (r) {
         var level = h("select", { "aria-label": "Level for " + r.label });
         Object.keys(AUTONOMY_LEVELS).forEach(function (k) {

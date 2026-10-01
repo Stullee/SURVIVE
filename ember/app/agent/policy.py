@@ -11,11 +11,13 @@ milestone they back autonomy for a few rules (RULES), all off by default:
 * email_reply: an email that answers someone in a thread they started (Ember's footer always says an AI wrote it).
 
 Each grant has a level (LEVELS): manual (as before), veto_window (approved VETO_HOURS after the request unless the
-owner decided first) or auto (approved at once), a daily limit and a budget of actions. A request of the milestone the
-cycle worked for that fits a granted rule is carried by it (``apply``); every request that fits a rule is kept as a
-candidate. Ember's code revokes a grant (``keep``) on an unclear result, a spent budget, a missed or dropped milestone
-or the owner's veto (rejecting a request during its window), and only proposes a promotion (``suggestions``): a rule
-whose requests the owner approved PROMOTE_AFTER times without changes in PROMOTE_DAYS. The owner decides.
+owner decided first) or auto (approved at once), a daily limit and a budget of actions. A request that fits a granted
+rule is carried by the grant of a milestone it belongs to (``apply``). 0.14.0: that is what the request acts on, not
+the cycle's focus (``carrier``): a listing of the milestone's project, or of its venture's projects; an email reply
+belongs to a milestone of no project or venture. Every request that fits a rule is kept as a candidate. Ember's code
+revokes a grant (``keep``) on an unclear result, a spent budget, a milestone closed (done, missed or dropped) or the
+owner's veto (rejecting a request during its window), and only proposes a promotion (``suggestions``): a rule whose
+requests the owner approved PROMOTE_AFTER times without changes or a comment in PROMOTE_DAYS. The owner decides.
 
 Whatever is unlocked, no unlock carries a NEVER request (never.py: an account, money, a first contact, a first
 publication, a community post, tax, VAT, a Gewerbe or a contract, what only the owner carries out), and only the owner
@@ -50,7 +52,7 @@ RULES: dict[str, Rule] = {
     r.name: r
     for r in (
         Rule("qa_fix", "etsy.edit_listing", f"QA fixes: photos up to {qa.MIN_PHOTOS} on a live listing"),
-        Rule("price_change", "etsy.edit_listing", "price changes within 15% on a live listing"),
+        Rule("price_change", "etsy.edit_listing", "price changes within 15% of the approved price on a live listing"),
         Rule("listing_variant", "etsy.create_listing", "new listings in a backed leg after 5 approved unchanged"),
         Rule("deactivate", "etsy.deactivate", "taking a listing of Ember's off Etsy"),
         Rule("email_reply", "email.reply", "email replies in threads the other person started"),
@@ -65,6 +67,7 @@ PROMOTE_DAYS = 30
 PER_DAY, BUDGET = 3, 10  # a grant's defaults
 POLICY_BY = "Ember's code (your unlock)"
 REVOKED_BY = "Ember's code"
+SPENT = "its budget of {} actions is spent"  # the one revocation that isn't for cause (promotions may come back)
 CODE = (POLICY_BY, REVOKED_BY, "Ember")  # who never unlocks anything (migration 0051 names them too)
 
 
@@ -90,16 +93,46 @@ def _started_by_them(conn: sqlite3.Connection, scope: AgentScope, action: Mappin
     return root is not None and root["direction"] == "in" and str(root["from_addr"]).lower() == to
 
 
+def _clean(alias: str = "") -> str:
+    """0.14.0: an approval without changes and without a comment (an objection like "approved, but the pictures look
+    alike" is no clean approval), as promotions and listing variants count them."""
+    a = f"{alias}." if alias else ""
+    return f"{a}final_payload IS NULL AND COALESCE(trim({a}decision_comment), '') = ''"
+
+
 def _clean_approvals(conn: sqlite3.Connection, scope: AgentScope, venture_id: int) -> int:
-    """The owner's approvals without changes of listings for a venture."""
+    """The owner's approvals without changes or a comment of listings for a venture."""
     where, params = scope.where()
     return int(
         conn.execute(
             f"SELECT COUNT(*) FROM approvals WHERE {where} AND executor = 'etsy_listing' AND venture_id = ?"
-            " AND status IN ('approved', 'done') AND final_payload IS NULL AND decided_by IS NOT ?",
+            f" AND status IN ('approved', 'done') AND {_clean()} AND decided_by IS NOT ?",
             (*params, venture_id, POLICY_BY),
         ).fetchone()[0]
     )
+
+
+def approved_price(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> str | None:
+    """0.14.0: the price a listing of Ember's had when the owner last approved one: after the newest price change they
+    approved (their Undo included), else as it was listed. The price band is measured from it, so the changes an unlock
+    carries can't add up past PRICE_BAND (three cuts of 14% took EUR 4.50 to 2.86 in a day)."""
+    where, params = scope.where("e")
+    changed = conn.execute(
+        f"SELECT e.listing FROM etsy_edits e JOIN approvals a ON a.id = e.approval_id WHERE {where}"
+        " AND e.listing_id = ? AND e.status IN ('done', 'partial') AND e.listing IS NOT NULL"
+        " AND json_extract(a.action, '$.price') IS NOT NULL AND a.decided_by IS NOT ? ORDER BY e.id DESC LIMIT 1",
+        (*params, listing_id, POLICY_BY),
+    ).fetchone()
+    try:
+        if changed is not None:
+            return etsy.listing_from_action(changed["listing"]).price
+        listed = etsy_publisher.listing_row(conn, scope, listing_id)
+        if listed is not None:
+            approval = conn.execute("SELECT * FROM approvals WHERE id = ?", (listed["approval_id"],)).fetchone()
+            return etsy_publisher.approved_listing(approval).price
+    except etsy.EtsyError:
+        return None
+    return None
 
 
 def match(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any]) -> str | None:
@@ -121,8 +154,8 @@ def match(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any]) -
         if current is None:
             return None
         if parts == ["price"] and edit.price is not None:
-            try:
-                old, new = Decimal(current.price), Decimal(edit.price)
+            try:  # 0.14.0: from the price the owner approved, not the last change (which an unlock may have made)
+                old, new = Decimal(approved_price(conn, scope, edit.listing_id) or "0"), Decimal(edit.price)
             except InvalidOperation:
                 return None
             return "price_change" if old > 0 and abs(new / old - 1) <= PRICE_BAND else None
@@ -194,13 +227,51 @@ def used(conn: sqlite3.Connection, grant_id: int, clock: Clock) -> tuple[int, in
 
 
 def _stands(conn: sqlite3.Connection, grant_id: int) -> bool:
-    """Whether a grant still stands: the newest of its milestone and rule, and not manual (not taken back)."""
+    """Whether a grant still stands: the newest of its milestone and rule, not manual (not taken back), and (0.14.0)
+    its milestone still open."""
     row = conn.execute(
-        "SELECT g.level, (SELECT MAX(h.id) FROM policy_grants h WHERE h.milestone_id = g.milestone_id"
-        " AND h.rule = g.rule) AS newest FROM policy_grants g WHERE g.id = ?",
+        "SELECT g.level, m.status, (SELECT MAX(h.id) FROM policy_grants h WHERE h.milestone_id = g.milestone_id"
+        " AND h.rule = g.rule) AS newest FROM policy_grants g JOIN milestones m ON m.id = g.milestone_id"
+        " WHERE g.id = ?",
         (grant_id,),
     ).fetchone()
-    return row is not None and row["level"] != "manual" and row["newest"] == grant_id
+    return row is not None and row["level"] != "manual" and row["newest"] == grant_id and row["status"] == "open"
+
+
+def _covers(conn: sqlite3.Connection, approval_id: int, grant_id: int) -> bool:
+    """0.14.0: whether a grant's milestone covers what a request acts on (an unlock of 0.13.0 held what its cycle aimed
+    at, whatever it touched)."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM approvals_scope s JOIN policy_grants g ON g.milestone_id = s.milestone_id"
+            " WHERE s.approval_id = ? AND g.id = ?",
+            (approval_id, grant_id),
+        ).fetchone()
+        is not None
+    )
+
+
+def carrier(
+    conn: sqlite3.Connection, scope: AgentScope, approval_id: int, rule: str
+) -> tuple[int | None, sqlite3.Row | None]:
+    """0.14.0: the milestone whose unlock carries a request, by what the request acts on (the view approvals_scope,
+    which the database checks too): the open milestones it belongs to, the one its cycle worked for first, then a
+    project's before a venture's, the oldest first. The first whose grant for the rule stands, with it; else the first
+    of them and None (no milestone: None)."""
+    covering = [
+        int(r[0])
+        for r in conn.execute(
+            "SELECT m.id FROM approvals_scope s JOIN milestones m ON m.id = s.milestone_id JOIN approvals a"
+            " ON a.id = s.approval_id WHERE s.approval_id = ? AND m.status = 'open'"
+            " ORDER BY m.id IS NOT a.milestone_id, m.project_id IS NULL, m.id",
+            (approval_id,),
+        )
+    ]
+    for milestone_id in covering:
+        granted = grant(conn, scope, milestone_id, rule)
+        if granted is not None:
+            return milestone_id, granted
+    return (covering[0] if covering else None), None
 
 
 @contextmanager
@@ -228,33 +299,30 @@ def _approve(conn: sqlite3.Connection, approval_id: int, now: str, why: str) -> 
 
 
 def apply(conn: sqlite3.Connection, scope: AgentScope, approval_id: int, clock: Clock) -> str:
-    """A request just made: kept as a candidate if it fits a rule, and carried by the grant of the milestone its cycle
-    worked for, if one stands and has room. Returns what the agent is told ("" when nothing changes)."""
+    """A request just made: kept as a candidate if it fits a rule, and carried by the grant of the milestone it belongs
+    to (0.14.0: by what it acts on, ``carrier``), if one stands and has room. Returns what the agent is told ("" when
+    nothing changes)."""
     row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
     rule = match(conn, scope, row) if row is not None and row["status"] == "pending" else None
     if row is None or rule is None:
         return ""
     now = to_iso(clock.now())
+    milestone_id, granted = carrier(conn, scope, approval_id, rule)
     conn.execute(
         "INSERT OR IGNORE INTO policy_candidates (approval_id, rule, milestone_id, created_at) VALUES (?, ?, ?, ?)",
-        (approval_id, rule, row["milestone_id"], now),
+        (approval_id, rule, milestone_id, now),
     )
-    if row["milestone_id"] is None:
-        return ""
-    milestone = conn.execute("SELECT status FROM milestones WHERE id = ?", (row["milestone_id"],)).fetchone()
-    granted = grant(conn, scope, int(row["milestone_id"]), rule)
-    if milestone is None or milestone["status"] != "open" or granted is None:
+    if granted is None:
         return ""
     label = RULES[rule].label
-    found = never.reasons(conn, row)
-    if found:
-        return f" It waits for your owner whatever they unlocked: never automatic for {never.text(found)}."
+    if never.reasons(conn, row):  # 0.14.0: which kind is the owner's to see (it named the words to avoid)
+        return " It waits for your owner whatever they unlocked (never automatic)."
     total, today = used(conn, int(granted["id"]), clock)
     if total >= int(granted["budget"]):
         return ""  # spent: keep() revokes it
     if today >= int(granted["per_day"]):
         return f" Your owner's unlock for {label} has carried {today} today, its limit: this one waits for them."
-    unlock = f"your owner unlocked {label} for milestone #{row['milestone_id']}"
+    unlock = f"your owner unlocked {label} for milestone #{milestone_id}"
     auto = granted["level"] == "auto"
     until = None if auto else to_iso(clock.now() + timedelta(hours=VETO_HOURS))
     try:
@@ -284,7 +352,9 @@ def run_due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[s
         (*params, now),
     ).fetchall():
         if use["status"] != "pending" or not _stands(conn, int(use["grant_id"])):
-            continue  # the owner decided first, or the unlock was taken back: it waits for them
+            continue  # the owner decided first, or the unlock ended (taken back, its milestone closed): it waits
+        if not _covers(conn, int(use["approval_id"]), int(use["grant_id"])):
+            continue  # 0.14.0: held by an unlock of 0.13.0 whose milestone doesn't cover it: it waits
         row = conn.execute("SELECT * FROM approvals WHERE id = ?", (use["approval_id"],)).fetchone()
         if never.reasons(conn, row):
             continue
@@ -302,9 +372,10 @@ def run_due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[s
 
 
 def keep(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[str]:
-    """Revoke the grants whose milestone was missed or dropped, whose budget is spent, which carried a request that
-    ended unclear, whose request the owner vetoed, or (email replies) whose reply the person answered by asking to
-    stop. Returns what happened."""
+    """Revoke the grants whose milestone closed (0.14.0: done too, so success ends an unlock visibly), whose budget
+    is spent, which carried a request that ended unclear, whose request the owner vetoed, or (email replies) whose
+    reply the person answered by asking to stop. Returns what happened, with the requests it held for their veto
+    window, which wait for the owner now."""
     now = to_iso(clock.now())
     happened = []
     for g in grants(conn, scope):
@@ -313,15 +384,25 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[str]
         why = _revocation(conn, g, clock)
         if why:
             set_grant(conn, scope, int(g["milestone_id"]), str(g["rule"]), "manual", now, by=REVOKED_BY, why=why[:300])
+            held = [
+                f"#{r[0]}"
+                for r in conn.execute(
+                    "SELECT u.approval_id FROM policy_uses u JOIN approvals a ON a.id = u.approval_id"
+                    " WHERE u.grant_id = ? AND u.approved_at IS NULL AND a.status = 'pending' ORDER BY u.id",
+                    (g["id"],),
+                )
+            ]
+            waits = f"; what it held waits for you: request {', '.join(held)}" if held else ""
             happened.append(
                 f"Ember's code revoked the unlock for {RULES[g['rule']].label} (milestone #{g['milestone_id']}): {why}"
+                + waits
             )
     return happened
 
 
 def _revocation(conn: sqlite3.Connection, g: sqlite3.Row, clock: Clock) -> str:
     milestone = conn.execute("SELECT status FROM milestones WHERE id = ?", (g["milestone_id"],)).fetchone()
-    if milestone is None or milestone["status"] in ("missed", "dropped"):
+    if milestone is None or milestone["status"] in ("done", "missed", "dropped"):
         return f"milestone #{g['milestone_id']} was {milestone['status'] if milestone else 'removed'}"
     for use in conn.execute(
         "SELECT u.approval_id, a.status, (SELECT j.status FROM action_journal j WHERE j.approval_id = u.approval_id"
@@ -345,21 +426,25 @@ def _revocation(conn: sqlite3.Connection, g: sqlite3.Row, clock: Clock) -> str:
             return f"{stopped['address']} asked to stop after an automatic reply (request #{stopped['approval_id']})"
     total, _ = used(conn, int(g["id"]), clock)
     if total >= int(g["budget"]):
-        return f"its budget of {g['budget']} actions is spent"
+        return SPENT.format(g["budget"])
     return ""
 
 
 def suggestions(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[dict[str, Any]]:
     """The promotions Ember's code proposes: a rule whose requests for an open milestone the owner approved
-    PROMOTE_AFTER times without changes in PROMOTE_DAYS, while nothing is granted for it. The owner decides."""
+    PROMOTE_AFTER times without changes or a comment (0.14.0) in PROMOTE_DAYS, while nothing is granted for it and
+    (0.14.0) its unlock wasn't taken back for cause in PROMOTE_DAYS (only a spent budget isn't a cause). The owner
+    decides."""
     since = to_iso(clock.now() - timedelta(days=PROMOTE_DAYS))
     where, params = scope.where("a")
     rows = conn.execute(
         "SELECT c.rule, c.milestone_id, COUNT(*) AS approved FROM policy_candidates c JOIN approvals a"
         f" ON a.id = c.approval_id JOIN milestones m ON m.id = c.milestone_id WHERE {where} AND m.status = 'open'"
-        " AND a.status IN ('approved', 'done') AND a.final_payload IS NULL AND a.decided_by IS NOT ?"
-        " AND c.created_at >= ? GROUP BY c.rule, c.milestone_id HAVING COUNT(*) >= ? ORDER BY c.milestone_id, c.rule",
-        (*params, POLICY_BY, since, PROMOTE_AFTER),
+        f" AND a.status IN ('approved', 'done') AND {_clean('a')} AND a.decided_by IS NOT ?"
+        " AND c.created_at >= ? AND NOT EXISTS (SELECT 1 FROM policy_grants g WHERE g.milestone_id = c.milestone_id"
+        " AND g.rule = c.rule AND g.level = 'manual' AND g.created_at >= ? AND COALESCE(g.why, '') NOT LIKE ?)"
+        " GROUP BY c.rule, c.milestone_id HAVING COUNT(*) >= ? ORDER BY c.milestone_id, c.rule",
+        (*params, POLICY_BY, since, since, SPENT.format("%"), PROMOTE_AFTER),
     ).fetchall()
     return [
         {
@@ -438,4 +523,29 @@ def veto_until(conn: sqlite3.Connection, approval_id: int) -> str | None:
         "SELECT veto_until, grant_id FROM policy_uses WHERE approval_id = ? AND approved_at IS NULL", (approval_id,)
     ).fetchone()
     held = row is not None and row["veto_until"] and _stands(conn, int(row["grant_id"]))
-    return str(row["veto_until"]) if held else None
+    return str(row["veto_until"]) if held and _covers(conn, approval_id, int(row["grant_id"])) else None
+
+
+def ended(conn: sqlite3.Connection, approval_id: int) -> str | None:
+    """0.14.0: why a request an unlock held for its veto window waits for the owner after all (None: it doesn't): its
+    milestone closed, the unlock was taken back, or its milestone doesn't cover it. For its card."""
+    row = conn.execute(
+        "SELECT u.grant_id, g.milestone_id, g.rule, m.status FROM policy_uses u"
+        " JOIN approvals a ON a.id = u.approval_id JOIN policy_grants g ON g.id = u.grant_id"
+        " JOIN milestones m ON m.id = g.milestone_id WHERE u.approval_id = ? AND u.approved_at IS NULL"
+        " AND a.status = 'pending'",
+        (approval_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    if _stands(conn, int(row["grant_id"])):
+        if _covers(conn, approval_id, int(row["grant_id"])):
+            return None
+        return f"milestone #{row['milestone_id']} doesn't cover what it acts on, so its unlock doesn't carry it"
+    if row["status"] != "open":
+        return f"milestone #{row['milestone_id']} was {row['status']}, so the unlock that held it ended"
+    newest = conn.execute(
+        "SELECT why FROM policy_grants WHERE milestone_id = ? AND rule = ? ORDER BY id DESC LIMIT 1",
+        (row["milestone_id"], row["rule"]),
+    ).fetchone()
+    return f"the unlock that held it was taken back ({newest['why'] or 'by you'})"

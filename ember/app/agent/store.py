@@ -15,6 +15,7 @@ from datetime import timedelta
 from typing import Any
 
 from ..economy.clock import from_iso, to_iso
+from . import never
 
 OPEN_STATUSES = ("idea", "active", "waiting")
 CLOSED_STATUSES = ("succeeded", "failed", "abandoned")
@@ -354,7 +355,8 @@ def withdraw_request(
 
 def insert_approval(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, now: str, **fields: Any) -> int:
     """A request for the owner; with ``executor`` and ``action`` (canonical JSON), one Ember's code carries out. It
-    names what it works for (0.12.0): its project's venture or the cycle's, and the cycle's focus milestone."""
+    names what it works for (0.12.0): its project's venture or the cycle's, and the cycle's focus milestone (0.14.0:
+    an unlock goes by what the request acts on instead, policy.carrier)."""
     focus = conn.execute(
         "SELECT y.milestone_id, COALESCE((SELECT venture_id FROM projects WHERE id = ?), y.venture_id, p.venture_id)"
         " FROM cycles y LEFT JOIN projects p ON p.id = y.project_id WHERE y.id = ?",
@@ -384,6 +386,9 @@ def insert_approval(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, 
             focus[1] if focus else None,
         ),
     )
+    words = never.act_words(fields.get("executor"), fields.get("action"))
+    if words is not None:  # 0.14.0: what it says, as NEVER reads it (the database can't normalise text)
+        conn.execute("INSERT INTO act_words (approval_id, words) VALUES (?, ?)", (cursor.lastrowid, words))
     return int(cursor.lastrowid)
 
 

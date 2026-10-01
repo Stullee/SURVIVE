@@ -28,6 +28,7 @@ from . import never, policy, store
 from .store import AgentScope
 
 FEED = 30  # entries on the Approvals tab
+MISSED_DAYS = 14  # 0.14.0: the days a digest is written for afterwards, when rounds didn't run (a pause)
 # What the owner's Undo does, by what would undo an action (connectors.undo_of): the button, the request's title and
 # what it costs.
 UNDO = {
@@ -42,6 +43,10 @@ UNDO = {
     "delete_pin": ("Delete the pin", "delete", "none"),  # 0.13.0 (Phase E2)
     "delete_product": ("Delete the product", "delete", "none"),  # 0.13.0 (Phase E4)
 }
+REPEATABLE = ("delete_pin", "delete_product")  # 0.14.0: an Undo that may be repeated after it ended unclear
+# 0.14.0: the agent's states in which Ember's code carries out the owner's Undo: also while paused or waiting for
+# money (an Undo costs no API money), never once the kill switch is on (it stops everything Ember's code sends).
+UNDO_WHILE = ("alive", "critical", "paused", "unfunded")
 WHO = {
     "unlock": "your unlock",
     "owner": "you approved it",
@@ -131,10 +136,30 @@ def _journal(
 def _last_undo(conn: sqlite3.Connection, journal_id: int) -> sqlite3.Row | None:
     return conn.execute(
         "SELECT u.approval_id, a.status, a.result_note, (SELECT COUNT(*) FROM action_journal j WHERE"
-        " j.approval_id = u.approval_id AND j.status <> 'failed') AS made FROM action_undos u JOIN approvals a"
+        " j.approval_id = u.approval_id AND j.status <> 'failed') AS made, (SELECT j.status FROM action_journal j"
+        " WHERE j.approval_id = u.approval_id ORDER BY j.id DESC LIMIT 1) AS ended FROM action_undos u JOIN approvals a"
         " ON a.id = u.approval_id WHERE u.journal_id = ? ORDER BY u.id DESC LIMIT 1",
         (journal_id,),
     ).fetchone()
+
+
+def _place(row: sqlite3.Row) -> str:
+    return {"pinterest": "Pinterest", "printify": "Printify"}.get(str(row["class"]).split(".")[0], "Etsy")
+
+
+# 0.14.0: an entry of the journal after action {row} that no longer counts as a later action on its listing: an Undo of
+# an action after {row} too (the two cancel out), or an action an Undo undid that nothing undid. After an Undo, the
+# action before it can be undone too.
+_UNDONE = (
+    "EXISTS (SELECT 1 FROM action_undos v JOIN approvals b ON b.id = v.approval_id WHERE v.journal_id = {entry}"
+    " AND b.status = 'done')"
+)
+_CANCELLED = (
+    "(EXISTS (SELECT 1 FROM action_undos u WHERE u.approval_id = j.approval_id AND u.journal_id > {row})"
+    " OR EXISTS (SELECT 1 FROM action_undos u JOIN approvals a ON a.id = u.approval_id JOIN action_journal k"
+    " ON k.approval_id = u.approval_id WHERE u.journal_id = j.id AND a.status = 'done'"
+    f" AND NOT {_UNDONE.format(entry='k.id')}))"
+)
 
 
 def _listing(raw: str | None) -> etsy.Listing | None:
@@ -172,12 +197,17 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
         if row["status"] == "failed":
             return "nothing was done"
         if row["status"] == "unclear":
-            place = {"pinterest": "Pinterest", "printify": "Printify"}.get(str(row["class"]).split(".")[0], "Etsy")
-            return f"it is unclear what happened: check it at {place}"
+            return f"it is unclear what happened: check it at {_place(row)}"
         return "Ember's code can't undo it"
     last = _last_undo(conn, int(row["id"]))
-    if last is not None and not (last["status"] == "failed" and last["made"] == 0):
-        return "it is undone" if last["status"] == "done" else "your Undo of it is under way"
+    if last is not None and last["status"] == "done":
+        return "it is undone"
+    if last is not None and last["status"] != "failed":
+        return "your Undo of it is under way"
+    # 0.14.0: an Undo that ended with something made is no longer "under way" for good; a delete that ended unclear
+    # may be repeated (what is gone already counts as deleted)
+    if last is not None and last["made"] and not (last["ended"] == "unclear" and undo["action"] in REPEATABLE):
+        return f"your Undo of it ended {last['ended']}: check it at {_place(row)}"
     where, params = scope.where()
     if undo["action"] == "delete_pin":  # 0.13.0 (Phase E2)
         pin = conn.execute(
@@ -190,10 +220,11 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
         ).fetchone()
         live = product is not None and product["status"] in printify_publisher.LIVE
         return None if live else "the product isn't at Printify anymore"
+    journal_where, journal_params = scope.where("j")
     later = conn.execute(
-        f"SELECT id FROM action_journal WHERE {where} AND subject = ? AND class LIKE 'etsy.%' AND id > ?"
-        " AND status <> 'failed' ORDER BY id LIMIT 1",
-        (*params, row["subject"], row["id"]),
+        f"SELECT j.id FROM action_journal j WHERE {journal_where} AND j.subject = ? AND j.class LIKE 'etsy.%'"
+        f" AND j.id > ? AND j.status <> 'failed' AND NOT {_CANCELLED.format(row='?')} ORDER BY j.id LIMIT 1",
+        (*journal_params, row["subject"], row["id"], row["id"]),
     ).fetchone()
     if later is not None:
         return f"a later action changed this listing (#{later['id']}): undo that one first"
@@ -396,6 +427,16 @@ def digest(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, day: date)
     by = Counter(_who(r) for r in actions)
     trouble = Counter(str(r["status"]) for r in actions if r["status"] in ("failed", "partial", "unclear"))
     where, params = scope.where("a")
+    # 0.14.0: what Ember's code carried out before the journal began (0.13.0) is only in the requests it closed: the
+    # first digest after the upgrade said "carried out nothing" for a day of 5 listings and 3 changes.
+    for r in conn.execute(
+        f"SELECT a.status, a.decided_by FROM approvals a WHERE {where} AND a.closed_by = ? AND a.closed_at >= ?"
+        " AND a.closed_at < ? AND a.executor IS NOT NULL"
+        " AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = a.id)",
+        (*params, etsy_publisher.CLOSED_BY, start, end),
+    ):
+        by["unlock" if r["decided_by"] == policy.POLICY_BY else "owner"] += 1
+        trouble.update(["failed"] if r["status"] == "failed" else [])
     approved = dict(
         conn.execute(
             f"SELECT u.level, COUNT(*) FROM policy_uses u JOIN approvals a ON a.id = u.approval_id WHERE {where}"
@@ -470,21 +511,28 @@ def _digest_text(day: date, data: dict[str, Any], clock: Clock) -> str:
     return text[:2000]
 
 
-def write_due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> str | None:
-    """Yesterday's digest, written once (at the first round of the owner's day); its text when written now."""
-    day = clock.today() - timedelta(days=1)
-    written = conn.execute(
-        "SELECT 1 FROM owner_digests WHERE mode = ? AND session = ? AND day = ?",
-        (scope.mode, scope.session, day.isoformat()),
-    ).fetchone()
-    if written is not None:
-        return None
-    text, data = digest(conn, scope, clock, day)
-    conn.execute(
-        "INSERT INTO owner_digests (mode, session, day, text, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (scope.mode, scope.session, day.isoformat(), text, json.dumps(data, sort_keys=True), to_iso(clock.now())),
-    )
-    return text
+def write_due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[str]:
+    """Yesterday's digest, written once (at the first round of the owner's day), and (0.14.0) one for each day since
+    the newest digest that has none, MISSED_DAYS at most (a pause stops the rounds that write them); the texts written
+    now."""
+    yesterday = clock.today() - timedelta(days=1)
+    newest = conn.execute(
+        "SELECT MAX(day) FROM owner_digests WHERE mode = ? AND session = ?", (scope.mode, scope.session)
+    ).fetchone()[0]
+    first = yesterday
+    if newest is not None:
+        first = max(date.fromisoformat(str(newest)) + timedelta(days=1), yesterday - timedelta(days=MISSED_DAYS - 1))
+    written = []
+    day = first
+    while day <= yesterday:
+        text, data = digest(conn, scope, clock, day)
+        conn.execute(
+            "INSERT INTO owner_digests (mode, session, day, text, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (scope.mode, scope.session, day.isoformat(), text, json.dumps(data, sort_keys=True), to_iso(clock.now())),
+        )
+        written.append(text)
+        day += timedelta(days=1)
+    return written
 
 
 def latest(conn: sqlite3.Connection, scope: AgentScope) -> dict[str, Any] | None:

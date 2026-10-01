@@ -27,10 +27,19 @@ from tests.test_ventures import JOURNAL, plan, tool_results  # noqa: E402
 
 
 def a_milestone(agent: Any, title: str = "Ten sales") -> int:
+    """An open milestone of the shop's product line (0.14.0: an unlock carries only what its milestone covers, the
+    project of the first listing); without a listing, of no project (it covers email replies)."""
     due = (agent.clock.today() + timedelta(days=30)).isoformat()
     with agent.db.transaction() as conn:
+        line = conn.execute("SELECT project_id FROM approvals WHERE executor = 'etsy_listing' ORDER BY id").fetchone()
         return roadmap.create(
-            conn, agent.scope(), title=title, measure="10 orders", due=due, now=to_iso(agent.clock.now())
+            conn,
+            agent.scope(),
+            title=title,
+            measure="10 orders",
+            due=due,
+            now=to_iso(agent.clock.now()),
+            project_id=line["project_id"] if line else None,
         )
 
 
@@ -77,8 +86,8 @@ def test_an_auto_unlock_carries_a_small_price_change_and_nothing_bigger(data_dir
     assert (made[-1]["status"], made[-1]["decided_by"]) == ("approved", policy.POLICY_BY)
     said = tool_results(agent, "propose_etsy_edit")[-1]["result"]
     assert (
-        "Ember's code approved it at once: your owner unlocked price changes within 15% on a live listing for "
-        f"milestone #{goal} (auto)." in said
+        "Ember's code approved it at once: your owner unlocked price changes within 15% of the approved price on a live"
+        f" listing for milestone #{goal} (auto)." in said
     )
     assert agent.execute_approved() == [(made[-1]["id"], "done")]  # the executor carries it out as always
     assert price_of(agent, listing_id) == (old * Decimal("0.95")).quantize(Decimal("0.01"))
