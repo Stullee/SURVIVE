@@ -19,6 +19,7 @@ import base64
 import binascii
 import re
 import sqlite3
+from collections.abc import Collection
 from datetime import timedelta
 from typing import Any
 
@@ -116,6 +117,7 @@ class Owner:
         scope: AgentScope,
         agent_name: str,
         unlocks_off: str = "",
+        ready: Collection[str] = (),
     ) -> None:
         self.db = db
         self.clock = clock
@@ -123,6 +125,7 @@ class Owner:
         self.scope = scope
         self.agent_name = agent_name
         self.unlocks_off = unlocks_off  # 0.14.0: why no unlock may be granted now (policy.off), "" when one may
+        self.ready = ready  # 0.14.0: the channels set up now (a channel venture's first test waits for its channel)
 
     def _now(self) -> str:
         return to_iso(self.clock.now())
@@ -539,7 +542,9 @@ class Owner:
                 after = ventures.get(conn, self.scope, venture_id)
                 # 0.12.0: a backed venture's first test becomes a milestone; a parked or killed one's milestones go.
                 if action == "back" and after is not None:
-                    stages.first_test(conn, self.scope, after, self.clock.today(), now)
+                    # 0.14.0: a channel's venture only once its channel is set up (else stages.keep sets it then)
+                    if not stages.waits_for_channel(after, self.ready):
+                        stages.first_test(conn, self.scope, after, self.clock.today(), now)
                     # 0.13.0: its case's first sale, as a prediction Ember's code settles
                     case = ventures.latest_case(conn, venture_id)
                     predictions.add_first_sale(conn, self.scope, venture_id, case, self.clock.today(), now)

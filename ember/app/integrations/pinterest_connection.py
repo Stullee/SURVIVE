@@ -60,7 +60,8 @@ class PinterestConnection:
             return None
         if self._fake is not None:
             return self._fake
-        if pinterest.config_problems(self.settings) or self.tokens.load() is None:
+        tokens = self.tokens.load()
+        if pinterest.config_problems(self.settings) or tokens is None or pinterest.lapsed(tokens, self.clock.now()):
             return None
         from .pinterest_live import LiveAccount  # the only module that talks to Pinterest (and imports httpx2)
 
@@ -122,8 +123,11 @@ class PinterestConnection:
         problems = pinterest.config_problems(self.settings)
         if problems:
             return "not_configured", "; ".join(problems)
-        if self.tokens.load() is None:
+        tokens = self.tokens.load()
+        if tokens is None:
             return "not_connected", "Connect your account: System, Pinterest, Connect."
+        if pinterest.lapsed(tokens, self.clock.now()):  # 0.14.0: unused for too long (the app was off)
+            return "not_connected", "The connection expired: connect your account again (System, Pinterest)."
         return "ok", None
 
     def describe(self, scope: Any = None) -> dict[str, Any]:

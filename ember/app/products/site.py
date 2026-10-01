@@ -34,6 +34,14 @@ SOURCE_MAX = 20_000
 LANGUAGES = ("de", "en")
 ZIP_TIME = (2026, 1, 1, 0, 0, 0)  # every file's time in the download, so the same site is the same file
 _EMAIL = re.compile(r"^[^@\s<>\"']{1,64}@[^@\s<>\"']{1,190}\.[A-Za-z]{2,63}$")
+# 0.14.0: the Impressum's address is where the owner can be found (a street ending in its number, then the postcode
+# with the town), never a PO box or a Packstation; a phone number, if given, is one; a business ID in the VAT ID's
+# option is a Wirtschafts-Identifikationsnummer (§ 139c AO: DE, 9 digits, a dash and 5 digits).
+_POSTCODE = re.compile(r"^(?:[A-Z]{1,2}-)?\d{4,5} +\S")
+_STREET = re.compile(r"[^\W\d_].*[\s.]\d+ ?[a-zA-Z]?(?: ?[-/] ?\d+ ?[a-zA-Z]?)*$")
+_PO_BOX = re.compile(r"\b(?:postfach|postbox|p\.? ?o\.? ?box|packstation|postfiliale)\b", re.IGNORECASE)
+_PHONE = re.compile(r"^\+?[0-9 ()/.-]{6,40}$")
+_BUSINESS_ID = re.compile(r"^DE\d{9}-\d{5}$")
 _PRINT_ONLY = (markup.Space, markup.Photo, markup.Lines, markup.PageBreak)
 
 
@@ -70,11 +78,21 @@ class Owner:
         found = []
         if not self.legal_name:
             found.append("site_owner_name is missing")
-        if len(self.address) < 2:
+        town = next((i for i, line in enumerate(self.address) if i and _POSTCODE.match(line)), 0)
+        if not any(_STREET.match(line) for line in self.address[:town]):  # 0.14.0: the street and its number first
             found.append("site_address needs the street and the postcode with the town")
+        elif any(_PO_BOX.search(line) for line in self.address):
+            found.append("site_address must be where you can be found (street, postcode and town), not a PO box")
         if not _EMAIL.match(self.email):
             found.append("site_email is missing")
+        if self.phone and (not _PHONE.match(self.phone) or sum(c.isdigit() for c in self.phone) < 6):
+            found.append("site_phone must be a phone number, like +49 30 1234567")
         return found
+
+    def advice(self) -> list[str]:
+        """0.14.0: what the Impressum should have but can be built without. The site has no contact form, so without
+        a phone the email is its only way to reach the owner."""
+        return [] if self.phone else ["site_phone is empty: the Impressum's only contact is the email (add a phone)"]
 
 
 def check(slug: str, title: str, description: str, source: str, menu: str = "") -> Page:
@@ -287,7 +305,12 @@ def impressum(owner: Owner) -> str:
         "<h2>Kontakt</h2>",
         f"<p>{'<br>'.join(contact)}</p>",
     ]
-    if owner.vat_id:
+    if _BUSINESS_ID.match(owner.vat_id.replace(" ", "")):
+        parts += [
+            "<h2>Wirtschafts-Identifikationsnummer</h2>",
+            f"<p>Wirtschafts-Identifikationsnummer gemäß § 139c Abgabenordnung: {_e(owner.vat_id)}</p>",
+        ]
+    elif owner.vat_id:
         parts += [
             "<h2>Umsatzsteuer-ID</h2>",
             f"<p>Umsatzsteuer-Identifikationsnummer gemäß § 27a Umsatzsteuergesetz: {_e(owner.vat_id)}</p>",
@@ -319,7 +342,8 @@ def datenschutz(owner: Owner) -> str:
             "Inhalte von anderen Anbietern (keine Schriften, Skripte, Karten oder Videos).</p>",
             f"<p>{host} technisch notwendige Daten (IP-Adresse, Zeitpunkt, aufgerufene Seite, Browser) in seinen "
             "Server-Protokollen, um die Seite auszuliefern und ihren Betrieb zu sichern (Art. 6 Abs. 1 lit. f "
-            "DSGVO).</p>",
+            "DSGVO). Die Protokolle werden gelöscht, sobald sie dafür nicht mehr nötig sind; die genaue Frist richtet "
+            "sich nach den Vorgaben des Anbieters.</p>",
             "<h2>Wenn Sie uns schreiben</h2>",
             "<p>Schreiben Sie uns eine E-Mail, verarbeiten wir Ihre Angaben, um Ihre Anfrage zu beantworten (Art. 6 "
             "Abs. 1 lit. b und f DSGVO), und löschen sie, wenn sie dafür nicht mehr nötig sind und keine "

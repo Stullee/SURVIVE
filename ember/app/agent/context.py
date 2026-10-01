@@ -220,8 +220,8 @@ class Snapshot:
     proven: list[tuple[str, str]] = field(default_factory=list)  # workshop scripts worth building in: (path, why)
     review: str = ""  # today's daily review, as the planner sees it ("" before it is made)
     etsy: str = ""  # the ETSY SHOP section ("" without a shop)
-    pinterest: str = ""  # the PINTEREST section ("" without the owner's account), 0.13.0
-    printify: str = ""  # the PRINTIFY section ("" without the owner's account), 0.13.0
+    pinterest: str = ""  # the PINTEREST section ("" while off; 0.14.0: one line while not set up), 0.13.0
+    printify: str = ""  # the PRINTIFY section ("" while off; 0.14.0: one line while not set up), 0.13.0
     website: str = ""  # the WEBSITE section ("" while the owner's website is off), 0.13.0
     ventures: list[sqlite3.Row] = field(default_factory=list)  # the venture tree (0.10.0)
     venture_money: dict[int, ventures.Money] = field(default_factory=dict)

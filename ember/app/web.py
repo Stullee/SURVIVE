@@ -409,6 +409,7 @@ def _owner_actions(request: Request) -> owner_side.Owner | None:
         state.agent.scope(),
         state.loaded.settings.agent_name,
         unlocks_off=state.agent.unlocks_off(),  # 0.14.0: no unlock without owner_user_ids, or in safe mode
+        ready=state.agent.channels_ready(),  # 0.14.0: a channel venture's first test waits for its channel
     )
 
 

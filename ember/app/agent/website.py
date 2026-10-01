@@ -118,6 +118,7 @@ def state(conn: sqlite3.Connection, scope: AgentScope, who: site.Owner) -> dict[
             for r in rows
         ],
         "problem": problem,
+        "advice": who.advice(),  # 0.14.0: what it lacks but can be built without
         "downloaded_at": last["downloaded_at"] if last is not None else None,
         "changed": changed,
     }
@@ -135,6 +136,8 @@ def planner_text(conn: sqlite3.Connection, scope: AgentScope, who: site.Owner) -
         lines = [f"Changed since your owner downloaded it ({now['downloaded_at'][:10]}): {', '.join(now['changed'])}."]
     else:
         lines = [f"Your owner downloaded it as it is ({now['downloaded_at'][:10]})."]
+    if not now["problem"]:  # 0.14.0: what the owner can add, once nothing is missing
+        lines += [f"Ask your owner: {a}." for a in now["advice"]]
     if who.url:
         lines.append(f"Its address: {who.url.rstrip('/')}/ (a page is there as <name>.html).")
     shown = "; ".join(
@@ -152,6 +155,7 @@ def describe(conn: sqlite3.Connection, scope: AgentScope, settings: Settings) ->
     return {
         "status": "not_ready" if now["problem"] else "ok",
         "reason": now["problem"],
+        "advice": now["advice"],
         "url": settings.site_url.strip() or None,
         "language": settings.site_language,
         "max_pages": site.MAX_PAGES,

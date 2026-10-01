@@ -13,7 +13,7 @@ import base64
 import json
 import logging
 import threading
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx2
@@ -41,7 +41,11 @@ log = logging.getLogger(__name__)
 TIMEOUT = httpx2.Timeout(connect=10.0, read=60.0, write=120.0, pool=10.0)
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 ACCESS_SECONDS = 3_600
-REFRESH_DAYS = 365  # a continuous refresh token lasts a year from its last use
+# 0.14.0: a refresh token lasts as long as Pinterest's answer says (refresh_token_expires_in); when it doesn't say,
+# DEFAULT_REFRESH_DAYS (a continuous refresh token's 60 days from its last use: DOCS.md). The sync renews an unused
+# connection RENEW_BEFORE its refresh token ends.
+DEFAULT_REFRESH_DAYS = 60
+RENEW_BEFORE = timedelta(days=14)
 REFRESH_EARLY = timedelta(minutes=5)
 MIME = {".png": "image/png", ".jpg": "image/jpeg"}
 _REFRESH_LOCK = threading.Lock()
@@ -145,13 +149,22 @@ def connect(
         Tokens(
             access_token=access,
             refresh_token=str(data.get("refresh_token") or ""),
-            expires_at=to_iso(now + timedelta(seconds=int(data.get("expires_in") or ACCESS_SECONDS))),
-            refresh_expires_at=to_iso(now + timedelta(days=REFRESH_DAYS)),
+            expires_at=to_iso(now + _seconds(data, "expires_in", ACCESS_SECONDS)),
+            refresh_expires_at=to_iso(now + _seconds(data, "refresh_token_expires_in", DEFAULT_REFRESH_DAYS * 86_400)),
             username=info.username,
             connected_at=to_iso(now),
         )
     )
     return info
+
+
+def _seconds(data: dict[str, Any], key: str, default: int) -> timedelta:
+    """A lifetime in Pinterest's token answer (``default`` seconds when it doesn't give a positive number)."""
+    try:
+        seconds = int(data.get(key) or 0)
+    except (TypeError, ValueError):
+        seconds = 0
+    return timedelta(seconds=seconds if seconds > 0 else default)
 
 
 def _account(data: Any) -> AccountInfo:
@@ -183,22 +196,46 @@ class LiveAccount:
                 raise NotSent("Pinterest isn't connected")
             if from_iso(tokens.expires_at) - REFRESH_EARLY > now:
                 return tokens
-            if not tokens.refresh_token or from_iso(tokens.refresh_expires_at) <= now:
-                raise NotSent("the connection to Pinterest expired: connect it again (System, Pinterest)")
-            try:
-                data = _token_request(
-                    self.settings,
-                    {"grant_type": "refresh_token", "refresh_token": tokens.refresh_token},
-                    self._transport,
-                )
-            except NotSent as exc:
-                raise NotSent(f"Pinterest didn't renew the connection ({exc}): connect it again") from None
-            tokens.access_token = str(data["access_token"])
-            tokens.refresh_token = str(data.get("refresh_token") or tokens.refresh_token)
-            tokens.expires_at = to_iso(now + timedelta(seconds=int(data.get("expires_in") or ACCESS_SECONDS)))
-            tokens.refresh_expires_at = to_iso(now + timedelta(days=REFRESH_DAYS))
-            self.tokens.save(tokens)
-            return tokens
+            return self._renew(tokens, now)
+
+    def _renew(self, tokens: Tokens, now: datetime) -> Tokens:
+        """A new access token (and, with continuous refresh, a new refresh token). Called under _REFRESH_LOCK."""
+        if not tokens.refresh_token or from_iso(tokens.refresh_expires_at) <= now:
+            raise NotSent("the connection to Pinterest expired: connect it again (System, Pinterest)")
+        try:
+            data = _token_request(
+                self.settings,
+                {"grant_type": "refresh_token", "refresh_token": tokens.refresh_token},
+                self._transport,
+            )
+        except NotSent as exc:
+            raise NotSent(f"Pinterest didn't renew the connection ({exc}): connect it again") from None
+        tokens.access_token = str(data["access_token"])
+        tokens.expires_at = to_iso(now + _seconds(data, "expires_in", ACCESS_SECONDS))
+        if data.get("refresh_token"):  # 0.14.0: a new refresh token lasts as Pinterest says; an old one keeps its end
+            tokens.refresh_token = str(data["refresh_token"])
+            refresh = _seconds(data, "refresh_token_expires_in", DEFAULT_REFRESH_DAYS * 86_400)
+            tokens.refresh_expires_at = to_iso(now + refresh)
+        self.tokens.save(tokens)
+        return tokens
+
+    def keep_alive(self) -> None:
+        """0.14.0: renew a connection Ember hasn't used for a while (the sync calls it every SYNC_HOURS, with or
+        without pins): an expired access token as a call would (so a connection made under 0.13.0, with its assumed
+        year, learns Pinterest's lifetime), and any access token RENEW_BEFORE its refresh token ends. Once a renewal
+        gave no new refresh token, the access token outlives the old one: it isn't renewed early again."""
+        now = self.clock.now()
+        tokens = self.tokens.load()
+        if tokens is None:
+            return
+        ends = from_iso(tokens.refresh_expires_at)
+        if not tokens.refresh_token or ends - now > RENEW_BEFORE or from_iso(tokens.expires_at) > ends:
+            self._access()
+            return
+        with _REFRESH_LOCK:
+            tokens = self.tokens.load()
+            if tokens is not None and from_iso(tokens.refresh_expires_at) == ends:  # not renewed meanwhile
+                self._renew(tokens, now)
 
     def _call(self, method: str, path: str, *, changes: bool = False, **kwargs: Any) -> Any:
         headers = {"Authorization": f"Bearer {self._access().access_token}", "Accept": "application/json"}
