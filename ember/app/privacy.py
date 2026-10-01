@@ -31,11 +31,12 @@ _CODE_WORDS = (
 )
 _CODE = r"(?:\d{4,8}|\d{3}[ -]\d{3}|(?-i:(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,10}))"
 # Not a code: part of a word, a date or time, an amount, a number or an id ("#12"). Between the word and the
-# code: no digit and no "[", so a code already masked ends the search as the code did.
+# code: no digit and no "[", so a code already masked ends the search as the code did. 0.14.0: and no "|", a table's
+# cell border (live: a workshop run's cost was masked, its task's "verify" being in the next cell).
 _NOT_AFTER = r"(?<![\w.,:#$€£/-])"
 _NOT_BEFORE = r"(?![\w]|[.,:/-]\d)"
-_CODE_AFTER = re.compile(rf"(?i)(\b{_CODE_WORDS}\b[^\n\d\[]{{0,40}}?){_NOT_AFTER}({_CODE}){_NOT_BEFORE}")
-_CODE_BEFORE = re.compile(rf"(?i){_NOT_AFTER}({_CODE}){_NOT_BEFORE}([^\n\d\[]{{0,30}}?\b{_CODE_WORDS}\b)")
+_CODE_AFTER = re.compile(rf"(?i)(\b{_CODE_WORDS}\b[^\n\d\[|]{{0,40}}?){_NOT_AFTER}({_CODE}){_NOT_BEFORE}")
+_CODE_BEFORE = re.compile(rf"(?i){_NOT_AFTER}({_CODE}){_NOT_BEFORE}([^\n\d\[|]{{0,30}}?\b{_CODE_WORDS}\b)")
 # Links: everything after "?" or "#" can hold a token, and so can a long path segment of letters and digits.
 _URL = re.compile(r"(?i:https?)://[^\s\"'<>()\[\]{}⏎|]+")
 _SEGMENT = re.compile(r"[A-Za-z0-9_-]{20,}")

@@ -168,6 +168,8 @@ class Jail:
                 )
         allowed = KINDS[kinds]
         if want_file and Path(parts[-1]).suffix.lower() not in allowed:
+            if not Path(parts[-1]).suffix and self._is_folder(parts):  # 0.14.0: it said "only text files"
+                raise SandboxError(f"{text} is a folder: workspace_list lists it")
             if kinds == "text":
                 extra = (
                     " (PDF, Word, Excel and picture files are made with make_document, make_spreadsheet, "
@@ -176,6 +178,13 @@ class Jail:
                 raise SandboxError(f"only text files: {', '.join(sorted(TEXT_EXTENSIONS))}{extra}")
             raise SandboxError(f"only these files: {', '.join(sorted(allowed))}")
         return parts
+
+    def _is_folder(self, parts: list[str]) -> bool:
+        try:
+            with self._folder(parts):
+                return True
+        except (SandboxError, OSError):
+            return False
 
     @contextlib.contextmanager
     def _folder(self, parts: list[str], *, create: bool = False) -> Iterator[int]:

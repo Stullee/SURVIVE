@@ -49,7 +49,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Dry run | on | Fake model, no API calls, no cost. |
 | Let the agent read whole web pages | off | Off: live research is web search only. On: it can also read pages from its search results (about $0.01–0.02 each). PDFs and other documents are always refused, because they have no size limit, and so are Etsy's pages, because Etsy's API terms forbid programs reading its site (searching it is fine). |
 | Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, 5 minutes after your last message or decision (at most 15 after the first, and at least 30 after the last such wake), so one cycle reads them all (after a running cycle, unless that cycle saw them; not while the agent is paused or dormant). **Wake now** is immediate. Off: it reads your message at its next scheduled wake-up. |
-| Wake Ember when you decide | on | Your decision on one of its requests (approve, reject, mark done or failed), on a venture (back, park, kill) or on a milestone wakes the agent to act on it, the same way as a message. Off: it sees your decision at its next scheduled wake-up. Either way, while a request waits for you the agent sleeps at most 4 hours (or the **Default sleep**, if that is longer), and works on other things meanwhile. |
+| Wake Ember when you decide | on | Your decision on one of its requests (approve, reject, mark done or failed), on a venture (back, park, kill) or on a milestone wakes the agent to act on it, the same way as a message. Off: it sees your decision at its next scheduled wake-up. Either way, while a request waits for you the agent sleeps at most 4 hours (or the **Default sleep**, if that is longer), and works on other things meanwhile. Once no request waits any more, the sleep it chose stands again (counted from the end of that cycle). |
 | Wake Ember for events | on | A reply to Ember's email, a new email from a person or the last day of a milestone that Ember's code doesn't check itself wakes the agent for a short cycle (see [the agenda](#events-wake-it-the-agenda)). Off: they wait for its next scheduled wake-up. |
 | Worker effort | default | How thoroughly the model works in each step. `medium` or `low` write shorter answers and use fewer tool calls, which costs less but may do a worse job. Not used for Haiku. |
 | Kill switch reset | 0 | Change it to any other number and restart to undo the kill switch. |
@@ -84,7 +84,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Printify currency | EUR | The currency of the prices and costs Printify shows for that shop. |
 | Printify products per day | 2 | The most products Ember creates in one day (0 to 10). |
 | Website | off | Lets the agent write the pages of a small website of yours, which Ember builds and you publish. See [Website](#website). |
-| Website name, language, address | empty, de, empty | The site's name in its header (empty: your name), the language of its pages, and where you publish it (https, for its sitemap). |
+| Website name, language, address | empty, de, empty | The site's name in its header (empty: your name), the language of its pages, and where you publish it (https, for its sitemap): the site's folder address like https://example.org, not a page's file name (a trailing /index.html is dropped). |
 | Your full name, address, email, phone, VAT ID (Impressum) | empty | Your data for the site's Impressum and privacy page: name, address (street, postcode and town; not a PO box) and email are needed; phone and VAT ID (or your Wirtschafts-Identifikationsnummer) optional. Never in the diagnostics report. |
 | Your web host (privacy page) | empty | The company hosting your site, named on the privacy page. |
 
@@ -1012,7 +1012,9 @@ no longer shown); a study that failed three times stops until you press
   your message at its next wake-up. **Wake now** wakes it at once. Your reply
   also marks its earlier messages read; while five of its messages are unread,
   it can't write to you, and it sends at most
-  two messages a day that answer none of yours (Ember's code counts them). A
+  two messages a day that answer none of yours (Ember's code counts them),
+  plus one per promise that reports it kept (naming its #number) so it can
+  close it. A
   message that promises something shows the promise under it, and whether it
   was kept. Never send
   passwords: messages are stored and sent to Anthropic, and the agent can't log
@@ -1598,8 +1600,9 @@ Impressum names it as one). Without the first three Ember doesn't build the
 site, and the dashboard says what is missing. The Impressum has no place for a
 register entry (Handelsregister): if you have one, add it to the downloaded
 `impressum.html` yourself. Set **Website address** to where you will publish
-it (for its sitemap), **Website name** to your shop's name and **Your web
-host** to the company hosting it. Save and restart the app.
+it (for its sitemap; the folder address, not a page's file name), **Website
+name** to your shop's name and **Your web host** to the company hosting it.
+Save and restart the app.
 
 ## Reddit
 
@@ -1660,7 +1663,8 @@ subject. Your library's texts (what the study
 drew from a document, `library_read` and `knowledge_search` results) and the
 words of an opt-out reason are left out the same way. Every email address is
 masked (`[email 1]`, and `[Ember's address]`), and so are one-time codes
-(`[masked]`), the tokens in links (`https://example.com/verify?[…]`), the words
+(`[masked]`; in a table, only when the code word is in the same cell), the
+tokens in links (`https://example.com/verify?[…]`), the words
 you removed from your messages (`[removed]`, see below), and your Home
 Assistant name and user ID (`[the owner]`, `[the owner's user ID]`). It never contains the API key, the
 mailbox password, Etsy's keystring, secret or tokens, or an email's text. It
@@ -1802,7 +1806,8 @@ you corrected, say); it also makes the workshop forget what the runs before it
 cost.
 A call whose bill is uncertain (the API failed before any reply) is charged to
 the balance at its worst case (a workshop call: what it kept back) until you
-correct it, but counts toward the caps only with what it is known to cost.
+correct it, but counts toward the caps only with what it is known to cost. A
+500, 502, 503, 504 or 529 error before the answer began costs nothing.
 As an outside safety net, give Ember its own
 [Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
 API key and set a monthly spend limit there.

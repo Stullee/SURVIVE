@@ -222,6 +222,7 @@ class Field:
     minimum: int | None = None
     maximum: int | None = None
     cut: bool = False  # too long: cut to max_len with a note instead of refusing (for notes, not content)
+    remedy: str = ""  # 0.14.0: what to do when it is too long, said in the refusal
     items: tuple[tuple[str, Field], ...] = ()  # an array's objects: their fields, in order
 
 
@@ -302,7 +303,13 @@ SPECS: dict[str, Spec] = {
             {
                 "path": _s("e.g. 'drafts/post.md'.", 200),
                 "mode": _s("", 10, enum=("create", "overwrite", "append", "delete", "copy")),
-                "content": _s("The text; for copy, the file to copy.", WRITE_CHARS, required=False),
+                "content": Field(
+                    "string",
+                    "The text; for copy, the file to copy.",
+                    required=False,
+                    max_len=WRITE_CHARS,
+                    remedy="create with the first part, then append the rest, one part per call",
+                ),
             },
             per_cycle=10,
         ),
@@ -431,7 +438,7 @@ SPECS: dict[str, Spec] = {
             "your owner backs or kills one; park it with a note. Free.",
             {
                 "venture_id": _i(""),
-                "learned": _s("What you found out, with sources.", 2_000, required=False),
+                "learned": _s("What you found out, with sources.", 2_000, required=False, cut=True),
                 **{
                     score.name: _i(f"1 {score.low}, 5 {score.high}.", required=False, minimum=1, maximum=5)
                     for score in ventures.SCORES
@@ -645,9 +652,9 @@ SPECS: dict[str, Spec] = {
             "and what it could earn.",
             {
                 "title": _s("Short title.", 120),
-                "problem": _s("What limits you today, and what it costs you.", 600),
-                "proposed_change": _s("The ability or change you need.", 600),
-                "expected_benefit": _s("What you would do with it and what it could earn.", 600),
+                "problem": _s("What limits you today, and what it costs you.", 600, cut=True),
+                "proposed_change": _s("The ability or change you need.", 600, cut=True),
+                "expected_benefit": _s("What you would do with it and what it could earn.", 600, cut=True),
                 "priority": _s("", 10, enum=("low", "medium", "high")),
                 "workshop_script": _s(
                     "A workshop script to build in (sent along).",
@@ -1509,8 +1516,9 @@ def _checked(fields: dict[str, Field], raw: Any, notes: list[str] | None, where:
             if _BAD_CHARS.search(value):
                 raise ToolError(f"{name} contains control or direction characters")
             if f.max_len and len(value) > f.max_len:
-                if not f.cut:
-                    raise ToolError(f"{name} is longer than {f.max_len:,} characters")
+                if not f.cut:  # 0.14.0: with the numbers (and what to do), so the next try fits
+                    remedy = f": {f.remedy}" if f.remedy else ""
+                    raise ToolError(f"{name} is too long: {len(value):,} of {f.max_len:,} characters{remedy}")
                 if notes is not None:
                     notes.append(f"{name} was cut to {f.max_len:,} of its {len(value):,} characters")
                 value = value[: f.max_len - 1].rstrip() + "…"
@@ -2773,7 +2781,11 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     named = list(dict.fromkeys(int(n) for n in re.findall(r"\d{1,9}", args.get("answers") or "")))[:20]
     promised = _promise(ctx, args)
     # 0.12.0: at most MESSAGES_PER_DAY a day that answer none of the owner's (the prompt's "once a day" was prose)
-    if not store.answerable(conn, ctx.scope, named) and _unasked_today(ctx, conn) >= MESSAGES_PER_DAY:
+    if (
+        not store.answerable(conn, ctx.scope, named)
+        and not (promised is None and _reports_promise(ctx, conn, args["text"]))
+        and _unasked_today(ctx, conn) >= MESSAGES_PER_DAY
+    ):
         raise ToolError(
             f"you sent your owner {MESSAGES_PER_DAY} messages today that answer none of theirs: batch the rest into "
             "tomorrow's, or into your answer when they write"
@@ -2816,6 +2828,21 @@ def _promise(ctx: ToolContext, args: dict[str, Any]) -> tuple[str, str] | None:
     return what, day.isoformat()
 
 
+def _reports_promise(ctx: ToolContext, conn: Any, text: str) -> bool:
+    """0.14.0: whether the message names an open promise (#n) that the owner hasn't heard about since it was made: the
+    daily cap lets it through, so obligation_done can close it (live: the cap refused the very message obligation_done
+    asked for). Only a message that makes no promise itself, so one report can't open the way for the next."""
+    where, params = ctx.scope.where()
+    for number in dict.fromkeys(int(n) for n in re.findall(r"#(\d{1,9})", text)):
+        row = conn.execute(
+            f"SELECT message_id FROM obligations WHERE id = ? AND {where} AND kind = 'promise' AND status = 'open'",
+            (number, *params),
+        ).fetchone()
+        if row is not None and not obligations.told_since(conn, ctx.scope, row["message_id"]):
+            return True
+    return False
+
+
 def _unasked_today(ctx: ToolContext, conn: Any) -> int:
     """The agent's messages of the owner's today that answered none of theirs."""
     start = to_iso(ctx.clock.day_start(ctx.clock.today()))
@@ -2843,7 +2870,10 @@ def _obligation_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
         if row is None or row["status"] != "open":
             refused.append(f"#{number} is not an open obligation of yours")
         elif row["kind"] == "promise" and not obligations.told_since(conn, ctx.scope, row["message_id"]):
-            refused.append(f"#{number} is a promise: tell your owner it is kept (or why not) with message_owner first")
+            refused.append(
+                f"#{number} is a promise: tell your owner it is kept (or why not) with message_owner first, naming "
+                f"#{number} (the daily limit lets it through if it promises nothing new)"
+            )
         else:
             obligations.close_one(conn, number, result, "agent", ctx.cycle_id, ctx.now())
             closed.append(number)

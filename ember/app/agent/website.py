@@ -17,6 +17,9 @@ from ..products import site
 from .store import AgentScope
 
 _ADDRESS_LINES = re.compile(r"\n|\\n|,")  # the options' text field has one line: commas separate the address's
+# 0.14.0: a home page's file name ends the address the owner gave (live: https://ember-ai.de/index.html made every page
+# https://ember-ai.de/index.html/<name>.html): the site's address is its folder.
+_HOME_FILE = re.compile(r"/index\.html?$", re.IGNORECASE)
 
 
 def owner(settings: Settings) -> site.Owner:
@@ -31,8 +34,13 @@ def owner(settings: Settings) -> site.Owner:
         host=settings.site_host.strip(),
         name=settings.site_name.strip(),
         language=settings.site_language,
-        url=settings.site_url.strip(),
+        url=address(settings),
     )
+
+
+def address(settings: Settings) -> str:
+    """The site's address in use: the owner's site_url without a home page's file name or a closing slash."""
+    return _HOME_FILE.sub("", settings.site_url.strip().rstrip("/")).rstrip("/")
 
 
 def pages(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
@@ -156,7 +164,7 @@ def describe(conn: sqlite3.Connection, scope: AgentScope, settings: Settings) ->
         "status": "not_ready" if now["problem"] else "ok",
         "reason": now["problem"],
         "advice": now["advice"],
-        "url": settings.site_url.strip() or None,
+        "url": address(settings) or None,
         "language": settings.site_language,
         "max_pages": site.MAX_PAGES,
         "pages": now["pages"],

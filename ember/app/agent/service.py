@@ -792,6 +792,7 @@ class Agent:
         # than the back-off: its money was spent already, and backing off sooner (live, 30 minutes instead of 420)
         # only brought the next paid cycle sooner
         overran = self._overran(end)
+        uncut: tuple[datetime, str] | None = None  # 0.14.0: the wake the agent chose, if a waiting request cut it
         if end.status in ("completed", "idle") or overran:
             minutes = end.sleep_minutes or self.settings.wake_interval_minutes
             minutes = max(self.settings.min_sleep_minutes, min(self.settings.max_sleep_minutes, minutes))
@@ -809,6 +810,7 @@ class Agent:
                 with self.db.connection() as conn:
                     waiting = store.count_rows(conn, "approvals", self.scope(), "status = 'pending'")
                 if waiting and minutes > cap:
+                    uncut = now + timedelta(minutes=minutes), reason
                     minutes = cap
                     reason += (
                         f"; cut to {cap} min: {waiting} request{'s wait' if waiting != 1 else ' waits'} for your"
@@ -818,15 +820,19 @@ class Agent:
             if check is not None and now + timedelta(minutes=minutes) > check[0]:
                 minutes = max(self.settings.min_sleep_minutes, math.ceil((check[0] - now).total_seconds() / 60))
                 reason += f"; waking for the check of milestone #{check[1]}"
+            if check is not None and uncut is not None and uncut[0] > check[0]:
+                uncut = check[0], f"{uncut[1]}; waking for the check of milestone #{check[1]}"
             daily = min(burn.MAINTENANCE_SLEEP_MINUTES, self.settings.max_sleep_minutes)
             if minutes < daily and burn.current(self.db, self.economy.life.evaluate()).mode == burn.MAINTENANCE:
                 minutes, reason = daily, "the burn mode is maintenance: one cycle a day"  # 0.12.0
+                uncut = None
         if end.status not in ("completed", "idle"):
             failures += 1
             self.db.set_meta(self._key("failures"), str(failures))
             backoff = min(self.settings.max_sleep_minutes, self.settings.min_sleep_minutes * 2 ** (failures - 1))
             if not overran or minutes < backoff:
                 minutes, reason = backoff, f"after a {end.status} cycle, backing off"
+                uncut = None  # the back-off, not a waiting request, sets this wake
             else:
                 reason += f" (the cycle was {end.status} after a call cost more than its worst case)"
         self._set_time("next_wake_at", now + timedelta(minutes=minutes))
@@ -834,6 +840,30 @@ class Agent:
         # 0.14.0: an event waits out the back-off too (decide may hold the schedule longer: maintenance, the reserve)
         backoff = None if end.status in ("completed", "idle") else self._meta_time("next_wake_at")
         self._set_time("backoff_until", backoff)
+        cut = (
+            {"wake": to_iso(now + timedelta(minutes=minutes)), "uncut": to_iso(uncut[0]), "reason": uncut[1]}
+            if uncut is not None
+            else None
+        )
+        self.db.set_meta(self._key("sleep_cut"), json.dumps(cut) if cut else "")
+
+    def lift_sleep_cut(self) -> None:
+        """0.14.0: the owner decided the last waiting request: the wake the agent chose (from the end of the cycle that
+        chose it) stands again, if it is still ahead and the cut's wake wasn't changed since. Live: the cut to 60 min
+        stayed after the owner's decision."""
+        raw = self.db.get_meta(self._key("sleep_cut"))
+        if not raw:
+            return
+        with self.db.connection() as conn:
+            if store.count_rows(conn, "approvals", self.scope(), "status = 'pending'"):
+                return
+        self.db.set_meta(self._key("sleep_cut"), "")
+        cut = json.loads(raw)
+        later = from_iso(cut["uncut"])
+        if self._meta_time("next_wake_at") != from_iso(cut["wake"]) or later <= self.clock.now():
+            return
+        self._set_time("next_wake_at", later)
+        self.db.set_meta(self._key("next_wake_reason"), cut["reason"])
 
     # --- approved actions Ember carries out itself ---
 

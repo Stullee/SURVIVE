@@ -203,7 +203,7 @@ schema:
   site_enabled: bool
   site_name: str(,60)?
   site_language: list(de|en)
-  site_url: 'match(^(?=.{0,200}$)(?:https://[A-Za-z0-9.-]{1,190}(?::\d{1,5})?(?:/[A-Za-z0-9._~/-]*)?)?$)?'
+  site_url: 'match(^(?=.{0,200}$)(?:https://[A-Za-z0-9.-]{1,190}(?::\d{1,5})?(?:/(?:[A-Za-z0-9._~-]*/)*(?:[A-Za-z0-9_~-]*|(?i:index\.html?)))?)?$)?'
   site_owner_name: str(,100)?
   site_address: str(,300)?
   site_email: 'match(^(?=.{0,254}$)(?:[^@\s<>"'']{1,64}@[^@\s<>"'']{1,190}\.[A-Za-z]{2,63})?$)?'

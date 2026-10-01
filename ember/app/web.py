@@ -489,6 +489,8 @@ def _wake_for_decision(request: Request, reply: Any) -> None:
     wake_on_decision option), like a message wakes it (the reply says when, as ``wake``: see ``_wake_for_message``)."""
     state = _state(request)
     agent = state.agent
+    if reply.status == 200 and agent is not None:
+        agent.lift_sleep_cut()  # 0.14.0: no request waits any more: the sleep the agent chose stands
     if reply.status != 200 or agent is None or not state.loaded.settings.wake_on_decision:
         return
     wake = agent.wake_for_decision()

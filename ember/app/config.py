@@ -33,8 +33,12 @@ log = logging.getLogger(__name__)
 MIN_PRICE = 0.000001
 # 0.13.0: the website's address (https, a host and at most a path: no query, no fragment) and its email address.
 # 0.14.0: with their lengths, and empty allowed: config.yaml's schema has the same patterns (a test checks), so Home
-# Assistant refuses a bad value when the owner saves it, instead of Ember starting in safe mode.
-_SITE_URL = re.compile(r"^(?=.{0,200}$)(?:https://[A-Za-z0-9.-]{1,190}(?::\d{1,5})?(?:/[A-Za-z0-9._~/-]*)?)?$")
+# Assistant refuses a bad value when the owner saves it, instead of Ember starting in safe mode. The path names a
+# folder, not a file: its last part has no dot (a home page's index.html or index.htm, in any case, is taken off).
+_SITE_URL = re.compile(
+    r"^(?=.{0,200}$)(?:https://[A-Za-z0-9.-]{1,190}(?::\d{1,5})?"
+    r"(?:/(?:[A-Za-z0-9._~-]*/)*(?:[A-Za-z0-9_~-]*|(?i:index\.html?)))?)?$"
+)
 _SITE_EMAIL = re.compile(r"""^(?=.{0,254}$)(?:[^@\s<>"']{1,64}@[^@\s<>"']{1,190}\.[A-Za-z]{2,63})?$""")
 
 
@@ -308,7 +312,9 @@ class Settings(BaseModel):
         if 0 < self.etsy_usd_per_eur < 0.5:  # 0.12.0: the ledger's range for an exchange rate (0: none)
             problems.append("etsy_usd_per_eur must be 0 (no rate) or between 0.5 and 3 USD per EUR")
         if self.site_url and not _SITE_URL.match(self.site_url):  # 0.13.0: the website's own address
-            problems.append("site_url must be an https address without a query, like https://example.org")
+            problems.append(
+                "site_url must be an https address without a query or a file name, like https://example.org"
+            )
         if self.site_email and not _SITE_EMAIL.match(self.site_email):
             problems.append("site_email must be an email address, like shop@example.org")
         names = [p.model for p in self.price_table]

@@ -73,6 +73,8 @@ MIME_TYPES = {
 }
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 _WORD = re.compile(r"[a-z0-9]+")
+# 0.14.0: the file names a helper's answer mentions (it said it made a poster that never came back).
+_NAMED = re.compile(r"[\w./-]+\.(?:png|jpe?g|pdf|docx|xlsx|pptx|csv|txt|md|json|html)\b", re.IGNORECASE)
 
 
 class WorkshopError(ValueError):
@@ -193,6 +195,11 @@ class Workshop:
     def _prompt(task: str, inputs: list[tuple[str, str, bytes]], script: str | None) -> str:
         given = [name for path, name, _ in inputs if path != script]
         lines = [task.strip(), "", f"Files handed over: {', '.join(given)}." if given else "No files handed over."]
+        # 0.14.0: a path in the task is a file name in $OUTPUT_DIR (run #7 saved its poster elsewhere: lost)
+        lines.append(
+            "A path in the task names a file: save it by its file name at the top of $OUTPUT_DIR "
+            "(e.g. $OUTPUT_DIR/x.png), or it is lost."
+        )
         if script:
             lines.append(
                 f"Start from the script {PurePosixPath(script).name} (kept from an earlier run): run it, with the "
@@ -321,7 +328,7 @@ class Workshop:
                 log.warning("Couldn't delete a workshop file from Anthropic's storage; it expires on its own")
 
     def _record(self, cycle_id: int, run: Run) -> None:
-        status = "failed" if run.failure else ("ok" if run.kept else "nothing")
+        status = "failed" if run.failure else ("ok" if made(run) else "nothing")
         with self.db.transaction() as conn:
             store.insert_workshop_run(
                 conn,
@@ -340,6 +347,11 @@ class Workshop:
             )
 
 
+def made(run: Run) -> list[tuple[str, int]]:
+    """0.14.0: the files the run kept besides its script (live: run #7 was "ok" with only its script back, $0.89)."""
+    return [(path, size) for path, size in run.kept if path != run.script_path]
+
+
 def report(run: Run, wrap: Any) -> tuple[bool, str, str]:
     """(ok, the agent's tool result, a one-line summary). ``wrap`` marks the helper's answer as data."""
     cost = f"${micros_to_usd(run.cost):.4f}"
@@ -355,10 +367,21 @@ def report(run: Run, wrap: Any) -> tuple[bool, str, str]:
         lines.append("Not kept: " + "; ".join(f"{name}: {why}" for name, why in run.refused) + ".")
     if run.failure:
         lines.append(f"Problem: {run.failure}.")
+    elif run.kept and not made(run) and not run.refused:
+        # A refused file came back: the "Not kept" line says why, so no advice to run it again.
+        known = {PurePosixPath(n).name for n in [*(path for path, _ in run.kept), *run.inputs]}
+        named = dict.fromkeys(PurePosixPath(n).name for n in _NAMED.findall(run.answer))
+        lost = [n for n in named if n not in known][:5]
+        lines.append(
+            "Only the script came back"
+            + (f" ({', '.join(lost)} didn't)" if lost else "")
+            + ": every file must be saved into $OUTPUT_DIR. Run the script again with script."
+        )
     elif not run.kept:
         lines.append("Nothing was kept: name the files you need in the task (e.g. 'chart.png, 1200 x 800 pixels').")
-    ok = bool(run.kept) and not run.failure
-    summary = f"workshop {cost}: " + (", ".join(path for path, _ in run.kept[:3]) or run.failure or "nothing kept")
+    ok = bool(made(run)) and not run.failure
+    files = ", ".join(path for path, _ in run.kept[:3]) if made(run) else ""
+    summary = f"workshop {cost}: " + (files or run.failure or ("only its script" if run.kept else "nothing kept"))
     return ok, "\n".join(lines), summary[:300]
 
 

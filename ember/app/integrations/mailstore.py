@@ -111,12 +111,15 @@ def _store(db: Database, scope: Scope, mailbox: Mailbox, fetched: FetchResult, n
             words = opt_out(mail.subject, mail.body) if mail.from_addr and not own and not mail.bulk else None
             if words is None:
                 continue
-            if suppress(conn, scope, mail.from_addr, now, f'replied "{words}"', email_id):
+            # 0.14.0: "replied" only to an email Ember sent (live: a provider's own mail was said to reply)
+            answered = _answered(conn, scope, mail)
+            how = "replied" if answered else "wrote"
+            if suppress(conn, scope, mail.from_addr, now, f'{how} "{words}"', email_id):
                 result.suppressed.append(mail.from_addr)
             # 0.14.0: a stop in answer to Ember's email covers the address Ember wrote to as well (a colleague may
             # answer for info@); it was only the sender's.
             reason = f"an answer to Ember's email to this address asked to stop (email #{email_id})"
-            for to in _answered(conn, scope, mail):
+            for to in answered:
                 if to not in (mail.from_addr.lower(), mailbox.address.lower()) and suppress(
                     conn, scope, to, now, reason, email_id
                 ):

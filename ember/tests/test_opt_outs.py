@@ -124,7 +124,7 @@ def test_a_flood_of_mail_is_read_over_a_few_checks_never_dropped(db_agent: Agent
     stored = rows(db_agent, "SELECT uid FROM emails WHERE direction = 'in' AND from_addr LIKE 'p%@example.org'")
     assert sorted(r["uid"] for r in stored) == list(range(2, 132))
     reason = rows(db_agent, "SELECT reason FROM email_suppressions")[0]["reason"]
-    assert reason == 'replied "Keine Werbung mehr, danke."'
+    assert reason == 'wrote "Keine Werbung mehr, danke."'  # 0.14.0: it answers no email of Ember's
 
 
 def test_a_newsletter_or_an_automatic_reply_never_asks(db_agent: Agent) -> None:

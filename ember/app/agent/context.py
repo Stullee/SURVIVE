@@ -96,6 +96,7 @@ WAITING_NOTE = "Your owner's decision on these wakes you: don't wait for it, wor
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
 # room for one whole message of plain text at the owner's limit of 2,000 characters.
 OWNER_BUDGET = 2_300
+OPEN_UPGRADES = 5  # 0.14.0: the open upgrade requests WAITING FOR YOUR OWNER lists
 QUOTE_CAP = 300  # characters of each text quoted in a decision or upgrade line, when the owner's news is shortened
 SHORTEST_QUOTE = 40  # no quoted text is shortened below this; if that isn't enough, the last lines are cut
 # The owner's (standing instructions and news), the mail and the research sections (and their headings) come on top
@@ -203,6 +204,7 @@ class Snapshot:
     project_money: dict[int, tuple[int, int]] = field(default_factory=dict)
     owner_messages: list[sqlite3.Row] = field(default_factory=list)
     pending: list[sqlite3.Row] = field(default_factory=list)
+    upgrades: list[sqlite3.Row] = field(default_factory=list)  # 0.14.0: its open upgrade requests, newest first
     last_cycle: sqlite3.Row | None = None
     last_journal: sqlite3.Row | None = None
     handoff: sqlite3.Row | None = None  # 0.14.0: the newest handoff the agent wrote (its cycle_id and handoff)
@@ -318,6 +320,7 @@ def snapshot(
         project_money=money,
         owner_messages=store.open_messages(conn, scope, 8),
         pending=store.pending_requests(conn, scope),  # 0.14.0: every one, not those among the newest 20 requests
+        upgrades=open_upgrades(conn, scope),
         last_cycle=last_cycle,
         last_journal=journal[0] if journal else None,
         handoff=handoff,
@@ -728,11 +731,35 @@ def _unheaded(body: str) -> str:
     return "".join(pieces)
 
 
+def open_upgrades(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
+    """0.14.0: the agent's upgrade requests the owner hasn't released or declined, newest first (live: it paid to
+    test whether upgrade #3 was in, as it couldn't see its status)."""
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT id, status, created_at, decided_at FROM upgrades WHERE {where} AND status IN ('new', 'accepted')"
+        f" ORDER BY id DESC LIMIT {OPEN_UPGRADES}",
+        params,
+    ).fetchall()
+
+
+def upgrades_line(rows: list[sqlite3.Row]) -> str:
+    shown = ", ".join(f"#{r['id']} {r['status']} ({(r['decided_at'] or r['created_at'])[:10]})" for r in rows)
+    return f"Your upgrade requests not built in yet: {shown}."
+
+
 def _planner_texts(s: Snapshot, dry_run: bool, journal: int = PLANNER_BUDGETS["journal"]) -> dict[str, str]:
     """The planner's sections that are cut at a line boundary, uncut, by budget ("": no such section this time;
     YOUR LAST CYCLE shares its ``journal`` budget out among its digests, last_cycle_text)."""
     pending = (
-        "\n".join(f"#{r['id']} {r['type']}: {flat(r['title'])} (expires {store.expires_at(r)[:10]})" for r in s.pending)
+        "\n".join(
+            [
+                *(
+                    f"#{r['id']} {r['type']}: {flat(r['title'])} (expires {store.expires_at(r)[:10]})"
+                    for r in s.pending
+                ),
+                *([upgrades_line(s.upgrades)] if s.upgrades else []),
+            ]
+        )
         or "None."
     )
     if s.pending and s.decision_wakes:  # first, so a cut never takes it (0.12.0: it slept 12 hours for a decision)

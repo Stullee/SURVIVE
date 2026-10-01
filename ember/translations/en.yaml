@@ -373,8 +373,9 @@ configuration:
     name: Website address
     description: >-
       Where you publish it, e.g. https://example.org: for its sitemap and the
-      search engines. Optional. An https address with at most a path (no ?, no
-      #); a domain with umlauts in its xn-- form.
+      search engines. The folder address, not a page's file name. Optional. An
+      https address with at most a path (no ?, no #); a domain with umlauts in
+      its xn-- form.
   site_owner_name:
     name: Your full name (Impressum)
     description: >-
