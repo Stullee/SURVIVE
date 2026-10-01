@@ -15,6 +15,8 @@ page must be independent (not a vendor's or an affiliate's), and the demand must
 
 from __future__ import annotations
 
+import csv
+import io
 import re
 import sqlite3
 from datetime import timedelta
@@ -29,7 +31,9 @@ DAYS = 14  # how old a demand note may be when its product line's first listing 
 # doesn't: the next is still its first).
 LISTED = ("pending", "approved", "approved_with_changes", "done")
 _LIBRARY = re.compile(r"^library #(\d+)$", re.IGNORECASE)
-_NUMBER = re.compile(r"\d(?:[\d.,]*\d)?")
+# 0.14.0: a separator joins groups of 3 digits only (1,200 and 12.500,00), so the columns of a comma export
+# ("1200,450") stay two numbers
+_NUMBER = re.compile(r"(?<!\d)(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d{1,2})?(?!\d)")
 _YEAR = re.compile(r"^(?:19|20)\d\d$")
 # what a cited number counts: searches, sales, orders, reviews, buyers, listings (a word near it, in the note)
 _DEMAND_WORDS = re.compile(
@@ -42,24 +46,41 @@ EXPORTS = (".csv", ".tsv")  # a keyword or market export the owner uploaded: a t
 
 
 def _digits(number: str) -> str:
-    """A number as digits only (1,200 and 1.200 are both 1200), "" for one digit, a year or a decimal's cents: 4.99
-    is 4, not 499."""
+    """A number as digits only (1,200 and 1.200 are both 1200), "" for one digit or a decimal's cents: 4.99 is 4,
+    not 499."""
     whole = re.sub(r"[.,]\d{1,2}$", "", number)
     digits = re.sub(r"\D", "", whole)
-    return "" if len(digits) < 2 or _YEAR.match(number) else digits
+    return "" if len(digits) < 2 else digits
 
 
 def numbers(text: str) -> set[str]:
-    """The numbers of two digits or more in ``text``, as digits only (not years, nor a decimal's cents)."""
+    """The numbers of two digits or more in ``text``, as digits only (not a decimal's cents)."""
     return {digits for digits in (_digits(n) for n in _NUMBER.findall(text)) if digits}
+
+
+def cells(text: str, file_name: str) -> str:
+    """0.14.0: an export's text with its cells apart (a .tsv by tabs; a .csv by the delimiter it uses), so a
+    column's number doesn't run into the next one's."""
+    if not file_name.lower().endswith(EXPORTS):
+        return text
+    delimiter = "\t"
+    if not file_name.lower().endswith(".tsv"):
+        try:
+            delimiter = csv.Sniffer().sniff(text[:4000], delimiters=",;\t|").delimiter
+        except csv.Error:
+            delimiter = ","
+    return "\n".join(" ".join(row) for row in csv.reader(io.StringIO(text), delimiter=delimiter))
 
 
 def cited(said: str, text: str) -> bool:
     """0.14.0: whether the demand ``said`` cites a number of ``text`` with a demand word near it ("850 searches a
-    month"): a year or "13 tags" in a general guide doesn't show demand."""
+    month"): "13 tags" in a general guide doesn't show demand, nor a year ("searches in 2026"; "2000 searches"
+    does)."""
     found = numbers(text)
     for match in _NUMBER.finditer(said):
         near = said[max(0, match.start() - 40) : match.end() + 40]
+        if _YEAR.match(match[0]) and not _DEMAND_WORDS.match(said[match.end() :].lstrip()):
+            continue  # a year, unless what it counts comes right after it
         if _digits(match[0]) in found and _DEMAND_WORDS.search(near):
             return True
     return False
@@ -84,7 +105,7 @@ def source_problem(conn: sqlite3.Connection, scope: AgentScope, source: str, pro
                 f"library #{number} isn't linked to project #{project_id} or its venture, nor a keyword or market "
                 "export your owner uploaded (.csv or .tsv): it can't show this product line's demand"
             )
-        if not cited(said or "", library.full_text(conn, number)):
+        if not cited(said or "", cells(library.full_text(conn, number), str(row["file_name"] or ""))):
             return (
                 f"cite a number from library #{number} in demand, with what it counts (searches, sales, orders): "
                 "none of yours is in it"

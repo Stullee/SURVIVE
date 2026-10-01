@@ -494,7 +494,9 @@ against six knock-outs:
   advertising in Germany), found in the case's words or declared by the agent;
 - accounts Ember itself would have to create;
 - more cash to start than **Cash for a venture's first test**;
-- a first sale later than half the net runway (in days);
+- a first sale later than half the net runway (in days; the first sale counts
+  as at least 14 days, so below 28 days of net runway every case is slow until
+  you lift it);
 - a sale that loses money after the fees;
 - no independent page behind its demand: no claim of searches, sales, orders,
   reviews or buyers from a page that isn't a vendor's or an affiliate's (0.14.0:

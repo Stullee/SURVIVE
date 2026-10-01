@@ -520,7 +520,7 @@ class Owner:
                         409,
                     )
                 if why:
-                    stages.reopen(conn, row, now, why)
+                    stages.reopen(conn, row, now, why, comment)
                     said = f"Ember's code put venture #{venture_id} back in researching when it was backed: {why}"
                     events.record(self.db, "info", "owner", said[:300])
                     return Reply(200, {"id": venture_id, "stage": "researching", "not_backed": why})

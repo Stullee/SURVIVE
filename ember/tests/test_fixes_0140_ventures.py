@@ -109,6 +109,22 @@ def test_a_library_document_backs_a_demand_note_only_when_linked_or_an_export_wi
     assert problem(agent, "library #99", said) == "there is no document #99 in your owner's library"
 
 
+def test_a_comma_export_keeps_its_columns_apart_and_a_count_like_2000_can_be_cited(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
+    product_line(agent)
+    plain = "Keyword,Searches,Competition\nnebenkostenabrechnung vorlage,1200,450\nmietvertrag vorlage,2000,2100\n"
+    upload = {"file_name": "keywords.csv", "file_data": base64.b64encode(plain.encode()).decode()}
+    export = document(agent, **upload)
+    for said in ("Buyers search nebenkostenabrechnung vorlage 1200 times a month.", "1,200 searches a month."):
+        assert problem(agent, f"library #{export}", said) == "", said
+    assert problem(agent, f"library #{export}", "mietvertrag vorlage: 2000 searches a month.") == ""
+    assert "cite a number from library #" in problem(agent, f"library #{export}", "1200450 searches a month.")
+    assert "cite a number from library #" in problem(agent, f"library #{export}", "Searched a lot in 2000.")
+    tabs = document(agent, file_name="k.tsv", file_data=base64.b64encode(b"kw\tvol\nvorlage\t850\n").decode())
+    assert problem(agent, f"library #{tabs}", "850 searches a month.") == ""
+    assert demand.numbers("1,200 12.500,00 4.99 1200,450") == {"1200", "12500", "450"}
+
+
 def test_a_demand_note_needs_an_independent_page_and_a_number(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     product_line(agent)
@@ -265,6 +281,22 @@ def test_the_owners_back_sends_a_knocked_out_proposal_back_to_researching_first(
     assert rows(agent, f"SELECT stage FROM ventures WHERE id = {DROPSHIPPING}")[0]["stage"] == "researching"
     backed = owner(agent).decide_venture(DROPSHIPPING, {"action": "back", "confirm": True}, "Stefan")
     assert backed.status == 200 and backed.body["stage"] == "building"  # the owner's call, knowing it
+
+
+def test_the_owners_words_with_a_back_that_sends_it_to_researching_are_kept(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
+    with agent.db.transaction() as conn:  # a proposal without numbers (from before the gates)
+        conn.execute("DROP TRIGGER ventures_proposed_numbers")
+        conn.execute("DROP TRIGGER ventures_proposed_researched")
+        conn.execute(f"UPDATE ventures SET stage = 'proposed' WHERE id = {DROPSHIPPING}")
+    [card] = [v for v in agent.ventures()["items"] if v["id"] == DROPSHIPPING]
+    assert card["backing_problem"].endswith("as it was proposed before a business case needed them")
+    body = {"action": "back", "comment": "Keep the first test under 20 EUR."}
+    assert owner(agent).decide_venture(DROPSHIPPING, body, "Stefan").body["stage"] == "researching"
+    [row] = rows(agent, f"SELECT notes FROM ventures WHERE id = {DROPSHIPPING}")
+    assert "Your owner said with their Back: Keep the first test under 20 EUR." in row["notes"]
+    [card] = [v for v in agent.ventures()["items"] if v["id"] == DROPSHIPPING]
+    assert card["backing_problem"] == "it has no numbers (venture_case) yet"  # not proposed: no talk of a proposal
 
 
 def test_the_owners_back_on_a_venture_without_numbers_needs_their_confirmation(data_dir: Path) -> None:
@@ -446,6 +478,13 @@ def test_slow_compares_the_first_sale_in_days_with_half_the_runway(data_dir: Pat
         ("Wir rufen Firmen nicht an.", False),
         ("We will not do any cold outreach.", False),
         ("Wir sprechen über Firmen an der Uni.", False),
+        # review round 2: an adverb before whom, a ban said of something else, small words before "kein"
+        ("Wir rufen täglich 20 Firmen an.", True),
+        ("Dann kontaktieren wir lokale Firmen.", True),
+        ("We cold email 200 shops (forbidden for B2C only).", True),
+        ("It is illegal to cold call people, so buyers come through Etsy.", False),
+        ("Kaltakquise ist bei uns kein Thema.", False),
+        ("Kaltakquise ist kein Problem für uns.", True),
     ],
 )
 def test_cold_outreach_words_read_negations_and_german(words: str, cold: bool) -> None:

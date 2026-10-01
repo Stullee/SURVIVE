@@ -414,7 +414,7 @@ SPECS: dict[str, Spec] = {
                 "setup_eur": _s("Cash to start.", 12),
                 "owner_hours": _s("Your owner's hours.", 6),
                 "first_sale_days": _i(
-                    f"Days to the first sale (at least {econ.MIN_FIRST_SALE_DAYS}).",
+                    f"Days to the first sale (at least {econ.MIN_FIRST_SALE_DAYS}; later than half the runway: slow).",
                     minimum=econ.MIN_FIRST_SALE_DAYS,
                     maximum=econ.MAX_FIRST_SALE_DAYS,
                 ),
