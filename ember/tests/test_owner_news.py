@@ -514,9 +514,12 @@ def test_a_long_changelog_keeps_its_newest_lines_and_fits_the_planner_whole(tmp_
         f"## 0.{minor}.0\n\n" + "\n".join(f"- Änderung {i} in 0.{minor}." for i in range(60)) for minor in (9, 8)
     ]
     path.write_text("\n\n".join(versions), encoding="utf-8")
-    text_ = news.changelog_news(path, "0.7.0", "0.9.0")
+    notes = news.changelog_news(path, "0.7.0", "0.9.0")
+    assert notes.endswith("- Änderung 59 in 0.8.")  # 0.14.0: whole; a plan shows a part of it
+    text_, after = news.changelog_part(notes)
     assert text_.startswith("Your software was upgraded from 0.7.0 to 0.9.0. What changed:\n\n## 0.9.0\n")
-    assert text_.endswith(" in 0.8.\n…(older changes cut)") and "Änderung 59 in 0.9." in text_
+    assert text_.endswith(" in 0.8.\n…(the rest of these notes comes in your next plan)") and after is not None
+    assert "Änderung 59 in 0.9." in text_
     assert news.CHANGELOG_LIMIT - 40 < context.json_bytes(text_) <= news.CHANGELOG_LIMIT
     snap = snapshot_with([])
     snap.news = News(changelog=text_, running_version="0.9.0")

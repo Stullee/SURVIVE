@@ -72,6 +72,25 @@ PLANNER_BUDGETS = {
 # 0.12.0: the ROADMAP isn't scaled down with the other sections (its checks and goals come first, and the cut took
 # every goal once the budget shrank).
 ROADMAP_FLOOR = 1_800
+# 0.14.0: what the sections leave of their budgets goes to the sections that were cut, in this order (the day's review
+# lost its advice and ROADMAP a first test while 8.6 KB went unused). The plan stays within the budgets' sum.
+SPARE_ORDER = (
+    "review",
+    "roadmap",
+    "journal",
+    "projects",
+    "ventures",
+    "ready",
+    "pending",
+    "etsy",
+    "printify",
+    "pinterest",
+    "website",
+    "strategy",
+    "identity",
+    "library",
+    "workshop",
+)
 # 0.12.0: while requests wait for the owner, the plan is told that waiting isn't its job.
 WAITING_NOTE = "Your owner's decision on these wakes you: don't wait for it, work on something else meanwhile."
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
@@ -87,7 +106,7 @@ BRIEF_BUDGET = 6_500
 # 0.12.0: the learnings from the owner's library that match the plan (Ember's code picks them), on top of the brief.
 KNOWLEDGE_HEADING = "WHAT YOU LEARNED (from your owner's library)"
 KNOWLEDGE_BUDGET = 1_800
-VENTURE_FOCUS_BUDGET = 1_900  # a venture's FOCUS in the brief
+VENTURE_FOCUS_BUDGET = 2_400  # a venture's FOCUS in the brief (0.14.0: 1,900 cut its numbers and pitch)
 MILESTONE_FOCUS_BUDGET = 1_100  # a milestone's FOCUS in the brief (0.11.0; 0.12.0: with its last cycle's digest)
 BRAINSTORM_BRIEF = "grow the tree with brainstorm (first, if you plan one), "  # 0.14.0: only in explore
 VENTURE_BRIEF = (
@@ -298,7 +317,7 @@ def snapshot(
         projects=projects,
         project_money=money,
         owner_messages=store.open_messages(conn, scope, 8),
-        pending=[r for r in store.queue(conn, "approvals", scope, 20) if r["status"] == "pending"],
+        pending=store.pending_requests(conn, scope),  # 0.14.0: every one, not those among the newest 20 requests
         last_cycle=last_cycle,
         last_journal=journal[0] if journal else None,
         handoff=handoff,
@@ -686,11 +705,6 @@ def pins_text(s: Snapshot, budget: int = PINS_BUDGET) -> str:
     return f"{PINS_HEADING}\n{cut(chr(10).join(f'- {p}' for p in s.pins), budget)}" if s.pins else ""
 
 
-def _strategy(s: Snapshot, budget: int) -> str:
-    """The planner's STRATEGY: as much of it as fits."""
-    return cut(s.memory.get("strategy", ""), budget)
-
-
 def workshop_text(s: Snapshot) -> str:
     """For the planner only: the workshop scripts that proved useful, each with a request to have it built in."""
     return "\n".join(
@@ -714,47 +728,93 @@ def _unheaded(body: str) -> str:
     return "".join(pieces)
 
 
-def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str, Shown]:
-    """The planner's context, and what of the owner's news and of the changelog it lists and shows whole."""
-    b = {k: int(v * scale) for k, v in PLANNER_BUDGETS.items()}
+def _planner_texts(s: Snapshot, dry_run: bool, journal: int = PLANNER_BUDGETS["journal"]) -> dict[str, str]:
+    """The planner's sections that are cut at a line boundary, uncut, by budget ("": no such section this time;
+    YOUR LAST CYCLE shares its ``journal`` budget out among its digests, last_cycle_text)."""
     pending = (
         "\n".join(f"#{r['id']} {r['type']}: {flat(r['title'])} (expires {store.expires_at(r)[:10]})" for r in s.pending)
         or "None."
     )
     if s.pending and s.decision_wakes:  # first, so a cut never takes it (0.12.0: it slept 12 hours for a decision)
         pending = f"{WAITING_NOTE}\n{pending}"
+    return {
+        "status": status_text(s, dry_run),
+        "journal": last_cycle_text(s, journal),
+        "review": s.review,
+        "roadmap": roadmap_text(s),
+        "projects": project_lines(s),
+        "ready": s.ready if s.venture else "",
+        "ventures": ventures.planner_lines(s.ventures, s.venture_money, s.venture),
+        "pending": pending,
+        "mail": mail_text(s),
+        "etsy": s.etsy,
+        "pinterest": s.pinterest,
+        "printify": s.printify,
+        "website": s.website,
+        "strategy": s.memory.get("strategy", ""),
+        "identity": s.memory.get("identity", ""),
+        "workspace": "\n".join(s.workspace) or "Empty.",
+        "research": research_text(s),
+        "workshop": workshop_text(s),
+        "library": library.planner_text(s.library) if s.library else "",
+    }
+
+
+def _allot(texts: dict[str, str], budgets: dict[str, int], used: int) -> dict[str, str]:
+    """0.14.0: each text cut to its budget; then what is left of all the budgets (``used``: the bytes of the sections
+    cut on their own) widens the cut ones, in SPARE_ORDER. The sections never hold more than the budgets' sum."""
+    shown = {key: cut(text, budgets[key]) for key, text in texts.items()}
+    spare = sum(budgets.values()) - used - sum(json_bytes(text) for text in shown.values() if text)
+    for key in (key for key in SPARE_ORDER if key in texts):
+        if spare <= 0:
+            break
+        wider = cut(texts[key], json_bytes(shown[key]) + spare)
+        if json_bytes(wider) > json_bytes(shown[key]):  # it was cut, and the spare room holds more of it
+            spare -= json_bytes(wider) - json_bytes(shown[key])
+            shown[key] = wider
+    return shown
+
+
+def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str, Shown]:
+    """The planner's context, and what of the owner's news and of the changelog it lists and shows whole."""
+    b = {k: int(v * scale) for k, v in PLANNER_BUDGETS.items()}
+    b["roadmap"] = max(b["roadmap"], ROADMAP_FLOOR)
     head = _news_head(s)
     owner, lines, _ = _owner(s, b["news"] - json_bytes(head))
     events = "\n".join(agenda_line(r) for r in s.agenda)  # 0.13.0: after the owner's news, cut first
     since = cut("\n".join(part for part in (head, owner, events) if part) or "Nothing new.", b["news"])
     software = cut(s.news.changelog, b["software"])
-    research = research_text(s)
-    last_cycle = last_cycle_text(s, b["journal"])
+    standing = instructions_section(s, b["instructions"])
+    lessons = lessons_text(s, b["lessons"], int(PINS_BUDGET * scale))
+    # The sections cut on their own budget (the owner's, the changelog and the lessons, whose pins come on top).
+    own = [since, software, *(text for _, text in standing)]
+    used = sum(map(json_bytes, own)) + min(json_bytes(lessons), b["lessons"])
+    t = _allot(_planner_texts(s, dry_run, b["journal"]), b, used)
     parts = [
-        ("STATUS", cut(status_text(s, dry_run), b["status"])),
+        ("STATUS", t["status"]),
         *([(obligations.HEADING, s.obligations)] if s.obligations else []),  # 0.12.0: first, never cut
-        *instructions_section(s, b["instructions"]),
+        *standing,
         ("SINCE YOUR LAST WAKE", since),
-        *([("YOUR LAST CYCLE", cut(last_cycle, b["journal"]))] if last_cycle else []),
+        *([("YOUR LAST CYCLE", t["journal"])] if t["journal"] else []),
         *([("YOUR SOFTWARE", software)] if s.news.changelog else []),
-        *([("TODAY'S REVIEW", cut(s.review, b["review"]))] if s.review else []),
-        ("ROADMAP", cut(roadmap_text(s), max(b["roadmap"], ROADMAP_FLOOR))),
-        ("OPEN PROJECTS", cut(project_lines(s), b["projects"])),
-        *([("READY", cut(s.ready, b["ready"]))] if s.venture and s.ready else []),  # 0.13.0: the decision desk
-        ("VENTURES", cut(ventures.planner_lines(s.ventures, s.venture_money, s.venture), b["ventures"])),
-        ("WAITING FOR YOUR OWNER", cut(pending, b["pending"])),
-        *([("MAIL", cut(mail_text(s), b["mail"]))] if s.mail is not None else []),
-        *([("ETSY SHOP", cut(s.etsy, b["etsy"]))] if s.etsy else []),
-        *([("PINTEREST", cut(s.pinterest, b["pinterest"]))] if s.pinterest else []),
-        *([("PRINTIFY", cut(s.printify, b["printify"]))] if s.printify else []),
-        *([("WEBSITE", cut(s.website, b["website"]))] if s.website else []),
-        (STRATEGY_HEADING, _strategy(s, b["strategy"])),
-        (IDENTITY_HEADING, cut(s.memory.get("identity", ""), b["identity"])),
-        (LESSONS_HEADING, lessons_text(s, b["lessons"], int(PINS_BUDGET * scale))),
-        ("WORKSPACE", cut("\n".join(s.workspace) or "Empty.", b["workspace"])),
-        *([(RESEARCH_HEADING, cut(research, b["research"]))] if research else []),
-        *([("WORKSHOP", cut(workshop_text(s), b["workshop"]))] if s.proven else []),
-        *([("YOUR OWNER'S LIBRARY", cut(library.planner_text(s.library), b["library"]))] if s.library else []),
+        *([("TODAY'S REVIEW", t["review"])] if t["review"] else []),
+        ("ROADMAP", t["roadmap"]),
+        ("OPEN PROJECTS", t["projects"]),
+        *([("READY", t["ready"])] if t["ready"] else []),  # 0.13.0: the decision desk
+        ("VENTURES", t["ventures"]),
+        ("WAITING FOR YOUR OWNER", t["pending"]),
+        *([("MAIL", t["mail"])] if s.mail is not None else []),
+        *([("ETSY SHOP", t["etsy"])] if t["etsy"] else []),
+        *([("PINTEREST", t["pinterest"])] if t["pinterest"] else []),
+        *([("PRINTIFY", t["printify"])] if t["printify"] else []),
+        *([("WEBSITE", t["website"])] if t["website"] else []),
+        (STRATEGY_HEADING, t["strategy"]),
+        (IDENTITY_HEADING, t["identity"]),
+        (LESSONS_HEADING, lessons),
+        ("WORKSPACE", t["workspace"]),
+        *([(RESEARCH_HEADING, t["research"])] if t["research"] else []),
+        *([("WORKSHOP", t["workshop"])] if s.proven else []),
+        *([("YOUR OWNER'S LIBRARY", t["library"])] if s.library else []),
         ("TASK", _task(s)),
     ]
     held = _held(since, f"{head}\n" if head else "", lines)

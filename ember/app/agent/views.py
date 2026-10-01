@@ -159,30 +159,8 @@ def dashboard(agent: Agent) -> dict[str, Any]:
             }
             for r in store.approvals_for_owner(conn, scope)
         ]
-        where, params = scope.where()
-        promised: dict[int, list[dict[str, Any]]] = {}  # 0.12.0: what a message of the agent's promised
-        for o in conn.execute(
-            f"SELECT * FROM obligations WHERE {where} AND kind = 'promise' ORDER BY id", params
-        ).fetchall():
-            promised.setdefault(int(o["message_id"]), []).append(
-                {"id": o["id"], "what": o["what"], "due": o["due"], "status": o["status"], "result": o["result"]}
-            )
-        inbox = [
-            {
-                "id": r["id"],
-                "created_at": r["created_at"],
-                "sender": r["sender"],
-                "text": r["text"],
-                "read_at": r["read_at"],
-                "entered_by": r["entered_by"],
-                "removed": r["removed_at"] is not None,
-                "seen_by_agent": r["seen_cycle_id"] is not None,
-                "answered_by": r["answered_by"],  # the agent's message that answered this one of the owner's
-                "promises": promised.get(int(r["id"]), []),
-                "simulated": r["mode"] == "dry_run",
-            }
-            for r in store.queue(conn, "messages", scope)
-        ]
+        messages, inbox_before = store.inbox(conn, scope)
+        inbox = _inbox(conn, scope, messages)
         upgrades = [
             {
                 "id": r["id"],
@@ -200,7 +178,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "script_bytes": len((r["script_text"] or "").encode("utf-8")),
                 "simulated": r["mode"] == "dry_run",
             }
-            for r in store.queue(conn, "upgrades", scope)
+            for r in store.upgrades_for_owner(conn, scope)  # 0.14.0: every new one
         ]
         will = store.last_will(conn, scope.life_id) if scope.life_id else None
         counts = badges(conn, scope)
@@ -227,6 +205,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         # 0.13.0: what Ember's code did, the owner's Undo, the daily digest (0.14.0: and why unlocks are off, if so)
         "audit": {**audit_view, "unlocks_off": agent.unlocks_off()},
         "inbox": inbox,
+        "inbox_before": inbox_before,  # 0.14.0: older messages load on request (api/inbox?before=)
         "upgrades": upgrades,
         "instructions": instructions,
         "last_will": {"text": will["text"], "cut_off": bool(will["cut_off"])} if will else None,
@@ -238,6 +217,43 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         # And the library (api/library, 0.12.0): this changes whenever a document or its study does.
         "library": {"stamp": library_stamp},
     }
+
+
+def _inbox(conn: sqlite3.Connection, scope: store.AgentScope, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    """The Inbox's messages as the dashboard shows them."""
+    where, params = scope.where()
+    promised: dict[int, list[dict[str, Any]]] = {}  # 0.12.0: what a message of the agent's promised
+    for o in conn.execute(
+        f"SELECT * FROM obligations WHERE {where} AND kind = 'promise' ORDER BY id", params
+    ).fetchall():
+        promised.setdefault(int(o["message_id"]), []).append(
+            {"id": o["id"], "what": o["what"], "due": o["due"], "status": o["status"], "result": o["result"]}
+        )
+    return [
+        {
+            "id": r["id"],
+            "created_at": r["created_at"],
+            "sender": r["sender"],
+            "text": r["text"],
+            "read_at": r["read_at"],
+            "entered_by": r["entered_by"],
+            "removed": r["removed_at"] is not None,
+            "seen_by_agent": r["seen_cycle_id"] is not None,
+            "answered_by": r["answered_by"],  # the agent's message that answered this one of the owner's
+            "promises": promised.get(int(r["id"]), []),
+            "simulated": r["mode"] == "dry_run",
+        }
+        for r in rows
+    ]
+
+
+def inbox_page(agent: Agent, before: int, limit: int = store.INBOX_PAGE) -> dict[str, Any]:
+    """0.14.0: the Inbox's messages older than message ``before`` (the dashboard brings the newest), and the message
+    the next page begins before (None: there are no older ones)."""
+    scope = agent.scope()
+    with agent.db.connection() as conn:
+        rows, after = store.inbox(conn, scope, limit, before)
+        return {"messages": _inbox(conn, scope, rows), "before": after}
 
 
 def _roadmap_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated: int, today: str) -> str:

@@ -29,7 +29,10 @@ from .store import REQUEST_DAYS, AgentScope
 from .ventures import news_line
 
 # Bytes (JSON-escaped): the planner's YOUR SOFTWARE section holds this much uncut, and only then counts it as read.
+# 0.14.0: longer notes come in parts of this size, one a plan (the agent read 1,937 of 0.13.0's 8,456 characters).
 CHANGELOG_LIMIT = 2_000
+CONTINUED = "Your release notes, continued:\n"
+MORE = "\n…(the rest of these notes comes in your next plan)"
 _HEADING = re.compile(r"^## (\d+)\.(\d+)\.(\d+)\s*$")
 # An owner item as the agent is shown it: ("message", id, None), ("approval", id, version), ("upgrade", id, status),
 # ("venture", id, owner_version) or ("milestone", id, owner_version). A decision the owner changes again (a new version
@@ -39,6 +42,11 @@ Item = tuple[str, int, int | str | None]
 
 def changelog_key(mode: str) -> str:
     return f"agent.{mode}.changelog_seen"
+
+
+def changelog_at_key(mode: str) -> str:
+    """0.14.0: how far the agent has read the notes of its upgrade: "<seen>><running>@<character>"."""
+    return f"agent.{mode}.changelog_at"
 
 
 def _q(text: str | None) -> str:
@@ -79,7 +87,8 @@ def _fmt(version: tuple[int, int, int]) -> str:
 
 
 def changelog_news(changelog: Path, seen: str | None, running: str) -> str:
-    """The CHANGELOG sections the agent hasn't read yet (empty when nothing is new)."""
+    """The CHANGELOG sections the agent hasn't read yet, whole (empty when nothing is new): ``changelog_part`` gives
+    the part a plan shows."""
     current = parse_version(running)
     if current is None:
         return ""
@@ -102,23 +111,48 @@ def changelog_news(changelog: Path, seen: str | None, running: str) -> str:
     parts = [header]
     for version, body in sorted(wanted, reverse=True):
         parts.append(f"## {_fmt(version)}\n{body}")
-    text = "\n\n".join(parts)
-    if _json_bytes(text) > CHANGELOG_LIMIT:
-        lines, note = text.split("\n"), "\n…(older changes cut)"
-        while lines and _json_bytes("\n".join(lines) + note) > CHANGELOG_LIMIT:
-            lines.pop()
-        text = "\n".join(lines).rstrip() + note
-    return text
+    return "\n\n".join(parts)
+
+
+def changelog_part(text: str, at: int = 0) -> tuple[str, int | None]:
+    """0.14.0: the part of the unread notes ``text`` from character ``at`` on that one plan shows, at most
+    CHANGELOG_LIMIT bytes (whole lines while one fits, saying the rest comes next), and where the next part begins
+    (None: this part ends the notes). The plan saw their first 2 KB, and the whole version counted as read."""
+    if not 0 <= at < len(text.rstrip()):  # past their end (the notes changed): from the start
+        at = 0
+    while text[at : at + 1] == "\n":
+        at += 1
+    head = CONTINUED if at else ""
+    rest = text[at:]
+    if _json_bytes(head + rest) <= CHANGELOG_LIMIT:
+        return head + rest, None
+    lines: list[str] = []
+    for line in rest.split("\n"):
+        if _json_bytes(head + "\n".join([*lines, line]) + MORE) > CHANGELOG_LIMIT:
+            break
+        lines.append(line)
+    shown = "\n".join(lines)
+    if not shown.strip():  # a line longer than a part: as many characters as fit
+        low, high = 1, len(rest)
+        while low < high:
+            middle = (low + high + 1) // 2
+            low, high = (
+                (middle, high) if _json_bytes(head + rest[:middle] + MORE) <= CHANGELOG_LIMIT else (low, middle - 1)
+            )
+        shown = rest[:low]
+    return head + shown.rstrip() + MORE, at + len(shown)
 
 
 @dataclass
 class News:
     decided: list[sqlite3.Row] = field(default_factory=list)
     upgrades: list[sqlite3.Row] = field(default_factory=list)
-    changelog: str = ""
+    changelog: str = ""  # the part of the unread release notes this plan shows (0.14.0: ``changelog_part``)
     running_version: str = ""
     ventures: list[sqlite3.Row] = field(default_factory=list)  # the owner's word on a venture (0.10.0)
     milestones: list[sqlite3.Row] = field(default_factory=list)  # the owner's word on a milestone (0.11.0)
+    changelog_next: int | None = None  # 0.14.0: where the next part begins (None: this one ends the notes)
+    changelog_from: str = ""  # 0.14.0: the version the notes begin after ("" when none was read before)
 
     def approval_lines(self) -> list[str]:
         lines = []
@@ -211,13 +245,18 @@ def collect(conn: sqlite3.Connection, db: Database, scope: AgentScope, running_v
         params,
     ).fetchall()
     seen = db.get_meta(changelog_key(scope.mode))
+    notes = changelog_news(paths.CHANGELOG_PATH, seen, running_version)
+    mark, _, at = (db.get_meta(changelog_at_key(scope.mode)) or "").rpartition("@")
+    part, after = changelog_part(notes, int(at) if mark == f"{seen or ''}>{running_version}" and at.isdigit() else 0)
     return News(
         decided,
         upgrades,
-        changelog_news(paths.CHANGELOG_PATH, seen, running_version),
+        part,
         running_version,
         ventures,
         milestones,
+        changelog_next=after,
+        changelog_from=seen or "",
     )
 
 
@@ -268,6 +307,11 @@ def mark_seen(conn: sqlite3.Connection, cycle_id: int, items: Iterable[Item]) ->
 
 
 def mark_changelog_seen(db: Database, scope: AgentScope, news: News) -> None:
-    """After a plan that showed the whole changelog: it isn't shown again until the next version."""
-    if news.changelog and parse_version(news.running_version) is not None:
+    """After a plan that showed its part of the notes whole: the next plan shows the next part (0.14.0), and after the
+    last part they aren't shown again until the next version."""
+    if not news.changelog or parse_version(news.running_version) is None:
+        return
+    if news.changelog_next is None:
         db.set_meta(changelog_key(scope.mode), news.running_version)
+    else:
+        db.set_meta(changelog_at_key(scope.mode), f"{news.changelog_from}>{news.running_version}@{news.changelog_next}")

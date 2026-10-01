@@ -838,7 +838,6 @@ class CycleRunner:
         case_row = ventures.latest_case(conn, row["id"])
         numbers = ventures.numbers_text(case_row)  # 0.13.0
         judged = critic.text(critic.latest(conn, row["id"]), case_row)  # 0.13.0: the critic's review of it
-        numbers = f"{numbers}\n{judged}" if judged else numbers
         knocked = (  # 0.13.0: while it isn't backed
             knockouts.text(
                 knockouts.check(conn, row, cash_eur=self.settings.venture_cash_eur, net_days=self.net_runway_days)
@@ -856,6 +855,7 @@ class CycleRunner:
             evidence=found,
             numbers=numbers,
             knocked=knocked,
+            critic=judged,
         )
 
     def _review(self, cycle_id: int, ctx: tools.ToolContext) -> None:

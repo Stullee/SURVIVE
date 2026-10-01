@@ -795,12 +795,16 @@ def focus_text(
     evidence: str = "",
     numbers: str = "",
     knocked: str = "",
+    critic: tuple[str, str] = ("", ""),
 ) -> str:
     """The brief's FOCUS for a venture: everything the agent knows of it, the most important first, as the brief cuts
-    it from the end (0.12.0: it lost the owner's comment and the first test): the owner's word, the first test, the
-    next question and the knowledge file, the digest of the last cycle aimed at it (``last``), the scores, its
-    numbers (``numbers``, 0.13.0), its evidence by grade (``evidence``, 0.12.0), then the pitch and the rest of the
-    business case, each field at most FOCUS_CHARS characters."""
+    it from the end (0.12.0: it lost the owner's comment and the first test): the owner's word, its knock-outs
+    (``knocked``) and the critic's verdict and flaw (``critic``: that line and the one with its numbers), the first
+    test and the next question, its numbers (``numbers``), its evidence by grade (``evidence``) and the pitch (0.14.0:
+    these came after the scores, and a case with a critique lost them), then the knowledge file, the digest of the
+    last cycle aimed at it (``last``), the scores, the critic's numbers and the rest of the business case. Each field
+    is at most FOCUS_CHARS characters (0.14.0: the knock-outs, the critic's verdict and the evidence too; the owner's
+    card shows them whole), so VENTURE_FOCUS_BUDGET holds everything up to the pitch, each field at its longest."""
     file = parts[-1] if parts else file_of(row["id"], row["title"])  # ``parts``: the knowledge file's (0.12.0)
     kept = f"{file} ({file_size:,} B)" if file_size is not None else f"{file} (not written yet)"
     if parts and len(parts) > 1:
@@ -815,18 +819,21 @@ def focus_text(
         lines.append(f"Stage rule (Ember's code keeps it): {rule}")
     count = researched(row)
     budget = budget_text(row)  # 0.12.0
+    verdict, reckoned = critic
     lines += [
+        *([_one_line(knocked, FOCUS_CHARS)] if knocked else []),
+        *([_one_line(verdict, FOCUS_CHARS)] if verdict else []),
         f"First test: {_one_line(row['first_test'], FOCUS_CHARS) or '-'}",
         f"Next question: {_one_line(row['next_question'], FOCUS_CHARS) or '-'}",
+        *([numbers] if numbers else []),
+        *([_one_line(evidence, FOCUS_CHARS)] if evidence else []),
+        f"Pitch: {_one_line(row['pitch'], FOCUS_CHARS)}",
         f"Knowledge file: {kept}",
         *([f"Its last cycle (Ember's code's digest): {last}"] if last else []),
         f"Scores: {scores_text(row)}",
         f"Research for it: {count} call{'s' if count != 1 else ''} that found something (scores need "
         f"{RESEARCH_TO_SCORE}, a business case {RESEARCH_TO_PROPOSE})" + (f"; {budget}" if budget else ""),
-        *([numbers] if numbers else []),  # 0.13.0
-        *([knocked] if knocked else []),  # 0.13.0: its knock-outs
-        *([evidence] if evidence else []),
-        f"Pitch: {_one_line(row['pitch'], FOCUS_CHARS)}",
+        *([reckoned] if reckoned else []),
     ]
     lines += [f"{label}: {_one_line(row[name], FOCUS_CHARS) or '-'}" for name, label, _ in CASE if name != "first_test"]
     if projects:  # the newest three
@@ -844,7 +851,9 @@ def news_line(row: Mapping[str, Any]) -> str:
     action = row["owner_action"]
     if action == "added":
         branch = f" (a branch of #{row['parent_id']})" if row["parent_id"] else ""
-        line = f"Your owner added a venture idea{branch}, {name}: {_q(row['pitch'])}. Research and score it"
+        # 0.14.0: "Research and score it", but only a venture cycle's venture_update takes scores
+        line = f"Your owner added a venture idea{branch}, {name}: {_q(row['pitch'])}. "
+        line += "Research it; a venture cycle scores it"
     elif action == "research":
         line = f"Your owner wants {name} researched next (it is {row['stage']} now)"
     elif action == "back":

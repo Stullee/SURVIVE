@@ -183,13 +183,15 @@ def ranking_ev(case_row: Mapping[str, Any] | None, critique: Mapping[str, Any] |
     return min(ours, float(critique["ev_eur"])) if critique is not None else ours
 
 
-def text(critique: Mapping[str, Any] | None, case_row: Mapping[str, Any] | None) -> str:
-    """FOCUS's critic line ("" without a critique of the newest case)."""
+def text(critique: Mapping[str, Any] | None, case_row: Mapping[str, Any] | None) -> tuple[str, str]:
+    """FOCUS's critic lines ("" without a critique of the newest case): its verdict and the fatal flaw, then its
+    numbers and what would change its mind (0.14.0: two lines, so the flaw comes near the top of FOCUS)."""
     if critique is None or case_row is None:
-        return ""
+        return "", ""
     return (
         f"Critic (a separate call on case #{critique['case_id']}): {critique['verdict']}; fatal flaw: "
-        f"{critique['fatal_flaw']}; its numbers: a sale keeps EUR {float(critique['net_eur']):.2f}, expected EUR "
+        f"{critique['fatal_flaw']}",
+        f"Critic's numbers: a sale keeps EUR {float(critique['net_eur']):.2f}, expected EUR "
         f"{float(critique['ev_eur']):.0f} a month (yours: EUR {float(case_row['ev_eur']):.0f}); it would change its "
-        f"mind if: {critique['change_mind']}"
+        f"mind if: {critique['change_mind']}",
     )

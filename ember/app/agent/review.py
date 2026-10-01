@@ -645,16 +645,10 @@ def _verdicts(row: sqlite3.Row) -> list[dict[str, Any]]:
 
 
 def planner_text(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
-    """Today's review for the planner: the verdicts first (with the project's title), then the focus and lesson."""
+    """Today's review for the planner: the focus, the lesson and the advice first, then the stop and change verdicts
+    (with the project's title) and those on milestones, and the projects to continue on one line (0.14.0: the verdicts
+    came first, and the cut took the advice)."""
     lines = [f"Your review of today ({row['day']}), made before your first plan:"]
-    for v in _verdicts(row):
-        project = conn.execute("SELECT title, status FROM projects WHERE id = ?", (v["project_id"],)).fetchone()
-        title = f" {_one_line(project['title'], 60)} [{project['status']}]" if project else ""
-        lines.append(f"- #{v['project_id']}{title}: {v['verdict']}: {_one_line(v['why'], 160)}")
-    for v in milestone_verdicts(row):
-        verdict = f"{v.get('verdict')} to {v.get('new_due')}" if v.get("verdict") == "extend" else v.get("verdict")
-        done = "applied" if v.get("applied") else f"not applied: {_one_line(v.get('outcome'), 120)}"
-        lines.append(f"- milestone #{v.get('milestone_id')}: {verdict}: {_one_line(v.get('why'), 120)} ({done})")
     if row["focus"]:
         lines.append(f"Focus today: {_one_line(row['focus'], 300)}")
     if row["lesson"]:
@@ -670,4 +664,18 @@ def planner_text(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
         "Act on it: carry out every stop and change (project_update), and keep the lesson with memory_update if it"
         " is new."
     )
+    kept = []
+    for v in _verdicts(row):
+        if v["verdict"] == "continue":
+            kept.append(f"#{v['project_id']}")
+            continue
+        project = conn.execute("SELECT title, status FROM projects WHERE id = ?", (v["project_id"],)).fetchone()
+        title = f" {_one_line(project['title'], 60)} [{project['status']}]" if project else ""
+        lines.append(f"- #{v['project_id']}{title}: {v['verdict']}: {_one_line(v['why'], 160)}")
+    for v in milestone_verdicts(row):
+        verdict = f"{v.get('verdict')} to {v.get('new_due')}" if v.get("verdict") == "extend" else v.get("verdict")
+        done = "applied" if v.get("applied") else f"not applied: {_one_line(v.get('outcome'), 120)}"
+        lines.append(f"- milestone #{v.get('milestone_id')}: {verdict}: {_one_line(v.get('why'), 120)} ({done})")
+    if kept:
+        lines.append(f"- continue: {', '.join(kept)}")
     return "\n".join(lines)
