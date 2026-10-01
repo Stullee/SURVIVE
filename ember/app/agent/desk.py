@@ -222,12 +222,13 @@ def recent(conn: sqlite3.Connection, scope: AgentScope, limit: int = 10) -> list
 
 
 def decided(conn: sqlite3.Connection, scope: AgentScope, since: str) -> int:
-    """Ventures whose stage became proposed, parked or killed since ``since`` (the desk's watch: 2 a week)."""
+    """Ventures whose stage became proposed, parked or killed since ``since`` (the desk's watch: 2 a week): the agent's
+    and the owner's decisions (0.14.0: not Ember's code's parks by a stage's rule, which aren't decisions)."""
     where, params = scope.where()
     return int(
         conn.execute(
             f"SELECT COUNT(*) FROM ventures WHERE {where} AND stage IN ('proposed', 'parked', 'killed')"
-            " AND stage_at >= ?",
+            " AND stage_at >= ? AND NOT (stage = 'parked' AND parked_by IS 'code')",
             (*params, since),
         ).fetchone()[0]
     )

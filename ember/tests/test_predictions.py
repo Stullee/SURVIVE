@@ -83,7 +83,7 @@ def test_a_backed_ventures_first_sale_is_a_prediction_the_critic_and_triage_read
     fake = FakeTransport(script=[plan(steps=[])])
     agent, _ = run(data_dir, fake, settings=VENTURING)
     proposed(agent)  # DROPSHIPPING, its case's first sale in a month
-    made = econ.Case("other", 30.0, 10.0, 0.0, (1, 3, 8), 10.0, 2.0, 0, 3.0)  # PRINT: a first sale this month
+    made = econ.Case("other", 30.0, 10.0, 0.0, (1, 3, 8), 10.0, 2.0, 0, 3.0)  # PRINT: a first sale at once
     with agent.db.transaction() as conn:
         ventures.add_case(conn, PRINT, None, made, econ.compute(made), to_iso(agent.clock.now()))
     actions = owner(agent)
@@ -93,13 +93,13 @@ def test_a_backed_ventures_first_sale_is_a_prediction_the_critic_and_triage_read
     assert rows(agent, "SELECT venture_id, claim, probability, due FROM predictions ORDER BY id") == [
         {
             "venture_id": DROPSHIPPING,
-            "claim": f"venture #{DROPSHIPPING}'s first sale within 1 month of being backed (case #1)",
+            "claim": f"venture #{DROPSHIPPING}'s first sale within 30 days of being backed (case #1)",
             "probability": 0.5,
             "due": (today + timedelta(days=30)).isoformat(),
         },
         {
             "venture_id": PRINT,
-            "claim": f"venture #{PRINT}'s first sale this month of being backed (case #2)",
+            "claim": f"venture #{PRINT}'s first sale within 14 days of being backed (case #2)",  # 14 at least
             "probability": 0.5,
             "due": (today + timedelta(days=14)).isoformat(),
         },

@@ -423,7 +423,9 @@ you want more research. In a venture cycle the agent:
   it learns in the venture's knowledge file (`ventures/<number>-<name>.md` in
   its workspace, which the card opens; a full one continues in
   `…-2.md`, `…-3.md`) and scores it again. In a venture cycle every research
-  call is a venture's (the one it focuses on, unless it names another). A
+  call is a venture's (the one it focuses on, unless it names another); in
+  another cycle, one focused on a venture that isn't backed counts for it too
+  (0.14.0), and a paid call that failed counts toward its budget. A
   question it asked in the last 30 days that found web pages (the same words,
   site or page) is answered from that research, free, and doesn't count as
   research for a venture;
@@ -459,7 +461,8 @@ each pick with the list it came from, and the work steps see it in their focus.
 In the focus burn mode only the build items are offered. The **Decision desk**
 box on the Ventures tab shows the list as it stands, what the last venture
 plans took (or why none), and how many ventures were decided in the last 7
-days (proposed, parked or killed; the aim is 2 a week). The desk works within
+days (proposed, parked or killed by the agent or you, not parked by a stage's
+rule; the aim is 2 a week). The desk works within
 your **Share for ventures**; it has no cap of its own.
 
 A venture cycle only researches and decides: its work steps don't carry the
@@ -472,12 +475,15 @@ about 30% shorter than in 0.11.
 **Numbers.** A business case comes with numbers (0.13.0): the agent gives
 the price, the cost per sale, the fixed costs a month, its low, likely and high
 estimate of sales a month (P10, P50, P90), the cash to start, your hours a
-month, the months to the first sale and its own API spend on it. Ember's code
+month, the days to the first sale (0.14.0: at least 14) and its own API spend
+on it. Ember's code
 works out the rest the same way for every venture: the fees (Etsy's for
 Germany: the listing fee again at each sale, 6.5% of the sale, payment
 processing of 4% and €0.30, and VAT on Etsy's fees), what a sale keeps, the
 sales a month that break even, the net a month at each estimate, and the
-expected net a month over six months per API dollar and per hour of yours.
+expected net a month over six months per API dollar and per hour of yours
+(0.14.0: the months before the first sale earn nothing and still pay the fixed
+costs).
 The card shows the newest case; a venture is proposed only with one. Without
 your exchange rate (**Exchange rate for Etsy revenue**), USD 1.10 per EUR is
 assumed and said.
@@ -488,15 +494,19 @@ against six knock-outs:
   advertising in Germany), found in the case's words or declared by the agent;
 - accounts Ember itself would have to create;
 - more cash to start than **Cash for a venture's first test**;
-- a first sale later than half the net runway;
+- a first sale later than half the net runway (in days);
 - a sale that loses money after the fees;
-- no independent page behind its demand (only vendors' or affiliates' pages,
-  or no evidence at all).
+- no independent page behind its demand: no claim of searches, sales, orders,
+  reviews or buyers from a page that isn't a vendor's or an affiliate's (0.14.0:
+  a price or a policy doesn't count).
 
 A knocked-out venture isn't proposed: the agent fixes what can be fixed (new
 numbers, independent evidence) or parks it with the numbers. The card lists
 its knock-outs, and you can **Lift** one for that venture if you accept it
 (and **Restore** it later); the agent hears it as your note on the venture.
+If you back a proposal that has no numbers (one proposed before 0.13.0) or a
+knock-out that stands now, it goes back to researching instead and you see why
+(0.14.0); back it from there if you still want it.
 
 **Critic.** The agent argues its own cases, so before its next plan after a
 venture is proposed, a separate call on the **Model for venture plans and
@@ -522,9 +532,10 @@ changes:
 - **independent**: a page one of the agent's research calls returned (Ember's
   code keeps each call's pages, matched without tracking parameters);
 - **marketing**: a vendor's page (a business selling what the page describes:
-  Shopify, Printful, Printify, Etsy research tools such as eRank or Marmalead,
-  course platforms and the like) or an affiliate's link (one that pays whoever
-  sends a buyer), even when research returned it;
+  Shopify, Printful, Printify, dropshipping suppliers such as BigBuy, Etsy
+  research tools such as eRank or Marmalead, course platforms and the like, on
+  any of their domains, shopify.de too) or an affiliate's link (one that pays
+  whoever sends a buyer), even when research returned it;
 - **unchecked**: a page no research call returned: the agent's word only.
 
 A venture's card lists its evidence (**Evidence: … claims**), each claim with
@@ -670,7 +681,7 @@ from the day this version first sees their listings live.
 
 **Forecasts Ember's code settles.** The agent can give a metric milestone its
 odds of being met by its date (0.13.0: 5 to 95%). When you back a venture, its
-business case's months to the first sale become a 50% call. Ember's code settles
+business case's days to the first sale become a 50% call. Ember's code settles
 both from its records before every plan, with no model call:
 
 - a milestone call **came true** if the milestone was met by its first date (a
@@ -1103,16 +1114,18 @@ can also remove the app's access at Etsy).
   or the project its cycle focuses on), which is how a sale is attributed. A
   product line's **first** listing needs a **demand note** from the last 14
   days: the keywords buyers type, what shows they buy (searches, competitors'
-  sales and prices) and its source, which must be a page the agent's research
-  returned or a document in your Library. No more generic templates without
-  one.
+  sales and prices) and its source, which must be an independent page the
+  agent's research returned or a document in your Library that is linked to
+  the product line or its venture, or a keyword export you uploaded as a .csv
+  or .tsv file (0.14.0); the note must cite a number from it. No more generic
+  templates without one.
 - **Etsy market probe** (off by default): with it on, a demand note also reads
   Etsy's search of active listings for its keywords and keeps only two things:
   how many listings match, and the price quartiles of the first ones (never
   another seller's listing). Turn it on only once you have confirmed that
   Etsy's API terms allow this use. Without it, add a keyword export (from a
-  keyword tool you use) to the **Library** each week: the agent can cite it as
-  the source of its demand notes.
+  keyword tool you use, as a .csv or .tsv file) to the **Library** each week:
+  the agent can cite it as the source of its demand notes.
 - A listing runs for four months. Ember creates it without Etsy's automatic
   renewal; once a listing has sold, Ember turns automatic renewal on for it
   (Etsy charges its listing fee, USD 0.20, at each renewal), so the listings

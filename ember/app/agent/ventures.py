@@ -45,7 +45,9 @@ ACTIVE_STAGES = ("researching", "proposed", "building", "live")  # worked on: wh
 EXPLORING = ("idea", "researching", "proposed")  # not backed yet: what venture cycles find out about
 # What the agent may set: backing (building) and killing are the owner's decisions.
 AGENT_STAGES = ("idea", "researching", "proposed", "live", "parked")
-AGENT_START_STAGES = ("idea", "researching", "live")  # live: a way it already earns, like its Etsy shop
+# 0.14.0: not live: "Ember earns somewhere" let any new venture skip the owner's backing. A venture goes live once the
+# owner backed it and its first test is met (the seeded Etsy leg starts live by Ember's code).
+AGENT_START_STAGES = ("idea", "researching")
 # The business case: each must be filled in before a venture can be proposed. (name, label, characters)
 CASE: tuple[tuple[str, str, int], ...] = (
     ("demand", "Demand", 400),
@@ -434,7 +436,8 @@ def add_case(
         "INSERT INTO venture_cases (venture_id, cycle_id, created_at, channel, price_eur, unit_cost_eur,"
         " monthly_costs_eur, sales_low, sales_mid, sales_high, setup_eur, owner_hours, first_sale_months, api_usd,"
         " usd_per_eur, fees_eur, net_eur, break_even, net_low, net_mid, net_high, ev_eur, ev_per_api_usd,"
-        " ev_per_hour, needs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " ev_per_hour, needs, first_sale_days)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             venture_id,
             cycle_id,
@@ -446,7 +449,7 @@ def add_case(
             *case.sales,
             case.setup_eur,
             case.owner_hours,
-            case.first_sale_months,
+            min(econ.MAX_FIRST_SALE_MONTHS, round(case.first_sale_days / econ.DAYS_A_MONTH)),  # as 0.13.0 kept it
             case.api_usd,
             result.usd_per_eur,
             result.fees_eur,
@@ -457,6 +460,7 @@ def add_case(
             result.ev_per_api_usd,
             result.ev_per_hour,
             needs,
+            case.first_sale_days,
         ),
     )
     return int(cursor.lastrowid)
@@ -479,7 +483,7 @@ def case_of(row: Mapping[str, Any]) -> tuple[econ.Case, econ.Economics]:
         sales=(int(row["sales_low"]), int(row["sales_mid"]), int(row["sales_high"])),
         setup_eur=float(row["setup_eur"]),
         owner_hours=float(row["owner_hours"]),
-        first_sale_months=int(row["first_sale_months"]),
+        first_sale_days=int(row["first_sale_days"]),
         api_usd=float(row["api_usd"]),
     )
     result = econ.Economics(

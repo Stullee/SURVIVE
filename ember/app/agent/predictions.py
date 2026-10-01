@@ -6,7 +6,7 @@ or the critic whether they could be trusted. Now Ember's code keeps two kinds of
 * milestone: a metric milestone the agent gives a likelihood (milestone_plan's ``likely``, LIKELY percent): hit once
   the milestone is met by its first date (a date moved later doesn't move the prediction), miss once that date has
   passed without it or it was missed, void when it was dropped first;
-* first_sale: when the owner backs a venture, its newest business case's months to the first sale, as a 50% call
+* first_sale: when the owner backs a venture, its newest business case's days to the first sale, as a 50% call
   (the case's middle estimate): hit once an Etsy order of its listings or revenue for it is recorded by then, miss
   after.
 
@@ -31,9 +31,8 @@ from . import metrics
 from .store import AgentScope
 
 LIKELY = (5, 95)  # the odds a milestone takes, in percent
-FIRST_SALE_ODDS = 0.5  # a business case's months to the first sale: its middle estimate
+FIRST_SALE_ODDS = 0.5  # a business case's days to the first sale: its middle estimate
 FIRST_SALE_MIN_DAYS = 14  # even "this month" gets two weeks
-DAYS_A_MONTH = 30
 MIN_SETTLED = 5  # settled milestone predictions before the calibration says which way the odds lean
 LEAN = 0.10  # a gap this big between the odds given and the share met is a lean
 CALIBRATION_CHARS = 240
@@ -67,10 +66,9 @@ def add_first_sale(
         return None
     if conn.execute("SELECT 1 FROM predictions WHERE case_id = ?", (case_row["id"],)).fetchone() is not None:
         return None
-    months = int(case_row["first_sale_months"])
-    due = today + timedelta(days=max(FIRST_SALE_MIN_DAYS, months * DAYS_A_MONTH))
-    within = "this month" if months == 0 else f"within {months} month{'s' if months != 1 else ''}"
-    claim = f"venture #{venture_id}'s first sale {within} of being backed (case #{case_row['id']})"
+    days = max(FIRST_SALE_MIN_DAYS, int(case_row["first_sale_days"]))  # 0.14.0: the case's days
+    due = today + timedelta(days=days)
+    claim = f"venture #{venture_id}'s first sale within {days} days of being backed (case #{case_row['id']})"
     cursor = conn.execute(
         "INSERT INTO predictions (mode, session, kind, venture_id, case_id, claim, probability, due, created_at)"
         " VALUES (?, ?, 'first_sale', ?, ?, ?, ?, ?, ?)",

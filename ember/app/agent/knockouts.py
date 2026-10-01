@@ -4,13 +4,15 @@ What ruled a venture out was the agent's judgement, and a dropshipping case that
 owner. Now each business case is checked against six knock-outs:
 
 * cold_outreach: it needs writing to people who didn't ask first (illegal advertising in Germany, UWG section 7): the
-  case says so (``needs``) or its words do;
+  case says so (``needs``) or its words do (0.14.0: not where they rule it out, "no cold outreach", and in German too);
 * ember_accounts: it needs accounts Ember itself would create (big platforms block automated sign-ups, and
   Anthropic's usage policy forbids them): the case says so;
 * cash: it needs more cash to start than the owner's venture budget (the ``venture_cash_eur`` option);
-* slow: its first sale comes later than half the net runway;
+* slow: its first sale comes later than half the net runway (0.14.0: in days, at least econ.MIN_FIRST_SALE_DAYS; whole
+  months knocked out every case below about 61 days of runway, and 0 months passed);
 * losing: a sale loses money (its net per sale, after the fees, is not above 0);
-* vendor_only: no independent page backs its demand (its evidence is vendors', affiliates' or unchecked, or none).
+* vendor_only: no independent page backs its demand (0.14.0: a claim of searches, sales, orders, reviews or buyers,
+  evidence.demand_shown; any one independent claim lifted it, a policy or a price too).
 
 A knock-out is reversible: it goes when the case changes (new numbers, new evidence), and the owner can override one
 for a venture on the Ventures tab (and restore it). A knocked-out venture isn't proposed; the agent parks it with the
@@ -25,7 +27,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from . import evidence, ventures
+from . import econ, evidence, ventures
 
 RULES = ("cold_outreach", "ember_accounts", "cash", "slow", "losing", "vendor_only")
 LABELS = {
@@ -37,14 +39,43 @@ LABELS = {
     "vendor_only": "no independent source for its demand",
 }
 NEEDS = ("cold_outreach", "ember_accounts")  # what a case says it needs (venture_case's ``needs``)
-DAYS_A_MONTH = 30.4
-# Words of a case that plan writing to people who didn't ask first (the owner can override a wrong match).
+# Words of a case that plan writing to people who didn't ask first (the owner can override a wrong match). 0.14.0:
+# "reach out to", "writing to" and German too ("Firmen anschreiben"), a few words between verb and whom.
+_WHO = (
+    r"(?:local |small |german |potential |target |selected |the |\d[\d.,]*\+? )*(?:hr |hiring |shop |store )?"
+    r"(?:businesses|companies|firms|shops|stores|owners|leads|prospects|agencies|managers|recruiters|founders|ceos"
+    r"|decision[- ]makers)\b"
+)
 _COLD = re.compile(
     r"\bcold[- ](?:e-?mails?|call(?:s|ing)?|outreach|messages?|dms?|pitch(?:es)?)\b|\bkaltakquise\b"
-    r"|\b(?:e-?mail|contact|write to|message|dm)(?:ing)? (?:local |small )?(?:businesses|companies|shops|shop owners"
-    r"|leads|prospects|agencies)\b|\blead (?:lists?|generation)\b",
+    r"|\b(?:e-?mail(?:s|ing)?|contact(?:s|ing)?|messag(?:e|es|ing)|dm(?:s|ing)?|phon(?:es|ing)|call(?:s|ing)?) "
+    + _WHO
+    + r"|\b(?:writ(?:e|es|ing)|wrote|reach(?:es|ing)? out) to "
+    + _WHO
+    + r"|\blead (?:lists?|generation)\b"
+    r"|\b(?:firmen|unternehmen|betriebe|händler|geschäfte|läden|shops|ladenbesitzer\w*|inhaber\w*|personaler\w*"
+    r"|entscheider\w*|neukunden|agenturen|praxen)\s+(?:(?:per|mit|via|über|telefonisch|direkt|gezielt|aktiv|e-?mail"
+    r"|linkedin|xing|telefon)\s+)*(?:an(?:zu)?schreiben|an(?:zu)?rufen|(?:zu )?kontaktieren|an(?:zu)?sprechen|anmailen"
+    r"|akquirieren)\b",
     re.IGNORECASE,
 )
+# 0.14.0: words that rule it out, just before ("no cold outreach", "we never email businesses") or just after ("cold
+# outreach: none", "cold calls are not needed"), and a part of a sentence that calls it illegal.
+_NOT = re.compile(
+    r"\b(?:no|not|never|without|avoid\w*|instead of|rather than|kein\w*|nicht|nie|niemals|ohne|statt)\b|n't\b",
+    re.IGNORECASE,
+)
+_NOT_AFTER = re.compile(
+    r"^[\s:\u2013\u2014-]*(?:(?:is|are|was|were|will be|would be|ist|sind|wird|werden)\s+)?"
+    r"(?:no|none|not|never|nicht|kein\w*|nie)\b|^\s*(?:is|are|was|were|wo|do|does)n't\b",
+    re.IGNORECASE,
+)
+_UNLAWFUL = re.compile(
+    r"\b(?:illegal|unlawful|forbidden|prohibited|banned|not allowed|verboten|unzulässig|untersagt|rechtswidrig)\b",
+    re.IGNORECASE,
+)
+_CLAUSE_END = ".;:!?,\n"  # where a part of a sentence ends
+_SENTENCE_END = ".;!?\n"
 
 
 @dataclass(frozen=True)
@@ -56,6 +87,26 @@ class KnockOut:
     @property
     def label(self) -> str:
         return LABELS[self.rule]
+
+
+def _cut(text: str, ends: str) -> int:
+    """Where ``text`` reaches the first of ``ends`` (its length without one)."""
+    return min((i for i in (text.find(c) for c in ends) if i >= 0), default=len(text))
+
+
+def cold_words(text: str) -> str:
+    """The first words of ``text`` that plan cold outreach ("" without any): 0.14.0, not where the few words before
+    them or the words right after rule it out, nor in a part of a sentence that calls it illegal."""
+    for found in _COLD.finditer(text):
+        head = text[: found.start()]
+        before = head[max(head.rfind(c) for c in _CLAUSE_END) + 1 :]
+        tail = text[found.end() :]
+        clause = before + found[0] + tail[: _cut(tail, _CLAUSE_END)]
+        near = " ".join(before.split()[-4:])
+        if _NOT.search(near) or _NOT_AFTER.search(tail[: _cut(tail, _SENTENCE_END)]) or _UNLAWFUL.search(clause):
+            continue
+        return found[0]
+    return ""
 
 
 def overridden(conn: sqlite3.Connection, venture_id: int) -> set[str]:
@@ -91,35 +142,30 @@ def check(
     case = ventures.latest_case(conn, vid)
     found: list[tuple[str, str]] = []
     needs = set(str(case["needs"] or "").split(",")) if case is not None else set()
-    words = " ".join(str(venture[name] or "") for name in ("pitch", *ventures.CASE_FIELDS))
-    cold = _COLD.search(words)
+    cold = cold_words("\n".join(str(venture[name] or "") for name in ("pitch", *ventures.CASE_FIELDS)))
     if "cold_outreach" in needs or cold:
-        why = "its case says it needs it" if "cold_outreach" in needs else f"its case plans it ({cold[0]!r})"
+        why = "its case says it needs it" if "cold_outreach" in needs else f"its case plans it ({cold!r})"
         found.append(("cold_outreach", f"{why}: advertising to people who didn't ask first is illegal in Germany"))
     if "ember_accounts" in needs:
         found.append(("ember_accounts", "its case needs accounts Ember itself would create: your owner creates them"))
     if case is not None:
         if float(case["setup_eur"]) > cash_eur:
             found.append(("cash", f"EUR {float(case['setup_eur']):.0f} to start, the budget is EUR {cash_eur:.0f}"))
-        days = int(case["first_sale_months"]) * DAYS_A_MONTH
+        days = max(int(case["first_sale_days"]), econ.MIN_FIRST_SALE_DAYS)  # 0.14.0: days, not whole months
         if net_days is not None and days > net_days / 2:
-            found.append(
-                (
-                    "slow",
-                    f"its first sale in {int(case['first_sale_months'])} months, half the runway is "
-                    f"{net_days / 2:.0f} days",
-                )
-            )
+            found.append(("slow", f"its first sale in {days} days, half the runway is {net_days / 2:.0f} days"))
         if float(case["net_eur"]) <= 0:
             found.append(("losing", f"a sale keeps EUR {float(case['net_eur']):.2f} after fees and its cost"))
-    graded = evidence.counts(conn, vid)
-    if graded["independent"] == 0:
+    if not evidence.demand_shown(conn, vid):  # 0.14.0: a demand number, not any independent claim
+        graded = evidence.counts(conn, vid)
         what = (
-            f"its evidence is {graded['marketing']} vendors' or affiliates' and {graded['unchecked']} unchecked"
+            f"no independent page shows demand (searches, sales, orders, reviews, buyers): its claims are "
+            f"{graded['independent']} independent, {graded['marketing']} vendors' or affiliates' and "
+            f"{graded['unchecked']} unchecked"
             if sum(graded.values())
             else "it has no evidence yet"
         )
-        found.append(("vendor_only", f"{what}: save an independent page's numbers with evidence"))
+        found.append(("vendor_only", f"{what}: save an independent page's demand numbers with evidence"))
     return [KnockOut(rule, why, rule in lifted) for rule, why in found]
 
 

@@ -1398,7 +1398,7 @@ class FakeTransport:
                     "sales_low": low,
                     "sales_mid": mid,
                     "sales_high": high,
-                    "first_sale_months": min(24, int(found["first"]) + 1) if found else 2,
+                    "first_sale_months": min(24, round(int(found["first"]) / 30.4) + 1) if found else 2,
                 },
                 "verdict": "test",
                 "change_mind": "Dry run: an independent page with sales numbers for this kind of product.",
@@ -1874,8 +1874,8 @@ class FakeTransport:
             return "demand_note", {
                 "project_id": pid,
                 "keywords": f"{idea.title} printable"[:100].lower(),
-                "demand": f"[simulated] Buyers search for {idea.title.lower()}; competing listings sell for a few "
-                "euros.",
+                "demand": f"[simulated] Buyers search for {idea.title.lower()} about 1,200 times a month; competing "
+                "listings sell for a few euros.",
                 "source": page,
             }
         if stage == "etsy_propose":
@@ -2353,7 +2353,7 @@ _NUMBERED = re.compile(r"^(\d+)\. (.+)$", re.MULTILINE)  # the consolidation's l
 _CASE_NUMBERS = re.compile(
     r"price EUR (?P<price>[\d.]+), cost per sale EUR (?P<cost>[\d.]+), fixed costs EUR (?P<fixed>[\d.]+) a month, "
     r"sales a month (?P<low>\d+) \(P10\) / (?P<mid>\d+) \(P50\) / (?P<high>\d+) \(P90\).*? first sale in "
-    r"(?P<first>\d+) months"
+    r"(?P<first>\d+) days"
 )
 _MARKS = re.compile(r" \((?:pinned|has numbers|pinned, has numbers)\)$")
 

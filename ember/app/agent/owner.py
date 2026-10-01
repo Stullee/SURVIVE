@@ -493,6 +493,8 @@ class Owner:
             if expected is not None and (not isinstance(expected, int) or isinstance(expected, bool)):
                 raise OwnerError("expected_version", "expected_version must be a number")
             allowed, stage = VENTURE_ACTIONS[action]
+            if action == "back":
+                self._checked_proposal(venture_id)  # 0.14.0
             with self.db.transaction() as conn:
                 row = ventures.get(conn, self.scope, venture_id)
                 if row is None:
@@ -523,6 +525,28 @@ class Owner:
             return Reply(200, {"id": venture_id, "stage": after["stage"] if after else stage})
 
         return _reply(run)
+
+    def _checked_proposal(self, venture_id: int) -> None:
+        """0.14.0: a proposal is backed as Ember's code checked it. One without numbers (proposed before the gates) or
+        with a standing knock-out goes back to researching instead, and the owner hears why (OwnerError): they back it
+        from there if they still want it."""
+        net_days = self.economy.life.evaluate().runway.net_days  # the knock-outs' slow rule
+        with self.db.transaction() as conn:
+            row = ventures.get(conn, self.scope, venture_id)
+            if row is None or row["stage"] != "proposed":
+                return
+            why = stages.backing_problem(conn, row, cash_eur=self.economy.settings.venture_cash_eur, net_days=net_days)
+            if why:
+                stages.reopen(conn, row, self._now(), why)
+        if why:
+            said = f"Ember's code put venture #{venture_id} back in researching: {why}"
+            events.record(self.db, "info", "agent", said[:300])
+            raise OwnerError(
+                "action",
+                f"venture #{venture_id} isn't backed as proposed: {why}. Ember's code put it back in researching: back "
+                "it from there if you still want it (lift a knock-out on its card first if you accept it)",
+                409,
+            )
 
     def override_knockout(self, venture_id: int, body: Any, who: str | None) -> Reply:
         """0.13.0: lift a knock-out Ember's code found in a venture's case (``lift`` true), or restore it; the agent

@@ -385,7 +385,7 @@ NUMBERS = {
     "sales_high": 20,
     "setup_eur": "10",
     "owner_hours": "10",
-    "first_sale_months": 1,
+    "first_sale_days": 30,
     "api_usd": "3",
 }
 
@@ -593,18 +593,17 @@ def test_only_the_owner_takes_a_venture_out_of_their_park(data_dir: Path) -> Non
     assert agent.ventures()["items"][COMPANION - 1]["parked_by"] == "owner"
 
 
-def test_a_venture_starts_live_only_where_ember_already_earns(data_dir: Path) -> None:
+def test_a_venture_never_starts_live_on_the_agents_word(data_dir: Path) -> None:
+    # 0.14.0: it could once Ember earned anywhere, skipping the owner's backing
     live = ("venture_create", {"title": "Etsy shop in English", "pitch": "The shop's English leg.", "stage": "live"})
     fake = FakeTransport(script=[plan(steps=["add a leg"]), ToolCalls([live]), Reply("Done."), JOURNAL])
     fake.script.extend([plan(steps=["add a leg"]), ToolCalls([live]), Reply("Done."), JOURNAL])
     agent, _ = run(data_dir, fake, settings=ROOMY)
-    refused = tool_results(agent, "venture_create")[0]
-    assert refused["status"] == "error" and "starts live only as a way you already earn" in refused["result"]
     sale = {"amount": "4.50", "source": "Etsy order 1", "idempotency_key": "a" * 32}
     assert agent.economy.record("revenue", sale, "Stefan").status == 201
     agent.run_cycle("schedule")
-    assert tool_results(agent, "venture_create")[1]["status"] == "ok"
-    assert rows(agent, "SELECT stage FROM ventures WHERE title = 'Etsy shop in English'") == [{"stage": "live"}]
+    assert [r["status"] for r in tool_results(agent, "venture_create")] == ["error", "error"]
+    assert rows(agent, "SELECT stage FROM ventures WHERE title = 'Etsy shop in English'") == []
 
 
 def test_a_business_case_needs_research_scores_and_a_source_or_euros() -> None:
@@ -630,7 +629,7 @@ def test_the_database_refuses_scores_and_cases_without_research(data_dir: Path) 
         ventures.update(c, DROPSHIPPING, now, revenue=4, scores_by="research")
     with pytest.raises(sqlite3.IntegrityError, match="needs its numbers"), agent.db.transaction() as c:
         ventures.update(c, DROPSHIPPING, now, stage="proposed")  # 0.13.0
-    case = econ.Case("etsy_digital", 4.9, 0, 0, (1, 5, 15), 0, 2, 1, 2)
+    case = econ.Case("etsy_digital", 4.9, 0, 0, (1, 5, 15), 0, 2, 30, 2)
     with agent.db.transaction() as c:
         ventures.add_case(c, DROPSHIPPING, None, case, econ.compute(case), now)
     with pytest.raises(sqlite3.IntegrityError, match="two research calls"), agent.db.transaction() as c:

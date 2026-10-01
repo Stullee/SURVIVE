@@ -5696,7 +5696,7 @@
         h("div", { title: "Expected net a month over six months, the months before the first sale earning nothing" },
           h("dt", { text: "Expected" }), h("dd", { text: "€" + Math.round(num(n.ev_eur)) + " a month" +
             (n.ev_per_hour === null ? "" : " · €" + num(n.ev_per_hour).toFixed(2) + " per hour of yours") })),
-        h("div", null, h("dt", { text: "To start" }), h("dd", { text: eur(n.setup_eur) + " · " + num(n.owner_hours) + " h a month from you · first sale in " + n.first_sale_months + " month" + (n.first_sale_months === 1 ? "" : "s") }))));
+        h("div", null, h("dt", { text: "To start" }), h("dd", { text: eur(n.setup_eur) + " · " + num(n.owner_hours) + " h a month from you · first sale in " + n.first_sale_days + " day" + (n.first_sale_days === 1 ? "" : "s") }))));
   }
 
   // 0.13.0: the independent critic's review of the newest case: its verdict, the fatal flaw, its own numbers (worked out

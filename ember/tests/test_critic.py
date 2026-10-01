@@ -35,10 +35,10 @@ ANSWER = {
     "verdict": "test",
     "change_mind": "Three sales in the first two weeks of one listing.",
 }
-AGENTS = econ.Case("etsy_digital", 4.9, 0.0, 0.0, (2, 10, 30), 10.0, 2.0, 1, 3.0)  # test_knockouts.case's numbers
+AGENTS = econ.Case("etsy_digital", 4.9, 0.0, 0.0, (2, 10, 30), 10.0, 2.0, 30, 3.0)  # test_knockouts.case's numbers
 THEIRS = econ.Case(
-    "etsy_digital", 4.9, 0.0, 0.0, (0, 4, 12), 10.0, 2.0, 2, 3.0
-)  # its setup, hours and API: the agent's
+    "etsy_digital", 4.9, 0.0, 0.0, (0, 4, 12), 10.0, 2.0, 61, 3.0
+)  # its setup, hours and API: the agent's (0.14.0: its 2 months in days)
 
 
 def proposed(agent: Agent) -> None:
@@ -111,7 +111,7 @@ def test_the_critic_reviews_a_proposed_case_before_the_plan(data_dir: Path) -> N
     assert (
         card(agent)["critique"] is None
         and card(agent)["ranking_ev_eur"]
-        == econ.compute(econ.Case("etsy_digital", 4.9, 0.0, 0.0, (1, 3, 8), 10.0, 2.0, 1, 3.0)).ev_eur
+        == econ.compute(econ.Case("etsy_digital", 4.9, 0.0, 0.0, (1, 3, 8), 10.0, 2.0, 30, 3.0)).ev_eur
     )
     fake.script.extend([Reply(json.dumps(ANSWER)), plan(steps=[])])
     agent.run_cycle("schedule")

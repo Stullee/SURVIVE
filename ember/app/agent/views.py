@@ -713,7 +713,7 @@ def _numbers(row: sqlite3.Row | None) -> dict[str, Any] | None:
         "sales": list(case.sales),
         "setup_eur": case.setup_eur,
         "owner_hours": case.owner_hours,
-        "first_sale_months": case.first_sale_months,
+        "first_sale_days": case.first_sale_days,  # 0.14.0: days, not months
         "api_usd": case.api_usd,
         "fees_eur": result.fees_eur,
         "net_eur": result.net_eur,

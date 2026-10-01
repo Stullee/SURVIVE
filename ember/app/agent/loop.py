@@ -1403,6 +1403,20 @@ class CycleRunner:
             except CallRefused as exc:  # a state or system refusal ends the cycle at its next call
                 return tools.Outcome(False, f"Error: research refused ({exc.reason}).", "refused")
             except CallFailed as exc:
+                # 0.14.0: a failed call that was paid counts toward the venture's research budget too
+                if venture_id is not None and exc.result.cost_micros > 0:
+                    with self.db.transaction() as conn:
+                        ventures.add_research(
+                            conn,
+                            venture_id,
+                            cycle_id,
+                            exc.result.call_id,
+                            question,
+                            url,
+                            0,
+                            exc.result.cost_micros,
+                            to_iso(self.clock.now()),
+                        )
                 blocked = _BLOCKED_SITES.search(exc.result.error or "")
                 if blocked:
                     return tools.Outcome(
