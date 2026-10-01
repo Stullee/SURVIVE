@@ -262,21 +262,20 @@ def test_the_venture_focus_keeps_what_matters_most_when_it_is_cut() -> None:
         "[researching] · spent $1000000.00 · earned $1000000.00 less $1000000.00 of expenses · net -$1000000.00"
     )
     assert lines[1] == f'Owner: your owner\'s note (2026-09-30): "{"ä" * 219}…"'
-    assert lines[2:5] == [
+    assert lines[2:4] == [
         f"First test: {'ä' * 219}…",
         f"Next question: {'ä' * 219}…",
-        f"Knowledge file: {ventures.file_of(10**9, 'ä' * 80)} (1,000,000,000 B)",
-    ]
+    ]  # 0.14.0: then the pitch, before the knowledge file (here no room is left for it)
     ordered = [line.split(":")[0] for line in text.split("\n")]
     assert ordered == [
         "Focus venture",
         "Owner",
         "First test",
         "Next question",
+        "Pitch",
         "Knowledge file",
         "Scores",
         "Research for it",
-        "Pitch",
         "Demand",
         "Economics",
         "Setup",

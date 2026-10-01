@@ -177,10 +177,11 @@ def _next_bar(
 
 
 def _owe(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row, gate: Gate, project: str, now: str) -> str:
-    """The obligation a missed bar leaves: its action, with the numbers."""
+    """The obligation a missed bar leaves: its action first, then the numbers (0.14.0: the plan's line is cut at
+    obligations.LINE_CHARS, and the action came after the numbers)."""
     what = (
-        f"milestone #{row['milestone_id']} {_title(gate.title, project)!r} was missed ({str(row['result'])[:160]}): "
-        f"{gate.missed}"
+        f"project #{row['project_id']}: {gate.missed} (milestone #{row['milestone_id']} "
+        f"{_title(gate.title, project)!r} was missed: {str(row['result'])[:160]})"
     )
     conn.execute(
         "INSERT INTO obligations (mode, session, kind, what, due, created_at, milestone_id)"

@@ -404,7 +404,8 @@ start. The weight (0–100, revenue counting double) is the node's size; its
 colour is its stage. A brainstorm's scores are a first guess (dashed); research
 replaces them. The agent's own scores count only after research: Ember's code
 records each research call made for a venture (in a venture cycle, the one it
-focuses on), and the agent can score a venture once one of them found web pages.
+focuses on), and the agent can score a venture once one of them found web pages
+(in a venture cycle, where it also writes the business case).
 The card's **Research** line counts them.
 
 **Venture cycles.** The **Share for ventures** option (25 % by default) is the
@@ -886,7 +887,9 @@ no longer shown); a study that failed three times stops until you press
   sent by mistake; a note that something was removed stays. Each of your
   messages stays in the agent's plans until one of its messages answers it,
   so a cycle that ends early can't lose your question; under your message the
-  Inbox says whether it was answered yet.
+  Inbox says whether it was answered yet. The Inbox shows the newest 30
+  messages and every one of yours still waiting for an answer; **Show older
+  messages** loads the ones before.
 - **Workspace**: the files the agent writes in its own folder (drafts, notes,
   research), and the PDF, Word, Excel and picture files Ember made from them, so
   you can review them before you approve anything. Open a text file to read it
@@ -898,7 +901,8 @@ no longer shown); a study that failed three times stops until you press
   one, Ember creates it in your shop (see [Etsy](#etsy)).
 - **Upgrade requests**: ideas for changing Ember's code. Accept, decline, or mark
   one released with the version that contains it. After an update the agent
-  reads what changed in the release notes. A request built on a workshop script
+  reads what changed in the release notes, about 2 KB a plan until it has read
+  them all. A request built on a workshop script
   comes with the script (see [How Ember grows](#the-workshop)).
 - **Pause / Resume** stops and restarts the wake cycles. **Wake now** starts a
   cycle right away.

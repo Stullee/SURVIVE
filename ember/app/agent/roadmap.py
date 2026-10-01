@@ -687,7 +687,7 @@ def goal_line(row: Mapping[str, Any], today: date, spent: Mapping[int, int] | No
 
 def code_closed(closed: list[Mapping[str, Any]], since: str | None) -> list[str]:
     """0.12.0: what Ember's code closed from its records since ``since`` (the end of the last cycle): a done to build
-    on, a miss to decide on."""
+    on, a miss to decide on (0.14.0: a missed bar of a product line's listing test has its action in OBLIGATIONS)."""
     fresh = [
         r
         for r in closed
@@ -698,10 +698,17 @@ def code_closed(closed: list[Mapping[str, Any]], since: str | None) -> list[str]
     if not fresh:
         return []
     listed = "; ".join(f"#{r['id']} {_q(r['title'], 60)} {r['status']}" for r in fresh[:4])
-    missed = " For a miss, decide what now: aim again (a new milestone), change the approach, or let it go."
+    missed = [r for r in fresh if r["status"] == "missed"]
+    bars = [  # a product line's (a venture's first test has the venture's number)
+        r
+        for r in missed
+        if (_column(r, "created_by"), _column(r, "kind")) == ("code", "first_test") and _column(r, "project_id")
+    ]
+    note = " For a miss, decide what now: aim again (a new milestone), change the approach, or let it go."
     return [
         f"Roadmap check: since your last cycle, Ember's code closed from its records: {listed}."
-        + (missed if any(r["status"] == "missed" for r in fresh) else "")
+        + (note if len(bars) < len(missed) else "")
+        + (" For a missed bar of a listing test, do what OBLIGATIONS says." if bars else "")
     ]
 
 

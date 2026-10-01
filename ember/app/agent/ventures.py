@@ -115,6 +115,7 @@ NOTE_CHARS = 300
 OWNER_ACTIONS = ("added", "research", "back", "park", "kill", "note")
 IDEAS_SHOWN = 8  # the heaviest ideas the planner sees in a venture cycle (the rest are counted)
 FOCUS_CHARS = 220  # each field of a venture's FOCUS in the brief, the owner's comment included (0.12.0)
+KNOCKED_CHARS = 440  # 0.14.0: its knock-outs in FOCUS (the owner's card shows them whole)
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -789,12 +790,15 @@ def focus_text(
     evidence: str = "",
     numbers: str = "",
     knocked: str = "",
+    critic: tuple[str, str] = ("", ""),
 ) -> str:
     """The brief's FOCUS for a venture: everything the agent knows of it, the most important first, as the brief cuts
-    it from the end (0.12.0: it lost the owner's comment and the first test): the owner's word, the first test, the
-    next question and the knowledge file, the digest of the last cycle aimed at it (``last``), the scores, its
-    numbers (``numbers``, 0.13.0), its evidence by grade (``evidence``, 0.12.0), then the pitch and the rest of the
-    business case, each field at most FOCUS_CHARS characters."""
+    it from the end (0.12.0: it lost the owner's comment and the first test): the owner's word, its knock-outs
+    (``knocked``, at most KNOCKED_CHARS characters) and the critic's verdict and flaw (``critic``: that line and the
+    one with its numbers), the first test and the next question, its numbers (``numbers``), its evidence by grade
+    (``evidence``) and the pitch (0.14.0: these came after the scores, and a case with a critique lost them), then the
+    knowledge file, the digest of the last cycle aimed at it (``last``), the scores, the critic's numbers and the rest
+    of the business case, each field at most FOCUS_CHARS characters."""
     file = parts[-1] if parts else file_of(row["id"], row["title"])  # ``parts``: the knowledge file's (0.12.0)
     kept = f"{file} ({file_size:,} B)" if file_size is not None else f"{file} (not written yet)"
     if parts and len(parts) > 1:
@@ -809,18 +813,21 @@ def focus_text(
         lines.append(f"Stage rule (Ember's code keeps it): {rule}")
     count = researched(row)
     budget = budget_text(row)  # 0.12.0
+    verdict, reckoned = critic
     lines += [
+        *([_one_line(knocked, KNOCKED_CHARS)] if knocked else []),
+        *([verdict] if verdict else []),
         f"First test: {_one_line(row['first_test'], FOCUS_CHARS) or '-'}",
         f"Next question: {_one_line(row['next_question'], FOCUS_CHARS) or '-'}",
+        *([numbers] if numbers else []),
+        *([evidence] if evidence else []),
+        f"Pitch: {_one_line(row['pitch'], FOCUS_CHARS)}",
         f"Knowledge file: {kept}",
         *([f"Its last cycle (Ember's code's digest): {last}"] if last else []),
         f"Scores: {scores_text(row)}",
         f"Research for it: {count} call{'s' if count != 1 else ''} that found something (scores need "
         f"{RESEARCH_TO_SCORE}, a business case {RESEARCH_TO_PROPOSE})" + (f"; {budget}" if budget else ""),
-        *([numbers] if numbers else []),  # 0.13.0
-        *([knocked] if knocked else []),  # 0.13.0: its knock-outs
-        *([evidence] if evidence else []),
-        f"Pitch: {_one_line(row['pitch'], FOCUS_CHARS)}",
+        *([reckoned] if reckoned else []),
     ]
     lines += [f"{label}: {_one_line(row[name], FOCUS_CHARS) or '-'}" for name, label, _ in CASE if name != "first_test"]
     if projects:  # the newest three

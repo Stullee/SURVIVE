@@ -865,6 +865,11 @@ class Agent:
             "cycle_running": self.running_cycle,
         }
 
+    def inbox_page(self, before: int, limit: int) -> dict[str, Any]:
+        from . import views
+
+        return views.inbox_page(self, before, limit)
+
     def ventures(self) -> dict[str, Any]:
         from . import views
 

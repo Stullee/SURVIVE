@@ -59,6 +59,9 @@
     instructions: { editing: false, saving: false, secretWarned: null },
     markingRead: false,
     killBusy: false,
+    // 0.14.0: the Inbox's older messages, loaded on request: those pages, the message the next one begins before (null:
+    // no older ones) and the dashboard's page they follow (a new message moves it: they load again, or a gap would open).
+    older: { messages: [], next: null, after: null },
   };
 
   // The phase-1 scenario switcher is gone; drop its stored choice.
@@ -617,7 +620,7 @@
     section("instructions", [d.instructions, agent.name, coming, !!agent.unavailable, minute], ["instructions-view"], function () {
       renderInstructions(isObject(d.instructions) ? d.instructions : null, agent);
     });
-    section("inbox", [d.inbox, d.badges, agent.name, coming, d.mode, minute], ["inbox"], function () { renderInbox(arr(d.inbox), agent.name, badgeCounts(d).unread, isDryRun(d)); });
+    section("inbox", [d.inbox, d.inbox_before, d.badges, agent.name, coming, d.mode, minute], ["inbox"], function () { renderInboxOf(d); });
     section("upgrades", [d.upgrades, coming, agent.name, minute], null, function () { return renderUpgrades(arr(d.upgrades)); });
     // The tree is loaded apart: again when it changed (a venture, or a cycle that ended), while its tab is open.
     if (ui.tab === "ventures" && !ui.vt.busy && d.ventures_stamp !== undefined && d.ventures_stamp !== ui.vt.stamp) loadVentures();
@@ -3112,10 +3115,26 @@
       (open ? (late ? " · overdue" : " · open") : " · closed" + (o.result ? ": " + asText(o.result) : "")));
   }
 
-  function renderInbox(messages, agentName, unread, dry) {
+  // 0.14.0: the dashboard brings the newest messages and every one of yours still waiting for an answer; older ones
+  // load on request, a page at a time.
+  var INBOX_PAGE = 30;
+
+  function renderInboxOf(d) {
+    renderInbox(arr(d.inbox), (d.agent || standInAgent(d)).name, badgeCounts(d).unread, isDryRun(d), d.inbox_before);
+  }
+
+  function renderInbox(messages, agentName, unread, dry, before) {
     var el = $("inbox");
     var name = agentName || "Ember";
-    var sorted = messages.slice().sort(function (x, y) { return byDate("created_at")(x, y) || num(x.id) - num(y.id); });
+    if (ui.older.after !== null && ui.older.after !== before) ui.older = { messages: [], next: null, after: null };
+    var seen = {};
+    var all = messages.concat(ui.older.messages).filter(function (m) {
+      if (!isObject(m) || seen[String(m.id)]) return false;
+      seen[String(m.id)] = true;
+      return true;
+    });
+    var next = num(ui.older.after === null ? before : ui.older.next);  // NaN: no older messages
+    var sorted = all.sort(function (x, y) { return byDate("created_at")(x, y) || num(x.id) - num(y.id); });
     var unreadRows = sorted.filter(isUnread);
     $("inbox-sub").textContent = unread ? plural(unread, "unread message") + " from " + name + "." : "No unread messages.";
     var mark = $("inbox-mark-read");
@@ -3123,7 +3142,7 @@
     if (!sorted.length) {
       replace(el, emptyState("li", "No messages yet.", name + " writes here when it has a question or news for you. You can write first, too."));
     } else {
-      replace(el, sorted.map(function (m) {
+      replace(el, [next > 0 ? olderMessagesButton(next) : null].concat(sorted.map(function (m) {
         var fromOwner = m.sender === "owner";
         var who = fromOwner ? (m.entered_by ? String(m.entered_by) : "You") : name;
         return h("li", { "data-from": fromOwner ? "owner" : "agent", "data-id": String(m.id), "data-unread": isUnread(m) ? "true" : null },
@@ -3135,7 +3154,7 @@
           fromOwner && m.seen_by_agent && !m.removed ? answeredLine(m, sorted) : null,
           fromOwner ? null : arr(m.promises).map(promiseLine),
           fromOwner && !m.removed ? removeButton(num(m.id)) : null);
-      }));
+      })).filter(function (item) { return item; }));
     }
     var later = laterTitle();
     var text = $("composer-text");
@@ -3152,6 +3171,24 @@
     // In dry run the fake model answers: say so above the box, and to screen readers in it.
     $("inbox-dry-note").hidden = !dry;
     text.setAttribute("aria-describedby", (dry ? "inbox-dry-note " : "") + "composer-hint composer-count composer-error");
+  }
+
+  function olderMessagesButton(before) {
+    var b = h("button", { type: "button", class: "btn", text: "Show older messages" });
+    b.addEventListener("click", function () {
+      var after = ui.older.after === null && ui.data ? ui.data.inbox_before : ui.older.after;
+      b.disabled = true;
+      b.textContent = "Loading…";
+      request("GET", "api/inbox?limit=" + INBOX_PAGE + "&before=" + encodeURIComponent(String(before))).then(function (res) {
+        if (!res.ok || !isObject(res.data)) throw httpError(res);
+        ui.older = { messages: ui.older.messages.concat(arr(res.data.messages)), next: res.data.before, after: after };
+        if (ui.data) safely("inbox", function () { renderInboxOf(ui.data); });  // at once, though the button has focus
+      }).catch(function (err) {
+        b.disabled = false;
+        b.textContent = "Show older messages (failed: " + errorText(err) + ")";
+      });
+    });
+    return h("li", { class: "inbox-more" }, b);
   }
 
   function composerCount() {
@@ -3253,6 +3290,8 @@
         }
         status.textContent = "The message's text was removed.";
         status.setAttribute("data-kind", "ok");
+        ui.older = { messages: [], next: null, after: null };  // they held its text: they load again on request
+        ui.rendered.inbox = null;
         refresh();
       }).catch(function (err) {
         status.textContent = "Couldn't remove the text (" + errorText(err) + ").";

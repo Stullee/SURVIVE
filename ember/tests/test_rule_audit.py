@@ -275,10 +275,23 @@ def test_no_sentence_is_said_twice_in_one_request() -> None:
 
 def test_the_fixed_prompt_is_smaller() -> None:
     """The fixed part of a work step (its system text and tool definitions) against 0.11.1's 45,866 bytes: a venture
-    cycle's at least 30% smaller, an ordinary cycle's no bigger; the reflection reads its work's from the cache."""
+    cycle's at least 30% smaller, an ordinary cycle's no bigger; the reflection reads its work's from the cache.
+    0.14.0: with every channel of the owner's on (it was 48.5 KB with Printify on, measured without)."""
 
     def fixed(venture: bool) -> int:
-        request = prompts.work_request(SETTINGS, "brief", [], mail=True, etsy=True, venture=venture, library=True)
+        request = prompts.work_request(
+            SETTINGS,
+            "brief",
+            [],
+            mail=True,
+            etsy=True,
+            venture=venture,
+            library=True,
+            pinterest=True,
+            printify=True,
+            site=True,
+        )
+        assert prompts.workshop_on(SETTINGS)
         return len(json.dumps([request["system"], request["tools"]], ensure_ascii=False).encode())
 
     assert fixed(venture=True) <= 0.7 * 45_866

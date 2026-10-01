@@ -128,6 +128,7 @@ def dashboard(request: Request) -> dict[str, Any]:
         "activity": [],
         "approvals": [],
         "inbox": [],
+        "inbox_before": None,
         "upgrades": [],
         "instructions": None,
         "mind": None,
@@ -437,6 +438,16 @@ def _poke_executor(request: Request, reply: Reply) -> None:
     approval = reply.body.get("approval") if reply.status == 200 else None
     if isinstance(approval, dict) and approval.get("executor"):
         _poke(request)
+
+
+@router.get("/api/inbox")
+def inbox(request: Request, before: int = Query(ge=1, le=2**62), limit: int = Query(30, ge=1, le=200)) -> JSONResponse:
+    """0.14.0: the Inbox's messages older than message ``before``, newest first (the dashboard brings the newest, and
+    every message of the owner's still waiting for an answer)."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    return JSONResponse(agent.inbox_page(before, limit))
 
 
 @router.post("/api/inbox")

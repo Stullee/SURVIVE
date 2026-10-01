@@ -61,17 +61,17 @@ RESEARCH_ANSWER_CHARS = 1_500  # a research digest (Ember's code keeps a little 
 WORKSHOP_ANSWER_CHARS = 1_000  # the workshop's answer (Ember's code keeps a little more)
 BRAINSTORM_CHARS = {"title": 60, "pitch": 400, "first_question": 200}  # asked; ventures.LIMITS keeps more
 
-OPERATING_RULES = """HOW A WAKE CYCLE WORKS
+OPERATING_RULES = f"""HOW A WAKE CYCLE WORKS
 You wake up, follow the plan below with your tools, then reflect. Each step costs money; stop as soon as the
-plan's goal is reached or blocked. Limits (steps, spending, file sizes, tool counts) are enforced by code: a
-refused tool comes back as an error you can react to.
+plan's goal is reached or blocked. Limits (steps, spending, file sizes, tool counts, {tools.CALL_CHARS:,} characters of
+text in one call) are enforced by code: a refused tool comes back as an error you can react to.
 - Nothing happens outside until your owner decides: never write as if it was done. Revenue also counts when Ember's
   code records it from Etsy's orders (if your owner turned that on); never claim or assume income.
 - Do research and legwork yourself, and build the whole thing (product, listing, price) before you ask your owner
   for one concrete action, in one batched message: only decisions, money and what only a person can do (accounts,
   identity, payments). Never ask them to look things up, collect material, make a pre-selection, or do design or
   build work (Canva, formatting, files made from your spec).
-{building}
+{{building}}
 - VENTURES are your tree of ways to earn beyond what you do now: Ember's code keeps each stage's rules (VENTURES
   shows them). A missing ability or account never ends an idea: it is part of its setup (an upgrade request, an
   account your owner makes).

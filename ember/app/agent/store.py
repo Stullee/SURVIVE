@@ -18,6 +18,7 @@ from ..economy.clock import from_iso, to_iso
 
 OPEN_STATUSES = ("idea", "active", "waiting")
 CLOSED_STATUSES = ("succeeded", "failed", "abandoned")
+INBOX_PAGE = 30  # the Inbox's messages at a time (0.14.0: older ones on request)
 
 
 @dataclass(frozen=True)
@@ -326,6 +327,14 @@ def expires_at(row: Any) -> str:
     return to_iso(from_iso(str(row["created_at"])) + timedelta(days=REQUEST_DAYS[row["type"]]))
 
 
+def pending_requests(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
+    """Every request waiting for the owner, the first to expire first (0.14.0: the plan's WAITING FOR YOUR OWNER
+    looked for them among the newest 20 requests only). PENDING_CAPS bound how many there are."""
+    where, params = scope.where()
+    rows = conn.execute(f"SELECT * FROM approvals WHERE {where} AND status = 'pending' ORDER BY id", params)
+    return sorted(rows.fetchall(), key=expires_at)
+
+
 def expire_requests(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[sqlite3.Row]:
     """The pending requests the owner didn't decide within their type's days, expired (0.12.0): news for the agent,
     like a decision, and no longer waiting. Returns them."""
@@ -518,11 +527,39 @@ def approvals_for_owner(conn: sqlite3.Connection, scope: AgentScope, closed: int
     ).fetchall()
 
 
-def queue(conn: sqlite3.Connection, table: str, scope: AgentScope, limit: int = 30) -> list[sqlite3.Row]:
-    if table not in {"approvals", "messages", "upgrades"}:
-        raise ValueError("unknown table")
+def inbox(
+    conn: sqlite3.Connection, scope: AgentScope, limit: int = INBOX_PAGE, before: int | None = None
+) -> tuple[list[sqlite3.Row], int | None]:
+    """The Inbox, newest first: the newest ``limit`` messages, or the ``limit`` before message ``before``; the first
+    page also holds every message of the owner's the agent hasn't answered (and whose text is still there), however
+    old (0.14.0: only the newest 30 were shown, so an older one couldn't be read, checked or removed). With the
+    message the next page begins before (None: there are no older ones)."""
     where, params = scope.where()
-    return conn.execute(f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC LIMIT ?", (*params, limit)).fetchall()
+    older = " AND id < ?" if before is not None else ""
+    page = conn.execute(
+        f"SELECT * FROM messages WHERE {where}{older} ORDER BY id DESC LIMIT ?",
+        (*params, *((before,) if before is not None else ()), limit + 1),
+    ).fetchall()
+    after = int(page[limit - 1]["id"]) if len(page) > limit else None
+    page = page[:limit]
+    if before is None and after is not None:
+        page += conn.execute(
+            f"SELECT * FROM messages WHERE {where} AND id < ? AND sender = 'owner' AND answered_by IS NULL"
+            " AND removed_at IS NULL ORDER BY id DESC",
+            (*params, after),
+        ).fetchall()
+    return page, after
+
+
+def upgrades_for_owner(conn: sqlite3.Connection, scope: AgentScope, decided: int = 30) -> list[sqlite3.Row]:
+    """The upgrade requests the owner's Upgrades tab lists, newest first: every new one and the newest ``decided``
+    others (0.14.0: only the newest 30 of all were listed)."""
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT * FROM upgrades WHERE {where} AND (status = 'new' OR id IN (SELECT id FROM upgrades WHERE {where}"
+        " AND status <> 'new' ORDER BY id DESC LIMIT ?)) ORDER BY id DESC",
+        (*params, *params, decided),
+    ).fetchall()
 
 
 def standing_instructions(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | None:

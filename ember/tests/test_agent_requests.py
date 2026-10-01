@@ -305,7 +305,8 @@ def test_tool_definitions_match_the_validation() -> None:
         tools.MAIL_TOOLS
     )
     for definition in tools.definitions(mail=True):
-        spec = tools.SPECS[definition["name"]]
+        spec = tools.spec_of(definition["name"], venture=False)  # 0.14.0: as an ordinary cycle checks it
+        assert spec is not None
         schema = definition["input_schema"]
         assert schema["additionalProperties"] is False
         assert set(schema["properties"]) == set(spec.fields)

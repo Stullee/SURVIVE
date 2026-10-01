@@ -98,9 +98,9 @@ def test_the_critic_reviews_a_proposed_case_before_the_plan(data_dir: Path) -> N
         f"The critic on venture #{DROPSHIPPING} (case #1): test; expected EUR {got.ev_eur:.0f} a month by its numbers."
     )
     brief = [r for r in fake.sent if request_kind(r) == "work"][-1]["messages"][0]["content"][0]["text"]
-    assert (
-        f"\nCritic (a separate call on case #1): test; fatal flaw: {ANSWER['fatal_flaw']}; its numbers: a sale" in brief
-    )
+    # 0.14.0: the verdict and the flaw near the top of FOCUS, its numbers further down
+    assert f"\nCritic (a separate call on case #1): test; fatal flaw: {ANSWER['fatal_flaw']}\n" in brief
+    assert "\nCritic's numbers: a sale keeps EUR " in brief
     shown = card(agent)
     assert (shown["critique"]["verdict"], shown["critique"]["sales"]) == ("test", [0, 4, 12])
     assert shown["ranking_ev_eur"] == got.ev_eur < econ.compute(AGENTS).ev_eur  # the lower of the two

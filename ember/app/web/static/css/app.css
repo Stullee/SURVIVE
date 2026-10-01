@@ -605,6 +605,7 @@ a.btn-primary { color: var(--text); }
 .chat { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 10px; }
 .chat li { max-width: 80%; min-width: 0; padding: 8px 12px; border-radius: 12px; background: var(--surface-2); }
 .chat li.empty-state { max-width: none; background: none; }
+.chat li.inbox-more { max-width: none; justify-self: center; padding: 0; background: none; }
 .chat li[data-from="owner"] { justify-self: end; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
 .chat .who { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font-size: 0.8rem; color: var(--text-2); margin-bottom: 2px; }
 .chat .msg-text { display: block; white-space: pre-wrap; }
