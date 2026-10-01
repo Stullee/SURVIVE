@@ -74,7 +74,7 @@ options:
   # The workshop: code the agent has written, run in Anthropic's sandbox (see the Documentation tab). Its model
   # (workshop_model) is an optional option: empty, the worker model writes the code.
   workshop: true
-  workshop_run_cap_usd: 0.5
+  workshop_run_cap_usd: 0.75
   workshop_runs_per_day: 6
   code_execution_usd_per_hour: 0.05
   # Change this number (and restart) to re-enable an agent stopped with the kill switch.

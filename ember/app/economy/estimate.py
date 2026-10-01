@@ -14,9 +14,11 @@ so far. Each tool result is assumed to add at most an allowance of tokens:
 web_fetch is bounded by its ``max_content_tokens`` (required), web search
 results by ``SEARCH_RESULT_ALLOWANCE_TOKENS``. When the request uses prompt
 caching, the API caches the loop's context itself, so later samplings read it
-from the cache and what is new is written once. Assumption (to verify with a
-live call in phase 5): ``max_tokens`` bounds the output of the whole loop. The
-remaining estimation risk (a result larger than its allowance, a cache miss
+from the cache and what is new is written once. 0.14.0: ``max_tokens`` limits
+each sampling, not the loop (live, a workshop run wrote 12,439 output tokens
+with ``max_tokens`` 8,000), so the loop's output is priced as 10 times
+``max_tokens``, and each sampling adds its output to what the next ones read.
+The remaining estimation risk (a result larger than its allowance, a cache miss
 inside one loop) is detected after the call: the actual cost is compared with
 the estimate.
 
@@ -27,6 +29,15 @@ view). Its container is billed by time, not tokens: the worst case adds
 ``CONTAINER_ALLOWANCE_MINUTES`` at the owner's price per hour, which covers the
 longest call the transport lets run plus the idle minutes before the container
 is put away. A request may name the container of the call it continues.
+
+What can't be bounded (0.14.0): nothing in a request limits the size of a code
+run's result (printed output, a file or a picture looked at) or of a web search
+result. Live, one workshop run wrote 540,865 tokens to the cache, about ten
+times what these allowances allow, and cost 5.3 times its estimate. So for a
+server tool the worst case here is a price under stated assumptions, not a
+ceiling: the budget guard reserves a workshop call at the cap per run, or at
+what recent runs cost if that is more (metering.workshop_reservation), and
+research, priced the same way, only has its history and the safety factor.
 """
 
 from __future__ import annotations
@@ -200,24 +211,33 @@ def worst_case_micros(
     if "1h" in plan.cache_ttls:
         first_rate = max(first_rate, dec(price.cache_write_1h))
     prompt = plan.input_tokens
-    output = plan.max_output_tokens
+    looped = bool(plan.tool_uses or plan.code_runs)
+    samplings = MAX_SERVER_ITERATIONS if looped else 1
+    output = samplings * plan.max_output_tokens  # 0.14.0: max_tokens limits each sampling of a server tool's loop
     tokens = prompt * first_rate + output * dec(price.output)
-    if plan.tool_uses or plan.code_runs:
+    if looped:
         allowance = max(
             SEARCH_RESULT_ALLOWANCE_TOKENS if plan.search_uses or plan.pending_searches else 0,
             plan.fetch_allowance_tokens,
         )
-        # Everything a later sampling can see beyond the prompt: all tool results (they may all
-        # arrive at once, in parallel) and all output written so far.
-        grown = plan.tool_uses * allowance + plan.code_runs * CODE_RESULT_ALLOWANCE_TOKENS + output
-        later = MAX_SERVER_ITERATIONS - 1
+        # The results of the tool calls a paused turn left (the first sampling reads them), and all results, which may
+        # all arrive at once (in parallel).
+        pending = (plan.pending_searches + plan.pending_fetches) * allowance
+        pending += plan.pending_code_runs * CODE_RESULT_ALLOWANCE_TOKENS
+        results = (plan.search_uses + plan.fetch_uses) * allowance + pending
+        # 0.14.0: what each sampling adds for the next ones to read: its output, and one code run's result.
+        step = plan.max_output_tokens + (CODE_RESULT_ALLOWANCE_TOKENS if plan.code_execution else 0)
+        later = samplings - 1
+        # Sampling k (2 to 10) reads the prompt, the results and what the k-1 samplings before it added.
+        reread = later * (prompt + results) + step * later * samplings // 2
+        grown = results + samplings * step  # everything the loop adds, written once
         if plan.cache_ttls:
             read, write = dec(price.cache_read), dec(price.cache_write_5m)
             # Later samplings read the context from the cache; what's new is written once; and if the
             # prompt's own entry misses once inside the loop, it is written again.
-            tokens += later * (prompt + grown) * read + grown * write + prompt * (write - read)
+            tokens += reread * read + grown * write + prompt * (write - read)
         else:
-            tokens += later * (prompt + grown) * first_rate
+            tokens += (reread + pending) * first_rate
     searches = (plan.search_uses + plan.pending_searches) * dec(web_search_usd_per_1000) * 1000
     total = tokens * dec(multiplier) + searches
     if plan.code_runs:

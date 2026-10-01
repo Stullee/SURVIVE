@@ -148,13 +148,15 @@ class Settings(BaseModel):
     # Effort for the work steps and the reflection ("default" sends none, which means high). Not sent to Haiku 4.5.
     worker_effort: Literal["default", "high", "medium", "low"] = "default"
     # The workshop (0.7.0): code the agent has written and run in Anthropic's sandbox. A run has its own cap and
-    # counts toward the daily cap, not the cycle cap (the daily cap still bounds it, whatever this cap says).
+    # counts toward the daily cap, not the cycle cap (the daily cap still bounds it, whatever this cap says). 0.14.0:
+    # each call of a run holds at least this cap of the daily cap and the balance, and a run priced above it is
+    # refused; the default rose from 0.50 as a run's output is priced per sampling (about $0.60 with Sonnet 5).
     # Container time costs this much per hour after Anthropic's free hours (1,550 a month per organization); Ember
     # books it for every run, as an upper bound.
     workshop: bool = True
     # The model that writes the workshop's code; empty: the worker model.
     workshop_model: str = Field(default="", max_length=100)
-    workshop_run_cap_usd: float = Field(default=0.5, ge=0.05, le=100)
+    workshop_run_cap_usd: float = Field(default=0.75, ge=0.05, le=100)
     workshop_runs_per_day: int = Field(default=6, ge=0, le=50)
     code_execution_usd_per_hour: float = Field(default=0.05, ge=0, le=100)
     kill_switch_reset: int = Field(default=0, ge=0, le=1_000_000)

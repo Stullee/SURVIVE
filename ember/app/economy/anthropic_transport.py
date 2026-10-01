@@ -18,12 +18,15 @@ logged. The SDK is imported here only, and only when live mode needs it.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import math
 import os
 import socket
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Mapping
 from typing import Any
 
@@ -38,6 +41,10 @@ WRITE_SECONDS = 60.0
 READ_SECONDS = 300.0  # the longest silence between two stream events
 TOTAL_SECONDS = 1_800.0  # the longest a whole call may take
 SERVER_TOOL_ALLOWANCE = 3_000  # tokens per server tool definition, which count_tokens can't size (0.12.0: 1,000)
+# 0.14.0: tokens per file handed to code execution (a container_upload block). count_tokens refused them without the
+# code execution tool, which it doesn't size either; the file goes into the container, not the prompt.
+UPLOAD_ALLOWANCE = 200
+COUNTS_KEPT = 16  # 0.14.0: counts remembered, by what was counted (a work step's guard counted one request 8 times)
 FILE_SECONDS = 120.0  # one Files API request (the workshop's inputs and outputs)
 UPLOAD_EXPIRY_SECONDS = 3_600  # the workshop's inputs are gone within the hour, even if deleting them fails
 _COUNT_FIELDS = ("model", "messages", "system", "tools", "tool_choice", "thinking", "output_config", "cache_control")
@@ -95,6 +102,8 @@ class AnthropicTransport:
         # Set when the API refuses the key or the account (bad key, no credit, a spend limit):
         # no further calls until the owner fixes it and restarts the app.
         self.blocked: str | None = None
+        self._counts: OrderedDict[str, int] = OrderedDict()
+        self._counts_lock = threading.Lock()
         self._not_sent = (
             httpx2.ConnectError,
             httpx2.ConnectTimeout,
@@ -137,8 +146,37 @@ class AnthropicTransport:
     # --- sizing: a free endpoint with its own rate limit ---
 
     def count_tokens(self, request: Mapping[str, Any]) -> int:
-        """The prompt's size in tokens, with a margin; a rough upper bound if counting fails."""
+        """The prompt's size in tokens, with a margin; a rough upper bound if counting fails. 0.14.0: what was counted
+        once is answered from memory, a rough bound too: the budget guard sizes one request several times (a work step
+        sent 8 count requests for its 2 requests), and each could wait for retries or fail on its own."""
         body = {k: request[k] for k in _COUNT_FIELDS if k in request}
+        key = hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        with self._counts_lock:
+            if key in self._counts:
+                self._counts.move_to_end(key)
+                return self._counts[key]
+        counted = self._count(request, body)
+        with self._counts_lock:
+            self._counts[key] = counted
+            while len(self._counts) > COUNTS_KEPT:
+                self._counts.popitem(last=False)
+        return counted
+
+    def _count(self, request: Mapping[str, Any], body: dict[str, Any]) -> int:
+        """One count_tokens request for ``body`` (``request``'s counted fields)."""
+        # 0.14.0: a file for code execution (container_upload) is refused without the code execution tool, which isn't
+        # counted (below): every workshop request with files fell back to the rough count. Each counts as an allowance.
+        uploads = 0
+        messages = []
+        for message in body.get("messages") or []:
+            content = message.get("content") if isinstance(message, Mapping) else None
+            if isinstance(content, list) and any(_is_upload(b) for b in content):
+                uploads += sum(1 for b in content if _is_upload(b))
+                kept = [b for b in content if not _is_upload(b)] or [{"type": "text", "text": "-"}]
+                message = {**message, "content": kept}
+            messages.append(message)
+        if uploads:
+            body = {**body, "messages": messages}
         tools = list(body.get("tools") or [])
         local = [t for t in tools if not str(t.get("type") or "").startswith(_SERVER_TOOL_PREFIXES)]
         server = len(tools) - len(local)
@@ -152,10 +190,12 @@ class AnthropicTransport:
                 body.pop("tool_choice", None)
         try:
             counted = self._client.with_options(max_retries=2, timeout=30.0).messages.count_tokens(**body)
-            return math.ceil(counted.input_tokens * 1.05) + 200 + server * SERVER_TOOL_ALLOWANCE
         except Exception as exc:  # noqa: BLE001 - a failed count must not stop the call; guess high instead
             log.warning("Token counting failed (%s); using a rough upper bound", type(exc).__name__)
             return rough_token_count(request) + server * SERVER_TOOL_ALLOWANCE
+        return (
+            math.ceil(counted.input_tokens * 1.05) + 200 + server * SERVER_TOOL_ALLOWANCE + uploads * UPLOAD_ALLOWANCE
+        )
 
     # --- the Files API: the workshop's inputs and outputs (free, and not metered) ---
 
@@ -254,6 +294,10 @@ class AnthropicTransport:
             return Interrupted(
                 f"{type(exc).__name__}: {_short(exc)}", _merge(start, delta) if start else None, request_id
             )
+
+
+def _is_upload(block: Any) -> bool:
+    return isinstance(block, Mapping) and block.get("type") == "container_upload"
 
 
 def _usage(usage: Any) -> dict[str, Any] | None:

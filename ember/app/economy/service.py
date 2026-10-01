@@ -36,7 +36,16 @@ from .ledger import (
     confirmations,
 )
 from .life import KILLED_KEY, PAUSED_KEY, RUNWAY_CAP_DAYS, Life, LifeStatus, mode_of
-from .metering import MeteredModel, MeterHealth, ProcessLock, Transport, recover_interrupted, usd_cap_to_micros
+from .metering import (
+    MeteredModel,
+    MeterHealth,
+    ProcessLock,
+    Transport,
+    recover_interrupted,
+    usd_cap_to_micros,
+    workshop_reservation,
+    workshop_tail_ends,
+)
 from .pricing import (
     opening_cost,
     raised_safety_factors,
@@ -316,19 +325,33 @@ class Economy:
                 f" {ROOMY_CYCLE} times that (${micros_to_usd(math.ceil(working * ROOMY_CYCLE / 10_000) * 10_000):.2f})"
                 " most cycles end after a step or two."
             )
-        run = workshop_run_cost(self.settings, self.db, self.mode)
+        run = workshop_run_cost(self.settings, self.db, self.mode, scaled=False)
         if run is not None and self.settings.workshop and self.settings.workshop_runs_per_day:
             model = self.settings.workshop_model or self.settings.worker_model
-            for label, cap in (
-                ("workshop cap per run", self.settings.workshop_run_cap_usd),
-                ("daily spend cap", self.settings.daily_spend_cap_usd),
-            ):
-                if usd_cap_to_micros(cap) < run:
-                    result.append(
-                        f"The {label} (${cap:.2f}) is below one workshop run with {model} (up to"
-                        f" ${micros_to_usd(run):.2f}), so the workshop can't run."
+            # 0.14.0: a run's cap bounds its price; what it holds of the day can be more (its raised estimate, what
+            # recent runs cost), and the warning says which
+            scaled = workshop_run_cost(self.settings, self.db, self.mode) or run
+            simulated = self.mode == "dry_run"
+            held = workshop_reservation(self.db, self.settings, self.clock, simulated, model, scaled, self.mode)
+            daily = self.settings.daily_spend_cap_usd
+            if usd_cap_to_micros(self.settings.workshop_run_cap_usd) < run:
+                result.append(
+                    f"The workshop cap per run (${self.settings.workshop_run_cap_usd:.2f}) is below one workshop run"
+                    f" with {model} (up to ${micros_to_usd(run):.2f}), so the workshop can't run."
+                )
+            elif usd_cap_to_micros(daily) < held:
+                warning = (
+                    f"A workshop run with {model} now keeps ${micros_to_usd(held):.2f} of the day (its cap per run, its"
+                    " raised estimate or what recent runs cost), more than the daily spend cap"
+                    f" (${daily:.2f}), so the workshop can't run."
+                )
+                ends = workshop_tail_ends(self.db, self.clock, simulated, model, self.mode, usd_cap_to_micros(daily))
+                if ends is not None:
+                    warning += (
+                        f" What recent runs cost stops counting on {ends.astimezone(self.clock.tz).date().isoformat()},"
+                        " or at once with Reset estimates."
                     )
-                    break
+                result.append(warning)
         return result
 
     def dashboard(self) -> dict[str, Any]:

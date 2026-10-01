@@ -697,9 +697,9 @@ def test_a_call_never_costs_more_than_the_guards_worst_case(settings: Settings) 
 
 
 def test_answers_report_only_usage_keys_the_guard_knows() -> None:
-    allowed = _KNOWN_USAGE_KEYS - {"iterations"}
+    allowed = _KNOWN_USAGE_KEYS
     assert allowed >= fake_llm.USAGE_KEYS
-    for _, _, outcome in all_calls(corpus()):
+    for kind, _, outcome in all_calls(corpus()):
         if isinstance(outcome, Interrupted):
             assert outcome.partial_usage is None or set(outcome.partial_usage) <= allowed
         if not isinstance(outcome, Completed):
@@ -708,7 +708,13 @@ def test_answers_report_only_usage_keys_the_guard_knows() -> None:
         assert set(response) - {"stop_details"} == RESPONSE_KEYS
         assert ("stop_details" in response) == (response["stop_reason"] == "refusal")
         usage = response["usage"]
-        assert set(usage) <= allowed and "iterations" not in usage
+        assert set(usage) <= allowed
+        # 0.14.0: a server tool's loop reports its samplings, and they add up to the usage
+        assert ("iterations" in usage) == (kind in ("research", "workshop"))
+        for key in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"):
+            assert sum(i[key] for i in usage.get("iterations", [])) == (
+                usage.get(key, 0) if "iterations" in usage else 0
+            )
         assert all(isinstance(v, int) and v >= 0 for v in usage.get("cache_creation", {}).values())
         assert set(usage.get("server_tool_use", {})) <= _KNOWN_SERVER_TOOLS
         assert usage["service_tier"] == "standard" and usage["inference_geo"] == "global"

@@ -609,6 +609,17 @@ class Agent:
                 return moment, int(row["id"])
         return None
 
+    def _overran(self, end: CycleEnd) -> bool:
+        """0.14.0: whether a call's overrun stopped or cut short a cycle the agent chose a sleep for (the budget guard
+        stopped it, or refused further calls of that kind)."""
+        if end.status not in ("stopped", "refused") or not end.sleep_minutes or end.cycle_id is None:
+            return False
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM llm_calls WHERE cycle_id = ? AND overrun = 1 LIMIT 1", (end.cycle_id,)
+            ).fetchone()
+        return row is not None
+
     def _fallback_wake(self) -> None:
         """The next wake when working it out failed (0.12.0): the default interval from now, never the last one."""
         minutes = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes)
@@ -650,10 +661,15 @@ class Agent:
             self._set_time("next_wake_at", None)
             self.db.set_meta(self._key("next_wake_reason"), no_room)
             return
-        if end.status in ("completed", "idle"):
+        # 0.14.0: a cycle a call's overrun stopped sleeps as the agent chose, as a completed one would, but no sooner
+        # than the back-off: its money was spent already, and backing off sooner (live, 30 minutes instead of 420)
+        # only brought the next paid cycle sooner
+        overran = self._overran(end)
+        if end.status in ("completed", "idle") or overran:
             minutes = end.sleep_minutes or self.settings.wake_interval_minutes
             minutes = max(self.settings.min_sleep_minutes, min(self.settings.max_sleep_minutes, minutes))
-            self.db.set_meta(self._key("failures"), "0")
+            if not overran:
+                self.db.set_meta(self._key("failures"), "0")
             reason = "scheduled"
             if end.sleep_minutes:
                 reason = f"{self.settings.agent_name} chose {minutes} min"
@@ -677,11 +693,14 @@ class Agent:
             daily = min(burn.MAINTENANCE_SLEEP_MINUTES, self.settings.max_sleep_minutes)
             if minutes < daily and burn.current(self.db, self.economy.life.evaluate()).mode == burn.MAINTENANCE:
                 minutes, reason = daily, "the burn mode is maintenance: one cycle a day"  # 0.12.0
-        else:
+        if end.status not in ("completed", "idle"):
             failures += 1
             self.db.set_meta(self._key("failures"), str(failures))
-            minutes = min(self.settings.max_sleep_minutes, self.settings.min_sleep_minutes * 2 ** (failures - 1))
-            reason = f"after a {end.status} cycle, backing off"
+            backoff = min(self.settings.max_sleep_minutes, self.settings.min_sleep_minutes * 2 ** (failures - 1))
+            if not overran or minutes < backoff:
+                minutes, reason = backoff, f"after a {end.status} cycle, backing off"
+            else:
+                reason += f" (the cycle was {end.status} after a call cost more than its worst case)"
         self._set_time("next_wake_at", now + timedelta(minutes=minutes))
         self.db.set_meta(self._key("next_wake_reason"), reason)
 

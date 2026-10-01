@@ -149,8 +149,9 @@ configuration:
   workshop_run_cap_usd:
     name: Workshop cap per run (USD)
     description: >-
-      The most one workshop run may cost. Runs count toward the daily cap,
-      not the cycle cap, because one run can cost more than a whole cycle.
+      The most one workshop run may be priced at, and what Ember keeps of
+      the daily cap for each run (more after costlier runs). Runs count
+      toward the daily cap, not the cycle cap.
   workshop_runs_per_day:
     name: Workshop runs per day
     description: At most this many workshop runs a day (0 switches the workshop off).
