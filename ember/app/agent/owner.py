@@ -580,6 +580,9 @@ class Owner:
                     raise OwnerError("id", "no such milestone", 404)
                 if row["status"] != "open":
                     raise OwnerError("id", f"this milestone is {row['status']}", 409)
+                if level != "manual" and not policy.fits(conn, milestone_id, rule):  # 0.14.0: it would carry nothing
+                    need = "no project or venture" if rule == "email_reply" else "a project or venture"
+                    raise OwnerError("rule", f"this milestone never covers {rule}: it needs a milestone of {need}", 409)
                 now = self._now()
                 policy.set_grant(conn, self.scope, milestone_id, rule, level, now, by=_signed(who), **limits)
                 label = policy.RULES[rule].label

@@ -613,7 +613,7 @@
     section("approvals", [d.approvals, projectTitles(d), coming, agent.name, emailLimits(d), minute], null, function () {
       return renderApprovals(arr(d.approvals), projectTitles(d), emailLimits(d));
     });
-    section("audit", [d.audit, agent.name, minute], ["audit-feed", "audit-take-back"], function () { renderAudit(d.audit); });
+    section("audit", [d.audit, agent.name, agent.state, agent.killed, minute], ["audit-feed", "audit-take-back"], function () { renderAudit(d.audit, agent.state === "killed" || !!agent.killed); });
     section("instructions", [d.instructions, agent.name, coming, !!agent.unavailable, minute], ["instructions-view"], function () {
       renderInstructions(isObject(d.instructions) ? d.instructions : null, agent);
     });
@@ -2197,7 +2197,7 @@
     unclear: { icon: "!", label: "Unclear", tone: "critical" },
   };
 
-  function renderAudit(audit) {
+  function renderAudit(audit, killed) {
     var data = isObject(audit) ? audit : {};
     var items = arr(data.feed);
     var digest = isObject(data.digest) ? data.digest : null;
@@ -2211,12 +2211,14 @@
     takeBack.hidden = !unlocks;
     takeBack.disabled = false;
     takeBack.onclick = function () { takeBackUnlocks(takeBack, unlocks); };
-    replace($("audit-feed"), items.length ? items.map(auditItem)
+    replace($("audit-feed"), items.length ? items.map(function (e) { return auditItem(e, killed); })
       : [h("li", { class: "muted", text: "Nothing yet: what " + agentName() + "'s code carries out (emails, listings, changes) shows here." })]);
   }
 
-  function auditItem(e) {
+  function auditItem(e, killed) {
     var undo = isObject(e.undo) ? e.undo : {};
+    // 0.14.0: an Undo approved before the kill switch went on waits until it is off
+    var waits = killed && undone && /^(approved|pending)$/.test(String(undone.status)) ? " It waits until the kill switch is off." : "";
     var undone = isObject(undo.request) ? undo.request : null;
     var button = null;
     if (undo.label && !undo.why_not) {
@@ -2235,7 +2237,7 @@
       changes.length ? h("ul", { class: "audit-changes" }, changes) : null,
       e.note ? h("p", { class: "small pre-line", text: e.note }) : null,
       undone ? h("p", { class: "small" }, h("strong", { text: "Your Undo: " }),
-        "request #" + undone.approval_id + " (" + String(undone.status).replace(/_/g, " ") + ")" + (undone.note ? ": " + undone.note : "")) : null,
+        "request #" + undone.approval_id + " (" + String(undone.status).replace(/_/g, " ") + ")" + (undone.note ? ": " + undone.note : "") + waits) : null,
       button ? h("p", null, button)
         : undo.label && !undone ? h("p", { class: "muted small", text: "Undo isn't possible now: " + undo.why_not + "." }) : null);
   }
@@ -6396,7 +6398,8 @@
   }
 
   function milestoneAutonomy(m) {
-    var rules = arr(m.autonomy);
+    // 0.14.0: a rule the milestone never covers isn't offered (one still unlocked from before shows, to take back)
+    var rules = arr(m.autonomy).filter(function (r) { return r.fits !== false || r.level !== "manual"; });
     if (!rules.length) return null;
     var on = rules.filter(function (r) { return r.level !== "manual"; }).length;
     var status = h("p", { class: "muted small", role: "status" });

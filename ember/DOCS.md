@@ -802,8 +802,9 @@ no longer shown); a study that failed three times stops until you press
   until you choose otherwise (0.14.0: an unlock carries only what belongs to
   its milestone, whatever the plan works on: a milestone of a project covers
   that project's listings, one of a venture the listings of its projects, and
-  one of neither covers email replies; it ends when its milestone closes,
-  also when it is met, and what it held waits for you):
+  one of neither covers email replies, so the box offers only those rules;
+  it ends when its milestone closes, also when it is met, and what it held
+  waits for you):
   - QA fixes: photos up to 5 on a live listing;
   - price changes within 15% of the price you last approved on a live listing
     (several automatic changes can't add up past it);
@@ -832,8 +833,9 @@ no longer shown); a study that failed three times stops until you press
   VAT, an invoice, a Gewerbe or a contract (0.14.0: read in what it sends,
   look-alike letters, hidden characters and hyphens inside a word included,
   in German, English and the neighbours' words for VAT, invoices and
-  contracts, not in a listing's copy; a word list can still miss a phrasing
-  or catch a harmless word, such as a licence in a reply), and anything only
+  contracts, offers and quotes, not in a listing's copy; a word list can
+  still miss a phrasing or catch a harmless word, such as a licence or an
+  offer in a reply), and anything only
   you carry out. Such a request always waits for your click, and if it fits an
   unlocked kind, its card says why it waits. Only you unlock: Ember's code
   can only take an unlock back. The database checks this again on its own. It
@@ -857,7 +859,8 @@ no longer shown); a study that failed three times stops until you press
   in its next round, like any change you approve, and the entry shows its
   request. Only the newest action on a listing can be undone, and not while
   another change of it waits; an action that was undone no longer counts, so
-  after an Undo the action before it can be undone too (0.14.0). An Undo is
+  after an Undo the action before it can be undone too (0.14.0). If you undid
+  an Undo, the entry names the action to undo next. An Undo is
   carried out while Ember is paused or waits for money too, but not while the
   kill switch is on: that stops everything Ember's code sends, so undo it at
   Etsy by hand. An email can't be unsent. A pin's **Delete the
@@ -869,9 +872,10 @@ no longer shown); a study that failed three times stops until you press
   press it again (what is gone already counts as deleted).
 
   Before an unlock's price change or photo fix is made, Ember's code reads the
-  listing at Etsy again (0.14.0). If its price or photo count differs from
-  Ember's record (you changed it at Etsy), nothing is changed and the change
-  comes to you as a new request.
+  listing at Etsy again (0.14.0). If its price differs from Ember's record,
+  or its photos aren't the ones Ember's code set last (you changed them at
+  Etsy, or Ember never noted them: listings from before 0.14.0), nothing is
+  changed and the change comes to you as a new request.
 
   **Daily digest**: at the start of each day, Ember's code sums up the day
   before. It covers how many actions it carried out and on whose decision,

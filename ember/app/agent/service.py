@@ -212,6 +212,7 @@ class Agent:
         now = self.clock.now()
         with self.db.transaction() as conn:
             store.interrupt_open_tool_calls(conn, to_iso(now))
+            store.keep_act_words(conn)  # 0.14.0: requests stored before NEVER read normalised text
         if self.economy.health.lock_held:  # (another process holding the data folder may be sending right now)
             self.executor.recover()  # an email that was being sent may have gone out: it is never sent again
             self.publisher.recover()  # a listing that was being created may exist: it is never created again

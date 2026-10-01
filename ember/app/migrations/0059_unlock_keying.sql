@@ -79,7 +79,7 @@ FROM (
             OR r.words GLOB '*vereinbarung*' OR r.words GLOB '*lizenz*'
             OR r.words GLOB '*widerruf*' OR r.words GLOB '*einfuhr*' OR r.words GLOB '*verzoll*'
             OR r.words GLOB '*[^a-z]invoic*' OR r.words GLOB '*[^a-z]agreement*' OR r.words GLOB '*[^a-z]licen*'
-            OR r.words GLOB '*[^a-z]rechnung*' OR r.words GLOB '*[^a-z]ustg*' OR r.words GLOB '*[^a-z]umsatzst*'
+            OR r.words GLOB '*[^e]rechnung*' OR r.words GLOB '*[^a-z]ustg*' OR r.words GLOB '*[^a-z]umsatzst*'
             OR r.words GLOB '*[^a-z]mehrwertst*' OR r.words GLOB '*[^a-z]kleinunternehm*'
             OR r.words GLOB '*[^a-z]angebot*' OR r.words GLOB '*[^a-z]factur*' OR r.words GLOB '*[^a-z]fattur*'
             OR r.words GLOB '*[^a-z]faktur*' OR r.words GLOB '*[^a-z]contrat*' OR r.words GLOB '*[^a-z]impuest*'
@@ -89,7 +89,10 @@ FROM (
             OR r.words GLOB '*[^a-z]taxation[^a-z]*' OR r.words GLOB '*[^a-z]vat[^a-z]*'
             OR r.words GLOB '*[^a-z]ust[^a-z]*' OR r.words GLOB '*[^a-z]mwst[^a-z]*'
             OR r.words GLOB '*[^a-z]gst[^a-z]*' OR r.words GLOB '*[^a-z]iva[^a-z]*'
-            OR r.words GLOB '*[^a-z]tva[^a-z]*' OR r.words GLOB '*[^a-z]agb[^a-z]*' OR r.words GLOB '*[^a-z]customs[^a-z]*' AS legal,
+            OR r.words GLOB '*[^a-z]tva[^a-z]*' OR r.words GLOB '*[^a-z]agb[^a-z]*' OR r.words GLOB '*[^a-z]customs[^a-z]*'
+            OR r.words GLOB '*[^a-z]uid[^a-z]*' OR r.words GLOB '*[^a-z]offer[^a-z]*' OR r.words GLOB '*[^a-z]offers[^a-z]*'
+            OR r.words GLOB '*[^a-z]quote[^a-z]*' OR r.words GLOB '*[^a-z]quotes[^a-z]*'
+            OR r.words GLOB '*[^a-z]quotation[^a-z]*' AS legal,
         r.executor IS NULL OR r.executor NOT IN (
             'email', 'reddit_link', 'etsy_listing', 'etsy_edit', 'pinterest_pin', 'printify_product'
         ) AS owner_only
@@ -150,3 +153,16 @@ WHEN EXISTS (
     )
 )
 BEGIN SELECT RAISE(ABORT, 'action_undos: this action is undone or being undone'); END;
+
+-- An unlock's photo fix compared only the number of photos at Etsy with Ember's record: photos the owner replaced
+-- there, as many as before, were still deleted. Ember's code now keeps the photo numbers Etsy gave a listing when it
+-- last set its photos, and an unlock's photo fix waits for the owner unless Etsy still has exactly those.
+CREATE TABLE etsy_photo_ids (
+    id          INTEGER PRIMARY KEY,
+    mode        TEXT NOT NULL,
+    session     INTEGER NOT NULL DEFAULT 0,
+    listing_id  INTEGER NOT NULL,
+    ids         TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+CREATE INDEX etsy_photo_ids_listing ON etsy_photo_ids (mode, session, listing_id, id);

@@ -45,6 +45,12 @@ def unlock(agent: Any, milestone_id: int, rule: str, level: str = "auto") -> Non
     assert owner(agent).set_autonomy(milestone_id, {"rule": rule, "level": level}, "Stefan").status == 200
 
 
+def unlocked_before(agent: Any, milestone_id: int, rule: str, level: str = "auto") -> None:
+    """An unlock the owner could give before 0.14.0 refused one the milestone never covers."""
+    with agent.db.transaction() as conn:
+        policy.set_grant(conn, agent.scope(), milestone_id, rule, level, to_iso(agent.clock.now()), by="Stefan")
+
+
 def close(agent: Any, milestone_id: int, status: str) -> None:
     with agent.db.transaction() as conn:
         conn.execute(
@@ -122,7 +128,7 @@ def test_an_unlock_carries_only_what_belongs_to_its_milestone(data_dir: Path) ->
     agent, listing_id = listed(data_dir)
     guide = goal(agent, "Write the Pinterest guide")  # no project, no venture: no listing is its
     line = goal(agent, "Ten sales", project_id=LINE)
-    unlock(agent, guide, "deactivate")
+    unlocked_before(agent, guide, "deactivate")
     made = work_on(agent, guide, change(listing_id, state="deactivate"))[-1]  # the plan names the guide
     assert (made["status"], made["milestone_id"]) == ("pending", guide)  # before: deactivated at once
     now = to_iso(agent.clock.now())
@@ -160,7 +166,7 @@ def test_an_unlock_carries_only_what_belongs_to_its_milestone(data_dir: Path) ->
     )
     # An email reply belongs to no product line: a milestone of no project or venture carries it
     she_wrote(agent)
-    unlock(agent, line, "email_reply")
+    unlocked_before(agent, line, "email_reply")
     assert status_of(agent, a_reply(agent, "Yes, in A5 too.")) == ("pending", None)
     unlock(agent, guide, "email_reply")
     reply = a_reply(agent, "Yes, in A4 too.")
@@ -210,7 +216,7 @@ def test_a_request_held_by_a_milestone_that_doesnt_cover_it_waits_for_the_owner(
     Ember's code doesn't approve it, nor does the database."""
     agent, listing_id = listed(data_dir)
     guide = goal(agent, "Write the Pinterest guide")
-    unlock(agent, guide, "deactivate", "veto_window")
+    unlocked_before(agent, guide, "deactivate", "veto_window")
     held = work_on(agent, guide, change(listing_id, state="deactivate"))[-1]["id"]
     with agent.db.connection() as conn:
         granted = policy.grant(conn, agent.scope(), guide, "deactivate")
@@ -268,8 +274,15 @@ EVASIONS = (
     "Fattura in arrivo.",
     "Faktura f\u00f8lger.",
     "Ihr Angebot nehmen wir an.",
+    "Schlussrechnung folgt.",  # review round 2: invoice compounds, an offer or a quote in English, a VAT number
+    "Die Vorabrechnung ist angeh\u00e4ngt.",
+    "Proformarechnung anbei.",
+    "Our offer: 200 at 3 EUR.",
+    "Quote attached.",
+    "Unsere UID-Nummer steht unten.",
 )
 HARMLESS = ("Btw, the A5 file is attached.", "Sonderangebot: 2 f\u00fcr 1", "Your T-Shirt ships today.")
+HARMLESS += ("Die Berechnung der Versandkosten steht im Shop.",)  # a Berechnung is a sum, no invoice
 
 
 def legal_in_db(agent: Any, approval_id: int) -> int:
@@ -379,8 +392,8 @@ def test_an_unlock_s_change_waits_for_the_owner_when_etsy_s_listing_differs(data
         rows(agent, f"SELECT action FROM approvals WHERE id = {fix['id']}")[0]["action"],
     )
     assert back["description"].startswith(
-        "Sent back to you by Ember's code: Etsy's listing differs from Ember's record (it has 5 photos at Etsy, 1 in"
-        " Ember's record)."
+        "Sent back to you by Ember's code: Etsy's listing differs from Ember's record (its photos at Etsy aren't the"
+        " ones Ember set last (5 now, 1 then))."
     )
     note = rows(agent, f"SELECT result_note FROM approvals WHERE id = {fix['id']}")[0]["result_note"]
     assert f"request #{back['id']} waits for your owner" in note
@@ -446,6 +459,8 @@ def test_undoing_an_undo_of_an_undo_still_leads_back_to_the_first_action(data_di
                 f"a later action changed this listing (#{newest['id']}): undo that one first"
             )
             assert newest["undo"]["why_not"] is None
+            changed = next(e for e in feed(agent) if e["class"] == "etsy.edit_listing" and not e["undoes"])
+            assert changed["undo"]["why_not"] == f"its Undo was undone: undo #{newest['id']} to undo it again"
     assert price_of(agent, listing_id) == Decimal("4.50")
     created = next(e for e in feed(agent) if e["class"] == "etsy.create_listing")
     assert created["undo"]["why_not"] is None  # before: "undo #2 first", and #2 "it is undone": a dead end
@@ -609,3 +624,85 @@ def test_promotions_count_only_clean_approvals_and_stay_away_after_a_revocation_
         {"why": f"your owner vetoed request #{held['id']}"}
     ]
     assert agent.roadmap()["autonomy_suggestions"] == []  # before: suggested again at once
+
+
+# --- Review round 2 ----------------------------------------------------------------------------------------------
+
+
+def test_a_photo_fix_waits_for_the_owner_when_etsy_has_other_photos_as_many(data_dir: Path) -> None:
+    """21e: the owner replaced Ember's photo at Etsy with one of their own: the count is the same, the photo not."""
+    agent, listing_id = listed(data_dir)
+    line = goal(agent, "Ten sales", project_id=LINE)
+    unlock(agent, line, "qa_fix")
+    shop = agent.etsy.shop()
+    [embers] = shop.photo_ids(listing_id)
+    shop.upload_photo(listing_id, "theirs.jpg", b"theirs", 1)
+    shop.delete_photo(listing_id, embers)
+    theirs = agent.etsy.shop().photo_ids(listing_id)
+    assert len(theirs) == 1
+    photos = [f"shop/fix-{n}.png" for n in range(1, 6)]
+    for path in photos:
+        agent.roots()[0].write_bytes(path, f"{path} data".encode())
+    fix = work_on(agent, line, change(listing_id, photos=", ".join(photos)))[-1]
+    assert (fix["status"], fix["decided_by"]) == ("approved", policy.POLICY_BY)
+    assert agent.execute_approved() == [(fix["id"], "failed")]  # before: done, and the owner's photo deleted
+    assert agent.etsy.shop().photo_ids(listing_id) == theirs
+    [back] = rows(agent, f"SELECT id, description FROM approvals WHERE id > {fix['id']} AND executor = 'etsy_edit'")
+    assert "its photos at Etsy aren't the ones Ember set last (1 now, 1 then)" in back["description"]
+    reject(agent, back["id"])
+    # A listing whose photos Ember's code never saw at Etsy (set before 0.14.0) waits for the owner
+    with agent.db.transaction() as conn:
+        conn.execute("DELETE FROM etsy_photo_ids")
+    last = work_on(agent, line, change(listing_id, photos=", ".join(photos)))[-1]
+    assert agent.execute_approved() == [(last["id"], "failed")]
+    [back] = rows(agent, f"SELECT id, description FROM approvals WHERE id > {last['id']} AND executor = 'etsy_edit'")
+    assert "Ember has no record of the photos Etsy has" in back["description"]
+    # The owner approves it: Ember's code sets the photos and notes Etsy's numbers for the next fix
+    assert owner(agent).decide(back["id"], {"decision": "approve"}, "Stefan").status == 200
+    assert agent.execute_approved() == [(back["id"], "done")]
+    kept = rows(agent, f"SELECT ids FROM etsy_photo_ids WHERE listing_id = {listing_id} ORDER BY id DESC LIMIT 1")
+    assert json.loads(kept[0]["ids"]) == agent.etsy.shop().photo_ids(listing_id)
+
+
+def test_the_owner_s_own_ask_me_doesnt_keep_a_rule_from_being_suggested(data_dir: Path) -> None:
+    """X20: only a take-back by Ember's code for cause holds a suggestion back, not the owner's own 'Ask me'."""
+    agent, listing_id = listed(data_dir)
+    line = goal(agent, "Ten sales", project_id=LINE)
+    unlock(agent, line, "price_change", "manual")
+    for n in range(policy.PROMOTE_AFTER):
+        made = work_on(agent, line, change(listing_id, price=f"4.{40 - n}"))[-1]
+        assert owner(agent).decide(made["id"], {"decision": "approve"}, "Stefan").status == 200
+        assert agent.execute_approved() == [(made["id"], "done")]
+    [suggested] = agent.roadmap()["autonomy_suggestions"]  # before: none for 30 days
+    assert (suggested["milestone_id"], suggested["rule"]) == (line, "price_change")
+
+
+def test_a_rule_a_milestone_never_covers_cant_be_unlocked_on_it(data_dir: Path) -> None:
+    """21a: email replies on a product line's milestone, listing rules on one of no product line would carry nothing:
+    they aren't unlocked, nor offered."""
+    agent, _ = listed(data_dir)
+    line, replies = goal(agent, "Ten sales", project_id=LINE), goal(agent, "Answer questions")
+    for milestone_id, rule in ((line, "email_reply"), (replies, "deactivate"), (replies, "price_change")):
+        reply = owner(agent).set_autonomy(milestone_id, {"rule": rule, "level": "auto"}, "Stefan")
+        assert reply.status == 409, (milestone_id, rule)
+        assert "this milestone never covers" in str(reply.body)
+    unlock(agent, line, "deactivate")
+    unlock(agent, replies, "email_reply")
+    assert owner(agent).set_autonomy(line, {"rule": "email_reply", "level": "manual"}, "Stefan").status == 200
+    with agent.db.connection() as conn:
+        fits = {r["rule"]: r["fits"] for r in policy.view(conn, agent.scope(), agent.clock, replies)}
+    assert fits == {rule: rule == "email_reply" for rule in policy.RULES}
+
+
+def test_an_email_request_stored_before_the_upgrade_is_read_normalised_after_a_restart(data_dir: Path) -> None:
+    """21c: a reply stored without its normalised act (before 0.14.0) gets it at startup: look-alikes count."""
+    agent, _ = listed(data_dir)
+    she_wrote(agent)
+    reply = a_reply(agent, "RECHΝUNG folgt.")
+    assert legal_in_db(agent, reply) == 1
+    with agent.db.transaction() as conn:  # as stored by 0.13.0: no act_words row
+        conn.execute("DROP TRIGGER act_words_no_delete")
+        conn.execute("DELETE FROM act_words")
+    assert legal_in_db(agent, reply) == 0
+    agent.recover()
+    assert legal_in_db(agent, reply) == 1

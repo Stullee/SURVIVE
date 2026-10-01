@@ -433,8 +433,8 @@ def _revocation(conn: sqlite3.Connection, g: sqlite3.Row, clock: Clock) -> str:
 def suggestions(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[dict[str, Any]]:
     """The promotions Ember's code proposes: a rule whose requests for an open milestone the owner approved
     PROMOTE_AFTER times without changes or a comment (0.14.0) in PROMOTE_DAYS, while nothing is granted for it and
-    (0.14.0) its unlock wasn't taken back for cause in PROMOTE_DAYS (only a spent budget isn't a cause). The owner
-    decides."""
+    (0.14.0) Ember's code didn't take its unlock back for cause in PROMOTE_DAYS (only a spent budget isn't a cause;
+    the owner's own "Ask me" doesn't count). The owner decides."""
     since = to_iso(clock.now() - timedelta(days=PROMOTE_DAYS))
     where, params = scope.where("a")
     rows = conn.execute(
@@ -442,9 +442,10 @@ def suggestions(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> li
         f" ON a.id = c.approval_id JOIN milestones m ON m.id = c.milestone_id WHERE {where} AND m.status = 'open'"
         f" AND a.status IN ('approved', 'done') AND {_clean('a')} AND a.decided_by IS NOT ?"
         " AND c.created_at >= ? AND NOT EXISTS (SELECT 1 FROM policy_grants g WHERE g.milestone_id = c.milestone_id"
-        " AND g.rule = c.rule AND g.level = 'manual' AND g.created_at >= ? AND COALESCE(g.why, '') NOT LIKE ?)"
+        " AND g.rule = c.rule AND g.level = 'manual' AND g.by = ? AND g.created_at >= ?"
+        " AND COALESCE(g.why, '') NOT LIKE ?)"
         " GROUP BY c.rule, c.milestone_id HAVING COUNT(*) >= ? ORDER BY c.milestone_id, c.rule",
-        (*params, POLICY_BY, since, since, SPENT.format("%"), PROMOTE_AFTER),
+        (*params, POLICY_BY, since, REVOKED_BY, since, SPENT.format("%"), PROMOTE_AFTER),
     ).fetchall()
     return [
         {
@@ -456,7 +457,18 @@ def suggestions(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> li
         }
         for r in rows
         if grant(conn, scope, int(r["milestone_id"]), str(r["rule"])) is None
+        and fits(conn, int(r["milestone_id"]), str(r["rule"]))
     ]
+
+
+def fits(conn: sqlite3.Connection, milestone_id: int, rule: str) -> bool:
+    """0.14.0: whether a milestone's scope can ever cover a rule's requests (approvals_scope): email replies only on a
+    milestone of no project and no venture, listings only on one of a project or venture."""
+    row = conn.execute("SELECT project_id, venture_id FROM milestones WHERE id = ?", (milestone_id,)).fetchone()
+    if row is None:
+        return False
+    linked = row["project_id"] is not None or row["venture_id"] is not None
+    return linked != (RULES[rule].action_class == "email.reply")
 
 
 def view(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, milestone_id: int) -> list[dict[str, Any]]:
@@ -471,6 +483,7 @@ def view(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, milestone_id
                 "rule": rule.name,
                 "label": rule.label,
                 "action_class": rule.action_class,
+                "fits": fits(conn, milestone_id, rule.name),
                 "level": g["level"] if g is not None else "manual",
                 "per_day": g["per_day"] if g is not None else PER_DAY,
                 "budget": g["budget"] if g is not None else BUDGET,

@@ -392,6 +392,22 @@ def insert_approval(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, 
     return int(cursor.lastrowid)
 
 
+def keep_act_words(conn: sqlite3.Connection) -> int:
+    """0.14.0: the normalised act of the email requests stored before Ember's code kept it (at startup), so NEVER
+    reads look-alike letters in them too. How many it kept."""
+    rows = conn.execute(
+        "SELECT id, executor, action FROM approvals a WHERE executor = 'email'"
+        " AND NOT EXISTS (SELECT 1 FROM act_words w WHERE w.approval_id = a.id)"
+    ).fetchall()
+    kept = 0
+    for r in rows:
+        words = never.act_words(r["executor"], r["action"])
+        if words is not None:
+            conn.execute("INSERT INTO act_words (approval_id, words) VALUES (?, ?)", (r["id"], words))
+            kept += 1
+    return kept
+
+
 def insert_message(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int | None, text: str, now: str) -> int:
     cursor = conn.execute(
         "INSERT INTO messages (mode, session, life_id, created_at, sender, cycle_id, text)"

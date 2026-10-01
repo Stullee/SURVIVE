@@ -338,6 +338,7 @@ class Publisher:
                 f" {etsy.edit_url(listing_id)}"
             )
             return self._after(approval_id, "draft", listing_id, note, error)
+        self._saw_photos(shop, scope, listing_id)
         note = f"Listed on Etsy as #{listing_id} ({state}): {etsy.listing_url(listing_id)}"
         if shop.simulated:
             note = f"Listed in the dry run's fake shop as #{listing_id}; nothing reached Etsy."
@@ -479,15 +480,18 @@ class Publisher:
                 before = current_listing(conn, scope, edit.listing_id)
             except EtsyError:
                 return None  # _change says why it can't be made
+            seen = self._photos_seen(conn, scope, edit.listing_id)
         if before is None or edit.parts() not in (["price"], ["photos"]):
             return None
         try:
             with _guard(shop):
                 if edit.photos is not None:
-                    at_etsy = len(shop.photo_ids(edit.listing_id))
-                    if at_etsy == len(before.photos):
+                    at_etsy = shop.photo_ids(edit.listing_id)
+                    if seen is None:
+                        return "Ember has no record of the photos Etsy has, so it can't tell whether you changed them"
+                    if at_etsy == seen:
                         return None
-                    return f"it has {at_etsy} photos at Etsy, {len(before.photos)} in Ember's record"
+                    return f"its photos at Etsy aren't the ones Ember set last ({len(at_etsy)} now, {len(seen)} then)"
                 found = [r.price for r in shop.listings([edit.listing_id]) if r.listing_id == edit.listing_id]
         except Exception as exc:  # noqa: BLE001 - what can't be read isn't checked: the owner decides
             error = str(exc) if isinstance(exc, EtsyError) else type(exc).__name__
@@ -496,6 +500,29 @@ class Publisher:
         if price is not None and Decimal(price) == Decimal(before.price):
             return None
         return f"its price at Etsy is {price or 'unknown'}, {before.price} in Ember's record"
+
+    def _saw_photos(self, shop: Shop, scope: AgentScope, listing_id: int) -> None:
+        """0.14.0: the photo numbers Etsy gave a listing once Ember's code set its photos, kept to compare before an
+        unlock's photo fix. Unread, none are kept: that fix then waits for the owner."""
+        try:
+            with _guard(shop):
+                ids = shop.photo_ids(listing_id)
+        except Exception:  # noqa: BLE001 - not kept; the next automatic photo fix asks the owner
+            log.warning("Etsy listing %d's photo numbers couldn't be read", listing_id)
+            return
+        with self.db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO etsy_photo_ids (mode, session, listing_id, ids, recorded_at) VALUES (?, ?, ?, ?, ?)",
+                (scope.mode, scope.session, listing_id, json.dumps(ids), to_iso(self.clock.now())),
+            )
+
+    @staticmethod
+    def _photos_seen(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> list[int] | None:
+        row = conn.execute(
+            "SELECT ids FROM etsy_photo_ids WHERE mode = ? AND session = ? AND listing_id = ? ORDER BY id DESC LIMIT 1",
+            (scope.mode, scope.session, listing_id),
+        ).fetchone()
+        return None if row is None else [int(i) for i in json.loads(row["ids"])]
 
     def _send_back(self, conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row, differs: str) -> str:
         """0.14.0: an unlock's change that Etsy's listing doesn't match isn't made: nothing is sent, and the owner gets
@@ -599,6 +626,8 @@ class Publisher:
             error = str(exc) if isinstance(exc, EtsyError) else type(exc).__name__
             if not isinstance(exc, EtsyError):
                 log.exception("Changing Etsy listing %d (request #%d) failed", listing_id, approval_id)
+        if "photos" in made:
+            self._saw_photos(shop, scope, listing_id)
         after = etsy.edited(before, edit, made) if made else None
         note = _change_note(shop, edit, status, made, halfway, error)
         title = edit.title if "title" in made else None

@@ -407,7 +407,8 @@ VOCABULARY = (
 VOCABULARY += (
     "§ 19 UStG", "Rechnung", "Auftrag", "St\u0435uer", "Ste\u00aduer", "\uff34\uff21\uff38", "IVA", "TAXABLE",
     "Lizenz", "licence", "Zoll", "customs", "Angebot", "Sonderangebot", "RECH\u039dUNG", "CO\u039dTRACT", "Steu-er",
-    "non-taxable", "Btw", "facture", "Contrato",
+    "non-taxable", "Btw", "facture", "Contrato", "Schlussrechnung", "Berechnung", "offer", "Offers", "QUOTE",
+    "quotation", "UID-Nr.", "fluid",
 )  # fmt: skip
 
 

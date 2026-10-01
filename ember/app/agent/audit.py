@@ -143,6 +143,21 @@ def _last_undo(conn: sqlite3.Connection, journal_id: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
+def _undone(conn: sqlite3.Connection, journal_id: int) -> tuple[int, int]:
+    """0.14.0: how many Undos in a row were done from an action on (its Undo, that Undo's Undo, ...), and the newest
+    entry of that chain."""
+    done, head = 0, journal_id
+    while (last := _last_undo(conn, head)) is not None and last["status"] == "done":
+        entry = conn.execute(
+            "SELECT id FROM action_journal WHERE approval_id = ? AND status <> 'failed' ORDER BY id DESC LIMIT 1",
+            (last["approval_id"],),
+        ).fetchone()
+        if entry is None:
+            break
+        done, head = done + 1, int(entry["id"])
+    return done, head
+
+
 def _place(row: sqlite3.Row) -> str:
     return {"pinterest": "Pinterest", "printify": "Printify"}.get(str(row["class"]).split(".")[0], "Etsy")
 
@@ -215,6 +230,9 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
         return "Ember's code can't undo it"
     last = _last_undo(conn, int(row["id"]))
     if last is not None and last["status"] == "done":
+        done, head = _undone(conn, int(row["id"]))
+        if done % 2 == 0:  # 0.14.0: its Undo was undone in turn: it is in effect again
+            return f"its Undo was undone: undo #{head} to undo it again"
         return "it is undone"
     if last is not None and last["status"] != "failed":
         return "your Undo of it is under way"

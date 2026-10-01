@@ -12,7 +12,7 @@ whatever is granted, and no option changes that (CLASSES):
   duties of the owner's own): a new public presence needs the owner's decision and their Impressum, DDG section 5;
 * posts in third-party communities (Reddit): only the owner posts, from their account;
 * tax, VAT, a Gewerbe and contracts: a request whose own act says words that touch them (LEGAL_WORDS,
-  LEGAL_PREFIXES, LEGAL_PARTS). 0.14.0: the act is what is sent or said (an email's subject and text), never a
+  LEGAL_PREFIXES, LEGAL_PARTS, invoices). 0.14.0: the act is what is sent or said (an email's subject and text), never a
   listing's product copy or disclaimer ("Mietvertrag" in a checklist's copy is no contract), and its text is
   normalised first (``normalise``), so look-alike letters, invisible characters and other spellings don't slip past;
 * what only the owner carries out: a request without an executor of Ember's code, or with one no rule covers yet;
@@ -56,15 +56,17 @@ EXECUTORS = ("email", "reddit_link", "etsy_listing", "etsy_edit", "pinterest_pin
 # compounds such as Umsatzsteuer, Kleingewerbe, Kaufvertrag). Both spellings of the umlaut, as lower() leaves it.
 # 0.14.0: tax status, invoices and legal acts in German and English, VAT's, invoices' and contracts' names in the
 # neighbours' languages. Not "btw" (in English: by the way), and "angebot" only at a word's start (no Sonderangebot).
+# An offer or a quote is an act too. "rechnung" anywhere in a word (Schlussrechnung), but not "berechnung" (a sum).
 LEGAL_WORDS = ("tax", "taxes", "taxed", "taxable", "taxation", "vat", "ust", "mwst", "gst", "iva", "tva", "agb")
-LEGAL_WORDS += ("customs",)
-LEGAL_PREFIXES = ("invoic", "agreement", "licen", "rechnung", "ustg", "umsatzst", "mehrwertst", "kleinunternehm")
+LEGAL_WORDS += ("customs", "uid", "offer", "offers", "quote", "quotes", "quotation")
+LEGAL_PREFIXES = ("invoic", "agreement", "licen", "ustg", "umsatzst", "mehrwertst", "kleinunternehm")
 LEGAL_PREFIXES += ("angebot", "factur", "fattur", "faktur", "contrat", "impuest", "impot")
 LEGAL_PARTS = ("steuer", "gewerbe", "finanzamt", "vertrag", "verträg", "vertrÄg", "contract", "auftrag", "aufträg")
 LEGAL_PARTS += ("auftrÄg", "vereinbarung", "lizenz", "widerruf", "einfuhr", "verzoll")
 _LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 _WORDS = re.compile(rf"[^a-z](?:{'|'.join(LEGAL_WORDS)})[^a-z]")
 _PREFIXES = re.compile(rf"[^a-z](?:{'|'.join(LEGAL_PREFIXES)})")
+_INVOICES = re.compile(r"[^e]rechnung")
 # 0.14.0: Cyrillic and Greek capitals that look like Latin ones, folded before casefolding (Greek Ν is N, though ν
 # looks like v), and the small letters that look like Latin ones after it.
 _CAPITALS = str.maketrans("АВЕКМНОРСТХЅІЈҮҺԚԜӀΑΒΕΖΗΙΚΜΝΟΡΤΥΧ", "ABEKMHOPCTXSIJYHQWIABEZHIKMNOPTYX")
@@ -94,6 +96,7 @@ def _legal(words: str) -> bool:
     return (
         any(part in words for part in LEGAL_PARTS)
         or _PREFIXES.search(words) is not None
+        or _INVOICES.search(words) is not None
         or _WORDS.search(words) is not None
     )
 
