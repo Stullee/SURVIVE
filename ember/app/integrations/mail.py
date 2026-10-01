@@ -21,6 +21,7 @@ that only records, so the owner can try the whole flow without a mailbox and wit
 
 from __future__ import annotations
 
+import colorsys
 import contextlib
 import imaplib
 import json
@@ -71,14 +72,20 @@ _HIDDEN_STYLE = re.compile(
     r"display:none|visibility:(?:hidden|collapse)|font-size:0(?:\.0*)?[a-z%]*(?:;|!|$)|opacity:0?(?:\.0*)?%?(?:;|!|$)"
     # 0.14.0: text of 2px or less, far off the screen, clipped away, or hidden from Outlook's reader
     r"|font-size:(?:[01](?:\.\d*)?|2(?:\.0*)?)(?:px|pt)(?:;|!|$)|mso-hide:all|clip:rect\((?:0(?:px)?,?){4}\)"
+    r"|font-size:0?\.(?:[01]\d*|20*)r?em(?:;|!|$)|transform:scale[xy]?\(0(?:\.0*)?[,)]"
     r"|(?:left|top|right|text-indent|margin(?:-left|-top)?):-(?:\d{4,}|[5-9]\d\d)(?:\.\d*)?[a-z%]*(?:;|!|$)"
 )
 _ZERO_BOX = re.compile(r"(?:^|;)(?:max-)?(?:height|width):(?:0(?:\.0*)?[a-z%]*|1px)(?:;|!|$)")
-_CSS_CHARS = 100_000  # of an email's <style> elements, read for the rules that hide text
-_CSS_RULES = 200  # of those rules, at most (a real email has a few)
+_CSS_CHARS = 100_000  # of each of an email's <style> elements (without comments), read for the rules that hide text
+_KEY_RULES = 50  # rules kept per class, id or tag they select (a real email has a few)
 _CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _SELECTOR = re.compile(r"^([a-z][a-z0-9]*)?((?:[.#][a-z0-9_-]+)*)$")
-_COLOURS = {"white": "#ffffff", "black": "#000000"}
+_SHEET_STYLE = re.compile(r"(?:^|;)(?:color|background(?:-color)?):")  # what a rule may set besides hiding
+_COLOURS = {
+    "white": "#ffffff", "black": "#000000", "snow": "#fffafa", "ghostwhite": "#f8f8ff", "whitesmoke": "#f5f5f5",
+    "floralwhite": "#fffaf0", "seashell": "#fff5ee", "mintcream": "#f5fffa", "azure": "#f0ffff",
+    "aliceblue": "#f0f8ff", "honeydew": "#f0fff0", "lavenderblush": "#fff0f5", "ivory": "#fffff0",
+}  # fmt: skip
 _WHITE = "#ffffff"  # an email's page, unless its style sheet sets a background
 _SKIP = frozenset({"script", "style", "head", "title", "template", "noscript", "svg", "math", "iframe", "object"})
 # Elements that start a new paragraph (a blank line) or a new line.
@@ -338,7 +345,7 @@ def _machine(msg: Message, sender: str) -> bool:
 def _authenticated(msg: Message, sender: str) -> bool:
     """0.14.0: whether the receiving mail provider verified the sender. Its verdict is the topmost
     Authentication-Results header, the one its receiving server added (any below it may come from the sender): dmarc
-    pass, or dkim or spf pass for the From: domain (or a domain of the same organisation), unless dmarc failed. No
+    pass, or dkim or spf pass for the From: domain (or a parent or subdomain of it), unless dmarc failed. No
     verdict: unverified."""
     try:
         verdicts = msg.get_all("Authentication-Results") or []
@@ -366,16 +373,16 @@ def _authenticated(msg: Message, sender: str) -> bool:
         if method == "dmarc" and props.get("header.from", domain) == domain:
             passed = True
         signer = {"dkim": props.get("header.d") or props.get("header.i"), "spf": props.get("smtp.mailfrom")}.get(method)
-        if signer and _organisation(signer) == _organisation(domain):
+        if signer and _aligned(signer.strip("."), domain):
             passed = True
     return passed
 
 
-def _organisation(domain: str) -> str:
-    """A domain's organisation (example.org for mail.example.org, example.co.uk for mail.example.co.uk), roughly."""
-    labels = domain.strip(".").split(".")
-    second = len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in ("co", "com", "org", "net", "ac", "gov", "or")
-    return ".".join(labels[-3:] if second else labels[-2:])
+def _aligned(signer: str, domain: str) -> bool:
+    """Whether a domain that passed dkim or spf speaks for the From: domain: the same domain, or one a parent of the
+    other (mail.example.org for example.org). Not two domains under a shared parent: without the list of public
+    suffixes, victim.me.uk and attacker.me.uk would look like one organisation."""
+    return "." in signer and (signer == domain or signer.endswith(f".{domain}") or domain.endswith(f".{signer}"))
 
 
 def _header(msg: Message, name: str, limit: int) -> str | None:
@@ -427,7 +434,9 @@ class _HtmlText(HTMLParser):
     """HTML as a reader sees it: text only, without scripts, styles and anything hidden; links keep their host.
 
     0.14.0: hidden also by the rules of the email's <style> elements (the simple ones, outside @media), and by a text
-    colour the same as its background (white on white)."""
+    colour the same as its background (white on white), from a style or from a rule. This is best-effort: rules
+    with other selectors (attributes, pseudo-classes, @media), colours in units or names Ember doesn't know, and text
+    hidden by layout (behind another element, outside a box) still show."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -438,7 +447,9 @@ class _HtmlText(HTMLParser):
         self.hidden = 0  # open elements that hide their content
         self.overflow = False
         self.css = ""  # the style sheet being read
-        self.rules: list[tuple[str | None, frozenset[str], str | None]] = []  # (tag, classes, id) that hide
+        # Rules by a class (".x"), id ("#x") or tag they select: (tag, classes, id, declarations)
+        self.rules: dict[str, list[tuple[str | None, frozenset[str], str | None, str]]] = {}
+        self.hiding: set[str] = set()  # classes, ids and tags with more hiding rules than are kept: they hide
         self.page: str = _WHITE
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -453,7 +464,7 @@ class _HtmlText(HTMLParser):
             self.stack.append((tag, False, host, None))
             return
         values = {name.lower(): (value or "") for name, value in attrs}
-        style = re.sub(r"\s+", "", values.get("style", "").lower())
+        style = self._sheet(tag, values) + re.sub(r"\s+", "", values.get("style", "").lower())
         background = _background(style, values) if style or "bgcolor" in values or "background" in values else None
         hides = tag in _SKIP or self._hides(tag, values, style, background)
         self.stack.append((tag, hides, host, background))
@@ -461,9 +472,6 @@ class _HtmlText(HTMLParser):
 
     def _hides(self, tag: str, values: dict[str, str], style: str, background: str | None) -> bool:
         if "hidden" in values or values.get("aria-hidden", "").strip().lower() == "true" or _hides_style(style):
-            return True
-        classes, ident = frozenset(values.get("class", "").lower().split()), values.get("id", "").strip().lower()
-        if any(t in (None, tag) and c <= classes and i in (None, ident) for t, c, i in self.rules):
             return True
         declared = _declared(style, "color") if "color" in style else ""
         if not declared and "color" not in values:
@@ -475,13 +483,43 @@ class _HtmlText(HTMLParser):
             background = next((b for *_, b in reversed(self.stack) if b is not None), self.page)
         return _alike(colour, background)
 
+    def _sheet(self, tag: str, values: dict[str, str]) -> str:
+        """The declarations of the style sheet's rules that select this element, each ending in ";" (its own style
+        comes after them, so it wins)."""
+        if not self.rules and not self.hiding:
+            return ""
+        classes, ident = frozenset(values.get("class", "").lower().split()), values.get("id", "").strip().lower()
+        keys = [tag, *(f".{c}" for c in classes), *([f"#{ident}"] if ident else [])]
+        if not self.hiding.isdisjoint(keys):
+            return "display:none;"
+        return "".join(
+            f"{style};"
+            for key in keys
+            for t, c, i, style in self.rules.get(key, ())
+            if t in (None, tag) and c <= classes and i in (None, ident)
+        )
+
+    def _read_sheet(self) -> None:
+        """0.14.0: keeps the rules of a style sheet. Each is kept under one class, id or tag it selects, at most
+        _KEY_RULES of them, so a style sheet can't make reading slow. More hiding rules than that hide all they
+        select (rather than let an email hide text past them)."""
+        rules, page, unknown = _css_rules(_CSS_COMMENT.sub("", self.css))
+        for tag, classes, ident, style in rules:
+            key = f"#{ident}" if ident else f".{min(classes)}" if classes else tag or ""
+            kept = self.rules.setdefault(key, [])
+            if len(kept) < _KEY_RULES:
+                kept.append((tag, classes, ident, style))
+            elif _hides_style(style):
+                self.hiding.add(key)
+        if page is not None or unknown:
+            self.page = "" if unknown else page  # the page isn't white, or may not be
+
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self._break(tag)
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "style" and self.css:
-            self.rules = (self.rules + _css_rules(self.css))[:_CSS_RULES]
-            self.page = "" if "background" in self.css else self.page  # the page may not be white
+            self._read_sheet()
             self.css = ""
         bottom = max(0, len(self.stack) - _END_TAG_SEARCH)
         for index in range(len(self.stack) - 1, bottom - 1, -1):
@@ -497,7 +535,9 @@ class _HtmlText(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if self.stack and self.stack[-1][0] == "style":
-            self.css = (self.css + data.lower())[:_CSS_CHARS]
+            self.css += data.lower()
+            if len(self.css) > _CSS_CHARS:  # comments don't count
+                self.css = _CSS_COMMENT.sub("", self.css)[:_CSS_CHARS]
             return
         # As in a browser: line breaks in the source are spaces, except inside <pre>.
         self._add(
@@ -524,14 +564,17 @@ def _hides_style(style: str) -> bool:
     return bool(_HIDDEN_STYLE.search(style) or ("overflow:hidden" in style and _ZERO_BOX.search(style)))
 
 
-def _css_rules(css: str) -> list[tuple[str | None, frozenset[str], str | None]]:
-    """0.14.0: the rules of a style sheet that hide what they select, as (tag, classes, id). Only rules outside an
-    at-rule count (an @media block's apply on some screens only), and only simple selectors: the last part of each
+def _css_rules(css: str) -> tuple[list[tuple[str | None, frozenset[str], str | None, str]], str | None, bool]:
+    """0.14.0: the rules of a style sheet (without comments) that hide what they select or set its colour or
+    background, as (tag, classes, id, declarations); the page's background a rule for body or html sets (None
+    without one); and whether a rule Ember can't read sets a background (so the page's isn't known). Only rules outside
+    an at-rule count (an @media block's apply on some screens only), and only simple selectors: the last part of each
     (".b" of ".a .b", but not the "td" of ".a td", which would hide every cell), without pseudo-classes or
     attributes."""
-    css = _CSS_COMMENT.sub("", css)
-    found: list[tuple[str | None, frozenset[str], str | None]] = []
-    depth, head, start = 0, "", 0
+    found: list[tuple[str | None, frozenset[str], str | None, str]] = []
+    page: str | None = None
+    unknown = False
+    depth, head, start, body = 0, "", 0, 0
     for index, char in enumerate(css):
         if char == "{":
             if depth == 0:
@@ -540,12 +583,26 @@ def _css_rules(css: str) -> list[tuple[str | None, frozenset[str], str | None]]:
         elif char == "}" and depth:
             depth -= 1
             if depth == 0:
-                if not head.startswith("@") and _hides_style(re.sub(r"\s+", "", css[body:index])):
-                    found += [s for s in map(_selector, head.split(",")) if s is not None]
+                style = re.sub(r"\s+", "", css[body:index])
+                selectors = [] if head.startswith("@") else head.split(",")
+                read = [s for s in map(_selector, selectors) if s is not None]
+                backdrop = _background(style, {})
+                if (
+                    "background" in style
+                    if head.startswith("@")
+                    else backdrop is not None and len(read) < len(selectors)
+                ):
+                    unknown = True
+                if read and (_hides_style(style) or _SHEET_STYLE.search(style)):
+                    found += [(*s, style.strip(";")) for s in read]
+                if backdrop is not None and any(
+                    s[1:] == (frozenset(), None) and s[0] in ("body", "html") for s in read
+                ):
+                    page = backdrop
                 start = index + 1
         elif char == ";" and depth == 0:
             start = index + 1  # @import and @charset
-    return found
+    return found, page, unknown
 
 
 def _selector(text: str) -> tuple[str | None, frozenset[str], str | None] | None:
@@ -586,6 +643,12 @@ def _colour(text: str) -> str | None:
         return "#" + "".join(c * 2 for c in text[1:])
     if re.fullmatch(r"#[0-9a-f]{6}", text):
         return text
+    hsl = re.fullmatch(r"hsla?\((\d{1,3})(?:deg)?,(\d{1,3})%,(\d{1,3})%(?:,([\d.]+))?\)", text)
+    if hsl is not None:  # 0.14.0
+        if hsl[4] is not None and float(hsl[4] or 0) == 0:
+            return "transparent"
+        rgb = colorsys.hls_to_rgb(int(hsl[1]) % 360 / 360, min(int(hsl[3]), 100) / 100, min(int(hsl[2]), 100) / 100)
+        return "#" + "".join(f"{round(n * 255):02x}" for n in rgb)
     rgb = re.fullmatch(r"rgba?\((\d{1,3}),(\d{1,3}),(\d{1,3})(?:,([\d.]+))?\)", text)
     if rgb is None:
         return None

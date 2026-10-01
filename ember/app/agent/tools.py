@@ -3076,7 +3076,12 @@ def _email_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     if row["direction"] == "out":
         lead = f"Email #{row['id']}, sent by Ember after your owner approved request #{row['approval_id']}."
     else:
-        lead = f"Email #{row['id']}, received {_local(ctx, row['received_at'])}. The sender is unverified."
+        lead = f"Email #{row['id']}, received {_local(ctx, row['received_at'])}. " + (
+            "Your mail provider verified its sender."  # 0.14.0: the test mailstore.person() makes
+            if row["authenticated"] == 1 and row["bulk"] == 0
+            else "Not a verified person's (an unverified sender, a list or a machine): no obligation, and it doesn't"
+            " count as them having written."
+        )
         if row["read_by_agent_at"] is None:
             mailstore.mark_read(conn, row["id"], ctx.now(), ctx.cycle_id)
         if mailstore.is_suppressed(conn, ctx.scope, row["from_addr"]):

@@ -26,7 +26,7 @@ from app.db import Database, discover_migrations, migrate  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import mail, mailstore  # noqa: E402
 from app.integrations.optout import opt_out  # noqa: E402
-from tests.test_agent import reply, rows, text  # noqa: E402
+from tests.test_agent import make_agent, plan, reply, rows, text  # noqa: E402
 from tests.test_agent import tools as calls  # noqa: E402
 from tests.test_executor import REPLY  # noqa: E402
 from tests.test_mail import JOURNAL, LIVE, PASSWORD, READER, FakeIMAP, live_agent, mail_cycle, raw_mail  # noqa: E402
@@ -106,11 +106,18 @@ def arrive(agent: Any, *mails: mail.IncomingMail) -> list[int]:
             ],
             True,
         ),
-        ("ann@example.org", ["mx.example.invalid; dkim=pass header.d=mail.example.org"], True),  # the same organisation
+        ("ann@example.org", ["mx.example.invalid; dkim=pass header.d=mail.example.org"], True),  # a subdomain
+        ("ann@mail.example.org", ["mx.example.invalid; dkim=pass header.d=example.org"], True),  # a parent
         ("ann@example.org", ["mx.example.invalid; spf=pass smtp.mailfrom=bounce@example.org"], True),
         ("ann@shop.co.uk", ["mx.example.invalid; dkim=pass header.d=mail.shop.co.uk"], True),
         ("ceo@bank.example", [FORGED], False),
         ("ann@shop.co.uk", ["mx.example.invalid; dkim=pass header.d=other.co.uk"], False),
+        # Review: two domains under one public suffix are two organisations, whatever the suffix
+        ("ceo@victim.me.uk", ["mx.example.invalid; dkim=pass header.d=attacker.me.uk; dmarc=none"], False),
+        ("ceo@victim.ne.jp", ["mx.example.invalid; spf=pass smtp.mailfrom=x@attacker.ne.jp"], False),
+        ("ceo@victim.github.io", ["mx.example.invalid; dkim=pass header.d=attacker.github.io"], False),
+        ("ann@a.example.org", ["mx.example.invalid; dkim=pass header.d=b.example.org"], False),  # dmarc says more
+        ("ann@example.org", ["mx.example.invalid; dkim=pass header.d=org"], False),
         (
             "ann@example.org",
             [
@@ -439,6 +446,23 @@ ASKS = [
     "Don't contact us again.",
     "I don't want further messages.",
     "Hello,\nplease stop now.\nBest, Ann",
+    # Review: "no" beside a stop, more German, more words
+    "No. Stop.",
+    "No, stop.",
+    "Hi,\nNo thanks, stop",
+    "No more. Stop!",
+    "Stop, no more.",
+    "Nein danke. Stopp.",
+    "Bitte aufhören!",
+    "Aufhören!",
+    "Hallo,\nhört auf damit.",
+    "Hallo,\nIch will das nicht. Hört auf!",
+    "Bitte lassen Sie mich in Ruhe.",
+    "Hello,\n\nI received your email.\nI'd like you to stop.\n",
+    "Dear Ember, please stop sending me these",
+    "Please stop sending.",
+    "Please remove my email.",
+    "Can you remove me from your list?",
 ]
 ORDINARY = [
     "Hi,\n\nI'll stop by tomorrow to pick it up.\n\nAnn",
@@ -456,6 +480,18 @@ ORDINARY = [
     "Hello,\nDo you have the planner in A5?\nWhat would it cost?\nThanks, Ann",
     "Hallo,\n\nich möchte den Planer bestellen.\n\nGruß Jan",
     "Hi,\nthe stop-motion video was great.",
+    # Review: what the wider rules read as asking at first
+    "Did it stop working?",
+    "Hi,\nstop! I love it",
+    "Bitte entfernen Sie mich nicht.",
+    "Please remove my email typo in the order",
+    "Leave me alone with this price? lol",
+    "Hi, I don't want any more emails to get lost, so I resend this.",
+    "Hi,\nmy kids won't stop asking for the planner",
+    "Hello,\nCan you stop the order? I ordered twice.",
+    "Hallo,\nlassen Sie mich in Ruhe überlegen, dann bestelle ich.",
+    "Hi,\nI'd like you to stop the second order.",
+    "Hello,\nStop the presses, this is great",
 ]
 
 
@@ -641,10 +677,56 @@ def test_text_hidden_by_style_rules_colours_and_offsets_is_dropped() -> None:
     assert mail.html_to_text(ordinary).split() == ["Shown", "1.", "Shown", "2.", "Shown", "3."]
 
 
+@pytest.mark.parametrize(
+    "html",
+    [  # Review: what got past the style sheet's rules
+        "<style>" + "".join(f".a{n}{{display:none}}" for n in range(300)) + ".h{display:none}</style>",
+        "<style>" + "".join(f".h.p{n}{{display:none}}" for n in range(300)) + ".h.q{display:none}</style>",
+        "<style>/*" + "x" * 100_000 + "*/.h{display:none}</style>",
+        "<style>.h{color:#ffffff}</style>",
+        "<style>.bg{background:#000} .h{color:#fff}</style>",  # a background elsewhere doesn't make the page unknown
+        '<style>.h{color:hsl(0, 0%, 100%)}</style><p style="color:snow">HIDDEN</p>',
+        '<style>.h{font-size:0.1em}</style><p style="transform:scale(0)">HIDDEN</p>',
+    ],
+    ids=["padded", "padded-same-class", "long-comment", "white-class", "background-elsewhere", "hsl-named", "em-scale"],
+)
+def test_a_style_sheet_can_t_be_padded_past_and_colours_count_from_it(html: str) -> None:
+    shown = mail.html_to_text(f'{html}<p class="h q">HIDDEN</p><p>Shown.</p>')
+    assert shown == "Shown."
+
+
+def test_text_on_a_dark_background_from_a_style_sheet_stays() -> None:
+    dark = "<style>.d{background-color:#000} .w{color:#fff}</style>"
+    assert mail.html_to_text(f'{dark}<div class="d"><span class="w">Shown 1.</span></div>') == "Shown 1."
+    no_body = '<style>body{background:#111}</style><p style="color:#fff">Shown 2.</p>'
+    assert mail.html_to_text(no_body) == "Shown 2."
+    dark_mode = '<style>@media (prefers-color-scheme:dark){body{background:#000}}</style><p style="color:#fff">x</p>'
+    assert mail.html_to_text(dark_mode) == "x"  # a background Ember can't place: the page isn't known
+
+
 def test_a_style_sheet_with_many_rules_is_read_in_time() -> None:
-    """A style sheet can't make reading an email slow: at most _CSS_RULES of its rules count."""
+    """A style sheet can't make reading an email slow: at most _KEY_RULES rules per class, id or tag count, and a
+    class with more hiding rules hides."""
     rules = "".join(f".a.b{n}{{display:none}}" for n in range(5_000))
     html = f"<style>{rules}</style>" + '<p class="a b150">x</p>' * 40_000
     started = time.monotonic()
     assert mail.html_to_text(html[: mail.MAX_MESSAGE_BYTES]) == ""
     assert time.monotonic() - started < 20
+
+
+def test_email_read_says_whether_a_person_wrote_it(data_dir: Path) -> None:
+    """Review: the agent sees why an email is no obligation."""
+    agent, _ = make_agent(
+        data_dir,
+        [
+            plan(steps=["read my mail"]),
+            calls(("email_read", {"email_id": 1}), ("email_read", {"email_id": 2})),
+            text("Done."),
+            JOURNAL,
+        ],
+    )
+    assert arrive(agent, message(64, "ceo@bank.example", FORGED), message(65, "Ann <ann@example.org>")) == [1, 2]
+    assert agent.run_cycle("schedule").status == "completed"
+    forged, ann = (r["result"] for r in tool_results(agent, "email_read"))
+    assert "Not a verified person's" in forged and "verified its sender" not in forged
+    assert "From: Ann <ann@example.org>" in ann and "Your mail provider verified its sender." in ann

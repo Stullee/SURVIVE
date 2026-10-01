@@ -991,7 +991,9 @@ included: encrypt your backups.
   written: anyone can put any address in *From:*. Ember reads the provider's
   verdict in the topmost *Authentication-Results* header, which the provider
   adds above any the sender wrote (DMARC, or DKIM or SPF of the sender's
-  domain, passed). Most providers add one; an email without it is unverified.
+  domain or a parent or subdomain of it, passed). Most providers add one; an
+  email without it is unverified. If your provider adds none to an email, a
+  header the sender wrote is the topmost one and counts.
   Someone who wrote before 0.14.0 counts again once they write again.
 - **Approve** it and Ember sends it itself, exactly once: plain text, to that
   one recipient, no copies, no attachments, from "Ember (AI agent of *your
