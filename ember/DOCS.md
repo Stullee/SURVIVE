@@ -840,9 +840,15 @@ no longer shown); a study that failed three times stops until you press
 - **Autonomy** (0.13.0): on the Roadmap tab, an open milestone's card has an
   **Autonomy** box. There you can let Ember's code carry out a few small kinds
   of request for that milestone without your click. Each is off (**Ask me**)
-  until you choose otherwise:
+  until you choose otherwise (0.14.0: an unlock carries only what belongs to
+  its milestone, whatever the plan works on: a milestone of a project covers
+  that project's listings, one of a venture the listings of its projects, and
+  one of neither covers email replies, so the box offers only those rules;
+  it ends when its milestone closes, also when it is met, and what it held
+  waits for you):
   - QA fixes: photos up to 5 on a live listing;
-  - price changes within 15% on a live listing;
+  - price changes within 15% of the price you last approved on a live listing
+    (several automatic changes can't add up past it);
   - new listings in a backed leg, once you approved 5 of its listings
     unchanged;
   - taking a listing of Ember's off Etsy;
@@ -858,19 +864,26 @@ no longer shown); a study that failed three times stops until you press
   safe mode, you can't grant one, the Autonomy box says why, and Ember's code
   takes back the ones you granted (grant them again once it's fixed). Ember's
   code takes an unlock back itself when one of its actions ends unclear, its
-  budget is spent, the milestone is missed or dropped, or you veto or cancel
-  one of its requests. It never widens one. When you approved 5 requests of a
-  kind unchanged within 30 days, the Roadmap tab suggests an unlock, and you
-  decide. Ember hears each change as your note on the milestone.
+  budget is spent, the milestone closes (met, missed or dropped), or you veto
+  or cancel one of its requests. It never widens one. When you approved 5
+  requests of a kind unchanged and without a comment within 30 days, the
+  Roadmap tab suggests an unlock, and you decide (0.14.0: not again within 30
+  days after Ember's code took that unlock back for a reason other than a
+  spent budget). Ember hears each change as your note on the milestone.
 
   **Never automatic**, whatever you unlock: creating an account, moving or
   spending money, a first contact (someone who never wrote to Ember, § 7 UWG),
   Ember's first listing in your shop, the pin that makes its first Pinterest
   board and its first Printify product (a new public presence needs your
   decision and your Impressum, § 5 DDG; physical goods bring duties of their
-  own), a post in a third-party community, a request
-  whose words touch tax, VAT, a Gewerbe or a contract, and anything only you
-  carry out. Such a request always waits for your click, and if it fits an
+  own), a post in a third-party community, an email whose text touches tax,
+  VAT, an invoice, a Gewerbe or a contract (0.14.0: read in what it sends,
+  look-alike letters, hidden characters and hyphens inside a word included,
+  in German, English and the neighbours' words for VAT, invoices and
+  contracts, offers and quotes, not in a listing's copy; a word list can
+  still miss a phrasing or catch a harmless word, such as a licence or an
+  offer in a reply), and anything only
+  you carry out. Such a request always waits for your click, and if it fits an
   unlocked kind, its card says why it waits. Only you unlock: Ember's code
   can only take an unlock back. The database checks this again on its own. It
   refuses an unlock's approval of such a request, an approval that no current
@@ -895,18 +908,32 @@ no longer shown); a study that failed three times stops until you press
   Undo is a request of yours, approved at once. Ember's code carries it out
   in its next round, like any change you approve, and the entry shows its
   request. Only the newest action on a listing can be undone, and not while
-  another change of it waits. An email can't be unsent. A pin's **Delete the
+  another change of it waits; an action that was undone no longer counts, so
+  after an Undo the action before it can be undone too (0.14.0). If you undid
+  an Undo, the entry names the action to undo next. An Undo is
+  carried out while Ember is paused or waits for money too, but not while the
+  kill switch is on: that stops everything Ember's code sends, so undo it at
+  Etsy by hand. An email can't be unsent. A pin's **Delete the
   pin** deletes it at Pinterest (a board stays: delete it at Pinterest if you
   want). A Printify product's **Delete the product** deletes it at Printify,
   which takes its Etsy listing down too (check your shop). If an Undo failed
-  before anything changed, or you cancelled it, you can undo again.
+  before anything changed, or you cancelled it, you can undo again. If the app
+  stopped while deleting a pin or product, the Undo ends unclear and you can
+  press it again (what is gone already counts as deleted).
+
+  Before an unlock's price change or photo fix is made, Ember's code reads the
+  listing at Etsy again (0.14.0). If its price differs from Ember's record,
+  or its photos aren't the ones Ember's code set last (you changed them at
+  Etsy, or Ember never noted them: listings from before 0.14.0), nothing is
+  changed and the change comes to you as a new request.
 
   **Daily digest**: at the start of each day, Ember's code sums up the day
   before. It covers how many actions it carried out and on whose decision,
   what failed, what your unlocks approved, what they hold for your veto,
   which unlocks were taken back and why, and what waited for you whatever
   you unlocked. The newest digest is at the top of this card, in the System
-  log and in the sensor (`digest`).
+  log and in the sensor (`digest`). Days without a round (a pause) get their
+  digest afterwards, up to 14 days back (0.14.0).
 
   **Take back every unlock**, at the top of this card while any unlock
   stands: one click sets every rule of every milestone back to **Ask me**.

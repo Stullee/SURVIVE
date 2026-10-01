@@ -15,6 +15,7 @@ from datetime import timedelta
 from typing import Any
 
 from ..economy.clock import from_iso, to_iso
+from . import never
 
 OPEN_STATUSES = ("idea", "active", "waiting")
 CLOSED_STATUSES = ("succeeded", "failed", "abandoned")
@@ -354,7 +355,8 @@ def withdraw_request(
 
 def insert_approval(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, now: str, **fields: Any) -> int:
     """A request for the owner; with ``executor`` and ``action`` (canonical JSON), one Ember's code carries out. It
-    names what it works for (0.12.0): its project's venture or the cycle's, and the cycle's focus milestone."""
+    names what it works for (0.12.0): its project's venture or the cycle's, and the cycle's focus milestone (0.14.0:
+    an unlock goes by what the request acts on instead, policy.carrier)."""
     focus = conn.execute(
         "SELECT y.milestone_id, COALESCE((SELECT venture_id FROM projects WHERE id = ?), y.venture_id, p.venture_id)"
         " FROM cycles y LEFT JOIN projects p ON p.id = y.project_id WHERE y.id = ?",
@@ -384,7 +386,26 @@ def insert_approval(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, 
             focus[1] if focus else None,
         ),
     )
+    words = never.act_words(fields.get("executor"), fields.get("action"))
+    if words is not None:  # 0.14.0: what it says, as NEVER reads it (the database can't normalise text)
+        conn.execute("INSERT INTO act_words (approval_id, words) VALUES (?, ?)", (cursor.lastrowid, words))
     return int(cursor.lastrowid)
+
+
+def keep_act_words(conn: sqlite3.Connection) -> int:
+    """0.14.0: the normalised act of the email requests stored before Ember's code kept it (at startup), so NEVER
+    reads look-alike letters in them too. How many it kept."""
+    rows = conn.execute(
+        "SELECT id, executor, action FROM approvals a WHERE executor = 'email'"
+        " AND NOT EXISTS (SELECT 1 FROM act_words w WHERE w.approval_id = a.id)"
+    ).fetchall()
+    kept = 0
+    for r in rows:
+        words = never.act_words(r["executor"], r["action"])
+        if words is not None:
+            conn.execute("INSERT INTO act_words (approval_id, words) VALUES (?, ?)", (r["id"], words))
+            kept += 1
+    return kept
 
 
 def insert_message(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int | None, text: str, now: str) -> int:

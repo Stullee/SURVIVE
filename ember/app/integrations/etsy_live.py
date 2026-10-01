@@ -349,6 +349,7 @@ class LiveShop:
                         auto_renew=item["should_auto_renew"]
                         if isinstance(item.get("should_auto_renew"), bool)
                         else None,
+                        price=_price(item.get("price")),
                     )
                 )
         return found
@@ -525,6 +526,12 @@ def _cents(money: Any) -> int | None:
     if amount is None:
         return None
     return round(amount * 100 / divisor) if divisor else amount
+
+
+def _price(money: Any) -> str | None:
+    """0.14.0: Etsy's money as a price ("4.50"), None when it isn't one."""
+    cents = _cents(money)
+    return None if cents is None else f"{Decimal(cents) / 100:.2f}"
 
 
 def _int(value: Any) -> int | None:

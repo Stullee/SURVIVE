@@ -613,7 +613,7 @@
     section("approvals", [d.approvals, projectTitles(d), coming, agent.name, emailLimits(d), minute], null, function () {
       return renderApprovals(arr(d.approvals), projectTitles(d), emailLimits(d));
     });
-    section("audit", [d.audit, agent.name, minute], ["audit-feed", "audit-take-back"], function () { renderAudit(d.audit); });
+    section("audit", [d.audit, agent.name, agent.state, agent.killed, minute], ["audit-feed", "audit-take-back"], function () { renderAudit(d.audit, agent.state === "killed" || !!agent.killed); });
     section("instructions", [d.instructions, agent.name, coming, !!agent.unavailable, minute], ["instructions-view"], function () {
       renderInstructions(isObject(d.instructions) ? d.instructions : null, agent);
     });
@@ -2204,7 +2204,7 @@
     unclear: { icon: "!", label: "Unclear", tone: "critical" },
   };
 
-  function renderAudit(audit) {
+  function renderAudit(audit, killed) {
     var data = isObject(audit) ? audit : {};
     var items = arr(data.feed);
     var digest = isObject(data.digest) ? data.digest : null;
@@ -2219,12 +2219,14 @@
     takeBack.hidden = !unlocks;
     takeBack.disabled = false;
     takeBack.onclick = function () { takeBackUnlocks(takeBack, unlocks); };
-    replace($("audit-feed"), items.length ? items.map(auditItem)
+    replace($("audit-feed"), items.length ? items.map(function (e) { return auditItem(e, killed); })
       : [h("li", { class: "muted", text: "Nothing yet: what " + agentName() + "'s code carries out (emails, listings, changes) shows here." })]);
   }
 
-  function auditItem(e) {
+  function auditItem(e, killed) {
     var undo = isObject(e.undo) ? e.undo : {};
+    // 0.14.0: an Undo approved before the kill switch went on waits until it is off
+    var waits = killed && undone && /^(approved|pending)$/.test(String(undone.status)) ? " It waits until the kill switch is off." : "";
     var undone = isObject(undo.request) ? undo.request : null;
     var button = null;
     if (undo.label && !undo.why_not) {
@@ -2243,7 +2245,7 @@
       changes.length ? h("ul", { class: "audit-changes" }, changes) : null,
       e.note ? h("p", { class: "small pre-line", text: e.note }) : null,
       undone ? h("p", { class: "small" }, h("strong", { text: "Your Undo: " }),
-        "request #" + undone.approval_id + " (" + String(undone.status).replace(/_/g, " ") + ")" + (undone.note ? ": " + undone.note : "")) : null,
+        "request #" + undone.approval_id + " (" + String(undone.status).replace(/_/g, " ") + ")" + (undone.note ? ": " + undone.note : "") + waits) : null,
       button ? h("p", null, button)
         : undo.label && !undone ? h("p", { class: "muted small", text: "Undo isn't possible now: " + undo.why_not + "." }) : null);
   }
@@ -2375,6 +2377,8 @@
         h("strong", { text: "Your unlock: " }), name + "'s code approves it on " + fmtDateTime(a.veto_until) + " unless you decide first.") : null,
       a.status === "pending" && a.decision_comment ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "↩ " }),
         String(a.decision_comment)) : null,  // 0.14.0: an unlock taken back before its approval ran
+      a.unlock_ended && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "⏱ " }),
+        h("strong", { text: "It waits for you: " }), String(a.unlock_ended) + ".") : null,
       arr(a.never).length && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "🔒 " }),
         h("strong", { text: "Never automatic: " }), arr(a.never).join("; ") + ". It waits for you, whatever you unlocked.") : null,
       arr(a.qa).length ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
@@ -6396,16 +6400,24 @@
   // missed milestone or a veto.
   var AUTONOMY_LEVELS = { manual: "Ask me (manual)", veto_window: "Run unless I veto within 12 h", auto: "Run at once (auto)" };
 
+  // 0.14.0: an unlock carries only what belongs to its milestone, whatever the plan works on.
+  function autonomyScope(m) {
+    if (m.project_id) return "on the listings of its project (" + (m.project_title || "#" + m.project_id) + ")";
+    if (m.venture_id) return "on the listings of its venture's projects (" + (m.venture_title || "#" + m.venture_id) + ")";
+    return "email replies only: it names no project or venture, so no listing is its";
+  }
+
   function milestoneAutonomy(m) {
-    var rules = arr(m.autonomy);
+    // 0.14.0: a rule the milestone never covers isn't offered (one still unlocked from before shows, to take back)
+    var rules = arr(m.autonomy).filter(function (r) { return r.fits !== false || r.level !== "manual"; });
     if (!rules.length) return null;
     var off = ui.rm.data && ui.rm.data.unlocks_off ? String(ui.rm.data.unlocks_off) : "";  // 0.14.0
     var on = rules.filter(function (r) { return r.level !== "manual"; }).length;
     var status = h("p", { class: "muted small", role: "status" });
     return h("div", { class: "rm-autonomy" }, h("details", null,
       h("summary", null, h("strong", { text: "Autonomy: " }), on ? plural(on, "rule") + " unlocked" : "all manual"),
-      h("p", { class: "muted small", text: "What " + agentName() + "'s code may carry out for this milestone without your click. " +
-        "It takes back an unlock itself on an unclear result, a spent budget, a missed milestone or your veto." }),
+      h("p", { class: "muted small", text: "What " + agentName() + "'s code may carry out for this milestone without your click, " +
+        autonomyScope(m) + ". It takes back an unlock itself on an unclear result, a spent budget, the milestone's end or your veto." }),
       off ? h("p", { class: "warn-box", text: "Unlocks are off while " + off + ": " + agentName() + "'s code takes them back " +
         "and you can't grant one. Put your Home Assistant user ID in owner_user_ids (Configuration tab), outside safe mode." }) : null,
       h("ul", { class: "vt-evidence" }, rules.map(function (r) {

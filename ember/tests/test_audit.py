@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import audit, policy  # noqa: E402
+from app.agent import audit, policy, store  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import connectors, etsy  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
@@ -208,6 +208,28 @@ def test_the_owner_takes_back_every_unlock(data_dir: Path) -> None:
     assert any("Stefan took back every unlock (3 in all)" in e["message"] for e in agent_events(agent))
 
 
+def spending(agent: Any, listing_id: int, price: str) -> int:
+    """A price change of a request that spends money, made as the tools make one: never automatic."""
+    with agent.db.transaction() as conn:
+        cycle = conn.execute("SELECT MAX(id) FROM cycles").fetchone()[0]
+        made = store.insert_approval(
+            conn,
+            agent.scope(),
+            cycle,
+            to_iso(agent.clock.now()),
+            type="spend_money",
+            title="Change the price",
+            description="It pays for itself.",
+            payload=f"Price: {price}",
+            expected_cost="none",
+            expected_benefit="more sales",
+            executor="etsy_edit",
+            action=store.canonical({"listing_id": listing_id, "currency": "EUR", "price": price}),
+        )
+        policy.apply(conn, agent.scope(), made, agent.clock)
+    return made
+
+
 def test_the_daily_digest(data_dir: Path) -> None:
     agent, listing_id = listed(data_dir)  # the owner approved a listing, Ember's code created it
     day = agent.clock.today()
@@ -216,9 +238,9 @@ def test_the_daily_digest(data_dir: Path) -> None:
     old = price_of(agent, listing_id)
     made = work_on(agent, goal, change(listing_id, price=f"{old * Decimal('0.95'):.2f}"))  # carried by the unlock
     assert agent.execute_approved() == [(made[-1]["id"], "done")]
-    waited = work_on(agent, goal, change(listing_id, price=f"{old:.2f}", reason="Etsy adds VAT now."))[-1]
-    assert waited["status"] == "pending"  # never automatic
-    reject(agent, waited["id"])
+    waited = spending(agent, listing_id, f"{old:.2f}")  # 0.14.0: a reason's words are no act; money is NEVER
+    assert rows(agent, f"SELECT status FROM approvals WHERE id = {waited}") == [{"status": "pending"}]
+    reject(agent, waited)
     missed = a_milestone(agent, "Thirty sales")
     assert owner(agent).set_autonomy(missed, {"rule": "qa_fix", "level": "auto"}, "Stefan").status == 200
     with agent.db.transaction() as conn:

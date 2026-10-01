@@ -406,9 +406,12 @@ def test_an_unlock_does_not_carry_a_listing_with_one_photo(data_dir: Path, monke
     agent, _ = listed(data_dir)  # a listing is live: a new one isn't Ember's first publication
     goal = a_milestone(agent)
     unlock(agent, goal, "listing_variant")
-    action = json.loads(rows(agent, "SELECT action FROM approvals WHERE executor = 'etsy_listing'")[0]["action"])
+    first = rows(agent, "SELECT action, project_id FROM approvals WHERE executor = 'etsy_listing'")[0]
+    action, line = json.loads(first["action"]), first["project_id"]  # 0.14.0: a listing of the milestone's line
     fits(monkeypatch, "listing_variant")
-    one_photo = request(agent, goal, executor="etsy_listing", action={**action, "photos": action["photos"][:1]})
+    one_photo = request(
+        agent, goal, executor="etsy_listing", action={**action, "photos": action["photos"][:1]}, project_id=line
+    )
     with agent.db.transaction() as conn:
         said = policy.apply(conn, agent.scope(), one_photo, agent.clock)
     assert said == (
@@ -416,7 +419,7 @@ def test_an_unlock_does_not_carry_a_listing_with_one_photo(data_dir: Path, monke
     )
     assert status_of(agent, one_photo)["status"] == "pending"
     photos = (action["photos"] * 5)[:5]
-    five = request(agent, goal, executor="etsy_listing", action={**action, "photos": photos})
+    five = request(agent, goal, executor="etsy_listing", action={**action, "photos": photos}, project_id=line)
     with agent.db.transaction() as conn:
         assert "approved it at once" in policy.apply(conn, agent.scope(), five, agent.clock)
 
@@ -426,9 +429,12 @@ def test_a_held_request_that_fails_its_qa_is_not_approved(data_dir: Path, monkey
     agent, _ = listed(data_dir)
     goal = a_milestone(agent)
     unlock(agent, goal, "listing_variant", "veto_window")
-    action = json.loads(rows(agent, "SELECT action FROM approvals WHERE executor = 'etsy_listing'")[0]["action"])
+    first = rows(agent, "SELECT action, project_id FROM approvals WHERE executor = 'etsy_listing'")[0]
+    action, line = json.loads(first["action"]), first["project_id"]  # 0.14.0: a listing of the milestone's line
     fits(monkeypatch, "listing_variant")
-    held = request(agent, goal, executor="etsy_listing", action={**action, "photos": (action["photos"] * 5)[:5]})
+    held = request(
+        agent, goal, executor="etsy_listing", action={**action, "photos": (action["photos"] * 5)[:5]}, project_id=line
+    )
     with agent.db.transaction() as conn:
         assert "unless your owner decides first" in policy.apply(conn, agent.scope(), held, agent.clock)
     monkeypatch.setattr("app.integrations.qa.MIN_PHOTOS", 6)

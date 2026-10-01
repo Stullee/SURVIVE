@@ -552,6 +552,7 @@ class RemoteListing:
     favorites: int | None
     ends_at: str | None = None  # 0.12.0: when the listing ends at Etsy (it lasts four months), and
     auto_renew: bool | None = None  # whether Etsy renews it then
+    price: str | None = None  # 0.14.0: its price at Etsy ("4.50"; None if Etsy didn't say)
 
 
 @dataclass(frozen=True)
@@ -909,6 +910,7 @@ class FakeShop:
                     favorites,
                     item.get("ends_at"),
                     bool(item.get("auto_renew")),
+                    f"{Decimal(int(item['price_cents'])) / 100:.2f}",
                 )
             )
         return found

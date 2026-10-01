@@ -59,6 +59,7 @@ SYNC_MINUTES = 60
 CATALOG_DAYS = {"blueprints": 7, "providers": 7, "variants": 1}
 LIVE = ("publishing", "active")
 INTERRUPTED = "the app stopped while creating the product"
+DELETE_INTERRUPTED = "the app stopped while deleting it"  # 0.14.0: the owner's Undo of a product
 GONE = "Deleted at Printify, not by Ember's code"
 SHOWN = 10  # blueprints a catalog search shows
 CANCELED = "('canceled', 'cancelled')"  # an order's status that doesn't count (SQL)
@@ -371,14 +372,15 @@ class Publisher:
         self.workspace = workspace
         self._lock = threading.Lock()  # one run (or sync) at a time in this process
 
-    def run(self) -> list[tuple[int, str]]:
-        """Carry out the approved products (and the owner's Undos of products) that are due."""
+    def run(self, undos: bool = False) -> list[tuple[int, str]]:
+        """Carry out the approved products (and the owner's Undos of products) that are due; with ``undos`` (0.14.0:
+        while the agent is paused or waits for money), only the Undos."""
         account = self.account()
         if account is None or not self._lock.acquire(blocking=False):
             return []
         try:
             scope = self.scope()
-            creating = self._approved(scope, "printify_product")
+            creating = [] if undos else self._approved(scope, "printify_product")
             deleting = self._approved(scope, "printify_delete")
             if not creating and not deleting:
                 return []
@@ -620,15 +622,28 @@ class Publisher:
         return "done"
 
     def recover(self) -> int:
-        """Rows left 'running' by a crash: unclear, never retried."""
-        with self.db.connection() as conn:
+        """Rows left 'running' by a crash: unclear, never retried. 0.14.0: the owner's Undo of a product too (its
+        journal entry was left 'running', the Undo "under way" for good): unclear, and the owner may press it again."""
+        with self.db.transaction() as conn:
             left = conn.execute(
                 "SELECT approval_id, product_id FROM printify_products WHERE status = 'running'"
             ).fetchall()
+            deleting = conn.execute(
+                "SELECT j.approval_id, j.subject FROM action_journal j JOIN approvals a ON a.id = j.approval_id"
+                " WHERE j.status = 'running' AND a.executor = 'printify_delete'"
+            ).fetchall()
+            for row in deleting:
+                note = (
+                    f"It is unclear whether product {row['subject']} was deleted ({DELETE_INTERRUPTED}). Ember won't"
+                    " try again on its own: check Printify, or press Delete the product again (a product gone already"
+                    " counts as deleted)."
+                )
+                connectors.finish(conn, row["approval_id"], "unclear", to_iso(self.clock.now()), note=note)
+                self._close(conn, row["approval_id"], "failed", note, None)
         for row in left:
             note = f"It is unclear what Printify made ({INTERRUPTED}). Ember won't try again; check your products."
             self._after(row["approval_id"], "unclear", row["product_id"], None, None, note, INTERRUPTED)
-        return len(left)
+        return len(left) + len(deleting)
 
     # --- the sync ---
 

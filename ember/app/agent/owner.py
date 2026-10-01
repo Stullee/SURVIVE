@@ -598,6 +598,9 @@ class Owner:
                     raise OwnerError("id", "no such milestone", 404)
                 if row["status"] != "open":
                     raise OwnerError("id", f"this milestone is {row['status']}", 409)
+                if level != "manual" and not policy.fits(conn, milestone_id, rule):  # 0.14.0: it would carry nothing
+                    need = "no project or venture" if rule == "email_reply" else "a project or venture"
+                    raise OwnerError("rule", f"this milestone never covers {rule}: it needs a milestone of {need}", 409)
                 now = self._now()
                 policy.set_grant(conn, self.scope, milestone_id, rule, level, now, by=_signed(who), **limits)
                 label = policy.RULES[rule].label
@@ -635,9 +638,16 @@ class Owner:
 
     def undo(self, journal_id: int, who: str | None) -> Reply:
         """0.13.0: undo an action of Ember's code on a listing: a request of the owner's, approved at once, which
-        Ember's code carries out in its next round (audit.undo)."""
+        Ember's code carries out in its next round (audit.undo). 0.14.0: also while the agent is paused or waits for
+        money; refused once the kill switch is on (or the life is over), where it would wait for good."""
 
         def run() -> Reply:
+            state = self.economy.life.evaluate().state
+            if state not in audit.UNDO_WHILE:
+                stopped = "the kill switch is on" if state == "killed" else f"the agent is {state}"
+                raise OwnerError(
+                    "id", f"Ember's code carries nothing out while {stopped}, an Undo neither: undo it by hand", 409
+                )
             with self.db.transaction() as conn:
                 try:
                     approval_id, what = audit.undo(conn, self.scope, self._now(), journal_id, _signed(who))
