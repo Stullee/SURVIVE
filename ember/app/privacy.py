@@ -52,6 +52,10 @@ _COMPANY = (
     " ltd llc gmbh ag kg co corp company group kundenservice kundendienst"
 )
 _COMPANY_WORDS = frozenset(_COMPANY.split())
+# A mailbox of a role, not of a person ("transaction@", "workspace-noreply@"): only then is a word of the sender's
+# own domain in the name a brand's.
+_ROLE = "no donotreply transaction transactions hello mail mailer contact kontakt order orders admin office notify"
+_ROLE_WORDS = _COMPANY_WORDS | frozenset(_ROLE.split())
 # Other people's text as the tools hand it to the agent: web research and emails (tools.wrap).
 _THIRD_PARTY = re.compile(r'<data src="(research|email:[^"]*)" id="([0-9a-f]+)">(.*?)(?:</data id="\2">|\Z)', re.DOTALL)
 
@@ -109,12 +113,15 @@ def person_like(name: str | None, own_address: str = "", sender: str = "") -> bo
     word and none a label of Ember's own mail domain. The report masked every name, so a brand ("Pinterest"), an
     ordinary word ("mailbox", the live report's own provider) and a company ("Etsy Support") were replaced wherever
     they appeared, in the owner's own instructions too. A word that is a label of the sender's own domain is a
-    brand's ("Etsy Transactions" from etsy.com), not a person's."""
+    brand's ("Etsy Transactions" from transaction@etsy.com) only if the sender's mailbox is a role's: a person's
+    name is often their domain ("Max Mustermann" from max@mustermann.de)."""
     words = [w for w in re.split(r"[\s,]+", name or "") if w]
     if not 2 <= len(words) <= 4 or not all(_NAME_WORD.fullmatch(w) for w in words):
         return False
     own = set(own_address.lower().partition("@")[2].split(".")[:-1])  # Ember's domain, without its ending
-    own |= set(sender.lower().partition("@")[2].split(".")[:-1])  # the sender's domain, without its ending
+    mailbox, _, domain = sender.lower().partition("@")
+    if set(re.split(r"[._+-]", mailbox)) & _ROLE_WORDS:
+        own |= set(domain.split(".")[:-1])  # the sender's domain, without its ending
     return not any(w.lower().rstrip(".") in _COMPANY_WORDS or set(w.lower().split(".")) & own for w in words)
 
 

@@ -1427,14 +1427,17 @@ The report is **shareable** by default: it leaves out other people's text (the
 emails the agent read, the web pages it researched and the emails it wrote to
 others, with their subjects and senders' names wherever they are quoted), and
 keeps only their length. A sender's name is replaced only when it looks like a
-person's (two to four words, not a company's or a team's), and only whole, so a
-brand such as "Pinterest" stays readable. Your library's texts (what the study
+person's (two to four words, not a company's or a team's, and no word of
+Ember's mail domain or, for a role's mailbox such as `noreply@`, of the
+sender's), and only whole, so a brand such as "Pinterest" stays readable. A
+subject that is one ordinary word is masked only where it is quoted as a
+subject. Your library's texts (what the study
 drew from a document, `library_read` and `knowledge_search` results) and the
-words of an opt-out reply are left out the same way. Every email address is
+words of an opt-out reason are left out the same way. Every email address is
 masked (`[email 1]`, and `[Ember's address]`), and so are one-time codes
 (`[masked]`), the tokens in links (`https://example.com/verify?[…]`), the words
 you removed from your messages (`[removed]`, see below), and your Home
-Assistant name and user ID (`[the owner]`). It never contains the API key, the
+Assistant name and user ID (`[the owner]`, `[the owner's user ID]`). It never contains the API key, the
 mailbox password, Etsy's keystring, secret or tokens, or an email's text. It
 does hold your messages and the agent's work, so read it before you share it.
 
@@ -1453,9 +1456,10 @@ projects and workspace files (right away, or when a running cycle ends), and in
 every report. The history (the journal, the model's replies and the tool calls)
 can't be changed, so its copies stay in the database and are redacted wherever
 the report shows them, until they are pruned: after 30 days (0.14.0) the
-model's replies and the tool calls' inputs and results become `[pruned]`, except
-the five newest research results the plan still shows. The calls' costs, tokens
-and purposes are kept. Words from messages removed before 0.11.2 were not
+model's replies and the tool calls' results become `[pruned]` and their inputs
+`{}`, except the five newest research results the plan still shows. The calls'
+costs, tokens and purposes are kept. The database file then stops growing: it
+reuses the freed space but does not shrink. Words from messages removed before 0.11.2 were not
 registered: change such a password where it is used.
 
 ## Money

@@ -157,6 +157,8 @@ def test_only_whole_person_like_names_are_masked_and_never_inside_an_address() -
         ("Dr. Hans Müller", "hm@example.org", True),
         ("Anne-Marie O'Neil", "am@example.org", True),
         ("Lena Hoffmann", READER, True),
+        ("Max Mustermann", "max@mustermann.de", True),  # a person's own domain: their mailbox is no role's
+        ("Hans Hans", "x@hans.dev", True),
     ],
 )
 def test_which_senders_names_are_masked(name: str, address: str, masked: bool, data_dir: Path) -> None:
@@ -254,6 +256,26 @@ def test_a_subject_of_one_word_is_still_masked(data_dir: Path) -> None:
     assert f"[subject of email #{asked}]" in shared
 
 
+def test_a_subject_of_one_ordinary_word_is_masked_only_where_it_is_quoted(data_dir: Path) -> None:
+    """ "Rechnung" as a subject overwrote that word everywhere, in the owner's instructions too."""
+    agent, _ = make_agent(data_dir, [])
+    scope = agent.scope()
+    with agent.db.transaction() as conn:
+        for uid, subject in ((1, "Willkommen"), (2, "Rechnung")):
+            conn.execute(
+                "INSERT INTO emails (mode, session, life_id, direction, uidvalidity, uid, from_addr, from_name,"
+                " to_addr, subject, received_at, body) VALUES (?, ?, ?, 'in', 1, ?, 'x@strato.de', 'Strato',"
+                " 'ember@example.invalid', ?, ?, 'x')",
+                (scope.mode, scope.session, scope.life_id, uid, subject, to_iso(agent.clock.now())),
+            )
+        masker = Masker(own_address="emberthehelper@mailbox.org", others=diagnostics._others(conn))
+    text = "Willkommen bei uns. Bitte die Rechnung bezahlen."
+    assert masker(text) == text
+    assert masker('Email #2 from x: "Rechnung"') == 'Email #2 from x: "[subject of email #2]"'
+    assert masker('{"text": "Email #1: \\"Willkommen\\""}') == '{"text": "Email #1: \\"[subject of email #1]\\""}'
+    assert masker("Subject: Rechnung\n\nHallo") == "Subject: [subject of email #2]\n\nHallo"
+
+
 @pytest.mark.parametrize("ids", [(), (OWNER_ID,)])
 def test_the_owner_s_label_in_an_etsy_event_is_masked(ids: tuple[str, ...], data_dir: Path) -> None:
     """web.py writes the label into the etsy and pinterest events too, perhaps in no column named "by"."""
@@ -271,6 +293,7 @@ def test_the_owner_s_label_in_an_etsy_event_is_masked(ids: tuple[str, ...], data
         ('replied "Bitte keine Mails mehr"', "replied [the sender's words, 22 characters]"),
         ('wrote "stop"', "wrote [the sender's words, 4 characters]"),  # a first message, not a reply
         ("asked to stop", "asked to stop"),
+        ('asked in email #7: they wrote "Lass mich in Ruhe"', "asked in email #7 [the agent's note, 30 characters]"),
     ],
 )
 def test_an_opt_out_reason_keeps_only_the_length_of_their_words(reason: str, shown: str) -> None:

@@ -191,6 +191,8 @@ _MASK: contextvars.ContextVar[privacy.Masker | None] = contextvars.ContextVar("d
 _HEADING = re.compile(r"^(## )", re.MULTILINE)  # a line that could pose as a section of the report
 _USER_ID = re.compile(r"[0-9a-f]{32}\b")  # a Home Assistant user ID
 _LABEL = re.compile(r"(.{1,25}?) \(([0-9a-f]{32})\)")  # how web._owner labels a user's action: "name (user ID)"
+_ASKED = re.compile(r"(asked in email #\d+): (.*)", re.DOTALL)  # an opt-out the agent marked
+_WORD = re.compile(r"[^\W\d_]+")  # one word of letters only, an ordinary word
 _REPLIED = re.compile(r'(replied|wrote) "(.*?)"?', re.DOTALL)  # an opt-out in the sender's words (mailstore._store)
 
 
@@ -219,13 +221,19 @@ def _others(conn: Any, own: str = "") -> dict[str, str]:
     """Other people's words that the report's texts may quote, and what the shareable report shows instead: the
     emails' subjects (0.14.0: also as the agenda quotes them, cut to 80 characters) and their senders' names if they
     look like a person's (privacy.person_like: never one word, as "Pinterest" or "mailbox" overwrote those words
-    everywhere), and the subjects of the emails the agent asked to send. A subject of one word is still masked."""
+    everywhere), and the subjects of the emails the agent asked to send. A subject that is one ordinary word
+    ("Rechnung") is masked only where it is quoted as a subject, so the word stays readable elsewhere."""
     others: dict[str, str] = {}
 
     def add(text: str | None, shown: str, shortest: int) -> None:
-        if text and len(text.strip()) >= shortest:
-            others.setdefault(text, shown)
-            others.setdefault(json.dumps(text, ensure_ascii=False)[1:-1], shown)  # as a JSON text quotes it
+        if not text or len(text.strip()) < shortest:
+            return
+        if _WORD.fullmatch(text):  # 0.14.0: one ordinary word: only as quoted, JSON-quoted or after "Subject: "
+            for before, after in (('"', '"'), ('\\"', '\\"'), ("Subject: ", "")):
+                others.setdefault(f"{before}{text}{after}", f"{before}{shown}{after}")
+            return
+        others.setdefault(text, shown)
+        others.setdefault(json.dumps(text, ensure_ascii=False)[1:-1], shown)  # as a JSON text quotes it
 
     for row in conn.execute("SELECT id, subject, from_name, from_addr FROM emails ORDER BY id"):
         add(row["subject"], f"[subject of email #{row['id']}]", 8)
@@ -571,7 +579,8 @@ def _scheduler(state: AppState) -> str:
 def _planner_preview(state: AppState, full: bool) -> str:
     """The planner's context as the next wake cycle would build it now: what the agent will see, section by section.
     Shareable, its MAIL and RECENT RESEARCH sections keep only what isn't other people's text, and (0.14.0) its
-    library section only the counts."""
+    library section only the counts. 0.14.0: Ember's code's keepers don't run here, so what they would change now
+    shows after the next cycle."""
     agent = getattr(state, "agent", None)
     if agent is None:
         return "agent not running"
@@ -1089,9 +1098,13 @@ def _integrations(state: AppState, full: bool = True) -> str:
 
 
 def _their_words(reason: str | None) -> str | None:
-    """An opt-out's reason; the sender's own words (mailstore: 'replied "..."') only as their length."""
+    """An opt-out's reason; the sender's own words (mailstore: 'replied "..."') only as their length. 0.14.0: so is
+    the agent's note (mark_opt_out: 'asked in email #N: ...'), which often quotes them."""
     found = _REPLIED.fullmatch(reason or "")
-    return f"{found[1]} [the sender's words, {len(found[2]):,} characters]" if found else reason
+    if found:
+        return f"{found[1]} [the sender's words, {len(found[2]):,} characters]"
+    found = _ASKED.fullmatch(reason or "")
+    return f"{found[1]} [the agent's note, {len(found[2]):,} characters]" if found else reason
 
 
 def _seen(message: Any) -> str:

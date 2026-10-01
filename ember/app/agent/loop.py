@@ -234,7 +234,8 @@ class CycleRunner:
     def planner_preview(self, venture: bool) -> str:
         """The planner's context as a wake cycle would build it now (the diagnostics report shows it): nothing is
         fetched, synced, marked or spent. 0.14.0: and nothing kept: Ember's code's keepers run in a cycle only (they
-        ran here, outside the cycle's lock, and parked ventures and closed milestones when the report was made)."""
+        ran here, outside the cycle's lock, and parked ventures and closed milestones when the report was made). So
+        what they would change now (an obligation, a grade, a settled forecast) shows only after the next cycle."""
         self.etsy_on = self.etsy is not None and self.publisher is not None and self.etsy.shop() is not None
         self.pinterest_on = self.etsy_on and self.pinterest is not None and self.pinterest.account() is not None
         self.printify_on = self.etsy_on and self.printify is not None and self.printify.account() is not None
