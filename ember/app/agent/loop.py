@@ -489,7 +489,13 @@ class CycleRunner:
             except Exception:  # noqa: BLE001 - Printify must never end a cycle
                 log.exception("Checking the products at Printify failed")
         currency = self.settings.printify_currency
-        ctx.printify = tools.PrintifyAccess(shop.title, currency, self.settings.printify_products_per_day)
+        ctx.printify = tools.PrintifyAccess(
+            shop.title,
+            currency,
+            self.settings.printify_products_per_day,
+            self.settings.printify_buyer_pays_shipping,
+            self.settings.printify_bill_vat,
+        )
         # 0.14.0: with the shop, for a cost probe (an unpublished product that tells what making costs)
         catalog = printify_publisher.Catalog(
             self.db, self.clock, self.scope.mode, lambda: account, lambda: shop.shop_id
@@ -498,7 +504,15 @@ class CycleRunner:
 
         def look(search: str | None, blueprint_id: int | None, provider_id: int | None) -> str:
             with sealed():
-                return catalog.answer(search, blueprint_id, provider_id, currency, rate)
+                return catalog.answer(
+                    search,
+                    blueprint_id,
+                    provider_id,
+                    currency,
+                    rate,
+                    self.settings.printify_buyer_pays_shipping,
+                    self.settings.printify_bill_vat,
+                )
 
         ctx.catalog = look
         self.printify_on = True

@@ -328,6 +328,16 @@ configuration:
     description: >-
       At most this many approved products are created a day; more wait for
       the next day.
+  printify_buyer_pays_shipping:
+    name: Buyers pay Printify shipping
+    description: >-
+      On if your Etsy shipping profile for Printify's products charges the
+      buyer for shipping. Off: Ember prices as if the price alone pays it.
+  printify_bill_vat:
+    name: Printify bills VAT
+    description: >-
+      On if Printify adds VAT to its bill and you can't reclaim it (for
+      example as a Kleinunternehmer). Used for the margin check.
   site_enabled:
     name: Website
     description: >-

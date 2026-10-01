@@ -10,6 +10,7 @@ failed."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sqlite3
 from datetime import timedelta
@@ -81,7 +82,7 @@ def test_the_margin_check_uses_econ_s_fee_model_with_vat() -> None:
     least = printify.least_price(1204, 609)
     assert least % 10 == 0 and printify.keeps(least, 1204, 609) and not printify.keeps(least - 10, 1204, 609)
     assert least > 2500
-    assert printify.least_price(900, 609, "EUR", 1.10) == printify.least_price(900, 609)
+    assert printify.least_price(900, 609, printify.Terms("EUR", 1.10)) == printify.least_price(900, 609)
 
 
 def test_a_price_that_keeps_too_little_says_so_with_the_owner_s_rate(data_dir: Path) -> None:
@@ -89,10 +90,10 @@ def test_a_price_that_keeps_too_little_says_so_with_the_owner_s_rate(data_dir: P
     agent.settings = agent.pod.settings = agent.settings.model_copy(update={"etsy_usd_per_eur": 1.25})
     assert agent.execute_approved() == [(request, "failed")]
     note = rows(agent, f"SELECT result_note FROM approvals WHERE id = {request}")[0]["result_note"]
-    least = printify.money(printify.least_price(790, 450, "EUR", 1.25), "EUR")
-    assert "(VAT on both)" in note and f"at least {least}" in note
+    least = printify.money(printify.least_price(790, 450, printify.Terms("EUR", 1.25)), "EUR")
+    assert "(the price alone pays the shipping; Printify's bill plus 19%)" in note and f"at least {least}" in note
     assert json.loads(made_rows(agent)[0]["prices"]) == [
-        [SMALL, 1790, 790, 450, printify.kept(1790, 790, 450, "EUR", 1.25)]
+        [SMALL, 1790, 790, 450, printify.kept(1790, 790, 450, printify.Terms("EUR", 1.25))]
     ]
 
 
@@ -102,6 +103,61 @@ def test_the_approval_card_says_what_the_check_assumes_without_a_legal_word(data
     assert "Published only if each price keeps 15% after Etsy's fees, making and shipping" in row["payload"]
     with agent.db.connection() as conn:
         assert never.reasons(conn, row) == ["first_publication"]  # not 'legal' too
+
+
+def test_who_pays_shipping_and_vat_on_the_bill_are_the_owner_s_options(data_dir: Path) -> None:
+    # The live case (making 9.00, shipping 6.09): the price alone pays the shipping by default, with VAT on the bill.
+    free, buyer = printify.Terms(), printify.Terms(buyer_ships=True)
+    assert printify.least_price(900, 609, free) == 2530
+    # When the buyer pays the shipping, it is revenue with Etsy's fees on it, and 15% is of price and shipping.
+    least = printify.least_price(900, 609, buyer)
+    assert least == 1920 and least < 2530
+    paid = Decimal(least + 609)
+    bill = Decimal(1509) * Decimal("1.19")
+    assert printify.kept(least, 900, 609, buyer) == round(paid - printify.fees(least + 609) - bill)
+    assert printify.keeps(least, 900, 609, buyer) and not printify.keeps(least - 10, 900, 609, buyer)
+    # Without VAT on Printify's bill (a seller who reclaims it), less is needed.
+    assert printify.least_price(900, 609, printify.Terms(buyer_ships=True, bill_vat=False)) < least
+    # The options reach the catalog, the proposal and the execution.
+    agent, _ = listed(data_dir)
+    settings = agent.settings.model_copy(update={"printify_buyer_pays_shipping": True, "printify_bill_vat": False})
+    assert printify.terms(settings) == printify.Terms("EUR", settings.etsy_usd_per_eur, True, False)
+    assert (
+        "the buyer pays the shipping; Printify's bill as billed"
+        in printify.Terms(buyer_ships=True, bill_vat=False).said()
+    )
+    ctx = pod_context(agent)
+    ctx.printify = dataclasses.replace(ctx.printify, buyer_ships=True)
+    read_catalog(ctx)
+    with agent.db.transaction() as conn:
+        printify_publisher.keep_costs(
+            conn, agent.scope().mode, POSTER, SENSARIA, {SMALL: 790}, to_iso(agent.clock.now())
+        )
+    least = printify.least_price(790, 450, printify.Terms(buyer_ships=True))
+    assert least < printify.least_price(790, 450)
+    made = a_proposal(agent, ctx, prices=f"{SMALL}: {least / 100:.2f}")
+    assert made.ok, made.text
+    [request] = rows(agent, "SELECT id, payload FROM approvals WHERE executor = 'printify_product'")
+    assert "(the buyer pays the shipping; Printify's bill plus 19%)" in request["payload"]
+    assert owner(agent).decide(request["id"], {"decision": "approve"}, "Owner").status == 200
+    agent.settings = agent.pod.settings = agent.settings.model_copy(update={"printify_buyer_pays_shipping": True})
+    assert agent.execute_approved() == [(request["id"], "active")]
+
+
+def test_a_margin_in_another_currency_than_eur_or_usd_is_refused(data_dir: Path) -> None:
+    # Etsy's USD listing fee was converted at the EUR rate for any currency.
+    with pytest.raises(printify.PrintifyError, match="can't check a margin in GBP"):
+        printify.fees(2500, "GBP", 1.1)
+    with pytest.raises(printify.PrintifyError):
+        printify.least_price(900, 609, printify.Terms("GBP"))
+    agent, _ = listed(data_dir)
+    ctx = pod_context(agent)
+    read_catalog(ctx)
+    ctx.printify = dataclasses.replace(ctx.printify, currency="GBP")
+    shop = ctx.etsy
+    ctx.etsy = tools.EtsyAccess(shop_name="EmberTestShop", currency="GBP", daily_limit=3, categories=shop.categories)
+    refused = a_proposal(agent, ctx)
+    assert not refused.ok and "checks a margin in EUR or USD only, not GBP" in refused.text
 
 
 # --- the shipping a buyer pays is revenue ---------------------------------------------------------------------------
@@ -242,7 +298,7 @@ def test_what_making_costs_is_converted_like_the_shipping(data_dir: Path) -> Non
     catalog = printify_publisher.Catalog(agent.db, agent.clock, mode, agent.printify.account)
     ctx.catalog = lambda search, blueprint, provider: catalog.answer(search, blueprint, provider, "EUR", 1.25)
     ctx.usd_per_eur = 1.25
-    least = printify.least_price(632, 360, "EUR", 1.25)  # USD 7.90 and 4.50 at 1.25 a euro
+    least = printify.least_price(632, 360, printify.Terms("EUR", 1.25))  # USD 7.90 and 4.50 at 1.25 a euro
     shown = call(ctx, "printify_catalog", {"blueprint_id": POSTER, "provider_id": SENSARIA})
     assert f"making 6.32 EUR, least price {printify.money(least, 'EUR')}" in shown.text
     refused = a_proposal(agent, ctx, prices=f"{SMALL}: {(least - 10) / 100:.2f}")
@@ -314,6 +370,8 @@ def test_a_publish_that_never_reaches_etsy_fails_with_its_reason(data_dir: Path)
     assert (made["status"], made["error"]) == ("failed", printify_publisher.STALE)
     [product_id] = list(account.state["products"])
     assert any(f"Printify didn't publish it to Etsy within 24 hours: product {product_id}" in e for e in events(agent))
+    entry = next(e for e in agent.dashboard()["audit"]["feed"] if e["class"] == "printify.create_product")
+    assert entry["undo"]["why_not"] is None  # still at Printify: Undo deletes it
     ctx = pod_context(agent)
     assert a_proposal(agent, ctx, title="Minimalist lake poster", image="shop/lake.png").ok
     [second] = rows(agent, f"SELECT * FROM approvals WHERE executor = 'printify_product' AND id > {request}")
@@ -323,6 +381,59 @@ def test_a_publish_that_never_reaches_etsy_fails_with_its_reason(data_dir: Path)
     account.state["products"][product_id].update(listing_id=800_000_123, visible=True)
     agent.pod.sync(force=True)
     assert (made_rows(agent)[0]["status"], made_rows(agent)[0]["listing_id"]) == ("active", 800_000_123)
+
+
+def test_an_unclear_product_never_published_offers_the_undo_that_deletes_it(data_dir: Path) -> None:
+    agent, request = approved(data_dir)
+    account = agent.printify.account()
+
+    def lost(shop: int, product_id: str) -> None:
+        raise Unclear("the connection to Printify broke (ReadTimeout)")  # nothing was published
+
+    account.publish = lost
+    assert agent.execute_approved() == [(request, "unclear")]
+    [product_id] = list(account.state["products"])
+    agent.clock.advance(hours=printify_publisher.PUBLISH_HOURS)
+    agent.pod.sync(force=True)
+    [made] = made_rows(agent)
+    assert (made["status"], made["error"]) == ("failed", printify_publisher.STALE)
+    assert any("or Undo deletes it" in e for e in events(agent))
+    entry = next(e for e in agent.dashboard()["audit"]["feed"] if e["class"] == "printify.create_product")
+    assert entry["undo"] == {"label": "Delete the product", "why_not": None, "request": None}
+    reply = owner(agent).undo(entry["id"], "Stefan")
+    assert reply.status == 200, reply.body
+    assert agent.execute_approved() == [(int(reply.body["approval_id"]), "done")]
+    assert account.state["products"] == {} and made_rows(agent)[0]["status"] == "deleted"
+
+
+def test_one_product_read_failing_keeps_the_orders_and_old_stale_rows_rest(data_dir: Path) -> None:
+    agent, request = approved(data_dir)
+    account = agent.printify.account()
+    account.publish = lambda shop, product_id: None  # accepted, but no Etsy listing comes
+    assert agent.execute_approved() == [(request, "publishing")]
+    [product_id] = list(account.state["products"])
+    account.sell(product_id)
+    read = account.product
+
+    def busy(shop: int, wanted: str) -> Any:
+        raise printify.PrintifyError("Printify answered 429")
+
+    account.product = busy
+    error = agent.pod.sync(force=True)
+    assert error is not None and "429" in error
+    assert len(rows(agent, "SELECT * FROM printify_orders")) == 1  # 0.13.0: the whole sync stopped
+    account.product = read
+    agent.clock.advance(hours=printify_publisher.PUBLISH_HOURS)
+    assert agent.pod.sync(force=True) is None
+    assert made_rows(agent)[0]["error"] == printify_publisher.STALE
+    # A STALE product is read again for STALE_DAYS, then no more.
+    reads = []
+    account.product = lambda shop, wanted: reads.append(wanted) or read(shop, wanted)
+    agent.pod.sync(force=True)
+    assert reads == [product_id]
+    agent.clock.advance(days=printify_publisher.STALE_DAYS)
+    agent.pod.sync(force=True)
+    assert reads == [product_id]
 
 
 def test_an_unclear_product_gone_at_printify_is_deleted_and_a_crash_keeps_its_number(data_dir: Path) -> None:

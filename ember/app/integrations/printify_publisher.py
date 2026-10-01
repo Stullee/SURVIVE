@@ -30,6 +30,7 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
@@ -53,6 +54,7 @@ from .printify import (
     PrintifyError,
     Product,
     Provider,
+    Terms,
     Upload,
     Variant,
     convert,
@@ -61,6 +63,7 @@ from .printify import (
     least_price,
     money,
     product_from_action,
+    terms,
 )
 
 log = logging.getLogger(__name__)
@@ -77,6 +80,7 @@ GONE = "Deleted at Printify, not by Ember's code"
 # for a product and provider, whatever came of it.
 PUBLISH_HOURS = 24
 STALE = "Printify didn't publish it to Etsy"
+STALE_DAYS = 30  # 0.14.0: a product that failed as STALE is read again until then (its listing may come late)
 PROBE_TITLE = "Ember cost probe (not for sale)"
 PROBE_PICTURE = "ember-cost-probe.png"
 PROBE_VARIANTS = 100
@@ -328,6 +332,8 @@ class Catalog:
         provider_id: int | None,
         currency: str,
         usd_per_eur: float = 0.0,
+        buyer_ships: bool = False,
+        bill_vat: bool = True,
     ) -> str:
         """The printify_catalog tool's answer. Raises PrintifyError."""
         if blueprint_id is None:
@@ -354,6 +360,7 @@ class Catalog:
         # 0.14.0: shipping in the currency Printify states (converted to printify_currency's), and what making costs
         # with the least price that keeps the margin (a cost probe reads it)
         costs, unknown = self.costs(blueprint_id, provider_id, found_variants)
+        sale = Terms(currency, usd_per_eur, buyer_ships, bill_vat)
         lines, refused = [], ""
         for v in found_variants:
             line = f"#{v.variant_id}: {v.title}: print area {v.width} x {v.height} pixels, shipping to Germany "
@@ -368,14 +375,18 @@ class Catalog:
                 line += f" ({money(v.shipping_cents, v.currency)})"
             if v.variant_id in costs:
                 making = convert(costs[v.variant_id], v.currency, currency, usd_per_eur)
-                least = least_price(making, shipping, currency, usd_per_eur)
-                line += f", making {money(making, currency)}, least price {money(least, currency)}"
+                line += f", making {money(making, currency)}"
+                try:
+                    line += f", least price {money(least_price(making, shipping, sale), currency)}"
+                except PrintifyError as exc:  # 0.14.0: a currency whose fees can't be reckoned
+                    refused = str(exc)
             lines.append(line)
         joined = "\n".join(lines)
         return (
             f"Variants of product #{blueprint_id} by provider #{provider_id} (variant_id: name):\n{joined}\n"
             + (f"Shipping: {refused}, so no product of it can be proposed.\n" if refused else "")
-            + f"A price keeps {MIN_MARGIN * 100:.0f}% after Etsy's fees, making and shipping from its least price on"
+            + f"A price keeps {MIN_MARGIN * 100:.0f}% after Etsy's fees, making and shipping ({sale.said()}) from its "
+            + "least price on"
             + (f"; making isn't known for all ({unknown})." if unknown else ".")
         )
 
@@ -707,6 +718,7 @@ class Publisher:
         shipping = dict(product.shipping)
         prices, short = [], []
         rate, currency = self.settings.etsy_usd_per_eur, product.currency
+        sale = replace(terms(self.settings), currency=currency)  # in the currency the product was priced in
         for variant, price in product.prices:
             cost = costs.get(variant)
             ship = shipping.get(variant, 0)
@@ -718,13 +730,17 @@ class Publisher:
             except PrintifyError as exc:
                 short.append(f"what variant {variant} costs: {exc}")
                 continue
-            left = kept(price, cost, ship, currency, rate)
+            try:
+                left = kept(price, cost, ship, sale)
+            except PrintifyError as exc:  # 0.14.0: a currency whose fees can't be reckoned
+                short.append(f"variant {variant}: {exc}")
+                continue
             prices.append([variant, price, cost, ship, left])
-            if not keeps(price, cost, ship, currency, rate):
+            if not keeps(price, cost, ship, sale):
                 short.append(
                     f"variant {variant} at {money(price, currency)} keeps {money(left, currency)} after Etsy's fees, "
-                    f"making {money(cost, currency)} and shipping {money(ship, currency)} (VAT on both): at least "
-                    f"{money(least_price(cost, ship, currency, rate), currency)}"
+                    f"making {money(cost, currency)} and shipping {money(ship, currency)} ({sale.said()}): at least "
+                    f"{money(least_price(cost, ship, sale), currency)}"
                 )
         return prices, short
 
@@ -904,7 +920,11 @@ class Publisher:
                     raise PrintifyError("it can't be told which Printify shop sells through Etsy")
                 clean_probe(self.db, scope.mode, account, shop)  # 0.14.0: what a failed delete of a probe left
                 for row in mine:
-                    self._reconcile(account, shop, row, now)
+                    try:
+                        self._reconcile(account, shop, row, now)
+                    except PrintifyError as exc:  # 0.14.0: one product read can't keep the orders from being kept
+                        log.warning("Reading Printify product %s failed: %s", row["product_id"], exc)
+                        error = f"product {row['product_id']}: {exc}"[:300]
                 ours = {str(r["product_id"]): str(r["currency"]) for r in mine}
                 lines = [line for line in account.orders(shop) if line.product_id in ours] if ours else []
                 with self.db.transaction() as conn:
@@ -944,6 +964,8 @@ class Publisher:
         Etsy listing (STALE). The listing Printify made makes it active; a product gone at Printify is deleted; one
         with no listing PUBLISH_HOURS after it was sent fails with the reason. Nothing is ever sent again."""
         stale = row["status"] == "failed" and row["error"] == STALE
+        if stale and now - from_iso(row["finished_at"]) >= timedelta(days=STALE_DAYS):
+            return
         if row["status"] not in (*LIVE, "unclear") and not stale:
             return
         try:
@@ -959,9 +981,15 @@ class Publisher:
             where = "published at Printify" if found.visible else "at Printify, unpublished"
             why = (
                 f"{STALE} within {PUBLISH_HOURS} hours: product {row['product_id']} is {where}. Check it there "
-                "(Etsy may want a production partner), then publish or delete it"
+                "(Etsy may want a production partner) and publish it, or Undo deletes it"
             )
-            self._update(row["approval_id"], status="failed", error=STALE, result=why)
+            with self.db.transaction() as conn:
+                conn.execute(
+                    "UPDATE printify_products SET status = 'failed', error = ?, result = ? WHERE approval_id = ?",
+                    (STALE, why, row["approval_id"]),
+                )
+                # 0.14.0: the product is at Printify: its journal entry offers the Undo that deletes it
+                self._journal(conn, row, account.simulated, {"product_id": row["product_id"]}, why)
             events.record(self.db, "warning", "printify", f"Request #{row['approval_id']}: {why}"[:300])
 
     def _adopt(self, row: sqlite3.Row, listing_id: int, simulated: bool) -> None:
@@ -969,28 +997,28 @@ class Publisher:
         failed for want of a listing) gets its journal entry now, with the Undo that deletes it."""
         url = etsy.listing_url(listing_id)
         with self.db.transaction() as conn:
-            now = to_iso(self.clock.now())
-            journaled = conn.execute(
-                "SELECT 1 FROM action_journal WHERE approval_id = ? AND status IN ('done', 'simulated')",
-                (row["approval_id"],),
-            ).fetchone()
-            result = None if journaled else f"Published after all (the sync found it): {url}"
+            result = f"Published after all (the sync found it): {url}"
+            after = {"product_id": row["product_id"], "listing_id": listing_id}
+            added = self._journal(conn, row, simulated, after, result)
+            keep = row["status"] == "publishing" and not added  # its note says what was made, with its prices
             conn.execute(
                 "UPDATE printify_products SET status = 'active', listing_id = ?, error = NULL,"
                 " result = COALESCE(?, result) WHERE approval_id = ?",
-                (listing_id, result, row["approval_id"]),
+                (listing_id, None if keep else result, row["approval_id"]),
             )
-            if not journaled:
-                connectors.begin(conn, row["approval_id"], now, subject=str(row["product_id"]))
-                connectors.finish(
-                    conn,
-                    row["approval_id"],
-                    "simulated" if simulated else "done",
-                    now,
-                    {"product_id": row["product_id"], "listing_id": listing_id},
-                    result,
-                )
         events.record(self.db, "info", "printify", f"Request #{row['approval_id']}: live in the shop: {url}")
+
+    def _journal(self, conn: sqlite3.Connection, row: sqlite3.Row, simulated: bool, after: Any, note: str) -> bool:
+        """0.14.0: a journal entry with the Undo that deletes the product, unless it has one. Whether it was added."""
+        if conn.execute(
+            "SELECT 1 FROM action_journal WHERE approval_id = ? AND status IN ('done', 'simulated')",
+            (row["approval_id"],),
+        ).fetchone():
+            return False
+        now = to_iso(self.clock.now())
+        connectors.begin(conn, row["approval_id"], now, subject=str(row["product_id"]))
+        connectors.finish(conn, row["approval_id"], "simulated" if simulated else "done", now, after, note)
+        return True
 
     def _update(self, approval_id: int, **columns: Any) -> None:
         sets = ", ".join(f"{name} = ?" for name in columns)

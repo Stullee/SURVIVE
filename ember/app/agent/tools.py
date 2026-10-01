@@ -1350,6 +1350,8 @@ class PrintifyAccess:
     shop_title: str
     currency: str
     daily_limit: int
+    buyer_ships: bool = False  # 0.14.0: the owner's printify_buyer_pays_shipping
+    bill_vat: bool = True  # 0.14.0: the owner's printify_bill_vat
 
 
 CatalogFn = Callable[[str | None, int | None, int | None], str]  # search, blueprint, provider: the catalog's answer
@@ -3605,6 +3607,9 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
     if len(billed) > 1:
         raise ToolError(f"Printify states these variants in {' and '.join(sorted(billed))}: one product each")
     billed_in, rate = billed.pop(), ctx.usd_per_eur
+    if access.currency not in ("EUR", "USD"):  # 0.14.0: Etsy's USD listing fee converts only to EUR
+        raise ToolError(f"Ember's code checks a margin in EUR or USD only, not {access.currency}")
+    sale = printify.Terms(access.currency, rate, access.buyer_ships, access.bill_vat)
     try:
         shipping = {v.variant_id: printify.convert(v.shipping_cents, billed_in, access.currency, rate) for v in chosen}
     except printify.PrintifyError as exc:
@@ -3650,13 +3655,13 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
     low, currency = [], access.currency
     for v, price in prices:
         cost = printify.convert(costs[v], billed_in, currency, rate) if v in costs else None
-        if cost is not None and not printify.keeps(price, cost, shipping[v], currency, rate):
-            least = printify.least_price(cost, shipping[v], currency, rate)
+        if cost is not None and not printify.keeps(price, cost, shipping[v], sale):
+            least = printify.least_price(cost, shipping[v], sale)
             low.append(f"variant {v} at {printify.money(price, currency)}: at least {printify.money(least, currency)}")
     if low:
         raise ToolError(
             f"{'; '.join(low)}: below that a price keeps less than {printify.MIN_MARGIN * 100:.0f}% after Etsy's "
-            "fees, making and shipping"
+            f"fees, making and shipping ({sale.said()})"
         )
     joined = ventures.adopt(conn, ctx.scope, project_id, ctx.cycle_id, "printify", ctx.now())
     product = printify.Product(
@@ -3680,7 +3685,7 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
     made = _new_request(
         ctx,
         conn,
-        printify.payload(product, blueprint, provider, {v.variant_id: v.title for v in chosen}),
+        printify.payload(product, blueprint, provider, {v.variant_id: v.title for v in chosen}, sale),
         product.to_action(),
         project_id=project_id,
         type="sell",

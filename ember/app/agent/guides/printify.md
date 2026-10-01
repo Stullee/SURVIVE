@@ -19,9 +19,10 @@ A PRODUCT NEEDS:
    rules). Ember's code adds a line saying AI helped design it.
 4. its project (a product line): a new product line's first product needs a demand note, as a listing does.
 
-PRICES: each price must keep {MIN_MARGIN}% of itself after Etsy's fees, making and shipping (VAT on both; as if the
-price alone pays the shipping). A price below its variant's least price is refused; with making unknown, a price that
-keeps too little isn't published. Printing on demand costs a lot: price at 2.5 to 3 times making and shipping.
+PRICES: each price must keep {MIN_MARGIN}% of what the buyer pays after Etsy's fees, making and shipping (who pays
+shipping and VAT: your owner's options, the catalog says which). A price below its variant's least price is refused;
+with making unknown, a price that keeps too little isn't published. Printing on demand costs a lot: price at 2.5 to 3
+times making and shipping.
 
 RULES: only your own designs (no brands, characters, famous people, lyrics or anyone's art: those are others' rights),
 and no health or safety claims. Your owner's first product always waits for their decision: physical goods bring them

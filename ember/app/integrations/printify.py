@@ -19,9 +19,11 @@ token for Ember (Printify: My profile, Connections) and sets it in the options w
 
 0.14.0: the margin is checked with econ's fee model (the one the whole app uses: the listing fee, 6.5%, payment
 processing and VAT on Etsy's fees), and Printify's bill (making and shipping) carries VAT too, as for a seller without
-a VAT ID. The check assumes the price alone pays the shipping (as if the listing shipped free): shipping a buyer pays
-is revenue on top of it. Amounts carry the currency Printify states where it states one; shipping in another currency
-is converted at the owner's exchange rate, or refused without one.
+a VAT ID (the owner's option printify_bill_vat). Who pays the shipping is the owner's option too
+(printify_buyer_pays_shipping, as their Etsy shipping profile charges it): by default the check assumes the price alone
+pays it (as if the listing shipped free); when the buyer pays it, it is revenue with Etsy's fees on it, and the margin
+is a share of price and shipping. Amounts carry the currency Printify states where it states one; shipping in another
+currency is converted at the owner's exchange rate, or refused without one. A margin is checked in EUR or USD only.
 
 In dry run (with Printify switched on) a fake account stands in, with a small catalog, its state kept in the database
 per dry-run session: nothing reaches Printify.
@@ -229,36 +231,69 @@ def convert(cents: int, currency: str, to: str, usd_per_eur: float = 0.0) -> int
 def fees(price_cents: int, currency: str = "EUR", usd_per_eur: float = 0.0) -> Decimal:
     """0.14.0: Etsy's fees on a sale at this price (cents), by econ.fees: the listing fee (USD 0.20, at the owner's
     rate or econ's assumed one), 6.5%, payment processing (4% and 0.30) and VAT on Etsy's fees. It was about 10.5% and
-    0.50, less than the fee model the rest of the app uses."""
+    0.50, less than the fee model the rest of the app uses. Raises PrintifyError for a currency other than EUR or USD
+    (the listing fee can't be converted to it)."""
+    if currency not in ("EUR", "USD"):
+        raise PrintifyError(f"Ember's code can't check a margin in {currency} (only EUR or USD)")
     rate = 1.0 if currency == "USD" else usd_per_eur if usd_per_eur > 0 else econ.DEFAULT_USD_PER_EUR
     return Decimal(str(econ.fees("etsy_physical", price_cents / 100, rate))) * 100
 
 
-def kept(
-    price_cents: int, cost_cents: int, shipping_cents: int, currency: str = "EUR", usd_per_eur: float = 0.0
-) -> int:
-    """What a sale at this price keeps after Etsy's fees, making and shipping, with VAT on Printify's bill (cents)."""
-    bill = Decimal(cost_cents + shipping_cents) * (1 + BILL_VAT)
-    left = Decimal(price_cents) - fees(price_cents, currency, usd_per_eur) - bill
+@dataclass(frozen=True)
+class Terms:
+    """0.14.0: how a sale is reckoned, from the owner's options: the currency, the exchange rate, whether the buyer pays
+    the shipping on top of the price, and whether Printify's bill carries VAT."""
+
+    currency: str = "EUR"
+    usd_per_eur: float = 0.0
+    buyer_ships: bool = False
+    bill_vat: bool = True
+
+    def said(self) -> str:
+        """What the check assumes, for the approval card and the agent (no word the NEVER list reads as legal)."""
+        pays = "the buyer pays the shipping" if self.buyer_ships else "the price alone pays the shipping"
+        return f"{pays}; Printify's bill {f'plus {BILL_VAT * 100:.0f}%' if self.bill_vat else 'as billed'}"
+
+
+DEFAULT_TERMS = Terms()
+
+
+def terms(settings: Settings) -> Terms:
+    return Terms(
+        settings.printify_currency,
+        settings.etsy_usd_per_eur,
+        settings.printify_buyer_pays_shipping,
+        settings.printify_bill_vat,
+    )
+
+
+def kept(price_cents: int, cost_cents: int, shipping_cents: int, sale: Terms = DEFAULT_TERMS) -> int:
+    """What a sale at this price keeps after Etsy's fees, making and shipping, with VAT on Printify's bill if it
+    carries VAT (cents). When the buyer pays the shipping, it is revenue and Etsy's fees apply to it."""
+    bill = Decimal(cost_cents + shipping_cents) * (1 + (BILL_VAT if sale.bill_vat else 0))
+    paid = price_cents + (shipping_cents if sale.buyer_ships else 0)
+    left = Decimal(paid) - fees(paid, sale.currency, sale.usd_per_eur) - bill
     return int(left.to_integral_value(rounding=ROUND_HALF_UP))
 
 
-def keeps(
-    price_cents: int, cost_cents: int, shipping_cents: int, currency: str = "EUR", usd_per_eur: float = 0.0
-) -> bool:
-    """Whether a price keeps MIN_MARGIN of itself after Etsy's fees, making and shipping (with VAT)."""
-    return kept(price_cents, cost_cents, shipping_cents, currency, usd_per_eur) >= Decimal(price_cents) * MIN_MARGIN
+def keeps(price_cents: int, cost_cents: int, shipping_cents: int, sale: Terms = DEFAULT_TERMS) -> bool:
+    """Whether a sale keeps MIN_MARGIN of what the buyer pays (the price, and the shipping when the buyer pays it) after
+    Etsy's fees, making and shipping."""
+    paid = price_cents + (shipping_cents if sale.buyer_ships else 0)
+    return kept(price_cents, cost_cents, shipping_cents, sale) >= Decimal(paid) * MIN_MARGIN
 
 
-def least_price(cost_cents: int, shipping_cents: int, currency: str = "EUR", usd_per_eur: float = 0.0) -> int:
-    """The lowest price (cents, a multiple of 10) that keeps MIN_MARGIN."""
-    price = max(100, (cost_cents + shipping_cents) // 10 * 10)
-    while not keeps(price, cost_cents, shipping_cents, currency, usd_per_eur):
+def least_price(cost_cents: int, shipping_cents: int, sale: Terms = DEFAULT_TERMS) -> int:
+    """The lowest price (cents, a multiple of 10) that keeps MIN_MARGIN. Raises PrintifyError (fees)."""
+    price = max(100, (cost_cents + (0 if sale.buyer_ships else shipping_cents)) // 10 * 10)
+    while not keeps(price, cost_cents, shipping_cents, sale):
         price += 10  # counted up from what it costs, so it holds whatever econ's fee table is
     return price
 
 
-def payload(product: Product, blueprint: str, provider: str, variants: dict[int, str]) -> str:
+def payload(
+    product: Product, blueprint: str, provider: str, variants: dict[int, str], sale: Terms = DEFAULT_TERMS
+) -> str:
     """The request as the owner reads and approves it."""
     shipping = dict(product.shipping)
     lines = [
@@ -271,8 +306,8 @@ def payload(product: Product, blueprint: str, provider: str, variants: dict[int,
             for v, c in product.prices
         ),
         # 0.14.0: what the check assumes (no word the NEVER list reads as legal: the fee model is in the docs)
-        f"Published only if each price keeps {MIN_MARGIN * 100:.0f}% after Etsy's fees, making and shipping (as if "
-        "the price alone pays the shipping).",
+        f"Published only if each price keeps {MIN_MARGIN * 100:.0f}% after Etsy's fees, making and shipping "
+        f"({sale.said()}).",
         f"Title: {product.title}",
         f"Tags: {', '.join(product.tags)}",
         "",

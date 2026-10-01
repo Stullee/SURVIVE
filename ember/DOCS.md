@@ -641,6 +641,10 @@ close such a milestone done; the database refuses it as well. The metrics:
 | `qa_clean` | every live listing has at least 5 photos | Etsy and Ember |
 | `views_total`, `favorites_total`, `orders_total` | the listings' views, favorites or orders in all, as Etsy counts them now (only Ember's code sets milestones with them: the listing test below) | Etsy |
 
+The Etsy listings Printify made for Ember's products count in these metrics
+too, and so in the listing test and the venture rules below; `qa_clean`
+leaves them out (their photos are Printify's mockups).
+
 A milestone linked to a project or venture counts only what belongs to it (a
 listing belongs to the project of the request that created it). Etsy's numbers
 count only from a sync after the milestone was set and at most 3 hours old; a
@@ -1301,6 +1305,12 @@ product always waits for your decision, whatever you unlocked.
    **Printify currency** to the currency your Printify shop shows its prices
    and costs in, save and restart the app. If you have more than one Printify
    shop connected to Etsy, set **Printify shop** to its number too.
+4. Check two options for the margin check. Switch **Buyers pay Printify
+   shipping** on if the Etsy shipping profile of Printify's products charges
+   the buyer for shipping (Printify's default); off, Ember prices as if the
+   price alone pays it. **Printify bills VAT** (on by default): switch it off
+   only if you can reclaim the VAT on Printify's bill. Ask a Steuerberater
+   about your VAT status; this is not tax advice.
 
 **System → Printify** on the dashboard shows the shop Ember found, the products
 it made and what their orders cost you.
@@ -1327,8 +1337,11 @@ it made and what their orders cost you.
   (not published yet) and reads what each variant costs to make. It publishes
   the product to your Etsy shop only if every price keeps **15%** of itself
   after Etsy's fees (the listing fee, 6.5%, payment processing and 19% VAT on
-  Etsy's fees), making and shipping (with 19% VAT on Printify's bill), as if
-  the price alone paid the shipping. Otherwise it deletes the unpublished
+  Etsy's fees), making and shipping (with 19% VAT on Printify's bill if
+  **Printify bills VAT** is on). If **Buyers pay Printify shipping** is on,
+  the shipping is revenue too (with Etsy's fees on it) and the 15% is of price
+  and shipping; otherwise the price alone pays the shipping. Prices in GBP
+  can't be checked (EUR and USD only). Otherwise it deletes the unpublished
   product and the card says, for each price, what it would need (if the delete
   fails, the card says so and names the product to delete at Printify). A product can only be approved as it is or rejected; **Cancel**
   stops it before Ember starts.
@@ -1348,8 +1361,11 @@ it made and what their orders cost you.
   recorded once). The sale itself is an order in your Etsy shop: its revenue,
   with the shipping the buyer paid, is recorded as for any listing of Ember's.
 - The agent's plan shows each product with what its prices keep and the orders
-  (PRINTIFY); the metrics `pod_products_live` and `pod_orders` can measure a
-  milestone. The seeded venture *Print on demand in the Etsy shop* has its first
+  (PRINTIFY); the metrics `pod_products_live` (products whose listing is live
+  on Etsy) and `pod_orders` can measure a milestone. A product line without a
+  venture joins the cycle's venture when the agent proposes for it, or else
+  the print-on-demand venture (the Etsy leg for an Etsy listing); it never
+  joins a parked or killed one. The seeded venture *Print on demand in the Etsy shop* has its first
   test in them: a first order.
 - **Undo** on the product's entry under **What Ember's code did** deletes it at
   Printify.

@@ -120,6 +120,8 @@ options:
   printify_shop_id: 0
   printify_currency: EUR
   printify_products_per_day: 2
+  printify_buyer_pays_shipping: false
+  printify_bill_vat: true
   # Your website (see the Documentation tab): pages the agent writes, built by Ember into a static site that you
   # preview, download and publish yourself. Your name, address, email, phone, VAT ID and web host for its Impressum
   # and privacy page, its name and its address are optional options too.
@@ -194,6 +196,8 @@ schema:
   printify_shop_id: int(0,999999999999)
   printify_currency: list(EUR|USD|GBP)
   printify_products_per_day: int(0,10)
+  printify_buyer_pays_shipping: bool
+  printify_bill_vat: bool
   site_enabled: bool
   site_name: str?
   site_language: list(de|en)
