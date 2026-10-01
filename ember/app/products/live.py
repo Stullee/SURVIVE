@@ -444,12 +444,14 @@ class English(Words):
             f'<a class="brand" href="/en/" aria-label="{site}, home page"><img class="brand-mark" src="/flame.svg" '
             f'alt=""><span class="brand-name">{site}</span></a>\n'
             '<nav class="site-nav" aria-label="Sections">\n<a href="/en/#idea">The idea</a>\n<a href="/en/#how">How '
-            'it works</a>\n<a href="/en/#money">Money</a>\n<a href="/en/#products">Products</a>\n'
-            '<a href="/en/live.html" aria-current="page">Live</a>\n</nav>\n'
+            'it works</a>\n<a href="/en/#money">Money</a>\n<a href="/en/#guardrails">Guardrails</a>\n'
+            '<a href="/en/#products">Products</a>\n<a href="/blog/" hreflang="de">Blog<span class="visually-hidden"> '
+            '(German)</span></a>\n<a href="/en/live.html" aria-current="page">Live</a>\n<a href="/en/#faq">FAQ</a>\n'
+            "</nav>\n"
             '<nav class="lang-switch" aria-label="Language"><a href="/en/live.html" hreflang="en" aria-current="true">'
             'EN<span class="visually-hidden"> (English)</span></a><a href="/live.html" hreflang="de" lang="de">DE<span '
             'class="visually-hidden"> (Deutsch)</span></a></nav>\n'
-            '<a class="header-cta" href="/en/#contact">Contact</a>\n'
+            f'<a class="header-cta" href="/en/#contact">{blog.MAIL_ICON}Contact</a>\n'
             "</div>\n</header>\n"
         )
 

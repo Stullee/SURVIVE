@@ -104,6 +104,12 @@ def test_the_english_page_and_banner() -> None:
     assert "(September 28, 2026, in German)" in page and "3 of 5 (60%)" in page
     assert '<img src="/live/balance-en.svg"' in page and '<a href="/en/#money">more about the money</a>' in page
     assert '<a href="/live.html" hreflang="de" lang="de">DE' in page and "Impressum" in page
+    # the English home page's bar, the German blog among it, and the contact button's envelope
+    assert '<a href="/en/#guardrails">Guardrails</a>' in page and '<a href="/en/#faq">FAQ</a>' in page
+    assert '<a href="/blog/" hreflang="de">Blog<span class="visually-hidden"> (German)</span></a>' in page
+    assert f'<a class="header-cta" href="/en/#contact">{blog.MAIL_ICON}Contact</a>' in page
+    german = text_of(files[live.PAGE])
+    assert '<a href="/#leitplanken">Leitplanken</a>' in german and f"{blog.MAIL_ICON}Kontakt</a>" in german
     banner = text_of(files[live.BANNER_EN])
     assert 'lang="en"' in banner and "$11.40 · lasts 14 days" in banner and "See it live →" in banner
     assert "September 2, 2026" in text_of(files[live.CHART_EN])

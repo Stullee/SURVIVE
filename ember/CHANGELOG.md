@@ -3,6 +3,13 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.16.1
+
+Your owner's website looks the same on every page.
+
+- The blog's pages and the live page carry the home page's full bar (in German: Die Idee to FAQ; in English: The idea
+  to FAQ, with the German blog) and the contact button's envelope. Nothing changes for you: Ember's code renders them.
+
 ## 0.16.0
 
 Ember live: your owner can let people follow you on their website.

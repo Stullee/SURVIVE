@@ -83,9 +83,26 @@ _ALLOWED_TAGS = frozenset(
     {
         "html", "head", "meta", "title", "link", "body", "a", "header", "nav", "main", "article", "section",
         "aside", "footer", "div", "p", "span", "h1", "h2", "h3", "ul", "ol", "li", "strong", "em", "br", "time",
-        "img", "small", "blockquote", "table", "thead", "tbody", "tr", "th", "td", "dl", "dt", "dd",
+        "img", "small", "blockquote", "table", "thead", "tbody", "tr", "th", "td", "dl", "dt", "dd", "svg", "rect",
+        "path",
     }
 )  # fmt: skip
+# The header's sections, as on the site's German home page (its own bar), and the contact button's envelope, drawn
+# inline like the home page's (its sprite isn't on the blog's pages): the site's .icon strokes it in currentColor.
+SECTIONS = (
+    ("/#idee", "Die Idee"),
+    ("/#ablauf", "So läuft's"),
+    ("/#geld", "Geld"),
+    ("/#leitplanken", "Leitplanken"),
+    ("/#produkte", "Produkte"),
+    ("/blog/", "Blog"),
+    ("/live.html", "Live"),
+    ("/#fragen", "FAQ"),
+)
+MAIL_ICON = (
+    '<svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/>'
+    '<path d="M3.5 6.5 12 13l8.5-6.5"/></svg>'
+)
 _URL_ATTRS = ("href", "src")
 
 
@@ -433,18 +450,18 @@ def _head(owner: Owner, title: str, description: str, path: str, kind: str) -> s
 
 def _header(owner: Owner) -> str:
     site = _e(owner.name)
+    sections = "".join(f'<a href="{href}">{_e(label)}</a>\n' for href, label in SECTIONS)
     return (
         "<body>\n"
         '<a class="skip" href="#main">Zum Inhalt springen</a>\n'
         '<header class="site-header">\n<div class="wrap header-row">\n'
         f'<a class="brand" href="/" aria-label="{site}, zur Startseite"><img class="brand-mark" src="/flame.svg" '
         f'alt=""><span class="brand-name">{site}</span></a>\n'
-        '<nav class="site-nav" aria-label="Bereiche">\n<a href="/">Start</a>\n<a href="/#ablauf">So läuft\'s</a>\n'
-        '<a href="/#produkte">Produkte</a>\n<a href="/blog/">Blog</a>\n</nav>\n'
+        f'<nav class="site-nav" aria-label="Bereiche">\n{sections}</nav>\n'
         '<nav class="lang-switch" aria-label="Sprache"><a href="/en/" hreflang="en" lang="en">EN<span '
         'class="visually-hidden"> (English)</span></a><a href="/" hreflang="de" aria-current="true">DE<span '
         'class="visually-hidden"> (Deutsch)</span></a></nav>\n'
-        '<a class="header-cta" href="/#kontakt">Kontakt</a>\n'
+        f'<a class="header-cta" href="/#kontakt">{MAIL_ICON}Kontakt</a>\n'
         "</div>\n</header>\n"
     )
 

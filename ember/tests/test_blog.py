@@ -126,6 +126,11 @@ def test_the_page_is_the_site_s_template_with_the_words_escaped() -> None:
     assert '<a href="mailto:shop@example.org">uns</a>' in page
     assert '<a class="btn btn-primary" href="https://www.etsy.com/listing/4584899301">Auf Etsy ansehen</a>' in page
     assert "Ember, ein Experiment von Stefan Muster in Berlin" in page
+    # the home page's bar: all its sections, and the contact button with its envelope
+    nav = page.split('<nav class="site-nav" aria-label="Bereiche">\n', 1)[1].split("</nav>", 1)[0]
+    assert nav.count("<a ") == 8 and '<a href="/#leitplanken">Leitplanken</a>' in nav
+    assert '<a href="/live.html">Live</a>' in nav and '<a href="/#fragen">FAQ</a>' in nav
+    assert f'<a class="header-cta" href="/#kontakt">{blog.MAIL_ICON}Kontakt</a>' in page
     assert "Transparenz: Ember, ein KI-Agent" in page and "Musterstraße" not in page  # never the address
     without = blog.read_post("\n".join(line for line in POST.split("\n") if not line.startswith("product_")), OWNER)
     assert "post-product" not in blog.render_post(without, "2026-10-01", OWNER).decode()
@@ -158,6 +163,9 @@ def test_the_check_before_an_upload_refuses_what_the_template_never_has() -> Non
         b'<a href="mailto:x@y.de">x</a>': "isn't an allowed address",
         b'<img src="https://tracker.example/p.gif" alt="">': "isn't an allowed address",
         b'<iframe src="/x"></iframe>': "<iframe> isn't allowed",
+        b'<svg onload="x()"></svg>': "the attribute onload isn't allowed",  # the icon's svg, never more
+        b'<svg><use href="https://tracker.example/i.svg#x"/></svg>': "<use> isn't allowed",
+        b"<svg><foreignObject></foreignObject></svg>": "<foreignobject> isn't allowed",
     }
     for snippet, message in bad.items():
         if snippet == b"<p>x</p>":
