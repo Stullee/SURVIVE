@@ -109,6 +109,7 @@ class LifeStatus:
     runway: Runway = field(default_factory=lambda: Runway(None, None))
     revive_needed: int | None = None
     revive_suggested: int | None = None
+    money_in_id: int = 0  # 0.16.x: the newest ledger row that brought money in (burn.settle)
 
     @property
     def critical(self) -> bool:
@@ -319,6 +320,7 @@ class Life:
             settled_balance=settled,
             pending=pending,
             spent_in_life=spent,
+            money_in_id=self.books.last_money_in(scope),
         )
 
         if life["ended_at"] is not None:

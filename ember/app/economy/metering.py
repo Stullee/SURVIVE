@@ -61,7 +61,6 @@ from .pricing import (
     mark_us_inference,
     note_accurate_call,
     raise_safety_factor,
-    reset_after,
     safety_factor,
     working_cycle_cost,
 )
@@ -324,6 +323,16 @@ class Reservation:
     quote: int | None = None  # 0.15.0: the priced worst case, if less than ``estimate``: an overrun is judged by it
 
 
+@dataclass(frozen=True)
+class Allowance:
+    """What a call may go over, in micros (MeteredModel._allowance: a reflection's, so that it always runs): the cycle
+    cap, the daily cap and the event wake-ups' share of the day. The balance and the last-will reserve allow nothing."""
+
+    cycle: int = 0
+    day: int = 0
+    events: int = 0
+
+
 @dataclass
 class _Settlement:
     status: str
@@ -433,44 +442,45 @@ def event_reserve(settings: Settings, clock: Clock, trigger: str, working: int =
 
 
 def workshop_reservation(
-    db: Database, settings: Settings, clock: Clock, simulated: bool, model: str, quote: int, mode: str
+    db: Database, settings: Settings, clock: Clock, simulated: bool, model: str, quote: int
 ) -> int:
     """0.15.0: what a workshop call on ``model`` holds of the daily cap and the balance: its worst case (``quote``),
-    the owner's cap per run, or EXPECTED_FACTOR times the 95th percentile of what the workshop calls on ``model`` cost
-    in the last WORKSHOP_TAIL_DAYS days (since the owner last reset the estimates), whichever is most.
+    the owner's cap per run, or EXPECTED_FACTOR times the costliest of the workshop calls on ``model`` in the last
+    WORKSHOP_TAIL_DAYS days (``_workshop_tail``), whichever is most.
 
     A code execution call's worst case is a price under assumptions nothing in the request enforces (estimate.py):
     live, a run admitted under a $0.35 estimate cost $1.84, and at the default caps it would have taken the day to
     $2.94 against a $1.50 cap. Holding what runs were seen to cost keeps the daily cap and the balance hard for runs
     like those; a run can still cost more than anything seen, and that is booked when it happens. The tail forgets a
-    costly run after WORKSHOP_TAIL_DAYS, so it can't refuse the workshop for good."""
-    costs = sorted(cost for _, cost in _workshop_tail(db, clock, simulated, model, mode))
-    tail = 0
-    if costs:
-        p95 = costs[min(len(costs) - 1, math.ceil(0.95 * len(costs)) - 1)]
-        tail = int((Decimal(p95) * EXPECTED_FACTOR).to_integral_value(rounding=ROUND_CEILING))
+    costly run after WORKSHOP_TAIL_DAYS, so it can't refuse the workshop for good.
+
+    0.16.x: the costliest call, not the 95th percentile (of 20 calls, that left the costliest out); and the owner's
+    Reset estimates no longer clears the tail: one click on it dropped the hold after a run like #423 from $2.76 to
+    the $1.50 cap per run, which the same run would have broken the daily cap with."""
+    costs = [cost for _, cost in _workshop_tail(db, clock, simulated, model)]
+    tail = int((Decimal(max(costs)) * EXPECTED_FACTOR).to_integral_value(rounding=ROUND_CEILING)) if costs else 0
     return max(quote, usd_cap_to_micros(settings.workshop_run_cap_usd), tail)
 
 
-def workshop_tail_ends(
-    db: Database, clock: Clock, simulated: bool, model: str, mode: str, above: int
-) -> datetime | None:
+def workshop_tail_ends(db: Database, clock: Clock, simulated: bool, model: str, above: int) -> datetime | None:
     """0.15.0: when the last of the recent workshop calls on ``model`` that alone make a hold of more than ``above``
     leaves the tail of workshop_reservation (None if none does)."""
-    costly = [ts for ts, cost in _workshop_tail(db, clock, simulated, model, mode) if cost * EXPECTED_FACTOR > above]
+    costly = [ts for ts, cost in _workshop_tail(db, clock, simulated, model) if cost * EXPECTED_FACTOR > above]
     return from_iso(max(costly)) + timedelta(days=WORKSHOP_TAIL_DAYS) if costly else None
 
 
-def _workshop_tail(db: Database, clock: Clock, simulated: bool, model: str, mode: str) -> list[tuple[str, int]]:
-    """(when, what it is known to cost) of the last EXPECTED_WINDOW answered workshop calls on ``model`` in the last
-    WORKSHOP_TAIL_DAYS days, since the owner's last reset. What they are known to cost, not what they were booked at:
-    an uncertain call booked at its hold would raise the next hold with every call."""
+def _workshop_tail(db: Database, clock: Clock, simulated: bool, model: str) -> list[tuple[str, int]]:
+    """(when, what it is known to cost) of the last EXPECTED_WINDOW workshop calls on ``model`` in the last
+    WORKSHOP_TAIL_DAYS days that are known to have cost something. What they are known to cost, not what they were
+    booked at: an uncertain call booked at its hold would raise the next hold with every call. 0.16.x: an interrupted
+    call too (a broken stream reports what the run had used so far; one cut by a restart knows nothing, so it adds
+    nothing)."""
     since = to_iso(clock.now() - timedelta(days=WORKSHOP_TAIL_DAYS))
     with db.connection() as conn:
         rows = conn.execute(
-            "SELECT ts, floor_micros FROM llm_calls WHERE model = ? AND purpose = ? AND simulated = ? AND status = 'ok'"
-            " AND floor_micros > 0 AND ts >= ? AND id > ? ORDER BY id DESC LIMIT ?",
-            (model, WORKSHOP, 1 if simulated else 0, since, reset_after(db, mode), EXPECTED_WINDOW),
+            "SELECT ts, floor_micros FROM llm_calls WHERE model = ? AND purpose = ? AND simulated = ?"
+            " AND status IN ('ok', 'interrupted') AND floor_micros > 0 AND ts >= ? ORDER BY id DESC LIMIT ?",
+            (model, WORKSHOP, 1 if simulated else 0, since, EXPECTED_WINDOW),
         ).fetchall()
     return [(str(r[0]), int(r[1])) for r in rows]
 
@@ -650,7 +660,7 @@ class MeteredModel:
     def _held(self, purpose: str, model: str, estimate: int) -> int:
         if purpose != WORKSHOP:
             return estimate
-        return workshop_reservation(self.db, self.settings, self.clock, self.simulated, model, estimate, self.life.mode)
+        return workshop_reservation(self.db, self.settings, self.clock, self.simulated, model, estimate)
 
     def expected(
         self,
@@ -685,19 +695,18 @@ class MeteredModel:
     ) -> tuple[bool, int, int]:
         """0.12.0: (whether ``request`` fits now as a ``purpose`` call, its expected cost, its worst case), as the guard
         will judge it: its expected cost under its own cap (the cycle cap) less ``keep``, its worst case under the
-        daily cap and the balance less ``keep_money`` (``keep`` if not given). A reflection may overdraw the cycle
-        cap by one cache miss, and (0.15.0) by what calls of its cycle cost beyond their worst case. Raises
-        Unpriceable."""
+        daily cap and the balance less ``keep_money`` (``keep`` if not given). A reflection may go over the caps by
+        what ``_allowance`` allows. Raises Unpriceable."""
         worst = self.quote(request, purpose, extra_tokens)
-        expected, allowance = worst, 0
+        expected, allowance = worst, Allowance()
         if purpose not in OUTSIDE_CYCLE_CAP:
             plan, price = self._plan(request, extra_tokens)
             expected, miss = self._expected(plan, price, purpose, cycle_id, worst)
             expected = min(expected, worst)
-            allowance = miss + self._overrun_excess(cycle_id) if purpose == "reflect" else 0
-        cycle_room, money_room = self.rooms(cycle_id, purpose, keep, keep_money)
+            allowance = self._allowance(cycle_id, purpose, miss)
+        cycle_room, money_room = self.rooms(cycle_id, purpose, keep, keep_money, allowance)
         own = expected if purpose not in OUTSIDE_CYCLE_CAP else worst
-        return own <= cycle_room + allowance and worst <= money_room, expected, worst
+        return own <= cycle_room and worst <= money_room, expected, worst
 
     def reflection_reserve(self, expected: int, model: str) -> int:
         """0.12.0: what a cycle keeps for its reflection under the cycle cap: 1.5 times the 95th percentile of the
@@ -778,14 +787,20 @@ class MeteredModel:
         return min(self.rooms(cycle_id, purpose, keep))
 
     def rooms(
-        self, cycle_id: int, purpose: str = "work", keep: int = 0, keep_money: int | None = None
+        self,
+        cycle_id: int,
+        purpose: str = "work",
+        keep: int = 0,
+        keep_money: int | None = None,
+        allowance: Allowance | None = None,
     ) -> tuple[int, int]:
         """0.12.0: (the room under the call's own cap: the cycle cap, a workshop run's cap, or the daily cap for the
         other calls outside the cycle cap, less ``keep`` where it limits a later call too; the room under the daily
         cap and the balance, keeping the last-will reserve, less ``keep_money``, ``keep`` if not given). The cycle cap
         counts expected costs, the rest worst cases. 0.15.0: in a maintenance cycle every call's own room is also the
         cycle cap's, and until EVENT_RESERVE_HOUR a scheduled cycle's calls leave the event reserve (``_money_refusal``
-        says how)."""
+        says how). ``allowance``: what the call may go over the caps by (a reflection's, ``_allowance``)."""
+        over = allowance or Allowance()
         keep_money = keep if keep_money is None else keep_money
         status = self.life.evaluate()
         scope = self.life.scope()
@@ -802,10 +817,10 @@ class MeteredModel:
         today = self.books.cap_spend_on(scope, self.clock.today())
         held = self.held_for_events(cycle["trigger"])  # 0.15.0
         in_cycle_cap = purpose not in OUTSIDE_CYCLE_CAP or every
-        cycle_room = cycle["cap_micros"] - spent - reserved
+        cycle_room = cycle["cap_micros"] - spent - reserved + over.cycle
         if purpose not in OUTSIDE_CYCLE_CAP:
             # 0.15.0: what the calls outside the cycle cap spent before comes out of the day's rest less the reserve
-            own_cap = min(cycle_room, daily_cap - held - today - pending) if held else cycle_room
+            own_cap = min(cycle_room, daily_cap - held - today - pending + over.events) if held else cycle_room
         elif purpose == WORKSHOP:
             own_cap = usd_cap_to_micros(self.settings.workshop_run_cap_usd)
         else:
@@ -814,7 +829,9 @@ class MeteredModel:
             own_cap = min(own_cap, cycle_room)
         in_cap = keep if in_cycle_cap else 0  # a workshop run's own cap isn't the reflection's
         outside = held if purpose in OUTSIDE_CYCLE_CAP else 0  # they count their worst case against the reserve
-        money = min(daily_cap - outside - today - pending - keep_money, status.balance - pending - keep_money)
+        money = min(
+            daily_cap - outside - today - pending - keep_money + over.day, status.balance - pending - keep_money
+        )
         if purpose != "last_will" and status.last_will_at is None:
             money = min(
                 money, status.balance - pending - (last_will_reserve(self.settings, self.db, self.life.mode) or 0)
@@ -876,13 +893,12 @@ class MeteredModel:
                 priced = self._estimate(plan, price, search_price, geo, container_price, None)
                 quote = self._estimate(plan, price, search_price, geo, container_price, purpose)
                 estimate = self._held(purpose, plan.model, quote)  # 0.15.0: a workshop call holds more
-                # 0.12.0: the cycle cap counts the expected cost (a reflection may overdraw it by one cache miss, and
-                # 0.15.0: by what calls of its cycle cost beyond their worst case)
-                expected, allowance = quote, 0
+                # 0.12.0: the cycle cap counts the expected cost (a reflection may go over the caps: _allowance)
+                expected, allowance = quote, Allowance()
                 if purpose not in OUTSIDE_CYCLE_CAP:
                     expected, miss = self._expected(plan, price, purpose, cycle_id, quote)
                     expected = min(expected, quote)
-                    allowance = miss + self._overrun_excess(cycle_id) if purpose == "reflect" else 0
+                    allowance = self._allowance(cycle_id, purpose, miss)
                 refusal, starving = self._money_refusal(cycle, status, purpose, estimate, expected, allowance, priced)
             if refusal is not None:
                 call_id = None
@@ -985,16 +1001,32 @@ class MeteredModel:
         factor = safety_factor(self.db, plan.model, self.life.mode, purpose)
         return int((Decimal(base) * factor).to_integral_value(rounding=ROUND_CEILING))
 
-    def _overrun_excess(self, cycle_id: int) -> int:
-        """0.15.0: what the calls of the cycle that count toward its cap cost beyond their worst case."""
+    def _allowance(self, cycle_id: int, purpose: str, miss: int) -> Allowance:
+        """What a ``purpose`` call in cycle ``cycle_id`` may go over the caps by (reads only): nothing, but a
+        reflection, which always runs within the balance and the last-will reserve, the cycle cap by one cache miss
+        (``miss``: 0.12.0) and by what the calls under that cap cost beyond their worst case (0.15.0), and the daily
+        cap and the event reserve by what the cycle's calls of today cost beyond what they held (0.16.x: after a
+        workshop run cost more than its hold, the daily cap refused the reflection); the event reserve counts the
+        reflection's expected cost, so it also allows the cache miss."""
+        if purpose != "reflect":
+            return Allowance()
+        own, today = self._overrun_excess(cycle_id)
+        return Allowance(cycle=miss + own, day=today, events=miss + today)
+
+    def _overrun_excess(self, cycle_id: int) -> tuple[int, int]:
+        """(what the calls of the cycle that count toward its cap cost beyond their worst case (0.15.0; in maintenance
+        every call counts toward it), what all its calls booked today cost beyond what they held (0.16.x: a workshop
+        call holds more than its worst case))."""
         outside = ", ".join("?" for _ in OUTSIDE_CYCLE_CAP)
+        excess = "MAX(c.floor_micros - c.estimate_micros, 0)"
         with self.db.connection() as conn:
             row = conn.execute(
-                "SELECT COALESCE(SUM(MAX(floor_micros - estimate_micros, 0)), 0) FROM llm_calls WHERE cycle_id = ?"
-                f" AND overrun = 1 AND purpose NOT IN ({outside})",
-                (cycle_id, *OUTSIDE_CYCLE_CAP),
+                f"SELECT COALESCE(SUM(CASE WHEN c.purpose NOT IN ({outside}) OR y.burn_mode = ? THEN {excess} END), 0),"
+                f" COALESCE(SUM(CASE WHEN c.local_day = ? THEN {excess} END), 0)"
+                " FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id WHERE c.cycle_id = ? AND c.overrun = 1",
+                (*OUTSIDE_CYCLE_CAP, burn.MAINTENANCE, self.clock.today().isoformat(), cycle_id),
             ).fetchone()
-        return int(row[0])
+        return int(row[0]), int(row[1])
 
     def _money_refusal(
         self,
@@ -1003,20 +1035,21 @@ class MeteredModel:
         purpose: str,
         estimate: int,
         expected: int,
-        allowance: int = 0,
+        allowance: Allowance | None = None,
         priced: int | None = None,
     ) -> tuple[tuple[str, str] | None, bool]:
         """(refusal, is it starvation) for the caps, the balance and the last-will reserve: the cycle cap counts the
-        call's ``expected`` cost (with ``allowance`` more for a reflection: 0.12.0), the rest its worst case, what it
-        holds (``estimate``). 0.15.0: a workshop run's cap is checked against the request as priced (``priced``,
-        without a raised safety factor: that locked the workshop at its cap after one overrun); the factor and what
-        recent runs cost make it hold more of the day instead.
+        call's ``expected`` cost, the rest its worst case, what it holds (``estimate``), and a reflection may go over
+        the caps by its ``allowance`` (``_allowance``). 0.15.0: a workshop run's cap is checked against the request as
+        priced (``priced``, without a raised safety factor: that locked the workshop at its cap after one overrun);
+        the factor and what recent runs cost make it hold more of the day instead.
 
         0.15.0: a maintenance cycle's cap bounds every call in it, those outside the cycle cap by their worst case
         (a workshop run, the daily review, a study). Until EVENT_RESERVE_HOUR a scheduled cycle's calls leave the
         events' share of the day: the calls under the cycle cap by their expected cost, like the cycle cap that left
         it when the cycle opened, and the others by their worst case."""
         scope = self.life.scope()
+        over = allowance or Allowance()
         every = cycle["burn_mode"] == burn.MAINTENANCE
         if purpose == WORKSHOP:
             run_cap = usd_cap_to_micros(self.settings.workshop_run_cap_usd)
@@ -1029,7 +1062,7 @@ class MeteredModel:
                 ), False
         if purpose not in OUTSIDE_CYCLE_CAP or every:
             spent, reserved = self.books.cycle_spend(cycle["id"], outside_cap=False, every_purpose=every)
-            if spent + reserved + expected > cycle["cap_micros"] + allowance:
+            if spent + reserved + expected > cycle["cap_micros"] + over.cycle:
                 return (
                     f"the cycle cap of ${micros_to_usd(cycle['cap_micros']):.2f}"
                     + (" (maintenance: every call counts)" if every else "")
@@ -1040,7 +1073,7 @@ class MeteredModel:
         daily_cap = usd_cap_to_micros(self.settings.daily_spend_cap_usd)
         today = self.books.cap_spend_on(scope, self.clock.today())
         pending = self.books.pending(scope)
-        if today + pending + estimate > daily_cap:
+        if today + pending + estimate > daily_cap + over.day:
             return (
                 f"the daily cap of ${micros_to_usd(daily_cap):.2f} would be exceeded"
                 f" (today ${micros_to_usd(today + pending):.4f}, this call up to ${micros_to_usd(estimate):.4f})",
@@ -1048,8 +1081,8 @@ class MeteredModel:
             ), False
         for_events = self.held_for_events(cycle["trigger"])
         outside = purpose in OUTSIDE_CYCLE_CAP
-        counted, over = (estimate, 0) if outside else (expected, allowance)
-        if for_events and today + pending + counted > daily_cap - for_events + over:
+        counted, extra = (estimate, 0) if outside else (expected, over.events)
+        if for_events and today + pending + counted > daily_cap - for_events + extra:
             return (
                 f"${micros_to_usd(for_events):.2f} of the daily cap is kept for event wake-ups until"
                 f" {EVENT_RESERVE_HOUR}:00 (today ${micros_to_usd(today + pending):.4f} of"

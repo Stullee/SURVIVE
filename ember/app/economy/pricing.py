@@ -42,7 +42,7 @@ _SAFETY_PREFIX = "economy.safety."  # until 0.12.0: one factor per mode and mode
 _FACTOR_PREFIX = "economy.factor."  # 0.12.0: economy.factor.<mode>.<purpose>.<model>
 _ACCURATE_PREFIX = "economy.factor_ok."  # the accurate calls in a row since the factor last changed
 _SINCE_PREFIX = "economy.factor_on."  # 0.15.0: the day the factor last changed
-_RESET_PREFIX = "economy.reset_after."  # 0.15.0: the last model call before the owner's reset, per mode
+_RESET_PREFIX = "economy.reset_after."  # 0.15.0 to 0.16.1: the last model call before the owner's reset (not read)
 
 
 @dataclass(frozen=True)
@@ -219,22 +219,18 @@ def raised_safety_factors(db: Database, mode: str) -> list[tuple[str, str, Decim
 
 
 def reset_safety_factors(db: Database, mode: str) -> int:
-    """The owner's reset (0.12.0): every estimate in ``mode`` unscaled again, the factors from before 0.12.0 included,
-    and (0.15.0) the workshop's reservation forgets the runs before it (``reset_after``). Returns how many raised
-    factors there were."""
+    """The owner's reset (0.12.0): every estimate in ``mode`` unscaled again, the factors from before 0.12.0 included.
+    Returns how many raised factors there were.
+
+    0.16.x: only the factors. From 0.15.0 the workshop's hold also forgot what the runs before the reset cost, so one
+    click on the banner dropped it to the cap per run (metering.workshop_reservation keeps them now)."""
     raised = len(raised_safety_factors(db, mode))
     with db.transaction() as conn:
         for prefix in (_FACTOR_PREFIX, _ACCURATE_PREFIX, _SAFETY_PREFIX, _SINCE_PREFIX):
             start = f"{prefix}{mode}."
             conn.execute("DELETE FROM meta WHERE substr(key, 1, ?) = ?", (len(start), start))
-        last = conn.execute("SELECT COALESCE(MAX(id), 0) FROM llm_calls").fetchone()[0]
-    db.set_meta(f"{_RESET_PREFIX}{mode}", str(last))
+        conn.execute("DELETE FROM meta WHERE key = ?", (f"{_RESET_PREFIX}{mode}",))
     return raised
-
-
-def reset_after(db: Database, mode: str) -> int:
-    """0.15.0: the last model call before the owner's latest reset of the estimates in ``mode`` (0 if never)."""
-    return int(_decimal(db.get_meta(f"{_RESET_PREFIX}{mode}"), Decimal(0)))
 
 
 def profile_cost(

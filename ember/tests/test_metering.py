@@ -9,6 +9,7 @@ import pytest
 
 from app.config import Settings
 from app.economy.metering import (
+    WORKSHOP,
     CallFailed,
     CallRefused,
     Completed,
@@ -325,19 +326,51 @@ def test_only_two_modules_write_money() -> None:
     assert writers == ["economy/ledger.py", "economy/metering.py"]
 
 
-def test_an_uncertain_charge_counts_what_it_is_known_to_cost_toward_the_caps(data_dir: Path) -> None:
-    # 0.12.0: a 5xx before any reply was charged at the worst case against the caps and the venture share.
+def test_an_answered_uncertain_charge_counts_what_it_is_known_to_cost_toward_the_caps(data_dir: Path) -> None:
+    # 0.12.0: an uncertain bill was charged at the worst case against the caps and the venture share. 0.16.x: that
+    # holds for an answer whose usage was read; a call interrupted mid-answer, or an answer without its usage, counts
+    # what it was charged (review of 0.16.1, bug 7).
     economy = make_economy(data_dir, GENEROUS)
     scope = economy.life.scope()
     before = economy.books.balance(scope)
-    model, _ = metered(economy, ScriptedTransport(outcomes=[Interrupted("HTTP 502: bad gateway")]))
+    outcomes = [
+        Completed(message(1_000, 200, brand_new_counter=5)),  # read, with a field nobody prices
+        Completed({**message(), "usage": {}}),  # an answer without its usage
+        Interrupted("read timeout", {"input_tokens": 1_000, "output_tokens": 300}),  # broken off mid-answer
+    ]
+    model, _ = metered(economy, ScriptedTransport(outcomes=outcomes))
     cycle = model.open_cycle("test")
+    odd = model.call(cycle, "work", request(max_tokens=1_000))
+    blank = model.call(cycle, "work", request(max_tokens=1_000))
     with pytest.raises(CallFailed) as failed:
         model.call(cycle, "work", request(max_tokens=1_000))
-    result = failed.value.result
-    assert result.cost_micros == 12_000 and result.billing_uncertain  # the worst case: 1,000 in and 1,000 out
-    assert economy.books.balance(scope) == before - 12_000  # the balance keeps the worst case
-    assert economy.books.cycle_spend(cycle) == (12_000, 0)  # and so do the cycle's reports
-    # the caps count what it is known to cost: its prompt, 1,000 tokens at $2 per million
-    assert economy.books.cycle_spend(cycle, outside_cap=False) == (2_000, 0)
-    assert economy.books.cap_spend_on(scope, economy.clock.today()) == 2_000
+    results = [odd, blank, failed.value.result]
+    assert [(r.cost_micros, r.billing_uncertain) for r in results] == [(12_000, True)] * 3  # each at its worst case
+    assert economy.books.balance(scope) == before - 36_000  # the balance keeps the worst cases
+    assert economy.books.cycle_spend(cycle) == (36_000, 0)  # and so do the cycle's reports
+    # the caps count what the read answer is known to cost (1,000 tokens in, 200 out), the others their charge
+    assert economy.books.cycle_spend(cycle, outside_cap=False) == (4_000 + 12_000 + 12_000, 0)
+    assert economy.books.cap_spend_on(scope, economy.clock.today()) == 28_000
+    assert [c["floor_micros"] for c in calls(economy)] == [4_000, 0, 5_000]  # death still goes by what is known
+
+
+def test_a_call_interrupted_by_a_restart_counts_its_charge_toward_the_caps(data_dir: Path) -> None:
+    # Review of 0.16.1 (bug 7): since 0.15.0 a 5xx before the answer costs nothing, so the calls left uncertain broke
+    # off mid-answer and most likely cost money. A workshop run cut by a restart was charged its $1.50 hold and counted
+    # $0 toward the day: with $5.30 of $7 spent, $1.70 was still left to spend instead of $0.20.
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=7, cycle_spend_cap_usd=7, workshop_run_cap_usd=1.5)
+    economy = make_economy(data_dir, settings)
+    model, _ = metered(economy, ScriptedTransport(outcomes=[Completed(message(1_000, 529_800))]))
+    cycle = model.open_cycle("test")
+    assert model.call(cycle, "plan", request(max_tokens=530_000)).cost_micros == 5_300_000
+    assert model.reserve(cycle, WORKSHOP, request()).estimate == 1_500_000  # the run holds its cap per run
+    fresh = restart(economy)  # the app stops during the run
+    row = calls(fresh)[-1]
+    assert (row["status"], row["cost_micros"], row["floor_micros"]) == ("interrupted", 1_500_000, 0)
+    assert fresh.books.cap_spend_on(fresh.life.scope(), fresh.clock.today()) == 6_800_000  # before: $5.30
+    again, _ = metered(fresh)
+    second = again.open_cycle("test")
+    assert again.rooms(second, "work")[1] == 200_000
+    with pytest.raises(CallRefused, match="daily cap") as refused:
+        again.call(second, "work", request(max_tokens=30_000))  # up to $0.302
+    assert refused.value.category == "cap"

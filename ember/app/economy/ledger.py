@@ -46,6 +46,14 @@ _MONEY_IN = (
 # The calls that don't count toward the cycle cap (metering.py says why; 0.15.0: one list for the guard and the books,
 # the critic's and the consolidation's are the daily cap's only, as documented).
 OUTSIDE_CYCLE_CAP = ("workshop", "review", "study", "consolidate", "critic")
+# An answer whose usage was read (as metering.MeteredModel._settle reads it). Of the calls whose bill is uncertain,
+# only these count toward the caps with what they are known to cost: a call interrupted mid-answer (a restart, a broken
+# stream, a timeout) most likely cost money, and an answer without its usage costs anyone's guess, so they count what
+# they were charged. (Since 0.15.0 a 5xx before the answer began costs nothing and isn't uncertain.)
+_USAGE_READ = (
+    "(c.status = 'ok' AND json_extract(c.usage_raw, '$.input_tokens') > 0"
+    " AND json_type(c.usage_raw, '$.output_tokens') IS NOT NULL)"
+)
 _ENTRY_COLUMNS = (
     "id, ts, occurred_on, type, amount_micros, simulated, source, note, llm_call_id, corrects_id,"
     " orig_amount, orig_currency, fx_rate, created_by, entered_by, project_id, venture_id"
@@ -303,9 +311,11 @@ class Books:
     def cap_spend_on(self, scope: Scope, day: date) -> int:
         """API spend that counts toward the daily cap: charges and cost increases, never refunds.
 
-        A refund of earlier overcharges (a negative correction) is money back, not room to spend more today. A call
-        whose bill is uncertain (a 5xx before any reply) counts with what it is known to cost, not the worst case it
-        was charged (0.12.0): the balance keeps the worst case until the owner corrects it.
+        A refund of earlier overcharges (a negative correction) is money back, not room to spend more today. An
+        answered call whose bill is uncertain (an unknown usage field, say) counts with what it is known to cost, not
+        the worst case it was charged (0.12.0): the balance keeps the worst case until the owner corrects it. A call
+        interrupted mid-answer, or an answer without its usage, counts what it was charged (``_USAGE_READ``): until
+        0.16.x it counted its known part, $0 after a restart, while the balance was charged its whole hold.
         """
         where, params = scope.where()
         joined, joined_params = scope.where("l")
@@ -318,8 +328,8 @@ class Books:
             excess = conn.execute(
                 "SELECT COALESCE(SUM(c.cost_micros - c.floor_micros), 0) FROM ledger l"
                 " JOIN llm_calls c ON c.id = l.llm_call_id"
-                f" WHERE l.type = 'api_cost' AND c.billing_uncertain = 1 AND l.occurred_on = ? AND {joined}"
-                " AND NOT EXISTS (SELECT 1 FROM ledger k WHERE k.type = 'api_cost_correction'"
+                f" WHERE l.type = 'api_cost' AND c.billing_uncertain = 1 AND {_USAGE_READ} AND l.occurred_on = ?"
+                f" AND {joined} AND NOT EXISTS (SELECT 1 FROM ledger k WHERE k.type = 'api_cost_correction'"
                 " AND k.llm_call_id = c.id)",
                 (day.isoformat(), *joined_params),
             ).fetchone()
@@ -383,6 +393,16 @@ class Books:
             ).fetchone()
         return row is not None
 
+    def last_money_in(self, scope: Scope) -> int:
+        """The newest ledger row that brought money in (a grant, revenue or a positive adjustment), 0 if none (0.16.x:
+        a burn mode moves up only once money came in after it began)."""
+        where, params = scope.where()
+        with self.db.connection() as conn:
+            row = conn.execute(
+                f"SELECT COALESCE(MAX(id), 0) FROM ledger WHERE {_MONEY_IN} AND {where}", params
+            ).fetchone()
+        return int(row[0])
+
     def latest_grant_after(self, scope: Scope, mark: int) -> sqlite3.Row | None:
         """The newest owner grant (not a correction) recorded after ledger row ``mark``."""
         where, params = scope.where()
@@ -396,16 +416,18 @@ class Books:
     def cycle_spend(self, cycle_id: int, outside_cap: bool = True, every_purpose: bool = False) -> tuple[int, int]:
         """(charged, reserved-and-pending) micros of one cycle; for the cycle cap without the calls that don't count
         toward it (OUTSIDE_CYCLE_CAP: ``outside_cap=False``; 0.15.0: with them all in a maintenance cycle,
-        ``every_purpose``), and then with what an uncertain call is known to cost rather than its worst case (0.12.0,
-        as ``cap_spend_on``)."""
+        ``every_purpose``), and then with what an answered call whose bill is uncertain is known to cost rather than
+        its worst case (0.12.0; 0.16.x: an interrupted call at its charge, as ``cap_spend_on``)."""
         outside = ", ".join(f"'{purpose}'" for purpose in OUTSIDE_CYCLE_CAP)
         workshop = "" if outside_cap or every_purpose else f" AND purpose NOT IN ({outside})"
-        charged = "cost_micros" if outside_cap else "floor_micros"
+        charged = "cost_micros"
+        if not outside_cap:
+            charged = f"CASE WHEN billing_uncertain = 1 AND {_USAGE_READ} THEN floor_micros ELSE cost_micros END"
         with self.db.connection() as conn:
             row = conn.execute(
                 f"SELECT COALESCE(SUM(CASE WHEN status IN ('ok', 'interrupted') THEN {charged} ELSE 0 END), 0),"
                 " COALESCE(SUM(CASE WHEN status = 'pending' THEN estimate_micros ELSE 0 END), 0)"
-                f" FROM llm_calls WHERE cycle_id = ?{workshop}",
+                f" FROM llm_calls c WHERE cycle_id = ?{workshop}",
                 (cycle_id,),
             ).fetchone()
         return int(row[0]), int(row[1])
