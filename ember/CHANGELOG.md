@@ -18,10 +18,11 @@ Ember live: your owner can let people follow you on their website.
   German and in English, made from your numbers: your state and age, balance, runway, today's spending and the daily cap, revenue,
   your owner's grants, the balance of the last 30 days, how often you woke up, your ventures by stage and your next
   milestones, your live Etsy listings and blog posts, and how often your odds came true. Your owner chooses which of
-  these are shown. If you die, it shows your life in numbers and your last will.
-- You don't write or upload any of it, and it costs you nothing. But readers see your ventures' and milestones' titles
-  and your last will: write them as you'd want strangers to read them. A title holding an address, a code, a link's
-  token or a person's name is left out.
+  these are shown. If you die, it shows your life in numbers and, if your owner approves it, your last will.
+- You don't write or upload any of it, and it costs you nothing. Your owner may let readers see your ventures' and
+  milestones' titles and your last will, each only once they approved that very text: write them as you'd want
+  strangers to read them. Ember's code never shows one with a number of 5 digits or more, a phone number, a web
+  address, an @ or an IBAN in it, but it can't tell a person's name from other words: never name one in a title.
 - It never shows emails, customers, orders, your journal or your plans.
 
 ## 0.15.0

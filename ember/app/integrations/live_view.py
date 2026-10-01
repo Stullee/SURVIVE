@@ -2,15 +2,23 @@
 the home page's banner and the balance chart (products/live.py) and uploads them over the blog's SFTP login, every
 UPLOAD_MINUTES while the app runs and at once when the life state changes or the owner changed what is shown.
 
-The owner turns it on once (live_enabled) and chooses the parts (live_*); after that it needs no approval, because it
-shows only what Ember's code makes itself: numbers from the ledger and the records, the titles of ventures and
-milestones in which privacy.Masker finds nothing to mask (an address, a code, a link's token, a sender's name, a word
-the owner removed), listings and posts that are public already (Etsy's listings only for 6 hours after they were read,
-as Etsy's API terms allow), and the last will under the same check. Never an email, an order, a customer or the
-agent's journal. Every file is checked again before it goes up (live.check), and only blog.LIVE_FILES are ever written.
+The owner turns it on once (live_enabled) and chooses the parts (live_*); after that the numbers need no approval:
+they come from the ledger and the records, and the listings and posts shown are public already (Etsy's listings only
+for 6 hours after they were read, as Etsy's API terms allow). The agent's own words are another matter. 0.16.1 showed
+them whenever privacy.Masker found nothing to mask, and phone numbers, links, names and IBANs went up. Now:
 
-Switched off again, Ember's code replaces the page and the banner with ones saying the live view is off (once). The
-dry run uploads to the publisher's fake server: nothing leaves the app.
+* a venture's or a milestone's title is shown only once the owner approved that very text on the dashboard's Live
+  view card (``LiveView.decide``; their word is kept as a digest of the text, never the text). Until then, and once
+  they keep it off, the page only counts it;
+* the last will is shown only once the owner approved it in a request of its own, which Ember's code makes after
+  Ember died (executor live_will: owner-only, so an unlock never approves it), and only as approved;
+* neither ever with an @, a web address, an IBAN, a phone number or a number of 5 digits (privacy.unpublishable),
+  what the Masker masks, or a secret the logs hide (logging_setup.redact).
+
+Never an email, an order, a customer or the agent's journal. Every file is checked again before it goes up
+(live.check), and only blog.LIVE_FILES are ever written. A file the owner switched off is replaced by one saying so,
+and switched off as a whole, the page, the banner and the chart say the live view is off (once). The dry run uploads to
+the publisher's fake server: nothing leaves the app.
 """
 
 from __future__ import annotations
@@ -18,14 +26,20 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import sqlite3
+import time
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from .. import events, privacy
+from ..agent import store
+from ..agent.store import AgentScope
 from ..config import Settings
 from ..economy.clock import from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.life import RUNWAY_CAP_DAYS
+from ..logging_setup import redact
 from ..products import live
 from . import etsy, sftp, site_publisher
 
@@ -40,6 +54,13 @@ MILESTONES_SHOWN = 5
 VENTURES_SHOWN = 8
 LISTINGS_SHOWN = 6
 POSTS_SHOWN = 5
+TITLE_MAX = {"venture": 80, "milestone": 100}
+WILL_MAX = 6000
+WILL = "live_will"  # the executor of the owner's request to show the last will (owner-only: never an unlock's)
+APPROVED = ("approved", "approved_with_changes", "done")
+DECISIONS_KEPT = 300  # the owner's words on titles kept, the newest
+CARD_SECONDS = 60  # how long the Live view card's titles are reused (finding them reads every email's sender)
+MASKED = "what the diagnostics report masks (an address, a code, a link's token, a word you removed, an email's sender)"
 
 
 def key(mode: str, name: str) -> str:
@@ -80,13 +101,7 @@ def problems(settings: Settings, mode: str) -> list[str]:
     return found
 
 
-def _options_fingerprint(settings: Settings) -> str:
-    shown = parts_of(settings)
-    text = json.dumps([shown.__dict__, settings.agent_name, settings.site_url, settings.site_name], sort_keys=True)
-    return hashlib.sha256(text.encode()).hexdigest()[:16]
-
-
-# --- the snapshot ----------------------------------------------------------------------------------------------------
+# --- the agent's words ---------------------------------------------------------------------------------------------
 
 
 def _masker(agent: Agent) -> privacy.Masker:
@@ -100,12 +115,153 @@ def _masker(agent: Agent) -> privacy.Masker:
     return privacy.Masker(own, redactor, False, others)
 
 
-def _clean(masker: privacy.Masker, text: str, limit: int) -> str | None:
-    """A text of the agent's for the public page, or None if Ember's code found something in it to mask."""
-    text = " ".join(str(text or "").split()) if limit < 1000 else str(text or "").strip()
-    if not text or masker(text) != text:
+def public(masker: privacy.Masker, text: str, limit: int) -> tuple[str, str | None]:
+    """A text of the agent's as the public page would show it (its invisible characters out, a title on one line), and
+    what keeps it off the page whatever the owner says (None: nothing). 0.16.1 checked only what the Masker changes,
+    and not what the logs hide (redact): a registered secret in a title would have been uploaded."""
+    shown = privacy.visible(str(text or ""))
+    shown = (" ".join(shown.split()) if limit < 1000 else shown.strip())[:limit]
+    if not shown:
+        return "", "only characters a reader can't see"
+    why = privacy.unpublishable(shown)
+    for form in (shown, privacy.folded(shown)):
+        if why is None and masker(form) != form:
+            why = MASKED
+        if why is None and redact(form) != form:
+            why = "a secret (a key or a password)"
+    return shown, why
+
+
+def text_id(kind: str, text: str) -> str:
+    """How the owner's word on a title is kept: a digest of the title as shown (never its text)."""
+    return hashlib.sha256(f"{kind}\n{text}".encode()).hexdigest()
+
+
+def decisions(raw: str | None) -> dict[str, dict[str, Any]]:
+    """The owner's words on titles, by text_id: {"shown": True (approved) or False (kept off), "at": when}."""
+    try:
+        data = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, dict)} if isinstance(data, dict) else {}
+
+
+@dataclass(frozen=True)
+class Title:
+    """A venture's or a milestone's title as the page would show it, and its state: shown (the owner approved it),
+    waiting (for the owner), off (the owner keeps it off) or refused (``why``: Ember's code keeps it off)."""
+
+    kind: str  # venture or milestone
+    ref: int  # its number
+    text: str
+    note: str  # the venture's stage, or the milestone's due day
+    state: str
+    why: str | None = None
+
+    @property
+    def id(self) -> str:
+        return text_id(self.kind, self.text)
+
+    def json(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "ref": self.ref,
+            "text": self.text,
+            "note": self.note,
+            "state": self.state,
+            "why": self.why,
+        }
+
+
+@dataclass(frozen=True)
+class Work:
+    """The titles the work part would show (the ventures', the latest first, then the next milestones'), and how many
+    there are of each."""
+
+    titles: tuple[Title, ...] = ()
+    ventures: int = 0  # being worked on (live.VENTURE_STAGES)
+    ideas: int = 0
+    parked: int = 0
+    milestones: int = 0  # open
+
+
+def work(conn: sqlite3.Connection, agent: Agent, masker: privacy.Masker, scope: AgentScope) -> Work:
+    decided = decisions(agent.db.get_meta(key(agent.mode, "texts")))
+
+    def title(kind: str, ref: int, raw: str, note: str) -> Title:
+        text, why = public(masker, raw, TITLE_MAX[kind])
+        word = decided.get(text_id(kind, text), {}).get("shown")
+        state = "refused" if why else "shown" if word is True else "off" if word is False else "waiting"
+        return Title(kind, ref, text, note, state, why)
+
+    where, params = scope.where()
+    found = []
+    ventures = ideas = parked = milestones = 0
+    for row in conn.execute(
+        f"SELECT id, stage, title FROM ventures WHERE {where} AND life_id = ? ORDER BY updated_at DESC, id DESC",
+        (*params, scope.life_id),
+    ):
+        stage = str(row["stage"])
+        if stage == "idea":
+            ideas += 1
+        elif stage in ("parked", "killed"):
+            parked += 1
+        elif stage in live.VENTURE_STAGES:
+            ventures += 1
+            if ventures <= VENTURES_SHOWN:
+                found.append(title("venture", int(row["id"]), row["title"], stage))
+    for row in conn.execute(
+        f"SELECT id, title, due FROM milestones WHERE {where} AND life_id = ? AND status = 'open' ORDER BY due, id",
+        (*params, scope.life_id),
+    ):
+        milestones += 1
+        if milestones <= MILESTONES_SHOWN:
+            found.append(title("milestone", int(row["id"]), row["title"], str(row["due"])))
+    return Work(tuple(found), ventures, ideas, parked, milestones)
+
+
+def will_request(conn: sqlite3.Connection, scope: AgentScope, life_id: int) -> sqlite3.Row | None:
+    """The newest request asking the owner to show this life's last will on the live page."""
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT * FROM approvals WHERE {where} AND executor = ? AND json_extract(action, '$.life_id') = ?"
+        " ORDER BY id DESC LIMIT 1",
+        (*params, WILL, life_id),
+    ).fetchone()
+
+
+def execution(row: sqlite3.Row) -> dict[str, Any] | None:
+    """What happened to the owner's approved request for the last will, for the dashboard (None before approval):
+    waiting for the next upload, done once it is on the page, or cancelled by the owner."""
+    if row["status"] in ("approved", "approved_with_changes"):
+        status = "waiting"
+    elif row["status"] in ("done", "failed"):
+        status = str(row["status"])
+    else:
         return None
-    return text[:limit]
+    return {
+        "status": status,
+        "started_at": None,
+        "finished_at": row["closed_at"],
+        "result": row["result_note"],
+        "error": None,
+        "url": row["result_link"],
+    }
+
+
+def _approved(request: sqlite3.Row | None, text: str) -> bool:
+    """Whether the owner approved exactly this text of the last will (as it is: never with changes)."""
+    if request is None or request["status"] not in APPROVED or request["final_payload"] is not None:
+        return False
+    try:
+        action = json.loads(request["action"])
+    except ValueError:
+        return False
+    return isinstance(action, dict) and action.get("sha256") == store.sha256(text)
+
+
+# --- the snapshot ----------------------------------------------------------------------------------------------------
 
 
 def snapshot(agent: Agent) -> live.Snapshot:
@@ -127,9 +283,6 @@ def snapshot(agent: Agent) -> live.Snapshot:
     runway = status.runway.days
     masker = _masker(agent)
     notes: list[str] = []
-    ventures: list[tuple[str, str]] = []
-    ideas = parked = cycles = cycles_today = 0
-    milestones: list[tuple[str, str]] = []
     listings: list[live.Item] = []
     posts: list[live.Item] = []
     record: dict[str, Any] = {}
@@ -154,32 +307,10 @@ def snapshot(agent: Agent) -> live.Snapshot:
             ).fetchone()[0]
         )
         where, params = scope.where()
-        for row in conn.execute(
-            f"SELECT stage, title FROM ventures WHERE {where} AND life_id = ? ORDER BY updated_at DESC",
-            (*params, scope.life_id),
-        ):
-            stage = str(row["stage"])
-            if stage == "idea":
-                ideas += 1
-            elif stage in ("parked", "killed"):
-                parked += 1
-            elif stage in live.VENTURE_STAGES and len(ventures) < VENTURES_SHOWN:
-                title = _clean(masker, row["title"], 80)
-                if title is None:
-                    notes.append("a venture's title")
-                else:
-                    ventures.append((stage, title))
-        for row in conn.execute(
-            f"SELECT title, due FROM milestones WHERE {where} AND life_id = ? AND status = 'open' ORDER BY due, id",
-            (*params, scope.life_id),
-        ):
-            if len(milestones) >= MILESTONES_SHOWN:
-                break
-            title = _clean(masker, row["title"], 100)
-            if title is None:
-                notes.append("a milestone's title")
-            else:
-                milestones.append((title, str(row["due"])))
+        doing = work(conn, agent, masker, scope)
+        ventures = [(t.note, t.text) for t in doing.titles if t.kind == "venture" and t.state == "shown"]
+        milestones = [(t.text, t.note) for t in doing.titles if t.kind == "milestone" and t.state == "shown"]
+        notes += [f"a {t.kind}'s title" for t in doing.titles if t.state != "shown"]
         fresh = to_iso(now - timedelta(hours=ETSY_SHOWN_HOURS))
         for row in conn.execute(
             f"SELECT listing_id, title, views, favorites FROM etsy_listings WHERE {where} AND status = 'active'"
@@ -214,13 +345,13 @@ def snapshot(agent: Agent) -> live.Snapshot:
             }
         record["sales_on_time"], record["sales_settled"] = sum(sales), len(sales)
         if dead and status.life_id:
-            row = conn.execute("SELECT text FROM last_wills WHERE life_id = ?", (status.life_id,)).fetchone()
-            if row is not None:
-                cleaned = _clean(masker, row["text"], 6000)
-                if cleaned is None:
-                    notes.append("the last will")
+            row = store.last_will(conn, status.life_id)
+            if row is not None:  # 0.16.1 showed it unasked: only as the owner approved it
+                text, why = public(masker, row["text"], WILL_MAX)
+                if why is None and _approved(will_request(conn, scope, status.life_id), text):
+                    will = text
                 else:
-                    will = cleaned
+                    notes.append("the last will")
     age = None
     if status.born_at:
         end = from_iso(status.ended_at) if status.ended_at else now
@@ -248,9 +379,11 @@ def snapshot(agent: Agent) -> live.Snapshot:
         cycles=cycles,
         cycles_today=cycles_today,
         ventures=tuple(ventures),
-        ideas=ideas,
-        parked=parked,
+        ventures_more=doing.ventures - len(ventures),
+        ideas=doing.ideas,
+        parked=doing.parked,
         milestones=tuple(milestones),
+        milestones_more=doing.milestones - len(milestones),
         listings=tuple(listings),
         posts=tuple(posts),
         met=int(record.get("met", 0)),
@@ -269,6 +402,17 @@ def snapshot(agent: Agent) -> live.Snapshot:
 # --- uploading -------------------------------------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class Made:
+    """The files as they would go up now: which of them show the live view (the others say a part is off), whether
+    they show the last will, and what the owner had decided when they were made (``fingerprint``)."""
+
+    files: dict[str, bytes]
+    shown: tuple[str, ...] = ()
+    will: bool = False
+    fingerprint: str = ""
+
+
 class LiveView:
     """Uploads the live view over the blog publisher's connection (one upload or check at a time)."""
 
@@ -276,6 +420,7 @@ class LiveView:
         self.agent = agent
         self.blog = agent.blog
         self.mode = agent.mode
+        self._card: tuple[float, Work] | None = None  # the Live view card's titles, and when they were found
 
     def _meta(self, name: str) -> str:
         return self.agent.db.get_meta(key(self.mode, name)) or ""
@@ -283,9 +428,38 @@ class LiveView:
     def _set(self, name: str, value: str) -> None:
         self.agent.db.set_meta(key(self.mode, name), value)
 
+    def _fingerprint(self) -> str:
+        """What the owner decides about the page: the parts, the names and the address, and their words on titles and
+        on the last will (a change uploads the page at once)."""
+        settings = self.agent.settings
+        with self.agent.db.connection() as conn:
+            where, params = self.agent.scope().where()
+            will = conn.execute(
+                f"SELECT id, status FROM approvals WHERE {where} AND executor = ? ORDER BY id DESC LIMIT 1",
+                (*params, WILL),
+            ).fetchone()
+        approved = int(will["id"]) if will is not None and will["status"] in APPROVED else None
+        text = json.dumps(
+            [parts_of(settings).__dict__, settings.agent_name, settings.site_url, settings.site_name]
+            + [self._meta("texts"), approved],
+            sort_keys=True,
+        )
+        return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+    def _on_server(self) -> set[str]:
+        """The files of an earlier upload that show the live view (not its version saying a part is off). 0.16.1
+        didn't keep them: after the upgrade, any of the live view's files may be up."""
+        raw = self._meta("on_server")
+        if raw:
+            try:
+                return {str(path) for path in json.loads(raw)}
+            except (TypeError, ValueError):
+                pass
+        return set(live.FILES) if self._meta("uploaded_at") else set()
+
     def due(self) -> str | None:
         """Why the live view is uploaded now (None: not yet): the first time, after UPLOAD_MINUTES, when the life
-        state or the owner's choice of parts changed, or (switched off) once to say so."""
+        state or the owner's choice of parts or their word on a text changed, or (switched off) once to say so."""
         settings = self.agent.settings
         now = self.agent.clock.now()
         error_at = self._meta("error_at")
@@ -296,7 +470,7 @@ class LiveView:
         last = self._meta("uploaded_at")
         if not last or self._meta("shown") != "1":
             return "first"
-        if self._meta("options") != _options_fingerprint(settings):
+        if self._meta("options") != self._fingerprint():
             return "options"
         if self._meta("state") != self.agent.economy.life.evaluate().state:
             return "state"
@@ -304,13 +478,67 @@ class LiveView:
             return "schedule"
         return None
 
-    def files(self) -> dict[str, bytes]:
-        """The files as they would go up now (the dashboard's preview, and the upload)."""
+    def make(self) -> Made:
+        """The files as they would go up now (the dashboard's preview, and the upload): the parts the owner shows, and
+        in place of a file switched off since it went up its version saying so."""
         settings = self.agent.settings
         owner = site_publisher.owner_of(settings)
+        fingerprint = self._fingerprint()
         if not settings.live_enabled:
-            return live.render_all_off(owner, settings.agent_name)
-        return live.render(snapshot(self.agent), parts_of(settings), owner)
+            return Made(live.render_all_off(owner, settings.agent_name), fingerprint=fingerprint)
+        s = snapshot(self.agent)
+        parts = parts_of(settings)
+        files = live.render(s, parts, owner, self._on_server())
+        shown = tuple(live.shown_paths(s, parts))
+        return Made(files, shown, bool(s.will) and parts.memorial and live.dead(s), fingerprint)
+
+    def files(self) -> dict[str, bytes]:
+        return self.make().files
+
+    def ask(self) -> int | None:
+        """Ask the owner, once, to approve the last will for the live page: once Ember is dead, while the memorial is
+        shown, unless something in the will keeps it off a public page. The new request (None: none was made)."""
+        settings = self.agent.settings
+        if not (settings.live_enabled and settings.live_show_memorial):
+            return None
+        status = self.agent.economy.life.evaluate()
+        if status.state not in ("dead", "ended") or not status.life_id:
+            return None
+        scope = self.agent.scope()
+        with self.agent.db.connection() as conn:
+            row = store.last_will(conn, status.life_id)
+            if row is None or will_request(conn, scope, status.life_id) is not None:
+                return None
+        text, why = public(_masker(self.agent), row["text"], WILL_MAX)
+        if why is not None:
+            return None
+        name = settings.agent_name
+        died = f" on {status.ended_at[:10]}" if status.ended_at else ""
+        with self.agent.db.transaction() as conn:
+            if will_request(conn, scope, status.life_id) is not None:
+                return None
+            made = store.insert_approval(
+                conn,
+                scope,
+                int(row["cycle_id"]),
+                to_iso(self.agent.clock.now()),
+                type="publish",
+                title=f"Live page: {name}'s last will"[:120],
+                description=(
+                    f"{name} died{died}. Ember's code shows its last will on your live page (live.html and "
+                    "en/live.html) only if you approve it, exactly as below, and only while live_show_memorial is on. "
+                    f"Until then, and if you reject it, the memorial shows {name}'s life in numbers without it. No "
+                    "unlock approves this: only you do."
+                )[:2000],
+                payload=text,
+                expected_cost="none",
+                expected_benefit=f"Readers of your live page read {name}'s last words."[:300],
+                executor=WILL,
+                action=store.canonical({"life_id": status.life_id, "sha256": store.sha256(text)}),
+            )
+        note = f"Request #{made}: {name}'s last will waits for you to show it on the live page"
+        events.record(self.agent.db, "info", "website", note)
+        return made
 
     def run(self) -> str | None:
         """Upload the live view if it is due; returns what happened (None: nothing was due)."""
@@ -322,26 +550,31 @@ class LiveView:
         if trouble:
             return self._failed("; ".join(trouble), quiet=True)
         try:
-            files = self.files()
+            self.ask()
+            made = self.make()
         except Exception as exc:  # noqa: BLE001 - the live view must never stop the scheduler
             log.exception("Making the live view failed")
             return self._failed(f"the live view couldn't be made ({type(exc).__name__})")
-        found = live.check(files, site_publisher.owner_of(settings))
+        found = live.check(made.files, site_publisher.owner_of(settings))
         if found:
             return self._failed("a file didn't pass the check: " + "; ".join(found))
         try:
-            simulated = self.blog.put(files)
+            simulated = self.blog.put(made.files)
         except sftp.SftpError as exc:
             return self._failed(str(exc))
+        except Exception as exc:  # noqa: BLE001 - 0.16.1: what escaped here was tried again every round, unbounded
+            log.exception("Uploading the live view failed")
+            return self._failed(f"the upload failed ({type(exc).__name__})")
         if simulated is None:
             return None  # the blog is uploading: the next round
-        return self._done(why, files, simulated=simulated)
+        return self._done(why, made, simulated=simulated)
 
-    def _done(self, why: str, files: dict[str, bytes], simulated: bool) -> str:
+    def _done(self, why: str, made: Made, simulated: bool) -> str:
         now = to_iso(self.agent.clock.now())
         self._set("uploaded_at", now)
         self._set("error", "")
         self._set("error_at", "")
+        self._set("on_server", json.dumps(list(made.shown)))
         if why == "off":
             self._set("shown", "0")
             note = "The live view is off: Ember's code uploaded a page saying so"
@@ -349,15 +582,46 @@ class LiveView:
             return "off"
         first = self._meta("shown") != "1"
         self._set("shown", "1")
-        self._set("options", _options_fingerprint(self.agent.settings))
+        self._set("options", made.fingerprint)
         self._set("state", self.agent.economy.life.evaluate().state)
-        self._set("files", json.dumps(sorted(files)))
+        self._set("files", json.dumps(sorted(made.files)))
+        if made.will:
+            self._will_shown(now, simulated)
         if first:
             where = "the dry run's fake server" if simulated else site_publisher.owner_of(self.agent.settings).url
-            events.record(
-                self.agent.db, "info", "website", f"The live view is on: uploaded {', '.join(sorted(files))} to {where}"
-            )
+            note = f"The live view is on: uploaded {', '.join(sorted(made.files))} to {where}"
+            events.record(self.agent.db, "info", "website", note)
         return "done"
+
+    def _will_shown(self, now: str, simulated: bool) -> None:
+        """The owner's approved request for the last will is carried out once it is on the page."""
+        url = f"{site_publisher.owner_of(self.agent.settings).url}/{live.PAGE}"
+        link = None if simulated else url
+        note = (
+            "Shown on the dry run's fake server's live page; nothing reached your website."
+            if simulated
+            else f"Shown on your live page: {url}"
+        )
+        scope = self.agent.scope()
+        where, params = scope.where()
+        with self.agent.db.transaction() as conn:
+            ids = [
+                int(r["id"])
+                for r in conn.execute(
+                    f"SELECT id FROM approvals WHERE {where} AND executor = ? AND json_extract(action, '$.life_id') = ?"
+                    " AND status IN ('approved', 'approved_with_changes')",
+                    (*params, WILL, scope.life_id),
+                )
+            ]
+            for approval_id in ids:
+                conn.execute(
+                    "UPDATE approvals SET status = 'done', closed_at = ?, closed_by = ?, result_note = ?,"
+                    " result_link = ?, version = version + 1, seen_cycle_id = NULL WHERE id = ?"
+                    " AND status IN ('approved', 'approved_with_changes')",
+                    (now, site_publisher.CLOSED_BY, note, link, approval_id),
+                )
+        for approval_id in ids:
+            events.record(self.agent.db, "info", "website", f"Request #{approval_id}: {note}"[:300])
 
     def _failed(self, error: str, quiet: bool = False) -> str:
         """Kept for the dashboard; an event only when the error is new (a missing option says so once)."""
@@ -366,6 +630,43 @@ class LiveView:
         self._set("error", error[:500])
         self._set("error_at", to_iso(self.agent.clock.now()))
         return "failed"
+
+    # --- the owner's word on the agent's titles ---
+
+    def titles(self, fresh: bool = False) -> Work:
+        """The titles the work part would show, with the owner's word on each (reused for CARD_SECONDS)."""
+        card = self._card
+        if not fresh and card is not None and time.monotonic() - card[0] < CARD_SECONDS:
+            return card[1]
+        masker = _masker(self.agent)
+        with self.agent.db.connection() as conn:
+            found = work(conn, self.agent, masker, self.agent.scope())
+        self._card = (time.monotonic(), found)
+        return found
+
+    def decide(self, text_id: str, show: bool, who: str | None) -> dict[str, Any]:
+        """The owner's word on a title: shown from the next upload on (at once), or kept off. Only a title the page
+        would show now (LookupError: it changed meanwhile), and never one Ember's code keeps off (ValueError)."""
+        found = {t.id: t for t in self.titles(fresh=True).titles}
+        title = found.get(text_id)
+        if title is None:
+            raise LookupError("this title isn't one the live page would show now (it changed meanwhile): reload")
+        if show and title.why is not None:
+            raise ValueError(f"Ember's code keeps this title off the page: it holds {title.why}")
+        with self.agent.db.transaction():
+            decided = decisions(self._meta("texts"))
+            decided[text_id] = {"shown": show, "at": to_iso(self.agent.clock.now())}
+            newest = sorted(decided.items(), key=lambda item: str(item[1].get("at")), reverse=True)[:DECISIONS_KEPT]
+            self._set("texts", json.dumps(dict(newest), sort_keys=True))
+            events.record(
+                self.agent.db,
+                "info",
+                "owner",
+                f"{who or 'The owner'} {'showed' if show else 'kept off'} {title.kind} #{title.ref}'s title on the live"
+                " page",
+            )
+        self._card = None
+        return self.describe()
 
     def describe(self) -> dict[str, Any]:
         """The dashboard's Live view section (never the password)."""
@@ -376,6 +677,7 @@ class LiveView:
         uploaded = self._meta("uploaded_at") or None
         owner = site_publisher.owner_of(settings)
         shown = parts_of(settings)
+        titles = [t.json() for t in self.titles().titles] if settings.live_enabled and shown.work else []
         return {
             "status": "off" if not settings.live_enabled else "not_ready" if trouble else "ok",
             "reason": "; ".join(trouble) or None,
@@ -388,4 +690,19 @@ class LiveView:
             "parts": {name: bool(value) for name, value in shown.__dict__.items()},
             "snippet": live.snippet(settings.agent_name) if shown.banner else None,
             "snippet_en": live.snippet(settings.agent_name, "en") if shown.banner else None,
+            "titles": titles,  # the agent's titles the work part would show, and the owner's word on each
+            "will": self._will_card() if settings.live_enabled and shown.memorial else None,
         }
+
+    def _will_card(self) -> dict[str, Any] | None:
+        """The last will's request, once Ember is dead (None: no will to show)."""
+        status = self.agent.economy.life.evaluate()
+        if status.state not in ("dead", "ended") or not status.life_id:
+            return None
+        with self.agent.db.connection() as conn:
+            if store.last_will(conn, status.life_id) is None:
+                return None
+            row = will_request(conn, self.agent.scope(), status.life_id)
+        if row is None:
+            return {"approval_id": None, "status": None}
+        return {"approval_id": int(row["id"]), "status": str(row["status"])}

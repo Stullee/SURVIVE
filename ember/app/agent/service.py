@@ -981,6 +981,11 @@ class Agent:
         """0.16.0: the live view's files as they would go up now, for the owner's preview."""
         return self.live.files()
 
+    def decide_live_title(self, text_id: str, show: bool, who: str | None) -> dict[str, Any]:
+        """The owner's word on one of the agent's titles for the live page (shown from the next upload on, at once, or
+        kept off): the Live view card as it is then. Raises LookupError (no such title now) or ValueError."""
+        return self.live.decide(text_id, show, who)
+
     def sync_shop(self) -> None:
         """Read the Etsy shop's listings and orders (at most hourly) and its categories (daily) while Ember runs, not
         only when the agent wakes: Etsy's API terms allow showing listings for 6 hours after they were read, its

@@ -9,6 +9,9 @@ Two tools, for the diagnostics report above all (the owner shares it to get help
   mistake), its secret-looking words are registered as salted hashes, never as text (``register``). Any text can then
   be checked word by word: the report, and Ember's code scrubs the agent's memory, open projects and workspace files
   (``Agent.scrub_removed``). The history in the database can't change, so a copy there is only redacted when shown.
+
+And one for the public live page (``unpublishable``): the Masker was made for the report, so a phone number, a plain
+link, an address with a zero-width space or a fullwidth @, a street with its postcode or an IBAN passed it (0.16.1).
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+import unicodedata
 from dataclasses import dataclass, field
 
 REMOVED = "[removed]"  # a word the owner removed, where Ember keeps or shows it
@@ -263,3 +267,66 @@ def _token(segment: str) -> bool:
     if not _SEGMENT.fullmatch(segment) or not any(c.isdigit() for c in segment):
         return False
     return any(c.isupper() for c in segment) or "-" not in segment
+
+
+# --- what a public page never shows of the agent's words ------------------------------------------------------------
+
+_UNSEEN = ("Cc", "Cf")  # controls and invisible formats: zero-width spaces, soft hyphens, direction marks
+_HIDDEN = {*_UNSEEN, "Cn", "Co", "Cs", "Mn", "Me"}  # for the check also unassigned, private and combining marks
+_SPELLED_AT = re.compile(r"[(\[{<]\s*(?:at|ät)\s*[)\]}>]", re.IGNORECASE)  # max (at) example.org
+_SPELLED_DOT = re.compile(r"[(\[{<]\s*(?:dot|punkt|\.)\s*[)\]}>]", re.IGNORECASE)  # example[.]org, example (dot) org
+_RUN = re.compile(r"\d{5,}")  # a postcode, an account, order or customer number, an unspaced phone number
+_PLUS_PHONE = re.compile(r"\+\s?\(?\d[\d\s()/.-]{4,}\d")  # +49 30 1234567, +49 (0)151 2345 6789
+_ZERO_PHONE = re.compile(r"(?<![\w.,+])0\d{1,4}[\s/()-]+\d[\d\s()/-]*\d")  # 0151 2345 6789, 030/123 456 78
+_WORD = re.compile(r"[\w.-]+")
+_IPV4 = re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])")
+_IBAN = re.compile(r"(?<![a-z0-9])[a-z]{2}\d{2}(?: ?[a-z0-9]){11,30}(?![a-z0-9])", re.IGNORECASE)
+
+
+def visible(text: str) -> str:
+    """A text without the characters a reader can't see (controls other than line breaks and tabs, zero-width spaces,
+    soft hyphens, direction marks), so what a public page shows is what was checked."""
+    return "".join(ch for ch in text if ch in "\n\t" or unicodedata.category(ch) not in _UNSEEN)
+
+
+def folded(text: str) -> str:
+    """A text as the public page's check reads it: compatibility forms folded (NFKC: ＠ is @, ①②③ is 123, ｗｗｗ is
+    www, ． is .), invisible characters and stray combining marks out, an ideographic full stop and a spelled-out @
+    or dot in brackets as @ and ."""
+    text = unicodedata.normalize("NFKC", text).replace("\u3002", ".")
+    text = "".join(ch for ch in text if ch.isspace() or unicodedata.category(ch) not in _HIDDEN)
+    return _SPELLED_DOT.sub(".", _SPELLED_AT.sub("@", text))
+
+
+def _host(word: str) -> bool:
+    """Whether a word looks like a host name (ember-ai.de, www.etsy.com): two labels or more, the last one of two or
+    more letters, the others not all digits (a date like 1.Oktober is no host)."""
+    labels = word.strip(".-").split(".")
+    if len(labels) < 2 or not all(labels):
+        return False
+    return len(labels[-1]) >= 2 and labels[-1].isalpha() and not all(label.isdigit() for label in labels[:-1])
+
+
+def _digits(match: re.Match[str]) -> int:
+    return sum(ch.isdigit() for ch in match[0])
+
+
+def unpublishable(text: str) -> str | None:
+    """0.16.1's live page showed a text of the agent's whenever the Masker changed nothing in it: what keeps one off a
+    public page instead (None: nothing), read after folding (``folded``): an @ in any form (an email address), a web
+    address (a link, a domain, an IP address), an IBAN, a phone number, or a run of 5 or more digits (a postcode, an
+    account, order or customer number). Strict on purpose: a title or a last will rarely needs any of them, and the
+    owner approves each text as well (a person's name can't be told from other words)."""
+    text = folded(text)
+    if "@" in text:
+        return "an @ (an email address)"
+    if "://" in text or _IPV4.search(text) or any(_host(word) for word in _WORD.findall(text)):
+        return "a web address"
+    if any(_digits(m) >= 10 for m in _IBAN.finditer(text)):
+        return "an IBAN"
+    phones = [*_PLUS_PHONE.finditer(text), *_ZERO_PHONE.finditer(text)]
+    if any(_digits(m) >= (7 if m[0].startswith("+") else 8) for m in phones):
+        return "a phone number"
+    if _RUN.search(text):
+        return "a number of 5 digits or more"
+    return None

@@ -1696,32 +1696,53 @@ What the page shows, each part switched off by its option:
 
 | Option | Shows |
 |---|---|
-| **Live: banner** (`live_banner`) | The banner: state, balance and runway, today's spending, the time. |
+| **Live: banner** (`live_banner`) | The banner: state, balance and runway, today's spending, the date and time it was made. |
 | **Live: balance and spending** (`live_show_money`) | Balance, runway, today's API spending against the daily cap, all API costs and other expenses. |
 | **Live: revenue** (`live_show_revenue`) | Revenue in all and in the last 30 days, the share of the costs it covers (the chart marks days with revenue). |
 | **Live: your money** (`live_show_grants`) | What you gave Ember. Off: the balance is shown without saying where the money came from. |
 | **Live: balance chart** (`live_show_chart`) | The balance of the last 30 days, from Ember's second day (`live/balance.svg`, `live/balance-en.svg`). |
-| **Live: what Ember works on** (`live_show_work`) | How often it woke up, its ventures by stage, its next milestones. |
+| **Live: what Ember works on** (`live_show_work`) | How often it woke up, its ventures by stage, its next milestones: counted, and with the titles you approved. Off by default. |
 | **Live: shop and blog** (`live_show_shop`) | Its live Etsy listings with views and favorites, the newest blog posts. |
 | **Live: track record** (`live_show_record`) | How often its forecasts came true (milestones met against the odds it gave, the Brier score). |
-| **Live: memorial** (`live_show_memorial`) | If it dies: its life in numbers and its last will. |
+| **Live: memorial** (`live_show_memorial`) | If it dies: its life in numbers, and its last will once you approved it. Off by default. |
 
 What it never shows: emails, senders, orders, customers, inquiries, the
 agent's journal, plans or prompts. The ventures' and milestones' titles and the
-last will are the agent's words: Ember's code checks each with the same masking
-as the shareable diagnostics report and leaves out a text in which it finds an
-address, a code, a link's token, a sender's name or a word you removed. Etsy's
-listings are shown only for 6 hours after Ember's code read them, as Etsy's API
-terms allow; the page footer carries Etsy's trademark notice. Every file is
-checked again before it goes up (no script, nothing from elsewhere), and only
-these six files are ever written. The agent's titles stay in the language it
-wrote them in; the English page marks the blog's posts as German.
+last will are the agent's words, and it reads emails and web pages, so they go
+up only as you approved them:
 
-The page has your site's head, header and footer, refreshes itself every 5
-minutes in an open tab and says when it was made: if that time is more than an
-hour old, Ember is offline. Switching **Ember live** off replaces the page and
-the banner with ones saying the live view is off. In a dry run the files go to
-the fake server and say "Probelauf".
+- **Titles.** With **Live: what Ember works on** on, **System → Website → Live
+  view** lists the titles the page would show, each with **Show it** and **Keep
+  it off**. Your word holds for that exact text: a title the agent changes is
+  asked again. Until you approve a title, the page only counts it ("Weitere in
+  Arbeit: 2").
+- **The last will.** If Ember dies while **Live: memorial** is on, Ember's code
+  asks you in a request of its own (Approvals) to show the will, exactly as
+  written. No unlock approves it; until you do, the memorial shows Ember's life
+  in numbers without it.
+
+Ember's code also keeps a text off the page whatever you say if it holds an @
+(in any form, also spelled out or as a fullwidth sign), a web address, an IBAN,
+a phone number or a number of 5 digits or more, read after folding look-alike
+and invisible characters, or anything the shareable diagnostics report masks
+(an address, a code, a link's token, an email's sender, a word you removed) or a
+secret the logs hide. It can't tell a person's name from other words: that is
+what your approval is for. Etsy's listings are shown only for 6 hours after
+Ember's code read them, as Etsy's API terms allow; the page footer carries
+Etsy's trademark notice. Every file is checked again before it goes up (no
+script, nothing from elsewhere), and only these six files are ever written. The
+agent's titles stay in the language it wrote them in; the English page marks the
+blog's posts as German.
+
+The page has your site's head, header and footer and refreshes itself every 5
+minutes in an open tab. The page and the banner say when they were made (date
+and time) and that a time more than an hour old means Ember is offline: they
+can't tell by themselves when uploads stop (the app is down, the connection
+fails, a dry run). A part you switch off is replaced on your server by a version
+saying so (a banner you switched off doesn't keep showing an old balance), and
+switching **Ember live** off replaces the page, the banner and the chart with
+ones saying the live view is off. In a dry run the files go to the fake server
+and say "Probelauf".
 
 ### Setting it up
 

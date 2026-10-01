@@ -483,8 +483,10 @@ configuration:
   live_show_work:
     name: "Live: what Ember works on"
     description: >-
-      Its ventures by stage, its open milestones and how often it woke up. The
-      agent's own titles, shown only where they hold no address, name or code.
+      How often Ember woke up, and its ventures by stage and its open
+      milestones: counted, and with their titles once you approved each title
+      on the dashboard's Live view card (a title with a long number, a web
+      address, an @ or an IBAN is never shown). Off by default.
   live_show_shop:
     name: "Live: shop and blog"
     description: >-
@@ -498,5 +500,6 @@ configuration:
   live_show_memorial:
     name: "Live: memorial"
     description: >-
-      If Ember dies: its life in numbers and its last will. Off: the page only
-      says that it died.
+      If Ember dies: its life in numbers, and its last will once you approved
+      it (Ember's code then asks you in a request; no unlock approves it). Off:
+      the page only says that it died. Off by default.

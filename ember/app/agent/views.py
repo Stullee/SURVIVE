@@ -16,6 +16,7 @@ from ..integrations import (
     etsy,
     etsy_publisher,
     executor,
+    live_view,
     mailstore,
     pinterest,
     pinterest_publisher,
@@ -817,6 +818,8 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
                 shortfalls = []
     if r["executor"] in site_publisher.EXECUTORS and action is not None:  # 0.14.0: the blog on the owner's website
         execution = site_publisher.execution(conn, r, agent.db, agent.settings)
+    if r["executor"] == live_view.WILL and action is not None:  # the last will on the live page
+        execution = live_view.execution(r)
     if r["executor"] == "etsy_edit" and action is not None:
         execution = etsy_publisher.edit_execution(conn, r)
         try:

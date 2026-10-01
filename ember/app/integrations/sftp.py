@@ -32,7 +32,9 @@ logging.getLogger("paramiko").setLevel(logging.WARNING)  # its transport logs ev
 
 TIMEOUT = 20  # seconds: connecting, the SSH handshake and the login
 IO_TIMEOUT = 60  # seconds: one read or write
-FOLDER = re.compile(r"^/?(?:[A-Za-z0-9._~ -]+/?)*$")
+# One folder's name. 0.16.1 checked the whole path with one pattern whose repeated group backtracked exponentially on
+# a character outside it (30 characters ending in an umlaut took 17 seconds, holding the whole app): each name alone.
+SEGMENT = re.compile(r"[A-Za-z0-9._~ -]+")
 _PIN = re.compile(r"^SHA256:[A-Za-z0-9+/]{43}=?$")
 
 
@@ -92,9 +94,12 @@ def pin_of(text: str) -> str:
 
 
 def folder_of(text: str) -> str:
-    """The website's folder on the server, checked: no '..', no odd characters. Raises ValueError."""
+    """The website's folder on the server, checked: names separated by single slashes (one at the start and the end
+    may stand), no '..', no odd characters. Raises ValueError."""
     value = text.strip()
-    if not FOLDER.match(value) or ".." in value.split("/"):
+    inner = value.removeprefix("/")
+    names = inner.removesuffix("/").split("/") if inner else []
+    if not all(SEGMENT.fullmatch(name) and name != ".." for name in names):
         raise ValueError("blog_sftp_folder is a folder on your server like /ember-ai.de or empty")
     return value.rstrip("/") if value not in ("", "/") else value
 
@@ -152,10 +157,17 @@ class LiveServer:
     simulated = False
 
     def __init__(self, transport: Any, client: Any, folder: str, seen: str) -> None:
+        import paramiko  # loaded already: a LiveServer is made only by connect()
+
         self._transport = transport
         self._sftp = client
         self._folder = folder
         self.fingerprint = seen
+        # What a broken connection raises. 0.16.1: paramiko's SSHException too ("Server connection dropped", when the
+        # connection drops during a transfer), which escaped: the live view logged in again every round, with no
+        # back-off, and the owner's check answered 500.
+        self._dropped: type[BaseException] = paramiko.SSHException
+        self._broken: tuple[type[BaseException], ...] = (OSError, EOFError, self._dropped)
 
     def _full(self, path: str) -> str:
         _checked(path)
@@ -168,7 +180,7 @@ class LiveServer:
                 data = handle.read(blog.PAGE_MAX + 1)
         except FileNotFoundError:
             return None
-        except (OSError, EOFError) as exc:
+        except self._broken as exc:
             raise NotSent(f"{path} on the server can't be read ({_why(exc)})") from None
         if len(data) > blog.PAGE_MAX:
             raise NotSent(f"{path} on the server is larger than {blog.PAGE_MAX // 1000} kB")
@@ -183,9 +195,9 @@ class LiveServer:
         except FileNotFoundError:
             try:
                 self._sftp.mkdir(parent, 0o755)
-            except (OSError, EOFError) as exc:
+            except self._broken as exc:
                 raise NotSent(f"the folder {posixpath.basename(parent)} can't be made ({_why(exc)})") from None
-        except (OSError, EOFError) as exc:
+        except self._broken as exc:
             raise NotSent(f"the server can't be read ({_why(exc)})") from None
 
     def write(self, path: str, data: bytes) -> None:
@@ -197,7 +209,7 @@ class LiveServer:
         try:
             with self._sftp.open(temporary, "wb") as handle:
                 handle.write(data)
-        except (OSError, EOFError) as exc:
+        except self._broken as exc:
             self._forget(temporary)
             raise NotSent(f"{path} couldn't be uploaded ({_why(exc)})") from None
         try:
@@ -207,7 +219,7 @@ class LiveServer:
                 with contextlib.suppress(FileNotFoundError):
                     self._sftp.remove(full)
                 self._sftp.rename(temporary, full)
-        except (OSError, EOFError) as exc:
+        except self._broken as exc:
             self._forget(temporary)
             raise Unclear(f"{path} was uploaded but couldn't be put in place ({_why(exc)})") from None
         try:
@@ -218,15 +230,18 @@ class LiveServer:
             raise Unclear(f"{path} on the server isn't the file Ember's code uploaded")
 
     def _forget(self, temporary: str) -> None:
-        with contextlib.suppress(OSError, EOFError):
+        with contextlib.suppress(*self._broken):
             self._sftp.remove(temporary)
 
     def remove(self, path: str) -> None:
+        """NotSent: the server refused it, the file is still there; Unclear: the connection dropped, it may be gone."""
         full = self._full(path)
         try:
             self._sftp.remove(full)
         except FileNotFoundError:
             return
+        except self._dropped as exc:  # the request may have reached the server before the connection dropped
+            raise Unclear(f"it is unclear whether {path} was removed ({_why(exc)})") from None
         except (OSError, EOFError) as exc:
             raise NotSent(f"{path} couldn't be removed ({_why(exc)})") from None
 
