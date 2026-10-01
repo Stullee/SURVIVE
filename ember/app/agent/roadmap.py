@@ -16,6 +16,10 @@ The owner adds milestones, leaves notes and drops milestones on the Roadmap tab 
 for the agent like a decision. A milestone the owner added is theirs (0.12.0, migration 0021): the agent can't drop
 it, and its new date for one is a proposal the owner accepts or rejects. The last ``OWNER_SLOTS`` open places are kept
 for the owner. Dates are the owner's local days.
+
+0.14.0: only the agent's and the owner's milestones take the roadmap's places (``placed``). Ember's code's have a bound
+of their own: one money goal with its two decision points, one first test or scale point for each backed venture, and
+one bar or scale point at a time for each product line's listing test (agent/gates.py).
 """
 
 from __future__ import annotations
@@ -35,8 +39,9 @@ STATUSES = ("open", "done", "missed", "dropped")
 CLOSED = ("done", "missed", "dropped")
 LIMITS = {"title": 100, "measure": 300, "result": 600, "notes": 2_000, "comment": 1_000}
 NOTE_CHARS = 300
-MAX_OPEN = 20  # open milestones at once: a roadmap every plan can read
+MAX_OPEN = 20  # the agent's and the owner's open milestones at once: a roadmap every plan can read
 OWNER_SLOTS = 4  # the last open places, kept for the owner: the agent adds milestones while fewer than 16 are open
+PLACED_BY = ("agent", "owner")  # 0.14.0: whose milestones take a place (Ember's code's are bounded by what it keeps)
 MAX_MOVES = 2  # how often a milestone's date can move
 MAX_MILESTONES = 2_000  # in all, closed ones included
 AHEAD_DAYS = 366  # how far ahead a milestone can be dated
@@ -169,6 +174,17 @@ def count(conn: sqlite3.Connection, scope: AgentScope, status: str | None = None
     if status is None:
         return int(conn.execute(f"SELECT COUNT(*) FROM milestones WHERE {where}", params).fetchone()[0])
     row = conn.execute(f"SELECT COUNT(*) FROM milestones WHERE {where} AND status = ?", (*params, status))
+    return int(row.fetchone()[0])
+
+
+def placed(conn: sqlite3.Connection, scope: AgentScope) -> int:
+    """0.14.0: the open milestones that take a place of MAX_OPEN: the agent's and the owner's."""
+    where, params = scope.where()
+    marks = ", ".join("?" for _ in PLACED_BY)
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM milestones WHERE {where} AND status = 'open' AND created_by IN ({marks})",
+        (*params, *PLACED_BY),
+    )
     return int(row.fetchone()[0])
 
 
@@ -388,7 +404,7 @@ def keep_money_goal(
     dropped = conn.execute(
         f"SELECT 1 FROM milestones WHERE {where} AND kind = 'money_goal' AND status = 'dropped' LIMIT 1", params
     ).fetchone()
-    if dropped is not None or count(conn, scope, "open") + 1 + len(DECISION_FRACTIONS) > MAX_OPEN:
+    if dropped is not None:  # 0.14.0: the goal and its decision points take none of the agent's or owner's places
         return happened
     level = _money_level(conn, scope)
     due = today + timedelta(days=MONEY_GOAL_DAYS)
@@ -457,6 +473,13 @@ def owner_word(
     )
     if action != "drop":
         return []
+    # 0.14.0: the first tests under it (a venture's, a product line's bars) go on, leading to no goal: the owner's drop
+    # of the money goal brought them back one by one, and ended a backed venture's test without a word on it
+    conn.execute(
+        "UPDATE milestones SET parent_id = NULL, updated_at = ? WHERE parent_id = ? AND status = 'open'"
+        " AND created_by = 'code' AND kind = 'first_test'",
+        (now, milestone_id),
+    )
     return drop_steps(conn, milestone_id, now, f"Dropped by your owner with #{milestone_id}{why}", "owner")
 
 

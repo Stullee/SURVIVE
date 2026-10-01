@@ -88,7 +88,8 @@ def test_a_backed_ventures_first_test_is_a_milestone_it_meets_before_it_goes_liv
         refused = call(agent, "milestone_update", milestone_id=test, **args)
         assert not refused.ok and error in refused.text, refused.text
     met = call(agent, "milestone_update", milestone_id=test, status="done", result="3 samples sold, receipts #71-#73")
-    assert met.ok, met.text
+    assert not met.ok and "your owner confirms it" in met.text, met.text  # 0.14.0: not on the agent's word
+    assert owner(agent).decide_milestone(test, {"action": "drop", "comment": "Met: 3 sold."}, "Stefan").status == 200
     launched = call(agent, "venture_update", venture_id=DROPSHIPPING, stage="live")
     assert launched.ok, launched.text
     assert venture(agent, DROPSHIPPING)["stage"] == "live"
@@ -237,7 +238,9 @@ def test_the_0_11_tree_and_roadmap_come_through_the_rebuild(tmp_path: Path) -> N
         conn.execute(insert, (3, 1, "agent", "Mine"))
         before = [tuple(r) for r in conn.execute("SELECT * FROM ventures")]
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == list(range(30, 59))
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [
+        m.version for m in discover_migrations() if m.version >= 30
+    ]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         after = [tuple(r)[: len(before[0])] for r in conn.execute("SELECT * FROM ventures")]

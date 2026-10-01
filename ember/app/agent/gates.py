@@ -3,10 +3,12 @@ checks.
 
 A product line (a project) whose first listing is live on Etsy is tested from that day on: 10 views in all by day 7,
 30 views and 2 favorites by day 14, and a first order by day 21. Ember's code sets each bar as a milestone linked to
-the project, so its metric counts only its listings, one bar at a time: the next once the one before is closed (so a
-product line holds at most two open milestones of the roadmap's MAX_OPEN), each due on its day from the start. Etsy's
-own numbers grade them: the listings' views, favorites and orders in all, as the last sync read them (no views history
-is kept for this, and the agent can't set these metrics itself).
+the project, so its metric counts only its listings, one bar at a time: the next once the one before is closed, each
+due on its day from the start. Etsy's own numbers grade them: the listings' views, favorites and orders in all, as the
+last sync read them (no views history is kept for this). 0.14.0: day 14's favorites are a bar once its views are met
+(a miss of the views misses the day-14 bar), so a product line holds one open milestone at a time; these take none of
+the agent's or the owner's places (roadmap.placed). A bar dropped (by the owner, or with a parked venture) ends the
+product line's test: no next bar is set.
 
 A missed bar is an obligation with its action: fix the titles, tags and category once (day 7); park the product line
 with the numbers (day 14: one obligation for its two bars); stop building that product type (day 21). A first order by
@@ -61,7 +63,8 @@ GATES = (
         "views_total",
         30,
         "Day 14: 30 views",
-        "Its listings have 30 views in all by day 14 (Etsy's numbers). Missed: park the product line with the numbers",
+        "Its listings have 30 views in all by day 14 (Etsy's numbers; then 2 favorites, the next bar). Missed: park "
+        "the product line with the numbers",
         PARK,
     ),
     Gate(
@@ -86,7 +89,7 @@ GATES = (
     ),
 )
 BY_KEY = {g.key: g for g in GATES}
-BARS = (("day7_views",), ("day14_views", "day14_favorites"), ("day21_sale",))  # one after the other
+BARS = ("day7_views", "day14_views", "day14_favorites", "day21_sale")  # one after the other (0.14.0: one at a time)
 SCALE_TITLE = "Scale it: 5 variants or a bundle"
 SCALE_MEASURE = (
     "A buyer ordered by day 21: the product line has 5 variants or a bundle live (you close it when they are live)"
@@ -139,9 +142,12 @@ def _record(
     )
 
 
-def _set(conn: sqlite3.Connection, scope: AgentScope, project: Any, gate: Gate, start: date, now: str) -> int:
-    """One bar as a milestone of Ember's code, due on its day from the start."""
-    due = (start + timedelta(days=gate.day)).isoformat()
+def _set(
+    conn: sqlite3.Connection, scope: AgentScope, project: Any, gate: Gate, start: date, today: date, now: str
+) -> int:
+    """One bar as a milestone of Ember's code, due on its day from the start (0.14.0: or today, for a bar that opens
+    after its day because the one before was graded after its date)."""
+    due = max(start + timedelta(days=gate.day), today).isoformat()
     goal = roadmap.money_goal(conn, scope)
     milestone_id = roadmap.create(
         conn,
@@ -164,15 +170,21 @@ def _set(conn: sqlite3.Connection, scope: AgentScope, project: Any, gate: Gate, 
 def _next_bar(
     conn: sqlite3.Connection, scope: AgentScope, project: Any, rows: list[sqlite3.Row], today: date, now: str
 ) -> list[int]:
-    """The next bar of a product line's test, once the one before is closed (the first one at its start)."""
+    """The next bar of a product line's test, once the one before is closed (the first one at its start). 0.14.0: none
+    once a bar was dropped (the test ended), and day 14's favorites only once its views are met."""
     have = {r["gate"]: r for r in rows}
+    if any(r["status"] == "dropped" for r in rows):
+        return []
     start = date.fromisoformat(str(rows[0]["started_on"])) if rows else today
-    for bar in BARS:
-        if all(key in have for key in bar):
-            if any(have[key]["status"] == "open" for key in bar):
+    for key in BARS:
+        if key in have:
+            if have[key]["status"] == "open":
                 return []  # this bar is being checked
             continue
-        return [_set(conn, scope, project, BY_KEY[key], start, now) for key in bar if key not in have]
+        views = have.get("day14_views")
+        if key == "day14_favorites" and views is not None and views["status"] != "done":
+            continue  # the day-14 bar is missed already
+        return [_set(conn, scope, project, BY_KEY[key], start, today, now)]
     return []
 
 

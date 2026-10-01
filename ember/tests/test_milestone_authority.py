@@ -216,13 +216,13 @@ def test_the_last_four_open_places_are_the_owners(data_dir: Path) -> None:
     for n in range(16):
         create(agent, title=f"Step {n}", measure="x", due=day(10))
     assert refused(agent, "milestone_plan", milestones=[dict(title="One more", measure="x", due=day(10))]) == (
-        "16 milestones are open already, and the other 4 of the 20 places are kept for your owner: close or drop one "
-        "first"
+        "16 of your and your owner's milestones are open already, and the other 4 of the 20 places are kept for your "
+        "owner: close or drop one first"
     )
     for n in range(4):
         add(agent, title=f"Owner's {n}", measure="x", due=day(10))
     full = owner(agent).add_milestone({"title": "Fifth", "measure": "x", "due": day(10)}, None)
-    assert full.status == 409 and full.body["error"] == "20 milestones are open already"
+    assert full.status == 409 and full.body["error"] == "20 of your and the agent's milestones are open already"
 
 
 def test_a_0_11_roadmap_comes_through_the_rebuild(tmp_path: Path) -> None:
@@ -253,7 +253,9 @@ def test_a_0_11_roadmap_comes_through_the_rebuild(tmp_path: Path) -> None:
         conn.execute("UPDATE cycles SET status = 'completed', ended_at = 'then' WHERE id = 1")
         before = [tuple(r) for r in conn.execute("SELECT * FROM milestones ORDER BY id")]
     old.close()
-    assert migrate(db_file, backup_dir=tmp_path / "backups") == list(range(21, 59))
+    assert migrate(db_file, backup_dir=tmp_path / "backups") == [
+        m.version for m in discover_migrations() if m.version >= 21
+    ]
     upgraded = Database(db_file)
     with upgraded.transaction() as conn:
         after = [tuple(r)[: len(before[0])] for r in conn.execute("SELECT * FROM milestones ORDER BY id")]

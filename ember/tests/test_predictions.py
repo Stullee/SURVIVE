@@ -110,7 +110,7 @@ def test_a_backed_ventures_first_sale_is_a_prediction_the_critic_and_triage_read
     assert called(agent)[0][2] == "hit" and called(agent)[0][3].startswith(f"revenue for it on {today.isoformat()}")
     with pytest.raises(sqlite3.IntegrityError, match="a prediction never changes"), agent.db.transaction() as conn:
         conn.execute("UPDATE predictions SET probability = 0.9 WHERE status = 'open'")  # PRINT's, still open
-    agent.clock.advance(days=15)
+    agent.clock.advance(days=15 + predictions.FIRST_SALE_GRACE_DAYS)  # 0.14.0: a late record still counts
     settle(agent)
     assert called(agent)[1][2:] == ("miss", f"no sale recorded for it by {(today + timedelta(days=14)).isoformat()}")
     record = "first sales by the business case's month: 1 of 2 on time"

@@ -20,7 +20,8 @@ For a venture already in the stage when a rule came, the rule counts from then (
 
 Ember's code parks reversibly (``parked_by`` 'code'): only the owner takes such a venture up again, and only the owner
 backs or kills one (migration 0030). A venture parked or killed takes its open milestones with it
-(``drop_milestones``): all of them when the owner parked or killed it, else all but the owner's.
+(``drop_milestones``): all of them when the owner parked or killed it, else all but the owner's; 0.14.0: and the bars
+of its projects' listing tests.
 """
 
 from __future__ import annotations
@@ -94,12 +95,13 @@ def drop_milestones(
     conn: sqlite3.Connection, scope: AgentScope, venture_id: int, now: str, result: str, by: str
 ) -> list[int]:
     """A venture parked or killed takes its open milestones with it, and the open steps leading to them: all of them
-    when the owner parked or killed it (``by`` 'owner'), else all but the owner's (which stay theirs to drop). Returns
-    their numbers."""
+    when the owner parked or killed it (``by`` 'owner'), else all but the owner's (which stay theirs to drop). 0.14.0:
+    and the bars Ember's code set for its projects (their listing tests end with it). Returns their numbers."""
     where, params = scope.where()
     linked = conn.execute(
-        f"SELECT * FROM milestones WHERE {where} AND venture_id = ? AND status = 'open' ORDER BY id",
-        (*params, venture_id),
+        f"SELECT * FROM milestones WHERE {where} AND status = 'open' AND (venture_id = ? OR (created_by = 'code'"
+        " AND project_id IN (SELECT id FROM projects WHERE venture_id = ?))) ORDER BY id",
+        (*params, venture_id, venture_id),
     ).fetchall()
     dropped: list[int] = []
     for row in [*linked, *(s for r in linked for s in roadmap.open_steps(conn, r["id"]))]:
