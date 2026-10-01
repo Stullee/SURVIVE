@@ -96,8 +96,28 @@ def _store(db: Database, scope: Scope, mailbox: Mailbox, fetched: FetchResult, n
             own = mail.from_addr.lower() == mailbox.address.lower()  # Ember's own address is never suppressed
             # A newsletter's "unsubscribe" is about Ember leaving it (0.12.0).
             words = opt_out(mail.subject, mail.body) if mail.from_addr and not own and not mail.bulk else None
-            if words is not None and suppress(conn, scope, mail.from_addr, now, f'replied "{words}"', email_id):
+            if words is None:
+                continue
+            # 0.14.0: "replied" only to an email Ember sent (live: a provider's own mail was said to reply)
+            how = "replied" if _answers_ours(conn, scope, mail) else "wrote"
+            if suppress(conn, scope, mail.from_addr, now, f'{how} "{words}"', email_id):
                 result.suppressed.append(mail.from_addr)
+
+
+def _answers_ours(conn: sqlite3.Connection, scope: Scope, mail: IncomingMail) -> bool:
+    """Whether the email answers one Ember sent (its In-Reply-To or References name it)."""
+    ids = [i for i in {mail.in_reply_to, *(mail.references or "").split()[-50:]} if i]
+    if not ids:
+        return False
+    where, params = scope.where()
+    marks = ", ".join("?" * len(ids))
+    return (
+        conn.execute(
+            f"SELECT 1 FROM emails WHERE {where} AND direction = 'out' AND message_id IN ({marks}) LIMIT 1",
+            (*params, *ids),
+        ).fetchone()
+        is not None
+    )
 
 
 def _int(value: str | None) -> int:

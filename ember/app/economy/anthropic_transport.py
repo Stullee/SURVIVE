@@ -5,9 +5,10 @@ cost; this module only sends it and reports what happened, as one of the four
 outcomes the guard understands:
 
 * ``NotSent``: nothing left this process (no connection, a refused host).
-* ``Rejected``: the API refused before generating anything (4xx, 429, 529).
-* ``Interrupted``: the request was sent but the answer broke off, or the server
-  failed (5xx). The cost is unknown, so the guard books the worst case.
+* ``Rejected``: the API refused before generating anything (4xx, 429, 5xx
+  before the stream opened).
+* ``Interrupted``: the request was sent but the answer broke off, or another
+  server error. The cost is unknown, so the guard books the worst case.
 * ``Completed``: a whole message with its usage.
 
 Rules: the SDK never retries (``max_retries=0``), so one call is one request;
@@ -42,9 +43,10 @@ FILE_SECONDS = 120.0  # one Files API request (the workshop's inputs and outputs
 UPLOAD_EXPIRY_SECONDS = 3_600  # the workshop's inputs are gone within the hour, even if deleting them fails
 _COUNT_FIELDS = ("model", "messages", "system", "tools", "tool_choice", "thinking", "output_config", "cache_control")
 _SERVER_TOOL_PREFIXES = ("web_search_", "web_fetch_", "code_execution_")
-# Refusals before anything is generated. Other 5xx count as "cost unknown": nothing
-# official says a failed server-side request is never billed.
-_REJECTED_STATUSES = frozenset({400, 401, 402, 403, 404, 409, 413, 422, 429, 529})
+# Refusals before anything is generated. 0.14.0: a server error before the stream opened is one too, as 529 is (live:
+# a 503 was booked at the worst case, $0.15, and warned the owner for good). After the stream opened, the cost is
+# unknown: the guard books the worst case.
+_REJECTED_STATUSES = frozenset({400, 401, 402, 403, 404, 409, 413, 422, 429, 500, 502, 503, 504, 529})
 
 
 class _Stopped(Exception):

@@ -345,7 +345,8 @@ class CycleRunner:
         if not closed and final != end.status:
             end.status = final  # the guard already stopped it (an overrun)
         spent, _ = self.economy.books.cycle_spend(cycle_id)
-        tail = f"; next sleep {end.sleep_minutes} min" if end.sleep_minutes else ""
+        # 0.14.0: the sleep it chose (the scheduler may cut it: the dashboard's next wake says)
+        tail = f"; chose {end.sleep_minutes} min of sleep" if end.sleep_minutes else ""
         level = "info" if final in ("completed", "idle") else "warning"
         events.record(
             self.db,

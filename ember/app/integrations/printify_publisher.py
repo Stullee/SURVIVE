@@ -330,8 +330,16 @@ def execution(
 def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
     """The plan's PRINTIFY: Ember's newest products with their prices, costs and numbers, and the orders."""
     made = products(conn, scope, limit)
-    if not made:
-        return "No product of yours yet: your first one waits for your owner's decision."
+    if not made:  # 0.14.0: it said one waited for the owner's decision when none was proposed
+        clause, params = scope.where()
+        waiting = conn.execute(
+            f"SELECT COUNT(*) FROM approvals WHERE {clause} AND executor = 'printify_product' AND status = 'pending'",
+            params,
+        ).fetchone()[0]
+        if not waiting:
+            return "No product of yours yet, and none proposed yet."
+        wait = "proposals wait" if waiting != 1 else "proposal waits"
+        return f"No product of yours yet: {waiting} {wait} for your owner's decision."
     lines = []
     for r in made:
         where = f"Etsy #{r['listing_id']}" if r["listing_id"] else "no Etsy listing yet"

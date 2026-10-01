@@ -518,7 +518,7 @@ def test_a_stop_reply_suppresses_its_sender_but_never_ember_itself(db_agent: Age
     fetched = mailstore.fetch(db_agent.db, db_agent.clock, scope, Box(scope.session))
     assert fetched.suppressed == ["ann@example.org"] and len(fetched.stored) == 3
     assert rows(db_agent, "SELECT address, reason FROM email_suppressions") == [
-        {"address": "ann@example.org", "reason": 'replied "UNSUBSCRIBE!"'}
+        {"address": "ann@example.org", "reason": 'wrote "UNSUBSCRIBE!"'}  # 0.14.0: not an answer to Ember's
     ]
     again = mailstore.fetch(db_agent.db, db_agent.clock, scope, Box(scope.session))
     assert again.stored == []  # the same UIDs are stored once
