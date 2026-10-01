@@ -98,6 +98,10 @@ class Scheduler:
                         await asyncio.to_thread(self.agent.sync_shop)  # at most hourly, also while the agent sleeps
                     except Exception:  # noqa: BLE001 - the shop must not stop the wake cycles
                         log.exception("Checking the Etsy shop failed")
+                    try:  # 0.16.0: the live view on the owner's website, every 15 minutes (also while it sleeps)
+                        await asyncio.to_thread(self.agent.publish_live)
+                    except Exception:  # noqa: BLE001 - the website must not stop the wake cycles
+                        log.exception("Uploading the live view failed")
                     try:  # 0.13.0: the agenda: what happened since the last look (an urgent event wakes the agent)
                         await asyncio.to_thread(self.agent.check_events)
                     except Exception:  # noqa: BLE001 - the agenda must not stop the wake cycles

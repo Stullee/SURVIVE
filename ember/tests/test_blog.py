@@ -833,7 +833,7 @@ def test_the_owner_s_card_preview_and_check(blog_client: TestClient) -> None:
 def test_nothing_while_the_blog_is_off(ingress_client: TestClient, data_dir: Path) -> None:
     assert ingress_client.get("api/dashboard").json()["integrations"]["blog"] == {"status": "disabled"}
     off = ingress_client.post("api/blog/check", headers=CSRF)
-    assert off.status_code == 422 and "the blog is off" in off.json()["error"]
+    assert off.status_code == 422 and "the blog and the live view are off" in off.json()["error"]
     fake = FakeTransport()
     run(data_dir, fake, cycles=1)
     assert "== BLOG ==" not in texts(next(r for r in fake.sent if request_kind(r) == "plan"))

@@ -1582,7 +1582,7 @@ code builds the site from them in one fixed design:
   the site's language. The Impressum says the texts were written with the help
   of an AI and checked before publishing: read them before you publish.
 
-Ember never publishes the site: you do. **System → Website** on the dashboard
+Ember never publishes the site: you do. **System → Website → Pages to download** on the dashboard
 shows its pages and what changed since you last downloaded it. **Preview**
 opens it in a tab of its own (where it runs nothing); **Download (zip)** gives
 you every file. Upload them to your host: any host of static files works, for
@@ -1652,9 +1652,10 @@ never overwritten by an Undo).
 
 Without a connection (your host is down, the password is wrong) an approved
 request waits: Ember's code tries again every 30 minutes and gives up after 24
-hours (the request then fails; nothing was uploaded). **System → Blog** shows
-the state, the server and its key, the posts on your site and **Check the
-connection**, which logs in and reads the blog's list. In a dry run the server
+hours (the request then fails; nothing was uploaded). **System → Website**
+shows the server and its key with **Check the connection** (it logs in and reads
+the blog's list) under **Connection**, and the blog's state and the posts on your
+site under **Blog**. In a dry run the server
 is a fake one inside the app: nothing reaches your website.
 
 ### Setting it up
@@ -1676,9 +1677,74 @@ is a fake one inside the app: nothing reaches your website.
 4. Optionally pin the server's key: copy its fingerprint (`SHA256:...`) from
    your host's help pages or from an SFTP program's first connection into **SFTP
    server key**. Left empty, the first connection keeps the key it sees: compare
-   it on **System → Blog** with your host's.
+   it on **System → Website → Connection** with your host's.
 5. Save, restart the app, and press **Check the connection** on **System →
-   Blog**.
+   Website**.
+
+## Ember live on your website
+
+With **Ember live** on, people can follow Ember on your website: a page
+(`live.html`) and a banner for your home page (`live/banner.svg`) that link to
+each other. Ember's code makes them from its own numbers and uploads them over
+the blog's SFTP login (above; **Blog** itself can stay off) every 15 minutes
+while the app runs, and at once when Ember's life state changes or you changed
+what is shown. It doesn't ask you each time: you decide once, with the options,
+what the page may show.
+
+What the page shows, each part switched off by its option:
+
+| Option | Shows |
+|---|---|
+| **Live: banner** (`live_banner`) | The banner: state, balance and runway, today's spending, the time. |
+| **Live: balance and spending** (`live_show_money`) | Balance, runway, today's API spending against the daily cap, all API costs and other expenses. |
+| **Live: revenue** (`live_show_revenue`) | Revenue in all and in the last 30 days, the share of the costs it covers (the chart marks days with revenue). |
+| **Live: your money** (`live_show_grants`) | What you gave Ember. Off: the balance is shown without saying where the money came from. |
+| **Live: balance chart** (`live_show_chart`) | The balance of the last 30 days (`live/balance.svg`). |
+| **Live: what Ember works on** (`live_show_work`) | How often it woke up, its ventures by stage, its next milestones. |
+| **Live: shop and blog** (`live_show_shop`) | Its live Etsy listings with views and favorites, the newest blog posts. |
+| **Live: track record** (`live_show_record`) | How often its forecasts came true (milestones met against the odds it gave, the Brier score). |
+| **Live: memorial** (`live_show_memorial`) | If it dies: its life in numbers and its last will. |
+
+What it never shows: emails, senders, orders, customers, inquiries, the
+agent's journal, plans or prompts. The ventures' and milestones' titles and the
+last will are the agent's words: Ember's code checks each with the same masking
+as the shareable diagnostics report and leaves out a text in which it finds an
+address, a code, a link's token, a sender's name or a word you removed. Etsy's
+listings are shown only for 6 hours after Ember's code read them, as Etsy's API
+terms allow; the page footer carries Etsy's trademark notice. Every file is
+checked again before it goes up (no script, nothing from elsewhere), and only
+`live.html`, `live/banner.svg` and `live/balance.svg` are ever written.
+
+The page has your site's head, header and footer, refreshes itself every 5
+minutes in an open tab and says when it was made: if that time is more than an
+hour old, Ember is offline. Switching **Ember live** off replaces the page and
+the banner with ones saying the live view is off. In a dry run the files go to
+the fake server and say "Probelauf".
+
+### Setting it up
+
+1. Set up the website options and the SFTP login as for the blog (above).
+2. Switch **Ember live** on, choose the parts, save and restart the app.
+3. Put the banner on your home page once. **System → Website → Live view**
+   shows the HTML with a **Copy** button:
+
+   ```html
+   <a class="live-banner" href="/live.html"><img src="/live/banner.svg" width="480" height="124" alt="Ember live: Zustand, Guthaben und Reichweite, alle 15 Minuten neu"></a>
+   ```
+
+   On ember-ai.de it fits in the hero, under the facts (`hero-facts`). Add its
+   style to your `style.css`:
+
+   ```css
+   .live-banner { display: block; width: 100%; max-width: 30rem; margin-top: 2.25rem; border-radius: var(--radius); }
+   .live-banner img { display: block; width: 100%; height: auto; border-radius: var(--radius); }
+   .live-banner:hover img { outline: 1px solid var(--flame); outline-offset: 2px; }
+   ```
+
+   A link in the menu (`<a href="live.html">Live</a>`) helps people find it.
+   The banner is drawn for the hero's dark background.
+4. **Preview the page** and **Preview the banner** on **System → Website → Live
+   view** show what goes up next.
 
 ## Reddit
 
@@ -1715,7 +1781,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.15.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.16.0 (by /u/your name)`.
 
 ## Diagnostics
 

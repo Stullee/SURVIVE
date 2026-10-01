@@ -38,6 +38,7 @@ from ..integrations import (
     etsy,
     etsy_publisher,
     etsy_revenue,
+    live_view,
     mailstore,
     pinterest,
     pinterest_publisher,
@@ -185,6 +186,9 @@ class Agent:
         # 0.14.0: the blog on the owner's website: the pages they approved, uploaded over SFTP by Ember's code (a fake
         # server in dry run).
         self.blog = site_publisher.Publisher(db, self.clock, self.settings, self.scope, self.mode)
+        # 0.16.0: Ember live on the owner's website: its numbers, uploaded over the blog's login (the same fake server
+        # in dry run).
+        self.live = live_view.LiveView(self)
         self._shop_failed_at: datetime | None = None  # the last check of the shop that failed (sync_shop)
         self._mail_checked_at: datetime | None = None  # 0.13.0: the last read of the mailbox between cycles
 
@@ -965,6 +969,18 @@ class Agent:
         with netguard.sealed() if self.mode == "dry_run" else contextlib.nullcontext():
             return self.blog.run()
 
+    def publish_live(self) -> str | None:
+        """0.16.0: upload the live view to the owner's website when it is due (every live.UPLOAD_MINUTES, at once when
+        the life state changed). Also while the agent is paused, waits for money or is dead: it costs no API money."""
+        if not self.cycles_enabled or not self.economy.health.lock_held:
+            return None
+        with netguard.sealed() if self.mode == "dry_run" else contextlib.nullcontext():
+            return self.live.run()
+
+    def live_files(self) -> dict[str, bytes]:
+        """0.16.0: the live view's files as they would go up now, for the owner's preview."""
+        return self.live.files()
+
     def sync_shop(self) -> None:
         """Read the Etsy shop's listings and orders (at most hourly) and its categories (daily) while Ember runs, not
         only when the agent wakes: Etsy's API terms allow showing listings for 6 hours after they were read, its
@@ -1038,17 +1054,20 @@ class Agent:
             "printify": self.printify.describe(scope),  # 0.13.0 (Phase E4)
             "site": home,
             "blog": self._blog_card(scope, posts),  # 0.14.0
+            "live": self.live.describe(),  # 0.16.0
         }
 
     def _blog_card(self, scope: AgentScope, posts: list[Any]) -> dict[str, Any]:
-        """0.14.0: the dashboard's Blog card (never the password: only whether it is set)."""
-        if not self.settings.blog_enabled:
+        """0.14.0: the dashboard's Blog card (never the password: only whether it is set). 0.16.0: the server's facts
+        also while only the live view uses the login (``enabled`` says whether the blog itself is on)."""
+        if not self.settings.blog_enabled and not self.settings.live_enabled:
             return {"status": "disabled"}
-        problems = site_publisher.problems(self.settings, self.mode)
+        problems = site_publisher.problems(self.settings, self.mode) if self.settings.blog_enabled else []
         owner = site_publisher.owner_of(self.settings)
         page = site_publisher.links(self.db, self.mode)
         return {
             "status": "not_ready" if problems else "ok",
+            "enabled": self.settings.blog_enabled,
             "reason": "; ".join(problems) or None,
             "simulated": self.mode == "dry_run",
             "url": owner.url or None,
@@ -1077,8 +1096,8 @@ class Agent:
     def blog_check(self) -> dict[str, Any]:
         """0.14.0: the owner's "Check the connection" (logs in, pins the server's key the first time, reads the blog's
         list). Raises sftp.SftpError or blog.BlogError with what is wrong."""
-        if not self.settings.blog_enabled:
-            raise sftp.NotSent("the blog is off: switch it on in the app's options (blog_enabled)")
+        if not self.settings.blog_enabled and not self.settings.live_enabled:
+            raise sftp.NotSent("the blog and the live view are off: switch one on in the app's options")
         with netguard.sealed() if self.mode == "dry_run" else contextlib.nullcontext():
             return self.blog.check()
 

@@ -29,7 +29,7 @@ from .integrations.pinterest import PinterestError
 from .integrations.sftp import SftpError
 from .logging_setup import printable
 from .paths import WEB_DIR
-from .products import blog, site
+from .products import blog, live, site
 from .products.blog import BlogError
 from .products.site import SiteError
 from .security import USER_ID_HEADER, ingress_base_href
@@ -887,6 +887,40 @@ def blog_preview(request: Request, approval_id: ItemId) -> Response:
             "cache-control": "no-store",
         },
     )
+
+
+# 0.16.0: Ember live on the owner's website: its files as they would go up now. The page loads the site's stylesheet,
+# font and pictures from the site, and its chart from here; nothing runs.
+_LIVE_NAMES = {"live.html": live.PAGE, "banner.svg": live.BANNER, "balance.svg": live.CHART}
+
+
+@router.get("/api/live/preview/{name}")
+def live_preview(request: Request, name: Annotated[str, Path(max_length=20)]) -> Response:
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    path = _LIVE_NAMES.get(name)
+    if path is None:
+        return PlainTextResponse("There is no such file.", status_code=404)
+    data = agent.live_files().get(path)
+    if data is None:
+        return PlainTextResponse("This file isn't shown (see the live options).", status_code=404)
+    headers = {"x-content-type-options": "nosniff", "cache-control": "no-store"}
+    if path.endswith(".svg"):
+        headers["content-security-policy"] = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+        return Response(data, media_type="image/svg+xml", headers=headers)
+    data = data.replace(f'src="/{live.CHART}"'.encode(), b'src="balance.svg"')
+    policy = "default-src 'none'; img-src 'self'"
+    site_url = urlsplit(agent.settings.site_url.strip())
+    if site_url.scheme == "https" and site_url.hostname and not site_url.username:  # the site's look, from the site
+        origin = f"https://{site_url.netloc}"
+        data = blog.preview(data, origin)
+        policy = f"default-src 'none'; style-src {origin}; font-src {origin}; img-src {origin} 'self'"
+    data = re.sub(rb'<meta http-equiv="(?:Content-Security-Policy|refresh)"[^>]*>\n', b"", data)
+    headers["content-security-policy"] = (
+        f"sandbox allow-same-origin; {policy}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
+    return Response(data, media_type="text/html; charset=utf-8", headers=headers)
 
 
 @router.post("/api/blog/check")

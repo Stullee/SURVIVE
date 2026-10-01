@@ -32,6 +32,7 @@ PROJECT_URL = "https://github.com/Stullee/SURVIVE"  # the footer's GitHub link: 
 SLUG_MAX = 60
 SLUG = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,58}[a-z0-9])?$")
 RESERVED = frozenset({"index"})  # blog/index.html is the list of posts
+LIVE_FILES = ("live.html", "live/banner.svg", "live/balance.svg")  # 0.16.0: Ember live (products/live.py)
 TITLE_MAX = 100
 DESCRIPTION_MAX = 170
 LEAD_MAX = 600
@@ -74,7 +75,7 @@ _ALLOWED_TAGS = frozenset(
     {
         "html", "head", "meta", "title", "link", "body", "a", "header", "nav", "main", "article", "section",
         "aside", "footer", "div", "p", "span", "h1", "h2", "h3", "ul", "ol", "li", "strong", "em", "br", "time",
-        "img", "small", "blockquote", "table", "thead", "tbody", "tr", "th", "td",
+        "img", "small", "blockquote", "table", "thead", "tbody", "tr", "th", "td", "dl", "dt", "dd",
     }
 )  # fmt: skip
 _URL_ATTRS = ("href", "src")

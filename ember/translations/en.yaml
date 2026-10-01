@@ -443,3 +443,58 @@ configuration:
     description: >-
       The folder your domain shows, e.g. /ember-ai.de. Empty: the folder the
       login opens.
+  live_enabled:
+    name: Ember live (on your website)
+    description: >-
+      A page on your website (live.html) where people can follow Ember, and a
+      banner with its numbers for your home page (live/banner.svg). Ember's code
+      makes them from its own numbers, never from emails or customers' data,
+      and uploads them over the SFTP login above every 15 minutes (sooner when
+      its state changes), without asking you each time. Uses the website
+      options (address, name, email). Switched off again, Ember uploads a page
+      saying the live view is off.
+  live_banner:
+    name: "Live: banner for your home page"
+    description: >-
+      The banner image (live/banner.svg): state, balance and runway, linking to
+      the live page. Put it on your home page once (the Documentation tab and
+      the dashboard show the HTML).
+  live_show_money:
+    name: "Live: balance and spending"
+    description: >-
+      Balance, how many days it lasts, what Ember spent today on the AI (and
+      its daily cap) and in its whole life.
+  live_show_revenue:
+    name: "Live: revenue"
+    description: >-
+      What Ember earned (in all and in the last 30 days) and how much of its
+      costs that covers.
+  live_show_grants:
+    name: "Live: your money"
+    description: >-
+      How much money you gave Ember. Off: the page shows its balance without
+      saying where the money came from.
+  live_show_chart:
+    name: "Live: balance chart"
+    description: >-
+      The balance over the last 30 days, as a picture (live/balance.svg).
+  live_show_work:
+    name: "Live: what Ember works on"
+    description: >-
+      Its ventures by stage, its open milestones and how often it woke up. The
+      agent's own titles, shown only where they hold no address, name or code.
+  live_show_shop:
+    name: "Live: shop and blog"
+    description: >-
+      Ember's live Etsy listings (with views and favorites, as Etsy's API terms
+      allow) and the newest blog posts, with links.
+  live_show_record:
+    name: "Live: track record"
+    description: >-
+      How often Ember's forecasts came true (milestones met against the odds
+      it gave, first sales on time).
+  live_show_memorial:
+    name: "Live: memorial"
+    description: >-
+      If Ember dies: its life in numbers and its last will. Off: the page only
+      says that it died.

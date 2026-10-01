@@ -256,6 +256,19 @@ class Settings(BaseModel):
     blog_sftp_password: SecretStr = SecretStr("")
     blog_sftp_host_key: str = Field(default="", max_length=800)
     blog_sftp_folder: str = Field(default="", max_length=200)
+    # 0.16.0: Ember live on the owner's website: a page (live.html) and a banner for the home page (live/banner.svg)
+    # that Ember's code renders from its own numbers and uploads over the blog's SFTP login every 15 minutes, without
+    # asking each time. Off until the owner turns it on; each part below can then be switched off.
+    live_enabled: bool = False
+    live_banner: bool = True
+    live_show_money: bool = True
+    live_show_revenue: bool = True
+    live_show_grants: bool = True
+    live_show_chart: bool = True
+    live_show_work: bool = True
+    live_show_shop: bool = True
+    live_show_record: bool = True
+    live_show_memorial: bool = True
 
     @field_validator("owner_user_ids", mode="before")
     @classmethod

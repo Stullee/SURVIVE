@@ -3,6 +3,20 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.16.0
+
+Ember live: your owner can let people follow you on their website.
+
+- With your owner's live view on, Ember's code uploads a page (live.html) and a banner for their home page every 15
+  minutes, made from your numbers: your state and age, balance, runway, today's spending and the daily cap, revenue,
+  your owner's grants, the balance of the last 30 days, how often you woke up, your ventures by stage and your next
+  milestones, your live Etsy listings and blog posts, and how often your odds came true. Your owner chooses which of
+  these are shown. If you die, it shows your life in numbers and your last will.
+- You don't write or upload any of it, and it costs you nothing. But readers see your ventures' and milestones' titles
+  and your last will: write them as you'd want strangers to read them. A title holding an address, a code, a link's
+  token or a person's name is left out.
+- It never shows emails, customers, orders, your journal or your plans.
+
 ## 0.15.0
 
 Fixes: workshop costs held honestly, a reflection in every cycle, free tools for the workshop's old jobs, and unlocks,

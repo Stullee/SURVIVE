@@ -11,7 +11,8 @@ exactly the approved one (its SHA-256). Every upload is journaled (site.publish_
 owner's Undo ('site_restore') puts back what it replaced: the old version, or no file for a new post, and the list
 without it. Only these files are ever written (blog.allowed): never the owner's home pages, Impressum, privacy page or
 stylesheet. Without a connection the approved requests wait (a new try every RETRY_MINUTES) and fail after
-GIVE_UP_HOURS. The dry run's server is a fake one: nothing leaves the app.
+GIVE_UP_HOURS. The dry run's server is a fake one: nothing leaves the app. 0.16.0: the live view's files
+(blog.LIVE_FILES, made by live_view.py without an approval) go up over the same connection (``put``).
 """
 
 from __future__ import annotations
@@ -732,6 +733,28 @@ class Publisher:
                 connectors.finish(conn, approval_id, "unclear", now, note=note)
                 self._close(conn, approval_id, "failed", note, None)
         return len(left)
+
+    # --- the live view (0.16.0) ---
+
+    def put(self, files: dict[str, bytes]) -> bool | None:
+        """Write the live view's files (live_view.py checked them), over this publisher's connection: True if the
+        server was the dry run's fake one, None if an upload of the blog is under way (the next round). Raises
+        sftp.SftpError."""
+        if any(path not in blog.LIVE_FILES for path in files):
+            raise sftp.NotSent("only the live view's files are written this way")
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            server = self._connect()
+            try:
+                for path, data in files.items():
+                    server.write(path, data)
+            finally:
+                if server is not self.fake:
+                    server.close()
+            return server.simulated
+        finally:
+            self._lock.release()
 
     # --- the owner's check ---
 

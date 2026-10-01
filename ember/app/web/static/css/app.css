@@ -317,6 +317,9 @@ main:focus { outline: none; }
 .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .small-head { font-size: 0.8rem; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.04em; margin: 8px 0 4px; }
 
+.web-part:not([hidden]) ~ .web-part { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--ring); }
+.web-head { font-size: 1rem; margin-bottom: 4px; }
+.snippet { white-space: pre-wrap; word-break: break-all; font-size: 0.8rem; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); margin: 6px 0; }
 .facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 8px 0; }
 .facts dt { color: var(--text-2); }
 .facts dd { margin: 0; min-width: 0; }

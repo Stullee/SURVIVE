@@ -1,14 +1,14 @@
 """SFTP to the owner's web host (0.14.0): the only way Ember's code writes to their website.
 
 Only Ember's code connects, never the agent (its tools have no network): the publisher (site_publisher.py) uploads
-exactly the pages the owner approved. The login is the owner's (their options: blog_sftp_*); the password is never
-logged or shown. The server must show the key the owner pinned (blog_sftp_host_key) or, without one, the key Ember's
-code saw at its first connection (trust on first use, kept per host): a server with another key gets nothing, so
-the login and the pages can only ever reach the owner's server.
+exactly the pages the owner approved, and (0.16.0) the live view's files (live_view.py). The login is the owner's
+(their options: blog_sftp_*); the password is never logged or shown. The server must show the key the owner pinned
+(blog_sftp_host_key) or, without one, the key Ember's code saw at its first connection (trust on first use, kept per
+host): a server with another key gets nothing, so the login and the pages can only ever reach the owner's server.
 
 ``Server`` is what the publisher uses: read a file, write one (to a temporary name first, then renamed over the old
 one, and read back), remove one. Every path is checked against blog.allowed (a post, the blog's list, the link page)
-before anything is sent. ``FakeServer`` stands in for it in a dry run: nothing leaves the app.
+or blog.LIVE_FILES before anything is sent. ``FakeServer`` stands in for it in a dry run: nothing leaves the app.
 """
 
 from __future__ import annotations
@@ -113,8 +113,10 @@ class Server(Protocol):
 
 
 def _checked(path: str) -> str:
-    if not blog.allowed(path):
-        raise NotSent(f"{path} isn't a file Ember's code may write (a post, the blog's list or the link page)")
+    if not blog.allowed(path) and path not in blog.LIVE_FILES:
+        raise NotSent(
+            f"{path} isn't a file Ember's code may write (a post, the blog's list, the link page or the live view)"
+        )
     return path
 
 

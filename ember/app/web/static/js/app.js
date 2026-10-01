@@ -593,7 +593,9 @@
     section("pinterest", [d.integrations, d.mode, minute], ["pinterest-facts", "pinterest-pins"], function () { renderPinterest(d); });
     section("printify", [d.integrations, d.mode, minute], ["printify-facts", "printify-products", "printify-orders"], function () { renderPrintify(d); });
     section("site", [d.integrations, d.mode, minute], ["site-facts", "site-actions", "site-pages"], function () { renderSite(d); });
-    section("blog", [d.integrations, d.mode, minute], ["blog-facts", "blog-posts"], function () { renderBlog(d); });
+    section("blog", [d.integrations, d.mode, minute], ["blog-server", "blog-facts", "blog-posts"], function () { renderBlog(d); });
+    section("live", [d.integrations, d.mode, minute], ["live-facts", "live-actions"], function () { renderLive(d); });
+    safely("website", renderWebsiteCard);
     section("transitions", [d.transitions], ["transitions"], function () { renderTransitions(arr(d.transitions)); });
     section("events", [d.events], ["events"], function () { renderEvents(arr(d.events)); });
     section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d, agent); });
@@ -4061,7 +4063,7 @@
   function renderSite(d) {
     var s = isObject(d.integrations) && isObject(d.integrations.site) ? d.integrations.site : null;
     var shown = !!s && s.status !== "disabled";  // off (the default), or an older server: no card
-    $("site-card").hidden = !shown;
+    $("site-part").hidden = !shown;
     if (!shown) { replace($("site-facts"), []); replace($("site-actions"), []); replace($("site-pages"), []); return; }
     var ready = s.status === "ok";
     var changed = arr(s.changed).map(asText);
@@ -4130,25 +4132,36 @@
     return [h("div", { class: "form-actions" }, c.button), c.status];
   }
 
+  // 0.16.0: the Website card: the SFTP connection (the blog's and the live view's), the live view, the blog and the
+  // pages to download, each part shown while it is on.
+  function renderWebsiteCard() {
+    $("website-card").hidden = ["server-part", "live-part", "blog-part", "site-part"].every(function (id) { return $(id).hidden; });
+  }
+
   function renderBlog(d) {
     var b = isObject(d.integrations) && isObject(d.integrations.blog) ? d.integrations.blog : null;
-    var shown = !!b && b.status !== "disabled";  // off (the default), or an older server: no card
-    $("blog-card").hidden = !shown;
-    if (!shown) { replace($("blog-facts"), []); replace($("blog-actions"), []); replace($("blog-posts"), []); return; }
+    var shown = !!b && b.status !== "disabled";  // the blog and the live view off (the default), or an older server
+    var blogOn = shown && b.enabled !== false;  // 0.16.0: the connection also serves the live view alone
+    $("server-part").hidden = !shown;
+    $("blog-part").hidden = !blogOn;
+    if (!shown) { replace($("blog-server"), []); replace($("blog-facts"), []); replace($("blog-actions"), []); replace($("blog-posts"), []); return; }
     var posts = arr(b.posts);
     var server = b.host ? asText(b.user || "?") + " at " + asText(b.host) + ":" + asText(b.port) + (b.folder ? ", folder " + asText(b.folder) : "") : "Not set (blog_sftp_host)";
     var page = isObject(b.links_page) ? b.links_page : null;
-    replace($("blog-facts"), [
-      h("dt", { text: "Status" }), h("dd", null, chip(BLOG_STATUS, b.status, sentence(String(b.status || "unknown").replace(/_/g, " ")))),
-      b.status !== "ok" && b.reason ? [h("dt", { text: "Why" }), h("dd", { class: "pre-line", text: sentence(String(b.reason)) + "." })] : null,
+    replace($("blog-server"), [
       h("dt", { text: "Website" }), h("dd", null, b.url ? siteLink(b.url, asText(b.url)) : h("span", { text: "Not set (site_url)" })),
       h("dt", { text: "Server" }), h("dd", { text: b.simulated ? "Dry run: a fake server, nothing leaves the app" : server }),
       b.simulated ? null : [h("dt", { text: "Password" }), h("dd", { text: b.password_set ? "Set (never shown)" : "Not set (blog_sftp_password)" })],
       h("dt", { text: "Server key" }), h("dd", { class: "mono", text: b.host_key ? asText(b.host_key) + (b.simulated ? "" : b.host_key_pinned_by_owner ? " (yours, from the options)" : " (kept since the first connection)") : "Not pinned yet: the first connection keeps the key it sees" }),
       b.last_error ? [h("dt", { text: "Last connection" }), h("dd", { class: "pre-line", text: "Failed: " + endSentence(String(b.last_error)) })] : null,
-      h("dt", { text: "Link page" }), h("dd", { text: page ? "Uploaded by " + agentName() + " on " + asText(page.day) + " (request #" + asText(page.approval_id) + ")" : "Yours: " + agentName() + " hasn't changed it" }),
     ]);
     replace($("blog-actions"), blogCheckArea());
+    if (!blogOn) { replace($("blog-facts"), []); replace($("blog-posts"), []); return; }
+    replace($("blog-facts"), [
+      h("dt", { text: "Status" }), h("dd", null, chip(BLOG_STATUS, b.status, sentence(String(b.status || "unknown").replace(/_/g, " ")))),
+      b.status !== "ok" && b.reason ? [h("dt", { text: "Why" }), h("dd", { class: "pre-line", text: sentence(String(b.reason)) + "." })] : null,
+      h("dt", { text: "Link page" }), h("dd", { text: page ? "Uploaded by " + agentName() + " on " + asText(page.day) + " (request #" + asText(page.approval_id) + ")" : "Yours: " + agentName() + " hasn't changed it" }),
+    ]);
     replace($("blog-posts"), posts.length ? h("div", { class: "table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, ["Post", "Date", "Published by"].map(function (c) { return h("th", { scope: "col", text: c }); }))),
       h("tbody", null, posts.map(function (q) {
@@ -4157,6 +4170,60 @@
           h("td", { text: asText(q.day) }),
           h("td", { text: q.approval_id ? agentName() + " (#" + asText(q.approval_id) + ")" : "You" }));
       })))) : h("p", { class: "muted", text: "None known yet: " + agentName() + "'s code reads the blog's list at the first upload, or when you check the connection." }));
+  }
+
+  // 0.16.0: the live view on the owner's website: what it shows, when it went up, the preview and the banner's HTML.
+  var LIVE_STATUS = {
+    ok: { icon: "✓", label: "On", tone: "good" },
+    not_ready: { icon: "○", label: "Not ready", tone: "warning" },
+    off: { icon: "–", label: "Off", tone: "" },
+  };
+  var LIVE_PARTS = [
+    ["banner", "banner"], ["money", "balance and spending"], ["revenue", "revenue"], ["grants", "your money"],
+    ["chart", "chart"], ["work", "work"], ["shop", "shop and blog"], ["record", "track record"], ["memorial", "memorial"],
+  ];
+
+  function liveSnippetArea(text) {
+    var c = ui.liveSnippet;
+    if (!c) {
+      c = ui.liveSnippet = {};
+      c.code = h("pre", { class: "snippet mono", tabindex: "0" });
+      c.status = h("p", { class: "form-status small", role: "status" });
+      c.button = h("button", { type: "button", class: "btn btn-small", text: "Copy the HTML" });
+      c.button.addEventListener("click", function () {
+        copyText(c.code.textContent, c.code, function () { c.status.textContent = "Copied. Paste it into your home page once."; }, function (selected) {
+          c.status.textContent = selected ? "The browser didn't allow copying. The HTML is selected: press Ctrl+C (Cmd+C on a Mac)." : "The browser didn't allow copying: select the HTML and copy it.";
+        });
+      });
+    }
+    if (c.code.textContent !== text) c.code.textContent = text;
+    return [h("h4", { class: "small-head", text: "The banner on your home page" }),
+      h("p", { class: "muted small", text: "Put this once into your home page (in the hero, under the facts) and add the banner's style to your stylesheet (see the Documentation tab). It links to the live page; the picture changes by itself." }),
+      c.code, h("div", { class: "form-actions" }, c.button), c.status];
+  }
+
+  function renderLive(d) {
+    var l = isObject(d.integrations) && isObject(d.integrations.live) ? d.integrations.live : null;
+    var shown = !!l && l.status !== "disabled";
+    $("live-part").hidden = !shown;
+    if (!shown) { replace($("live-facts"), []); replace($("live-actions"), []); return; }
+    var parts = isObject(l.parts) ? l.parts : {};
+    var on = LIVE_PARTS.filter(function (p) { return parts[p[0]]; }).map(function (p) { return p[1]; });
+    var off = LIVE_PARTS.filter(function (p) { return !parts[p[0]]; }).map(function (p) { return p[1]; });
+    replace($("live-facts"), [
+      h("dt", { text: "Status" }), h("dd", null, chip(LIVE_STATUS, l.status, sentence(String(l.status || "unknown").replace(/_/g, " ")))),
+      l.status === "not_ready" && l.reason ? [h("dt", { text: "Why" }), h("dd", { class: "pre-line", text: sentence(String(l.reason)) + "." })] : null,
+      h("dt", { text: "Page" }), h("dd", null, l.url && !l.simulated ? siteLink(l.url, asText(l.url)) : h("span", { text: l.simulated ? "Dry run: uploaded to the fake server" : "Not set (site_url)" })),
+      h("dt", { text: "Uploaded" }), h("dd", null, l.uploaded_at ? timeEl(l.uploaded_at, fmtDateTime(l.uploaded_at) + " (" + relTime(l.uploaded_at) + ")") : h("span", { text: "Not yet" })),
+      l.status === "ok" ? [h("dt", { text: "Shows" }), h("dd", { text: on.length ? sentence(on.join(", ")) + "." : "Only its state." })] : null,
+      l.status === "ok" && off.length ? [h("dt", { text: "Hidden" }), h("dd", { text: sentence(off.join(", ")) + "." })] : null,
+      l.last_error ? [h("dt", { text: "Last upload" }), h("dd", { class: "pre-line", text: "Failed: " + endSentence(String(l.last_error)) })] : null,
+    ]);
+    if (l.status === "off") { replace($("live-actions"), h("p", { class: "muted small", text: "Off: the page on your site says so. Switch it on with live_enabled." })); return; }
+    var preview = h("div", { class: "form-actions" },
+      h("a", { class: "btn", href: "api/live/preview/live.html", target: "_blank", rel: "noopener", text: "Preview the page" }),
+      parts.banner ? h("a", { class: "btn", href: "api/live/preview/banner.svg", target: "_blank", rel: "noopener", text: "Preview the banner" }) : null);
+    replace($("live-actions"), [preview, l.snippet ? liveSnippetArea(asText(l.snippet)) : null]);
   }
 
   // What an order cost you at Printify is an expense only you record: the form opens filled in, and its key records it
