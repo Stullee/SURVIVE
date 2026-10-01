@@ -69,12 +69,17 @@ _INVISIBLE = re.compile(
 _SOURCE_SPACE = re.compile(r"\s+")
 _SPACES = re.compile(r"[ \t\f\v\xa0\u2000-\u200a\u202f\u205f\u3000]+")
 _HIDDEN_STYLE = re.compile(
-    r"display:none|visibility:(?:hidden|collapse)|font-size:0(?:\.0*)?[a-z%]*(?:;|!|$)|opacity:0?(?:\.0*)?%?(?:;|!|$)"
+    r"display:none|visibility:(?:hidden|collapse)|font-size:0(?:\.0*)?[a-z%]*(?:;|!|$)"
+    # 0.14.0: an opacity below 0.05 too
+    r"|opacity:(?:0*\.?0*|0*\.0[0-4]\d*|0*[0-4](?:\.\d*)?%|0*\.\d+%)(?:;|!|$)"
     # 0.14.0: text of 2px or less, far off the screen, clipped away, or hidden from Outlook's reader
-    r"|font-size:(?:[01](?:\.\d*)?|2(?:\.0*)?)(?:px|pt)(?:;|!|$)|mso-hide:all|clip:rect\((?:0(?:px)?,?){4}\)"
-    r"|font-size:0?\.(?:[01]\d*|20*)r?em(?:;|!|$)|transform:scale[xy]?\(0(?:\.0*)?[,)]"
-    r"|(?:left|top|right|text-indent|margin(?:-left|-top)?):-(?:\d{4,}|[5-9]\d\d)(?:\.\d*)?[a-z%]*(?:;|!|$)"
+    r"|font-size:(?:[0-2](?:\.\d*)?|3(?:\.0*)?)(?:px|pt)(?:;|!|$)|mso-hide:all|clip:rect\((?:0(?:px)?,?){4}\)"
+    r"|font-size:(?:0?\.(?:[01]\d*|20*)r?em|(?:1?\d|20)(?:\.\d*)?%)(?:;|!|$)|transform:scale[xy]?\(0(?:\.0*)?[,)]"
+    r"|(?:left|top|right|text-indent|margin(?:-left|-top)?):-(?:(?:\d{4,}|[3-9]\d\d)(?:\.\d*)?[a-z%]*"
+    r"|(?:\d{3,}|[5-9]\d)(?:\.\d*)?r?em)(?:;|!|$)"
 )
+_COLOUR_ARGS = re.compile(r"((?:rgb|hsl)a?\()([^()]*)\)")
+FAINT = 0.05  # 0.14.0: text with less opacity (or a colour with less alpha) can't be read
 _ZERO_BOX = re.compile(r"(?:^|;)(?:max-)?(?:height|width):(?:0(?:\.0*)?[a-z%]*|1px)(?:;|!|$)")
 _CSS_CHARS = 100_000  # of each of an email's <style> elements (without comments), read for the rules that hide text
 _KEY_RULES = 50  # rules kept per class, id or tag they select (a real email has a few)
@@ -464,7 +469,7 @@ class _HtmlText(HTMLParser):
             self.stack.append((tag, False, host, None))
             return
         values = {name.lower(): (value or "") for name, value in attrs}
-        style = self._sheet(tag, values) + re.sub(r"\s+", "", values.get("style", "").lower())
+        style = self._sheet(tag, values) + _squeeze(values.get("style", ""))
         background = _background(style, values) if style or "bgcolor" in values or "background" in values else None
         hides = tag in _SKIP or self._hides(tag, values, style, background)
         self.stack.append((tag, hides, host, background))
@@ -583,7 +588,7 @@ def _css_rules(css: str) -> tuple[list[tuple[str | None, frozenset[str], str | N
         elif char == "}" and depth:
             depth -= 1
             if depth == 0:
-                style = re.sub(r"\s+", "", css[body:index])
+                style = _squeeze(css[body:index])
                 selectors = [] if head.startswith("@") else head.split(",")
                 read = [s for s in map(_selector, selectors) if s is not None]
                 backdrop = _background(style, {})
@@ -634,27 +639,46 @@ def _background(style: str, values: dict[str, str]) -> str | None:
     return colour if colour not in (None, "transparent") else ""
 
 
+def _squeeze(style: str) -> str:
+    """A style in lower case without spaces. 0.14.0: a colour's arguments split by spaces or "/" ("rgb(255 255 255 /
+    50%)") are split by commas."""
+    style = _COLOUR_ARGS.sub(lambda m: m[1] + ",".join(re.split(r"[\s,/]+", m[2].strip())) + ")", style.lower())
+    return re.sub(r"\s+", "", style)
+
+
+def _share(text: str, whole: float) -> float | None:
+    """A number, or a percentage of the whole; None if it is neither."""
+    number = re.fullmatch(r"(\d*\.?\d+)(%?)", text)
+    return None if number is None else float(number[1]) * (whole / 100 if number[2] else 1)
+
+
 def _colour(text: str) -> str | None:
-    """A CSS colour as #rrggbb, or "transparent" (None: not one Ember knows)."""
-    text = re.sub(r"\s+", "", text.lower())
+    """A CSS colour as #rrggbb, or "transparent" (None: not one Ember knows). 0.14.0: hsl(), #rgba, #rrggbbaa,
+    percentages and the space syntax; one with an alpha below FAINT is transparent."""
+    text = _squeeze(text)
     if text in ("transparent", *_COLOURS):
         return _COLOURS.get(text, text)
-    if re.fullmatch(r"#[0-9a-f]{3}", text):
-        return "#" + "".join(c * 2 for c in text[1:])
-    if re.fullmatch(r"#[0-9a-f]{6}", text):
-        return text
-    hsl = re.fullmatch(r"hsla?\((\d{1,3})(?:deg)?,(\d{1,3})%,(\d{1,3})%(?:,([\d.]+))?\)", text)
-    if hsl is not None:  # 0.14.0
-        if hsl[4] is not None and float(hsl[4] or 0) == 0:
-            return "transparent"
-        rgb = colorsys.hls_to_rgb(int(hsl[1]) % 360 / 360, min(int(hsl[3]), 100) / 100, min(int(hsl[2]), 100) / 100)
-        return "#" + "".join(f"{round(n * 255):02x}" for n in rgb)
-    rgb = re.fullmatch(r"rgba?\((\d{1,3}),(\d{1,3}),(\d{1,3})(?:,([\d.]+))?\)", text)
-    if rgb is None:
+    if re.fullmatch(r"#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})", text):
+        digits = text[1:] if len(text) > 5 else "".join(c * 2 for c in text[1:])
+        return "transparent" if len(digits) == 8 and int(digits[6:], 16) / 255 < FAINT else "#" + digits[:6]
+    function = re.fullmatch(r"(rgb|hsl)a?\(([^()]*)\)", text)
+    parts = function[2].split(",") if function else []
+    if function is None or len(parts) not in (3, 4):
         return None
-    if rgb[4] is not None and float(rgb[4] or 0) == 0:
+    alpha = _share(parts[3], 1) if len(parts) == 4 else 1
+    if alpha is not None and alpha < FAINT:
         return "transparent"
-    return "#" + "".join(f"{min(int(n), 255):02x}" for n in rgb.groups()[:3])
+    if function[1] == "hsl":
+        hue = _share(parts[0].removesuffix("deg"), 360)
+        saturation, light = _share(parts[1], 100), _share(parts[2], 100)
+        if hue is None or light is None or saturation is None:
+            return None
+        rgb = colorsys.hls_to_rgb(hue % 360 / 360, min(light / 100, 1), min(saturation / 100, 1))
+        return "#" + "".join(f"{round(n * 255):02x}" for n in rgb)
+    channels = [_share(part, 255) for part in parts[:3]]
+    if None in channels:
+        return None
+    return "#" + "".join(f"{min(round(n), 255):02x}" for n in channels)
 
 
 def _alike(colour: str | None, background: str | None) -> bool:

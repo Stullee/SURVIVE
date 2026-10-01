@@ -218,8 +218,8 @@ in the memorial if it dies.
 Between cycles, Ember's code notes in the **agenda** what happens while the agent
 sleeps (0.13.0), each thing once. It reads the Etsy shop hourly and Ember's
 mailbox every 15 minutes, also while the agent is paused or dormant. While
-reading the mailbox fails, it tries less often, down to every 4 hours, and
-warns you once (0.14.0):
+reading the mailbox fails, it tries less often, down to every 4 hours (also at
+the start of a cycle), and warns you once (0.14.0):
 
 - an Etsy order of Ember's listings;
 - a person's email that answers one Ember sent (not an automatic reply, a
@@ -1041,7 +1041,10 @@ included: encrypt your backups.
   needs no answer (`inquiry_done`, with the reason), for example a thank-you
   or spam.
 - An answer in the thread of someone who wrote has its own kind on the card:
-  **answer someone who wrote to Ember**. It is never a first contact. Ember's
+  **answer someone who wrote to Ember**. It is no first contact when their
+  email was a verified person's (see above). An answer to an unverified
+  sender, a list or a machine still gets the card's first-email warning, and
+  an email-reply unlock doesn't send it. Ember's
   code checks two things, and the card and the agent both see the result:
   that the subject keeps the thread ("Re: …"), and that the answer is short
   (at most 200 words). On the Roadmap, the metrics `inquiries_received` and

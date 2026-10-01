@@ -14,11 +14,12 @@ import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from .. import events
 from ..agent.store import AgentScope as Scope
 from ..db import Database
-from ..economy.clock import Clock, to_iso
+from ..economy.clock import Clock, from_iso, to_iso
 from ..logging_setup import redact
 from .mail import MAX_FETCH, FetchResult, IncomingMail, Mailbox, MailError, one_line
 from .optout import opt_out
@@ -85,6 +86,7 @@ def fetch(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, budget: fl
             events.record(db, "warning", "email", f"Checking Ember's mailbox failed: {result.error}")
         db.set_meta(meta_key(scope.mode, "last_error"), result.error)
         db.set_meta(meta_key(scope.mode, "failures"), str(failures + 1))
+        db.set_meta(meta_key(scope.mode, "failed_at"), now)
         return result
     if failures:
         events.record(db, "info", "email", f"Ember's mailbox can be read again (after {failures} failed checks)")
@@ -162,6 +164,15 @@ def wait_minutes(db: Database, mode: str, every: int) -> int:
     row after the first, at most BACKOFF_MINUTES."""
     failures = _int(db.get_meta(meta_key(mode, "failures")))
     return min(every * 2 ** min(max(failures - 1, 0), 10), max(every, BACKOFF_MINUTES))
+
+
+def due(db: Database, clock: Clock, mode: str, every: int) -> bool:
+    """0.14.0: whether the mailbox may be read now: always while it works or failed once, else once wait_minutes have
+    passed since the last failed read (so the read at the start of each cycle backs off too)."""
+    failed_at = db.get_meta(meta_key(mode, "failed_at"))
+    if _int(db.get_meta(meta_key(mode, "failures"))) < 2 or not failed_at:
+        return True
+    return clock.now() - from_iso(failed_at) >= timedelta(minutes=wait_minutes(db, mode, every))
 
 
 def _int(value: str | None) -> int:

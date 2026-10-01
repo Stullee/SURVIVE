@@ -397,8 +397,11 @@ class CycleRunner:
             events.record(self.db, "info", "agent", f"Request #{r['id']} expired: no decision in {days} days")
 
     def _fetch_mail(self, cycle_id: int) -> None:
-        """New mail before the plan (errors are recorded and shown, and never stop the cycle)."""
+        """New mail before the plan (errors are recorded and shown, and never stop the cycle). 0.14.0: not while a
+        failing mailbox's wait (mailstore.due) runs."""
         if self.mailbox is None or self.stop.is_set():
+            return
+        if not mailstore.due(self.db, self.clock, self.scope.mode, agenda.MAIL_MINUTES):
             return
         self._progress(cycle_id, current_action="Checking the mailbox")
         try:

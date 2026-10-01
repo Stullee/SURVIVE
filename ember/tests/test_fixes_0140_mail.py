@@ -463,6 +463,31 @@ ASKS = [
     "Please stop sending.",
     "Please remove my email.",
     "Can you remove me from your list?",
+    # Review round 2: "us", "spamming", "kindly", "wish to receive", German "mir" and "melden Sie mich ab"
+    "Please stop contacting us.",
+    "Stop emailing us.",
+    "Please remove us from your list.",
+    "Kindly remove us from your mailing list.",
+    "Do not email us.",
+    "Please take us off your list.",
+    "Please stop spamming me.",
+    "Stop spamming me!",
+    "Stop spamming me pls",
+    "Not interested. Please stop messaging.",
+    "Stop it please, I'm not interested.",
+    "Hi Ember,\n\nkindly stop.",
+    "Kindly stop emailing us.",
+    "Good morning,\n\nWe do not wish to receive further emails.",
+    "I do not wish to receive these emails.",
+    "Bitte schreiben Sie mir nicht mehr.",
+    "Schreiben Sie mir nicht mehr.",
+    "Bitte mailen Sie mir nicht mehr.",
+    "Bitte schreibt mir nicht mehr.",
+    "Schreib mir nicht mehr.",
+    "Melden Sie mich bitte ab.",
+    "Bitte melden Sie mich ab.",
+    "Hör auf mir zu schreiben.",
+    "Hört auf, mir zu schreiben.",
 ]
 ORDINARY = [
     "Hi,\n\nI'll stop by tomorrow to pick it up.\n\nAnn",
@@ -492,6 +517,16 @@ ORDINARY = [
     "Hallo,\nlassen Sie mich in Ruhe überlegen, dann bestelle ich.",
     "Hi,\nI'd like you to stop the second order.",
     "Hello,\nStop the presses, this is great",
+    # Review round 2: near the new phrases
+    "Don't stop sending us the samples, we love them.",
+    "Do not email us the PDF, post it.",
+    "I wish to receive the invoice by post.",
+    "Kindly send me the price list.",
+    "Schreiben Sie mir bitte mehr dazu.",
+    "Melden Sie sich bitte ab Montag an.",
+    "Hör auf zu zweifeln, wir machen das!",
+    "Stop it please, I'm laughing so hard",
+    "Nothing can stop us now, thanks to the planner!",
 ]
 
 
@@ -639,6 +674,32 @@ def test_a_failing_mailbox_is_read_less_often_and_warns_once(data_dir: Path, mon
     assert any("can be read again" in e["message"] for e in agent.db.recent_events(limit=5))
 
 
+def test_a_cycle_doesn_t_read_a_failing_mailbox_before_its_wait_is_over(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 2: the read at the start of each cycle logged in whatever the failures."""
+    FakeIMAP.instances, FakeIMAP.mails, FakeIMAP.validity = [], {1: raw_mail(1)}, 7
+    monkeypatch.setattr(FakeIMAP, "password", "changed by the owner")
+    monkeypatch.setattr(mail.imaplib, "IMAP4_SSL", FakeIMAP)
+    turns = [plan(steps=["look around"]), text("Done."), JOURNAL]
+    agent = live_agent(data_dir, turns * 3)
+    for _ in range(3):  # three failed reads: the next waits 60 minutes
+        agent.check_events()
+        agent.clock.advance(minutes=60)
+    assert len(FakeIMAP.instances) == 3
+    agent.clock.advance(minutes=-30)
+    assert not mailstore.due(agent.db, agent.clock, "live", 15)
+    assert agent.run_cycle("schedule").status == "completed"
+    assert len(FakeIMAP.instances) == 3  # the cycle left the mailbox alone
+    agent.clock.advance(minutes=30)
+    assert agent.run_cycle("schedule").status == "completed"
+    assert len(FakeIMAP.instances) == 4  # the wait is over: it tries again
+    monkeypatch.setattr(FakeIMAP, "password", PASSWORD)
+    agent.clock.advance(minutes=mailstore.BACKOFF_MINUTES)
+    assert agent.run_cycle("schedule").status == "completed"
+    assert mailstore.due(agent.db, agent.clock, "live", 15)  # it works again: every cycle reads it
+
+
 # --- X25: hidden text in HTML mail ---
 
 
@@ -693,6 +754,55 @@ def test_text_hidden_by_style_rules_colours_and_offsets_is_dropped() -> None:
 def test_a_style_sheet_can_t_be_padded_past_and_colours_count_from_it(html: str) -> None:
     shown = mail.html_to_text(f'{html}<p class="h q">HIDDEN</p><p>Shown.</p>')
     assert shown == "Shown."
+
+
+@pytest.mark.parametrize(
+    "style",
+    [  # Review round 2: inline tricks that got past
+        "opacity:0.01",
+        "opacity:.001",
+        "opacity:4%",
+        "color:rgb(100%,100%,100%)",
+        "color:rgb(255 255 255)",
+        "color:rgb(255 255 255 / 1)",
+        "color:hsl(0 0% 100%)",
+        "color:rgba(0,0,0,0.01)",
+        "color:rgb(0 0 0 / 0%)",
+        "color:#ffff",
+        "color:#ffffffff",
+        "color:#00000001",
+        "font-size:1%",
+        "font-size:2.5px",
+        "text-indent:-100em",
+        "left:-400px",
+        "margin-left:-60em",
+    ],
+)
+def test_faint_tiny_and_far_off_text_is_dropped(style: str) -> None:
+    assert mail.html_to_text(f'<p style="{style}">HIDDEN</p><p>Shown.</p>') == "Shown."
+
+
+@pytest.mark.parametrize(
+    "style",
+    [
+        "opacity:0.5",
+        "opacity:.05",
+        "opacity:40%",
+        "color:rgb(50%,50%,50%)",
+        "color:rgb(255 0 0)",
+        "color:#f00f",
+        "color:#ff000080",
+        "font-size:80%",
+        "font-size:3.5px",
+        "text-indent:-2em",
+        "left:-200px",
+        "margin-left:-10em",
+    ],
+)
+def test_readable_text_in_these_styles_stays(style: str) -> None:
+    assert mail.html_to_text(f'<p style="{style}">Shown.</p>') == "Shown."
+    dark = f'<body style="background:#000"><p style="{style};color:rgb(255 255 255 / 90%)">Shown.</p></body>'
+    assert mail.html_to_text(dark) == "Shown."
 
 
 def test_text_on_a_dark_background_from_a_style_sheet_stays() -> None:
