@@ -118,15 +118,21 @@ configuration:
   wake_on_message:
     name: Wake Ember when you write
     description: >-
-      On: a message you send in the Inbox wakes the agent to read it, like
-      Wake now (at most one wake-up a minute). Off: it reads your message at
-      its next scheduled wake-up.
+      On: a message you send in the Inbox wakes the agent to read it, 5
+      minutes after your last message or decision (at least 30 minutes
+      after the last such wake), so one cycle reads them all. Off: it reads your message at its next scheduled wake-up.
   wake_on_decision:
     name: Wake Ember when you decide
     description: >-
       On: your decision on one of its requests (approve, reject, done), on a
       venture or on a milestone wakes the agent to act on it, like a message
       does. Off: it sees your decision at its next scheduled wake-up.
+  wake_on_events:
+    name: Wake Ember for events
+    description: >-
+      On: a reply to Ember's email, a new email from a person or the last day
+      of a milestone Ember's code doesn't check wakes the agent for a short
+      cycle (at most 4 a day). Off: they wait for its next scheduled wake-up.
   worker_effort:
     name: Worker effort
     description: >-

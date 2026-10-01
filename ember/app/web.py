@@ -451,10 +451,10 @@ def send_message(request: Request, body: Annotated[Any, Body()] = None) -> JSONR
 
 
 def _wake_for_message(request: Request) -> str | None:
-    """The owner wrote: wake the agent to read it (the wake_on_message option), like Wake now does, within its minute
-    between wake-ups. "now" if a wake is on its way; "after_cycle" or "soon" if it follows once the running cycle has
-    ended or the minute has passed; None if none follows (the option is off, the agent is paused, ...): the message
-    waits for the next wake."""
+    """The owner wrote: wake the agent to read it (the wake_on_message option). "now" if a wake is on its way (Wake
+    now); "soon", or "after_cycle" while a cycle runs, if it follows (0.14.0: one cycle a few minutes after the owner's
+    last message or decision, Agent.wake_for_message); None if none follows (the option is off, the agent is paused,
+    ...): the message waits for the next wake."""
     state = _state(request)
     agent = state.agent
     if agent is None or not state.loaded.settings.wake_on_message:
@@ -463,7 +463,7 @@ def _wake_for_message(request: Request) -> str | None:
         return "now"
     wake = agent.wake_for_message()
     if wake in ("now", "soon") and state.scheduler is not None:
-        state.scheduler.poke()  # decide again: run the cycle now, or sleep only until the minute has passed
+        state.scheduler.poke()  # decide again: sleep only until the owner has been quiet for a few minutes
     return wake
 
 

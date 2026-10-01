@@ -48,8 +48,9 @@ code from Etsy's own numbers): the agent never reports its own.
 | Web search price | 10 USD per 1,000 | Charged per search on top of tokens. |
 | Dry run | on | Fake model, no API calls, no cost. |
 | Let the agent read whole web pages | off | Off: live research is web search only. On: it can also read pages from its search results (about $0.01–0.02 each). PDFs and other documents are always refused, because they have no size limit, and so are Etsy's pages, because Etsy's API terms forbid programs reading its site (searching it is fine). |
-| Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, like **Wake now** (at most one wake-up a minute; during a cycle, right after it; not while the agent is paused). Off: it reads your message at its next scheduled wake-up. |
-| Wake Ember when you decide | on | Your decision on one of its requests (approve, reject, mark done or failed), on a venture (back, park, kill) or on a milestone wakes the agent to act on it, the same way as a message. Off: it sees your decision at its next scheduled wake-up. Either way, while a request waits for you the agent sleeps at most the **Default sleep**, and works on other things meanwhile. |
+| Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, 5 minutes after your last message or decision (at most 15 after the first, and at least 30 after the last such wake), so one cycle reads them all (after a running cycle, unless that cycle saw them; not while the agent is paused or dormant). **Wake now** is immediate. Off: it reads your message at its next scheduled wake-up. |
+| Wake Ember when you decide | on | Your decision on one of its requests (approve, reject, mark done or failed), on a venture (back, park, kill) or on a milestone wakes the agent to act on it, the same way as a message. Off: it sees your decision at its next scheduled wake-up. Either way, while a request waits for you the agent sleeps at most 4 hours (or the **Default sleep**, if that is longer), and works on other things meanwhile. |
+| Wake Ember for events | on | A reply to Ember's email, a new email from a person or the last day of a milestone that Ember's code doesn't check itself wakes the agent for a short cycle (see [the agenda](#events-wake-it-the-agenda)). Off: they wait for its next scheduled wake-up. |
 | Worker effort | default | How thoroughly the model works in each step. `medium` or `low` write shorter answers and use fewer tool calls, which costs less but may do a worse job. Not used for Haiku. |
 | Kill switch reset | 0 | Change it to any other number and restart to undo the kill switch. |
 | Owner user IDs | empty | The Home Assistant users who are Ember's owner: only they can use the dashboard and its actions. Empty: everyone who can open the panel. The dashboard shows your ID while this is empty. See [Security](#security). |
@@ -241,12 +242,18 @@ mailbox every 15 minutes, also while the agent is paused or dormant:
   listing already had when the agenda began don't count);
 - an open milestone's last day (from 08:00 on its date).
 
-The next plan lists them under *since your last wake*. An order, a reply or a
-milestone's last day also **wakes** the agent for a short **reactive cycle**. It
-works on the event first, in at most 5 work steps, with no venture work, daily
-review, library study or critic. That happens at most **4 times a day**, at
-least **30 minutes** apart, never while dormant, and only while the day's cap
-covers a cycle. An event that can't wake the agent waits for its next cycle.
+The next plan lists them under *since your last wake*. A reply, a new email
+from a person (see [Ember's mailbox](#embers-mailbox)) or a milestone's last day
+also **wakes** the agent for a short **reactive cycle**, with the option **Wake
+Ember for events**. It works on the event first, in at most 5 work steps, with
+no venture work, daily review, library study or critic. That happens at most
+**4 times a day**, at least **30 minutes** apart, and only while the day's cap
+covers a cycle. It never happens while the agent is dormant, while it backs off
+after a failed, stopped or refused cycle, after three interrupted cycles, or
+while its cycle cap leaves no room for work. Orders, favorites and the last day
+of a milestone Ember's code checks itself (one with a metric, such as a listing
+test's bars, or the money goal) wake no one: Ember's code records them. An
+event that can't wake the agent waits for its next cycle.
 
 To keep money for these wake-ups, a scheduled cycle leaves **a fifth of the
 daily cap** unspent until **20:00** (your time), unless the cap is too small to
@@ -905,12 +912,15 @@ no longer shown); a study that failed three times stops until you press
   something that leaves the container, or for money. ..."); it is only saved
   when you press **Save**.
 - **Inbox**: the agent's messages to you, and yours to it. Your message wakes
-  it to read it right away (see the option **Wake Ember when you write**). If
-  it is in the middle of a cycle, or woke less than a minute ago, it wakes
-  again for your message as soon as the cycle is over and the minute has
-  passed. With the option off, or while it is paused, it reads your message at
-  its next wake-up. Your reply also marks its earlier messages read; while
-  five of its messages are unread, it can't write to you, and it sends at most
+  it to read it (see the option **Wake Ember when you write**): 5 minutes after
+  your last message or decision (at most 15 after the first, at least 30
+  after the last wake for your news, and a restart keeps the wake), so one
+  cycle reads all of them. A cycle that comes first reads them too. If it is in
+  the middle of a cycle, it wakes after the cycle, unless that cycle already
+  saw them. With the option off, or while it is paused or dormant, it reads
+  your message at its next wake-up. **Wake now** wakes it at once. Your reply
+  also marks its earlier messages read; while five of its messages are unread,
+  it can't write to you, and it sends at most
   two messages a day that answer none of yours (Ember's code counts them). A
   message that promises something shows the promise under it, and whether it
   was kept. Never send
@@ -1540,9 +1550,11 @@ runway, and the agent's plans say which mode it is in:
 - **focus**: 15 to 30 days: the tests already running go on (venture cycles
   only while a venture is backed or live), with no brainstorms and no new ideas
   but those you bring;
-- **maintenance**: under 15 days: one scheduled cycle a day, of at most $0.40
-  with every call counted (the daily review and library study too), no workshop
-  runs and no venture cycles (your messages and decisions still wake it);
+- **maintenance**: under 15 days: one scheduled cycle a day (after a failed or
+  stopped one too), of at most $0.40 with every call counted (the daily review
+  and library study too), no workshop runs and no venture cycles (your messages,
+  decisions and events still wake it, and the next scheduled cycle comes a day
+  after the last cycle of any kind);
 - **dormant**: once its last will is written and its runway is critical: no
   model calls until money comes in (a sale or your grant); **Wake now** still
   runs a cycle.

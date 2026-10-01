@@ -173,7 +173,7 @@ def test_a_maintenance_cycle_offers_no_workshop_and_says_its_cap(
     assert "there is no tool called 'workshop'" in refused["result"]
     status = section(planner_texts(fake)[0], "STATUS")
     assert "This cycle may spend up to $0.40 (maintenance: $0.40 a cycle, every call counted)." in status
-    assert "every call counted, no workshop runs or venture cycles: earn or cut costs" in status
+    assert "every call counted, no workshop runs or venture cycles" in status
     assert "This cycle may spend up to $0.40 (maintenance" in briefs(fake)[0]
 
 

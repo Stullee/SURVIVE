@@ -37,9 +37,10 @@ KEY = "burn_mode.{mode}.{life}"
 MEANING = {
     EXPLORE: "as your owner's options allow",
     FOCUS: "finish the tests already running (a venture backed or live); no brainstorms, new ideas only your owner's",
+    # 0.14.0: the day counts from the last cycle of any kind (service.Agent._maintenance_day)
     MAINTENANCE: (
         f"one cycle a day of at most ${MAINTENANCE_CYCLE_USD:.2f}, every call counted, no workshop runs or venture"
-        " cycles: earn or cut costs"
+        " cycles (your owner's or an event's wake-up starts a new day): earn or cut costs"
     ),
     DORMANT: "no model calls until money comes in (a sale or your owner's grant)",
 }

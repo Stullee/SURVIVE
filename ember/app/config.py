@@ -141,10 +141,14 @@ class Settings(BaseModel):
     web_search_usd_per_1000: float = Field(default=10.0, ge=MIN_PRICE, le=1_000)
     dry_run: bool = True
     web_fetch: bool = False
-    # A message from the owner wakes the agent to read it (like Wake now, within its minute between wake-ups).
+    # A message from the owner wakes the agent to read it (0.14.0: one cycle a few minutes after their last message or
+    # decision).
     wake_on_message: bool = True
     # 0.12.0: the owner's decision on a request, venture or milestone wakes the agent to act on it, like a message.
     wake_on_decision: bool = True
+    # 0.14.0: an urgent event in the agenda (a reply, an inquiry, a milestone's last day) wakes the agent for a short
+    # reactive cycle. Off: it waits for the next cycle's plan.
+    wake_on_events: bool = True
     # Effort for the work steps and the reflection ("default" sends none, which means high). Not sent to Haiku 4.5.
     worker_effort: Literal["default", "high", "medium", "low"] = "default"
     # The workshop (0.7.0): code the agent has written and run in Anthropic's sandbox. A run has its own cap and

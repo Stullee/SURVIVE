@@ -28,21 +28,47 @@ def sold(agent: Any, *receipts: int) -> None:
     assert agent.publisher.sync(force=True) is None
 
 
-def test_an_order_wakes_the_agent_for_a_lean_reactive_cycle(data_dir: Path) -> None:
+def replied(agent: Any, uid: int) -> None:
+    """A reply to the email Ember sent (sent first), come in now: urgent (0.14.0: an order no longer wakes it)."""
+    scope = agent.scope()
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        if not conn.execute("SELECT 1 FROM emails WHERE direction = 'out'").fetchone():
+            approval = conn.execute("SELECT id FROM approvals ORDER BY id LIMIT 1").fetchone()["id"]
+            conn.execute(
+                "INSERT INTO emails (mode, session, life_id, direction, message_id, from_addr, to_addr, subject,"
+                " sent_at, received_at, body, approval_id) VALUES (?, ?, ?, 'out', '<m1@ember>', 'ember@example.org',"
+                " 'ann@example.org', 'Your planner', ?, ?, 'Hello', ?)",
+                (scope.mode, scope.session, scope.life_id, now, now, approval),
+            )
+        conn.execute(
+            "INSERT INTO emails (mode, session, life_id, direction, uidvalidity, uid, message_id, in_reply_to,"
+            " from_addr, to_addr, subject, sent_at, received_at, body) VALUES (?, ?, ?, 'in', 1, ?, ?, '<m1@ember>',"
+            " 'ann@example.org', 'ember@example.org', 'Re: Your planner', ?, ?, 'Thanks!')",
+            (scope.mode, scope.session, scope.life_id, uid, f"<r{uid}@ann>", now, now),
+        )
+
+
+def test_a_reply_wakes_the_agent_for_a_lean_reactive_cycle(data_dir: Path) -> None:
     agent, listing = listed(data_dir)
     agent.check_events()  # the agenda begins: what came before is history
     assert rows(agent, "SELECT COUNT(*) AS n FROM agenda WHERE baseline = 0") == [{"n": 0}]
     agent.clock.advance(minutes=10)
-    sold(agent, 71)
+    sold(agent, 71)  # 0.14.0: an order is noted for the next plan, and wakes no one
+    agent.check_events()
+    replied(agent, 7)
     agent.check_events()
     agent.check_events()  # noted once
-    [noted] = rows(agent, "SELECT kind, key, urgent, woke_at, seen_cycle_id, text FROM agenda WHERE baseline = 0")
-    assert (noted["kind"], noted["key"], noted["urgent"], noted["woke_at"]) == ("order", "71", 1, None)
-    assert noted["text"].startswith("An Etsy order (receipt #71, ") and f"of your listing #{listing} " in noted["text"]
-    assert agent.sensor_fields()["agenda_open"] == 1
+    noted = rows(agent, "SELECT kind, key, urgent, woke_at, seen_cycle_id, text FROM agenda WHERE baseline = 0")
+    assert [(n["kind"], n["urgent"], n["woke_at"]) for n in noted] == [("order", 0, None), ("reply", 1, None)]
+    assert (
+        noted[0]["text"].startswith("An Etsy order (receipt #71, ")
+        and f"of your listing #{listing} " in noted[0]["text"]
+    )
+    assert agent.sensor_fields()["agenda_open"] == 2
     decision = agent.decide()
     assert (decision.run, decision.trigger) == (True, "event")
-    assert decision.reason.startswith("woken by an event: An Etsy order (receipt #71")
+    assert decision.reason.startswith(f"woken by an event: Email #{noted[1]['key']} from ann@example.org answers")
     fake = agent.transport
     before = len(fake.sent)
     end = agent.run_cycle("event")
@@ -54,15 +80,15 @@ def test_an_order_wakes_the_agent_for_a_lean_reactive_cycle(data_dir: Path) -> N
     assert kinds[0] == "plan" and "review" not in kinds and "critic" not in kinds  # lean: the plan first
     planner = sent[0]["messages"][0]["content"][0]["text"]
     assert "\n== TASK ==\nPlan this reactive cycle: an event woke you (Agenda in SINCE YOUR LAST WAKE)." in planner
-    assert "Agenda (order, noted " in planner and "An Etsy order (receipt #71" in planner
+    assert "Agenda (reply, noted " in planner and "Agenda (order, noted " in planner
     assert sum(1 for k in kinds if k == "work") <= agenda.REACTIVE_STEPS
-    [after] = rows(agent, "SELECT woke_at, seen_cycle_id FROM agenda WHERE baseline = 0")
-    assert after["woke_at"] is not None and after["seen_cycle_id"] == cycle["id"]
+    after = rows(agent, "SELECT woke_at, seen_cycle_id FROM agenda WHERE baseline = 0 ORDER BY id")
+    assert after[1]["woke_at"] is not None and all(a["seen_cycle_id"] == cycle["id"] for a in after)
     fields = agent.sensor_fields()
     assert (fields["agenda_open"], fields["event_wakes_today"]) == (0, 1)
-    # Another order within 30 minutes of that wake-up waits (for the gap, or the next cycle's plan)
+    # Another reply within 30 minutes of that wake-up waits (for the gap, or the next cycle's plan)
     agent.clock.advance(minutes=5)
-    sold(agent, 71, 72)
+    replied(agent, 8)
     agent.check_events()
     assert agent.decide().trigger != "event"
     agent.clock.advance(minutes=30)
@@ -72,11 +98,9 @@ def test_an_order_wakes_the_agent_for_a_lean_reactive_cycle(data_dir: Path) -> N
 def test_event_wakes_stop_at_four_a_day(data_dir: Path) -> None:
     agent, _ = listed(data_dir)
     agent.check_events()
-    receipts = []
     for n in range(agenda.EVENT_WAKES + 1):
         agent.clock.advance(minutes=31)
-        receipts.append(100 + n)
-        sold(agent, *receipts)
+        replied(agent, 100 + n)
         agent.check_events()
         decision = agent.decide()
         if n < agenda.EVENT_WAKES:
