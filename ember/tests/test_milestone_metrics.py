@@ -71,6 +71,8 @@ def test_the_catalogue() -> None:
         "qa_clean",
         "views_total",  # 0.15.0: the agent's goals too
         "favorites_total",
+        "search_impressions",  # 0.16.0
+        "search_clicks",
     }
     assert set(metrics.CATALOGUE) - set(metrics.NAMES) == {"orders_total"}
     for m in metrics.CATALOGUE.values():

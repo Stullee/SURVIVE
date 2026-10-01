@@ -42,6 +42,7 @@ from ..integrations import (
     pinterest,
     pinterest_publisher,
     printify_publisher,
+    search_console,
     sftp,
     site_publisher,
 )
@@ -185,6 +186,8 @@ class Agent:
         # 0.14.0: the blog on the owner's website: the pages they approved, uploaded over SFTP by Ember's code (a fake
         # server in dry run).
         self.blog = site_publisher.Publisher(db, self.clock, self.settings, self.scope, self.mode)
+        # 0.16.0: the owner's Search Console, read-only (a fake property in dry run): how the website does in Google.
+        self.search = search_console.SearchConsole(db, self.clock, self.settings, self.scope, self.mode)
         self._shop_failed_at: datetime | None = None  # the last check of the shop that failed (sync_shop)
         self._mail_checked_at: datetime | None = None  # 0.13.0: the last read of the mailbox between cycles
 
@@ -974,6 +977,7 @@ class Agent:
         if self.sync_blocked():
             return
         self._sync_pins()
+        self._sync_search()
         self._sync_pod()
         if not self.publisher.due():
             return
@@ -993,6 +997,29 @@ class Agent:
             self.etsy.refresh_categories(shop)
         if error is None:
             self._shop_failed_at = None
+
+    def _sync_search(self, force: bool = False) -> str | None:
+        """0.16.0: the website's numbers in Google Search, at most every search_console.SYNC_HOURS (the fake property
+        of a dry run needs no network); the milestones with a Google metric are checked against the fresh numbers."""
+        if not (force or self.search.due()):
+            return None
+        try:
+            with netguard.sealed() if self.mode == "dry_run" else contextlib.nullcontext():
+                error = self.search.sync(force=force)
+        except Exception:  # noqa: BLE001 - Search Console must not keep the shop from being checked
+            log.exception("Reading Search Console failed")
+            return "reading failed"
+        if error is None:
+            metrics.grade_all(
+                self.db, self.scope(), self.economy.life.scope(), self.clock, self.settings.etsy_stats_history
+            )
+        return error
+
+    def search_check(self) -> dict[str, Any]:
+        """0.16.0: the owner's "Check now": read Search Console at once; the card with the result."""
+        error = self._sync_search(force=True)
+        card = search_console.describe(self.db, self.scope(), self.settings, self.clock.today())
+        return {**card, "error": error}
 
     def _sync_pins(self) -> None:
         """0.13.0 (Phase E2): the pins' numbers, at most every pinterest_publisher.SYNC_HOURS (the fake account of a
@@ -1038,6 +1065,7 @@ class Agent:
             "printify": self.printify.describe(scope),  # 0.13.0 (Phase E4)
             "site": home,
             "blog": self._blog_card(scope, posts),  # 0.14.0
+            "search": search_console.describe(self.db, scope, self.settings, self.clock.today()),  # 0.16.0
         }
 
     def _blog_card(self, scope: AgentScope, posts: list[Any]) -> dict[str, Any]:

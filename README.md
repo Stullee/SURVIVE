@@ -142,7 +142,10 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   handler). With the blog on (0.14.0), Ember's code also uploads the pages the
   owner approved over SFTP to the owner's web host, only to a server showing the
   pinned key and only a post, the blog's list and the link page
-  (`ember/app/integrations/sftp.py`, `site_publisher.py`).
+  (`ember/app/integrations/sftp.py`, `site_publisher.py`). With Search Console on
+  (0.16.0), Ember's code reads the site's Google Search numbers, read-only, from
+  `oauth2.googleapis.com` and `searchconsole.googleapis.com` only
+  (`ember/app/integrations/search_console.py`).
 - **Outside actions.** The agent has no tool that sends or posts anything. An
   email it proposes is sent by Ember's code only after the owner approves it,
   exactly as approved, once, to one recipient, with a footer saying an AI wrote

@@ -113,10 +113,13 @@ def test_options_match_settings_defaults() -> None:
         "blog_sftp_password",
         "blog_sftp_host_key",
         "blog_sftp_folder",
+        "search_console_site",
+        "search_console_key",
     }
     assert set(options) == fields - optional
     assert schema["anthropic_api_key"] == schema["email_password"] == schema["etsy_shared_secret"] == "password?"
     assert schema["pinterest_app_secret"] == schema["printify_api_token"] == schema["blog_sftp_password"] == "password?"
+    assert schema["search_console_key"] == "password?"
     for key, value in options.items():
         if key == "price_table":
             continue

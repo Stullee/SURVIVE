@@ -125,6 +125,8 @@ TABLES = (
     "site_downloads",
     "site_uploads",
     "blog_posts",
+    "search_console_days",
+    "search_console_top",
     "listing_gates",
     "observations",
     "memory_versions",
@@ -1102,6 +1104,8 @@ def _integrations(state: AppState, full: bool = True) -> str:
     out.append(f"-- website\n{_json(agent.integrations()['site'])}")
     # 0.14.0: the blog: its state, the SFTP server and its key, and the posts on the site (never the password).
     out.append(f"-- blog\n{_json(agent.integrations()['blog'])}")
+    # 0.16.0: Google Search Console: the property, the service account's email and the numbers (never the key).
+    out.append(f"-- google search\n{_json(agent.integrations()['search'])}")
     return "\n".join(out)
 
 

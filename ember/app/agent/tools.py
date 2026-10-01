@@ -1152,6 +1152,7 @@ def definitions(
     site: bool = False,
     brainstorm: bool = True,
     blog: bool = False,
+    search: bool = False,
 ) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds (the
     reflection reads it from the cache at a tenth of the price; a list of its own would write the whole conversation
@@ -1160,8 +1161,14 @@ def definitions(
     and, 0.12.0, the tools for building and selling only in an ordinary one, the library's only while it holds
     documents; 0.13.0: the Pinterest and Printify tools, and their manuals, only with the owner's account and a
     shop, and the website's only when the owner switched it on; 0.14.0: the blog's too; 0.15.0: brainstorm only when
-    the burn mode allows it)."""
-    channels = {"pinterest": pinterest and etsy, "printify": printify and etsy, "website": site, "blog": blog}
+    the burn mode allows it; 0.16.0: the Google Search metrics only with Search Console)."""
+    channels = {
+        "pinterest": pinterest and etsy,
+        "printify": printify and etsy,
+        "website": site,
+        "blog": blog,
+        "search": search,
+    }
     return [
         _definition(_channel_guides(spec_of(spec.name, venture) or spec, channels))
         for spec in SPECS.values()

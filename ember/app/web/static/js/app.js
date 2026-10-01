@@ -594,6 +594,7 @@
     section("printify", [d.integrations, d.mode, minute], ["printify-facts", "printify-products", "printify-orders"], function () { renderPrintify(d); });
     section("site", [d.integrations, d.mode, minute], ["site-facts", "site-actions", "site-pages"], function () { renderSite(d); });
     section("blog", [d.integrations, d.mode, minute], ["blog-facts", "blog-posts"], function () { renderBlog(d); });
+    section("search", [d.integrations, d.mode, minute], ["search-facts", "search-queries", "search-pages"], function () { renderSearch(d); });
     section("transitions", [d.transitions], ["transitions"], function () { renderTransitions(arr(d.transitions)); });
     section("events", [d.events], ["events"], function () { renderEvents(arr(d.events)); });
     section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d, agent); });
@@ -4128,6 +4129,64 @@
       });
     }
     return [h("div", { class: "form-actions" }, c.button), c.status];
+  }
+
+  // 0.16.0: the website in Google Search, read by Ember's code from the owner's Search Console (read-only).
+  var SEARCH_STATUS = {
+    ok: { icon: "✓", label: "Connected", tone: "good" },
+    not_ready: { icon: "○", label: "Not ready", tone: "warning" },
+  };
+
+  function searchCheckArea() {
+    var c = ui.searchCheck;
+    if (!c) {
+      c = ui.searchCheck = {};
+      c.status = h("p", { class: "form-status small", role: "status" });
+      c.button = h("button", { type: "button", class: "btn", text: "Check now" });
+      c.button.addEventListener("click", function () {
+        c.button.disabled = true;
+        c.status.textContent = "Reading Search Console…";
+        request("POST", "api/search-console/check", {}).then(function (res) {
+          if (!res.ok) throw httpError(res);
+          var r = isObject(res.data) ? res.data : {};
+          c.status.textContent = "It works" + (r.simulated ? " (dry run: a fake property)" : "") + ": " +
+            plural(num(r.impressions) || 0, "impression") + " and " + plural(num(r.clicks) || 0, "click") +
+            " in the last " + asText(r.period_days) + " days" + (r.last_day ? " (to " + asText(r.last_day) + ")" : "") + ".";
+          refresh();
+        }).catch(function (err) {
+          c.status.textContent = "Not working: " + errorText(err) + ".";
+        }).then(function () { c.button.disabled = false; });
+      });
+    }
+    return [h("div", { class: "form-actions" }, c.button), c.status];
+  }
+
+  function searchTable(rows, first) {
+    return rows.length ? h("div", { class: "table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, [first, "Impressions", "Clicks", "Position"].map(function (c, i) { return h("th", i ? { scope: "col", class: "num", text: c } : { scope: "col", text: c }); }))),
+      h("tbody", null, rows.map(function (r) {
+        return h("tr", null, h("td", { text: asText(r.key) }), h("td", { class: "num", text: count(r.impressions) }),
+          h("td", { class: "num", text: count(r.clicks) }), h("td", { class: "num", text: asText(r.position) }));
+      })))) : h("p", { class: "muted", text: "None yet: Google shows them a few days after the site is first seen." });
+  }
+
+  function renderSearch(d) {
+    var g = isObject(d.integrations) && isObject(d.integrations.search) ? d.integrations.search : null;
+    var shown = !!g && g.status !== "disabled";  // off (the default), or an older server: no card
+    $("search-card").hidden = !shown;
+    if (!shown) { ["search-facts", "search-actions", "search-queries", "search-pages"].forEach(function (id) { replace($(id), []); }); return; }
+    replace($("search-facts"), [
+      h("dt", { text: "Status" }), h("dd", null, chip(SEARCH_STATUS, g.status, sentence(String(g.status || "unknown").replace(/_/g, " ")))),
+      g.status !== "ok" && g.reason ? [h("dt", { text: "Why" }), h("dd", { class: "pre-line", text: sentence(String(g.reason)) + "." })] : null,
+      h("dt", { text: "Property" }), h("dd", { text: g.site ? asText(g.site) : "Not set (search_console_site or site_url)" }),
+      g.simulated ? null : [h("dt", { text: "Service account" }), h("dd", { class: "mono", text: g.service_account ? asText(g.service_account) + " (add it as a user of the property in Search Console)" : "No key yet (search_console_key)" })],
+      h("dt", { text: "Last read" }), h("dd", null, g.last_sync_at ? timeEl(g.last_sync_at, fmtDateTime(g.last_sync_at) + " (" + relTime(g.last_sync_at) + ")") : h("span", { text: "Never" })),
+      g.last_error ? [h("dt", { text: "Last error" }), h("dd", { class: "pre-line", text: endSentence(String(g.last_error)) })] : null,
+      h("dt", { text: "Last " + asText(g.period_days) + " days" }), h("dd", { text: g.last_day ? count(g.impressions) + " impressions, " + count(g.clicks) + " clicks" + (g.position !== null && g.position !== undefined ? ", average position " + asText(g.position) : "") + " (to " + asText(g.last_day) + ")" : "No numbers yet" }),
+    ]);
+    replace($("search-actions"), searchCheckArea());
+    replace($("search-queries"), searchTable(arr(g.queries), "Search"));
+    replace($("search-pages"), searchTable(arr(g.pages), "Page"));
   }
 
   function renderBlog(d) {

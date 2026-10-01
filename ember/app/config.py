@@ -41,6 +41,7 @@ _SITE_URL = re.compile(
 )
 _SITE_EMAIL = re.compile(r"""^(?=.{0,254}$)(?:[^@\s<>"']{1,64}@[^@\s<>"']{1,190}\.[A-Za-z]{2,63})?$""")
 # 0.14.0's SFTP host name, bounded the same way (empty allowed, its length in the pattern).
+SEARCH_SITE = re.compile(r"^(?:sc-domain:[a-z0-9.-]{1,190}|https?://[A-Za-z0-9.-]{1,190}(?::\d{1,5})?/(?:\S*/)?)$")
 _HOST = re.compile(r"^(?=.{0,200}$)(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,198}[A-Za-z0-9])?)?$")
 
 
@@ -256,6 +257,13 @@ class Settings(BaseModel):
     blog_sftp_password: SecretStr = SecretStr("")
     blog_sftp_host_key: str = Field(default="", max_length=800)
     blog_sftp_folder: str = Field(default="", max_length=200)
+    # Google Search Console (0.16.0): how the website does in Google Search (impressions, clicks, searches, pages),
+    # read by Ember's code with the owner's service account (its JSON key, read-only) for the plan, the dashboard and
+    # milestones. search_console_site is the property ("": the Domain property of site_url). Off until the owner turns
+    # it on (in dry run too: a fake property stands in).
+    search_console_enabled: bool = False
+    search_console_site: str = Field(default="", max_length=300)
+    search_console_key: SecretStr = SecretStr("")
 
     @field_validator("owner_user_ids", mode="before")
     @classmethod
@@ -274,6 +282,7 @@ class Settings(BaseModel):
         "pinterest_app_secret",
         "printify_api_token",
         "blog_sftp_password",
+        "search_console_key",
         mode="before",
     )
     @classmethod
@@ -309,6 +318,7 @@ class Settings(BaseModel):
         "blog_sftp_user",
         "blog_sftp_host_key",
         "blog_sftp_folder",
+        "search_console_site",
         mode="before",
     )
     @classmethod
@@ -339,6 +349,8 @@ class Settings(BaseModel):
             problems.append("site_email must be an email address, like shop@example.org")
         if self.blog_sftp_host and not _HOST.match(self.blog_sftp_host):  # 0.14.0
             problems.append("blog_sftp_host must be a host name like ssh.example.org, without a user or a path")
+        if self.search_console_site and not SEARCH_SITE.match(self.search_console_site):  # 0.16.0
+            problems.append("search_console_site must be like sc-domain:example.org or https://example.org/")
         names = [p.model for p in self.price_table]
         if len(names) != len(set(names)):
             problems.append("price_table lists the same model more than once")
@@ -397,6 +409,7 @@ class Settings(BaseModel):
             "pinterest_app_secret",
             "printify_api_token",
             "blog_sftp_password",
+            "search_console_key",
         }
         data = self.model_dump(mode="json", exclude=secret)
         data["anthropic_api_key_set"] = self.api_key_set
@@ -406,6 +419,7 @@ class Settings(BaseModel):
         data["pinterest_app_secret_set"] = bool(self.pinterest_app_secret.get_secret_value().strip())
         data["printify_api_token_set"] = bool(self.printify_api_token.get_secret_value().strip())
         data["blog_sftp_password_set"] = bool(self.blog_sftp_password.get_secret_value().strip())
+        data["search_console_key_set"] = bool(self.search_console_key.get_secret_value().strip())
         return data
 
 

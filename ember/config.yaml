@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.15.0"
+version: "0.16.0"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -133,6 +133,9 @@ options:
   # folder are optional options too.
   blog_enabled: false
   blog_sftp_port: 22
+  # Google Search Console (see the Documentation tab): how your website does in Google Search, read by Ember's code
+  # with your service account's key (read-only). The key and the property are optional options too.
+  search_console_enabled: false
 
 schema:
   anthropic_api_key: password?
@@ -222,3 +225,6 @@ schema:
   blog_sftp_password: password?
   blog_sftp_host_key: str(,800)?
   blog_sftp_folder: str(,200)?
+  search_console_enabled: bool
+  search_console_site: str(,300)?
+  search_console_key: password?

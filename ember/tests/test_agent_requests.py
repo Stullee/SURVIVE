@@ -65,6 +65,7 @@ def first_step_and_reflection(brief: str) -> tuple[dict[str, Any], dict[str, Any
             printify=True,
             site=True,
             blog=True,
+            search=True,
         ),
         prompts.reflect_request(
             SETTINGS,
@@ -80,6 +81,7 @@ def first_step_and_reflection(brief: str) -> tuple[dict[str, Any], dict[str, Any
             printify=True,
             site=True,
             blog=True,
+            search=True,
         ),
     )
 

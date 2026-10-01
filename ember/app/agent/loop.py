@@ -49,7 +49,14 @@ from ..economy.metering import (
 )
 from ..economy.pricing import LAST_WILL, PLANNER_OPENING, REVIEW_CALL, working_cycle_cost
 from ..economy.service import Economy
-from ..integrations import etsy_publisher, mailstore, pinterest_publisher, printify_publisher, site_publisher
+from ..integrations import (
+    etsy_publisher,
+    mailstore,
+    pinterest_publisher,
+    printify_publisher,
+    search_console,
+    site_publisher,
+)
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox
@@ -228,6 +235,7 @@ class CycleRunner:
         self.printify_waits = ""  # 0.15.0: why Printify's tools are off although it is set up (its shop isn't known)
         self.site_on = settings.site_enabled  # 0.13.0 (Phase E3): the owner's website: its tool and WEBSITE section
         self.blog_on = settings.blog_enabled  # 0.14.0: the owner's blog: its tools and BLOG section
+        self.search_on = settings.search_console_enabled  # 0.16.0: GOOGLE SEARCH and its metrics
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
         self.news_kept: frozenset[news.Item] = frozenset()  # 0.15.0: the owner's news marked seen once the cycle ends
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
@@ -623,6 +631,7 @@ class CycleRunner:
                 pod = _waiting("Printify", self.printify.status(), self._etsy_state(), self.printify_waits)
             site_text = website.planner_text(conn, self.scope, website.owner(self.settings)) if self.site_on else ""
             blog_text = site_publisher.text(conn, self.db, self.scope, self.settings) if self.blog_on else ""
+            search_text = search_console.text(conn, self.db, self.scope, self.settings) if self.search_on else ""
             return context.snapshot(
                 conn,
                 self.scope,
@@ -644,6 +653,7 @@ class CycleRunner:
                 printify=pod,
                 website=site_text,
                 blog=blog_text,
+                search=search_text,
                 venture=venture,
                 venture_share=self.settings.venture_share,
                 shelf=library.shelf(conn, self.scope),
@@ -1241,6 +1251,7 @@ class CycleRunner:
                 site=self.site_on,
                 **_offered(ctx),
                 blog=self.blog_on,
+                search=self.search_on,
             )
             if not self._affordable(cycle_id, request, brief, turns, ctx):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
@@ -1362,6 +1373,7 @@ class CycleRunner:
             site=self.site_on,
             **_offered(ctx),
             blog=self.blog_on,
+            search=self.search_on,
         )
         try:
             step_worst = self.meter.quote(request, "work")
@@ -1441,6 +1453,7 @@ class CycleRunner:
             site=self.site_on,
             **_offered(ctx),
             blog=self.blog_on,
+            search=self.search_on,
         )
         # 0.12.0: why the work ended is kept first, also when the reflection can't be paid for.
         self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)

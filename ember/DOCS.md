@@ -91,6 +91,9 @@ code from Etsy's own numbers): the agent never reports its own.
 | SFTP server, port, user, password | empty, 22, empty, empty | Your web host's SFTP login (at STRATO: Customer login → Your package → Databases and webspace → SFTP & SSH). Only Ember's code uses it, never the agent; the password is never logged or shown. |
 | SFTP server key | empty | The server's key fingerprint (`SHA256:...`) or public key line, so Ember connects only to your server. Empty: the key seen at the first connection is kept (and shown on the dashboard). |
 | Website folder on the server | empty | The folder your domain shows, e.g. `/ember-ai.de`. Empty: the folder the login opens. |
+| Google Search Console | off | Lets Ember's code read how your website does in Google Search with your service account's key (read-only). See [Google Search Console](#google-search-console). |
+| Search Console property | empty | `sc-domain:example.org` (a Domain property) or `https://example.org/` (a URL-prefix property). Empty: the Domain property of **Website address**. |
+| Service account key | empty | The whole JSON key file of your Google Cloud service account. Only Ember's code uses it; never logged or shown. |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -1680,6 +1683,56 @@ is a fake one inside the app: nothing reaches your website.
 5. Save, restart the app, and press **Check the connection** on **System →
    Blog**.
 
+## Google Search Console
+
+With **Google Search Console** on, Ember's code reads how your website does in
+Google Search: per day the impressions (how often a page of yours showed in
+Google's results), the clicks and the average position, and the top searches
+and pages of the last 28 days. It reads them twice a day (Google's numbers come
+two to three days late) and keeps them:
+
+- the agent sees them in its plan (GOOGLE SEARCH), so it knows which posts are
+  found and for which searches, and can set milestones with the metrics
+  `search_impressions` and `search_clicks` (the last 28 days), which Ember's code
+  checks itself, like the Etsy views;
+- **System → Google Search** shows the same, with **Check now** to read at once.
+
+It is read-only: Ember's code signs in as a service account of yours with
+Google's read-only Search Console scope, can't change anything at Google, and
+talks to `oauth2.googleapis.com` and `searchconsole.googleapis.com` only.
+Nothing is added to your website: no script, no cookie, so the privacy page
+stays true (unlike Google Analytics, which would need a cookie banner). In a dry
+run a fake property stands in; nothing reaches Google.
+
+### Setting it up
+
+1. **Search Console:** at [search.google.com/search-console](https://search.google.com/search-console),
+   add your site as a **Domain** property (`ember-ai.de`) and verify it with the
+   TXT record Google shows. At STRATO: **Domainverwaltung**, the gear next to
+   your domain, **DNS → TXT- und CNAME-Records → verwalten**, a TXT record with
+   Google's value. Submit your sitemap (`https://ember-ai.de/sitemap.xml`) under
+   **Sitemaps**.
+2. **Google Cloud:** at [console.cloud.google.com](https://console.cloud.google.com),
+   create a project (e.g. "Ember"), and under **APIs & Services → Library**
+   enable the **Google Search Console API**.
+3. **Service account:** under **IAM & Admin → Service Accounts**, create one
+   (e.g. "ember-reader") without any roles. Open it, **Keys → Add key → Create
+   new key → JSON**: your browser downloads the key file. Keep it private.
+4. **Access:** back in Search Console, **Settings → Users and permissions → Add
+   user**: the service account's email (`...@....iam.gserviceaccount.com`, in
+   the key file as `client_email`) with the permission **Restricted** (reading
+   is all it needs).
+5. **Ember:** in the app's **Configuration** tab, switch **Google Search
+   Console** on and paste the whole key file into **Service account key**
+   (line breaks don't matter). Leave **Search Console property** empty for the
+   Domain property of your **Website address**. Save, restart the app, and press
+   **Check now** on **System → Google Search**.
+
+If Google refuses, the card says what to do (most often: the service account
+isn't a user of the property yet, or the API isn't enabled in the project). To
+stop it, switch the option off, remove the key, and remove the service account
+from the property (or delete its key in Google Cloud).
+
 ## Reddit
 
 Since late 2025 Reddit approves every new API app by hand, so Ember has no
@@ -1715,7 +1768,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.15.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.16.0 (by /u/your name)`.
 
 ## Diagnostics
 
@@ -2015,6 +2068,12 @@ automation, for example:
   exactly the site's Content-Security-Policy). The SFTP password is used only by
   Ember's code, never written to logs, the database, the dashboard or the
   diagnostics.
+- With **Google Search Console** on, Ember's code also talks to
+  `oauth2.googleapis.com` and `searchconsole.googleapis.com` (nothing else at
+  Google), signed in as your service account with the read-only Search Console
+  scope. The key stays in the options: it is never written to logs, the
+  database, the dashboard or the diagnostics (the dashboard shows only the
+  service account's email, to add in Search Console).
 - The agent never writes the bytes of a PDF, Word, Excel or picture file: it
   writes text, and Ember's own code makes the file from it, without any network
   or other programs. Spreadsheets only get formulas with common functions that

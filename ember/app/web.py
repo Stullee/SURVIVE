@@ -905,6 +905,22 @@ def blog_check(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
+@router.post("/api/search-console/check")
+def search_console_check(request: Request) -> JSONResponse:
+    """0.16.0: read Search Console now (the owner's check after setting it up)."""
+    agent = _state(request).agent
+    if agent is None:
+        return JSONResponse({"code": "not_runnable", "error": "the agent is not running"}, status_code=409)
+    if not agent.settings.search_console_enabled:
+        return JSONResponse({"error": "Search Console is off: switch it on in the options"}, status_code=422)
+    card = agent.search_check()
+    if card["error"]:
+        return JSONResponse({"error": card["error"]}, status_code=422)
+    who = _owner(request) or "The owner"
+    event_log.record(_state(request).db, "info", "search_console", f"{who} checked Search Console: it works")
+    return JSONResponse(card)
+
+
 @router.get("/api/diagnostics")
 def diagnostics_report(request: Request, full: bool = False) -> PlainTextResponse:
     """A text report of the whole system for troubleshooting (never contains secrets): shareable, or with other

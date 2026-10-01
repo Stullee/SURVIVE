@@ -28,7 +28,7 @@ from typing import Any
 from .. import events
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import etsy, etsy_publisher, mailstore, pinterest_publisher, printify_publisher, qa
+from ..integrations import etsy, etsy_publisher, mailstore, pinterest_publisher, printify_publisher, qa, search_console
 from . import ventures
 from .store import AgentScope
 
@@ -44,6 +44,7 @@ SOURCES = {
     "ember": "Ember's records",
     "pinterest": "Pinterest",
     "printify": "Printify",
+    "google": "Google Search Console",
 }
 
 
@@ -149,6 +150,21 @@ CATALOGUE: dict[str, Metric] = {
         # 0.13.0 (Phase E4): Ember's Printify products, as the last Printify sync read them
         Metric("pod_products_live", "your Printify products in the shop now", "count", "printify", unit="product"),
         Metric("pod_orders", "orders of your Printify products, in all", "count", "printify", unit="order"),
+        # 0.16.0: the owner's website in Google Search, the last 28 days, as the last Search Console read had them
+        Metric(
+            "search_impressions",
+            "times your owner's website showed in Google Search, the last 28 days",
+            "count",
+            "google",
+            unit="impression",
+        ),
+        Metric(
+            "search_clicks",
+            "clicks from Google Search to your owner's website, the last 28 days",
+            "count",
+            "google",
+            unit="click",
+        ),
         # 0.13.0: a product line's listing test (agent/gates.py): its listings' views and favorites in all, as the last
         # sync read them (Etsy's own counts: no history kept). 0.15.0: the agent sets them too (its views goals were
         # self-reported), refused when met already; orders_total stays Ember's code's (orders_observed is the agent's)
@@ -178,6 +194,7 @@ HELP = (
 CHANNEL_METRICS = {
     "pinterest": (("pins_live", "pin_clicks"), "pins_live and pin_clicks: Pinterest, now"),
     "printify": (("pod_products_live", "pod_orders"), "pod_products_live and pod_orders: Printify, now"),
+    "search": (("search_impressions", "search_clicks"), "search_impressions and search_clicks: Google, last 28 days"),
 }
 
 
@@ -364,6 +381,8 @@ def read(
     if m.name in ("pins_live", "pin_clicks"):  # 0.13.0 (Phase E2)
         live, clicks = pinterest_publisher.totals(conn, scope)
         return Reading(live if m.name == "pins_live" else clicks, now, "")
+    if m.name in ("search_impressions", "search_clicks"):  # 0.16.0
+        return _read_search(conn, scope, m, now)
     if m.name in ("pod_products_live", "pod_orders"):  # 0.13.0 (Phase E4)
         products, orders = printify_publisher.totals(conn, scope)
         return Reading(products if m.name == "pod_products_live" else orders, now, "")
@@ -389,6 +408,20 @@ def read(
     stage = venture["stage"]
     rank = STAGES.index(stage) if stage in STAGES else -1
     return Reading(rank, now, f" (venture #{venture_id}{'' if rank >= 0 else ' is ' + stage})")
+
+
+def _read_search(conn: sqlite3.Connection, scope: AgentScope, m: Metric, now: str) -> Reading | Unread:
+    """0.16.0: the last 28 days of Google Search, as the last Search Console read had them (fresh enough)."""
+    where, params = scope.where()
+    synced = conn.execute(f"SELECT MAX(synced_at) FROM search_console_days WHERE {where}", params).fetchone()[0]
+    last = search_console.latest_day(conn, scope)
+    if not synced or last is None:
+        return Unread("Search Console hasn't been read yet")
+    if from_iso(now) - from_iso(synced) > timedelta(hours=search_console.FRESH_HOURS):
+        return Unread(f"Search Console was last read at {synced[:16].replace('T', ' ')} UTC")
+    impressions, clicks, _ = search_console.totals(conn, scope, last)
+    value = impressions if m.name == "search_impressions" else clicks
+    return Reading(value, synced, f" ({search_console.PERIOD} days to {last.isoformat()})")
 
 
 def listing_counts(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any], metric: str) -> int:

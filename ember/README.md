@@ -21,7 +21,9 @@ dated milestones toward them, each with a measure of done. Optionally Ember gets
 mailbox: it reads its mail on its own and sends an email only after you approve
 it. With your own website's SFTP login, Ember writes blog posts and the link
 page in your site's design, and its code uploads each one after you approve it
-(and puts back what it replaced if you undo it).
+(and puts back what it replaced if you undo it). With your Search Console's
+read-only service account, Ember sees how the site does in Google Search
+(impressions, clicks, searches) and plans with it.
 
 > The term 'Etsy' is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or certified by Etsy, Inc.
 

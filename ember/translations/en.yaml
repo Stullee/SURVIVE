@@ -443,3 +443,21 @@ configuration:
     description: >-
       The folder your domain shows, e.g. /ember-ai.de. Empty: the folder the
       login opens.
+  search_console_enabled:
+    name: Google Search Console
+    description: >-
+      Let Ember's code read how your website does in Google Search
+      (impressions, clicks, searches, pages) with your service account's
+      key, read-only. Nothing is added to your website.
+  search_console_site:
+    name: Search Console property (optional)
+    description: >-
+      sc-domain:example.org for a Domain property, or https://example.org/ for
+      a URL-prefix property. Empty: the Domain property of your website's
+      address.
+  search_console_key:
+    name: Service account key
+    description: >-
+      The whole JSON key file of your Google Cloud service account (paste it
+      as it is). Only Ember's code uses it, read-only; it is never shown or
+      logged.

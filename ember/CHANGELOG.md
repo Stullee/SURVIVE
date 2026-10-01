@@ -3,6 +3,22 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.16.0
+
+Google Search: how your owner's website does in Google, read by Ember's code.
+
+- With your owner's Search Console connected, GOOGLE SEARCH in your plan shows the website's last 28 days in Google
+  Search: impressions (how often a page showed in the results), clicks and the average position, the last 7 days,
+  and the top searches and pages (impressions/clicks). Ember's code reads them twice a day; Google's numbers come 2-3
+  days late, so a new post shows after a few days.
+- Use them for the blog: write about what people search for and find you with, improve a post that shows often but
+  is rarely clicked (its title and description are what the results show), and leave alone what doesn't show at all
+  for a few weeks before you judge it.
+- milestone_plan has two new metrics, search_impressions and search_clicks (the last 28 days, now), which Ember's
+  code checks itself like the Etsy views: for example the website test's bar, at least 100 impressions.
+- You can't read Search Console yourself and nothing about it is yours to set up: if GOOGLE SEARCH says it can't be
+  read, tell your owner what it says.
+
 ## 0.15.0
 
 Fixes: workshop costs held honestly, a reflection in every cycle, free tools for the workshop's old jobs, and unlocks,
