@@ -24,7 +24,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,12 @@ _MIGRATION_NAME = re.compile(r"^(\d{4})_([a-z0-9_]+)\.sql$")
 _TRANSACTION_STATEMENT = re.compile(r"^(BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b", re.IGNORECASE)
 _LEADING_COMMENTS = re.compile(r"^(?:\s+|--[^\n]*(?:\n|$)|/\*.*?\*/)*", re.DOTALL)
 MAX_BACKUPS = 10
+# 0.14.0: how long tool calls' inputs and results and the model's replies are kept whole; at least
+# tools.RESEARCH_REPEAT_DAYS (a question asked again within them is answered from its first call).
+TEXT_DAYS = 30
+PRUNED = "[pruned]"  # what such a text becomes then (the only change the history's guards allow)
+PRUNE_BATCH = 500  # rows of each kind at a time, so the shared connection is never held for long
+RESEARCH_KEPT = 5  # a session's newest research calls stay whole: the plan's RECENT RESEARCH shows them (context.py)
 
 
 class MigrationError(RuntimeError):
@@ -341,6 +347,28 @@ class Database:
                 (keep,),
             )
             return cur.rowcount
+
+    def prune_texts(self, now: datetime, days: int = TEXT_DAYS) -> int:
+        """0.14.0: the large texts older than ``days`` become PRUNED: a finished tool call's input ('{}') and result,
+        and what the model wrote in a call. A session's newest research calls stay whole (the plan's RECENT RESEARCH).
+        The rows stay, and the model calls with their costs, tokens and purpose are never touched. Returns how many
+        rows were pruned now (at most PRUNE_BATCH of each kind)."""
+        before = (now - timedelta(days=days)).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self.transaction() as conn:
+            tools = conn.execute(
+                "UPDATE tool_calls SET input = '{}', result = ? WHERE id IN (SELECT id FROM tool_calls"
+                " WHERE started_at < ? AND status <> 'started' AND result IS NOT ? AND (input <> '{}' OR result IS NOT"
+                " NULL) AND id NOT IN (SELECT id FROM (SELECT t.id, ROW_NUMBER() OVER (PARTITION BY c.session,"
+                " c.simulated ORDER BY t.id DESC) AS newest FROM tool_calls t JOIN cycles c ON c.id = t.cycle_id"
+                " WHERE t.tool = 'research' AND t.status = 'ok') WHERE newest <= ?) LIMIT ?)",
+                (PRUNED, before, PRUNED, RESEARCH_KEPT, PRUNE_BATCH),
+            ).rowcount
+            texts = conn.execute(
+                "UPDATE call_texts SET text = ?, stop_details = NULL WHERE llm_call_id IN (SELECT t.llm_call_id"
+                " FROM call_texts t JOIN llm_calls l ON l.id = t.llm_call_id WHERE l.ts < ? AND t.text <> ? LIMIT ?)",
+                (PRUNED, before, PRUNED, PRUNE_BATCH),
+            ).rowcount
+        return tools + texts
 
     def recent_events(self, limit: int = 50, min_level: str = "info") -> list[dict[str, Any]]:
         levels = ["debug", "info", "warning", "error"]

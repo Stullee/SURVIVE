@@ -267,7 +267,8 @@ def test_the_daily_digest(data_dir: Path) -> None:
         " was missed). 1 request(s) waited for you whatever you unlocked (never automatic)."
     )
     sensors = agent.sensor_fields()
-    assert (sensors["digest_day"], sensors["digest"], sensors["unlocks"]) == (day.isoformat(), written[0]["text"], 2)
+    assert (sensors["digest_day"], sensors["digest_actions"], sensors["unlocks"]) == (day.isoformat(), 2, 2)
+    assert "digest" not in sensors  # 0.14.0: the open sensor gets the digest's counts, not its text
     assert agent.dashboard()["audit"]["digest"]["day"] == day.isoformat()
     assert any(e["message"].startswith(f"Daily digest: {day.isoformat()}: ") for e in agent_events(agent))
     with agent.db.connection() as conn:

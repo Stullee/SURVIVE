@@ -59,6 +59,7 @@ from .store import AgentScope
 log = logging.getLogger(__name__)
 
 FIRST_WAKE_DELAY = timedelta(minutes=2)
+MAINTENANCE_REASON = "the burn mode is maintenance: one cycle a day"  # 0.14.0: why the next wake waits a day
 BOOT_GRACE = timedelta(seconds=60)
 CRASH_LOOP = 3
 MAX_WILL_ATTEMPTS = 3
@@ -311,7 +312,10 @@ class Agent:
             return reasons.get(status.state, f"The agent is {status.state}")
         return None
 
-    def decide(self, now: datetime | None = None) -> Decision:
+    def decide(self, now: datetime | None = None, *, preview: bool = False) -> Decision:
+        """Whether a wake cycle runs now, and why. ``preview`` (0.14.0, the diagnostics report): the same decision with
+        nothing written: no event marked as having woken the agent, no next wake or burn mode kept, no wake requested.
+        """
         now = now or self.clock.now()
         blocked = self.blocked_reason()
         if blocked:
@@ -322,42 +326,46 @@ class Agent:
             if retry is None or now >= retry or self.wake_requested:
                 return Decision(True, "last_will", "the last will is due")
             return Decision(False, reason="The last will is due; retrying later", wait_until=retry)
-        mode = burn.current(self.db, status).mode
+        mode = (burn.peek if preview else burn.current)(self.db, status).mode  # 0.14.0: a preview keeps no mode
         # 0.12.0: dormant, no model calls until money comes in; only the owner's Wake now runs a cycle
         if mode == burn.DORMANT and not self.wake_requested:
             return Decision(False, reason=f"Dormant: {burn.MEANING[burn.DORMANT]}; Wake now runs a cycle")
         ready = None
         if self.message_waiting and not self.wake_requested:
-            ready = self._wake_for_waiting_message(now)
+            if not preview:
+                ready = self._wake_for_waiting_message(now)
+            elif self._unread():  # 0.14.0: a preview requests no wake and keeps nothing; it says when one would be
+                ready = self._owner_wake_due(now)
+                if ready is None:
+                    why = "read the owner's message" if self.waiting_for == "message" else "act on the owner's decision"
+                    return Decision(False, reason=f"Waking up to {why} in a moment")
         if self.wake_requested:
             return Decision(True, "owner", "woken by the owner")
-        decision = self._decide_schedule(now, mode)
+        decision = self._decide_schedule(now, mode, preview)
         # 0.14.0: the owner's wake is one more reason to wake, not a hold: a cycle that comes first reads their news
         if ready is not None and not decision.run and (decision.wait_until is None or ready < decision.wait_until):
             why = "read the owner's message" if self.waiting_for == "message" else "act on the owner's decision"
             return Decision(False, reason=f"Waking up to {why} soon", wait_until=ready)
         return decision
 
-    def _decide_schedule(self, now: datetime, mode: str) -> Decision:
-        """For ``decide``: an event's or the schedule's wake (the owner's aside)."""
+    def _decide_schedule(self, now: datetime, mode: str, preview: bool = False) -> Decision:
+        """For ``decide``: an event's or the schedule's wake (the owner's aside); ``preview``: nothing kept."""
         no_room = self._no_room_for_work()
         if no_room:
             return Decision(False, reason=no_room)
-        event = self._event_wake(now)  # 0.13.0: a reply, an inquiry or a milestone's last day
+        event = self._event_wake(now, preview)  # 0.13.0: a reply, an inquiry or a milestone's last day
         if event is not None:
             return event
         wake = self._meta_time("next_wake_at")
+        why = self.db.get_meta(self._key("next_wake_reason")) or "sleeping"
         if wake is None:
-            wake = now + FIRST_WAKE_DELAY
-            self._set_time("next_wake_at", wake)
-            self.db.set_meta(self._key("next_wake_reason"), "first wake-up")
-        held = self._maintenance_day(wake) if mode == burn.MAINTENANCE else None
+            wake, why = now + FIRST_WAKE_DELAY, "first wake-up"  # 0.14.0: the preview, which keeps nothing, says so too
+            self._keep_wake(wake, why, preview)
+        held = self._maintenance_day(wake, preview) if mode == burn.MAINTENANCE else None
         if held is not None:
-            wake = held
+            wake, why = held, MAINTENANCE_REASON
         if now < wake:
-            return Decision(
-                False, reason=self.db.get_meta(self._key("next_wake_reason")) or "sleeping", wait_until=wake
-            )
+            return Decision(False, reason=why, wait_until=wake)
         if self._crash_loop():
             return Decision(False, reason="The last cycles were all interrupted; press Wake now to try again")
         # A cycle that can plan but not afford one work step and its reflection would only pay for the plan. A daily
@@ -371,22 +379,26 @@ class Agent:
         if daily - today - held < needed <= daily - today:
             evening = self.clock.at(self.clock.today(), EVENT_RESERVE_HOUR)  # 0.14.0: 20:00 on DST days too
             reason = f"the rest of the daily cap is kept for event wake-ups until {EVENT_RESERVE_HOUR}:00"
-            self._set_time("next_wake_at", evening)
-            self.db.set_meta(self._key("next_wake_reason"), reason)
+            self._keep_wake(evening, reason, preview)
             return Decision(False, reason=reason[0].upper() + reason[1:], wait_until=evening)
         if daily - today < needed:
             tomorrow = self._next_local_midnight(now) + timedelta(minutes=5)
-            self._set_time("next_wake_at", tomorrow)
-            self.db.set_meta(self._key("next_wake_reason"), "waiting for the daily cap to reset")
+            self._keep_wake(tomorrow, "waiting for the daily cap to reset", preview)
             return Decision(False, reason="Waiting for the daily cap to reset", wait_until=tomorrow)
         return Decision(True, "schedule", "scheduled wake-up")
 
-    def _event_wake(self, now: datetime) -> Decision | None:
+    def _keep_wake(self, when: datetime, reason: str, preview: bool) -> None:
+        if not preview:
+            self._set_time("next_wake_at", when)
+            self.db.set_meta(self._key("next_wake_reason"), reason)
+
+    def _event_wake(self, now: datetime, preview: bool = False) -> Decision | None:
         """0.13.0: an urgent event in the agenda (a reply to Ember's email, an inquiry, a milestone's last day) wakes
         the agent for a reactive cycle: at most agenda.EVENT_WAKES a day, agenda.MIN_GAP apart, when the day's cap
         covers a cycle (the events' share included). Otherwise the event waits for the next cycle's plan. 0.14.0: only
         with the owner's wake_on_events option, and behind the schedule's guards: not in a crash loop, nor while the
-        agent backs off after a failed, stopped or refused cycle (backoff_until, set by ``_after``)."""
+        agent backs off after a failed, stopped or refused cycle (backoff_until, set by ``_after``). ``preview``: no
+        event is marked as having woken the agent."""
         if not self.settings.wake_on_events:
             return None
         with self.db.connection() as conn:
@@ -403,8 +415,9 @@ class Agent:
         today = self.economy.books.cap_spend_on(self.economy.life.scope(), self.clock.today())
         if daily - today < (opening_cost(self.settings, self.db, self.mode) or 0):
             return None
-        with self.db.transaction() as conn:
-            agenda.mark_woke(conn, [int(r["id"]) for r in waiting], to_iso(now))
+        if not preview:
+            with self.db.transaction() as conn:
+                agenda.mark_woke(conn, [int(r["id"]) for r in waiting], to_iso(now))
         more = f" and {len(waiting) - 1} more" if len(waiting) > 1 else ""
         return Decision(True, "event", f"woken by an event: {waiting[0]['text']}{more}"[:300])
 
@@ -470,7 +483,7 @@ class Agent:
             ).fetchall()
         return len(rows) == CRASH_LOOP and all(r["status"] == "interrupted" for r in rows)
 
-    def _maintenance_day(self, wake: datetime) -> datetime | None:
+    def _maintenance_day(self, wake: datetime, preview: bool = False) -> datetime | None:
         """0.14.0: in the maintenance burn mode, one cycle a day after a failed, stopped or refused cycle too (its
         back-off woke the agent 30 minutes later): no scheduled wake before a day after the last cycle began. Any cycle
         counts (the owner's and events' too), as a completed one's sleep always did (``_after``). Returns that moment
@@ -486,8 +499,7 @@ class Agent:
         held = from_iso(last) + timedelta(minutes=day)
         if held <= wake:
             return None
-        self._set_time("next_wake_at", held)
-        self.db.set_meta(self._key("next_wake_reason"), "the burn mode is maintenance: one cycle a day")
+        self._keep_wake(held, MAINTENANCE_REASON, preview)
         return held
 
     def _next_local_midnight(self, now: datetime) -> datetime:
@@ -556,20 +568,31 @@ class Agent:
         self._set_time("owner_wake_at", None)
         self._set_time("owner_wake_by", None)
 
+    def _unread(self) -> bool:
+        """Whether a message or decision of the owner's is still unseen by the agent."""
+        with self.db.connection() as conn:
+            return bool(store.unseen(conn, "messages", self.scope(), 1) or news.decided_unseen(conn, self.scope()))
+
+    def _owner_wake_due(self, now: datetime) -> datetime | None:
+        """0.14.0: while it is too soon to wake for the owner's news, when it can be (OWNER_QUIET after their last
+        message or decision, OWNER_GAP after the last cycle for their news); None when it can be now."""
+        if self.quiet_until is not None and now < self.quiet_until:
+            return self.quiet_until
+        last = self._meta_time("owner_woke_at")
+        if last is not None and now < last + OWNER_GAP:
+            return last + OWNER_GAP
+        return None
+
     def _wake_for_waiting_message(self, now: datetime) -> datetime | None:
         """For ``decide``: wake for the owner's messages and decisions (0.14.0: once they have been quiet for
         OWNER_QUIET). Returns when that can be while it is still too soon; None once the agent is woken, or when the
         agent has seen all of the owner's news (a cycle that ran meanwhile saw it: no second cycle for it)."""
-        with self.db.connection() as conn:
-            unread = store.unseen(conn, "messages", self.scope(), 1) or news.decided_unseen(conn, self.scope())
-        if not unread:
+        if not self._unread():
             self._owner_wake_done()
             return None
-        if self.quiet_until is not None and now < self.quiet_until:
-            return self.quiet_until
-        last = self._meta_time("owner_woke_at")  # 0.14.0: OWNER_GAP between two cycles for the owner's news
-        if last is not None and now < last + OWNER_GAP:
-            return last + OWNER_GAP
+        due = self._owner_wake_due(now)
+        if due is not None:
+            return due
         status, body = self.request_wake(
             by_message=self.waiting_for == "message", by_decision=self.waiting_for == "decision"
         )
@@ -1002,6 +1025,7 @@ class Agent:
             event_wakes = agenda.wakes(conn, scope, self.clock)[0]
             digest = audit.latest(conn, scope)
             unlocks = sum(1 for g in policy.grants(conn, scope) if g["level"] != "manual")
+        data = (digest or {}).get("data") or {}
         wake = self._meta_time("next_wake_at") if self.blocked_reason() is None else None
         return {
             **counts,
@@ -1011,10 +1035,13 @@ class Agent:
             "waiting_on_you": sum(counts[name] for name in views.WAITING_ON_YOU),
             "agenda_open": agenda_open,
             "event_wakes_today": event_wakes,
-            # 0.13.0: the unlocks that stand, and the newest daily digest (a notification can follow digest_day)
+            # 0.13.0: the unlocks that stand, and the newest daily digest (a notification can follow digest_day).
+            # 0.14.0: its counts only: anyone on the host network can read the sensor, and a text can name a person.
             "unlocks": unlocks,
             "digest_day": digest["day"] if digest else None,
-            "digest": digest["text"] if digest else None,
+            "digest_actions": sum((data.get("actions") or {}).values()) if digest else None,
+            "digest_failed": sum((data.get("trouble") or {}).values()) if digest else None,
+            "digest_taken_back": len(data.get("taken_back") or []) if digest else None,
             "next_wake_at": to_iso(wake) if wake else None,
             "cycle_running": self.running_cycle,
         }

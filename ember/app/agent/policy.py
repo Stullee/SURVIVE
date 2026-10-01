@@ -540,14 +540,14 @@ def _revocation(conn: sqlite3.Connection, g: sqlite3.Row, clock: Clock) -> str:
             return f"request #{use['approval_id']} ended unclear"
     if g["rule"] == "email_reply":  # 0.13.0 (Phase E1): the channel's kill rule
         stopped = conn.execute(
-            "SELECT u.approval_id, s.address FROM policy_uses u JOIN approvals a ON a.id = u.approval_id"
+            "SELECT u.approval_id FROM policy_uses u JOIN approvals a ON a.id = u.approval_id"
             " JOIN email_suppressions s ON s.mode = a.mode AND s.session = a.session"
             " AND s.address = lower(json_extract(a.action, '$.to')) WHERE u.grant_id = ? AND u.approved_at IS NOT NULL"
             " AND s.since >= u.approved_at ORDER BY u.id LIMIT 1",
             (g["id"],),
         ).fetchone()
-        if stopped is not None:
-            return f"{stopped['address']} asked to stop after an automatic reply (request #{stopped['approval_id']})"
+        if stopped is not None:  # 0.14.0: never their address (the digest goes to the open sensor and notifications)
+            return f"the person you answered in request #{stopped['approval_id']} asked to stop"
     total, _ = used(conn, int(g["id"]), clock)
     holding = conn.execute(  # 0.14.0: a spent budget ends it once what it holds for its veto window is decided
         "SELECT u.approval_id FROM policy_uses u JOIN approvals a ON a.id = u.approval_id WHERE u.grant_id = ?"

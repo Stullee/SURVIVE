@@ -80,6 +80,10 @@ class Scheduler:
                 await asyncio.to_thread(self.economy.tick)
                 if time.monotonic() - self._last_prune > PRUNE_EVERY_SECONDS:
                     await asyncio.to_thread(self.db.prune_events, KEEP_EVENTS)
+                    try:  # 0.14.0: and the old texts of the model calls and tool calls (db.TEXT_DAYS)
+                        await asyncio.to_thread(self.db.prune_texts, self.economy.clock.now())
+                    except Exception:  # noqa: BLE001 - pruning must not stop the wake cycles
+                        log.exception("Pruning old texts failed")
                     self._last_prune = time.monotonic()
                 if self.agent is not None and not self._stopping:
                     try:  # 0.13.0: the owner's unlocks first: what their veto windows let through, and revocations

@@ -3,7 +3,8 @@
 Two tools, for the diagnostics report above all (the owner shares it to get help):
 
 - ``Masker`` masks email addresses, one-time codes and the tokens in links (a login link, an OAuth code) in a text,
-  and leaves out other people's text (emails, web pages) unless the owner asks for everything.
+  and leaves out other people's text (emails, web pages) unless the owner asks for everything. 0.14.0: a sender's
+  name is masked only when it looks like a person's (``person_like``), only whole, and never inside an address.
 - ``Redactor`` finds the words the owner removed. When the owner removes the text of a message (a password sent by
   mistake), its secret-looking words are registered as salted hashes, never as text (``register``). Any text can then
   be checked word by word: the report, and Ember's code scrubs the agent's memory, open projects and workspace files
@@ -25,7 +26,7 @@ SALT_KEY = "secret.redaction_salt"  # meta: made by migration 0015; the report n
 _EMAIL = re.compile(r"(?<![\w.+%-])[\w.+%-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})+")
 # One-time codes: 4 to 8 digits (or 3 and 3), or 5 to 10 capitals and digits, next to a word that names a code.
 _CODE_WORDS = (
-    r"(?:codes?|otp|pin|tan|passcode|password|passwort|kennwort|verification|verify|verifizierung\w*|confirm\w*"
+    r"(?:codes?|otp|pin|tan|passcode|password|passwort|kennwort|verification|verify|verifizierung\w*|confirm(?!ed\b)\w*"
     r"|bestätigung\w*|sicherheits\w*|security|einmal\w*|anmelde\w*|login|log-in|sign-in|2fa|one-time|zugangs\w*)"
 )
 _CODE = r"(?:\d{4,8}|\d{3}[ -]\d{3}|(?-i:(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,10}))"
@@ -36,10 +37,25 @@ _NOT_BEFORE = r"(?![\w]|[.,:/-]\d)"
 _CODE_AFTER = re.compile(rf"(?i)(\b{_CODE_WORDS}\b[^\n\d\[]{{0,40}}?){_NOT_AFTER}({_CODE}){_NOT_BEFORE}")
 _CODE_BEFORE = re.compile(rf"(?i){_NOT_AFTER}({_CODE}){_NOT_BEFORE}([^\n\d\[]{{0,30}}?\b{_CODE_WORDS}\b)")
 # Links: everything after "?" or "#" can hold a token, and so can a long path segment of letters and digits.
-_URL = re.compile(r"https?://[^\s\"'<>()\[\]{}⏎|]+", re.IGNORECASE)
+_URL = re.compile(r"(?i:https?)://[^\s\"'<>()\[\]{}⏎|]+")
 _SEGMENT = re.compile(r"[A-Za-z0-9_-]{20,}")
 _UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 _PHONE = re.compile(r"(?:\+|0)\d{7,}")
+# Links and addresses in one pass (0.14.0), so what one of them masks can't break the other.
+_LINKS = re.compile(f"(?P<url>{_URL.pattern})|(?P<address>{_EMAIL.pattern})")
+# 0.14.0: a person's name, as a sender's display name gives it: two to four words of letters ("Anne-Marie O'Neil").
+_NAME_WORD = re.compile(r"[^\W\d_]+(?:['’.-][^\W\d_]+)*\.?")
+# Words that make a sender's name a company's or a team's, not a person's ("Etsy Support", "The Printify Team").
+_COMPANY = (
+    "support team service services customer care help info news newsletter noreply no-reply reply notifications"
+    " alerts billing sales marketing account accounts security shop store official business partners community inc"
+    " ltd llc gmbh ag kg co corp company group kundenservice kundendienst"
+)
+_COMPANY_WORDS = frozenset(_COMPANY.split())
+# A mailbox of a role, not of a person ("transaction@", "workspace-noreply@"): only then is a word of the sender's
+# own domain in the name a brand's.
+_ROLE = "no donotreply transaction transactions hello mail mailer contact kontakt order orders admin office notify"
+_ROLE_WORDS = _COMPANY_WORDS | frozenset(_ROLE.split())
 # Other people's text as the tools hand it to the agent: web research and emails (tools.wrap).
 _THIRD_PARTY = re.compile(r'<data src="(research|email:[^"]*)" id="([0-9a-f]+)">(.*?)(?:</data id="\2">|\Z)', re.DOTALL)
 
@@ -90,6 +106,23 @@ def _words(text: str) -> list[tuple[int, int]]:
         if b > a:
             trimmed.append((a, b))
     return trimmed
+
+
+def person_like(name: str | None, own_address: str = "", sender: str = "") -> bool:
+    """0.14.0: whether a sender's display name looks like a person's: two to four words of letters, none a company's
+    word and none a label of Ember's own mail domain. The report masked every name, so a brand ("Pinterest"), an
+    ordinary word ("mailbox", the live report's own provider) and a company ("Etsy Support") were replaced wherever
+    they appeared, in the owner's own instructions too. A word that is a label of the sender's own domain is a
+    brand's ("Etsy Transactions" from transaction@etsy.com) only if the sender's mailbox is a role's: a person's
+    name is often their domain ("Max Mustermann" from max@mustermann.de)."""
+    words = [w for w in re.split(r"[\s,]+", name or "") if w]
+    if not 2 <= len(words) <= 4 or not all(_NAME_WORD.fullmatch(w) for w in words):
+        return False
+    own = set(own_address.lower().partition("@")[2].split(".")[:-1])  # Ember's domain, without its ending
+    mailbox, _, domain = sender.lower().partition("@")
+    if set(re.split(r"[._+-]", mailbox)) & _ROLE_WORDS:
+        own |= set(domain.split(".")[:-1])  # the sender's domain, without its ending
+    return not any(w.lower().rstrip(".") in _COMPANY_WORDS or set(w.lower().split(".")) & own for w in words)
 
 
 def _digest(salt: str, word: str) -> str:
@@ -161,25 +194,32 @@ class Masker:
     full: bool = False
     others: dict[str, str] = field(default_factory=dict)
     addresses: dict[str, int] = field(default_factory=dict)  # each other address and its number in this report
-    _quoted: re.Pattern[str] | None = field(default=None, init=False, repr=False)
+    _pattern: re.Pattern[str] = field(default=_LINKS, init=False, repr=False)
 
     def __post_init__(self) -> None:
         words = sorted((w for w in self.others if w.strip()), key=len, reverse=True)  # the longest first
-        if words:
-            self._quoted = re.compile("|".join(rf"(?<!\w){re.escape(w)}(?!\w)" for w in words))
+        if words and not self.full:
+            # 0.14.0: other people's words in one pass with the links and addresses, whole only (never a part of an
+            # address, a host name or a word), so a name can't break an address and a subject takes its address along.
+            quoted = "|".join(rf"(?<![\w@.-]){re.escape(w)}(?![\w@-]|\.\w)" for w in words)
+            self._pattern = re.compile(f"(?P<quoted>{quoted})|{_LINKS.pattern}")
 
     def __call__(self, text: str) -> str:
         if not text:
             return text
         if not self.full:
             text = leave_out_third_party(text)
-            if self._quoted is not None:
-                text = self._quoted.sub(lambda m: self.others[m[0]], text)
+        text = self._pattern.sub(self._replace, text)
         text = self.redactor.apply(text)
-        text = _URL.sub(_mask_url, text)
-        text = _EMAIL.sub(self._address, text)
         text = _CODE_AFTER.sub(lambda m: f"{m[1]}{CODE}", text)
         return _CODE_BEFORE.sub(lambda m: f"{CODE}{m[2]}", text)
+
+    def _replace(self, match: re.Match[str]) -> str:
+        if match.lastgroup == "quoted":
+            return self.others[match[0]]
+        if match.lastgroup == "url":  # an address in a link's path is masked too
+            return _EMAIL.sub(self._address, _mask_url(match))
+        return self._address(match)
 
     def _address(self, match: re.Match[str]) -> str:
         address = match[0].lower()
