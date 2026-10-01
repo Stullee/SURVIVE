@@ -348,7 +348,7 @@ configuration:
     name: Website address
     description: >-
       Where you publish it, e.g. https://example.org: for its sitemap and the
-      search engines. Optional.
+      search engines. The folder address, not a page's file name. Optional.
   site_owner_name:
     name: Your full name (Impressum)
     description: >-

@@ -188,7 +188,10 @@ class Workshop:
         given = [name for path, name, _ in inputs if path != script]
         lines = [task.strip(), "", f"Files handed over: {', '.join(given)}." if given else "No files handed over."]
         # 0.14.0: a path in the task is a file name in $OUTPUT_DIR (run #7 saved its poster elsewhere: lost)
-        lines.append("A path in the task names a file: save it into $OUTPUT_DIR, or it is lost.")
+        lines.append(
+            "A path in the task names a file: save it by its file name at the top of $OUTPUT_DIR "
+            "(e.g. $OUTPUT_DIR/x.png), or it is lost."
+        )
         if script:
             lines.append(
                 f"Start from the script {PurePosixPath(script).name} (kept from an earlier run): run it, with the "

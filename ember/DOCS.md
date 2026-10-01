@@ -49,7 +49,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Dry run | on | Fake model, no API calls, no cost. |
 | Let the agent read whole web pages | off | Off: live research is web search only. On: it can also read pages from its search results (about $0.01–0.02 each). PDFs and other documents are always refused, because they have no size limit, and so are Etsy's pages, because Etsy's API terms forbid programs reading its site (searching it is fine). |
 | Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, like **Wake now** (at most one wake-up a minute; during a cycle, right after it; not while the agent is paused). Off: it reads your message at its next scheduled wake-up. |
-| Wake Ember when you decide | on | Your decision on one of its requests (approve, reject, mark done or failed), on a venture (back, park, kill) or on a milestone wakes the agent to act on it, the same way as a message. Off: it sees your decision at its next scheduled wake-up. Either way, while a request waits for you the agent sleeps at most the **Default sleep**, and works on other things meanwhile. |
+| Wake Ember when you decide | on | Your decision on one of its requests (approve, reject, mark done or failed), on a venture (back, park, kill) or on a milestone wakes the agent to act on it, the same way as a message. Off: it sees your decision at its next scheduled wake-up. Either way, while a request waits for you the agent sleeps at most the **Default sleep**, and works on other things meanwhile. Once no request waits any more, the sleep it chose stands again (counted from the end of that cycle). |
 | Worker effort | default | How thoroughly the model works in each step. `medium` or `low` write shorter answers and use fewer tool calls, which costs less but may do a worse job. Not used for Haiku. |
 | Kill switch reset | 0 | Change it to any other number and restart to undo the kill switch. |
 | Owner user IDs | empty | The Home Assistant users who are Ember's owner: only they can use the dashboard and its actions. Empty: everyone who can open the panel. The dashboard shows your ID while this is empty. See [Security](#security). |
@@ -83,7 +83,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Printify currency | EUR | The currency of the prices and costs Printify shows for that shop. |
 | Printify products per day | 2 | The most products Ember creates in one day (0 to 10). |
 | Website | off | Lets the agent write the pages of a small website of yours, which Ember builds and you publish. See [Website](#website). |
-| Website name, language, address | empty, de, empty | The site's name in its header (empty: your name), the language of its pages, and where you publish it (https, for its sitemap). |
+| Website name, language, address | empty, de, empty | The site's name in its header (empty: your name), the language of its pages, and where you publish it (https, for its sitemap): the site's folder address like https://example.org, not a page's file name (a trailing /index.html is dropped). |
 | Your full name, address, email, phone, VAT ID (Impressum) | empty | Your data for the site's Impressum and privacy page: name, address and email are needed, phone and VAT ID optional. Never in the diagnostics report. |
 | Your web host (privacy page) | empty | The company hosting your site, named on the privacy page. |
 
@@ -1373,7 +1373,7 @@ full name**, **Your address** (street, then postcode and town, separated by a
 comma), **Your email address** and, if you have them, **Your phone number**
 and **Your VAT ID**: the Impressum needs them, and the dashboard says which one
 is missing. Set **Website address** to where you will publish it (for its
-sitemap), **Website name** to your shop's name and **Your web host** to the
+sitemap; the folder address, not a page's file name), **Website name** to your shop's name and **Your web host** to the
 company hosting it. Save and restart the app.
 
 ## Reddit

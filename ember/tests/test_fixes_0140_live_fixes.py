@@ -83,7 +83,7 @@ def test_a_workshop_run_with_only_its_script_back_is_not_ok() -> None:
 
 def test_the_task_says_files_go_into_the_output_folder() -> None:
     prompt = workshop.Workshop._prompt("Save as shop/posters/a.png", [], None)
-    assert "A path in the task names a file: save it into $OUTPUT_DIR, or it is lost." in prompt
+    assert "save it by its file name at the top of $OUTPUT_DIR (e.g. $OUTPUT_DIR/x.png), or it is lost." in prompt
 
 
 # --- LIVE 3: PRINTIFY counts the proposals that wait ----------------------------------------------------------------
@@ -99,6 +99,13 @@ def test_printify_says_whether_a_proposal_waits(data_dir: Path) -> None:
         conn.execute("UPDATE approvals SET status = 'withdrawn' WHERE executor = 'printify_product'")
     with agent.db.connection() as conn:
         assert printify_publisher.text(conn, agent.scope()) == "No product of yours yet, and none proposed yet."
+
+
+def test_printify_says_an_approved_product_is_not_created_yet(data_dir: Path) -> None:
+    agent, _, request = proposed(data_dir)
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200  # not executed yet
+    with agent.db.connection() as conn:
+        assert printify_publisher.text(conn, agent.scope()) == "No product of yours yet: 1 approved, not created yet."
 
 
 # --- LIVE 4: a server error before the stream opened costs nothing --------------------------------------------------
@@ -225,8 +232,10 @@ def test_a_kept_promise_can_be_reported_past_the_daily_message_limit(data_dir: P
     assert call(agent, "message_owner", text="Update 1.").ok
     assert call(agent, "message_owner", text="Site soon.", commits="Draft the website's home page", due=day(4)).ok
     early = call(agent, "obligation_done", numbers="1", result="Wrote it, see message #2")
-    assert not early.ok and "naming #1 (the daily limit lets that message through)" in early.text
+    assert not early.ok and "naming #1 (the daily limit lets it through if it promises nothing new)" in early.text
     assert not call(agent, "message_owner", text="The home page is done.").ok  # the limit holds for others
+    chained = call(agent, "message_owner", text="#1 is kept. Shop next.", commits="Open the shop", due=day(5))
+    assert not chained.ok and "2 messages today" in chained.text  # a report that promises anew is no exemption
     told = call(agent, "message_owner", text="Promise #1 is kept: the home page is done (site_page 'index').")
     assert told.ok, told.text
     assert call(agent, "obligation_done", numbers="1", result="Told in message #3; site_page 'index'").ok

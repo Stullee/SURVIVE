@@ -332,14 +332,20 @@ def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
     made = products(conn, scope, limit)
     if not made:  # 0.14.0: it said one waited for the owner's decision when none was proposed
         clause, params = scope.where()
-        waiting = conn.execute(
-            f"SELECT COUNT(*) FROM approvals WHERE {clause} AND executor = 'printify_product' AND status = 'pending'",
+        waiting, approved = conn.execute(
+            f"SELECT COUNT(*) FILTER (WHERE status = 'pending'), COUNT(*) FILTER (WHERE status IN {APPROVED}"
+            " AND NOT EXISTS (SELECT 1 FROM printify_products p WHERE p.approval_id = approvals.id))"
+            f" FROM approvals WHERE {clause} AND executor = 'printify_product'",
             params,
-        ).fetchone()[0]
-        if not waiting:
+        ).fetchone()
+        if not waiting and not approved:
             return "No product of yours yet, and none proposed yet."
-        wait = "proposals wait" if waiting != 1 else "proposal waits"
-        return f"No product of yours yet: {waiting} {wait} for your owner's decision."
+        parts = [f"{approved} approved, not created yet"] if approved else []
+        if waiting:
+            parts.append(
+                f"{waiting} {'proposals wait' if waiting != 1 else 'proposal waits'} for your owner's decision"
+            )
+        return f"No product of yours yet: {'; '.join(parts)}."
     lines = []
     for r in made:
         where = f"Etsy #{r['listing_id']}" if r["listing_id"] else "no Etsy listing yet"

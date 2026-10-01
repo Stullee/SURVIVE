@@ -2701,7 +2701,7 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     # 0.12.0: at most MESSAGES_PER_DAY a day that answer none of the owner's (the prompt's "once a day" was prose)
     if (
         not store.answerable(conn, ctx.scope, named)
-        and not _reports_promise(ctx, conn, args["text"])
+        and not (promised is None and _reports_promise(ctx, conn, args["text"]))
         and _unasked_today(ctx, conn) >= MESSAGES_PER_DAY
     ):
         raise ToolError(
@@ -2749,7 +2749,7 @@ def _promise(ctx: ToolContext, args: dict[str, Any]) -> tuple[str, str] | None:
 def _reports_promise(ctx: ToolContext, conn: Any, text: str) -> bool:
     """0.14.0: whether the message names an open promise (#n) that the owner hasn't heard about since it was made: the
     daily cap lets it through, so obligation_done can close it (live: the cap refused the very message obligation_done
-    asked for)."""
+    asked for). Only a message that makes no promise itself, so one report can't open the way for the next."""
     where, params = ctx.scope.where()
     for number in dict.fromkeys(int(n) for n in re.findall(r"#(\d{1,9})", text)):
         row = conn.execute(
@@ -2790,7 +2790,7 @@ def _obligation_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
         elif row["kind"] == "promise" and not obligations.told_since(conn, ctx.scope, row["message_id"]):
             refused.append(
                 f"#{number} is a promise: tell your owner it is kept (or why not) with message_owner first, naming "
-                f"#{number} (the daily limit lets that message through)"
+                f"#{number} (the daily limit lets it through if it promises nothing new)"
             )
         else:
             obligations.close_one(conn, number, result, "agent", ctx.cycle_id, ctx.now())
