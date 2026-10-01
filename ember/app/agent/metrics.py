@@ -21,7 +21,7 @@ import json
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -412,14 +412,15 @@ def _read_etsy(
     return Reading(1 if live and not few else 0, synced, detail, sample=len(live))
 
 
-def orders_of(conn: sqlite3.Connection, scope: AgentScope, ours: set[int], since: str) -> list[int]:
-    """The receipts of the (counted) Etsy orders with one of the listings ``ours``, from ``since`` on ("": all)."""
+def orders_of(conn: sqlite3.Connection, scope: AgentScope, ours: set[int], since: str, until: str = "") -> list[int]:
+    """The receipts of the (counted) Etsy orders with one of the listings ``ours``, from ``since`` on ("": all) and
+    before ``until`` ("": to now)."""
     where, params = scope.where()
     found = []
     for order in conn.execute(
         f"SELECT receipt_id, items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS} AND ordered_at >= ?"
-        " ORDER BY ordered_at",
-        (*params, since),
+        " AND (? = '' OR ordered_at < ?) ORDER BY ordered_at",
+        (*params, since, until, until),
     ):
         items = json.loads(order["items"] or "[]")
         if any(isinstance(i, dict) and i.get("listing_id") in ours for i in items):
@@ -497,8 +498,12 @@ def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str
         judged: Reading | None = reading
         if m.etsy and past and books.clock.local_day(reading.at).isoformat() > row["due"]:
             # 0.14.0: Etsy read only after its date (a sync gap): its last reading by then decides; a later one can
-            # only show a miss (a bar met days late was graded done)
-            judged = _by_its_date(row, books) or (reading if reading.value < target else None)
+            # only show a miss (a bar met days late was graded done). Orders carry their own date: those placed by
+            # the end of its due day count, however late a sync fetched them
+            if m.name in ("orders_observed", "orders_total"):
+                judged = _orders_by_its_date(conn, scope, row, books, reading)
+            else:
+                judged = _by_its_date(row, books) or (reading if reading.value < target else None)
         if judged is reading:
             conn.execute(
                 "UPDATE milestones SET progress = ?, checked_at = ? WHERE id = ?",
@@ -546,6 +551,18 @@ def _by_its_date(row: Mapping[str, Any], books: Books) -> Reading | None:
     if row["progress"] is None or not at or books.clock.local_day(str(at)).isoformat() > row["due"]:
         return None
     return Reading(int(row["progress"]), str(at), " (its last reading by its date)")
+
+
+def _orders_by_its_date(
+    conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any], books: Books, reading: Reading
+) -> Reading:
+    """0.14.0: the milestone's Etsy orders placed by the end of its due day, the owner's local day."""
+    rows = listings(conn, scope, row["project_id"], row["venture_id"])
+    since = str(row["created_at"]) if row["metric"] == "orders_observed" else ""
+    until = books.clock.day_bounds(date.fromisoformat(str(row["due"])))[1]
+    found = orders_of(conn, scope, {int(r["listing_id"]) for r in rows}, since, until)
+    detail = f" (receipts {_ids(found)}, ordered by its date)" if found else ""
+    return Reading(len(found), reading.at, detail, sample=reading.sample)
 
 
 def grade_all(db: Database, scope: AgentScope, ledger: Any, clock: Clock, history: bool) -> list[str]:

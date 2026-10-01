@@ -13,7 +13,8 @@ product line's test: no next bar is set.
 A missed bar is an obligation with its action: fix the titles, tags and category once (day 7); park the product line
 with the numbers (day 14: one obligation for its two bars); stop building that product type (day 21). A first order by
 day 21 is met with its own action: scale it (5 variants or a bundle), a decision point Ember's code sets for the agent
-to close. Their dates never move and only the owner drops them; a closed project takes its open ones with it.
+to close. Their dates never move (0.14.0: a bar that opens on or after its day is due the day after it opens) and only
+the owner drops them; a closed project takes its open ones with it.
 
 The bars are milestones of the kind 'first_test' (a product line's first test; listing_gates names each one's bar),
 under the money goal when it is due later; the milestone to scale is a decision point ('decision') of its own, a goal
@@ -145,9 +146,9 @@ def _record(
 def _set(
     conn: sqlite3.Connection, scope: AgentScope, project: Any, gate: Gate, start: date, today: date, now: str
 ) -> int:
-    """One bar as a milestone of Ember's code, due on its day from the start (0.14.0: or today, for a bar that opens
-    after its day because the one before was graded after its date)."""
-    due = max(start + timedelta(days=gate.day), today).isoformat()
+    """One bar as a milestone of Ember's code, due on its day from the start. 0.14.0: a bar that opens on or after its
+    day (the one before was graded then) is due the next day, so a sync can read it by its date."""
+    due = max(start + timedelta(days=gate.day), today + timedelta(days=1)).isoformat()
     goal = roadmap.money_goal(conn, scope)
     milestone_id = roadmap.create(
         conn,

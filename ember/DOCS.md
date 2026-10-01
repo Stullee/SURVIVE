@@ -632,7 +632,9 @@ its date has passed without it, with the numbers too (and, for orders and
 favorites, whether the listings had too few views to judge). The agent can't
 close such a milestone done; the database refuses it as well. Past its date,
 Etsy's numbers read only after that day (a gap in the syncs) don't meet it: its
-last reading by its date decides, and without one it is missed. The metrics:
+last reading by its date decides, and without one it is missed. Orders carry
+their own date: those placed by its date count, however late they were read.
+The metrics:
 
 | Metric | What it counts | From |
 |---|---|---|
@@ -672,7 +674,8 @@ of the roadmap's 20 places:
 A miss is an obligation with that action, shown first in the agent's plan
 until it is done. A first order by day 21 sets a decision point of its own:
 **Scale it: 5 variants or a bundle**, which the agent closes when they are
-live. The test's dates never move and only you drop its milestones: your drop
+live. The test's dates never move, except that a bar opening on or after its
+day is due the day after it opens. Only you drop its milestones: your drop
 ends that product line's test, and so does parking its venture. A project that
 is closed takes its open ones with it. Existing product lines get theirs from
 the day this version first sees their listings live.

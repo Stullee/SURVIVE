@@ -135,14 +135,14 @@ def test_a_missed_day_14_views_bar_misses_the_day_14_bar(data_dir: Path) -> None
     assert keep_gates(agent) == []
 
 
-def test_a_favorites_bar_opened_after_its_day_is_due_the_day_it_opens(data_dir: Path) -> None:
+def test_a_favorites_bar_opened_after_its_day_is_due_the_day_after_it_opens(data_dir: Path) -> None:
     agent, _ = started(data_dir)
     close(agent, "day7_views", "done")
     keep_gates(agent)
     close(agent, "day14_views", "done")  # met by day 14, but graded after midnight
     agent.clock.advance(days=15)
     keep_gates(agent)
-    assert bars(agent)["day14_favorites"]["due"] == agent.clock.today().isoformat()
+    assert bars(agent)["day14_favorites"]["due"] == day(agent, 1)
 
 
 # --- FIX NOW 20a: what a milestone Ember's code checks counts is fixed ---
@@ -310,6 +310,49 @@ def test_a_milestone_not_read_by_its_date_is_missed(data_dir: Path) -> None:
     agent.sync_shop()
     after = milestone(agent, bar)
     assert after["status"] == "missed" and "not read by its date" in after["result"], after["result"]
+
+
+def first_order_bar(data_dir: Path, ordered_after: int) -> dict[str, Any]:
+    """A first-order bar due tomorrow, read at 0 orders; an order placed ``ordered_after`` days after its due day (0:
+    on it) and fetched only by a sync the day after that."""
+    agent, listing = listed(data_dir)
+    agent.clock.advance(minutes=61)
+    agent.sync_shop()
+    bar = create(
+        agent,
+        title="Day 21: a first order",
+        measure="A first order",
+        due=day(agent, 1),
+        created_by="code",
+        kind="first_test",
+        metric="orders_total",
+        target=1,
+    )
+    agent.clock.advance(minutes=61)
+    agent.sync_shop()
+    assert milestone(agent, bar)["progress"] == 0
+    agent.clock.advance(days=1 + ordered_after)
+    scope = agent.scope()
+    with agent.db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO etsy_orders (mode, session, receipt_id, ordered_at, total, total_cents, currency, items,"
+            " synced_at, status) VALUES (?, ?, 777, ?, '4.90 EUR', 490, 'EUR', ?, ?, 'paid')",
+            (scope.mode, scope.session, to_iso(agent.clock.now()), f'[{{"listing_id": {listing}}}]', ""),
+        )
+    agent.clock.advance(days=1)
+    agent.sync_shop()
+    return milestone(agent, bar)
+
+
+def test_an_order_placed_by_its_date_counts_however_late_it_was_fetched(data_dir: Path) -> None:
+    met = first_order_bar(data_dir, 0)
+    assert (met["status"], met["closed_by"]) == ("done", "code"), met["result"]
+    assert "receipts #777, ordered by its date" in met["result"]
+
+
+def test_an_order_placed_after_its_date_does_not_meet_it(data_dir: Path) -> None:
+    missed = first_order_bar(data_dir, 1)
+    assert missed["status"] == "missed" and "orders_total 0 orders, target" in missed["result"], missed["result"]
 
 
 # --- X10: a parked venture's projects drop their bars ---
@@ -520,3 +563,16 @@ def test_the_agent_sets_views_and_favorites_in_all_that_code_grades(data_dir: Pa
     agent.sync_shop()
     graded = milestone(agent, mine)
     assert (graded["status"], graded["closed_by"]) == ("done", "code"), graded["result"]
+
+
+def test_a_goal_that_a_listing_is_live_hints_at_listings_live(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    hint = "metric listings_live (with project_id) lets Ember's code check it"
+    live = call(
+        agent,
+        "milestone_plan",
+        milestones=[dict(title="Nebenkosten tool live", measure="The listing is live", due=day(agent, 7))],
+    )
+    assert live.ok and hint in live.text, live.text  # a hint, not a refusal
+    other = call(agent, "milestone_plan", milestones=[dict(title="3 drafts", measure="3 drafts", due=day(agent, 7))])
+    assert other.ok and hint not in other.text, other.text

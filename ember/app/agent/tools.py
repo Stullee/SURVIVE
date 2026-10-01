@@ -2239,6 +2239,7 @@ _SHOP = re.compile(r"\b(?:listings?|etsy|shop)\b", re.IGNORECASE)
 _ELSEWHERE = re.compile(
     r"\b(?:pins?|pinterest|website|site|blog|posts?|reddit|instagram|tiktok|youtube|videos?)\b", re.IGNORECASE
 )
+_LIVE = re.compile(r"\b(?:live|listed)\b", re.IGNORECASE)  # 0.14.0: "X live" goals, self-graded: a hint, not a refusal
 
 
 def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tuple[int, str]:
@@ -2326,6 +2327,10 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
         if checked
         else "When its measure is met, close it with milestone_update (done, with the evidence)."
     )
+    if checked is None and ctx.etsy is not None and _LIVE.search(words) and not _ELSEWHERE.search(words):
+        close += (
+            " If it means listings live on Etsy, metric listings_live (with project_id) lets Ember's code check it."
+        )
     instead = ""
     if replaces is not None:
         moves = roadmap.replaced_moves(replaces)
