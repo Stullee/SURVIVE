@@ -168,6 +168,7 @@ WORKSHOP_INPUT_MB = 10  # their size together
 # ONE_REPLY_CHARS of a text, and every part written through the conversation is read again by each later step.
 DRAFT_MAX_TOKENS = 8_000
 DRAFT_CHARS = DRAFT_MAX_TOKENS * 3  # what a draft holds at least (3 characters a token)
+DRAFT_BYTES = DRAFT_MAX_TOKENS * 4  # 0.14.0: the room a draft needs in a file (4 bytes a token)
 DRAFT_SOURCES = 5  # workspace files a draft builds on
 DRAFT_SOURCE_CHARS = 24_000  # their text, together
 FIRST_CONTACT = (
@@ -1142,6 +1143,7 @@ def definitions(
     pinterest: bool = False,
     printify: bool = False,
     site: bool = False,
+    brainstorm: bool = True,
 ) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds (the
     reflection reads it from the cache at a tenth of the price; a list of its own would write the whole conversation
@@ -1149,7 +1151,8 @@ def definitions(
     only when the owner's options allow runs, the Etsy tools only with a shop, brainstorm only in a venture cycle
     and, 0.12.0, the tools for building and selling only in an ordinary one, the library's only while it holds
     documents; 0.13.0: the Pinterest and Printify tools, and their manuals, only with the owner's account and a
-    shop, and the website's only when the owner switched it on)."""
+    shop, and the website's only when the owner switched it on; 0.14.0: brainstorm only when the burn mode allows
+    it)."""
     channels = {"pinterest": pinterest and etsy, "printify": printify and etsy, "website": site}
     return [
         _definition(_channel_guides(spec_of(spec.name, venture) or spec, channels))
@@ -1164,6 +1167,7 @@ def definitions(
             pinterest=pinterest,
             printify=printify,
             site=site,
+            brainstorm=brainstorm,
         )
     ]
 
@@ -1202,8 +1206,10 @@ def offered(
     pinterest: bool = False,
     printify: bool = False,
     site: bool = False,
+    brainstorm: bool = True,
 ) -> bool:
-    """Whether tool ``name`` is offered in a cycle of this configuration and kind (``venture``: a venture cycle)."""
+    """Whether tool ``name`` is offered in a cycle of this configuration and kind (``venture``: a venture cycle;
+    ``brainstorm``: the burn mode allows brainstorms, 0.14.0)."""
     return (
         (mail or name not in MAIL_TOOLS)
         and (workshop or name not in WORKSHOP_TOOLS)
@@ -1212,6 +1218,7 @@ def offered(
         and ((printify and etsy) or name not in PRINTIFY_TOOLS)
         and (site or name not in SITE_TOOLS)
         and (venture or name not in VENTURE_TOOLS)
+        and (brainstorm or name != "brainstorm")
         and not (venture and name in ORDINARY_TOOLS)
         and (library or name not in LIBRARY_TOOLS)
     )
@@ -2056,6 +2063,13 @@ def _draft(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         raise ToolError(f"{path} already exists: overwrite it, append to it, or name a new file")
     if mode == "append" and not exists:
         raise ToolError(f"{path} doesn't exist yet: create it first")
+    limit = ctx.workspace.limits.max_file_bytes
+    size = (ctx.workspace.size_of(path) or 0) if mode == "append" else 0
+    if limit - size < DRAFT_BYTES:  # 0.14.0: refused before it is paid for, not after
+        raise ToolError(
+            f"{path} holds {size // 1024} KB and a draft may add {DRAFT_BYTES // 1024} KB, more than the "
+            f"{limit // 1024} KB a file holds: draft the rest into a new file, with {path} as a source"
+        )
     brief = args["brief"].strip()
     if not brief:
         raise ToolError("the brief is empty")
@@ -2074,22 +2088,42 @@ def _draft(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     if isinstance(drafted, Outcome):
         return drafted
     cost = f"(cost ${micros_to_usd(drafted.cost_micros):.4f})"
+    moved = ""
+    if mode == "append" and size + len(drafted.text.encode("utf-8")) > limit:
+        # 0.14.0: a paid draft longer than the file's room is kept in a file of its own, not thrown away
+        path, mode, moved = _free_name(ctx.workspace, path), "create", f" It didn't fit in {path} ({limit // 1024} KB)."
     try:
         size = ctx.workspace.write(path, drafted.text, append=mode == "append", create_only=mode == "create")
     except SandboxError as exc:
         return Outcome(False, f"Error: the draft was written but can't be saved ({exc}). {cost}", "refused", paid=True)
+    go_on = "with mode append and" if limit - size >= DRAFT_BYTES else "into a new file, with"
     cut = (
-        f" It was cut off at its length limit: read its end with workspace_read, then draft the rest with mode append "
-        f"and {path} as a source."
+        f" It was cut off at its length limit: read its end with workspace_read, then draft the rest {go_on} "
+        f"{path} as a source."
         if drafted.cut_off
         else ""
     )
     return Outcome(
         True,
         f"{'Appended to' if mode == 'append' else 'Wrote'} {path}: {len(drafted.text):,} characters, now {size:,} "
-        f"bytes.{cut} Read it with workspace_read before you use it. {cost}",
+        f"bytes.{moved}{cut} Read it with workspace_read before you use it. {cost}",
         f"draft {path}",
     )
+
+
+def _free_name(workspace: Jail, path: str) -> str:
+    """0.14.0: the first of <name>-2.md, <name>-3.md, ... next to ``path`` that can be written and doesn't exist yet
+    (``path`` itself if none of the first 98 is: then the write is refused as before)."""
+    stem, _, suffix = path.rpartition(".")  # a text file's name always has its suffix
+    for number in range(2, 100):
+        candidate = f"{stem}-{number}.{suffix}"
+        try:
+            workspace.parts(candidate)
+        except SandboxError:
+            return path  # the name is as long as a name can be
+        if not workspace.exists(candidate):
+            return candidate
+    return path
 
 
 # --- the roadmap (0.11.0) ---
@@ -2602,6 +2636,8 @@ def _library_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
             state = {"done": f"{counts.get(r['id'], 0)} learnings", "waiting": "not studied yet"}.get(
                 r["study"], "not studied"
             )
+            if r["study"] == "done" and r["study_note"]:  # 0.14.0: its learnings were full before its last part
+                state += f" · {r['study_note']}"
             links = "".join(
                 f" · {name} #{r[f'{name}_id']}" for name in ("venture", "project") if r[f"{name}_id"] is not None
             )

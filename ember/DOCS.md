@@ -234,7 +234,9 @@ covers a cycle. An event that can't wake the agent waits for its next cycle.
 
 To keep money for these wake-ups, a scheduled cycle leaves **a fifth of the
 daily cap** unspent until **20:00** (your time), unless the cap is too small to
-spare it. When a scheduled wake would need that share, it waits until 20:00.
+spare it. Every call of that cycle leaves it, workshop runs, the daily review,
+library study and the critic too. When a scheduled wake would need that share,
+it waits until 20:00.
 Your **Wake now**, messages and decisions are never held back. The activity
 list shows an event's cycle as *woken by an event*, and the System log shows
 what was noted.
@@ -307,7 +309,9 @@ whole file in one call of its own (up to about 24,000 characters, a few cents
 to a dime on claude-sonnet-5), from the agent's brief and the workspace files it
 names; the file is saved in the workspace and never read back through the
 conversation. Drafts count toward the cycle cap like research, at most 3 a
-cycle, in ordinary cycles only.
+cycle, in ordinary cycles only. An append that the file's 64 KB might not hold
+is refused before it is paid for; a paid draft that still doesn't fit is saved
+as a new file next to it.
 
 The agent can **look** at a picture (a page or a listing photo) before it shows
 you anything, and it reads a short guide for each tool. The PDFs embed their
@@ -755,7 +759,9 @@ naming the part of the document it comes from. The text never has to be read
 or analysed again. Studying costs a few cents for a typical page (a long guide
 of 100 pages about $0.30 with the default models); the **Daily study budget**
 option limits it (0.50 USD a day by default, counted toward the daily cap), and
-a long document is studied over several cycles or days. Each card shows how far
+a long document is studied over several cycles or days. A document keeps at
+most 60 learnings: once they are full its study ends, and its card says which
+parts weren't studied (the agent can still read them). Each card shows how far
 the study got, what it cost and, when you open it, what the agent learned.
 
 **Used where it matters.** Each plan sees what was newly learned; each work
@@ -1505,15 +1511,20 @@ runway, and the agent's plans say which mode it is in:
   allow;
 - **focus**: 15 to 30 days: the tests already running go on (venture cycles
   only while a venture is backed or live), with no brainstorms;
-- **maintenance**: under 15 days: one scheduled cycle a day, of at most $0.40,
-  and no venture cycles (your messages and decisions still wake it);
+- **maintenance**: under 15 days: one scheduled cycle a day, of at most $0.40
+  with every call counted (the daily review and library study too), no workshop
+  runs and no venture cycles (your messages and decisions still wake it);
 - **dormant**: once its last will is written and its runway is critical: no
   model calls until money comes in (a sale or your grant); **Wake now** still
   runs a cycle.
 
 A mode moves down at once and up only 20% past its threshold, so it doesn't
 flicker. Each change is in the System log, and the dashboard's runway shows the
-mode when it holds the agent back (sensor attribute `burn_mode`). The Etsy shop
+mode when it holds the agent back (sensor attribute `burn_mode`). The dashboard
+and the agent's plans also say when the mode moves down next at today's burn
+(for example *maintenance from about 10-03*), if that is within 30 days. The
+agent's plans state the cycle cap in force, and why it is lower than your
+option (maintenance, or the event wake-ups' share until 20:00). The Etsy shop
 is read on its schedule also while the agent is paused, dormant or waiting for
 money, so a sale is still seen and recorded; only the kill switch or the end of
 a life stops it.
@@ -1535,7 +1546,9 @@ cap and the balance are never exceeded. A cycle keeps enough of its cap for its
 reflection (at least 1.5 times the 95th percentile of the recent reflections),
 and a reflection may go over the cycle cap by what a cache miss would add.
 Workshop runs have their own cap per run instead of the cycle cap, and the
-daily review counts only toward the daily cap. A small reserve is always kept
+daily review, library study, the lessons' consolidation and the critic count
+only toward the daily cap (in maintenance the cycle's $0.40 bounds them all).
+A small reserve is always kept
 so the agent can write its last will. If a call ever costs more than its worst
 case, the cycle stops and Ember
 scales up the estimates for that kind of call (planning, a work step, the

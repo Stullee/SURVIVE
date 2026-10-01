@@ -93,8 +93,8 @@ def test_a_review_the_budget_cant_cover_now_waits_for_the_next_cycle(
     agent, fake = next_day(data_dir)
     real = MeteredModel.headroom
 
-    def no_room_for_reviews(self: MeteredModel, cycle_id: int, purpose: str = "work") -> int:
-        return 0 if purpose == REVIEW else real(self, cycle_id, purpose)
+    def no_room_for_reviews(self: MeteredModel, cycle_id: int, purpose: str = "work", keep: int = 0) -> int:
+        return 0 if purpose == REVIEW else real(self, cycle_id, purpose, keep)
 
     monkeypatch.setattr(MeteredModel, "headroom", no_room_for_reviews)
     before = len(fake.sent)

@@ -89,9 +89,10 @@ KNOWLEDGE_HEADING = "WHAT YOU LEARNED (from your owner's library)"
 KNOWLEDGE_BUDGET = 1_800
 VENTURE_FOCUS_BUDGET = 1_900  # a venture's FOCUS in the brief
 MILESTONE_FOCUS_BUDGET = 1_100  # a milestone's FOCUS in the brief (0.11.0; 0.12.0: with its last cycle's digest)
+BRAINSTORM_BRIEF = "grow the tree with brainstorm (first, if you plan one), "  # 0.14.0: only in explore
 VENTURE_BRIEF = (
     "This is a venture cycle: read guide 'ventures' first, research as often as this cycle can pay for (STATUS), "
-    "grow the tree with brainstorm (first, if you plan one), save each number your research finds with evidence and "
+    f"{BRAINSTORM_BRIEF}save each number your research finds with evidence and "
     "the rest with venture_update (learned, with sources), and rescore the venture from the evidence."
 )
 # 0.12.0: the brief's copy of OBLIGATIONS (the plan's is never cut), on top of the brief's budget like the owner's.
@@ -176,7 +177,9 @@ class Snapshot:
     agent_name: str
     today_spend: int
     daily_cap: float
-    cycle_cap: float
+    cycle_cap: float  # 0.14.0: what this cycle may still spend under the cap in force (metering.cycle_room)
+    cap_note: str = ""  # 0.14.0: why that is below the owner's option ("" if it isn't)
+    brainstorm: bool = True  # 0.14.0: the burn mode allows brainstorms (explore)
     projects: list[sqlite3.Row] = field(default_factory=list)
     project_money: dict[int, tuple[int, int]] = field(default_factory=dict)
     owner_messages: list[sqlite3.Row] = field(default_factory=list)
@@ -231,6 +234,8 @@ def snapshot(
     today_spend: int,
     daily_cap: float,
     cycle_cap: float,
+    cap_note: str = "",
+    brainstorm: bool = True,
     news: News | None = None,
     mail_address: str | None = None,
     today: date | None = None,
@@ -281,6 +286,8 @@ def snapshot(
         today_spend=today_spend,
         daily_cap=daily_cap,
         cycle_cap=cycle_cap,
+        cap_note=cap_note,
+        brainstorm=brainstorm,
         projects=projects,
         project_money=money,
         owner_messages=store.open_messages(conn, scope, 8),
@@ -380,7 +387,7 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
         + (" DRY RUN (simulated money)." if dry_run else ""),
         f"State: {st.state}. Balance ${micros_to_usd(st.balance):.2f}. Runway {runway}.",
         f"Spent today ${micros_to_usd(s.today_spend):.2f} of ${s.daily_cap:.2f}."
-        f" This cycle may spend up to ${s.cycle_cap:.2f}.",
+        f" This cycle may spend up to ${s.cycle_cap:.2f}{s.cap_note}.",
     ]
     if s.burn:
         lines.append(f"Burn mode, set by Ember's code: {s.burn}.")
@@ -393,7 +400,7 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
             f" ${micros_to_usd(spent):.2f} so far." + (" This is a venture cycle." if s.venture else "")
         )
         if s.venture:
-            lines.append(ventures.room_text(s.cycle_cap, s.call_costs))
+            lines.append(ventures.room_text(s.cycle_cap, s.call_costs, s.brainstorm))
     if st.last_will_due:
         lines.append("Your money is nearly gone: your last will is due.")
     return "\n".join(lines)
@@ -765,7 +772,7 @@ def brief(
         *owners,
         *mailed,
         *owed,  # 0.12.0: what the agent owes, with the numbers obligation_done closes
-        *([("VENTURE CYCLE", VENTURE_BRIEF)] if s.venture else []),
+        *([("VENTURE CYCLE", _venture_brief(s))] if s.venture else []),
         *learned,  # before the FOCUS: a brief over its budget loses its end, and this section's room is its own
         ("FOCUS", focus_text),
         (LESSONS_HEADING, lessons_text(s, 800)),
@@ -785,6 +792,12 @@ def brief(
     # A message longer than the brief can ever hold is shown in full as far as it can be.
     full = frozenset(item for item, shown_whole in held.items() if shown_whole or item == too_long)
     return text, Shown(full, listed=frozenset(held))
+
+
+def _venture_brief(s: Snapshot) -> str:
+    """The brief's VENTURE CYCLE: without brainstorms outside explore (0.14.0: the focus mode's brief still asked for
+    one, and the tool refused it)."""
+    return VENTURE_BRIEF if s.brainstorm else VENTURE_BRIEF.replace(BRAINSTORM_BRIEF, "")
 
 
 def will_context(s: Snapshot, dry_run: bool) -> str:

@@ -36,6 +36,7 @@ from ..economy.estimate import Unpriceable
 from ..economy.metering import (
     CONSOLIDATE,
     CRITIC,
+    EVENT_RESERVE_HOUR,
     RESEARCH_CHECK,
     REVIEW,
     STUDY,
@@ -276,14 +277,15 @@ class CycleRunner:
         )
         ctx.research = self._research_fn(ctx)
         ctx.draft = self._draft_fn(ctx)
-        ctx.workshop = self._workshop_fn(ctx) if prompts.workshop_on(self.settings) else None
+        mode = burn.peek(self.db, self.economy.life.evaluate())  # the cycle's: open_cycle has just kept it
+        # 0.14.0: no workshop runs in maintenance (a run costs about what the whole cycle may)
+        ctx.workshop = self._workshop_fn(ctx) if prompts.workshop_on(self.settings) and mode.workshop else None
         end = CycleEnd("failed", "the cycle ended unexpectedly")
         try:
             if trigger != "last_will":
                 ctx.venture = self._venture_cycle(cycle_id) if not self.reactive else False
                 # 0.12.0: brainstorms only while the burn mode is explore
-                explore = burn.peek(self.db, self.economy.life.evaluate()).brainstorms
-                ctx.brainstorm = self._brainstorm_fn(ctx) if ctx.venture and explore else None
+                ctx.brainstorm = self._brainstorm_fn(ctx) if ctx.venture and mode.brainstorms else None
                 with self.db.connection() as conn:
                     self.library_on = ctx.library = library.totals(conn, self.scope)[0] > 0
                 self._fetch_mail(cycle_id)
@@ -507,11 +509,13 @@ class CycleRunner:
         if self.stop.is_set():
             raise Stopping
 
-    def _snapshot(self, venture: bool = False) -> context.Snapshot:
+    def _snapshot(self, venture: bool = False, cycle_id: int | None = None) -> context.Snapshot:
+        """What the plan, the brief and the will see; ``cycle_id``: the cycle's (none for the diagnostics' preview)."""
         status = self.economy.life.evaluate()
         scope = self.economy.life.scope()
         self.net_runway_days = status.runway.net_days  # 0.13.0
         mode = burn.peek(self.db, status)
+        room, why = self.meter.cycle_room(cycle_id, mode)  # 0.14.0: the cap in force, not the options'
         self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
         self._keep_stages()
         metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
@@ -572,7 +576,8 @@ class CycleRunner:
                 agent_name=self.settings.agent_name,
                 today_spend=today,
                 daily_cap=self.settings.daily_spend_cap_usd,
-                cycle_cap=self.settings.cycle_spend_cap_usd,
+                cycle_cap=micros_to_usd(room),
+                cap_note=_cap_note(why),
                 news=fresh,
                 mail_address=self.mailbox.address if self.mailbox else None,
                 today=self.clock.today(),
@@ -584,7 +589,8 @@ class CycleRunner:
                 venture_share=self.settings.venture_share,
                 shelf=library.shelf(conn, self.scope),
                 decision_wakes=self.settings.wake_on_decision,
-                burn=_burn_line(mode),
+                burn=_burn_line(mode, self.clock),
+                brainstorm=mode.brainstorms,
                 ready=desk.text(self.ready_items, predictions.calibration(conn, self.scope) if venture else ""),
                 agenda=agenda.unseen(conn, self.scope),  # 0.13.0: what happened between cycles
                 reactive=self.reactive,
@@ -616,7 +622,7 @@ class CycleRunner:
             self._study(cycle_id)
         if not self.reactive:
             self._critique(cycle_id)  # 0.13.0
-        snap = self._snapshot(ctx.venture)
+        snap = self._snapshot(ctx.venture, cycle_id)
         ctx.net_runway_days = self.net_runway_days  # 0.13.0: the knock-outs' slow rule
         action = "Planning this venture cycle" if ctx.venture else "Planning this cycle"
         self._progress(cycle_id, phase="plan", current_action=action)
@@ -857,7 +863,10 @@ class CycleRunner:
         except Unpriceable as exc:
             log.warning("The daily review can't be priced (%s); skipped", exc)
             return
-        if quote > self.meter.headroom(cycle_id, REVIEW):
+        # 0.14.0: it leaves what the cycle needs to work after it, as the study does (in maintenance the cycle's cap
+        # bounds the review too, and a review that took most of it left no plan)
+        working = working_cycle_cost(self.settings, self.db, self.economy.life.mode) or 0
+        if quote > self.meter.headroom(cycle_id, REVIEW, keep=working):
             log.info("The daily review can't be afforded now; it is tried at the next cycle")
             return
         try:
@@ -1001,10 +1010,12 @@ class CycleRunner:
         budget = usd_cap_to_micros(self.settings.library_study_usd_per_day)
         for _ in range(library.STUDY_CALLS if budget > 0 else 0):
             self._check_stop()
-            with self.db.connection() as conn:
+            with self.db.transaction() as conn:
                 document = library.next_to_study(conn, self.scope)
                 if document is None:
                     return
+                if library.end_full(conn, document, to_iso(self.clock.now())):  # 0.14.0: nothing more to keep
+                    continue
                 parts = library.next_parts(conn, document)
                 known = library.learnings_of(conn, document["id"])
                 spent = library.study_spent(conn, self.scope, self.clock.today())
@@ -1152,6 +1163,7 @@ class CycleRunner:
                 pinterest=self.pinterest_on,
                 printify=self.printify_on,
                 site=self.site_on,
+                **_offered(ctx),
             )
             if not self._affordable(cycle_id, request, brief, turns, ctx):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
@@ -1263,6 +1275,7 @@ class CycleRunner:
             pinterest=self.pinterest_on,
             printify=self.printify_on,
             site=self.site_on,
+            **_offered(ctx),
         )
         try:
             step_worst = self.meter.quote(request, "work")
@@ -1340,6 +1353,7 @@ class CycleRunner:
             pinterest=self.pinterest_on,
             printify=self.printify_on,
             site=self.site_on,
+            **_offered(ctx),
         )
         # 0.12.0: why the work ended is kept first, also when the reflection can't be paid for.
         self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)
@@ -1710,7 +1724,7 @@ class CycleRunner:
     # --- the last will ---
 
     def _last_will(self, cycle_id: int) -> CycleEnd:
-        snap = self._snapshot()
+        snap = self._snapshot(cycle_id=cycle_id)
         self._progress(cycle_id, phase="last_will", current_action="Writing the last will")
         request = prompts.will_request(self.settings, context.will_context(snap, self.dry_run))
         if not context.fits(request, LAST_WILL.input_tokens):
@@ -1946,6 +1960,25 @@ def _picture_bytes(block: dict[str, Any]) -> int:
     return min(IMAGE_EQUIVALENT_BYTES, math.ceil(width * height * IMAGE_EQUIVALENT_BYTES / tools.LOOK_PIXELS**2))
 
 
-def _burn_line(mode: burn.Burn) -> str:
-    """STATUS's burn mode (0.12.0), when it holds the agent back: nothing in explore."""
-    return "" if mode.mode == burn.EXPLORE else mode.text()
+def _burn_line(mode: burn.Burn, clock: Clock) -> str:
+    """STATUS's burn mode (0.12.0), when it holds the agent back or (0.14.0) is projected to within
+    burn.PROJECTED_DAYS: nothing in explore otherwise."""
+    projected = burn.projected_text(mode, clock.now().astimezone(clock.tz))
+    if mode.mode == burn.EXPLORE and not projected:
+        return ""
+    return mode.text() + (f"; {projected}" if projected else "")
+
+
+def _offered(ctx: tools.ToolContext) -> dict[str, bool]:
+    """0.14.0: the tools the burn mode leaves this cycle (the workshop not in maintenance, brainstorm only in
+    explore), the same for every step and the reflection, so the cache holds."""
+    return {"workshop": ctx.workshop is not None, "brainstorm": ctx.brainstorm is not None}
+
+
+def _cap_note(why: str) -> str:
+    """0.14.0: why STATUS's cycle cap is below the owner's option (metering.cycle_room says which)."""
+    if why == "maintenance":
+        return f" (maintenance: ${burn.MAINTENANCE_CYCLE_USD:.2f} a cycle, every call counted)"
+    if why == "events":
+        return f" (until {EVENT_RESERVE_HOUR}:00 a fifth of today's cap is kept for event wake-ups)"
+    return ""

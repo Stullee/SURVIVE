@@ -502,7 +502,8 @@ def save_study(
     llm_call_id: int | None = None,
 ) -> int:
     """A study call's learnings (new ones only, up to MAX_LEARNINGS for the document) and progress; the summary is
-    the first call's. Returns how many learnings were added."""
+    the first call's. Returns how many learnings were added. 0.14.0: once its learnings are full the study ends (the
+    calls after that kept nothing and were paid for), and its note says which parts weren't studied."""
     known = {_key(r["text"]) for r in learnings_of(conn, document["id"])}
     room = MAX_LEARNINGS - len(known)
     added = 0
@@ -518,13 +519,45 @@ def save_study(
         )
         added += 1
     done = last_part >= int(document["parts"])
+    note = None if done or len(known) < MAX_LEARNINGS else full_note(last_part, int(document["parts"]))
+    ended = done or note is not None
     conn.execute(
-        "UPDATE library_documents SET studied_parts = ?, study = ?, study_failures = 0, study_note = NULL,"
+        "UPDATE library_documents SET studied_parts = ?, study = ?, study_failures = 0, study_note = ?,"
         " study_micros = study_micros + ?, summary = CASE WHEN summary = '' THEN ? ELSE summary END,"
         " studied_at = CASE WHEN ? THEN ? ELSE studied_at END WHERE id = ?",
-        (last_part, "done" if done else "waiting", cost, study.summary, done, now, document["id"]),
+        (
+            last_part,
+            "done" if ended else "waiting",
+            note,
+            cost,
+            study.summary,
+            ended,
+            now,
+            document["id"],
+        ),
     )
     return added
+
+
+def full_note(studied: int, parts: int) -> str:
+    """0.14.0: why a study ended before its last part."""
+    return (
+        f"Its {MAX_LEARNINGS} learnings are full, the most a document keeps: parts {studied + 1}-{parts} weren't "
+        "studied (library_read reads them)."
+    )
+
+
+def end_full(conn: sqlite3.Connection, document: Mapping[str, Any], now: str) -> bool:
+    """0.14.0: end the study of a document whose learnings are full already (from before 0.14.0, or after the owner's
+    new try), before a call is paid for. Returns whether it did."""
+    if len(learnings_of(conn, document["id"])) < MAX_LEARNINGS:
+        return False
+    conn.execute(
+        "UPDATE library_documents SET study = 'done', study_note = ?, studied_at = ?"
+        " WHERE id = ? AND study = 'waiting'",
+        (full_note(int(document["studied_parts"]), int(document["parts"])), now, document["id"]),
+    )
+    return True
 
 
 def study_failed(conn: sqlite3.Connection, document_id: int, note: str, cost: int) -> bool:
