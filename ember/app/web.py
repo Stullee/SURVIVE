@@ -402,7 +402,12 @@ def _owner_actions(request: Request) -> owner_side.Owner | None:
     if state.economy is None or state.agent is None:
         return None
     return owner_side.Owner(
-        state.db, state.economy.clock, state.economy, state.agent.scope(), state.loaded.settings.agent_name
+        state.db,
+        state.economy.clock,
+        state.economy,
+        state.agent.scope(),
+        state.loaded.settings.agent_name,
+        unlocks_off=state.agent.unlocks_off(),  # 0.14.0: no unlock without owner_user_ids, or in safe mode
     )
 
 

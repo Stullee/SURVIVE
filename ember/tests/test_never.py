@@ -22,6 +22,7 @@ pytest.importorskip("httpx2")
 from app.agent import never, policy, roadmap  # noqa: E402
 from app.agent.fake_llm import FakeTransport  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
+from app.integrations import connectors  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import listed  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
@@ -373,8 +374,10 @@ VOCABULARY = (
 
 
 def test_the_database_reads_a_request_as_the_code_does(data_dir: Path) -> None:
-    """Random requests of every type, executor and wording, read before and after Ember's first listing went live:
-    the code's NEVER classes (never.py) are exactly the database's (the view approvals_never), class by class."""
+    """Random requests of every type, executor and wording, read before and after Ember's first listing, board and
+    Printify product went live: the code's NEVER classes (never.py) are exactly the database's (the view
+    approvals_never), class by class. 0.14.0: every executor of Ember's code (Pinterest, Printify and the Undo's too)
+    and one it doesn't know."""
     agent = an_agent(data_dir)
     goal = a_milestone(agent)
     rng = random.Random(51)  # noqa: S311 - generated requests, not security
@@ -382,7 +385,7 @@ def test_the_database_reads_a_request_as_the_code_does(data_dir: Path) -> None:
     tos = (WROTE, WROTE.upper(), " " + WROTE, "new@example.org", "", 5, None)
     made = []
     for _ in range(300):
-        executor = rng.choice((None, "email", "reddit_link", "etsy_listing", "etsy_edit"))
+        executor = rng.choice((None, "canva_design", *sorted(connectors.EXECUTORS)))
         action: Any = None
         if executor == "email":
             to = rng.choice(tos)
@@ -414,6 +417,19 @@ def test_the_database_reads_a_request_as_the_code_does(data_dir: Path) -> None:
             "INSERT INTO etsy_listings (mode, session, approval_id, started_at, finished_at, status, listing_id, title)"
             " VALUES (?, ?, ?, ?, ?, 'active', 900000009, 'A5 planner')",
             (scope.mode, scope.session, made[0], now, now),
+        )
+    agree()
+    with agent.db.transaction() as conn:  # and its first board and Printify product: no pin or product is first
+        scope, now = agent.scope(), to_iso(agent.clock.now())
+        conn.execute(
+            "INSERT INTO pinterest_boards (mode, session, approval_id, board_id, name, status, started_at, finished_at)"
+            " VALUES (?, ?, ?, '42', 'Planners', 'active', ?, ?)",
+            (scope.mode, scope.session, made[1], now, now),
+        )
+        conn.execute(
+            "INSERT INTO printify_products (mode, session, approval_id, title, currency, status, started_at,"
+            " finished_at) VALUES (?, ?, ?, 'A5 planner', 'EUR', 'publishing', ?, ?)",
+            (scope.mode, scope.session, made[2], now, now),
         )
     agree()
     assert seen == {

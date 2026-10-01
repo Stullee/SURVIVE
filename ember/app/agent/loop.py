@@ -72,6 +72,7 @@ from . import (
     netguard,
     news,
     obligations,
+    policy,
     predictions,
     prompts,
     research_check,
@@ -201,6 +202,7 @@ class CycleRunner:
         pins: pinterest_publisher.Publisher | None = None,
         printify: PrintifyConnection | None = None,
         pod: printify_publisher.Publisher | None = None,
+        unlocks_off: str | None = None,
     ) -> None:
         self.db = db
         self.settings = settings
@@ -230,6 +232,8 @@ class CycleRunner:
         self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
         self.reactive = False  # 0.13.0: a cycle an event woke (run sets it)
         self.max_steps = settings.max_tool_steps
+        # 0.14.0: why the owner's unlocks don't act in this cycle (policy.off; the service knows safe mode)
+        self.unlocks_off = policy.off(settings.owner_user_ids, False) if unlocks_off is None else unlocks_off
 
     # --- the cycle ---
 
@@ -276,6 +280,7 @@ class CycleRunner:
             mail=tools.MailAccess(self.mailbox.address, self.settings.email_daily_limit) if self.mailbox else None,
             usd_per_eur=self.settings.etsy_usd_per_eur,  # 0.13.0: a venture case's rate (0: econ assumes one)
             venture_cash_eur=self.settings.venture_cash_eur,  # 0.13.0: the knock-outs' cash budget
+            unlocks_off=self.unlocks_off,  # 0.14.0
         )
         ctx.research = self._research_fn(ctx)
         ctx.draft = self._draft_fn(ctx)

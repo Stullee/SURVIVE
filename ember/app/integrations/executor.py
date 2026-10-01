@@ -33,7 +33,7 @@ from email.utils import format_datetime, make_msgid
 from typing import Any
 
 from .. import events
-from ..agent import netguard
+from ..agent import netguard, policy
 from ..agent.store import AgentScope
 from ..config import Settings
 from ..db import Database
@@ -57,11 +57,17 @@ def _cap(text: str | None, limit: int) -> str | None:
     return text[:limit] if text else None
 
 
-def footer(settings: Settings) -> str:
+def footer(settings: Settings, unlocked: bool = False) -> str:
+    """The AI footer. 0.14.0: an email an unlock of the owner's approved says so (the owner didn't review it)."""
     agent, owner = settings.agent_name, settings.email_owner_name or "its owner"
+    how = (
+        "and sent under rules they set, without their review of this email"
+        if unlocked
+        else "and approved by them before sending"
+    )
     return (
-        f"\n\n-- \nThis email was written by {agent}, an AI agent, on behalf of {owner}, and approved by them "
-        f'before sending. Reply "stop" and {agent} won\'t write to you again.'
+        f"\n\n-- \nThis email was written by {agent}, an AI agent, on behalf of {owner}, {how}. "
+        f'Reply "stop" and {agent} won\'t write to you again.'
     )
 
 
@@ -88,7 +94,7 @@ def email_body(row: sqlite3.Row, action: dict[str, Any]) -> str:
 
 
 def build_message(
-    action: dict[str, Any], body: str, address: str, settings: Settings, now: datetime
+    action: dict[str, Any], body: str, address: str, settings: Settings, now: datetime, unlocked: bool = False
 ) -> tuple[EmailMessage, str]:
     """The email as it is sent, and its Message-ID. Header values can't hold line breaks (EmailMessage refuses)."""
     message = EmailMessage()
@@ -101,7 +107,7 @@ def build_message(
     if action.get("in_reply_to"):
         message["In-Reply-To"] = action["in_reply_to"]
         message["References"] = action.get("references") or action["in_reply_to"]
-    message.set_content(body.rstrip() + footer(settings), charset="utf-8", cte="quoted-printable")
+    message.set_content(body.rstrip() + footer(settings, unlocked), charset="utf-8", cte="quoted-printable")
     mail.check_outgoing(message, action["to"])
     return message, message_id
 
@@ -250,8 +256,9 @@ class Executor:
                 return "waiting_limit"
             try:
                 action = parse_action(row["action"])
+                unlocked = row["decided_by"] == policy.POLICY_BY  # 0.14.0: the footer says who approved it
                 message, message_id = build_message(
-                    action, email_body(row, action), self.mailbox.address, self.settings, now
+                    action, email_body(row, action), self.mailbox.address, self.settings, now, unlocked
                 )
             except ValueError as exc:
                 self._start(conn, approval_id, stamp, None)

@@ -2213,7 +2213,8 @@
     $("audit-digest").hidden = !digest;
     $("audit-digest").textContent = digest ? "Daily digest for " + digest.text : "";
     $("audit-sub").textContent = (unlocks ? unlocks + (unlocks === 1 ? " unlock stands" : " unlocks stand")
-      : "No unlock stands: every request waits for you") + (held ? " · " + held + " held for your veto" : "");
+      : "No unlock stands: every request waits for you") + (held ? " · " + held + " held for your veto" : "") +
+      (data.unlocks_off ? " · Unlocks are off while " + data.unlocks_off + ": none approves anything, and none can be granted" : "");
     var takeBack = $("audit-take-back");
     takeBack.hidden = !unlocks;
     takeBack.disabled = false;
@@ -2273,7 +2274,7 @@
   }
 
   function takeBackUnlocks(button, n) {
-    if (!window.confirm("Take back every unlock (" + n + ")? Every request waits for your click again, also those held for your veto.")) return;
+    if (!window.confirm("Take back every unlock (" + n + ")? Every request waits for your click again, also those held for your veto and those approved that haven't run yet.")) return;
     button.disabled = true;
     request("POST", "api/autonomy/take_back", {}).then(function (res) {
       if (res.ok) {
@@ -2372,6 +2373,8 @@
       actionFlags(a.action_class),
       a.veto_until && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "⏱ " }),
         h("strong", { text: "Your unlock: " }), name + "'s code approves it on " + fmtDateTime(a.veto_until) + " unless you decide first.") : null,
+      a.status === "pending" && a.decision_comment ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "↩ " }),
+        String(a.decision_comment)) : null,  // 0.14.0: an unlock taken back before its approval ran
       arr(a.never).length && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "🔒 " }),
         h("strong", { text: "Never automatic: " }), arr(a.never).join("; ") + ". It waits for you, whatever you unlocked.") : null,
       arr(a.qa).length ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
@@ -4805,7 +4808,7 @@
     var name = agentName();
     $("kill-name-show").textContent = name;
     $("kill-title").textContent = "Stop " + name + " with the kill switch?";
-    $("kill-desc-1").textContent = "The kill switch stops " + name + " for good: no more model calls, and a running cycle ends at its next call. Unlike Pause, Resume doesn't undo it.";
+    $("kill-desc-1").textContent = "The kill switch stops " + name + " for good: no more model calls, and a running cycle ends at its next call. It takes back every unlock too. Unlike Pause, Resume doesn't undo it.";
     $("kill-name").value = "";
     $("kill-reason").value = "";
     killFieldError("kill-name", "");
@@ -6396,12 +6399,15 @@
   function milestoneAutonomy(m) {
     var rules = arr(m.autonomy);
     if (!rules.length) return null;
+    var off = ui.rm.data && ui.rm.data.unlocks_off ? String(ui.rm.data.unlocks_off) : "";  // 0.14.0
     var on = rules.filter(function (r) { return r.level !== "manual"; }).length;
     var status = h("p", { class: "muted small", role: "status" });
     return h("div", { class: "rm-autonomy" }, h("details", null,
       h("summary", null, h("strong", { text: "Autonomy: " }), on ? plural(on, "rule") + " unlocked" : "all manual"),
       h("p", { class: "muted small", text: "What " + agentName() + "'s code may carry out for this milestone without your click. " +
         "It takes back an unlock itself on an unclear result, a spent budget, a missed milestone or your veto." }),
+      off ? h("p", { class: "warn-box", text: "Unlocks are off while " + off + ": " + agentName() + "'s code takes them back " +
+        "and you can't grant one. Put your Home Assistant user ID in owner_user_ids (Configuration tab), outside safe mode." }) : null,
       h("ul", { class: "vt-evidence" }, rules.map(function (r) {
         var level = h("select", { "aria-label": "Level for " + r.label });
         Object.keys(AUTONOMY_LEVELS).forEach(function (k) {

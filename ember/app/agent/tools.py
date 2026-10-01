@@ -1388,6 +1388,7 @@ class ToolContext:
     usd_per_eur: float = 0.0  # the owner's exchange rate (etsy_usd_per_eur; 0: none, econ assumes one), 0.13.0
     venture_cash_eur: float = 20.0  # the owner's cash for a venture's first test (a knock-out beyond it), 0.13.0
     net_runway_days: float | None = None  # at the cycle's start (None: it earns what it spends), 0.13.0
+    unlocks_off: str = ""  # 0.14.0: why the owner's unlocks don't act now (policy.off; "" when they do)
     library: bool = False  # the owner's library holds documents (0.12.0): its tools
     brainstorm: BrainstormFn | None = None
     draft: DraftFn | None = None  # 0.12.0
@@ -3166,7 +3167,7 @@ def _new_request(ctx: ToolContext, conn: Any, payload: str, action: dict[str, An
     made = store.insert_approval(
         conn, ctx.scope, ctx.cycle_id, ctx.now(), payload=payload, action=action_json, **fields
     )
-    ctx.state.policy_note = policy.apply(conn, ctx.scope, made, ctx.clock)  # 0.13.0: the owner's unlocks
+    ctx.state.policy_note = policy.apply(conn, ctx.scope, made, ctx.clock, ctx.unlocks_off)  # the owner's unlocks
     return made
 
 
@@ -3174,6 +3175,13 @@ def _unlocked(ctx: ToolContext) -> str:
     """What the owner's unlock did with the request just made ("" when it waits for them as before)."""
     note, ctx.state.policy_note = ctx.state.policy_note, ""
     return note
+
+
+def _at_once(conn: Any, made: int, note: str, then: str) -> str | None:
+    """0.14.0: the answer for a request an unlock approved at once (None if it waits): what happened first, not that it
+    waits for the owner."""
+    row = conn.execute("SELECT status FROM approvals WHERE id = ?", (made,)).fetchone()
+    return f"Approval request #{made}:{note}{then}" if row is not None and row["status"] == "approved" else None
 
 
 def _propose_email(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -3218,6 +3226,11 @@ def _propose_email(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     )
     if isinstance(made, str):
         return Outcome(True, made, "duplicate email")
+    note = _unlocked(ctx)
+    then = f" It is sent once, with its AI footer (at most {box.daily_limit} emails a day), and you hear the result."
+    done = _at_once(conn, made, note, then)
+    if done is not None:
+        return Outcome(True, done, f"#{made} email to {_cut(to, 60)}")
     text = (
         f"Approval request #{made} is waiting for your owner. Nothing has been sent. If they approve it, Ember's code "
         f"sends it once, with its AI footer (at most {box.daily_limit} emails a day), and you hear the result."
@@ -3227,7 +3240,7 @@ def _propose_email(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     short = qa.defects(connectors.class_of("email", action).name, action)  # 0.13.0: an answer's checks
     if short:
         text += f" QA (Ember's code): {'; '.join(short)}; your owner sees it too."
-    text += _unlocked(ctx)
+    text += note
     return Outcome(True, text, f"#{made} email to {_cut(to, 60)}")
 
 
@@ -3304,6 +3317,11 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
     )
     if isinstance(made, str):
         return Outcome(True, made, "duplicate listing")
+    note = _unlocked(ctx)
+    then = f" Ember's code creates it in {shop.shop_name} (at most {shop.daily_limit} a day) and you hear the result."
+    done = _at_once(conn, made, note, then)
+    if done is not None:
+        return Outcome(True, done, f"#{made} Etsy listing: {_cut(listing.title, 60)}")
     text = (
         f"Approval request #{made} is waiting for your owner, in the category {category} (#{listing.taxonomy_id}). "
         f"Nothing is on Etsy yet. If they approve it, Ember's code creates the listing in {shop.shop_name} (at most "
@@ -3312,7 +3330,7 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
     short = qa.defects("etsy.create_listing", listing)  # 0.13.0: the QA registry; your owner sees it too
     if short:
         text += f" QA (Ember's code): {'; '.join(short)}: make more with make_image and change the request."
-    text += _unlocked(ctx)
+    text += note
     return Outcome(True, text, f"#{made} Etsy listing: {_cut(listing.title, 60)}")
 
 
@@ -3448,10 +3466,12 @@ def _propose_etsy_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
     what = f"{does} #{listing_id}" + (f" and changes its {parts}" if action and parts else "")
     if action is None:
         what = f"changes the {parts} of #{listing_id}"
-    text = (
+    note = _unlocked(ctx)
+    waits = (
         f"Approval request #{made} is waiting for your owner: it {what}. Nothing has changed at Etsy yet. If they "
-        "approve it, Ember's code makes the change and you hear the result."
-    ) + _unlocked(ctx)
+        f"approve it, Ember's code makes the change and you hear the result.{note}"
+    )
+    text = _at_once(conn, made, note, f" Ember's code {what} at Etsy and you hear the result.") or waits
     if action is None:
         return Outcome(True, text, f"#{made} change of #{listing_id}: {parts}")
     return Outcome(True, text, f"#{made} {verb.lower()} #{listing_id}" + (f": {parts}" if parts else ""))
