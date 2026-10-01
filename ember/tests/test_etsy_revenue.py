@@ -47,10 +47,12 @@ def turned_on(agent: Any, rate: float = 1.1) -> None:
 
 
 def entries(agent: Any) -> list[dict[str, Any]]:
+    """The orders' entries (0.14.0: not the listing fees, which Ember's code records whatever the option)."""
     return rows(
         agent,
         "SELECT id, type, amount_micros, simulated, source, note, corrects_id, orig_amount, orig_currency, fx_rate,"
-        " created_by, project_id, venture_id FROM ledger WHERE created_by = 'etsy' ORDER BY id",
+        " created_by, project_id, venture_id FROM ledger WHERE created_by = 'etsy'"
+        " AND COALESCE(source, '') NOT LIKE 'Etsy listing %' ORDER BY id",
     )
 
 
@@ -80,9 +82,10 @@ def test_a_paid_order_and_its_fees_are_recorded_once(data_dir: Path) -> None:
         "venture_id": shown["venture_id"],
     }
     assert shown["project_id"] is not None
-    assert (fees["type"], fees["amount_micros"], fees["orig_amount"]) == ("expense", 850_000, "0.77")  # 0.48 + 6.5%
+    # 0.48, and 6.5% of 4.50 and USD 0.20 (at 1.1) with 19% VAT (0.14.0)
+    assert (fees["type"], fees["amount_micros"], fees["orig_amount"]) == ("expense", 1_140_000, "1.04")
     assert fees["project_id"] == shown["project_id"] and fees["note"].startswith("Etsy's fees on order 71")
-    assert agent.economy.status().balance == before + 4_950_000 - 850_000
+    assert agent.economy.status().balance == before + 4_950_000 - 1_140_000
     assert shown["recorded"] and shown["recorded_by"] == "etsy" and shown["fees_recorded"]
     assert not shown["recordable"] and not shown["fees_recordable"]  # nothing left for the owner's buttons
     events = [e["message"] for e in agent.db.recent_events(limit=20)]

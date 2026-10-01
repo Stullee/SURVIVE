@@ -23,9 +23,10 @@ LINES = [
 
 def test_embers_share_of_the_fees() -> None:
     order = etsy.Order(71, "2026-09-02T10:00:00Z", 900, "EUR", LINES, items_cents=900)
-    assert etsy.fees_share(order, LINES[:1], 48) == 24 + 29  # half the processing fee, 6.5% of 4.50
+    # half the processing fee; 0.14.0: 6.5% of 4.50 and USD 0.20 (at 1.10), with 19% VAT on both (29.25 + 18.18)
+    assert etsy.fees_share(order, LINES[:1], 48) == 24 + 56
     coupon = etsy.Order(72, "2026-09-02T10:00:00Z", 800, "EUR", LINES, items_cents=900, discount_cents=100)
-    assert etsy.fees_share(coupon, LINES[:1], 48) == 24 + 26  # on the 4.00 the line earned after its coupon share
+    assert etsy.fees_share(coupon, LINES[:1], 48) == 24 + 53  # on the 4.00 the line earned after its coupon share
 
 
 def recorded(agent: Any) -> dict[str, Any]:
@@ -46,15 +47,15 @@ def test_an_orders_fees_are_read_once_and_recorded_as_an_expense(data_dir: Path)
     shop.orders = lambda since: [etsy.Order(71, "2026-09-02T10:00:00Z", 900, "EUR", LINES, items_cents=900)]  # type: ignore[method-assign]
     assert agent.publisher.sync(force=True) is None
     order = recorded(agent)
-    assert order["fees_cents"] == 53 and not order["fees_recordable"]  # the revenue comes first
+    assert order["fees_cents"] == 80 and not order["fees_recordable"]  # the revenue comes first
     assert agent.publisher.sync(force=True) is None and reads == [71]  # a payment is read once
     with agent.db.connection() as conn:
         text = etsy_publisher.shop_text(conn, agent.scope(), agent.clock, "EmberTestShop", 3)
-    assert "Orders in the last 7 days: 1 (4.50 EUR less 0.53 of Etsy's fees)" in text
+    assert "Orders in the last 7 days: 1 (4.50 EUR less 0.80 of Etsy's fees)" in text
     owner_entry(agent.economy, "revenue", "4.50", idempotency_key=order["revenue_key"], test_money=True)
     order = recorded(agent)
     assert order["fees_recordable"] and not order["fees_recorded"]
-    owner_entry(agent.economy, "expense", "0.53", idempotency_key=order["fee_key"], test_money=True)
+    owner_entry(agent.economy, "expense", "0.80", idempotency_key=order["fee_key"], test_money=True)
     order = recorded(agent)
     assert order["fees_recorded"] and not order["fees_recordable"]
     script = (Path(__file__).parents[1] / "app" / "web" / "static" / "js" / "app.js").read_text(encoding="utf-8")

@@ -36,15 +36,17 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from datetime import date, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from .. import events
-from ..agent import netguard
+from ..agent import econ, netguard
 from ..agent.sandbox import Jail, SandboxError
 from ..agent.store import AgentScope
 from ..config import Settings
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
+from ..economy.ledger import dollars_to_micros
 from . import connectors, etsy, printify_publisher, qa
 from .etsy import Edit, EtsyError, Listing, NotSent, Shop, Unclear, Upload
 
@@ -56,7 +58,10 @@ _APPROVED_SQL = ", ".join(f"'{status}'" for status in APPROVED)
 COUNTED = ("running", "active", "draft", "unclear")  # what uses up the daily limit
 SYNC_MINUTES = 60
 FEE_READS = 10  # order payments read per sync, for the fees (0.12.0)
-ORDER_DAYS = 30  # how far back the sync looks for orders
+ORDER_DAYS = 30  # how far back the sync looks for orders, at least
+CATCH_UP_DAYS = 365  # 0.14.0: and after a gap, back to the last sync that worked, at most this far
+MISSING_READS = 10  # 0.14.0: listings Etsy's batch answer left out, read one by one per sync
+ITEMS_CHARS = 4_000  # an order's lines as etsy_orders holds them (0010's CHECK)
 INTERRUPTED = "the app stopped while creating the listing"
 CHANGE_INTERRUPTED = "the app stopped while changing the listing"
 CHANGED = "{path} changed after you approved it (its SHA-256 differs); ask for a new request"
@@ -165,6 +170,7 @@ def state_text(row: sqlite3.Row) -> str:
             return "live, renews itself" + (f" on {ends}" if ends else "")
         return f"live until {ends}" if ends else "live"
     words = {"expired": f"expired on {ends}" if ends else "expired", "inactive": "deactivated", "sold_out": "sold out"}
+    words.update(unknown="not in Etsy's last answer", removed="removed at Etsy")  # 0.14.0
     return words.get(state, state)
 
 
@@ -374,6 +380,10 @@ class Publisher:
                 note,
                 subject=str(listing_id) if listing_id else None,
             )
+            if status == "active" and listing_id:  # 0.14.0: Etsy's listing fee for publishing it
+                row = conn.execute("SELECT mode, session FROM etsy_listings WHERE approval_id = ?", (approval_id,))
+                mode, session = row.fetchone()
+                listing_fee_due(conn, mode, session, listing_id, "listed", now, "it went live")
             link = etsy.listing_url(listing_id) if status == "active" and listing_id else None
             if status == "draft" and listing_id:
                 link = etsy.edit_url(listing_id)
@@ -469,9 +479,10 @@ class Publisher:
         """The change at Etsy, part by part; what was made is recorded, whatever happens."""
         listing_id = edit.listing_id
         steps: list[tuple[set[str], Callable[[list[str]], None]]] = []
+        answered: list[str] = []  # 0.14.0: the state Etsy answers with is recorded, not the one asked for
 
         def set_state(_: list[str]) -> None:
-            shop.set_state(listing_id, etsy.STATES[edit.state or ""])
+            answered.append(shop.set_state(listing_id, etsy.STATES[edit.state or ""]))
 
         if edit.state == "renew":  # first: the rest of the change is made to a live listing
             steps.append(({"renew"}, set_state))
@@ -538,6 +549,8 @@ class Publisher:
         note = _change_note(shop, edit, status, made, halfway, error)
         title = edit.title if "title" in made else None
         state = next((etsy.STATES[part] for part in ("renew", "deactivate") if part in made), None)
+        if state is not None and answered:
+            state = str(answered[-1] or state)[:20]
         renewal = edit.auto_renew if "auto_renew" in made else None
         return self._changed(approval_id, status, after, title, note, error, scope, state, renewal)
 
@@ -607,6 +620,17 @@ class Publisher:
                 state is not None and scope is not None
             ):  # 0.12.0: as it is now; a renewal's end comes with the next sync
                 where, params = scope.where()
+                before = conn.execute(
+                    f"SELECT state, ends_at FROM etsy_listings WHERE {where} AND listing_id = ? AND status = 'active'",
+                    (*params, row["listing_id"]),
+                ).fetchone()
+                ended = before is not None and (
+                    before["state"] in ("expired", "sold_out") or (before["ends_at"] or now) < now
+                )
+                if state == etsy.LIVE_STATE and ended:  # 0.14.0: Etsy's listing fee for renewing it
+                    why = f"Ember renewed it (request #{approval_id})"
+                    event = f"renewal-request-{approval_id}"
+                    listing_fee_due(conn, scope.mode, scope.session, row["listing_id"], event, now, why)
                 conn.execute(
                     "UPDATE etsy_listings SET state = ?, ends_at = CASE WHEN ? = 'active' THEN NULL ELSE ends_at END"
                     f" WHERE {where} AND listing_id = ?",
@@ -659,56 +683,135 @@ class Publisher:
                         f"SELECT receipt_id FROM etsy_orders WHERE {where} AND fees_cents IS NOT NULL", params
                     )
                 }
+                live = [  # 0.14.0: the ones Ember counts as live, to be looked up when the batch leaves one out
+                    int(r[0])
+                    for r in conn.execute(
+                        f"SELECT listing_id FROM etsy_listings WHERE {where} AND listing_id IS NOT NULL"
+                        f" AND status = 'active' AND COALESCE(state, '{etsy.LIVE_STATE}') IN ('{etsy.LIVE_STATE}',"
+                        " 'unknown')",
+                        params,
+                    )
+                ]
+            # 0.14.0: back to the last sync that worked, not only 30 days: a longer gap lost its orders.
+            since = now - timedelta(days=ORDER_DAYS)
+            last = self.db.get_meta(meta_key(scope.mode, "last_sync_at"))
+            if last:
+                since = max(min(since, from_iso(last) - timedelta(days=1)), now - timedelta(days=CATCH_UP_DAYS))
             try:
                 with _guard(shop):
                     remote = shop.listings(ids) if ids else []
-                    orders = shop.orders(now - timedelta(days=ORDER_DAYS)) if ids else []
+                    orders = shop.orders(since) if ids else []
             except Exception as exc:  # noqa: BLE001 - reported on the dashboard, never raised
                 error = str(exc) if isinstance(exc, EtsyError) else type(exc).__name__
                 self.db.set_meta(meta_key(scope.mode, "last_error"), error[:300])
                 log.warning("The Etsy sync failed: %s", error)
                 return error
+            found, gone = self._missing(shop, live, {item.listing_id for item in remote})
+            remote += found
+            seen = {item.listing_id for item in remote}
+            unseen = {i: i in gone for i in live if i not in seen}  # 0.14.0: True: Etsy says there is none
             stamp = to_iso(now)
             ours = set(ids)
             processing = self._processing_fees(shop, orders, ours, known)
-            with self.db.transaction() as conn:
-                for item in remote:
-                    conn.execute(
-                        "UPDATE printify_products SET state = ?, views = ?, favorites = ?, synced_at = ?"
-                        f" WHERE {where} AND listing_id = ?",
-                        (item.state[:20], item.views, item.favorites, stamp, *params, item.listing_id),
-                    )
-                    conn.execute(
-                        "UPDATE etsy_listings SET state = ?, views = ?, favorites = ?, ends_at = ?, auto_renew = ?,"
-                        f" synced_at = ? WHERE {where} AND listing_id = ?",
-                        (
-                            item.state[:20],
-                            item.views,
-                            item.favorites,
-                            item.ends_at,
-                            None if item.auto_renew is None else int(item.auto_renew),
-                            stamp,
-                            *params,
-                            item.listing_id,
-                        ),
-                    )
-                for order in orders:
-                    items = [i for i in order.items if i.get("listing_id") in ours]
-                    if not items:
-                        continue  # the owner's own products: not Ember's business
-                    # 0.12.0: only Ember's lines, net of tax, shipping, the coupon and refunds (the whole receipt was
-                    # stored), with the order's status, which later syncs keep current.
-                    net = etsy.order_net(order, items)
-                    values = (
-                        f"{net / 100:.2f} {order.currency}",
-                        net,
-                        json.dumps(items, ensure_ascii=False)[:4000],
-                        order.status,
+            try:
+                skipped = self._store(scope, stamp, remote, unseen, orders, ours, processing)
+            except Exception as exc:  # noqa: BLE001 - 0.14.0: it stopped every sync, seen only in the log
+                error = f"Etsy's numbers couldn't be stored ({type(exc).__name__})"
+                log.exception("Storing the Etsy sync failed")
+                self.db.set_meta(meta_key(scope.mode, "last_error"), error)
+                return error
+            if self.settings.etsy_auto_renew_sold:
+                self._renew_sellers(shop, scope)
+            self.db.set_meta(meta_key(scope.mode, "last_sync_at"), stamp)
+            self.db.set_meta(meta_key(scope.mode, "last_error"), "; ".join(skipped)[:300])
+            if self.after_sync is not None:
+                try:
+                    self.after_sync(scope, self.settings)
+                except Exception:  # noqa: BLE001 - the numbers are stored; the next sync tries again
+                    log.exception("Recording the Etsy orders in the ledger failed")
+            return None
+        finally:
+            self._lock.release()
+
+    def _missing(self, shop: Shop, live: list[int], seen: set[int]) -> tuple[list[etsy.RemoteListing], set[int]]:
+        """0.14.0: the live listings Etsy's batch answer left out (an expired or deactivated one may not be in it),
+        read one by one, at most MISSING_READS a sync: the ones Etsy answers for, and the ones it says there is none
+        of. A failure is left for the next sync, never raised."""
+        found, gone = [], set()
+        for listing_id in [i for i in live if i not in seen][:MISSING_READS]:
+            try:
+                with _guard(shop):
+                    listing = shop.listing(listing_id)
+            except Exception as exc:  # noqa: BLE001 - the next sync tries again
+                error = str(exc) if isinstance(exc, EtsyError) else type(exc).__name__
+                log.warning("Reading Etsy listing %d failed: %s", listing_id, error)
+                break  # the same answer for the rest, most likely
+            if listing is None:
+                gone.add(listing_id)
+            else:
+                found.append(listing)
+        return found, gone
+
+    def _store(
+        self,
+        scope: AgentScope,
+        stamp: str,
+        remote: list[etsy.RemoteListing],
+        unseen: dict[int, bool],
+        orders: list[etsy.Order],
+        ours: set[int],
+        processing: dict[int, int],
+    ) -> list[str]:
+        """What a sync read, in one transaction. Returns the orders that couldn't be stored (0.14.0: one such order
+        stopped every sync for 30 days; now it is skipped, and the dashboard says so)."""
+        where, params = scope.where()
+        rate = self.settings.etsy_usd_per_eur or econ.DEFAULT_USD_PER_EUR
+        skipped = []
+        with self.db.transaction() as conn:
+            for item in remote:
+                conn.execute(
+                    "UPDATE printify_products SET state = ?, views = ?, favorites = ?, synced_at = ?"
+                    f" WHERE {where} AND listing_id = ?",
+                    (item.state[:20], item.views, item.favorites, stamp, *params, item.listing_id),
+                )
+                _renewed(conn, scope, item, stamp)
+                conn.execute(
+                    "UPDATE etsy_listings SET state = ?, views = ?, favorites = ?, ends_at = ?, auto_renew = ?,"
+                    f" synced_at = ? WHERE {where} AND listing_id = ?",
+                    (
+                        item.state[:20],
+                        item.views,
+                        item.favorites,
+                        item.ends_at,
+                        None if item.auto_renew is None else int(item.auto_renew),
                         stamp,
-                    )
+                        *params,
+                        item.listing_id,
+                    ),
+                )
+            # 0.14.0: a live listing Etsy's answers left out isn't counted as live any more (it was, for good): removed
+            # when Etsy says there is none, expired once its end passed without renewing itself, else unknown until a
+            # later sync reads it. It keeps when it was last seen.
+            for listing_id, removed in unseen.items():
+                conn.execute(
+                    "UPDATE etsy_listings SET state = CASE WHEN ? THEN 'removed' WHEN ends_at <= ?"
+                    " AND COALESCE(auto_renew, 0) = 0 THEN 'expired' ELSE 'unknown' END"
+                    f" WHERE {where} AND listing_id = ? AND status = 'active'",
+                    (removed, stamp, *params, listing_id),
+                )
+            for order in orders:
+                items = [i for i in order.items if i.get("listing_id") in ours]
+                if not items:
+                    continue  # the owner's own products: not Ember's business
+                # 0.12.0: only Ember's lines, net of tax, shipping, the coupon and refunds (the whole receipt was
+                # stored), with the order's status, which later syncs keep current.
+                net = etsy.order_net(order, items)
+                values = (f"{net / 100:.2f} {order.currency}", net, stored_items(items), order.status, stamp)
+                conn.execute("SAVEPOINT etsy_order")
+                try:
                     if order.paid:
                         fee = processing.get(order.receipt_id)
-                        fees = etsy.fees_share(order, items, fee) if fee is not None else None
+                        fees = etsy.fees_share(order, items, fee, rate) if fee is not None else None
                         conn.execute(
                             "INSERT INTO etsy_orders (mode, session, receipt_id, ordered_at, currency, total,"
                             " total_cents, items, status, synced_at, fees_cents)"
@@ -733,19 +836,13 @@ class Publisher:
                             f" WHERE {where} AND receipt_id = ?",
                             (*values, *params, order.receipt_id),
                         )
-                observe(conn, scope, self.clock.today().isoformat(), stamp, self.settings.etsy_stats_history)
-            if self.settings.etsy_auto_renew_sold:
-                self._renew_sellers(shop, scope)
-            self.db.set_meta(meta_key(scope.mode, "last_sync_at"), stamp)
-            self.db.set_meta(meta_key(scope.mode, "last_error"), "")
-            if self.after_sync is not None:
-                try:
-                    self.after_sync(scope, self.settings)
-                except Exception:  # noqa: BLE001 - the numbers are stored; the next sync tries again
-                    log.exception("Recording the Etsy orders in the ledger failed")
-            return None
-        finally:
-            self._lock.release()
+                except sqlite3.IntegrityError as exc:
+                    conn.execute("ROLLBACK TO etsy_order")
+                    log.warning("Etsy order %d couldn't be stored: %s", order.receipt_id, exc)
+                    skipped.append(f"Etsy order {order.receipt_id} couldn't be stored ({exc})")
+                conn.execute("RELEASE etsy_order")
+            observe(conn, scope, self.clock.today().isoformat(), stamp, self.settings.etsy_stats_history)
+        return skipped
 
     def _processing_fees(self, shop: Shop, orders: list[etsy.Order], ours: set[int], known: set[int]) -> dict[int, int]:
         """0.12.0: the processing fee of each paid order with Ember's listings whose fees aren't known yet (at most
@@ -1139,7 +1236,8 @@ MAX_ORDERS_READ = 1_000  # the orders looked at for the dashboard (0.12.0)
 
 def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> list[dict[str, Any]]:
     """The newest ``limit`` orders, and every older one that still needs the owner (0.12.0: the list stopped at 20,
-    so older orders lost their Record as revenue button): not recorded yet, or recorded and refunded since."""
+    so older orders lost their Record as revenue button): not recorded yet, or recorded and refunded since (0.14.0: in
+    part too) until its entry is corrected."""
     where, params = scope.where()
     rows = conn.execute(
         f"SELECT * FROM etsy_orders WHERE {where} ORDER BY ordered_at DESC, id DESC LIMIT ?", (*params, MAX_ORDERS_READ)
@@ -1148,8 +1246,8 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
     for r in rows:
         key = revenue_key(r["receipt_id"])
         entry = conn.execute(
-            "SELECT id, created_by, amount_micros + (SELECT COALESCE(SUM(k.amount_micros), 0) FROM ledger k"
-            " WHERE k.corrects_id = ledger.id) AS left_micros FROM ledger WHERE idempotency_key = ?",
+            "SELECT id, created_by, amount_micros, fx_rate, amount_micros + (SELECT COALESCE(SUM(k.amount_micros), 0)"
+            " FROM ledger k WHERE k.corrects_id = ledger.id) AS left_micros FROM ledger WHERE idempotency_key = ?",
             (key,),
         ).fetchone()
         fees_key = fee_key(r["receipt_id"])
@@ -1170,6 +1268,7 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
                 "entry_id": entry["id"] if entry else None,  # to correct if the order was refunded since
                 "recorded_by": entry["created_by"] if entry else None,  # 0.12.0: the owner, or 'etsy' (Ember's code)
                 "corrected_in_full": entry is not None and entry["left_micros"] <= 0,  # 0.12.0
+                "correction_due": entry is not None and correction_due(r, entry),  # 0.14.0
                 "project_id": project_id,  # what the revenue form suggests (0.12.0)
                 "venture_id": venture_id,
                 # 0.12.0: the order's status; an order from before has none, and its total is the whole receipt's.
@@ -1191,9 +1290,24 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
                 and r["currency"] in ("EUR", "USD"),
             }
         )
-    return out[:limit] + [
-        o for o in out[limit:] if o["recordable"] or (o["recorded"] and o["status"] in etsy.DEAD_ORDERS)
-    ]
+    return out[:limit] + [o for o in out[limit:] if o["recordable"] or o["correction_due"]]
+
+
+def correction_due(order: sqlite3.Row, entry: sqlite3.Row) -> bool:
+    """0.14.0: whether a refunded or cancelled order earns less now than its revenue entry says, net of its corrections
+    (only a full refund or a cancellation asked for a correction, so a partial refund of an order the owner recorded
+    went unnoticed). The order's net is converted at the entry's rate; an entry of a EUR order made without one is due
+    once partly refunded until it is corrected."""
+    left = int(entry["left_micros"])
+    if left <= 0 or order["status"] not in (*etsy.DEAD_ORDERS, "partially refunded"):
+        return False
+    if order["status"] in etsy.DEAD_ORDERS:
+        return True
+    rate = Decimal(entry["fx_rate"]) if entry["fx_rate"] else Decimal(1) if order["currency"] == "USD" else None
+    if rate is None:
+        return order["status"] == "partially refunded" and left >= int(entry["amount_micros"])
+    usd = (Decimal(order["total_cents"]) / 100 * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return dollars_to_micros(usd) < left
 
 
 def order_project(conn: sqlite3.Connection, scope: AgentScope, items: list[Any]) -> tuple[int | None, int | None]:
@@ -1220,6 +1334,62 @@ def order_project(conn: sqlite3.Connection, scope: AgentScope, items: list[Any])
         if row is not None:
             return row["project_id"], row["venture_id"]
     return None, None
+
+
+def stored_items(items: list[dict[str, Any]]) -> str:
+    """An order's lines as etsy_orders keeps them, within ITEMS_CHARS (0.14.0: an order with many lines was cut
+    mid-JSON, failed the table's CHECK and stopped every sync for 30 days). Too long, the titles go (etsy_listings has
+    them), then the lines of a listing at the same price are summed; what still doesn't fit is refused, and that order
+    is skipped."""
+    text = json.dumps(items, ensure_ascii=False)
+    if len(text) <= ITEMS_CHARS:
+        return text
+    bare = [{k: i[k] for k in ("listing_id", "quantity", "price_cents") if k in i} for i in items]
+    text = json.dumps(bare)
+    if len(text) <= ITEMS_CHARS:
+        return text
+    summed: dict[tuple[Any, Any], dict[str, Any]] = {}
+    for line in bare:
+        one = summed.setdefault((line.get("listing_id"), line.get("price_cents")), {**line, "quantity": 0})
+        one["quantity"] += int(line.get("quantity") or 1)
+    return json.dumps(list(summed.values()))
+
+
+FEE_DUE_KEY = "integrations.etsy.listing_fee_due."  # + the fee's ledger key: a listing fee still to record (0.14.0)
+
+
+def listing_fee_key(listing_id: int, event: str) -> str:
+    """The ledger's request key for a listing fee Etsy charged (0.14.0): the listing and what it was for."""
+    return hashlib.sha256(f"etsy-listing-fee-{listing_id}-{event}".encode()).hexdigest()[:32]
+
+
+def listing_fee_due(
+    conn: sqlite3.Connection, mode: str, session: int, listing_id: int, event: str, at: str, why: str, fees: int = 1
+) -> None:
+    """0.14.0: a listing fee (USD 0.20) Etsy charged for one of Ember's listings, noted in the transaction that saw it
+    (``at``: when): the next sync records it in the ledger (etsy_revenue). The fees Ember's listings cost were never
+    recorded."""
+    data = {"mode": mode, "session": session, "listing_id": listing_id, "at": at, "why": why, "fees": fees}
+    conn.execute(
+        "INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO NOTHING",
+        (FEE_DUE_KEY + listing_fee_key(listing_id, event), json.dumps(data), at),
+    )
+
+
+def _renewed(conn: sqlite3.Connection, scope: AgentScope, item: etsy.RemoteListing, now: str) -> None:
+    """0.14.0: a renewal Etsy made (a listing that renews itself, at its end; or the owner's, at Etsy), seen as its end
+    moving on from one that had passed: a listing fee for each four months (a renewal Ember made is noted with it)."""
+    where, params = scope.where()
+    row = conn.execute(
+        f"SELECT ends_at FROM etsy_listings WHERE {where} AND listing_id = ? AND status = 'active'",
+        (*params, item.listing_id),
+    ).fetchone()
+    if row is None or not row["ends_at"] or not item.ends_at or not row["ends_at"] <= now < item.ends_at:
+        return
+    days = (from_iso(item.ends_at) - from_iso(row["ends_at"])).days
+    fees = max(1, round(days / etsy.LISTING_DAYS)) if item.auto_renew else 1
+    why = f"Etsy renewed it until {item.ends_at[:10]}"
+    listing_fee_due(conn, scope.mode, scope.session, item.listing_id, f"renewal-{item.ends_at}", now, why, fees)
 
 
 def fee_key(receipt_id: int) -> str:

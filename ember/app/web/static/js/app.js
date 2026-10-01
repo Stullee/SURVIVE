@@ -1442,13 +1442,50 @@
 
   // 0.12.0: the dashboard brings the newest 20 entries; older ones load on request and stay until the page reloads.
   var LEDGER_PAGE = 100;
+  var LEDGER_NEWEST = 20;
+
+  // 0.14.0: a page of entries (newest first, at most `size`) followed by the older ones kept under it, or null when
+  // entries may lie between them. The older pages were merged with each poll's newest 20 as they came, so the entries
+  // new ones pushed out of those 20 were in neither list, and the tab skipped them without a sign.
+  function ledgerJoin(page, kept, size) {
+    if (!kept.length) return page;
+    var seen = {};
+    page.forEach(function (e) { seen[String(e.id)] = true; });
+    var meets = page.length < size || kept.some(function (e) { return seen[String(e.id)]; });
+    return meets ? page.concat(kept.filter(function (e) { return !seen[String(e.id)]; })) : null;
+  }
+
+  // Loads the entries between the newest page and the older ones kept (the page right under the newest), then shows
+  // them together; beyond a page, the older ones go (the button loads them again).
+  function fillLedgerGap(newest) {
+    if (ui.ledgerFilling) return;
+    ui.ledgerFilling = true;
+    var kept = arr(ui.ledgerOlder);
+    request("GET", "api/ledger?limit=" + LEDGER_PAGE + "&before=" + encodeURIComponent(String(newest[newest.length - 1].id))).then(function (res) {
+      if (!res.ok || !isObject(res.data)) throw httpError(res);
+      var got = arr(res.data.entries);
+      var joined = ledgerJoin(got, kept, LEDGER_PAGE);
+      if (joined === null) ui.ledgerEnd = false;
+      ui.ledgerOlder = newest.concat(joined === null ? got : joined);
+    }).catch(function () {
+      ui.ledgerOlder = [];
+      ui.ledgerEnd = false;
+    }).then(function () {
+      ui.ledgerFilling = false;
+      if (ui.data) safely("ledger", function () { renderLedger(ui.data); });
+    });
+  }
 
   function renderLedger(d) {
     var newest = arr(isObject(d.ledger) ? d.ledger.entries : null);
-    var seen = {};
-    newest.forEach(function (e) { seen[String(e.id)] = true; });
-    var older = arr(ui.ledgerOlder).filter(function (e) { return !seen[String(e.id)]; });
-    var entries = newest.concat(older);
+    var entries = ledgerJoin(newest, arr(ui.ledgerOlder), LEDGER_NEWEST);
+    if (entries === null) {
+      fillLedgerGap(newest);
+      entries = newest;
+    } else if (arr(ui.ledgerOlder).length) {
+      ui.ledgerOlder = entries;  // everything shown stays together
+    }
+    ui.ledgerShown = entries;
     var dry = isDryRun(d);
     ui.ledgerById = {};
     if (!isObject(d.ledger)) {
@@ -1498,8 +1535,9 @@
         extra.length ? h("p", { class: "l-extra", text: extra.join(" · ") }) : null,
         h("div", { class: "l-foot" }, h("p", { class: "l-meta", text: meta.join(" · ") }), correct));
     }));
-    var more = newest.length >= 20 && ui.ledgerEnd !== true;
-    if (more) $("ledger-list").appendChild(h("li", { class: "ledger-more" }, olderButton(entries[entries.length - 1].id)));
+    var more = newest.length >= LEDGER_NEWEST && ui.ledgerEnd !== true;
+    if (ui.ledgerFilling) $("ledger-list").appendChild(h("li", { class: "ledger-more muted", text: "Loading the entries in between…" }));
+    else if (more) $("ledger-list").appendChild(h("li", { class: "ledger-more" }, olderButton(entries[entries.length - 1].id)));
   }
 
   function olderButton(lastId) {
@@ -1510,7 +1548,7 @@
       request("GET", "api/ledger?limit=" + LEDGER_PAGE + "&before=" + encodeURIComponent(String(lastId))).then(function (res) {
         if (!res.ok || !isObject(res.data)) throw httpError(res);
         var got = arr(res.data.entries);
-        ui.ledgerOlder = arr(ui.ledgerOlder).concat(got);
+        ui.ledgerOlder = arr(ui.ledgerShown).concat(got);  // 0.14.0: with the entries shown above them
         if (got.length < LEDGER_PAGE) ui.ledgerEnd = true;
         if (ui.data) safely("ledger", function () { renderLedger(ui.data); });
       }).catch(function (err) {
@@ -3638,7 +3676,8 @@
           h("td", null, timeEl(o.ordered_at, fmtDateTime(o.ordered_at))),
           // 0.12.0: only Ember's lines, net of tax, shipping, the coupon and refunds (before, the whole receipt).
           h("td", { class: "num", text: asText(o.total) + (o.whole_receipt ? " (whole receipt)" : "") }),
-          h("td", { text: arr(o.items).map(function (i) { return asText(i.title) + (num(i.quantity) > 1 ? " × " + i.quantity : ""); }).join("; ") }),
+          // 0.14.0: an order with many lines is kept without their titles
+          h("td", { text: arr(o.items).map(function (i) { return asText(i.title || "#" + i.listing_id) + (num(i.quantity) > 1 ? " × " + i.quantity : ""); }).join("; ") }),
           h("td", { text: o.status ? asText(o.status) : "–" }),
           h("td", null, orderRevenueCell(o, fake)));
       }))))] : h("p", { class: "muted", text: "No orders with Ember's listings yet." }));
@@ -3650,7 +3689,8 @@
     var refunded = o.status === "fully refunded" || o.status === "canceled";
     if (o.recorded) {
       var by = o.recorded_by === "etsy" ? "Recorded by Ember's code" : "Recorded";  // 0.12.0: from Etsy's numbers
-      var said = h("span", { class: "muted small", text: refunded ? by + ", then " + o.status + (o.corrected_in_full ? ", and corrected" : ": correct entry #" + o.entry_id) : by });
+      // 0.14.0: a partial refund asks for a correction too (only a full refund or a cancellation did)
+      var said = h("span", { class: "muted small", text: o.correction_due ? by + ", then " + o.status + ": correct entry #" + o.entry_id + " (Ember's lines earn " + asText(o.total) + " now)" : refunded ? by + ", then " + o.status + ", and corrected" : by });
       if (o.fees_recordable) return [said, " ", recordFeesButton(o, fake)];  // 0.12.0: Etsy's fees on it
       return o.fees_recorded ? [said, h("span", { class: "muted small", text: " · fees recorded" })] : said;
     }
@@ -3680,8 +3720,9 @@
     return b;
   }
 
-  // 0.12.0: Ember's share of Etsy's fees on a recorded order (its processing fee, read from the payment, and the 6.5%
-  // transaction fee), as an expense of the same project: the form opens filled in, and its key records it once.
+  // 0.12.0: Ember's share of Etsy's fees on a recorded order (its processing fee, read from the payment, the 6.5%
+  // transaction fee and, 0.14.0, the listing fee a sale renews and the VAT on fees), as an expense of the same project:
+  // the form opens filled in, and its key records it once.
   function recordFeesButton(o, fake) {
     var cents = num(o.fees_cents);
     var amount = isNaN(cents) ? null : (cents / 100).toFixed(2);
@@ -3689,7 +3730,7 @@
     b.addEventListener("click", function () {
       openLedgerForm("expense", amount, {
         currency: o.currency,
-        note: "Etsy's fees on order " + o.receipt_id + ": payment processing and the 6.5% transaction fee",
+        note: "Etsy's fees on order " + o.receipt_id + ": payment processing, the 6.5% transaction fee, USD 0.20 a unit sold and 19% VAT on those two",
         day: String(o.ordered_at || "").slice(0, 10),
         idKey: String(o.fee_key || ""),
         testMoney: fake,

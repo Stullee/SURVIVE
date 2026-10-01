@@ -60,6 +60,8 @@ OFFICE = {
 }
 PAGE = 100  # items per page Etsy returns at most
 RECEIPT_PAUSE = 1.1  # seconds between pages of orders: Etsy allows about one a second per shop there
+ORDER_PAGES = 5  # pages of orders a sync reads
+CATCH_UP_PAGES = 100  # 0.14.0: and after a gap of more than a month (10,000 receipts)
 _REFRESH_LOCK = threading.Lock()
 
 
@@ -335,28 +337,31 @@ class LiveShop:
                 "GET", "/v3/application/listings/batch", params={"listing_ids": ",".join(str(i) for i in batch)}
             )
             for item in data.get("results", []) if isinstance(data, dict) else []:
-                if not isinstance(item, dict) or not isinstance(item.get("listing_id"), int):
-                    continue
-                found.append(
-                    RemoteListing(
-                        listing_id=item["listing_id"],
-                        state=str(item.get("state") or "?"),
-                        title=str(item.get("title") or ""),
-                        url=str(item.get("url") or listing_url(item["listing_id"])),
-                        views=_int(item.get("views")),
-                        favorites=_int(item.get("num_favorers")),
-                        ends_at=_moment(item.get("ending_timestamp")),
-                        auto_renew=item["should_auto_renew"]
-                        if isinstance(item.get("should_auto_renew"), bool)
-                        else None,
-                    )
-                )
+                listing = _listing(item)
+                if listing is not None:
+                    found.append(listing)
         return found
+
+    def listing(self, listing_id: int) -> RemoteListing | None:
+        """0.14.0: one listing, read on its own (getListing, as the shop's owner): whether the batch answers for
+        expired or inactive listings was never checked. None when Etsy says there is none (HTTP 404)."""
+        try:
+            data = self._call("GET", f"/v3/application/listings/{listing_id}")
+        except NotSent as exc:
+            if str(exc).startswith("HTTP 404"):
+                return None
+            raise
+        listing = _listing(data)
+        if listing is None:
+            raise NotSent("Etsy's answer had no listing")
+        return listing
 
     def orders(self, since: datetime) -> list[Order]:
         found: list[Order] = []
         offset = 0
-        while offset < 500:  # at most five pages a sync
+        # Five pages cover a sync's 30 days; 0.14.0: a catch-up after a longer gap reads on until the answer ends.
+        pages = ORDER_PAGES if self.clock.now() - since <= timedelta(days=31) else CATCH_UP_PAGES
+        while offset < PAGE * pages:
             data = self._call(
                 "GET",
                 f"/v3/application/shops/{self._shop_id()}/receipts",
@@ -480,6 +485,22 @@ class LiveShop:
             changes=True,
             data={"should_auto_renew": "true" if on else "false"},
         )
+
+
+def _listing(item: Any) -> RemoteListing | None:
+    """A listing as Etsy answers for it (None if it isn't one)."""
+    if not isinstance(item, dict) or not isinstance(item.get("listing_id"), int):
+        return None
+    return RemoteListing(
+        listing_id=item["listing_id"],
+        state=str(item.get("state") or "?"),
+        title=str(item.get("title") or ""),
+        url=str(item.get("url") or listing_url(item["listing_id"])),
+        views=_int(item.get("views")),
+        favorites=_int(item.get("num_favorers")),
+        ends_at=_moment(item.get("ending_timestamp")),
+        auto_renew=item["should_auto_renew"] if isinstance(item.get("should_auto_renew"), bool) else None,
+    )
 
 
 def _order(receipt: Any) -> Order | None:

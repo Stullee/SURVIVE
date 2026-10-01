@@ -4,8 +4,8 @@ Owner entries are validated, checked for replays and for surprises (an
 unusually large amount, or a change that would make the agent critical or kill
 it), and only then written, together with the life-state evaluation, in one
 transaction. The ledger's writers are this module (owner entries and, 0.12.0,
-the entries from Etsy's numbers the owner turned on) and the budget guard (API
-costs); nothing else writes money.
+the entries from Etsy's numbers the owner turned on, and 0.14.0, Etsy's listing
+fees) and the budget guard (API costs); nothing else writes money.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from .ledger import (
     Scope,
     confirmations,
 )
-from .life import KILLED_KEY, PAUSED_KEY, RUNWAY_CAP_DAYS, Life, LifeStatus, mode_of
+from .life import KILLED_KEY, MONEY_PAUSE_KEY, PAUSED_KEY, RUNWAY_CAP_DAYS, Life, LifeStatus, mode_of
 from .metering import MeteredModel, MeterHealth, ProcessLock, Transport, recover_interrupted, usd_cap_to_micros
 from .pricing import (
     opening_cost,
@@ -60,7 +60,7 @@ TYPE_LABELS = {
 
 
 # 0.12.0: an entry from an integration's numbers may make the agent critical (that is what its money says), but it
-# never kills the agent or leaves it unfunded: that entry waits for the owner.
+# never kills the agent or leaves it unfunded: that entry waits for the owner (0.14.0: a fact pauses the agent instead).
 HELD_STATES = frozenset({"dead", "unfunded"})
 
 
@@ -234,10 +234,15 @@ class Economy:
                 life.persist_if_dead()  # a confirmed death of the sleeping live agent is recorded now, not later
         return Reply(201, {"entry": self.books.entry(entry_id), "economy": self._summary(status)})
 
-    def record_integration(self, prepared: PreparedEntry) -> Recorded:
+    def record_integration(self, prepared: PreparedEntry, fact: bool = False) -> Recorded:
         """An entry from an integration's numbers (0.12.0: Etsy's orders, when the owner turned that on). Nobody is
         asked to confirm it, so it is never written twice (its key, which the owner's button for it uses too) and
-        never when it would kill the agent or leave it unfunded. In dry run it is test money: the fake shop's."""
+        never when it would kill the agent or leave it unfunded. In dry run it is test money: the fake shop's.
+
+        0.14.0: a ``fact`` (a refund of revenue Ember's code recorded, a listing fee Etsy charged) is written all the
+        same: held back, it left the agent spending money it didn't have. When it leaves the agent without money,
+        Ember's code pauses the agent with the reason instead of letting it die: the owner grants funds, or resumes it
+        and lets the money decide."""
         with self.db.transaction() as conn:
             if conn.execute("SELECT 1 FROM ledger WHERE idempotency_key = ?", (prepared.idempotency_key,)).fetchone():
                 return Recorded()
@@ -250,14 +255,24 @@ class Economy:
                 conn.execute("RELEASE integration_entry")
                 log.warning("The ledger refused an entry from %s: %s", prepared.created_by, exc)
                 return Recorded()
-            worse = _worse_state(before, self.life.evaluate())
-            if worse in HELD_STATES:
+            after = self.life.evaluate()
+            worse = _worse_state(before, after)
+            if worse in HELD_STATES and not fact:
                 conn.execute("ROLLBACK TO integration_entry")
                 conn.execute("RELEASE integration_entry")
                 return Recorded(held=worse)
             conn.execute("RELEASE integration_entry")
             events.record(self.db, "info", "ledger", _describe(prepared, entry_id), {"entry_id": entry_id})
-            self.life.evaluate_and_persist()
+            if worse in HELD_STATES:
+                reason = (
+                    f"Paused by Ember's code: entry #{entry_id} from Etsy's numbers left it without money (balance"
+                    f" ${micros_to_usd(after.balance):.2f}). Grant funds and resume it, or resume it to let it end"
+                )
+                self.db.set_meta(MONEY_PAUSE_KEY, reason)
+                self.life.set_switch(PAUSED_KEY, True)
+                events.record(self.db, "warning", "control", reason)
+            else:
+                self.life.evaluate_and_persist()
         return Recorded(entry_id)
 
     def set_paused(self, paused: bool, who: str | None = None) -> LifeStatus:
