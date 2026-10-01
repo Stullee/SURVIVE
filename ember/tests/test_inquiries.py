@@ -197,6 +197,6 @@ def test_an_opt_out_after_an_automatic_reply_takes_the_unlock_back(data_dir: Pat
             "rule": "email_reply",
             "level": "manual",
             "by": policy.REVOKED_BY,
-            "why": f"{READER} asked to stop after an automatic reply (request #{made['id']})",
+            "why": f"the person you answered in request #{made['id']} asked to stop",  # 0.14.0: never their address
         }
     ]

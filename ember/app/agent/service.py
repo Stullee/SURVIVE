@@ -281,7 +281,10 @@ class Agent:
             return reasons.get(status.state, f"The agent is {status.state}")
         return None
 
-    def decide(self, now: datetime | None = None) -> Decision:
+    def decide(self, now: datetime | None = None, *, preview: bool = False) -> Decision:
+        """Whether a wake cycle runs now, and why. ``preview`` (0.14.0, the diagnostics report): the same decision with
+        nothing written: no event marked as having woken the agent, no next wake or burn mode kept, no wake requested.
+        """
         now = now or self.clock.now()
         blocked = self.blocked_reason()
         if blocked:
@@ -293,16 +296,16 @@ class Agent:
                 return Decision(True, "last_will", "the last will is due")
             return Decision(False, reason="The last will is due; retrying later", wait_until=retry)
         # 0.12.0: dormant, no model calls until money comes in; only the owner's Wake now runs a cycle
-        if burn.current(self.db, status).mode == burn.DORMANT and not self.wake_requested:
+        if (burn.peek if preview else burn.current)(self.db, status).mode == burn.DORMANT and not self.wake_requested:
             return Decision(False, reason=f"Dormant: {burn.MEANING[burn.DORMANT]}; Wake now runs a cycle")
         if self.message_waiting and not self.wake_requested:
-            ready = self._wake_for_waiting_message()
-            if ready is not None:
+            ready = None if preview else self._wake_for_waiting_message()
+            if ready is not None or preview:
                 why = "read the owner's message" if self.waiting_for == "message" else "act on the owner's decision"
                 return Decision(False, reason=f"Waking up to {why} in a moment", wait_until=ready)
         if self.wake_requested:
             return Decision(True, "owner", "woken by the owner")
-        event = self._event_wake(now)  # 0.13.0: an order, a reply or a milestone's last day
+        event = self._event_wake(now, preview)  # 0.13.0: an order, a reply or a milestone's last day
         if event is not None:
             return event
         no_room = self._no_room_for_work()
@@ -311,8 +314,7 @@ class Agent:
         wake = self._meta_time("next_wake_at")
         if wake is None:
             wake = now + FIRST_WAKE_DELAY
-            self._set_time("next_wake_at", wake)
-            self.db.set_meta(self._key("next_wake_reason"), "first wake-up")
+            self._keep_wake(wake, "first wake-up", preview)
         if now < wake:
             return Decision(
                 False, reason=self.db.get_meta(self._key("next_wake_reason")) or "sleeping", wait_until=wake
@@ -330,17 +332,20 @@ class Agent:
         if daily - today - held < needed <= daily - today:
             evening = self.clock.day_start(self.clock.today()) + timedelta(hours=EVENT_RESERVE_HOUR)
             reason = f"the rest of the daily cap is kept for event wake-ups until {EVENT_RESERVE_HOUR}:00"
-            self._set_time("next_wake_at", evening)
-            self.db.set_meta(self._key("next_wake_reason"), reason)
+            self._keep_wake(evening, reason, preview)
             return Decision(False, reason=reason[0].upper() + reason[1:], wait_until=evening)
         if daily - today < needed:
             tomorrow = self._next_local_midnight(now) + timedelta(minutes=5)
-            self._set_time("next_wake_at", tomorrow)
-            self.db.set_meta(self._key("next_wake_reason"), "waiting for the daily cap to reset")
+            self._keep_wake(tomorrow, "waiting for the daily cap to reset", preview)
             return Decision(False, reason="Waiting for the daily cap to reset", wait_until=tomorrow)
         return Decision(True, "schedule", "scheduled wake-up")
 
-    def _event_wake(self, now: datetime) -> Decision | None:
+    def _keep_wake(self, when: datetime, reason: str, preview: bool) -> None:
+        if not preview:
+            self._set_time("next_wake_at", when)
+            self.db.set_meta(self._key("next_wake_reason"), reason)
+
+    def _event_wake(self, now: datetime, preview: bool = False) -> Decision | None:
         """0.13.0: an urgent event in the agenda (an order, a reply to Ember's email, a milestone's last day) wakes the
         agent for a reactive cycle: at most agenda.EVENT_WAKES a day, agenda.MIN_GAP apart, when the day's cap covers
         a cycle (the events' share included). Otherwise the event waits for the next cycle's plan."""
@@ -355,8 +360,9 @@ class Agent:
         today = self.economy.books.cap_spend_on(self.economy.life.scope(), self.clock.today())
         if daily - today < (opening_cost(self.settings, self.db, self.mode) or 0):
             return None
-        with self.db.transaction() as conn:
-            agenda.mark_woke(conn, [int(r["id"]) for r in waiting], to_iso(now))
+        if not preview:
+            with self.db.transaction() as conn:
+                agenda.mark_woke(conn, [int(r["id"]) for r in waiting], to_iso(now))
         more = f" and {len(waiting) - 1} more" if len(waiting) > 1 else ""
         return Decision(True, "event", f"woken by an event: {waiting[0]['text']}{more}"[:300])
 
@@ -848,6 +854,7 @@ class Agent:
             event_wakes = agenda.wakes(conn, scope, self.clock)[0]
             digest = audit.latest(conn, scope)
             unlocks = sum(1 for g in policy.grants(conn, scope) if g["level"] != "manual")
+        data = (digest or {}).get("data") or {}
         wake = self._meta_time("next_wake_at") if self.blocked_reason() is None else None
         return {
             **counts,
@@ -857,10 +864,13 @@ class Agent:
             "waiting_on_you": sum(counts[name] for name in views.WAITING_ON_YOU),
             "agenda_open": agenda_open,
             "event_wakes_today": event_wakes,
-            # 0.13.0: the unlocks that stand, and the newest daily digest (a notification can follow digest_day)
+            # 0.13.0: the unlocks that stand, and the newest daily digest (a notification can follow digest_day).
+            # 0.14.0: its counts only: anyone on the host network can read the sensor, and a text can name a person.
             "unlocks": unlocks,
             "digest_day": digest["day"] if digest else None,
-            "digest": digest["text"] if digest else None,
+            "digest_actions": sum((data.get("actions") or {}).values()) if digest else None,
+            "digest_failed": sum((data.get("trouble") or {}).values()) if digest else None,
+            "digest_taken_back": len(data.get("taken_back") or []) if digest else None,
             "next_wake_at": to_iso(wake) if wake else None,
             "cycle_running": self.running_cycle,
         }

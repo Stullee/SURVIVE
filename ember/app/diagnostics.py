@@ -35,10 +35,12 @@ from . import privacy
 from .agent import library, ventures
 from .agent.context import RESEARCH_HEADING
 from .agent.sandbox import kind_of
+from .agent.tools import LIBRARY_TOOLS
 from .db import utcnow
 from .economy.clock import to_iso
 from .economy.costs import micros_to_usd
 from .economy.ledger import Scope
+from .economy.metering import STUDY
 from .integrations import etsy_publisher
 from .logging_setup import redact
 from .version import app_version, build_id
@@ -122,6 +124,7 @@ TABLES = (
     "site_pages",
     "site_downloads",
     "listing_gates",
+    "observations",
     "memory_versions",
     "lesson_pins",
     "research_checks",
@@ -186,6 +189,9 @@ NOT_INSTRUCTIONS = (
 )
 _MASK: contextvars.ContextVar[privacy.Masker | None] = contextvars.ContextVar("diagnostics_mask", default=None)
 _HEADING = re.compile(r"^(## )", re.MULTILINE)  # a line that could pose as a section of the report
+_USER_ID = re.compile(r"[0-9a-f]{32}\b")  # a Home Assistant user ID
+_LABEL = re.compile(r"(.{1,25}?) \(([0-9a-f]{32})\)")  # how web._owner labels a user's action: "name (user ID)"
+_REPLIED = re.compile(r'(replied|wrote) "(.*?)"?', re.DOTALL)  # an opt-out in the sender's words (mailstore._store)
 
 
 def report(state: AppState, *, full: bool = False) -> str:
@@ -198,33 +204,65 @@ def report(state: AppState, *, full: bool = False) -> str:
 
 
 def _masker(state: AppState, full: bool) -> privacy.Masker:
+    mailbox = getattr(getattr(state, "agent", None), "mailbox", None)  # the fake one in a dry run
+    own = getattr(mailbox, "address", "") or state.loaded.settings.email_address or ""
     try:
         with state.db.connection() as conn:
             redactor = privacy.load(conn)
-            others = {} if full else _others(conn)
+            others = {} if full else {**_others(conn, own), **_owners(conn, state.loaded.settings.owner_user_ids)}
     except Exception:  # noqa: BLE001 - no database (see DATABASE): nothing was removed that could be found
         redactor, others = privacy.Redactor(), {}
-    mailbox = getattr(getattr(state, "agent", None), "mailbox", None)  # the fake one in a dry run
-    own = getattr(mailbox, "address", "") or state.loaded.settings.email_address or ""
     return privacy.Masker(own, redactor, full, others)
 
 
-def _others(conn: Any) -> dict[str, str]:
+def _others(conn: Any, own: str = "") -> dict[str, str]:
     """Other people's words that the report's texts may quote, and what the shareable report shows instead: the
-    emails' subjects and their senders' names, and the subjects of the emails the agent asked to send."""
+    emails' subjects (0.14.0: also as the agenda quotes them, cut to 80 characters) and their senders' names if they
+    look like a person's (privacy.person_like), and the subjects of the emails the agent asked to send. 0.14.0: a
+    text of one word is never one of them (a name like "Pinterest" or "mailbox" overwrote those words everywhere)."""
     others: dict[str, str] = {}
 
     def add(text: str | None, shown: str, shortest: int) -> None:
-        if text and len(text.strip()) >= shortest:
+        if text and len(text.strip()) >= shortest and len(text.split()) > 1:
             others.setdefault(text, shown)
             others.setdefault(json.dumps(text, ensure_ascii=False)[1:-1], shown)  # as a JSON text quotes it
 
     for row in conn.execute("SELECT id, subject, from_name FROM emails ORDER BY id"):
         add(row["subject"], f"[subject of email #{row['id']}]", 8)
-        add(row["from_name"], f"[sender of email #{row['id']}]", 5)
+        cut = " ".join(str(row["subject"] or "").split())[:80]  # as agenda._mail quotes it
+        add(json.dumps(cut, ensure_ascii=False)[1:-1], f"[subject of email #{row['id']}]", 8)
+        if privacy.person_like(row["from_name"], own):
+            add(row["from_name"], f"[sender of email #{row['id']}]", 5)
     for row in conn.execute("SELECT id, title FROM approvals WHERE type = 'contact' ORDER BY id"):
         add((row["title"] or "").partition(": ")[2], f"[subject of request #{row['id']}]", 8)
     return others
+
+
+def _owners(conn: Any, ids: tuple[str, ...]) -> dict[str, str]:
+    """0.14.0: the Home Assistant users' labels ("name (user ID)", web._owner) and IDs, and what the shareable report
+    shows instead. They were printed throughout (the owner's name next to the ID owner_user_ids trusts). Ember records
+    a label (or the ID alone, for a user without a name) in its columns named "by" or "..._by", and at the start of
+    the owner's events."""
+    labels: set[str] = set()
+    for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall():
+        for column in conn.execute(f"PRAGMA table_info({table})").fetchall():  # noqa: S608 - the schema's own names
+            if column["name"] == "by" or column["name"].endswith("_by"):
+                name = column["name"]
+                query = f"SELECT DISTINCT {name} FROM {table} WHERE {name} LIKE '%)' OR length({name}) = 32"  # noqa: S608
+                labels.update(str(row[0]) for row in conn.execute(query))
+    for (message,) in conn.execute("SELECT message FROM events WHERE kind IN ('owner', 'control')"):
+        found = _LABEL.match(message) or _USER_ID.match(message)
+        if found:
+            labels.add(found[0])
+    shown = dict.fromkeys(ids, "[the owner's user ID]")
+    for label in labels:
+        found = _LABEL.fullmatch(label)
+        if found:
+            shown[label] = shown[json.dumps(label, ensure_ascii=False)[1:-1]] = "[the owner]"
+            shown[found[2]] = "[the owner's user ID]"
+        elif _USER_ID.fullmatch(label):
+            shown[label] = "[the owner's user ID]"
+    return shown
 
 
 def _report(state: AppState, full: bool) -> str:
@@ -520,7 +558,7 @@ def _scheduler(state: AppState) -> str:
             "spent_today_usd": micros_to_usd(spent),
             "venture_cycles_today_usd": micros_to_usd(ventured),
         }
-        decision = agent.decide()
+        decision = agent.decide(preview=True)  # 0.14.0: nothing marked or kept (the report only reads)
         data["decision_now"] = {
             "run": decision.run,
             "trigger": decision.trigger,
@@ -532,7 +570,8 @@ def _scheduler(state: AppState) -> str:
 
 def _planner_preview(state: AppState, full: bool) -> str:
     """The planner's context as the next wake cycle would build it now: what the agent will see, section by section.
-    Shareable, its MAIL and RECENT RESEARCH sections keep only what isn't other people's text."""
+    Shareable, its MAIL and RECENT RESEARCH sections keep only what isn't other people's text, and (0.14.0) its
+    library section only the counts."""
     agent = getattr(state, "agent", None)
     if agent is None:
         return "agent not running"
@@ -549,6 +588,10 @@ def _leave_out_preview(text: str) -> str:
             parts[index + 1] = f"\n{lines[0]}\n({len(lines) - 1} emails: their senders and subjects are left out)\n\n"
         elif heading == f"== {RESEARCH_HEADING} ==":
             parts[index + 1] = f"\n({len(lines)} research results: the web text is left out)\n\n"
+        elif heading == "== YOUR OWNER'S LIBRARY ==" and len(lines) > 1:  # 0.14.0: the first line is the counts
+            new = sum(1 for line in lines if line.startswith("- #"))
+            left_out = f"{new} newly studied document{'s' if new != 1 else ''}: what {'they' if new != 1 else 'it'}"
+            parts[index + 1] = f"\n{lines[0]}\n({left_out} taught is left out)\n\n"
     return "".join(parts)
 
 
@@ -573,7 +616,7 @@ def _cycle(conn: Any, c: Any, full: bool = True) -> str:
     calls = conn.execute("SELECT * FROM llm_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
     tools = conn.execute("SELECT * FROM tool_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
     if not full:
-        tools = [{**dict(t), "input": _email_input(t["tool"], t["input"])} for t in tools]
+        tools = [{**dict(t), "input": _email_input(t["tool"], t["input"]), "result": _library_result(t)} for t in tools]
     texts = conn.execute(
         "SELECT t.llm_call_id, l.purpose, t.text, t.stop_details FROM call_texts t JOIN llm_calls l ON l.id ="
         " t.llm_call_id WHERE l.cycle_id = ? ORDER BY t.llm_call_id",
@@ -623,10 +666,20 @@ def _cycle(conn: Any, c: Any, full: bool = True) -> str:
 
 
 def _reply_text(row: Any, full: bool) -> str:
-    """What the model wrote in a call; shareable, a research call's digest (web text) only as its length."""
+    """What the model wrote in a call; shareable, a research call's digest (web text) and (0.14.0) a study of the
+    owner's library (drawn from their document) only as their lengths."""
     if not full and row["purpose"] == "research":
         return f"[{len(row['text'] or ''):,} characters of web text left out]"
+    if not full and row["purpose"] == STUDY:
+        return f"[{len(row['text'] or ''):,} characters from your library left out]"
     return _cell(row["text"], REPLY_CHARS)
+
+
+def _library_result(row: Any) -> str | None:
+    """0.14.0: a tool's result; the owner's library's texts (library_read, knowledge_search) only as their length."""
+    if row["tool"] not in LIBRARY_TOOLS or row["result"] is None:
+        return row["result"]
+    return f"[{len(row['result']):,} characters from your library left out]"
 
 
 def _email_input(tool: str, raw: str) -> str:
@@ -889,6 +942,14 @@ def _agent(state: AppState, full: bool = True) -> str:
                     for r in rows
                 ]
             out.append(f"-- {table}\n" + _rows(rows, columns))
+        # 0.14.0: whether Ember's code's daily record (observations, 0.12.0) runs: how much of it, never a value
+        observed = conn.execute(
+            "SELECT subject, metric, COUNT(DISTINCT day) AS days, COUNT(DISTINCT subject_id) AS subjects, MAX(day) AS"
+            f" newest FROM observations WHERE {where} GROUP BY subject, metric ORDER BY subject, metric",
+            params,
+        ).fetchall()
+        columns = ["subject", "metric", "days", "subjects", "newest"]
+        out.append("-- observations (by subject and metric)\n" + _rows(observed, columns))
         if full:  # what the study learned: Ember's words, but drawn from the owner's documents (full report only)
             learned = conn.execute(
                 f"SELECT document_id, part, topic, text FROM learnings WHERE {where} ORDER BY id DESC LIMIT 20", params
@@ -978,7 +1039,10 @@ def _integrations(state: AppState, full: bool = True) -> str:
     scope = agent.scope()
     where, params = scope.where()
     joined, _ = scope.where("a")
-    out = [f"-- email\n{_json(agent.integrations()['email'])}"]
+    email = agent.integrations()["email"]
+    if not full:  # 0.14.0: an opt-out's reason quotes the sender's words
+        email["suppressed"] = [{**s, "reason": _their_words(s["reason"])} for s in email["suppressed"]]
+    out = [f"-- email\n{_json(email)}"]
     with state.db.connection() as conn:
         emails = conn.execute(
             "SELECT id, direction, received_at, from_addr, to_addr, subject, length(body) AS body_chars, body_cut,"
@@ -1022,6 +1086,12 @@ def _integrations(state: AppState, full: bool = True) -> str:
     # 0.13.0 (Phase E3): the website's state and pages (the texts are the agent's; the owner's data is never in it).
     out.append(f"-- website\n{_json(agent.integrations()['site'])}")
     return "\n".join(out)
+
+
+def _their_words(reason: str | None) -> str | None:
+    """An opt-out's reason; the sender's own words (mailstore: 'replied "..."') only as their length."""
+    found = _REPLIED.fullmatch(reason or "")
+    return f"{found[1]} [the sender's words, {len(found[2]):,} characters]" if found else reason
 
 
 def _seen(message: Any) -> str:

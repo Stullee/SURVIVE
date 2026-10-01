@@ -233,11 +233,12 @@ class CycleRunner:
 
     def planner_preview(self, venture: bool) -> str:
         """The planner's context as a wake cycle would build it now (the diagnostics report shows it): nothing is
-        fetched, synced, marked or spent."""
+        fetched, synced, marked or spent. 0.14.0: and nothing kept: Ember's code's keepers run in a cycle only (they
+        ran here, outside the cycle's lock, and parked ventures and closed milestones when the report was made)."""
         self.etsy_on = self.etsy is not None and self.publisher is not None and self.etsy.shop() is not None
         self.pinterest_on = self.etsy_on and self.pinterest is not None and self.pinterest.account() is not None
         self.printify_on = self.etsy_on and self.printify is not None and self.printify.account() is not None
-        snap = self._snapshot(venture)
+        snap = self._snapshot(venture, keep=False)
         planner = ""
         for scale in PLANNER_SCALES:
             planner, _ = context.planner_context(snap, self.dry_run, scale)
@@ -507,17 +508,20 @@ class CycleRunner:
         if self.stop.is_set():
             raise Stopping
 
-    def _snapshot(self, venture: bool = False) -> context.Snapshot:
+    def _snapshot(self, venture: bool = False, keep: bool = True) -> context.Snapshot:
+        """What a plan sees; first (``keep``) Ember's code keeps its rules: the money goal, the stages, the grading,
+        the listing tests, the predictions and the obligations."""
         status = self.economy.life.evaluate()
         scope = self.economy.life.scope()
         self.net_runway_days = status.runway.net_days  # 0.13.0
         mode = burn.peek(self.db, status)
-        self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
-        self._keep_stages()
-        metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
-        self._keep_gates()  # 0.13.0: after the grading, so a bar missed now is owed at once
-        predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
-        self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
+        if keep:
+            self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
+            self._keep_stages()
+            metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
+            self._keep_gates()  # 0.13.0: after the grading, so a bar missed now is owed at once
+            predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
+            self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
         local = self.clock.now().astimezone(self.clock.tz).strftime("%A %Y-%m-%d %H:%M %Z")
         with self.db.connection() as conn:

@@ -855,8 +855,8 @@ no longer shown); a study that failed three times stops until you press
   before. It covers how many actions it carried out and on whose decision,
   what failed, what your unlocks approved, what they hold for your veto,
   which unlocks were taken back and why, and what waited for you whatever
-  you unlocked. The newest digest is at the top of this card, in the System
-  log and in the sensor (`digest`).
+  you unlocked. The newest digest is at the top of this card and in the System
+  log; the sensor has its counts (`digest_day`, `digest_actions`, ...).
 
   **Take back every unlock**, at the top of this card while any unlock
   stands: one click sets every rule of every milestone back to **Ask me**.
@@ -1426,12 +1426,17 @@ recent events. Use **Copy** to paste it into a bug report or a chat.
 The report is **shareable** by default: it leaves out other people's text (the
 emails the agent read, the web pages it researched and the emails it wrote to
 others, with their subjects and senders' names wherever they are quoted), and
-keeps only their length. Every email address is masked (`[email 1]`, and
-`[Ember's address]`), and so are one-time codes (`[masked]`), the tokens in
-links (`https://example.com/verify?[…]`) and the words you removed from your
-messages (`[removed]`, see below). It never contains the API key, the mailbox
-password, Etsy's keystring, secret or tokens, or an email's text. It does hold
-your messages and the agent's work, so read it before you share it.
+keeps only their length. A sender's name is replaced only when it looks like a
+person's (two to four words, not a company's or a team's), and only whole, so a
+brand such as "Pinterest" stays readable. Your library's texts (what the study
+drew from a document, `library_read` and `knowledge_search` results) and the
+words of an opt-out reply are left out the same way. Every email address is
+masked (`[email 1]`, and `[Ember's address]`), and so are one-time codes
+(`[masked]`), the tokens in links (`https://example.com/verify?[…]`), the words
+you removed from your messages (`[removed]`, see below), and your Home
+Assistant name and user ID (`[the owner]`). It never contains the API key, the
+mailbox password, Etsy's keystring, secret or tokens, or an email's text. It
+does hold your messages and the agent's work, so read it before you share it.
 
 Tick **Include other people's text** for a private report with the emails and
 the web text: for your own eyes only. Never paste a report into an AI tool that
@@ -1447,7 +1452,10 @@ Ember's code replaces them with `[removed]` in the agent's memory files, open
 projects and workspace files (right away, or when a running cycle ends), and in
 every report. The history (the journal, the model's replies and the tool calls)
 can't be changed, so its copies stay in the database and are redacted wherever
-the report shows them. Words from messages removed before 0.11.2 were not
+the report shows them, until they are pruned: after 30 days (0.14.0) the
+model's replies and the tool calls' inputs and results become `[pruned]`, except
+the five newest research results the plan still shows. The calls' costs, tokens
+and purposes are kept. Words from messages removed before 0.11.2 were not
 registered: change such a password where it is used.
 
 ## Money
@@ -1604,9 +1612,12 @@ your milestones), with `waiting_on_you`, their total (0.13.0), and of Ember's
 mailbox: `email_unread` (emails the agent hasn't read) and `email_waiting`
 (approved emails not sent yet). `agenda_open` counts the events no plan has
 seen yet and `event_wakes_today` the wake-ups events caused today. `unlocks`
-counts the unlocks that stand (0.13.0), and `digest` is the newest daily digest,
-with the day it covers in `digest_day` (an automation can notify you when it
-changes). It never contains any text the agent wrote.
+counts the unlocks that stand (0.13.0). Of the newest daily digest, `digest_day`
+is the day it covers (an automation can notify you when it changes), and
+`digest_actions`, `digest_failed` and `digest_taken_back` count the actions
+Ember's code carried out that day, those that failed, partly failed or ended
+unclear, and the unlocks taken back; its text is on the dashboard only. The
+JSON never contains any text the agent wrote, nor anyone's address.
 In dry run the numbers are the dry run's. If the database can't be read,
 `state` is `unknown` and the numbers are empty.
 
