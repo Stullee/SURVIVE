@@ -183,7 +183,7 @@ class Snapshot:
     pending: list[sqlite3.Row] = field(default_factory=list)
     last_cycle: sqlite3.Row | None = None
     last_journal: sqlite3.Row | None = None
-    handoff: sqlite3.Row | None = None  # 0.14.0: the newest journal the agent wrote (its cycle_id and handoff)
+    handoff: sqlite3.Row | None = None  # 0.14.0: the newest handoff the agent wrote (its cycle_id and handoff)
     digests: list[str] = field(default_factory=list)  # the last cycles' digests, newest first (0.12.0)
     obligations: str = ""  # 0.12.0: what the agent owes (OBLIGATIONS), bounded: never cut in the plan
     memory: dict[str, str] = field(default_factory=dict)
@@ -274,7 +274,9 @@ def snapshot(
     journal = store.journal(conn, scope, 5)
     where, params = scope.where()
     handoff = conn.execute(
-        f"SELECT cycle_id, handoff FROM journal WHERE {where} AND author = 'agent' ORDER BY id DESC LIMIT 1", params
+        f"SELECT cycle_id, handoff FROM journal WHERE {where} AND author = 'agent'"
+        " AND handoff IS NOT NULL AND handoff <> '' ORDER BY id DESC LIMIT 1",
+        params,
     ).fetchone()
     files = _safe_listing(workspace)
     standing = store.standing_instructions(conn, scope)
@@ -440,17 +442,17 @@ def last_cycle_text(s: Snapshot, budget: int = PLANNER_BUDGETS["journal"]) -> st
     the last two cycles (what they did and didn't do: a journal can claim work that never happened). Without a
     digest (a cycle from before 0.12.0), the last cycle's goal.
 
-    0.14.0: after a cycle that wrote no journal (stopped, failed, killed), the last handoff the agent wrote, with its
-    cycle, and no journal line (Ember's code's: its digest says more). Within ``budget`` bytes, each digest is cut to
-    its own share: the section's cut took the older one down to its goal."""
+    0.14.0: after a cycle that left no handoff (stopped, failed, killed or idle), the last handoff the agent wrote,
+    with its cycle. No journal line for a journal Ember's code wrote: its digest says more. Within ``budget`` bytes,
+    each digest is cut to its own share: the section's cut took the older one down to its goal."""
     lines = []
     journal = s.last_journal
     written = journal is not None and _author(journal) != "system"
     if written and journal["handoff"]:
         lines.append(f"Your handoff to this cycle: {json.dumps(journal['handoff'], ensure_ascii=False)}")
-    elif not written and s.handoff is not None and s.handoff["handoff"]:
+    elif s.handoff is not None:
         lines.append(
-            f"Your last handoff, from cycle #{s.handoff['cycle_id']} (the cycles after it wrote no journal): "
+            f"Your last handoff, from cycle #{s.handoff['cycle_id']} (the cycles after it left none): "
             + json.dumps(s.handoff["handoff"], ensure_ascii=False)
         )
     goal = _plan_goal(s.last_cycle)

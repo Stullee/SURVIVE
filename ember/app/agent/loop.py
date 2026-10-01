@@ -1429,6 +1429,7 @@ class CycleRunner:
                 )
             response = result.response or {}
             cost = result.cost_micros
+            partial = ""
             if response.get("stop_reason") == "pause_turn":
                 follow = dict(request)
                 follow["messages"] = [
@@ -1443,6 +1444,11 @@ class CycleRunner:
                         more = self._call(cycle_id, "research", follow, venture_id)
                         response = more.response or response
                         cost += more.cost_micros
+                    else:
+                        partial = (
+                            "\n(The search paused and wasn't continued: that would use the money kept for your"
+                            " reflection. This answer may be partial.)"
+                        )
                 except (Unpriceable, CallRefused, CallFailed):
                     pass
             answer = _text_of(response)
@@ -1478,7 +1484,7 @@ class CycleRunner:
                 )
             return tools.Outcome(
                 True,
-                f"{body}{source_text}{counted}\n(cost ${micros_to_usd(cost):.4f})",
+                f"{body}{source_text}{counted}{partial}\n(cost ${micros_to_usd(cost):.4f})",
                 f"research: {question[:80]}",
             )
 
@@ -1817,7 +1823,7 @@ def write_records(conn: Any, scope: AgentScope, cycle_id: int, status: str, note
     none, then its digest (0.12.0). Both say how it really ended (0.14.0)."""
     if not store.has_journal(conn, cycle_id):
         summary = f"Cycle ended {status}" + (f": {note}" if note else "")
-        store.write_journal(conn, scope, cycle_id, "system", summary, _code_journal(conn, cycle_id), now)
+        store.write_journal(conn, scope, cycle_id, "system", summary, _code_journal(conn, cycle_id, status), now)
     digest.write(conn, cycle_id, status, note, now)
 
 
@@ -1837,11 +1843,12 @@ def recover_records(conn: Any, scope: AgentScope, now: str) -> None:
         write_records(conn, scope, int(row["id"]), str(row["status"]), row["note"], now)
 
 
-def _code_journal(conn: Any, cycle_id: int) -> str:
+def _code_journal(conn: Any, cycle_id: int, status: str = "completed") -> str:
     """0.12.0: the journal of a cycle whose reflection wrote none, built by Ember's code from its records: the goal,
     what its tools did (and what was refused or skipped, so it isn't taken for done) and what it cost. It was only
-    "Goal: …"."""
-    row = conn.execute("SELECT plan FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
+    "Goal: …". 0.14.0: of a cycle that ended ``status`` before its work did, where its work stopped and its plan's
+    steps, as its digest says."""
+    row = conn.execute("SELECT * FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
     try:
         plan = json.loads(row["plan"]) if row and row["plan"] else {}
     except ValueError:
@@ -1851,6 +1858,8 @@ def _code_journal(conn: Any, cycle_id: int) -> str:
         "Written by Ember's code: the reflection wrote no journal.",
         f"Goal: {goal}" if goal else "No plan was made.",
     ]
+    if goal and status not in ("completed", "idle"):
+        lines += digest.ended(row, status)
     calls = conn.execute(
         "SELECT tool, status, summary FROM tool_calls WHERE cycle_id = ? AND parent_id IS NULL ORDER BY id", (cycle_id,)
     ).fetchall()

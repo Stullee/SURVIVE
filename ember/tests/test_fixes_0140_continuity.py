@@ -139,6 +139,7 @@ def test_a_paused_researchs_continuation_leaves_the_reflections_reserve(
     assert purposes(agent, 1) == ["plan", "work", "research", "work", "reflect"]  # the continuation wasn't sent
     [research] = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'research'")
     assert research["status"] == "ok" and "Poster prices start at 12 EUR." in research["result"]
+    assert "The search paused and wasn't continued" in research["result"]  # not taken for a full search
 
 
 # --- FIX NOW 2: a stopped cycle's digest and journal say how it really ended ---
@@ -157,11 +158,32 @@ def test_a_cycle_the_guard_stopped_mid_work_is_not_recorded_as_done(data_dir: Pa
     assert "Work ended: the plan was done." not in lines
     assert f"Work ended: stopped at work step 1 of {ROOMY.max_tool_steps}, before its plan was done." in lines
     assert f"Its plan's steps (not all done): 1. {json.dumps(steps[0])}; 2. {json.dumps(steps[1])}" in lines
-    [journal] = rows(agent, "SELECT author, summary FROM journal")
-    assert journal == {
-        "author": "system",
-        "summary": "Cycle ended stopped: a call cost more than its worst-case estimate",
-    }
+    [journal] = rows(agent, "SELECT author, summary, entry FROM journal")
+    assert (journal["author"], journal["summary"]) == (
+        "system",
+        "Cycle ended stopped: a call cost more than its worst-case estimate",
+    )
+    entry = journal["entry"].split("\n")  # the code journal says it too, as the digest does
+    assert f"Work ended: stopped at work step 1 of {ROOMY.max_tool_steps}, before its plan was done." in entry
+    assert f"Its plan's steps (not all done): 1. {json.dumps(steps[0])}; 2. {json.dumps(steps[1])}" in entry
+
+
+def test_only_the_journal_tried_while_working_is_left_out_of_not_done(data_dir: Path) -> None:
+    # The refused early journal isn't work left undone (the reflection writes it); a refused set_sleep still is.
+    early = ToolCalls(
+        [
+            ("set_sleep", {"minutes": -5, "reason": "Waiting"}),
+            ("write_journal", {"summary": "Drafted the post", "entry": "What worked..."}),
+        ]
+    )
+    fake = FakeTransport(script=[plan(steps=["draft the post"]), early, REFLECT_JOURNAL])
+    agent, ends = run(data_dir, fake)
+    assert ends[0].status == "completed"
+    [not_done] = [line for line in digest_of(agent, 1) if line.startswith("Not done")]
+    assert not_done.startswith("Not done (1): set_sleep (error: ")
+    with agent.db.connection() as conn:
+        [undone] = digest.undone(conn, 1)
+    assert undone.startswith("set_sleep (error: ")
 
 
 @pytest.mark.parametrize("status", ["failed", "interrupted", "stopped", "refused"])
@@ -190,11 +212,24 @@ def test_the_last_handoff_reaches_the_plan_after_a_stopped_cycle(data_dir: Path)
     assert [e.status for e in ends] == ["completed", "stopped", "idle"]
     shown = section(planner_texts(fake)[2], "YOUR LAST CYCLE")
     assert shown.startswith(
-        f"Your last handoff, from cycle #1 (the cycles after it wrote no journal): {json.dumps(HANDOFF)}\n"
+        f"Your last handoff, from cycle #1 (the cycles after it left none): {json.dumps(HANDOFF)}\n"
     )
     assert "Its journal:" not in shown  # Ember's code's journal of #2: its digest says more
     older = shown.split("\nCycle #1 completed", 1)[1]
     assert "Reflection: yes; journal by the agent." in older  # the older digest isn't cut down to its goal
+
+
+def test_the_last_handoff_outlasts_an_idle_cycle(data_dir: Path) -> None:
+    # An idle cycle's journal (the agent's, with no handoff) hid the handoff before it, after it and after a stopped
+    # cycle that followed it.
+    first = [plan(steps=["make the poster"]), Reply("Done."), REFLECT_JOURNAL]
+    fake = FakeTransport(script=[*first, plan(steps=[]), *STOPPED, plan(steps=[])])
+    agent, ends = run(data_dir, fake, cycles=4)
+    assert [e.status for e in ends] == ["completed", "idle", "stopped", "idle"]
+    line = f"Your last handoff, from cycle #1 (the cycles after it left none): {json.dumps(HANDOFF)}"
+    after_idle, after_stop = (section(t, "YOUR LAST CYCLE") for t in planner_texts(fake)[2:4])
+    assert after_idle.startswith(line + "\n")
+    assert after_stop.startswith(line + "\n")
 
 
 def test_each_digest_keeps_its_share_of_the_section() -> None:
