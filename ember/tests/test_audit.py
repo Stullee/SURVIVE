@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import audit, policy, store  # noqa: E402
+from app.agent import audit, news, policy, store  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import connectors, etsy  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
@@ -201,9 +201,15 @@ def test_the_owner_takes_back_every_unlock(data_dir: Path) -> None:
     agent.run_policy()  # what an unlock held waits for the owner now
     assert rows(agent, f"SELECT status FROM approvals WHERE id = {held}") == [{"status": "pending"}]
     assert (agent.dashboard()["audit"]["unlocks"], agent.dashboard()["audit"]["held"]) == (0, 0)
-    for milestone in (goal, other):
-        comment = rows(agent, f"SELECT owner_comment FROM milestones WHERE id = {milestone}")[0]["owner_comment"]
-        assert comment.startswith("Took back every unlock")
+    for milestone in (goal, other):  # 0.16.1 analysis (bug 5): the agent hears it in its news, not as the owner's note
+        assert rows(agent, f"SELECT owner_comment FROM milestones WHERE id = {milestone}")[0]["owner_comment"] is None
+    with agent.db.connection() as conn:
+        heard = news.collect(conn, agent.db, agent.scope(), "0.0.0").venture_lines()
+    assert (
+        f'Unlocks of milestone #{goal} "Ten sales": your owner took back taking a listing of Ember\'s off Etsy and'
+        " price changes within 15% of the approved price on a live listing (with Take back every unlock). Nothing is"
+        " unlocked on it now: its requests wait for your owner's click." in heard
+    )
     assert owner(agent).take_back_unlocks({}, "Stefan").body == {"taken_back": 0}
     assert any("Stefan took back every unlock (3 in all)" in e["message"] for e in agent_events(agent))
 

@@ -19,7 +19,7 @@ def test_fresh_database_gets_all_migrations(tmp_path: Path) -> None:
     applied = migrate(db_file, backup_dir=tmp_path / "backups")
     assert applied == [m.version for m in discover_migrations()]
     database = Database(db_file)
-    assert database.schema_version() == len(discover_migrations())
+    assert database.schema_version() == discover_migrations()[-1].version
     with database.connection() as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"schema_migrations", "meta", "events"} <= tables
@@ -99,6 +99,30 @@ def test_migration_gaps_are_rejected(tmp_path: Path) -> None:
     _write(tmp_path, "0003_three.sql", "")
     with pytest.raises(MigrationError, match="without gaps"):
         discover_migrations(tmp_path)
+
+
+def test_a_number_another_branch_holds_may_be_skipped_until_it_comes(tmp_path: Path) -> None:
+    """The 0.16.1 analysis's fixes took 0071 while 0070 was Google Search Console's, on a branch not merged yet: the
+    numbers may skip a reserved one while its file isn't here, and it applies after the later ones once it comes."""
+    mig_dir = tmp_path / "migrations"
+    _write(mig_dir, "0001_one.sql", "CREATE TABLE one (x INTEGER);")
+    _write(mig_dir, "0003_three.sql", "CREATE TABLE three (x INTEGER);")
+    with pytest.raises(MigrationError, match="without gaps"):
+        discover_migrations(mig_dir, reserved=frozenset({4}))  # only the number reserved
+    db_file = tmp_path / "ember.db"
+    assert migrate(db_file, discover_migrations(mig_dir, reserved=frozenset({2}))) == [1, 3]
+    _write(mig_dir, "0002_two.sql", "CREATE TABLE two (x INTEGER);")
+    assert migrate(db_file, discover_migrations(mig_dir, reserved=frozenset({2})), tmp_path / "backups") == [2]
+    _write(mig_dir, "0002_twice.sql", "")
+    with pytest.raises(MigrationError, match="without gaps"):  # two of a number are refused as before
+        discover_migrations(mig_dir, reserved=frozenset({2}))
+
+
+def test_a_reserved_number_goes_once_its_migration_is_merged() -> None:
+    """A number stays reserved only while its branch isn't merged: then the numbers have no gap again."""
+    here = {m.version for m in discover_migrations()}
+    assert not dbmod.RESERVED & here, "remove the merged migration's number from app/db.py RESERVED"
+    assert all(0 < number < max(here) for number in dbmod.RESERVED)  # a gap below the newest one
 
 
 def test_old_backups_are_pruned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

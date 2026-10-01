@@ -630,7 +630,13 @@ euros. The tab's badge counts the ones waiting. On each card:
 parks a venture whose research brings no business case within 21 days of its
 first research call (while nothing is built for it: no open project), and a
 backed venture whose first test is missed (closed missed, or still open a week
-after its date). It also parks an idea of the agent's that no one took up
+after its date: a first test Ember's code checks has that week too, and is
+met if its number comes in it). A first test of Pinterest or Printify that is
+still unmet then while no pin or product was ever made never ran: it starts
+once more instead (once). A week before a first test's date, the System log
+tells you once what is at stake (when it is parked, and the listing tests of
+its product lines that end with it), and the agent's plan lists it among what
+it owes. It also parks an idea of the agent's that no one took up
 (researched) within 30 days, the **triage** (your own ideas wait for you), and a
 **live** venture that has sold nothing 60 days after it went live (no revenue
 recorded for it, no Etsy order of its listings). A live venture that earns more
@@ -925,7 +931,9 @@ no longer shown); a study that failed three times stops until you press
   requests of a kind unchanged and without a comment within 30 days, the
   Roadmap tab suggests an unlock, and you decide (0.15.0: not again within 30
   days after Ember's code took that unlock back for a reason other than a
-  spent budget). Ember hears each change as your note on the milestone.
+  spent budget). Ember hears each change in its news, Ember's code's
+  take-backs too, and its plans and the milestone's card say what stands
+  unlocked (an unlock is no longer written into your note on the milestone).
 
   **Never automatic**, whatever you unlock: creating an account, moving or
   spending money, a first contact (someone who never wrote to Ember, § 7 UWG),
@@ -995,8 +1003,7 @@ no longer shown); a study that failed three times stops until you press
   **Take back every unlock**, at the top of this card while any unlock
   stands: one click sets every rule of every milestone back to **Ask me**.
   What the unlocks held for your veto, or approved without Ember's code having
-  begun it, waits for your click again, and Ember hears it as your note on each
-  milestone. 0.15.0 took back every unlock of 0.13.0 once: grant again what you
+  begun it, waits for your click again, and Ember hears it in its news. 0.15.0 took back every unlock of 0.13.0 once: grant again what you
   want.
 - **Standing instructions**, at the top of the **Inbox**: lasting guidance the
   agent reads in every plan and work step, so you don't have to repeat it in
@@ -1558,10 +1565,12 @@ it made and what their orders cost you.
 - The agent's plan shows each product with what its prices keep and the orders
   (PRINTIFY); the metrics `pod_products_live` (products whose listing is live
   on Etsy) and `pod_orders` can measure a milestone. A product line without a
-  venture joins the cycle's venture when the agent proposes for it, or else
-  the print-on-demand venture (the Etsy leg for an Etsy listing); it never
-  joins a parked or killed one. The seeded venture *Print on demand in the Etsy shop* has its first
-  test in them: a first order.
+  venture joins its channel's venture when the agent proposes for it: the
+  print-on-demand venture for a Printify product, the Etsy leg for an Etsy
+  listing (a digital download), whatever the cycle worked on; it never joins
+  a parked or killed one. The upgrade moved the open lines that sell only
+  Etsy listings from print on demand to the Etsy leg. The seeded venture
+  *Print on demand in the Etsy shop* has its first test in them: a first order.
 - **Undo** on the product's entry under **What Ember's code did** deletes it at
   Printify.
 

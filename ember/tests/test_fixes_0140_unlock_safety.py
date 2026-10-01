@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 pytest.importorskip("httpx2")
 
-from app.agent import policy, prompts  # noqa: E402
+from app.agent import news, policy, prompts  # noqa: E402
 from app.agent.owner import Owner, apply_kill_switch_reset, kill  # noqa: E402
 from app.config import LoadedSettings, Settings  # noqa: E402
 from app.db import Database, discover_migrations, migrate  # noqa: E402
@@ -280,8 +280,17 @@ def test_the_kill_switch_takes_back_every_unlock_and_its_reset_approves_nothing(
     assert rows(agent, "SELECT level, by, why FROM policy_grants ORDER BY id DESC LIMIT 1") == [
         {"level": "manual", "by": "Stefan", "why": "you used the kill switch"}
     ]
-    note = rows(agent, f"SELECT owner_comment FROM milestones WHERE id = {goal}")[0]["owner_comment"]
-    assert note.startswith("Used the kill switch, which took back every unlock")
+    # 0.16.1 analysis (bug 5): the agent hears it in its news, not as the owner's note on the milestone
+    assert rows(agent, f"SELECT owner_comment FROM milestones WHERE id = {goal}")[0]["owner_comment"] is None
+    with agent.db.connection() as conn:
+        heard = news.collect(conn, agent.db, agent.scope(), "0.0.0").venture_lines()
+    assert any(
+        line.startswith(f"Unlocks of milestone #{goal} ")
+        and "your owner took back price changes within 15% of the approved price on a live listing (with the kill"
+        " switch)"
+        in line
+        for line in heard
+    ), heard
     assert apply_kill_switch_reset(agent.db, agent.economy, 2) and agent.db.get_meta(KILLED_KEY) == "0"
     agent.clock.advance(hours=policy.VETO_HOURS, minutes=1)
     agent.run_policy()

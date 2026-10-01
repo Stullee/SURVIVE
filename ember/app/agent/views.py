@@ -403,12 +403,14 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
         autonomy = {
             int(m["id"]): policy.view(conn, scope, agent.clock, int(m["id"])) for m in rows if m["status"] == "open"
         }
+        standing = policy.standing(conn, scope)  # 0.16.1 analysis (bug 5): what is unlocked, from the grants
         promotions = policy.suggestions(conn, scope, agent.clock)
     items = []
     for m in rows:
         due = roadmap.parse_day(m["due"]) or today
         called = odds.get(int(m["id"]))
         cycles, spent = effort.get(m["id"], (0, 0))
+        ends = ventures.test_ends(m)
         items.append(
             {
                 "id": m["id"],
@@ -460,6 +462,12 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
                 # 0.13.0: the agent's odds that it is met by its first date, and how Ember's code settled them
                 "prediction": _prediction(called),
                 "autonomy": autonomy.get(int(m["id"])),  # 0.13.0: what the owner unlocked for it (open ones)
+                # 0.16.1 analysis (bug 5): the unlocks that stand, in words ("" when none does): from the grants, as
+                # the agent's plan says them, never from a note (0.13.0's stayed after every take-back)
+                "unlocked": policy.unlocked_text(standing.get(int(m["id"]), [])),
+                # 0.16.1 analysis (bug 1): a backed venture's open first test: the last day it can be met, a week after
+                # its date; Ember's code parks the venture the next day
+                "test_ends": str(ends) if ends is not None and m["status"] == "open" else None,
                 "simulated": m["mode"] == "dry_run",
             }
         )

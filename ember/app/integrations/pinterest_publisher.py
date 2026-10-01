@@ -91,6 +91,14 @@ def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
     return int(row[0]), int(row[1])
 
 
+def made_any(conn: sqlite3.Connection, scope: AgentScope) -> bool:
+    """0.16.1 analysis (bug 1): whether Ember's code ever made a pin (it has Pinterest's id), deleted since or not: a
+    Pinterest venture's first test ran only then (agent/stages.py)."""
+    where, params = scope.where()
+    found = conn.execute(f"SELECT 1 FROM pinterest_pins WHERE {where} AND pin_id IS NOT NULL LIMIT 1", params)
+    return found.fetchone() is not None
+
+
 def created_today(conn: sqlite3.Connection, clock: Clock, scope: AgentScope) -> int:
     """The pins started today, for pinterest_pins_per_day. 0.15.0: not one that failed before any pin request was sent
     (no board: its checks refused it, such as a listing no longer live), so it doesn't hold a valid pin back a day."""

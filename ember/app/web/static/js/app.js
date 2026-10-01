@@ -6786,6 +6786,12 @@
         h("div", null, h("dt", { text: "Done when" }), h("dd", { class: "pre-line", text: asText(m.measure) })),
         m.checked ? h("div", null, h("dt", { text: "Checked by Ember's code" }), h("dd", { text: asText(m.checked) })) : null,
         predictionRow(m.prediction, name + "'s odds"),
+        // 0.16.1 analysis (bug 1): a backed venture's first test can be met until a week after its date
+        m.test_ends ? h("div", null, h("dt", { text: "Last day" }),
+          h("dd", { text: fmtDay(m.test_ends) + ", a week after its date. If it is still unmet then, Ember's code closes it missed and " +
+            "parks venture #" + m.venture_id + ", which ends the listing tests of its product lines." })) : null,
+        // 0.16.1 analysis (bug 5): what stands unlocked, from your unlocks themselves (no longer a note that outlived them)
+        m.unlocked ? h("div", null, h("dt", { text: "Unlocked" }), h("dd", { text: asText(m.unlocked) })) : null,
         milestoneAutonomy(m),
         closed ? h("div", null, h("dt", { text: (MILESTONE_RESULT[m.state] || "Result") + (selfReported(m) ? " (self-reported)" :
           m.closed_by === "code" && m.metric ? " (checked by Ember's code)" : "") }),

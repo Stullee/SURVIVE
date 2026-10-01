@@ -10,7 +10,10 @@ can ever hold. What a prompt left out, cut or shortened, and what a cycle that e
 before showed, stays news for the next cycle. The owner's messages stay in the plans
 after that too, until the agent answers them (0.9.1, ``store.open_messages``). The owner's word on a venture (an idea
 they added, backing, parking, killing, a note: 0.10.0) and on a milestone of the roadmap (one they added, a note,
-dropping it: 0.11.0) is news like a decision.
+dropping it: 0.11.0) is news like a decision. 0.16.1 analysis (bug 5): so is a change of a milestone's unlocks (the
+owner's unlock or take-back, and Ember's code's take-back, which the agent never heard of): one line per milestone,
+with what stands on it now (``unlock_line``), seen once a plan showed it (policy_grants_seen). The owner's unlocks were
+written into the milestone's note instead, which nothing changed when Ember's code took them back.
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from pathlib import Path
 
 from .. import paths
 from ..db import Database
-from . import roadmap
+from . import policy, roadmap
 from .store import REQUEST_DAYS, AgentScope
 from .ventures import news_line
 
@@ -35,9 +38,17 @@ CONTINUED = "Your release notes, continued:\n"
 MORE = "\n…(the rest of these notes comes in your next plan)"
 _HEADING = re.compile(r"^## (\d+)\.(\d+)\.(\d+)\s*$")
 # An owner item as the agent is shown it: ("message", id, None), ("approval", id, version), ("upgrade", id, status),
-# ("venture", id, owner_version) or ("milestone", id, owner_version). A decision the owner changes again (a new version
-# or status) is news again.
+# ("venture", id, owner_version) or ("milestone", id, owner_version); 0.16.1 analysis (bug 5): ("unlock", milestone id,
+# the newest grant shown). A decision the owner changes again (a new version or status) is news again.
 Item = tuple[str, int, int | str | None]
+# 0.16.1 analysis (bug 5): a grant the agent hasn't seen, and that changed something (taking back what wasn't unlocked
+# is no news): for the news (the grant as ``g``) and the owner's decisions it wakes the agent for.
+UNSEEN_GRANT = (
+    "NOT EXISTS (SELECT 1 FROM policy_grants_seen s WHERE s.grant_id = g.id) AND (g.level <> 'manual'"
+    " OR COALESCE((SELECT h.level FROM policy_grants h WHERE h.milestone_id = g.milestone_id AND h.rule = g.rule"
+    " AND h.id < g.id ORDER BY h.id DESC LIMIT 1), 'manual') <> 'manual')"
+)
+UNLOCKS_SHOWN = 6  # milestones whose unlock changes a plan lists at most (the rest come in the next)
 
 
 def changelog_key(mode: str) -> str:
@@ -153,6 +164,10 @@ class News:
     milestones: list[sqlite3.Row] = field(default_factory=list)  # the owner's word on a milestone (0.11.0)
     changelog_next: int | None = None  # 0.15.0: where the next part begins (None: this one ends the notes)
     changelog_from: str = ""  # 0.15.0: the version the notes begin after ("" when none was read before)
+    # 0.16.1 analysis (bug 5): the unlock changes the agent hasn't seen (grants, with their milestone's title), oldest
+    # first, and the unlocks that stand now on each milestone (policy.standing)
+    unlocks: list[sqlite3.Row] = field(default_factory=list)
+    standing: dict[int, list[sqlite3.Row]] = field(default_factory=dict)
 
     def approval_lines(self) -> list[str]:
         lines = []
@@ -200,8 +215,13 @@ class News:
         return lines
 
     def venture_lines(self) -> list[str]:
-        """The owner's word on ventures, then on milestones (their lines follow the decisions')."""
-        return [*(news_line(r) for r in self.ventures), *(roadmap.news_line(r) for r in self.milestones)]
+        """The owner's word on ventures, then on milestones (their lines follow the decisions'), then (0.16.1 analysis,
+        bug 5) the changes of the milestones' unlocks."""
+        return [
+            *(news_line(r) for r in self.ventures),
+            *(roadmap.news_line(r) for r in self.milestones),
+            *(unlock_line(changes, self.standing.get(mid, [])) for mid, changes in self._unlocks()),
+        ]
 
     def items(self) -> list[Item]:
         """The items of ``approval_lines()``, ``upgrade_lines()`` and ``venture_lines()``, in the same order."""
@@ -210,7 +230,46 @@ class News:
             *(("upgrade", r["id"], r["status"]) for r in self.upgrades),
             *(("venture", r["id"], r["owner_version"]) for r in self.ventures),
             *(("milestone", r["id"], r["owner_version"]) for r in self.milestones),
+            *(("unlock", mid, max(int(g["id"]) for g in changes)) for mid, changes in self._unlocks()),
         ]
+
+    def _unlocks(self) -> list[tuple[int, list[sqlite3.Row]]]:
+        """The unseen unlock changes by milestone (the milestone changed first, first), at most UNLOCKS_SHOWN."""
+        found: dict[int, list[sqlite3.Row]] = {}
+        for g in self.unlocks:
+            found.setdefault(int(g["milestone_id"]), []).append(g)
+        return list(found.items())[:UNLOCKS_SHOWN]
+
+
+def unlock_line(changes: list[sqlite3.Row], standing: list[sqlite3.Row]) -> str:
+    """0.16.1 analysis (bug 5): the unseen changes of a milestone's unlocks (``changes``, oldest first: the newest of
+    each rule is said), who made them and why, and the other unlocks that stand on it (``standing``: all of them, from
+    policy.standing), or that none does, for the news."""
+    newest = {str(g["rule"]): g for g in changes}
+    said: dict[tuple[str, str], list[str]] = {}  # (who did what, why): the rules, so a switch's are one clause
+    for g in sorted(newest.values(), key=lambda g: int(g["id"])):
+        if g["level"] != "manual":
+            said.setdefault(("your owner unlocked", ""), []).append(policy.granted_text(g))
+        elif g["by"] in policy.CODE:
+            said.setdefault(("Ember's code took back", str(g["why"] or "")), []).append(policy.RULES[g["rule"]].label)
+        else:
+            how = policy.SWITCHES.get(str(g["why"] or ""), "")
+            said.setdefault(("your owner took back", how), []).append(policy.RULES[g["rule"]].label)
+    clauses = [f"{did} {_listed(rules)}" + (f" ({why})" if why else "") for (did, why), rules in said.items()]
+    others = [g for g in standing if g["rule"] not in newest]
+    if not standing:
+        now = " Nothing is unlocked on it now: its requests wait for your owner's click."
+    elif others:
+        now = f" Still unlocked on it: {policy.unlocked_text(others)}."
+    else:
+        now = ""
+    first = changes[0]
+    return f"Unlocks of milestone #{first['milestone_id']} {_q(first['milestone_title'])}: {'; '.join(clauses)}.{now}"
+
+
+def _listed(items: list[str]) -> str:
+    """Items in words: "a", "a and b", "a, b and c"."""
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
 
 
 @dataclass(frozen=True)
@@ -244,6 +303,12 @@ def collect(conn: sqlite3.Connection, db: Database, scope: AgentScope, running_v
         " LIMIT 10",
         params,
     ).fetchall()
+    granted, granted_params = scope.where("g")
+    unlocks = conn.execute(  # 0.16.1 analysis (bug 5)
+        f"SELECT g.*, m.title AS milestone_title FROM policy_grants g JOIN milestones m ON m.id = g.milestone_id"
+        f" WHERE {granted} AND {UNSEEN_GRANT} ORDER BY g.id LIMIT 100",
+        granted_params,
+    ).fetchall()
     seen = db.get_meta(changelog_key(scope.mode))
     notes = changelog_news(paths.CHANGELOG_PATH, seen, running_version)
     mark, _, at = (db.get_meta(changelog_at_key(scope.mode)) or "").rpartition("@")
@@ -257,21 +322,32 @@ def collect(conn: sqlite3.Connection, db: Database, scope: AgentScope, running_v
         milestones,
         changelog_next=after,
         changelog_from=seen or "",
+        unlocks=unlocks,
+        standing=policy.standing(conn, scope) if unlocks else {},
     )
 
 
 def decided_unseen(conn: sqlite3.Connection, scope: AgentScope) -> bool:
     """0.12.0: whether the owner decided something the agent hasn't seen yet (a request decided or closed, their word
-    on a venture or a milestone): what their decision wakes the agent for."""
+    on a venture or a milestone; 0.16.1 analysis, bug 5: their unlock or take-back, not Ember's code's): what their
+    decision wakes the agent for."""
     where, params = scope.where()
-    return any(
+    if any(
         conn.execute(f"SELECT 1 FROM {table} WHERE {where} AND {condition} LIMIT 1", params).fetchone()
         for table, condition in (
             ("approvals", "status <> 'pending' AND seen_cycle_id IS NULL"),
             ("ventures", "owner_action IS NOT NULL AND seen_cycle_id IS NULL"),
             ("milestones", "owner_action IS NOT NULL AND seen_cycle_id IS NULL"),
         )
+    ):
+        return True
+    granted, granted_params = scope.where("g")
+    marks = ", ".join("?" for _ in policy.CODE)
+    owners = conn.execute(
+        f"SELECT 1 FROM policy_grants g WHERE {granted} AND g.by NOT IN ({marks}) AND {UNSEEN_GRANT} LIMIT 1",
+        (*granted_params, *policy.CODE),
     )
+    return owners.fetchone() is not None
 
 
 def mark_seen(conn: sqlite3.Connection, cycle_id: int, items: Iterable[Item]) -> None:
@@ -302,6 +378,13 @@ def mark_seen(conn: sqlite3.Connection, cycle_id: int, items: Iterable[Item]) ->
         elif kind == "milestone":
             conn.execute(
                 "UPDATE milestones SET seen_cycle_id = ? WHERE id = ? AND owner_version = ? AND seen_cycle_id IS NULL",
+                (cycle_id, item_id, version),
+            )
+        elif kind == "unlock":
+            # 0.16.1 analysis (bug 5): the changes up to the newest one shown; a later one stays news
+            conn.execute(
+                "INSERT OR IGNORE INTO policy_grants_seen (grant_id, cycle_id) SELECT id, ? FROM policy_grants"
+                " WHERE milestone_id = ? AND id <= ?",
                 (cycle_id, item_id, version),
             )
 

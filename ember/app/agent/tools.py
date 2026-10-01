@@ -3447,7 +3447,7 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
             f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "
             f"{demand.DAYS} days first (demand_note: the keywords buyers search and what shows they buy)"
         )
-    joined = ventures.adopt(conn, ctx.scope, project_id, ctx.cycle_id, "etsy", ctx.now())  # 0.15.0
+    joined = ventures.adopt(conn, ctx.scope, project_id, "etsy", ctx.now())  # 0.15.0
     made = _new_request(
         ctx,
         conn,
@@ -3865,7 +3865,7 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
             f"{'; '.join(low)}: below that a price keeps less than {printify.MIN_MARGIN * 100:.0f}% after Etsy's "
             f"fees, making and shipping ({sale.said()})"
         )
-    joined = ventures.adopt(conn, ctx.scope, project_id, ctx.cycle_id, "printify", ctx.now())
+    joined = ventures.adopt(conn, ctx.scope, project_id, "printify", ctx.now())
     product = printify.Product(
         title=title,
         description=description,

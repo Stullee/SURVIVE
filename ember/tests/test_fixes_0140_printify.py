@@ -564,19 +564,14 @@ def test_a_printify_product_s_line_joins_the_print_on_demand_venture_never_a_par
             )
             for i in range(3)
         ]
-        assert ventures.adopt(conn, scope, made[0], cycle, "printify", now) == pod
-        assert ventures.adopt(conn, scope, made[0], cycle, "etsy", now) is None  # it has one
+        assert ventures.adopt(conn, scope, made[0], "printify", now) == pod
+        assert ventures.adopt(conn, scope, made[0], "etsy", now) is None  # it has one
         conn.execute("UPDATE ventures SET stage = 'parked', parked_by = 'owner' WHERE id = ?", (pod,))
-        assert ventures.adopt(conn, scope, made[1], cycle, "printify", now) is None
-        # A venture cycle's product line joins that venture.
-        dropshipping = venture_titled(agent, "Dropshipping store")
-        venturing = conn.execute(
-            "INSERT INTO cycles (life_id, boot_id, started_at, status, trigger, simulated, cap_micros, session,"
-            " venture_id) SELECT life_id, boot_id, ?, 'completed', 'schedule', simulated, cap_micros, session, ?"
-            " FROM cycles WHERE id = ?",
-            (now, dropshipping, cycle),
-        ).lastrowid
-        assert ventures.adopt(conn, scope, made[2], venturing, "etsy", now) == dropshipping
+        assert ventures.adopt(conn, scope, made[1], "printify", now) is None
+        # 0.16.1 analysis (bug 1): a line joins its channel's venture, not the one its cycle aimed at: an Etsy listing
+        # (a digital download) made in a cycle for print on demand or dropshipping joins the Etsy leg
+        leg = venture_titled(agent, ventures.ETSY_LEG)
+        assert ventures.adopt(conn, scope, made[2], "etsy", now) == leg
 
 
 # --- a free cost probe ----------------------------------------------------------------------------------------------
@@ -747,7 +742,9 @@ def test_the_migration_keeps_the_catalog_adds_order_tax_and_links_product_lines(
     new = Database(db_file)
     with new.transaction() as conn:
         linked = dict(conn.execute("SELECT id, venture_id FROM projects ORDER BY id").fetchall())
-        assert linked == {7: 1, 8: 4, 9: None, 10: 4, 11: None}
+        # 0.16.1 analysis (bug 1): #10 sells Etsy listings (digital downloads) only: 0071 takes it from print on demand
+        # to the Etsy leg
+        assert linked == {7: 1, 8: 4, 9: None, 10: 1, 11: None}
         kinds = [tuple(r) for r in conn.execute("SELECT kind, key FROM printify_catalog ORDER BY kind")]
         assert kinds == [("blueprints", "")]  # the variants are read again, with Printify's currency
         conn.execute(

@@ -32,7 +32,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy import metering
-from . import metrics
+from . import metrics, ventures
 from .store import AgentScope
 
 STATUSES = ("open", "done", "missed", "dropped")
@@ -622,21 +622,39 @@ def _replaces(row: Mapping[str, Any]) -> str:
     return f" · replaces #{row['replaces_id']}" if _column(row, "replaces_id") else ""
 
 
+def _unlocked(row: Mapping[str, Any], unlocks: Mapping[int, str] | None) -> str:
+    """0.16.1 analysis (bug 5): what the owner's unlocks that stand let Ember's code carry out for a milestone without
+    their click (``unlocks``: policy.unlocked_text by milestone, short), as a short clause ("" if none stands). From the
+    grants, never from a note: 0.13.0's note said "Unlocked" after every take-back."""
+    text = (unlocks or {}).get(int(row["id"]), "")
+    return f" · your owner unlocked: {text}" if text else ""
+
+
+def _stake(row: Mapping[str, Any]) -> str:
+    """0.16.1 analysis (bug 1): a backed venture's first test, as a short clause: the last day it can be met (its date
+    and a week's grace), and what Ember's code does then ("" for any other milestone)."""
+    ends = ventures.test_ends(row)
+    return f" · unmet by {ends}, Ember's code parks venture #{row['venture_id']}" if ends else ""
+
+
 def milestone_line(
     row: Mapping[str, Any],
     today: date,
     detail: bool,
     open_ids: set[int] | None = None,
     spent: Mapping[int, int] | None = None,
+    unlocks: Mapping[int, str] | None = None,
 ) -> str:
     """One milestone for the planner: its number, title, date, and (with ``detail``) its measure and newest note; with
-    a metric, where it stands; what it may cost and spent (``spent``: its work's cost by milestone), and its wait."""
+    a metric, where it stands; what it may cost and spent (``spent``: its work's cost by milestone), and its wait;
+    (0.16.1 analysis) what stands unlocked for it (``unlocks``)."""
     due = _due(row)
     line = f"#{row['id']} {_q(row['title'], 100)} · due {_day(due)} ({when(due, today)})"
     if detail and not _column(row, "metric"):
         line += f" · measure: {_q(row['measure'], 160)}"
-    line += _checked(row) + _money(row, spent) + _waits(row, today)
+    line += _checked(row) + _stake(row) + _money(row, spent) + _waits(row, today)
     line += _links(row, open_ids) + _moved(row) + _replaces(row) + _proposed(row) + owner_said(row)
+    line += _unlocked(row, unlocks)
     return line + (_last_note(row) if detail else "")
 
 
@@ -649,8 +667,9 @@ def _column(row: Mapping[str, Any], name: str) -> Any:
 
 
 def checks(rows: list[Mapping[str, Any]], today: date, spent: Mapping[int, int] | None = None) -> list[str]:
-    """Ember's code's notes on the roadmap's shape, for the planner: empty, overdue (not what waits, 0.12.0), checks
-    due, spending over a milestone's budget, nothing due this week, nothing planned beyond this month."""
+    """Ember's code's notes on the roadmap's shape, for the planner: empty, overdue (not what waits, 0.12.0, nor a
+    venture's first test in its week of grace, 0.16.1 analysis), checks due, spending over a milestone's budget, nothing
+    due this week, nothing planned beyond this month."""
     if not rows:
         return [
             "Roadmap check: your roadmap is empty. Plan a step that lays it out with milestone_plan: 1 to 3 goals "
@@ -659,7 +678,11 @@ def checks(rows: list[Mapping[str, Any]], today: date, spent: Mapping[int, int] 
         ]
     notes = []
     kinds = [horizon(_due(r), today) for r in rows]
-    overdue = [r for r, k in zip(rows, kinds, strict=True) if k == OVERDUE[0] and not waiting(r, today)]
+    overdue = [
+        r
+        for r, k in zip(rows, kinds, strict=True)
+        if k == OVERDUE[0] and not waiting(r, today) and not ventures.is_first_test(r)  # 0.16.1 analysis (bug 1)
+    ]
     if overdue:
         ids = ", ".join(f"#{r['id']}" for r in overdue[:6])
         notes.append(
@@ -692,7 +715,12 @@ def checks(rows: list[Mapping[str, Any]], today: date, spent: Mapping[int, int] 
     return notes
 
 
-def goal_line(row: Mapping[str, Any], today: date, spent: Mapping[int, int] | None = None) -> str:
+def goal_line(
+    row: Mapping[str, Any],
+    today: date,
+    spent: Mapping[int, int] | None = None,
+    unlocks: Mapping[int, str] | None = None,
+) -> str:
     """A goal for the plan, compact on one line (0.12.0: the ROADMAP's cut took every goal)."""
     due = _due(row)
     links = "".join(f" · {name} #{row[f'{name}_id']}" for name in ("venture", "project") if row[f"{name}_id"])
@@ -703,8 +731,9 @@ def goal_line(row: Mapping[str, Any], today: date, spent: Mapping[int, int] | No
         said = " · set by Ember's code"
     measure = _checked(row) or f" · measure: {_q(row['measure'], 90)}"
     return (
-        f"#{row['id']} {_q(row['title'], 70)} · due {_day(due)} ({when(due, today)}){measure}{_money(row, spent)}"
-        f"{_waits(row, today)}{links}{_moved(row)}{_replaces(row)}{_proposed(row)}{said}"
+        f"#{row['id']} {_q(row['title'], 70)} · due {_day(due)} ({when(due, today)}){measure}{_stake(row)}"
+        f"{_money(row, spent)}"
+        f"{_waits(row, today)}{links}{_moved(row)}{_replaces(row)}{_proposed(row)}{said}{_unlocked(row, unlocks)}"
     )
 
 
@@ -741,11 +770,13 @@ def planner_text(
     today: date,
     since: str | None = None,
     spent: Mapping[int, int] | None = None,
+    unlocks: Mapping[int, str] | None = None,
 ) -> str:
     """The ROADMAP section: a count by horizon and the checks (what Ember's code closed since ``since`` among them),
     then the goals (the open milestones that lead to no other: what the rest is for) one line each, so a cut never
     takes them (0.12.0: with 18 milestones, the cut took all 3 goals at every budget); then the other open milestones
-    by horizon (the measure shown for what is overdue or due this week), and what was closed lately."""
+    by horizon (the measure shown for what is overdue or due this week), and what was closed lately. 0.16.1 analysis
+    (bug 5): each open milestone says what stands unlocked for it (``unlocks``: policy.unlocked_text by milestone)."""
     open_ids = {int(r["id"]) for r in rows}
     goals = [r for r in rows if r["parent_id"] not in open_ids]
     groups: dict[str, list[Mapping[str, Any]]] = {}
@@ -759,7 +790,7 @@ def planner_text(
     lines = [head, *checks(rows, today, spent), *code_closed(closed, since)]
     if goals:
         lines.append("Goals (the rest leads to them):")
-        lines.extend(goal_line(r, today, spent) for r in goals)
+        lines.extend(goal_line(r, today, spent, unlocks) for r in goals)
     ends = {key: today + timedelta(days=last) for key, _, last in HORIZONS}
     for key, label in labels:
         members = [r for r in groups.get(key, []) if r["parent_id"] in open_ids]  # the goals are listed above
@@ -767,7 +798,7 @@ def planner_text(
             continue
         lines.append(f"{label} (to {_day(ends[key])}):" if key in ends else f"{label}:")
         for r in members:
-            lines.append(milestone_line(r, today, key in (OVERDUE[0], "week"), open_ids, spent))
+            lines.append(milestone_line(r, today, key in (OVERDUE[0], "week"), open_ids, spent, unlocks))
     if closed:
         done = "; ".join(
             f"#{r['id']} {_q(r['title'], 60)} {closed_as(r)} {str(r['closed_at'])[:10]}"
@@ -785,27 +816,45 @@ def focus_text(
     spent: Mapping[int, int] | None = None,
     replaced: Mapping[str, Any] | None = None,
     last: str = "",
+    unlocked: str = "",
 ) -> str:
     """The brief's FOCUS for the plan's milestone: what it takes to be done and how to close it first (a cut takes
     the end), then (0.12.0) the digest of the last cycle aimed at it (``last``), what it leads to and serves, the
-    owner's word and the notes."""
+    owner's word, (0.16.1 analysis, bug 5) what stands unlocked for it (``unlocked``: policy.unlocked_text) and the
+    notes."""
     due = _due(row)
     checked = metrics.status_text(row)
+    ends = ventures.test_ends(row)
+    if ends is not None:  # 0.16.1 analysis (bug 1): a backed venture's first test: a week's grace, then the park
+        how = (
+            (
+                f"{checked}. It closes it done once met."
+                if checked
+                else "Measure met: send your owner the evidence; their drop confirms it."
+            )
+            + f" Unmet by {ends} (a week after its date), Ember's code closes it missed and parks venture "
+            f"#{row['venture_id']}. Its date never moves, and only your owner drops it."
+        )
+    elif checked:
+        how = (
+            f"{checked}. It closes it done once met, missed if its date passes first. Out of reach by its date: move "
+            "it (why; twice at most), or drop it (why; your odds on it count as missed)."
+        )
+    else:
+        how = (
+            "Measure met: send your owner the evidence; their drop confirms it."
+            if dict(row).get("kind") == "first_test"
+            else "Measure met: close it done, with the evidence."
+        ) + (
+            " Out of reach by its date: move it (why; twice at most, and your owner decides on theirs), or close it "
+            "missed once the date has passed."
+        )
     lines = [
         f"Focus milestone: #{row['id']} {_q(row['title'])} [{row['status']}] · due {_day(due)} ({when(due, today)})"
         + _moved(row)
         + _proposed(row),
         f"Measure of done: {_q(row['measure'])}",
-        f"{checked}. It closes it done once met, missed if its date passes first. Out of reach by its date: move it "
-        "(why; twice at most), or drop it (why; your odds on it count as missed)."
-        if checked
-        else (
-            "Measure met: send your owner the evidence; their drop confirms it."
-            if dict(row).get("kind") == "first_test"
-            else "Measure met: close it done, with the evidence."
-        )
-        + " Out of reach by its date: move it (why; twice at most, and your owner decides on theirs), or close it "
-        "missed once the date has passed.",
+        how,
     ]
     if last:
         lines.append(f"Its last cycle (Ember's code's digest): {last}")
@@ -822,6 +871,8 @@ def focus_text(
     said = owner_said(row)
     if said:
         lines.append(f"Owner: {said.removeprefix(' · ')}")
+    if unlocked:
+        lines.append(f"Unlocked by your owner (Ember's code carries these out without their click): {unlocked}")
     money = _money(row, spent)
     if money:
         lines.append(f"Money and time: {money.removeprefix(' · ')}")

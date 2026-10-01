@@ -51,10 +51,8 @@ AS_IS_EXECUTORS = (
     "site_restore",
 )
 _AS_IS_WHAT = {"pinterest": ("a pin", "pins"), "printify": ("a product", "products"), "site": ("a page", "pages")}
-TAKEN_BACK = "you took back every unlock"  # 0.13.0: the owner's switch
-TAKEN_BACK_NOTE = "Took back every unlock: your requests wait for me again"
-KILLED = "you used the kill switch"  # 0.15.0: it takes back every unlock too
-KILLED_NOTE = "Used the kill switch, which took back every unlock: your requests wait for me again"
+TAKEN_BACK = policy.TAKEN_BACK  # 0.13.0: the owner's switch
+KILLED = policy.KILLED  # 0.15.0: it takes back every unlock too
 DECISIONS = {"approve": "approved", "approve_with_changes": "approved_with_changes", "reject": "rejected"}
 OUTCOMES = ("done", "failed")
 UPGRADE_STATUSES = ("accepted", "declined", "released")
@@ -607,7 +605,9 @@ class Owner:
 
     def set_autonomy(self, milestone_id: int, body: Any, who: str | None) -> Reply:
         """0.13.0: unlock a rule of the policy engine for a milestone (veto_window or auto, with a daily limit and a
-        budget of actions), or take it back (manual). Kept as history; the agent hears it as the owner's note."""
+        budget of actions), or take it back (manual). Kept as history; the agent hears it in its news. 0.16.1 analysis
+        (bug 5): not as the owner's note on the milestone any more: each click overwrote the one before (and the
+        owner's own note), and no take-back by Ember's code changed it, so a note said "Unlocked" long after."""
 
         def run() -> Reply:
             data = _body(body, {"rule", "level", "per_day", "budget"})
@@ -638,16 +638,7 @@ class Owner:
                 if level != "manual" and not policy.fits(conn, milestone_id, rule):  # 0.15.0: it would carry nothing
                     need = "no project or venture" if rule == "email_reply" else "a project or venture"
                     raise OwnerError("rule", f"this milestone never covers {rule}: it needs a milestone of {need}", 409)
-                now = self._now()
-                policy.set_grant(conn, self.scope, milestone_id, rule, level, now, by=_signed(who), **limits)
-                label = policy.RULES[rule].label
-                said = (
-                    f"Unlocked for this milestone: {label} ({level.replace('_', ' ')}, at most {limits['per_day']} a"
-                    f" day, {limits['budget']} in all)"
-                    if level != "manual"
-                    else f"Took back the unlock for {label}: your requests wait for me again"
-                )
-                roadmap.owner_word(conn, milestone_id, now, "note", said[: roadmap.LIMITS["comment"]], who)
+                policy.set_grant(conn, self.scope, milestone_id, rule, level, self._now(), by=_signed(who), **limits)
             events.record(
                 self.db, "info", "owner", f"{who or 'The owner'} set {rule} to {level} for milestone #{milestone_id}"
             )
@@ -657,15 +648,12 @@ class Owner:
 
     def take_back_unlocks(self, body: Any, who: str | None) -> Reply:
         """0.13.0: the owner's switch: every unlock that stands is taken back at once (what they held waits for the
-        owner again). The agent hears it as the owner's note on each milestone."""
+        owner again). The agent hears it in its news (0.16.1 analysis, bug 5: no longer as a note on each milestone)."""
 
         def run() -> Reply:
             _body(body, set())
             with self.db.transaction() as conn:
-                now = self._now()
-                taken = policy.revoke_all(conn, self.scope, now, by=_signed(who), why=TAKEN_BACK)
-                for milestone_id in sorted({int(g["milestone_id"]) for g in taken}):
-                    roadmap.owner_word(conn, milestone_id, now, "note", TAKEN_BACK_NOTE, who)
+                taken = policy.revoke_all(conn, self.scope, self._now(), by=_signed(who), why=TAKEN_BACK)
             events.record(
                 self.db, "warning", "owner", f"{who or 'The owner'} took back every unlock ({len(taken)} in all)"
             )
@@ -953,10 +941,7 @@ def kill(db: Database, economy: Economy, agent_name: str, body: Any, who: str | 
             raise OwnerError("confirm_name", f"type the agent's name ({agent_name}) to confirm")
         reason = _text(data, "reason", 300)
         with db.transaction() as conn:
-            now = to_iso(economy.clock.now())
-            taken = policy.revoke_everywhere(conn, now, by=_signed(who), why=KILLED)
-            for milestone_id in sorted({int(g["milestone_id"]) for g in taken}):
-                roadmap.owner_word(conn, milestone_id, now, "note", KILLED_NOTE, who)
+            policy.revoke_everywhere(conn, to_iso(economy.clock.now()), by=_signed(who), why=KILLED)
             status = economy.life.set_switch(KILLED_KEY, True)
         message = f"{who or 'The owner'} used the kill switch" + (f": {reason}" if reason else "")
         events.record(db, "error", "control", message)

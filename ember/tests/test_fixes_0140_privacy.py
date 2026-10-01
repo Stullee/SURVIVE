@@ -530,7 +530,9 @@ def test_the_migration_keeps_the_history_and_its_guards(tmp_path: Path) -> None:
         _, call = insert_cycle(conn, "2026-08-01T10:00:00Z")
         history = {table: [dict(r) for r in conn.execute(f"SELECT * FROM {table}")] for table in HISTORY}  # noqa: S608
     old.close()
-    assert dbmod.migrate(db_file, backup_dir=tmp_path / "backups") == [ours.version]
+    assert dbmod.migrate(db_file, backup_dir=tmp_path / "backups") == [
+        m.version for m in dbmod.discover_migrations() if m.version >= ours.version
+    ]
     upgraded = dbmod.Database(db_file)
     with upgraded.connection() as conn:
         assert {table: [dict(r) for r in conn.execute(f"SELECT * FROM {table}")] for table in HISTORY} == history  # noqa: S608

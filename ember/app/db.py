@@ -42,6 +42,11 @@ TEXT_DAYS = 30
 PRUNED = "[pruned]"  # what such a text becomes then (the only change the history's guards allow)
 PRUNE_BATCH = 500  # rows of each kind at a time, so the shared connection is never held for long
 RESEARCH_KEPT = 5  # a session's newest research calls stay whole: the plan's RECENT RESEARCH shows them (context.py)
+# A migration number another branch holds and that isn't merged yet: until its file is here, the numbers may skip it.
+# A database this build migrated applies it once it comes (its migration is independent of the later ones). 0070 is
+# Google Search Console's (branch claude/zen-cannon-v75uxs), 0071 the 0.16.1 analysis's fixes. Remove a number once its
+# migration is merged (tests/test_db.py checks that).
+RESERVED = frozenset({70})
 
 
 class MigrationError(RuntimeError):
@@ -67,7 +72,9 @@ def utcnow() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def discover_migrations(directory: Path = paths.MIGRATIONS_DIR) -> list[Migration]:
+def discover_migrations(directory: Path = paths.MIGRATIONS_DIR, reserved: frozenset[int] = RESERVED) -> list[Migration]:
+    """The migrations in ``directory``, numbered 1..N without gaps (but for a number another branch holds: ``reserved``,
+    while its file isn't here)."""
     migrations = []
     for path in sorted(directory.glob("*.sql")):
         match = _MIGRATION_NAME.match(path.name)
@@ -75,7 +82,8 @@ def discover_migrations(directory: Path = paths.MIGRATIONS_DIR) -> list[Migratio
             raise MigrationError(f"badly named migration file: {path.name}")
         migrations.append(Migration(int(match.group(1)), match.group(2), path))
     versions = [m.version for m in migrations]
-    if versions != list(range(1, len(versions) + 1)):
+    present = set(versions)
+    if versions != [v for v in range(1, max(present, default=0) + 1) if v in present or v not in reserved]:
         raise MigrationError(f"migration versions must be 1..N without gaps, found {versions}")
     return migrations
 

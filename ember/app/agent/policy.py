@@ -53,16 +53,27 @@ class Rule:
     name: str
     action_class: str  # connectors.CLASSES
     label: str
+    short: str  # 0.16.1 analysis (bug 5): its name in the plan's ROADMAP, which says every plan what is unlocked
 
 
 RULES: dict[str, Rule] = {
     r.name: r
     for r in (
-        Rule("qa_fix", "etsy.edit_listing", f"QA fixes: photos up to {qa.MIN_PHOTOS} on a live listing"),
-        Rule("price_change", "etsy.edit_listing", "price changes within 15% of the approved price on a live listing"),
-        Rule("listing_variant", "etsy.create_listing", "new listings in a backed leg after 5 approved unchanged"),
-        Rule("deactivate", "etsy.deactivate", "taking a listing of Ember's off Etsy"),
-        Rule("email_reply", "email.reply", "email replies in threads the other person started"),
+        Rule("qa_fix", "etsy.edit_listing", f"QA fixes: photos up to {qa.MIN_PHOTOS} on a live listing", "QA fixes"),
+        Rule(
+            "price_change",
+            "etsy.edit_listing",
+            "price changes within 15% of the approved price on a live listing",
+            "price changes",
+        ),
+        Rule(
+            "listing_variant",
+            "etsy.create_listing",
+            "new listings in a backed leg after 5 approved unchanged",
+            "new listings",
+        ),
+        Rule("deactivate", "etsy.deactivate", "taking a listing of Ember's off Etsy", "taking listings off Etsy"),
+        Rule("email_reply", "email.reply", "email replies in threads the other person started", "email replies"),
     )
 }
 LEVELS = ("manual", "veto_window", "auto")
@@ -76,6 +87,10 @@ POLICY_BY = "Ember's code (your unlock)"
 REVOKED_BY = "Ember's code"
 CODE = (POLICY_BY, REVOKED_BY, "Ember")  # who never unlocks anything (migration 0051 names them too)
 STOPPED = "Approved by your unlock, which was taken back ({why}) before Ember's code carried it out: it waits for you."
+TAKEN_BACK = "you took back every unlock"  # 0.13.0: the owner's switch (a grant's why, said to the owner)
+KILLED = "you used the kill switch"  # 0.15.0: it takes back every unlock too
+# 0.16.1 analysis (bug 5): how the agent hears the owner's two switches in its news (their why is said to the owner)
+SWITCHES = {TAKEN_BACK: "with Take back every unlock", KILLED: "with the kill switch"}
 # 0.15.0: a normal end, not a take-back: the one revocation that isn't for cause (promotions may come back, and what
 # it approved runs). Always SPENT.format(budget=...).
 SPENT = "its budget of {budget} actions is spent"
@@ -235,6 +250,37 @@ def grant(conn: sqlite3.Connection, scope: AgentScope, milestone_id: int, rule: 
     """The standing grant of a milestone for a rule, None while it is manual."""
     found = [g for g in grants(conn, scope, milestone_id) if g["rule"] == rule]
     return found[0] if found and found[0]["level"] != "manual" else None
+
+
+def standing(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, list[sqlite3.Row]]:
+    """0.16.1 analysis (bug 5): the unlocks that stand, by milestone (each rule's newest grant, not manual, of an open
+    milestone), in RULES' order. What the planner and the cards say is unlocked comes from them: 0.13.0 wrote each
+    unlock into the milestone's note, and no take-back by Ember's code (the upgrade to 0.15.0's either) changed it."""
+    where, params = scope.where("g")
+    found: dict[int, list[sqlite3.Row]] = {}
+    for g in conn.execute(
+        f"SELECT g.* FROM policy_grants g JOIN milestones m ON m.id = g.milestone_id WHERE {where}"
+        " AND g.level <> 'manual' AND m.status = 'open' AND g.id = (SELECT MAX(h.id) FROM policy_grants h"
+        " WHERE h.milestone_id = g.milestone_id AND h.rule = g.rule) ORDER BY g.milestone_id, g.id",
+        params,
+    ).fetchall():
+        found.setdefault(int(g["milestone_id"]), []).append(g)
+    order = list(RULES)
+    return {mid: sorted(rows, key=lambda g: order.index(g["rule"])) for mid, rows in found.items()}
+
+
+def granted_text(g: Mapping[str, Any], short: bool = False) -> str:
+    """0.16.1 analysis (bug 5): one unlock in words: its rule, level, daily limit and budget (``short``: its rule's
+    short name and level, as the plan's ROADMAP says it every plan)."""
+    rule, level = RULES[g["rule"]], str(g["level"]).replace("_", " ")
+    if short:
+        return f"{rule.short} ({level})"
+    return f"{rule.label} ({level}, at most {g['per_day']} a day, {g['budget']} in all)"
+
+
+def unlocked_text(rows: Sequence[Mapping[str, Any]], short: bool = False) -> str:
+    """0.16.1 analysis (bug 5): a milestone's unlocks that stand (``standing``) in words ("" when none does)."""
+    return (", " if short else "; ").join(granted_text(g, short) for g in rows)
 
 
 def set_grant(

@@ -24,7 +24,7 @@ from ..economy.costs import micros_to_usd
 from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
-from . import digest, library, obligations, review, roadmap, store, tools, ventures
+from . import digest, library, obligations, policy, review, roadmap, store, tools, ventures
 from .agenda import REACTIVE_STEPS
 from .agenda import line as agenda_line
 from .memory import Memory, heading_like, lesson_key, pins
@@ -238,6 +238,9 @@ class Snapshot:
     roadmap: list[sqlite3.Row] = field(default_factory=list)  # the open milestones, the first due first (0.11.0)
     roadmap_closed: list[sqlite3.Row] = field(default_factory=list)  # closed in the last roadmap.CLOSED_DAYS days
     roadmap_spent: dict[int, int] = field(default_factory=dict)  # what each milestone's work cost (0.12.0)
+    # 0.16.1 analysis (bug 5): what stands unlocked for each open milestone, from the grants: its rules' short names
+    # and levels (policy.unlocked_text), so the ROADMAP keeps its room (the work step's FOCUS says them in full)
+    roadmap_unlocks: dict[int, str] = field(default_factory=dict)
     library: library.Shelf | None = None  # the owner's library (0.12.0): None while it is empty
     decision_wakes: bool = False  # the owner's decisions wake the agent (0.12.0, the wake_on_decision option)
     burn: str = ""  # 0.12.0: the burn mode Ember's code set from the net runway (burn.Burn.text)
@@ -356,6 +359,7 @@ def snapshot(
         roadmap=roadmap.open_milestones(conn, scope),
         roadmap_closed=_closed_lately(conn, scope, today),
         roadmap_spent={mid: cost for mid, (_, cost) in roadmap.effort(conn, scope).items()},
+        roadmap_unlocks={mid: policy.unlocked_text(rows, True) for mid, rows in policy.standing(conn, scope).items()},
         library=shelf,
         decision_wakes=decision_wakes,
         burn=burn,
@@ -375,7 +379,9 @@ def roadmap_text(s: Snapshot) -> str:
     """The planner's ROADMAP (0.11.0), counted from the owner's today; what Ember's code closed since the last cycle
     ended is a check of its own (0.12.0)."""
     since = dict(s.last_cycle).get("ended_at") if s.last_cycle is not None else None
-    return roadmap.planner_text(s.roadmap, s.roadmap_closed, s.today or date.today(), since, s.roadmap_spent)
+    return roadmap.planner_text(
+        s.roadmap, s.roadmap_closed, s.today or date.today(), since, s.roadmap_spent, s.roadmap_unlocks
+    )
 
 
 def _safe_listing(workspace: Jail, shown: int = 19, budget: int = 900) -> list[str]:

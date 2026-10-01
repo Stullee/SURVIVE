@@ -560,6 +560,14 @@ def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
     return int(live.fetchone()[0]), int(orders.fetchone()[0])
 
 
+def made_any(conn: sqlite3.Connection, scope: AgentScope) -> bool:
+    """0.16.1 analysis (bug 1): whether Ember's code ever made a product at Printify (it has Printify's id), deleted
+    since or not: a print-on-demand venture's first test ran only then (agent/stages.py)."""
+    where, params = scope.where()
+    found = conn.execute(f"SELECT 1 FROM printify_products WHERE {where} AND product_id IS NOT NULL LIMIT 1", params)
+    return found.fetchone() is not None
+
+
 def created_today(conn: sqlite3.Connection, clock: Clock, scope: AgentScope) -> int:
     where, params = scope.where()
     start = to_iso(clock.day_start(clock.today()))

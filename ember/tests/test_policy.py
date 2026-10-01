@@ -98,8 +98,11 @@ def test_an_auto_unlock_carries_a_small_price_change_and_nothing_bigger(data_dir
     assert [(r["rule"], r["level"], r["used"]) for r in shown if r["level"] != "manual"] == [
         ("price_change", "auto", 1)
     ]
-    assert rows(agent, f"SELECT owner_comment FROM milestones WHERE id = {goal}")[0]["owner_comment"].startswith(
-        "Unlocked for this milestone: price changes within 15%"
+    # 0.16.1 analysis (bug 5): what stands unlocked is said from the grant, never written into the owner's note
+    item = next(m for m in agent.roadmap()["items"] if m["id"] == goal)
+    assert (item["owner_action"], item["owner_comment"]) == (None, None)
+    assert item["unlocked"] == (
+        "price changes within 15% of the approved price on a live listing (auto, at most 3 a day, 10 in all)"
     )
 
 

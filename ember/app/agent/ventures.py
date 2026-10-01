@@ -87,6 +87,9 @@ MAX_ACTIVE = 8  # ventures being worked on at once (ideas don't count: the tree 
 # after it began is parked, and a backed venture's first test is due this many days after the owner backed it.
 RESEARCH_DAYS = 21
 FIRST_TEST_DAYS = 21
+# A backed venture's first test is missed once it is still unmet this many days after its date, in words or with a
+# metric (0.16.1 analysis, bug 1: a metric's was closed missed at the first check after its date, with no grace).
+FIRST_TEST_GRACE_DAYS = 7
 # 0.13.0: triage, an idea of the agent's is researched or parked within this many days of coming up; a live venture that
 # has sold nothing this many days after going live is parked (and one that earns more than it costs gets a decision
 # point to scale it, due in SCALE_DAYS).
@@ -705,6 +708,28 @@ def triage_date(v: Mapping[str, Any]) -> date | None:
     return start + timedelta(days=TRIAGE_DAYS)
 
 
+def is_first_test(row: Mapping[str, Any]) -> bool:
+    """0.16.1 analysis (bug 1): whether a milestone is a backed venture's first test, set by Ember's code (not a bar of
+    a product line's listing test, agent/gates.py, which is a first test of a project)."""
+    return (
+        _value(row, "kind") == "first_test"
+        and _value(row, "created_by") == "code"
+        and bool(_value(row, "venture_id"))
+        and not _value(row, "project_id")
+    )
+
+
+def test_ends(row: Mapping[str, Any]) -> date | None:
+    """0.16.1 analysis (bug 1): the last day a venture's first test can be met, its date and FIRST_TEST_GRACE_DAYS: the
+    next day Ember's code closes it missed and parks the venture (agent/stages.py). None for any other milestone."""
+    if not is_first_test(row):
+        return None
+    try:
+        return date.fromisoformat(str(row["due"])) + timedelta(days=FIRST_TEST_GRACE_DAYS)
+    except ValueError:
+        return None
+
+
 def stage_rule(v: Mapping[str, Any]) -> str:
     """The rule of the venture's stage that Ember's code keeps (0.12.0, agent/stages.py), in a few words: "" for a
     stage without one, or a row built by hand without the columns."""
@@ -1011,28 +1036,30 @@ def seed(conn: sqlite3.Connection, scope: AgentScope, now: str) -> int:
 ETSY_LEG = next(title for key, _, title, *_ in SEEDS if key == "etsy")
 
 
-def adopt(
-    conn: sqlite3.Connection, scope: AgentScope, project_id: int, cycle_id: int, channel: str, now: str
-) -> int | None:
-    """0.15.0: a product line that sells in the Etsy shop belongs to a venture. A project without one joins its cycle's
-    venture, or else the channel's: the Etsy leg for an Etsy listing, the print-on-demand venture ('printify') for a
-    Printify product; never a parked or killed one. Its sales counted for no venture, so a leg that sold was parked as
-    one that sold nothing. Returns the venture it joined, or None."""
-    project = conn.execute("SELECT venture_id FROM projects WHERE id = ?", (project_id,)).fetchone()
-    if project is None or project["venture_id"] is not None:
-        return None
+def channel_venture(conn: sqlite3.Connection, scope: AgentScope, channel: str) -> sqlite3.Row | None:
+    """0.16.1 analysis (bug 1): the venture a product line of a channel sells for: the Etsy leg for an Etsy listing (a
+    digital download), the print-on-demand venture ('printify') for a Printify product. None when there is none, or it
+    is parked or killed."""
     where, params = scope.where()
-    cycle = conn.execute("SELECT venture_id FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
-    leg = conn.execute(
-        f"SELECT id FROM ventures WHERE {where} AND (channel = ? OR (? = 'etsy' AND title = ? AND parent_id IS NULL))"
+    row = conn.execute(
+        f"SELECT * FROM ventures WHERE {where} AND (channel = ? OR (? = 'etsy' AND title = ? AND parent_id IS NULL))"
         " ORDER BY id LIMIT 1",
         (*params, channel, channel, ETSY_LEG),
     ).fetchone()
-    for venture_id in (cycle["venture_id"] if cycle else None, leg["id"] if leg else None):
-        venture = get(conn, scope, venture_id) if venture_id else None
-        if venture is not None and venture["stage"] not in ("parked", "killed"):
-            conn.execute(
-                "UPDATE projects SET venture_id = ?, updated_at = ? WHERE id = ?", (venture["id"], now, project_id)
-            )
-            return int(venture["id"])
-    return None
+    return row if row is not None and row["stage"] not in ("parked", "killed") else None
+
+
+def adopt(conn: sqlite3.Connection, scope: AgentScope, project_id: int, channel: str, now: str) -> int | None:
+    """0.15.0: a product line that sells in the Etsy shop belongs to a venture: a project without one joins its
+    channel's (``channel_venture``), never a parked or killed one. Its sales counted for no venture, so a leg that sold
+    was parked as one that sold nothing. 0.16.1 analysis (bug 1): the channel's, not the venture the cycle aimed at: a
+    digital download made in a cycle for print on demand joined that venture, and went down with it when Ember's code
+    parked it. Returns the venture it joined, or None."""
+    project = conn.execute("SELECT venture_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if project is None or project["venture_id"] is not None:
+        return None
+    venture = channel_venture(conn, scope, channel)
+    if venture is None:
+        return None
+    conn.execute("UPDATE projects SET venture_id = ?, updated_at = ? WHERE id = ?", (venture["id"], now, project_id))
+    return int(venture["id"])

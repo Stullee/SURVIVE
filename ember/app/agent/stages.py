@@ -12,7 +12,11 @@ stage has a rule (``RULES``): what completes it, and when Ember's code parks the
   in FIRST_TEST_DAYS, its date fixed); the venture goes live once that is met (the database refuses it before), and is
   parked when it is missed (closed missed, or still open FIRST_TEST_GRACE_DAYS after its date). 0.15.0: a venture a
   channel of Ember's code serves (CHANNEL_TESTS) gets its first test only once that channel is set up: its clock
-  doesn't run while the owner hasn't connected it.
+  doesn't run while the owner hasn't connected it. 0.16.1 analysis (bug 1): a first test with a metric has the same
+  grace as one in words (metrics.grade no longer closes it missed at its date); a channel's first test that is still
+  unmet when its grace ends, while no product of the channel was ever made (CHANNEL_PRODUCTS), never ran: it starts
+  once more instead (once a venture, ``run_again``); and the owner hears it a week before a first test's date
+  (``warn``), as the agent does (OBLIGATIONS, ``owed``).
 * idea (0.13.0, triage): an idea of the agent's is researched (researching) or parked within TRIAGE_DAYS of coming up;
   Ember's code parks it then. The owner's ideas wait for them.
 * live (0.13.0, scale): a live venture that earns more than it costs (its P&L: revenue less expenses and the API calls
@@ -28,12 +32,14 @@ of its projects' listing tests.
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import from_iso
+from ..integrations import pinterest_publisher, printify_publisher
 from . import knockouts, metrics, roadmap, ventures
 from .store import AgentScope
 
@@ -42,7 +48,11 @@ FIRST_TEST_DAYS = ventures.FIRST_TEST_DAYS
 TRIAGE_DAYS = ventures.TRIAGE_DAYS  # 0.13.0
 LIVE_DAYS = ventures.LIVE_DAYS
 SCALE_DAYS = ventures.SCALE_DAYS
-FIRST_TEST_GRACE_DAYS = 7
+FIRST_TEST_GRACE_DAYS = ventures.FIRST_TEST_GRACE_DAYS
+# 0.16.1 analysis (bug 1): the owner hears it once (the System log) when a backed venture's first test is due within
+# this many days and unmet, a week before its date and two before the venture would be parked; the agent owes it too.
+WARN_DAYS = 7
+WARNED_KEY = "agent.{mode}.first_test_warned.{milestone}"
 OPEN_PROJECTS = ("idea", "active", "waiting")
 NO_TEST = (
     "Its first test is met: a small launch whose result shows whether it can earn (its business case names none yet)"
@@ -53,10 +63,22 @@ CHANNEL_TESTS = {
     "pinterest": ("pin_clicks", 10, "Its pins bring 10 clicks to the shop's listings (Pinterest's numbers)"),
     "printify": ("pod_orders", 1, "A buyer orders one of its products (Printify's records)"),  # Phase E4
 }
+# 0.16.1 analysis (bug 1): what a channel's venture makes, and whether Ember's code ever made one. Unmet when its grace
+# ends while none was ever made, a channel's first test never ran (Ember's own checks refused the poster twice): it
+# starts once more instead of parking the venture, once a venture (NEVER_RAN names such a test in its result).
+CHANNEL_PRODUCTS: dict[str, tuple[str, Callable[[sqlite3.Connection, AgentScope], bool]]] = {
+    "pinterest": ("pin", pinterest_publisher.made_any),
+    "printify": ("Printify product", printify_publisher.made_any),
+}
+NEVER_RAN = "so it never ran"
 
 
 def _day(stamp: str) -> date:
     return from_iso(stamp).date()
+
+
+def _q(text: Any) -> str:
+    return json.dumps(" ".join(str(text or "").split()), ensure_ascii=False)
 
 
 def first_test(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any], today: date, now: str) -> int:
@@ -223,6 +245,123 @@ def restart_test(
     return f"Ember's code dropped milestone #{test['id']}, the first test of venture #{vid}: {why}"
 
 
+def never_ran(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any]) -> str:
+    """0.16.1 analysis (bug 1): what a channel's venture never made, so that its first test would start once more if
+    still unmet when its grace ends ("" when it made one, isn't a channel's, or its test started once more already)."""
+    channel = venture["channel"] if "channel" in venture.keys() else None  # noqa: SIM118 - a Row, not a dict
+    if channel not in CHANNEL_PRODUCTS:
+        return ""
+    product, made = CHANNEL_PRODUCTS[channel]
+    if made(conn, scope):
+        return ""
+    again = conn.execute(
+        "SELECT 1 FROM milestones WHERE venture_id = ? AND kind = 'first_test' AND created_by = 'code'"
+        " AND status = 'dropped' AND closed_by = 'code' AND result LIKE ? LIMIT 1",
+        (venture["id"], f"%{NEVER_RAN}%"),
+    ).fetchone()
+    return "" if again else product
+
+
+def run_again(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    venture: Mapping[str, Any],
+    test: Mapping[str, Any],
+    product: str,
+    today: date,
+    now: str,
+) -> str:
+    """0.16.1 analysis (bug 1): a channel's first test that never ran (``never_ran``: no ``product`` was ever made by
+    its last day) starts once more: a new first test, due in FIRST_TEST_DAYS; the old one is dropped with the reason,
+    and the open steps that led to it lead to the new one. Returns what happened, for the events."""
+    vid = int(venture["id"])
+    made = first_test(conn, scope, venture, today, now)
+    why = f"no {product} was ever made by its last day, {NEVER_RAN}"
+    conn.execute(
+        "UPDATE milestones SET status = 'dropped', result = ?, closed_at = ?, closed_by = 'code', updated_at = ?,"
+        " proposed_due = NULL, proposed_note = NULL, proposed_at = NULL, proposed_cycle_id = NULL"
+        " WHERE id = ? AND status = 'open'",
+        (f"Venture #{vid}'s first test: {why}. Ember's code started it once more as #{made}.", now, now, test["id"]),
+    )
+    conn.execute(  # the agent's and the owner's (one Ember's code set leads only to a money goal, migration 0065)
+        "UPDATE milestones SET parent_id = ?, updated_at = ? WHERE parent_id = ? AND status = 'open'"
+        " AND created_by <> 'code'",
+        (made, now, test["id"]),
+    )
+    return (
+        f"Ember's code started the first test of venture #{vid} once more as milestone #{made} (due in "
+        f"{FIRST_TEST_DAYS} days): {why}"
+    )
+
+
+def _lines_tested(conn: sqlite3.Connection, venture_id: int) -> list[int]:
+    """The product lines of a venture whose listing tests are open (a bar Ember's code set): its park ends them."""
+    return [
+        int(r[0])
+        for r in conn.execute(
+            "SELECT DISTINCT m.project_id FROM milestones m JOIN projects p ON p.id = m.project_id"
+            " WHERE p.venture_id = ? AND m.status = 'open' AND m.created_by = 'code' ORDER BY m.project_id",
+            (venture_id,),
+        )
+    ]
+
+
+def at_stake(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any], test: Mapping[str, Any]) -> str:
+    """0.16.1 analysis (bug 1): what happens if a backed venture's open first test stays unmet: by when it can still be
+    met, the park and what goes down with it, or that it starts once more when no product of its channel is made."""
+    vid = int(venture["id"])
+    progress = metrics.progress_text(test)
+    lines = _lines_tested(conn, vid)
+    goes = f", which ends the listing tests of its product lines {', '.join(f'#{p}' for p in lines)}" if lines else ""
+    product = never_ran(conn, scope, venture)
+    again = f" If no {product} is made by then, it starts the test once more instead." if product else ""
+    return (
+        f"First test #{test['id']} of venture #{vid} {_q(venture['title'])} is due {test['due']}, not met yet"
+        + (f" ({progress})" if progress else "")
+        + f". Unmet by {ventures.test_ends(test)}, Ember's code closes it missed and parks venture #{vid}{goes}."
+        + again
+    )
+
+
+def _due_soon(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[tuple[sqlite3.Row, sqlite3.Row]]:
+    """The backed ventures whose open first test (set by Ember's code) is due within WARN_DAYS or past its date, with
+    that test."""
+    found = []
+    for v in ventures.all_ventures(conn, scope):
+        if v["stage"] != "building" or not v["test_milestone_id"]:
+            continue
+        test = roadmap.get(conn, scope, v["test_milestone_id"])
+        due = roadmap.parse_day(test["due"]) if test is not None else None
+        if test is None or test["status"] != "open" or due is None or not ventures.is_first_test(test):
+            continue
+        if (due - today).days <= WARN_DAYS:
+            found.append((v, test))
+    return found
+
+
+def warn(conn: sqlite3.Connection, scope: AgentScope, today: date, now: str) -> list[str]:
+    """0.16.1 analysis (bug 1): the owner hears once, a week before a backed venture's first test is due unmet (or as
+    soon as Ember's code sees one later), what is at stake (``at_stake``). Returns the warnings, for the System log."""
+    happened = []
+    for v, test in _due_soon(conn, scope, today):
+        key = WARNED_KEY.format(mode=scope.mode, milestone=test["id"])
+        fresh = conn.execute(
+            "INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO NOTHING", (key, now, now)
+        ).rowcount
+        if fresh:
+            happened.append(at_stake(conn, scope, v, test))
+    return happened
+
+
+def owed(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[str]:
+    """0.16.1 analysis (bug 1): what the agent owes for each backed venture whose first test is due within WARN_DAYS
+    unmet, for its OBLIGATIONS: what is at stake, then what to do."""
+    return [
+        f"{at_stake(conn, scope, v, test)} Work toward it first, or tell your owner once what it needs."
+        for v, test in _due_soon(conn, scope, today)
+    ]
+
+
 def keep(
     conn: sqlite3.Connection,
     scope: AgentScope,
@@ -234,8 +373,9 @@ def keep(
     """Before every plan: a first test for each backed venture that has none (0.15.0: a channel's venture once its
     channel is ``ready``; while the owner hasn't set the channel up (``unset``), an open first test Ember's code set
     earlier is dropped, and a new one comes once it is), and the stages' rules (research without a business case, a
-    missed first test; 0.13.0: an idea no one took up, a live venture that sells nothing or earns more than it costs).
-    Returns what happened, for the events."""
+    missed first test; 0.13.0: an idea no one took up, a live venture that sells nothing or earns more than it costs;
+    0.16.1 analysis, bug 1: a channel's first test that never ran, as no product of the channel was ever made, starts
+    once more instead of being missed, once a venture). Returns what happened, for the events."""
     happened = []
     paid = ventures.money(conn, scope)
     for v in ventures.all_ventures(conn, scope):
@@ -281,10 +421,22 @@ def keep(
             continue
         late = (today - (roadmap.parse_day(test["due"]) or today)).days
         if test["status"] == "open" and late > FIRST_TEST_GRACE_DAYS:
+            product = never_ran(conn, scope, v) if test["created_by"] == "code" else ""
+            if product:  # 0.16.1 analysis (bug 1): it measured nothing: once more, instead of parking the venture
+                happened.append(run_again(conn, scope, v, test, product, today, now))
+                continue
+            progress = metrics.progress_text(test)  # 0.16.1 analysis (bug 1): a metric's where it stands
             conn.execute(
                 "UPDATE milestones SET status = 'missed', result = ?, closed_at = ?, closed_by = 'code', updated_at = ?"
                 " WHERE id = ? AND status = 'open'",
-                (f"Still open {late} days after its date: Ember's code closed it missed.", now, now, test["id"]),
+                (
+                    f"Still open {late} days after its date"
+                    + (f" ({progress})" if progress else "")
+                    + ": Ember's code closed it missed.",
+                    now,
+                    now,
+                    test["id"],
+                ),
             )
             test = roadmap.get(conn, scope, test["id"])
         if test is not None and test["status"] == "missed":

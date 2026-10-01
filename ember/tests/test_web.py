@@ -210,7 +210,11 @@ def test_dashboard_payload(ingress_client: TestClient) -> None:
     assert len(data["economy"]["days"]) == 30
     assert data["agent"]["state"] == "alive"
     assert data["agent"]["balance_usd"] == 20.0
-    assert data["system"]["database"] == {"ok": True, "error": None, "schema_version": len(discover_migrations())}
+    assert data["system"]["database"] == {
+        "ok": True,
+        "error": None,
+        "schema_version": discover_migrations()[-1].version,
+    }
     assert data["system"]["dry_run"] is True
     assert any(e["message"].startswith("Started version") for e in data["events"])
 

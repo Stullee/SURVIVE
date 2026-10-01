@@ -8,7 +8,8 @@ forgotten, and a decision of the owner's was shown once. Now Ember's code keeps 
 * misses: a milestone Ember's code closed missed (a metric's): the agent decides what now;
 
 and reads the rest from their own records: the owner's messages waiting for an answer, people's emails waiting for
-one (0.13.0, Phase E1: mailstore.inquiries), overdue milestones and live listings with too few photos. The plan shows
+one (0.13.0, Phase E1: mailstore.inquiries), overdue milestones and live listings with too few photos (0.16.1 analysis,
+bug 1: and a backed venture's first test due within a week unmet, with what is at stake: stages.owed). The plan shows
 them first and never cuts them; a pressing one (``pressing``) makes a wake cycle an ordinary one rather than a
 venture cycle. The agent closes a promise, decision or miss with
 ``obligation_done``, saying what it did; a promise only once its owner has heard from it since, and a miss also closes
@@ -23,7 +24,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..integrations import etsy_publisher, mailstore, qa
-from . import roadmap
+from . import roadmap, stages, ventures
 from .store import AgentScope
 
 KINDS = ("promise", "decision", "miss")
@@ -193,10 +194,13 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date) -> str:
         lines.append(f"- {line(r, today)}")
     if len(rows) > SHOWN:
         lines.append(f"- and {len(rows) - SHOWN} more obligations, due later.")
+    lines += [f"- {line}" for line in stages.owed(conn, scope, today)]  # 0.16.1 analysis (bug 1)
     overdue = [
         m
         for m in roadmap.open_milestones(conn, scope)
-        if (roadmap.parse_day(m["due"]) or today) < today and not roadmap.waiting(m, today)
+        if (roadmap.parse_day(m["due"]) or today) < today
+        and not roadmap.waiting(m, today)
+        and not ventures.is_first_test(m)  # its line is above: only Ember's code or the owner closes it
     ]
     if overdue:
         ids = ", ".join(f"#{m['id']}" for m in overdue[:6]) + (

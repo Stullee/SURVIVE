@@ -319,9 +319,10 @@ def listings(
         " AND l.listing_id IS NOT NULL ORDER BY l.id"
     )
     # 0.15.0: a listing of a product line with no venture (a closed one the upgrade couldn't link) counts for its
-    # channel's venture, as ventures.adopt would link it: the Etsy leg, or the print-on-demand venture.
+    # channel's venture, as ventures.adopt would link it: the Etsy leg, or the print-on-demand venture. 0.16.1 analysis
+    # (bug 1): not for the venture its request's cycle aimed at (a digital download counted for print on demand).
     mine = (
-        "p.id AS for_project, COALESCE(p.venture_id, y.venture_id, (SELECT v.id FROM ventures v WHERE"
+        "p.id AS for_project, COALESCE(p.venture_id, (SELECT v.id FROM ventures v WHERE"
         " v.mode = l.mode AND v.session = l.session AND v.stage NOT IN ('parked', 'killed') AND {leg}"
         " ORDER BY v.id LIMIT 1)) AS for_venture"
     )
@@ -500,7 +501,10 @@ def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str
     the day's observation), close it done once met and missed once its date has passed without it (a ceiling: missed
     once passed, done at its date). A killed venture's milestones were dropped with it (agent/stages.py). 0.15.0: past
     its date, Etsy's numbers read only after it (a sync gap) don't meet it: its last reading by then decides, and
-    without one it is missed (a bar met days late was graded done). Returns what happened, for the events."""
+    without one it is missed (a bar met days late was graded done). 0.16.1 analysis (bug 1): a backed venture's first
+    test isn't closed missed here: like one in words, it can be met until FIRST_TEST_GRACE_DAYS after its date, and
+    then its venture's rule closes it (agent/stages.py, which may start it once more instead). It was closed missed at
+    the first check after its date, and the venture parked the next plan. Returns what happened, for the events."""
     now = to_iso(books.clock.now())
     today = books.clock.today()
     happened = []
@@ -511,8 +515,9 @@ def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str
             continue
         target = int(row["target"])
         past = today.isoformat() > row["due"]
+        graced = ventures.is_first_test(row)
         judged: Reading | None = reading
-        if m.etsy and past and books.clock.local_day(reading.at).isoformat() > row["due"]:
+        if m.etsy and past and not graced and books.clock.local_day(reading.at).isoformat() > row["due"]:
             # 0.15.0: Etsy read only after its date (a sync gap): its last reading by then decides; a later one can
             # only show a miss (a bar met days late was graded done). Orders carry their own date: those placed by
             # the end of its due day count, however late a sync fetched them
@@ -536,7 +541,7 @@ def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str
             status = "missed" if judged.value > target else "done" if past else None
         else:
             status = "done" if judged.value >= target else "missed" if past else None
-        if status is None:
+        if status is None or (status == "missed" and graced):
             continue
         evidence = (
             _evidence(m, judged, target, books)
