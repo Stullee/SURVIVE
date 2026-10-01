@@ -300,7 +300,7 @@ class Agent:
             return Decision(False, reason=f"Dormant: {burn.MEANING[burn.DORMANT]}; Wake now runs a cycle")
         if self.message_waiting and not self.wake_requested:
             ready = None if preview else self._wake_for_waiting_message()
-            if ready is not None or preview:
+            if ready is not None or (preview and self._unread()):  # 0.14.0: a preview requests no wake
                 why = "read the owner's message" if self.waiting_for == "message" else "act on the owner's decision"
                 return Decision(False, reason=f"Waking up to {why} in a moment", wait_until=ready)
         if self.wake_requested:
@@ -312,13 +312,12 @@ class Agent:
         if no_room:
             return Decision(False, reason=no_room)
         wake = self._meta_time("next_wake_at")
+        why = self.db.get_meta(self._key("next_wake_reason")) or "sleeping"
         if wake is None:
-            wake = now + FIRST_WAKE_DELAY
-            self._keep_wake(wake, "first wake-up", preview)
+            wake, why = now + FIRST_WAKE_DELAY, "first wake-up"  # 0.14.0: the preview, which keeps nothing, says so too
+            self._keep_wake(wake, why, preview)
         if now < wake:
-            return Decision(
-                False, reason=self.db.get_meta(self._key("next_wake_reason")) or "sleeping", wait_until=wake
-            )
+            return Decision(False, reason=why, wait_until=wake)
         if self._crash_loop():
             return Decision(False, reason="The last cycles were all interrupted; press Wake now to try again")
         # A cycle that can plan but not afford one work step and its reflection would only pay for the plan. A daily
@@ -479,13 +478,16 @@ class Agent:
             return "after_cycle" if code == "cycle_running" else "soon"
         return None
 
+    def _unread(self) -> bool:
+        """Whether a message or decision of the owner's is still unseen by the agent."""
+        with self.db.connection() as conn:
+            return bool(store.unseen(conn, "messages", self.scope(), 1) or news.decided_unseen(conn, self.scope()))
+
     def _wake_for_waiting_message(self) -> datetime | None:
         """For ``decide``: wake for a message or decision that couldn't wake the agent when it came. Returns when that
         can be while it is still too soon; None once the agent is woken, or when the agent has seen all of the owner's
         news (the cycle that was running saw it: no second cycle for it)."""
-        with self.db.connection() as conn:
-            unread = store.unseen(conn, "messages", self.scope(), 1) or news.decided_unseen(conn, self.scope())
-        if not unread:
+        if not self._unread():
             self.message_waiting = False
             return None
         status, body = self.request_wake(

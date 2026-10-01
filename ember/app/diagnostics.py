@@ -218,20 +218,20 @@ def _masker(state: AppState, full: bool) -> privacy.Masker:
 def _others(conn: Any, own: str = "") -> dict[str, str]:
     """Other people's words that the report's texts may quote, and what the shareable report shows instead: the
     emails' subjects (0.14.0: also as the agenda quotes them, cut to 80 characters) and their senders' names if they
-    look like a person's (privacy.person_like), and the subjects of the emails the agent asked to send. 0.14.0: a
-    text of one word is never one of them (a name like "Pinterest" or "mailbox" overwrote those words everywhere)."""
+    look like a person's (privacy.person_like: never one word, as "Pinterest" or "mailbox" overwrote those words
+    everywhere), and the subjects of the emails the agent asked to send. A subject of one word is still masked."""
     others: dict[str, str] = {}
 
     def add(text: str | None, shown: str, shortest: int) -> None:
-        if text and len(text.strip()) >= shortest and len(text.split()) > 1:
+        if text and len(text.strip()) >= shortest:
             others.setdefault(text, shown)
             others.setdefault(json.dumps(text, ensure_ascii=False)[1:-1], shown)  # as a JSON text quotes it
 
-    for row in conn.execute("SELECT id, subject, from_name FROM emails ORDER BY id"):
+    for row in conn.execute("SELECT id, subject, from_name, from_addr FROM emails ORDER BY id"):
         add(row["subject"], f"[subject of email #{row['id']}]", 8)
         cut = " ".join(str(row["subject"] or "").split())[:80]  # as agenda._mail quotes it
         add(json.dumps(cut, ensure_ascii=False)[1:-1], f"[subject of email #{row['id']}]", 8)
-        if privacy.person_like(row["from_name"], own):
+        if privacy.person_like(row["from_name"], own, row["from_addr"] or ""):
             add(row["from_name"], f"[sender of email #{row['id']}]", 5)
     for row in conn.execute("SELECT id, title FROM approvals WHERE type = 'contact' ORDER BY id"):
         add((row["title"] or "").partition(": ")[2], f"[subject of request #{row['id']}]", 8)
@@ -242,7 +242,7 @@ def _owners(conn: Any, ids: tuple[str, ...]) -> dict[str, str]:
     """0.14.0: the Home Assistant users' labels ("name (user ID)", web._owner) and IDs, and what the shareable report
     shows instead. They were printed throughout (the owner's name next to the ID owner_user_ids trusts). Ember records
     a label (or the ID alone, for a user without a name) in its columns named "by" or "..._by", and at the start of
-    the owner's events."""
+    the owner's events (web.py's owner, control, etsy and pinterest events)."""
     labels: set[str] = set()
     for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall():
         for column in conn.execute(f"PRAGMA table_info({table})").fetchall():  # noqa: S608 - the schema's own names
@@ -250,7 +250,7 @@ def _owners(conn: Any, ids: tuple[str, ...]) -> dict[str, str]:
                 name = column["name"]
                 query = f"SELECT DISTINCT {name} FROM {table} WHERE {name} LIKE '%)' OR length({name}) = 32"  # noqa: S608
                 labels.update(str(row[0]) for row in conn.execute(query))
-    for (message,) in conn.execute("SELECT message FROM events WHERE kind IN ('owner', 'control')"):
+    for (message,) in conn.execute("SELECT message FROM events"):  # 0.14.0: also the etsy and pinterest events
         found = _LABEL.match(message) or _USER_ID.match(message)
         if found:
             labels.add(found[0])

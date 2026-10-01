@@ -104,15 +104,17 @@ def _words(text: str) -> list[tuple[int, int]]:
     return trimmed
 
 
-def person_like(name: str | None, own_address: str = "") -> bool:
+def person_like(name: str | None, own_address: str = "", sender: str = "") -> bool:
     """0.14.0: whether a sender's display name looks like a person's: two to four words of letters, none a company's
     word and none a label of Ember's own mail domain. The report masked every name, so a brand ("Pinterest"), an
     ordinary word ("mailbox", the live report's own provider) and a company ("Etsy Support") were replaced wherever
-    they appeared, in the owner's own instructions too."""
+    they appeared, in the owner's own instructions too. A word that is a label of the sender's own domain is a
+    brand's ("Etsy Transactions" from etsy.com), not a person's."""
     words = [w for w in re.split(r"[\s,]+", name or "") if w]
     if not 2 <= len(words) <= 4 or not all(_NAME_WORD.fullmatch(w) for w in words):
         return False
     own = set(own_address.lower().partition("@")[2].split(".")[:-1])  # Ember's domain, without its ending
+    own |= set(sender.lower().partition("@")[2].split(".")[:-1])  # the sender's domain, without its ending
     return not any(w.lower().rstrip(".") in _COMPANY_WORDS or set(w.lower().split(".")) & own for w in words)
 
 

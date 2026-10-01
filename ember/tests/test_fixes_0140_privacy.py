@@ -26,7 +26,7 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app import db as dbmod  # noqa: E402
-from app import diagnostics, privacy  # noqa: E402
+from app import diagnostics, events, privacy  # noqa: E402
 from app.agent import library, obligations  # noqa: E402
 from app.agent.context import RESEARCH_CALLS  # noqa: E402
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls  # noqa: E402
@@ -150,6 +150,9 @@ def test_only_whole_person_like_names_are_masked_and_never_inside_an_address() -
         ("The Printify Team", "hello@printify.com", False),
         ("mailbox.org Team", "service@mailbox.org", False),
         ("Etsy No Reply", "no-reply@etsy.com", False),
+        ("Etsy Transactions", "transaction@etsy.com", False),  # a word of the sender's own domain: a brand
+        ("Google Workspace", "workspace-noreply@google.com", False),
+        ("Canva Pro", "no-reply@canva.com", False),
         ("Hans Beispielmann", "hans@example.org", True),
         ("Dr. Hans Müller", "hm@example.org", True),
         ("Anne-Marie O'Neil", "am@example.org", True),
@@ -238,6 +241,30 @@ def test_cut_subjects_opt_out_words_and_the_owner_s_identity_stay_out(data_dir: 
     assert json.loads(section(shared, "OPTIONS (public)"))["owner_user_ids"] == ["[the owner's user ID]"]
 
 
+def test_a_subject_of_one_word_is_still_masked(data_dir: Path) -> None:
+    """Only a sender's name must be more than one word; a subject is someone else's text whatever its length."""
+    agent, _ = make_agent(data_dir, [scripted_plan(steps=[])])
+    assert agent.run_cycle("schedule").status in ("completed", "idle")
+    agent.check_events()
+    agent.clock.advance(minutes=20)
+    asked = inbound(agent, "hans@example.org", subject="Mietvertragskündigung-Musterstrasse12")
+    agent.check_events()
+    shared, full = shared_and_full(agent)
+    assert "Musterstrasse12" in full and "Musterstrasse12" not in shared
+    assert f"[subject of email #{asked}]" in shared
+
+
+@pytest.mark.parametrize("ids", [(), (OWNER_ID,)])
+def test_the_owner_s_label_in_an_etsy_event_is_masked(ids: tuple[str, ...], data_dir: Path) -> None:
+    """web.py writes the label into the etsy and pinterest events too, perhaps in no column named "by"."""
+    agent, _ = make_agent(data_dir, [], ROOMY.model_copy(update={"owner_user_ids": ids}))
+    events.record(agent.db, "info", "etsy", f"{LABEL} started connecting Etsy")
+    shared, full = shared_and_full(agent)
+    assert LABEL in full
+    assert "Felix Beispiel" not in shared and OWNER_ID not in shared
+    assert "[the owner] started connecting Etsy" in section(shared, diagnostics.EVENTS_TITLE)
+
+
 @pytest.mark.parametrize(
     ("reason", "shown"),
     [
@@ -283,6 +310,20 @@ def test_building_the_report_wakes_nothing_and_keeps_nothing(data_dir: Path) -> 
     assert "\n== STATUS ==\n" in section(full, diagnostics.PLANNER_TITLE)
     decision = agent.decide()  # the scheduler's decision is still the event's
     assert (decision.run, decision.trigger) == (True, "event")
+
+
+def test_the_preview_wakes_for_a_waiting_message_only_if_one_is_unseen(data_dir: Path) -> None:
+    """With nothing unseen, decide() clears message_waiting and goes on; the preview gives that same decision."""
+    agent, _ = make_agent(data_dir, [])
+    agent.message_waiting, agent.waiting_for = True, "message"
+    preview = agent.decide(preview=True)
+    assert "Waking up" not in preview.reason and agent.message_waiting  # the preview keeps nothing
+    real = agent.decide()
+    assert (preview.run, preview.trigger, preview.reason) == (real.run, real.trigger, real.reason)
+    assert not agent.message_waiting
+    assert owner(agent).send_message({"text": "Hello."}, LABEL).status == 201
+    agent.message_waiting = True
+    assert agent.decide(preview=True).reason == "Waking up to read the owner's message in a moment"
 
 
 def test_the_preview_runs_no_keeper(data_dir: Path) -> None:
