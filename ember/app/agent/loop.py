@@ -1445,6 +1445,20 @@ class CycleRunner:
             except CallRefused as exc:  # a state or system refusal ends the cycle at its next call
                 return tools.Outcome(False, f"Error: research refused ({exc.reason}).", "refused")
             except CallFailed as exc:
+                # 0.14.0: a failed call that was paid counts toward the venture's research budget too
+                if venture_id is not None and exc.result.cost_micros > 0:
+                    with self.db.transaction() as conn:
+                        ventures.add_research(
+                            conn,
+                            venture_id,
+                            cycle_id,
+                            exc.result.call_id,
+                            question,
+                            url,
+                            0,
+                            exc.result.cost_micros,
+                            to_iso(self.clock.now()),
+                        )
                 blocked = _BLOCKED_SITES.search(exc.result.error or "")
                 if blocked:
                     return tools.Outcome(
@@ -1479,8 +1493,10 @@ class CycleRunner:
                             "\n(The search paused and wasn't continued: that would use the money kept for your"
                             " reflection. This answer may be partial.)"
                         )
-                except (Unpriceable, CallRefused, CallFailed):
+                except (Unpriceable, CallRefused):
                     pass
+                except CallFailed as exc:  # 0.14.0: paid, so it counts toward the budget too
+                    cost += exc.result.cost_micros
             answer = _text_of(response)
             digest = answer[:RESEARCH_DIGEST_CHARS] or "Nothing useful was found."
             sources = _sources(response)

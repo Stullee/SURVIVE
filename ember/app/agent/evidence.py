@@ -6,12 +6,13 @@ selling the very tool it praised, or nothing the agent ever read. Now the agent 
 
 * unchecked: not a page the research tool returned (``research_sources``, recorded as research runs): the agent's
   word only;
-* marketing: a vendor's page (it sells what it describes: Shopify, Printful, Etsy research tools, course platforms)
-  or an affiliate's (a link that pays whoever sends a buyer);
+* marketing: a vendor's page (it sells what it describes: Shopify, Printful, Etsy research tools, course platforms;
+  0.14.0: on any of its domains, shopify.de too) or an affiliate's (a link that pays whoever sends a buyer);
 * independent: any other page from the research results.
 
 The grade is final (a claim never changes), the venture's FOCUS shows its evidence by grade, and the Ventures tab
-lists it.
+lists it. 0.14.0: what backs a venture's demand (``demand_shown``) is an independent claim of a demand metric
+(searches, sales, orders, reviews, buyers) from a page that isn't a vendor's by today's table.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from .store import AgentScope
 
 GRADES = ("independent", "marketing", "unchecked")
 # Vendors: pages about a market by someone selling into it (tools, platforms, print on demand, dropshipping, courses).
+# 0.14.0: matched by their name on any domain (``site_name``: www.shopify.de and printify.co.uk are vendors too).
 MARKETING_DOMAINS = (
     "shopify.com",
     "oberlo.com",
@@ -65,6 +67,35 @@ MARKETING_DOMAINS = (
     "hubspot.com",
     "semrush.com",
     "ahrefs.com",
+    # 0.14.0: dropshipping suppliers, print on demand and Etsy tools that graded independent
+    "bigbuy.eu",
+    "syncee.com",
+    "autods.com",
+    "sellvia.com",
+    "vidaxl.com",
+    "finerworks.com",
+    "spreadshirt.com",
+    "prodigi.com",
+    "teelaunch.com",
+    "koalanda.com",
+    "etsyhunt.com",
+)
+_VENDORS = frozenset(domain.split(".")[0] for domain in MARKETING_DOMAINS)
+# A country's second level (co.uk, com.au): the name is the label before it.
+_SECOND_LEVEL = frozenset({"co", "com", "net", "org", "ac", "gov", "edu"})
+# 0.14.0: what shows demand (people searching for it or paying), in a claim's metric or unit: a price, a fee, a
+# policy or a minimum order doesn't.
+_DEMAND = re.compile(
+    r"\b(?:searches|search (?:volume|interest)|sales|sold|orders|reviews|buyers|customers|downloads|favou?rites"
+    r"|purchases|demand|revenue|suchanfragen|suchvolumen|verkäufe|verkauft|bestellungen|bewertungen|käufer|kunden"
+    r"|nachfrage|umsatz)\b",
+    re.IGNORECASE,
+)
+# ... but not a price, a tax, a cost, a policy, a minimum or shipping of them ("average sales price", "minimum orders")
+_NOT_DEMAND = re.compile(
+    r"\b(?:prices?|pricing|tax\w*|costs?|fees?|polic(?:y|ies)|minimum|min\.|shipping|delivery|returns?|margins?"
+    r"|preis\w*|steuer\w*|kosten|gebühr\w*|mindest\w*|versand\w*|liefer\w*|rückgabe\w*|marge)\b",
+    re.IGNORECASE,
 )
 # Affiliates: a link that pays whoever sends a buyer.
 _AFFILIATE_PARAMS = frozenset({"ref", "aff", "affiliate", "aff_id", "affid", "partner", "via", "tag", "irclickid"})
@@ -104,6 +135,24 @@ def record_sources(
         )
 
 
+def site_name(host: str) -> str:
+    """A host's registrable name without its suffix (0.14.0): 'shopify' for www.shopify.de, help.shopify.com or
+    shopify.co.uk."""
+    labels = [label for label in host.lower().rstrip(".").split(".") if label]
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL:
+        return labels[-3]
+    return labels[-2] if len(labels) >= 2 else "".join(labels)
+
+
+def vendor(url: str) -> bool:
+    """Whether the page is a vendor's (MARKETING_DOMAINS, by name on any domain)."""
+    try:
+        host = urlsplit(url.strip()).hostname or ""
+    except ValueError:
+        return False
+    return site_name(host) in _VENDORS
+
+
 def grade(conn: sqlite3.Connection, scope: AgentScope, url: str) -> str:
     """unchecked, marketing or independent (see the module's docstring)."""
     where, params = scope.where()
@@ -113,12 +162,10 @@ def grade(conn: sqlite3.Connection, scope: AgentScope, url: str) -> str:
     if found is None:
         return "unchecked"
     parts = urlsplit(url.strip())
-    host = (parts.hostname or "").lower()
-    vendor = any(host == d or host.endswith(f".{d}") for d in MARKETING_DOMAINS)
     affiliate = _AFFILIATE_PATH.search(parts.path) is not None or any(
         k.lower() in _AFFILIATE_PARAMS for k, _ in parse_qsl(parts.query, keep_blank_values=True)
     )
-    return "marketing" if vendor or affiliate else "independent"
+    return "marketing" if vendor(url) or affiliate else "independent"
 
 
 def add(
@@ -174,6 +221,20 @@ def counts(conn: sqlite3.Connection, venture_id: int) -> dict[str, int]:
         ).fetchall()
     )
     return {g: int(found.get(g, 0)) for g in GRADES}
+
+
+def demand_shown(conn: sqlite3.Connection, venture_id: int) -> bool:
+    """0.14.0: whether an independent page backs the venture's demand: a claim of a demand metric (searches, sales,
+    orders, reviews, buyers) from a page that isn't a vendor's by today's table (a claim graded before counts only
+    then). Any one independent claim did, a policy or a competitor's price too."""
+    rows = conn.execute(
+        "SELECT metric, unit, url FROM evidence WHERE venture_id = ? AND source = 'independent'", (venture_id,)
+    )
+    return any(_demand(f"{r['metric']} {r['unit']}") and not vendor(r["url"]) for r in rows)
+
+
+def _demand(words: str) -> bool:
+    return bool(_DEMAND.search(words)) and not _NOT_DEMAND.search(words)
 
 
 def by_venture(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, dict[str, Any]]:

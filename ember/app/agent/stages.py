@@ -32,7 +32,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import from_iso
-from . import metrics, roadmap, ventures
+from . import knockouts, metrics, roadmap, ventures
 from .store import AgentScope
 
 RESEARCH_DAYS = ventures.RESEARCH_DAYS
@@ -132,6 +132,35 @@ def park(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any]
     dropped = drop_milestones(conn, scope, vid, now, f"Venture #{vid} was parked by Ember's code: {why}.", "code")
     also = f"; dropped with it: {', '.join(f'#{i}' for i in dropped)}" if dropped else ""
     return f"Ember's code parked venture #{vid} ({venture['title']}): {why}{also}"
+
+
+def backing_problem(
+    conn: sqlite3.Connection, venture: Mapping[str, Any], *, cash_eur: float, net_days: float | None
+) -> str:
+    """0.14.0: why a proposal can't be backed as it stands ("" when it can): it has no numbers (proposed before they
+    were needed) or a knock-out stands. Such a proposal goes back to researching (``reopen``)."""
+    if not ventures.latest_case(conn, int(venture["id"])):
+        if venture["stage"] == "proposed":
+            return "it has no numbers (venture_case), as it was proposed before a business case needed them"
+        return "it has no numbers (venture_case) yet"
+    standing = knockouts.active(knockouts.check(conn, venture, cash_eur=cash_eur, net_days=net_days))
+    if standing:
+        return "it is knocked out (" + "; ".join(f"{k.label}: {k.why}" for k in standing) + ")"
+    return ""
+
+
+def reopen(conn: sqlite3.Connection, venture: Mapping[str, Any], now: str, why: str, said: str | None = None) -> None:
+    """0.14.0: Ember's code sends a proposal back to researching (``why``, kept in its notes): a venture proposed
+    before the gates, or one knocked out since, isn't backed as it stands. What the owner ``said`` with their Back is
+    kept there too."""
+    note = f"Back to researching by Ember's code: {why}."
+    if said:
+        note += f" Your owner said with their Back: {said}"
+    note = ventures.add_note(venture["notes"], None, note)
+    conn.execute(
+        "UPDATE ventures SET stage = 'researching', notes = ?, updated_at = ? WHERE id = ? AND stage = 'proposed'",
+        (note, now, venture["id"]),
+    )
 
 
 def sold(conn: sqlite3.Connection, scope: AgentScope, venture_id: int, paid: ventures.Money) -> bool:

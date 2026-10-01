@@ -5700,6 +5700,8 @@
       ventureCritique(v),
       isObject(v.first_sale) ? h("dl", { class: "item-grid" }, predictionRow(v.first_sale, "First sale, as its case said")) : null,
       ventureKnockouts(v),
+      // 0.14.0: why Ember's code wouldn't back it; your Back confirms it anyway
+      v.backing_problem ? h("p", { class: "muted small", text: "Ember's code wouldn't back it: " + String(v.backing_problem) + "." }) : null,
       ventureEvidence(v),
       h("dl", { class: "money" },
         h("div", { title: "Research calls for this venture that found web pages: its scores need one, a business case " + toPropose + "." },
@@ -5749,7 +5751,7 @@
         h("div", { title: "Expected net a month over six months, the months before the first sale earning nothing" },
           h("dt", { text: "Expected" }), h("dd", { text: "€" + Math.round(num(n.ev_eur)) + " a month" +
             (n.ev_per_hour === null ? "" : " · €" + num(n.ev_per_hour).toFixed(2) + " per hour of yours") })),
-        h("div", null, h("dt", { text: "To start" }), h("dd", { text: eur(n.setup_eur) + " · " + num(n.owner_hours) + " h a month from you · first sale in " + n.first_sale_months + " month" + (n.first_sale_months === 1 ? "" : "s") }))));
+        h("div", null, h("dt", { text: "To start" }), h("dd", { text: eur(n.setup_eur) + " · " + num(n.owner_hours) + " h a month from you · first sale in " + n.first_sale_days + " day" + (n.first_sale_days === 1 ? "" : "s") }))));
   }
 
   // 0.13.0: the independent critic's review of the newest case: its verdict, the fatal flaw, its own numbers (worked out
@@ -5932,8 +5934,9 @@
     var comment = { name: "comment", label: mode === "note" ? "Your note" : "Comment for " + name + " (optional)", rows: 2, max: 1000,
       required: mode === "note", missing: "Write the note." };
     var specs = {
-      back: { title: "Back this venture", submit: "Back it",
-        intro: [h("p", { text: "Backing tells " + name + " to build it: it plans the first test and asks you, one step at a time, for what only you can do (accounts, money, setup)." })] },
+      back: { title: "Back this venture", submit: it.row.backing_problem ? "Back it anyway" : "Back it",
+        intro: [h("p", { text: "Backing tells " + name + " to build it: it plans the first test and asks you, one step at a time, for what only you can do (accounts, money, setup)." }),
+          it.row.backing_problem ? h("p", { text: "Ember's code wouldn't back it: " + String(it.row.backing_problem) + ". Backing it anyway is your call." }) : null] },
       research: { title: "Research this next", submit: "Research next",
         intro: [h("p", { text: name + " researches it in its next venture cycle, with a new research budget of " + usd((ui.vt.data || {}).research_budget_usd) +
           ", scores it from the evidence and brings you a business case or tells you why not." })] },
@@ -5954,10 +5957,13 @@
       var version = num(it.row.owner_version);
       if (!isNaN(version)) body.expected_version = version;
       if (values.comment) body.comment = values.comment;
+      if (mode === "back" && it.row.backing_problem) body.confirm = true;  // 0.14.0: you saw why code wouldn't
       return body;
     };
     spec.done = function (res) {
       loadVentures();
+      var notBacked = isObject(res.data) && res.data.not_backed;
+      if (notBacked) return "Not backed: Ember's code put it back in researching (" + String(notBacked) + ").";
       return done[mode] + " " + decisionWake(res, name);
     };
     return spec;

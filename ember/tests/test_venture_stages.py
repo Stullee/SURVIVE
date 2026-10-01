@@ -54,7 +54,7 @@ def backed(data_dir: Path) -> tuple[Agent, int]:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     with agent.db.transaction() as conn:
         ventures.update(conn, DROPSHIPPING, "2026-09-01T12:00:00Z", first_test="Sell 3 stores' worth of samples")
-    reply = owner(agent).decide_venture(DROPSHIPPING, {"action": "back", "comment": "Go."}, "Stefan")
+    reply = owner(agent).decide_venture(DROPSHIPPING, {"action": "back", "comment": "Go.", "confirm": True}, "Stefan")
     assert reply.status == 200, reply.body
     test = venture(agent, DROPSHIPPING)["test_milestone_id"]
     assert test is not None
@@ -112,7 +112,9 @@ def test_a_missed_first_test_parks_the_venture_until_the_owner_takes_it_up(data_
     assert not refused.ok and "Ember's code parked venture #3 by its stage's rule: only your owner" in refused.text
     with agent.db.transaction() as conn, pytest.raises(sqlite3.IntegrityError, match="out of their park"):
         conn.execute("UPDATE ventures SET stage = 'researching' WHERE id = ?", (DROPSHIPPING,))
-    again = owner(agent).decide_venture(DROPSHIPPING, {"action": "back", "comment": "Once more."}, "Stefan")
+    again = owner(agent).decide_venture(
+        DROPSHIPPING, {"action": "back", "comment": "Once more.", "confirm": True}, "Stefan"
+    )
     assert again.status == 200 and again.body["stage"] == "building"
     fresh = venture(agent, DROPSHIPPING)["test_milestone_id"]
     assert fresh != test and milestone(agent, fresh)["status"] == "open"  # a new first test

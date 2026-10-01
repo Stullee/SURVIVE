@@ -32,7 +32,7 @@ def case(agent: Agent, **changes: object) -> None:
         "sales": (2, 10, 30),
         "setup_eur": 10.0,
         "owner_hours": 2.0,
-        "first_sale_months": 1,
+        "first_sale_days": 30,
         "api_usd": 3.0,
         **{k: v for k, v in changes.items() if k != "needs"},
     }
@@ -75,12 +75,12 @@ def test_each_knock_out_is_found_from_the_case(data_dir: Path) -> None:
     independent(agent)
     case(agent)
     assert found(agent) == []
-    case(agent, setup_eur=50.0, first_sale_months=2, unit_cost_eur=6.0, needs="cold_outreach,ember_accounts")
+    case(agent, setup_eur=50.0, first_sale_days=61, unit_cost_eur=6.0, needs="cold_outreach,ember_accounts")
     assert [rule for rule, _ in found(agent, net_days=100.0)] == [
         "cold_outreach",
         "ember_accounts",
         "cash",
-        "slow",  # 2 months, half the runway is 50 days
+        "slow",  # 61 days, half the runway is 50 days
         "losing",
     ]
     assert "slow" not in [rule for rule, _ in found(agent, net_days=None)]  # it earns what it spends

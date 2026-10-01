@@ -221,7 +221,8 @@ def test_the_focus_mode_offers_no_brainstorm(data_dir: Path, monkeypatch: pytest
     agent, _ = run(data_dir, fake, cycles=0, settings=VENTURING)
     with agent.db.transaction() as conn:
         ventures.update(conn, DROPSHIPPING, "2026-09-01T12:00:00Z", first_test="Sell 3 stores' worth of samples")
-    assert owner(agent).decide_venture(DROPSHIPPING, {"action": "back"}, "Stefan").status == 200
+    # 0.14.0 (ventures): a venture without numbers is backed only with the owner's confirmation
+    assert owner(agent).decide_venture(DROPSHIPPING, {"action": "back", "confirm": True}, "Stefan").status == 200
     agent.run_cycle("schedule")
     assert rows(agent, "SELECT venture FROM cycles") == [{"venture": 1}]
     names = work_tools(fake)

@@ -270,7 +270,7 @@ def test_revenue_spending_and_a_ventures_stage(data_dir: Path) -> None:
     grade(agent)
     assert (milestone(agent, tight)["status"], milestone(agent, loose)["status"]) == ("missed", "open")
     assert "over the limit" in milestone(agent, tight)["result"]
-    assert owner(agent).decide_venture(venture, {"action": "back"}, "Owner").status == 200
+    assert owner(agent).decide_venture(venture, {"action": "back", "confirm": True}, "Owner").status == 200
     grade(agent)
     assert milestone(agent, backed)["status"] == "done" and milestone(agent, case)["status"] == "open"
     assert owner(agent).decide_venture(venture, {"action": "kill", "comment": "No."}, "Owner").status == 200

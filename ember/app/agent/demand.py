@@ -6,17 +6,24 @@ tool): the keywords buyers search, the demand the agent found and its source (a 
 document of the owner's library, such as the keyword export the owner adds each week) and, with the owner's Etsy
 market probe on (``etsy_market_probe``), Etsy's numbers for the keywords: how many active listings match and the
 quartiles of the first ones' prices. The probe keeps only these aggregates, never another seller's listing.
+
+0.14.0: any library document was a source, even a removed one, and no number was needed (live, a general Etsy guide
+"backed" a product line). Now a library document counts when it is linked to the product line or its venture, or is
+a keyword or market export the owner uploaded as a table (.csv, .tsv), and the demand cites a number found in it; a
+page must be independent (not a vendor's or an affiliate's), and the demand must give a number.
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import re
 import sqlite3
 from datetime import timedelta
 
 from ..economy.clock import from_iso, to_iso
 from ..integrations import etsy
-from . import evidence
+from . import evidence, library
 from .store import AgentScope
 
 DAYS = 14  # how old a demand note may be when its product line's first listing is proposed
@@ -24,20 +31,94 @@ DAYS = 14  # how old a demand note may be when its product line's first listing 
 # doesn't: the next is still its first).
 LISTED = ("pending", "approved", "approved_with_changes", "done")
 _LIBRARY = re.compile(r"^library #(\d+)$", re.IGNORECASE)
+# 0.14.0: a separator joins groups of 3 digits only (1,200 and 12.500,00), so the columns of a comma export
+# ("1200,450") stay two numbers
+_NUMBER = re.compile(r"(?<!\d)(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d{1,2})?(?!\d)")
+_YEAR = re.compile(r"^(?:19|20)\d\d$")
+# what a cited number counts: searches, sales, orders, reviews, buyers, listings (a word near it, in the note)
+_DEMAND_WORDS = re.compile(
+    r"\b(?:search\w*|sales|sold|sell\w*|orders?|reviews?|buyers?|customers?|downloads?|favou?rites|purchases|demand"
+    r"|listings|results|month\w*|suchanfragen|suchvolumen|gesucht|verkäufe|verkauft|bestellungen|bewertungen|käufer"
+    r"|kunden|nachfrage|treffer|angebote|monat\w*)\b",
+    re.IGNORECASE,
+)
+EXPORTS = (".csv", ".tsv")  # a keyword or market export the owner uploaded: a table
 
 
-def source_problem(conn: sqlite3.Connection, scope: AgentScope, source: str) -> str:
-    """Why ``source`` can't back a demand note ("" when it can): it must be a page from the research results (as the
-    evidence store checks one) or a document of the owner's library ('library #12')."""
+def _digits(number: str) -> str:
+    """A number as digits only (1,200 and 1.200 are both 1200), "" for one digit or a decimal's cents: 4.99 is 4,
+    not 499."""
+    whole = re.sub(r"[.,]\d{1,2}$", "", number)
+    digits = re.sub(r"\D", "", whole)
+    return "" if len(digits) < 2 else digits
+
+
+def numbers(text: str) -> set[str]:
+    """The numbers of two digits or more in ``text``, as digits only (not a decimal's cents)."""
+    return {digits for digits in (_digits(n) for n in _NUMBER.findall(text)) if digits}
+
+
+def cells(text: str, file_name: str) -> str:
+    """0.14.0: an export's text with its cells apart (a .tsv by tabs; a .csv by the delimiter it uses), so a
+    column's number doesn't run into the next one's."""
+    if not file_name.lower().endswith(EXPORTS):
+        return text
+    delimiter = "\t"
+    if not file_name.lower().endswith(".tsv"):
+        try:
+            delimiter = csv.Sniffer().sniff(text[:4000], delimiters=",;\t|").delimiter
+        except csv.Error:
+            delimiter = ","
+    return "\n".join(" ".join(row) for row in csv.reader(io.StringIO(text), delimiter=delimiter))
+
+
+def cited(said: str, text: str) -> bool:
+    """0.14.0: whether the demand ``said`` cites a number of ``text`` with a demand word near it ("850 searches a
+    month"): "13 tags" in a general guide doesn't show demand, nor a year ("searches in 2026"; "2000 searches"
+    does)."""
+    found = numbers(text)
+    for match in _NUMBER.finditer(said):
+        near = said[max(0, match.start() - 40) : match.end() + 40]
+        if _YEAR.match(match[0]) and not _DEMAND_WORDS.match(said[match.end() :].lstrip()):
+            continue  # a year, unless what it counts comes right after it
+        if _digits(match[0]) in found and _DEMAND_WORDS.search(near):
+            return True
+    return False
+
+
+def source_problem(conn: sqlite3.Connection, scope: AgentScope, source: str, project_id: int, said: str | None) -> str:
+    """Why ``source`` can't back a demand note for the project with the demand ``said`` ("" when it can): it must be
+    an independent page from the research results (as the evidence store grades one), or a document of the owner's
+    library ('library #12') that is linked to the product line or its venture, or is an export the owner uploaded;
+    0.14.0: the demand cites a number found in the document, or gives one from the page."""
     found = _LIBRARY.match(source)
     if found:
-        where, params = scope.where()
-        row = conn.execute(
-            f"SELECT 1 FROM library_documents WHERE id = ? AND {where}", (int(found[1]), *params)
-        ).fetchone()
-        return "" if row else f"there is no document #{found[1]} in your owner's library"
-    if source.startswith(("https://", "http://")) and evidence.grade(conn, scope, source) != "unchecked":
+        number = int(found[1])
+        row = library.get(conn, scope, number)
+        if row is None or row["removed_at"] is not None:
+            return f"there is no document #{number} in your owner's library"
+        project = conn.execute("SELECT venture_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        venture_id = project["venture_id"] if project is not None else None
+        linked = row["project_id"] == project_id or (venture_id is not None and row["venture_id"] == venture_id)
+        if not linked and not str(row["file_name"] or "").lower().endswith(EXPORTS):
+            return (
+                f"library #{number} isn't linked to project #{project_id} or its venture, nor a keyword or market "
+                "export your owner uploaded (.csv or .tsv): it can't show this product line's demand"
+            )
+        if not cited(said or "", cells(library.full_text(conn, number), str(row["file_name"] or ""))):
+            return (
+                f"cite a number from library #{number} in demand, with what it counts (searches, sales, orders): "
+                "none of yours is in it"
+            )
         return ""
+    if source.startswith(("https://", "http://")):
+        graded = evidence.grade(conn, scope, source)
+        if graded == "marketing":
+            return "a vendor's or an affiliate's page doesn't show demand: cite an independent page from your research"
+        if graded == "independent":
+            if not numbers(said or ""):
+                return "give a number from the page in demand (searches, sales, competitors' prices)"
+            return ""
     return (
         "source must be a page from your research results (its address) or a document of your owner's library "
         "('library #12')"

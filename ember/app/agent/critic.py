@@ -66,8 +66,8 @@ def case_text(
         f"The agent's numbers (case #{case_row['id']}): channel {case.channel}, price EUR {case.price_eur:.2f}, cost "
         f"per sale EUR {case.unit_cost_eur:.2f}, fixed costs EUR {case.monthly_costs_eur:.2f} a month, sales a month "
         f"{case.sales[0]} (P10) / {case.sales[1]} (P50) / {case.sales[2]} (P90), cash to start EUR "
-        f"{case.setup_eur:.2f}, the owner's hours {case.owner_hours:g} a month, first sale in {case.first_sale_months} "
-        f"months, API spend USD {case.api_usd:.2f} a month.\nEmber's code's economics of them: {result.text(case)}\n\n"
+        f"{case.setup_eur:.2f}, the owner's hours {case.owner_hours:g} a month, first sale in {case.first_sale_days} "
+        f"days, API spend USD {case.api_usd:.2f} a month.\nEmber's code's economics of them: {result.text(case)}\n\n"
         f"Evidence: {sum(graded.values())} claims ({graded['independent']} independent, {graded['marketing']} "
         f"marketing, {graded['unchecked']} unchecked)"
         + (f"; the newest:\n{listed}" if listed else ".")
@@ -102,7 +102,7 @@ def parse(answer: Any, agents: econ.Case) -> tuple[dict[str, str], econ.Case] | 
         sales=(sales[0], sales[1], sales[2]),
         setup_eur=agents.setup_eur,
         owner_hours=agents.owner_hours,
-        first_sale_months=first,
+        first_sale_days=round(first * econ.DAYS_A_MONTH),  # 0.14.0: its months, in days like the agent's
         api_usd=agents.api_usd,
     )
     return {"verdict": str(answer["verdict"]), **texts}, case
@@ -135,7 +135,7 @@ def add(
             case.unit_cost_eur,
             case.monthly_costs_eur,
             *case.sales,
-            case.first_sale_months,
+            round(case.first_sale_days / econ.DAYS_A_MONTH),
             result.net_eur,
             result.break_even,
             result.ev_eur,

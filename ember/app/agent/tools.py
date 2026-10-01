@@ -360,14 +360,12 @@ SPECS: dict[str, Spec] = {
         Spec(
             "venture_create",
             "Add a venture to your tree: a new way to earn (a market, platform, business model, or a channel that "
-            "brings buyers to what you sell), or a leg you run (stage live), branched from the venture it grew from. "
+            "brings buyers to what you sell), branched from the venture it grew from. "
             f"At most {ventures.MAX_ACTIVE} are worked on at once. Free.",
             {
                 "title": _s("A short name.", 80, cut=True),
                 "pitch": _s("What it is, who pays for what, and why it could work.", 600, cut=True),
-                "stage": _s(
-                    "idea, researching, or live for a way you already earn.", 12, enum=ventures.AGENT_START_STAGES
-                ),
+                "stage": _s("idea or researching.", 12, enum=ventures.AGENT_START_STAGES),
                 "next_question": _s("The first question your research must answer.", 300, required=False, cut=True),
                 "parent_id": _i("The venture it branches from.", required=False),
             },
@@ -408,7 +406,11 @@ SPECS: dict[str, Spec] = {
                 "sales_high": _i("P90.", minimum=0, maximum=MAX_SALES),
                 "setup_eur": _s("Cash to start.", 12),
                 "owner_hours": _s("Your owner's hours.", 6),
-                "first_sale_months": _i("Months to the first sale.", minimum=0, maximum=econ.MAX_FIRST_SALE_MONTHS),
+                "first_sale_days": _i(
+                    f"Days to the first sale (at least {econ.MIN_FIRST_SALE_DAYS}; later than half the runway: slow).",
+                    minimum=econ.MIN_FIRST_SALE_DAYS,
+                    maximum=econ.MAX_FIRST_SALE_DAYS,
+                ),
                 "api_usd": _s("Your API spend on it (USD).", 12),
                 "needs": _s(
                     "If it needs them: cold_outreach (people who didn't ask first), ember_accounts (accounts you'd "
@@ -717,7 +719,7 @@ SPECS: dict[str, Spec] = {
                     60,
                     required=False,
                 ),
-                "venture_id": _i("The venture it is for (default: a venture cycle's focus).", required=False),
+                "venture_id": _i("The venture it researches (default: the focus venture).", required=False),
             },
             per_cycle=3,
         ),
@@ -892,7 +894,7 @@ SPECS: dict[str, Spec] = {
                     required=False,
                 ),
                 "source": _s(
-                    "A page from your research results, or 'library #12'.",
+                    "An independent page from your research results, or 'library #12' (an export, or linked to it).",
                     300,
                     required=False,
                 ),
@@ -1789,17 +1791,6 @@ def project_net(conn: Any, scope: AgentScope, project_id: int) -> tuple[int, int
     return int(earned), int(cost)
 
 
-def _earning(conn: Any, scope: AgentScope) -> bool:
-    """Whether Ember already earns somewhere (0.12.0): an active Etsy listing, or revenue its owner recorded (the
-    live scope counts real money only). What a venture created as live needs."""
-    where, params = scope.where()
-    if conn.execute(f"SELECT 1 FROM etsy_listings WHERE {where} AND status = 'active' LIMIT 1", params).fetchone():
-        return True
-    simulated = "" if scope.simulated else " AND simulated = 0"
-    revenue = conn.execute(f"SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type = 'revenue'{simulated}")
-    return int(revenue.fetchone()[0]) > 0
-
-
 def _open_venture(conn: Any, scope: AgentScope, venture_id: int) -> Any:
     row = ventures.get(conn, scope, venture_id)
     if row is None:
@@ -1872,7 +1863,7 @@ def _venture_case(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
         sales=sales,
         setup_eur=amounts["setup_eur"],
         owner_hours=amounts["owner_hours"],
-        first_sale_months=args["first_sale_months"],
+        first_sale_days=args["first_sale_days"],
         api_usd=amounts["api_usd"],
     )
     needs = [n.strip() for n in (args.get("needs") or "").split(",") if n.strip()]
@@ -1914,11 +1905,6 @@ def _venture_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     parent_id = args.get("parent_id")
     if parent_id is not None and ventures.get(conn, ctx.scope, parent_id) is None:
         raise ToolError(f"there is no venture #{parent_id} to branch from")
-    if stage == "live" and not _earning(conn, ctx.scope):  # 0.12.0: it skipped the owner's backing
-        raise ToolError(
-            "a venture starts live only as a way you already earn (an active Etsy listing, or revenue your owner "
-            "recorded): add it as an idea, or researching"
-        )
     venture_id = ventures.create(
         conn,
         ctx.scope,
@@ -2929,13 +2915,18 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         raise ToolError("the question is empty")
     # 0.12.0: research counts for a venture: the one it names or, in a venture cycle, the focus venture (a venture
     # cycle's research is always a venture's). A question asked again is answered from before, free; a new call for a
-    # venture that isn't backed needs what is left of its research budget.
+    # venture that isn't backed needs what is left of its research budget. 0.14.0: in any other cycle too, research
+    # counts for a focus venture that has a research budget (it escaped the budget, while its cost was the venture's).
     venture_id = args.get("venture_id")
     if venture_id is None and ctx.venture:
         if ctx.state.focus_venture_id is None:
             raise ToolError("name the venture it researches (venture_id): a venture cycle's research is a venture's")
         venture_id = ctx.state.focus_venture_id
     with ctx.db.connection() as conn:
+        if venture_id is None and ctx.state.focus_venture_id is not None:
+            focus = ventures.get(conn, ctx.scope, ctx.state.focus_venture_id)
+            if focus is not None and focus["stage"] in ventures.BUDGETED:
+                venture_id = ctx.state.focus_venture_id
         venture = _open_venture(conn, ctx.scope, venture_id) if venture_id is not None else None
         earlier = _asked_before(conn, ctx, question, url, None if url else site)
         if earlier is not None:
@@ -3410,7 +3401,7 @@ def _demand_note(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     with ctx.db.connection() as conn:
         if store.project(conn, ctx.scope, project_id) is None:
             raise ToolError(f"there is no project #{project_id}")
-        problem = demand.source_problem(conn, ctx.scope, source) if source is not None else ""
+        problem = demand.source_problem(conn, ctx.scope, source, project_id, said) if source is not None else ""
     if problem:
         raise ToolError(problem)
     if ctx.market is None and (said is None or source is None):

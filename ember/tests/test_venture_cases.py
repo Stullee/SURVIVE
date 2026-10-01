@@ -22,20 +22,23 @@ def test_the_numbers_are_worked_out_the_same_way_for_every_venture() -> None:
     # Etsy in Germany: USD 0.20 again at each sale, 6.5%, 4% + EUR 0.30, and 19% VAT on the listing and 6.5% fees
     assert econ.fees("etsy_digital", 3.0, 1.10) == pytest.approx(0.8684, abs=1e-4)
     assert econ.fees("other", 3.0, 1.10) == 0.0
-    case = econ.Case("etsy_digital", 3.0, 0.0, 0.0, (2, 10, 30), 0.0, 2.0, 1, 3.0)
+    case = econ.Case("etsy_digital", 3.0, 0.0, 0.0, (2, 10, 30), 0.0, 2.0, 30, 3.0)
     got = econ.compute(case, 1.10)
     assert (got.fees_eur, got.net_eur) == (0.87, 2.13)
     assert got.break_even == 1.3  # the API spend (USD 3 a month) is its only fixed cost
     assert got.net == (1.54, 18.59, 61.22)
-    # Swanson's rule (30/40/30) over six months, the first earning nothing: 5/6 of the expected month
-    assert got.ev_eur == pytest.approx((0.3 * 1.54 + 0.4 * 18.59 + 0.3 * 61.22) * 5 / 6, abs=0.01)
+    # Swanson's rule (30/40/30) over six months; 0.14.0: the 30 days before the first sale earn nothing and still pay
+    # the fixed costs (the API spend)
+    before = 30 / econ.DAYS_A_MONTH
+    expected = 0.3 * 1.54 + 0.4 * 18.59 + 0.3 * 61.22
+    assert got.ev_eur == pytest.approx(((6 - before) * expected - before * 3 / 1.10) / 6, abs=0.01)
     assert got.ev_per_hour == pytest.approx(got.ev_eur / 2, abs=0.01)
     assert got.ev_per_api_usd == pytest.approx(got.ev_eur * 1.10 / 3, abs=0.01)
-    losing = econ.compute(econ.Case("other", 10.0, 12.0, 5.0, (0, 1, 2), 100.0, 0.0, 3, 0.0))
+    losing = econ.compute(econ.Case("other", 10.0, 12.0, 5.0, (0, 1, 2), 100.0, 0.0, 91, 0.0))
     assert losing.break_even is None and losing.ev_per_hour is None and losing.ev_per_api_usd is None
     assert losing.usd_per_eur == econ.DEFAULT_USD_PER_EUR  # the owner set no rate: the assumption
     assert "no break-even: a sale doesn't cover its own costs" in losing.text(
-        econ.Case("other", 10.0, 12.0, 5.0, (0, 1, 2), 100.0, 0.0, 3, 0.0)
+        econ.Case("other", 10.0, 12.0, 5.0, (0, 1, 2), 100.0, 0.0, 91, 0.0)
     )
 
 

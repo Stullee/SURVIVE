@@ -10,7 +10,8 @@ and Ember's code computes the rest the same way for every venture:
   VAT ID, like a Kleinunternehmer, pays it); on another channel, the agent's cost per sale holds its fees;
 * net per sale and the sales a month that break even (the fixed costs and Ember's API spend on it);
 * the net a month at the low, likely and high sales (the agent's P10, P50 and P90), and the expected net: Swanson's
-  rule (30% low, 40% likely, 30% high), less a share for the months before the first sale over a six-month horizon;
+  rule (30% low, 40% likely, 30% high) over a six-month horizon, whose months before the first sale earn nothing and
+  still pay the fixed costs (0.14.0: they cost nothing, so a slow, losing case showed a profit);
 * the expected net per API dollar and per hour of the owner's time: what ranks ventures (the decision desk).
 
 These are estimates of the agent's estimates: the case shows which numbers they came from.
@@ -28,7 +29,12 @@ PROCESSING_EUR = 0.30  # ...and a fixed part
 FEE_VAT = 0.19  # VAT on Etsy's seller fees (listing, transaction) for a seller without a VAT ID
 DEFAULT_USD_PER_EUR = 1.10  # when the owner set no exchange rate (etsy_usd_per_eur): an assumption, said as one
 HORIZON_MONTHS = 6  # what the expected net is judged over: the months before the first sale earn nothing
-MAX_FIRST_SALE_MONTHS = 24  # a case's months to the first sale (the agent's and the critic's)
+MAX_FIRST_SALE_MONTHS = 24  # the critic's months to the first sale
+DAYS_A_MONTH = 30.4
+# 0.14.0: the agent gives the days to the first sale (whole months couldn't tell 10 days from 25), and fewer than
+# MIN_FIRST_SALE_DAYS count as that many: a new listing needs its first weeks, and 0 was a loophole.
+MIN_FIRST_SALE_DAYS = 14
+MAX_FIRST_SALE_DAYS = 730
 WEIGHTS = (0.3, 0.4, 0.3)  # Swanson's rule for the low, likely and high estimate (P10, P50, P90)
 
 
@@ -43,8 +49,13 @@ class Case:
     sales: tuple[int, int, int]  # a month: low, likely, high (P10, P50, P90)
     setup_eur: float
     owner_hours: float  # the owner's hours a month
-    first_sale_months: int
+    first_sale_days: int  # 0.14.0: days, not months
     api_usd: float  # Ember's API spend on it a month
+
+    @property
+    def presale_months(self) -> float:
+        """The months of the horizon before the first sale (at least MIN_FIRST_SALE_DAYS)."""
+        return min(max(self.first_sale_days, MIN_FIRST_SALE_DAYS) / DAYS_A_MONTH, HORIZON_MONTHS)
 
 
 @dataclass(frozen=True)
@@ -74,8 +85,8 @@ class Economics:
             f"A sale at EUR {case.price_eur:.2f} keeps EUR {self.net_eur:.2f} (fees EUR {self.fees_eur:.2f}, cost EUR "
             f"{case.unit_cost_eur:.2f}); {even}. A month at {low}/{mid}/{high} sales nets EUR {self.net[0]:.0f} / "
             f"{self.net[1]:.0f} / {self.net[2]:.0f}; expected EUR {self.ev_eur:.0f} a month over "
-            f"{HORIZON_MONTHS} months (first sale in {case.first_sale_months}); per API dollar {per_api}, per hour of "
-            f"your owner's {per_hour}."
+            f"{HORIZON_MONTHS} months (first sale in {case.first_sale_days} days); per API dollar {per_api}, per hour "
+            f"of your owner's {per_hour}."
         )
 
 
@@ -98,8 +109,8 @@ def compute(case: Case, usd_per_eur: float | None = None) -> Economics:
     break_even = fixed / net_eur if net_eur > 0 else None
     net = tuple(round(n * net_eur - fixed, 2) for n in case.sales)
     expected = sum(w * n for w, n in zip(WEIGHTS, net, strict=True))
-    earning = max(0, HORIZON_MONTHS - case.first_sale_months) / HORIZON_MONTHS
-    ev = round(expected * earning - case.setup_eur / HORIZON_MONTHS, 2)
+    before = case.presale_months  # 0.14.0: they pay the fixed costs too
+    ev = round(((HORIZON_MONTHS - before) * expected - before * fixed - case.setup_eur) / HORIZON_MONTHS, 2)
     return Economics(
         usd_per_eur=rate,
         fees_eur=round(per_sale_fees, 2),
