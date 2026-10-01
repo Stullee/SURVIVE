@@ -859,7 +859,8 @@ def news_line(row: Mapping[str, Any]) -> str:
     elif action == "back":
         test = _value(row, "test_milestone_id")
         line = f"Your owner backed {name}: it is building now. " + (
-            f"Its first test is milestone #{test} on your roadmap: meet it, then it goes live"
+            f"Its first test is milestone #{test} on your roadmap: it goes live once Ember's code or your owner "
+            "finds it met"
             if test
             else "Plan its first test with them"
         )

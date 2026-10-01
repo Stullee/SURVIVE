@@ -729,7 +729,8 @@ def test_the_owner_adds_ideas_and_decides_and_the_agent_hears_it(data_dir: Path)
     )
     assert (
         'Your owner backed venture #3 "Dropshipping store": it is building now. Its first test is milestone #1 on your'
-        ' roadmap: meet it, then it goes live. Owner\'s comment: "Go, I make the accounts."' in text
+        " roadmap: it goes live once Ember's code or your owner finds it met. Owner's comment: "
+        '"Go, I make the accounts."' in text
     )
     assert 'Your owner wants venture #8 "Services on Fiverr" researched next (it is researching now)' in text
     assert (

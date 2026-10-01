@@ -69,8 +69,10 @@ def test_the_catalogue() -> None:
         "pod_products_live",  # 0.13.0 (Phase E4)
         "pod_orders",
         "qa_clean",
+        "views_total",  # 0.14.0: the agent's goals too
+        "favorites_total",
     }
-    assert set(metrics.CATALOGUE) - set(metrics.NAMES) == {"views_total", "favorites_total", "orders_total"}
+    assert set(metrics.CATALOGUE) - set(metrics.NAMES) == {"orders_total"}
     for m in metrics.CATALOGUE.values():
         assert m.code_only or m.name in metrics.help_text() or m.name.endswith("_delta"), m.name
         assert m.source in metrics.SOURCES and m.kind in ("count", "usd", "yes", "stage")

@@ -21,7 +21,7 @@ import json
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -58,7 +58,7 @@ class Metric:
     ceiling: bool = False  # met while not above the target, at its date; missed once above it
     venture: bool = False  # measures a venture: the milestone must name one
     history: bool = False  # needs the owner's etsy_stats_history (views and favorites kept over time)
-    code_only: bool = False  # 0.13.0: only Ember's code sets milestones with it (a listing test's bars: agent/gates.py)
+    code_only: bool = False  # 0.13.0: only Ember's code sets milestones with it (a listing test's bar: agent/gates.py)
     sample: str = ""  # what a miss is judged against: below min_sample, too little to judge
     min_sample: int = 0
 
@@ -150,11 +150,10 @@ CATALOGUE: dict[str, Metric] = {
         Metric("pod_products_live", "your Printify products in the shop now", "count", "printify", unit="product"),
         Metric("pod_orders", "orders of your Printify products, in all", "count", "printify", unit="order"),
         # 0.13.0: a product line's listing test (agent/gates.py): its listings' views and favorites in all, as the last
-        # sync read them (Etsy's own counts: no history kept); only Ember's code sets milestones with them
-        Metric("views_total", "views your listings have had in all", "count", "etsy", unit="view", code_only=True),
-        Metric(
-            "favorites_total", "favorites your listings have in all", "count", "etsy", unit="favorite", code_only=True
-        ),
+        # sync read them (Etsy's own counts: no history kept). 0.14.0: the agent sets them too (its views goals were
+        # self-reported), refused when met already; orders_total stays Ember's code's (orders_observed is the agent's)
+        Metric("views_total", "views your listings have had in all", "count", "etsy", unit="view"),
+        Metric("favorites_total", "favorites your listings have in all", "count", "etsy", unit="favorite"),
         Metric("orders_total", "Etsy orders of your listings, in all", "count", "etsy", unit="order", code_only=True),
         Metric(
             "qa_clean",
@@ -169,9 +168,9 @@ CATALOGUE: dict[str, Metric] = {
 NAMES = tuple(name for name, m in CATALOGUE.items() if not m.code_only)  # the ones the agent can set
 # The catalogue in the tool's words, as short as it can be: every request of a work step carries it.
 HELP = (
-    "listings_live counts now; the deltas, orders_observed, revenue_verified_usd (recorded revenue less "
-    "expenses), research_calls_ok (found something), inquiries_received and inquiries_answered (people's "
-    "emails; your answers) and api_spend_usd (a ceiling) count from when it is set; "
+    "listings_live, views_total and favorites_total count now; the deltas, orders_observed, revenue_verified_usd "
+    "(recorded revenue less expenses), research_calls_ok (found something), inquiries_received and "
+    "inquiries_answered (people's emails; your answers) and api_spend_usd (a ceiling) count from when it is set; "
     f"case_complete and stage_reached are a venture's; qa_clean: {qa.MIN_PHOTOS}+ photos on each live "
     "listing"
 )
@@ -413,14 +412,15 @@ def _read_etsy(
     return Reading(1 if live and not few else 0, synced, detail, sample=len(live))
 
 
-def orders_of(conn: sqlite3.Connection, scope: AgentScope, ours: set[int], since: str) -> list[int]:
-    """The receipts of the (counted) Etsy orders with one of the listings ``ours``, from ``since`` on ("": all)."""
+def orders_of(conn: sqlite3.Connection, scope: AgentScope, ours: set[int], since: str, until: str = "") -> list[int]:
+    """The receipts of the (counted) Etsy orders with one of the listings ``ours``, from ``since`` on ("": all) and
+    before ``until`` ("": to now)."""
     where, params = scope.where()
     found = []
     for order in conn.execute(
         f"SELECT receipt_id, items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS} AND ordered_at >= ?"
-        " ORDER BY ordered_at",
-        (*params, since),
+        " AND (? = '' OR ordered_at < ?) ORDER BY ordered_at",
+        (*params, since, until, until),
     ):
         items = json.loads(order["items"] or "[]")
         if any(isinstance(i, dict) and i.get("listing_id") in ours for i in items):
@@ -482,8 +482,9 @@ def _evidence(m: Metric, reading: Reading, target: int, books: Books) -> str:
 def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str]:
     """Check every open metric milestone (no model call): record where it stands (``progress``, ``checked_at``, and
     the day's observation), close it done once met and missed once its date has passed without it (a ceiling: missed
-    once passed, done at its date). A killed venture's milestones were dropped with it (agent/stages.py). Returns what
-    happened, for the events."""
+    once passed, done at its date). A killed venture's milestones were dropped with it (agent/stages.py). 0.14.0: past
+    its date, Etsy's numbers read only after it (a sync gap) don't meet it: its last reading by then decides, and
+    without one it is missed (a bar met days late was graded done). Returns what happened, for the events."""
     now = to_iso(books.clock.now())
     today = books.clock.today()
     happened = []
@@ -493,30 +494,47 @@ def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str
         if m is None or isinstance(reading, Unread):
             continue
         target = int(row["target"])
-        conn.execute(
-            "UPDATE milestones SET progress = ?, checked_at = ? WHERE id = ?", (reading.value, reading.at, row["id"])
-        )
-        conn.execute(
-            "INSERT INTO observations (mode, session, day, observed_at, subject, subject_id, metric, value)"
-            " VALUES (?, ?, ?, ?, 'milestone', ?, ?, ?) ON CONFLICT DO NOTHING",
-            (scope.mode, scope.session, today.isoformat(), now, row["id"], m.name, reading.value),
-        )
         past = today.isoformat() > row["due"]
-        if m.ceiling:
-            status = "missed" if reading.value > target else "done" if past else None
+        judged: Reading | None = reading
+        if m.etsy and past and books.clock.local_day(reading.at).isoformat() > row["due"]:
+            # 0.14.0: Etsy read only after its date (a sync gap): its last reading by then decides; a later one can
+            # only show a miss (a bar met days late was graded done). Orders carry their own date: those placed by
+            # the end of its due day count, however late a sync fetched them
+            if m.name in ("orders_observed", "orders_total"):
+                judged = _orders_by_its_date(conn, scope, row, books, reading)
+            else:
+                judged = _by_its_date(row, books) or (reading if reading.value < target else None)
+        if judged is reading:
+            conn.execute(
+                "UPDATE milestones SET progress = ?, checked_at = ? WHERE id = ?",
+                (reading.value, reading.at, row["id"]),
+            )
+            conn.execute(
+                "INSERT INTO observations (mode, session, day, observed_at, subject, subject_id, metric, value)"
+                " VALUES (?, ?, ?, ?, 'milestone', ?, ?, ?) ON CONFLICT DO NOTHING",
+                (scope.mode, scope.session, today.isoformat(), now, row["id"], m.name, reading.value),
+            )
+        if judged is None:
+            status: str | None = "missed"
+        elif m.ceiling:
+            status = "missed" if judged.value > target else "done" if past else None
         else:
-            status = "done" if reading.value >= target else "missed" if past else None
+            status = "done" if judged.value >= target else "missed" if past else None
         if status is None:
             continue
-        evidence = _evidence(m, reading, target, books)
+        evidence = (
+            _evidence(m, judged, target, books)
+            if judged is not None
+            else f"{m.name} was not read by its date, target {target_text(m, target)}"
+        )
         if status == "done":
             result = f"Ember's code checked it: {evidence}."
         elif m.ceiling:
             result = f"Ember's code checked it: {evidence}: over the limit."
         else:
             result = f"Ember's code checked it after its date: {evidence}."
-            if m.sample and reading.sample is not None and reading.sample < m.min_sample:
-                result += f" Too little to judge: {reading.sample:,} {m.sample} in all, fewer than {m.min_sample:,}."
+            if m.sample and judged is not None and judged.sample is not None and judged.sample < m.min_sample:
+                result += f" Too little to judge: {judged.sample:,} {m.sample} in all, fewer than {m.min_sample:,}."
         conn.execute(
             "UPDATE milestones SET status = ?, result = ?, closed_at = ?, closed_by = 'code', updated_at = ?,"
             " proposed_due = NULL, proposed_note = NULL, proposed_at = NULL, proposed_cycle_id = NULL"
@@ -525,6 +543,26 @@ def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str
         )
         happened.append(f"Ember's code closed milestone #{row['id']} {status}: {evidence}")
     return happened
+
+
+def _by_its_date(row: Mapping[str, Any], books: Books) -> Reading | None:
+    """0.14.0: a milestone's last reading on or before its due day, the owner's local day (None: none by then)."""
+    at = row["checked_at"]
+    if row["progress"] is None or not at or books.clock.local_day(str(at)).isoformat() > row["due"]:
+        return None
+    return Reading(int(row["progress"]), str(at), " (its last reading by its date)")
+
+
+def _orders_by_its_date(
+    conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any], books: Books, reading: Reading
+) -> Reading:
+    """0.14.0: the milestone's Etsy orders placed by the end of its due day, the owner's local day."""
+    rows = listings(conn, scope, row["project_id"], row["venture_id"])
+    since = str(row["created_at"]) if row["metric"] == "orders_observed" else ""
+    until = books.clock.day_bounds(date.fromisoformat(str(row["due"])))[1]
+    found = orders_of(conn, scope, {int(r["listing_id"]) for r in rows}, since, until)
+    detail = f" (receipts {_ids(found)}, ordered by its date)" if found else ""
+    return Reading(len(found), reading.at, detail, sample=reading.sample)
 
 
 def grade_all(db: Database, scope: AgentScope, ledger: Any, clock: Clock, history: bool) -> list[str]:

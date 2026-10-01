@@ -696,8 +696,10 @@ class Owner:
                         raise OwnerError(
                             "due", f"the milestone it leads to is due {parent['due']}: choose that or earlier"
                         )
-                if roadmap.count(conn, self.scope, "open") >= roadmap.MAX_OPEN:
-                    raise OwnerError("title", f"{roadmap.MAX_OPEN} milestones are open already", 409)
+                if roadmap.placed(conn, self.scope) >= roadmap.MAX_OPEN:  # 0.14.0: Ember's code's take no place
+                    raise OwnerError(
+                        "title", f"{roadmap.MAX_OPEN} of your and the agent's milestones are open already", 409
+                    )
                 if roadmap.count(conn, self.scope) >= roadmap.MAX_MILESTONES:
                     raise OwnerError("title", "the roadmap holds as many milestones as it can", 409)
                 same = roadmap.open_by_title(conn, self.scope, title)

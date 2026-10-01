@@ -506,7 +506,7 @@ SPECS: dict[str, Spec] = {
             "leading to them and this week's steps, each due no later than its parent. With a metric, Ember's code "
             "checks it and closes it (done once met, missed after its date); without, your done is self-reported. "
             f"Title, measure, metric and costs are final; a date can move. At most "
-            f"{roadmap.MAX_OPEN - roadmap.OWNER_SLOTS} open. Free.",
+            f"{roadmap.MAX_OPEN - roadmap.OWNER_SLOTS} open (Ember's code's aside). Free.",
             {
                 "milestones": _a(
                     "Parents first.",
@@ -1968,8 +1968,8 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         if stage == "live" and not _tested(conn, ctx.scope, row):  # 0.12.0: the stage's rule, kept by the database too
             test = f"milestone #{row['test_milestone_id']}" if row["test_milestone_id"] else "a milestone"
             raise ToolError(
-                f"venture #{vid} goes live once its first test ({test} on your roadmap) is met: close that done with "
-                "the evidence first"
+                f"venture #{vid} goes live once its first test ({test} on your roadmap) is met, as Ember's code checks "
+                "it or your owner confirms it"
             )
         if current in ("building", "live") and stage != "parked" and stage != "live":
             raise ToolError(f"venture #{vid} is {current}: your owner backed it; park it with a note if it should stop")
@@ -2028,10 +2028,12 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
 
 
 def _tested(conn: Any, scope: AgentScope, row: Any) -> bool:
-    """Whether a backed venture's first test is met (0.12.0), or the owner dropped it."""
+    """Whether a backed venture's first test is met (0.12.0), or the owner dropped it. 0.14.0: met as Ember's code or
+    the owner closed it, never on the agent's word alone."""
     test = roadmap.get(conn, scope, row["test_milestone_id"]) if row["test_milestone_id"] else None
     return test is not None and (
-        test["status"] == "done" or (test["status"] == "dropped" and test["closed_by"] == "owner")
+        (test["status"] == "done" and test["closed_by"] in ("code", "owner"))
+        or (test["status"] == "dropped" and test["closed_by"] == "owner")
     )
 
 
@@ -2279,6 +2281,17 @@ def _milestone_plan(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     return Outcome(True, "\n".join(line for _, line in made), summary[:300])
 
 
+# 0.14.0: a number of views or favorites of the shop's listings in a milestone's words, which Ember's code counts on
+# Etsy (not a pin's, a post's or the website's)
+_COUNTED = re.compile(r"\b\d[\d.,]*\s+(views?|favou?rites?)\b", re.IGNORECASE)
+_SHOP = re.compile(r"\b(?:listings?|etsy|shop)\b", re.IGNORECASE)
+_ELSEWHERE = re.compile(
+    r"\b(?:pins?|pinterest|website|site|blog|posts?|reddit|instagram|tiktok|youtube|videos?)\b", re.IGNORECASE
+)
+_LIVE = re.compile(r"\b(?:live|listed)\b", re.IGNORECASE)  # 0.14.0: "X live" goals, self-graded: a hint, not a refusal
+_SOLD = re.compile(r"\b\d+\s+(?:orders?|sales?)\b", re.IGNORECASE)  # 0.14.0: "3 sales" goals: a hint as well
+
+
 def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tuple[int, str]:
     """One milestone of a plan (``args``: its fields, its parent's number as parent_id): its number, and the line
     that says what happened."""
@@ -2290,13 +2303,21 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
         raise ToolError("target is a metric's: set metric too")
     if not measure and not args.get("metric"):
         raise ToolError("say how you will know it is reached: a measure, or a metric Ember's code checks")
+    words = f"{title} {measure}"
+    counted = _COUNTED.search(words) if not args.get("metric") and ctx.etsy is not None else None
+    if counted is not None and _SHOP.search(words) and not _ELSEWHERE.search(words):  # 0.14.0: code has the number
+        name = "views_total" if counted[1].lower().startswith("view") else "favorites_total"
+        raise ToolError(
+            f"Ember's code counts your listings' {name.split('_')[0]} in all on Etsy: set metric {name} and target "
+            "(with project_id or venture_id for theirs only), and it checks it for you"
+        )
     today = ctx.clock.today()
     due = _due_date(args["due"], today)
     places = roadmap.MAX_OPEN - roadmap.OWNER_SLOTS  # 0.12.0: the last places are your owner's
-    if roadmap.count(conn, ctx.scope, "open") >= places:
+    if roadmap.placed(conn, ctx.scope) >= places:  # 0.14.0: Ember's code's milestones take none
         raise ToolError(
-            f"{places} milestones are open already, and the other {roadmap.OWNER_SLOTS} of the {roadmap.MAX_OPEN} "
-            "places are kept for your owner: close or drop one first"
+            f"{places} of your and your owner's milestones are open already, and the other {roadmap.OWNER_SLOTS} of "
+            f"the {roadmap.MAX_OPEN} places are kept for your owner: close or drop one first"
         )
     if roadmap.count(conn, ctx.scope) >= roadmap.MAX_MILESTONES:
         raise ToolError(f"your roadmap holds {roadmap.MAX_MILESTONES:,} milestones, as many as it can")
@@ -2356,6 +2377,15 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
         if checked
         else "When its measure is met, close it with milestone_update (done, with the evidence)."
     )
+    if checked is None and ctx.etsy is not None and _LIVE.search(words) and not _ELSEWHERE.search(words):
+        close += (
+            " If it means listings live on Etsy, metric listings_live (with project_id) lets Ember's code check it."
+        )
+    if checked is None and ctx.etsy is not None and _SOLD.search(words) and not _ELSEWHERE.search(words):
+        close += (
+            " If it means orders in the Etsy shop, metric orders_observed (with project_id or venture_id) lets "
+            "Ember's code count them."
+        )
     instead = ""
     if replaces is not None:
         moves = roadmap.replaced_moves(replaces)
@@ -2465,6 +2495,11 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
             f"{metrics.status_text(row)}. Ember's code closes milestone #{mid} done once its metric is met: work "
             "toward it; if it is out of reach, move its date (why) or drop it (why)"
         )
+    if status == "done" and row["kind"] == "first_test":  # 0.14.0: a venture goes live on it
+        raise ToolError(
+            f"milestone #{mid} is a first test, met as Ember's code checks it or your owner confirms it: tell your "
+            "owner what shows it is met (message_owner), and your owner confirms it on the Roadmap tab"
+        )
     if row["created_by"] == "code":  # 0.12.0: the money goal and its decision points
         if args.get("due") and args["due"] != row["due"]:
             raise ToolError(f"Ember's code set the date of milestone #{mid}: it doesn't move")
@@ -2527,6 +2562,12 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     for name, check in (("venture_id", _open_venture), ("project_id", _open_project)):
         value = args.get(name)
         if value is not None and value != row[name]:
+            if row["created_by"] == "code" or row["metric"]:  # 0.14.0: links decide what Ember's code counts
+                who = "set" if row["created_by"] == "code" else "checks"
+                raise ToolError(
+                    f"Ember's code {who} milestone #{mid}: what Ember's code counts for it is fixed, so it stays "
+                    "linked as it is"
+                )
             check(conn, ctx.scope, value)
             changes[name] = value
     if status:
@@ -2586,6 +2627,9 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         dropped = roadmap.drop_steps(conn, mid, ctx.now(), f"Dropped with #{mid}: {result}", "agent", ctx.cycle_id)
         if dropped:
             after = f" Dropped with it, as they led to it: {_numbers(dropped)}."
+        called = predictions.of_milestones(conn, [mid]).get(mid)
+        if called is not None and called["status"] == "open":
+            after += f" Your odds on it ({float(called['probability']):.0%}) count as a miss."  # 0.14.0
     elif status:
         what = status
         waiting = [k["id"] for k in roadmap.children(conn, mid) if k["status"] == "open"]

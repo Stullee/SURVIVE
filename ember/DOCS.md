@@ -593,7 +593,9 @@ euros. The tab's badge counts the ones waiting. On each card:
   roadmap (**First test: …**, set by Ember's code, due in 21 days, with the
   business case's first test as its measure), and it asks you for what only you
   can do (accounts, money, setup), one step at a time. The venture goes live
-  only once that first test is met (or you drop it on the Roadmap tab).
+  only once that first test is met as Ember's code checks it, or you drop it
+  on the Roadmap tab: the agent's own word doesn't count (for a first test
+  without a metric, it tells you, and your drop confirms it).
 - **Research next** (or **Research more**, **Research again**): it goes first
   in the next venture cycle.
 - **Park**, **Kill** or **Note**, each with an optional comment (a note needs
@@ -617,7 +619,9 @@ from the upgrade, so none is parked at once. A venture parked this way says **Pa
 the reason in its notes; like one you parked, only you take it up again. Only
 you back or kill a venture: the database refuses it from anyone else. A venture
 that is parked or killed takes its open milestones with it (when the agent or
-Ember's code parked it, yours stay yours to drop). Each card shows its stage's
+Ember's code parked it, yours stay yours to drop). When you or Ember's code
+park or kill it, the open bars of its product lines' listing tests go too, which
+ends those tests; the agent's own park leaves them open. Each card shows its stage's
 rule, and so does the agent's plan.
 
 **Add idea** puts your own idea into the tree, optionally as a branch of an
@@ -667,7 +671,8 @@ next, which asks for more (twice, then three times what the agent spends); past
 its date it closes it **missed** and sets it again. The agent can't move, drop
 or close the goal, nor move a decision point; it closes a decision point with
 its decision. You can drop the goal: then Ember's code sets no more, and the
-roadmap's goals are yours and the agent's.
+roadmap's goals are yours and the agent's (the first tests that led to it go
+on, leading to no goal).
 
 **Milestones Ember's code checks.** A milestone can name a **metric** and a
 target, and then Ember's code checks it from its records, with no model call:
@@ -675,7 +680,11 @@ after each Etsy sync and before every plan. It closes the milestone **done**
 once the target is met, with the numbers as its evidence, and **missed** once
 its date has passed without it, with the numbers too (and, for orders and
 favorites, whether the listings had too few views to judge). The agent can't
-close such a milestone done; the database refuses it as well. The metrics:
+close such a milestone done; the database refuses it as well. Past its date,
+Etsy's numbers read only after that day (a gap in the syncs) don't meet it: its
+last reading by its date decides, and without one it is missed. Orders carry
+their own date: those placed by its date count, however late they were read.
+The metrics:
 
 | Metric | What it counts | From |
 |---|---|---|
@@ -688,10 +697,11 @@ close such a milestone done; the database refuses it as well. The metrics:
 | `stage_reached` | the venture reached a stage (researching, proposed, building, live) | Ember |
 | `api_spend_usd` | API spending since it was set: a ceiling, missed once passed, done at its date | Ember |
 | `qa_clean` | every live listing has at least 5 photos | Etsy and Ember |
-| `views_total`, `favorites_total`, `orders_total` | the listings' views, favorites or orders in all, as Etsy counts them now (only Ember's code sets milestones with them: the listing test below) | Etsy |
+| `views_total`, `favorites_total`, `orders_total` | the listings' views, favorites or orders in all, as Etsy counts them now (only Ember's code sets milestones with `orders_total`: the listing test below; a milestone of the agent's that names a number of its listings' views or favorites must use the first two) | Etsy |
 
 A milestone linked to a project or venture counts only what belongs to it (a
-listing belongs to the project of the request that created it). Etsy's numbers
+listing belongs to the project of the request that created it), and the links
+of a milestone Ember's code set or checks never change. Etsy's numbers
 count only from a sync after the milestone was set and at most 3 hours old; a
 milestone for a killed venture's stage or case is closed missed. Its card on
 the Roadmap tab shows where it stands (**Checked by Ember's code**), and the
@@ -701,8 +711,9 @@ without a metric is allowed; the agent's done on it stays self-reported.
 **A product line's listing test.** Once a product line (a project) has its
 first listing live on Etsy, Ember's code tests it, counted from that day: one
 bar at a time (the next once the one before is closed, so a product line holds
-at most two open milestones), each a milestone it checks from Etsy's own numbers
-(no views history is needed):
+one open milestone: day 14's 30 views, then its 2 favorites), each a milestone
+it checks from Etsy's own numbers (no views history is needed). These take none
+of the roadmap's 20 places:
 
 | Day | Bar | If missed, the agent owes |
 |---|---|---|
@@ -713,9 +724,12 @@ at most two open milestones), each a milestone it checks from Etsy's own numbers
 A miss is an obligation with that action, shown first in the agent's plan
 until it is done. A first order by day 21 sets a decision point of its own:
 **Scale it: 5 variants or a bundle**, which the agent closes when they are
-live. The test's dates never move and only you drop its milestones; a project
-that is closed takes its open ones with it. Existing product lines get theirs
-from the day this version first sees their listings live.
+live. The test's dates never move, except that a bar opening on or after its
+day is due the day after it opens. Only you drop its milestones: your drop
+ends that product line's test, and so does your or Ember's code's park of its
+venture. A project that
+is closed takes its open ones with it. Existing product lines get theirs from
+the day this version first sees their listings live.
 
 **Forecasts Ember's code settles.** The agent can give a metric milestone its
 odds of being met by its date (0.13.0: 5 to 95%). When you back a venture, its
@@ -724,10 +738,11 @@ both from its records before every plan, with no model call:
 
 - a milestone call **came true** if the milestone was met by its first date (a
   date moved later doesn't move the call). It **didn't** once that date has
-  passed or the milestone was missed. It is **void** if the milestone was
-  dropped first;
+  passed or the milestone was missed. It is **void** if you or Ember's code
+  dropped the milestone first; the agent's own drop settles it as a miss;
 - a first sale came true once an Etsy order of the venture's listings, or
-  revenue recorded for it, falls within its time.
+  revenue recorded for it, falls within its time (a sale recorded up to 7 days
+  after that still counts, if it happened in time).
 
 A call never changes, and a settled one is final. The record in a few words
 (how often the milestones given odds were met against the odds given, with the
@@ -782,8 +797,9 @@ wants a new date for it, it proposes one with the reason, and the card shows
 **Accept new date** and **Keep the date**; until you accept, the date stands.
 **Note** leaves a comment on any milestone, and **Drop** takes an open one (and
 the open milestones leading to it) off the plan. Of the 20 open places on the
-roadmap, the agent fills 16 at most: the last 4 are kept for yours. The agent
-reads your word on its next wake.
+roadmap, the agent fills 16 at most: the last 4 are kept for yours. The
+milestones Ember's code sets (the money goal, decision points, first tests and
+listing bars) take none of them. The agent reads your word on its next wake.
 
 ## Library
 

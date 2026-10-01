@@ -5,10 +5,11 @@ or the critic whether they could be trusted. Now Ember's code keeps two kinds of
 
 * milestone: a metric milestone the agent gives a likelihood (milestone_plan's ``likely``, LIKELY percent): hit once
   the milestone is met by its first date (a date moved later doesn't move the prediction), miss once that date has
-  passed without it or it was missed, void when it was dropped first;
+  passed without it or it was missed, void when the owner or Ember's code dropped it first (0.14.0: the agent's own
+  drop is a miss: dropping a losing call voided it);
 * first_sale: when the owner backs a venture, its newest business case's months to the first sale, as a 50% call
   (the case's middle estimate): hit once an Etsy order of its listings or revenue for it is recorded by then, miss
-  after.
+  after (0.14.0: FIRST_SALE_GRACE_DAYS after, so that a sale made in time but recorded late still counts).
 
 ``settle`` runs before every plan, after the metrics are read, with no model call. ``calibration`` is their record in
 a few words: how often the milestones given odds were met against the odds given (with the Brier score), and how many
@@ -33,6 +34,7 @@ from .store import AgentScope
 LIKELY = (5, 95)  # the odds a milestone takes, in percent
 FIRST_SALE_ODDS = 0.5  # a business case's months to the first sale: its middle estimate
 FIRST_SALE_MIN_DAYS = 14  # even "this month" gets two weeks
+FIRST_SALE_GRACE_DAYS = 7  # 0.14.0: a sale by its date, recorded this much later, still counts
 DAYS_A_MONTH = 30
 MIN_SETTLED = 5  # settled milestone predictions before the calibration says which way the odds lean
 LEAN = 0.10  # a gap this big between the odds given and the share met is a lean
@@ -83,7 +85,9 @@ def add_first_sale(
 
 
 def _milestone(conn: sqlite3.Connection, p: Mapping[str, Any], clock: Clock, today: date) -> tuple[str, str] | None:
-    m = conn.execute("SELECT id, status, closed_at FROM milestones WHERE id = ?", (p["milestone_id"],)).fetchone()
+    m = conn.execute(
+        "SELECT id, status, closed_at, closed_by FROM milestones WHERE id = ?", (p["milestone_id"],)
+    ).fetchone()
     due = date.fromisoformat(str(p["due"]))
     if m is None:
         return "void", "its milestone is gone"
@@ -93,6 +97,8 @@ def _milestone(conn: sqlite3.Connection, p: Mapping[str, Any], clock: Clock, tod
             return "hit", f"milestone #{m['id']} was met on {closed.isoformat()}"
         return "miss", f"milestone #{m['id']} was met only on {closed.isoformat()}, after {due.isoformat()}"
     if m["status"] == "dropped" and closed is not None and closed <= due:
+        if m["closed_by"] == "agent":  # 0.14.0: dropping a losing call no longer voids it
+            return "miss", f"milestone #{m['id']} was dropped by you on {closed.isoformat()}, before its date"
         return "void", f"milestone #{m['id']} was dropped on {closed.isoformat()}, before its date"
     if m["status"] == "missed" or today > due:
         return "miss", f"milestone #{m['id']} wasn't met by {due.isoformat()} (it is {m['status']})"
@@ -142,11 +148,12 @@ def settle(conn: sqlite3.Connection, scope: AgentScope, books: metrics.Books) ->
             outcome = _milestone(conn, p, books.clock, today)
         else:
             sold = _sold(conn, scope, books, int(p["venture_id"]), str(p["created_at"]), str(p["due"]))
+            late = (date.fromisoformat(str(p["due"])) + timedelta(days=FIRST_SALE_GRACE_DAYS)).isoformat()
             outcome = (
                 ("hit", sold)
                 if sold
                 else ("miss", f"no sale recorded for it by {p['due']}")
-                if today.isoformat() > str(p["due"])
+                if today.isoformat() > late
                 else None
             )
         if outcome is None:

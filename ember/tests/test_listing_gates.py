@@ -1,8 +1,8 @@
 """0.13.0: a product line's listing test, the bars of the analysis' section 8 as milestones Ember's code sets and
 checks: 10 views by day 7, 30 views and 2 favorites by day 14, a first order by day 21, counted from the day its first
-listing is live, one bar at a time. Etsy's own numbers grade them (no views history kept); a miss is owed with its
-bar's action, a first order sets a milestone to scale the product line, and a closed project takes its open bars with
-it."""
+listing is live, one bar at a time (0.14.0: day 14's views, then its favorites). Etsy's own numbers grade them (no
+views history kept); a miss is owed with its bar's action, a first order sets a milestone to scale the product line,
+and a closed project takes its open bars with it."""
 
 from __future__ import annotations
 
@@ -68,15 +68,14 @@ def test_a_product_line_s_test_begins_with_its_first_live_listing_one_bar_at_a_t
     agent.clock.advance(days=2)
     close(agent, "day7_views", "done")
     keep(agent)
-    second = bars(agent)
-    assert set(second) == {"day7_views", "day14_views", "day14_favorites"}
     for key, metric, target in (("day14_views", "views_total", 30), ("day14_favorites", "favorites_total", 2)):
-        assert (second[key]["metric"], second[key]["target"]) == (metric, target)
-        assert second[key]["due"] == (today + timedelta(days=14)).isoformat()  # from the start, not from now
-    close(agent, "day14_views", "done")
-    assert keep(agent) == []  # the favorites are still being checked
-    close(agent, "day14_favorites", "done")
-    keep(agent)
+        found = bars(agent)
+        assert [k for k, r in found.items() if r["status"] == "open"] == [key]  # 0.14.0: views first, then favorites
+        assert (found[key]["metric"], found[key]["target"]) == (metric, target)
+        assert found[key]["due"] == (today + timedelta(days=14)).isoformat()  # from the start, not from now
+        assert keep(agent) == []  # this bar is being checked
+        close(agent, key, "done")
+        keep(agent)
     last = bars(agent)["day21_sale"]
     assert (last["metric"], last["target"], last["due"]) == (
         "orders_total",
@@ -95,11 +94,11 @@ def test_the_bars_are_graded_from_etsy_s_numbers_without_a_history(data_dir: Pat
     agent.sync_shop()
     assert bars(agent)["day7_views"]["status"] == "done"
     assert bars(agent)["day7_views"]["result"].startswith("Ember's code checked it: views_total ")
-    keep(agent)  # the next bar, checked at the next sync
-    agent.clock.advance(minutes=61)
-    agent.sync_shop()
-    found = bars(agent)
-    assert (found["day14_views"]["status"], found["day14_favorites"]["status"]) == ("done", "done")
+    for key in ("day14_views", "day14_favorites"):  # 0.14.0: one bar at a time
+        keep(agent)  # the next bar, checked at the next sync
+        agent.clock.advance(minutes=61)
+        agent.sync_shop()
+        assert bars(agent)[key]["status"] == "done"
     keep(agent)
     assert bars(agent)["day21_sale"]["status"] == "open"
     assert rows(agent, "SELECT COUNT(*) AS n FROM obligations")[0]["n"] == 0  # nothing owed for bars met
@@ -113,10 +112,10 @@ def test_a_miss_is_owed_with_its_bar_s_action(data_dir: Path) -> None:
     [owed] = rows(agent, "SELECT kind, what, milestone_id FROM obligations")
     assert owed["kind"] == "miss" and owed["milestone_id"] == bars(agent)["day7_views"]["id"]
     assert "fix the titles, tags and category of its listings once (propose_etsy_edit)" in owed["what"]
-    assert set(bars(agent)) == {"day7_views", "day14_views", "day14_favorites"}  # a miss doesn't end the test
+    assert set(bars(agent)) == {"day7_views", "day14_views"}  # a miss doesn't end the test
     close(agent, "day14_views", "missed")
-    close(agent, "day14_favorites", "missed")
     keep(agent)
+    assert "day14_favorites" not in bars(agent)  # 0.14.0: day 14's bar is missed already
     owed_now = rows(agent, "SELECT what FROM obligations ORDER BY id")
     assert len(owed_now) == 2 and "park the product line (its project) with the numbers" in owed_now[1]["what"]
     assert keep(agent) == []  # owed once
@@ -155,14 +154,15 @@ def test_a_closed_project_takes_its_open_bars_with_it(data_dir: Path) -> None:
     keep(agent)
     with agent.db.transaction() as conn:
         conn.execute("UPDATE projects SET status = 'abandoned' WHERE id = ?", (project,))
-    assert len(keep(agent)) == 2
+    assert len(keep(agent)) == 1  # 0.14.0: one bar open at a time
     statuses = {key: row["status"] for key, row in bars(agent).items()}
-    assert statuses == {"day7_views": "done", "day14_views": "dropped", "day14_favorites": "dropped"}
+    assert statuses == {"day7_views": "done", "day14_views": "dropped"}
     assert keep(agent) == []
 
 
-def test_only_ember_s_code_sets_the_listing_bars() -> None:
+def test_only_ember_s_code_sets_the_order_bar() -> None:
     plan = next(d for d in tools.definitions(etsy=True) if d["name"] == "milestone_plan")
     offered = plan["input_schema"]["properties"]["milestones"]["items"]["properties"]["metric"]["enum"]
-    assert not {"views_total", "favorites_total", "orders_total"} & set(offered) and "views_delta" in offered
-    assert metrics.CATALOGUE["views_total"].code_only and not metrics.CATALOGUE["views_total"].history
+    assert "orders_total" not in offered and "views_delta" in offered
+    assert {"views_total", "favorites_total"} <= set(offered)  # 0.14.0: the agent's goals use them too
+    assert metrics.CATALOGUE["orders_total"].code_only and not metrics.CATALOGUE["views_total"].history
