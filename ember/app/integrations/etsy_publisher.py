@@ -683,6 +683,11 @@ class Publisher:
                         f"SELECT receipt_id FROM etsy_orders WHERE {where} AND fees_cents IS NOT NULL", params
                     )
                 }
+                unread = conn.execute(  # 0.14.0: a paid order whose fees are still to be read
+                    f"SELECT MIN(ordered_at) FROM etsy_orders WHERE {where} AND fees_cents IS NULL"
+                    f" AND COALESCE(status, 'paid') IN ({', '.join(repr(s) for s in sorted(etsy.PAID_ORDERS))})",
+                    params,
+                ).fetchone()[0]
                 live = [  # 0.14.0: the ones Ember counts as live, to be looked up when the batch leaves one out
                     int(r[0])
                     for r in conn.execute(
@@ -693,10 +698,14 @@ class Publisher:
                     )
                 ]
             # 0.14.0: back to the last sync that worked, not only 30 days: a longer gap lost its orders.
+            # And back to the oldest paid order whose fees aren't read yet: a catch-up stores more than FEE_READS.
             since = now - timedelta(days=ORDER_DAYS)
             last = self.db.get_meta(meta_key(scope.mode, "last_sync_at"))
             if last:
-                since = max(min(since, from_iso(last) - timedelta(days=1)), now - timedelta(days=CATCH_UP_DAYS))
+                since = min(since, from_iso(last) - timedelta(days=1))
+            if unread:
+                since = min(since, from_iso(unread) - timedelta(days=1))
+            since = max(since, now - timedelta(days=CATCH_UP_DAYS))
             try:
                 with _guard(shop):
                     remote = shop.listings(ids) if ids else []
@@ -1381,16 +1390,21 @@ LISTING_TABLES = ("etsy_listings", "printify_products")
 def _renewed(conn: sqlite3.Connection, scope: AgentScope, table: str, item: etsy.RemoteListing, now: str) -> None:
     """0.14.0: a renewal Etsy made (a listing that renews itself, at its end; or the owner's, at Etsy), seen as its end
     moving on from one that had passed: a listing fee for each four months (a renewal Ember made is noted with it). A
-    listing Printify made is first seen live here: the fee for publishing it (Ember's own are noted in ``_after``)."""
+    listing Printify made is first seen live here: the fee for publishing it (Ember's own are noted in ``_after``). So
+    is a draft of Ember's the owner published at Etsy (the ledger's key books its fee once)."""
     where, params = scope.where()
     row = conn.execute(
-        f"SELECT ends_at, synced_at FROM {table} WHERE {where} AND listing_id = ? AND status = 'active'",
+        f"SELECT ends_at, synced_at, state, status FROM {table} WHERE {where} AND listing_id = ?"
+        " AND status IN ('active', 'draft')",
         (*params, item.listing_id),
     ).fetchone()
     if row is None:
         return
     if table == "printify_products" and row["synced_at"] is None and item.state == etsy.LIVE_STATE:
         listing_fee_due(conn, scope.mode, scope.session, item.listing_id, "listed", now, "Printify published it")
+        return
+    if row["status"] == "draft" and row["state"] != etsy.LIVE_STATE and item.state == etsy.LIVE_STATE:
+        listing_fee_due(conn, scope.mode, scope.session, item.listing_id, "listed", now, "the owner published it")
         return
     if not row["ends_at"] or not item.ends_at or not row["ends_at"] <= now < item.ends_at:
         return

@@ -1158,8 +1158,9 @@ that hold them: date, status, Ember's lines and which listing, never who bought.
 An order's amount is only Ember's lines: their price times quantity, less their
 share of a coupon and of any refund; tax, shipping and your own products in the
 same receipt don't count, and Etsy's fees are recorded on their own (below). Every sync
-reads the receipts that changed since the last sync that worked (at least 30
-days back, at most a year), so an order refunded or cancelled after it was read
+reads the receipts that changed since the last sync that worked, or since the
+oldest paid order whose fees it hasn't read yet (at least 30 days back, at most
+a year), so an order refunded or cancelled after it was read
 is updated, and it stops counting. A listing Etsy's answer leaves out is read on
 its own; one Etsy says there is none of counts as removed, and one that can't be
 read counts as expired once its end passed and it doesn't renew itself, else as
@@ -1181,7 +1182,7 @@ transaction fee on what its lines earned, the listing fee each unit sold renews
 (USD 0.20) and 19% VAT on those two, as the venture cases count them. Check it
 against your Etsy payment account (Offsite Ads, a VAT ID) and change the amount
 before you save. Etsy's listing fees for Ember's listings, its own and the ones Printify
-made of its products (USD 0.20 when one goes live, when Ember renews one, and at
+made of its products (USD 0.20 when one goes live, also a draft you publish, when Ember renews one, and at
 each renewal Etsy makes), are Ember's
 own spending: Ember's code records them in the ledger at the next sync,
 whatever the option below, so don't record them yourself.

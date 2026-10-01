@@ -39,6 +39,7 @@ from tests.economy_helpers import make_economy  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import a_change, call, listed, live_shop, shop_context  # noqa: E402
+from tests.test_etsy import proposed as etsy_proposed  # noqa: E402
 from tests.test_etsy_revenue import LINE, LISTING, order, shop_with, turned_on  # noqa: E402
 from tests.test_life import spend  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
@@ -142,6 +143,27 @@ def test_the_listing_fees_of_printifys_listings_are_booked_too(data_dir: Path) -
     assert agent.publisher.sync(force=True) is None and agent.publisher.sync(force=True) is None
     fees = [f["note"] for f in listing_fees(agent) if f["source"] == f"Etsy listing {pod}"]
     assert fees[1:] == [f"Etsy's listing fee for listing {pod}: Etsy renewed it until {ends[0][:10]}"]
+
+
+def test_the_owner_publishing_a_draft_of_embers_books_its_listing_fee(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent, _, request = etsy_proposed(data_dir)
+
+    def refuse(self: Any, listing_id: int, name: str, data: bytes, rank: int) -> None:
+        raise etsy.NotSent("HTTP 400: file too large")
+
+    monkeypatch.setattr(etsy.FakeShop, "upload_file", refuse)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    assert agent.execute_approved() == [(request, "draft")]
+    assert agent.publisher.sync(force=True) is None and listing_fees(agent) == []
+    shop = agent.etsy.shop()  # the owner adds the file and publishes it at Etsy
+    item = shop.state["listings"]["900000001"]
+    item["state"], item["live_since"] = "active", to_iso(agent.clock.now())
+    assert agent.publisher.sync(force=True) is None and agent.publisher.sync(force=True) is None
+    assert [f["note"] for f in listing_fees(agent)] == [  # 0.14.0 at first: never booked
+        "Etsy's listing fee for listing 900000001: the owner published it"
+    ]
 
 
 def test_a_listing_fee_the_ledger_refuses_waits_for_the_next_sync(data_dir: Path) -> None:
@@ -448,6 +470,27 @@ def test_orders_are_read_back_to_the_last_sync_that_worked(data_dir: Path) -> No
     agent.clock.advance(days=500)
     assert agent.publisher.sync(force=True) is None
     assert asked[-1] == agent.clock.now() - timedelta(days=etsy_publisher.CATCH_UP_DAYS)  # at most a year
+
+
+def test_a_catch_up_reads_the_fees_of_every_order_it_stores(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    assert agent.publisher.sync(force=True) is None
+    worked = agent.clock.now()
+    agent.clock.advance(days=40)
+    placed = [
+        etsy.Order(500 + n, to_iso(worked + timedelta(days=2)), 450, "EUR", [LINE], items_cents=450) for n in range(15)
+    ]
+    shop = agent.etsy.shop()
+    shop.orders = lambda since: [o for o in placed if since <= from_iso(o.ordered_at)]  # type: ignore[method-assign]
+    shop.payment_fees = lambda receipt_id: 48  # type: ignore[method-assign]
+    for _ in range(3):
+        assert agent.publisher.sync(force=True) is None
+    fees = rows(agent, "SELECT receipt_id, fees_cents FROM etsy_orders ORDER BY receipt_id")
+    assert len(fees) == 15 and all(f["fees_cents"] for f in fees)  # 0.14.0 at first: five kept no fees for good
+    asked: list[Any] = []
+    shop.orders = lambda since: asked.append(since) or []  # type: ignore[method-assign]
+    assert agent.publisher.sync(force=True) is None
+    assert asked == [agent.clock.now() - timedelta(days=etsy_publisher.ORDER_DAYS)]  # all read: 30 days again
 
 
 def test_a_catch_up_reads_every_page_of_orders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
