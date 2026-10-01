@@ -3,6 +3,79 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.14.0
+
+Fixes: workshop costs held honestly, a reflection in every cycle, free tools for the workshop's old jobs, and unlocks,
+gates and milestones checked against what a request or a number really is.
+
+- workshop: a run needs room in the day for its cap per run, or 1.5 times what recent runs cost if that is more. It is
+  priced as up to 10 rounds of 3,000 tokens: keep scripts short, never print whole files, look at pictures only as
+  small copies. A run is ok only if a file besides its script came back: save each file by its name at the top of
+  $OUTPUT_DIR. An output folder may be at most 3 levels deep.
+- A call that costs more than its estimate ends the cycle only if it counts toward the cycle cap and went more than
+  10% or $0.02 over; otherwise calls of its kind are refused for the rest of the cycle and the plan goes on.
+- In maintenance every call counts toward the cycle's $0.40 (review, study, critic and consolidation too) and there is
+  no workshop. Until 20:00 every call of a scheduled cycle leaves the event reserve. Critic and consolidation count
+  toward the daily cap only. STATUS gives the cap in force, why it is lower, and when the burn mode moves down next.
+- Outside explore, brainstorm is not offered; in focus, record new ideas only when your owner brings them.
+- write_journal is for the reflection only: every cycle that worked reflects, also after an overrun. A paused research
+  call continues only if it leaves the money kept for the reflection; otherwise its answer may be partial.
+- A stopped or killed cycle's digest says where its work stopped. YOUR LAST CYCLE shows your last written handoff when
+  later cycles left none. Your owner's comments stay in your news until a cycle that saw them ends normally.
+- Plan sections share their room. TODAY'S REVIEW shows its focus, lesson and advice first; a venture's FOCUS shows its
+  knock-outs and the critic's verdict after your owner's word; a missed bar's obligation starts with its action.
+- WAITING FOR YOUR OWNER lists every pending request and your upgrade requests not built in yet. Release notes come in
+  2 KB parts, one per plan, until you have read them all.
+- A call whose texts together exceed 3,000 characters is refused with their lengths. A too-long field is refused with
+  its length and limit; request_upgrade's texts and venture_update's learned are cut instead.
+- In an ordinary cycle venture_update takes venture_id, learned, stage, next_question and note; scores and the case
+  belong to venture cycles. draft refuses an append the 64 KB file might not hold before it is paid for.
+- Pictures may have up to 40 MP. workspace_read reads PDF and Word text and Excel cells (formulas with results);
+  workspace_write mode copy copies a file. Both are free: don't pay the workshop for them.
+- make_spreadsheet draws each sheet. make_image shows any sheet ('b.xlsx#Budget', '#2'), zooms in with '@top' and 9
+  other regions, makes text-only photos (layout text) and typographic posters at print size (layout poster), 10 times
+  a cycle. QA counts distinct photos: the same page under another name, or a copy, adds none.
+- Events wake you only while your owner's wake_on_events is on, and not in a back-off, a crash loop or without room
+  for work. Orders, favorites and the last day of a milestone Ember's code grades wait for your next plan. Your
+  owner's messages and decisions wake one cycle a few minutes after their last one, at most every 30 minutes.
+- While a request waits, your chosen sleep is cut to at most 240 minutes; once your owner decides the last one, it
+  stands again. In maintenance the next scheduled cycle comes a day after the last cycle began.
+- Only a verified person's email counts as someone having written: not a list, a machine, your own address, or mail
+  stored before 0.14.0. email_read says whether the sender was verified. More opt-out phrasings are caught.
+- message_owner: past the 2-a-day limit, one message per open promise (#n) may report it kept, so it can be closed.
+- Ember's code's milestones take none of your 16 places; a product line's test has one open bar at a time. A milestone
+  Ember's code set or checks keeps its project and venture.
+- You can't close a first test done: send your owner the evidence; a venture goes live when Ember's code or your owner
+  finds it met. Dropping a milestone you gave odds on settles them as a miss. Etsy views and favorites read after a
+  milestone's date don't meet it.
+- You can set views_total and favorites_total (with project_id or venture_id); a goal naming such a number needs the
+  metric. Use listings_live for "is live" and orders_observed for orders.
+- venture_case takes first_sale_days (14 to 730); the expected net pays the fixed costs until the first sale, and
+  'slow' compares those days with half the net runway.
+- vendor_only stands until an independent page shows a demand number. A demand_note's library source must be linked to
+  the product line or its venture, or be a .csv/.tsv export, and the note must cite its number ('1,200 searches').
+- venture_create no longer takes stage live. Research in an ordinary cycle aimed at an unbacked venture counts toward
+  its budget, paid failures too. The cold_outreach check skips sentences that rule it out and reads German.
+- Etsy fees are booked as venture cases count them, and listing fees as the project's expenses. A refund is always
+  recorded; if it leaves you without money, Ember's code pauses you. A listing Etsy no longer has stops counting live.
+- printify_catalog shows each variant's making cost and least price; propose_printify_product refuses a price below
+  it, and currencies other than EUR or USD. The 15% check counts VAT, and your owner's options say who pays shipping.
+- Printify's listings count in the Etsy metrics, the listing test and the venture rules. A line live only through
+  Printify that misses day 7 owes one message_owner asking to fix its listings.
+- A Pinterest or Printify channel not yet set up shows one line saying what is missing; its venture's first test
+  starts once it is ready. An approved pin isn't made if its listing is no longer live.
+- The website needs your owner's name and postal address. Without site_phone, WEBSITE asks you to get a phone
+  number from your owner.
+- An unlock carries a request only if its milestone covers what the request acts on (a project's or venture's
+  listings; email replies only on a milestone with neither), only if it passes QA ("Re:", at most 200 words; 5
+  distinct photos), and only while owner_user_ids names your owner. A milestone that closes, even met, ends its
+  unlocks. 0.14.0 took back every 0.13.0 unlock.
+- An unlock taken back sends what it approved and hasn't begun back to your owner. Price changes stay within 15% of
+  the price your owner last approved; if a listing changed at Etsy, an unlocked change goes to your owner instead.
+- NEVER's tax and contract check reads only what a request sends (an email's subject and text), through look-alike
+  letters and hidden characters; listing copy is not checked.
+- After 30 days old tool results and model replies read '[pruned]'; your five newest research results stay.
+
 ## 0.13.0
 
 Decisions from numbers: a venture's case now has figures that Ember's code checks.
