@@ -123,6 +123,8 @@ CLASSES: dict[str, ActionClass] = {
             undo="put back the page it replaced",
         ),
         _class("site.restore", "put back what an upload to your website replaced", {"owner_identity"}),
+        # The last will on the live page, shown by Ember's code once the owner approved it (live_view.py)
+        _class("site.live_will", "show Ember's last will on your live page", {"reaches_people", "owner_identity"}),
         _class(
             "reddit.post",
             "a Reddit post you publish from your account",
@@ -147,6 +149,7 @@ _EXECUTORS = {
     "site_post": "site.publish_post",  # 0.14.0
     "site_links": "site.publish_links",
     "site_restore": "site.restore",  # the owner's Undo of an upload
+    "live_will": "site.live_will",  # never on an unlock: no rule of the policy engine names it (never.EXECUTORS)
 }
 # 0.13.0: every executor Ember's code has (the approvals table takes any short name since 0054: this is the list)
 EXECUTORS = frozenset({*_EXECUTORS, "etsy_edit"})

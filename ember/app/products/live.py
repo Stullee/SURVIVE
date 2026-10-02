@@ -3,17 +3,20 @@
 rendered by Ember's code from its own numbers (integrations/live_view.py takes the snapshot and uploads the files over
 the blog's SFTP login).
 
-Everything here is made from a ``Snapshot``: numbers Ember's code keeps, the titles of its ventures and milestones (only
-those Ember's code found nothing to mask in), the listings and posts that are public already, and the last will. Every
-text is escaped into the site's template (its own head, header, footer and Content-Security-Policy, as the blog's), and
-each page is checked by blog.audit before it goes up. The pictures are SVG drawn from numbers only: no script, no link,
-no font or picture from elsewhere (``audit_svg``). The agent's own words stay in the language it wrote them in.
+Everything here is made from a ``Snapshot``: numbers Ember's code keeps, the titles of its ventures and milestones and
+the last will (only those the owner approved; the others only counted), and the listings and posts that are public
+already. Every text is escaped into the site's template (its own head, header, footer and Content-Security-Policy, as
+the blog's), and each page is checked by blog.audit before it goes up. The pictures are SVG drawn from numbers only: no
+script, no link, no font or picture from elsewhere (``audit_svg``). The agent's own words stay in the language it wrote
+them in. The page and the banner say when they were made, and that a time more than an hour old means Ember is offline
+(they can't tell by themselves: the site has no scripts); a file the owner switched off is replaced by one saying so.
 """
 
 from __future__ import annotations
 
 import html
 import re
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -97,9 +100,11 @@ class Snapshot:
     cycles: int = 0
     cycles_today: int = 0
     ventures: tuple[tuple[str, str], ...] = ()  # (stage, title)
+    ventures_more: int = 0  # ventures being worked on whose titles aren't shown (not approved by the owner)
     ideas: int = 0
     parked: int = 0
     milestones: tuple[tuple[str, str], ...] = ()  # (title, due YYYY-MM-DD)
+    milestones_more: int = 0  # open milestones whose titles aren't shown
     listings: tuple[Item, ...] = ()
     posts: tuple[Item, ...] = ()
     met: int = 0  # milestones given odds: met, settled, average odds given (0..1), Brier score
@@ -159,6 +164,10 @@ class Words:
 
     def moment(self, at: datetime) -> str:
         return f"{self.date(at.date().isoformat())}, {self.clock(at)}"
+
+    def stamp(self, at: datetime) -> str:
+        """The moment, short enough for the banner."""
+        return f"{at.day}.{at.month}.{at.year}, {self.clock(at)}"
 
     def days(self, days: float) -> str:
         if days < 1:
@@ -231,9 +240,13 @@ class Words:
     woke_today = ", heute {times}."
     woke_how = "Bei jedem Aufwachen plant es, arbeitet und schreibt auf, was es gelernt hat."
     ventures = "Geschäftsideen"
+    ventures_count = "Geschäftsideen in Arbeit: {count}"
+    ventures_more = "Weitere in Arbeit: {count}"
     ideas = "{count} weitere Ideen warten noch"
     parked = "{count} zurückgestellt oder aufgegeben"
     goals = "Nächste Ziele"
+    goals_count = "Offene Ziele: {count}."
+    goals_more = "Weitere offene Ziele: {count}."
     until = "bis {date}"
     shop = "Im Shop"
     blog_head = "Neu im Blog"
@@ -262,16 +275,18 @@ class Words:
     off_description = "Die Live-Ansicht von {name} ist ausgeschaltet."
     off = "Die Live-Ansicht ist gerade ausgeschaltet."
     banner_off = "Die Live-Ansicht ist gerade aus."
+    chart_off = "Das Diagramm ist gerade ausgeschaltet."
     banner_story = "Seine Geschichte"
     banner_story_will = "Seine Geschichte und sein letzter Wille"
     banner_money = "{balance} · reicht {runway}"
     banner_plain = "Eine KI, die sich rechnen muss"
-    banner_bottom = "Stand {time} · Live ansehen →"
+    banner_bottom = "Live ansehen →"
+    banner_stamp = "Stand {when} · älter als eine Stunde: offline"
     banner_today = "Heute {spent} für die KI · "
     banner_trial = "Probelauf · "
     banner_label = "{name} live: {state}"
     banner_label_money = ", Guthaben {balance}, reicht für {runway}"
-    banner_label_time = ". Stand {time}."
+    banner_label_time = ". Stand: {when}; ist der Stand älter als eine Stunde, ist {name} gerade offline."
     banner_label_off = "{name} live: ausgeschaltet"
     snippet_alt = "{name} live: Zustand, Guthaben und Reichweite, alle {minutes} Minuten neu"
 
@@ -319,6 +334,9 @@ class English(Words):
 
     def moment(self, at: datetime) -> str:
         return f"{self.date(at.date().isoformat())}, {self.clock(at)} Berlin time"
+
+    def stamp(self, at: datetime) -> str:
+        return f"{_MONTHS_EN[at.month - 1][:3]} {at.day}, {at.year}, {self.clock(at)} Berlin time"
 
     def days(self, days: float) -> str:
         if days < 1:
@@ -385,9 +403,13 @@ class English(Words):
     woke_today = ", {times} today."
     woke_how = "Each time it plans, works and writes down what it learned."
     ventures = "Business ideas"
+    ventures_count = "Business ideas in progress: {count}"
+    ventures_more = "More in progress: {count}"
     ideas = "{count} more ideas are waiting"
     parked = "{count} put aside or given up"
     goals = "Next goals"
+    goals_count = "Open goals: {count}."
+    goals_more = "More open goals: {count}."
     until = "by {date}"
     shop = "In the shop"
     blog_head = "New on the blog"
@@ -416,16 +438,18 @@ class English(Words):
     off_description = "The live view of {name} is switched off."
     off = "The live view is switched off right now."
     banner_off = "The live view is off right now."
+    chart_off = "The chart is switched off right now."
     banner_story = "Its story"
     banner_story_will = "Its story and its last will"
     banner_money = "{balance} · lasts {runway}"
     banner_plain = "An AI that has to earn its keep"
-    banner_bottom = "As of {time} · See it live →"
+    banner_bottom = "See it live →"
+    banner_stamp = "As of {when} · older than an hour: offline"
     banner_today = "{spent} on AI today · "
     banner_trial = "Trial run · "
     banner_label = "{name} live: {state}"
     banner_label_money = ", balance {balance}, lasts {runway}"
-    banner_label_time = ". As of {time}."
+    banner_label_time = ". As of {when}; if this is more than an hour old, {name} is offline."
     banner_label_off = "{name} live: switched off"
     snippet_alt = "{name} live: state, balance and runway, updated every {minutes} minutes"
 
@@ -556,7 +580,9 @@ def _work(s: Snapshot, w: Words) -> str:
     if shown:
         out.append(f"<h3>{_e(w.ventures)}</h3>")
         out.append(_list(shown))
-    counted = []
+    counted = []  # the titles the owner hasn't approved are only counted
+    if s.ventures_more:
+        counted.append((w.ventures_more if shown else w.ventures_count).format(count=w.number(s.ventures_more)))
     if s.ideas:
         counted.append(w.ideas.format(count=w.number(s.ideas)))
     if s.parked:
@@ -566,6 +592,9 @@ def _work(s: Snapshot, w: Words) -> str:
     if s.milestones:
         out.append(f"<h3>{_e(w.goals)}</h3>")
         out.append(_list([(title, "", w.until.format(date=w.date(due))) for title, due in s.milestones]))
+    if s.milestones_more:
+        more = w.goals_more if s.milestones else w.goals_count
+        out.append(f"<p>{_e(more.format(count=w.number(s.milestones_more)))}</p>")
     return "\n".join(out)
 
 
@@ -727,11 +756,13 @@ def banner_label(s: Snapshot, parts: Parts, w: Words | None = None) -> str:
     text = w.banner_label.format(name=s.name, state=w.state(s.state))
     if parts.money and not dead(s):
         text += w.banner_label_money.format(balance=w.usd(s.balance), runway=w.runway(s))
-    return text + w.banner_label_time.format(time=w.clock(s.at))
+    return text + w.banner_label_time.format(when=w.moment(s.at), name=s.name)
 
 
 def render_banner(s: Snapshot, parts: Parts, lang: str = "de") -> bytes:
-    """The banner: the state, and with the money shown the balance and runway, for the home page's hero."""
+    """The banner: the state, and with the money shown the balance and runway, for the home page's hero. 0.16.1 gave
+    only the time of day, so a banner left up when the uploads stopped looked current: the date, and that a time more
+    than an hour old means Ember is offline."""
     w = WORDS[lang]
     width, height = BANNER_SIZE
     colour = _STATE_COLOURS.get(s.state, "#85837b")
@@ -739,26 +770,28 @@ def render_banner(s: Snapshot, parts: Parts, lang: str = "de") -> bytes:
     if s.age_days is not None and not dead(s):
         headline += f" · {w.age(s)}"
     if dead(s):
-        middle = w.banner_story_will if parts.memorial else w.banner_story
+        middle = w.banner_story_will if parts.memorial and s.will else w.banner_story
     elif parts.money:
         middle = w.banner_money.format(balance=w.usd(s.balance), runway=w.runway(s))
     else:
         middle = w.banner_plain
-    bottom = w.banner_bottom.format(time=w.clock(s.at))
+    bottom = w.banner_bottom
     if parts.money and not dead(s):
         bottom = w.banner_today.format(spent=w.usd(s.today_spend)) + bottom
     if s.simulated:
         bottom = w.banner_trial + bottom
     style = _NIGHT + f".state{{fill:{colour}}}"
     ring = "" if s.state in _STATE_COLOURS else ' fill="none" stroke="#85837b" stroke-width="2"'
+    size = 21 if len(middle) <= 32 else 18  # "Seine Geschichte und sein letzter Wille" ran past the edge at 21
     body = (
         f'<rect class="bg" x="0.5" y="0.5" width="{width - 1}" height="{height - 1}" rx="14"/>\n'
-        f'<text class="flame" x="22" y="30" font-size="12" font-weight="700" letter-spacing="1.6">'
+        f'<text class="flame" x="22" y="26" font-size="12" font-weight="700" letter-spacing="1.6">'
         f"{_e(s.name.upper())} LIVE</text>\n"
-        f'<circle class="state" cx="29" cy="52" r="6"{ring}/>\n'
-        f'<text x="44" y="58" font-size="17" font-weight="700">{_e(headline)}</text>\n'
-        f'<text x="22" y="87" font-size="21" font-weight="700">{_e(middle)}</text>\n'
-        f'<text class="muted" x="22" y="108" font-size="12">{_e(bottom)}</text>'
+        f'<circle class="state" cx="29" cy="45" r="6"{ring}/>\n'
+        f'<text x="44" y="51" font-size="17" font-weight="700">{_e(headline)}</text>\n'
+        f'<text x="22" y="78" font-size="{size}" font-weight="700">{_e(middle)}</text>\n'
+        f'<text class="muted" x="22" y="98" font-size="12">{_e(bottom)}</text>\n'
+        f'<text class="muted" x="22" y="113" font-size="11">{_e(w.banner_stamp.format(when=w.stamp(s.at)))}</text>'
     )
     return _svg(width, height, banner_label(s, parts, w), style, body, lang)
 
@@ -832,6 +865,18 @@ def render_banner_off(name: str, lang: str = "de") -> bytes:
     return _svg(width, height, w.banner_label_off.format(name=name), _NIGHT, body, lang)
 
 
+def render_chart_off(lang: str = "de") -> bytes:
+    """The chart's place once the owner switched it (or the whole live view) off: no numbers of an older day stay up."""
+    w = WORDS[lang]
+    width, height = CHART_SIZE
+    body = (
+        f'<rect class="bg" x="0.5" y="0.5" width="{width - 1}" height="{height - 1}" rx="14"/>\n'
+        f'<text class="muted" x="{width // 2}" y="{height // 2 + 6}" font-size="16" text-anchor="middle">'
+        f"{_e(w.chart_off)}</text>"
+    )
+    return _svg(width, height, w.chart_off, _PAGE, body, lang)
+
+
 def audit_svg(data: bytes) -> list[str]:
     """What is wrong with a picture Ember's code is about to upload (none: it may go up): drawn from numbers and
     escaped text only, so this is the second check: no script, handler, link or anything loaded from elsewhere."""
@@ -847,28 +892,50 @@ def audit_svg(data: bytes) -> list[str]:
     return [f"the picture holds {found[0].strip()!r}"] if found else []
 
 
-def render(s: Snapshot, parts: Parts, owner: blog.Owner) -> dict[str, bytes]:
-    """The files to upload, in both languages: the page always, the banner and the chart if shown (the chart from
-    its second day on)."""
+def shown_paths(s: Snapshot, parts: Parts) -> list[str]:
+    """The files the live view shows now, in both languages: the page always, the banner and the chart if shown (the
+    chart from its second day on, and not in the memorial)."""
+    paths = []
+    for lang in LANGUAGES:
+        page, banner, chart = PATHS[lang]
+        paths.append(page)
+        if parts.banner:
+            paths.append(banner)
+        if parts.chart and len(s.days) >= 2 and not dead(s):
+            paths.append(chart)
+    return paths
+
+
+def _off(path: str, owner: blog.Owner, name: str) -> bytes:
+    """A file of the live view as it is once switched off."""
+    lang = next(lang for lang, paths in PATHS.items() if path in paths)
+    page, banner, _ = PATHS[lang]
+    if path == page:
+        return render_off(owner, name, lang)
+    return render_banner_off(name, lang) if path == banner else render_chart_off(lang)
+
+
+def render(s: Snapshot, parts: Parts, owner: blog.Owner, replaced: Collection[str] = ()) -> dict[str, bytes]:
+    """The files to upload: those shown (``shown_paths``), and in place of each of ``replaced`` (files of an earlier
+    upload that show the live view) not shown any more its version saying it is off. 0.16.1 left a file the owner
+    switched off as it was: a banner saying "alive" with an old balance stayed on their home page."""
+    shown = set(shown_paths(s, parts))
     files = {}
     for lang in LANGUAGES:
         page, banner, chart = PATHS[lang]
         files[page] = render_page(s, parts, owner, lang)
-        if parts.banner:
+        if banner in shown:
             files[banner] = render_banner(s, parts, lang)
-        if parts.chart and len(s.days) >= 2 and not dead(s):
+        if chart in shown:
             files[chart] = render_chart(s, parts, lang)
+    for path in sorted(set(replaced) & set(FILES) - shown):
+        files[path] = _off(path, owner, s.name)
     return files
 
 
 def render_all_off(owner: blog.Owner, name: str) -> dict[str, bytes]:
-    """The pages and banners saying the live view is off, in both languages."""
-    files = {}
-    for lang in LANGUAGES:
-        page, banner, _ = PATHS[lang]
-        files[page] = render_off(owner, name, lang)
-        files[banner] = render_banner_off(name, lang)
-    return files
+    """The pages, banners and charts saying the live view is off, in both languages."""
+    return {path: _off(path, owner, name) for path in FILES}
 
 
 def check(files: dict[str, bytes], owner: blog.Owner) -> list[str]:

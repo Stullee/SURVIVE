@@ -1,6 +1,10 @@
 """0.15.0, the money guard (FIX NOW 1, 2a, 26b; X4, X18): a workshop call's worst case was a guess, not a ceiling
 (live, #423 was quoted $0.35 and cost $1.84), any overrun stopped the whole cycle and its reflection, the safety factor
-couldn't cover a 5x miss nor come down for a rare purpose, and one work step sent 8 count_tokens requests."""
+couldn't cover a 5x miss nor come down for a rare purpose, and one work step sent 8 count_tokens requests.
+
+Review of 0.16.1: Reset estimates also cleared the workshop's run history (bug 8), the hold left out interrupted runs
+and, of 20 runs, the costliest one (bug 36), and after a call cost more than its hold the daily cap and the event
+reserve refused the reflection (bug 33)."""
 
 from __future__ import annotations
 
@@ -20,9 +24,10 @@ from app.config import Settings
 from app.db import Database, discover_migrations, migrate
 from app.economy import pricing
 from app.economy.estimate import MAX_SERVER_ITERATIONS, plan_request, worst_case_micros
-from app.economy.metering import OVERRUN_STOP, WORKSHOP, CallRefused, Completed
+from app.economy.metering import OVERRUN_STOP, REVIEW, WORKSHOP, CallFailed, CallRefused, Completed, Interrupted
 from app.economy.pricing import safety_factor
-from tests.economy_helpers import FakeClock, ScriptedTransport, make_economy, message, metered, request
+from tests import economy_helpers
+from tests.economy_helpers import FakeClock, ScriptedTransport, make_economy, message, metered, request, restart
 from tests.test_agent import make_agent, plan, rows, text, tools
 from tests.test_owner_loop import APPROVAL
 
@@ -297,6 +302,56 @@ def test_after_an_overrun_stop_a_waiting_request_still_cuts_the_sleep(data_dir: 
     )
 
 
+def overrun_workshop(economy: Any, trigger: str, spent: int) -> tuple[Any, int]:
+    """A cycle that spent ``spent`` on a review, then ran a workshop call that held its $1.50 cap per run and cost
+    $2.00 ($0.50 beyond its hold), with what the reflection's worst case needed of the day kept. (model, cycle)"""
+    review = Completed(message(1_000, (spent - 2_000) // 10))
+    model, _ = metered(economy, ScriptedTransport(outcomes=[review, Completed(message(1_000, 199_800))]))
+    cycle = model.open_cycle(trigger)
+    model.call(cycle, REVIEW, request(max_tokens=(spent - 2_000) // 10))
+    assert model.rooms(cycle, WORKSHOP, keep=REFLECTION_WORST)[1] >= 1_500_000  # the run fits next to the reflection
+    run = model.call(cycle, WORKSHOP, request(max_tokens=100_000))  # priced at $1.002, holding $1.50
+    assert run.overrun and (run.estimate_micros, run.cost_micros) == (1_500_000, 2_000_000)
+    return model, cycle
+
+
+REFLECTION = request(max_tokens=50_000, system="Reflect.")
+REFLECTION_WORST = 502_000
+
+
+def test_a_reflection_goes_over_the_daily_cap_by_what_a_run_cost_beyond_its_hold(data_dir: Path) -> None:
+    # Review of 0.16.1 (bug 33): the reflection was always run after an overrun under the cycle cap (0.15.0), but the
+    # daily cap gave no allowance, and a workshop call's excess wasn't counted: with $4.50 spent, a run held $1.50 and
+    # cost $2.00, so the day was at $6.50 and the reflection's $0.502 was refused against the $7 cap.
+    economy = make_economy(data_dir, OWNER)
+    model, cycle = overrun_workshop(economy, "owner", 4_500_000)
+    assert model.affordable(REFLECTION, "reflect", cycle)[0]
+    assert not model.affordable(REFLECTION, "research", cycle)[0]  # only the reflection
+    assert model.call(cycle, "reflect", REFLECTION).cost_micros == 4_000  # 1,000 tokens in, 200 out
+    assert economy.books.cap_spend_on(economy.life.scope(), economy.clock.today()) == 6_504_000
+
+
+def test_a_reflection_goes_over_the_event_reserve_by_what_a_run_cost_beyond_its_hold(data_dir: Path) -> None:
+    # Until 20:00 a scheduled cycle leaves $1.40 of the $7 for event wake-ups: $3.50 spent, the run's $2.00 took the day
+    # to $5.50, and the reflection's $0.502 would have broken the $5.60 the reserve leaves.
+    economy = make_economy(data_dir, OWNER)
+    model, cycle = overrun_workshop(economy, "schedule", 3_500_000)
+    assert model.affordable(REFLECTION, "reflect", cycle)[0]
+    with pytest.raises(CallRefused, match="kept for event wake-ups"):
+        model.call(cycle, "research", REFLECTION)
+    assert model.call(cycle, "reflect", REFLECTION).status == "ok"
+
+
+def test_the_balance_still_bounds_a_reflection_after_an_overrun(data_dir: Path) -> None:
+    economy = make_economy(data_dir, OWNER)
+    model, cycle = overrun_workshop(economy, "owner", 4_500_000)
+    economy_helpers.owner(economy, "expense", "43", test_money=True)  # $0.50 left of the $50
+    assert not model.affordable(REFLECTION, "reflect", cycle)[0]
+    with pytest.raises(CallRefused, match="not enough money") as refused:
+        model.call(cycle, "reflect", REFLECTION)
+    assert refused.value.category == "balance"
+
+
 # --- X4: the safety factor covers what was missed and comes down again ---
 
 
@@ -351,13 +406,56 @@ def test_a_raised_factor_doesnt_lock_the_workshop_at_its_cap(data_dir: Path) -> 
     assert not result.overrun and llm_calls(economy.db)[-1]["estimate_micros"] == held
 
 
-def test_the_owners_reset_clears_the_factor_and_the_tail(data_dir: Path) -> None:
+def test_the_owners_reset_clears_the_factor_but_not_the_tail(data_dir: Path) -> None:
+    # Review of 0.16.1 (bug 8): until then the reset also made the workshop forget its runs, so one click on the banner
+    # dropped the hold after a run like #423 from $2.76 to the $1.50 cap per run, and the same run then broke the day.
     economy = make_economy(data_dir, OWNER)
     model = economy.metered(FakeTransport(script=[Overrun()]))
-    model.call(model.open_cycle("test"), WORKSHOP, workshop(OWNER))
-    assert model.reservation(workshop(OWNER), WORKSHOP) > 2_000_000
+    result = model.call(model.open_cycle("test"), WORKSHOP, workshop(OWNER))
+    tail = -(-result.cost_micros * 3 // 2)
+    assert model.reservation(workshop(OWNER), WORKSHOP) == tail > 2_500_000  # about $2.64 after the fake's $1.76
     assert pricing.reset_safety_factors(economy.db, "dry_run") == 1
-    assert model.reservation(workshop(OWNER), WORKSHOP) == 1_500_000
+    assert safety_factor(economy.db, MODEL, "dry_run", WORKSHOP) == 1
+    assert model.reservation(workshop(OWNER), WORKSHOP) == tail
+
+
+SHOP = Settings(starting_balance_usd=500, daily_spend_cap_usd=100, cycle_spend_cap_usd=1, workshop_run_cap_usd=0.5)
+RUN = request(max_tokens=40_000)  # priced at $0.402, under the $0.50 cap per run
+
+
+def test_the_hold_takes_the_costliest_of_the_last_twenty_runs(data_dir: Path) -> None:
+    # Review of 0.16.1 (bug 36): of 20 runs the 95th percentile is the second costliest, so a $0.392 run among 19 of
+    # $0.102 left the next hold at the $0.50 cap per run, which a run like it could break by $0.09.
+    economy = make_economy(data_dir, SHOP)
+    costly = [Completed(message(1_000, 39_000))]
+    model, _ = metered(economy, ScriptedTransport(outcomes=costly + [Completed(message(1_000, 10_000))] * 19))
+    cycle = model.open_cycle("test")
+    for _ in range(20):
+        model.call(cycle, WORKSHOP, RUN)
+    assert [c["cost_micros"] for c in llm_calls(economy.db)] == [392_000] + [102_000] * 19
+    assert model.reservation(RUN, WORKSHOP) == 588_000  # 1.5 times the costliest
+
+
+def test_an_interrupted_run_counts_toward_the_hold_at_what_it_is_known_to_cost(data_dir: Path) -> None:
+    # Review of 0.16.1 (bug 36): a run broken off mid-answer was left out of what recent runs cost
+    economy = make_economy(data_dir, SHOP)
+    broken = Interrupted("connection reset", {"input_tokens": 1_000, "output_tokens": 39_000})
+    model, _ = metered(economy, ScriptedTransport(outcomes=[broken]))
+    cycle = model.open_cycle("test")
+    with pytest.raises(CallFailed):
+        model.call(cycle, WORKSHOP, RUN)
+    [row] = llm_calls(economy.db)
+    assert (row["status"], row["cost_micros"], row["floor_micros"]) == ("interrupted", 500_000, 392_000)
+    assert model.reservation(RUN, WORKSHOP) == 588_000  # before: the $0.50 cap per run
+    # One cut by a restart knows nothing of what it cost: it adds nothing (at its hold, it would raise every next one)
+    model.reserve(cycle, WORKSHOP, RUN)
+    fresh = restart(economy)
+    assert [(r["status"], r["cost_micros"], r["floor_micros"]) for r in llm_calls(fresh.db)][-1] == (
+        "interrupted",
+        588_000,
+        0,
+    )
+    assert metered(fresh)[0].reservation(RUN, WORKSHOP) == 588_000
 
 
 def test_the_owner_hears_when_what_a_run_holds_is_more_than_the_day(data_dir: Path) -> None:
@@ -369,7 +467,7 @@ def test_the_owner_hears_when_what_a_run_holds_is_more_than_the_day(data_dir: Pa
     [warning] = [w for w in economy.warnings() if "workshop" in w]
     assert "more than the daily spend cap ($2.00), so the workshop can't run" in warning
     day = (economy.clock.now() + timedelta(days=14)).astimezone(economy.clock.tz).date().isoformat()
-    assert warning.endswith(f"What recent runs cost stops counting on {day}, or at once with Reset estimates.")
+    assert warning.endswith(f"What recent runs cost stops counting on {day}.")  # 0.16.2: Reset no longer clears it
 
 
 # --- the migration ---

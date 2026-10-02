@@ -2192,7 +2192,8 @@
     return a.executor === "email" || a.executor === "reddit_link" || a.executor === "etsy_listing" || a.executor === "etsy_edit" ||
       a.executor === "pinterest_pin" || a.executor === "pinterest_delete" ||
       a.executor === "printify_product" || a.executor === "printify_delete" ||
-      a.executor === "site_post" || a.executor === "site_links" || a.executor === "site_restore" ? a.executor : null;
+      a.executor === "site_post" || a.executor === "site_links" || a.executor === "site_restore" ||
+      a.executor === "live_will" ? a.executor : null;
   }
 
   // A new Etsy listing, or a change to a live one: Ember's code makes both after approval.
@@ -2208,8 +2209,11 @@
   // uploads it after approval.
   function isSite(a) { var e = executorOf(a); return e === "site_post" || e === "site_links" || e === "site_restore"; }
 
+  // The last will on the live page: Ember's code shows it, exactly as approved, at its next upload (never an unlock).
+  function isLive(a) { return executorOf(a) === "live_will"; }
+
   // What Ember's code carries out exactly as approved: approve or reject, and cancel before it starts.
-  function isAsIs(a) { return isPinterest(a) || isPrintify(a) || isSite(a); }
+  function isAsIs(a) { return isPinterest(a) || isPrintify(a) || isSite(a) || isLive(a); }
 
   var APPROVAL_GROUPS = [
     { key: "pending", title: "Waiting for your decision", match: function (s) { return s === "pending"; } },
@@ -2224,6 +2228,8 @@
       match: function (s, a) { return isApproved(s) && !!a && isPrintify(a); } },
     { key: "uploading", label: "Approved pages", title: function () { return "Approved pages for your website, " + agentName() + " uploads them"; },
       match: function (s, a) { return isApproved(s) && !!a && isSite(a); } },
+    { key: "showing", label: "Approved for the live page", title: function () { return "Approved for your live page, " + agentName() + "'s code shows it"; },
+      match: function (s, a) { return isApproved(s) && !!a && isLive(a); } },
     { key: "closed", title: "Closed", match: function () { return true; } },
   ];
 
@@ -2424,7 +2430,7 @@
     return [
       h("div", { class: "item-head" },
         h("h3", { text: a.title || "Untitled request" }), plainChip(APPROVAL_TYPES[a.type] || sentence(String(a.type || "other").replace(/_/g, " "))),
-        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : isPinterest(a) ? "Pinterest" : isPrintify(a) ? "Printify" : isSite(a) ? "Website" : "Reddit") : null,
+        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : isPinterest(a) ? "Pinterest" : isPrintify(a) ? "Printify" : isSite(a) ? "Website" : isLive(a) ? "Live page" : "Reddit") : null,
         statusChip, a.simulated ? testTag() : null),
       a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
       actionFlags(a.action_class),
@@ -2448,6 +2454,7 @@
       a.status === "pending" && executor === "pinterest_pin" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this pin on your Pinterest account itself (a new board first, if it names one), exactly as shown. Pinterest charges nothing for it; your Undo deletes it." }) : null,
       a.status === "pending" && executor === "printify_product" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this product at Printify and publishes it to your Etsy shop, exactly as shown, if every price keeps 15% after Etsy's fees, making and shipping; otherwise it deletes it there and says what each price needs. Printify charges you for making and shipping each order; your Undo deletes the product." }) : null,
       a.status === "pending" && (executor === "site_post" || executor === "site_links") ? h("p", { class: "send-note", text: "After you approve, " + name + " uploads exactly the page the preview shows to your website over SFTP" + (executor === "site_post" ? ", and adds it to the blog's list" : "") + ". It touches nothing else on your server; your Undo puts back what it replaced." }) : null,
+      a.status === "pending" && executor === "live_will" ? h("p", { class: "send-note", text: "After you approve, " + name + "'s code shows exactly this text on your live page (live.html and en/live.html) from its next upload on, while live_show_memorial is on. Rejected, it is never shown; an unlock never approves it." }) : null,
       executor === "site_post" || executor === "site_links" ? h("p", { class: "form-actions" }, h("a", { class: "btn btn-small", href: "api/blog/preview/" + encodeURIComponent(String(a.id)), target: "_blank", rel: "noopener", text: "Preview the page" }),
         h("span", { class: "muted small", text: " In a tab of its own, with your site's look (loaded from your site); it runs nothing." })) : null,
       executionView(a, email),
@@ -2582,6 +2589,7 @@
     if (isPinterest(a)) return pinExecutionView(a, st);
     if (isPrintify(a)) return productExecutionView(a, st);
     if (isSite(a)) return siteExecutionView(a, st);
+    if (isLive(a)) return liveExecutionView(a, st);
     var ex = isObject(a.execution) ? a.execution : {};
     var name = agentName();
     var limit = limitText(email);
@@ -2688,6 +2696,24 @@
     else detail = [ex.error ? endSentence(String(ex.error)) : ""];
     return h("div", { class: "execution", "data-status": st },
       h("p", { class: "execution-head" }, chip(SITE_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
+      h("p", { class: "execution-detail" }, detail));
+  }
+
+  // The last will on the live page, as Ember's code carries out the owner's approval.
+  var LIVE_EXECUTION = {
+    waiting: { icon: "◔", label: "Waiting for the next upload", tone: "accent" },
+    done: { icon: "✓", label: "On the live page", tone: "good" },
+    failed: { icon: "✕", label: "Not shown", tone: "critical" },
+  };
+
+  function liveExecutionView(a, st) {
+    var ex = isObject(a.execution) ? a.execution : {};
+    var detail;
+    if (st === "waiting") detail = [agentName() + "'s code shows it at its next upload of the live page (within 15 minutes, while the live view and live_show_memorial are on)."];
+    else if (ex.result) detail = [endSentence(sentence(ex.result)), ex.url && !a.simulated ? [" ", siteLink(ex.url, "Open the page")] : null];
+    else detail = [""];
+    return h("div", { class: "execution", "data-status": st },
+      h("p", { class: "execution-head" }, chip(LIVE_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
       h("p", { class: "execution-detail" }, detail));
   }
 
@@ -2810,6 +2836,8 @@
         approveIntro = name + " then creates this product at Printify and publishes it to your Etsy shop, exactly as shown, if every price keeps its margin after what Printify charges to make and ship it. You hear the result on this card; your Undo deletes it.";
       } else if (executor === "site_post" || executor === "site_links") {
         approveIntro = name + " then uploads exactly the page you previewed to your website" + (executor === "site_post" ? " and adds it to the blog's list" : "") + ". You hear the result on this card; your Undo puts back what it replaced.";
+      } else if (executor === "live_will") {
+        approveIntro = name + "'s code then shows exactly this text on your live page at its next upload. To take it down later, switch live_show_memorial off.";
       }
       var specs = {
         approve: { title: executor === "email" ? "Approve this email" : "Approve this request", submit: "Approve",
@@ -2860,6 +2888,7 @@
         if (executor === "pinterest_pin") return "Approved. " + name + " makes the pin itself; this card shows when it's live.";
         if (executor === "printify_product") return "Approved. " + name + " creates the product itself; this card shows when it's in the shop.";
         if (executor === "site_post" || executor === "site_links") return "Approved. " + name + " uploads the page itself; this card shows when it's online.";
+        if (executor === "live_will") return "Approved. " + name + "'s code shows it on your live page at its next upload; this card shows when it's there.";
         if (mode === "approve_with_changes" && st === "approved") return "Approved as it was (the text was unchanged). Carry it out, then mark it done or failed.";
         if (mode === "approve_with_changes") return "Approved with your changes. Carry it out with your version, then mark it done or failed.";
         return "Approved. Carry it out, then mark it done or failed.";
@@ -2881,7 +2910,7 @@
       return {
         mode: mode, title: "Cancel this?", submit: "Cancel", danger: true, cancelLabel: "Keep it",
         intro: [h("p", { text: name + " won't carry it out. The request is marked failed, and " + name + " sees that on its next wake." })],
-        fields: [{ name: "result_note", label: "Why (" + name + " reads it)", rows: 2, max: 2000, required: true, value: isPrintify(a) ? "Cancelled before it reached Printify." : isSite(a) ? "Cancelled before it was uploaded." : "Cancelled before it reached Pinterest.", missing: "Say why you cancel it." }],
+        fields: [{ name: "result_note", label: "Why (" + name + " reads it)", rows: 2, max: 2000, required: true, value: isPrintify(a) ? "Cancelled before it reached Printify." : isSite(a) ? "Cancelled before it was uploaded." : isLive(a) ? "Cancelled before it was shown." : "Cancelled before it reached Pinterest.", missing: "Say why you cancel it." }],
         url: url + "close",
         body: function (v) { return { outcome: "failed", expected_version: version, result_note: v.result_note }; },
         done: function () { return "Cancelled. " + name + " won't carry it out."; },
@@ -4202,6 +4231,64 @@
     return [h("h4", { class: "small-head", text: "The banner on your " + where }), c.code, h("div", { class: "form-actions" }, c.button), c.status];
   }
 
+  // The agent's titles the work part would show: the owner shows each once, or keeps it off (their word holds for
+  // that exact text). Ember's code never shows one with a long number, a web address, an @ or an IBAN.
+  var LIVE_TITLE = {
+    shown: { icon: "✓", label: "Shown", tone: "good" },
+    waiting: { icon: "◔", label: "Waiting for you", tone: "accent" },
+    off: { icon: "–", label: "Kept off", tone: "" },
+    refused: { icon: "✕", label: "Never shown", tone: "critical" },
+  };
+
+  function liveTitleButton(t, show, label, status) {
+    var b = h("button", { type: "button", class: "btn btn-small" + (show ? "" : " btn-ghost"), text: label });
+    b.addEventListener("click", function () {
+      b.disabled = true;
+      status.textContent = "Saving…";
+      request("POST", "api/live/titles/" + encodeURIComponent(String(t.id)), { show: show }).then(function (res) {
+        if (!res.ok) throw httpError(res);
+        status.textContent = show ? "Shown from the next upload on (in a minute or two)." : "Kept off the page.";
+        refresh();
+      }).catch(function (err) {
+        status.textContent = "Not saved: " + errorText(err) + ".";
+        b.disabled = false;
+      });
+    });
+    return b;
+  }
+
+  function liveTitles(titles) {
+    if (!titles.length) return null;
+    var name = agentName();
+    return [h("h4", { class: "small-head", text: name + "'s titles on the page" }),
+      h("p", { class: "muted small", text: "The page shows a title only once you showed it: until then it only counts it. Your word holds for the exact text; a changed title waits for you again." }),
+      h("div", { class: "table-wrap" }, h("table", null,
+        h("thead", null, h("tr", null, ["Title", "Of", "On the page", ""].map(function (c) { return h("th", { scope: "col", text: c }); }))),
+        h("tbody", null, titles.map(function (t) {
+          var status = h("p", { class: "form-status small", role: "status" });
+          var buttons = [];
+          if (t.state !== "refused" && t.state !== "shown") buttons.push(liveTitleButton(t, true, "Show it", status));
+          if (t.state !== "refused" && t.state !== "off") buttons.push(liveTitleButton(t, false, t.state === "shown" ? "Take it off" : "Keep it off", status));
+          var of = (t.kind === "venture" ? "Venture #" : "Milestone #") + asText(t.ref) + (t.kind === "venture" ? " (" + asText(t.note) + ")" : " (due " + asText(t.note) + ")");
+          return h("tr", null,
+            h("td", null, h("span", { text: asText(t.text) }), t.why ? h("p", { class: "muted small", text: name + "'s code keeps it off: it holds " + asText(t.why) + "." }) : null),
+            h("td", { text: of }),
+            h("td", null, chip(LIVE_TITLE, t.state, sentence(asText(t.state)))),
+            h("td", null, buttons.length ? h("div", { class: "form-actions" }, buttons) : null, status));
+        }))))];
+  }
+
+  function liveWill(w) {
+    if (!isObject(w)) return null;
+    var request = w.approval_id ? "request #" + w.approval_id : null;
+    var text = !request ? "Not asked yet: " + agentName() + "'s code asks you to approve it at its next upload, unless it holds what a public page never shows (then it stays off)."
+      : w.status === "pending" ? "Waits for your decision: " + request + " under Approvals."
+      : isApproved(w.status) ? "Approved (" + request + "): shown from the next upload on."
+      : w.status === "done" ? "On the page (" + request + ")."
+      : "Not shown (" + request + ", " + String(w.status).replace(/_/g, " ") + ").";
+    return [h("dt", { text: "Last will" }), h("dd", { text: text })];
+  }
+
   function renderLive(d) {
     var l = isObject(d.integrations) && isObject(d.integrations.live) ? d.integrations.live : null;
     var shown = !!l && l.status !== "disabled";
@@ -4218,6 +4305,7 @@
       l.status === "ok" ? [h("dt", { text: "Shows" }), h("dd", { text: on.length ? sentence(on.join(", ")) + "." : "Only its state." })] : null,
       l.status === "ok" && off.length ? [h("dt", { text: "Hidden" }), h("dd", { text: sentence(off.join(", ")) + "." })] : null,
       l.last_error ? [h("dt", { text: "Last upload" }), h("dd", { class: "pre-line", text: "Failed: " + endSentence(String(l.last_error)) })] : null,
+      liveWill(l.will),
     ]);
     if (l.status === "off") { replace($("live-actions"), h("p", { class: "muted small", text: "Off: the page on your site says so. Switch it on with live_enabled." })); return; }
     function previewLink(href, text) { return h("a", { class: "btn", href: href, target: "_blank", rel: "noopener", text: text }); }
@@ -4227,7 +4315,8 @@
     var how = l.snippet ? h("p", { class: "muted small", text: "Put each banner once into its home page (in the hero, under the facts) and add the banner's style to your stylesheet (see the Documentation tab). It links to the live page in the same language; the picture changes by itself." }) : null;
     replace($("live-actions"), [preview, how,
       l.snippet ? liveSnippetArea("de", asText(l.snippet)) : null,
-      l.snippet_en ? liveSnippetArea("en", asText(l.snippet_en)) : null]);
+      l.snippet_en ? liveSnippetArea("en", asText(l.snippet_en)) : null,
+      liveTitles(arr(l.titles))]);
   }
 
   // What an order cost you at Printify is an expense only you record: the form opens filled in, and its key records it

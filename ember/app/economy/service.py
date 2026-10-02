@@ -347,7 +347,7 @@ class Economy:
             # recent runs cost), and the warning says which
             scaled = workshop_run_cost(self.settings, self.db, self.mode) or run
             simulated = self.mode == "dry_run"
-            held = workshop_reservation(self.db, self.settings, self.clock, simulated, model, scaled, self.mode)
+            held = workshop_reservation(self.db, self.settings, self.clock, simulated, model, scaled)
             daily = self.settings.daily_spend_cap_usd
             if usd_cap_to_micros(self.settings.workshop_run_cap_usd) < run:
                 result.append(
@@ -360,11 +360,10 @@ class Economy:
                     " raised estimate or what recent runs cost), more than the daily spend cap"
                     f" (${daily:.2f}), so the workshop can't run."
                 )
-                ends = workshop_tail_ends(self.db, self.clock, simulated, model, self.mode, usd_cap_to_micros(daily))
+                ends = workshop_tail_ends(self.db, self.clock, simulated, model, usd_cap_to_micros(daily))
                 if ends is not None:
                     warning += (
-                        f" What recent runs cost stops counting on {ends.astimezone(self.clock.tz).date().isoformat()},"
-                        " or at once with Reset estimates."
+                        f" What recent runs cost stops counting on {ends.astimezone(self.clock.tz).date().isoformat()}."
                     )
                 result.append(warning)
         return result

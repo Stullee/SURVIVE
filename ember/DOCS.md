@@ -411,9 +411,10 @@ added (about $0.60 with claude-sonnet-5), and refuses a run priced above what
 is left of its **cap per run**. That price is not a ceiling: nothing limits
 what the run's code prints or looks at, and that one run read ten times more
 than the price allows for. So each call keeps back the most of its cap per
-run, its raised estimate, and about 1.5 times the costliest of the last 20
-workshop calls in 14 days (what they are known to cost), under the daily cap
-and the balance, and a run waits until that fits. A call
+run, its raised estimate, and 1.5 times the costliest of the last 20 workshop
+calls in 14 days (what they are known to cost, interrupted ones included),
+under the daily cap and the balance, and a run waits until that fits. **Reset
+estimates** doesn't clear those runs; they stop counting after 14 days. A call
 can still cost more than all of this; Ember then books what it cost, makes no
 more workshop calls in that cycle, and raises the workshop's estimates. Runs
 count toward the daily cap and the balance but not the cycle cap (one run can
@@ -1705,32 +1706,53 @@ What the page shows, each part switched off by its option:
 
 | Option | Shows |
 |---|---|
-| **Live: banner** (`live_banner`) | The banner: state, balance and runway, today's spending, the time. |
+| **Live: banner** (`live_banner`) | The banner: state, balance and runway, today's spending, the date and time it was made. |
 | **Live: balance and spending** (`live_show_money`) | Balance, runway, today's API spending against the daily cap, all API costs and other expenses. |
 | **Live: revenue** (`live_show_revenue`) | Revenue in all and in the last 30 days, the share of the costs it covers (the chart marks days with revenue). |
 | **Live: your money** (`live_show_grants`) | What you gave Ember. Off: the balance is shown without saying where the money came from. |
 | **Live: balance chart** (`live_show_chart`) | The balance of the last 30 days, from Ember's second day (`live/balance.svg`, `live/balance-en.svg`). |
-| **Live: what Ember works on** (`live_show_work`) | How often it woke up, its ventures by stage, its next milestones. |
+| **Live: what Ember works on** (`live_show_work`) | How often it woke up, its ventures by stage, its next milestones: counted, and with the titles you approved. Off by default. |
 | **Live: shop and blog** (`live_show_shop`) | Its live Etsy listings with views and favorites, the newest blog posts. |
 | **Live: track record** (`live_show_record`) | How often its forecasts came true (milestones met against the odds it gave, the Brier score). |
-| **Live: memorial** (`live_show_memorial`) | If it dies: its life in numbers and its last will. |
+| **Live: memorial** (`live_show_memorial`) | If it dies: its life in numbers, and its last will once you approved it. Off by default. |
 
 What it never shows: emails, senders, orders, customers, inquiries, the
 agent's journal, plans or prompts. The ventures' and milestones' titles and the
-last will are the agent's words: Ember's code checks each with the same masking
-as the shareable diagnostics report and leaves out a text in which it finds an
-address, a code, a link's token, a sender's name or a word you removed. Etsy's
-listings are shown only for 6 hours after Ember's code read them, as Etsy's API
-terms allow; the page footer carries Etsy's trademark notice. Every file is
-checked again before it goes up (no script, nothing from elsewhere), and only
-these six files are ever written. The agent's titles stay in the language it
-wrote them in; the English page marks the blog's posts as German.
+last will are the agent's words, and it reads emails and web pages, so they go
+up only as you approved them:
 
-The page has your site's head, header and footer, refreshes itself every 5
-minutes in an open tab and says when it was made: if that time is more than an
-hour old, Ember is offline. Switching **Ember live** off replaces the page and
-the banner with ones saying the live view is off. In a dry run the files go to
-the fake server and say "Probelauf".
+- **Titles.** With **Live: what Ember works on** on, **System → Website → Live
+  view** lists the titles the page would show, each with **Show it** and **Keep
+  it off**. Your word holds for that exact text: a title the agent changes is
+  asked again. Until you approve a title, the page only counts it ("Weitere in
+  Arbeit: 2").
+- **The last will.** If Ember dies while **Live: memorial** is on, Ember's code
+  asks you in a request of its own (Approvals) to show the will, exactly as
+  written. No unlock approves it; until you do, the memorial shows Ember's life
+  in numbers without it.
+
+Ember's code also keeps a text off the page whatever you say if it holds an @
+(in any form, also spelled out or as a fullwidth sign), a web address, an IBAN,
+a phone number or a number of 5 digits or more, read after folding look-alike
+and invisible characters, or anything the shareable diagnostics report masks
+(an address, a code, a link's token, an email's sender, a word you removed) or a
+secret the logs hide. It can't tell a person's name from other words: that is
+what your approval is for. Etsy's listings are shown only for 6 hours after
+Ember's code read them, as Etsy's API terms allow; the page footer carries
+Etsy's trademark notice. Every file is checked again before it goes up (no
+script, nothing from elsewhere), and only these six files are ever written. The
+agent's titles stay in the language it wrote them in; the English page marks the
+blog's posts as German.
+
+The page has your site's head, header and footer and refreshes itself every 5
+minutes in an open tab. The page and the banner say when they were made (date
+and time) and that a time more than an hour old means Ember is offline: they
+can't tell by themselves when uploads stop (the app is down, the connection
+fails, a dry run). A part you switch off is replaced on your server by a version
+saying so (a banner you switched off doesn't keep showing an old balance), and
+switching **Ember live** off replaces the page, the banner and the chart with
+ones saying the live view is off. In a dry run the files go to the fake server
+and say "Probelauf".
 
 ### Setting it up
 
@@ -1800,7 +1822,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.16.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.16.2 (by /u/your name)`.
 
 ## Diagnostics
 
@@ -1917,8 +1939,13 @@ runway, and the agent's plans say which mode it is in:
   model calls until money comes in (a sale or your grant); **Wake now** still
   runs a cycle.
 
-A mode moves down at once and up only 20% past its threshold, so it doesn't
-flicker. Each change is in the System log, and the dashboard's runway shows the
+A mode moves down at once. It moves up only once money came in since it moved
+down (a grant, revenue or an adjustment that adds; a refund of API costs
+doesn't count), and only as far as the net runway is 20% past each threshold,
+counted at the API spending of the week before it moved down if that was more:
+a lower mode spends less, which alone would make the runway look long. So it
+doesn't flicker, and a small sale doesn't buy back a week of full spending.
+Each change is in the System log, and the dashboard's runway shows the
 mode when it holds the agent back (sensor attribute `burn_mode`). The dashboard
 and the agent's plans also say when the mode moves down next at today's burn
 (for example *maintenance from about 10-03*), if that is within 30 days. The
@@ -1944,7 +1971,11 @@ its cap (by at most one call's worst case less its expected cost); the daily
 cap and the balance hold up to each call's worst case. A cycle keeps enough of
 its cap for its reflection (at least 1.5 times the 95th percentile of the
 recent reflections), and a reflection may go over the cycle cap by what a cache
-miss would add, and by what calls of its cycle cost beyond their worst case.
+miss would add, and by what calls of its cycle cost beyond their worst case. It
+may also go over the daily cap and the event wake-ups' share by what its
+cycle's calls cost today beyond what they kept back (a workshop run that cost
+more than its hold, say), so it always runs; never past the balance or the last
+will's reserve.
 Workshop runs have their own cap per run instead of the cycle cap, and the
 daily review, library study, the lessons' consolidation and the critic count
 only toward the daily cap (in maintenance the cycle's $0.40 bounds them all). A small reserve is always kept
@@ -1963,12 +1994,15 @@ cycle (never sooner than the usual back-off). A scaled-up estimate
 comes down by half of what it is above 1 after 3 calls of its kind in a row
 that didn't need it, and after every 7 days without a change. The dashboard
 lists them with **Reset estimates**, for when you know why it happened (a price
-you corrected, say); it also makes the workshop forget what the runs before it
-cost.
-A call whose bill is uncertain (the API failed before any reply) is charged to
-the balance at its worst case (a workshop call: what it kept back) until you
-correct it, but counts toward the caps only with what it is known to cost. A
-500, 502, 503, 504 or 529 error before the answer began costs nothing.
+you corrected, say). It resets only these estimates: what a workshop run keeps
+back for the runs of the last 14 days stays (see [The workshop](#the-workshop)).
+A call whose answer broke off (a restart, a broken stream, a timeout) is
+charged to the balance at its worst case (a workshop call: what it kept back)
+until you correct it, and counts toward the caps at that charge too: it most
+likely cost money. An answer whose bill is uncertain (an unknown usage field,
+say) is charged the same way but counts toward the caps only with what it is
+known to cost. A 500, 502, 503, 504 or 529 error before the answer began costs
+nothing.
 As an outside safety net, give Ember its own
 [Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
 API key and set a monthly spend limit there.

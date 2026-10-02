@@ -49,8 +49,14 @@ AS_IS_EXECUTORS = (
     "site_post",  # 0.14.0: the page as it was rendered and previewed
     "site_links",
     "site_restore",
+    "live_will",  # the last will as the live page would show it, never in another wording
 )
-_AS_IS_WHAT = {"pinterest": ("a pin", "pins"), "printify": ("a product", "products"), "site": ("a page", "pages")}
+_AS_IS_WHAT = {
+    "pinterest": ("a pin", "pins"),
+    "printify": ("a product", "products"),
+    "site": ("a page", "pages"),
+    "live": ("the text", "texts"),
+}
 TAKEN_BACK = policy.TAKEN_BACK  # 0.13.0: the owner's switch
 KILLED = policy.KILLED  # 0.15.0: it takes back every unlock too
 DECISIONS = {"approve": "approved", "approve_with_changes": "approved_with_changes", "reject": "rejected"}

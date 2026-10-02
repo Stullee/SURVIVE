@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.16.1"
+version: "0.16.2"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -142,10 +142,10 @@ options:
   live_show_revenue: true
   live_show_grants: true
   live_show_chart: true
-  live_show_work: true
+  live_show_work: false
   live_show_shop: true
   live_show_record: true
-  live_show_memorial: true
+  live_show_memorial: false
 
 schema:
   anthropic_api_key: password?

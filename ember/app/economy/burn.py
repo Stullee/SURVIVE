@@ -14,6 +14,13 @@ A mode moves down at once and up only once the net runway is 20% past the thresh
 every change is in the System log. The runway counts gross API charges (FIX NOW 30), so a refund can't flip the mode.
 0.15.0: at today's burn the net runway shrinks by a day a day, so STATUS and the dashboard say when the mode moves
 down next (``projected``); it moves up only when money comes in.
+
+0.16.2: until then it moved up whenever the net runway was past the margin, and a lower mode spends less, so the week's
+spending fell and the runway grew past it within days: on the owner's ledger maintenance went back to focus and full
+spending two days after it began, and flipped 11 more times before critical. A mode below explore now moves up only
+once money came in since it began (a grant, revenue or an adjustment that adds, as the critical state ends), judged at
+the API spending of the week before it moved down when that was more (``Since``, ``judged``), so a small sale doesn't
+buy back a week of full spending either.
 """
 
 from __future__ import annotations
@@ -23,7 +30,7 @@ from datetime import datetime, timedelta
 
 from .. import events
 from ..db import Database
-from .life import LifeStatus
+from .life import RUNWAY_CAP_DAYS, LifeStatus
 
 EXPLORE, FOCUS, MAINTENANCE, DORMANT = "explore", "focus", "maintenance", "dormant"
 MODES = (DORMANT, MAINTENANCE, FOCUS, EXPLORE)  # the lowest first
@@ -34,6 +41,7 @@ MAINTENANCE_CYCLE_USD = 0.40  # a maintenance cycle's cap
 MAINTENANCE_SLEEP_MINUTES = 24 * 60  # one scheduled cycle a day
 PROJECTED_DAYS = 30  # 0.15.0: a change further off than this isn't projected
 KEY = "burn_mode.{mode}.{life}"
+SINCE_KEY = "burn_mode_since.{mode}.{life}"  # 0.16.2: where the mode below explore began (Since), "" in explore
 MEANING = {
     EXPLORE: "as your owner's options allow",
     FOCUS: "finish the tests already running (a venture backed or live); no brainstorms, new ideas only your owner's",
@@ -47,9 +55,21 @@ MEANING = {
 
 
 @dataclass(frozen=True)
+class Since:
+    """0.16.2: where a mode below explore began (kept by ``current``): the newest ledger row that had brought money in
+    by then (``LifeStatus.money_in_id``), and the API spending a day of the week before it moved down, in micros (the
+    most since the mode was last explore: after a short move up, the week before the next move down holds days of the
+    lower mode's spending too)."""
+
+    money_in: int
+    spend: int
+
+
+@dataclass(frozen=True)
 class Burn:
     mode: str
     net_days: float | None
+    held: str = ""  # 0.16.2: why the mode stays below what the net runway alone would make it ("" if it doesn't)
 
     @property
     def venture_cycles(self) -> bool:
@@ -70,7 +90,8 @@ class Burn:
 
     def text(self) -> str:
         runway = "earning at least what it spends" if self.net_days is None else f"{self.net_days:.1f} days"
-        return f"{self.mode} (net runway: {runway}): {MEANING[self.mode]}"
+        held = f"; {self.held}" if self.held else ""
+        return f"{self.mode} (net runway: {runway}{held}): {MEANING[self.mode]}"
 
 
 def projected(burn: Burn, now: datetime) -> tuple[str, datetime] | None:
@@ -100,32 +121,83 @@ def _raw(status: LifeStatus) -> str:
     return FOCUS if net > MAINTENANCE_DAYS else MAINTENANCE
 
 
-def settle(previous: str | None, status: LifeStatus) -> str:
-    """The mode now, given the mode before (``previous``): down at once, up only MARGIN past a threshold."""
+def _spend(status: LifeStatus) -> int:
+    """The API spending a day of the runway's week, in micros (0 without any)."""
+    runway = status.runway
+    return int(runway.window_spend / runway.active_days) if runway.active_days > 0 else 0
+
+
+def judged(status: LifeStatus, since: Since | None) -> float | None:
+    """0.16.2: the net runway a move up from the mode that began at ``since`` is judged by: at the API spending of the
+    week before it moved down when that was more than now's (a lower mode spends less, and that alone made the runway
+    look long), less the revenue and expenses of the runway's week; None while that earns at least what it spends."""
+    runway = status.runway
+    if since is None or since.spend <= _spend(status):
+        return runway.net_days
+    rate = since.spend - (runway.window_net_in / runway.active_days if runway.active_days > 0 else 0)
+    return min(max(0, status.balance) / rate, RUNWAY_CAP_DAYS) if rate > 0 else None
+
+
+def settle(previous: str | None, status: LifeStatus, since: Since | None = None) -> str:
+    """The mode now, given the mode before (``previous``): down at once, up only MARGIN past a threshold, and (0.16.2)
+    only once money came in since the mode before began (``since``), judged at the spending from before it moved down
+    (``judged``)."""
+    return _settle(previous, status, since)[0]
+
+
+def _settle(previous: str | None, status: LifeStatus, since: Since | None) -> tuple[str, str]:
+    """(``settle``'s mode, why it stays below what the net runway alone would make it, or "")."""
     target = _raw(status)
     if previous not in MODES or DORMANT in (target, previous) or MODES.index(target) <= MODES.index(previous):
-        return target
-    net = status.runway.net_days
-    if net is None:
-        return target
+        return target, ""
     up = str(previous)
+    if since is None or status.money_in_id <= since.money_in:  # (a mode kept before 0.16.2 begins at its next check)
+        return up, "up again only once money comes in"
+    net = judged(status, since)
+    if net is None:
+        return target, ""
     for mode, floor in ((FOCUS, MAINTENANCE_DAYS), (EXPLORE, EXPLORE_DAYS)):
         if MODES.index(up) < MODES.index(mode) <= MODES.index(target) and net > floor * MARGIN:
             up = mode
-    return up
+    if up != target and since.spend > _spend(status):
+        return up, f"{net:.1f} days at the spending from before it moved down"
+    return up, ""
+
+
+def _since(db: Database, status: LifeStatus) -> Since | None:
+    value = db.get_meta(SINCE_KEY.format(mode=status.mode, life=status.life_id)) or ""
+    try:
+        money_in, spend = (int(part) for part in value.split())
+    except ValueError:
+        return None
+    return Since(money_in, spend)
+
+
+def _burn(previous: str | None, status: LifeStatus, since: Since | None) -> Burn:
+    mode, held = _settle(previous, status, since)
+    return Burn(mode, status.runway.net_days, held)
 
 
 def peek(db: Database, status: LifeStatus) -> Burn:
     """The mode now, without keeping it (the dashboard)."""
     previous = db.get_meta(KEY.format(mode=status.mode, life=status.life_id))
-    return Burn(settle(previous, status), status.runway.net_days)
+    return _burn(previous, status, _since(db, status))
 
 
 def current(db: Database, status: LifeStatus) -> Burn:
-    """The mode now, kept; a change is in the System log."""
+    """The mode now, kept; a change is in the System log. 0.16.2: so is where a mode below explore began (``Since``):
+    the money in by then, and the most API spending a day since the mode was last explore."""
     key = KEY.format(mode=status.mode, life=status.life_id)
     previous = db.get_meta(key)
-    burn = Burn(settle(previous, status), status.runway.net_days)
+    since = _since(db, status)
+    burn = _burn(previous, status, since)
+    since_key = SINCE_KEY.format(mode=status.mode, life=status.life_id)
+    if burn.mode == EXPLORE:
+        if since is not None:
+            db.set_meta(since_key, "")
+    elif burn.mode != previous or since is None:
+        spend = max(_spend(status), since.spend if since is not None else 0)
+        db.set_meta(since_key, f"{status.money_in_id} {spend}")
     if burn.mode != previous:
         db.set_meta(key, burn.mode)
         if previous is not None:
