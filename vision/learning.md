@@ -1,7 +1,7 @@
 # Vision: Ember learns from her own work
 
-*Draft, 2026-10-02, written against 0.17.0 and the diagnostics of that day. Phase 1 is built in 0.18.0; phases 2
-and 3 are not built yet.*
+*Draft, 2026-10-02, written against 0.17.0 and the diagnostics of that day. All three phases are built in 0.18.0,
+released as one update.*
 
 ## The idea in one paragraph
 
@@ -165,28 +165,36 @@ bottleneck, and the health check says which.
 - **Measure that it works.** Repeated mistakes, how often her bets come true (calibration), days a stuck product waits
   for a decision, the share of cycles she starts herself.
 
-## Phases
+## Phases (all in 0.18.0)
 
-**Phase 1 (0.18.0, built):** the spending stance; the rewritten texts; reach counted per project and the funnel
-stage in the daily review, whose verdicts name a bottleneck; marketing before parking; the review's lesson kept by
-Ember's code; tool limits out of the lessons (the consolidation may drop them); a strategy naming a parked or killed
-venture is an obligation; an over-long journal is shortened instead of lost; LESSONS shows 2.6 KB instead of 1.3 KB.
-Not yet in phase 1: the research-depth facts of the health check (demand note, evidence, competitor comparison, buyer
-complaints) come with phase 2's weekly look, and the quality critic with phase 3.
+**Phase 1:** the spending stance; the rewritten texts; reach counted per project and the funnel stage in the daily
+review, whose verdicts name a bottleneck; marketing before parking; the review's lesson kept by Ember's code; tool
+limits out of the lessons (the consolidation may drop them); a strategy naming a parked or killed venture is an
+obligation; an over-long journal is shortened instead of lost; LESSONS shows 2.6 KB instead of 1.3 KB.
 
-The constitution's new HOW TO THINK is short on purpose: the work step's fixed prompt may not grow past 0.11.1's
-45,866 bytes (`tests/test_rule_audit.py`), and it had 3 bytes to spare, so the rewrite took room from repeated prose
-in the operating rules.
+**Phase 2:** bets (`agent/bets.py`, placed with project_update, settled from the funnel before every plan); the
+research-depth line of the health check (demand note, independent evidence, the last quality check); retrospectives
+of what settled, kept as cases (`agent/learning.py`); the weekly look (`agent/weekly.py`).
 
-**Phase 2:** the weekly look at the whole business; bets with a views history; retrospectives and cases.
+**Phase 3:** the playbook with confidence set by Ember's code and fading; recall in the brief, knowledge_search and at
+a project's or venture's creation; the quality critic (`agent/quality.py`, with the cover photo); READY for ordinary
+cycles and the sleep cut (`agent/slack.py`).
 
-**Phase 3:** the playbook with confidence; recall; the independent product critic; the waiting-time list.
+What changed from the design while building it:
+- A bet needs no views history: it keeps its own baseline, so the owner's `etsy_stats_history` option can stay off.
+- A bet on views is judged no_reach, not lost, when nothing was done to bring buyers during it.
+- The weekly look and the quality critic count as a review and a critique in the books (the purposes `review` and
+  `critic`): no new money rules.
+- The constitution's new HOW TO THINK is short: the work step's fixed prompt may not grow past 0.11.1's 45,866 bytes
+  (`tests/test_rule_audit.py`), and it had 3 bytes to spare. The bet's field on project_update needed 128 bytes more,
+  so the bound is now 46,800 (2% more), on the owner's word that more spending on learning is welcome.
 
 ## The transition to 0.18.0
 
-- **Database:** one migration (0072) rebuilds the listing tests' table so a bar can be the day-28 retry; every row
-  stays. As after every migration, the app copies the database to `/data/backups` first, and a 0.17.0 refuses the
-  migrated database: to go back, restore that copy.
+- **Database:** one migration (0072_learning) adds the tables bets, cases, principles, weekly_reviews and
+  quality_checks (all empty), and rebuilds two tables to widen a check, keeping every row: listing_gates (the day-28
+  retry bar) and memory_versions (the weekly look's strategy). As after every migration, the app copies the database
+  to `/data/backups` first, and a 0.17.0 refuses the migrated database: to go back, restore that copy.
 
 - **Spending:** the new option `spending_stance` defaults to invest, so an installed Ember moves to explore at her
   next check (a mode below explore no longer waits for money to come in); the System log says so. An owner who wants
@@ -199,5 +207,9 @@ in the operating rules.
 - **Strategy:** a strategy naming a parked or killed venture becomes an obligation at her next plan; she rewrites it.
 - **The texts:** the constitution, rules and knowledge apply from her next cycle; her release notes (CHANGELOG
   0.18.0) tell her what changed and why.
+- **The learning loop starts empty:** no bets, cases or principles exist yet. The first daily review after the update
+  has little to look back on; the first weekly look comes at the first cycle after it (it needs one daily review) and
+  rewrites the strategy. The quality critic checks one live product line a cycle, so all six listings are scored within
+  about six cycles. READY appears at the first ordinary plan: with every listing unseen, it asks for reach first.
 - **The owner:** pastes the standing instruction above, checks `spending_stance`, and pins the lessons that must
   never be lost (the owner's preferences among them).

@@ -325,6 +325,53 @@ Under **Mind → Lessons** you can **pin** a lesson (at most 6): the agent never
 drops it, a rewrite of its lessons must keep it word for word, and every plan
 and work step shows it first. **Unpin** lets it go the usual way.
 
+### The learning loop
+
+Since 0.18.0 Ember's code runs routines that let the agent learn from its own
+work, like a manager's calendar (the design is in `vision/learning.md`):
+
+- **Bets.** When the agent changes a project, it can bet on the result with
+  project_update ("+15 views in 7 days: the pins bring buyers"). Ember's code
+  keeps the number then and settles the bet before every plan: **won**,
+  **lost**, or **no_reach** for a bet on views when nothing was done to bring
+  buyers meanwhile. A bet on favorites or orders needs the listings seen first,
+  and on orders a quality check that didn't say improve.
+- **Retrospectives.** The daily review lists what settled since the last one
+  (bets, metric milestones, closed projects, parked or killed ventures, requests
+  you rejected) and writes a retrospective of each: what it expected, what
+  happened, why, the cause (worked, wrong idea, weak execution, no reach, too
+  early, outside) and how sure it is. Each is kept as a **case**.
+- **The weekly look.** Once a week, after the daily review, one more call on the
+  strategy model (about the price of a review) reads the whole business as
+  Ember's code puts it together: the money, every project's funnel and reach,
+  the ventures, where the week's cycles and money went, who started them, the
+  bets' record and the cases. It rewrites the agent's strategy (refused if it
+  names a parked or killed venture), says what to stop and start and asks up to
+  3 questions for the week, which every plan that week sees.
+- **The playbook.** The weekly look draws principles from the cases, each citing
+  them. Ember's code sets their confidence: established with 3 agreeing cases
+  and none against, disputed once a case is against, a hypothesis otherwise. A
+  principle no case confirms for 6 weeks (4 months once established) is retired.
+  Each plan's LESSONS shows the playbook first, then the newest lessons.
+- **Recall.** The work steps get the principles and cases that match their plan,
+  knowledge_search finds them, and creating a project or venture names the most
+  similar case.
+- **The quality critic.** Before a plan, one product line's newest live listing
+  a cycle is scored by the strategy model (its cover photo, title, tags, price
+  and description against the demand note's market prices, and your rule that a
+  product must beat a free AI chat): 7 of 10 passes. It checks again after 14
+  days or after a change of its listings. The score and fixes show in the daily
+  review.
+- **Waiting time.** An ordinary cycle's plan gets **READY**: what is useful
+  while projects wait (bringing buyers to unseen listings, the critic's fixes, a
+  missing demand note, the week's questions). While it lists something, the
+  agent's sleep is cut to 3 hours (never below your shortest sleep, not in
+  maintenance).
+
+All of it counts toward the daily cap, not the cycle cap, and none of it ends a
+cycle. The diagnostics report lists the bets, cases, principles, weekly looks
+and quality checks.
+
 ## Products
 
 Ember doesn't hand you design work: it makes the files itself. The agent writes

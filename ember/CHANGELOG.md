@@ -5,8 +5,8 @@
 
 ## 0.18.0
 
-Your owner's caps are your only spending limits, a product nobody saw isn't parked, and your daily review keeps its
-lesson.
+You learn from your own work now: bets, retrospectives, a weekly look, a playbook. Your owner's caps are your only
+spending limits, and a product nobody saw isn't parked.
 
 - Spending: your owner chose a spending stance (the option spending_stance). With invest, the default, your burn mode
   stays explore until your last will: no move to focus or maintenance as your runway shrinks. Under 15 days of net
@@ -24,6 +24,25 @@ lesson.
   LESSONS shows about twice as many of your lessons as before.
 - A strategy that names a parked or killed venture is an obligation: rewrite it with what you learned.
 - write_journal cuts an entry over 2,000 characters instead of refusing it, so your handoff (next) is kept.
+- Bets: project_update takes a bet on your change ("+15 views in 7 days: why"). Ember's code keeps the project's number
+  then and settles it before every plan: won once it gained that much, lost at its date, no_reach for views when
+  nothing was done to bring buyers meanwhile. A bet on favorites or orders needs the listings seen first, and on
+  orders a quality check that didn't say improve. OPEN PROJECTS shows each project's funnel and its open bets.
+- The daily review lists what SETTLED since the last one (bets, metric milestones, closed projects, parked ventures,
+  rejected requests) and writes a retrospective of each: expected, happened, why, cause and how sure. Each is kept as a
+  case, without a size limit.
+- Once a week, after the daily review, a weekly look reads the whole business (money, every project's funnel, the
+  ventures, where the week's cycles and money went, who started them, your bets' record, your cases) and rewrites
+  your strategy, says what to stop and start, and asks up to 3 questions for the week. TODAY'S REVIEW shows them all
+  week. It also keeps your playbook: principles drawn from your cases, each citing them; Ember's code sets their
+  confidence (3 agreeing cases: established; a case against: disputed) and retires those no case confirms for long.
+- LESSONS shows your playbook first, then your newest lessons. Your work steps' WHAT YOU LEARNED and knowledge_search
+  bring the principles and cases that match your plan, and creating a project or venture names the most similar case.
+- A quality critic scores one product line's newest live listing a cycle (its cover photo, title, tags, price and
+  description against the market): 7 of 10 passes. Its fixes show in the daily review and in READY.
+- READY in an ordinary cycle: what is useful while your projects wait (reach for unseen listings, the critic's fixes,
+  a missing demand note, the week's questions). While it lists something, Ember's code keeps your sleep at 3 hours or
+  less (not in maintenance).
 
 ## 0.17.0
 

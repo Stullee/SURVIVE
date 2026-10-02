@@ -86,6 +86,7 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
         ("- Check your last review's verdicts", GUIDANCE, ""),
         ("- Read your owner's decisions and comments", GUIDANCE, ""),
         ("- Name one lesson worth keeping", GUIDANCE, ""),
+        ("- Write a retrospective of each item SETTLED lists", GUIDANCE, "0.18.0: Ember's code keeps them as cases"),
         ("- Look at your venture tree", GUIDANCE, ""),
         ("- Check your roadmap", GUIDANCE, "Ember's code applies the verdicts"),
         ("Reply only with JSON matching the schema:", PROTOCOL, "the review's reply"),
@@ -97,6 +98,7 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
         ("- focus:", SCHEMA, ""),
         ("- ventures:", SCHEMA, ""),
         ("- roadmap:", SCHEMA, ""),
+        ("- retros:", SCHEMA, ""),
         ("- milestones:", SCHEMA, ""),
     ],
     "venture_brief": [
@@ -310,4 +312,5 @@ def test_the_fixed_prompt_is_smaller() -> None:
         return len(json.dumps([request["system"], request["tools"]], ensure_ascii=False).encode())
 
     assert fixed(venture=True) <= 0.7 * 45_866
-    assert fixed(venture=False) <= 45_866
+    # 0.18.0: the learning loop's bet (project_update) and the owner's choice to invest in it: 2% more than 0.11.1's
+    assert fixed(venture=False) <= 46_800

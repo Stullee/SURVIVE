@@ -24,7 +24,21 @@ from ..economy.costs import micros_to_usd
 from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
 from ..integrations import mailstore
-from . import digest, library, obligations, policy, review, roadmap, store, tools, ventures
+from . import (
+    bets,
+    digest,
+    learning,
+    library,
+    obligations,
+    policy,
+    reach,
+    review,
+    roadmap,
+    store,
+    tools,
+    ventures,
+    weekly,
+)
 from .agenda import REACTIVE_STEPS
 from .agenda import line as agenda_line
 from .memory import Memory, heading_like, lesson_key, pins
@@ -107,7 +121,7 @@ SHORTEST_QUOTE = 40  # no quoted text is shortened below this; if that isn't eno
 # project's and a milestone's focus at their longest loses its end, as a brief over its budget always does.)
 BRIEF_BUDGET = 6_500
 # 0.12.0: the learnings from the owner's library that match the plan (Ember's code picks them), on top of the brief.
-KNOWLEDGE_HEADING = "WHAT YOU LEARNED (from your owner's library)"
+KNOWLEDGE_HEADING = "WHAT YOU LEARNED (your playbook and cases, your owner's library)"  # 0.18.0: with your own
 KNOWLEDGE_BUDGET = 1_800
 VENTURE_FOCUS_BUDGET = 2_400  # a venture's FOCUS in the brief (0.15.0: 1,900 cut its numbers and pitch)
 MILESTONE_FOCUS_BUDGET = 1_100  # a milestone's FOCUS in the brief (0.11.0; 0.12.0: with its last cycle's digest)
@@ -121,6 +135,7 @@ VENTURE_BRIEF = (
 OBLIGATIONS_BRIEF_BUDGET = 1_000
 # 0.12.0: the lessons the owner pinned come first in LESSONS, on top of its budget (at most memory.MAX_PINS of them).
 PINS_BUDGET = 2_000
+PLAYBOOK_SHARE = 0.6  # 0.18.0: of LESSONS' budget, the most the playbook takes
 PINS_HEADING = "Pinned by your owner (always kept):"
 # The largest brief, those sections and their headings included: the WORK and REFLECT profiles are measured on it.
 BRIEF_MAX = (
@@ -204,6 +219,9 @@ class Snapshot:
     brainstorm: bool = True  # 0.15.0: the burn mode allows brainstorms (explore)
     projects: list[sqlite3.Row] = field(default_factory=list)
     project_money: dict[int, tuple[int, int]] = field(default_factory=dict)
+    project_funnels: dict[int, str] = field(default_factory=dict)  # 0.18.0: reach.Funnel.short
+    project_bets: dict[int, list[str]] = field(default_factory=dict)  # 0.18.0: the open bets
+    playbook: list[Any] = field(default_factory=list)  # 0.18.0: the active principles (learning.principles)
     owner_messages: list[sqlite3.Row] = field(default_factory=list)
     pending: list[sqlite3.Row] = field(default_factory=list)
     upgrades: list[sqlite3.Row] = field(default_factory=list)  # 0.15.0: its open upgrade requests, newest first
@@ -244,7 +262,7 @@ class Snapshot:
     library: library.Shelf | None = None  # the owner's library (0.12.0): None while it is empty
     decision_wakes: bool = False  # the owner's decisions wake the agent (0.12.0, the wake_on_decision option)
     burn: str = ""  # 0.12.0: the burn mode Ember's code set from the net runway (burn.Burn.text)
-    ready: str = ""  # 0.13.0: a venture cycle's READY list, ranked by Ember's code (desk.text)
+    ready: str = ""  # READY, ranked by Ember's code: a venture cycle's (desk.text), 0.18.0: an ordinary one's (slack)
     agenda: list[sqlite3.Row] = field(default_factory=list)  # 0.13.0: events no plan has shown yet (agenda.py)
     reactive: bool = False  # 0.13.0: a cycle an event woke
 
@@ -326,6 +344,9 @@ def snapshot(
         brainstorm=brainstorm,
         projects=projects,
         project_money=money,
+        project_funnels={pid: f.short() for pid, f in reach.funnels(conn, scope).items()},
+        project_bets=bets.open_lines(conn, scope),
+        playbook=learning.principles(conn, scope),
         owner_messages=store.open_messages(conn, scope, 8),
         pending=store.pending_requests(conn, scope),  # 0.15.0: every one, not those among the newest 20 requests
         upgrades=open_upgrades(conn, scope),
@@ -344,7 +365,14 @@ def snapshot(
         mail=mail,
         instructions=standing["text"] if standing else "",
         proven=store.proven_scripts(conn, scope),
-        review=review.planner_text(conn, todays_review) if todays_review is not None else "",
+        review="\n\n".join(  # 0.18.0: with the week's look
+            text
+            for text in (
+                review.planner_text(conn, todays_review) if todays_review is not None else "",
+                weekly.planner_text(weekly.latest(conn, scope, today)) if today is not None else "",
+            )
+            if text
+        ),
         etsy=etsy,
         pinterest=pinterest,
         printify=printify,
@@ -464,6 +492,9 @@ def project_lines(s: Snapshot) -> str:
             f"${micros_to_usd(spent):.2f} · earned ${micros_to_usd(earned):.2f}"
         )
         lines.append(f"   hypothesis: {flat(p['hypothesis'])}")
+        if p["id"] in s.project_funnels:  # 0.18.0
+            lines.append(f"   {s.project_funnels[p['id']]}")
+        lines += [f"   {flat(b)}" for b in s.project_bets.get(p["id"], [])]
     return "\n".join(lines)
 
 
@@ -710,9 +741,12 @@ def lessons_text(s: Snapshot, budget: int, pins_budget: int = PINS_BUDGET) -> st
     (0.12.0: without the memory checks that asked for blind rewrites)."""
     pinned = {lesson_key(p) for p in s.pins}
     others = "\n".join(line for line in s.memory.get("lessons", "").splitlines() if lesson_key(line) not in pinned)
-    newest = cut(_newest_lines(others, budget), budget)
+    # 0.18.0: the playbook first (at most PLAYBOOK_SHARE of the budget), then the newest lessons in what is left
+    playbook = learning.playbook_text(s.playbook, int(budget * PLAYBOOK_SHARE))
+    room = budget - json_bytes(playbook) - 2 if playbook else budget
+    newest = cut(_newest_lines(others, room), room) if room > 0 else ""
     pinned_text = pins_text(s, pins_budget)
-    return f"{pinned_text}\n\n{newest}" if pinned_text and newest else pinned_text or newest
+    return "\n\n".join(part for part in (pinned_text, playbook, newest) if part)
 
 
 def pins_text(s: Snapshot, budget: int = PINS_BUDGET) -> str:
@@ -782,7 +816,7 @@ def _planner_texts(s: Snapshot, dry_run: bool, journal: int = PLANNER_BUDGETS["j
         "review": s.review,
         "roadmap": roadmap_text(s),
         "projects": project_lines(s),
-        "ready": s.ready if s.venture else "",
+        "ready": s.ready,  # 0.18.0: an ordinary plan's too (slack.py)
         "ventures": ventures.planner_lines(s.ventures, s.venture_money, s.venture),
         "pending": pending,
         "mail": mail_text(s),
@@ -840,7 +874,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *([("TODAY'S REVIEW", t["review"])] if t["review"] else []),
         ("ROADMAP", t["roadmap"]),
         ("OPEN PROJECTS", t["projects"]),
-        *([("READY", t["ready"])] if t["ready"] else []),  # 0.13.0: the decision desk
+        *([("READY", t["ready"])] if t["ready"] else []),  # 0.13.0: the decision desk (0.18.0: or slack.py)
         ("VENTURES", t["ventures"]),
         ("WAITING FOR YOUR OWNER", t["pending"]),
         *([("MAIL", t["mail"])] if s.mail is not None else []),

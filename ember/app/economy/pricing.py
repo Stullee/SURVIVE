@@ -74,9 +74,10 @@ LAST_WILL = CallProfile(input_tokens=6_600, max_tokens=1_000)  # 0.18.0: the con
 WORK = CallProfile(input_tokens=36_500, max_tokens=2_000, cache_ttls=("5m",))
 REFLECT = CallProfile(input_tokens=48_200, max_tokens=2_000, cache_ttls=("5m",))
 # The daily review (0.7.1), measured the same way: the constitution, the knowledge, the review rules (with the
-# venture tree's: 0.10.0, and the roadmap's: 0.11.0, with verdicts on milestones: 0.12.0, with bottlenecks: 0.18.0)
+# venture tree's: 0.10.0, and the roadmap's: 0.11.0, with verdicts on milestones: 0.12.0, with bottlenecks and
+# retrospectives: 0.18.0)
 # and a full scorecard.
-REVIEW_CALL = CallProfile(input_tokens=15_400, max_tokens=2_200)
+REVIEW_CALL = CallProfile(input_tokens=16_000, max_tokens=2_200)
 # The biggest first call of a workshop run (0.7.0), measured the same way: its rules, a task at its length limit and
 # the most files handed over. It also has the code execution tool, priced with every code run and container time.
 # 0.15.0: 3,000 tokens of output per sampling (the API applies max_tokens to each), and its rules ask for short scripts.

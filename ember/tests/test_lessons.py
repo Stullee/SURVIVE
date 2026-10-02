@@ -85,7 +85,7 @@ def test_the_daily_review_consolidates_the_lessons(data_dir: Path) -> None:
     before = len(fake.sent)
     agent.run_cycle("schedule")
     kinds = [request_kind(r) for r in list(fake.sent)[before:]]
-    assert kinds[:3] == ["review", "consolidate", "plan"]
+    assert kinds[:4] == ["review", "consolidate", "weekly", "plan"]  # 0.18.0: the weekly look after the review
     [version] = rows(agent, "SELECT content FROM memory_versions WHERE source = 'consolidation'")
     _, kept = memory.lesson_lines(version["content"])
     # 0.18.0: the review's own lesson was added first (16 lessons)

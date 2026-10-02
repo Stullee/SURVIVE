@@ -62,6 +62,16 @@ class Funnel:
             return "not_seen"
         return "not_liked" if not self.favorites else "not_bought"
 
+    def short(self) -> str:
+        """The funnel in a few words, for the plan's OPEN PROJECTS."""
+        if not self.listings:
+            return "funnel: nothing live yet"
+        where = STAGES[self.stage].split(":")[0]
+        return (
+            f"funnel: {self.views} views, {self.favorites} favorites, {self.orders} orders ({where}); reach done:"
+            f" {self.reach}"
+        )
+
     def text(self) -> str:
         if not self.listings:
             return f"funnel: {STAGES['not_listed']}"
@@ -142,3 +152,33 @@ def _pins(conn: sqlite3.Connection, scope: AgentScope) -> list[str]:
 def review_text(funnel: Funnel | None) -> str:
     """A project's funnel line for the daily review's PROJECTS, or "" for one without a live listing."""
     return funnel.text() if funnel is not None and funnel.listings else ""
+
+
+def research_text(conn: sqlite3.Connection, scope: AgentScope, project_id: int, venture_id: int | None) -> str:
+    """0.18.0: how deep a project's research went, for the daily review: its newest demand note (with the market
+    probe's prices if any), its venture's independent evidence, and its newest quality check (quality.py)."""
+    where, params = scope.where()
+    note = conn.execute(
+        f"SELECT * FROM demand_notes WHERE {where} AND project_id = ? ORDER BY id DESC LIMIT 1", (*params, project_id)
+    ).fetchone()
+    if note is None:
+        demand = "no demand note"
+    else:
+        prices = f", market prices {note['low']:g}-{note['high']:g} {note['currency']}" if note["low"] else ""
+        demand = f"demand note of {str(note['created_at'])[:10]}{prices}"
+    independent = 0
+    if venture_id:
+        independent = conn.execute(
+            f"SELECT COUNT(*) FROM evidence WHERE {where} AND venture_id = ? AND source = 'independent'",
+            (*params, venture_id),
+        ).fetchone()[0]
+    check = conn.execute(
+        f"SELECT * FROM quality_checks WHERE {where} AND project_id = ? AND status = 'ok' ORDER BY id DESC LIMIT 1",
+        (*params, project_id),
+    ).fetchone()
+    quality = (
+        f"quality {check['score']}/10, {check['verdict']} ({str(check['created_at'])[:10]}): {check['fixes'][:160]}"
+        if check
+        else "no quality check yet"
+    )
+    return f"research: {demand}; {independent} independent claim(s) for its venture · {quality}"
