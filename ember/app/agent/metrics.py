@@ -319,8 +319,8 @@ def listings(
         " AND l.listing_id IS NOT NULL ORDER BY l.id"
     )
     # 0.15.0: a listing of a product line with no venture (a closed one the upgrade couldn't link) counts for its
-    # channel's venture, as ventures.adopt would link it: the Etsy leg, or the print-on-demand venture. 0.16.1 analysis
-    # (bug 1): not for the venture its request's cycle aimed at (a digital download counted for print on demand).
+    # channel's venture, as ventures.adopt would link it: the Etsy leg, or the print-on-demand venture. 0.16.3 (analysis
+    # bug 1): not for the venture its request's cycle aimed at (a digital download counted for print on demand).
     mine = (
         "p.id AS for_project, COALESCE(p.venture_id, (SELECT v.id FROM ventures v WHERE"
         " v.mode = l.mode AND v.session = l.session AND v.stage NOT IN ('parked', 'killed') AND {leg}"
@@ -501,7 +501,7 @@ def grade(conn: sqlite3.Connection, scope: AgentScope, books: Books) -> list[str
     the day's observation), close it done once met and missed once its date has passed without it (a ceiling: missed
     once passed, done at its date). A killed venture's milestones were dropped with it (agent/stages.py). 0.15.0: past
     its date, Etsy's numbers read only after it (a sync gap) don't meet it: its last reading by then decides, and
-    without one it is missed (a bar met days late was graded done). 0.16.1 analysis (bug 1): a backed venture's first
+    without one it is missed (a bar met days late was graded done). 0.16.3 (analysis bug 1): a backed venture's first
     test isn't closed missed here: like one in words, it can be met until FIRST_TEST_GRACE_DAYS after its date, and
     then its venture's rule closes it (agent/stages.py, which may start it once more instead). It was closed missed at
     the first check after its date, and the venture parked the next plan. Returns what happened, for the events."""

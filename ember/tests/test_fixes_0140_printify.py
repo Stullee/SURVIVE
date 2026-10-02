@@ -568,7 +568,7 @@ def test_a_printify_product_s_line_joins_the_print_on_demand_venture_never_a_par
         assert ventures.adopt(conn, scope, made[0], "etsy", now) is None  # it has one
         conn.execute("UPDATE ventures SET stage = 'parked', parked_by = 'owner' WHERE id = ?", (pod,))
         assert ventures.adopt(conn, scope, made[1], "printify", now) is None
-        # 0.16.1 analysis (bug 1): a line joins its channel's venture, not the one its cycle aimed at: an Etsy listing
+        # 0.16.3 (analysis bug 1): a line joins its channel's venture, not the one its cycle aimed at: an Etsy listing
         # (a digital download) made in a cycle for print on demand or dropshipping joins the Etsy leg
         leg = venture_titled(agent, ventures.ETSY_LEG)
         assert ventures.adopt(conn, scope, made[2], "etsy", now) == leg
@@ -742,7 +742,7 @@ def test_the_migration_keeps_the_catalog_adds_order_tax_and_links_product_lines(
     new = Database(db_file)
     with new.transaction() as conn:
         linked = dict(conn.execute("SELECT id, venture_id FROM projects ORDER BY id").fetchall())
-        # 0.16.1 analysis (bug 1): #10 sells Etsy listings (digital downloads) only: 0071 takes it from print on demand
+        # 0.16.3 (analysis bug 1): #10 sells Etsy listings (digital downloads) only: 0071 takes it from print on demand
         # to the Etsy leg
         assert linked == {7: 1, 8: 4, 9: None, 10: 1, 11: None}
         kinds = [tuple(r) for r in conn.execute("SELECT kind, key FROM printify_catalog ORDER BY kind")]

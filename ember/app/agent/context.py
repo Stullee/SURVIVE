@@ -238,7 +238,7 @@ class Snapshot:
     roadmap: list[sqlite3.Row] = field(default_factory=list)  # the open milestones, the first due first (0.11.0)
     roadmap_closed: list[sqlite3.Row] = field(default_factory=list)  # closed in the last roadmap.CLOSED_DAYS days
     roadmap_spent: dict[int, int] = field(default_factory=dict)  # what each milestone's work cost (0.12.0)
-    # 0.16.1 analysis (bug 5): what stands unlocked for each open milestone, from the grants: its rules' short names
+    # 0.16.3 (analysis bug 5): what stands unlocked for each open milestone, from the grants: its rules' short names
     # and levels (policy.unlocked_text), so the ROADMAP keeps its room (the work step's FOCUS says them in full)
     roadmap_unlocks: dict[int, str] = field(default_factory=dict)
     library: library.Shelf | None = None  # the owner's library (0.12.0): None while it is empty

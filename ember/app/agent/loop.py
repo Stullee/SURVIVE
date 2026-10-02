@@ -747,7 +747,7 @@ class CycleRunner:
                         roadmap.get(conn, self.scope, milestone["replaces_id"]) if milestone["replaces_id"] else None
                     )
                     last = digest.newest_for(conn, self.scope, "milestone_id", milestone["id"], cycle_id)
-                    # 0.16.1 analysis (bug 5): what stands unlocked for it, from the grants
+                    # 0.16.3 (analysis bug 5): what stands unlocked for it, from the grants
                     unlocked = policy.unlocked_text(policy.standing(conn, self.scope).get(int(milestone["id"]), []))
                     milestone_focus = roadmap.focus_text(
                         milestone, self.clock.today(), parent, spent, replaced, last=last, unlocked=unlocked
@@ -872,7 +872,7 @@ class CycleRunner:
         ]
         with self.db.transaction() as conn:
             happened = stages.keep(conn, self.scope, self.clock.today(), to_iso(self.clock.now()), ready, unset)
-            # 0.16.1 analysis (bug 1): the owner hears once, a week before a first test's date, what is at stake
+            # 0.16.3 (analysis bug 1): the owner hears once, a week before a first test's date, what is at stake
             warned = stages.warn(conn, self.scope, self.clock.today(), to_iso(self.clock.now()))
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])

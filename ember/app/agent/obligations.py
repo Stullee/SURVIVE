@@ -8,7 +8,7 @@ forgotten, and a decision of the owner's was shown once. Now Ember's code keeps 
 * misses: a milestone Ember's code closed missed (a metric's): the agent decides what now;
 
 and reads the rest from their own records: the owner's messages waiting for an answer, people's emails waiting for
-one (0.13.0, Phase E1: mailstore.inquiries), overdue milestones and live listings with too few photos (0.16.1 analysis,
+one (0.13.0, Phase E1: mailstore.inquiries), overdue milestones and live listings with too few photos (0.16.3, analysis
 bug 1: and a backed venture's first test due within a week unmet, with what is at stake: stages.owed). The plan shows
 them first and never cuts them; a pressing one (``pressing``) makes a wake cycle an ordinary one rather than a
 venture cycle. The agent closes a promise, decision or miss with
@@ -194,7 +194,7 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date) -> str:
         lines.append(f"- {line(r, today)}")
     if len(rows) > SHOWN:
         lines.append(f"- and {len(rows) - SHOWN} more obligations, due later.")
-    lines += [f"- {line}" for line in stages.owed(conn, scope, today)]  # 0.16.1 analysis (bug 1)
+    lines += [f"- {line}" for line in stages.owed(conn, scope, today)]  # 0.16.3 (analysis bug 1)
     overdue = [
         m
         for m in roadmap.open_milestones(conn, scope)

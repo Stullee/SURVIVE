@@ -98,7 +98,7 @@ def test_an_auto_unlock_carries_a_small_price_change_and_nothing_bigger(data_dir
     assert [(r["rule"], r["level"], r["used"]) for r in shown if r["level"] != "manual"] == [
         ("price_change", "auto", 1)
     ]
-    # 0.16.1 analysis (bug 5): what stands unlocked is said from the grant, never written into the owner's note
+    # 0.16.3 (analysis bug 5): what stands unlocked is said from the grant, never written into the owner's note
     item = next(m for m in agent.roadmap()["items"] if m["id"] == goal)
     assert (item["owner_action"], item["owner_comment"]) == (None, None)
     assert item["unlocked"] == (

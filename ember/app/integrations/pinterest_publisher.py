@@ -92,7 +92,7 @@ def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
 
 
 def made_any(conn: sqlite3.Connection, scope: AgentScope) -> bool:
-    """0.16.1 analysis (bug 1): whether Ember's code ever made a pin (it has Pinterest's id), deleted since or not: a
+    """0.16.3 (analysis bug 1): whether Ember's code ever made a pin (it has Pinterest's id), deleted since or not: a
     Pinterest venture's first test ran only then (agent/stages.py)."""
     where, params = scope.where()
     found = conn.execute(f"SELECT 1 FROM pinterest_pins WHERE {where} AND pin_id IS NOT NULL LIMIT 1", params)

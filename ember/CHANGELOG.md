@@ -3,6 +3,24 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.16.3
+
+Fixes: a first test can't end a venture before it could run, a product line counts for its channel's venture, and
+what your owner unlocked comes from their unlocks themselves.
+
+- A backed venture's first test that Ember's code checks (pins' clicks, a first Printify order) can be met until a week
+  after its date, as one in words can; unmet then, Ember's code closes it missed and parks the venture. If no pin or
+  Printify product was ever made by then, the test never ran: it starts once more instead (once). ROADMAP and FOCUS
+  give its last day. A week before its date your owner hears what is at stake, and OBLIGATIONS lists it: work toward
+  it first, or tell your owner once what it needs.
+- A product line without a venture joins its channel's venture: an Etsy listing (a digital download) the Etsy leg, a
+  Printify product print on demand, whatever your cycle worked on. Lines that sell only Etsy listings were moved from
+  print on demand to the Etsy leg, so a park of print on demand no longer ends their listing tests.
+- ROADMAP names what stands unlocked on each milestone (FOCUS says it in full): Ember's code carries such requests out
+  without your owner's click. An unlock is no longer written into your owner's note on the milestone, and the old
+  "Unlocked for this milestone" notes are gone where nothing stands. Each change of a milestone's unlocks comes in your
+  news, a take-back by Ember's code too (the upgrade to 0.15.0 took back every unlock of 0.13.0: you hear it once now).
+
 ## 0.16.2
 
 Fixes from the review of 0.16.1: your words go on your owner's live page only as they approved them, a lower burn

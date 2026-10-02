@@ -611,9 +611,9 @@ class Owner:
 
     def set_autonomy(self, milestone_id: int, body: Any, who: str | None) -> Reply:
         """0.13.0: unlock a rule of the policy engine for a milestone (veto_window or auto, with a daily limit and a
-        budget of actions), or take it back (manual). Kept as history; the agent hears it in its news. 0.16.1 analysis
-        (bug 5): not as the owner's note on the milestone any more: each click overwrote the one before (and the
-        owner's own note), and no take-back by Ember's code changed it, so a note said "Unlocked" long after."""
+        budget of actions), or take it back (manual). Kept as history; the agent hears it in its news. 0.16.3 (analysis
+        bug 5): not as the owner's note on the milestone any more: each click overwrote the one before (and the owner's
+        own note), and no take-back by Ember's code changed it, so a note said "Unlocked" long after."""
 
         def run() -> Reply:
             data = _body(body, {"rule", "level", "per_day", "budget"})
@@ -654,7 +654,7 @@ class Owner:
 
     def take_back_unlocks(self, body: Any, who: str | None) -> Reply:
         """0.13.0: the owner's switch: every unlock that stands is taken back at once (what they held waits for the
-        owner again). The agent hears it in its news (0.16.1 analysis, bug 5: no longer as a note on each milestone)."""
+        owner again). The agent hears it in its news (0.16.3, analysis bug 5: no longer as a note on each milestone)."""
 
         def run() -> Reply:
             _body(body, set())

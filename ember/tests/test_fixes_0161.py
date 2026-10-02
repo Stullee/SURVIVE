@@ -477,7 +477,7 @@ def test_after_the_upgrade_from_0130_the_plan_says_nothing_is_unlocked_and_hears
     agent = Agent(economy.db, LoadedSettings(LIVE), economy, transport=ScriptedTransport(False), cycles_enabled=True)
     agent.recover()
     planner = agent.planner_preview()
-    assert "Unlocked for this milestone" not in planner
+    assert "Unlocked for this milestone:" not in planner  # a note's own words (the release notes may name them)
     shown = section(planner, "ROADMAP")
     assert "note" not in line_of(shown, '#1 "Ten sales"') and "unlocked" not in line_of(shown, '#1 "Ten sales"')
     assert "your owner" not in line_of(shown, '#2 "First Nebenkosten sale"')

@@ -236,7 +236,9 @@ committed in 0.4.0, which has to be changed where it is used.
    it for the agent too: Ember reads new changelog entries at its first wake-up
    after an upgrade to learn what changed about itself.
 3. Database changes go in a new migration, `ember/app/migrations/000N_name.sql`
-   (numbered without gaps, never edit a released one). Ember backs up the
+   (numbered without gaps, never edit a released one; a number another branch
+   holds may be skipped until that branch is merged: `RESERVED` in
+   `ember/app/db.py`, 0070 for Google Search Console). Ember backs up the
    database to `/data/backups` before applying it.
 4. Run the checks, commit, and push the commit to a candidate branch first (for
    example `release/0.2.0`): CI runs on every push. Wait until every CI job is

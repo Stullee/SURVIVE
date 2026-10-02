@@ -201,7 +201,7 @@ def test_the_owner_takes_back_every_unlock(data_dir: Path) -> None:
     agent.run_policy()  # what an unlock held waits for the owner now
     assert rows(agent, f"SELECT status FROM approvals WHERE id = {held}") == [{"status": "pending"}]
     assert (agent.dashboard()["audit"]["unlocks"], agent.dashboard()["audit"]["held"]) == (0, 0)
-    for milestone in (goal, other):  # 0.16.1 analysis (bug 5): the agent hears it in its news, not as the owner's note
+    for milestone in (goal, other):  # 0.16.3 (analysis bug 5): the agent hears it in its news, not as the owner's note
         assert rows(agent, f"SELECT owner_comment FROM milestones WHERE id = {milestone}")[0]["owner_comment"] is None
     with agent.db.connection() as conn:
         heard = news.collect(conn, agent.db, agent.scope(), "0.0.0").venture_lines()

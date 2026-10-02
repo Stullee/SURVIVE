@@ -88,7 +88,7 @@ MAX_ACTIVE = 8  # ventures being worked on at once (ideas don't count: the tree 
 RESEARCH_DAYS = 21
 FIRST_TEST_DAYS = 21
 # A backed venture's first test is missed once it is still unmet this many days after its date, in words or with a
-# metric (0.16.1 analysis, bug 1: a metric's was closed missed at the first check after its date, with no grace).
+# metric (0.16.3, analysis bug 1: a metric's was closed missed at the first check after its date, with no grace).
 FIRST_TEST_GRACE_DAYS = 7
 # 0.13.0: triage, an idea of the agent's is researched or parked within this many days of coming up; a live venture that
 # has sold nothing this many days after going live is parked (and one that earns more than it costs gets a decision
@@ -709,7 +709,7 @@ def triage_date(v: Mapping[str, Any]) -> date | None:
 
 
 def is_first_test(row: Mapping[str, Any]) -> bool:
-    """0.16.1 analysis (bug 1): whether a milestone is a backed venture's first test, set by Ember's code (not a bar of
+    """0.16.3 (analysis bug 1): whether a milestone is a backed venture's first test, set by Ember's code (not a bar of
     a product line's listing test, agent/gates.py, which is a first test of a project)."""
     return (
         _value(row, "kind") == "first_test"
@@ -720,7 +720,7 @@ def is_first_test(row: Mapping[str, Any]) -> bool:
 
 
 def test_ends(row: Mapping[str, Any]) -> date | None:
-    """0.16.1 analysis (bug 1): the last day a venture's first test can be met, its date and FIRST_TEST_GRACE_DAYS: the
+    """0.16.3 (analysis bug 1): the last day a venture's first test can be met, its date and FIRST_TEST_GRACE_DAYS: the
     next day Ember's code closes it missed and parks the venture (agent/stages.py). None for any other milestone."""
     if not is_first_test(row):
         return None
@@ -1037,7 +1037,7 @@ ETSY_LEG = next(title for key, _, title, *_ in SEEDS if key == "etsy")
 
 
 def channel_venture(conn: sqlite3.Connection, scope: AgentScope, channel: str) -> sqlite3.Row | None:
-    """0.16.1 analysis (bug 1): the venture a product line of a channel sells for: the Etsy leg for an Etsy listing (a
+    """0.16.3 (analysis bug 1): the venture a product line of a channel sells for: the Etsy leg for an Etsy listing (a
     digital download), the print-on-demand venture ('printify') for a Printify product. None when there is none, or it
     is parked or killed."""
     where, params = scope.where()
@@ -1052,7 +1052,7 @@ def channel_venture(conn: sqlite3.Connection, scope: AgentScope, channel: str) -
 def adopt(conn: sqlite3.Connection, scope: AgentScope, project_id: int, channel: str, now: str) -> int | None:
     """0.15.0: a product line that sells in the Etsy shop belongs to a venture: a project without one joins its
     channel's (``channel_venture``), never a parked or killed one. Its sales counted for no venture, so a leg that sold
-    was parked as one that sold nothing. 0.16.1 analysis (bug 1): the channel's, not the venture the cycle aimed at: a
+    was parked as one that sold nothing. 0.16.3 (analysis bug 1): the channel's, not the venture the cycle aimed at: a
     digital download made in a cycle for print on demand joined that venture, and went down with it when Ember's code
     parked it. Returns the venture it joined, or None."""
     project = conn.execute("SELECT venture_id FROM projects WHERE id = ?", (project_id,)).fetchone()

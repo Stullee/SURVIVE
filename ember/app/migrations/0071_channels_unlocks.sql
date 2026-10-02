@@ -1,4 +1,4 @@
--- The 0.16.1 analysis, bugs 1 and 5.
+-- 0.16.3: bugs 1 and 5 of the 0.16.1 analysis.
 --
 -- Bug 1. A product line belongs to its channel's venture (agent/ventures.py, adopt): an Etsy listing, a digital
 -- download, to the Etsy leg; a Printify product to the print-on-demand venture. 0068 linked an open line to the venture

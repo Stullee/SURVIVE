@@ -623,7 +623,7 @@ def _replaces(row: Mapping[str, Any]) -> str:
 
 
 def _unlocked(row: Mapping[str, Any], unlocks: Mapping[int, str] | None) -> str:
-    """0.16.1 analysis (bug 5): what the owner's unlocks that stand let Ember's code carry out for a milestone without
+    """0.16.3 (analysis bug 5): what the owner's unlocks that stand let Ember's code carry out for a milestone without
     their click (``unlocks``: policy.unlocked_text by milestone, short), as a short clause ("" if none stands). From the
     grants, never from a note: 0.13.0's note said "Unlocked" after every take-back."""
     text = (unlocks or {}).get(int(row["id"]), "")
@@ -631,7 +631,7 @@ def _unlocked(row: Mapping[str, Any], unlocks: Mapping[int, str] | None) -> str:
 
 
 def _stake(row: Mapping[str, Any]) -> str:
-    """0.16.1 analysis (bug 1): a backed venture's first test, as a short clause: the last day it can be met (its date
+    """0.16.3 (analysis bug 1): a backed venture's first test, as a short clause: the last day it can be met (its date
     and a week's grace), and what Ember's code does then ("" for any other milestone)."""
     ends = ventures.test_ends(row)
     return f" · unmet by {ends}, Ember's code parks venture #{row['venture_id']}" if ends else ""
@@ -647,7 +647,7 @@ def milestone_line(
 ) -> str:
     """One milestone for the planner: its number, title, date, and (with ``detail``) its measure and newest note; with
     a metric, where it stands; what it may cost and spent (``spent``: its work's cost by milestone), and its wait;
-    (0.16.1 analysis) what stands unlocked for it (``unlocks``)."""
+    (0.16.3) what stands unlocked for it (``unlocks``)."""
     due = _due(row)
     line = f"#{row['id']} {_q(row['title'], 100)} · due {_day(due)} ({when(due, today)})"
     if detail and not _column(row, "metric"):
@@ -668,7 +668,7 @@ def _column(row: Mapping[str, Any], name: str) -> Any:
 
 def checks(rows: list[Mapping[str, Any]], today: date, spent: Mapping[int, int] | None = None) -> list[str]:
     """Ember's code's notes on the roadmap's shape, for the planner: empty, overdue (not what waits, 0.12.0, nor a
-    venture's first test in its week of grace, 0.16.1 analysis), checks due, spending over a milestone's budget, nothing
+    venture's first test in its week of grace, 0.16.3), checks due, spending over a milestone's budget, nothing
     due this week, nothing planned beyond this month."""
     if not rows:
         return [
@@ -681,7 +681,7 @@ def checks(rows: list[Mapping[str, Any]], today: date, spent: Mapping[int, int] 
     overdue = [
         r
         for r, k in zip(rows, kinds, strict=True)
-        if k == OVERDUE[0] and not waiting(r, today) and not ventures.is_first_test(r)  # 0.16.1 analysis (bug 1)
+        if k == OVERDUE[0] and not waiting(r, today) and not ventures.is_first_test(r)  # 0.16.3 (analysis bug 1)
     ]
     if overdue:
         ids = ", ".join(f"#{r['id']}" for r in overdue[:6])
@@ -775,8 +775,8 @@ def planner_text(
     """The ROADMAP section: a count by horizon and the checks (what Ember's code closed since ``since`` among them),
     then the goals (the open milestones that lead to no other: what the rest is for) one line each, so a cut never
     takes them (0.12.0: with 18 milestones, the cut took all 3 goals at every budget); then the other open milestones
-    by horizon (the measure shown for what is overdue or due this week), and what was closed lately. 0.16.1 analysis
-    (bug 5): each open milestone says what stands unlocked for it (``unlocks``: policy.unlocked_text by milestone)."""
+    by horizon (the measure shown for what is overdue or due this week), and what was closed lately. 0.16.3 (analysis
+    bug 5): each open milestone says what stands unlocked for it (``unlocks``: policy.unlocked_text by milestone)."""
     open_ids = {int(r["id"]) for r in rows}
     goals = [r for r in rows if r["parent_id"] not in open_ids]
     groups: dict[str, list[Mapping[str, Any]]] = {}
@@ -820,12 +820,12 @@ def focus_text(
 ) -> str:
     """The brief's FOCUS for the plan's milestone: what it takes to be done and how to close it first (a cut takes
     the end), then (0.12.0) the digest of the last cycle aimed at it (``last``), what it leads to and serves, the
-    owner's word, (0.16.1 analysis, bug 5) what stands unlocked for it (``unlocked``: policy.unlocked_text) and the
+    owner's word, (0.16.3, analysis bug 5) what stands unlocked for it (``unlocked``: policy.unlocked_text) and the
     notes."""
     due = _due(row)
     checked = metrics.status_text(row)
     ends = ventures.test_ends(row)
-    if ends is not None:  # 0.16.1 analysis (bug 1): a backed venture's first test: a week's grace, then the park
+    if ends is not None:  # 0.16.3 (analysis bug 1): a backed venture's first test: a week's grace, then the park
         how = (
             (
                 f"{checked}. It closes it done once met."

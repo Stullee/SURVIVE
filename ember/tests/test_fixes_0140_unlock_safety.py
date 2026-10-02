@@ -280,7 +280,7 @@ def test_the_kill_switch_takes_back_every_unlock_and_its_reset_approves_nothing(
     assert rows(agent, "SELECT level, by, why FROM policy_grants ORDER BY id DESC LIMIT 1") == [
         {"level": "manual", "by": "Stefan", "why": "you used the kill switch"}
     ]
-    # 0.16.1 analysis (bug 5): the agent hears it in its news, not as the owner's note on the milestone
+    # 0.16.3 (analysis bug 5): the agent hears it in its news, not as the owner's note on the milestone
     assert rows(agent, f"SELECT owner_comment FROM milestones WHERE id = {goal}")[0]["owner_comment"] is None
     with agent.db.connection() as conn:
         heard = news.collect(conn, agent.db, agent.scope(), "0.0.0").venture_lines()

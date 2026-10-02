@@ -53,7 +53,7 @@ class Rule:
     name: str
     action_class: str  # connectors.CLASSES
     label: str
-    short: str  # 0.16.1 analysis (bug 5): its name in the plan's ROADMAP, which says every plan what is unlocked
+    short: str  # 0.16.3 (analysis bug 5): its name in the plan's ROADMAP, which says every plan what is unlocked
 
 
 RULES: dict[str, Rule] = {
@@ -89,7 +89,7 @@ CODE = (POLICY_BY, REVOKED_BY, "Ember")  # who never unlocks anything (migration
 STOPPED = "Approved by your unlock, which was taken back ({why}) before Ember's code carried it out: it waits for you."
 TAKEN_BACK = "you took back every unlock"  # 0.13.0: the owner's switch (a grant's why, said to the owner)
 KILLED = "you used the kill switch"  # 0.15.0: it takes back every unlock too
-# 0.16.1 analysis (bug 5): how the agent hears the owner's two switches in its news (their why is said to the owner)
+# 0.16.3 (analysis bug 5): how the agent hears the owner's two switches in its news (their why is said to the owner)
 SWITCHES = {TAKEN_BACK: "with Take back every unlock", KILLED: "with the kill switch"}
 # 0.15.0: a normal end, not a take-back: the one revocation that isn't for cause (promotions may come back, and what
 # it approved runs). Always SPENT.format(budget=...).
@@ -253,7 +253,7 @@ def grant(conn: sqlite3.Connection, scope: AgentScope, milestone_id: int, rule: 
 
 
 def standing(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, list[sqlite3.Row]]:
-    """0.16.1 analysis (bug 5): the unlocks that stand, by milestone (each rule's newest grant, not manual, of an open
+    """0.16.3 (analysis bug 5): the unlocks that stand, by milestone (each rule's newest grant, not manual, of an open
     milestone), in RULES' order. What the planner and the cards say is unlocked comes from them: 0.13.0 wrote each
     unlock into the milestone's note, and no take-back by Ember's code (the upgrade to 0.15.0's either) changed it."""
     where, params = scope.where("g")
@@ -270,7 +270,7 @@ def standing(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, list[sqli
 
 
 def granted_text(g: Mapping[str, Any], short: bool = False) -> str:
-    """0.16.1 analysis (bug 5): one unlock in words: its rule, level, daily limit and budget (``short``: its rule's
+    """0.16.3 (analysis bug 5): one unlock in words: its rule, level, daily limit and budget (``short``: its rule's
     short name and level, as the plan's ROADMAP says it every plan)."""
     rule, level = RULES[g["rule"]], str(g["level"]).replace("_", " ")
     if short:
@@ -279,7 +279,7 @@ def granted_text(g: Mapping[str, Any], short: bool = False) -> str:
 
 
 def unlocked_text(rows: Sequence[Mapping[str, Any]], short: bool = False) -> str:
-    """0.16.1 analysis (bug 5): a milestone's unlocks that stand (``standing``) in words ("" when none does)."""
+    """0.16.3 (analysis bug 5): a milestone's unlocks that stand (``standing``) in words ("" when none does)."""
     return (", " if short else "; ").join(granted_text(g, short) for g in rows)
 
 

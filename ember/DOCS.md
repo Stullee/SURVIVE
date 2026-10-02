@@ -1004,8 +1004,8 @@ no longer shown); a study that failed three times stops until you press
   **Take back every unlock**, at the top of this card while any unlock
   stands: one click sets every rule of every milestone back to **Ask me**.
   What the unlocks held for your veto, or approved without Ember's code having
-  begun it, waits for your click again, and Ember hears it in its news. 0.15.0 took back every unlock of 0.13.0 once: grant again what you
-  want.
+  begun it, waits for your click again, and Ember hears it in its news. 0.15.0
+  took back every unlock of 0.13.0 once: grant again what you want.
 - **Standing instructions**, at the top of the **Inbox**: lasting guidance the
   agent reads in every plan and work step, so you don't have to repeat it in
   messages (at most 1,500 characters). **Edit** changes them, and saving an
@@ -1822,7 +1822,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.16.2 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.16.3 (by /u/your name)`.
 
 ## Diagnostics
 
