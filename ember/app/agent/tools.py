@@ -810,14 +810,13 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "resize_image",
-            f"Make a print file of one of your pictures at an exact size, free: its centre in the size's proportions "
-            f"(nothing stretched), resized, at {images.PRINT_DPI} dpi. For a print area or another poster size without "
-            "making the art again.",
+            f"Your picture at exact pixels for print, free: its centre, not stretched, {images.PRINT_DPI} dpi.",
             {
-                "source": _s("Your .png or .jpg, e.g. 'workshop/out/poster.png'.", 200),
-                "output": _s("The .png to make, e.g. 'shop/poster-3508x4961.png'.", 200),
-                "width": _i("In pixels.", minimum=make.PRINT_SIDE[0], maximum=make.PRINT_SIDE[1]),
-                "height": _i("In pixels.", minimum=make.PRINT_SIDE[0], maximum=make.PRINT_SIDE[1]),
+                "source": _s("A .png or .jpg.", 200),
+                "output": _s("A .png.", 200),
+                # pixels, 100 to 10,000: make.resize says so (in the schema, they took room the prompt doesn't have)
+                "width": _i(""),
+                "height": _i(""),
             },
             per_cycle=6,
         ),
