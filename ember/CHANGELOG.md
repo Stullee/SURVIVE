@@ -3,6 +3,21 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.16.2
+
+Your words go on your owner's live page only as your owner approved them.
+
+- Your ventures' and milestones' titles appear on the live page only once your owner approved each title, and only
+  while they show that part (it is off unless they switch it on); until then the page only counts them. A title with a
+  number of 5 digits or more, a phone number, a web address, an @ or an IBAN is never shown: keep titles short and
+  plain, without names.
+- Your last will appears there only if your owner approves it after you died, exactly as you wrote it.
+- The banner on their home page shows the date, and says that a time more than an hour old means you are offline. A
+  part your owner switches off is replaced by one saying so. You don't do anything differently: Ember's code makes and
+  uploads all of it.
+- Ember's code fixes: a website folder option with an odd character no longer stops the app, and a connection to your
+  owner's server that drops during an upload is reported and tried again later.
+
 ## 0.16.1
 
 Your owner's website looks the same on every page.
