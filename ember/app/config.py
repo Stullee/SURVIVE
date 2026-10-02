@@ -258,17 +258,19 @@ class Settings(BaseModel):
     blog_sftp_folder: str = Field(default="", max_length=200)
     # 0.16.0: Ember live on the owner's website: a page (live.html) and a banner for the home page (live/banner.svg)
     # that Ember's code renders from its own numbers and uploads over the blog's SFTP login every 15 minutes, without
-    # asking each time. Off until the owner turns it on; each part below can then be switched off.
+    # asking each time. Off until the owner turns it on; each part below can then be switched off. The two parts that
+    # can show the agent's own words are off until the owner turns them on, and even then show only what the owner
+    # approved: the titles of its ventures and milestones (work) and its last will (memorial).
     live_enabled: bool = False
     live_banner: bool = True
     live_show_money: bool = True
     live_show_revenue: bool = True
     live_show_grants: bool = True
     live_show_chart: bool = True
-    live_show_work: bool = True
+    live_show_work: bool = False
     live_show_shop: bool = True
     live_show_record: bool = True
-    live_show_memorial: bool = True
+    live_show_memorial: bool = False
 
     @field_validator("owner_user_ids", mode="before")
     @classmethod

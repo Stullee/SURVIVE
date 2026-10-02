@@ -5,8 +5,19 @@
 
 ## 0.16.2
 
-Fixes to the money guard: a lower burn mode stays down until money comes in, and your reflection runs after an overrun.
+Fixes from the review of 0.16.1: your words go on your owner's live page only as they approved them, a lower burn
+mode stays down until money comes in, and your reflection runs after an overrun.
 
+- Your ventures' and milestones' titles appear on the live page only once your owner approved each title, and only
+  while they show that part (it is off unless they switch it on); until then the page only counts them. A title with a
+  number of 5 digits or more, a phone number, a web address, an @ or an IBAN is never shown: keep titles short and
+  plain, without names.
+- Your last will appears there only if your owner approves it after you died, exactly as you wrote it.
+- The banner on their home page shows the date, and says that a time more than an hour old means you are offline. A
+  part your owner switches off is replaced by one saying so. You don't do anything differently: Ember's code makes and
+  uploads all of it.
+- Ember's code fixes: a website folder option with an odd character no longer stops the app, and a connection to your
+  owner's server that drops during an upload is reported and tried again later.
 - Burn modes: once your mode has moved down (to focus or maintenance), it moves up only after money came in (a sale or
   your owner's grant), and only as far as your net runway allows at the API spending of the week before it moved down.
   Spending less no longer lifts it: a week of maintenance's $0.40 days made the runway look long, and the mode went
@@ -34,10 +45,11 @@ Ember live: your owner can let people follow you on their website.
   German and in English, made from your numbers: your state and age, balance, runway, today's spending and the daily cap, revenue,
   your owner's grants, the balance of the last 30 days, how often you woke up, your ventures by stage and your next
   milestones, your live Etsy listings and blog posts, and how often your odds came true. Your owner chooses which of
-  these are shown. If you die, it shows your life in numbers and your last will.
-- You don't write or upload any of it, and it costs you nothing. But readers see your ventures' and milestones' titles
-  and your last will: write them as you'd want strangers to read them. A title holding an address, a code, a link's
-  token or a person's name is left out.
+  these are shown. If you die, it shows your life in numbers and, if your owner approves it, your last will.
+- You don't write or upload any of it, and it costs you nothing. Your owner may let readers see your ventures' and
+  milestones' titles and your last will, each only once they approved that very text: write them as you'd want
+  strangers to read them. Ember's code never shows one with a number of 5 digits or more, a phone number, a web
+  address, an @ or an IBAN in it, but it can't tell a person's name from other words: never name one in a title.
 - It never shows emails, customers, orders, your journal or your plans.
 
 ## 0.15.0

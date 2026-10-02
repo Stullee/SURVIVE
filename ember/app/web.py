@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import html
+import logging
 import re
 from typing import Annotated, Any
 from urllib.parse import quote, urlsplit
@@ -37,6 +38,7 @@ from .state import AppState
 from .version import app_version, build_id
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 _INDEX_TEMPLATE = (WEB_DIR / "index.html").read_text(encoding="utf-8")
 
@@ -931,6 +933,28 @@ def live_preview(request: Request, name: Annotated[str, Path(max_length=20)]) ->
     return Response(data, media_type="text/html; charset=utf-8", headers=headers)
 
 
+@router.post("/api/live/titles/{text_id}")
+def live_title(
+    request: Request,
+    text_id: Annotated[str, Path(pattern=r"^[0-9a-f]{64}$")],
+    body: Annotated[Any, Body()] = None,
+) -> JSONResponse:
+    """The owner's word on one of the agent's titles for the live page: {"show": true} shows it from the next upload
+    on (at once), {"show": false} keeps it off. Only a title the page would show now."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    if not isinstance(body, dict) or set(body) != {"show"} or not isinstance(body["show"], bool):
+        return JSONResponse({"error": 'send {"show": true} or {"show": false}', "field": "show"}, status_code=422)
+    try:
+        card = agent.decide_live_title(text_id, body["show"], _owner(request))
+    except LookupError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    return JSONResponse({"live": card})
+
+
 @router.post("/api/blog/check")
 def blog_check(request: Request) -> JSONResponse:
     """Log in to the owner's server (pinning its key the first time) and read the blog's list."""
@@ -941,6 +965,9 @@ def blog_check(request: Request) -> JSONResponse:
         result = agent.blog_check()
     except (SftpError, BlogError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception as exc:  # noqa: BLE001 - 0.16.1: the owner hears what went wrong, never a bare 500
+        log.exception("Checking the SFTP connection failed")
+        return JSONResponse({"error": f"the check failed ({type(exc).__name__}): see the app's log"}, status_code=502)
     who = _owner(request) or "The owner"
     found = f"{result['posts']} posts in the blog's list" if result["index"] else "no blog list yet"
     event_log.record(_state(request).db, "info", "website", f"{who} checked the SFTP connection: it works ({found})")

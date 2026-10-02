@@ -49,8 +49,14 @@ AS_IS_EXECUTORS = (
     "site_post",  # 0.14.0: the page as it was rendered and previewed
     "site_links",
     "site_restore",
+    "live_will",  # the last will as the live page would show it, never in another wording
 )
-_AS_IS_WHAT = {"pinterest": ("a pin", "pins"), "printify": ("a product", "products"), "site": ("a page", "pages")}
+_AS_IS_WHAT = {
+    "pinterest": ("a pin", "pins"),
+    "printify": ("a product", "products"),
+    "site": ("a page", "pages"),
+    "live": ("the text", "texts"),
+}
 TAKEN_BACK = "you took back every unlock"  # 0.13.0: the owner's switch
 TAKEN_BACK_NOTE = "Took back every unlock: your requests wait for me again"
 KILLED = "you used the kill switch"  # 0.15.0: it takes back every unlock too

@@ -12,6 +12,7 @@ import os
 import socket
 import sqlite3
 import threading
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -280,6 +281,9 @@ def test_the_server_key_and_the_folder_are_checked() -> None:
     for wrong in ("/a/../b", "a;b", "a\\b"):
         with pytest.raises(ValueError, match="blog_sftp_folder"):
             sftp.folder_of(wrong)
+    for wrong in ("a//b", "//", "/a//", "a/./../b"):
+        with pytest.raises(ValueError, match="blog_sftp_folder"):
+            sftp.folder_of(wrong)
     with pytest.raises(ValueError, match="blog_sftp_host must be a host name"):
         Settings(blog_sftp_host="user@ssh.example.org")
     assert "blog_sftp_password" not in Settings(blog_sftp_password=" s3cret ").public_dict()
@@ -292,6 +296,19 @@ def test_the_server_key_and_the_folder_are_checked() -> None:
         "site_owner_name is missing",
         "site_email is missing",
     ]
+
+
+def test_an_odd_folder_is_refused_at_once() -> None:
+    """0.16.1's pattern backtracked exponentially on a character outside it: 30 characters ending in an umlaut took 17
+    seconds, holding the whole app (the plan, the dashboard and every live round check the folder). Home Assistant
+    allows 200 characters."""
+    started = time.perf_counter()
+    for wrong in ("a" * 199 + "ä", "/ember-ai.de/" * 15 + "ü", "a " * 99 + ";", "x/" * 99 + "\\"):
+        assert len(wrong) <= 200
+        with pytest.raises(ValueError, match="blog_sftp_folder"):
+            sftp.folder_of(wrong)
+    assert sftp.folder_of("/" + "a/" * 99) == "/" + "/".join("a" * 99)
+    assert time.perf_counter() - started < 0.1
 
 
 # --- the agent's tools and the plan ---------------------------------------------------------------------------------
@@ -784,6 +801,56 @@ def test_the_live_client_against_a_real_sftp_server(sftp_server: tuple[int, para
     closed.close()
     with pytest.raises(sftp.NotSent, match="can't be reached"):
         sftp.connect(sftp.Login("127.0.0.1", unused, "u", "p"), None)
+
+
+def drop_connections() -> None:
+    """Cut every connection the test server holds, as a host does that drops one mid-transfer (paramiko's transports
+    are threads)."""
+    for thread in threading.enumerate():
+        if isinstance(thread, paramiko.Transport) and thread.server_mode:
+            thread.close()
+
+
+def cut_on(mp: pytest.MonkeyPatch, operation: str, ending: str, after: bool = False) -> None:
+    """The test server cuts its connections when it is asked to carry out ``operation`` (open, posix_rename, remove)
+    on a path ending in ``ending``: before carrying it out, or (``after``) once it did."""
+    real = getattr(_Files, operation)
+
+    def cutting(self: _Files, path: str, *args: Any) -> Any:
+        if not path.endswith(ending):
+            return real(self, path, *args)
+        result = real(self, path, *args) if after else paramiko.SFTP_FAILURE
+        drop_connections()
+        return result
+
+    mp.setattr(_Files, operation, cutting)
+
+
+def test_a_connection_dropped_mid_transfer_is_reported(sftp_server: tuple[int, paramiko.PKey, Path]) -> None:
+    """0.16.1 caught OSError and EOFError, but a connection that drops during a transfer raises paramiko's
+    SSHException ("Server connection dropped"), which escaped: the live view logged in again every round and the
+    owner's check answered 500. Nothing changed on the server: NotSent; it may have: Unclear."""
+    port, key, root = sftp_server
+    login = sftp.Login("127.0.0.1", port, "example.org", "s3cret-sftp-pass")
+    cases: list[tuple[str, str, bool, Callable[[sftp.LiveServer], Any], type[sftp.SftpError], str, bytes | None]] = [
+        ("open", ".tmp", False, lambda s: s.write("links.html", b"new"), sftp.NotSent, "couldn't be uploaded", b"old"),
+        ("open", "links.html", False, lambda s: s.read("links.html"), sftp.NotSent, "can't be read", b"old"),
+        ("posix_rename", ".tmp", True, lambda s: s.write("links.html", b"new"), sftp.Unclear, "put in place", b"new"),
+        ("remove", "links.html", True, lambda s: s.remove("links.html"), sftp.Unclear, "unclear whether", None),
+    ]
+    for operation, ending, after, action, kind, message, left in cases:
+        (root / "links.html").write_bytes(b"old")
+        with pytest.MonkeyPatch.context() as mp:
+            cut_on(mp, operation, ending, after)
+            server = sftp.connect(login, sftp.fingerprint(key.asbytes()))
+            try:
+                with pytest.raises(kind, match=message) as raised:
+                    action(server)
+            finally:
+                server.close()
+        assert "dropped" in str(raised.value), operation
+        assert ((root / "links.html").read_bytes() if (root / "links.html").exists() else None) == left, operation
+        assert not [p.name for p in root.iterdir() if p.name.endswith(".tmp")], operation
 
 
 # --- the owner's side -------------------------------------------------------------------------------------------------
