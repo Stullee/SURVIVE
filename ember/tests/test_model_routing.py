@@ -9,12 +9,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.agent import prompts, research_check
-from app.agent.fake_llm import FakeTransport
+from app.agent.fake_llm import FakeTransport, Raw, Reply, ToolCalls
 from app.agent.service import Agent
 from app.config import Settings
 from app.economy import pricing
 from tests.test_agent import rows
 from tests.test_loop_shapes import run
+from tests.test_ventures import JOURNAL, found, plan
 
 HAIKU = "claude-haiku-4-5"
 ROUTED = Settings(strategy_model="claude-opus-5-5", research_model=HAIKU)
@@ -44,12 +45,16 @@ def state_of(agent: Agent) -> research_check.Check:
         return research_check.check(conn, agent.scope(), HAIKU)
 
 
-def until(agent: Agent, done: object) -> None:
-    for _ in range(12):  # a cycle of the fake researches more often than not
-        if done():  # type: ignore[operator]
-            return
-        agent.run_cycle("schedule")
-    raise AssertionError("it never happened")
+def researched(agent: Agent, fake: FakeTransport, question: str, *answers: Raw) -> None:
+    """A cycle that asks one research question; ``answers``: its research calls' answers (in the check, the worker
+    model's, then the research model's). Scripted: the fake researches when its dice say so, and the dice are seeded
+    by the request, which holds the cycle's random fence nonce (tools.wrap), so 12 cycles without research came by
+    chance, about once in 30 runs (CI, 10-01)."""
+    fake.script.extend(
+        [plan(steps=["research"]), ToolCalls([("research", {"question": question})]), *answers, Reply("Done."), JOURNAL]
+    )
+    assert agent.run_cycle("schedule").status == "completed"
+    assert [t for t in fake.trace if t[1] == "invalid"] == []
 
 
 def compared(agent: Agent, times: int, found: int) -> None:
@@ -69,22 +74,26 @@ def compared(agent: Agent, times: int, found: int) -> None:
 
 
 def test_the_research_model_takes_over_once_its_check_passed(data_dir: Path) -> None:
-    agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=CHECKING, before=lambda a: compared(a, 9, 9))
-    until(agent, lambda: state_of(agent).compared == 10)
+    fake = FakeTransport()
+    agent, _ = run(data_dir, fake, cycles=0, settings=CHECKING, before=lambda a: compared(a, 9, 9))
+    page = found("https://example.invalid/planners")
+    researched(agent, fake, "Who sells weekly meal planners in German?", page, page)
     state = state_of(agent)
     assert state.passed and agent.dashboard()["models"]["research"] == HAIKU
     events = [e["message"] for e in agent.db.recent_events(limit=100)]
     assert any(m.startswith(f"The research model's check passed: {HAIKU} answered 10 of 10") for m in events)
     before = rows(agent, "SELECT COUNT(*) AS n FROM llm_calls")[0]["n"]
-    until(agent, lambda: rows(agent, f"SELECT id FROM llm_calls WHERE purpose = 'research' AND id > {before}"))
-    [call] = rows(agent, f"SELECT model FROM llm_calls WHERE purpose = 'research' AND id > {before} LIMIT 1")
+    researched(agent, fake, "What do German meal planners cost on Etsy?", page)
+    [call] = rows(agent, f"SELECT model FROM llm_calls WHERE purpose = 'research' AND id > {before}")
     assert call["model"] == HAIKU  # research runs on it now
     assert rows(agent, "SELECT COUNT(*) AS n FROM research_checks")[0]["n"] == 10  # and nothing is compared any more
 
 
 def test_a_research_model_that_finds_less_stays_out(data_dir: Path) -> None:
-    agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=CHECKING, before=lambda a: compared(a, 9, 6))
-    until(agent, lambda: state_of(agent).compared == 10)
+    fake = FakeTransport()
+    agent, _ = run(data_dir, fake, cycles=0, settings=CHECKING, before=lambda a: compared(a, 9, 6))
+    page = found("https://example.invalid/planners")
+    researched(agent, fake, "Who sells weekly meal planners in German?", page, page)
     state = state_of(agent)
     assert not state.passed and state.text().startswith(f"failed: {HAIKU} answered 10 of 10 and found web pages for 7")
     models = agent.dashboard()["models"]
