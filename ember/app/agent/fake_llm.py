@@ -17,8 +17,9 @@ What the rest of Ember can rely on:
   so cache writes and reads show up as they would for the real conversation.
 * A request the real API would reject gets ``Rejected(400, reason)`` (see :func:`validate_request`), so a
   bug in the agent loop fails in tests rather than in phase 5.
-* Deterministic: an answer is a function of (seed, scenario, request). Only the simulated cache, the
-  ``flaky`` call counter and a test script carry state from one call to the next.
+* Deterministic: an answer is a function of (seed, scenario, request), the random nonces of untrusted text's
+  <data> wrappers aside. Only the simulated cache, the ``flaky`` call counter and a test script carry state from
+  one call to the next.
 * Standard library only; no sockets, subprocesses or threads, so it runs inside ``netguard.sealed()``.
 * The workshop's Files API is emulated in memory (``upload_file``, ``file_info``, ``download_file``,
   ``delete_file``), and a workshop call answers like Anthropic's code execution tool: a script, a run, and the
@@ -107,6 +108,10 @@ SIMULATED_SITE = "https://example.invalid"
 RETRIEVED_AT = "2026-01-01T00:00:00Z"
 SIGNATURE_PREFIX = "fakesig_"
 _MARKER = '"cache_control":{'  # a marker in canonical JSON
+# The nonce of untrusted text's <data> wrapper (tools.wrap, library.study_context), in canonical JSON. It is random for
+# every cycle, so answers seeded with it differed from run to run: a test waiting for the fake to research failed one
+# CI run in several (0.16.2). _rng leaves it out.
+_DATA_NONCE = re.compile(r'(<data src=\\"[^"\\]*\\" id=\\"|</data id=\\")[0-9a-f]{6}(?=\\")')
 USAGE_KEYS = frozenset(
     {
         "input_tokens",
@@ -2941,8 +2946,10 @@ def _cache_layout(request: Mapping[str, Any]) -> tuple[list[str], list[int], lis
 
 
 def _rng(seed: int, scenario: str, canonical: str) -> random.Random:
-    """Random(sha256(f"{seed}:{scenario}:{canonical_json(request)}")): the same request, the same answer."""
-    digest = hashlib.sha256(f"{seed}:{scenario}:{canonical}".encode()).digest()
+    """Random(sha256(f"{seed}:{scenario}:{canonical_json(request)}")): the same request, the same answer, whatever
+    the random nonces of its <data> wrappers (_DATA_NONCE)."""
+    stable = _DATA_NONCE.sub(r"\1nonce", canonical)
+    digest = hashlib.sha256(f"{seed}:{scenario}:{stable}".encode()).digest()
     return random.Random(int.from_bytes(digest, "big"))  # noqa: S311 - a simulation, not security
 
 
