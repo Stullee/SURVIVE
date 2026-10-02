@@ -70,6 +70,7 @@ _PRODUCT_TOOLS = {
     "make_document": "documents",
     "make_spreadsheet": "spreadsheets",
     "make_image": "listing photos",
+    "resize_image": "print files",
     "workshop": "workshop runs that kept files",
 }
 

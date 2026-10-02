@@ -10,6 +10,9 @@ hid why. A picture is reduced while it is decoded where it can be (a JPEG at 1/2
 doesn't take its full size in memory twice. make_image zooms in on a region of a page (REGIONS), makes text photos
 and posters at print size, and notes in each photo what it shows (``marked``). With that and a difference hash of its
 pixels (``look``), the QA registry counts distinct photos, not copies.
+
+0.17.0 (upgrade request #4): ``fitted`` makes a print file of one of the agent's pictures at an exact size, cut to its
+proportions at the centre and resized (a workshop script that proved itself, built in: no new art for a new size).
 """
 
 from __future__ import annotations
@@ -19,10 +22,11 @@ import io
 import struct
 import zlib
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 import pypdfium2
 import pypdfium2.raw as pdfium_c
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, PngImagePlugin
 
 from . import fonts
 from .theme import RGB, contrast, hex_rgb, readable_on, tint
@@ -33,6 +37,7 @@ SHAPE_NAMES = tuple(SHAPES)
 MAX_PIXELS = 40_000_000  # 0.15.0: 12 MP until then
 LAYOUTS = ("photo", "text", "poster")
 POSTER_SIDE = 6_000  # a poster's longer side: 150 dpi or more on every poster Printify prints (A1, 24 x 36 in)
+PRINT_DPI = 300  # 0.17.0: what a print file made by ``fitted`` says it is meant for (Printify's print areas)
 # A region of a page or picture make_image zooms in on ('shop/cv.pdf#1@top'): left, top, right, bottom, as fractions.
 REGIONS = {
     "top": (0.0, 0.0, 1.0, 0.45),
@@ -446,6 +451,55 @@ def text_photo(
         draw.text((box[0] + pad_x, box[1] + pad_y - badge_font.size * 0.08), badge, font=badge_font,
                   fill=readable_on(accent_rgb))  # fmt: skip
     return png(canvas)
+
+
+@dataclass(frozen=True)
+class Fitted:
+    """0.17.0: a print file ``fitted`` made: its PNG, the size of the picture it was made from and the part of it kept
+    (left, top, right, bottom)."""
+
+    data: bytes
+    size: tuple[int, int]
+    source: tuple[int, int]
+    kept: tuple[int, int, int, int]
+
+    @property
+    def scale(self) -> float:
+        """How many times larger (above 1) or smaller the kept part was drawn."""
+        return self.size[0] / (self.kept[2] - self.kept[0])
+
+
+def centre_part(width: int, height: int, target_w: int, target_h: int) -> tuple[int, int, int, int]:
+    """0.17.0: the largest part of a ``width`` x ``height`` picture in the proportions of ``target_w`` x ``target_h``,
+    at its centre (left, top, right, bottom): what is left after cutting the sides or the top and bottom evenly."""
+    if width * target_h > height * target_w:  # wider than the target: cut the sides
+        kept = min(width, max(1, round(height * target_w / target_h)))
+        left = (width - kept) // 2
+        return left, 0, left + kept, height
+    kept = min(height, max(1, round(width * target_h / target_w)))
+    top = (height - kept) // 2
+    return 0, top, width, top + kept
+
+
+def fitted(data: bytes, width: int, height: int) -> Fitted:
+    """0.17.0: a PNG of exactly ``width`` x ``height`` pixels made of a picture (PNG or JPEG): its centre in those
+    proportions (nothing stretched), resized with Lanczos, noted as PRINT_DPI dots per inch. What make_image noted the
+    picture shows (``marked``) stays noted: a print file of a photo shows what the photo shows."""
+    if too_large(width, height):
+        raise ImageError(f"the print file would be {too_large(width, height)}")
+    image = _checked(data)
+    mark = str(image.info.get(MARK, "")) if image.format == "PNG" else ""
+    source = image.size
+    kept = centre_part(image.width, image.height, width, height)
+    # the kept part only, without cutting it out first (transparency is dropped: a print has none)
+    resized = _decoded(lambda: image.convert("RGB").resize((width, height), Image.Resampling.LANCZOS, box=kept))
+    info = PngImagePlugin.PngInfo()
+    if mark:
+        info.add_text(MARK, mark)
+    out = io.BytesIO()
+    # optimize would take seconds at print size (as for posters)
+    resized.save(out, "PNG", compress_level=6, dpi=(PRINT_DPI, PRINT_DPI), pnginfo=info)
+    return Fitted(out.getvalue(), (width, height), source, kept)
 
 
 def poster_size(shape: str) -> tuple[int, int]:

@@ -4,7 +4,7 @@ matplotlib, pillow, reportlab, python-docx, python-pptx, openpyxl, pypdf and mor
 your make_ tools can't do: charts and diagrams, PowerPoint templates, pictures drawn by code (patterns, cards,
 mockups), data work on a CSV, files that combine several of those. Never pay it for what is free: workspace_read
 reads PDF, Word and Excel files, workspace_write copies a file (mode copy), make_image draws sheets, details, text
-photos and simple posters.
+photos and simple posters, resize_image makes a picture's print file at any size.
 
 WRITING A GOOD TASK
 - Name every file you want, with its size and format: "price-chart.png, 1600 x 1200 pixels, 4 labelled bars".

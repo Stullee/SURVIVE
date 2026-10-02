@@ -6,6 +6,9 @@
   ``shop/budget-preview.png`` (0.15.0: and ``shop/budget-sheet2.png`` for the second sheet, and so on).
 * ``image``: a listing photo made of pages of Ember's own PDFs, sheets of its Excel files or pictures (0.15.0: or a
   region of one, zoomed in), with a title, a subtitle and a badge; (0.15.0) a text photo, or a poster at print size.
+* ``resize`` (0.17.0, resize_image): one of the agent's pictures at an exact size for printing,
+  ``shop/poster-a3.png``: cut to its proportions at the centre and resized, without paying for the picture to be made
+  again.
 
 The agent never writes the bytes of these files: Ember's code makes them from the agent's text and writes them
 with ``Jail.write_bytes``. Every problem the agent can fix comes back as a ProductError naming what to change.
@@ -282,4 +285,48 @@ def image(
     width, height = images.SHAPES[shape]
     what = "text listing photo" if layout == "text" else "listing photo"
     made.report.append(f"Made {output}: a {shape} {what}, {width} x {height} pixels, {_size(len(data))}.")
+    return made
+
+
+# --- print files (0.17.0) ---
+
+PRINT_SIDE = (100, 10_000)  # a print file's width and height, in pixels (and at most images.MAX_PIXELS together)
+CUT_NOTE = 0.10  # a print file that leaves out more of its picture than this says so
+SOFT_SCALE = 2.0  # a print file drawn more than this many times larger than its picture says it looks soft
+
+
+def resize(jail: Jail, source: str, output: str, width: int, height: int) -> Made:
+    """Make ``output`` (a PNG) of exactly ``width`` x ``height`` pixels from ``source`` (a PNG or JPEG in the
+    workspace): its centre in those proportions, resized, at images.PRINT_DPI. Upgrade request #4 built in: the
+    workshop script that made the bauhaus poster's print files (3508 x 4961 and 2480 x 3508), without a run."""
+    _base(output, ".png", "output")
+    if not source.lower().endswith((".png", ".jpg")):
+        raise ProductError("source must be a .png or .jpg picture in your workspace, e.g. 'shop/poster.png'")
+    low, high = PRINT_SIDE
+    for name, value in (("width", width), ("height", height)):
+        if not low <= value <= high:
+            raise ProductError(f"{name} must be {low} to {high:,} pixels")
+    try:
+        result = images.fitted(jail.read_bytes(source), width, height)
+    except images.ImageError as exc:
+        raise ProductError(f"{source}: {exc}") from None
+    made = Made()
+    _write(jail, made, output, result.data)
+    left, top, right, bottom = result.kept
+    source_w, source_h = result.source
+    dpi = images.PRINT_DPI
+    line = (
+        f"Made {output}: {width} x {height} pixels, {_size(len(result.data))}, from {source} ({source_w} x "
+        f"{source_h}): at {dpi} dpi it prints {width / dpi * 2.54:.1f} x {height / dpi * 2.54:.1f} cm."
+    )
+    cut = 1 - (right - left) * (bottom - top) / (source_w * source_h)
+    if cut > CUT_NOTE:
+        sides = "left and right" if right - left < source_w else "top and bottom"
+        line += f" Its proportions differ from the picture's: {cut:.0%} of it was cut off at the {sides}."
+    if result.scale > SOFT_SCALE:
+        line += (
+            f" It is drawn {result.scale:.1f} times larger than the picture, which adds no detail: it may look soft "
+            "printed, so look at it first."
+        )
+    made.report.append(line)
     return made

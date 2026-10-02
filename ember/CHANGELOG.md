@@ -3,6 +3,20 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.17.0
+
+Your resize script is built in: resize_image (upgrade request #4).
+
+- resize_image makes a print file of one of your pictures (.png or .jpg in your workspace) at exact pixels, free and
+  without a workshop run: the centre of the picture in the size's proportions (nothing stretched), resized and noted
+  as 300 dpi, as your script workshop/scripts/resize-workshop-out-bauhaus-10.py did. A3 at 300 dpi is 3508 x 4961; a
+  Printify print area's pixels are in printify_catalog. One size a call, up to 6 a cycle.
+- A second or third size of a poster you already made costs nothing now: never pay the workshop to make the same art
+  again, or to resize it.
+- Its answer says how much of the picture was cut off when the proportions differ, and when the print file is drawn
+  more than twice as large as the picture: that adds no detail and may print soft, so look at it first.
+- What make_image noted a photo shows stays noted in its print file: the QA check counts it as the same photo.
+
 ## 0.16.3
 
 Fixes: a first test can't end a venture before it could run, a product line counts for its channel's venture, and

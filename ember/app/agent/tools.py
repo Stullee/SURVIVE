@@ -19,7 +19,8 @@ Etsy tools.
 
 The making tools (``make_document``, ``make_spreadsheet``, ``make_image``) turn
 the agent's text into PDF, Word, Excel and PNG files with Ember's own code
-(app.products); ``look`` shows the model one of its pictures. ``workshop`` (like
+(app.products), and ``resize_image`` (0.17.0) makes print files of its pictures;
+``look`` shows the model one of its pictures. ``workshop`` (like
 ``research``, a metered model call) has code written and run in Anthropic's
 sandbox; Ember's code checks every file it made before it is kept.
 """
@@ -111,7 +112,7 @@ LOOK_PIXELS = 1_000  # the longer side of a picture the agent looks at: about 1,
 CATEGORIES_SHOWN = 10  # etsy_categories' answer, shortest paths first
 DEPARTMENT = " (a whole department: too broad for a listing)"
 # Making files takes a moment: these run sealed, but outside the database transaction the other tools share.
-MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image"})
+MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image", "resize_image"})
 GUIDES = (
     "documents",
     "spreadsheets",
@@ -152,6 +153,7 @@ ORDINARY_TOOLS = (
             "make_document",
             "make_spreadsheet",
             "make_image",
+            "resize_image",
             "look",
             "workshop",
             "draft",
@@ -805,6 +807,19 @@ SPECS: dict[str, Spec] = {
                 "background": _s("Background colour (default: a light tint of accent).", 7, required=False),
             },
             per_cycle=etsy.MAX_PHOTOS,  # 0.15.0: a listing's photos in one cycle (4 was fewer than qa.MIN_PHOTOS)
+        ),
+        Spec(
+            "resize_image",
+            f"Make a print file of one of your pictures at an exact size, free: its centre in the size's proportions "
+            f"(nothing stretched), resized, at {images.PRINT_DPI} dpi. For a print area or another poster size without "
+            "making the art again.",
+            {
+                "source": _s("Your .png or .jpg, e.g. 'workshop/out/poster.png'.", 200),
+                "output": _s("The .png to make, e.g. 'shop/poster-3508x4961.png'.", 200),
+                "width": _i("In pixels.", minimum=make.PRINT_SIDE[0], maximum=make.PRINT_SIDE[1]),
+                "height": _i("In pixels.", minimum=make.PRINT_SIDE[0], maximum=make.PRINT_SIDE[1]),
+            },
+            per_cycle=6,
         ),
         Spec(
             "look",
@@ -3126,6 +3141,12 @@ def _make_image(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     return _made(made, "made a listing photo")
 
 
+def _resize_image(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
+    """0.17.0: upgrade request #4, the workshop's resize script built in."""
+    made = make.resize(ctx.workspace, args["source"], args["output"], args["width"], args["height"])
+    return _made(made, "made a print file")
+
+
 def _workshop(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     if ctx.workshop is None:
         raise ToolError("the workshop isn't available")
@@ -4176,6 +4197,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "make_document": _make_document,
     "make_spreadsheet": _make_spreadsheet,
     "make_image": _make_image,
+    "resize_image": _resize_image,
     "look": _look,
     "guide": _guide,
     "email_inbox": _email_inbox,

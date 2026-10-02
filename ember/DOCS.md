@@ -335,6 +335,13 @@ agent's workspace:
   in Etsy's 4:3 size (3000 x 2250) or square or portrait; or a photo of words
   alone (what is included), or a simple typographic poster at print size. Up to
   10 a cycle, a whole listing's photos.
+- **Print files** (`resize_image`): one of the agent's pictures at exact pixels
+  (a Printify print area, e.g. 3508 x 4961 for A3 at 300 dpi): the centre of
+  the picture in the size's proportions, nothing stretched, resized and noted
+  as 300 dpi. A second or third size of a poster costs nothing instead of a
+  workshop run; the agent hears what was cut off and when a picture is drawn so
+  much larger that it may print soft. Up to 6 a cycle. Built in from upgrade
+  request #4 (the workshop's resize script).
 
 The agent reads the text of its PDF, Word and Excel files and copies files
 itself, for free (the workshop was paid for this). Pictures may have up to
@@ -1822,7 +1829,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.16.3 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.17.0 (by /u/your name)`.
 
 ## Diagnostics
 
