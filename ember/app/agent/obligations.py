@@ -9,7 +9,9 @@ forgotten, and a decision of the owner's was shown once. Now Ember's code keeps 
 
 and reads the rest from their own records: the owner's messages waiting for an answer, people's emails waiting for
 one (0.13.0, Phase E1: mailstore.inquiries), overdue milestones and live listings with too few photos (0.16.3, analysis
-bug 1: and a backed venture's first test due within a week unmet, with what is at stake: stages.owed). The plan shows
+bug 1: and a backed venture's first test due within a week unmet, with what is at stake: stages.owed; 0.18.0: and a
+strategy that names a parked or killed venture, ``stale_strategy``: live, it named dropshipping as the priority long
+after the agent had parked it, and every plan read it). The plan shows
 them first and never cuts them; a pressing one (``pressing``) makes a wake cycle an ordinary one rather than a
 venture cycle. The agent closes a promise, decision or miss with
 ``obligation_done``, saying what it did; a promise only once its owner has heard from it since, and a miss also closes
@@ -19,6 +21,7 @@ when a milestone replaces it.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import date, timedelta
 from typing import Any
@@ -160,9 +163,31 @@ def pressing(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[s
     return found
 
 
-def text(conn: sqlite3.Connection, scope: AgentScope, today: date) -> str:
+def stale_strategy(conn: sqlite3.Connection, scope: AgentScope, strategy: str) -> str:
+    """0.18.0: the line OBLIGATIONS gives a strategy that names a parked or killed venture, or "". A venture counts as
+    named by its whole title, or by its number ("#3") with the first long word of its title shortly before it."""
+    lowered = strategy.lower()
+    named = []
+    for v in ventures.all_ventures(conn, scope):
+        if v["stage"] not in ("parked", "killed"):
+            continue
+        title = " ".join(str(v["title"]).split()).lower()
+        word = next((w for w in re.findall(r"[^\W\d_]+", title) if len(w) >= 5), "")
+        near = word and re.search(rf"{re.escape(word)}\W.{{0,40}}#{v['id']}\b", lowered, re.DOTALL)
+        if (title and title in lowered) or near:
+            named.append(f"#{v['id']} {_flat(v['title'], 40)} ({v['stage']})")
+    if not named:
+        return ""
+    return (
+        f"Your strategy names {', '.join(named[:3])}: rewrite it without it (memory_update strategy, replace), with"
+        " what you learned."
+    )
+
+
+def text(conn: sqlite3.Connection, scope: AgentScope, today: date, strategy: str = "") -> str:
     """The plan's OBLIGATIONS, at most SHOWN obligations and a line each for the owner's messages, the overdue
-    milestones and the listings with too few photos: bounded, so it is never cut. Empty when nothing is owed."""
+    milestones, the listings with too few photos and (0.18.0) a stale ``strategy``: bounded, so it is never cut. Empty
+    when nothing is owed."""
     lines = []
     where, params = scope.where()
     waiting = conn.execute(
@@ -215,6 +240,9 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date) -> str:
             f"- Live listings with fewer than {qa.MIN_PHOTOS} photos: {shown}{more}: give each the whole"
             " set with propose_etsy_edit."
         )
+    stale = stale_strategy(conn, scope, strategy)
+    if stale:
+        lines.append(f"- {stale}")
     if not lines:
         return ""
     if rows:

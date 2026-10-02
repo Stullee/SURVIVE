@@ -973,7 +973,23 @@ class CycleRunner:
                 events.record(self.db, "info", "agent", f"The daily review: {outcome.text}"[:300])
         self._save_review(cycle_id, card, parsed, note)
         if parsed is not None:
+            self._keep_lesson(cycle_id, parsed.lesson)
             self._consolidate(cycle_id)
+
+    def _keep_lesson(self, cycle_id: int, lesson: str) -> None:
+        """0.18.0: the daily review's lesson goes into the lessons file (live, no plan copied it: the review's
+        conclusions were lost), on one line, as the agent's own append would; one already noted is skipped."""
+        line = " ".join(lesson.split())
+        if not line:
+            return
+        try:
+            with self.db.transaction() as conn:
+                said = self.memory.update(conn, "lessons", "append", line, cycle_id, to_iso(self.clock.now()))
+        except memory_files.MemoryError_ as exc:
+            log.warning("The daily review's lesson wasn't kept: %s", exc)
+            return
+        if not said.startswith("already noted"):
+            events.record(self.db, "info", "agent", f"The daily review's lesson was kept: {line}"[:300])
 
     def _consolidate(self, cycle_id: int) -> None:
         """0.12.0: the lessons' daily consolidation, after the daily review: a call of its own on the planner's model
@@ -985,7 +1001,8 @@ class CycleRunner:
             return
         with self.db.connection() as conn:
             pinned = {memory_files.lesson_key(p["text"]) for p in memory_files.pins(conn, self.scope)}
-        request = prompts.consolidate_request(self.settings, memory_files.consolidation_input(text, pinned))
+        named = frozenset(tools.SPECS)  # 0.18.0: a lesson naming a tool is marked, and its limit may go
+        request = prompts.consolidate_request(self.settings, memory_files.consolidation_input(text, pinned, named))
         try:
             quote = self.meter.quote(request, CONSOLIDATE)
         except Unpriceable as exc:
@@ -1008,7 +1025,7 @@ class CycleRunner:
         except ValueError:
             answer = None
         with self.db.transaction() as conn:
-            done = memory_files.consolidate(text, answer, pinned, memory_files.CAPS["lessons"])
+            done = memory_files.consolidate(text, answer, pinned, memory_files.CAPS["lessons"], named)
             if done is not None and self.memory.read("lessons") == text:
                 self.memory.rewrite(conn, "lessons", done[0], "consolidation", to_iso(self.clock.now()))
         message = (
@@ -2138,9 +2155,9 @@ def _picture_bytes(block: dict[str, Any]) -> int:
 
 def _burn_line(mode: burn.Burn, clock: Clock) -> str:
     """STATUS's burn mode (0.12.0), when it holds the agent back or (0.15.0) is projected to within
-    burn.PROJECTED_DAYS: nothing in explore otherwise."""
+    burn.PROJECTED_DAYS, or (0.18.0) says to fight for a first euro: nothing in explore otherwise."""
     projected = burn.projected_text(mode, clock.now().astimezone(clock.tz))
-    if mode.mode == burn.EXPLORE and not projected:
+    if mode.mode == burn.EXPLORE and not projected and not mode.fight:
         return ""
     return mode.text() + (f"; {projected}" if projected else "")
 

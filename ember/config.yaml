@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.17.0"
+version: "0.18.0"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -37,6 +37,7 @@ options:
   daily_spend_cap_usd: 1.5
   cycle_spend_cap_usd: 0.5
   venture_share: 25
+  spending_stance: invest
   venture_cash_eur: 20
   library_study_usd_per_day: 0.5
   wake_interval_minutes: 240
@@ -154,6 +155,7 @@ schema:
   daily_spend_cap_usd: float(0,1000)
   cycle_spend_cap_usd: float(0,1000)
   venture_share: int(0,100)
+  spending_stance: list(invest|steady|conserve)
   venture_cash_eur: float(0,100000)
   library_study_usd_per_day: float(0,100)
   wake_interval_minutes: int(5,10080)

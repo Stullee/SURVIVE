@@ -25,7 +25,7 @@ from ..economy.ledger import Books, Scope
 from ..economy.life import LifeStatus, Runway
 from ..integrations import etsy, etsy_publisher
 from ..version import app_version
-from . import predictions, prompts, roadmap, ventures
+from . import predictions, prompts, reach, roadmap, ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
 
 WINDOW_DAYS = 7
@@ -86,6 +86,7 @@ class Verdict:
     project_id: int
     verdict: str
     why: str
+    bottleneck: str = ""  # 0.18.0: prompts.BOTTLENECKS ("" when the answer named none)
 
 
 @dataclass
@@ -178,7 +179,7 @@ def scorecard(
         _money(conn, scope, books, ledger_scope, status, since),
         _last_review(conn, scope, today),
         _etsy(conn, scope, since),
-        _project_lines(conn, projects, clock, since),
+        _project_lines(conn, projects, clock, since, reach.funnels(conn, scope)),
         roadmap.review_text(conn, scope, today, since),
         predictions.review_text(conn, scope, since),  # 0.13.0: the forecasts against the results
         _ventures(conn, scope, since),
@@ -325,7 +326,14 @@ def _projects(conn: sqlite3.Connection, scope: AgentScope, since: str) -> list[s
     return [*open_, *closed][:MAX_PROJECTS]
 
 
-def _project_lines(conn: sqlite3.Connection, projects: list[sqlite3.Row], clock: Clock, since: str) -> str:
+def _project_lines(
+    conn: sqlite3.Connection,
+    projects: list[sqlite3.Row],
+    clock: Clock,
+    since: str,
+    funnels: dict[int, reach.Funnel] | None = None,
+) -> str:
+    """The projects, each with (0.18.0) its funnel and the reach done for it when it has live listings."""
     if not projects:
         return "PROJECTS\nNo projects: nothing is being tried."
     lines = ["PROJECTS (open ones, then those closed in the period)"]
@@ -357,6 +365,9 @@ def _project_lines(conn: sqlite3.Connection, projects: list[sqlite3.Row], clock:
             f" all · requests to your owner: {requests}" + (f" ({split})" if split else "") + f" · {last}"
         )
         lines.append(f"   hypothesis: {_one_line(p['hypothesis'], 200)}")
+        funnel = reach.review_text((funnels or {}).get(int(pid)))
+        if funnel:
+            lines.append(f"   {funnel}")
         if p["next_step"]:
             lines.append(f"   next step: {_one_line(p['next_step'], 150)}")
     return "\n".join(lines)
@@ -536,7 +547,9 @@ def parse(text: str, project_ids: set[int]) -> Review | None:
         if verdict not in VERDICTS:
             continue
         seen.add(pid)
-        verdicts.append(Verdict(pid, verdict, _one_line(item.get("why"), WHY_CHARS)))
+        neck = item.get("bottleneck")
+        neck = neck if neck in prompts.BOTTLENECKS else ""
+        verdicts.append(Verdict(pid, verdict, _one_line(item.get("why"), WHY_CHARS), neck))
     texts = {key: str(data.get(key) or "").strip()[:limit] for key, limit in LIMITS.items()}
     judged: list[MilestoneVerdict] = []
     items = data.get("milestones")
@@ -582,7 +595,12 @@ def save(
     note: str | None = None,
 ) -> int:
     verdicts = (
-        [{"project_id": v.project_id, "verdict": v.verdict, "why": v.why} for v in review.verdicts] if review else []
+        [
+            {"project_id": v.project_id, "verdict": v.verdict, "bottleneck": v.bottleneck, "why": v.why}
+            for v in review.verdicts
+        ]
+        if review
+        else []
     )
     judged = [
         {
@@ -662,17 +680,19 @@ def planner_text(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
         if said:
             lines.append(f"{label}: {_one_line(said, 400)}")
     lines.append(
-        "Act on it: carry out every stop and change (project_update), and keep the lesson with memory_update if it"
-        " is new."
+        "Act on it: carry out every stop and change (project_update), and work on each bottleneck (reach: bring"
+        " buyers to it). Ember's code kept the lesson."
     )
     kept = []
     for v in _verdicts(row):
+        neck = v.get("bottleneck") or ""  # 0.18.0
         if v["verdict"] == "continue":
-            kept.append(f"#{v['project_id']}")
+            kept.append(f"#{v['project_id']}" + (f" ({neck})" if neck else ""))
             continue
         project = conn.execute("SELECT title, status FROM projects WHERE id = ?", (v["project_id"],)).fetchone()
         title = f" {_one_line(project['title'], 60)} [{project['status']}]" if project else ""
-        lines.append(f"- #{v['project_id']}{title}: {v['verdict']}: {_one_line(v['why'], 160)}")
+        said = f"{_one_line(v['why'], 160)}" + (f" (bottleneck: {neck})" if neck else "")
+        lines.append(f"- #{v['project_id']}{title}: {v['verdict']}: {said}")
     for v in milestone_verdicts(row):
         verdict = f"{v.get('verdict')} to {v.get('new_due')}" if v.get("verdict") == "extend" else v.get("verdict")
         done = "applied" if v.get("applied") else f"not applied: {_one_line(v.get('outcome'), 120)}"

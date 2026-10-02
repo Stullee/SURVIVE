@@ -248,15 +248,23 @@ def test_the_room_line_prices_research_only_without_brainstorms() -> None:
 # --- X19: the projected date of the next burn-mode change ---
 
 
+def kept(mode: str, days: float | None) -> burn.Burn:
+    """0.18.0: a mode under the owner's conserve stance (the burn modes as they were)."""
+    return burn.Burn(mode, days, stance=burn.CONSERVE)
+
+
 def test_the_next_burn_mode_is_projected_at_todays_burn() -> None:
     now = datetime(2026, 9, 30, 12, 0, tzinfo=START.tzinfo)
-    assert burn.projected(burn.Burn(burn.FOCUS, 18.3), now) == (burn.MAINTENANCE, now + timedelta(days=3.3))
-    assert burn.projected_text(burn.Burn(burn.FOCUS, 18.3), now) == "maintenance from about 10-03 at today's burn"
-    assert burn.projected_text(burn.Burn(burn.EXPLORE, 40.0), now) == "focus from about 10-10 at today's burn"
-    assert burn.projected_text(burn.Burn(burn.FOCUS, 33.0), now) == "maintenance from about 10-18 at today's burn"
-    assert burn.projected_text(burn.Burn(burn.FOCUS, 14.0), now) == "maintenance from about 09-30 at today's burn"
+    assert burn.projected(kept(burn.FOCUS, 18.3), now) == (
+        burn.MAINTENANCE,
+        now + timedelta(days=3.3),
+    )
+    assert burn.projected_text(kept(burn.FOCUS, 18.3), now) == "maintenance from about 10-03 at today's burn"
+    assert burn.projected_text(kept(burn.EXPLORE, 40.0), now) == "focus from about 10-10 at today's burn"
+    assert burn.projected_text(kept(burn.FOCUS, 33.0), now) == "maintenance from about 10-18 at today's burn"
+    assert burn.projected_text(kept(burn.FOCUS, 14.0), now) == "maintenance from about 09-30 at today's burn"
     for mode, days in ((burn.EXPLORE, 61.0), (burn.EXPLORE, None), (burn.MAINTENANCE, 9.0), (burn.DORMANT, 1.0)):
-        assert burn.projected(burn.Burn(mode, days), now) is None, (mode, days)
+        assert burn.projected(kept(mode, days), now) is None, (mode, days)
 
 
 def test_status_and_the_dashboard_show_the_projection(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -267,7 +275,8 @@ def test_status_and_the_dashboard_show_the_projection(data_dir: Path, monkeypatc
 
     def evaluate(*args: Any, **kwargs: Any) -> Any:
         status = real(*args, **kwargs)
-        return dataclasses.replace(status, runway=dataclasses.replace(status.runway, net_days=18.3))
+        runway = dataclasses.replace(status.runway, net_days=18.3)
+        return dataclasses.replace(status, runway=runway, stance=burn.CONSERVE)  # 0.18.0: the modes as they were
 
     monkeypatch.setattr(agent.economy.life, "evaluate", evaluate)
     agent.run_cycle("schedule")

@@ -243,8 +243,8 @@ def test_the_planner_sees_todays_review_only_today(data_dir: Path) -> None:
     assert text.startswith(f"Your review of today ({agent.clock.today().isoformat()})")
     # 0.15.0: the advice first, the verdicts after it (a project to continue on one line), so a cut takes them first.
     assert "\nFocus today: " in text and text.endswith(
-        "Act on it: carry out every stop and change (project_update), and keep the lesson with memory_update if it"
-        " is new.\n- continue: #1"
+        "Act on it: carry out every stop and change (project_update), and work on each bottleneck (reach: bring"
+        " buyers to it). Ember's code kept the lesson.\n- continue: #1 (too_early)"
     )
     agent.clock.advance(days=1)
     before = len(fake.sent)

@@ -688,7 +688,9 @@ SPECS: dict[str, Spec] = {
             "candid entry (what you did, what worked, what didn't) and next, for your next plan.",
             {
                 "summary": _s("One line.", 240, cut=True),
-                "entry": _s("", 2_000),
+                # 0.18.0: cut, not refused: the reflection is the cycle's last reply, and a refused journal lost its
+                # handoff (cycle #72 lost "next" to an entry of 2,652 characters)
+                "entry": _s("", 2_000, cut=True),
                 "next": _s("What your next cycle should do first, and why.", 400, required=False, cut=True),
             },
             per_cycle=1,

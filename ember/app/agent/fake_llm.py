@@ -1329,12 +1329,12 @@ class FakeTransport:
             if status not in _OPEN_STATUSES:
                 continue
             if cycles >= REVIEW_STOP_CYCLES and _NO_REVENUE in card:
-                verdict, why = "stop", f"{cycles} cycles and nothing earned: no sign of demand."
+                verdict, neck, why = "stop", "none", f"{cycles} cycles and nothing earned: no sign of demand."
             elif status == "idea":
-                verdict, why = "change", "Still an idea: start it with a first draft, or drop it."
+                verdict, neck, why = "change", "none", "Still an idea: start it with a first draft, or drop it."
             else:
-                verdict, why = "continue", "Too early to judge: it needs a finished listing first."
-            verdicts.append({"project_id": pid, "verdict": verdict, "why": why})
+                verdict, neck, why = "continue", "too_early", "Too early to judge: it needs a finished listing first."
+            verdicts.append({"project_id": pid, "verdict": verdict, "bottleneck": neck, "why": why})  # 0.18.0
         stops = sum(1 for v in verdicts if v["verdict"] == "stop")
         review = {
             "verdicts": verdicts,
@@ -1356,7 +1356,9 @@ class FakeTransport:
                 [_text(whole[: len(whole) // 2])], "max_tokens", output_tokens=max_tokens, note="chaos: cut_off"
             )
         if chaos == "unknown_project":
-            verdicts.append({"project_id": 99_999, "verdict": "stop", "why": "A project that isn't listed."})
+            verdicts.append(
+                {"project_id": 99_999, "verdict": "stop", "bottleneck": "none", "why": "A project that isn't listed."}
+            )
             return _Draft([_text(json.dumps(review))], note="chaos: unknown_project")
         return _Draft(
             [_text(json.dumps(review, ensure_ascii=False))], note=f"review: {len(verdicts)} verdicts, {stops} stop"

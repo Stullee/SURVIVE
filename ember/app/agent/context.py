@@ -54,7 +54,7 @@ PLANNER_BUDGETS = {
     "mail": MAIL_BUDGET,
     "strategy": 2_000,
     "identity": 600,
-    "lessons": 1_300,
+    "lessons": 2_600,  # 0.18.0: 1,300 showed the newest 6 lessons, all tool limits
     "journal": 1_700,  # YOUR LAST CYCLE (0.12.0: the handoff, the last journal and the last 2 cycles' digests)
     "workspace": 900,
     "research": RESEARCH_BUDGET,
@@ -313,6 +313,7 @@ def snapshot(
     ).fetchone()
     files = _safe_listing(workspace)
     standing = store.standing_instructions(conn, scope)
+    memories = memory.read_all()
     return Snapshot(
         status=status,
         local_time=local_time,
@@ -332,8 +333,8 @@ def snapshot(
         last_journal=journal[0] if journal else None,
         handoff=handoff,
         digests=digest.latest(conn, scope),
-        obligations=obligations.text(conn, scope, today) if today is not None else "",
-        memory=memory.read_all(),
+        obligations=obligations.text(conn, scope, today, memories.get("strategy", "")) if today is not None else "",
+        memory=memories,
         pins=[str(p["text"]) for p in pins(conn, scope)],
         workspace=files,
         workspace_usage=_usage_line(workspace),

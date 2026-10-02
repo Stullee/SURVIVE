@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import gates, metrics, tools  # noqa: E402
+from app.agent import gates, metrics, reach, tools  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import listed  # noqa: E402
@@ -104,7 +104,8 @@ def test_the_bars_are_graded_from_etsy_s_numbers_without_a_history(data_dir: Pat
     assert rows(agent, "SELECT COUNT(*) AS n FROM obligations")[0]["n"] == 0  # nothing owed for bars met
 
 
-def test_a_miss_is_owed_with_its_bar_s_action(data_dir: Path) -> None:
+def test_a_miss_is_owed_with_its_bar_s_action(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(reach, "ENOUGH", 0)  # 0.18.0: as if it had the reach a fair test needs (no retry)
     agent, _ = started(data_dir)
     close(agent, "day7_views", "missed")
     happened = keep(agent)
@@ -166,3 +167,53 @@ def test_only_ember_s_code_sets_the_order_bar() -> None:
     assert "orders_total" not in offered and "views_delta" in offered
     assert {"views_total", "favorites_total"} <= set(offered)  # 0.15.0: the agent's goals use them too
     assert metrics.CATALOGUE["orders_total"].code_only and not metrics.CATALOGUE["views_total"].history
+
+
+# --- 0.18.0: marketing before parking ---
+
+
+def test_a_day_14_views_miss_without_reach_owes_a_push_and_one_more_bar(data_dir: Path) -> None:
+    agent, project = started(data_dir)
+    start = agent.clock.today()
+    close(agent, "day7_views", "done")
+    keep(agent)
+    close(agent, "day14_views", "missed")
+    happened = keep(agent)
+    assert happened[0].startswith(f"Obligation: bring buyers to project #{project}'s listings")
+    [owed] = rows(agent, "SELECT kind, what, milestone_id FROM obligations")
+    assert owed["kind"] == "miss" and owed["milestone_id"] == bars(agent)["day14_views"]["id"]
+    assert "bring buyers to its listings before its last views bar on day 28" in owed["what"]
+    assert "park" not in owed["what"].split("(milestone")[0].replace("isn't parked yet", "")
+    retry = bars(agent)["retry_views"]
+    assert (retry["metric"], retry["target"], retry["status"]) == ("views_total", 30, "open")
+    assert retry["due"] == (start + timedelta(days=28)).isoformat() and retry["title"].startswith("Day 28: 30 views")
+    assert set(bars(agent)) == {"day7_views", "day14_views", "retry_views"}  # nothing else while it runs
+    assert keep(agent) == []  # owed once
+    close(agent, "retry_views", "missed")
+    keep(agent)
+    last = rows(agent, "SELECT what FROM obligations ORDER BY id DESC LIMIT 1")[0]["what"]
+    assert "park the product line (its project) with the numbers" in last  # marketed, and still not seen
+
+
+def test_the_bars_after_a_retry_come_later(data_dir: Path) -> None:
+    agent, _ = started(data_dir)
+    start = agent.clock.today()
+    close(agent, "day7_views", "done")
+    keep(agent)
+    close(agent, "day14_views", "missed")
+    keep(agent)
+    close(agent, "retry_views", "done")  # the push brought buyers
+    keep(agent)
+    favorites = bars(agent)["day14_favorites"]
+    assert favorites["status"] == "open"  # the retry's views count as met
+    assert favorites["due"] == (start + timedelta(days=14 + gates.RETRY_DAYS)).isoformat()
+
+
+def test_enough_reach_counts_blog_posts_pins_and_edits(data_dir: Path) -> None:
+    agent, project = started(data_dir)
+    [listing] = rows(agent, "SELECT listing_id FROM etsy_listings WHERE listing_id IS NOT NULL")
+    with agent.db.connection() as conn:
+        funnel = reach.funnels(conn, agent.scope())[project]
+    assert funnel.listings == [listing["listing_id"]] and funnel.reach == 0 and funnel.stage == "not_seen"
+    assert "less than the 3 a fair test needs" in funnel.text()
+    assert reach.listing_ids("see https://www.etsy.com/de/listing/123456/x and etsy.com/listing/99") == {123456, 99}

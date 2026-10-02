@@ -19,7 +19,7 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import econ, gates, metrics, predictions, roadmap, stages, tools, ventures  # noqa: E402
+from app.agent import econ, gates, metrics, predictions, reach, roadmap, stages, tools, ventures  # noqa: E402
 from app.agent.fake_llm import FakeTransport  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.agent.store import AgentScope  # noqa: E402
@@ -123,7 +123,8 @@ def test_a_product_line_holds_one_open_bar_at_a_time(data_dir: Path) -> None:
     assert [r["kind"] for r in opened].count("first_test") == 1  # the money goal and its decision points besides
 
 
-def test_a_missed_day_14_views_bar_misses_the_day_14_bar(data_dir: Path) -> None:
+def test_a_missed_day_14_views_bar_misses_the_day_14_bar(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(reach, "ENOUGH", 0)  # 0.18.0: as if it had the reach a fair test needs (no retry)
     agent, _ = started(data_dir)
     close(agent, "day7_views", "done")
     keep_gates(agent)

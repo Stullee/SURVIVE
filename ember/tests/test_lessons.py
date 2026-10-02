@@ -88,12 +88,13 @@ def test_the_daily_review_consolidates_the_lessons(data_dir: Path) -> None:
     assert kinds[:3] == ["review", "consolidate", "plan"]
     [version] = rows(agent, "SELECT content FROM memory_versions WHERE source = 'consolidation'")
     _, kept = memory.lesson_lines(version["content"])
-    assert len(kept) == 13 and sum("Ask people before building." in k for k in kept) == 1  # 3 said the same
+    # 0.18.0: the review's own lesson was added first (16 lessons)
+    assert len(kept) == 14 and sum("Ask people before building." in k for k in kept) == 1  # 3 said the same
     assert kept[0] == f"- [#c1] {PINNED}" and kept[1] == f"- [#c2] {NO}"  # newest last, as before
     [call] = rows(agent, "SELECT purpose, overhead FROM llm_calls WHERE purpose = 'consolidate'")
     assert call["overhead"] == 1  # like the review: the day's, not a milestone's
     events = [e["message"] for e in agent.db.recent_events(limit=40)]
-    assert "Ember's code consolidated the lessons: 15 lessons became 13 (2 merged into others, 0 dropped)" in events
+    assert "Ember's code consolidated the lessons: 16 lessons became 14 (2 merged into others, 0 dropped)" in events
 
 
 def test_a_short_file_needs_no_consolidation(data_dir: Path) -> None:

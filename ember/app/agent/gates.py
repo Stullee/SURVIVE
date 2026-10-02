@@ -16,6 +16,12 @@ day 21 is met with its own action: scale it (5 variants or a bundle), a decision
 to close. Their dates never move (0.15.0: a bar that opens on or after its day is due the day after it opens) and only
 the owner drops them; a closed project takes its open ones with it.
 
+0.18.0: marketing before parking. A product line that misses its day-14 views bar with less reach than reach.ENOUGH
+(blog posts, pins and listing edits for its listings, reach.py) wasn't seen, so it wasn't tested: it owes a push to
+bring buyers (MARKET) instead of a park, and gets one more views bar, 30 views by day 28 ('retry_views'), set at once.
+Missed, that one parks it. The bars after it come RETRY_DAYS later than they would have, each with at least
+RETRY_FLOOR_DAYS to run.
+
 The bars are milestones of the kind 'first_test' (a product line's first test; listing_gates names each one's bar),
 under the money goal when it is due later; the milestone to scale is a decision point ('decision') of its own, a goal
 in the plan.
@@ -29,11 +35,13 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..integrations import etsy_publisher
-from . import metrics, roadmap
+from . import metrics, reach, roadmap
 from .store import AgentScope
 
 OPEN_PROJECTS = ("idea", "active", "waiting")
 SCALE_DAYS = 14  # after a first order by day 21: the time to scale the product line
+RETRY_DAYS = 14  # 0.18.0: how much later the bars after a retry come
+RETRY_FLOOR_DAYS = 7  # 0.18.0: the least time a bar after a retry has to run
 
 
 @dataclass(frozen=True)
@@ -53,6 +61,11 @@ PRINTIFY_FIX = (
     " then let them run"
 )
 PARK = "park the product line (its project) with the numbers, unless your owner says otherwise"
+# 0.18.0: a day-14 views miss with too little reach: nobody saw it, so it wasn't tested
+MARKET = (
+    f"bring buyers to its listings before its last views bar on day 28 (blog posts that recommend them, pins, better"
+    f" titles and tags: at least {reach.ENOUGH} in all); it wasn't seen, so it isn't parked yet"
+)
 GATES = (
     Gate(
         "day7_views",
@@ -70,6 +83,16 @@ GATES = (
         30,
         "Day 14: 30 views",
         "Its listings have 30 views in all by day 14 (Etsy's numbers; then 2 favorites, the next bar). Missed: park "
+        "the product line with the numbers",
+        PARK,
+    ),
+    Gate(
+        "retry_views",
+        28,
+        "views_total",
+        30,
+        "Day 28: 30 views",
+        "Its listings have 30 views in all by day 28, after a push to bring buyers (Etsy's numbers). Missed: park "
         "the product line with the numbers",
         PARK,
     ),
@@ -96,6 +119,7 @@ GATES = (
 )
 BY_KEY = {g.key: g for g in GATES}
 BARS = ("day7_views", "day14_views", "day14_favorites", "day21_sale")  # one after the other (0.15.0: one at a time)
+RETRY = "retry_views"  # 0.18.0: set only by a day-14 views miss with too little reach, after day14_views
 SCALE_TITLE = "Scale it: 5 variants or a bundle"
 SCALE_MEASURE = (
     "A buyer ordered by day 21: the product line has 5 variants or a bundle live (you close it when they are live)"
@@ -149,11 +173,20 @@ def _record(
 
 
 def _set(
-    conn: sqlite3.Connection, scope: AgentScope, project: Any, gate: Gate, start: date, today: date, now: str
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    project: Any,
+    gate: Gate,
+    start: date,
+    today: date,
+    now: str,
+    later: int = 0,
+    floor: int = 1,
 ) -> int:
     """One bar as a milestone of Ember's code, due on its day from the start. 0.15.0: a bar that opens on or after its
-    day (the one before was graded then) is due the next day, so a sync can read it by its date."""
-    due = max(start + timedelta(days=gate.day), today + timedelta(days=1)).isoformat()
+    day (the one before was graded then) is due the next day, so a sync can read it by its date. 0.18.0: after a
+    retry, ``later`` days later and at least ``floor`` days from today; it records the start, not the shift."""
+    due = max(start + timedelta(days=gate.day + later), today + timedelta(days=floor)).isoformat()
     goal = roadmap.money_goal(conn, scope)
     milestone_id = roadmap.create(
         conn,
@@ -182,16 +215,44 @@ def _next_bar(
     if any(r["status"] == "dropped" for r in rows):
         return []
     start = date.fromisoformat(str(rows[0]["started_on"])) if rows else today
+    retry = have.get(RETRY)
+    if retry is not None and retry["status"] == "open":
+        return []  # 0.18.0: the retry is being checked
     for key in BARS:
         if key in have:
             if have[key]["status"] == "open":
                 return []  # this bar is being checked
             continue
-        views = have.get("day14_views")
+        views = retry if retry is not None else have.get("day14_views")
         if key == "day14_favorites" and views is not None and views["status"] != "done":
             continue  # the day-14 bar is missed already
+        if retry is not None:  # 0.18.0: the bars after a retry come later
+            later, floor = RETRY_DAYS, RETRY_FLOOR_DAYS
+            return [_set(conn, scope, project, BY_KEY[key], start, today, now, later, floor)]
         return [_set(conn, scope, project, BY_KEY[key], start, today, now)]
     return []
+
+
+def _retry(
+    conn: sqlite3.Connection, scope: AgentScope, project: Any, row: sqlite3.Row, today: date, now: str
+) -> tuple[str, int]:
+    """0.18.0: a day-14 views miss with too little reach: the obligation to bring buyers (MARKET) and the retry bar."""
+    made = _set(conn, scope, project, BY_KEY[RETRY], date.fromisoformat(str(row["started_on"])), today, now)
+    what = (
+        f"project #{row['project_id']}: {MARKET} (milestone #{row['milestone_id']} "
+        f"{_title(BY_KEY['day14_views'].title, str(project['title']))!r} was missed: {str(row['result'])[:120]};"
+        f" the last bar is milestone #{made})"
+    )
+    conn.execute(
+        "INSERT INTO obligations (mode, session, kind, what, due, created_at, milestone_id)"
+        " VALUES (?, ?, 'miss', ?, ?, ?, ?)",
+        (scope.mode, scope.session, what[:400], now[:10], now, row["milestone_id"]),
+    )
+    said = (
+        f"Obligation: bring buyers to project #{row['project_id']}'s listings (milestone #{row['milestone_id']} missed"
+        f" with too little reach); its last views bar is milestone #{made}"
+    )
+    return said, made
 
 
 def _owe(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row, gate: Gate, project: str, now: str) -> str:
@@ -252,6 +313,7 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, today: date, now: str) -> 
             f"SELECT milestone_id FROM obligations WHERE {where} AND milestone_id IS NOT NULL", params
         )
     }
+    funnels: dict[int, reach.Funnel] | None = None  # 0.18.0: read once, when a day-14 views miss needs it
     for project_id, rows in tests.items():
         project = projects.get(project_id)
         if project is None or project["status"] not in OPEN_PROJECTS:
@@ -275,6 +337,21 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, today: date, now: str) -> 
             twin = by_key.get({"day14_views": "day14_favorites", "day14_favorites": "day14_views"}.get(gate.key, ""))
             if twin is not None and int(twin["milestone_id"]) in owed:
                 continue  # one obligation for the day-14 bar
+            if gate.key == "day14_views" and RETRY not in by_key:
+                if funnels is None:
+                    funnels = reach.funnels(conn, scope)
+                funnel = funnels.get(project_id)
+                if funnel is None or funnel.reach < reach.ENOUGH:  # 0.18.0: not seen, so not tested
+                    said, made = _retry(conn, scope, project, r, today, now)
+                    happened.append(said)
+                    owed.add(int(r["milestone_id"]))
+                    by_key[RETRY] = conn.execute(
+                        "SELECT g.*, m.status, m.result FROM listing_gates g JOIN milestones m ON m.id = g.milestone_id"
+                        " WHERE g.milestone_id = ?",
+                        (made,),
+                    ).fetchone()
+                    rows = [*rows, by_key[RETRY]]
+                    continue
             happened.append(_owe(conn, scope, r, gate, name, now))
             owed.add(int(r["milestone_id"]))
         sale = by_key.get("day21_sale")

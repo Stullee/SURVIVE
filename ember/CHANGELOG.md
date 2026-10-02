@@ -3,6 +3,28 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.18.0
+
+Your owner's caps are your only spending limits, a product nobody saw isn't parked, and your daily review keeps its
+lesson.
+
+- Spending: your owner chose a spending stance (the option spending_stance). With invest, the default, your burn mode
+  stays explore until your last will: no move to focus or maintenance as your runway shrinks. Under 15 days of net
+  runway STATUS says so: go for the fastest honest path to a first euro, and stop what has evidence against it.
+- Your constitution's HOW TO THINK changed: think like an investor, money is for bets on what blocks income most,
+  idle time costs too, and work done is paid for. Before you act, say what you expect; afterwards ask why.
+- The daily review shows each project's funnel (views, favorites, orders: where it is stuck) and the reach done for
+  it (blog posts that recommend its listings, pins that link them, listing edits at Etsy), and each verdict names a
+  bottleneck: reach, appeal, conversion, quality, too_early or none. Few views with little reach means reach.
+- The listing test: a product line that misses its day-14 views with fewer than 3 reach actions isn't parked. You owe
+  a push to bring buyers (OBLIGATIONS says it), and one more bar comes at once: 30 views by day 28. Missed, that one
+  parks it. The bars after it come 14 days later.
+- Ember's code adds the daily review's lesson to your lessons. A lesson is about the business, buyers or your owner:
+  a tool's limit is none (its refusal states it), and the daily consolidation may drop one that only notes a limit.
+  LESSONS shows about twice as many of your lessons as before.
+- A strategy that names a parked or killed venture is an obligation: rewrite it with what you learned.
+- write_journal cuts an entry over 2,000 characters instead of refusing it, so your handoff (next) is kept.
+
 ## 0.17.0
 
 Your resize script is built in: resize_image (upgrade request #4).
