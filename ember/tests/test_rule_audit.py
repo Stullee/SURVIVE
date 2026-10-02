@@ -43,7 +43,7 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
         ("PLANNING Decide what this wake cycle", GUIDANCE, "what a plan is for; OBLIGATIONS are Ember's code's"),
         ("- Keep 2-3 experiments in flight", GUIDANCE, "waiting on the owner is never idle time"),
         ("- Build first, then ask", GUIDANCE, "what the owner's time is for"),
-        ("- Your daily cap is a limit, not a target", GUIDANCE, "spending and sleep (burn modes will be code)"),
+        ("- Spend on work that can earn", GUIDANCE, "spending and sleep (the burn modes and the stance are code)"),
         ("- In an ordinary cycle, work on your projects", POINTER, "Ember's code runs the venture cycles"),
         ("- Plan ahead with your roadmap", GUIDANCE, "how far ahead to plan and what to aim at"),
         ("Reply only with JSON matching the schema:", PROTOCOL, "the plan's reply"),
@@ -77,10 +77,16 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
     ],
     "review": [
         ("DAILY REVIEW Once a day", GUIDANCE, "the numbers are Ember's records: never argue with them"),
-        ("- Judge every project listed", GUIDANCE, ""),
+        (
+            "- Judge every project listed",
+            GUIDANCE,
+            "0.18.0: with its bottleneck, from the funnel and reach code counts",
+        ),
+        ("- Your owner's caps are the only spending limits", GUIDANCE, "0.18.0: the review invented caps"),
         ("- Check your last review's verdicts", GUIDANCE, ""),
         ("- Read your owner's decisions and comments", GUIDANCE, ""),
         ("- Name one lesson worth keeping", GUIDANCE, ""),
+        ("- Write a retrospective of each item SETTLED lists", GUIDANCE, "0.18.0: Ember's code keeps them as cases"),
         ("- Look at your venture tree", GUIDANCE, ""),
         ("- Check your roadmap", GUIDANCE, "Ember's code applies the verdicts"),
         ("Reply only with JSON matching the schema:", PROTOCOL, "the review's reply"),
@@ -92,6 +98,7 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
         ("- focus:", SCHEMA, ""),
         ("- ventures:", SCHEMA, ""),
         ("- roadmap:", SCHEMA, ""),
+        ("- retros:", SCHEMA, ""),
         ("- milestones:", SCHEMA, ""),
     ],
     "venture_brief": [
@@ -305,4 +312,5 @@ def test_the_fixed_prompt_is_smaller() -> None:
         return len(json.dumps([request["system"], request["tools"]], ensure_ascii=False).encode())
 
     assert fixed(venture=True) <= 0.7 * 45_866
-    assert fixed(venture=False) <= 45_866
+    # 0.18.0: the learning loop's bet (project_update) and the owner's choice to invest in it: 2% more than 0.11.1's
+    assert fixed(venture=False) <= 46_800

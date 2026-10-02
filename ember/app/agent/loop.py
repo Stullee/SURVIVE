@@ -59,6 +59,7 @@ from ..integrations.printify_connection import PrintifyConnection
 from ..version import app_version
 from . import (
     agenda,
+    bets,
     context,
     critic,
     desk,
@@ -67,6 +68,7 @@ from . import (
     evidence,
     gates,
     knockouts,
+    learning,
     library,
     metrics,
     netguard,
@@ -75,14 +77,17 @@ from . import (
     policy,
     predictions,
     prompts,
+    quality,
     research_check,
     review,
     roadmap,
+    slack,
     stages,
     store,
     tools,
     ventures,
     website,
+    weekly,
 )
 from . import memory as memory_files
 from .memory import Memory
@@ -120,6 +125,7 @@ STEP_GROWTH_FACTOR = 1.5
 # square, about 1,300 tokens) like this much, a 1000 x 750 listing photo like 3,750 bytes and a wide spreadsheet picture
 # (1000 x 180) like 900. A picture whose size can't be read counts as the largest.
 IMAGE_EQUIVALENT_BYTES = 5_000
+WEEKLY_INPUT_TOKENS = 12_000  # 0.18.0: the weekly look's prompt at most (its view is cut at weekly.VIEW_CHARS)
 PLANNER_SCALES = (1.0, 0.75, 0.5, 0.3)  # the planner's context budgets, until the request fits its profile
 NO_STEP = "not enough money left in this cycle for a work step and the reflection"
 
@@ -232,6 +238,7 @@ class CycleRunner:
         self.news_kept: frozenset[news.Item] = frozenset()  # 0.15.0: the owner's news marked seen once the cycle ends
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
         self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
+        self.slack_items: list[slack.Item] = []  # 0.18.0: the READY list the last ordinary plan was shown
         self.reactive = False  # 0.13.0: a cycle an event woke (run sets it)
         self.max_steps = settings.max_tool_steps
         # 0.15.0: why the owner's unlocks don't act in this cycle (policy.off; the service knows safe mode)
@@ -318,6 +325,12 @@ class CycleRunner:
         end.cycle_id = cycle_id
         if end.sleep_minutes is None:
             end.sleep_minutes, end.sleep_reason = state.sleep_minutes, state.sleep_reason or None
+        if end.status in ("completed", "idle") and trigger != "last_will":  # 0.18.0: no long sleep while work waits
+            mode_now = burn.peek(self.db, self.economy.life.evaluate()).mode
+            kept = slack.sleep(end.sleep_minutes, self.slack_items, self.settings.min_sleep_minutes, mode_now)
+            if kept != end.sleep_minutes:
+                end.sleep_minutes = kept
+                end.sleep_reason = f"Ember's code cut the sleep to {kept} min: READY lists useful work"
         self._close(cycle_id, end, state)
         return end
 
@@ -573,6 +586,7 @@ class CycleRunner:
             self._keep_stages()
             metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
             self._keep_gates()  # 0.13.0: after the grading, so a bar missed now is owed at once
+            self._keep_bets()  # 0.18.0: after the grading, from the same Etsy numbers
             predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
             self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
@@ -591,6 +605,10 @@ class CycleRunner:
                 )
                 if venture
                 else []
+            )
+            # 0.18.0: an ordinary plan's READY: useful work while projects wait (slack.py)
+            self.slack_items = (
+                slack.items(conn, self.scope, self.clock.today()) if not venture and not self.reactive else []
             )
             shop = ""
             if self.etsy_on and self.etsy is not None:
@@ -650,7 +668,11 @@ class CycleRunner:
                 decision_wakes=self.settings.wake_on_decision,
                 burn=_burn_line(mode, self.clock),
                 brainstorm=mode.brainstorms,
-                ready=desk.text(self.ready_items, predictions.calibration(conn, self.scope) if venture else ""),
+                ready=(
+                    desk.text(self.ready_items, predictions.calibration(conn, self.scope) if venture else "")
+                    if venture
+                    else slack.text(self.slack_items)
+                ),
                 agenda=agenda.unseen(conn, self.scope),  # 0.13.0: what happened between cycles
                 reactive=self.reactive,
             )
@@ -677,10 +699,16 @@ class CycleRunner:
             review_due = review.due(conn, self.scope, self.clock) and not self.reactive
         if review_due:
             self._review(cycle_id, ctx)
+        if not self.reactive:
+            with self.db.connection() as conn:
+                weekly_due = weekly.due(conn, self.scope, self.clock.today())
+            if weekly_due:
+                self._guarded(self._weekly, cycle_id, "the weekly look")  # 0.18.0: after the review's cases
         if self.library_on and not self.reactive:
             self._study(cycle_id)
         if not self.reactive:
             self._critique(cycle_id)  # 0.13.0
+            self._guarded(self._quality, cycle_id, "the quality check")  # 0.18.0
         snap = self._snapshot(ctx.venture, cycle_id)
         ctx.net_runway_days = self.net_runway_days  # 0.13.0: the knock-outs' slow rule
         action = "Planning this venture cycle" if ctx.venture else "Planning this cycle"
@@ -858,6 +886,14 @@ class CycleRunner:
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
 
+    def _keep_bets(self) -> None:
+        """0.18.0: the agent's bets that are won or due, settled by Ember's code before every plan (bets.settle)."""
+        with self.db.transaction() as conn:
+            happened = bets.settle(conn, self.scope, self.clock.today(), to_iso(self.clock.now()))
+            happened += learning.fade(conn, self.scope, to_iso(self.clock.now()))  # the playbook's old guesses
+        for line in happened:
+            events.record(self.db, "info", "agent", line[:300])
+
     def _keep_stages(self) -> None:
         """0.12.0: the rules of the ventures' stages (a first test for each backed venture, research without a business
         case and a missed first test parked), kept by Ember's code before every plan (stages.keep)."""
@@ -962,7 +998,8 @@ class CycleRunner:
         text = _text_of(response)
         self._save_text(result.call_id, text, response)
         stop = response.get("stop_reason")
-        parsed = review.parse(text, card.project_ids) if stop == "end_turn" else None
+        subjects = {item.subject for item in card.settled}
+        parsed = review.parse(text, card.project_ids, subjects) if stop == "end_turn" else None
         note = None
         if parsed is None:
             note = "the review wasn't valid JSON" if stop == "end_turn" else f"the review was cut off ({stop})"
@@ -971,9 +1008,104 @@ class CycleRunner:
             verdict.applied, verdict.outcome = outcome.ok, outcome.text.removeprefix("Error: ")
             if outcome.ok:
                 events.record(self.db, "info", "agent", f"The daily review: {outcome.text}"[:300])
-        self._save_review(cycle_id, card, parsed, note)
+        review_id = self._save_review(cycle_id, card, parsed, note)
+        if parsed is not None and parsed.retros:  # 0.18.0: its retrospectives become cases
+            with self.db.transaction() as conn:
+                made = learning.save_cases(
+                    conn, self.scope, review_id, parsed.retros, card.settled, to_iso(self.clock.now())
+                )
+            events.record(self.db, "info", "agent", f"The daily review kept {len(made)} case(s) of what settled")
         if parsed is not None:
+            self._keep_lesson(cycle_id, parsed.lesson)
             self._consolidate(cycle_id)
+
+    def _keep_lesson(self, cycle_id: int, lesson: str) -> None:
+        """0.18.0: the daily review's lesson goes into the lessons file (live, no plan copied it: the review's
+        conclusions were lost), on one line, as the agent's own append would; one already noted is skipped."""
+        line = " ".join(lesson.split())
+        if not line:
+            return
+        try:
+            with self.db.transaction() as conn:
+                said = self.memory.update(conn, "lessons", "append", line, cycle_id, to_iso(self.clock.now()))
+        except memory_files.MemoryError_ as exc:
+            log.warning("The daily review's lesson wasn't kept: %s", exc)
+            return
+        if not said.startswith("already noted"):
+            events.record(self.db, "info", "agent", f"The daily review's lesson was kept: {line}"[:300])
+
+    def _guarded(self, step: Callable[[int], None], cycle_id: int, name: str) -> None:
+        """0.18.0: a learning step before the plan: a bug in it is logged and the cycle goes on (Stopping and EndCycle
+        still end it)."""
+        try:
+            step(cycle_id)
+        except (Stopping, EndCycle):
+            raise
+        except Exception as exc:  # noqa: BLE001 - a learning step never ends the cycle
+            log.exception("%s failed in cycle #%d", name, cycle_id)
+            events.record(self.db, "warning", "agent", f"{name.capitalize()} failed: {type(exc).__name__}"[:300])
+
+    def _weekly(self, cycle_id: int) -> None:
+        """0.18.0: the weekly look at the whole business (weekly.py). It never ends the cycle: one the money can't
+        cover now waits for the next cycle, and a failed one is kept and tried again the next day."""
+        now = self.clock.now()
+        books, ledger_scope = self.economy.books, self.economy.life.scope()
+        status = self.economy.life.evaluate()
+        net = status.runway.net_days
+        runway = f"{net:.1f} days" if net is not None else "no end (it earns what it spends)"
+        lines = [f"Balance {_usd(status.balance)}; net runway: {runway}."]
+        for days in (7, 30):
+            start = now - timedelta(days=days)
+            earned = books.net_revenue_between(ledger_scope, start, now)
+            spent = books.api_spend_between(ledger_scope, start, now)
+            lines.append(f"Last {days} days: revenue less expenses {_usd(earned)}, API spending {_usd(spent)}.")
+        with self.db.connection() as conn:
+            standing = store.standing_instructions(conn, self.scope)
+            text = weekly.view(
+                conn,
+                self.scope,
+                now,
+                "MONEY\n" + "\n".join(lines),
+                self.memory.read("strategy"),
+                standing["text"] if standing else "",
+            )
+        request = prompts.weekly_request(self.settings, text)
+        if not context.fits(request, WEEKLY_INPUT_TOKENS):
+            log.warning("The weekly look doesn't fit its budget; skipped")
+            return
+        try:
+            quote = self.meter.quote(request, REVIEW)
+        except Unpriceable as exc:
+            log.warning("The weekly look can't be priced (%s); skipped", exc)
+            return
+        working = working_cycle_cost(self.settings, self.db, self.economy.life.mode) or 0
+        if quote > self.meter.headroom(cycle_id, REVIEW, keep=working):
+            log.info("The weekly look can't be afforded now; it is tried at the next cycle")
+            return
+        self._progress(cycle_id, phase="review", current_action="Looking at the whole business (weekly)")
+        answer, note = None, None
+        try:
+            result = self._call(cycle_id, REVIEW, request)
+        except CallRefused:
+            return
+        except CallFailed as exc:
+            note = f"the call failed: {exc.result.error or exc.result.status}"
+        else:
+            response = result.response or {}
+            reply = _text_of(response)
+            self._save_text(result.call_id, reply, response)
+            stop = response.get("stop_reason")
+            answer = weekly.parse(reply) if stop == "end_turn" else None
+            if answer is None:
+                note = "its answer wasn't usable" if stop == "end_turn" else f"it was cut off ({stop})"
+        stamp = to_iso(self.clock.now())
+        with self.db.transaction() as conn:
+            happened = weekly.apply(conn, self.scope, self.memory, answer, stamp) if answer is not None else []
+            weekly.save(conn, self.scope, cycle_id, stamp, self.clock.today(), text, answer, happened, note)
+        if answer is None:
+            events.record(self.db, "warning", "agent", f"The weekly look failed: {note}"[:300])
+        else:
+            events.record(self.db, "info", "agent", ("The weekly look: " + "; ".join(happened or ["no changes"]))[:300])
 
     def _consolidate(self, cycle_id: int) -> None:
         """0.12.0: the lessons' daily consolidation, after the daily review: a call of its own on the planner's model
@@ -985,7 +1117,8 @@ class CycleRunner:
             return
         with self.db.connection() as conn:
             pinned = {memory_files.lesson_key(p["text"]) for p in memory_files.pins(conn, self.scope)}
-        request = prompts.consolidate_request(self.settings, memory_files.consolidation_input(text, pinned))
+        named = frozenset(tools.SPECS)  # 0.18.0: a lesson naming a tool is marked, and its limit may go
+        request = prompts.consolidate_request(self.settings, memory_files.consolidation_input(text, pinned, named))
         try:
             quote = self.meter.quote(request, CONSOLIDATE)
         except Unpriceable as exc:
@@ -1008,7 +1141,7 @@ class CycleRunner:
         except ValueError:
             answer = None
         with self.db.transaction() as conn:
-            done = memory_files.consolidate(text, answer, pinned, memory_files.CAPS["lessons"])
+            done = memory_files.consolidate(text, answer, pinned, memory_files.CAPS["lessons"], named)
             if done is not None and self.memory.read("lessons") == text:
                 self.memory.rewrite(conn, "lessons", done[0], "consolidation", to_iso(self.clock.now()))
         message = (
@@ -1084,6 +1217,49 @@ class CycleRunner:
             f"{economics.ev_eur:.0f} a month by its numbers. Fatal flaw: {texts['fatal_flaw']}"
         )
         events.record(self.db, "info", "agent", message[:300])
+
+    def _quality(self, cycle_id: int) -> None:
+        """0.18.0: the quality critic, before the plan: one product line's live listing a cycle (quality.py). It
+        counts toward the daily cap only, leaves what the cycle needs to work, and never ends the cycle."""
+        with self.db.connection() as conn:
+            project_id = quality.due(conn, self.scope, self.clock.today())
+            if project_id is None:
+                return
+            text, picture = quality.case(conn, self.scope, self.workspace, project_id)
+        request = prompts.quality_request(self.settings, text, picture)
+        try:
+            quote = self.meter.quote(request, CRITIC)
+        except Unpriceable as exc:
+            log.warning("The quality check can't be priced (%s); skipped", exc)
+            return
+        working = working_cycle_cost(self.settings, self.db, self.economy.life.mode) or 0
+        if quote > self.meter.headroom(cycle_id, CRITIC, keep=working):
+            log.info("The quality check can't be afforded now; project #%d waits for the next cycle", project_id)
+            return
+        self._progress(cycle_id, current_action=f"The quality critic looks at project #{project_id}")
+        answer, note, call_id = None, None, None
+        try:
+            result = self._call(cycle_id, CRITIC, request)
+        except CallRefused:
+            return
+        except CallFailed as exc:
+            call_id, note = exc.result.call_id, f"the call failed ({exc.result.error or exc.result.status})"
+        else:
+            response = result.response or {}
+            reply = _text_of(response)
+            self._save_text(result.call_id, reply, response)
+            call_id = result.call_id
+            stop = response.get("stop_reason")
+            answer = quality.parse(reply) if stop == "end_turn" else None
+            if answer is None:
+                note = "its answer wasn't usable" if stop == "end_turn" else f"it was cut off ({stop})"
+        with self.db.transaction() as conn:
+            quality.save(conn, self.scope, project_id, call_id, answer, note, to_iso(self.clock.now()))
+        if answer is None:
+            events.record(self.db, "warning", "agent", f"The quality check of project #{project_id} failed: {note}")
+        else:
+            said = f"{answer['score']}/10, {answer['verdict']}" + (f": {answer['fixes']}" if answer["fixes"] else "")
+            events.record(self.db, "info", "agent", f"The quality critic on project #{project_id}: {said}"[:300])
 
     def _study(self, cycle_id: int) -> None:
         """0.12.0: study the owner's library before the plan: the next parts of the documents waiting, a few calls a
@@ -1162,21 +1338,28 @@ class CycleRunner:
             )
 
     def _knowledge(self, plan: Plan) -> str:
-        """0.12.0: the learnings from the owner's library that match the plan, picked by Ember's code, for the brief."""
-        if not self.library_on:
-            return ""
+        """0.12.0: the learnings from the owner's library that match the plan, picked by Ember's code, for the brief;
+        0.18.0: after the agent's own principles and cases that match it (learning.relevant)."""
         query = " ".join([plan.goal, plan.money_path, *plan.steps])
         with self.db.connection() as conn:
-            rows = library.relevant(conn, self.scope, query, plan.focus_venture_id, plan.focus_project_id)
-        return "\n".join(library.learning_line(r) for r in rows)
+            own = learning.relevant(conn, self.scope, query)
+            rows = (
+                library.relevant(conn, self.scope, query, plan.focus_venture_id, plan.focus_project_id)
+                if self.library_on
+                else []
+            )
+        return "\n".join([*own, *(library.learning_line(r) for r in rows)])
 
     def _save_review(
         self, cycle_id: int, card: review.Scorecard, parsed: review.Review | None, note: str | None
-    ) -> None:
+    ) -> int:
         with self.db.transaction() as conn:
-            review.save(conn, self.scope, cycle_id, to_iso(self.clock.now()), self.clock.today(), card, parsed, note)
+            made = review.save(
+                conn, self.scope, cycle_id, to_iso(self.clock.now()), self.clock.today(), card, parsed, note
+            )
         if parsed is None:
             events.record(self.db, "warning", "agent", f"The daily review failed: {note}")
+        return made
 
     def _parse_plan(self, text: str) -> Plan | None:
         data: Any = None
@@ -2138,9 +2321,9 @@ def _picture_bytes(block: dict[str, Any]) -> int:
 
 def _burn_line(mode: burn.Burn, clock: Clock) -> str:
     """STATUS's burn mode (0.12.0), when it holds the agent back or (0.15.0) is projected to within
-    burn.PROJECTED_DAYS: nothing in explore otherwise."""
+    burn.PROJECTED_DAYS, or (0.18.0) says to fight for a first euro: nothing in explore otherwise."""
     projected = burn.projected_text(mode, clock.now().astimezone(clock.tz))
-    if mode.mode == burn.EXPLORE and not projected:
+    if mode.mode == burn.EXPLORE and not projected and not mode.fight:
         return ""
     return mode.text() + (f"; {projected}" if projected else "")
 
@@ -2158,3 +2341,7 @@ def _cap_note(why: str) -> str:
     if why == "events":
         return f" (until {EVENT_RESERVE_HOUR}:00 a fifth of today's cap is kept for event wake-ups)"
     return ""
+
+
+def _usd(micros: int) -> str:
+    return f"${micros_to_usd(micros):.2f}"

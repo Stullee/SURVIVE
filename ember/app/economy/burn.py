@@ -21,6 +21,18 @@ spending two days after it began, and flipped 11 more times before critical. A m
 once money came in since it began (a grant, revenue or an adjustment that adds, as the critical state ends), judged at
 the API spending of the week before it moved down when that was more (``Since``, ``judged``), so a small sale doesn't
 buy back a week of full spending either.
+
+0.18.0: the owner's ``spending_stance`` decides how far a shrinking runway takes the mode. Narrowing what the agent may
+do as its runway shrank was backwards: when what it does isn't working, it needs new ideas more, not fewer.
+
+* invest (the default): explore whatever the runway, until the last will (dormant); the owner's caps are the only
+  limits. Under MAINTENANCE_DAYS of net runway STATUS tells the agent to go for the fastest path to a first euro
+  (``FIGHT``) and the System log warns the owner once (``WARNED_KEY``), so they decide: a grant or another stance;
+* steady: explore, and focus under EXPLORE_DAYS; never maintenance;
+* conserve: the modes above, as they were from 0.12.0 to 0.17.0.
+
+A mode kept below what the stance allows (the owner changed it, or the upgrade to 0.18.0) moves up to it at once:
+the owner's choice counts like money coming in.
 """
 
 from __future__ import annotations
@@ -33,6 +45,8 @@ from ..db import Database
 from .life import RUNWAY_CAP_DAYS, LifeStatus
 
 EXPLORE, FOCUS, MAINTENANCE, DORMANT = "explore", "focus", "maintenance", "dormant"
+INVEST, STEADY, CONSERVE = "invest", "steady", "conserve"  # 0.18.0: the owner's spending_stance
+FLOOR = {INVEST: EXPLORE, STEADY: FOCUS, CONSERVE: MAINTENANCE}  # the lowest mode a stance sets (dormant aside)
 MODES = (DORMANT, MAINTENANCE, FOCUS, EXPLORE)  # the lowest first
 EXPLORE_DAYS = 30.0  # of net runway, and more: explore
 MAINTENANCE_DAYS = 15.0  # and less: maintenance
@@ -41,6 +55,11 @@ MAINTENANCE_CYCLE_USD = 0.40  # a maintenance cycle's cap
 MAINTENANCE_SLEEP_MINUTES = 24 * 60  # one scheduled cycle a day
 PROJECTED_DAYS = 30  # 0.15.0: a change further off than this isn't projected
 KEY = "burn_mode.{mode}.{life}"
+WARNED_KEY = "burn_mode_warned.{mode}.{life}"  # 0.18.0: invest's warning to the owner under MAINTENANCE_DAYS
+FIGHT = (
+    "under {days:.0f} days of net runway: go for the fastest honest path to a first euro, and stop what has evidence"
+    " against it"
+)
 SINCE_KEY = "burn_mode_since.{mode}.{life}"  # 0.16.2: where the mode below explore began (Since), "" in explore
 MEANING = {
     EXPLORE: "as your owner's options allow",
@@ -70,6 +89,7 @@ class Burn:
     mode: str
     net_days: float | None
     held: str = ""  # 0.16.2: why the mode stays below what the net runway alone would make it ("" if it doesn't)
+    stance: str = INVEST  # 0.18.0: the owner's spending_stance
 
     @property
     def venture_cycles(self) -> bool:
@@ -88,10 +108,17 @@ class Burn:
     def cycle_cap(self, cap_micros: int) -> int:
         return min(cap_micros, int(MAINTENANCE_CYCLE_USD * 1_000_000)) if self.mode == MAINTENANCE else cap_micros
 
+    @property
+    def fight(self) -> str:
+        """0.18.0: invest's note under MAINTENANCE_DAYS of net runway, or ""."""
+        short = self.net_days is not None and self.net_days < MAINTENANCE_DAYS
+        return FIGHT.format(days=MAINTENANCE_DAYS) if self.stance == INVEST and self.mode == EXPLORE and short else ""
+
     def text(self) -> str:
         runway = "earning at least what it spends" if self.net_days is None else f"{self.net_days:.1f} days"
         held = f"; {self.held}" if self.held else ""
-        return f"{self.mode} (net runway: {runway}{held}): {MEANING[self.mode]}"
+        fight = f"; {self.fight}" if self.fight else ""
+        return f"{self.mode} (net runway: {runway}{held}): {MEANING[self.mode]}{fight}"
 
 
 def projected(burn: Burn, now: datetime) -> tuple[str, datetime] | None:
@@ -102,6 +129,8 @@ def projected(burn: Burn, now: datetime) -> tuple[str, datetime] | None:
     if burn.net_days is None or burn.mode not in (EXPLORE, FOCUS):
         return None
     lower, floor = (FOCUS, EXPLORE_DAYS) if burn.mode == EXPLORE else (MAINTENANCE, MAINTENANCE_DAYS)
+    if MODES.index(lower) < MODES.index(FLOOR.get(burn.stance, EXPLORE)):
+        return None  # 0.18.0: the owner's stance never sets it
     days = max(0.0, burn.net_days - floor)
     return (lower, now + timedelta(days=days)) if days <= PROJECTED_DAYS else None
 
@@ -112,13 +141,18 @@ def projected_text(burn: Burn, now: datetime) -> str:
     return f"{found[0]} from about {found[1]:%m-%d} at today's burn" if found else ""
 
 
+def _floor(status: LifeStatus) -> str:
+    """0.18.0: the lowest mode the owner's stance sets (an unknown stance counts as invest, the default)."""
+    return FLOOR.get(status.stance, EXPLORE)
+
+
 def _raw(status: LifeStatus) -> str:
     net = status.runway.net_days
     if status.last_will_at is not None and status.critical:
         return DORMANT
-    if net is None or net > EXPLORE_DAYS:
-        return EXPLORE
-    return FOCUS if net > MAINTENANCE_DAYS else MAINTENANCE
+    mode = EXPLORE if net is None or net > EXPLORE_DAYS else FOCUS if net > MAINTENANCE_DAYS else MAINTENANCE
+    floor = _floor(status)
+    return floor if MODES.index(mode) < MODES.index(floor) else mode
 
 
 def _spend(status: LifeStatus) -> int:
@@ -148,6 +182,9 @@ def settle(previous: str | None, status: LifeStatus, since: Since | None = None)
 def _settle(previous: str | None, status: LifeStatus, since: Since | None) -> tuple[str, str]:
     """(``settle``'s mode, why it stays below what the net runway alone would make it, or "")."""
     target = _raw(status)
+    floor = _floor(status)
+    if previous in MODES and previous != DORMANT and MODES.index(previous) < MODES.index(floor):
+        previous = floor  # 0.18.0: the owner's stance lifts a mode kept below it at once
     if previous not in MODES or DORMANT in (target, previous) or MODES.index(target) <= MODES.index(previous):
         return target, ""
     up = str(previous)
@@ -175,7 +212,7 @@ def _since(db: Database, status: LifeStatus) -> Since | None:
 
 def _burn(previous: str | None, status: LifeStatus, since: Since | None) -> Burn:
     mode, held = _settle(previous, status, since)
-    return Burn(mode, status.runway.net_days, held)
+    return Burn(mode, status.runway.net_days, held, status.stance if status.stance in FLOOR else INVEST)
 
 
 def peek(db: Database, status: LifeStatus) -> Burn:
@@ -203,4 +240,23 @@ def current(db: Database, status: LifeStatus) -> Burn:
         if previous is not None:
             lower = MODES.index(burn.mode) < MODES.index(previous) if previous in MODES else False
             events.record(db, "warning" if lower else "info", "economy", f"Burn mode: {burn.text()}"[:300])
+    _warn(db, status, burn)
     return burn
+
+
+def _warn(db: Database, status: LifeStatus, burn: Burn) -> None:
+    """0.18.0: under invest, the owner hears once when the net runway falls under MAINTENANCE_DAYS (again after it was
+    MARGIN past it): the code no longer cuts the spending, so the owner decides."""
+    key = WARNED_KEY.format(mode=status.mode, life=status.life_id)
+    warned = db.get_meta(key) == "1"
+    if burn.fight and not warned:
+        db.set_meta(key, "1")
+        events.record(
+            db,
+            "warning",
+            "economy",
+            f"Net runway {burn.net_days:.1f} days: your spending stance is invest, so Ember keeps exploring at your"
+            " caps. Add a grant, or choose steady or conserve in the options to spend less.",
+        )
+    elif warned and (burn.net_days is None or burn.net_days > MAINTENANCE_DAYS * MARGIN):
+        db.set_meta(key, "")

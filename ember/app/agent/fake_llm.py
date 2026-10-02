@@ -151,9 +151,14 @@ CHAOS: dict[str, tuple[str, ...]] = {
     "study": ("prose", "cut_off"),
     "consolidate": ("prose", "drops_everything"),  # 0.12.0
     "critic": ("prose", "cut_off"),  # 0.13.0
+    "weekly": ("prose",),  # 0.18.0
+    "quality": ("prose",),  # 0.18.0
     "will": ("cut_off", "empty"),
 }
 _OPEN_STATUSES = ("idea", "active", "waiting")
+# 0.18.0: the learning loop's own calls (the weekly look, the quality critic) are always answered by the fake itself:
+# a test's script is for the calls it was written for, and these come before plans it scripted.
+UNSCRIPTED = frozenset({"weekly", "quality"})
 _SEARCH_FIELDS = frozenset(
     {"type", "name", "max_uses", "allowed_domains", "blocked_domains", "user_location", "cache_control"}
 )
@@ -421,6 +426,10 @@ def request_kind(request: Mapping[str, Any]) -> str:
         return "consolidate"  # 0.12.0
     if isinstance(properties, Mapping) and "fatal_flaw" in properties:
         return "critic"  # 0.13.0
+    if isinstance(properties, Mapping) and "principles" in properties:
+        return "weekly"  # 0.18.0
+    if isinstance(properties, Mapping) and "fixes" in properties:
+        return "quality"  # 0.18.0
     system = request.get("system")
     first = system[0] if isinstance(system, list) and system else None
     if isinstance(first, Mapping) and str(first.get("text") or "").startswith(DRAFT_MARKER):
@@ -703,6 +712,7 @@ CLOSE_STEP = "Close project #{id}: my review says stop"
 _SCORECARD_PROJECT = re.compile(r"^#(\d+) \[(\w+)[^\]]*\] (.*?) · open .*?cycles in the period \((\d+) in all\)", re.M)
 _NO_REVENUE = "Revenue recorded: $0.00 in these days"
 _REVIEW_STOP = re.compile(r"^- #(\d+)[^\n]*?: stop: ", re.M)
+_SETTLED = re.compile(r"^- ((?:bet|milestone|project|venture|request) #\d+): ([^\n]*)", re.M)  # 0.18.0
 _CLOSE = re.compile(r"close project #(\d+)")
 PROMOTE_STEP = "Ask for this workshop script to be built into Ember:"
 # Venture cycles (0.10.0): the planner's VENTURES lines, the brief's focus venture, a brainstorm's tree.
@@ -1099,7 +1109,7 @@ class FakeTransport:
         if missing:
             self.trace.append((number, "invalid", f"unknown file {missing[0]}"))
             return Rejected(404, f"not_found_error: File {missing[0]} not found.", request_id)
-        if self.script:
+        if self.script and kind not in UNSCRIPTED:
             turn = self.script.popleft()
             if isinstance(turn, Fail):
                 self.trace.append((number, kind, f"script: {type(turn.outcome).__name__}"))
@@ -1255,6 +1265,10 @@ class FakeTransport:
             return self._consolidate(request, chaos)  # the same
         if kind == "critic":
             return self._critic(request, chaos)  # the same
+        if kind == "weekly":
+            return self._weekly(request, chaos)  # the same
+        if kind == "quality":
+            return self._quality(chaos)  # the same
         if kind == "research":
             draft = self._research(request, rng, chaos)
         elif kind == "workshop":
@@ -1329,12 +1343,12 @@ class FakeTransport:
             if status not in _OPEN_STATUSES:
                 continue
             if cycles >= REVIEW_STOP_CYCLES and _NO_REVENUE in card:
-                verdict, why = "stop", f"{cycles} cycles and nothing earned: no sign of demand."
+                verdict, neck, why = "stop", "none", f"{cycles} cycles and nothing earned: no sign of demand."
             elif status == "idea":
-                verdict, why = "change", "Still an idea: start it with a first draft, or drop it."
+                verdict, neck, why = "change", "none", "Still an idea: start it with a first draft, or drop it."
             else:
-                verdict, why = "continue", "Too early to judge: it needs a finished listing first."
-            verdicts.append({"project_id": pid, "verdict": verdict, "why": why})
+                verdict, neck, why = "continue", "too_early", "Too early to judge: it needs a finished listing first."
+            verdicts.append({"project_id": pid, "verdict": verdict, "bottleneck": neck, "why": why})  # 0.18.0
         stops = sum(1 for v in verdicts if v["verdict"] == "stop")
         review = {
             "verdicts": verdicts,
@@ -1346,6 +1360,19 @@ class FakeTransport:
             "ventures": "Research the heaviest idea next and keep the tree growing; park what research doesn't back.",
             "roadmap": "Close what is overdue honestly and keep one small milestone due this week.",
             "milestones": [],  # 0.12.0: it can't check a measure, so it judges none (its cycles move, then close)
+            # 0.18.0: a retrospective of each settled item, honest about how little a dry run shows
+            "retros": [
+                {
+                    "subject": m[1],
+                    "expected": "What I said I would get when I started it.",
+                    "happened": m[2][:280],
+                    "why": "Too little time and too few visitors to tell more yet.",
+                    "cause": "too_early",
+                    "sure": "low",
+                    "lesson": "",
+                }
+                for m in _SETTLED.finditer(card)
+            ],
         }
         if chaos == "prose":
             return _Draft([_text("Overall things are going fine and I will keep going.")], note="chaos: prose")
@@ -1356,7 +1383,9 @@ class FakeTransport:
                 [_text(whole[: len(whole) // 2])], "max_tokens", output_tokens=max_tokens, note="chaos: cut_off"
             )
         if chaos == "unknown_project":
-            verdicts.append({"project_id": 99_999, "verdict": "stop", "why": "A project that isn't listed."})
+            verdicts.append(
+                {"project_id": 99_999, "verdict": "stop", "bottleneck": "none", "why": "A project that isn't listed."}
+            )
             return _Draft([_text(json.dumps(review))], note="chaos: unknown_project")
         return _Draft(
             [_text(json.dumps(review, ensure_ascii=False))], note=f"review: {len(verdicts)} verdicts, {stops} stop"
@@ -1411,6 +1440,46 @@ class FakeTransport:
         keep = [{"text": texts[key], "from": numbers} for key, numbers in groups.items()]
         answer = json.dumps({"keep": keep, "drop": []}, ensure_ascii=False)
         return _Draft([_text(answer)], note=f"consolidate: {len(lessons)} lessons, {len(keep)} kept")
+
+    def _weekly(self, request: Mapping[str, Any], chaos: str | None) -> _Draft:
+        """The weekly look (0.18.0): reach is the bottleneck, a strategy that says so, one question, and a principle
+        drawn from the week's first cases; its chaos answers in prose."""
+        view = _text_of(request["messages"][-1].get("content"))
+        if chaos == "prose":
+            return _Draft([_text("The week went fine; I will keep going.")], note="chaos: prose")
+        cases = [int(n) for n in re.findall(r"^- case #(\d+) ", view, re.M)][:3]
+        strategy = "Bring buyers to what is live before building more; test one service idea this week."
+        principles = (
+            [
+                {
+                    "id": None,
+                    "text": "Listings without outside traffic stay unseen.",
+                    "supports": cases,
+                    "against": [],
+                    "retire": "",
+                }
+            ]
+            if cases
+            else []
+        )
+        answer = {
+            "assessment": "Products are live but nobody sees them; my time went into making more of them.",
+            "bottleneck": "Reach: the live listings get almost no views.",
+            "mix": "Every leg is a product; no service has been weighed yet.",
+            "stop": ["Making new products before the live ones are seen."],
+            "start": ["A push to bring buyers to each live listing.", "Research one service idea."],
+            "strategy": strategy,
+            "questions": ["Which channel brings the first 30 views to a listing?"],
+            "principles": principles,
+        }
+        return _Draft([_text(json.dumps(answer))], note=f"weekly: {len(cases)} cases cited")
+
+    def _quality(self, chaos: str | None) -> _Draft:
+        """The quality critic (0.18.0): a middling score that asks for better photos; its chaos answers in prose."""
+        if chaos == "prose":
+            return _Draft([_text("It looks decent to me.")], note="chaos: prose")
+        answer = {"score": 6, "fixes": "The first photo doesn't show what the buyer gets."}
+        return _Draft([_text(json.dumps(answer))], note="quality: 6, improve")
 
     def _critic(self, request: Mapping[str, Any], chaos: str | None) -> _Draft:
         """The independent critic (0.13.0): it doubts the demand, halving the agent's sales and putting the first sale

@@ -36,6 +36,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Starting balance | 20 USD | Your first grant, recorded once when the agent is born. |
 | Daily spending cap | 1.50 USD | Hard limit per day. Calls that could exceed it are refused. |
 | Spending cap per wake cycle | 0.50 USD | Hard limit per cycle. Must not exceed the daily cap (if it does, Ember uses the daily cap). A working cycle (its plan, a work step and the reflection) can cost up to about 0.25 USD with the default models; the dashboard warns you below 1.5 times that, when most cycles would end after a step or two. |
+| Spending stance | invest | What happens as the runway shrinks: **invest** keeps the agent exploring at your caps until its last will (under 15 days of runway the System log warns you once), **steady** goes no lower than focus, **conserve** is focus under 30 days and maintenance under 15. See [burn modes](#money). |
 | Share for ventures | 25 % | This share of each day's spending goes to venture cycles, where the agent researches new ways to earn. 0 switches them off. See [Ventures](#ventures). |
 | Cash for a venture's first test (EUR) | 20 | A business case that needs more cash than this to start is knocked out: Ember's code won't propose it until you lift that knock-out on its card (see [Ventures](#ventures)). |
 | Daily study budget for the library | 0.50 USD | What the agent may spend a day studying the documents you add on the Library tab. It counts toward the daily cap, not the cycle cap (except in the maintenance [burn mode](#money)). 0: nothing is studied, but the documents can still be searched and read. See [Library](#library). |
@@ -281,8 +282,13 @@ revenue you recorded and its sources, each project's cycles, spending and
 requests to you, your decisions and comments, its cycles, errors, finished
 products and workshop runs, and its verdicts from the last review.
 
+Since 0.18.0 each project with live listings also shows its funnel (views,
+favorites, orders: where it is stuck) and the reach done for it (blog posts,
+pins, listing edits).
+
 The agent then judges every project (**continue**, **change** or **stop**, with
-the numbers that decide it), says what works and what doesn't, what your
+its bottleneck: **reach**, **appeal**, **conversion**, **quality**,
+**too early** or **none**, and the numbers that decide it), says what works and what doesn't, what your
 decisions tell it, one lesson and today's focus, and it checks its venture tree
 and its roadmap. Each milestone that is overdue or due this week gets a
 verdict, **hit** (its measure is met, with the evidence), **miss** (past its
@@ -292,7 +298,8 @@ milestone with a metric is left to Ember's code, the money goal can't be
 closed, a date moves twice at most): the review keeps what came of each
 verdict, and the day's plans see it. Every plan that day shows the
 review, and the agent is told to carry it out: close what it stopped, change
-what it changed, keep the lesson. The next review shows whether it did. You can
+what it changed, work on each bottleneck. Ember's code adds the review's lesson
+to the agent's lessons itself (since 0.18.0). The next review shows whether it did. You can
 read every review, with the numbers it judged, under **Mind → Daily reviews**.
 
 A review is one call on the planner model (about $0.02–0.05 with
@@ -308,12 +315,62 @@ once the file holds 12 lessons or more, one more call on the planner model
 (about a cent) **consolidates** it: lessons that say the same become one, and
 those a newer lesson contradicts are retired, each with why. Ember's code checks
 the answer: what it doesn't account for stays, and a pinned lesson or one with
-numbers is never dropped. The System log says what changed, and every version
-of the file is kept.
+numbers is never dropped, unless (since 0.18.0) it names one of the agent's
+tools: a tool's limit ("the reason field caps at 300 characters") is no lesson,
+the tool's refusal states it. The System log says what changed, and every
+version of the file is kept. Each plan shows the pinned lessons and then the
+newest others, about 2.6 KB of them.
 
 Under **Mind → Lessons** you can **pin** a lesson (at most 6): the agent never
 drops it, a rewrite of its lessons must keep it word for word, and every plan
 and work step shows it first. **Unpin** lets it go the usual way.
+
+### The learning loop
+
+Since 0.18.0 Ember's code runs routines that let the agent learn from its own
+work, like a manager's calendar (the design is in `vision/learning.md`):
+
+- **Bets.** When the agent changes a project, it can bet on the result with
+  project_update ("+15 views in 7 days: the pins bring buyers"). Ember's code
+  keeps the number then and settles the bet before every plan: **won**,
+  **lost**, or **no_reach** for a bet on views when nothing was done to bring
+  buyers meanwhile. A bet on favorites or orders needs the listings seen first,
+  and on orders a quality check that didn't say improve.
+- **Retrospectives.** The daily review lists what settled since the last one
+  (bets, metric milestones, closed projects, parked or killed ventures, requests
+  you rejected) and writes a retrospective of each: what it expected, what
+  happened, why, the cause (worked, wrong idea, weak execution, no reach, too
+  early, outside) and how sure it is. Each is kept as a **case**.
+- **The weekly look.** Once a week, after the daily review, one more call on the
+  strategy model (about the price of a review) reads the whole business as
+  Ember's code puts it together: the money, every project's funnel and reach,
+  the ventures, where the week's cycles and money went, who started them, the
+  bets' record and the cases. It rewrites the agent's strategy (refused if it
+  names a parked or killed venture), says what to stop and start and asks up to
+  3 questions for the week, which every plan that week sees.
+- **The playbook.** The weekly look draws principles from the cases, each citing
+  them. Ember's code sets their confidence: established with 3 agreeing cases
+  and none against, disputed once a case is against, a hypothesis otherwise. A
+  principle no case confirms for 6 weeks (4 months once established) is retired.
+  Each plan's LESSONS shows the playbook first, then the newest lessons.
+- **Recall.** The work steps get the principles and cases that match their plan,
+  knowledge_search finds them, and creating a project or venture names the most
+  similar case.
+- **The quality critic.** Before a plan, one product line's newest live listing
+  a cycle is scored by the strategy model (its cover photo, title, tags, price
+  and description against the demand note's market prices, and your rule that a
+  product must beat a free AI chat): 7 of 10 passes. It checks again after 14
+  days or after a change of its listings. The score and fixes show in the daily
+  review.
+- **Waiting time.** An ordinary cycle's plan gets **READY**: what is useful
+  while projects wait (bringing buyers to unseen listings, the critic's fixes, a
+  missing demand note, the week's questions). While it lists something, the
+  agent's sleep is cut to 3 hours (never below your shortest sleep, not in
+  maintenance).
+
+All of it counts toward the daily cap, not the cycle cap, and none of it ends a
+cycle. The diagnostics report lists the bets, cases, principles, weekly looks
+and quality checks.
 
 ## Products
 
@@ -760,6 +817,14 @@ of the roadmap's 20 places:
 | 7 | 10 views in all | fixing the titles, tags and category of its listings once |
 | 14 | 30 views and 2 favorites | parking the product line, with the numbers |
 | 21 | a first order | stopping building that product type |
+
+**Marketing before parking** (0.18.0). A listing nobody has seen hasn't been
+tested. A product line that misses its day-14 views with less than 3 things done
+to bring buyers to it (blog posts on your site that recommend its listings, pins
+that link them, changes of them carried out at Etsy) owes a push to bring buyers
+instead of a park, and gets one more bar at once: 30 views by day 28. Missed,
+that one parks it. The bars after it come 14 days later, each with at least a
+week to run.
 
 A miss is an obligation with that action, shown first in the agent's plan
 until it is done. Ember can't edit the listings Printify made, so a product
@@ -1829,7 +1894,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.17.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.18.0 (by /u/your name)`.
 
 ## Diagnostics
 
@@ -1930,7 +1995,14 @@ counted too (Etsy's fees make it shorter, a sale longer). While Ember earns at
 least what it spends, the net runway has no end.
 
 **Burn modes.** Ember's code sets how fast the agent may spend from the net
-runway, and the agent's plans say which mode it is in:
+runway and your **Spending stance** option, and the agent's plans say which
+mode it is in. With **invest** (the default since 0.18.0) the agent stays in
+explore until its last will: your caps are its only limits, because narrowing
+what it may do as its runway shrinks takes away the new ideas it needs most
+when what it does isn't working. Under 15 days of net runway its plans tell it
+to go for the fastest honest path to a first euro, and the System log warns you
+once, so that you decide: a grant, or another stance. With **steady** the modes
+below go no lower than focus; with **conserve** they are as follows:
 
 - **explore**: more than 30 days (or it earns what it spends): as your options
   allow;
@@ -1946,7 +2018,8 @@ runway, and the agent's plans say which mode it is in:
   model calls until money comes in (a sale or your grant); **Wake now** still
   runs a cycle.
 
-A mode moves down at once. It moves up only once money came in since it moved
+A mode moves down at once. A mode below what your stance allows (you changed
+it) moves up to it at once. Otherwise it moves up only once money came in since it moved
 down (a grant, revenue or an adjustment that adds; a refund of API costs
 doesn't count), and only as far as the net runway is 20% past each threshold,
 counted at the API spending of the week before it moved down if that was more:

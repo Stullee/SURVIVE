@@ -63,7 +63,8 @@ def test_the_first_cycle_of_a_day_reviews_before_it_plans(data_dir: Path) -> Non
     agent.run_cycle("schedule")
     agent.run_cycle("schedule")
     today = kinds(fake, before)
-    assert today[:2] == ["review", "plan"] and today.count("review") == 1  # once a day
+    # once a day; 0.18.0: the weekly look follows the first review (its call is a review's in the books)
+    assert today[:3] == ["review", "weekly", "plan"] and today.count("review") == 1
     saved = rows(agent, "SELECT day, status, verdicts, focus, note FROM reviews")
     assert len(saved) == 1 and saved[0]["status"] == "ok" and saved[0]["note"] is None
     assert saved[0]["day"] == agent.clock.today().isoformat() and saved[0]["focus"]
@@ -79,7 +80,8 @@ def test_the_review_counts_toward_the_day_not_the_cycle(data_dir: Path) -> None:
     agent, _ = next_day(data_dir)
     agent.run_cycle("schedule")
     cycle_id = rows(agent, "SELECT cycle_id FROM reviews")[0]["cycle_id"]
-    cost = rows(agent, "SELECT cost_micros FROM llm_calls WHERE purpose = 'review'")[0]["cost_micros"]
+    # 0.18.0: the review's purpose is the weekly look's too
+    cost = rows(agent, "SELECT SUM(cost_micros) AS c FROM llm_calls WHERE purpose = 'review'")[0]["c"]
     everything, _ = agent.economy.books.cycle_spend(cycle_id)
     capped, _ = agent.economy.books.cycle_spend(cycle_id, outside_cap=False)
     assert everything - capped == cost > 0
@@ -243,8 +245,8 @@ def test_the_planner_sees_todays_review_only_today(data_dir: Path) -> None:
     assert text.startswith(f"Your review of today ({agent.clock.today().isoformat()})")
     # 0.15.0: the advice first, the verdicts after it (a project to continue on one line), so a cut takes them first.
     assert "\nFocus today: " in text and text.endswith(
-        "Act on it: carry out every stop and change (project_update), and keep the lesson with memory_update if it"
-        " is new.\n- continue: #1"
+        "Act on it: carry out every stop and change (project_update), and work on each bottleneck (reach: bring"
+        " buyers to it). Ember's code kept the lesson.\n- continue: #1 (too_early)"
     )
     agent.clock.advance(days=1)
     before = len(fake.sent)

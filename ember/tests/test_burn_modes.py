@@ -11,6 +11,7 @@ once money came in since it began, judged at the API spending of the week before
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,7 @@ from app.economy.life import LifeStatus, Runway
 from app.economy.metering import Completed, MeteredModel
 from app.economy.service import Economy
 from tests import economy_helpers
-from tests.economy_helpers import FakeClock, ScriptedTransport, make_economy, message, metered, request
+from tests.economy_helpers import START, FakeClock, ScriptedTransport, make_economy, message, metered, request
 from tests.test_agent import rows
 from tests.test_loop_shapes import run
 from tests.test_owner_loop import owner
@@ -33,7 +34,12 @@ from tests.test_ventures import DROPSHIPPING, JOURNAL, VENTURING, plan
 
 
 def status(
-    net: float | None, will: bool = False, critical: bool = False, money_in: int = 0, **runway: Any
+    net: float | None,
+    will: bool = False,
+    critical: bool = False,
+    money_in: int = 0,
+    stance: str = "conserve",  # 0.18.0: these tests are the burn modes as they were (the owner's conserve)
+    **runway: Any,
 ) -> LifeStatus:
     return LifeStatus(
         mode="live",
@@ -45,6 +51,7 @@ def status(
         runway=Runway(net, None, net_days=net, **runway),
         money_in_id=money_in,
         balance=80_000_000,
+        stance=stance,
     )
 
 
@@ -87,7 +94,7 @@ def test_a_move_up_is_judged_at_the_spending_from_before_the_mode_moved_down() -
     assert burn.judged(same, since) == 19.0 and burn.settle("maintenance", same, since) == "focus"
 
 
-WEEK = Settings(starting_balance_usd=100, daily_spend_cap_usd=7, cycle_spend_cap_usd=7)
+WEEK = Settings(starting_balance_usd=100, daily_spend_cap_usd=7, cycle_spend_cap_usd=7, spending_stance="conserve")
 
 
 def a_day(model: MeteredModel, transport: ScriptedTransport, clock: FakeClock, micros: int) -> str:
@@ -173,3 +180,51 @@ def test_dormant_makes_no_model_calls_until_money_comes_in(data_dir: Path, monke
     assert any(m.startswith("Burn mode: dormant (net runway: ") for m in events)
     agent.wake_requested = True  # the owner's Wake now still runs a cycle
     assert agent.decide().run
+
+
+# --- 0.18.0: the owner's spending stance ---
+
+
+def test_invest_keeps_exploring_until_the_last_will() -> None:
+    for net in (None, 45, 25, 10, 1):
+        assert burn.settle(None, status(net, stance="invest")) == "explore", net
+    assert burn.settle(None, status(1, will=True, critical=True, stance="invest")) == "dormant"
+    assert burn.settle("maintenance", status(10, stance="invest")) == "explore"  # the owner's choice lifts it at once
+    assert burn.settle("dormant", status(10, stance="invest")) == "explore"  # the will is past: as conserve does
+    assert burn.projected(burn.Burn(burn.EXPLORE, 40.0, stance=burn.INVEST), START) is None  # no change to come
+    short = burn.Burn(burn.EXPLORE, 12.0, stance=burn.INVEST)
+    assert short.fight and "fastest honest path to a first euro" in short.text()
+    assert not burn.Burn(burn.EXPLORE, 16.0, stance=burn.INVEST).fight
+    assert not burn.Burn(burn.EXPLORE, 12.0, stance=burn.CONSERVE).fight
+
+
+def test_steady_goes_no_lower_than_focus() -> None:
+    assert [burn.settle(None, status(n, stance="steady")) for n in (45, 25, 10)] == ["explore", "focus", "focus"]
+    assert burn.settle("maintenance", status(10, stance="steady")) == "focus"
+    assert burn.projected(burn.Burn(burn.FOCUS, 18.0, stance=burn.STEADY), START) is None
+    now = START
+    assert burn.projected(burn.Burn(burn.EXPLORE, 40.0, stance=burn.STEADY), now) == (
+        burn.FOCUS,
+        now + timedelta(days=10),
+    )
+    assert burn.settle(None, status(10, stance="unknown")) == "explore"  # an unknown stance counts as invest
+
+
+def test_invest_warns_the_owner_once_under_15_days(data_dir: Path) -> None:
+    clock = FakeClock()
+    economy = make_economy(data_dir, Settings(starting_balance_usd=100, daily_spend_cap_usd=7), clock)
+    for net, mode in ((12.0, "explore"), (11.0, "explore"), (20.0, "explore"), (10.0, "explore")):
+        assert burn.current(economy.db, status(net, stance="invest")).mode == mode
+    with economy.db.connection() as conn:
+        warned = [
+            str(r[0]) for r in conn.execute("SELECT message FROM events WHERE message LIKE 'Net runway%' ORDER BY id")
+        ]
+    assert len(warned) == 2  # once, and again after it was 20% past 15 days
+    assert warned[0].startswith("Net runway 12.0 days: your spending stance is invest") and "grant" in warned[0]
+
+
+def test_the_stance_is_the_owner_s_option() -> None:
+    assert Settings().spending_stance == "invest"
+    assert Settings(spending_stance="conserve").spending_stance == "conserve"
+    with pytest.raises(ValueError):
+        Settings(spending_stance="lavish")

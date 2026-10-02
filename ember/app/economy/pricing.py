@@ -59,9 +59,10 @@ class CallProfile:
 # the planning call that opens a wake cycle (a venture cycle's, with its rules and the VENTURES section: 0.10.0, and
 # the ROADMAP: 0.11.0; the owner's LIBRARY, the memory headings, the last cycles' digests, the OBLIGATIONS and the
 # lessons the owner pinned, and the burn mode in STATUS: 0.12.0; the decision desk's READY with the forecasts' record,
-# PINTEREST, PRINTIFY and WEBSITE: 0.13.0; BLOG: 0.14.0), and the last will. The agent never sends a bigger one.
-PLANNER_OPENING = CallProfile(input_tokens=24_800, max_tokens=1_200)
-LAST_WILL = CallProfile(input_tokens=6_400, max_tokens=1_000)
+# PINTEREST, PRINTIFY and WEBSITE: 0.13.0; BLOG: 0.14.0; LESSONS at 2,600 bytes: 0.18.0), and the last will. The agent
+# never sends a bigger one.
+PLANNER_OPENING = CallProfile(input_tokens=25_700, max_tokens=1_200)
+LAST_WILL = CallProfile(input_tokens=6_600, max_tokens=1_000)  # 0.18.0: the constitution grew
 # The first work step with the largest brief, and the reflection after it (with the room the loop keeps for one
 # step's growth), measured the same way: a wake cycle is only worth starting if both fit after its plan. Measured with
 # the most tools (an ordinary cycle's with a mailbox's, a shop's, the library's and, 0.13.0, Pinterest's, Printify's
@@ -73,8 +74,10 @@ LAST_WILL = CallProfile(input_tokens=6_400, max_tokens=1_000)
 WORK = CallProfile(input_tokens=36_500, max_tokens=2_000, cache_ttls=("5m",))
 REFLECT = CallProfile(input_tokens=48_200, max_tokens=2_000, cache_ttls=("5m",))
 # The daily review (0.7.1), measured the same way: the constitution, the knowledge, the review rules (with the
-# venture tree's: 0.10.0, and the roadmap's: 0.11.0, with verdicts on milestones: 0.12.0) and a full scorecard.
-REVIEW_CALL = CallProfile(input_tokens=14_900, max_tokens=2_200)
+# venture tree's: 0.10.0, and the roadmap's: 0.11.0, with verdicts on milestones: 0.12.0, with bottlenecks and
+# retrospectives: 0.18.0)
+# and a full scorecard.
+REVIEW_CALL = CallProfile(input_tokens=16_000, max_tokens=2_200)
 # The biggest first call of a workshop run (0.7.0), measured the same way: its rules, a task at its length limit and
 # the most files handed over. It also has the code execution tool, priced with every code run and container time.
 # 0.15.0: 3,000 tokens of output per sampling (the API applies max_tokens to each), and its rules ask for short scripts.

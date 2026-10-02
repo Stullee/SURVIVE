@@ -126,6 +126,11 @@ TABLES = (
     "site_uploads",
     "blog_posts",
     "listing_gates",
+    "bets",
+    "cases",
+    "principles",
+    "weekly_reviews",
+    "quality_checks",
     "observations",
     "memory_versions",
     "lesson_pins",
@@ -867,6 +872,16 @@ def _agent(state: AppState, full: bool = True) -> str:
                 ],
                 7,
             ),
+            # 0.18.0: the learning loop (vision/learning.md)
+            (
+                "bets",
+                ["id", "project_id", "metric", "gain", "baseline", "reach", "due", "status", "final", "expect"],
+                20,
+            ),
+            ("cases", ["id", "subject", "cause", "sure", "expected", "happened", "why", "lesson"], 20),
+            ("principles", ["id", "status", "confidence", "supports", "against", "text", "retired_why"], 40),
+            ("weekly_reviews", ["id", "day", "status", "answer", "outcome", "note"], 4),
+            ("quality_checks", ["id", "project_id", "created_at", "status", "score", "verdict", "fixes", "note"], 10),
             (
                 "etsy_listings",
                 [

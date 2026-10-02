@@ -635,6 +635,9 @@ def _rank(texts: list[str], words: list[str]) -> list[tuple[float, int]]:
     return scores
 
 
+rank = _rank  # 0.18.0: the same ranking for the agent's own cases and principles (learning.py)
+
+
 def search_learnings(
     conn: sqlite3.Connection, scope: AgentScope, words: list[str], limit: int = 10
 ) -> list[sqlite3.Row]:

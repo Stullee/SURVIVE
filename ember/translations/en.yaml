@@ -26,6 +26,15 @@ configuration:
       This percent of each day's spending goes to venture cycles, where the
       agent researches new ways to earn beyond what it does now and brings you
       business cases on the Ventures tab. 0 switches venture cycles off.
+  spending_stance:
+    name: Spending stance
+    description: >-
+      What happens as the runway shrinks. invest: your caps are the only
+      limits and Ember keeps exploring new ideas until its last will; under 15
+      days of runway the System log warns you once. steady: under 30 days
+      Ember finishes the tests already running and brings no new ideas of its
+      own (focus), never less. conserve: focus under 30 days, and under 15
+      days one cheap cycle a day (maintenance).
   venture_cash_eur:
     name: Cash for a venture's first test (EUR)
     description: >-

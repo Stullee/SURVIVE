@@ -62,10 +62,12 @@ from ..integrations import (
 from ..products import blog, checks, images, make, sheets, site
 from ..products.site import Owner as SiteOwner
 from . import (
+    bets,
     demand,
     econ,
     evidence,
     knockouts,
+    learning,
     library,
     metrics,
     netguard,
@@ -367,6 +369,7 @@ SPECS: dict[str, Spec] = {
                 "hypothesis": _s("A sharper hypothesis.", 400, required=False, cut=True),
                 "note": _s("A short note: what happened, what you learned.", 300, required=False, cut=True),
                 "venture_id": _i("Link it to this venture (its leg).", required=False),
+                "bet": _s("What you expect of your change, e.g. '+15 views in 7 days: why'.", 200, required=False),
             },
             per_cycle=8,
             reflect=True,
@@ -688,7 +691,9 @@ SPECS: dict[str, Spec] = {
             "candid entry (what you did, what worked, what didn't) and next, for your next plan.",
             {
                 "summary": _s("One line.", 240, cut=True),
-                "entry": _s("", 2_000),
+                # 0.18.0: cut, not refused: the reflection is the cycle's last reply, and a refused journal lost its
+                # handoff (cycle #72 lost "next" to an entry of 2,652 characters)
+                "entry": _s("", 2_000, cut=True),
                 "next": _s("What your next cycle should do first, and why.", 400, required=False, cut=True),
             },
             per_cycle=1,
@@ -1808,7 +1813,16 @@ def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     if cycle is not None and cycle["project_id"] is None:
         # A cycle's cost counts toward its project: without a focus from the plan, that is the one it started.
         store.update_cycle(conn, ctx.cycle_id, project_id=project_id)
-    return Outcome(True, f"Created project #{project_id}.", f"created #{project_id} {args['title'][:60]}", project_id)
+    alike = _alike(conn, ctx, f"{args['title']} {args.get('hypothesis') or ''}")
+    return Outcome(
+        True, f"Created project #{project_id}.{alike}", f"created #{project_id} {args['title'][:60]}", project_id
+    )
+
+
+def _alike(conn: Any, ctx: ToolContext, text: str) -> str:
+    """0.18.0: the cases most like a new project or venture, for the answer that creates it ("" without any)."""
+    found = learning.similar(conn, ctx.scope, text)
+    return (" You tried something like this before: " + " | ".join(found)) if found else ""
 
 
 def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -1844,13 +1858,21 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     if venture_id is not None and venture_id != row["venture_id"]:
         _open_venture(conn, ctx.scope, venture_id)
         changes["venture_id"] = venture_id
-    if not changes:
+    placed = ""
+    if args.get("bet"):  # 0.18.0: settled by Ember's code (bets.py); a refused bet changes nothing
+        try:
+            placed = bets.place(conn, ctx.scope, row["id"], args["bet"], ctx.cycle_id, ctx.clock.today(), ctx.now())
+        except bets.BetError as exc:
+            raise ToolError(f"bet: {exc}") from None
+    if not changes and not placed:
         raise ToolError("nothing to change")
-    store.update_project(conn, row["id"], ctx.now(), **changes)
+    if changes:
+        store.update_project(conn, row["id"], ctx.now(), **changes)
     transition = f"{row['status']} → {changes['status']}" if "status" in changes else "updated"
     if "venture_id" in changes:
         transition += f", part of venture #{venture_id}"
-    return Outcome(True, f"Project #{row['id']}: {transition}.", f"#{row['id']} {transition}", row["id"])
+    text = f"Project #{row['id']}: {transition}." + (f" {placed}" if placed else "")
+    return Outcome(True, text, f"#{row['id']} {transition}", row["id"])
 
 
 def project_net(conn: Any, scope: AgentScope, project_id: int) -> tuple[int, int]:
@@ -2001,7 +2023,7 @@ def _venture_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     return Outcome(
         True,
         f"Venture #{venture_id} is in your tree ({stage}{branch}). Score it and save what you learn with "
-        f"venture_update: your findings go to {file}.",
+        f"venture_update: your findings go to {file}." + _alike(conn, ctx, f"{title} {args['pitch']}"),
         f"venture #{venture_id} {title[:60]}",
     )
 
@@ -2728,14 +2750,17 @@ def _knowledge_search(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         raise ToolError("query: give words to look for (not only short or common ones)")
     found = library.search_learnings(conn, ctx.scope, words, limit=10)
     passages = library.search_parts(conn, ctx.scope, words, limit=3)
+    own = learning.relevant(conn, ctx.scope, query, limit=5)  # 0.18.0: your own principles and cases first
     quoted = json.dumps(query, ensure_ascii=False)
-    if not found and not passages:
+    if not found and not passages and not own:
         return Outcome(
             True,
             f"Nothing in your owner's library matches {quoted}. Try other words, or library_read for its documents.",
             f"nothing for {query[:60]}",
         )
     text = []
+    if own:
+        text.append("From your own playbook and cases:\n" + "\n".join(own))
     if found:
         lines = "\n".join(library.learning_line(r) for r in found)
         text.append(f"What you learned ({len(found)}, the best match first):\n{wrap(ctx, 'library', lines)}")

@@ -21,7 +21,7 @@ import logging
 import re
 import sqlite3
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Any
 
 from .. import events
@@ -284,21 +284,34 @@ def lesson_lines(text: str) -> tuple[str, list[str]]:
     return (head + "\n\n" if head else ""), [line for line in lines[first:] if line.startswith("- ")]
 
 
-def consolidation_input(text: str, pinned: set[str]) -> str:
-    """The lessons as the consolidation reads them: numbered, the pinned ones and those with numbers marked."""
+def consolidation_input(text: str, pinned: set[str], tools: Collection[str] = ()) -> str:
+    """The lessons as the consolidation reads them: numbered, the pinned ones, those with numbers and (0.18.0) those
+    naming one of ``tools`` marked."""
     _, lines = lesson_lines(text)
     shown = []
     for number, line in enumerate(lines, 1):
-        marks = [m for m, on in (("pinned", lesson_key(line) in pinned), ("has numbers", _numbers(line))) if on]
+        marks = [
+            m
+            for m, on in (
+                ("pinned", lesson_key(line) in pinned),
+                ("has numbers", _numbers(line)),
+                ("tool", about_tool(line, tools)),
+            )
+            if on
+        ]
         shown.append(f"{number}. {lesson_text(line)}" + (f" ({', '.join(marks)})" if marks else ""))
     return "\n".join(shown)
 
 
-def consolidate(text: str, answer: Any, pinned: set[str], cap: int) -> tuple[str, str] | None:
+def consolidate(
+    text: str, answer: Any, pinned: set[str], cap: int, tools: Collection[str] = ()
+) -> tuple[str, str] | None:
     """The lessons file after the consolidation's ``answer`` ({"keep": [{"text", "from"}], "drop": [{"line",
     "why"}]}), and what changed; None when it changes nothing or can't be used. Ember's code keeps every line the
     answer doesn't account for, never drops or rewrites a pinned line, and never drops a line that states a number
-    (it may merge it); a merged lesson keeps the newest tag of its lines, and the lessons stay newest last."""
+    (it may merge it) unless (0.18.0) it names one of ``tools``: a tool's limit is no lesson, its refusal states it
+    (live, 12 of 17 lessons were such limits and pushed the business lessons out); a merged lesson keeps the newest
+    tag of its lines, and the lessons stay newest last."""
     if not isinstance(answer, dict):
         return None
     head, lines = lesson_lines(text)
@@ -329,7 +342,7 @@ def consolidate(text: str, answer: Any, pinned: set[str], cap: int) -> tuple[str
         line, why = item.get("line"), " ".join(str(item.get("why") or "").split())[:WHY_CHARS]
         if not isinstance(line, int) or isinstance(line, bool) or not 1 <= line <= count or line in covered:
             continue
-        if line in fixed or _numbers(lines[line - 1]) or not why:
+        if line in fixed or (_numbers(lines[line - 1]) and not about_tool(lines[line - 1], tools)) or not why:
             continue  # a pinned lesson, or a no backed by data: kept
         covered.add(line)
         dropped.append(f"{json_quote(lesson_text(lines[line - 1])[:60])} ({why})")
@@ -359,6 +372,12 @@ _TAG = re.compile(r"^-\s*\[#c(\d+)\]")
 def _numbers(line: str) -> bool:
     """Whether a lesson states a number (its cycle tag aside): a no backed by data is never dropped."""
     return _DIGIT.search(lesson_text(line)) is not None
+
+
+def about_tool(line: str, tools: Collection[str]) -> bool:
+    """0.18.0: whether a lesson names one of ``tools`` (a tool's name as a word, like propose_printify_product)."""
+    words = set(re.findall(r"[a-z][a-z0-9_]+", lesson_text(line).lower()))
+    return any(name in words for name in tools)
 
 
 def _tag(line: str) -> int:

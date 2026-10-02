@@ -354,7 +354,7 @@ def test_the_rules_ask_for_action_instead_of_waiting() -> None:
         "with no open project, start one now",
         "Build first, then ask",
         "one concrete action",
-        "Your daily cap is a limit, not a target",  # 0.12.0: it was "there to be spent on experiments"
+        "up to your owner's caps",  # 0.12.0: "there to be spent on experiments"; 0.18.0: "a limit, not a target"
         "Sleep long only when there is truly nothing useful to do",
         "- money_path: how this goal leads to income",
     ):
