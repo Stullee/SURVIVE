@@ -61,7 +61,7 @@ def test_the_mode_follows_the_net_runway_and_moves_up_only_past_a_margin() -> No
     assert burn.settle("maintenance", status(40, money_in=1), began) == "explore"  # past both margins
     assert burn.settle("maintenance", status(None, money_in=1), began) == "explore"  # it earns what it spends
     for previous, net in (("focus", 37), ("maintenance", 19), ("maintenance", 40), ("maintenance", None)):
-        assert burn.settle(previous, status(net), began) == previous  # 0.16.x: no money came in since it began
+        assert burn.settle(previous, status(net), began) == previous  # 0.16.2: no money came in since it began
         assert burn.settle(previous, status(net, money_in=1)) == previous  # nor is it known when it began
     assert (
         burn.Burn("maintenance", 9.0).cycle_cap(500_000) == 400_000
@@ -82,7 +82,7 @@ def test_a_move_up_is_judged_at_the_spending_from_before_the_mode_moved_down() -
     # sales of $5.50 a day pay for the spending from before: back to explore
     assert burn.judged(status(None, money_in=2, window_net_in=38_500_000, **week), since) is None
     assert burn.settle("maintenance", status(None, money_in=2, window_net_in=38_500_000, **week), since) == "explore"
-    # spending as much now as before: today's net runway, as until 0.16.x
+    # spending as much now as before: today's net runway, as until 0.16.2
     same = status(19.0, money_in=2, window_spend=38_500_000, active_days=7.0)
     assert burn.judged(same, since) == 19.0 and burn.settle("maintenance", same, since) == "focus"
 

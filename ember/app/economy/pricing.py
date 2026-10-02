@@ -222,7 +222,7 @@ def reset_safety_factors(db: Database, mode: str) -> int:
     """The owner's reset (0.12.0): every estimate in ``mode`` unscaled again, the factors from before 0.12.0 included.
     Returns how many raised factors there were.
 
-    0.16.x: only the factors. From 0.15.0 the workshop's hold also forgot what the runs before the reset cost, so one
+    0.16.2: only the factors. From 0.15.0 the workshop's hold also forgot what the runs before the reset cost, so one
     click on the banner dropped it to the cap per run (metering.workshop_reservation keeps them now)."""
     raised = len(raised_safety_factors(db, mode))
     with db.transaction() as conn:

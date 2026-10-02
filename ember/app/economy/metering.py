@@ -454,7 +454,7 @@ def workshop_reservation(
     like those; a run can still cost more than anything seen, and that is booked when it happens. The tail forgets a
     costly run after WORKSHOP_TAIL_DAYS, so it can't refuse the workshop for good.
 
-    0.16.x: the costliest call, not the 95th percentile (of 20 calls, that left the costliest out); and the owner's
+    0.16.2: the costliest call, not the 95th percentile (of 20 calls, that left the costliest out); and the owner's
     Reset estimates no longer clears the tail: one click on it dropped the hold after a run like #423 from $2.76 to
     the $1.50 cap per run, which the same run would have broken the daily cap with."""
     costs = [cost for _, cost in _workshop_tail(db, clock, simulated, model)]
@@ -472,7 +472,7 @@ def workshop_tail_ends(db: Database, clock: Clock, simulated: bool, model: str, 
 def _workshop_tail(db: Database, clock: Clock, simulated: bool, model: str) -> list[tuple[str, int]]:
     """(when, what it is known to cost) of the last EXPECTED_WINDOW workshop calls on ``model`` in the last
     WORKSHOP_TAIL_DAYS days that are known to have cost something. What they are known to cost, not what they were
-    booked at: an uncertain call booked at its hold would raise the next hold with every call. 0.16.x: an interrupted
+    booked at: an uncertain call booked at its hold would raise the next hold with every call. 0.16.2: an interrupted
     call too (a broken stream reports what the run had used so far; one cut by a restart knows nothing, so it adds
     nothing)."""
     since = to_iso(clock.now() - timedelta(days=WORKSHOP_TAIL_DAYS))
@@ -1005,7 +1005,7 @@ class MeteredModel:
         """What a ``purpose`` call in cycle ``cycle_id`` may go over the caps by (reads only): nothing, but a
         reflection, which always runs within the balance and the last-will reserve, the cycle cap by one cache miss
         (``miss``: 0.12.0) and by what the calls under that cap cost beyond their worst case (0.15.0), and the daily
-        cap and the event reserve by what the cycle's calls of today cost beyond what they held (0.16.x: after a
+        cap and the event reserve by what the cycle's calls of today cost beyond what they held (0.16.2: after a
         workshop run cost more than its hold, the daily cap refused the reflection); the event reserve counts the
         reflection's expected cost, so it also allows the cache miss."""
         if purpose != "reflect":
@@ -1015,7 +1015,7 @@ class MeteredModel:
 
     def _overrun_excess(self, cycle_id: int) -> tuple[int, int]:
         """(what the calls of the cycle that count toward its cap cost beyond their worst case (0.15.0; in maintenance
-        every call counts toward it), what all its calls booked today cost beyond what they held (0.16.x: a workshop
+        every call counts toward it), what all its calls booked today cost beyond what they held (0.16.2: a workshop
         call holds more than its worst case))."""
         outside = ", ".join("?" for _ in OUTSIDE_CYCLE_CAP)
         excess = "MAX(c.floor_micros - c.estimate_micros, 0)"

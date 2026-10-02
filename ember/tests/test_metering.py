@@ -327,7 +327,7 @@ def test_only_two_modules_write_money() -> None:
 
 
 def test_an_answered_uncertain_charge_counts_what_it_is_known_to_cost_toward_the_caps(data_dir: Path) -> None:
-    # 0.12.0: an uncertain bill was charged at the worst case against the caps and the venture share. 0.16.x: that
+    # 0.12.0: an uncertain bill was charged at the worst case against the caps and the venture share. 0.16.2: that
     # holds for an answer whose usage was read; a call interrupted mid-answer, or an answer without its usage, counts
     # what it was charged (review of 0.16.1, bug 7).
     economy = make_economy(data_dir, GENEROUS)

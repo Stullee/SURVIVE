@@ -315,7 +315,7 @@ class Books:
         answered call whose bill is uncertain (an unknown usage field, say) counts with what it is known to cost, not
         the worst case it was charged (0.12.0): the balance keeps the worst case until the owner corrects it. A call
         interrupted mid-answer, or an answer without its usage, counts what it was charged (``_USAGE_READ``): until
-        0.16.x it counted its known part, $0 after a restart, while the balance was charged its whole hold.
+        0.16.2 it counted its known part, $0 after a restart, while the balance was charged its whole hold.
         """
         where, params = scope.where()
         joined, joined_params = scope.where("l")
@@ -394,7 +394,7 @@ class Books:
         return row is not None
 
     def last_money_in(self, scope: Scope) -> int:
-        """The newest ledger row that brought money in (a grant, revenue or a positive adjustment), 0 if none (0.16.x:
+        """The newest ledger row that brought money in (a grant, revenue or a positive adjustment), 0 if none (0.16.2:
         a burn mode moves up only once money came in after it began)."""
         where, params = scope.where()
         with self.db.connection() as conn:
@@ -417,7 +417,7 @@ class Books:
         """(charged, reserved-and-pending) micros of one cycle; for the cycle cap without the calls that don't count
         toward it (OUTSIDE_CYCLE_CAP: ``outside_cap=False``; 0.15.0: with them all in a maintenance cycle,
         ``every_purpose``), and then with what an answered call whose bill is uncertain is known to cost rather than
-        its worst case (0.12.0; 0.16.x: an interrupted call at its charge, as ``cap_spend_on``)."""
+        its worst case (0.12.0; 0.16.2: an interrupted call at its charge, as ``cap_spend_on``)."""
         outside = ", ".join(f"'{purpose}'" for purpose in OUTSIDE_CYCLE_CAP)
         workshop = "" if outside_cap or every_purpose else f" AND purpose NOT IN ({outside})"
         charged = "cost_micros"

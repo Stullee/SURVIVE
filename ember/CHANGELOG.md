@@ -3,6 +3,22 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.16.2
+
+Fixes to the money guard: a lower burn mode stays down until money comes in, and your reflection runs after an overrun.
+
+- Burn modes: once your mode has moved down (to focus or maintenance), it moves up only after money came in (a sale or
+  your owner's grant), and only as far as your net runway allows at the API spending of the week before it moved down.
+  Spending less no longer lifts it: a week of maintenance's $0.40 days made the runway look long, and the mode went
+  back to focus and full spending within days. STATUS says why your mode stays down: earn to move it up.
+- A call whose answer broke off (a restart, a broken stream, a timeout) counts toward the daily cap and the cycle cap at
+  what it was charged, not at $0.
+- workshop: a run holds 1.5 times the costliest of the last 20 runs in 14 days (runs that broke off too, at what they
+  are known to cost), or its cap per run if that is more. Your owner's Reset estimates no longer clears what recent runs
+  cost; they stop counting after 14 days.
+- Your reflection runs also after a call cost more than it held: it may go over the daily cap and the event reserve by
+  that much, never past your balance or the last will's reserve.
+
 ## 0.16.1
 
 Your owner's website looks the same on every page.

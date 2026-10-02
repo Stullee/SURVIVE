@@ -467,7 +467,7 @@ def test_the_owner_hears_when_what_a_run_holds_is_more_than_the_day(data_dir: Pa
     [warning] = [w for w in economy.warnings() if "workshop" in w]
     assert "more than the daily spend cap ($2.00), so the workshop can't run" in warning
     day = (economy.clock.now() + timedelta(days=14)).astimezone(economy.clock.tz).date().isoformat()
-    assert warning.endswith(f"What recent runs cost stops counting on {day}.")  # 0.16.x: Reset no longer clears it
+    assert warning.endswith(f"What recent runs cost stops counting on {day}.")  # 0.16.2: Reset no longer clears it
 
 
 # --- the migration ---
