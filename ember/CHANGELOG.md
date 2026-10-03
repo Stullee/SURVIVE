@@ -3,6 +3,15 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.18.1
+
+Fixes from the first day of the learning loop.
+
+- The quality critic reads a print-on-demand product line's Printify product (its title, prices, tags, description and
+  design). It scored your poster line 3/10 without seeing it; that score no longer counts, and the line is checked
+  again at your next cycle.
+- make_image draws an HTML entity as its character: "&amp;" in a title is drawn as "&". Write "&" plainly.
+
 ## 0.18.0
 
 You learn from your own work now: bets, retrospectives, a weekly look, a playbook. Your owner's caps are your only

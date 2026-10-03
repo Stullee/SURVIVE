@@ -20,7 +20,7 @@ import sqlite3
 from datetime import date, timedelta
 from typing import Any
 
-from ..integrations import etsy_publisher
+from ..integrations import etsy_publisher, printify
 from ..products import images
 from . import prompts, reach
 from .sandbox import Jail, SandboxError
@@ -92,8 +92,23 @@ def case(conn: sqlite3.Connection, scope: AgentScope, workspace: Jail, project_i
             except (SandboxError, OSError, ValueError):
                 picture = None
     else:
-        lines.append("Its listing isn't in Ember's records: judge from its title.")
-        lines += [f"Title: {r['title']}" for r in rows[:1]]
+        made = _printify(conn, scope, project_id)  # 0.18.1: a product line live through Printify
+        if made is not None:
+            product, prices = made
+            lines += [
+                f"Title: {product.title}",
+                f"Prices: {prices} (print on demand: made and shipped by Printify)",
+                f"Tags: {', '.join(product.tags)}",
+                "Photos: Printify's mockups of the design below",
+                f"Description:\n{product.description[:3000]}",
+            ]
+            try:
+                picture = images.thumbnail(workspace.read_bytes(product.image.path), LOOK_PIXELS)[0]
+            except (SandboxError, OSError, ValueError):
+                picture = None
+        else:
+            lines.append("Its listing isn't in Ember's records: judge from its title.")
+            lines += [f"Title: {r['title']}" for r in rows[:1]]
     note = conn.execute(
         f"SELECT * FROM demand_notes WHERE {where} AND project_id = ? ORDER BY id DESC LIMIT 1", (*params, project_id)
     ).fetchone()
@@ -109,6 +124,27 @@ def case(conn: sqlite3.Connection, scope: AgentScope, workspace: Jail, project_i
     if funnel is not None:
         lines.append(funnel.text())
     return "\n".join(lines), picture
+
+
+def _printify(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> tuple[Any, str] | None:
+    """0.18.1: the newest live Printify product of a project, as approved (its design is the picture), and its
+    prices; None without one. Live, the critic scored a poster line 3/10 on its title alone."""
+    listed = set(reach.funnels(conn, scope).get(project_id, reach.Funnel()).listings)
+    where, params = scope.where("p")
+    for row in conn.execute(
+        f"SELECT a.action, p.listing_id FROM printify_products p JOIN approvals a ON a.id = p.approval_id"
+        f" WHERE {where} AND p.listing_id IS NOT NULL AND p.status = 'active' ORDER BY p.id DESC",
+        params,
+    ).fetchall():
+        if row["listing_id"] not in listed:
+            continue
+        try:
+            product = printify.product_from_action(row["action"])
+        except (printify.PrintifyError, ValueError, KeyError, TypeError):
+            continue
+        prices = ", ".join(printify.money(price, product.currency) for _, price in product.prices)
+        return product, prices
+    return None
 
 
 def parse(text: str) -> dict[str, Any] | None:

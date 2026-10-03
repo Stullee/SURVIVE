@@ -28,6 +28,7 @@ sandbox; Ember's code checks every file it made before it is kept.
 from __future__ import annotations
 
 import base64
+import html
 import json
 import logging
 import re
@@ -3154,9 +3155,10 @@ def _make_image(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         ctx.workspace,
         args["output"],
         args.get("pages") or "",
-        args["title"],
-        args.get("subtitle", ""),
-        args.get("badge", ""),
+        # 0.18.1: an HTML entity in the text is drawn as the character (live, "Word &amp;" stood on a cover)
+        html.unescape(args["title"]),
+        html.unescape(args.get("subtitle", "")),
+        html.unescape(args.get("badge", "")),
         args.get("background"),
         args.get("accent"),
         args.get("shape", "landscape"),
