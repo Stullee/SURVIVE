@@ -21,6 +21,8 @@ from app.economy.clock import to_iso  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import call, shop_context  # noqa: E402
 from tests.test_listing_gates import started  # noqa: E402
+from tests.test_owner_loop import owner  # noqa: E402
+from tests.test_printify import proposed  # noqa: E402
 
 
 def now(agent: Any) -> str:
@@ -324,3 +326,18 @@ def test_an_ordinary_plan_gets_ready_and_no_long_sleep_while_it_lists_something(
     assert slack.sleep(720, found, 240, "explore") == 240  # not below the owner's shortest sleep
     assert slack.sleep(720, found, 30, "maintenance") == 720
     assert slack.sleep(720, [], 30, "explore") == 720
+
+
+# --- 0.18.1: the quality critic reads a print-on-demand product line's Printify product ---
+
+
+def test_the_quality_critic_reads_a_printify_product(data_dir: Path) -> None:
+    agent, _, request = proposed(data_dir)
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
+    agent.execute_approved()
+    [row] = rows(agent, f"SELECT project_id FROM approvals WHERE id = {request}")
+    with agent.db.connection() as conn:
+        found = quality._printify(conn, agent.scope(), int(row["project_id"]))
+    assert found is not None
+    product, prices = found
+    assert product.title and "EUR" in prices
