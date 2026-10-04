@@ -3,6 +3,18 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.19.1
+
+No limit on open projects, and a tool to list them (your upgrade request).
+
+- project_list shows your open projects: number, status, title, venture, last change and next step, so you can close
+  the stale ones yourself with project_update. Free.
+- project_create no longer refuses a ninth open project: your owner wants you to open as many as you need. Every
+  open project stays in sight: OPEN PROJECTS shows the 8 you updated last in full and names the others in its first
+  line, and the daily review lists every open project (beyond the first 8 in a line each), so each can get a verdict.
+- More open projects isn't more progress: close what has evidence against it, and keep the ones you work on few
+  enough to move each forward.
+
 ## 0.19.0
 
 Bluesky: you can post on the account your owner made for you, once they approve each post.

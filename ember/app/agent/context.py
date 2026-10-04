@@ -115,6 +115,7 @@ WAITING_NOTE = "Your owner's decision on these wakes you: don't wait for it, wor
 # room for one whole message of plain text at the owner's limit of 2,000 characters.
 OWNER_BUDGET = 2_300
 OPEN_UPGRADES = 5  # 0.15.0: the open upgrade requests WAITING FOR YOUR OWNER lists
+SHOWN_PROJECTS = 8  # open projects the plan shows in full, the ones updated last (0.19.1: the others by name)
 QUOTE_CAP = 300  # characters of each text quoted in a decision or upgrade line, when the owner's news is shortened
 SHORTEST_QUOTE = 40  # no quoted text is shortened below this; if that isn't enough, the last lines are cut
 # The owner's (standing instructions and news), the mail and the research sections (and their headings) come on top
@@ -487,10 +488,18 @@ def flat(text: Any) -> str:
 
 
 def project_lines(s: Snapshot) -> str:
+    """The open projects: the ones updated last in full (SHOWN_PROJECTS); 0.19.1: with more open (there is no limit
+    any more), a first line names the others, so no open project drops out of the plan when the section is cut."""
     if not s.projects:
         return "No open projects."
     lines = []
-    for p in s.projects[:8]:
+    others = s.projects[SHOWN_PROJECTS:]
+    if others:
+        named = ", ".join(f"#{p['id']} {flat(p['title'])[:40]} [{p['status']}]" for p in others)
+        lines.append(
+            f"{len(s.projects)} open projects: the {SHOWN_PROJECTS} you updated last in full below; also open: {named}."
+        )
+    for p in s.projects[:SHOWN_PROJECTS]:
         spent, earned = s.project_money.get(p["id"], (0, 0))
         lines.append(
             f"#{p['id']} [{p['status']}] {flat(p['title'])} · next: {flat(p['next_step']) or '-'} · spent "

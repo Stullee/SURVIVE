@@ -6,7 +6,7 @@ Handlers never raise: a refused or invalid call comes back to the model as an
 error result it can react to. Every call is recorded in ``tool_calls``.
 
 Limits that matter are enforced here, not in the prompt: per-cycle counts,
-sizes, the file jail, the number of open projects and pending requests, and
+sizes, the file jail, the number of pending requests (0.19.1: not of open projects), and
 which tools may run in the reflect phase. No tool can move money, record
 revenue, change the options, reach the network (``research`` is a metered
 model call with Anthropic's server-side web tools, not a local fetch) or touch
@@ -104,7 +104,6 @@ WRITE_CHARS = ONE_REPLY_CHARS
 DESCRIPTION_CHARS = min(etsy.DESCRIPTION_CHARS, ONE_REPLY_CHARS - 500)  # a listing's other fields come with it
 READ_DEFAULT_CHARS = 3_000
 READ_MAX_CHARS = 6_000
-MAX_OPEN_PROJECTS = 8
 MAX_TOOL_CALLS_PER_TURN = 4  # a reply's tool calls that run (write_journal besides them); the rest are skipped
 MAX_UNREAD_MESSAGES = 5
 MESSAGES_PER_DAY = 2  # 0.12.0: messages to the owner a day that answer none of theirs (the rule was only prose)
@@ -352,8 +351,7 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "project_create",
-            f"Start a project: a small, testable way to earn money honestly. At most {MAX_OPEN_PROJECTS} open "
-            "projects.",
+            "Start a project: a small, testable way to earn money honestly.",
             {
                 "title": _s("Short title.", 80, cut=True),
                 "hypothesis": _s(
@@ -381,6 +379,13 @@ SPECS: dict[str, Spec] = {
             },
             per_cycle=8,
             reflect=True,
+        ),
+        Spec(
+            "project_list",
+            "List your open projects: number, status, title, venture, last change and next step (close the stale "
+            "ones with project_update). Free.",
+            {},
+            per_cycle=3,
         ),
         Spec(
             "venture_create",
@@ -1845,9 +1850,7 @@ def _no_heading(args: dict[str, Any], *names: str) -> None:
 
 def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     _no_heading(args, "title", "hypothesis", "next_step")
-    open_ = store.open_projects(conn, ctx.scope)
-    if len(open_) >= MAX_OPEN_PROJECTS:
-        raise ToolError(f"you already have {MAX_OPEN_PROJECTS} open projects; close one first")
+    open_ = store.open_projects(conn, ctx.scope)  # 0.19.1: as many as the agent needs (it was at most 8)
     if any(p["title"].strip().lower() == args["title"].strip().lower() for p in open_):
         raise ToolError("an open project already has this title")
     venture_id = args.get("venture_id")
@@ -1880,6 +1883,22 @@ def _alike(conn: Any, ctx: ToolContext, text: str) -> str:
     """0.18.0: the cases most like a new project or venture, for the answer that creates it ("" without any)."""
     found = learning.similar(conn, ctx.scope, text)
     return (" You tried something like this before: " + " | ".join(found)) if found else ""
+
+
+def _project_list(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.19.1 (Ember's upgrade request): its open projects with their numbers, so it can close the stale ones itself
+    (the plan shows the ones updated last in full; a work step's brief only its focus)."""
+    projects = store.open_projects(conn, ctx.scope)
+    if not projects:
+        return Outcome(True, "No open projects.", "0 open projects")
+    lines = [f"{len(projects)} open projects, the one changed last first:"]
+    for p in projects:
+        venture = f" · venture #{p['venture_id']}" if p["venture_id"] else ""
+        step = _cut(" ".join(str(p["next_step"] or "").split()), 80) or "-"
+        title = _cut(" ".join(str(p["title"]).split()), 80)
+        changed = str(p["updated_at"])[:10]
+        lines.append(f"#{p['id']} [{p['status']}] {title}{venture} · changed {changed} · next: {step}")
+    return Outcome(True, "\n".join(lines), f"{len(projects)} open projects")
 
 
 def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -4386,6 +4405,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "memory_read": _memory_read,
     "project_create": _project_create,
     "project_update": _project_update,
+    "project_list": _project_list,
     "venture_create": _venture_create,
     "venture_update": _venture_update,
     "brainstorm": _brainstorm,

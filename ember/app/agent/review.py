@@ -30,7 +30,7 @@ from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
 
 WINDOW_DAYS = 7
 SCORECARD_MAX = 9_000  # characters: the review call's profile (pricing.REVIEW) is measured with a full scorecard
-MAX_PROJECTS = 8
+MAX_PROJECTS = 8  # projects the scorecard shows in full (0.19.1: every open one is listed, the others in a line each)
 MAX_DECISIONS = 6
 MAX_SALES = 6  # revenue entries listed in the scorecard
 MAX_ATTEMPTS = 2  # reviews a day, failed ones included
@@ -337,7 +337,9 @@ def _projects(conn: sqlite3.Connection, scope: AgentScope, since: str) -> list[s
         " ORDER BY updated_at DESC, id DESC",
         (*params, since),
     ).fetchall()
-    return [*open_, *closed][:MAX_PROJECTS]
+    # 0.19.1: every open project (there is no limit any more), so each can get a verdict; closed ones while there is
+    # room
+    return [*open_, *closed][: max(MAX_PROJECTS, len(open_))]
 
 
 def _project_lines(
@@ -352,9 +354,19 @@ def _project_lines(
     if not projects:
         return "PROJECTS\nNo projects: nothing is being tried."
     lines = ["PROJECTS (open ones, then those closed in the period)"]
+    if len(projects) > MAX_PROJECTS:
+        lines[0] = (
+            f"PROJECTS (open ones, then those closed in the period; the first {MAX_PROJECTS} in full, the others in a"
+            " line each)"
+        )
     now = clock.now()
-    for p in projects:
+    for index, p in enumerate(projects):
         pid = p["id"]
+        if index >= MAX_PROJECTS:  # 0.19.1: an open project beyond the first ones, in one line (the scorecard's size)
+            step = f" · next step: {_one_line(p['next_step'], 100)}" if p["next_step"] else ""
+            age = _days(now, p["created_at"])
+            lines.append(f"#{pid} [{p['status']}] {_one_line(p['title'], 80)} · open {age}{step}")
+            continue
         cycles = conn.execute(
             "SELECT COUNT(*), COALESCE(SUM(CASE WHEN started_at >= ? THEN 1 ELSE 0 END), 0), MAX(started_at)"
             " FROM cycles WHERE project_id = ?",
