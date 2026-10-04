@@ -18,6 +18,8 @@ pytest.importorskip("httpx2")
 
 from app.agent import bets, context, learning, prompts, quality, reach, slack, tools, ventures, weekly  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
+from app.integrations import etsy_publisher  # noqa: E402
+from app.integrations.etsy import NotSent  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import call, shop_context  # noqa: E402
 from tests.test_listing_gates import started  # noqa: E402
@@ -341,3 +343,33 @@ def test_the_quality_critic_reads_a_printify_product(data_dir: Path) -> None:
     assert found is not None
     product, prices = found
     assert product.title and "EUR" in prices
+
+
+# --- 0.18.1: a file Etsy says is attached already stays ---
+
+
+def test_a_file_etsy_has_attached_already_is_kept_not_deleted() -> None:
+    deleted: list[int] = []
+    uploaded: list[str] = []
+
+    def upload(name: str, data: bytes, rank: int) -> None:
+        if name == "letter.pdf":
+            raise NotSent("HTTP 400: File 12 is already attached to this listing.")
+        uploaded.append(name)
+
+    progress: list[str] = []
+    etsy_publisher._replace(
+        [11, 12], upload, deleted.append, [("letter.pdf", b"a"), ("phrases.pdf", b"b")], 5, progress
+    )
+    assert uploaded == ["phrases.pdf"] and deleted == [11] and progress == ["kept", "uploaded", "deleted"]
+    deleted.clear()
+
+    def unknown(name: str, data: bytes, rank: int) -> None:
+        raise NotSent("HTTP 400: File 99 is already attached to this listing.")
+
+    etsy_publisher._replace([11, 12], unknown, deleted.append, [("letter.pdf", b"a")], 5, [])
+    assert deleted == []  # which old file holds it is unknown: none is deleted
+    with pytest.raises(NotSent, match="too big"):
+        etsy_publisher._replace(
+            [11], lambda n, d, r: (_ for _ in ()).throw(NotSent("too big")), deleted.append, [("x", b"")], 5, []
+        )

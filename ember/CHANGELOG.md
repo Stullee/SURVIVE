@@ -3,6 +3,14 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.18.2
+
+A change of a listing's files works when it keeps one of them.
+
+- Etsy refused every change of the Anschreiben listing's files ("File ... is already attached to this listing"): the
+  files you kept were sent again. Ember's code now keeps a file Etsy already has and adds only the new ones, so
+  propose_etsy_edit with the whole file set (the phrase bank included) goes through. Send it once more.
+
 ## 0.18.1
 
 Fixes from the first day of the learning loop.
