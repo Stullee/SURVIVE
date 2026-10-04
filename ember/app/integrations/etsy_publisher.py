@@ -32,6 +32,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 import threading
 from collections.abc import Callable
@@ -1016,6 +1017,9 @@ class Publisher:
                 events.record(self.db, "warning", "etsy", message[:300])
 
 
+_ATTACHED = re.compile(r"File (\d+) is already attached to this listing", re.IGNORECASE)  # Etsy's 400 (0.18.1)
+
+
 def _replace(
     old_ids: list[int],
     upload: Callable[[str, bytes, int], None],
@@ -1025,15 +1029,29 @@ def _replace(
     progress: list[str],
 ) -> None:
     """Put ``items`` first (ranks 1, 2, ...) and delete the old ones, one old one earlier only where Etsy's limit
-    (``most``) needs the room: a live digital listing never is without a photo or a file."""
+    (``most``) needs the room: a live digital listing never is without a photo or a file. 0.18.1: a file Etsy says is
+    attached already (the same file uploaded again: "File N is already attached to this listing") stays as it is,
+    and is not deleted with the old ones; live, every change of a listing's files that kept one of them failed."""
     old = list(old_ids)
+    unsure = False  # a kept file whose number isn't among the old ones: deleting any old one could lose it
     for rank, (name, data) in enumerate(items, 1):
         while old and len(old) + rank - 1 >= most:
             delete(old.pop())
             progress.append("deleted")
-        upload(name, data, rank)
+        try:
+            upload(name, data, rank)
+        except NotSent as exc:
+            kept = _ATTACHED.search(str(exc))
+            if kept is None:
+                raise
+            if int(kept[1]) in old:
+                old.remove(int(kept[1]))
+            else:
+                unsure = True
+            progress.append("kept")
+            continue
         progress.append("uploaded")
-    for item_id in old:
+    for item_id in [] if unsure else old:
         delete(item_id)
         progress.append("deleted")
 
