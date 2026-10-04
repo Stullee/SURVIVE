@@ -502,6 +502,53 @@ def fitted(data: bytes, width: int, height: int) -> Fitted:
     return Fitted(out.getvalue(), (width, height), source, kept)
 
 
+@dataclass(frozen=True)
+class Sized:
+    """0.19.0: a picture as a service that takes pictures up to a size receives it (``within``)."""
+
+    data: bytes
+    mime: str  # image/jpeg
+    width: int
+    height: int
+
+
+SIZED_QUALITIES = (90, 82, 74, 66, 58, 50)  # a JPEG's qualities tried, the best first
+SIZED_SCALES = (1.0, 0.75, 0.5, 0.33)  # and its sizes, from the longest side asked for
+
+
+def within(data: bytes, max_bytes: int, longest: int) -> Sized:
+    """0.19.0: one of Ember's pictures (PNG or JPEG) as a service that takes at most ``max_bytes`` and ``longest``
+    pixels a side receives it (Bluesky): a JPEG of it as large and at the best quality that fits (white where it was
+    transparent), with nothing but its pixels (no metadata, not make_image's note of what it shows). The same picture
+    always gives the same bytes, so what the owner approved is what goes out."""
+    for scale in SIZED_SCALES:
+        picture = _flattened(data, max(1, round(longest * scale)))
+        for quality in SIZED_QUALITIES:
+            out = io.BytesIO()
+            picture.save(out, "JPEG", quality=quality, optimize=True)
+            if out.tell() <= max_bytes:
+                return Sized(out.getvalue(), "image/jpeg", picture.width, picture.height)
+    raise ImageError(f"no JPEG of it fits in {max_bytes:,} bytes")
+
+
+def _flattened(data: bytes, longest: int) -> Image.Image:
+    """A picture no wider or higher than ``longest``, in RGB, on white where it was transparent."""
+    image = _checked(data)
+
+    def reduce() -> Image.Image:
+        image.draft("RGB", (longest, longest))
+        clear = image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info
+        shown = image.convert("RGBA" if clear else "RGB")
+        shown.thumbnail((longest, longest), Image.Resampling.LANCZOS, reducing_gap=3.0)
+        if not clear:
+            return shown
+        white = Image.new("RGB", shown.size, (255, 255, 255))
+        white.paste(shown, mask=shown.getchannel("A"))
+        return white
+
+    return _decoded(reduce)
+
+
 def poster_size(shape: str) -> tuple[int, int]:
     """0.15.0: a poster's pixels: the shape's proportions, POSTER_SIDE on the longer side."""
     width, height = SHAPES[shape]

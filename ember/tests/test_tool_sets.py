@@ -26,6 +26,7 @@ EVERYTHING = {
     "printify": True,
     "site": True,
     "blog": True,
+    "bluesky": True,
 }
 
 
@@ -59,8 +60,8 @@ def test_a_venture_cycle_refuses_them(data_dir: Path) -> None:
     [made] = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'make_document'")
     assert made["status"] == "error"
     refusal = (
-        "make_document is not one of your tools in a venture cycle: making files, the shop, Pinterest, email, Reddit "
-        "and laying out the roadmap belong to ordinary cycles"
+        "make_document is not one of your tools in a venture cycle: making files, the shop, Pinterest, Bluesky, "
+        "email, Reddit and laying out the roadmap belong to ordinary cycles"
     )
     assert refusal in made["result"]
     work = [r for r in fake.sent if request_kind(r) == "work"]

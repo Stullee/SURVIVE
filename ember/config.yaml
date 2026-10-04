@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.18.2"
+version: "0.19.0"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -116,6 +116,10 @@ options:
   pinterest_enabled: false
   pinterest_redirect_uri: https://localhost/ember-pinterest
   pinterest_pins_per_day: 3
+  # Bluesky (see the Documentation tab): posts that bring people to Ember's work, from the account you made for it.
+  # Its handle and an app password made in its settings are optional options too.
+  bluesky_enabled: false
+  bluesky_posts_per_day: 2
   # Printify (see the Documentation tab): physical products with Ember's designs, made on order and sold in your Etsy
   # shop through Printify's Etsy connection. Your personal access token is an optional option too.
   printify_enabled: false
@@ -213,6 +217,10 @@ schema:
   pinterest_app_secret: password?
   pinterest_redirect_uri: str(1,300)
   pinterest_pins_per_day: int(0,20)
+  bluesky_enabled: bool
+  bluesky_handle: str(,253)?
+  bluesky_app_password: password?
+  bluesky_posts_per_day: int(0,20)
   printify_enabled: bool
   printify_api_token: password?
   printify_shop_id: int(0,999999999999)

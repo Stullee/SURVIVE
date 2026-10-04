@@ -101,6 +101,14 @@ CLASSES: dict[str, ActionClass] = {
             "pinterest.create_board", "make a board on your Pinterest profile", {"reaches_people", "owner_identity"}
         ),
         _class("pinterest.delete_pin", "delete a pin of Ember's from Pinterest", {"owner_identity"}),
+        # 0.19.0: Bluesky, the account the owner made for Ember
+        _class(
+            "bluesky.create_post",
+            "post on Ember's Bluesky account",
+            {"reaches_people", "owner_identity"},
+            undo="delete it",
+        ),
+        _class("bluesky.delete_post", "delete a post of Ember's from Bluesky", {"owner_identity"}),
         # 0.13.0 (Phase E4): Printify, the owner's account and their Etsy shop
         _class(
             "printify.create_product",
@@ -144,6 +152,8 @@ _EXECUTORS = {
     "reddit_link": "reddit.post",
     "pinterest_pin": "pinterest.create_pin",  # 0.13.0 (Phase E2)
     "pinterest_delete": "pinterest.delete_pin",  # the owner's Undo of a pin
+    "bluesky_post": "bluesky.create_post",  # 0.19.0: never on an unlock (no rule of the policy engine names it)
+    "bluesky_delete": "bluesky.delete_post",  # the owner's Undo of a post
     "printify_product": "printify.create_product",  # 0.13.0 (Phase E4)
     "printify_delete": "printify.delete_product",  # the owner's Undo of a product
     "site_post": "site.publish_post",  # 0.14.0
@@ -190,6 +200,8 @@ def undo_of(name: str, status: str, subject: str | None) -> dict[str, Any] | Non
         return {"action": "restore_site", "path": subject}
     if name == "printify.create_product":  # 0.13.0 (Phase E4): Printify's numbers are hexadecimal
         return {"action": "delete_product", "product_id": subject} if re.fullmatch(r"[0-9a-f]{1,40}", subject) else None
+    if name == "bluesky.create_post":  # 0.19.0: subject is the post's record key
+        return {"action": "delete_post", "rkey": subject} if re.fullmatch(r"[A-Za-z0-9._:~-]{1,512}", subject) else None
     if not subject.isdigit():
         return None
     if name == "pinterest.create_pin":  # 0.13.0 (Phase E2)

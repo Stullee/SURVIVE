@@ -220,6 +220,13 @@ class Settings(BaseModel):
     pinterest_app_secret: SecretStr = SecretStr("")
     pinterest_redirect_uri: str = Field(default="https://localhost/ember-pinterest", min_length=1, max_length=300)
     pinterest_pins_per_day: int = Field(default=3, ge=0, le=20)
+    # Bluesky (0.19.0): posts that bring people to Ember's work, from the account the owner made for it, through an app
+    # password made in the account's settings (never its own password). Off until the owner turns it on (in dry run
+    # too: then a fake account stands in).
+    bluesky_enabled: bool = False
+    bluesky_handle: str = Field(default="", max_length=253)
+    bluesky_app_password: SecretStr = SecretStr("")
+    bluesky_posts_per_day: int = Field(default=2, ge=0, le=20)
     # Printify (0.13.0, Phase E4): physical products with Ember's designs, made on order and sold in the owner's Etsy
     # shop through Printify's Etsy connection, with the owner's personal access token. Off until the owner turns it on
     # (in dry run too: then a fake account stands in). printify_shop_id 0: the one Printify shop connected to Etsy;
@@ -290,6 +297,7 @@ class Settings(BaseModel):
         "email_password",
         "etsy_shared_secret",
         "pinterest_app_secret",
+        "bluesky_app_password",
         "printify_api_token",
         "blog_sftp_password",
         mode="before",
@@ -315,6 +323,7 @@ class Settings(BaseModel):
         "etsy_redirect_uri",
         "pinterest_app_id",
         "pinterest_redirect_uri",
+        "bluesky_handle",
         "site_name",
         "site_url",
         "site_owner_name",
@@ -413,6 +422,7 @@ class Settings(BaseModel):
             "etsy_shared_secret",
             "etsy_keystring",
             "pinterest_app_secret",
+            "bluesky_app_password",
             "printify_api_token",
             "blog_sftp_password",
         }
@@ -422,6 +432,7 @@ class Settings(BaseModel):
         data["etsy_shared_secret_set"] = bool(self.etsy_shared_secret.get_secret_value().strip())
         data["etsy_keystring_set"] = bool(self.etsy_keystring.strip())
         data["pinterest_app_secret_set"] = bool(self.pinterest_app_secret.get_secret_value().strip())
+        data["bluesky_app_password_set"] = bool(self.bluesky_app_password.get_secret_value().strip())
         data["printify_api_token_set"] = bool(self.printify_api_token.get_secret_value().strip())
         data["blog_sftp_password_set"] = bool(self.blog_sftp_password.get_secret_value().strip())
         return data

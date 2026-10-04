@@ -78,6 +78,16 @@ CVs and letters that buyers send on.
 messages answers it (a cycle that ended before its reply used to lose the
 owner's questions); the Inbox shows which ones are answered.
 
+0.19.0 connects Bluesky: the agent proposes posts on an account the owner made
+for it (its words, a link to its listings or the owner's website, a picture),
+and after the owner approves one, Ember's code posts it with a line saying an
+AI wrote it, through an app password (never the account's own password; the
+login stays in memory, only bsky.social and Bluesky's own servers). It never
+mentions, replies to, follows, likes or messages anyone. Followers and each
+post's likes, reposts, replies and quotes come back into the agent's plans.
+Expect little from it: the [Bluesky section of the docs](ember/DOCS.md#bluesky)
+says why.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
@@ -145,7 +155,10 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   (`ember/app/integrations/sftp.py`, `site_publisher.py`). With the live view on
   (0.16.0), it uploads the live page, its banner and its chart there every 15
   minutes, made from Ember's own numbers, with the agent's titles and last will
-  only as the owner approved each one (`live_view.py`).
+  only as the owner approved each one (`live_view.py`). With Bluesky on
+  (0.19.0), Ember's code logs in to `bsky.social` with the account's app
+  password and posts what the owner approved to the account's own server at
+  Bluesky, and nowhere else (`ember/app/integrations/bluesky_live.py`).
 - **Outside actions.** The agent has no tool that sends or posts anything. An
   email it proposes is sent by Ember's code only after the owner approves it,
   exactly as approved, once, to one recipient, with a footer saying an AI wrote
@@ -279,7 +292,7 @@ ember/                       the app
     economy/                 ledger, life states, cost estimates, budget guard (metering.py)
     agent/                   the wake cycle, tools, context, fake model (constitution.md: the fixed prompt core)
     integrations/            Ember's mailbox (IMAP/SMTP), the executor of approved emails, Reddit links,
-                             Etsy, Pinterest, Printify, the blog's SFTP uploads
+                             Etsy, Pinterest, Bluesky, Printify, the blog's SFTP uploads
   tests/
 ```
 

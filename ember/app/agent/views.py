@@ -12,6 +12,8 @@ from ..economy import burn
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import (
+    bluesky,
+    bluesky_publisher,
     connectors,
     etsy,
     etsy_publisher,
@@ -815,6 +817,15 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
             try:
                 shortfalls = qa.defects(kind.name, pinterest.pin_from_action(action))
             except pinterest.PinterestError:
+                shortfalls = []
+    if r["executor"] in ("bluesky_post", "bluesky_delete") and action is not None:  # 0.19.0
+        refused = agent.bluesky.login.waiting(agent.clock.now())
+        daily = agent.settings.bluesky_posts_per_day
+        execution = bluesky_publisher.execution(conn, r, scope, agent.clock, daily, refused)
+        if r["executor"] == "bluesky_post":
+            try:
+                shortfalls = qa.defects(kind.name, bluesky.post_from_action(action))
+            except bluesky.BlueskyError:
                 shortfalls = []
     if r["executor"] in ("printify_product", "printify_delete") and action is not None:  # 0.13.0 (Phase E4)
         daily = agent.settings.printify_products_per_day

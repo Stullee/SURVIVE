@@ -7,7 +7,7 @@ below read. ``CHECKS`` holds each action class's checks (connectors.CLASSES): a 
 when it is proposed, and the owner's request card and the agent's tool result say what falls short. 0.13.0 (Phase
 E1): an answer to someone who wrote keeps their thread's subject and is short (REPLY_WORDS); (Phase E2) a pin's image
 is portrait, about 2:3 (PIN_RATIO); (Phase E4) a Printify product's picture prints sharp (SHARP_DPI) and fills its
-print area (SHAPE_SHARE).
+print area (SHAPE_SHARE). 0.19.0: a Bluesky post has a few hashtags at most (POST_TAGS).
 
 0.15.0: photos count as distinct pictures. The agent met MIN_PHOTOS with near-copies of one page, and the owner had to
 say so twice. A copy of an earlier photo adds no photo, and the check names it: the same file, or with ``looks``
@@ -27,6 +27,7 @@ REPLY_WORDS = 200  # an email answer's words at most (the footer Ember adds not 
 PIN_RATIO = (1.3, 1.7)  # a pin's image, height to width: portrait, about 2:3 (1000 x 1500) shows best
 SHARP_DPI = 150  # a printed picture below this looks blurry
 SHAPE_SHARE = 0.1  # a picture whose shape differs more from its print area's leaves part of it blank
+POST_TAGS = 3  # 0.19.0: a Bluesky post's hashtags at most (more read as spam there)
 ALIKE_BITS = 10  # 0.15.0: pictures whose difference hashes differ in fewer of their 512 bits look the same (a copy
 # resized, re-encoded or in another colour differs in about 4; another page under the same title in 16 or more)
 _THREAD = re.compile(r"^\s*(?:re|aw|antw|sv|rif)\s*(?:\[\d+\])?\s*:", re.IGNORECASE)
@@ -110,6 +111,14 @@ def _pin_shape(pin: Any) -> str:
     return f"{width} x {height} pixels: a pin shows best portrait, about 2:3 (1000 x 1500)"
 
 
+def _post_tags(post: Any) -> str:
+    """The post (bluesky.Post), or its action as the approvals table keeps it."""
+    tags = len(tuple((post.get("tags") if isinstance(post, Mapping) else getattr(post, "tags", ())) or ()))
+    if tags <= POST_TAGS:
+        return ""
+    return f"{tags} hashtags: more than {POST_TAGS} read as spam on Bluesky"
+
+
 def _print_sharpness(product: Any) -> str:
     dpi = int(product.dpi()) if callable(getattr(product, "dpi", None)) else 0
     if dpi <= 0:
@@ -142,6 +151,7 @@ CHECKS: dict[str, tuple[Callable[..., str], ...]] = {
     "etsy.edit_listing": (_edit_photos,),
     "email.reply": (_reply_subject, _reply_length),  # the email's action (to, subject, body)
     "pinterest.create_pin": (_pin_shape,),  # the pin (pinterest.Pin)
+    "bluesky.create_post": (_post_tags,),  # 0.19.0: the post (bluesky.Post)
     "printify.create_product": (_print_sharpness, _print_shape),  # the product (printify.Product)
 }
 

@@ -76,6 +76,7 @@ PLANNER_BUDGETS = {
     "review": 1_400,
     "etsy": 1_600,
     "pinterest": 700,  # 0.13.0 (Phase E2): with the owner's Pinterest account
+    "bluesky": 700,  # 0.19.0: with the Bluesky account the owner made for Ember
     "printify": 900,  # 0.13.0 (Phase E4): with the owner's Printify account
     "website": 800,  # 0.13.0 (Phase E3): when the owner switched their website on
     "blog": 900,  # 0.14.0: when the owner switched their blog on
@@ -100,6 +101,7 @@ SPARE_ORDER = (
     "etsy",
     "printify",
     "pinterest",
+    "bluesky",
     "website",
     "blog",
     "strategy",
@@ -243,6 +245,7 @@ class Snapshot:
     review: str = ""  # today's daily review, as the planner sees it ("" before it is made)
     etsy: str = ""  # the ETSY SHOP section ("" without a shop)
     pinterest: str = ""  # the PINTEREST section ("" while off; 0.15.0: one line while not set up), 0.13.0
+    bluesky: str = ""  # the BLUESKY section ("" while off; one line while not set up), 0.19.0
     printify: str = ""  # the PRINTIFY section ("" while off; 0.15.0: one line while not set up), 0.13.0
     website: str = ""  # the WEBSITE section ("" while the owner's website is off), 0.13.0
     blog: str = ""  # the BLOG section ("" while the owner's blog is off), 0.14.0
@@ -293,6 +296,7 @@ def snapshot(
     printify: str = "",
     website: str = "",
     blog: str = "",
+    bluesky: str = "",
     decision_wakes: bool = False,
     burn: str = "",
     ready: str = "",
@@ -375,6 +379,7 @@ def snapshot(
         ),
         etsy=etsy,
         pinterest=pinterest,
+        bluesky=bluesky,
         printify=printify,
         website=website,
         blog=blog,
@@ -822,6 +827,7 @@ def _planner_texts(s: Snapshot, dry_run: bool, journal: int = PLANNER_BUDGETS["j
         "mail": mail_text(s),
         "etsy": s.etsy,
         "pinterest": s.pinterest,
+        "bluesky": s.bluesky,
         "printify": s.printify,
         "website": s.website,
         "blog": s.blog,
@@ -880,6 +886,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *([("MAIL", t["mail"])] if s.mail is not None else []),
         *([("ETSY SHOP", t["etsy"])] if t["etsy"] else []),
         *([("PINTEREST", t["pinterest"])] if t["pinterest"] else []),
+        *([("BLUESKY", t["bluesky"])] if t["bluesky"] else []),
         *([("PRINTIFY", t["printify"])] if t["printify"] else []),
         *([("WEBSITE", t["website"])] if t["website"] else []),
         *([("BLOG", t["blog"])] if t["blog"] else []),

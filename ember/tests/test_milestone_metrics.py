@@ -66,6 +66,8 @@ def test_the_catalogue() -> None:
         "inquiries_answered",
         "pins_live",  # 0.13.0 (Phase E2)
         "pin_clicks",
+        "bluesky_posts_live",  # 0.19.0
+        "bluesky_reactions",
         "pod_products_live",  # 0.13.0 (Phase E4)
         "pod_orders",
         "qa_clean",

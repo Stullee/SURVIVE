@@ -28,7 +28,15 @@ from typing import Any
 from .. import events
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import etsy, etsy_publisher, mailstore, pinterest_publisher, printify_publisher, qa
+from ..integrations import (
+    bluesky_publisher,
+    etsy,
+    etsy_publisher,
+    mailstore,
+    pinterest_publisher,
+    printify_publisher,
+    qa,
+)
 from . import ventures
 from .store import AgentScope
 
@@ -43,6 +51,7 @@ SOURCES = {
     "owner": "your owner's records",
     "ember": "Ember's records",
     "pinterest": "Pinterest",
+    "bluesky": "Bluesky",
     "printify": "Printify",
 }
 
@@ -146,6 +155,15 @@ CATALOGUE: dict[str, Metric] = {
         # 0.13.0 (Phase E2): Ember's pins, as the last Pinterest sync read them
         Metric("pins_live", "your pins live on Pinterest now", "count", "pinterest", unit="pin"),
         Metric("pin_clicks", "clicks your pins brought to their links, in all", "count", "pinterest", unit="click"),
+        # 0.19.0: Ember's Bluesky posts, as the last Bluesky sync read them
+        Metric("bluesky_posts_live", "your posts live on Bluesky now", "count", "bluesky", unit="post"),
+        Metric(
+            "bluesky_reactions",
+            "likes, reposts, replies and quotes your live Bluesky posts have, in all",
+            "count",
+            "bluesky",
+            unit="reaction",
+        ),
         # 0.13.0 (Phase E4): Ember's Printify products, as the last Printify sync read them
         Metric("pod_products_live", "your Printify products in the shop now", "count", "printify", unit="product"),
         Metric("pod_orders", "orders of your Printify products, in all", "count", "printify", unit="order"),
@@ -177,6 +195,7 @@ HELP = (
 # 0.13.0: a channel's metrics, offered with the channel (tools.definitions), and their words for HELP.
 CHANNEL_METRICS = {
     "pinterest": (("pins_live", "pin_clicks"), "pins_live and pin_clicks: Pinterest, now"),
+    "bluesky": (("bluesky_posts_live", "bluesky_reactions"), "bluesky_posts_live and bluesky_reactions: Bluesky, now"),
     "printify": (("pod_products_live", "pod_orders"), "pod_products_live and pod_orders: Printify, now"),
 }
 
@@ -365,6 +384,9 @@ def read(
     if m.name in ("pins_live", "pin_clicks"):  # 0.13.0 (Phase E2)
         live, clicks = pinterest_publisher.totals(conn, scope)
         return Reading(live if m.name == "pins_live" else clicks, now, "")
+    if m.name in ("bluesky_posts_live", "bluesky_reactions"):  # 0.19.0
+        live, reactions = bluesky_publisher.totals(conn, scope)
+        return Reading(live if m.name == "bluesky_posts_live" else reactions, now, "")
     if m.name in ("pod_products_live", "pod_orders"):  # 0.13.0 (Phase E4)
         products, orders = printify_publisher.totals(conn, scope)
         return Reading(products if m.name == "pod_products_live" else orders, now, "")

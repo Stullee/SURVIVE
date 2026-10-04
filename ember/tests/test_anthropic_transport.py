@@ -194,8 +194,9 @@ def test_only_the_transport_imports_the_sdk() -> None:
         if source.name == "anthropic_transport.py":
             continue
         # Etsy's client (0.8.0) is Ember's own code, allowlisted to api.etsy.com: it may use httpx2, never the SDK.
-        # So are Pinterest's and Printify's (0.13.0), allowlisted to api.pinterest.com and api.printify.com.
-        clients = ("etsy_live.py", "pinterest_live.py", "printify_live.py")
+        # So are Pinterest's and Printify's (0.13.0), allowlisted to api.pinterest.com and api.printify.com, and
+        # Bluesky's (0.19.0), allowlisted to bsky.social and the servers Bluesky hosts accounts on.
+        clients = ("etsy_live.py", "pinterest_live.py", "printify_live.py", "bluesky_live.py")
         forbidden = {"anthropic"} if source.name in clients else {"anthropic", "httpx2"}
         for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
             names = [a.name for a in node.names] if isinstance(node, ast.Import) else []

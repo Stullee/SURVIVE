@@ -44,6 +44,8 @@ CODE_CANCELLED = "Cancelled by the owner before Ember's code carried it out"
 AS_IS_EXECUTORS = (
     "pinterest_pin",
     "pinterest_delete",
+    "bluesky_post",  # 0.19.0: the post as it was proposed, with its AI line
+    "bluesky_delete",
     "printify_product",
     "printify_delete",
     "site_post",  # 0.14.0: the page as it was rendered and previewed
@@ -53,6 +55,7 @@ AS_IS_EXECUTORS = (
 )
 _AS_IS_WHAT = {
     "pinterest": ("a pin", "pins"),
+    "bluesky": ("a post", "posts"),
     "printify": ("a product", "products"),
     "site": ("a page", "pages"),
     "live": ("the text", "texts"),
@@ -246,10 +249,11 @@ class Owner:
                 elif row["executor"] in AS_IS_EXECUTORS:  # 0.13.0 (Phase E2, E4)
                     started = conn.execute(
                         "SELECT 1 FROM pinterest_pins WHERE approval_id = ?"
+                        " UNION ALL SELECT 1 FROM bluesky_posts WHERE approval_id = ?"
                         " UNION ALL SELECT 1 FROM printify_products WHERE approval_id = ?"
                         " UNION ALL SELECT 1 FROM site_uploads WHERE approval_id = ? AND status <> 'proposed'"
                         " UNION ALL SELECT 1 FROM action_journal WHERE approval_id = ?",
-                        (approval_id, approval_id, approval_id, approval_id),
+                        (approval_id, approval_id, approval_id, approval_id, approval_id),
                     ).fetchone()
                     if started:
                         raise OwnerError("id", "Ember is already carrying this out; it reports the result", 409)

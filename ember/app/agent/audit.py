@@ -7,7 +7,8 @@
   Ember's code carries out like any change: deactivating a listing it created, changing a changed listing back,
   renewing a deactivated one (Etsy's fee), turning an automatic renewal off. It is journaled like any action and
   linked to what it undoes (action_undos). Only the newest action on a listing can be undone, and not while another
-  change of it waits; an email can't be unsent. 0.13.0 (Phase E2): a pin's Undo deletes it at Pinterest;
+  change of it waits; an email can't be unsent. 0.13.0 (Phase E2): a pin's Undo deletes it at Pinterest
+  (0.19.0: a Bluesky post's at Bluesky);
 * ``digest``: one of the owner's days: what Ember's code carried out and on whose decision, what the unlocks approved,
   hold and lost, and what waited whatever was unlocked (NEVER). Written once after the day ended (owner_digests),
   shown on the Approvals tab, in the System log and in the sensors;
@@ -23,7 +24,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import connectors, etsy, etsy_publisher, pinterest, printify_publisher, site_publisher
+from ..integrations import bluesky, connectors, etsy, etsy_publisher, pinterest, printify_publisher, site_publisher
 from . import never, policy, store
 from .store import AgentScope
 
@@ -41,10 +42,11 @@ UNDO = {
     ),
     "auto_renew_off": ("Turn automatic renewal off", "turn off automatic renewal of", "none"),
     "delete_pin": ("Delete the pin", "delete", "none"),  # 0.13.0 (Phase E2)
+    "delete_post": ("Delete the post", "delete", "none"),  # 0.19.0: Bluesky
     "delete_product": ("Delete the product", "delete", "none"),  # 0.13.0 (Phase E4)
     "restore_site": ("Put back what it replaced", "undo", "none"),  # 0.14.0: the old version back, a new post gone
 }
-REPEATABLE = ("delete_pin", "delete_product")  # 0.15.0: an Undo that may be repeated after it ended unclear
+REPEATABLE = ("delete_pin", "delete_product", "delete_post")  # 0.15.0: may be repeated after it ended unclear
 # 0.15.0: the agent's states in which Ember's code carries out the owner's Undo: also while paused or waiting for
 # money (an Undo costs no API money), never once the kill switch is on (it stops everything Ember's code sends).
 UNDO_WHILE = ("alive", "critical", "paused", "unfunded")
@@ -163,7 +165,7 @@ def _undone(conn: sqlite3.Connection, journal_id: int) -> tuple[int, int]:
 
 
 def _place(row: sqlite3.Row) -> str:
-    return {"pinterest": "Pinterest", "printify": "Printify", "site": "your website"}.get(
+    return {"pinterest": "Pinterest", "bluesky": "Bluesky", "printify": "Printify", "site": "your website"}.get(
         str(row["class"]).split(".")[0], "Etsy"
     )
 
@@ -252,6 +254,11 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
             f"SELECT status FROM pinterest_pins WHERE {where} AND pin_id = ?", (*params, row["subject"])
         ).fetchone()
         return None if pin is not None and pin["status"] == "active" else "the pin isn't on Pinterest anymore"
+    if undo["action"] == "delete_post":  # 0.19.0
+        post = conn.execute(
+            f"SELECT status FROM bluesky_posts WHERE {where} AND rkey = ?", (*params, row["subject"])
+        ).fetchone()
+        return None if post is not None and post["status"] == "active" else "the post isn't on Bluesky anymore"
     if undo["action"] == "restore_site":  # 0.14.0
         return site_publisher.why_not(conn, scope, row)
     if undo["action"] == "delete_product":  # 0.13.0 (Phase E4)
@@ -317,6 +324,13 @@ def _entry(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> dic
     }
 
 
+def _post_url(conn: sqlite3.Connection, scope: AgentScope, rkey: str) -> str:
+    """0.19.0: where a post of Ember's is on bsky.app (its record key alone, if Ember's records don't say)."""
+    where, params = scope.where()
+    row = conn.execute(f"SELECT did FROM bluesky_posts WHERE {where} AND rkey = ?", (*params, rkey)).fetchone()
+    return bluesky.post_url(row["did"], rkey) if row is not None and row["did"] else rkey
+
+
 def feed(conn: sqlite3.Connection, scope: AgentScope, limit: int = FEED) -> list[dict[str, Any]]:
     """What Ember's code did, the newest first."""
     rows = _journal(conn, scope, " ORDER BY j.id DESC LIMIT ?", (limit,)).fetchall()
@@ -367,6 +381,25 @@ def undo(conn: sqlite3.Connection, scope: AgentScope, now: str, journal_id: int,
         )
         _approve(conn, now, by, button, journal_id, approval_id)
         return approval_id, f"delete the pin ({pin_id})"
+    if kind == "delete_post":  # 0.19.0: Ember's code deletes the post at Bluesky
+        rkey = str(row["subject"])
+        approval_id = store.insert_approval(
+            conn,
+            scope,
+            cycle_id,
+            now,
+            project_id=original["project_id"] if original is not None else None,
+            payload=f"Delete post {rkey} from Ember's Bluesky account: {_post_url(conn, scope, rkey)}",
+            action=store.canonical({"rkey": rkey}),
+            type="publish",
+            title=f"Undo: delete Bluesky post {rkey}"[:120],
+            description=because,
+            expected_cost=cost,
+            expected_benefit="The post is gone from Bluesky.",
+            executor="bluesky_delete",
+        )
+        _approve(conn, now, by, button, journal_id, approval_id)
+        return approval_id, f"delete the post ({rkey})"
     if kind == "delete_product":  # 0.13.0 (Phase E4): Ember's code deletes it at Printify, which takes its listing down
         product_id = str(row["subject"])
         approval_id = store.insert_approval(

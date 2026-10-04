@@ -49,7 +49,15 @@ from ..economy.metering import (
 )
 from ..economy.pricing import LAST_WILL, PLANNER_OPENING, REVIEW_CALL, working_cycle_cost
 from ..economy.service import Economy
-from ..integrations import etsy_publisher, mailstore, pinterest_publisher, printify_publisher, site_publisher
+from ..integrations import (
+    bluesky_publisher,
+    etsy_publisher,
+    mailstore,
+    pinterest_publisher,
+    printify_publisher,
+    site_publisher,
+)
+from ..integrations.bluesky_connection import BlueskyConnection
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox
@@ -209,6 +217,8 @@ class CycleRunner:
         printify: PrintifyConnection | None = None,
         pod: printify_publisher.Publisher | None = None,
         unlocks_off: str | None = None,
+        bluesky: BlueskyConnection | None = None,
+        bluesky_posts: bluesky_publisher.Publisher | None = None,
     ) -> None:
         self.db = db
         self.settings = settings
@@ -228,6 +238,9 @@ class CycleRunner:
         self.pinterest = pinterest  # 0.13.0 (Phase E2): the owner's Pinterest account
         self.pins = pins
         self.pinterest_on = False  # the Pinterest tools and the PINTEREST section: with the account and a shop
+        self.bluesky = bluesky  # 0.19.0: the Bluesky account the owner made for Ember
+        self.bluesky_posts = bluesky_posts
+        self.bluesky_on = False  # the Bluesky tools and the BLUESKY section: with the account
         self.printify = printify  # 0.13.0 (Phase E4): the owner's Printify account
         self.pod = pod
         self.printify_on = False  # the Printify tools and the PRINTIFY section: with the account, its shop and ours
@@ -254,6 +267,7 @@ class CycleRunner:
         self.etsy_on = self.etsy is not None and self.publisher is not None and self.etsy.shop() is not None
         self.pinterest_on = self.etsy_on and self.pinterest is not None and self.pinterest.account() is not None
         self.printify_on = self.etsy_on and self.printify is not None and self.printify.account() is not None
+        self.bluesky_on = self.bluesky is not None and self.bluesky.account() is not None
         snap = self._snapshot(venture, keep=False)
         planner = ""
         for scale in PLANNER_SCALES:
@@ -309,6 +323,7 @@ class CycleRunner:
                 self._fetch_mail(cycle_id)
                 self._sync_etsy(cycle_id, ctx)
                 self._sync_pinterest(cycle_id, ctx)
+                self._sync_bluesky(cycle_id, ctx)
                 self._sync_printify(cycle_id, ctx)
                 ctx.site = website.owner(self.settings) if self.site_on else None  # 0.13.0 (Phase E3)
                 ctx.blog = self._blog_access() if self.blog_on else None  # 0.14.0
@@ -498,6 +513,31 @@ class CycleRunner:
         )
         self.pinterest_on = True
 
+    def _sync_bluesky(self, cycle_id: int, ctx: tools.ToolContext) -> None:
+        """0.19.0: the account's followers and the posts' numbers before the plan, and what the tools know of the
+        account (errors are recorded and shown, and never stop the cycle). A post needs no shop: it may link the owner's
+        website, or nothing."""
+        self.bluesky_on = False
+        if self.bluesky is None or self.bluesky_posts is None:
+            return
+        account = self.bluesky.account()
+        if account is None:
+            return
+        if not self.stop.is_set():
+            self._progress(cycle_id, current_action="Checking the posts on Bluesky")
+            try:
+                # The fake account of a dry run needs no network; the owner's is reached by Ember's code only.
+                with netguard.sealed() if account.simulated else contextlib.nullcontext():
+                    self.bluesky_posts.sync()
+            except Exception:  # noqa: BLE001 - Bluesky must never end a cycle
+                log.exception("Checking the posts on Bluesky failed")
+        ctx.bluesky = tools.BlueskyAccess(
+            self.bluesky.handle() or "Ember's account",
+            self.settings.bluesky_posts_per_day,
+            website.address(self.settings),  # the owner's website, which a post may link
+        )
+        self.bluesky_on = True
+
     def _blog_access(self) -> tools.BlogAccess:
         """0.14.0: what the blog's tools know: the site's data, and what keeps the blog from being published."""
         problems = site_publisher.problems(self.settings, self.scope.mode)
@@ -629,6 +669,13 @@ class CycleRunner:
                 )
             elif self.pinterest is not None:  # 0.15.0: switched on, but not set up
                 pins = _waiting("Pinterest", self.pinterest.status(), self._etsy_state())
+            posted = ""
+            if self.bluesky_on and self.bluesky is not None:  # 0.19.0
+                posted = _bluesky_head(self.bluesky, self.settings.bluesky_posts_per_day) + bluesky_publisher.text(
+                    conn, self.scope
+                )
+            elif self.bluesky is not None:  # switched on, but not set up (or Bluesky refused the login)
+                posted = _waiting("Bluesky", self.bluesky.status(), "ok", venture=False)
             pod = ""
             if self.printify_on and self.printify is not None:  # 0.13.0 (Phase E4)
                 known = self.printify.describe().get("shop") or {}
@@ -659,6 +706,7 @@ class CycleRunner:
                 today=self.clock.today(),
                 etsy=shop,
                 pinterest=pins,
+                bluesky=posted,
                 printify=pod,
                 website=site_text,
                 blog=blog_text,
@@ -1430,6 +1478,7 @@ class CycleRunner:
                 site=self.site_on,
                 **_offered(ctx),
                 blog=self.blog_on,
+                bluesky=self.bluesky_on,
             )
             if not self._affordable(cycle_id, request, brief, turns, ctx):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
@@ -1551,6 +1600,7 @@ class CycleRunner:
             site=self.site_on,
             **_offered(ctx),
             blog=self.blog_on,
+            bluesky=self.bluesky_on,
         )
         try:
             step_worst = self.meter.quote(request, "work")
@@ -1630,6 +1680,7 @@ class CycleRunner:
             site=self.site_on,
             **_offered(ctx),
             blog=self.blog_on,
+            bluesky=self.bluesky_on,
         )
         # 0.12.0: why the work ended is kept first, also when the reflection can't be paid for.
         self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)
@@ -2075,10 +2126,18 @@ def _unset(status: tuple[str, str | None], etsy: str) -> bool:
     return status[0] in ("not_configured", "not_connected") or (status[0] == "ok" and etsy != "ok")
 
 
-def _waiting(name: str, status: tuple[str, str | None], etsy: str, why: str = "") -> str:
+def _bluesky_head(connection: BlueskyConnection, daily_limit: int) -> str:
+    """0.19.0: BLUESKY's first line: the account, its followers at the last sync and the day's limit."""
+    followers = connection.followers()
+    known = f"{followers} followers; " if followers is not None else ""
+    return f"Ember's account: @{connection.handle()} ({known}at most {daily_limit} posts a day).\n"
+
+
+def _waiting(name: str, status: tuple[str, str | None], etsy: str, why: str = "", venture: bool = True) -> str:
     """0.15.0: the one line of a channel switched on whose tools are off ("" when it is switched off, or nothing says
     why), so the agent knows it waits for the owner rather than asking for it again: the channel's own setup or the Etsy
-    shop it needs. What else stopped a set-up channel (``why``) is given as it is, with no claim on the owner."""
+    shop it needs. What else stopped a set-up channel (``why``) is given as it is, with no claim on the owner. 0.19.0:
+    ``venture`` False for a channel no venture's first test waits for (Bluesky)."""
     state, reason = status
     if state == "disabled":
         return ""
@@ -2093,10 +2152,8 @@ def _waiting(name: str, status: tuple[str, str | None], etsy: str, why: str = ""
     if not why:
         return ""
     why = why.rstrip(".")
-    return (
-        f"Switched on, but it waits for your owner's setup ({why}): no {name} tools until then. A venture it serves "
-        "starts its first test only then."
-    )
+    line = f"Switched on, but it waits for your owner's setup ({why}): no {name} tools until then."
+    return f"{line} A venture it serves starts its first test only then." if venture else line
 
 
 def _step(text: str) -> str:

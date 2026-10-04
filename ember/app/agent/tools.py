@@ -14,8 +14,9 @@ the constitution. No tool sends anything: the email tools read what Ember's
 code fetched into the database, and ``propose_email`` and ``propose_reddit_post``
 only create approval requests, which Ember's code (an email) or the owner (a
 Reddit post) carries out once the owner approves them. So do ``propose_pin``
-(0.13.0: Ember's code makes the pin on the owner's Pinterest account) and the
-Etsy tools.
+(0.13.0: Ember's code makes the pin on the owner's Pinterest account),
+``propose_bluesky_post`` (0.19.0: Ember's code posts it on the account the owner made
+for Ember) and the Etsy tools.
 
 The making tools (``make_document``, ``make_spreadsheet``, ``make_image``) turn
 the agent's text into PDF, Word, Excel and PNG files with Ember's own code
@@ -45,6 +46,8 @@ from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..integrations import (
+    bluesky,
+    bluesky_publisher,
     connectors,
     etsy,
     etsy_publisher,
@@ -125,6 +128,7 @@ GUIDES = (
     "ventures",
     "email",
     "pinterest",
+    "bluesky",
     "printify",
     "website",
     "blog",
@@ -134,6 +138,8 @@ WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's option
 ETSY_TOOLS = frozenset({"etsy_categories", "propose_etsy_listing", "etsy_listing", "propose_etsy_edit", "demand_note"})
 # Offered only with the owner's Pinterest account and an Etsy shop (0.13.0, Phase E2): a pin links to a live listing.
 PINTEREST_TOOLS = frozenset({"pinterest_boards", "propose_pin"})
+# Offered only with the Bluesky account the owner made for Ember (0.19.0).
+BLUESKY_TOOLS = frozenset({"bluesky_posts", "propose_bluesky_post"})
 # Offered only with the owner's Printify account and an Etsy shop (0.13.0, Phase E4): a product becomes a listing there.
 PRINTIFY_TOOLS = frozenset({"printify_catalog", "propose_printify_product"})
 # Offered only when the owner switched their website on (0.13.0, Phase E3): its pages.
@@ -166,6 +172,7 @@ ORDINARY_TOOLS = (
     )
     | ETSY_TOOLS
     | PINTEREST_TOOLS
+    | BLUESKY_TOOLS
     | PRINTIFY_TOOLS
     | SITE_TOOLS
     | BLOG_TOOLS
@@ -1034,6 +1041,33 @@ SPECS: dict[str, Spec] = {
             per_cycle=2,
         ),
         Spec(
+            "bluesky_posts",
+            "Read Ember's Bluesky account and your newest posts with their likes, reposts, replies and quotes (at the "
+            "last sync). Free.",
+            {},
+            per_cycle=3,
+        ),
+        Spec(
+            "propose_bluesky_post",
+            "Ask your owner to approve a post on Ember's Bluesky account: your words and, if you like, a link to one "
+            "of your live Etsy listings or your owner's website and one of your pictures. Once approved, Ember's code "
+            "posts it (free) with a line saying an AI wrote it. Read guide 'bluesky' first.",
+            {
+                "text": _s(
+                    f"The post: plain text, at most {qa.POST_TAGS} #hashtags, no link (give it as link), no @mention.",
+                    bluesky.TEXT_CHARS,
+                ),
+                "language": _s("The post's language.", 2, enum=bluesky.LANGUAGES),
+                "link": _s(
+                    "A live Etsy listing's address or a page of your owner's website.", bluesky.LINK_MAX, required=False
+                ),
+                "image": _s("A .png or .jpg of yours shown with the post.", 200, required=False),
+                "alt_text": _s("What the picture shows (needed with one).", bluesky.ALT_MAX, required=False),
+                "reason": _s("Why, and what you expect.", 300),
+            },
+            per_cycle=2,
+        ),
+        Spec(
             "printify_catalog",
             "Look through Printify's catalog of products made on order: search finds products, blueprint_id who "
             "makes one, and with provider_id its variants, print area, shipping to Germany, what making costs and "
@@ -1172,6 +1206,7 @@ def definitions(
     site: bool = False,
     brainstorm: bool = True,
     blog: bool = False,
+    bluesky: bool = False,
 ) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds (the
     reflection reads it from the cache at a tenth of the price; a list of its own would write the whole conversation
@@ -1180,8 +1215,14 @@ def definitions(
     and, 0.12.0, the tools for building and selling only in an ordinary one, the library's only while it holds
     documents; 0.13.0: the Pinterest and Printify tools, and their manuals, only with the owner's account and a
     shop, and the website's only when the owner switched it on; 0.14.0: the blog's too; 0.15.0: brainstorm only when
-    the burn mode allows it)."""
-    channels = {"pinterest": pinterest and etsy, "printify": printify and etsy, "website": site, "blog": blog}
+    the burn mode allows it; 0.19.0: Bluesky's with the account)."""
+    channels = {
+        "pinterest": pinterest and etsy,
+        "printify": printify and etsy,
+        "website": site,
+        "blog": blog,
+        "bluesky": bluesky,
+    }
     return [
         _definition(_channel_guides(spec_of(spec.name, venture) or spec, channels))
         for spec in SPECS.values()
@@ -1197,6 +1238,7 @@ def definitions(
             site=site,
             brainstorm=brainstorm,
             blog=blog,
+            bluesky=bluesky,
         )
     ]
 
@@ -1237,6 +1279,7 @@ def offered(
     site: bool = False,
     brainstorm: bool = True,
     blog: bool = False,
+    bluesky: bool = False,
 ) -> bool:
     """Whether tool ``name`` is offered in a cycle of this configuration and kind (``venture``: a venture cycle;
     ``brainstorm``: the burn mode allows brainstorms, 0.15.0)."""
@@ -1245,6 +1288,7 @@ def offered(
         and (workshop or name not in WORKSHOP_TOOLS)
         and (etsy or name not in ETSY_TOOLS)
         and ((pinterest and etsy) or name not in PINTEREST_TOOLS)
+        and (bluesky or name not in BLUESKY_TOOLS)
         and ((printify and etsy) or name not in PRINTIFY_TOOLS)
         and (site or name not in SITE_TOOLS)
         and (blog or name not in BLOG_TOOLS)
@@ -1383,6 +1427,16 @@ class PinterestAccess:
 
 
 @dataclass(frozen=True)
+class BlueskyAccess:
+    """What the tools know of the Bluesky account the owner made for Ember (0.19.0): its handle, the daily limit and
+    the owner's website (a post may link it), never the app password or a way to reach Bluesky."""
+
+    handle: str
+    daily_limit: int
+    site_url: str = ""  # the owner's website ("": none set)
+
+
+@dataclass(frozen=True)
 class PrintifyAccess:
     """What the tools know of the owner's Printify account (0.13.0, Phase E4): its shop's name, the currency of its
     prices and the daily limit, never the token or a way to reach Printify (the catalog comes through ``catalog``)."""
@@ -1422,6 +1476,7 @@ class ToolContext:
     mail: MailAccess | None = None  # Ember's mailbox, when it has one
     etsy: EtsyAccess | None = None  # the Etsy shop, when there is one
     pinterest: PinterestAccess | None = None  # the owner's Pinterest account, when connected (0.13.0)
+    bluesky: BlueskyAccess | None = None  # the Bluesky account the owner made for Ember, when set up (0.19.0)
     printify: PrintifyAccess | None = None  # the owner's Printify account, when set up (0.13.0)
     catalog: CatalogFn | None = None  # Printify's catalog (0.13.0): kept by Ember's code, read at Printify when old
     site: SiteOwner | None = None  # the owner's data, when they switched their website on (0.13.0): its pages
@@ -1460,8 +1515,8 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
         spec = spec_of(name, ctx.venture)
         if spec is not None and ctx.venture and name in ORDINARY_TOOLS:
             raise ToolError(
-                f"{name} is not one of your tools in a venture cycle: making files, the shop, Pinterest, email, Reddit "
-                "and laying out the roadmap belong to ordinary cycles"
+                f"{name} is not one of your tools in a venture cycle: making files, the shop, Pinterest, Bluesky, "
+                "email, Reddit and laying out the roadmap belong to ordinary cycles"
             )
         if spec is None or not offered(
             name,
@@ -1474,6 +1529,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
             printify=ctx.printify is not None,
             site=ctx.site is not None,
             blog=ctx.blog is not None,
+            bluesky=ctx.bluesky is not None,
         ):
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
@@ -3208,6 +3264,8 @@ def guide_text(topic: str) -> str:
         .replace("{REPLY_WORDS}", str(qa.REPLY_WORDS))
         .replace("{PIN_TITLE}", str(pinterest.TITLE_MAX))
         .replace("{PIN_DESCRIPTION}", str(pinterest.DESCRIPTION_CHARS))
+        .replace("{POST_CHARS}", str(bluesky.TEXT_MAX))
+        .replace("{POST_TAGS}", str(qa.POST_TAGS))
         .replace("{SITE_PAGES}", str(site.MAX_PAGES))
         .replace("{BLOG_BODY_MIN}", str(blog.BODY_MIN))
         .replace("{BLOG_LINKS}", str(blog.LINKS_MAX))
@@ -3800,6 +3858,138 @@ def _propose_pin(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     return Outcome(True, text, f"#{made_id} pin: {_cut(pin.title, 60)}")
 
 
+_ETSY_LISTING = re.compile(
+    r"^https://(?:www\.)?etsy\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?listing/(\d{1,18})(?:[/?#][^\s]*)?$", re.IGNORECASE
+)
+
+
+def _bluesky(ctx: ToolContext) -> BlueskyAccess:
+    if ctx.bluesky is None:
+        raise ToolError("Ember's Bluesky account isn't set up")
+    return ctx.bluesky
+
+
+def _bluesky_posts(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    account = _bluesky(ctx)
+    made = bluesky_publisher.posts(conn, ctx.scope, 12)
+    head = f"Ember's Bluesky account: @{account.handle} (at most {account.daily_limit} posts a day)."
+    return Outcome(True, f"{head}\n{bluesky_publisher.text(conn, ctx.scope, 12)}", f"{len(made)} posts")
+
+
+def _post_link(ctx: ToolContext, conn: Any, raw: str) -> tuple[str, str, str, etsy.Upload | None]:
+    """0.19.0: a post's link, checked: one of Ember's live Etsy listings (its card: the listing's title and main
+    photo) or a page of the owner's website (a blog post of Ember's: its title and description on the card). Returns
+    the link, the card's title and description ("": the link shows in the words) and its photo."""
+    link = raw.strip()
+    parts = urlsplit(link)
+    if parts.scheme != "https" or not parts.netloc or any(ch.isspace() for ch in link):
+        raise ToolError("link must be an https address")
+    listing = _ETSY_LISTING.match(link)
+    if listing is not None:
+        listing_id = int(listing.group(1))
+        try:
+            current = etsy_publisher.current_listing(conn, ctx.scope, listing_id)
+        except etsy.EtsyError as exc:
+            raise ToolError(f"Ember's record of #{listing_id} isn't readable ({exc})") from None
+        row = etsy_publisher.listing_row(conn, ctx.scope, listing_id)
+        if current is None or row is None:
+            raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
+        if etsy_publisher.etsy_state(row) != etsy.LIVE_STATE:
+            raise ToolError(f"#{listing_id} isn't live at Etsy ({etsy_publisher.state_text(row)}): link a live listing")
+        photo = current.photos[0] if current.photos else None
+        return etsy.listing_url(listing_id), bluesky.one_line(current.title)[: bluesky.CARD_TITLE_MAX], "", photo
+    site = _bluesky(ctx).site_url
+    if site and (link == site or link.startswith(f"{site}/")):
+        for post in site_publisher.posts(conn, ctx.scope):
+            if link == f"{site}/{blog.post_path(str(post['slug']))}":
+                title, about = bluesky.one_line(post["title"]), bluesky.one_line(post["description"])
+                return link, title[: bluesky.CARD_TITLE_MAX], about[: bluesky.CARD_TITLE_MAX], None
+        return link, "", "", None
+    where = f" ({site})" if site else " (your owner hasn't set its address, site_url)"
+    raise ToolError(
+        "link goes to one of your live Etsy listings (https://www.etsy.com/listing/...) or a page of your owner's "
+        f"website{where}: other sites aren't yours to promote"
+    )
+
+
+def _propose_bluesky_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.19.0: a post on the Bluesky account the owner made for Ember."""
+    account = _bluesky(ctx)
+    text = bluesky.words(args["text"])
+    try:
+        bluesky.check_words(text)
+    except bluesky.BlueskyError as exc:
+        raise ToolError(str(exc)) from None
+    link = title = description = None
+    photo = None
+    if (args.get("link") or "").strip():
+        link, title, description, photo = _post_link(ctx, conn, args["link"])
+    upload = None
+    width = height = 0
+    alt = bluesky.one_line(args.get("alt_text") or "")
+    path = (args.get("image") or "").strip()
+    if path:
+        try:
+            data = ctx.workspace.read_bytes(path)
+        except SandboxError as exc:
+            raise ToolError(str(exc)) from None
+        try:
+            upload = bluesky.image(path, data)
+            width, height = images.png_size(data)
+        except bluesky.BlueskyError as exc:
+            raise ToolError(str(exc)) from None
+        except images.ImageError as exc:
+            raise ToolError(f"{path} can't be used: {exc}") from None
+        if not alt:
+            raise ToolError("alt_text is missing: say what the picture shows, for people who can't see it")
+    elif alt:
+        raise ToolError("alt_text describes a picture: give image too, or leave alt_text out")
+    post = bluesky.Post(
+        text=text,
+        language=args["language"],
+        link=link,
+        link_title=title or "",
+        link_description=description or "",
+        image=upload,
+        width=width,
+        height=height,
+        alt_text=alt,
+        card_photo=photo if upload is None and title else None,
+        tags=tuple(tag for _, _, tag in bluesky.hashtags(text)),
+    )
+    left = bluesky.room(post)
+    if left < 0:
+        raise ToolError(
+            f"the post would be {bluesky.TEXT_MAX - left} characters with the link and the AI line Ember's code adds;"
+            f" Bluesky takes {bluesky.TEXT_MAX}: shorten your words by {-left}"
+        )
+    reason = args["reason"].strip()
+    made_id = _new_request(
+        ctx,
+        conn,
+        bluesky.payload(post, account.handle),
+        post.to_action(),
+        type="publish",
+        title=_cut(f"Bluesky: {' '.join(text.split())}", 120),
+        description=reason,
+        expected_cost="none: Bluesky charges nothing for a post",
+        expected_benefit=reason,
+        executor="bluesky_post",
+    )
+    if isinstance(made_id, str):
+        return Outcome(True, made_id, "duplicate post")
+    answer = (
+        f"Approval request #{made_id} is waiting for your owner. Nothing is on Bluesky yet. If they approve it, "
+        f"Ember's code posts it on @{account.handle} (at most {account.daily_limit} posts a day) and you hear the "
+        f"result. It has {left} characters to spare."
+    )
+    short = qa.defects("bluesky.create_post", post)  # the QA registry: your owner sees it too
+    if short:
+        answer += f" QA (Ember's code): {'; '.join(short)}."
+    answer += _unlocked(ctx)
+    return Outcome(True, answer, f"#{made_id} post: {_cut(' '.join(text.split()), 60)}")
+
+
 def _printify(ctx: ToolContext) -> PrintifyAccess:
     if ctx.printify is None:
         raise ToolError("your owner's Printify account isn't set up")
@@ -4234,6 +4424,8 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "propose_reddit_post": _propose_reddit_post,
     "pinterest_boards": _pinterest_boards,
     "propose_pin": _propose_pin,
+    "bluesky_posts": _bluesky_posts,
+    "propose_bluesky_post": _propose_bluesky_post,
     "printify_catalog": _printify_catalog,
     "propose_printify_product": _propose_printify_product,
     "site_page": _site_page,

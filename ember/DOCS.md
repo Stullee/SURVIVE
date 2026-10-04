@@ -79,6 +79,9 @@ code from Etsy's own numbers): the agent never reports its own.
 | Pinterest app ID, app secret | empty | From the Pinterest app you create for your own account. The secret is never logged or shown. |
 | Pinterest redirect URI | https://localhost/ember-pinterest | The redirect URI registered for that app, exactly as there. |
 | Pins per day | 3 | The most pins Ember makes in one day (0 to 20). |
+| Bluesky | off | Lets the agent propose posts on the Bluesky account you made for Ember, which Ember posts after you approve them. See [Bluesky](#bluesky). |
+| Bluesky handle, app password | empty | The account's handle (such as `ember-shop.bsky.social`) and an app password made for Ember in its settings, never the account's own password. The app password is never logged or shown. |
+| Bluesky posts per day | 2 | The most posts Ember makes in one day (0 to 20). |
 | Printify | off | Lets the agent propose physical products with its designs, made on order by Printify and sold in your Etsy shop. See [Printify](#printify). |
 | Printify personal access token | empty | A token you create in Printify for Ember. Never logged or shown. |
 | Printify shop | 0 | The Printify shop connected to your Etsy shop (0: the only one that is). |
@@ -1032,8 +1035,8 @@ no longer shown); a study that failed three times stops until you press
 - **What Ember's code did**, below the requests on the **Approvals** tab
   (0.13.0): every action it carries out (an email sent, a listing created,
   changed, renewed or deactivated, a sold listing's automatic renewal turned
-  on, a Pinterest board or pin made or deleted, a Printify product created or
-  deleted), the newest first. Each one shows:
+  on, a Pinterest board or pin made or deleted, a Bluesky post made or deleted,
+  a Printify product created or deleted), the newest first. Each one shows:
   - what it acted on, and what it changed (before → after);
   - how it ended;
   - on whose decision: **You approved it**, **Your unlock**, **Your Undo**,
@@ -1052,7 +1055,8 @@ no longer shown); a study that failed three times stops until you press
   kill switch is on: that stops everything Ember's code sends, so undo it at
   Etsy by hand. An email can't be unsent. A pin's **Delete the
   pin** deletes it at Pinterest (a board stays: delete it at Pinterest if you
-  want). A Printify product's **Delete the product** deletes it at Printify,
+  want). A Bluesky post's **Delete the post** deletes it at Bluesky (0.19.0).
+  A Printify product's **Delete the product** deletes it at Printify,
   which takes its Etsy listing down too (check your shop). If an Undo failed
   before anything changed, or you cancelled it, you can undo again. If the app
   stopped while deleting a pin or product, the Undo ends unclear and you can
@@ -1546,6 +1550,87 @@ settings).
 - **Undo** on the pin's entry under **What Ember's code did** deletes it at
   Pinterest.
 
+## Bluesky
+
+Bluesky is a text-first social network. With **Bluesky** on, the agent proposes
+posts on an account you made for Ember: its words, and if it likes a link to one
+of its live Etsy listings or a page of your website and one of its pictures. You
+approve each one, and Ember's own code posts it, with a line saying an AI wrote
+it and a person approved it. In dry run a fake account
+(*@ember-dry-run.bsky.social*) takes the posts, so nothing reaches Bluesky (the
+dry run's built-in model doesn't write posts itself: the live agent does).
+
+**What to expect (checked in October 2026).** Bluesky's rules allow an account
+like this: automated posting is welcome, as long as it is disclosed and
+doesn't spam or interact with people who didn't ask for it (Ember never
+mentions, replies to, follows, likes or messages anyone). As a sales channel
+it is weak: its use shrank through 2026, Germany is a few percent of it,
+and many of its users dislike AI-made content (block lists and labels for AI
+accounts are common). Nothing shows it selling printables. Expect dozens of
+followers in a few months and a few clicks a post, and treat it as a 90-day
+test of reach with a stop rule (the agent's guide has one). Pinterest and
+search bring buyers for printables far more reliably.
+
+### Setting it up
+
+1. Create the account at [bsky.app](https://bsky.app) with your own email
+   address, and turn on two-factor sign-in. A handle on your own domain (your
+   website's) shows the account is yours.
+2. Make it clear it is an AI agent's account, and give it your Impressum: a
+   name such as *Ember (KI) · your shop's name*, and a bio that says an AI
+   agent writes the posts and you approve them, with links to your Impressum
+   and your privacy page (a business profile needs them, § 5 DDG). Use a logo
+   as its picture, not AI art.
+3. Turn on the **Automation label** in the account's settings: Bluesky then
+   shows a robot badge, *Automated account*, next to its name. Set who may
+   send it messages to *No one*. **System → Bluesky** shows whether the label
+   is on.
+4. Under **Settings → Privacy and security → App passwords**, add an app
+   password for Ember (leave access to direct messages off). Bluesky shows it
+   once: four groups of four letters and digits.
+5. In Ember's **Configuration** tab, turn on **Show unused optional
+   configuration options**, switch **Bluesky** on, enter the handle (without
+   the @) and the app password, save and restart the app.
+
+**System → Bluesky** shows the account and its followers within minutes. If
+Bluesky refuses the login (a wrong handle or app password), it says so, and
+Ember doesn't try again for an hour: correct the options and restart the app.
+To stop Ember's access, delete the app password at Bluesky.
+
+### How a post is made
+
+- The agent proposes a post with `propose_bluesky_post`: its words in German or
+  English (at most 300 characters with the link and the AI line, up to three
+  #hashtags, no link in the words and no @mention), a link if it likes (one of
+  its live Etsy listings or a page of your website: `site_url`), and a picture
+  of its own with alt text if it likes. The approval card shows the post
+  exactly as it will appear, the link and the picture's path, and what the QA
+  check finds short (more than three hashtags).
+- **Approve** and Ember posts it. Bluesky charges nothing. With a picture, the
+  link is clickable at the end of the words; without one, a listing shows as a
+  card with its title and main photo, and a blog post of Ember's with its title
+  and description. Ember sends a picture as a JPEG of at most 1 MB and 2000
+  pixels a side, without its metadata, so a large one is sent smaller. A post
+  can only be approved as it is or rejected (say what should change: the agent
+  proposes a better one). **Cancel** stops an approved post before Ember makes
+  it.
+- If the picture changed after you approved, or the listing it links is no
+  longer live, the post isn't made. Ember never posts twice: if it can't tell
+  whether Bluesky took a post (a lost connection), it says so and doesn't try
+  again. At most **Bluesky posts per day** are made a day; approved posts beyond
+  that wait for the next day.
+- Every six hours while the app runs, Ember reads the account's followers and
+  each post's likes, reposts, replies and quotes, and any label Bluesky's
+  moderation put on them. The agent's plan shows them (BLUESKY), and the
+  metrics `bluesky_posts_live` and `bluesky_reactions` can measure a milestone.
+  A live post that links one of Ember's listings counts as reach for its
+  product line. Bluesky doesn't say how many people clicked a link: watch the
+  listings' views on Etsy.
+- Replies and messages to the account are yours to read and answer in the
+  Bluesky app; Ember doesn't read them.
+- **Undo** on the post's entry under **What Ember's code did** deletes it at
+  Bluesky.
+
 ## Printify
 
 With **Printify** on, the agent can sell physical products with its designs:
@@ -1894,7 +1979,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.18.2 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.19.0 (by /u/your name)`.
 
 ## Diagnostics
 
@@ -2205,6 +2290,12 @@ automation, for example:
   Etsy, Ember's code also talks to `https://api.etsy.com`, and nothing else
   there; its tokens are kept in `/data/etsy/tokens.json`, readable only by
   Ember, and never appear in the database, the logs or the diagnostics.
+- With **Bluesky** on, Ember's code also talks to `https://bsky.social` (to log
+  in) and to the account's own server at Bluesky (a host under
+  `host.bsky.network`, as the login names it), and to nothing else there. It
+  logs in with the app password, never the account's own password (a login
+  that turns out to have full access is refused), and keeps Bluesky's tokens in
+  memory only: never on disk, in the database, the logs or the diagnostics.
 - With **Blog** on, Ember's code also connects over SFTP to the server in the
   options, only after you approved a page, and only to a server that shows the
   pinned key (yours, or the one seen at the first connection): another key gets

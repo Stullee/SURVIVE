@@ -8,8 +8,8 @@ bring any. Now Ember's code works out, for each project with live listings:
   is stuck (``stage``): not seen (a reach problem: market it), seen but not liked (the listing's appeal: photos,
   title, price), liked but not bought (price or trust), or selling;
 * its reach: what was done to bring buyers to its listings, from Ember's records: blog posts published on the owner's
-  site that recommend one of them, pins live at Pinterest that link one, and changes of them carried out at Etsy
-  (titles, tags, photos).
+  site that recommend one of them, pins live at Pinterest that link one, (0.19.0) posts live on Bluesky that link one,
+  and changes of them carried out at Etsy (titles, tags, photos).
 
 The daily review reads both (``review_text``) and names each project's bottleneck; the listing test parks a product
 line for too few views only once it had ENOUGH reach (gates.py), and owes a push to bring buyers otherwise.
@@ -46,11 +46,12 @@ class Funnel:
     orders: int = 0
     posts: int = 0  # blog posts published that recommend one of its listings
     pins: int = 0  # pins live that link one of its listings
+    bluesky: int = 0  # 0.19.0: Bluesky posts live that link one of its listings
     edits: int = 0  # changes of its listings carried out at Etsy
 
     @property
     def reach(self) -> int:
-        return self.posts + self.pins + self.edits
+        return self.posts + self.pins + self.bluesky + self.edits
 
     @property
     def stage(self) -> str:
@@ -75,7 +76,10 @@ class Funnel:
     def text(self) -> str:
         if not self.listings:
             return f"funnel: {STAGES['not_listed']}"
-        reach = f"{self.posts} blog post(s), {self.pins} pin(s), {self.edits} listing edit(s)"
+        reach = (
+            f"{self.posts} blog post(s), {self.pins} pin(s), {self.bluesky} Bluesky post(s),"
+            f" {self.edits} listing edit(s)"
+        )
         enough = "" if self.reach >= ENOUGH else f": less than the {ENOUGH} a fair test needs"
         return (
             f"funnel: {len(self.listings)} live listing(s), {self.views} views, {self.favorites} favorites,"
@@ -110,6 +114,8 @@ def funnels(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, Funnel]:
         found[project_id].posts += 1
     for project_id in _linked(_pins(conn, scope), owner):
         found[project_id].pins += 1
+    for project_id in _linked(_bluesky(conn, scope), owner):
+        found[project_id].bluesky += 1
     where, params = scope.where()
     for e in conn.execute(
         f"SELECT listing_id FROM etsy_edits WHERE {where} AND status IN ('done', 'partial')", params
@@ -146,6 +152,17 @@ def _pins(conn: sqlite3.Connection, scope: AgentScope) -> list[str]:
     return [
         str(r["link"])
         for r in conn.execute(f"SELECT link FROM pinterest_pins WHERE {where} AND status = 'active'", params)
+    ]
+
+
+def _bluesky(conn: sqlite3.Connection, scope: AgentScope) -> list[str]:
+    """0.19.0: the links of Ember's Bluesky posts live now."""
+    where, params = scope.where()
+    return [
+        str(r["link"])
+        for r in conn.execute(
+            f"SELECT link FROM bluesky_posts WHERE {where} AND status = 'active' AND link IS NOT NULL", params
+        )
     ]
 
 

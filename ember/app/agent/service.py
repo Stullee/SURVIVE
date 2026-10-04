@@ -35,6 +35,7 @@ from ..economy.metering import (
 from ..economy.pricing import opening_cost, working_cycle_cost
 from ..economy.service import Economy
 from ..integrations import (
+    bluesky_publisher,
     etsy,
     etsy_publisher,
     etsy_revenue,
@@ -47,6 +48,7 @@ from ..integrations import (
     site_publisher,
 )
 from ..integrations import executor as email_executor
+from ..integrations.bluesky_connection import BlueskyConnection
 from ..integrations.etsy_connection import EtsyConnection
 from ..integrations.etsy_publisher import Publisher
 from ..integrations.mail import Mailbox, select_mailbox
@@ -171,6 +173,12 @@ class Agent:
         self.pins = pinterest_publisher.Publisher(
             db, self.clock, self.settings, self.scope, self.pinterest.account, lambda: self.roots()[0]
         )
+        # 0.19.0: the Bluesky account the owner made for Ember (the fake one in dry run), switched on in the options.
+        # Only Ember's code reaches it; it posts what the owner approved (and deletes what they undo).
+        self.bluesky = BlueskyConnection(db, self.clock, self.settings, self.mode, economy.life.session())
+        self.bluesky_posts = bluesky_publisher.Publisher(
+            db, self.clock, self.settings, self.scope, self.bluesky.account, lambda: self.roots()[0]
+        )
         # 0.13.0 (Phase E4): the owner's Printify account (the fake one in dry run), switched on in the options: the
         # products it makes on order are sold in the Etsy shop. Only Ember's code reaches it.
         self.printify = PrintifyConnection(db, self.clock, self.settings, self.mode, economy.life.session())
@@ -254,6 +262,7 @@ class Agent:
             self.executor.recover()  # an email that was being sent may have gone out: it is never sent again
             self.publisher.recover()  # a listing that was being created may exist: it is never created again
             self.pins.recover()  # so may a pin (0.13.0)
+            self.bluesky_posts.recover()  # and a Bluesky post (0.19.0)
             self.pod.recover()  # and a Printify product
             self.blog.recover()  # and an upload to the owner's website (0.14.0)
         if self.mode == "dry_run":
@@ -655,6 +664,8 @@ class Agent:
                 self.printify,
                 self.pod,
                 unlocks_off=self.unlocks_off(),
+                bluesky=self.bluesky,
+                bluesky_posts=self.bluesky_posts,
             )
             end = runner.run(trigger)
             try:
@@ -946,15 +957,25 @@ class Agent:
         return None if state in audit.UNDO_WHILE else f"The agent is {state}"
 
     def execute_approved(self) -> list[tuple[int, str]]:
-        """Send the approved emails, create the approved Etsy listings and (0.13.0) pins and Printify products that are
-        due (the scheduler calls this before every decision). 0.15.0: while the agent is paused or waits for money,
-        only the owner's Undo."""
+        """Send the approved emails, create the approved Etsy listings and (0.13.0) pins and Printify products and
+        (0.19.0) Bluesky posts that are due (the scheduler calls this before every decision). 0.15.0: while the agent
+        is paused or waits for money, only the owner's Undo."""
         if self.executor_blocked():
             if self.undo_blocked():
                 return []
-            return self.publisher.run(undos=True) + self.pins.run(undos=True) + self._pod_run(undos=True)
+            undone = self.publisher.run(undos=True) + self.pins.run(undos=True) + self._pod_run(undos=True)
+            return undone + self._bluesky_run(undos=True)
         done = self.executor.run() if self.mailbox is not None else []
-        return done + self.publisher.run() + self.pins.run() + self._pod_run() + self._blog_run()
+        done += self.publisher.run() + self.pins.run() + self._bluesky_run()
+        return done + self._pod_run() + self._blog_run()
+
+    def _bluesky_run(self, undos: bool = False) -> list[tuple[int, str]]:
+        """0.19.0: the approved Bluesky posts (the fake account of a dry run needs no network)."""
+        account = self.bluesky.account()
+        if account is None:
+            return []
+        with netguard.sealed() if account.simulated else contextlib.nullcontext():
+            return self.bluesky_posts.run(undos)
 
     def _pod_run(self, undos: bool = False) -> list[tuple[int, str]]:
         """The approved Printify products (the fake account of a dry run needs no network)."""
@@ -995,6 +1016,7 @@ class Agent:
         if self.sync_blocked():
             return
         self._sync_pins()
+        self._sync_bluesky()
         self._sync_pod()
         if not self.publisher.due():
             return
@@ -1027,6 +1049,18 @@ class Agent:
         except Exception:  # noqa: BLE001 - Pinterest must not keep the shop from being checked
             log.exception("Checking the pins on Pinterest failed")
 
+    def _sync_bluesky(self) -> None:
+        """0.19.0: the account's followers and the posts' numbers, at most every bluesky_publisher.SYNC_HOURS (the fake
+        account of a dry run needs no network)."""
+        account = self.bluesky.account()
+        if account is None:
+            return
+        try:
+            with netguard.sealed() if account.simulated else contextlib.nullcontext():
+                self.bluesky_posts.sync()
+        except Exception:  # noqa: BLE001 - Bluesky must not keep the shop from being checked
+            log.exception("Checking the posts on Bluesky failed")
+
     def _sync_pod(self) -> None:
         """0.13.0 (Phase E4): the Printify products and their orders, at most every printify_publisher.SYNC_MINUTES."""
         account = self.printify.account()
@@ -1056,6 +1090,7 @@ class Agent:
             "email": email_executor.integration(self.db, self.clock, self.settings, self.mode, scope, self.mailbox),
             "etsy": shop,
             "pinterest": self.pinterest.describe(scope),  # 0.13.0 (Phase E2)
+            "bluesky": self.bluesky.describe(scope),  # 0.19.0
             "printify": self.printify.describe(scope),  # 0.13.0 (Phase E4)
             "site": home,
             "blog": self._blog_card(scope, posts),  # 0.14.0
@@ -1218,6 +1253,8 @@ class Agent:
             self.pins,
             self.printify,
             self.pod,
+            bluesky=self.bluesky,
+            bluesky_posts=self.bluesky_posts,
         )
         with self.db.connection() as conn:
             spent, ventured = ventures.day_spend(conn, scope, self.clock.today())

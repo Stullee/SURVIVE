@@ -591,6 +591,7 @@
     section("email", [d.integrations, minute], ["email-facts", "email-never"], function () { renderEmail(d); });
     section("etsy", [d.integrations, d.mode, minute], ["etsy-facts", "etsy-listings", "etsy-orders"], function () { renderEtsy(d); });
     section("pinterest", [d.integrations, d.mode, minute], ["pinterest-facts", "pinterest-pins"], function () { renderPinterest(d); });
+    section("bluesky", [d.integrations, d.mode, minute], ["bluesky-facts", "bluesky-posts"], function () { renderBluesky(d); });
     section("printify", [d.integrations, d.mode, minute], ["printify-facts", "printify-products", "printify-orders"], function () { renderPrintify(d); });
     section("site", [d.integrations, d.mode, minute], ["site-facts", "site-actions", "site-pages"], function () { renderSite(d); });
     section("blog", [d.integrations, d.mode, minute], ["blog-server", "blog-facts", "blog-posts"], function () { renderBlog(d); });
@@ -2191,6 +2192,7 @@
     if (!isObject(a.action)) return null;
     return a.executor === "email" || a.executor === "reddit_link" || a.executor === "etsy_listing" || a.executor === "etsy_edit" ||
       a.executor === "pinterest_pin" || a.executor === "pinterest_delete" ||
+      a.executor === "bluesky_post" || a.executor === "bluesky_delete" ||
       a.executor === "printify_product" || a.executor === "printify_delete" ||
       a.executor === "site_post" || a.executor === "site_links" || a.executor === "site_restore" ||
       a.executor === "live_will" ? a.executor : null;
@@ -2201,6 +2203,9 @@
 
   // 0.13.0 (Phase E2): a pin, or the owner's Undo of one: Ember's code carries both out after approval.
   function isPinterest(a) { var e = executorOf(a); return e === "pinterest_pin" || e === "pinterest_delete"; }
+
+  // 0.19.0: a Bluesky post, or the owner's Undo of one: Ember's code carries both out after approval.
+  function isBluesky(a) { var e = executorOf(a); return e === "bluesky_post" || e === "bluesky_delete"; }
 
   // 0.13.0 (Phase E4): a Printify product, or the owner's Undo of one: Ember's code carries both out after approval.
   function isPrintify(a) { var e = executorOf(a); return e === "printify_product" || e === "printify_delete"; }
@@ -2213,7 +2218,7 @@
   function isLive(a) { return executorOf(a) === "live_will"; }
 
   // What Ember's code carries out exactly as approved: approve or reject, and cancel before it starts.
-  function isAsIs(a) { return isPinterest(a) || isPrintify(a) || isSite(a) || isLive(a); }
+  function isAsIs(a) { return isPinterest(a) || isBluesky(a) || isPrintify(a) || isSite(a) || isLive(a); }
 
   var APPROVAL_GROUPS = [
     { key: "pending", title: "Waiting for your decision", match: function (s) { return s === "pending"; } },
@@ -2224,6 +2229,8 @@
       match: function (s, a) { return isApproved(s) && !!a && isEtsy(a); } },
     { key: "pinning", label: "Approved pins", title: function () { return "Approved pins, " + agentName() + " makes them"; },
       match: function (s, a) { return isApproved(s) && !!a && isPinterest(a); } },
+    { key: "posting", label: "Approved posts", title: function () { return "Approved Bluesky posts, " + agentName() + " posts them"; },
+      match: function (s, a) { return isApproved(s) && !!a && isBluesky(a); } },
     { key: "printing", label: "Approved products", title: function () { return "Approved Printify products, " + agentName() + " makes them"; },
       match: function (s, a) { return isApproved(s) && !!a && isPrintify(a); } },
     { key: "uploading", label: "Approved pages", title: function () { return "Approved pages for your website, " + agentName() + " uploads them"; },
@@ -2430,7 +2437,7 @@
     return [
       h("div", { class: "item-head" },
         h("h3", { text: a.title || "Untitled request" }), plainChip(APPROVAL_TYPES[a.type] || sentence(String(a.type || "other").replace(/_/g, " "))),
-        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : isPinterest(a) ? "Pinterest" : isPrintify(a) ? "Printify" : isSite(a) ? "Website" : isLive(a) ? "Live page" : "Reddit") : null,
+        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : isPinterest(a) ? "Pinterest" : isBluesky(a) ? "Bluesky" : isPrintify(a) ? "Printify" : isSite(a) ? "Website" : isLive(a) ? "Live page" : "Reddit") : null,
         statusChip, a.simulated ? testTag() : null),
       a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
       actionFlags(a.action_class),
@@ -2452,6 +2459,7 @@
       a.status === "pending" && executor === "etsy_listing" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this listing in your Etsy shop itself: a draft, its photos and files, then live. Etsy charges USD 0.20 per listing." }) : null,
       a.status === "pending" && executor === "etsy_edit" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this change to the live listing itself. Etsy charges nothing for it." }) : null,
       a.status === "pending" && executor === "pinterest_pin" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this pin on your Pinterest account itself (a new board first, if it names one), exactly as shown. Pinterest charges nothing for it; your Undo deletes it." }) : null,
+      a.status === "pending" && executor === "bluesky_post" ? h("p", { class: "send-note", text: "After you approve, " + name + " posts this on its Bluesky account itself, exactly as shown (with the line saying an AI wrote it and you approved it). Bluesky charges nothing for it; your Undo deletes it." }) : null,
       a.status === "pending" && executor === "printify_product" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this product at Printify and publishes it to your Etsy shop, exactly as shown, if every price keeps 15% after Etsy's fees, making and shipping; otherwise it deletes it there and says what each price needs. Printify charges you for making and shipping each order; your Undo deletes the product." }) : null,
       a.status === "pending" && (executor === "site_post" || executor === "site_links") ? h("p", { class: "send-note", text: "After you approve, " + name + " uploads exactly the page the preview shows to your website over SFTP" + (executor === "site_post" ? ", and adds it to the blog's list" : "") + ". It touches nothing else on your server; your Undo puts back what it replaced." }) : null,
       a.status === "pending" && executor === "live_will" ? h("p", { class: "send-note", text: "After you approve, " + name + "'s code shows exactly this text on your live page (live.html and en/live.html) from its next upload on, while live_show_memorial is on. Rejected, it is never shown; an unlock never approves it." }) : null,
@@ -2587,6 +2595,7 @@
     if (executorOf(a) === "etsy_listing") return listingExecutionView(a, st);
     if (executorOf(a) === "etsy_edit") return changeExecutionView(a, st);
     if (isPinterest(a)) return pinExecutionView(a, st);
+    if (isBluesky(a)) return postExecutionView(a, st);
     if (isPrintify(a)) return productExecutionView(a, st);
     if (isSite(a)) return siteExecutionView(a, st);
     if (isLive(a)) return liveExecutionView(a, st);
@@ -2631,6 +2640,32 @@
     else detail = [ex.error ? endSentence(String(ex.error)) : st === "deleted" ? "Deleted at Pinterest." : ""];
     return h("div", { class: "execution", "data-status": st },
       h("p", { class: "execution-head" }, chip(PIN_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
+      h("p", { class: "execution-detail" }, detail));
+  }
+
+  // 0.19.0: a Bluesky post, or the owner's Undo of one, as Ember's code carries it out.
+  var POST_EXECUTION = {
+    waiting: { icon: "◔", label: "Waiting", tone: "accent" },
+    waiting_limit: { icon: "◔", label: "Waiting for tomorrow's limit", tone: "warning" },
+    running: { icon: "●", label: "At Bluesky now", tone: "accent" },
+    active: { icon: "✓", label: "Posted", tone: "good" },
+    deleted: { icon: "–", label: "Deleted", tone: "" },
+    failed: { icon: "✕", label: "Not done", tone: "critical" },
+    unclear: { icon: "!", label: "Unclear: check Bluesky", tone: "critical" },
+  };
+
+  function postExecutionView(a, st) {
+    var ex = isObject(a.execution) ? a.execution : {};
+    var name = agentName();
+    var detail;
+    if (st === "waiting") detail = [name + (executorOf(a) === "bluesky_delete" ? " deletes it" : " posts it") + " by itself shortly; it checks every few minutes." + (ex.result ? " " + endSentence(sentence(ex.result)) : "")];
+    else if (st === "waiting_limit") detail = [name + " has made its posts for today, so this one waits for tomorrow's limit."];
+    else if (st === "running") detail = ex.started_at ? ["At Bluesky since ", timeEl(ex.started_at), "."] : ["At Bluesky now."];
+    else if (st === "active") detail = ["Posted ", timeEl(ex.finished_at || ex.started_at), ex.url && !a.simulated ? [": ", blueskyLink(ex.url, ex.url)] : "."];
+    else if (ex.result) detail = [endSentence(sentence(ex.result))];
+    else detail = [ex.error ? endSentence(String(ex.error)) : st === "deleted" ? "Deleted at Bluesky." : ""];
+    return h("div", { class: "execution", "data-status": st },
+      h("p", { class: "execution-head" }, chip(POST_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
       h("p", { class: "execution-detail" }, detail));
   }
 
@@ -2832,6 +2867,8 @@
         approveIntro = name + " then changes the live listing at Etsy itself, exactly as shown (Etsy charges nothing for it). You hear the result on this card.";
       } else if (executor === "pinterest_pin") {
         approveIntro = name + " then makes this pin on your Pinterest account itself, exactly as shown (a new board first, if it names one). You hear the result on this card; your Undo deletes it.";
+      } else if (executor === "bluesky_post") {
+        approveIntro = name + " then posts this on its Bluesky account itself, exactly as shown. You hear the result on this card; your Undo deletes it.";
       } else if (executor === "printify_product") {
         approveIntro = name + " then creates this product at Printify and publishes it to your Etsy shop, exactly as shown, if every price keeps its margin after what Printify charges to make and ship it. You hear the result on this card; your Undo deletes it.";
       } else if (executor === "site_post" || executor === "site_links") {
@@ -2886,6 +2923,7 @@
         if (executor === "etsy_listing") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " creates the listing itself; this card shows when it's live.";
         if (executor === "etsy_edit") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " changes the listing itself; this card shows when it's done.";
         if (executor === "pinterest_pin") return "Approved. " + name + " makes the pin itself; this card shows when it's live.";
+        if (executor === "bluesky_post") return "Approved. " + name + " posts it itself; this card shows when it's live.";
         if (executor === "printify_product") return "Approved. " + name + " creates the product itself; this card shows when it's in the shop.";
         if (executor === "site_post" || executor === "site_links") return "Approved. " + name + " uploads the page itself; this card shows when it's online.";
         if (executor === "live_will") return "Approved. " + name + "'s code shows it on your live page at its next upload; this card shows when it's there.";
@@ -2910,7 +2948,7 @@
       return {
         mode: mode, title: "Cancel this?", submit: "Cancel", danger: true, cancelLabel: "Keep it",
         intro: [h("p", { text: name + " won't carry it out. The request is marked failed, and " + name + " sees that on its next wake." })],
-        fields: [{ name: "result_note", label: "Why (" + name + " reads it)", rows: 2, max: 2000, required: true, value: isPrintify(a) ? "Cancelled before it reached Printify." : isSite(a) ? "Cancelled before it was uploaded." : isLive(a) ? "Cancelled before it was shown." : "Cancelled before it reached Pinterest.", missing: "Say why you cancel it." }],
+        fields: [{ name: "result_note", label: "Why (" + name + " reads it)", rows: 2, max: 2000, required: true, value: isPrintify(a) ? "Cancelled before it reached Printify." : isBluesky(a) ? "Cancelled before it reached Bluesky." : isSite(a) ? "Cancelled before it was uploaded." : isLive(a) ? "Cancelled before it was shown." : "Cancelled before it reached Pinterest.", missing: "Say why you cancel it." }],
         url: url + "close",
         body: function (v) { return { outcome: "failed", expected_version: version, result_note: v.result_note }; },
         done: function () { return "Cancelled. " + name + " won't carry it out."; },
@@ -4031,6 +4069,73 @@
           h("td", { class: "num", text: numbers(q.saves) }),
           h("td", { class: "num", text: numbers(q.clicks) }));
       })))) : h("p", { class: "muted", text: "None yet. When you approve a pin the agent proposed, Ember makes it here." }));
+  }
+
+  // ---- System -> Bluesky (0.19.0): the account the owner made for Ember, and Ember's posts with their numbers.
+
+  var POST_STATUS = {
+    running: { icon: "●", label: "Being posted", tone: "accent" },
+    active: { icon: "✓", label: "Live", tone: "good" },
+    deleted: { icon: "–", label: "Deleted", tone: "" },
+    failed: { icon: "✕", label: "Not posted", tone: "critical" },
+    unclear: { icon: "!", label: "Unclear", tone: "critical" },
+  };
+
+  // A link only to bsky.app over https; anything else is shown as text.
+  function blueskyLink(value, text) {
+    var url;
+    try { url = new URL(String(value)); } catch (e) { url = null; }
+    if (!url || !/^https:$/.test(url.protocol) || url.hostname !== "bsky.app" || url.port || url.username || url.password) {
+      return h("span", { class: "link-text", text: text || String(value || "–") });
+    }
+    var a = document.createElement("a");
+    a.setAttribute("href", url.href);
+    a.setAttribute("rel", "noopener noreferrer");
+    a.setAttribute("target", "_blank");
+    append(a, [text || url.href, h("span", { class: "visually-hidden", text: " (opens in a new tab)" })]);
+    return a;
+  }
+
+  function renderBluesky(d) {
+    var p = isObject(d.integrations) && isObject(d.integrations.bluesky) ? d.integrations.bluesky : null;
+    var shown = !!p && p.status !== "disabled";  // off (the default), or an older server: no card
+    $("bluesky-card").hidden = !shown;
+    if (!shown) { replace($("bluesky-facts"), []); replace($("bluesky-posts"), []); return; }
+    var fake = p.mode === "fake";
+    var reason = p.reason ? String(p.reason) : null;
+    if (!reason && p.status === "not_configured") reason = "Not set up: see the Documentation tab, 'Bluesky'.";
+    var handle = p.handle ? "@" + String(p.handle) : null;
+    replace($("bluesky-facts"), [
+      h("dt", { text: "Status" }), h("dd", null, chip(ETSY_STATUS, p.status, sentence(String(p.status || "unknown").replace(/_/g, " ")))),
+      reason && (p.status !== "ok" || fake) ? [h("dt", { text: fake ? "Mode" : "Why" }), h("dd", { class: "pre-line", text: reason })] : null,
+      h("dt", { text: "Account" }), h("dd", null, handle ? (fake ? h("span", { text: handle + " (fake)" }) : blueskyLink(p.profile_url, handle)) : "–"),
+      p.followers !== null && p.followers !== undefined ? [h("dt", { text: "Followers" }), h("dd", { text: count(p.followers) })] : null,
+      p.automated === false ? [h("dt", { text: "Automation label" }), h("dd", { class: "fact-error" }, h("span", { "aria-hidden": "true", text: "! " }),
+        "Off: turn it on in the Bluesky app (Settings, Automation label), so the account shows it is automated.")] : null,
+      p.automated === true ? [h("dt", { text: "Automation label" }), h("dd", { text: "On: the account shows it is automated" })] : null,
+      p.labels ? [h("dt", { text: "Moderation" }), h("dd", { class: "fact-error" }, h("span", { "aria-hidden": "true", text: "! " }), "Bluesky labelled the account: " + String(p.labels))] : null,
+      h("dt", { text: "Posts a day" }), h("dd", { text: "at most " + count(p.daily_limit) }),
+      p.last_sync_at ? [h("dt", { text: "Numbers from" }), h("dd", null, timeEl(p.last_sync_at, fmtDateTime(p.last_sync_at) + " (" + relTime(p.last_sync_at) + ")"))] : null,
+      p.last_error ? [h("dt", { text: "Last error" }), h("dd", { class: "fact-error" }, h("span", { "aria-hidden": "true", text: "✕ " }), String(p.last_error))] : null,
+    ]);
+    var posts = arr(p.posts);
+    replace($("bluesky-posts"), posts.length ? h("div", { class: "table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, ["Post", "Status", "Likes", "Reposts", "Replies", "Quotes"].map(function (c) { return h("th", { scope: "col", text: c }); }))),
+      h("tbody", null, posts.map(function (q) {
+        var numbers = function (v) { return q.synced_at && v !== null && v !== undefined ? count(v) : "–"; };
+        var words = asText(q.text).split("\n")[0];
+        var link = q.link ? (/^https:\/\/www\.etsy\.com\//.test(String(q.link)) ? etsyLink(q.link, "its listing") : siteLink(q.link, "its page")) : null;
+        return h("tr", null,
+          h("td", null, q.url && !fake ? blueskyLink(q.url, words) : h("span", { text: words }),
+            link && !fake ? [h("span", { class: "muted small", text: " → " }), link] : null,
+            q.labels ? h("p", { class: "fact-error small" }, "Labelled by moderation: " + String(q.labels)) : null,
+            q.status !== "active" && q.result ? h("p", { class: "muted small pre-line", text: asText(q.result) }) : null),
+          h("td", null, chip(POST_STATUS, q.status, sentence(String(q.status || "?")))),
+          h("td", { class: "num", text: numbers(q.likes) }),
+          h("td", { class: "num", text: numbers(q.reposts) }),
+          h("td", { class: "num", text: numbers(q.replies) }),
+          h("td", { class: "num", text: numbers(q.quotes) }));
+      })))) : h("p", { class: "muted", text: "None yet. When you approve a post the agent proposed, Ember posts it here." }));
   }
 
   // ---- System -> Printify (0.13.0, Phase E4): the account's shop, Ember's products and what their orders cost.

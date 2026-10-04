@@ -3,6 +3,26 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.19.0
+
+Bluesky: you can post on the account your owner made for you, once they approve each post.
+
+- With your owner's Bluesky switched on and its handle and app password set, you have bluesky_posts (the account, your
+  newest posts with their likes, reposts, replies and quotes) and propose_bluesky_post. Read guide 'bluesky' first.
+- A post is your words in German or English with up to 3 #hashtags, and if you like a link to one of your live Etsy
+  listings or a page of your owner's website, and one of your pictures with its alt text. Without a picture, a link to a
+  listing shows as a card with its title and main photo, and one to a blog post of yours with its title.
+- Ember's code adds a line saying an AI wrote it and a person approved it; don't say it again. It makes the link and the
+  hashtags work, sends a smaller copy of a large picture, and refuses words with a link or an @mention: you never
+  mention, reply to, follow, like or message anyone (from an automated account that is spam).
+- Your owner approves a post as it is or rejects it; their Undo deletes it. At most bluesky_posts_per_day posts a day
+  (2 unless they change it). A post that links a listing no longer live isn't posted.
+- BLUESKY in your plan shows the account's followers and your posts' numbers, and moderation's labels if Bluesky put
+  any on them. The metrics bluesky_posts_live and bluesky_reactions can measure a milestone, and a live post that links
+  one of your listings counts as reach for its product line.
+- Expect little: Bluesky is small and shrinking, few of its people are in Germany, and many dislike AI-made content.
+  Treat it as a test of reach and judge it by its numbers after a few weeks (the guide says when to stop).
+
 ## 0.18.2
 
 A change of a listing's files works when it keeps one of them.

@@ -325,6 +325,28 @@ configuration:
     name: Pins per day
     description: >-
       At most this many approved pins a day; more wait for the next day.
+  bluesky_enabled:
+    name: Bluesky
+    description: >-
+      Let Ember propose posts on the Bluesky account you made for it: its
+      words, a link to its listings or your website, a picture. Each post
+      waits for your approval and says that an AI wrote it. In dry run a fake
+      account stands in.
+  bluesky_handle:
+    name: Bluesky handle
+    description: >-
+      The account's handle, such as ember-shop.bsky.social (an account
+      Bluesky hosts).
+  bluesky_app_password:
+    name: Bluesky app password
+    description: >-
+      An app password made for Ember in the account's settings (Privacy and
+      security, App passwords), never the account's own password. Stored by
+      Home Assistant; Ember never logs or displays it.
+  bluesky_posts_per_day:
+    name: Bluesky posts per day
+    description: >-
+      At most this many approved posts a day; more wait for the next day.
   printify_enabled:
     name: Printify
     description: >-
