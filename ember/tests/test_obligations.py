@@ -122,13 +122,17 @@ def test_a_decision_and_a_miss_are_owed_a_reaction(data_dir: Path) -> None:
 
 
 def test_a_venture_cycle_gives_way_to_what_is_owed(data_dir: Path) -> None:
-    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[]), plan(steps=[])]), settings=VENTURING)
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[]), plan(steps=[]), plan(steps=[])]), settings=VENTURING)
     assert rows(agent, "SELECT venture FROM cycles") == [{"venture": 1}]  # every cycle a venture cycle
     assert owner(agent).send_message({"text": "Please fix the typo in listing 1."}, "Stefan").status == 201
+    agent.run_cycle("owner")  # the message woke it: the owner waits for what they asked
+    # 0.19.3: a scheduled venture cycle answers the message first and stays a venture cycle (live, messages turned 4 of
+    # 12 cycles that were the ventures' turn into ordinary ones)
     agent.run_cycle("schedule")
-    assert rows(agent, "SELECT venture FROM cycles ORDER BY id") == [{"venture": 1}, {"venture": 0}]
+    assert rows(agent, "SELECT venture FROM cycles ORDER BY id") == [{"venture": 1}, {"venture": 0}, {"venture": 1}]
     events = [e["message"] for e in agent.db.recent_events(limit=30)]
     assert "Cycle #2 is an ordinary cycle: 1 message of your owner's to answer comes first" in events
+    assert not any(e.startswith("Cycle #3 is an ordinary cycle") for e in events)
 
 
 def test_the_section_is_bounded_and_quoted(data_dir: Path) -> None:

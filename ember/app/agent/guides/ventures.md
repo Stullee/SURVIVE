@@ -33,7 +33,7 @@ THE BUSINESS CASE
   abilities Ember needs (name the upgrade)
 - first_euro: how soon, and why; risks: what could go wrong, legal duties, how you handle each
 - first_test: the smallest test that could prove or kill it, its cost, and the result that decides
-After your owner backs it: plan the first test as a project, ask for one owner action at a time
+Once your owner backs it, it is project work (ordinary cycles): ask for one owner action at a time
 (request_approval), and file request_upgrade for missing tools.
 
 TURNING "I CAN'T" INTO A PATH

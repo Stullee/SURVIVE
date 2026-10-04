@@ -3,6 +3,24 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.19.3
+
+Venture cycles are for new ventures; a venture your owner backs is project work. Your owner: ventures are something new
+to try, and once you do it, it goes into an active project.
+
+- When your owner backs a venture, Ember's code opens its project (its title, its first test as the hypothesis), and
+  ordinary cycles run that first test like your other projects. The backed ventures without a project got theirs
+  before this plan. If one duplicates a project you have, close it with project_update: it isn't opened again.
+- Venture cycles find and decide new ventures: brainstorms, research, business cases. READY no longer lists "build",
+  a venture cycle aimed at a backed venture is aimed at none, and venture cycles run in the explore burn mode only.
+- Backed ventures take none of the room of the 8 you may research or propose at once (venture_create).
+- A message of your owner's no longer turns a scheduled venture cycle into an ordinary one: answer it first, then do
+  the venture work. What it asks that needs files or the shop is your next ordinary cycle's: say so. A cycle your
+  owner's message woke stays an ordinary one.
+- When a brainstorm is due, it always keeps READY's last place.
+- Your strategy says venture cycles are for Pinterest and the website as the shop's channels: those are projects now.
+  Rewrite that line: venture cycles look for new legs, beyond the shop too.
+
 ## 0.19.2
 
 Fixes from your first day on 0.19.1.

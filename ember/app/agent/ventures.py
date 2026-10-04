@@ -41,7 +41,10 @@ from .store import AgentScope
 
 STAGES = ("idea", "researching", "proposed", "building", "live", "parked", "killed")
 OPEN_STAGES = ("idea", "researching", "proposed", "building", "live")
-ACTIVE_STAGES = ("researching", "proposed", "building", "live")  # worked on: what MAX_ACTIVE limits
+ACTIVE_STAGES = ("researching", "proposed", "building", "live")  # worked on
+# 0.19.3: what MAX_ACTIVE limits: the ventures being found out about. A backed one is its project's work, and no longer
+# takes the room of a new one (live: 4 backed ventures and the Etsy leg left room for 2).
+EXPLORED = ("researching", "proposed")
 EXPLORING = ("idea", "researching", "proposed")  # not backed yet: what venture cycles find out about
 # What the agent may set: backing (building) and killing are the owner's decisions.
 AGENT_STAGES = ("idea", "researching", "proposed", "live", "parked")
@@ -82,7 +85,7 @@ SCORES: tuple[Score, ...] = (
 )
 SCORE_FIELDS = tuple(s.name for s in SCORES)
 LIMITS = {"title": 80, "pitch": 600, "next_question": 300, "notes": 2_000, **{n: c for n, _, c in CASE}}
-MAX_ACTIVE = 8  # ventures being worked on at once (ideas don't count: the tree keeps growing)
+MAX_ACTIVE = 8  # ventures researched or proposed at once (ideas don't count: the tree keeps growing)
 # 0.12.0: the stages' rules Ember's code keeps (agent/stages.py): research that brings no business case this many days
 # after it began is parked, and a backed venture's first test is due this many days after the owner backed it.
 RESEARCH_DAYS = 21

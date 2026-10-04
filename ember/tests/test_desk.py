@@ -61,26 +61,27 @@ def test_ready_ranks_the_ventures_next_decisions(data_dir: Path) -> None:
         actions.decide_venture(PRINT, {"action": "back", "confirm": True}, "Stefan").status == 200
     )  # backed, no project yet
     assert keys(agent) == [
-        f"build #{PRINT}",
         f"appraise #{RECRUITING}",  # the owner's wish
         f"appraise #{DROPSHIPPING}",  # its research budget is nearly used: urgent
         f"appraise #{ETSY}",
         f"triage #{COMPANION}",  # weight 100 before the unscored ideas
+        "brainstorm",  # 0.19.3: due, it keeps the last place (triage #PINTEREST came fifth before)
     ]
-    assert keys(agent, burn.FOCUS) == [f"build #{PRINT}"]  # focus: only the tests already running
+    # 0.19.3: the backed venture is its project's work, in ordinary cycles: no "build", and no venture cycle in focus
+    assert keys(agent, burn.FOCUS) == []
     with agent.db.connection() as conn:
         items = desk.ready(
             conn, agent.scope(), mode=burn.EXPLORE, today=agent.clock.today(), cash_eur=20.0, net_days=None
         )
-    assert items[2].text.startswith(
+    assert items[1].text.startswith(
         "Dropshipping store · needs 2 research calls for it that found something (it has 1)"
     )
-    assert "research budget: $0.14 of $0.60 left" in items[2].text
-    assert items[1].text.startswith("your owner's wish: Recruiting and headhunting service · needs")
+    assert "research budget: $0.14 of $0.60 left" in items[1].text
+    assert items[0].text.startswith("your owner's wish: Recruiting and headhunting service · needs")
     for vid in (PINTEREST, WEBSITE, COMPANION):  # the ideas go: fewer than 5 wait, and none has its numbers
         assert actions.decide_venture(vid, {"action": "park"}, "Stefan").status == 200
     assert keys(agent)[-1] == "brainstorm"
-    assert items[-1].kind == "triage" and len(items) == desk.MAX_ITEMS
+    assert items[-1].kind == "brainstorm" and len(items) == desk.MAX_ITEMS
 
 
 def test_a_proposed_venture_the_critic_doubts_is_answered_first(data_dir: Path) -> None:

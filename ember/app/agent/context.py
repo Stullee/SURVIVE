@@ -130,7 +130,8 @@ VENTURE_FOCUS_BUDGET = 2_400  # a venture's FOCUS in the brief (0.15.0: 1,900 cu
 MILESTONE_FOCUS_BUDGET = 1_100  # a milestone's FOCUS in the brief (0.11.0; 0.12.0: with its last cycle's digest)
 BRAINSTORM_BRIEF = "grow the tree with brainstorm (first, if you plan one), "  # 0.15.0: only in explore
 VENTURE_BRIEF = (
-    "This is a venture cycle: read guide 'ventures' first, research as often as this cycle can pay for (STATUS), "
+    "This is a venture cycle: answer your owner's waiting messages first, read guide 'ventures', research as often "
+    "as this cycle can pay for (STATUS), "
     f"{BRAINSTORM_BRIEF}save each number your research finds with evidence and "
     "the rest with venture_update (learned, with sources), and rescore the venture from the evidence."
 )

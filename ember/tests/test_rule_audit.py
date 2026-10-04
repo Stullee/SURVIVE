@@ -58,6 +58,7 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
     ],
     "venture": [
         ("VENTURE CYCLE This cycle belongs to your ventures", GUIDANCE, "what a venture cycle is for, and a no"),
+        ("- Answer your owner's waiting messages first", GUIDANCE, "0.19.3: a scheduled venture cycle answers them"),
         ("- Work on ventures only", POINTER, "the venture cycle's tools are code's; the planner plans with them"),
         ("- READY lists your ventures' next decisions", POINTER, "Ember's code ranks them and checks the pick"),
         ("- A brainstorm", GUIDANCE, "where to brainstorm (READY says when)"),
@@ -102,7 +103,7 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
         ("- milestones:", SCHEMA, ""),
     ],
     "venture_brief": [
-        ("This is a venture cycle: read guide 'ventures' first", GUIDANCE, "the venture cycle's work steps"),
+        ("This is a venture cycle: answer your owner's waiting messages first", GUIDANCE, "its work steps"),
     ],
 }
 

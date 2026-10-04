@@ -3,8 +3,9 @@ the last week's API spending less its net revenue), not by a line in the prompt 
 steered a whole live week).
 
 * explore: more than 30 days of net runway, or it earns at least what it spends: as the owner's options allow;
-* focus: 15 to 30 days: the tests already running go on (a venture backed or live), no brainstorms, and new ideas
-  only those the owner brings (0.15.0: venture_create stays offered for them);
+* focus: 15 to 30 days: the tests already running go on (a venture backed or live: 0.19.3, its project's work in
+  ordinary cycles, so no venture cycles run), no brainstorms, and new ideas only those the owner brings (0.15.0:
+  venture_create stays offered for them);
 * maintenance: under 15 days: one scheduled cycle a day of at most $0.40 (0.15.0: every call in it counted, the
   daily review and the library's study too), with no workshop runs and no venture cycles;
 * dormant: the last will is written and the runway is critical: no model calls until money comes in (only the owner's
@@ -63,7 +64,8 @@ FIGHT = (
 SINCE_KEY = "burn_mode_since.{mode}.{life}"  # 0.16.2: where the mode below explore began (Since), "" in explore
 MEANING = {
     EXPLORE: "as your owner's options allow",
-    FOCUS: "finish the tests already running (a venture backed or live); no brainstorms, new ideas only your owner's",
+    FOCUS: "finish the tests already running (your backed ventures' projects); no venture cycles or brainstorms, new"
+    " ideas only your owner's",
     # 0.15.0: the day counts from the last cycle of any kind (service.Agent._maintenance_day)
     MAINTENANCE: (
         f"one cycle a day of at most ${MAINTENANCE_CYCLE_USD:.2f}, every call counted, no workshop runs or venture"
@@ -93,8 +95,9 @@ class Burn:
 
     @property
     def venture_cycles(self) -> bool:
-        """Whether venture cycles run (in focus, only while a venture is backed or live)."""
-        return self.mode in (EXPLORE, FOCUS)
+        """Whether venture cycles run: in explore (0.19.3: no longer in focus, where they only ran the tests of the
+        backed ventures, which are their projects' work now)."""
+        return self.mode == EXPLORE
 
     @property
     def brainstorms(self) -> bool:

@@ -4,21 +4,26 @@ A venture cycle's planner chose freely what to look at, so research went where t
 brainstorm never ran live. Now Ember's code ranks what the ventures need decided next, and each venture cycle's plan
 gets it as READY: at most MAX_ITEMS items, the most pressing first.
 
-* build: a venture your owner backed that has no open project yet: plan its first test;
 * appraise: a venture being researched, whose next need Ember's code names (research, evidence, numbers, a knock-out
   to fix; then propose or park it);
 * answer: a proposed venture whose critic said test or park: answer its flaw (evidence, new numbers) or park it;
-* triage: an idea: research it or park it, while fewer than ventures.MAX_ACTIVE are worked on;
+* triage: an idea: research it or park it, while fewer than ventures.MAX_ACTIVE are researched or proposed;
 * brainstorm: while fewer than FUNNEL ideas wait and fewer than FUNNEL ventures have their numbers (explore only).
 
-Their order: build; then your owner's wishes (a venture they want researched next, an idea they added); ventures
+0.19.3 (the owner's view: a venture is something new to try; once they back it, it is a project): a backed venture
+is no longer READY's (it was "build": set up its first test). Ember's code opens its project (stages.keep) and
+ordinary cycles run its first test, so venture cycles go to finding and deciding new ones. And a due brainstorm keeps
+READY's last place: live, two builds, an appraisal and two triages filled the five places, and no brainstorm was
+offered while the ideas ran low.
+
+Their order: your owner's wishes (a venture they want researched next, an idea they added); ventures
 close to being parked by their stage's rule (within URGENT_DAYS, or with little research budget left, the soonest
 first); answers to the critic; the other appraisals; triage; a brainstorm last. Within each, the highest expected net
 first (the critic's where it is lower), then the heaviest.
 
 The plan takes one (``ready``: its key, "appraise #3") or says why it takes none; Ember's code checks the key, aims
 the cycle at its venture and keeps each pick with the list it came from (``desk_picks``, never changed). The desk's
-cap is the owner's venture share: it runs in venture cycles only, and in the focus burn mode only for backed ventures.
+cap is the owner's venture share: it runs in venture cycles only, which run in the explore burn mode only (0.19.3).
 """
 
 from __future__ import annotations
@@ -33,7 +38,7 @@ from typing import Any
 
 from ..economy import burn
 from . import critic, knockouts, ventures
-from .store import OPEN_STATUSES, AgentScope
+from .store import AgentScope
 
 MAX_ITEMS = 5
 FUNNEL = 5  # ideas waiting, and ventures with numbers, below which a brainstorm is ready
@@ -41,7 +46,7 @@ URGENT_DAYS = 7  # a venture parked by its stage's rule within this many days is
 URGENT_BUDGET = 0.25  # ... and one with this share of its research budget left
 WHY_CHARS = 200  # why a plan takes no READY item, as kept
 ITEM_CHARS = 220  # an item's text: READY holds MAX_ITEMS of them in its budget
-KINDS = ("build", "appraise", "answer", "triage", "brainstorm")
+KINDS = ("build", "appraise", "answer", "triage", "brainstorm")  # build: before 0.19.3 (its records)
 _TIER = {"build": 0, "wish": 1, "urgent": 2, "answer": 3, "appraise": 4, "triage": 5, "brainstorm": 6}
 _KEY = re.compile(r"^\s*(build|appraise|answer|triage|brainstorm)\b\s*(?:#\s*)?(\d+)?", re.IGNORECASE)
 
@@ -102,19 +107,12 @@ def ready(
 ) -> list[Item]:
     """The READY list for a venture cycle in burn ``mode``: at most MAX_ITEMS, the most pressing first."""
     rows = ventures.all_ventures(conn, scope)
-    room = sum(1 for v in rows if v["stage"] in ventures.ACTIVE_STAGES) < ventures.MAX_ACTIVE
+    room = sum(1 for v in rows if v["stage"] in ventures.EXPLORED) < ventures.MAX_ACTIVE
     ranked: list[tuple[tuple[Any, ...], Item]] = []
     for v in rows:
         vid, stage, title = int(v["id"]), v["stage"], _line(v["title"], 50)
-        if stage == "building":
-            projects = ventures.projects_of(conn, vid)
-            if not any(p["status"] in OPEN_STATUSES for p in projects):
-                test = f" (milestone #{v['test_milestone_id']})" if v["test_milestone_id"] else ""
-                text = f"{title} · backed by your owner: set up its first test{test}: no open project for it yet"
-                ranked.append(((_TIER["build"], vid), Item("build", vid, text)))
-            continue
         if mode != burn.EXPLORE or stage not in ventures.EXPLORING:
-            continue  # focus: only the tests already running
+            continue  # 0.19.3: a backed or live venture is its project's, an ordinary cycle's work
         case_row = ventures.latest_case(conn, vid) if v["cases"] else None
         judged = critic.latest(conn, vid) if case_row is not None else None
         ev = critic.ranking_ev(case_row, judged)
@@ -169,7 +167,10 @@ def ready(
             )
             ranked.append(((_TIER["brainstorm"],), Item("brainstorm", None, text)))
     ranked.sort(key=lambda pair: pair[0])
-    return [item for _, item in ranked[:MAX_ITEMS]]
+    shown = [item for _, item in ranked[:MAX_ITEMS]]
+    if len(ranked) > MAX_ITEMS and ranked[-1][1].kind == "brainstorm":  # 0.19.3: never pushed off the list
+        shown[-1] = ranked[-1][1]
+    return shown
 
 
 def text(items: list[Item], record: str = "") -> str:

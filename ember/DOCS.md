@@ -197,9 +197,11 @@ it runs one **wake cycle**:
    (a request you rejected or carried out, or one that failed), milestones
    Ember's code closed missed, overdue milestones and live listings with too
    few photos. It closes a promise only after telling you it is kept (or why
-   not). While something is pressing (your unanswered message, a promise due by
-   tomorrow, a decision or miss of the last two days), a wake cycle is an
-   ordinary one, not a venture cycle.
+   not). While something is pressing (a promise due by tomorrow, a decision or
+   miss of the last two days, or your unanswered message when the cycle is the
+   one it woke), a wake cycle is an ordinary one, not a venture cycle. A
+   scheduled venture cycle answers your waiting messages first (0.19.3), and
+   leaves what needs files or the shop to the next ordinary cycle.
 2. **Act**: it uses its tools, up to the *Tool steps per cycle* option: files in
    its own workspace, its memory (strategy, identity, lessons), projects, web
    research (also limited to one site, such as etsy.com), requests for your
@@ -532,7 +534,10 @@ part of each day's spending the agent puts into ventures: a wake cycle is a
 venture cycle while venture cycles have had less than that share of the day's
 spending, so ventures get it whatever else is going on. It comes out of the
 same daily cap, so it doesn't raise what Ember spends; raise the daily cap if
-you want more research. In a venture cycle the agent:
+you want more research. Venture cycles are for new ventures: ideas, research
+and business cases (0.19.3). A venture you back becomes project work: Ember's
+code opens its project, and ordinary cycles run its first test. In a venture
+cycle the agent:
 
 - takes one of the **decision desk**'s items (0.13.0, below), or says why it
   takes none;
@@ -560,26 +565,28 @@ you want more research. In a venture cycle the agent:
 (0.13.0), and each venture cycle's plan gets it as **READY**: at most five
 items, the most pressing first:
 
-1. **build**: a venture you backed that has no open project yet: set up its
-   first test;
-2. your wishes: a venture you asked to have researched next, an idea you added;
-3. ventures close to being parked by their stage's rule (within 7 days, or
+1. your wishes: a venture you asked to have researched next, an idea you added;
+2. ventures close to being parked by their stage's rule (within 7 days, or
    with at most a quarter of their research budget left);
-4. **answer**: a proposed venture the critic says to test or park: answer its
+3. **answer**: a proposed venture the critic says to test or park: answer its
    flaw with evidence or new numbers, or park it;
-5. **appraise**: the other ventures being researched, with what each needs
+4. **appraise**: the other ventures being researched, with what each needs
    next (research, evidence, numbers, a knock-out to fix, then propose or
    park);
-6. **triage**: ideas to research or park, while fewer than 8 ventures are
-   worked on;
-7. **brainstorm**: while fewer than 5 ideas wait and fewer than 5 ventures
-   have their numbers.
+5. **triage**: ideas to research or park, while fewer than 8 ventures are
+   being researched or proposed (backed ones don't count);
+6. **brainstorm**: while fewer than 5 ideas wait and fewer than 5 ventures
+   have their numbers. When it is due it always gets the last place, even if
+   more items wait.
+
+A venture you backed isn't on the list (before 0.19.3 it was, as **build**):
+its project is ordinary cycles' work.
 
 Within each, the highest expected net comes first (the critic's where it is
 lower), then the heaviest. The plan takes one item or says why it takes none.
 Ember's code checks the key and aims the cycle at the item's venture. It keeps
 each pick with the list it came from, and the work steps see it in their focus.
-In the focus burn mode only the build items are offered. The **Decision desk**
+Venture cycles run only in the explore burn mode. The **Decision desk**
 box on the Ventures tab shows the list as it stands, what the last venture
 plans took (or why none), and how many ventures were decided in the last 7
 days (proposed, parked or killed by the agent or you, not parked by a stage's
@@ -677,7 +684,8 @@ euros. The tab's badge counts the ones waiting. On each card:
 
 - **Back it**: the agent builds it: its first test becomes a milestone on the
   roadmap (**First test: …**, set by Ember's code, due in 21 days, with the
-  business case's first test as its measure), and it asks you for what only you
+  business case's first test as its measure), Ember's code opens its project
+  (0.19.3; ordinary cycles work on it), and the agent asks you for what only you
   can do (accounts, money, setup), one step at a time. A venture of a channel
   Ember's code serves (Pinterest, Printify) gets its first test only once that
   channel is set up, so its 21 days don't run out during your setup (a first
@@ -1982,7 +1990,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.19.2 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.19.3 (by /u/your name)`.
 
 ## Diagnostics
 
@@ -2094,9 +2102,9 @@ below go no lower than focus; with **conserve** they are as follows:
 
 - **explore**: more than 30 days (or it earns what it spends): as your options
   allow;
-- **focus**: 15 to 30 days: the tests already running go on (venture cycles
-  only while a venture is backed or live), with no brainstorms and no new ideas
-  but those you bring;
+- **focus**: 15 to 30 days: the tests already running go on (the backed
+  ventures' projects, in ordinary cycles; no venture cycles), with no
+  brainstorms and no new ideas but those you bring;
 - **maintenance**: under 15 days: one scheduled cycle a day (after a failed or
   stopped one too), of at most $0.40 with every call counted (the daily review
   and library study too), no workshop runs and no venture cycles (your messages,

@@ -8,15 +8,16 @@ stage has a rule (``RULES``): what completes it, and when Ember's code parks the
   in the stage began (its first research call), while nothing is built for it (no open project). A venture no one
   researches waits: the seeded Etsy leg sits in researching until its first listing.
 * proposed: the owner's decision (back, park or kill).
-* building: when the owner backs a venture, its first test becomes a milestone Ember's code sets (``first_test``, due
-  in FIRST_TEST_DAYS, its date fixed); the venture goes live once that is met (the database refuses it before), and is
-  parked when it is missed (closed missed, or still open FIRST_TEST_GRACE_DAYS after its date). 0.15.0: a venture a
-  channel of Ember's code serves (CHANNEL_TESTS) gets its first test only once that channel is set up: its clock
-  doesn't run while the owner hasn't connected it. 0.16.3 (analysis bug 1): a first test with a metric has the same
-  grace as one in words (metrics.grade no longer closes it missed at its date); a channel's first test that is still
-  unmet when its grace ends, while no product of the channel was ever made (CHANNEL_PRODUCTS), never ran: it starts
-  once more instead (once a venture, ``run_again``); and the owner hears it a week before a first test's date
-  (``warn``), as the agent does (OBLIGATIONS, ``owed``).
+* building: when the owner backs a venture, its first test becomes a milestone Ember's code sets (``first_test``, due in
+  FIRST_TEST_DAYS, its date fixed), and (0.19.3) Ember's code opens its project (``open_project``): a backed venture is
+  project work, in ordinary cycles, and venture cycles find and decide new ones. The venture goes live once that is met
+  (the database refuses it before), and is parked when it is missed (closed missed, or still open FIRST_TEST_GRACE_DAYS
+  after its date). 0.15.0: a venture a channel of Ember's code serves (CHANNEL_TESTS) gets its first test only once that
+  channel is set up: its clock doesn't run while the owner hasn't connected it. 0.16.3 (analysis bug 1): a first test
+  with a metric has the same grace as one in words (metrics.grade no longer closes it missed at its date); a channel's
+  first test that is still unmet when its grace ends, while no product of the channel was ever made (CHANNEL_PRODUCTS),
+  never ran: it starts once more instead (once a venture, ``run_again``); and the owner hears it a week before a first
+  test's date (``warn``), as the agent does (OBLIGATIONS, ``owed``).
 * idea (0.13.0, triage): an idea of the agent's is researched (researching) or parked within TRIAGE_DAYS of coming up;
   Ember's code parks it then. The owner's ideas wait for them.
 * live (0.13.0, scale): a live venture that earns more than it costs (its P&L: revenue less expenses and the API calls
@@ -40,7 +41,7 @@ from typing import Any
 
 from ..economy.clock import from_iso
 from ..integrations import pinterest_publisher, printify_publisher
-from . import knockouts, metrics, roadmap, ventures
+from . import knockouts, metrics, roadmap, store, ventures
 from .store import AgentScope
 
 RESEARCH_DAYS = ventures.RESEARCH_DAYS
@@ -113,6 +114,35 @@ def first_test(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str
         "UPDATE ventures SET test_milestone_id = ?, updated_at = ? WHERE id = ?", (milestone_id, now, venture["id"])
     )
     return milestone_id
+
+
+def open_project(
+    conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any], test_id: int, cycle_id: int, now: str
+) -> str:
+    """0.19.3: the project of a backed venture that never had one, opened by Ember's code (the owner: "once we do it,
+    it goes into an active project"). Live, two venture cycles tried to set one up for the licence packs and couldn't,
+    and the website's project became the Bluesky channel's, so READY asked again and again. Returns what happened, or
+    "" when the venture had a project (open or closed: one the agent closed isn't opened again)."""
+    had = conn.execute("SELECT 1 FROM projects WHERE venture_id = ? LIMIT 1", (venture["id"],)).fetchone()
+    if had is not None:
+        return ""
+    title = " ".join(str(venture["title"]).split())[:80]
+    hypothesis = " ".join(str(venture["first_test"] or venture["pitch"] or title).split())
+    project = store.create_project(
+        conn,
+        scope,
+        cycle_id=cycle_id,
+        title=title,
+        hypothesis=hypothesis if len(hypothesis) <= 400 else hypothesis[:399].rstrip() + "…",
+        next_step=f"Run its first test (milestone #{test_id}): what to make or set up, where buyers see it, and a bet.",
+        status="active",
+        now=now,
+        venture_id=int(venture["id"]),
+    )
+    return (
+        f"Ember's code opened project #{project} for venture #{venture['id']}, which your owner backed: its first test "
+        f"(milestone #{test_id}) is the project's work, in ordinary cycles"
+    )
 
 
 def drop_milestones(
@@ -369,13 +399,15 @@ def keep(
     now: str,
     ready: Collection[str] = tuple(CHANNEL_TESTS),
     unset: Collection[str] = (),
+    cycle_id: int | None = None,
 ) -> list[str]:
     """Before every plan: a first test for each backed venture that has none (0.15.0: a channel's venture once its
     channel is ``ready``; while the owner hasn't set the channel up (``unset``), an open first test Ember's code set
     earlier is dropped, and a new one comes once it is), and the stages' rules (research without a business case, a
     missed first test; 0.13.0: an idea no one took up, a live venture that sells nothing or earns more than it costs;
     0.16.3, analysis bug 1: a channel's first test that never ran, as no product of the channel was ever made, starts
-    once more instead of being missed, once a venture). Returns what happened, for the events."""
+    once more instead of being missed, once a venture; 0.19.3: with ``cycle_id``, the project of a backed venture
+    that never had one). Returns what happened, for the events."""
     happened = []
     paid = ventures.money(conn, scope)
     for v in ventures.all_ventures(conn, scope):
@@ -418,7 +450,12 @@ def keep(
         if test is None:
             made = first_test(conn, scope, v, today, now)
             happened.append(f"Ember's code set the first test of venture #{v['id']} as milestone #{made}")
+            opened = open_project(conn, scope, v, made, cycle_id, now) if cycle_id is not None else ""
+            happened += [opened] if opened else []
             continue
+        if cycle_id is not None and test["status"] == "open":
+            opened = open_project(conn, scope, v, int(test["id"]), cycle_id, now)
+            happened += [opened] if opened else []
         late = (today - (roadmap.parse_day(test["due"]) or today)).days
         if test["status"] == "open" and late > FIRST_TEST_GRACE_DAYS:
             product = never_ran(conn, scope, v) if test["created_by"] == "code" else ""

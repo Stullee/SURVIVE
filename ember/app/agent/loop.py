@@ -317,7 +317,7 @@ class CycleRunner:
             # 0.15.0: no workshop runs in maintenance (a run costs about what the whole cycle may)
             ctx.workshop = self._workshop_fn(ctx) if prompts.workshop_on(self.settings) and mode.workshop else None
             if trigger != "last_will":
-                ctx.venture = self._venture_cycle(cycle_id) if not self.reactive else False
+                ctx.venture = self._venture_cycle(cycle_id, trigger) if not self.reactive else False
                 # 0.12.0: brainstorms only while the burn mode is explore
                 ctx.brainstorm = self._brainstorm_fn(ctx) if ctx.venture and mode.brainstorms else None
                 with self.db.connection() as conn:
@@ -410,16 +410,20 @@ class CycleRunner:
             return burn.peek(self.db, self.economy.life.evaluate())
         return burn.Burn(row["burn_mode"], None)
 
-    def _venture_cycle(self, cycle_id: int) -> bool:
+    def _venture_cycle(self, cycle_id: int, trigger: str = "schedule") -> bool:
         """Whether this is a venture cycle: venture cycles have had less than the owner's share of the day's spending
-        (``ventures.venture_turn``). Recorded on the cycle; an empty venture tree gets its first ideas first."""
+        (``ventures.venture_turn``). Recorded on the cycle; an empty venture tree gets its first ideas first. 0.19.3:
+        the owner's waiting messages make it an ordinary cycle only when one woke it (``trigger`` 'owner': they wait
+        for what they asked); otherwise the venture cycle answers them first. Live, messages turned 4 of 12 cycles
+        that were the ventures' turn into ordinary ones, and 2 of 12 were venture cycles."""
         allowed = self._burn_allows_ventures()  # 0.12.0: read before the transaction
         with self.db.transaction() as conn:
             ventures.seed(conn, self.scope, to_iso(self.clock.now()))
             spent, ventured = ventures.day_spend(conn, self.scope, self.clock.today())
             turn = allowed and ventures.venture_turn(self.settings.venture_share, spent, ventured)
             # 0.12.0: what the agent owes comes first (a venture cycle deferred the owner's quick fix)
-            owed = obligations.pressing(conn, self.scope, self.clock.today()) if turn else []
+            today = self.clock.today()
+            owed = obligations.pressing(conn, self.scope, today, messages=trigger == "owner") if turn else []
             if turn and not owed:
                 store.update_cycle(conn, cycle_id, venture=1)
         if owed:
@@ -432,19 +436,10 @@ class CycleRunner:
         return turn and not owed
 
     def _burn_allows_ventures(self) -> bool:
-        """0.12.0: venture cycles run in explore, and in focus only while a venture is backed or live (the tests
-        already running); not in maintenance or dormant."""
-        mode = burn.peek(self.db, self.economy.life.evaluate())
-        if not mode.venture_cycles:
-            return False
-        if mode.mode == burn.EXPLORE:
-            return True
-        where, params = self.scope.where()
-        with self.db.connection() as conn:
-            running = conn.execute(
-                f"SELECT 1 FROM ventures WHERE {where} AND stage IN ('building', 'live') LIMIT 1", params
-            ).fetchone()
-        return running is not None
+        """0.12.0: venture cycles run in the explore burn mode (0.19.3: no longer in focus, where they ran only the
+        backed ventures' tests: a backed venture's work is its project's, in ordinary cycles); not in maintenance or
+        dormant."""
+        return burn.peek(self.db, self.economy.life.evaluate()).venture_cycles
 
     def _expire_requests(self) -> None:
         """0.12.0: the requests the owner didn't decide within their type's days expire (news for the agent)."""
@@ -629,7 +624,7 @@ class CycleRunner:
         room, why = self.meter.cycle_room(cycle_id, mode)  # 0.15.0: the cap in force, not the options'
         if keep:
             self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
-            self._keep_stages()
+            self._keep_stages(cycle_id)
             metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
             self._keep_gates()  # 0.13.0: after the grading, so a bar missed now is owed at once
             self._keep_bets()  # 0.18.0: after the grading, from the same Etsy numbers
@@ -815,6 +810,12 @@ class CycleRunner:
                 venture = ventures.get(conn, self.scope, plan.focus_venture_id)
                 if venture is None or venture["stage"] not in ventures.OPEN_STAGES:
                     plan.focus_venture_id = None
+                elif ctx.venture and venture["stage"] not in ventures.EXPLORING:
+                    plan.focus_venture_id = None  # 0.19.3: a backed or live venture is its project's work
+                    venture_focus = (
+                        f"Venture #{venture['id']} is {venture['stage']}: your owner backed it, so its work is its "
+                        "project's, in ordinary cycles. This venture cycle finds and decides new ventures (READY)."
+                    )
                 else:
                     venture_focus = self._venture_focus(conn, venture, cycle_id)
                     if taken is not None and taken.venture_id == plan.focus_venture_id:
@@ -949,9 +950,10 @@ class CycleRunner:
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
 
-    def _keep_stages(self) -> None:
+    def _keep_stages(self, cycle_id: int | None = None) -> None:
         """0.12.0: the rules of the ventures' stages (a first test for each backed venture, research without a business
-        case and a missed first test parked), kept by Ember's code before every plan (stages.keep)."""
+        case and a missed first test parked), kept by Ember's code before every plan (stages.keep); 0.19.3: in a cycle
+        (``cycle_id``), a backed venture's project too."""
         # 0.15.0: a channel's venture gets its first test once the channel is set up (its tools are on), and one set
         # while the owner hadn't set it up yet (or switched it off since) starts again then
         ready = [name for name, on in (("pinterest", self.pinterest_on), ("printify", self.printify_on)) if on]
@@ -962,7 +964,9 @@ class CycleRunner:
             and (channel.status()[0] == "disabled" or _unset(channel.status(), self._etsy_state()))
         ]
         with self.db.transaction() as conn:
-            happened = stages.keep(conn, self.scope, self.clock.today(), to_iso(self.clock.now()), ready, unset)
+            happened = stages.keep(
+                conn, self.scope, self.clock.today(), to_iso(self.clock.now()), ready, unset, cycle_id=cycle_id
+            )
             # 0.16.3 (analysis bug 1): the owner hears once, a week before a first test's date, what is at stake
             warned = stages.warn(conn, self.scope, self.clock.today(), to_iso(self.clock.now()))
         for line in happened:

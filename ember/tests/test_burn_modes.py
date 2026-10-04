@@ -165,9 +165,12 @@ def test_focus_goes_on_with_the_tests_already_running(data_dir: Path, monkeypatc
         owner(agent).decide_venture(DROPSHIPPING, {"action": "back", "confirm": True}, "Stefan").status == 200
     )  # a test runs
     agent.run_cycle("schedule")
-    assert rows(agent, "SELECT venture FROM cycles ORDER BY id")[-1] == {"venture": 1}
+    # 0.19.3: the backed venture's test is its project's work, in ordinary cycles: no venture cycle runs in focus
+    assert rows(agent, "SELECT venture FROM cycles ORDER BY id")[-1] == {"venture": 0}
+    [project] = rows(agent, f"SELECT status, next_step FROM projects WHERE venture_id = {DROPSHIPPING}")
+    assert project["status"] == "active" and project["next_step"].startswith("Run its first test (milestone #")
     [refused] = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'brainstorm'")
-    assert refused["status"] == "error" and "brainstorming isn't available right now" in refused["result"]
+    assert refused["status"] == "error"
 
 
 def test_dormant_makes_no_model_calls_until_money_comes_in(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:

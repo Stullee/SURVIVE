@@ -141,19 +141,20 @@ def told_since(conn: sqlite3.Connection, scope: AgentScope, message_id: int) -> 
     return found is not None
 
 
-def pressing(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[str]:
+def pressing(conn: sqlite3.Connection, scope: AgentScope, today: date, messages: bool = True) -> list[str]:
     """What makes this wake cycle an ordinary one rather than a venture cycle: the owner's messages waiting for an
-    answer, a promise due by tomorrow (or overdue for PRESSING_OVERDUE_DAYS at most), a decision or a miss of the last
+    answer (0.19.3: only with ``messages``, when the owner's message woke it; a venture cycle answers them first), a
+    promise due by tomorrow (or overdue for PRESSING_OVERDUE_DAYS at most), a decision or a miss of the last
     PRESSING_NEW_DAYS days. Empty when nothing presses."""
     where, params = scope.where()
     found = []
-    messages = conn.execute(
+    waiting = conn.execute(
         f"SELECT COUNT(*) FROM messages WHERE {where} AND sender = 'owner' AND answered_by IS NULL"
         " AND removed_at IS NULL",
         params,
     ).fetchone()[0]
-    if messages:
-        found.append(f"{messages} message{'s' if messages != 1 else ''} of your owner's to answer")
+    if waiting and messages:
+        found.append(f"{waiting} message{'s' if waiting != 1 else ''} of your owner's to answer")
     first = (today - timedelta(days=PRESSING_OVERDUE_DAYS)).isoformat()
     last = (today + timedelta(days=1)).isoformat()
     since = (today - timedelta(days=PRESSING_NEW_DAYS)).isoformat()

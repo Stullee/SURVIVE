@@ -245,7 +245,7 @@ def test_a_venture_cycle_researches_up_to_eight_times(data_dir: Path) -> None:
     work = [r for r in fake.sent if request_kind(r) == "work"]
     assert all("brainstorm" in {t["name"] for t in r["tools"]} for r in work)
     brief = work[0]["messages"][0]["content"][0]["text"]
-    assert "\n== VENTURE CYCLE ==\nThis is a venture cycle: read guide 'ventures' first" in brief
+    assert "\n== VENTURE CYCLE ==\nThis is a venture cycle: answer your owner's waiting messages first" in brief
     assert "Focus venture: #3 Dropshipping store [idea]" in brief
     assert "Knowledge file: ventures/3-dropshipping-store.md (not written yet)" in brief
 

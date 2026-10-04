@@ -393,7 +393,7 @@ SPECS: dict[str, Spec] = {
             "venture_create",
             "Add a venture to your tree: a new way to earn (a market, platform, business model, or a channel that "
             "brings buyers to what you sell), branched from the venture it grew from. "
-            f"At most {ventures.MAX_ACTIVE} are worked on at once. Free.",
+            f"At most {ventures.MAX_ACTIVE} are researched or proposed at once. Free.",
             {
                 "title": _s("A short name.", 80, cut=True),
                 "pitch": _s("What it is, who pays for what, and why it could work.", 600, cut=True),
@@ -2132,11 +2132,8 @@ def _venture_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     if ventures.count(conn, ctx.scope) >= ventures.MAX_VENTURES:
         raise ToolError(f"your tree holds {ventures.MAX_VENTURES} ventures, as many as it can")
     stage = args["stage"]
-    if (
-        stage in ventures.ACTIVE_STAGES
-        and ventures.count(conn, ctx.scope, ventures.ACTIVE_STAGES) >= ventures.MAX_ACTIVE
-    ):
-        raise ToolError(f"{ventures.MAX_ACTIVE} ventures are being worked on already: add it as an idea, or park one")
+    if stage in ventures.EXPLORED and ventures.count(conn, ctx.scope, ventures.EXPLORED) >= ventures.MAX_ACTIVE:
+        raise ToolError(f"{ventures.MAX_ACTIVE} ventures are being researched already: add it as an idea, or park one")
     same = ventures.by_title(conn, ctx.scope, title)
     if same is not None:
         raise ToolError(f"venture #{same['id']} ({same['stage']}) already has this title: update it instead")
@@ -2184,9 +2181,9 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         changes["scores_by"] = "research"
     stage = args.get("stage")
     if stage and stage != current:
-        busy = ventures.count(conn, ctx.scope, ventures.ACTIVE_STAGES)
-        if stage in ventures.ACTIVE_STAGES and current not in ventures.ACTIVE_STAGES and busy >= ventures.MAX_ACTIVE:
-            raise ToolError(f"{ventures.MAX_ACTIVE} ventures are being worked on already: park or propose one first")
+        busy = ventures.count(conn, ctx.scope, ventures.EXPLORED)  # 0.19.3: backed ones take no room
+        if stage in ventures.EXPLORED and current not in ventures.EXPLORED and busy >= ventures.MAX_ACTIVE:
+            raise ToolError(f"{ventures.MAX_ACTIVE} ventures are being researched already: park or propose one first")
         if stage == "live" and current != "building":
             raise ToolError("a venture goes live once your owner backed it (building) and it launched")
         if stage == "live" and not _tested(conn, ctx.scope, row):  # 0.12.0: the stage's rule, kept by the database too
