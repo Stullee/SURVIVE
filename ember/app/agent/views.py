@@ -40,6 +40,7 @@ from . import (
     memory,
     metrics,
     never,
+    obligations,
     policy,
     predictions,
     prompts,
@@ -166,6 +167,12 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         ]
         messages, inbox_before = store.inbox(conn, scope)
         inbox = _inbox(conn, scope, messages)
+        # 0.19.4: every open promise, however old its message (the Inbox's "Waiting on Ember" lists them)
+        promises_open = [
+            {"id": o["id"], "what": o["what"], "due": o["due"], "message_id": o["message_id"]}
+            for o in obligations.open_rows(conn, scope)
+            if o["kind"] == "promise"
+        ]
         upgrades = [
             {
                 "id": r["id"],
@@ -211,6 +218,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "audit": {**audit_view, "unlocks_off": agent.unlocks_off()},
         "inbox": inbox,
         "inbox_before": inbox_before,  # 0.15.0: older messages load on request (api/inbox?before=)
+        "promises_open": promises_open,
         "upgrades": upgrades,
         "instructions": instructions,
         "last_will": {"text": will["text"], "cut_off": bool(will["cut_off"])} if will else None,
@@ -903,6 +911,10 @@ def _project(conn: sqlite3.Connection, p: sqlite3.Row) -> dict[str, Any]:
     earned = conn.execute(
         "SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type = 'revenue' AND project_id = ?", (p["id"],)
     ).fetchone()[0]
+    # 0.19.4: its expenses (Etsy's fees, corrections included), so the dashboard shows what it nets, as for a venture
+    expenses = conn.execute(
+        "SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type = 'expense' AND project_id = ?", (p["id"],)
+    ).fetchone()[0]
     pending = conn.execute(
         "SELECT COUNT(*) FROM approvals WHERE project_id = ? AND status = 'pending'", (p["id"],)
     ).fetchone()[0]
@@ -916,6 +928,8 @@ def _project(conn: sqlite3.Connection, p: sqlite3.Row) -> dict[str, Any]:
         "notes": p["notes"],
         "spent_usd": _usd(spent[0]),
         "earned_usd": _usd(earned),
+        "expenses_usd": _usd(expenses),
+        "net_usd": _usd(earned - expenses - spent[0]),
         "cycles": int(spent[1]),
         "pending_approvals": int(pending),
         "created_at": p["created_at"],

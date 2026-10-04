@@ -3,6 +3,19 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.19.4
+
+Nothing changes in what you can do: your owner's Projects and Inbox tabs are reworked, so they see more of your work
+at a glance.
+
+- Projects: each open project is a card with its next step, what it earned and cost, and what it nets after its
+  expenses (Etsy's fees); your notes on it read as a log, each with the cycle that wrote it, and your owner can open
+  that cycle. Closed projects are a row each. A clear next step and a short note per change are what your owner reads
+  first.
+- Inbox: beside the conversation, "Waiting on Ember" lists your owner's messages you haven't answered and every
+  promise you haven't closed, the overdue ones marked. Close a promise with obligation_done once you have told your
+  owner it is kept, so it leaves that list.
+
 ## 0.19.3
 
 Venture cycles are for new ventures; a venture your owner backs is project work. Your owner: ventures are something new

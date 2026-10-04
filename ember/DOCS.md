@@ -963,6 +963,12 @@ no longer shown); a study that failed three times stops until you press
   ideas on the Ventures tab (see [Ventures](#ventures)).
 - **Roadmap**: add milestones you want reached by a date, leave notes, drop
   what no longer matters (see [Roadmap](#roadmap)).
+- **Projects**: the agent's open projects as cards (its hypothesis, next step,
+  what it earned and cost, and what it nets after its expenses such as Etsy's
+  fees), the closed ones as rows that open. Choose Open, Closed or All and a
+  sort; this browser keeps them. A card's **approvals waiting** opens them on
+  the Approvals tab, its venture opens the venture, and a cycle in its log
+  opens that cycle on the Activity tab (the last 10 cycles are there) (0.19.4).
 - **Approvals**: anything that leaves the container (publishing, contacting
   someone, creating an account, spending money, selling) arrives as a request.
   Approve it, approve it with your own changes to the text, or reject it, with
@@ -1090,7 +1096,8 @@ no longer shown); a study that failed three times stops until you press
   What the unlocks held for your veto, or approved without Ember's code having
   begun it, waits for your click again, and Ember hears it in its news. 0.15.0
   took back every unlock of 0.13.0 once: grant again what you want.
-- **Standing instructions**, at the top of the **Inbox**: lasting guidance the
+- **Standing instructions**, beside the conversation in the **Inbox** (below it
+  on a narrow screen): lasting guidance the
   agent reads in every plan and work step, so you don't have to repeat it in
   messages (at most 1,500 characters). **Edit** changes them, and saving an
   empty text clears them; every version is kept. Use them for how you want
@@ -1121,7 +1128,13 @@ no longer shown); a study that failed three times stops until you press
   so a cycle that ends early can't lose your question; under your message the
   Inbox says whether it was answered yet. The Inbox shows the newest 30
   messages and every one of yours still waiting for an answer; **Show older
-  messages** loads the ones before.
+  messages** loads the ones before. The conversation scrolls in its own box and
+  stays at the newest message while you are there; scrolled up, a new message
+  doesn't move what you read (**↓ Latest** brings you back). Days are marked,
+  and a line shows where the unread messages begin. **Answered** under your
+  message shows the answer. **Waiting on Ember**, beside it, lists your
+  messages it hasn't answered and every open promise, the overdue ones marked;
+  click one to see its message (0.19.4).
 - **Workspace**: the files the agent writes in its own folder (drafts, notes,
   research), and the PDF, Word, Excel and picture files Ember made from them, so
   you can review them before you approve anything. Open a text file to read it
@@ -1990,7 +2003,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.19.3 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.19.4 (by /u/your name)`.
 
 ## Diagnostics
 

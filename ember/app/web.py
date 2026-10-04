@@ -133,6 +133,7 @@ def dashboard(request: Request) -> dict[str, Any]:
         "approvals": [],
         "inbox": [],
         "inbox_before": None,
+        "promises_open": [],
         "upgrades": [],
         "instructions": None,
         "mind": None,

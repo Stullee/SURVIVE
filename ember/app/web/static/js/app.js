@@ -50,7 +50,9 @@
     // The venture tree: loaded while its tab is open, again whenever the dashboard's ventures_stamp changes.
     // files: venture id -> what Ember learned about it (its knowledge file), loaded when the owner opens it.
     vt: { data: null, byId: {}, stamp: null, loadedAt: null, busy: false, again: false, error: null, selected: null,
-      files: {}, saving: false },
+      files: {}, saving: false, reveal: null },
+    // 0.19.4: the Projects tab's filter (open, closed, all) and sort, kept in this browser.
+    pj: { filter: loadPref("ember-projects-filter", "open"), sort: loadPref("ember-projects-sort", "status") },
     // The roadmap (0.11.0): loaded while its tab is open, again whenever the dashboard's roadmap stamp changes.
     rm: { data: null, byId: {}, stamp: null, busy: false, again: false, error: null, selected: null, saving: false },
     // The library (0.12.0): loaded while its tab is open, again whenever the dashboard's library stamp changes.
@@ -66,6 +68,9 @@
     // 0.15.0: the Inbox's older messages, loaded on request: those pages, the message the next one begins before (null:
     // no older ones) and the dashboard's page they follow (a new message moves it: they load again, or a gap would open).
     older: { messages: [], next: null, after: null },
+    // 0.19.4: the conversation scrolls inside, kept at the newest while the owner is there (stick); the newest message
+    // rendered, and whether one arrived below while the owner read further up.
+    chat: { stick: true, lastId: null, newBelow: false },
   };
 
   // The phase-1 scenario switcher is gone; drop its stored choice.
@@ -617,7 +622,7 @@
     section("ledger", [d.ledger, d.mode], ["ledger-list"], function () { renderLedger(d); });
     safely("forms", function () { updateForms(d, agent); });
 
-    section("projects", [d.projects, minute], ["projects"], function () { renderProjects(arr(d.projects)); });
+    section("projects", projectsKey(d), ["projects"], function () { renderProjects(d); });
     // Patched item by item, so an open cycle, its loaded details and their scroll positions survive the fast polls.
     section("activity", [d.activity, minute], null, function () { return renderActivity(arr(d.activity)); });
     // Owner queues: patched card by card, so an open decision form keeps what the owner typed.
@@ -628,7 +633,7 @@
     section("instructions", [d.instructions, agent.name, coming, !!agent.unavailable, minute], ["instructions-view"], function () {
       renderInstructions(isObject(d.instructions) ? d.instructions : null, agent);
     });
-    section("inbox", [d.inbox, d.inbox_before, d.badges, agent.name, coming, d.mode, minute], ["inbox"], function () { renderInboxOf(d); });
+    section("inbox", [d.inbox, d.inbox_before, d.promises_open, d.badges, agent.name, coming, d.mode, minute], ["inbox", "owed"], function () { renderInboxOf(d); });
     section("upgrades", [d.upgrades, coming, agent.name, minute], null, function () { return renderUpgrades(arr(d.upgrades)); });
     // The tree is loaded apart: again when it changed (a venture, or a cycle that ended), while its tab is open.
     if (ui.tab === "ventures" && !ui.vt.busy && d.ventures_stamp !== undefined && d.ventures_stamp !== ui.vt.stamp) loadVentures();
@@ -1597,52 +1602,297 @@
     return titles;
   }
 
-  function renderProjects(projects) {
+  // 0.19.4: the open projects as cards, the closed ones as rows that open; a filter and a sort kept in this browser.
+  // The bar with them is outside the list, so a control with focus never holds back the list's next render.
+  var PROJECT_FILTERS = ["open", "closed", "all"];
+  var PROJECT_SORTS = ["status", "updated", "net", "earned", "spent", "started"];
+  var PROJECT_CLOSED = { succeeded: true, failed: true, abandoned: true };
+
+  function projectsKey(d) {
+    return [d.projects, arr(d.activity).map(function (c) { return c.cycle_id; }), d.venture_choices, ui.pj.filter, ui.pj.sort,
+      agentName(), Math.floor(Date.now() / 60000)];
+  }
+
+  function renderProjectsNow() {
+    if (ui.data) section("projects", projectsKey(ui.data), ["projects"], function () { renderProjects(ui.data); });
+  }
+
+  function setProjectView(filter, sort) {
+    if (filter) { ui.pj.filter = filter; savePref("ember-projects-filter", filter); }
+    if (sort) { ui.pj.sort = sort; savePref("ember-projects-sort", sort); }
+    syncProjectControls();
+    renderProjectsNow();
+  }
+
+  function syncProjectControls() {
+    Array.prototype.forEach.call(document.querySelectorAll("[data-pj-filter]"), function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-pj-filter") === ui.pj.filter));
+    });
+    $("projects-sort").value = ui.pj.sort;
+  }
+
+  function initProjects() {
+    if (PROJECT_FILTERS.indexOf(ui.pj.filter) < 0) ui.pj.filter = "open";
+    if (PROJECT_SORTS.indexOf(ui.pj.sort) < 0) ui.pj.sort = "status";
+    Array.prototype.forEach.call(document.querySelectorAll("[data-pj-filter]"), function (b) {
+      b.addEventListener("click", function () { setProjectView(b.getAttribute("data-pj-filter"), null); });
+    });
+    $("projects-sort").addEventListener("change", function () { setProjectView(null, $("projects-sort").value); });
+    syncProjectControls();
+  }
+
+  function projectNet(p) { var v = num(p.net_usd); return isNaN(v) ? 0 : v; }
+
+  // "+$12.31", "−$1.30", "$0.00": the sign says which way the project moved the balance.
+  function netText(value) {
+    var v = num(value);
+    if (isNaN(v)) return "–";
+    return (v > 0 ? "+" : v < 0 ? "−" : "") + usd(Math.abs(v));
+  }
+
+  function netTone(value) { var v = num(value); return v > 0 ? "good" : v < 0 ? "critical" : null; }
+
+  function projectSorter(key) {
+    function time(iso) { return new Date(iso).getTime() || 0; }
+    function money(p, field) { var v = num(p[field]); return isNaN(v) ? 0 : v; }
+    return function (x, y) {
+      var by = key === "status" ? statusOrder(PROJECT_STATUS, x.status) - statusOrder(PROJECT_STATUS, y.status)
+        : key === "net" ? projectNet(y) - projectNet(x)
+        : key === "earned" ? money(y, "earned_usd") - money(x, "earned_usd")
+        : key === "spent" ? money(y, "spent_usd") + money(y, "expenses_usd") - money(x, "spent_usd") - money(x, "expenses_usd")
+        : key === "started" ? time(y.created_at) - time(x.created_at)
+        : 0;
+      return by || time(y.updated_at) - time(x.updated_at) || num(y.id) - num(x.id);
+    };
+  }
+
+  function renderProjects(d) {
     var el = $("projects");
+    var name = agentName();
+    var projects = arr(d.projects).filter(function (p) { return isObject(p) && p.id !== undefined; });
+    $("projects-bar").hidden = !projects.length;
     if (!projects.length) {
-      replace(el, emptyState("div", "No projects yet.", "When the agent starts a project, it shows up here with its hypothesis, its next step, and what it cost and earned."));
+      replace(el, emptyState("div", "No projects yet.", "When " + name + " starts a project, it shows up here with its hypothesis, its next step, and what it cost and earned."));
       return;
     }
-    var openIds = {};
-    Array.prototype.forEach.call(el.querySelectorAll("details[open]"), function (x) { openIds[x.getAttribute("data-id")] = true; });
-    var sorted = projects.slice().sort(function (x, y) {
-      return statusOrder(PROJECT_STATUS, x.status) - statusOrder(PROJECT_STATUS, y.status) ||
-        (new Date(y.updated_at).getTime() || 0) - (new Date(x.updated_at).getTime() || 0);
+    var ctx = { open: {}, cycles: {}, ventures: {} };
+    Array.prototype.forEach.call(el.querySelectorAll("details[open][data-id]"), function (x) { ctx.open[x.getAttribute("data-id")] = true; });
+    arr(d.activity).forEach(function (c) { if (isObject(c)) ctx.cycles[String(c.cycle_id)] = true; });
+    arr(d.venture_choices).forEach(function (v) { if (isObject(v)) ctx.ventures[String(v.id)] = v.title; });
+    var open = [];
+    var closed = [];
+    projects.forEach(function (p) { (PROJECT_CLOSED[p.status] ? closed : open).push(p); });
+    renderProjectStats(projects, open);
+    $("pj-count-open").textContent = intFmt.format(open.length);
+    $("pj-count-closed").textContent = intFmt.format(closed.length);
+    $("pj-count-all").textContent = intFmt.format(projects.length);
+    var sorter = projectSorter(ui.pj.sort);
+    open.sort(sorter);
+    closed.sort(sorter);
+    var all = ui.pj.filter === "all";
+    var parts = [];
+    if (ui.pj.filter !== "closed") {
+      parts.push(all && open.length ? projectsHead("Open", open.length) : null);
+      parts.push(open.length ? h("div", { class: "pj-cards" }, open.map(function (p) { return projectCard(p, ctx); }))
+        : emptyState("div", "No open projects.", name + " opens one when it tests an idea." + (closed.length ? " The finished ones are under Closed." : "")));
+    }
+    if (ui.pj.filter !== "open") {
+      parts.push(all && closed.length ? projectsHead("Closed", closed.length) : null);
+      parts.push(closed.length ? h("ul", { class: "pj-rows", "aria-label": "Closed projects" }, closed.map(function (p) { return projectRow(p, ctx); }))
+        : all ? null : emptyState("div", "No closed projects yet.", "A project closes when it succeeds, fails or is abandoned."));
+    }
+    if (ui.pj.filter === "open" && closed.length) parts.push(showClosedButton(closed));
+    replace(el, parts);
+  }
+
+  function projectsHead(title, n) {
+    return h("h2", { class: "pj-section-head" }, title, h("span", { class: "pj-section-count", text: intFmt.format(n) }));
+  }
+
+  function showClosedButton(closed) {
+    var succeeded = closed.filter(function (p) { return p.status === "succeeded"; }).length;
+    var b = h("button", { type: "button", class: "btn btn-ghost pj-show-closed" },
+      "Show " + plural(closed.length, "closed project") + (succeeded ? " (" + succeeded + " succeeded)" : ""));
+    b.addEventListener("click", function () {
+      var seg = document.querySelector('[data-pj-filter="closed"]');
+      seg.focus();  // before the render: focus inside the list would hold it back
+      setProjectView("closed", null);
     });
-    var counts = {};
-    var spent = 0;
+    return b;
+  }
+
+  function renderProjectStats(projects, open) {
     var earned = 0;
-    sorted.forEach(function (p) {
-      counts[p.status] = (counts[p.status] || 0) + 1;
-      spent += num(p.spent_usd) || 0;
+    var cost = 0;
+    var net = 0;
+    var waiting = 0;
+    var counts = {};
+    projects.forEach(function (p) {
       earned += num(p.earned_usd) || 0;
+      cost += (num(p.spent_usd) || 0) + (num(p.expenses_usd) || 0);
+      net += projectNet(p);
+    });
+    open.forEach(function (p) {
+      counts[p.status] = (counts[p.status] || 0) + 1;
+      waiting += num(p.pending_approvals) || 0;
     });
     var tally = Object.keys(PROJECT_STATUS).filter(function (k) { return counts[k]; }).map(function (k) {
       return counts[k] + " " + PROJECT_STATUS[k].label.toLowerCase();
     });
-    replace(el, [
-      h("p", { class: "panel-intro projects-summary", text: plural(sorted.length, "project") + (tally.length ? ": " + tally.join(", ") : "") +
-        ". Spent " + usd(spent) + ", earned " + usd(earned) + " in total." }),
-      sorted.map(function (p) { return projectCard(p, !!openIds[String(p.id)]); }),
+    if (waiting) tally.push(plural(waiting, "approval") + " waiting");
+    function stat(label, value, sub, tone) {
+      return h("div", { class: "pj-stat", "data-tone": tone || null },
+        h("dt", { text: label }), h("dd", { class: "pj-stat-value", text: value }), sub ? h("dd", { class: "pj-stat-sub", text: sub }) : null);
+    }
+    replace($("projects-stats"), [
+      stat("Open projects", intFmt.format(open.length), tally.join(" · ") || "none right now"),
+      stat("Earned", usd(earned), "revenue recorded for them"),
+      stat("Cost", usd(cost), "API calls and expenses"),
+      stat("Net", netText(net), "all " + plural(projects.length, "project"), netTone(net)),
     ]);
   }
 
-  function projectCard(p, notesOpen) {
-    var waiting = num(p.pending_approvals) > 0;
-    return h("article", { class: "card project", "data-id": String(p.id) },
-      h("div", { class: "project-head" }, chip(PROJECT_STATUS, p.status, sentence(p.status || "unknown")),
-        waiting ? h("span", { class: "chip", "data-tone": "warning" }, h("span", { "aria-hidden": "true", text: "◔" }),
-          plural(p.pending_approvals, "approval") + " waiting") : null),
-      h("h3", { text: p.title || "Untitled project" }),
+  function projectCard(p, ctx) {
+    var s = PROJECT_STATUS[p.status] || {};
+    return h("article", { class: "card project", "data-id": String(p.id), "data-tone": s.tone || null, "aria-labelledby": "pj-title-" + p.id },
+      h("div", { class: "pj-chips" }, chip(PROJECT_STATUS, p.status, sentence(p.status || "unknown")),
+        num(p.pending_approvals) > 0 ? approvalsButton(p) : null, ventureChip(p, ctx)),
+      h("h3", { class: "pj-title", id: "pj-title-" + p.id, text: p.title || "Untitled project" }),
       p.hypothesis ? h("p", { class: "hypothesis", text: p.hypothesis }) : null,
-      h("dl", { class: "money" },
-        h("div", null, h("dt", { text: "Spent" }), h("dd", { text: usd(p.spent_usd) })),
-        h("div", null, h("dt", { text: "Earned" }), h("dd", { text: usd(p.earned_usd) })),
-        h("div", null, h("dt", { text: "Cycles" }), h("dd", { text: count(p.cycles) }))),
-      h("p", { class: "next" }, h("strong", { text: "Next step: " }), p.next_step ? String(p.next_step) : "–"),
-      p.notes ? h("details", { class: "notes", "data-id": String(p.id), open: notesOpen },
-        h("summary", { text: "Notes" }), h("pre", { class: "notes-text", text: asText(p.notes) })) : null,
-      h("p", { class: "muted small project-dates" }, "Started ", timeEl(p.created_at), " · updated ", timeEl(p.updated_at)));
+      p.next_step ? h("div", { class: "pj-next" }, h("p", { class: "pj-next-label", text: "Next step" }), h("p", { class: "pj-next-text", text: String(p.next_step) })) : null,
+      projectMoney(p),
+      projectLog(p, ctx, true),
+      h("p", { class: "pj-foot" }, plural(p.cycles, "cycle"), " · started ", timeEl(p.created_at), " · updated ", timeEl(p.updated_at)));
+  }
+
+  // A closed project: one line (how it ended, what it netted, when), its card's contents when opened.
+  function projectRow(p, ctx) {
+    var key = "row-" + p.id;
+    return h("li", { class: "pj-row", "data-id": String(p.id) },
+      h("details", { "data-id": key, open: ctx.open[key] },
+        h("summary", null,
+          chip(PROJECT_STATUS, p.status, sentence(p.status || "unknown")),
+          h("span", { class: "pj-row-title", text: p.title || "Untitled project" }),
+          h("span", { class: "pj-row-net", "data-tone": netTone(p.net_usd), title: "Net: earned less its expenses and API cost", text: netText(p.net_usd) }),
+          h("span", { class: "pj-row-when" }, "closed ", timeEl(p.updated_at))),
+        h("div", { class: "pj-row-body" },
+          ventureChip(p, ctx),
+          p.hypothesis ? h("p", { class: "hypothesis", text: p.hypothesis }) : null,
+          projectMoney(p),
+          projectLog(p, ctx, false),
+          h("p", { class: "pj-foot" }, plural(p.cycles, "cycle"), " · started ", timeEl(p.created_at)))));
+  }
+
+  // Earned against cost (API calls plus its expenses), in the money chart's colors, and the net it comes to.
+  function projectMoney(p) {
+    var earned = num(p.earned_usd) || 0;
+    var api = num(p.spent_usd) || 0;
+    var expenses = num(p.expenses_usd) || 0;
+    var cost = api + expenses;
+    var top = Math.max(earned, cost);
+    if (!(top > 0)) return null;  // nothing spent or earned yet
+    function bar(value, cls) {
+      var fill = h("span", { class: "pj-fill " + cls });
+      fill.style.width = top > 0 && value > 0 ? Math.max(2, value / top * 100) + "%" : "0";
+      return h("span", { class: "pj-track" }, fill);
+    }
+    return h("div", { class: "pj-money" },
+      h("dl", { class: "pj-figures" },
+        h("div", null, h("dt", null, h("span", { class: "swatch pj-swatch-earned", "aria-hidden": "true" }), "Earned"), h("dd", { text: usd(earned) })),
+        h("div", null, h("dt", null, h("span", { class: "swatch pj-swatch-cost", "aria-hidden": "true" }), "Cost"), h("dd", { text: usd(cost) })),
+        h("div", { class: "pj-net", "data-tone": netTone(p.net_usd) }, h("dt", { text: "Net" }), h("dd", { text: netText(p.net_usd) }))),
+      top > 0 ? h("div", { class: "pj-bars", "aria-hidden": "true" }, bar(earned, "pj-fill-earned"), bar(cost, "pj-fill-cost")) : null,
+      expenses > 0 ? h("p", { class: "pj-cost-note", text: "Cost: API calls " + usd(api) + " and expenses " + usd(expenses) + "." }) : null);
+  }
+
+  // A project's notes as the agent's log, newest first: Ember's code starts each note with the cycle that wrote it
+  // ("[#c12] ..."). The notes keep their last 2,000 characters, so the oldest may begin without its cycle.
+  function noteEntries(notes) {
+    var entries = [];
+    String(notes || "").split("\n").forEach(function (line) {
+      var m = /^\s*\[#c(\d+)\]\s?(.*)$/.exec(line);
+      if (m) entries.push({ cycle: m[1], text: m[2] });
+      else if (entries.length) entries[entries.length - 1].text += "\n" + line;
+      else if (line.trim()) entries.push({ cycle: null, text: line });
+    });
+    return entries.filter(function (e) { return e.text.trim(); }).reverse();
+  }
+
+  function projectLog(p, ctx, collapsible) {
+    var entries = noteEntries(p.notes);
+    if (!entries.length) return null;
+    var list = h("ol", { class: "pj-log-list" }, entries.map(function (e) {
+      return h("li", null,
+        e.cycle ? h("span", { class: "pj-log-cycle" }, ctx.cycles[e.cycle] ? cycleLink(e.cycle) : "Cycle #" + e.cycle) : null,
+        h("span", { class: "pj-log-text", text: e.text.trim() }));
+    }));
+    if (!collapsible) return h("div", { class: "pj-log" }, h("h4", { class: "small-head", text: "Log" }), list);
+    var key = "log-" + p.id;
+    return h("details", { class: "pj-log", "data-id": key, open: ctx.open[key] },
+      h("summary", null, "Log ", h("span", { class: "pj-log-count", text: "· " + plural(entries.length, "note") })), list);
+  }
+
+  function cycleLink(id) {
+    var b = h("button", { type: "button", class: "link-button pj-cycle-link", "aria-label": "Cycle #" + id + ": open it in Activity", text: "Cycle #" + id });
+    b.addEventListener("click", function () { revealCycle(id); });
+    return b;
+  }
+
+  function approvalsButton(p) {
+    var n = num(p.pending_approvals);
+    var b = h("button", { type: "button", class: "chip chip-button", "data-tone": "warning", "aria-label": plural(n, "approval") + " waiting for you: open " + (n === 1 ? "it" : "them") + " in Approvals" },
+      h("span", { "aria-hidden": "true", text: "◔" }), plural(n, "approval") + " waiting", h("span", { class: "chip-arrow", "aria-hidden": "true", text: "→" }));
+    b.addEventListener("click", function () { revealApproval(p.id); });
+    return b;
+  }
+
+  function ventureChip(p, ctx) {
+    if (p.venture_id === null || p.venture_id === undefined) return null;
+    var title = ctx.ventures[String(p.venture_id)];
+    if (!title) return h("span", { class: "chip", text: "Venture #" + p.venture_id });
+    var b = h("button", { type: "button", class: "chip chip-button", "aria-label": "Venture: " + title + ". Open it in Ventures" },
+      h("span", { "aria-hidden": "true", text: "◆" }), h("span", { class: "chip-text", text: title }), h("span", { class: "chip-arrow", "aria-hidden": "true", text: "→" }));
+    b.addEventListener("click", function () { revealVenture(p.venture_id); });
+    return b;
+  }
+
+  // Brings a card or row of another tab into view, marks it for a moment and gives it (or a part of it) focus.
+  function revealEl(el, focusEl) {
+    if (!el) return;
+    var motion = !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    el.scrollIntoView({ block: "center", behavior: motion ? "smooth" : "auto" });
+    el.removeAttribute("data-flash");
+    void el.offsetWidth;  // restart the mark when it is shown again
+    el.setAttribute("data-flash", "true");
+    window.setTimeout(function () { el.removeAttribute("data-flash"); }, 2400);
+    var target = focusEl || el;
+    if (!target.hasAttribute("tabindex") && !/^(BUTTON|A|SUMMARY|INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) target.setAttribute("tabindex", "-1");
+    target.focus({ preventScroll: true });
+  }
+
+  function revealApproval(projectId) {
+    selectTab("approvals", false);
+    var ids = {};
+    arr(ui.data && ui.data.approvals).forEach(function (a) {
+      if (isObject(a) && a.status === "pending" && num(a.project_id) === num(projectId)) ids[String(a.id)] = true;
+    });
+    var card = Array.prototype.filter.call($("approvals").querySelectorAll("article[data-id]"), function (c) { return ids[c.getAttribute("data-id")]; })[0];
+    revealEl(card, card && card.querySelector("h3"));
+  }
+
+  function revealCycle(id) {
+    selectTab("activity", false);
+    var item = ui.cycles[String(id)];
+    if (!item) return;
+    var details = item.li.querySelector("details");
+    if (details) details.open = true;
+    revealEl(details || item.li, details ? details.querySelector("summary") : null);
+  }
+
+  function revealVenture(id) {
+    ui.vt.selected = id;
+    ui.vt.reveal = id;  // shown once the tree is loaded (selectTab loads it)
+    selectTab("ventures", false);
   }
 
   // ---- Activity: one item per cycle, patched in place. Returns false when an item was left out
@@ -1897,15 +2147,6 @@
     if (label) a.setAttribute("title", url.href);
     append(a, [label || text, h("span", { class: "visually-hidden", text: " (opens in a new tab)" })]);
     return a;
-  }
-
-  // Whether the agent answered one of the owner's messages it has seen: it stays in the agent's plans until then.
-  function answeredLine(m, messages) {
-    var answer = m.answered_by ? messages.filter(function (x) { return num(x.id) === num(m.answered_by); })[0] : null;
-    return h("p", { class: "seen", "data-seen": m.answered_by ? "yes" : "no" },
-      h("span", { "aria-hidden": "true", text: m.answered_by ? "✓ " : "◌ " }),
-      m.answered_by ? ["Answered by " + agentName(), answer ? [" ", timeEl(answer.created_at)] : null]
-        : "Not answered yet: " + agentName() + " keeps it in its plans until it answers");
   }
 
   function seenLine(seen) {
@@ -3284,25 +3525,52 @@
   // ---- Inbox
 
   // 0.12.0: what a message of the agent's promised (Ember's code keeps it until the agent closes it)
-  function promiseLine(o) {
-    var open = o.status === "open";
-    var late = open && o.due && o.due < todayIso();
-    return h("p", { class: "seen", "data-seen": open ? "no" : "yes" },
-      h("span", { "aria-hidden": "true", text: open ? "◌ " : "✓ " }),
-      "Promised: " + asText(o.what) + " · due " + fmtDay(o.due) +
-      (open ? (late ? " · overdue" : " · open") : " · closed" + (o.result ? ": " + asText(o.result) : "")));
+  function promiseState(o) {
+    if (o.status !== "open") return "closed";
+    return o.due && o.due < todayIso() ? "overdue" : "open";
+  }
+
+  function promiseMeta(o) {
+    var state = promiseState(o);
+    return state === "closed" ? "Closed" + (o.result ? ": " + asText(o.result) : "")
+      : (state === "overdue" ? "Overdue: it was due " : "Due ") + fmtDay(o.due);
+  }
+
+  function promiseItem(o) {
+    var state = promiseState(o);
+    return h("li", { class: "promise", "data-state": state },
+      h("span", { class: "promise-icon", "aria-hidden": "true", text: state === "closed" ? "✓" : state === "overdue" ? "!" : "◌" }),
+      h("span", { class: "promise-body" },
+        h("span", { class: "promise-what", text: asText(o.what) }),
+        h("span", { class: "promise-meta", text: promiseMeta(o) })));
   }
 
   // 0.15.0: the dashboard brings the newest messages and every one of yours still waiting for an answer; older ones
   // load on request, a page at a time.
   var INBOX_PAGE = 30;
+  var RUN_GAP_MS = 10 * 60 * 1000;  // messages of one sender this close together read as one run
 
   function renderInboxOf(d) {
     renderInbox(arr(d.inbox), (d.agent || standInAgent(d)).name, badgeCounts(d).unread, isDryRun(d), d.inbox_before);
+    renderOwed(d);
+  }
+
+  function localDay(date) {
+    return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0");
+  }
+
+  // "Today", "Yesterday", "Friday, October 2" (this year), "Fri, Oct 2, 2025".
+  var dayHeadFmt = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric" });
+  function dayHead(date) {
+    var today = new Date();
+    var days = Math.round((parseDay(localDay(today)) - parseDay(localDay(date))) / 86400000);
+    if (days === 0 || days === 1) return sentence(relFmt.format(-days, "day"));
+    return date.getFullYear() === today.getFullYear() ? dayHeadFmt.format(date) : dayLongFmt.format(date);
   }
 
   function renderInbox(messages, agentName, unread, dry, before) {
     var el = $("inbox");
+    var box = $("chat-scroll");
     var name = agentName || "Ember";
     if (ui.older.after !== null && ui.older.after !== before) ui.older = { messages: [], next: null, after: null };
     var seen = {};
@@ -3314,26 +3582,53 @@
     var next = num(ui.older.after === null ? before : ui.older.next);  // NaN: no older messages
     var sorted = all.sort(function (x, y) { return byDate("created_at")(x, y) || num(x.id) - num(y.id); });
     var unreadRows = sorted.filter(isUnread);
-    $("inbox-sub").textContent = unread ? plural(unread, "unread message") + " from " + name + "." : "No unread messages.";
+    var waiting = sorted.filter(function (m) { return m.sender === "owner" && !m.removed && !m.answered_by; }).length;
+    $("inbox-sub").textContent = (unread ? plural(unread, "unread message") + " from " + name : "No unread messages") +
+      (waiting ? " · " + plural(waiting, "message") + " of yours waiting for an answer" : "") + ".";
     var mark = $("inbox-mark-read");
     mark.hidden = !unreadRows.length || !!laterTitle();
+    // Where the owner was reading: the first message in view and how far down it was, kept across the render.
+    var anchor = null;
+    if (box.clientHeight > 0 && !ui.chat.stick) {
+      var first = Array.prototype.filter.call(el.children, function (li) {
+        return li.hasAttribute("data-id") && li.offsetTop + li.offsetHeight > box.scrollTop;
+      })[0];
+      if (first) anchor = { id: first.getAttribute("data-id"), offset: first.offsetTop - box.scrollTop };
+    }
     if (!sorted.length) {
       replace(el, emptyState("li", "No messages yet.", name + " writes here when it has a question or news for you. You can write first, too."));
     } else {
-      replace(el, [next > 0 ? olderMessagesButton(next) : null].concat(sorted.map(function (m) {
-        var fromOwner = m.sender === "owner";
-        var who = fromOwner ? (m.entered_by ? String(m.entered_by) : "You") : name;
-        return h("li", { "data-from": fromOwner ? "owner" : "agent", "data-id": String(m.id), "data-unread": isUnread(m) ? "true" : null },
-          h("span", { class: "who" }, who, " · ", timeEl(m.created_at),
-            isUnread(m) ? [" ", h("span", { class: "chip", "data-tone": "accent" }, h("span", { "aria-hidden": "true", text: "●" }), "Unread")] : null,
-            m.simulated ? [" ", testTag()] : null),
-          h("span", { class: "msg-text", "data-removed": m.removed ? "true" : null, text: asText(m.text) }),
-          fromOwner ? seenLine(!!m.seen_by_agent) : null,
-          fromOwner && m.seen_by_agent && !m.removed ? answeredLine(m, sorted) : null,
-          fromOwner ? null : arr(m.promises).map(promiseLine),
-          fromOwner && !m.removed ? removeButton(num(m.id)) : null);
-      })).filter(function (item) { return item; }));
+      var byId = {};
+      sorted.forEach(function (m) { byId[String(m.id)] = m; });
+      var items = [next > 0 ? olderMessagesButton(next) : null];
+      var prev = null;
+      var newShown = false;
+      sorted.forEach(function (m) {
+        var at = new Date(m.created_at);
+        var known = validDate(at);
+        if (known && (!prev || localDay(at) !== localDay(prev.at))) {
+          items.push(h("li", { class: "chat-day" }, h("span", { text: dayHead(at) })));
+          prev = null;
+        }
+        if (!newShown && isUnread(m)) {
+          newShown = true;
+          items.push(h("li", { class: "chat-new" }, h("span", { text: unreadRows.length > 1 ? plural(unreadRows.length, "new message") : "New message" })));
+        }
+        var run = !!(prev && prev.m.sender === m.sender && known && at - prev.at < RUN_GAP_MS);
+        items.push(messageItem(m, name, byId, dry, run));
+        prev = known ? { m: m, at: at } : null;
+      });
+      replace(el, items.filter(function (item) { return item; }));
     }
+    var lastId = sorted.length ? String(sorted[sorted.length - 1].id) : null;
+    if (ui.chat.stick) scrollChatToEnd();
+    else if (anchor) {
+      var li = el.querySelector('li[data-id="' + anchor.id + '"]');
+      if (li) box.scrollTop = li.offsetTop - anchor.offset;
+    }
+    if (!ui.chat.stick && ui.chat.lastId !== null && lastId !== ui.chat.lastId) ui.chat.newBelow = true;
+    ui.chat.lastId = lastId;
+    syncChatJump();
     var later = laterTitle();
     var text = $("composer-text");
     text.disabled = !!later;
@@ -3349,6 +3644,118 @@
     // In dry run the fake model answers: say so above the box, and to screen readers in it.
     $("inbox-dry-note").hidden = !dry;
     text.setAttribute("aria-describedby", (dry ? "inbox-dry-note " : "") + "composer-hint composer-count composer-error");
+  }
+
+  // One message: who and when (said once for a run of messages close together), the text, what it promised (the
+  // agent's) or whether the agent has seen and answered it (the owner's).
+  function messageItem(m, name, byId, dry, run) {
+    var fromOwner = m.sender === "owner";
+    var who = fromOwner ? (m.entered_by ? String(m.entered_by) : "You") : name;
+    var at = new Date(m.created_at);
+    var when = validDate(at) ? timeEl(m.created_at, shortTimeFmt.format(at)) : timeEl(m.created_at);
+    return h("li", { class: "msg", "data-from": fromOwner ? "owner" : "agent", "data-id": String(m.id),
+      "data-unread": isUnread(m) ? "true" : null, "data-run": run ? "true" : null },
+      h("p", { class: "who" }, h("span", { class: "who-name", text: who }), " ", when,
+        isUnread(m) ? [" ", h("span", { class: "chip", "data-tone": "accent" }, h("span", { "aria-hidden": "true", text: "●" }), "Unread")] : null,
+        m.simulated && !dry ? [" ", testTag()] : null),
+      h("div", { class: "bubble" },
+        h("span", { class: "msg-text", "data-removed": m.removed ? "true" : null, text: asText(m.text) }),
+        !fromOwner && arr(m.promises).length ? h("ul", { class: "msg-promises", "aria-label": "Promised in this message" },
+          arr(m.promises).filter(isObject).map(promiseItem)) : null),
+      fromOwner ? ownerStatus(m, name, byId) : null);
+  }
+
+  function ownerStatus(m, name, byId) {
+    var parts = [m.seen_by_agent
+      ? h("span", { class: "msg-state", "data-state": "done" }, h("span", { "aria-hidden": "true", text: "✓ " }), "Seen", h("span", { class: "visually-hidden", text: " by " + name }))
+      : h("span", { class: "msg-state", "data-state": "waiting" }, h("span", { "aria-hidden": "true", text: "◌ " }), "Not yet seen by " + name)];
+    if (m.seen_by_agent && !m.removed) {
+      var answer = m.answered_by ? byId[String(m.answered_by)] : null;
+      if (answer) {
+        var b = h("button", { type: "button", class: "link-button msg-state", "data-state": "done", "aria-label": "Answered by " + name + ": show the answer" },
+          h("span", { "aria-hidden": "true", text: "✓ " }), "Answered");
+        b.addEventListener("click", function () { revealMessage(answer.id); });
+        parts.push(b);
+      } else if (m.answered_by) {
+        parts.push(h("span", { class: "msg-state", "data-state": "done" }, h("span", { "aria-hidden": "true", text: "✓ " }), "Answered by " + name));
+      } else {
+        parts.push(h("span", { class: "msg-state", "data-state": "waiting", title: name + " keeps it in its plans until it answers" },
+          h("span", { "aria-hidden": "true", text: "◌ " }), "Not answered yet"));
+      }
+    }
+    if (!m.removed) parts.push(removeButton(num(m.id)));
+    return h("p", { class: "msg-status" }, parts);
+  }
+
+  // A message brought into view in the conversation, marked for a moment; focus goes to the conversation, so the
+  // next update isn't held back by focus in the list.
+  function revealMessage(id) {
+    var li = $("inbox").querySelector('li[data-id="' + String(id) + '"]');
+    if (!li) return;
+    ui.chat.stick = false;
+    revealEl(li.querySelector(".bubble") || li, $("chat-scroll"));
+  }
+
+  function scrollChatToEnd() {
+    var box = $("chat-scroll");
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function syncChatJump() {
+    var jump = $("chat-jump");
+    jump.hidden = ui.chat.stick;
+    jump.textContent = ui.chat.newBelow ? "↓ New messages" : "↓ Latest";
+  }
+
+  function chatScrolled() {
+    var box = $("chat-scroll");
+    if (!box.clientHeight) return;  // hidden: the Inbox tab isn't open
+    ui.chat.stick = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    if (ui.chat.stick) ui.chat.newBelow = false;
+    syncChatJump();
+  }
+
+  // Beside the conversation: the owner's messages the agent hasn't answered and what it promised and hasn't done.
+  function renderOwed(d) {
+    var name = (d.agent || standInAgent(d)).name || "Ember";
+    var loaded = {};
+    arr(d.inbox).concat(ui.older.messages).forEach(function (m) { if (isObject(m)) loaded[String(m.id)] = m; });
+    var questions = Object.keys(loaded).map(function (k) { return loaded[k]; }).filter(function (m) {
+      return m.sender === "owner" && !m.removed && !m.answered_by;
+    }).sort(byDate("created_at"));
+    var promises = arr(d.promises_open).filter(isObject).slice().sort(function (x, y) { return String(x.due).localeCompare(String(y.due)); });
+    $("owed-title").textContent = "Waiting on " + name;
+    $("owed-sub").textContent = questions.length || promises.length
+      ? [questions.length ? plural(questions.length, "message") + " to answer" : null,
+        promises.length ? plural(promises.length, "open promise") : null].filter(function (x) { return x; }).join(" · ") + "."
+      : "Nothing: " + name + " has answered your messages and closed its promises.";
+    function jumpItem(messageId, body, label) {
+      if (!loaded[String(messageId)]) return h("div", { class: "owed-item" }, body);
+      var b = h("button", { type: "button", class: "owed-item", "aria-label": label }, body);
+      b.addEventListener("click", function () { revealMessage(messageId); });
+      return b;
+    }
+    replace($("owed"), [
+      questions.length ? [h("h3", { class: "small-head", text: "Your messages" }), h("ul", { class: "owed-list" }, questions.map(function (m) {
+        var text = asText(m.text);
+        var meta = (m.seen_by_agent ? "Seen, not answered yet" : "Not seen yet") + " · sent " + relTime(m.created_at);
+        return h("li", null, jumpItem(m.id, [h("span", { class: "owed-text", text: text }), h("span", { class: "owed-meta", text: meta })],
+          "Your message: " + text.slice(0, 80) + ". " + meta + ". Show it"));
+      }))] : null,
+      promises.length ? [h("h3", { class: "small-head", text: "Promises" }), h("ul", { class: "owed-list" }, promises.map(function (o) {
+        var state = promiseState(Object.assign({ status: "open" }, o));
+        var meta = promiseMeta(Object.assign({ status: "open" }, o));
+        return h("li", { "data-state": state }, jumpItem(o.message_id,
+          [h("span", { class: "owed-text", text: asText(o.what) }), h("span", { class: "owed-meta", text: meta })],
+          "Promise: " + asText(o.what) + ". " + meta + ". Show the message"));
+      }))] : null,
+    ]);
+  }
+
+  function growComposer() {
+    var box = $("composer-text");
+    box.style.height = "auto";
+    box.style.height = Math.min(box.scrollHeight + 2, Math.max(120, Math.round(window.innerHeight * 0.4))) + "px";
   }
 
   function olderMessagesButton(before) {
@@ -3414,6 +3821,8 @@
       if (res.status === 201 || res.ok) {
         box.value = "";
         composerCount();
+        growComposer();
+        ui.chat.stick = true;  // the conversation shows the message just sent
         // With the wake_on_message option the message wakes the agent (0.15.0: one cycle a few minutes after your last
         // message or decision). Without it (or while paused, ...) it waits for the next wake.
         var wake = isObject(res.data) && typeof res.data.wake === "string" ? res.data.wake : "";
@@ -3477,7 +3886,7 @@
         btn.disabled = false;
       });
     });
-    return h("p", { class: "remove-line" }, btn);
+    return btn;
   }
 
   // Looks like a login: the words, or a generated password such as abcdef-123abc-XyZabc.
@@ -5350,10 +5759,18 @@
   // ------------------------------------------------------------------ inbox composer
 
   $("composer").addEventListener("submit", function (ev) { ev.preventDefault(); sendMessage(); });
+  $("chat-scroll").addEventListener("scroll", chatScrolled, { passive: true });
+  $("chat-jump").addEventListener("click", function () {
+    ui.chat.stick = true;
+    ui.chat.newBelow = false;
+    scrollChatToEnd();
+    syncChatJump();
+  });
   $("composer-text").addEventListener("keydown", function (ev) {
     if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); sendMessage(); }
   });
   $("composer-text").addEventListener("input", function () {
+    growComposer();
     composerError("");
     composerCount();
     if ($("composer-status").getAttribute("data-kind") === "ok") setComposerStatus("", "");
@@ -5837,6 +6254,11 @@
       vt.busy = false;
       safely("ventures", renderVentures);
       safely("banners", renderBanners);
+      if (vt.reveal !== null && !vt.again) {  // a project's venture chip asked for this one
+        var reveal = vt.reveal;
+        vt.reveal = null;
+        if (vt.byId[String(reveal)]) showVentureCard(reveal);
+      }
       if (vt.again) { vt.again = false; loadVentures(); }
     });
   }
@@ -7580,6 +8002,7 @@
     if (name === "ventures") loadVentures();
     if (name === "roadmap") loadRoadmap();
     if (name === "library") loadLibrary();
+    if (name === "inbox" && ui.chat.stick) scrollChatToEnd();  // it can't scroll while the tab is hidden
   }
 
   function selectMind(name, focus) {
@@ -7651,6 +8074,7 @@
   }
 
   initForms();
+  initProjects();
   initVentures();
   initRoadmap();
   initLibrary();

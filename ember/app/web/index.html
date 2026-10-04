@@ -201,7 +201,28 @@
     </section>
 
     <section class="panel" id="panel-projects" role="tabpanel" aria-labelledby="tab-projects" hidden>
-      <div class="cards" id="projects"></div>
+      <!-- Outside #projects: a control with focus here never holds back the list's next render. -->
+      <div class="pj-bar" id="projects-bar" hidden>
+        <dl class="pj-stats" id="projects-stats"></dl>
+        <div class="pj-controls">
+          <div class="segmented" role="group" aria-label="Show projects">
+            <button type="button" class="seg" data-pj-filter="open" aria-pressed="true">Open <span class="seg-count" id="pj-count-open"></span></button>
+            <button type="button" class="seg" data-pj-filter="closed" aria-pressed="false">Closed <span class="seg-count" id="pj-count-closed"></span></button>
+            <button type="button" class="seg" data-pj-filter="all" aria-pressed="false">All <span class="seg-count" id="pj-count-all"></span></button>
+          </div>
+          <label class="pj-sort" for="projects-sort">Sort
+            <select id="projects-sort">
+              <option value="status">Active first</option>
+              <option value="updated">Recently updated</option>
+              <option value="net">Best net</option>
+              <option value="earned">Most earned</option>
+              <option value="spent">Most spent</option>
+              <option value="started">Newest</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="pj-list" id="projects"></div>
     </section>
 
     <section class="panel" id="panel-ventures" role="tabpanel" aria-labelledby="tab-ventures" hidden>
@@ -381,52 +402,68 @@
     </section>
 
     <section class="panel" id="panel-inbox" role="tabpanel" aria-labelledby="tab-inbox" hidden>
-      <article class="card" id="instructions-card">
-        <div class="card-head">
-          <div>
-            <h2 id="instructions-title" tabindex="-1">Standing instructions</h2>
-            <p class="card-sub" id="instructions-sub">&nbsp;</p>
+      <!-- 0.19.4: the conversation first, with what Ember owes you and your standing instructions beside it. -->
+      <div class="inbox-layout">
+        <article class="card chat-card" aria-labelledby="inbox-title">
+          <div class="card-head">
+            <div>
+              <h2 id="inbox-title" tabindex="-1">Conversation</h2>
+              <p class="card-sub" id="inbox-sub">&nbsp;</p>
+            </div>
+            <button type="button" class="btn" id="inbox-mark-read" hidden>Mark all read</button>
           </div>
-          <button type="button" class="btn" id="instructions-edit" aria-controls="instructions-form" aria-expanded="false">Edit</button>
-        </div>
-        <div id="instructions-view"></div>
-        <form class="instructions-form" id="instructions-form" novalidate hidden>
-          <div class="field">
-            <label for="instructions-text" id="instructions-label">Standing instructions for the agent</label>
-            <textarea id="instructions-text" rows="6" aria-describedby="instructions-help instructions-count instructions-error"></textarea>
-            <p class="hint composer-hint"><span id="instructions-help">Ctrl+Enter (Cmd+Enter on a Mac) saves.</span> <span class="counter" id="instructions-count"></span></p>
-            <p class="field-error" id="instructions-error" hidden></p>
+          <p class="form-status" id="inbox-status" role="status"></p>
+          <div class="chat-wrap">
+            <!-- Scrolls inside, the newest at the bottom (focusable, so the keyboard can scroll it too). -->
+            <div class="chat-scroll" id="chat-scroll" tabindex="0" role="region" aria-label="Messages">
+              <ol class="chat" id="inbox"></ol>
+            </div>
+            <button type="button" class="chat-jump" id="chat-jump" hidden>↓ Latest</button>
           </div>
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary" id="instructions-save">Save</button>
-            <button type="button" class="btn" id="instructions-cancel">Cancel</button>
-          </div>
-        </form>
-        <p class="form-status" id="instructions-status" role="status"></p>
-        <p class="hint instructions-note" id="instructions-note">Ember reads these in every plan. Use them for lasting guidance; use messages for one-off things.</p>
-      </article>
-      <article class="card">
-        <div class="card-head">
-          <div>
-            <h2 id="inbox-title" tabindex="-1">Conversation</h2>
-            <p class="card-sub" id="inbox-sub">&nbsp;</p>
-          </div>
-          <button type="button" class="btn" id="inbox-mark-read" hidden>Mark all read</button>
-        </div>
-        <p class="form-status" id="inbox-status" role="status"></p>
-        <ol class="chat" id="inbox"></ol>
-        <p class="card-note" id="inbox-dry-note" hidden>Dry run: replies come from Ember's built-in fake model, which doesn't understand your messages. With dry run off, Claude reads and answers them.</p>
-        <form class="composer" id="composer" novalidate>
-          <div class="composer-field">
-            <label class="visually-hidden" for="composer-text" id="composer-label">Message to the agent</label>
-            <textarea id="composer-text" rows="3" aria-describedby="composer-hint composer-count composer-error"></textarea>
+          <p class="card-note" id="inbox-dry-note" hidden>Dry run: replies come from Ember's built-in fake model, which doesn't understand your messages. With dry run off, Claude reads and answers them.</p>
+          <form class="composer" id="composer" novalidate>
+            <div class="composer-field">
+              <label class="visually-hidden" for="composer-text" id="composer-label">Message to the agent</label>
+              <textarea id="composer-text" rows="2" aria-describedby="composer-hint composer-count composer-error"></textarea>
+              <button type="submit" class="btn btn-primary composer-send" id="composer-send">Send</button>
+            </div>
             <p class="hint composer-hint"><span id="composer-hint">Ctrl+Enter (Cmd+Enter on a Mac) sends.</span> <span class="counter" id="composer-count"></span></p>
             <p class="field-error" id="composer-error" hidden></p>
-          </div>
-          <button type="submit" class="btn btn-primary" id="composer-send">Send</button>
-        </form>
-        <p class="form-status" id="composer-status" role="status"></p>
-      </article>
+          </form>
+          <p class="form-status" id="composer-status" role="status"></p>
+        </article>
+        <aside class="inbox-side" aria-label="Beside the conversation">
+          <article class="card" id="owed-card" aria-labelledby="owed-title">
+            <h2 id="owed-title">Waiting on Ember</h2>
+            <p class="card-sub" id="owed-sub">&nbsp;</p>
+            <div id="owed"></div>
+          </article>
+          <article class="card" id="instructions-card">
+            <div class="card-head">
+              <div>
+                <h2 id="instructions-title" tabindex="-1">Standing instructions</h2>
+                <p class="card-sub" id="instructions-sub">&nbsp;</p>
+              </div>
+              <button type="button" class="btn" id="instructions-edit" aria-controls="instructions-form" aria-expanded="false">Edit</button>
+            </div>
+            <div id="instructions-view"></div>
+            <form class="instructions-form" id="instructions-form" novalidate hidden>
+              <div class="field">
+                <label for="instructions-text" id="instructions-label">Standing instructions for the agent</label>
+                <textarea id="instructions-text" rows="6" aria-describedby="instructions-help instructions-count instructions-error"></textarea>
+                <p class="hint composer-hint"><span id="instructions-help">Ctrl+Enter (Cmd+Enter on a Mac) saves.</span> <span class="counter" id="instructions-count"></span></p>
+                <p class="field-error" id="instructions-error" hidden></p>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary" id="instructions-save">Save</button>
+                <button type="button" class="btn" id="instructions-cancel">Cancel</button>
+              </div>
+            </form>
+            <p class="form-status" id="instructions-status" role="status"></p>
+            <p class="hint instructions-note" id="instructions-note">Ember reads these in every plan. Use them for lasting guidance; use messages for one-off things.</p>
+          </article>
+        </aside>
+      </div>
     </section>
 
     <section class="panel" id="panel-upgrades" role="tabpanel" aria-labelledby="tab-upgrades" hidden>
