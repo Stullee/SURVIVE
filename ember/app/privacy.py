@@ -29,9 +29,11 @@ SALT_KEY = "secret.redaction_salt"  # meta: made by migration 0015; the report n
 # Addresses as they appear in mail headers and texts (no quoted local parts: they don't occur in practice).
 _EMAIL = re.compile(r"(?<![\w.+%-])[\w.+%-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})+")
 # One-time codes: 4 to 8 digits (or 3 and 3), or 5 to 10 capitals and digits, next to a word that names a code.
+# 0.19.2: PIN or Pin, not pin (a Pinterest pin, or make_image's 'pin' shape, masked "DIN 5008" and pixel sizes)
 _CODE_WORDS = (
-    r"(?:codes?|otp|pin|tan|passcode|password|passwort|kennwort|verification|verify|verifizierung\w*|confirm(?!ed\b)\w*"
-    r"|bestätigung\w*|sicherheits\w*|security|einmal\w*|anmelde\w*|login|log-in|sign-in|2fa|one-time|zugangs\w*)"
+    r"(?:codes?|otp|(?-i:PIN|Pin)|tan|passcode|password|passwort|kennwort|verification|verify|verifizierung\w*"
+    r"|confirm(?!ed\b)\w*|bestätigung\w*|sicherheits\w*|security|einmal\w*|anmelde\w*|login|log-in|sign-in|2fa"
+    r"|one-time|zugangs\w*)"
 )
 _CODE = r"(?:\d{4,8}|\d{3}[ -]\d{3}|(?-i:(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,10}))"
 # Not a code: part of a word, a date or time, an amount, a number or an id ("#12"). Between the word and the

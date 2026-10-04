@@ -353,8 +353,9 @@ class Edit:
         return fields
 
 
-def listing_text(listing_id: int, listing: Listing, state: str = "") -> str:
-    """One of Ember's listings in full, for the agent (``state``: how it stands at Etsy, 0.12.0)."""
+def listing_text(listing_id: int, listing: Listing, state: str = "", numbers: str = "") -> str:
+    """One of Ember's listings in full, for the agent (``state``: how it stands at Etsy, 0.12.0; ``numbers``: Etsy's
+    views, favorites and sales, 0.19.2)."""
 
     def names(uploads: tuple[Upload, ...]) -> str:
         return ", ".join(u.path for u in uploads) or "none"
@@ -369,6 +370,7 @@ def listing_text(listing_id: int, listing: Listing, state: str = "") -> str:
             f"Category: {listing.category} (#{listing.taxonomy_id})",
             f"Photos ({len(listing.photos)}, the main one first): {names(listing.photos)}",
             f"Files buyers download: {names(listing.files)}",
+            *([numbers] if numbers else []),
             "Description (Ember adds the line about AI after it):",
             listing.description,
         ]

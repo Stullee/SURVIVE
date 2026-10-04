@@ -28,24 +28,60 @@ from .store import AgentScope
 
 MIN_DAYS, MAX_DAYS = 3, 28
 METRICS = {"view": "views", "views": "views", "favorite": "favorites", "favorites": "favorites"}
+METRICS |= {"favourite": "favorites", "favourites": "favorites"}
 METRICS |= {"order": "orders", "orders": "orders", "sale": "orders", "sales": "orders"}
-_BET = re.compile(r"^\+?\s*(\d+)\s+([a-z]+)\s+(?:in|within)\s+(\d+)\s+days?\s*[:,-]\s*(.+)$", re.IGNORECASE | re.DOTALL)
-FORMAT = "write it as '+15 views in 7 days: why you expect it' (views, favorites or orders; 3 to 28 days)"
+# 0.19.2: also "by" a day (OPEN PROJECTS shows a bet so: "+10 views by 2026-10-09"), a note in brackets after the
+# days or the day ("+15 views in 13 days (by 10-17): why"), and up to two words before the metric ("+5 listing
+# views"); live, these were refused three times in one cycle, and the bet was lost.
+_WHEN = (
+    r"(?:(?:in|within)\s+(?P<days>\d+)\s+days?"
+    r"|by\s+(?P<day>\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}|\d{1,2}\.\d{1,2}\.(?:\d{4})?))"
+)
+_BET = re.compile(
+    rf"^\+?\s*(?P<gain>\d+)\s+(?:[a-z][a-z-]*\s+){{0,2}}?(?P<metric>[a-z]+)\s+{_WHEN}(?:\s*\([^()]{{0,80}}\))?"
+    r"\s*[:,;\u2013\u2014-]\s*(?P<why>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+FORMAT = (
+    "write it as '+15 views in 7 days: why you expect it' or '+15 views by 2026-10-17: why' (views, favorites or "
+    "orders; 3 to 28 days)"
+)
 
 
 class BetError(ValueError):
     pass
 
 
-def parse(text: str) -> tuple[int, str, int, str]:
-    """(gain, metric, days, what is expected) of a bet's text; raises BetError with how to write it."""
+def parse(text: str, today: date | None = None) -> tuple[int, str, int, str]:
+    """(gain, metric, days, what is expected) of a bet's text (``today``: for a bet by a day); raises BetError with how
+    to write it."""
     found = _BET.match(" ".join(text.split()))
-    if found is None or found[2].lower() not in METRICS:
+    if found is None or found["metric"].lower() not in METRICS:
         raise BetError(FORMAT)
-    gain, days = int(found[1]), int(found[3])
-    if not 1 <= gain <= 100_000 or not MIN_DAYS <= days <= MAX_DAYS:
+    gain = int(found["gain"])
+    days = int(found["days"]) if found["days"] else _days_to(found["day"], today)
+    if not 1 <= gain <= 100_000 or days is None or not MIN_DAYS <= days <= MAX_DAYS:
         raise BetError(FORMAT)
-    return gain, METRICS[found[2].lower()], days, found[4].strip()
+    return gain, METRICS[found["metric"].lower()], days, found["why"].strip()
+
+
+def _days_to(text: str, today: date | None) -> int | None:
+    """The days from ``today`` to a day written as 2026-10-17, 10-17 or 17.10. (without a year: the next one to come),
+    or None."""
+    if today is None:
+        return None
+    parts = [int(part) for part in re.split(r"[-.]", text.strip(".")) if part]
+    try:
+        if "-" in text:
+            year, month, number = parts if len(parts) == 3 else (None, *parts)
+        else:
+            number, month, year = parts if len(parts) == 3 else (*parts, None)
+        day = date(year or today.year, month, number)
+    except (TypeError, ValueError):
+        return None
+    if year is None and day < today:
+        day = day.replace(year=today.year + 1)
+    return (day - today).days
 
 
 def value(funnel: reach.Funnel, metric: str) -> int:
@@ -56,7 +92,7 @@ def place(
     conn: sqlite3.Connection, scope: AgentScope, project_id: int, text: str, cycle_id: int | None, today: date, now: str
 ) -> str:
     """Place a bet on a project (raises BetError); the line project_update's answer adds."""
-    gain, metric, days, expect = parse(text)
+    gain, metric, days, expect = parse(text, today)
     funnel = reach.funnels(conn, scope).get(project_id)
     if funnel is None or not funnel.listings:
         raise BetError("a bet needs the project's live listings: Ember's code settles it from their numbers")

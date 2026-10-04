@@ -4,11 +4,11 @@ An approved post (executor 'bluesky_post') is carried out once, like a pin: its 
 anything is sent, so a crash never posts it twice ('unclear' when it can't be known; the app's next start marks what a
 crash left running). Its picture must be exactly the file the owner approved (its SHA-256); Ember's code sends a
 smaller copy when it is larger than Bluesky takes (images.within: the same picture always gives the same copy). The
-link must still be Ember's: a listing still live, as the pin's. At most bluesky_posts_per_day posts a day. Before the
-first post of a round Ember's code logs in: while Bluesky refuses the login, approved posts wait (nothing is begun).
-The owner's Undo of a post is a request of theirs (executor 'bluesky_delete'), carried out here too. The sync reads
-the account's followers and each live post's numbers (likes, reposts, replies, quotes, moderation's labels) at most
-every SYNC_HOURS.
+link must still be Ember's: a listing still live, as the pin's, or (0.19.2) a page of the owner's website that Ember's
+code knows is there. At most bluesky_posts_per_day posts a day. Before the first post of a round Ember's code logs in:
+while Bluesky refuses the login, approved posts wait (nothing is begun). The owner's Undo of a post is a request of
+theirs (executor 'bluesky_delete'), carried out here too. The sync reads the account's followers and each live post's
+numbers (likes, reposts, replies, quotes, moderation's labels) at most every SYNC_HOURS.
 """
 
 from __future__ import annotations
@@ -20,17 +20,20 @@ import re
 import sqlite3
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 from .. import events
+from ..agent import website
 from ..agent.sandbox import Jail, SandboxError
 from ..agent.store import AgentScope
 from ..config import Settings
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..products import images
-from . import connectors, etsy, etsy_publisher
+from . import connectors, etsy, etsy_publisher, site_publisher
 from .bluesky import (
     BLOB_LONGEST,
     BLOB_MAX_BYTES,
@@ -250,13 +253,23 @@ class Publisher:
                 )
             ]
 
-    @staticmethod
-    def _link(conn: sqlite3.Connection, scope: AgentScope, link: str | None, now: str) -> None:
+    def _link(self, conn: sqlite3.Connection, scope: AgentScope, link: str | None, now: str) -> str | None:
         """A post's link to one of Ember's listings must still be live when the post is made (an approved post can
-        wait days for its turn); a link to the owner's website is checked when it is proposed. Raises BlueskyError."""
+        wait days for its turn); 0.19.2: one to the owner's website must be a page Ember's code knows is there (live,
+        an approved post linked a blog post by its file's name: a missing page), and a blog post's address without its
+        ".html" is posted with it. Returns the link to post; raises BlueskyError."""
         found = LISTING_LINK.match(link or "")
         if found is None:
-            return
+            base = website.address(self.settings)
+            if link is None or not base or urlsplit(link).netloc.lower() != urlsplit(base).netloc.lower():
+                return link
+            page = site_publisher.known_page(conn, self.db, scope, base, link, self.settings.site_enabled)
+            if page is None:
+                raise BlueskyError(
+                    f"{link} isn't a page of your owner's website that Ember's code knows is there (a blog post's "
+                    "address ends in .html, as BLOG gives it)"
+                )
+            return page[0]
         listing_id = int(found.group(1))
         row = etsy_publisher.listing_row(conn, scope, listing_id)
         if row is None:
@@ -265,6 +278,7 @@ class Publisher:
             raise BlueskyError(f"#{listing_id} isn't live at Etsy any more ({etsy_publisher.state_text(row)})")
         if not row["auto_renew"] and row["ends_at"] and from_iso(row["ends_at"]) <= from_iso(now):
             raise BlueskyError(f"#{listing_id} isn't live at Etsy any more (it ended on {row['ends_at'][:10]})")
+        return link
 
     def _read(self, upload: Upload, what: str) -> bytes:
         try:
@@ -328,9 +342,13 @@ class Publisher:
                 return "skipped"
             if not problem:
                 try:
-                    self._link(conn, scope, post.link, stamp)
+                    fixed = self._link(conn, scope, post.link, stamp)
                 except BlueskyError as exc:
                     problem = str(exc)
+                else:
+                    if fixed != post.link:  # 0.19.2: a blog post's address without its ".html"
+                        note += f" Its link went out as {fixed}: the approved address named no page there."
+                        post = replace(post, link=fixed)
             if problem:
                 self._start(conn, scope, approval_id, stamp, str(row["title"]), None, sent=False)
                 connectors.begin(conn, approval_id, stamp)

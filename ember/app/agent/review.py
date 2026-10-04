@@ -181,10 +181,12 @@ def scorecard(
         _header(first, today, dry_run),
         _money(conn, scope, books, ledger_scope, status, since),
         _last_review(conn, scope, today),
+        # 0.19.2: before the projects, a few lines whose milestones the review judges (live, 8 projects in full left
+        # no room for it: "Milestones were not shown, so I can't judge them today")
+        roadmap.review_text(conn, scope, today, since),
         _etsy(conn, scope, since),
         _project_lines(conn, scope, projects, clock, since, reach.funnels(conn, scope)),
         learning.settled_text(settled),
-        roadmap.review_text(conn, scope, today, since),
         predictions.review_text(conn, scope, since),  # 0.13.0: the forecasts against the results
         _ventures(conn, scope, since),
         _decisions(conn, scope, since),

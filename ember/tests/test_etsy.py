@@ -661,7 +661,7 @@ def test_a_live_listing_is_read_and_a_change_proposed(data_dir: Path) -> None:
         rows(agent, "SELECT action FROM approvals WHERE executor = 'etsy_listing'")[0]["action"]
     )
     short = call(ctx, "etsy_listing", {})
-    assert short.text.startswith("Your live listings (newest first):\n- #900000001 ")
+    assert short.text.startswith("Your live listings (newest first; not read from Etsy yet):\n- #900000001 ")
     assert f"· 4.50 EUR · category #{before.taxonomy_id} · 1 photo, 2 files" in short.text
     full = call(ctx, "etsy_listing", {"listing_id": listing_id}).text
     assert f"Title: {before.title}\nPrice: 4.50 EUR\n" in full and full.endswith(f"after it):\n{before.description}")

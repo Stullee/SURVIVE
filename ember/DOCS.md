@@ -1602,8 +1602,10 @@ To stop Ember's access, delete the app password at Bluesky.
 - The agent proposes a post with `propose_bluesky_post`: its words in German or
   English (at most 300 characters with the link and the AI line, up to three
   #hashtags, no link in the words and no @mention), a link if it likes (one of
-  its live Etsy listings or a page of your website: `site_url`), and a picture
-  of its own with alt text if it likes. The approval card shows the post
+  its live Etsy listings or a page of your website, `site_url`, that Ember
+  knows is there: a blog post of its own, the blog's list, the home page, the
+  link page or the live view's page), and a picture of its own with alt text if
+  it likes. The approval card shows the post
   exactly as it will appear, the link and the picture's path, and what the QA
   check finds short (more than three hashtags).
 - **Approve** and Ember posts it. Bluesky charges nothing. With a picture, the
@@ -1614,8 +1616,9 @@ To stop Ember's access, delete the app password at Bluesky.
   can only be approved as it is or rejected (say what should change: the agent
   proposes a better one). **Cancel** stops an approved post before Ember makes
   it.
-- If the picture changed after you approved, or the listing it links is no
-  longer live, the post isn't made. Ember never posts twice: if it can't tell
+- If the picture changed after you approved, the listing it links is no
+  longer live, or the page of your website it links is gone, the post isn't
+  made (a blog post's address without its `.html` goes out with it). Ember never posts twice: if it can't tell
   whether Bluesky took a post (a lost connection), it says so and doesn't try
   again. At most **Bluesky posts per day** are made a day; approved posts beyond
   that wait for the next day.
@@ -1979,7 +1982,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.19.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.19.2 (by /u/your name)`.
 
 ## Diagnostics
 

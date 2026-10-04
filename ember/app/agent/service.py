@@ -821,9 +821,12 @@ class Agent:
                 self.db.set_meta(self._key("failures"), "0")
             reason = "scheduled"
             if end.sleep_minutes:
-                reason = f"{self.settings.agent_name} chose {minutes} min"
+                asked = end.asked_minutes or minutes  # 0.19.2: before Ember's code cut it (sleep_cut)
+                reason = f"{self.settings.agent_name} chose {asked} min"
                 if end.sleep_reason:  # the agent's words, quoted (the dashboard shows them as text)
                     reason += f": {json.dumps(end.sleep_reason[:SLEEP_REASON_CHARS], ensure_ascii=False)}"
+                if end.sleep_cut:
+                    reason += f"; {end.sleep_cut}"
                 # 0.12.0: waiting for the owner is no reason to sleep long (it slept 12 hours for an approval): while
                 # its requests wait, it wakes within WAITING_SLEEP_MINUTES (0.15.0; or the default interval, if longer)
                 # at the latest, to work on something else.

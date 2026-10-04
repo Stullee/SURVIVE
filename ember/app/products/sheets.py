@@ -175,7 +175,62 @@ def parse(source: str, read_csv: Any) -> Spec:
             if column.formula:
                 last = first + len(sheet.rows) + sheet.empty_rows - 1
                 check_formula(_placed(column.formula, first, first, last), names, f"{sheet.name} column {c + 1}")
+    spec.warnings.extend(_short_ranges(spec))
     return spec
+
+
+def data_rows(sheet: Sheet) -> tuple[int, int]:
+    """The Excel rows of a sheet's data: the first and the last (its empty rows to fill in included)."""
+    first = first_row(bool(sheet.title))
+    return first, first + len(sheet.rows) + sheet.empty_rows - 1
+
+
+def _short_ranges(spec: Spec) -> list[str]:
+    """0.19.2: a formula's range on another sheet that leaves out some of that sheet's data rows, or counts its total
+    row too. Live, a budget's summary summed Income!C2:C9 and Expenses!C2:C21 while their data were rows 4 to 12 and
+    4 to 26: what a buyer typed in the rows below was left out, and the pictures couldn't show it."""
+    sheets = {sheet.name.casefold(): sheet for sheet in spec.sheets}
+    found: list[str] = []
+    for sheet in spec.sheets:
+        first = first_row(bool(sheet.title))
+        for r, row in enumerate(sheet.rows):
+            for value in row:
+                if not (isinstance(value, str) and value.startswith("=")):
+                    continue
+                for name, column, low, high in _sheet_ranges(value):
+                    other = sheets.get(name.casefold())
+                    if other is None or other is sheet:
+                        continue
+                    top, bottom = data_rows(other)
+                    total = bottom + 1 if other.totals else None
+                    where = f"{sheet.name} row {first + r}: {name}!{column}{low}:{column}{high}"
+                    if low <= bottom and high >= top and (low > top or high < bottom):
+                        found.append(
+                            f"{where} leaves out some of the data of {other.name} (rows {top} to {bottom}"
+                            + (f"; its total is in row {total}" if total else "")
+                            + f"): {name}!{column}{top}:{column}{bottom} takes them all"
+                        )
+                    elif total is not None and low <= total <= high and low <= bottom:
+                        found.append(f"{where} counts the total row of {other.name} (row {total}) besides its data")
+    return found[:5]
+
+
+def _sheet_ranges(formula: str) -> list[tuple[str, str, int, int]]:
+    """The one-column ranges on a named sheet in a formula: (sheet, column, first row, last row)."""
+    try:
+        items = Tokenizer(formula).items
+    except Exception:  # noqa: BLE001 - check_formula refuses what can't be read
+        return []
+    found = []
+    for token in items:
+        if token.type != Token.OPERAND or token.subtype != Token.RANGE or "!" not in token.value:
+            continue
+        sheet, _, place = token.value.rpartition("!")
+        sheet = sheet[1:-1].replace("''", "'") if sheet.startswith("'") else sheet
+        match = re.fullmatch(r"\$?([A-Za-z]{1,3})\$?(\d{1,7}):\$?([A-Za-z]{1,3})\$?(\d{1,7})", place)
+        if match is not None and match[1].upper() == match[3].upper():
+            found.append((sheet, match[1].upper(), int(match[2]), int(match[4])))
+    return found
 
 
 def _sheet(where: str, data: Any, read_csv: Any) -> Sheet:
@@ -446,10 +501,11 @@ def preview(spec: Spec, max_rows: int = 18, index: int = 0) -> bytes:
     dashboard.
 
     Formulas show their result when the preview can work it out (arithmetic, SUM, AVERAGE, MIN, MAX, COUNT, ROUND
-    and ABS over this sheet's cells); any other formula is shown as written, in italics.
+    and ABS; 0.19.2: IF, IFERROR, COUNTIF, SUMIF and the other sheets' cells); any other formula is shown as written,
+    in italics.
     """
     sheet = spec.sheets[index]
-    values = _Results(sheet)
+    values = _spec_book(spec)[sheet.name.casefold()]
     scale = 2
     col_px = [max(60, int(c.width * 7.5)) * scale for c in sheet.columns]
     row_h = 22 * scale
@@ -498,6 +554,14 @@ def preview(spec: Spec, max_rows: int = 18, index: int = 0) -> bytes:
     return buffer.getvalue()
 
 
+def _spec_book(spec: Spec) -> dict[str, _Results]:
+    """0.19.2: each sheet's values by its name (any case), each able to read the others'."""
+    book: dict[str, _Formulas] = {}
+    for sheet in spec.sheets:
+        book[sheet.name.casefold()] = _Results(sheet, book)
+    return book  # type: ignore[return-value]
+
+
 # --- any Excel file: read and drawn (0.15.0) ---
 
 READ_ROWS = 2_000  # a sheet's rows read (MAX_ROWS of data under a title and a header)
@@ -532,33 +596,42 @@ def workbook_text(data: bytes) -> str:
     its result when Ember's code can work it out."""
     book = _book(data)
     try:
-        out: list[str] = []
-        size = 0
-        for number, sheet in enumerate(book.worksheets, start=1):
-            cells = _cells(sheet, READ_ROWS, READ_COLUMNS)
-            grid = _Grid({key: cell.value for key, cell in cells.items()})
-            rows = sorted({r for r, _ in cells})
-            columns = max((c for _, c in cells), default=0)
-            out.append(f"Sheet {number} '{sheet.title}' ({len(rows)} rows with values, {columns} columns):")
-            for r in rows:
-                shown = []
-                for c in range(1, columns + 1):
-                    value = cells[(r, c)].value if (r, c) in cells else None
-                    text = _plain(value)
-                    if isinstance(value, str) and value.startswith("="):
-                        result = grid.value(r, c)
-                        if not isinstance(result, str):
-                            text += f" → {_plain(result)}"
-                    shown.append(text)
-                out.append(f"{r}: " + " | ".join(shown).rstrip(" |"))
-                size += len(out[-1]) + 1
-                if size > TEXT_CHARS:
-                    out.append("… (the rest is cut)")
-                    return "\n".join(out)
-            out.append("")
-        return "\n".join(out).strip()
+        sheets = [(sheet.title, _cells(sheet, READ_ROWS, READ_COLUMNS)) for sheet in book.worksheets]
     finally:
         book.close()
+    grids = _grids(sheets)
+    out: list[str] = []
+    size = 0
+    for number, (title, cells) in enumerate(sheets, start=1):
+        grid = grids[title.casefold()]
+        rows = sorted({r for r, _ in cells})
+        columns = max((c for _, c in cells), default=0)
+        out.append(f"Sheet {number} '{title}' ({len(rows)} rows with values, {columns} columns):")
+        for r in rows:
+            shown = []
+            for c in range(1, columns + 1):
+                value = cells[(r, c)].value if (r, c) in cells else None
+                text = _plain(value)
+                if isinstance(value, str) and value.startswith("="):
+                    result = grid.value(r, c)
+                    if not (isinstance(result, str) and result.startswith("=")):
+                        text += f" → {_plain(result)}"
+                shown.append(text)
+            out.append(f"{r}: " + " | ".join(shown).rstrip(" |"))
+            size += len(out[-1]) + 1
+            if size > TEXT_CHARS:
+                out.append("… (the rest is cut)")
+                return "\n".join(out)
+        out.append("")
+    return "\n".join(out).strip()
+
+
+def _grids(sheets: list[tuple[str, dict[tuple[int, int], Any]]]) -> dict[str, _Grid]:
+    """0.19.2: each sheet's values by its name (any case), each able to read the others' (a summary's formulas)."""
+    book: dict[str, _Formulas] = {}
+    for title, cells in sheets:
+        book[title.casefold()] = _Grid({key: cell.value for key, cell in cells.items()}, book)
+    return book  # type: ignore[return-value]
 
 
 def picture(data: bytes, which: str = "") -> tuple[int, Image.Image]:
@@ -577,10 +650,11 @@ def picture(data: bytes, which: str = "") -> tuple[int, Image.Image]:
         if not 0 <= index < len(names):
             listed = ", ".join(f"{i} '{n}'" for i, n in enumerate(names, start=1))
             raise SheetError(f"the workbook has no sheet {which!r}; its sheets are {listed}")
-        cells = _cells(book.worksheets[index], READ_ROWS, READ_COLUMNS)
+        sheets = [(sheet.title, _cells(sheet, READ_ROWS, READ_COLUMNS)) for sheet in book.worksheets]
     finally:
         book.close()
-    grid = _Grid({key: cell.value for key, cell in cells.items()})
+    cells = sheets[index][1]
+    grid = _grids(sheets)[sheets[index][0].casefold()]
     shown = {key: cell for key, cell in cells.items() if key[0] <= PICTURE_ROWS and key[1] <= PICTURE_COLUMNS}
     last_row = max((r for r, _ in shown), default=1)
     last_column = max((c for _, c in shown), default=1)
@@ -665,23 +739,302 @@ class _Unknown(Exception):
     """A formula the preview can't work out."""
 
 
+_SHEET_PREFIX = r"(?:'(?:[^']|'')+'|[A-Za-z0-9_.À-ɏ]+)!"
+_CELL_TEXT = r"\$?[A-Za-z]{1,3}\$?\d{1,7}"
 _TOKENS = re.compile(
-    r"\s*(?:(?P<num>\d+(?:\.\d+)?)|(?P<fn>[A-Z]+)\(|"
-    r"(?P<range>\$?[A-Z]{1,3}\$?\d{1,7}:\$?[A-Z]{1,3}\$?\d{1,7})|(?P<ref>\$?[A-Z]{1,3}\$?\d{1,7})|(?P<op>[-+*/(),]))"
+    r"\s*(?:(?P<str>\"(?:[^\"]|\"\")*\")|(?P<fn>[A-Za-z][A-Za-z0-9.]*)\("
+    rf"|(?P<range>(?:{_SHEET_PREFIX})?(?:{_CELL_TEXT}:{_CELL_TEXT}|\$?[A-Za-z]{{1,3}}:\$?[A-Za-z]{{1,3}}))"
+    rf"|(?P<ref>(?:{_SHEET_PREFIX})?{_CELL_TEXT})|(?P<num>\d+(?:\.\d+)?)|(?P<cmp><>|<=|>=|=|<|>)"
+    r"|(?P<op>[-+*/(),&]))"
 )
 _CELL = re.compile(r"\$?([A-Z]{1,3})\$?(\d{1,7})")
-_PREVIEW_FUNCTIONS = {"SUM", "AVERAGE", "MIN", "MAX", "COUNT", "ROUND", "ABS"}
+_COLUMNS = re.compile(r"\$?([A-Z]{1,3}):\$?([A-Z]{1,3})")
+# 0.19.2: IF and IFERROR (live, a budget's savings rate stood on a listing's cover as "=IFERROR(D4/B4,0)"), a sheet's
+# cells from another (a summary's "=SUM(Income!C4:C12)") and COUNTIF/SUMIF (a tracker's counts by status)
+_PREVIEW_FUNCTIONS = {"SUM", "AVERAGE", "MIN", "MAX", "COUNT", "COUNTA", "ROUND", "ABS"}
+_PREVIEW_FUNCTIONS |= {"IF", "IFERROR", "IFNA", "COUNTIF", "SUMIF"}
+_MAX_CELLS = 50  # formulas worked out at once (a chain of references), before the preview gives up
+_Tok = tuple[str, str]  # a formula's token: (kind, text)
 
 
-class _Results:
-    """The values a sheet shows once Excel has calculated it, as far as a preview needs them."""
+def _tokens(text: str) -> list[_Tok]:
+    """A formula's tokens (its text after "="): a function's name and a reference upper-cased, a text as it is."""
+    found: list[_Tok] = []
+    position = 0
+    while position < len(text.rstrip()):
+        match = _TOKENS.match(text, position)
+        if match is None:
+            raise _Unknown
+        kind = match.lastgroup or ""
+        value = match.group(kind)
+        if kind == "str":
+            value = value[1:-1].replace('""', '"')
+        elif kind in ("fn", "range", "ref"):
+            sheet, mark, place = value.rpartition("!")
+            value = f"{sheet}{mark}{place.upper()}" if kind != "fn" else value.upper()
+        found.append((kind, value))
+        position = match.end()
+    return found
 
-    def __init__(self, sheet: Sheet) -> None:
+
+def _split(tokens: list[_Tok]) -> tuple[list[list[_Tok]], list[_Tok]]:
+    """A function's arguments (its tokens after the opening bracket, split at its own commas) and the tokens after its
+    closing bracket."""
+    args: list[list[_Tok]] = [[]]
+    depth = 0
+    for index, token in enumerate(tokens):
+        if token[0] == "fn" or token == ("op", "("):
+            depth += 1
+        elif token == ("op", ")"):
+            if depth == 0:
+                return ([] if args == [[]] else args), tokens[index + 1 :]
+            depth -= 1
+        elif token == ("op", ",") and depth == 0:
+            args.append([])
+            continue
+        args[-1].append(token)
+    raise _Unknown
+
+
+def _number(value: Any) -> float:
+    """A value as a number for arithmetic: empty is 0, text isn't one (Excel's #VALUE!)."""
+    if value is None:
+        return 0.0
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, int | float):
+        return float(value)
+    raise _Unknown
+
+
+def _numbers(values: list[Any]) -> list[float]:
+    """The numbers among a range's values (Excel's SUM leaves out text and empty cells)."""
+    return [float(v) for v in values if isinstance(v, int | float) and not isinstance(v, bool)]
+
+
+def _matches(value: Any, criterion: Any) -> bool:
+    """COUNTIF's and SUMIF's test of one value: a text alike in any case, a number equal, or a comparison (">5")."""
+    if isinstance(criterion, str):
+        found = re.fullmatch(r"(<>|<=|>=|=|<|>)(.*)", criterion, re.DOTALL)
+        op, wanted = (found[1], found[2]) if found else ("=", criterion)
+        try:
+            number = float(wanted)
+        except ValueError:
+            text = "" if value is None else str(value)
+            if op not in ("=", "<>"):
+                return False
+            return (text.casefold() == wanted.casefold()) == (op == "=")
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            return op == "<>"
+        return _compared(float(value), op, number)
+    if isinstance(criterion, int | float) and not isinstance(criterion, bool):
+        return isinstance(value, int | float) and not isinstance(value, bool) and float(value) == float(criterion)
+    raise _Unknown
+
+
+def _compared(left: Any, op: str, right: Any) -> bool:
+    if isinstance(left, str) or isinstance(right, str):
+        a, b = ("" if left is None else str(left)).casefold(), ("" if right is None else str(right)).casefold()
+    else:
+        a, b = _number(left), _number(right)
+    return {"=": a == b, "<>": a != b, "<": a < b, ">": a > b, "<=": a <= b, ">=": a >= b}[op]
+
+
+class _Formulas:
+    """What a sheet shows once Excel has calculated it, as far as a preview needs it: a formula's result from the
+    cells it names, on this sheet or (0.19.2) another of the workbook (``book``: by name, any case). ``_cell`` gives a
+    cell's value by Excel's row and column (from 1), ``_rows`` the rows a whole column holds."""
+
+    def __init__(self, book: dict[str, _Formulas] | None = None) -> None:
+        self.book = book if book is not None else {}
+        self.cache: dict[tuple[int, int], Any] = {}
+        self.busy: set[tuple[int, int]] = set()
+
+    def _cell(self, row: int, column: int) -> Any:
+        raise NotImplementedError
+
+    def _rows(self) -> range:
+        raise NotImplementedError
+
+    def formula(self, key: tuple[int, int], text: str) -> Any:
+        """The result of the formula ``text`` in the cell ``key``; raises _Unknown, ZeroDivisionError and the like."""
+        if key in self.cache:
+            return self.cache[key]
+        if key in self.busy or len(self.busy) > _MAX_CELLS:
+            raise _Unknown
+        self.busy.add(key)
+        try:
+            result, rest = self._compare(_tokens(text[1:]))
+            if rest:
+                raise _Unknown
+        finally:
+            self.busy.discard(key)
+        self.cache[key] = result
+        return result
+
+    def _sheet(self, text: str) -> tuple[_Formulas, str]:
+        """The sheet a reference names (this one without a name) and the reference without it."""
+        name, mark, place = text.rpartition("!")
+        if not mark:
+            return self, place
+        name = name[1:-1].replace("''", "'") if name.startswith("'") else name
+        sheet = self.book.get(name.casefold())
+        if sheet is None:
+            raise _Unknown
+        return sheet, place
+
+    def _ref(self, text: str) -> Any:
+        sheet, place = self._sheet(text)
+        match = _CELL.fullmatch(place)
+        if match is None:
+            raise _Unknown
+        return sheet._cell(int(match[2]), _column_index(match[1]) + 1)
+
+    def _range(self, text: str) -> list[Any]:
+        """A range's values, row by row: a block of cells (B2:C9) or whole columns (D:D: the rows the sheet holds)."""
+        sheet, place = self._sheet(text)
+        whole = _COLUMNS.fullmatch(place)
+        if whole is not None:
+            first, last = _column_index(whole[1]) + 1, _column_index(whole[2]) + 1
+            rows = sheet._rows()
+        else:
+            start, end = (_CELL.fullmatch(part) for part in place.split(":"))
+            if start is None or end is None:
+                raise _Unknown
+            first, last = _column_index(start[1]) + 1, _column_index(end[1]) + 1
+            rows = range(int(start[2]), int(end[2]) + 1)
+        if last < first or len(rows) * (last - first + 1) > READ_ROWS * 4:
+            raise _Unknown
+        return [sheet._cell(row, column) for row in rows for column in range(first, last + 1)]
+
+    def _compare(self, tokens: list[_Tok]) -> tuple[Any, list[_Tok]]:
+        value, tokens = self._join(tokens)
+        if tokens and tokens[0][0] == "cmp":
+            right, rest = self._join(tokens[1:])
+            return _compared(value, tokens[0][1], right), rest
+        return value, tokens
+
+    def _join(self, tokens: list[_Tok]) -> tuple[Any, list[_Tok]]:
+        value, tokens = self._sum(tokens)
+        while tokens and tokens[0] == ("op", "&"):
+            right, tokens = self._sum(tokens[1:])
+            value = _plain(value) + _plain(right)
+        return value, tokens
+
+    def _sum(self, tokens: list[_Tok]) -> tuple[Any, list[_Tok]]:
+        value, tokens = self._product(tokens)
+        while tokens and tokens[0] in (("op", "+"), ("op", "-")):
+            op = tokens[0][1]
+            right, tokens = self._product(tokens[1:])
+            value = _number(value) + _number(right) if op == "+" else _number(value) - _number(right)
+        return value, tokens
+
+    def _product(self, tokens: list[_Tok]) -> tuple[Any, list[_Tok]]:
+        value, tokens = self._factor(tokens)
+        while tokens and tokens[0] in (("op", "*"), ("op", "/")):
+            op = tokens[0][1]
+            right, tokens = self._factor(tokens[1:])
+            value = _number(value) * _number(right) if op == "*" else _number(value) / _number(right)
+        return value, tokens
+
+    def _factor(self, tokens: list[_Tok]) -> tuple[Any, list[_Tok]]:
+        if not tokens:
+            raise _Unknown
+        kind, text = tokens[0]
+        rest = tokens[1:]
+        if (kind, text) in (("op", "-"), ("op", "+")):
+            value, rest = self._factor(rest)
+            return (-_number(value) if text == "-" else _number(value)), rest
+        if kind == "num":
+            return float(text), rest
+        if kind == "str":
+            return text, rest
+        if kind == "ref":
+            return self._ref(text), rest
+        if (kind, text) == ("op", "("):
+            value, rest = self._compare(rest)
+            if not rest or rest[0] != ("op", ")"):
+                raise _Unknown
+            return value, rest[1:]
+        if kind == "fn" and text in _PREVIEW_FUNCTIONS:
+            args, rest = _split(rest)
+            return self._call(text, args), rest
+        raise _Unknown
+
+    def _value(self, tokens: list[_Tok]) -> Any:
+        value, rest = self._compare(tokens)
+        if rest:
+            raise _Unknown
+        return value
+
+    def _values(self, tokens: list[_Tok]) -> list[Any]:
+        """An argument's values: a range's cells, or one value."""
+        if len(tokens) == 1 and tokens[0][0] == "range":
+            return self._range(tokens[0][1])
+        return [self._value(tokens)]
+
+    def _call(self, name: str, args: list[list[_Tok]]) -> Any:
+        if name in ("IFERROR", "IFNA"):  # only its first argument's error (a division by zero) gives the second
+            if len(args) != 2:
+                raise _Unknown
+            try:
+                return self._value(args[0])
+            except (ZeroDivisionError, OverflowError):
+                return self._value(args[1])
+        if name == "IF":
+            if len(args) not in (2, 3):
+                raise _Unknown
+            test = self._value(args[0])
+            if isinstance(test, str):
+                raise _Unknown
+            if test:
+                return self._value(args[1])
+            return self._value(args[2]) if len(args) == 3 else False
+        if name in ("COUNTIF", "SUMIF"):
+            if len(args) != (2 if name == "COUNTIF" else len(args)) or not 2 <= len(args) <= 3:
+                raise _Unknown
+            values, criterion = self._values(args[0]), self._value(args[1])
+            if name == "COUNTIF":
+                return float(sum(1 for v in values if _matches(v, criterion)))
+            added = self._values(args[2]) if len(args) == 3 else values
+            if len(added) != len(values):
+                raise _Unknown
+            return sum(_numbers([a for v, a in zip(values, added, strict=True) if _matches(v, criterion)]))
+        if name == "ROUND":
+            if len(args) != 2:
+                raise _Unknown
+            return round(_number(self._value(args[0])), int(_number(self._value(args[1]))))
+        if name == "ABS":
+            if len(args) != 1:
+                raise _Unknown
+            return abs(_number(self._value(args[0])))
+        values = [v for arg in args for v in self._values(arg)]
+        if name == "COUNTA":
+            return float(sum(1 for v in values if v is not None and v != ""))
+        found = _numbers(values)
+        if name == "COUNT":
+            return float(len(found))
+        if not found:
+            return 0.0 if name == "SUM" else _empty(name)
+        return _total(name, found)
+
+
+def _empty(name: str) -> float:
+    """AVERAGE, MIN or MAX of no numbers: Excel shows #DIV/0! for AVERAGE and 0 for MIN and MAX."""
+    if name == "AVERAGE":
+        raise ZeroDivisionError
+    return 0.0
+
+
+class _Results(_Formulas):
+    """The values a sheet of a spec shows once Excel has calculated it, as far as a preview needs them (``book``:
+    0.19.2, the workbook's other sheets, by name)."""
+
+    def __init__(self, sheet: Sheet, book: dict[str, _Formulas] | None = None) -> None:
+        super().__init__(book)
         self.sheet = sheet
         self.first = first_row(bool(sheet.title))
         self.last = self.first + len(sheet.rows) + sheet.empty_rows - 1
-        self.cache: dict[tuple[int, int], Any] = {}
-        self.busy: set[tuple[int, int]] = set()
 
     def cell(self, index: int, column: int) -> Any:
         """The value of a data cell: a formula's result, or the formula itself when it can't be worked out."""
@@ -689,8 +1042,8 @@ class _Results:
         if not (isinstance(value, str) and value.startswith("=")):
             return value
         try:
-            return self._number(index, column)
-        except (_Unknown, ZeroDivisionError, OverflowError, RecursionError):
+            return self.formula((self.first + index, column + 1), value)
+        except (_Unknown, ZeroDivisionError, OverflowError, RecursionError, ValueError):
             return value
 
     def total(self, column: int) -> float | None:
@@ -704,192 +1057,58 @@ class _Results:
                 found.append(float(value))
         return _total(fn, found) if fn and found else None
 
-    def _number(self, index: int, column: int) -> float:
-        key = (index, column)
-        if key in self.cache:
-            return self.cache[key]
-        if key in self.busy or len(self.busy) > 50:
-            raise _Unknown
-        self.busy.add(key)
-        try:
-            tokens = _tokens(str(self.sheet.rows[index][column])[1:])
-            result, rest = self._sum(tokens)
-            if rest:
-                raise _Unknown
-        finally:
-            self.busy.discard(key)
-        self.cache[key] = result
-        return result
+    def _rows(self) -> range:
+        return range(self.first, self.last + 1)
 
-    def _ref(self, text: str) -> float:
-        value = self._at(text)
-        return 0.0 if value is None else value
-
-    def _at(self, text: str) -> float | None:
-        """A cell's number, or None when it is empty."""
-        match = _CELL.fullmatch(text)
-        if match is None:
-            raise _Unknown
-        column = _column_index(match.group(1))
-        row = int(match.group(2))
-        if column >= len(self.sheet.columns):
-            raise _Unknown
-        if row == self.last + 1 and column in self.sheet.totals:
-            total = self.total(column)
-            if total is None:
-                raise _Unknown
-            return total
+    def _cell(self, row: int, column: int) -> Any:
+        if not 1 <= column <= len(self.sheet.columns):
+            return None
+        if row == 1 and self.sheet.title:
+            return self.sheet.title if column == 1 else None
+        if row == self.first - 1:
+            return self.sheet.columns[column - 1].title
+        if row == self.last + 1 and self.sheet.totals:
+            if column - 1 in self.sheet.totals:
+                total = self.total(column - 1)
+                if total is None:
+                    raise _Unknown
+                return total
+            return "Total" if column == 1 else None
         index = row - self.first
         if not 0 <= index < len(self.sheet.rows):
-            if self.first <= row <= self.last:
-                return None  # an empty row to fill in
-            raise _Unknown
-        value = self.sheet.rows[index][column]
-        if value is None:
-            return None
+            return None  # an empty row to fill in, or below the table
+        value = self.sheet.rows[index][column - 1]
         if isinstance(value, str) and value.startswith("="):
-            return self._number(index, column)
-        if isinstance(value, int | float) and not isinstance(value, bool):
-            return float(value)
-        raise _Unknown
-
-    def _range(self, text: str) -> list[float]:
-        start, end = text.split(":")
-        a, b = _CELL.fullmatch(start), _CELL.fullmatch(end)
-        if a is None or b is None or a.group(1) != b.group(1) or int(b.group(2)) - int(a.group(2)) > MAX_ROWS:
-            raise _Unknown  # one column at a time is all a preview needs
-        found = [self._at(f"{a.group(1)}{row}") for row in range(int(a.group(2)), int(b.group(2)) + 1)]
-        return [value for value in found if value is not None]
-
-    def _sum(self, tokens: list[tuple[str, str]]) -> tuple[float, list[tuple[str, str]]]:
-        value, tokens = self._product(tokens)
-        while tokens and tokens[0] in (("op", "+"), ("op", "-")):
-            op = tokens[0][1]
-            right, tokens = self._product(tokens[1:])
-            value = value + right if op == "+" else value - right
-        return value, tokens
-
-    def _product(self, tokens: list[tuple[str, str]]) -> tuple[float, list[tuple[str, str]]]:
-        value, tokens = self._factor(tokens)
-        while tokens and tokens[0] in (("op", "*"), ("op", "/")):
-            op = tokens[0][1]
-            right, tokens = self._factor(tokens[1:])
-            value = value * right if op == "*" else value / right
-        return value, tokens
-
-    def _factor(self, tokens: list[tuple[str, str]]) -> tuple[float, list[tuple[str, str]]]:
-        if not tokens:
-            raise _Unknown
-        kind, text = tokens[0]
-        rest = tokens[1:]
-        if (kind, text) == ("op", "-"):
-            value, rest = self._factor(rest)
-            return -value, rest
-        if kind == "num":
-            return float(text), rest
-        if kind == "ref":
-            return self._ref(text), rest
-        if (kind, text) == ("op", "("):
-            value, rest = self._sum(rest)
-            if not rest or rest[0] != ("op", ")"):
-                raise _Unknown
-            return value, rest[1:]
-        if kind == "fn" and text in _PREVIEW_FUNCTIONS:
-            args: list[float] = []
-            while True:
-                if rest and rest[0][0] == "range":
-                    args.extend(self._range(rest[0][1]))
-                    rest = rest[1:]
-                else:
-                    value, rest = self._sum(rest)
-                    args.append(value)
-                if rest and rest[0] == ("op", ","):
-                    rest = rest[1:]
-                    continue
-                if rest and rest[0] == ("op", ")"):
-                    return _call(text, args), rest[1:]
-                raise _Unknown
-        raise _Unknown
+            return self.formula((row, column), value)
+        return value
 
 
-class _Grid(_Results):
-    """0.15.0: the values of any Excel file's sheet, by (row, column): formulas worked out as the preview does,
-    over whole ranges (text in them is left out, as Excel does)."""
+class _Grid(_Formulas):
+    """0.15.0: the values of any Excel file's sheet, by (row, column): formulas worked out as the preview does, over
+    whole ranges (text in them is left out, as Excel does); 0.19.2: with the workbook's other sheets (``book``)."""
 
-    def __init__(self, cells: dict[tuple[int, int], Any]) -> None:
+    def __init__(self, cells: dict[tuple[int, int], Any], book: dict[str, _Formulas] | None = None) -> None:
+        super().__init__(book)
         self.cells = cells
-        self.cache: dict[tuple[int, int], Any] = {}
-        self.busy: set[tuple[int, int]] = set()
 
     def value(self, row: int, column: int) -> Any:
         value = self.cells.get((row, column))
         if not (isinstance(value, str) and value.startswith("=")):
             return value
         try:
-            return self._formula((row, column))
-        except (_Unknown, ZeroDivisionError, OverflowError, RecursionError):
+            return self.formula((row, column), value)
+        except (_Unknown, ZeroDivisionError, OverflowError, RecursionError, ValueError):
             return value
 
-    def _formula(self, key: tuple[int, int]) -> float:
-        if key in self.cache:
-            return self.cache[key]
-        if key in self.busy or len(self.busy) > 50:
-            raise _Unknown
-        self.busy.add(key)
-        try:
-            result, rest = self._sum(_tokens(str(self.cells[key])[1:]))
-            if rest:
-                raise _Unknown
-        finally:
-            self.busy.discard(key)
-        self.cache[key] = result
-        return result
+    def _rows(self) -> range:
+        rows = [r for r, _ in self.cells]
+        return range(min(rows, default=1), max(rows, default=0) + 1)
 
-    def _at(self, text: str) -> float | None:
-        match = _CELL.fullmatch(text)
-        if match is None:
-            raise _Unknown
-        key = (int(match.group(2)), _column_index(match.group(1)) + 1)
-        value = self.cells.get(key)
-        if value is None:
-            return None
+    def _cell(self, row: int, column: int) -> Any:
+        value = self.cells.get((row, column))
         if isinstance(value, str) and value.startswith("="):
-            return self._formula(key)
-        if isinstance(value, int | float) and not isinstance(value, bool):
-            return float(value)
-        raise _Unknown
-
-    def _range(self, text: str) -> list[float]:
-        start, end = (_CELL.fullmatch(part) for part in text.split(":"))
-        if start is None or end is None:
-            raise _Unknown
-        rows = range(int(start.group(2)), int(end.group(2)) + 1)
-        columns = range(_column_index(start.group(1)), _column_index(end.group(1)) + 1)
-        if len(rows) * len(columns) > READ_ROWS * 4:
-            raise _Unknown
-        found = []
-        for row in rows:
-            for column in columns:
-                value = self.cells.get((row, column + 1))
-                if isinstance(value, str) and value.startswith("="):
-                    found.append(self._formula((row, column + 1)))
-                elif isinstance(value, int | float) and not isinstance(value, bool):
-                    found.append(float(value))
-        return found
-
-
-def _tokens(text: str) -> list[tuple[str, str]]:
-    found: list[tuple[str, str]] = []
-    position = 0
-    text = text.upper()
-    while position < len(text.rstrip()):
-        match = _TOKENS.match(text, position)
-        if match is None:
-            raise _Unknown
-        kind = match.lastgroup or ""
-        found.append((kind, match.group(kind)))
-        position = match.end()
-    return found
+            return self.formula((row, column), value)
+        return value
 
 
 def _column_index(letters: str) -> int:
@@ -897,22 +1116,6 @@ def _column_index(letters: str) -> int:
     for letter in letters:
         number = number * 26 + ord(letter) - ord("A") + 1
     return number - 1
-
-
-def _call(name: str, args: list[float]) -> float:
-    if name == "ROUND":
-        if len(args) != 2:
-            raise _Unknown
-        return round(args[0], int(args[1]))
-    if name == "ABS":
-        if len(args) != 1:
-            raise _Unknown
-        return abs(args[0])
-    if not args:
-        raise _Unknown
-    if name == "COUNT":
-        return float(len(args))
-    return _total(name, args)
 
 
 def _row(
@@ -946,8 +1149,8 @@ def _shown(value: Any, fmt: str) -> str:
     if isinstance(value, int | float):
         if fmt == "eur":
             return f"{value:,.2f} €"
-        if fmt == "usd":
-            return f"${value:,.2f}"
+        if fmt == "usd":  # 0.19.2: "-$32.50", as Excel shows it (the critic saw "$-32.50" on a cover)
+            return f"-${-value:,.2f}" if value < 0 else f"${value:,.2f}"
         if fmt == "percent":
             return f"{value * 100:.1f}%"
         if fmt == "integer":

@@ -25,6 +25,7 @@ import threading
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 from .. import events
 from ..agent import website
@@ -111,6 +112,68 @@ def posts(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
 def known(conn: sqlite3.Connection, scope: AgentScope, slug: str) -> sqlite3.Row | None:
     where, params = scope.where()
     return conn.execute(f"SELECT * FROM blog_posts WHERE {where} AND slug = ?", (*params, slug)).fetchone()
+
+
+_POST_PATH = re.compile(rf"{blog.POSTS}/([a-z0-9-]{{1,{blog.SLUG_MAX}}})(?:\.html|/)?")
+
+
+def _live_pages(db: Database, mode: str) -> list[str]:
+    """The live view's pages on the server (its .html files of the last upload)."""
+    raw = db.get_meta(f"integrations.live.{mode}.on_server")  # live_view.key(mode, "on_server")
+    try:
+        files = json.loads(raw) if raw else []
+    except ValueError:
+        return []
+    shown = {str(path) for path in files} if isinstance(files, list) else set()
+    return [path for path in blog.LIVE_FILES if path.endswith(".html") and path in shown]
+
+
+def known_page(
+    conn: sqlite3.Connection, db: Database, scope: AgentScope, base: str, link: str, site_pages: bool = False
+) -> tuple[str, sqlite3.Row | None] | None:
+    """0.19.2: the page of the owner's website (``base``: website.address) that ``link`` names, as Ember's records
+    know it: its address as the server has it and, for a post of the blog, its row (a card's title and description);
+    None when Ember's code knows no such page. Live, two Bluesky posts linked blog posts without their ".html", one by
+    its file's name instead of its slug: both addresses were missing pages. Known: the home page, the blog's list and
+    its posts (a post's address without ".html" or with a closing slash is its address), the link page Ember's code
+    uploaded, the live view's pages once on the server and, with ``site_pages`` (site_enabled), the site's pages."""
+    if not base:
+        return None
+    site, parts = urlsplit(base), urlsplit(link.strip())
+    if parts.scheme != "https" or parts.netloc.lower() != site.netloc.lower() or parts.query or parts.fragment:
+        return None
+    folder = site.path.rstrip("/")
+    if parts.path != folder and not parts.path.startswith(f"{folder}/"):
+        return None
+    path = parts.path[len(folder) :].lstrip("/")
+    if path in ("", "index.html"):
+        return f"{base}/", None
+    if path in (blog.POSTS, f"{blog.POSTS}/", blog.INDEX):
+        return f"{base}/{blog.POSTS}/", None
+    post = _POST_PATH.fullmatch(path)
+    if post is not None:
+        row = known(conn, scope, post[1]) if post[1] not in blog.RESERVED else None
+        return (f"{base}/{blog.post_path(post[1])}", row) if row is not None else None
+    if path == blog.LINKS and links(db, scope.mode) is not None:
+        return f"{base}/{blog.LINKS}", None
+    if path in _live_pages(db, scope.mode):
+        return f"{base}/{path}", None
+    if site_pages and path.endswith(".html") and path[:-5] in {str(r["slug"]) for r in website.pages(conn, scope)}:
+        return f"{base}/{path}", None
+    return None
+
+
+def known_pages(
+    conn: sqlite3.Connection, db: Database, scope: AgentScope, base: str, posts_shown: int = 8
+) -> list[str]:
+    """0.19.2: the addresses of the owner's website a post may link, for the agent: the blog's newest posts first."""
+    if not base:
+        return []
+    found = [f"{base}/{blog.post_path(str(r['slug']))}" for r in posts(conn, scope)[:posts_shown]]
+    found += [f"{base}/{blog.POSTS}/", f"{base}/"]
+    if links(db, scope.mode) is not None:
+        found.append(f"{base}/{blog.LINKS}")
+    return found + [f"{base}/{path}" for path in _live_pages(db, scope.mode)]
 
 
 def remember(
@@ -257,9 +320,13 @@ def text(conn: sqlite3.Connection, db: Database, scope: AgentScope, settings: Se
     seen = shown[0]["seen_at"][:10] if shown else None
     head = f"Posts on {owner.url}/blog/" + (f" (as read {seen})" if seen else "")
     if shown:
+        # 0.19.2: each at its address (live, a post linked one as the blog's address plus its slug: a missing page)
         lines.append(
             f"{head}: "
-            + "; ".join(f"{r['slug']} {json.dumps(r['title'], ensure_ascii=False)} ({r['day']})" for r in shown[:15])
+            + "; ".join(
+                f"{owner.url}/{blog.post_path(r['slug'])} {json.dumps(r['title'], ensure_ascii=False)} ({r['day']})"
+                for r in shown[:15]
+            )
             + (f"; and {len(shown) - 15} more" if len(shown) > 15 else "")
             + "."
         )

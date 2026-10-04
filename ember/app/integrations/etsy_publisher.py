@@ -1120,6 +1120,33 @@ def sold_counts(conn: sqlite3.Connection, scope: AgentScope, since: str | None =
     return sold
 
 
+def _counted(count: int, word: str) -> str:
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def numbers_text(views: int | None, favorites: int | None, sold: int | None = None) -> str:
+    """0.19.2: a listing's numbers at Etsy in words ("2 views, 0 favorites, 0 sold"), or that no sync read them."""
+    if views is None and favorites is None:
+        return "not read from Etsy yet"
+    text = f"{_counted(views or 0, 'view')}, {_counted(favorites or 0, 'favorite')}"
+    return text if sold is None else f"{text}, {sold} sold"
+
+
+def listing_numbers(conn: sqlite3.Connection, scope: AgentScope) -> tuple[dict[int, str], str | None]:
+    """0.19.2: each of Ember's listings' numbers as Etsy's last sync read them (numbers_text), and when the newest was
+    read. Live, the work steps never saw them (only the plan's ETSY SHOP did): the agent asked its owner for its
+    listings' views, and promised five times to report them once the owner sent them."""
+    where, params = scope.where()
+    rows = conn.execute(
+        f"SELECT listing_id, views, favorites, synced_at FROM etsy_listings WHERE {where} AND listing_id IS NOT NULL",
+        params,
+    ).fetchall()
+    sold = sold_counts(conn, scope)
+    found = {int(r["listing_id"]): numbers_text(r["views"], r["favorites"], sold.get(r["listing_id"], 0)) for r in rows}
+    newest = max((str(r["synced_at"]) for r in rows if r["synced_at"]), default=None)
+    return found, newest
+
+
 def live_rows(rows: list[sqlite3.Row], sold: dict[int, int]) -> list[sqlite3.Row]:
     """The listings live on Etsy, top sellers first, then the most favorited and the most seen (0.12.0: the plan saw
     only the newest 10 and the review the newest 8, so the oldest listings, seen the longest, dropped out first)."""

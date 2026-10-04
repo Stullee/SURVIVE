@@ -375,7 +375,9 @@ SPECS: dict[str, Spec] = {
                 "hypothesis": _s("A sharper hypothesis.", 400, required=False, cut=True),
                 "note": _s("A short note: what happened, what you learned.", 300, required=False, cut=True),
                 "venture_id": _i("Link it to this venture (its leg).", required=False),
-                "bet": _s("What you expect of your change, e.g. '+15 views in 7 days: why'.", 200, required=False),
+                "bet": _s(
+                    "What you expect of your change, e.g. '+15 views in 7 days: why'.", 200, required=False, cut=True
+                ),
             },
             per_cycle=8,
             reflect=True,
@@ -631,7 +633,7 @@ SPECS: dict[str, Spec] = {
             "expire. Free.",
             {
                 "request_id": _i(""),
-                "reason": _s("Why, for your owner.", 300),
+                "reason": _s("Why, for your owner.", 300, cut=True),
             },
             per_cycle=5,
             reflect=True,
@@ -663,7 +665,7 @@ SPECS: dict[str, Spec] = {
             "has heard it from you; a decision of your owner's you acted on; a missed milestone you decided about.",
             {
                 "numbers": _s("Their numbers, e.g. '3, 5'.", 100),
-                "result": _s("What you did: message #, request #, milestone # or file.", 300),
+                "result": _s("What you did: message #, request #, milestone # or file.", 300, cut=True),
             },
             per_cycle=3,
             reflect=True,
@@ -894,7 +896,7 @@ SPECS: dict[str, Spec] = {
                 "to": _s("One plain address; empty when replying.", 254, required=False),
                 "subject": _s("", mail.SUBJECT_MAX),
                 "body": _s("Plain text (Ember adds the footer).", min(mail.BODY_MAX, ONE_REPLY_CHARS)),
-                "reason": _s("Why this email, for your owner.", 300),
+                "reason": _s("Why this email, for your owner.", 300, cut=True),
                 "reply_to_email_id": _i("The email you answer (to its sender).", required=False),
             },
             per_cycle=3,
@@ -914,7 +916,7 @@ SPECS: dict[str, Spec] = {
                     300,
                     required=False,
                 ),
-                "reason": _s("Why this post, for your owner.", 300),
+                "reason": _s("Why this post, for your owner.", 300, cut=True),
             },
             per_cycle=2,
         ),
@@ -970,15 +972,15 @@ SPECS: dict[str, Spec] = {
                     f"1 to {etsy.MAX_PHOTOS} .png or .jpg files, separated by commas, the main one first.",
                     600,
                 ),
-                "reason": _s("Why now, and what you expect.", 300),
+                "reason": _s("Why now, and what you expect.", 300, cut=True),
                 "project_id": _i("Its product line (default: your focus project).", required=False),
             },
             per_cycle=1,
         ),
         Spec(
             "etsy_listing",
-            "Read your Etsy listings as Ember last listed or changed them: without listing_id a short list, with one "
-            "the listing in full. Free.",
+            "Read your Etsy listings as Ember last listed or changed them, with Etsy's numbers (views, favorites, "
+            "sales; read hourly): without listing_id a short list, with one the listing in full. Free.",
             {"listing_id": _i("", required=False, minimum=1)},
             per_cycle=6,
         ),
@@ -1010,7 +1012,7 @@ SPECS: dict[str, Spec] = {
                     600,
                     required=False,
                 ),
-                "reason": _s("Why, and what you expect.", 300),
+                "reason": _s("Why, and what you expect.", 300, cut=True),
             },
             per_cycle=3,
         ),
@@ -1041,7 +1043,7 @@ SPECS: dict[str, Spec] = {
                     pinterest.BOARD_NAME_MAX,
                     required=False,
                 ),
-                "reason": _s("Why, and what you expect.", 300),
+                "reason": _s("Why, and what you expect.", 300, cut=True),
             },
             per_cycle=2,
         ),
@@ -1064,11 +1066,14 @@ SPECS: dict[str, Spec] = {
                 ),
                 "language": _s("The post's language.", 2, enum=bluesky.LANGUAGES),
                 "link": _s(
-                    "A live Etsy listing's address or a page of your owner's website.", bluesky.LINK_MAX, required=False
+                    "A live Etsy listing's address, or a page of your owner's website that Ember's code knows (a blog "
+                    "post's address as BLOG gives it, ending in .html).",
+                    bluesky.LINK_MAX,
+                    required=False,
                 ),
                 "image": _s("A .png or .jpg of yours shown with the post.", 200, required=False),
                 "alt_text": _s("What the picture shows (needed with one).", bluesky.ALT_MAX, required=False),
-                "reason": _s("Why, and what you expect.", 300),
+                "reason": _s("Why, and what you expect.", 300, cut=True),
             },
             per_cycle=2,
         ),
@@ -1108,7 +1113,7 @@ SPECS: dict[str, Spec] = {
                     "characters.",
                     400,
                 ),
-                "reason": _s("Why now, and what you expect.", 300),
+                "reason": _s("Why now, and what you expect.", 300, cut=True),
                 "project_id": _i("Its product line (default: your focus project).", required=False),
             },
             per_cycle=1,
@@ -1138,7 +1143,7 @@ SPECS: dict[str, Spec] = {
             "for it is withdrawn). Read guide 'blog' first. Free.",
             {
                 "source": _s("The Markdown file in your workspace, e.g. 'blog/bewerbung-nachfassen.md'.", 200),
-                "reason": _s("Why this post now, and what you expect from it.", 300),
+                "reason": _s("Why this post now, and what you expect from it.", 300, cut=True),
             },
             per_cycle=2,
         ),
@@ -1161,7 +1166,7 @@ SPECS: dict[str, Spec] = {
                         ),
                     },
                 ),
-                "reason": _s("Why change it now.", 300),
+                "reason": _s("Why change it now.", 300, cut=True),
             },
             per_cycle=1,
         ),
@@ -1553,7 +1558,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
             if other:
                 raise ToolError(f"{other[0]} is set in a venture cycle; here {name} takes {', '.join(spec.fields)}")
         cut_notes: list[str] = []
-        args = validate(spec, raw_input, cut_notes)
+        args = validate(spec, unleaked(spec, raw_input, cut_notes), cut_notes)
         handler = HANDLERS[name]
         if name in CALLING_TOOLS:  # model calls: network, and no transaction held meanwhile
             outcome = _noted(handler(ctx, args), cut_notes)
@@ -1610,6 +1615,37 @@ def skip(
         )
         store.finish_tool_call(conn, call_id, "skipped", why[:300], why, ctx.now())
     return Outcome(False, f"Not executed: {why}.", why)
+
+
+# 0.19.2: a call's next text written inside the one before it, as the model's own markup ("...</entry>\n<parameter
+# name="next">..."): live, five journals kept their handoff inside the entry, and the next plan had none.
+_LEAKED = re.compile(r'<parameter name="([a-z_]{1,40})">')
+_CLOSING = re.compile(r"(?:\s*</[a-z_:]{1,40}>)+\s*$", re.IGNORECASE)
+
+
+def unleaked(spec: Spec, raw: Any, notes: list[str]) -> Any:
+    """The input with each text field another one's markup holds moved to its own field (unless that field is
+    given), when every such mark names another text field of the tool; what was moved is noted."""
+    if not isinstance(raw, dict):
+        return raw
+    fixed = dict(raw)
+    for name, value in raw.items():
+        field = spec.fields.get(name)
+        if field is None or field.type != "string" or not isinstance(value, str):
+            continue
+        marks = list(_LEAKED.finditer(value))
+        if not marks or any(
+            m[1] == name or m[1] not in spec.fields or spec.fields[m[1]].type != "string" for m in marks
+        ):
+            continue
+        fixed[name] = _CLOSING.sub("", value[: marks[0].start()]).rstrip()
+        for mark, after in zip(marks, [*marks[1:], None], strict=True):
+            text = _CLOSING.sub("", value[mark.end() : after.start() if after else len(value)]).strip()
+            given = raw.get(mark[1])
+            if text and not (isinstance(given, str) and given.strip()):
+                fixed[mark[1]] = text
+                notes.append(f"Ember's code moved the {mark[1]} you wrote inside {name} to {mark[1]}")
+    return fixed
 
 
 def validate(spec: Spec, raw: Any, notes: list[str] | None = None) -> dict[str, Any]:
@@ -1827,7 +1863,7 @@ def _memory_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
                 f"this keeps {len(kept)} of the {len(known)} lines of lessons.md, and {why}: read it with memory_read "
                 "(free) while working, then replace it in a later reply of the same cycle, keeping what still helps"
             )
-    text = ctx.memory.update(conn, args["file"], args["mode"], args["content"], ctx.cycle_id, ctx.now())
+    text = ctx.memory.update(conn, args["file"], args["mode"], args["content"], ctx.cycle_id, ctx.now(), SPECS)
     return Outcome(True, text, f"{args['mode']} {args['file']}")
 
 
@@ -1938,8 +1974,8 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     if args.get("bet"):  # 0.18.0: settled by Ember's code (bets.py); a refused bet changes nothing
         try:
             placed = bets.place(conn, ctx.scope, row["id"], args["bet"], ctx.cycle_id, ctx.clock.today(), ctx.now())
-        except bets.BetError as exc:
-            raise ToolError(f"bet: {exc}") from None
+        except bets.BetError as exc:  # 0.19.2: said so (live, the agent took its other changes for made)
+            raise ToolError(f"bet: {exc}; nothing was changed, so send the update again") from None
     if not changes and not placed:
         raise ToolError("nothing to change")
     if changes:
@@ -1947,8 +1983,32 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     transition = f"{row['status']} → {changes['status']}" if "status" in changes else "updated"
     if "venture_id" in changes:
         transition += f", part of venture #{venture_id}"
-    text = f"Project #{row['id']}: {transition}." + (f" {placed}" if placed else "")
+    text = f"Project #{row['id']}: {transition}." + (f" {placed}" if placed else "") + _left_behind(ctx, conn, row)
     return Outcome(True, text, f"#{row['id']} {transition}", row["id"])
+
+
+def _left_behind(ctx: ToolContext, conn: Any, before: Any) -> str:
+    """0.19.2: what a project leaving a backed venture (moved to another, or closed) leaves behind: the venture's first
+    test with no open project (live, a website test's project became a Bluesky channel's, and READY asked again for a
+    project to set up the website's test)."""
+    old = before["venture_id"]
+    if old is None:
+        return ""
+    now = store.project(conn, ctx.scope, before["id"])
+    if now is not None and now["venture_id"] == old and now["status"] in OPEN_STATUSES:
+        return ""
+    venture = ventures.get(conn, ctx.scope, old)
+    if venture is None or venture["stage"] not in ("building", "live"):
+        return ""
+    where, params = ctx.scope.where()
+    marks = ", ".join("?" for _ in OPEN_STATUSES)
+    others = conn.execute(
+        f"SELECT COUNT(*) FROM projects WHERE {where} AND venture_id = ? AND status IN ({marks})",
+        (*params, old, *OPEN_STATUSES),
+    ).fetchone()[0]
+    if others:
+        return ""
+    return f" Venture #{old} ({venture['title']}) has no open project now: its test needs one."
 
 
 def project_net(conn: Any, scope: AgentScope, project_id: int) -> tuple[int, int]:
@@ -3561,11 +3621,7 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
         raise ToolError(str(exc)) from None
     reason = args["reason"].strip()
     # 0.12.0: a listing belongs to a product line (a project), and a product line's first listing needs a demand note.
-    project_id = args.get("project_id", ctx.state.focus_project_id)
-    if project_id is None:
-        raise ToolError("name its project (project_id): each listing belongs to a product line")
-    if store.project(conn, ctx.scope, project_id) is None:
-        raise ToolError(f"there is no project #{project_id}")
+    project_id = _product_line(ctx, conn, args, "listing")
     if not demand.listed(conn, project_id) and demand.recent(conn, project_id, ctx.now()) is None:
         raise ToolError(
             f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "
@@ -3603,6 +3659,27 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
         text += f" QA (Ember's code): {'; '.join(short)}: make more with make_image and change the request."
     text += _joined(project_id, joined) + note
     return Outcome(True, text, f"#{made} Etsy listing: {_cut(listing.title, 60)}")
+
+
+def _product_line(ctx: ToolContext, conn: Any, args: dict[str, Any], what: str) -> int:
+    """The project (product line) a new listing or product joins: the one named, else the cycle's focus project, but
+    (0.19.2) not one of another venture than the cycle's: live, a cycle on venture #12 with a cover-letter project in
+    focus listed #12's licence bundle in that project, whose quality checks and listing test then read the bundle."""
+    project_id = args.get("project_id")
+    if project_id is None:
+        project_id = ctx.state.focus_project_id
+        if project_id is None:
+            raise ToolError(f"name its project (project_id): each {what} belongs to a product line")
+        focus = store.project(conn, ctx.scope, project_id)
+        venture = ctx.state.focus_venture_id
+        if focus is not None and venture is not None and focus["venture_id"] not in (None, venture):
+            raise ToolError(
+                f"name its project (project_id): your focus project #{project_id} belongs to venture "
+                f"#{focus['venture_id']}, and this cycle works on venture #{venture}"
+            )
+    if store.project(conn, ctx.scope, project_id) is None:
+        raise ToolError(f"there is no project #{project_id}")
+    return int(project_id)
 
 
 def _joined(project_id: int, venture_id: int | None) -> str:
@@ -3648,28 +3725,62 @@ def _demand_note(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
 def _etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     _shop(ctx)
     listing_id = args.get("listing_id")
+    # 0.19.2: with Etsy's numbers, which Ember's code reads every hour (live, the work steps never saw them, so the
+    # agent asked its owner for its listings' views and promised to report them once they were sent)
+    numbers, read = etsy_publisher.listing_numbers(conn, ctx.scope)
+    as_read = f"Etsy's numbers as Ember's code read them at {_local(ctx, read)}" if read else "not read from Etsy yet"
     try:
         if listing_id is None:
             found = etsy_publisher.live_listings(conn, ctx.scope)
             idle = etsy_publisher.idle_listings(conn, ctx.scope)  # 0.12.0: they were listed as live
             gone = "; ".join(f"#{r['listing_id']} {etsy_publisher.state_text(r)}" for r in idle)
+            pod = _printify_listings(conn, ctx.scope)
             if not found:
-                text = "You have no live listings." + (f" Not live at Etsy: {gone}." if gone else "")
+                text = "You have no live listings." + (f" Not live at Etsy: {gone}." if gone else "") + pod
                 return Outcome(True, text, "none")
-            lines = "\n".join(etsy.listing_line(i, listing) for i, listing in found)
-            text = f"Your live listings (newest first):\n{lines}" + (f"\nNot live at Etsy: {gone}." if gone else "")
+            lines = "\n".join(
+                etsy.listing_line(i, listing) + (f" · {numbers.get(i, 'not read from Etsy yet')}" if read else "")
+                for i, listing in found
+            )
+            text = f"Your live listings (newest first; {as_read}):\n{lines}"
+            text += (f"\nNot live at Etsy: {gone}." if gone else "") + pod
             return Outcome(True, text, f"{len(found)} listings")
         listing = etsy_publisher.current_listing(conn, ctx.scope, listing_id)
     except etsy.EtsyError as exc:
         raise ToolError(f"Ember's record of #{listing_id} isn't readable ({exc})") from None
     row = etsy_publisher.listing_row(conn, ctx.scope, listing_id)
     if listing is None or row is None:
+        made = _printify_listings(conn, ctx.scope, listing_id)
+        if made:  # 0.19.2: live, a cycle took its posters made through Printify for listings that weren't live
+            return Outcome(True, made.strip(), f"read #{listing_id}")
         raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
-    text = etsy.listing_text(listing_id, listing, etsy_publisher.state_text(row))
+    said = f"{as_read}: {numbers.get(listing_id, 'not read yet')}." if read else "Etsy's numbers: not read yet."
+    text = etsy.listing_text(listing_id, listing, etsy_publisher.state_text(row), said)
     waiting = etsy_publisher.open_edit(conn, ctx.scope, listing_id)
     if waiting is not None:
         text += f"\n\nRequest #{waiting} changes it and hasn't been made yet."
     return Outcome(True, text, f"read #{listing_id}")
+
+
+def _printify_listings(conn: Any, scope: AgentScope, listing_id: int | None = None) -> str:
+    """0.19.2: the Etsy listings of Ember's Printify products, with Etsy's numbers (etsy_listing showed only those Ember
+    listed itself: live, the agent took its two posters for listings that weren't live). "" when there are none."""
+    rows = [
+        r
+        for r in printify_publisher.products(conn, scope, 50)
+        if r["status"] == "active" and r["listing_id"] and listing_id in (None, int(r["listing_id"]))
+    ]
+    if not rows:
+        return ""
+    lines = [
+        f"- #{r['listing_id']} {' '.join(str(r['title']).split())[:70]} · "
+        + (etsy_publisher.numbers_text(r["views"], r["favorites"]) if r["synced_at"] else "not read from Etsy yet")
+        for r in rows
+    ]
+    return (
+        "\nMade through Printify (live at Etsy; Printify keeps them, propose_etsy_edit doesn't change them; PRINTIFY "
+        "in your plan has their prices):\n" + "\n".join(lines)
+    )
 
 
 def _propose_etsy_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -3918,12 +4029,20 @@ def _post_link(ctx: ToolContext, conn: Any, raw: str) -> tuple[str, str, str, et
         photo = current.photos[0] if current.photos else None
         return etsy.listing_url(listing_id), bluesky.one_line(current.title)[: bluesky.CARD_TITLE_MAX], "", photo
     site = _bluesky(ctx).site_url
-    if site and (link == site or link.startswith(f"{site}/")):
-        for post in site_publisher.posts(conn, ctx.scope):
-            if link == f"{site}/{blog.post_path(str(post['slug']))}":
-                title, about = bluesky.one_line(post["title"]), bluesky.one_line(post["description"])
-                return link, title[: bluesky.CARD_TITLE_MAX], about[: bluesky.CARD_TITLE_MAX], None
-        return link, "", "", None
+    if site and urlsplit(site).netloc.lower() == parts.netloc.lower():
+        # 0.19.2: only a page Ember's code knows is there (live, two posts linked missing pages of the blog)
+        page = site_publisher.known_page(conn, ctx.db, ctx.scope, site, link, site_pages=ctx.site is not None)
+        if page is None:
+            pages = ", ".join(site_publisher.known_pages(conn, ctx.db, ctx.scope, site))
+            raise ToolError(
+                f"{link} isn't a page of your owner's website that Ember's code knows is there: link one of {pages} "
+                "(a blog post's address ends in .html, as BLOG gives it)"
+            )
+        address, post = page
+        if post is not None:
+            title, about = bluesky.one_line(post["title"]), bluesky.one_line(post["description"])
+            return address, title[: bluesky.CARD_TITLE_MAX], about[: bluesky.CARD_TITLE_MAX], None
+        return address, "", "", None
     where = f" ({site})" if site else " (your owner hasn't set its address, site_url)"
     raise ToolError(
         "link goes to one of your live Etsy listings (https://www.etsy.com/listing/...) or a page of your owner's "
@@ -4098,11 +4217,7 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
         tags = etsy.check_tags(args["tags"])
     except etsy.EtsyError as exc:
         raise ToolError(str(exc)) from None
-    project_id = args.get("project_id", ctx.state.focus_project_id)
-    if project_id is None:
-        raise ToolError("name its project (project_id): each product belongs to a product line")
-    if store.project(conn, ctx.scope, project_id) is None:
-        raise ToolError(f"there is no project #{project_id}")
+    project_id = _product_line(ctx, conn, args, "product")
     if not demand.listed(conn, project_id) and demand.recent(conn, project_id, ctx.now()) is None:
         raise ToolError(
             f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "

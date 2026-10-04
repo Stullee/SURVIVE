@@ -917,6 +917,7 @@ def review_text(conn: sqlite3.Connection, scope: AgentScope, today: date, since:
     kinds = [horizon(_due(r), today) for r in rows]
     overdue = [r for r, k in zip(rows, kinds, strict=True) if k == OVERDUE[0]]
     week = [r for r, k in zip(rows, kinds, strict=True) if k == "week"]
+    month = [r for r, k in zip(rows, kinds, strict=True) if k == "month"]  # 0.19.2: they were left out
     further = [r for r, k in zip(rows, kinds, strict=True) if k in ("quarter", LATER[0])]
     split: dict[str, int] = {}
     for r in closed:
@@ -932,6 +933,7 @@ def review_text(conn: sqlite3.Connection, scope: AgentScope, today: date, since:
     if overdue:
         lines.append(f"- overdue: {listed(overdue)}")
     lines.append(f"- due in the next 7 days: {listed(week) or 'nothing'}")
+    lines.append(f"- due later this month: {listed(month) or 'nothing'}")
     lines.append(f"- planned beyond this month: {listed(further) or 'nothing'}")
     if closed:
         lines.append(

@@ -88,7 +88,9 @@ def test_an_expired_listing_isnt_live_and_is_renewed_with_a_change(data_dir: Pat
     assert agent.publisher.sync(force=True) is None
     renewed = to_iso(agent.clock.now() + timedelta(days=etsy.LISTING_DAYS))
     assert (listing(agent)["state"], listing(agent)["ends_at"]) == ("active", renewed)
-    assert call(ctx, "etsy_listing", {}).text.startswith("Your live listings (newest first):\n- #900000001 ")
+    live = call(ctx, "etsy_listing", {}).text
+    assert live.startswith("Your live listings (newest first; Etsy's numbers as Ember's code read them at ")
+    assert "):\n- #900000001 A sharper title · " in live
 
 
 def test_a_live_listing_is_deactivated_on_its_own_and_renewed_later(data_dir: Path) -> None:

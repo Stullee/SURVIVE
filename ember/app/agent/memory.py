@@ -115,8 +115,18 @@ class Memory:
                 if latest is not None:
                     events.record(self.db, "warning", "agent", f"The memory file {path} was changed outside Ember")
 
-    def update(self, conn: sqlite3.Connection, name: str, mode: str, content: str, cycle_id: int, now: str) -> str:
-        """Change a memory file for the agent; returns the tool result text."""
+    def update(
+        self,
+        conn: sqlite3.Connection,
+        name: str,
+        mode: str,
+        content: str,
+        cycle_id: int,
+        now: str,
+        tools: Collection[str] = (),
+    ) -> str:
+        """Change a memory file for the agent; returns the tool result text. ``tools``: the tools' names (0.19.2: a
+        full lessons file drops the lessons naming one first)."""
         path = self.filename(name)
         cap = CAPS[name]
         if mode not in ("replace", "append"):
@@ -158,7 +168,7 @@ class Memory:
             if len(new.encode("utf-8")) > cap:
                 if name != "lessons":
                     raise MemoryError_(f"{path} is full ({cap:,} bytes); replace it with a shorter version")
-                new, dropped = _drop_oldest(new, cap, set(pinned))
+                new, dropped = _drop_oldest(new, cap, set(pinned), tools)
                 if len(new.encode("utf-8")) > cap:
                     raise MemoryError_(f"{path} is full of the lessons your owner pinned: replace it shorter")
         self.jail.write(path, new)
@@ -207,20 +217,46 @@ def lesson_key(line: str) -> str:
     return " ".join(_PREFIX.sub("", line.strip()).split()).casefold()
 
 
-def _drop_oldest(text: str, cap: int, keep: frozenset[str] | set[str] = frozenset()) -> tuple[str, int]:
+def _drop_oldest(
+    text: str, cap: int, keep: frozenset[str] | set[str] = frozenset(), tools: Collection[str] = ()
+) -> tuple[str, int]:
     """Drop the oldest lesson lines (keeping the heading and, 0.12.0, the pinned ones: ``keep``) until the file
-    fits; 0.12.0: those without numbers first, so a no backed by data outlives them."""
+    fits; 0.19.2: those naming one of ``tools`` first (a tool's limit is no lesson: its refusal states it), then
+    (0.12.0) those without numbers, so a no backed by data outlives them. Live, tool limits nearly always state a
+    number: the daily review's lesson, which states none, went first, and 8 of the 11 lessons left were tool limits."""
     lines = text.splitlines(keepends=True)
     head = [line for line in lines[:2] if not line.startswith("- ")]
     body = lines[len(head) :]
+    named = identifiers(tools)
     dropped = 0
     while len("".join(head + body).encode("utf-8")) > cap:
         droppable = [i for i, line in enumerate(body) if lesson_key(line) not in keep]
         if not droppable:
             break
-        body.pop(next((i for i in droppable if not _numbers(body[i])), droppable[0]))
+        first = next((i for i in droppable if about_tool(body[i], named)), None)
+        if first is None:
+            first = next((i for i in droppable if not _numbers(body[i])), droppable[0])
+        body.pop(first)
         dropped += 1
     return "".join(head + body), dropped
+
+
+def retire_for_release(text: str, notes: str, tools: Collection[str], pinned: set[str]) -> tuple[str, list[str]] | None:
+    """0.19.2: the lessons file without the lessons that name a tool the release ``notes`` name (except the pinned
+    ones), and those lessons; None when none does. An upgrade changes what its tools do: live, a lesson said
+    project_create refuses a ninth open project an hour after 0.19.1 lifted the limit, and the work step believed the
+    lesson over its plan and told its owner the limit still held. A lesson about a tool is relearned from its answer
+    if it still holds."""
+    words = set(re.findall(r"[a-z][a-z0-9_]+", notes.lower()))
+    named = {name for name in identifiers(tools) if name in words}
+    if not named:
+        return None
+    head, lines = lesson_lines(text)
+    gone = [line for line in lines if about_tool(line, named) and lesson_key(line) not in pinned]
+    if not gone:
+        return None
+    kept = [line for line in lines if line not in gone]
+    return head + "".join(f"{line}\n" for line in kept), [lesson_text(line) for line in gone]
 
 
 # --- 0.12.0: the owner's pins and the daily consolidation ---
@@ -372,6 +408,11 @@ _TAG = re.compile(r"^-\s*\[#c(\d+)\]")
 def _numbers(line: str) -> bool:
     """Whether a lesson states a number (its cycle tag aside): a no backed by data is never dropped."""
     return _DIGIT.search(lesson_text(line)) is not None
+
+
+def identifiers(tools: Collection[str]) -> set[str]:
+    """0.19.2: the tools' names no lesson uses as a word of its own (project_create, not research or look)."""
+    return {name for name in tools if "_" in name}
 
 
 def about_tool(line: str, tools: Collection[str]) -> bool:

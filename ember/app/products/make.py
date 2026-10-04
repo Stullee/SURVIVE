@@ -175,6 +175,15 @@ def spreadsheet(jail: Jail, source: str, output: str) -> Made:
     notes = f", a 'How to use' sheet with {len(spec.notes)} lines" if spec.notes else ""
     pictures = ", ".join(f"{path} ({sheet.name})" for path, sheet in zip(shown, spec.sheets, strict=True))
     made.report.append(f"{_size(len(data))}; {extra}{notes}. Pictures of its sheets: {pictures}.")
+    # 0.19.2: where each sheet's data are, for a formula on another sheet (live, a summary missed rows it guessed)
+    rows = []
+    for sheet in spec.sheets:
+        first, last = sheets.data_rows(sheet)
+        if last < first:
+            rows.append(f"{sheet.name} none")
+            continue
+        rows.append(f"{sheet.name} {first}-{last}" + (f" (total {last + 1})" if sheet.totals else ""))
+    made.report.append(f"Data rows: {', '.join(rows)}.")
     if spec.warnings:
         made.report.append("Check: " + " ".join(_sentence(w) for w in spec.warnings))
     if made.removed:
@@ -267,7 +276,9 @@ def image(
             if not pages.strip():
                 raise ProductError("name the pages to show (or use layout text or poster)")
             pictures, keys = _pictures(jail, pages, images.SHAPES[shape][1])
-            data = images.listing(pictures, title.strip(), " ".join(lines), badge.strip(), background, accent, shape)
+            # 0.19.2: each part of the subtitle on a line of its own ("|" splits lines; live, they ran together:
+            # "Unlimited clients No resale of files Plain English")
+            data = images.listing(pictures, title.strip(), "\n".join(lines), badge.strip(), background, accent, shape)
             shows = "photo:" + ",".join(sorted(keys))
     except images.ImageError as exc:
         raise ProductError(str(exc)) from None

@@ -10,8 +10,9 @@ A POST NEEDS:
 1. text and language (de or en: people see posts in the languages they read). At most {POST_CHARS} characters with the
    link and the AI line; the tool says what is left. Up to {POST_TAGS} #hashtags people follow (#Bewerbung,
    #Printable), no link in the words and no @mention.
-2. link (optional): one of your live Etsy listings or a page of your owner's website. Without a picture a listing shows
-   as a card with its title and main photo, and a blog post of yours with its title.
+2. link (optional): one of your live Etsy listings or a page of your owner's website that Ember's code knows is there:
+   a blog post of yours at its address in BLOG (it ends in .html), the blog's list, the home page or the live page.
+   Without a picture a listing shows as a card with its title and main photo, and a blog post of yours with its title.
 3. image (optional), with alt_text saying what it shows: one of your pictures, shown whole (Ember's code sends a
    smaller copy of a large one).
 

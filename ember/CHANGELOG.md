@@ -3,6 +3,30 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.19.2
+
+Fixes from your first day on 0.19.1.
+
+- Bluesky: a link to your owner's website must be a page Ember's code knows is there: a blog post at its address in
+  BLOG (it ends in .html), the blog's list, the home page or the live page. Two of your posts linked missing pages;
+  an approved post's link is checked again when it is made. An approved post, pin or blog post is carried out by
+  Ember's code, not your owner: you hear the result.
+- etsy_listing shows Etsy's numbers (views, favorites, sales; read hourly) and your listings made through Printify.
+  Read your views there; don't ask your owner for them.
+- At this upgrade Ember's code retired the lessons naming a tool these notes name: one said project_create refuses a
+  ninth open project, which it hasn't since 0.19.1. Each upgrade does so; a lesson that still holds comes back from the
+  tool's answer. A full lessons file drops tool lessons first.
+- A bet can be written as OPEN PROJECTS shows one: '+10 views by 2026-10-17: why' (a note in brackets after the date
+  is fine). When a bet is refused, project_update changes nothing: send the update again.
+- make_spreadsheet's pictures show what formulas work out to (IF, IFERROR, COUNTIF, SUMIF, sums of other sheets). Its
+  report says each sheet's data rows, and warns when a range on another sheet misses data rows or counts a total row.
+- make_image: each '|' part of a subtitle starts its own line.
+- A reason (or obligation_done's result) longer than 300 characters is cut to 300, not refused.
+- propose_etsy_listing and propose_printify_product: when your focus project belongs to another venture than the
+  cycle's, name project_id. project_update says when a backed venture is left without an open project.
+- A journal's next written inside its entry is kept as its next.
+- The daily review shows the roadmap before the projects, with the milestones due later this month.
+
 ## 0.19.1
 
 No limit on open projects, and a tool to list them (your upgrade request).

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
-from .. import events
+from .. import events, paths
 from ..config import Settings
 from ..db import Database
 from ..economy import burn
@@ -160,6 +160,8 @@ class CycleEnd:
     sleep_reason: str | None = None  # the agent's own words for sleep_minutes (set_sleep), if it gave any
     cycle_id: int | None = None
     skipped: bool = False  # the cycle never opened
+    sleep_cut: str | None = None  # 0.19.2: why Ember's code cut the sleep the agent chose (asked: what it chose)
+    asked_minutes: int | None = None
 
 
 @dataclass
@@ -343,9 +345,9 @@ class CycleRunner:
         if end.status in ("completed", "idle") and trigger != "last_will":  # 0.18.0: no long sleep while work waits
             mode_now = burn.peek(self.db, self.economy.life.evaluate()).mode
             kept = slack.sleep(end.sleep_minutes, self.slack_items, self.settings.min_sleep_minutes, mode_now)
-            if kept != end.sleep_minutes:
-                end.sleep_minutes = kept
-                end.sleep_reason = f"Ember's code cut the sleep to {kept} min: READY lists useful work"
+            if kept != end.sleep_minutes:  # 0.19.2: the agent's choice and words stay ("Ember chose" the cut)
+                end.asked_minutes, end.sleep_minutes = end.sleep_minutes, kept
+                end.sleep_cut = f"Ember's code cut it to {kept} min: READY lists useful work"
         self._close(cycle_id, end, state)
         return end
 
@@ -389,7 +391,8 @@ class CycleRunner:
             end.status = final  # the guard already stopped it (an overrun)
         spent, _ = self.economy.books.cycle_spend(cycle_id)
         # 0.15.0: the sleep it chose (the scheduler may cut it: the dashboard's next wake says)
-        tail = f"; chose {end.sleep_minutes} min of sleep" if end.sleep_minutes else ""
+        tail = f"; chose {end.asked_minutes or end.sleep_minutes} min of sleep" if end.sleep_minutes else ""
+        tail += f", cut to {end.sleep_minutes} (READY lists useful work)" if end.sleep_cut else ""
         level = "info" if final in ("completed", "idle") else "warning"
         events.record(
             self.db,
@@ -421,7 +424,10 @@ class CycleRunner:
                 store.update_cycle(conn, cycle_id, venture=1)
         if owed:
             events.record(
-                self.db, "info", "agent", f"Cycle #{cycle_id} is an ordinary cycle: {owed[0]} comes first"[:300]
+                self.db,
+                "info",
+                "agent",
+                f"Cycle #{cycle_id} is an ordinary cycle: {owed[0]} {_comes(owed[0])} first"[:300],
             )
         return turn and not owed
 
@@ -743,6 +749,7 @@ class CycleRunner:
     # --- plan, act, reflect ---
 
     def _plan_act_reflect(self, cycle_id: int, ctx: tools.ToolContext) -> CycleEnd:
+        self._guarded(self._retire_lessons, cycle_id, "the lessons' check after an upgrade")  # 0.19.2
         with self.db.connection() as conn:
             review_due = review.due(conn, self.scope, self.clock) and not self.reactive
         if review_due:
@@ -1075,12 +1082,43 @@ class CycleRunner:
             return
         try:
             with self.db.transaction() as conn:
-                said = self.memory.update(conn, "lessons", "append", line, cycle_id, to_iso(self.clock.now()))
+                said = self.memory.update(
+                    conn, "lessons", "append", line, cycle_id, to_iso(self.clock.now()), tools.SPECS
+                )
         except memory_files.MemoryError_ as exc:
             log.warning("The daily review's lesson wasn't kept: %s", exc)
             return
         if not said.startswith("already noted"):
             events.record(self.db, "info", "agent", f"The daily review's lesson was kept: {line}"[:300])
+
+    def _retire_lessons(self, cycle_id: int) -> None:
+        """0.19.2: once a version, before its first plan: the lessons that name a tool its release notes name go
+        (memory_files.retire_for_release), before the plan and the work steps read them. Live, an hour after 0.19.1
+        lifted project_create's limit, a lesson that it refuses a ninth open project made the work step skip its plan's
+        project_create, and it told its owner the limit still held. Free: no call."""
+        running = app_version()
+        key = f"agent.{self.scope.mode}.lessons_version"
+        checked = self.db.get_meta(key)
+        if checked == running:
+            return
+        since = checked or self.db.get_meta(news.changelog_key(self.scope.mode))
+        notes = news.changelog_news(paths.CHANGELOG_PATH, since, running) if since else ""
+        text = self.memory.read("lessons")
+        done = None
+        if notes:
+            with self.db.connection() as conn:
+                pinned = {memory_files.lesson_key(p["text"]) for p in memory_files.pins(conn, self.scope)}
+            done = memory_files.retire_for_release(text, notes, tools.SPECS, pinned)
+        if done is not None:
+            with self.db.transaction() as conn:
+                if self.memory.read("lessons") == text:
+                    self.memory.rewrite(conn, "lessons", done[0], "consolidation", to_iso(self.clock.now()))
+        self.db.set_meta(key, running)
+        if done is not None:
+            quoted = "; ".join(json.dumps(line[:60], ensure_ascii=False) for line in done[1][:3])
+            more = f" and {len(done[1]) - 3} more" if len(done[1]) > 3 else ""
+            message = f"Ember's code retired {len(done[1])} lesson(s) about tools {running} changed: {quoted}{more}"
+            events.record(self.db, "info", "agent", message[:300])
 
     def _guarded(self, step: Callable[[int], None], cycle_id: int, name: str) -> None:
         """0.18.0: a learning step before the plan: a bug in it is logged and the cycle goes on (Stopping and EndCycle
@@ -2126,10 +2164,15 @@ def _unset(status: tuple[str, str | None], etsy: str) -> bool:
     return status[0] in ("not_configured", "not_connected") or (status[0] == "ok" and etsy != "ok")
 
 
+def _comes(what: str) -> str:
+    """0.19.2: "1 message ... comes first", "2 messages ... come first"."""
+    return "come" if re.match(r"\d+ messages\b", what) else "comes"
+
+
 def _bluesky_head(connection: BlueskyConnection, daily_limit: int) -> str:
     """0.19.0: BLUESKY's first line: the account, its followers at the last sync and the day's limit."""
     followers = connection.followers()
-    known = f"{followers} followers; " if followers is not None else ""
+    known = f"{followers} follower{'' if followers == 1 else 's'}; " if followers is not None else ""
     return f"Ember's account: @{connection.handle()} ({known}at most {daily_limit} posts a day).\n"
 
 

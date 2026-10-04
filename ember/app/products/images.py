@@ -250,17 +250,19 @@ def _font(family: str, style: str, size: int) -> ImageFont.FreeTypeFont:
 
 
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, width: int) -> list[str]:
+    """``text`` in lines of ``width``: 0.19.2, each line of it (a subtitle's parts) begins a line of its own."""
     lines: list[str] = []
-    current = ""
-    for word in text.split():
-        candidate = f"{current} {word}".strip()
-        if draw.textlength(candidate, font=font) <= width or not current:
-            current = candidate
-        else:
+    for part in text.split("\n"):
+        current = ""
+        for word in part.split():
+            candidate = f"{current} {word}".strip()
+            if draw.textlength(candidate, font=font) <= width or not current:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        if current:
             lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
     return lines
 
 
@@ -363,7 +365,8 @@ def listing(
         title_font, title_lines = _fit(draw, title, "display", "B", start, tw, 4)
         sub_font, sub_lines = (None, [])
         if subtitle:
-            sub_font, sub_lines = _fit(draw, subtitle, "sans", "", int(title_font.size * 0.42), tw, 4)
+            parts = max(4, len([p for p in subtitle.split("\n") if p.strip()]))
+            sub_font, sub_lines = _fit(draw, subtitle, "sans", "", int(title_font.size * 0.42), tw, parts)
         badge_font = _font("sans", "B", max(28, int(title_font.size * 0.33))) if badge else None
         heights = [title_font.size * 1.12 * len(title_lines)]
         if sub_lines and sub_font is not None:

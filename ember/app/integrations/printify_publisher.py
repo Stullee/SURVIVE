@@ -649,7 +649,12 @@ def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
     lines = []
     for r in made:
         where = f"Etsy #{r['listing_id']}" if r["listing_id"] else "no Etsy listing yet"
-        numbers = f", {r['views'] or 0} views, {r['favorites'] or 0} favorites" if r["synced_at"] else ""
+        seen, liked = r["views"] or 0, r["favorites"] or 0  # 0.19.2: "1 view", not "1 views"
+        numbers = (
+            f", {seen} view{'' if seen == 1 else 's'}, {liked} favorite{'' if liked == 1 else 's'}"
+            if r["synced_at"]
+            else ""
+        )
         why = f": {r['error'][:80]}" if r["status"] == "failed" and r["error"] else ""  # 0.15.0
         lines.append(f"- {r['title'][:60]} ({r['status']}, {where}{numbers}){why}")
         for variant, price, cost, shipping, left in json.loads(r["prices"]) if r["prices"] else []:

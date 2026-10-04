@@ -494,10 +494,12 @@ def test_the_review_reads_the_roadmap(data_dir: Path) -> None:
     done = create(agent, title="Photos", measure="z", due=day(-5))
     with agent.db.transaction() as conn:
         roadmap.update(conn, done, NOW, status="done", result="Five photos made.", closed_at=NOW, closed_by="agent")
+    create(agent, title="This month", measure="m", due=day(20), parent_id=goal)  # 0.19.2: it was left out
     assert _review_text(agent).split("\n") == [
-        "ROADMAP (3 open, 1 overdue; in the period: 1 done)",
+        "ROADMAP (4 open, 1 overdue; in the period: 1 done)",
         '- overdue: #2 "Late one" (2026-08-30)',
         '- due in the next 7 days: #3 "This week" (2026-09-05)',
+        '- due later this month: #5 "This month" (2026-09-21)',
         '- planned beyond this month: #1 "Two legs" (2026-10-31)',
         '- closed in the period: #4 "Photos" done (self-reported): "Five photos made."',  # 0.12.0: its own word
     ]

@@ -564,6 +564,7 @@ def test_a_link_to_the_owner_s_website(data_dir: Path) -> None:
     action = json.loads(rows(agent, "SELECT action FROM approvals WHERE executor = 'bluesky_post'")[-1]["action"])
     assert (action["link_title"], action["link_description"]) == ("Der Wochenplan", "So planst du deine Woche.")
     assert action["card_photo"] is None
+    agent.db.set_meta(f"integrations.live.{scope.mode}.on_server", '["live.html", "live/banner.svg"]')  # 0.19.2
     plain = a_post(agent, ctx, text="Meine Zahlen, live.", link=f"{SITE}/live.html")
     assert plain.ok, plain.text
     payload = rows(agent, "SELECT payload FROM approvals WHERE executor = 'bluesky_post'")[-1]["payload"]
