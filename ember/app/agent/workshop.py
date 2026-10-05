@@ -8,7 +8,8 @@ again (``script``). Every run is a row in ``workshop_runs``.
 
 A script that proves useful is how Ember grows: the planner points at a script that was run again or whose files
 went into a request the owner approved, and the agent asks for it to be built into Ember (``request_upgrade`` with
-``workshop_script``), where it then costs nothing to run.
+``workshop_script``), where it then costs nothing to run. 0.22.2: it asks for a script once, and once the owner
+released its request, the workshop doesn't run it again (its tool does that free).
 
 Money: every call goes through the budget guard. A workshop call has its own cap per run and counts toward the
 daily cap and the balance, not toward the cycle cap. The Files API is free: inputs are uploaded for one run (and
@@ -135,6 +136,8 @@ class Workshop:
         if len(levels) >= MAX_DEPTH:  # 0.15.0: its files go inside it, so this is refused before the run is paid for
             raise WorkshopError(f"folder: at most {MAX_DEPTH - 1} folder levels, so that its files fit inside it")
         inputs = self._inputs(files, script)
+        if script is not None:
+            self._check_not_built_in(script, next(data for path, _, data in inputs if path == script))
         run = Run(task=task, script_used=script, inputs=[path for path, _, _ in inputs])
         uploaded: list[str] = []
         made: list[str] = []
@@ -162,6 +165,20 @@ class Workshop:
             done = store.workshop_runs_since(conn, self.scope, since)
         if done >= self.settings.workshop_runs_per_day:
             raise WorkshopError(f"the workshop runs at most {self.settings.workshop_runs_per_day} times a day")
+
+    def _check_not_built_in(self, script: str, data: bytes) -> None:
+        """0.22.2: a script whose upgrade request the owner released is built in: its tool does it free, so it isn't
+        paid for again (live, the agent believed each Nebenkostenabrechnung variant needed a run of the script that
+        0.20.0 built in as make_cost_statement)."""
+        with self.db.connection() as conn:
+            requests = store.script_requests(conn, self.scope, script, data.decode("utf-8"))
+        released = next((r for r in requests if r["status"] == "released"), None)
+        if released is not None:
+            version = released["released_version"]
+            raise WorkshopError(
+                f"{script} is built into Ember since {version} (upgrade request #{released['id']}): the tool its "
+                f"release notes name does it free. For what that tool can't do, describe the task without script"
+            )
 
     def _inputs(self, files: list[str], script: str | None) -> list[tuple[str, str, bytes]]:
         """(workspace path, name in the container, bytes) of every file handed over."""
@@ -228,15 +245,16 @@ class Workshop:
             if quote > room:
                 run.failure = (
                     f"{going_on} could cost up to ${micros_to_usd(quote):.3f}, but only ${micros_to_usd(room):.3f} "
-                    "is left for it (the workshop's cap per run, the daily cap or the balance" + kept
+                    "is left for it (the workshop's cap per run, the daily cap, or the balance: a run needs several "
+                    "times its hold above the last will's reserve" + kept  # 0.23.0: meter.rooms, as the guard
                 )
                 break
             money = self.meter.rooms(cycle_id, WORKSHOP, keep=keep)[1]
             if held > money:
                 run.failure = (
                     f"{going_on} holds ${micros_to_usd(held):.3f} of the day (the workshop's cap per run, or what "
-                    f"recent runs cost), but only ${micros_to_usd(money):.3f} is left (the daily cap or the balance"
-                    + kept
+                    f"recent runs cost), but only ${micros_to_usd(money):.3f} is left (the daily cap, or the balance: "
+                    "a run needs several times its hold above the last will's reserve" + kept
                 )
                 break
             try:

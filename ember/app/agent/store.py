@@ -498,13 +498,18 @@ def proven_scripts(conn: sqlite3.Connection, scope: AgentScope, limit: int = 2) 
     """Kept workshop scripts that proved useful and that the agent hasn't yet asked to have built in: (path, why).
 
     A script proves itself when it was run again (``script`` pointed at it), or when a file it made, or the script
-    itself, is named in a request the owner approved. Asking for it (request_upgrade with workshop_script) ends it.
+    itself, is named in a request the owner approved. Asking for it (request_upgrade with workshop_script) ends it,
+    and (0.22.2) for the scripts its runs kept since: they are the same script, changed.
     """
     where, params = scope.where()
     runs = conn.execute(
         f"SELECT script_path, script_used, outputs FROM workshop_runs WHERE {where} AND status = 'ok' ORDER BY id",
         params,
     ).fetchall()
+    asked = {
+        row[0]
+        for row in conn.execute(f"SELECT script_path FROM upgrades WHERE {where} AND script_path IS NOT NULL", params)
+    }
     uses: dict[str, int] = {}
     made: dict[str, set[str]] = {}
     for run in runs:
@@ -512,15 +517,13 @@ def proven_scripts(conn: sqlite3.Connection, scope: AgentScope, limit: int = 2) 
         if run["script_path"]:
             uses.setdefault(run["script_path"], 1)
             made.setdefault(run["script_path"], set()).update(outputs)
+            if run["script_used"] in asked:
+                asked.add(run["script_path"])
         if run["script_used"] and run["script_used"] in uses:
             uses[run["script_used"]] += 1
             made[run["script_used"]].update(outputs)
     if not uses:
         return []
-    asked = {
-        row[0]
-        for row in conn.execute(f"SELECT script_path FROM upgrades WHERE {where} AND script_path IS NOT NULL", params)
-    }
     approved = conn.execute(
         f"SELECT id, description, COALESCE(final_payload, payload) AS text FROM approvals WHERE {where}"
         " AND status IN ('approved', 'approved_with_changes', 'done') ORDER BY id DESC LIMIT 200",
@@ -540,6 +543,19 @@ def proven_scripts(conn: sqlite3.Connection, scope: AgentScope, limit: int = 2) 
         if why:
             found.append((path, "; ".join(why)))
     return found[-limit:]
+
+
+def script_requests(conn: sqlite3.Connection, scope: AgentScope, path: str, text: str) -> list[sqlite3.Row]:
+    """0.22.2: the agent's upgrade requests that carry the workshop script ``path``, or its code ``text`` under another
+    name, the newest first. Upgrade request #8 asked again for the script built in as make_cost_statement (#7)."""
+    where, params = scope.where()
+    found = conn.execute(
+        f"SELECT id, status, released_version, owner_note, script_path, script_text FROM upgrades WHERE {where}"
+        " AND script_path IS NOT NULL ORDER BY id DESC",
+        params,
+    ).fetchall()
+    code = text.strip()
+    return [r for r in found if r["script_path"] == path or (code and (r["script_text"] or "").strip() == code)]
 
 
 def workshop_runs_since(conn: sqlite3.Connection, scope: AgentScope, since: str) -> int:
