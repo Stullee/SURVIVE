@@ -82,6 +82,9 @@ _HIDDEN_STYLE = re.compile(
 # time growing with the square of its digits (16,000 zeros: 2 seconds, the whole app waiting).
 _OPACITY = re.compile(r"opacity:([0-9.]*+)(%?)(?:;|!|$)")
 _STYLE_CHARS = 8_000  # 0.21.0: of an element's style with its style sheet's rules; a longer one hides the element
+_STYLE_WORK = 5_000_000  # 0.21.0: characters of style read per email; past them the rest of its HTML isn't read
+# A url(...), a picture's data inside it included: it neither hides nor shows text, and isn't read (nor counted)
+_URL = re.compile(r"""url\(\s*(?:"[^"]*+"|'[^']*+'|[^)]*+)\s*\)?""", re.IGNORECASE)
 _COLOUR_ARGS = re.compile(r"((?:rgb|hsl)a?\()([^()]*)\)")
 FAINT = 0.05  # 0.15.0: text with less opacity (or a colour with less alpha) can't be read
 _ZERO_BOX = re.compile(r"(?:^|;)(?:max-)?(?:height|width):(?:0(?:\.0*)?[a-z%]*|1px)(?:;|!|$)")
@@ -298,11 +301,14 @@ class Mailbox(Protocol):
 # 0.21.0: an email whose MIME structure is deeper or has more parts than a real email's is stored with its headers
 # only. The parser recurses once per level: 1,000 levels (70 KB) raised RecursionError, and the mailbox was never read
 # past that email again, its opt-outs included.
-MAX_CONTAINERS = 64  # multipart and message parts: each is a level the parser may recurse into
+MAX_NESTING = 64  # multipart and message parts inside one another: each is a level the parser recurses into
 MAX_PARTS = 1_000
-_CONTAINER = re.compile(rb"^content-type:\s*(?:multipart|message)/", re.IGNORECASE | re.MULTILINE)
-_PART = re.compile(rb"^content-type:", re.IGNORECASE | re.MULTILINE)
-TOO_COMPLEX = "[This email has more nested parts than any real email, so only its headers were stored.]"
+_LINE_ENDS = re.compile(rb"\r\n?")  # as the parser: CRLF, CR and LF all end a line
+# A boundary line, or a Content-Type header with its folded lines
+_STRUCTURE = re.compile(rb"^(?:(--[^\n]*)|content-type:([^\n]*(?:\n[ \t][^\n]*)*))", re.IGNORECASE | re.MULTILINE)
+_CONTAINER = re.compile(rb"\s*(multipart|message)/", re.IGNORECASE)
+_BOUNDARY = re.compile(rb'boundary\s*=\s*(?:"([^"\n]*)"|([^\s;]+))', re.IGNORECASE)
+TOO_COMPLEX = "[This email is nested deeper or has more parts than any real email, so only its headers were stored.]"
 UNREADABLE = "[Ember couldn't read this email, so only its headers were stored.]"
 
 
@@ -341,15 +347,36 @@ def parse_message(
 
 
 def too_complex(raw: bytes) -> bool:
-    """0.21.0: whether an email has more multipart or message parts than MAX_CONTAINERS, or more parts than MAX_PARTS
-    (counted before it is parsed)."""
-    return len(_CONTAINER.findall(raw)) > MAX_CONTAINERS or len(_PART.findall(raw)) > MAX_PARTS
+    """0.21.0: whether an email's multipart and message parts lie more than MAX_NESTING deep inside one another, or it
+    has more than MAX_PARTS parts, read before it is parsed. A multipart part's level ends at its parent's next
+    boundary line, so parts side by side (32 forwarded emails, a digest) count once each, not as levels."""
+    stack: list[bytes | None] = []  # the open levels: a multipart's boundary, None for a message part
+    parts = 0
+    for match in _STRUCTURE.finditer(_LINE_ENDS.sub(b"\n", raw)):
+        line, header = match.group(1), match.group(2)
+        if line is not None:
+            line = line.rstrip()
+            for index in range(len(stack) - 1, -1, -1):
+                boundary = stack[index]
+                if boundary is not None and line in (b"--" + boundary, b"--" + boundary + b"--"):
+                    del stack[index + (line == b"--" + boundary) :]  # its next part, or (--b--) its end
+                    break
+            continue
+        parts += 1
+        container = _CONTAINER.match(header)
+        if container is not None:
+            found = _BOUNDARY.search(header) if container[1].lower() == b"multipart" else None
+            stack.append((found[1] if found[1] is not None else found[2]) if found else None)
+        if len(stack) > MAX_NESTING or parts > MAX_PARTS:
+            return True
+    return False
 
 
 def _head(raw: bytes) -> bytes:
-    """An email's headers, without its body."""
-    ends = [i for i in (raw.find(b"\r\n\r\n"), raw.find(b"\n\n")) if i >= 0]
-    return raw[: min(ends)] if ends else raw
+    """An email's headers, without its body (whatever its lines end with)."""
+    text = _LINE_ENDS.sub(b"\n", raw)
+    end = text.find(b"\n\n")
+    return text[:end] if end >= 0 else text
 
 
 def _parsed(raw: bytes, uid: int, note: str | None, authserv_ids: tuple[str, ...] = ()) -> IncomingMail:
@@ -572,10 +599,12 @@ class _HtmlText(HTMLParser):
         self.rules: dict[str, list[tuple[str | None, frozenset[str], str | None, str]]] = {}
         self.hiding: set[str] = set()  # classes, ids and tags with more hiding rules than are kept: they hide
         self.page: str = _WHITE
+        self.work = 0  # 0.21.0: characters of style read (_STYLE_WORK)
+        self.heavy = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self._break(tag)
-        if tag in _VOID:
+        if tag in _VOID or self.heavy:
             return
         if len(self.stack) >= _MAX_DEPTH:
             self.overflow = True  # deeper than any real email: drop the rest rather than guess what is hidden
@@ -585,9 +614,14 @@ class _HtmlText(HTMLParser):
             self.stack.append((tag, False, host, None))
             return
         values = {name.lower(): (value or "") for name, value in attrs}
-        own = values.get("style", "")
-        # 0.21.0: no real email's style is this long: it hides its element rather than make reading slow
-        style = "display:none;" if len(own) > _STYLE_CHARS else self._sheet(tag, values) + _squeeze(own)
+        own = _squeeze(values.get("style", ""))
+        # 0.21.0: no real email's style is this long (without the data of its pictures): it hides its element rather
+        # than make reading slow, and reading stops after _STYLE_WORK characters of style
+        style = "display:none;" if len(own) > _STYLE_CHARS else self._sheet(tag, values) + own
+        self.work += len(style)
+        if self.work > _STYLE_WORK:
+            self.heavy = True
+            return
         background = _background(style, values) if style or "bgcolor" in values or "background" in values else None
         hides = tag in _SKIP or self._hides(tag, values, style, background)
         self.stack.append((tag, hides, host, background))
@@ -680,7 +714,7 @@ class _HtmlText(HTMLParser):
                 self._add("\n" * (wanted - have))
 
     def _add(self, text: str) -> None:
-        if not self.hidden and not self.overflow:
+        if not self.hidden and not self.overflow and not self.heavy:
             self.parts.append(text)
             self.size += len(text)
 
@@ -776,6 +810,7 @@ def _background(style: str, values: dict[str, str]) -> str | None:
 def _squeeze(style: str) -> str:
     """A style in lower case without spaces. 0.15.0: a colour's arguments split by spaces or "/" ("rgb(255 255 255 /
     50%)") are split by commas."""
+    style = _URL.sub("url()", style)
     style = _COLOUR_ARGS.sub(lambda m: m[1] + ",".join(re.split(r"[\s,/]+", m[2].strip())) + ")", style.lower())
     return re.sub(r"\s+", "", style)
 
@@ -838,13 +873,15 @@ def html_to_text(html: str) -> str:
     parser = _HtmlText()
     for start in range(0, len(html), _HTML_FEED):
         parser.feed(html[start : start + _HTML_FEED])
-        if parser.size > 2 * BODY_CHARS or parser.overflow:
+        if parser.size > 2 * BODY_CHARS or parser.overflow or parser.heavy:
             break
     else:
         parser.close()
     text = clean_text("".join(parser.parts))
     if parser.overflow:
         text += "\n[The rest of this email's HTML was nested too deeply to read.]"
+    elif parser.heavy:
+        text += "\n[The rest of this email's HTML has more styling than any real email, so it wasn't read.]"
     return text
 
 

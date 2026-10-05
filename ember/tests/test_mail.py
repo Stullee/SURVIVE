@@ -485,7 +485,7 @@ def test_an_email_nested_too_deeply_is_stored_with_its_headers_and_its_stop_coun
 ) -> None:
     """0.21.0: 1,000 levels (70 KB) raised RecursionError in the parser, the fetch failed, its UID never advanced, and
     every later check failed on the same email: no mail was read again, "stop" replies included."""
-    assert mail.parse_message(nested_mail(mail.MAX_CONTAINERS - 1), 1).body == "Please stop."
+    assert mail.parse_message(nested_mail(mail.MAX_NESTING - 1), 1).body == "Please stop."
     imap.mails[3] = nested_mail(1_000)
     imap.mails[4] = raw_mail(4, subject="After it")
     agent = live_agent(data_dir, [])
@@ -498,6 +498,43 @@ def test_an_email_nested_too_deeply_is_stored_with_its_headers_and_its_stop_coun
         {"uid": 4, "from_addr": "ann@example.org", "subject": "After it", "body": "Hi!"},
     ]
     assert agent.db.get_meta(mailstore.meta_key(scope.mode, "last_uid")) == "4"
+
+
+def test_parts_side_by_side_aren_t_levels_and_any_line_end_counts() -> None:
+    """0.21.0 (pre-release review): every multipart or message part counted as a level, so a forward of 32 customer
+    emails lost its whole text; and lines ending in a bare CR passed the check, the parser recursed, and the email was
+    stored without its sender and subject (a "stop" in it lost)."""
+    outer = EmailMessage()
+    outer["From"], outer["Subject"] = "Stefan <owner@example.org>", "Fwd: questions"
+    outer.set_content("Ember, please answer these customer emails.")
+    for i in range(40):
+        inner = EmailMessage()
+        inner["From"], inner["Subject"] = f"c{i}@example.org", f"Question {i}"
+        inner.set_content(f"Question {i}")
+        inner.add_alternative(f"<p>Question {i}</p>", subtype="html")
+        outer.add_attachment(inner)
+    forwarded = mail.parse_message(outer.as_bytes(), 1)
+    assert forwarded.body.startswith("Ember, please answer") and len(forwarded.attachments) == 40
+    for end in ("\r", "\n", "\r\n"):
+        deep = nested_mail(1_000).replace(b"\r\n", end.encode())
+        parsed = mail.parse_message(deep, 2)
+        assert (parsed.from_addr, parsed.subject, parsed.body) == ("mo@example.org", "Stop", mail.TOO_COMPLEX), end
+        assert mail.parse_message(nested_mail(mail.MAX_NESTING - 1).replace(b"\r\n", end.encode()), 3).body == (
+            "Please stop."
+        )
+
+
+def test_a_picture_in_a_style_doesn_t_hide_its_text_and_heavy_styling_ends_reading() -> None:
+    """0.21.0 (pre-release review): an element whose style held a picture's data (over 8,000 characters) was hidden with
+    its text; and one style-sheet rule read again for each of 140,000 elements took 77 seconds."""
+    picture = "<p style=\"background:url('data:image/png;base64," + "A" * 20_000 + "');color:#333\">Real text</p>"
+    assert mail.html_to_text(picture) == "Real text"
+    started = time.perf_counter()
+    heavy = "<style>b{color:red;" + "x:y;" * 1_970 + "}</style><p>Shown</p>" + "<b></b>" * 140_000 + "<p>Never</p>"
+    text = mail.html_to_text(heavy)
+    assert time.perf_counter() - started < 5
+    assert text.startswith("Shown") and "Never" not in text and text.endswith("more styling than any real email, so it"
+                                                                            " wasn't read.]")  # fmt: skip
 
 
 def test_an_email_the_parser_fails_on_is_stored_with_its_headers(monkeypatch: pytest.MonkeyPatch) -> None:

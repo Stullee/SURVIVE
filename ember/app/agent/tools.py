@@ -3239,9 +3239,12 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     question = args["question"].strip()
     if not question:
         raise ToolError("the question is empty")
-    if url is not None and _ADDRESS_LIKE.search(question):
-        # 0.21.0: the page reader may read any address in the request, the question's too: one could carry data out
-        raise ToolError("when you read a page, the question names no web address or domain: only what to find on it")
+    if url is not None and _names_an_address(question, url):
+        # 0.21.0: the page reader may read an address in the request, the question's too: one could carry data out
+        raise ToolError(
+            "when you read a page, the question names no web address and nothing on the page's site: only what to find"
+            " on the page"
+        )
     # 0.12.0: research counts for a venture: the one it names or, in a venture cycle, the focus venture (a venture
     # cycle's research is always a venture's). A question asked again is answered from before, free; a new call for a
     # venture that isn't backed needs what is left of its research budget. 0.15.0: in any other cycle too, research
@@ -3317,8 +3320,23 @@ def _on_etsy(url: str) -> bool:
     return _on(_host(url), ETSY_DOMAINS)
 
 
-# 0.21.0: a web address or a domain (shop.example.org), in a page read's question
-_ADDRESS_LIKE = re.compile(r"(?i)[a-z][a-z0-9+.-]*://|\bwww\.|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,63}\b")
+# 0.21.0: in a page read's question, a web address with its scheme, or a host name (shop.example.org)
+_SCHEME = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://")
+_HOST_NAME = re.compile(r"(?i)\b[a-z0-9-]+(?:\.[a-z0-9-]+)+")
+
+
+def _names_an_address(question: str, url: str) -> bool:
+    """0.21.0: whether a page read's question holds a web address (with its scheme), or a host name on the page's site
+    (its host, a subdomain of it, or its domain without www): the page reader reaches only that site (prompts:
+    allowed_domains), so another host can't be read, and a file name or a product name like Node.js is no address."""
+    if _SCHEME.search(question):
+        return True
+    host = _host(url)
+    site = host.removeprefix("www.")
+    return any(
+        name == site or name.endswith(f".{site}") or (host and name.endswith(f".{host}"))
+        for name in (m.group(0).lower().rstrip(".") for m in _HOST_NAME.finditer(question))
+    )
 
 
 def _host(url: str) -> str:
