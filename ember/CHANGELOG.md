@@ -3,6 +3,24 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.23.1
+
+Fixes from the review of 0.22.0: your owner's park holds, and what it stops comes back when they take the venture up.
+
+- project_update: a project of a venture your owner parked or killed doesn't move to another venture: it stays with
+  it and waits. For another venture, open a project of its own.
+- Your owner's park keeps each project's status and next step in its notes ("It was active; its next step: ..."). When
+  they take the venture up again (Back it, or Research again), the project gets both back, unless you set another
+  next step meanwhile. A project parked before 0.23.1 says its next step is yours to set.
+- OPEN PROJECTS and project_list show the projects waiting on your owner's park last, after the ones you work on.
+- An email reply that a standing "auto" unlock approved before 0.22.0 took it back, and Ember's code hadn't sent yet,
+  waits for your owner again; it wasn't sent.
+- The daily review: a call tried again because it never reached the API, and the weekly look's call, no longer use up
+  the day's second attempt after a failed review. Its scorecard names every open project, also the ones it has no
+  room to show.
+- Principles: an established principle stays established when a new case confirms it, also when an older principle
+  cites some of its cases. A case against it still disputes it.
+
 ## 0.23.0
 
 Fixes from the review of 0.20.1, phase two: what buyers see. Statements prorate a partial year and take heating as

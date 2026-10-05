@@ -573,6 +573,8 @@ class Owner:
                     stages.stop_projects(conn, venture_id, stage or "", now)  # 0.22.0
                 elif action == "research":  # more research, asked for: the research clock starts again
                     conn.execute("UPDATE ventures SET stage_at = ? WHERE id = ?", (now, venture_id))
+                if action in ("back", "research") and row["stage"] == "parked":  # 0.23.1: its projects too
+                    stages.resume_projects(conn, venture_id)
                 after = ventures.get(conn, self.scope, venture_id)
             done = {"research": "asked for research on", "back": "backed", "park": "parked", "kill": "killed"}
             what = done.get(action, "left a note on")

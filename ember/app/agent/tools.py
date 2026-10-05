@@ -1940,7 +1940,8 @@ def _project_list(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     projects = store.open_projects(conn, ctx.scope)
     if not projects:
         return Outcome(True, "No open projects.", "0 open projects")
-    lines = [f"{len(projects)} open projects, the one changed last first:"]
+    # 0.23.1: the ones waiting while the owner parks their venture last (store.open_projects)
+    lines = [f"{len(projects)} open projects, the one changed last first, the ones your owner's park stopped last:"]
     for p in projects:
         venture = f" · venture #{p['venture_id']}" if p["venture_id"] else ""
         step = _cut(" ".join(str(p["next_step"] or "").split()), 80) or "-"
@@ -1990,6 +1991,15 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         changes["notes"] = notes[-2000:]
     venture_id = args.get("venture_id")
     if venture_id is not None and venture_id != row["venture_id"]:
+        held = ventures.get(conn, ctx.scope, row["venture_id"]) if row["venture_id"] is not None else None
+        if held is not None and (held["stage"] == "killed" or held["parked_by"] == "owner"):
+            # 0.23.1: moved out, then set active, a project of the venture worked on as before the owner's park
+            what = "killed" if held["stage"] == "killed" else "parked"
+            raise ToolError(
+                f"your owner {what} venture #{held['id']}: its projects stay with it"
+                + (" and wait until they take it up again" if what == "parked" else "; close this one")
+                + ". For another venture, open a project of its own"
+            )
         _working_venture(conn, ctx.scope, venture_id)
         tied = _tied(conn, ctx.scope, row["id"])
         if tied:  # 0.22.0 (analysis 0.20.1, FIX NOW 11): what Ember's code counted for it stays the venture's

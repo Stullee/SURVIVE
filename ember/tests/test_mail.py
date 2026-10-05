@@ -532,7 +532,13 @@ def test_a_picture_in_a_style_doesn_t_hide_its_text_and_heavy_styling_ends_readi
     assert mail.html_to_text(picture) == "Real text"
     # The url() is only left out of the length: the checks read all of a style (a 'url(' inside a string or an
     # unclosed one swallowed what followed, display:none too)
-    for style in ('font-family:"url(";display:none', "background:url(x;display:none", "font:'url(';font-size:0"):
+    for style in (
+        'font-family:"url(";display:none',
+        "color:red;/*url(*/font-size:0",  # 0.23.1: in a comment too
+        "/*url(*/display:none;/*)*/",
+        "background:url(x;display:none",
+        "font:'url(';font-size:0",
+    ):
         assert mail.html_to_text(f'<p>Shown</p><p style="{html.escape(style)}">Hidden</p>') == "Shown", style
     sheet = "<style>.x { font-family: 'url('; display: none }</style><p>Shown</p><p class=x>Hidden</p>"
     assert mail.html_to_text(sheet) == "Shown"

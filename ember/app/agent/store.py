@@ -178,11 +178,20 @@ def project(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> sql
 
 
 def open_projects(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
+    """The open projects, the one changed last first; 0.23.1: the ones waiting while their venture is parked by the
+    owner last (migration 0077 set them changed at the upgrade, and they took the plan's projects in full)."""
     where, params = scope.where()
     return conn.execute(
-        f"SELECT * FROM projects WHERE {where} AND status IN {OPEN_STATUSES} ORDER BY updated_at DESC, id DESC",
+        f"SELECT * FROM projects WHERE {where} AND status IN {OPEN_STATUSES} ORDER BY {PARKED_LAST},"
+        " updated_at DESC, id DESC",
         params,
     ).fetchall()
+
+
+PARKED_LAST = (  # 0 or 1, never NULL (a project of no venture: NULLs come first)
+    "COALESCE(status = 'waiting' AND venture_id IN (SELECT v.id FROM ventures v WHERE v.stage = 'parked'"
+    " AND v.parked_by = 'owner'), 0)"
+)
 
 
 def all_projects(conn: sqlite3.Connection, scope: AgentScope, limit: int = 50) -> list[sqlite3.Row]:

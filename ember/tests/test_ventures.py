@@ -874,7 +874,10 @@ def test_the_owner_s_park_or_kill_stops_its_projects(data_dir: Path) -> None:
     assert not new.ok and f"your owner parked venture #{parked}: no project goes into it" in new.text
     assert call(ctx, "project_update", {"project_id": first, "note": "Waiting for the owner."}).ok
     assert who.decide_venture(parked, {"action": "back", "confirm": True}, "Stefan").status == 200
-    assert call(ctx, "project_update", {"project_id": first, "status": "active"}).ok
+    # 0.23.1: taken up again, it is what it was (stages.resume_projects)
+    assert rows(agent, f"SELECT status, next_step FROM projects WHERE id = {first}") == [
+        {"status": "active", "next_step": "n"}
+    ]
 
 
 def test_ventures_parked_or_killed_before_the_upgrade_stop_their_projects(data_dir: Path) -> None:

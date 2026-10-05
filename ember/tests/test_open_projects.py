@@ -70,7 +70,10 @@ def test_the_plan_names_every_open_project(data_dir: Path) -> None:
     plan = agent.planner_preview()
     projects = plan.split("== OPEN PROJECTS ==\n", 1)[1].split("\n== ", 1)[0]
     first = projects.split("\n", 1)[0]
-    assert first.startswith(f"{OPEN} open projects: the 8 you updated last in full below; also open: ")
+    assert first.startswith(
+        f"{OPEN} open projects: the 8 you updated last in full below (the ones waiting while your owner parks their "
+        "venture come last); also open: "
+    )
     for pid in ids[8:]:  # named in the first line, which a cut section keeps
         assert f"#{pid} " in first
     assert f"#{ids[0]} [idea] One more line · next: Draft it" in projects  # the newest in full
@@ -117,7 +120,9 @@ def test_project_list_shows_every_open_project_with_its_number(data_dir: Path) -
         assert "project_list" in {d["name"] for d in tools.definitions(venture=venture)}
     assert tools.SPECS["project_list"].reflect is False  # a read: nothing reads its answer after the reflection
     shown = call(shop_context(agent), "project_list", {})
-    assert shown.ok and shown.text.startswith(f"{OPEN} open projects, the one changed last first:\n")
+    assert shown.ok and shown.text.startswith(
+        f"{OPEN} open projects, the one changed last first, the ones your owner's park stopped last:\n"
+    )
     listed = [line for line in shown.text.split("\n")[1:] if line]
     assert [int(line.split(" ", 1)[0][1:]) for line in listed] == ids
     assert listed[0].startswith(f"#{ids[0]} [idea] One more line · changed ")

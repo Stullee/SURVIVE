@@ -34,6 +34,7 @@ of its projects' listing tests.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Callable, Collection, Mapping
 from datetime import date, timedelta
@@ -174,29 +175,61 @@ def drop_milestones(
     return dropped
 
 
+PARKED_STEP = "None until your owner takes the venture up again."
+_WAS = "It was {status}; its next step: "
+
+
 def stop_projects(conn: sqlite3.Connection, venture_id: int, stage: str, now: str) -> list[int]:
     """0.22.0 (analysis 0.20.1, FIX NOW 12): the owner's park or kill (``stage``: parked or killed) stops the venture's
     project work: its open projects are abandoned when it is killed, and wait while it is parked (project_update
     doesn't make them active again until the owner takes it up). They stayed active, and the agent worked on them.
+    0.23.1: what each was and its next step stay in its notes (the park overwrote the next step for good), for
+    resume_projects; a park leaves ``updated_at`` the agent's (the plan shows the projects it updated last in full).
     Returns their numbers."""
     stopped = []
     for row in conn.execute(
-        "SELECT id, notes FROM projects WHERE venture_id = ? AND status IN ('idea', 'active', 'waiting') ORDER BY id",
+        "SELECT id, status, next_step, notes FROM projects WHERE venture_id = ? AND status IN ('idea', 'active',"
+        " 'waiting') ORDER BY id",
         (venture_id,),
     ).fetchall():
         status = "abandoned" if stage == "killed" else "waiting"
         said = f"[owner] Your owner {stage} venture #{venture_id}."
-        nxt = (
-            "None: closed with its venture."
-            if stage == "killed"
-            else "None until your owner takes the venture up again."
-        )
-        conn.execute(
-            "UPDATE projects SET status = ?, next_step = ?, notes = ?, updated_at = ? WHERE id = ?",
-            (status, nxt, f"{row['notes']}\n{said}".strip()[-2000:], now, row["id"]),
+        if stage == "parked" and row["next_step"] != PARKED_STEP:
+            said += f" {_WAS.format(status=row['status'])}{' '.join(str(row['next_step'] or '-').split())}"
+        nxt = "None: closed with its venture." if stage == "killed" else PARKED_STEP
+        conn.execute(  # a kill closes it, now (the review and the lessons read what closed when)
+            "UPDATE projects SET status = ?, next_step = ?, notes = ?, updated_at = CASE WHEN ? = 'abandoned' THEN ?"
+            " ELSE updated_at END WHERE id = ?",
+            (status, nxt, f"{row['notes']}\n{said}".strip()[-2000:], status, now, row["id"]),
         )
         stopped.append(int(row["id"]))
     return stopped
+
+
+def resume_projects(conn: sqlite3.Connection, venture_id: int) -> list[int]:
+    """0.23.1: the owner took a venture they parked up again (back or research): its waiting projects get back what
+    stop_projects kept in their notes, their status and next step, unless the agent set another next step meanwhile.
+    One whose park left nothing (0.22.0's, migration 0077) gets a next step saying so. Returns their numbers."""
+    resumed = []
+    said = f"[owner] Your owner took venture #{venture_id} up again."
+    for row in conn.execute(
+        "SELECT id, notes FROM projects WHERE venture_id = ? AND status = 'waiting' AND next_step = ? ORDER BY id",
+        (venture_id, PARKED_STEP),
+    ).fetchall():
+        status, nxt = "waiting", f"None yet: your owner took venture #{venture_id} up again; set one (project_update)."
+        mark = f"[owner] Your owner parked venture #{venture_id}. "
+        for line in reversed(str(row["notes"]).split("\n")):
+            if line.startswith(mark):
+                kept = re.match(re.escape(mark) + r"It was (idea|active|waiting); its next step: (.+)$", line)
+                if kept is not None:
+                    status, nxt = kept[1], kept[2]
+                break
+        conn.execute(
+            "UPDATE projects SET status = ?, next_step = ?, notes = ? WHERE id = ?",
+            (status, nxt, f"{row['notes']}\n{said}".strip()[-2000:], row["id"]),
+        )
+        resumed.append(int(row["id"]))
+    return resumed
 
 
 def park(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any], now: str, why: str) -> str:

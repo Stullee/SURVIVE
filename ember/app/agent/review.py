@@ -14,6 +14,7 @@ cover now is tried again at the next cycle; after MAX_ATTEMPTS failed reviews a 
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -26,7 +27,7 @@ from ..economy.life import LifeStatus, Runway
 from ..integrations import etsy, etsy_publisher
 from ..version import app_version
 from . import learning, predictions, prompts, reach, roadmap, ventures
-from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
+from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope, open_projects
 
 WINDOW_DAYS = 7
 SCORECARD_MAX = 9_000  # characters: the review call's profile (pricing.REVIEW) is measured with a full scorecard
@@ -139,20 +140,36 @@ def due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> bool:
     ).fetchall()
     if any(r["status"] == "ok" for r in rows) or len(rows) >= MAX_ATTEMPTS:
         return False
-    # 0.22.0: the review calls sent today count too: one whose answer a bug kept from being saved was paid for again in
-    # every cycle (its review was never recorded as failed)
-    sent = conn.execute(
-        "SELECT COUNT(*) FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id WHERE c.purpose = 'review'"
-        " AND c.status <> 'refused' AND c.local_day = ? AND y.session = ? AND y.simulated = ?",
-        (today.isoformat(), scope.session, 1 if scope.simulated else 0),
-    ).fetchone()[0]
-    if sent >= MAX_ATTEMPTS:
+    # 0.22.0: the review calls answered today count too: one whose answer a bug kept from being saved was paid for
+    # again in every cycle (its review was never recorded as failed). 0.23.1: the daily review's own (note_sent), not
+    # every call of purpose 'review': the weekly look's and the free retry of a failed call used up the second attempt.
+    if sent_today(conn, scope, today) >= MAX_ATTEMPTS:
         return False
     earlier = conn.execute(
         "SELECT 1 FROM cycles WHERE session = ? AND simulated = ? AND status = 'completed' AND started_at < ? LIMIT 1",
         (scope.session, 1 if scope.simulated else 0, to_iso(clock.day_start(today))),
     ).fetchone()
     return earlier is not None
+
+
+def _sent_key(scope: AgentScope) -> str:
+    return f"agent.{scope.mode}.{scope.session}.review_sent"
+
+
+def sent_today(conn: sqlite3.Connection, scope: AgentScope, day: date) -> int:
+    """0.23.1: the daily review calls answered on ``day`` (note_sent)."""
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (_sent_key(scope),)).fetchone()
+    stamp, _, count = str(row[0] if row else "").partition(":")
+    return int(count) if stamp == day.isoformat() and count.isdigit() else 0
+
+
+def note_sent(conn: sqlite3.Connection, scope: AgentScope, day: date, now: str) -> None:
+    """0.23.1: a daily review call was answered (paid for), before anything can fail with its answer."""
+    conn.execute(
+        "INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?)"
+        " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        (_sent_key(scope), f"{day.isoformat()}:{sent_today(conn, scope, day) + 1}", now),
+    )
 
 
 def of_day(conn: sqlite3.Connection, scope: AgentScope, day: date) -> sqlite3.Row | None:
@@ -223,16 +240,19 @@ def scorecard(
 
 
 def _cut_lines(text: str, room: int) -> str:
-    """``text`` in at most ``room`` characters, whole lines only, saying how many were left out."""
+    """``text`` in at most ``room`` characters, whole lines only, naming the projects left out (0.23.1: they were only
+    counted, though the review is told every open project is named)."""
     if len(text) <= room:
         return text
-    lines, kept, size = text.split("\n"), [], 0
-    for line in lines:
-        if size + len(line) + 1 > room - 60:
-            break
-        kept.append(line)
-        size += len(line) + 1
-    return "\n".join([*kept, f"[{len(lines) - len(kept)} more lines of projects left out: the scorecard's room]"])
+    lines = text.split("\n")
+    ids = [m[1] for m in (re.match(r"#(\d+) ", line) for line in lines) if m]
+    for keep in range(len(lines), 0, -1):
+        left = [i for i in ids if not any(line.startswith(f"#{i} ") for line in lines[:keep])]
+        note = f"[{len(lines) - keep} more lines of projects left out, for the scorecard's room: #" + ", #".join(left)
+        note = (note if left else note.rstrip(": #")) + "]"
+        if sum(len(line) + 1 for line in lines[:keep]) + len(note) <= room:
+            return "\n".join([*lines[:keep], note])
+    return f"[projects left out, for the scorecard's room: #{', #'.join(ids)}]"[:room]
 
 
 def _last_time(conn: sqlite3.Connection, scope: AgentScope, today: date) -> str | None:
@@ -364,12 +384,10 @@ def _cycles(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
 
 
 def _projects(conn: sqlite3.Connection, scope: AgentScope, since: str) -> list[sqlite3.Row]:
-    """Open projects, most recently updated first, then those closed in the period."""
+    """Open projects, most recently updated first (0.23.1: the ones the owner's park stopped last, store.open_projects),
+    then those closed in the period."""
+    open_ = open_projects(conn, scope)
     where, params = scope.where()
-    open_ = conn.execute(
-        f"SELECT * FROM projects WHERE {where} AND status IN {OPEN_STATUSES} ORDER BY updated_at DESC, id DESC",
-        params,
-    ).fetchall()
     closed = conn.execute(
         f"SELECT * FROM projects WHERE {where} AND status IN {CLOSED_STATUSES} AND updated_at >= ?"
         " ORDER BY updated_at DESC, id DESC",

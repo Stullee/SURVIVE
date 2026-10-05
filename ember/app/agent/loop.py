@@ -1088,6 +1088,8 @@ class CycleRunner:
         except CallFailed as exc:
             self._save_review(cycle_id, card, None, f"the review call failed: {exc.result.error or exc.result.status}")
             return
+        with self.db.transaction() as conn:  # 0.23.1: counted at once, whatever happens with the answer (review.due)
+            review.note_sent(conn, self.scope, self.clock.today(), to_iso(self.clock.now()))
         response = result.response or {}
         text = _text_of(response)
         self._save_text(result.call_id, text, response)

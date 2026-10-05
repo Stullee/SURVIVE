@@ -239,6 +239,8 @@ def apply_principles(
             all_for = sorted(set(_ids(old["supports"])) | set(supports))
             all_against = sorted(set(_ids(old["against"])) | set(against))
             level = confidence(_own(all_for, pid, active), all_against)
+            if level == "hypothesis" and old["confidence"] == "established" and not all_against:
+                level = "established"  # 0.23.1: what was established stays so; sharing cases only gates a promotion
             confirmed = now if set(supports) - set(_ids(old["supports"])) else old["confirmed_at"]
             # 0.22.0: only a hypothesis is reworded; what its cases established keeps its words (an established
             # principle's text could be swapped wholesale, its confidence kept)

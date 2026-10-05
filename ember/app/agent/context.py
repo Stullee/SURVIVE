@@ -498,7 +498,8 @@ def project_lines(s: Snapshot) -> str:
     if others:
         named = ", ".join(f"#{p['id']} {flat(p['title'])[:40]} [{p['status']}]" for p in others)
         lines.append(
-            f"{len(s.projects)} open projects: the {SHOWN_PROJECTS} you updated last in full below; also open: {named}."
+            f"{len(s.projects)} open projects: the {SHOWN_PROJECTS} you updated last in full below (the ones "
+            f"waiting while your owner parks their venture come last); also open: {named}."
         )
     for p in s.projects[:SHOWN_PROJECTS]:
         spent, earned = s.project_money.get(p["id"], (0, 0))
