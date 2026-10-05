@@ -88,6 +88,24 @@ def test_a_run_like_423_near_the_bottom_is_refused_rather_than_kill_ember(data_d
     model.call(cycle, metering.RESEARCH, research)
 
 
+def test_the_pre_check_judges_a_server_tool_call_as_the_guard_does(data_dir: Path) -> None:
+    """0.21.0 (pre-release review): affordable() still compared a research call's quote, not its hold, and knew nothing
+    of the 5x room: the guard refused a paused search's continuation the pre-check let through, and the agent got a
+    partial answer as if it were whole."""
+    settings = Settings(starting_balance_usd=2.0, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
+    economy = make_economy(data_dir, settings)
+    model = economy.metered(FakeTransport(script=[Overrun()]))
+    cycle = model.open_cycle("test")
+    assert model.affordable(workshop(settings), WORKSHOP, cycle)[0] is False  # the guard refuses it: 5 x $0.75
+    research = prompts.research_request(settings, "What sells?", None)
+    assert model.affordable(research, metering.RESEARCH, cycle)[0] is True
+    left = 5 * model.reservation(research, metering.RESEARCH)  # the balance falls to just under 5 x its hold
+    economy_helpers.owner(economy, "expense", f"{-(-(2_000_000 - left) // 10_000) / 100:.2f}")  # in cents, up
+    assert model.affordable(research, metering.RESEARCH, cycle)[0] is False
+    with pytest.raises(CallRefused, match="can cost more than it holds"):
+        model.call(cycle, metering.RESEARCH, research)
+
+
 def test_a_research_call_holds_the_tail_of_recent_research(data_dir: Path) -> None:
     """0.21.0: like a workshop call's, a research call's hold is at least 1.5 times the costliest recent one."""
     economy = make_economy(data_dir, OWNER)

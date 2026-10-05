@@ -291,19 +291,55 @@ def test_an_upgrade_marks_the_lessons_about_the_tools_its_notes_name_to_re_check
     )
     notes = "## 0.19.1\n- project_create no longer refuses a ninth open project. project_list shows them."
     pinned = {memory.lesson_key("Pinned: project_create a project per product line.")}
-    new, marked = memory.recheck_for_release(lessons, notes, TOOLS, pinned, "0.19.1") or ("", [])
+    new, marked, retired = memory.recheck_for_release(lessons, notes, TOOLS, pinned, "0.19.1") or ("", [], [])
     assert marked == ["project_create fails at 8 open projects; fold new work into an existing project."]
+    assert retired == []
     assert (
         "- [#c96] (re-check: 0.19.1 changed project_create) project_create fails at 8 open projects; fold new work"
         " into an existing project.\n" in new
     )
     assert "workspace_write" in new and "A decided action" in new and "- [#c37] Pinned: project_create" in new
     assert memory.recheck_for_release(lessons, "## 0.19.2\n- research is cheaper.", TOOLS, set(), "0.19.2") is None
-    again, _ = memory.recheck_for_release(new, notes, TOOLS, pinned, "0.20.0") or ("", [])
+    again, _, _ = memory.recheck_for_release(new, notes, TOOLS, pinned, "0.20.0") or ("", [], [])
     assert "(re-check: 0.20.0 changed project_create) project_create fails" in again and "0.19.1" not in again
-    full = "# Lessons\n\n" + "".join(f"- [#c{i}] project_create note {i}: {'x' * 60}\n" for i in range(55))
-    kept, _ = memory.recheck_for_release(full, notes, TOOLS, set(), "0.21.0") or ("", [])
-    assert len(kept.encode()) <= memory.CAPS["lessons"] and "note 54:" in kept and "note 0:" not in kept
+    # A marked lesson still is itself: for duplicates and pins (0.21.0, the pre-release review)
+    marked_line = next(line for line in again.splitlines() if "(re-check:" in line)
+    assert memory.lesson_key(marked_line) == memory.lesson_key("- [#c1] project_create fails at 8 open projects;"
+                                                               " fold new work into an existing project.")  # fmt: skip
+    assert memory.lesson_text(marked_line).startswith("project_create fails")
+
+
+def test_a_full_lessons_file_gets_short_marks_and_says_what_it_retired() -> None:
+    """0.21.0 (pre-release review): on a full file the marks deleted the oldest marked lessons, a pinned one marked by
+    an earlier upgrade too, and the event said they were only marked. Now: shorter marks first; only the oldest
+    unpinned ones the marks have no room for are retired, and said so."""
+    notes = "## 0.21.0\n- project_create changed."
+    pinned_line = "- [#c0] (re-check: 0.20.0 changed project_create) project_create: keep one per product line."
+    roomy = "# Lessons\n\n" + pinned_line + "\n- [#c99] project_create needs a title.\n"
+    for i in range(1, 100):  # filled to within a long mark of the cap, with room for a short one
+        line = f"- [#c{i}] Lesson {i} about prices: {'x' * 20}\n"
+        if len((roomy + line).encode()) > memory.CAPS["lessons"] - 15:
+            break
+        roomy += line
+    text, marked, retired = memory.recheck_for_release(
+        roomy, notes, TOOLS, {memory.lesson_key(pinned_line)}, "0.21.0"
+    ) or ("", [], [])
+    assert len(roomy.encode()) <= memory.CAPS["lessons"] < len(roomy.encode()) + 45  # a long mark doesn't fit
+    assert "- [#c99] (re-check) project_create needs a title.\n" in text and retired == []
+    assert len(text.encode()) <= memory.CAPS["lessons"]
+    assert marked == ["project_create needs a title."] and pinned_line in text
+    many = (
+        "# Lessons\n\n"
+        + pinned_line
+        + "\n"
+        + "".join(f"- [#c{i}] project_create note {i}: {'x' * 40}\n" for i in range(1, 60))
+    )
+    many = many[: many.rindex("\n", 0, memory.CAPS["lessons"]) + 1]  # just within the cap
+    text, marked, retired = memory.recheck_for_release(
+        many, notes, TOOLS, {memory.lesson_key(pinned_line)}, "0.21.0"
+    ) or ("", [], [])
+    assert len(text.encode()) <= memory.CAPS["lessons"] and pinned_line in text  # the pinned one stays
+    assert retired and retired[0].startswith("project_create note 1:") and len(marked) + len(retired) >= 50
 
 
 def test_the_first_cycle_after_an_upgrade_marks_them_once(data_dir: Path) -> None:

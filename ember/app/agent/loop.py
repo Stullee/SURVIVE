@@ -1123,11 +1123,16 @@ class CycleRunner:
                     self.memory.rewrite(conn, "lessons", done[0], "consolidation", to_iso(self.clock.now()))
         self.db.set_meta(key, running)
         if done is not None:
-            quoted = "; ".join(json.dumps(line[:60], ensure_ascii=False) for line in done[1][:3])
-            more = f" and {len(done[1]) - 3} more" if len(done[1]) > 3 else ""
+            _, marked, retired = done
+            quoted = "; ".join(json.dumps(line[:60], ensure_ascii=False) for line in marked[:3])
+            more = f" and {len(marked) - 3} more" if len(marked) > 3 else ""
             message = (
-                f"Ember's code marked {len(done[1])} lesson(s) to re-check: tools {running} changed: {quoted}{more}"
+                f"Ember's code marked {len(marked)} lesson(s) to re-check: tools {running} changed: {quoted}{more}"
             )
+            if retired:  # 0.21.0: said, never as marked (the file had no room for their marks)
+                message += f"; it retired {len(retired)} older one(s) to make room: " + "; ".join(
+                    json.dumps(line[:60], ensure_ascii=False) for line in retired[:2]
+                )
             events.record(self.db, "info", "agent", message[:300])
 
     def _guarded(self, step: Callable[[int], None], cycle_id: int, name: str) -> None:
@@ -1840,8 +1845,9 @@ class CycleRunner:
                             "\n(The search paused and wasn't continued: that would use the money kept for your"
                             " reflection. This answer may be partial.)"
                         )
-                except (Unpriceable, CallRefused):
-                    pass
+                except (Unpriceable, CallRefused) as exc:  # 0.21.0: said too (the answer read as complete)
+                    reason = exc.reason if isinstance(exc, CallRefused) else str(exc)
+                    partial = f"\n(The search paused and couldn't be continued: {reason}. This answer may be partial.)"
                 except CallFailed as exc:  # 0.15.0: paid, so it counts toward the budget too
                     cost += exc.result.cost_micros
             answer = _text_of(response)

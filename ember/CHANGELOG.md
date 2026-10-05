@@ -18,13 +18,13 @@ what your owner unlocked.
   READY lists work: this week's questions alone, or a plan that does nothing, keep the sleep you chose.
 - A workshop or research call needs 5 times what it holds left above the last will's reserve; research holds at least
   1.5 times the costliest research of the last 14 days.
-- research with a url reads only that page's site; its question may name no web address or domain.
+- research with a url reads only that page's site; its question holds no web address, nor a host name of that site.
 - The workshop's PDFs are refused with a page under a quarter inch or over 200 inches a side, or more than 20 times as
   long as wide. No PDF page is drawn above 40 MP.
 - Email: one nested deeper than any real email is stored with its headers only (one stopped Ember reading its
   mailbox). A "stop" sent through a list in answer to your email counts.
-- A lesson naming a tool these notes name is marked "(re-check: 0.21.0 changed <tool>)", no longer deleted: test it
-  against the tool's answer, then keep, rewrite or drop it.
+- A lesson naming a tool these notes name is marked "(re-check: 0.21.0 changed <tool>)", or "(re-check)" when your
+  lessons file is nearly full, no longer deleted: test it against the tool's answer, then keep, rewrite or drop it.
 
 ## 0.20.1
 

@@ -107,17 +107,11 @@ def pdf_pages(
 
 
 def page_sizes(pdf: bytes) -> list[tuple[float, float]]:
-    """0.21.0: each page's width and height in points."""
+    """0.21.0: each page's width and height in points, read without loading the page (loading one parses its whole
+    content: a 190 KB file took 10 s and 1.8 GB)."""
     document = pypdfium2.PdfDocument(pdf)
     try:
-        sizes = []
-        for index in range(len(document)):
-            page = document[index]
-            try:
-                sizes.append((page.get_width(), page.get_height()))
-            finally:
-                page.close()
-        return sizes
+        return [document.get_page_size(index) for index in range(len(document))]
     finally:
         document.close()
 
