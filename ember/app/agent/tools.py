@@ -3184,10 +3184,32 @@ def _request_upgrade(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
     if script is not None:
         if not script.endswith(".py"):
             raise ToolError("workshop_script must be a .py script the workshop kept, e.g. 'workshop/scripts/x-3.py'")
-        fields.update(script_path=script, script_text=ctx.workspace.read(script))
+        code = ctx.workspace.read(script)
+        earlier = store.script_requests(conn, ctx.scope, script, code)
+        if earlier:
+            raise ToolError(_script_asked(earlier[0], script))
+        fields.update(script_path=script, script_text=code)
     upgrade_id = store.insert_upgrade(conn, ctx.scope, ctx.cycle_id, ctx.now(), **fields)
     sent = f" with {script}" if script else ""
     return Outcome(True, f"Upgrade request #{upgrade_id} filed{sent}.", f"#{upgrade_id} {args['title'][:60]}")
+
+
+def _script_asked(row: Any, script: str) -> str:
+    """0.22.2: why a workshop script an earlier upgrade request carried is not asked for again (live, request #8 asked
+    again for the script that 0.20.0 built in as make_cost_statement, from request #7)."""
+    request = f"upgrade request #{row['id']}"
+    same = "" if row["script_path"] == script else f" (the same code as {row['script_path']})"
+    note = row["owner_note"]
+    note = f" Your owner's note: {json.dumps(note[:300], ensure_ascii=False)}." if note else ""
+    if row["status"] == "released":
+        return (
+            f"{request} carried {script}{same}, and your owner released it in {row['released_version']}: it is built "
+            f"in. The release notes of {row['released_version']} name the tool that does it, free: use that. Ask "
+            "again, without workshop_script, only for what that tool can't do." + note
+        )
+    if row["status"] == "declined":
+        return f"your owner declined {request}, which carried {script}{same}." + note
+    return f"{request} already carries {script}{same} and waits for your owner ({row['status']})." + note
 
 
 def _set_sleep(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:

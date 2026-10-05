@@ -43,6 +43,8 @@ WHAT YOU GET
   file's sheets as 'name.xlsx#Abrechnung', in German notation too.
 - Ember's code works out every formula of the file and keeps nothing unless each number equals its own sums. So the
   cover shows the file's numbers: never type them yourself, and never pay the workshop for a statement or its cover.
+- Each variant (other tenants, costs or keys; a commission with a client's own numbers) is a new spec and one more
+  call, free.
 - Each tenant's part of each cost is rounded to the cent, as on a real statement; Verteilung shows what is left over
   (Nicht umgelegt: cents, and the building's other units).
 

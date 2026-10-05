@@ -605,6 +605,137 @@ def test_an_approved_request_with_its_files_proves_a_script(data_dir: Path) -> N
         ]
 
 
+# 0.22.2: live, upgrade request #8 asked again for open-shop-nebenkostenabrechnung-de-16.py, which 0.20.0 had built
+# in as make_cost_statement (#7), and the agent believed each new variant needed a paid run of it.
+
+UPGRADE = {
+    "title": "Build the price chart in",
+    "problem": "Every chart costs a workshop run.",
+    "proposed_change": "A chart tool.",
+    "expected_benefit": "Free charts.",
+    "priority": "medium",
+}
+
+
+def asked(agent: Any, path: str, status: str = "new", note: str | None = None) -> int:
+    """An upgrade request of the agent's that carries the script ``path``, decided by the owner as ``status``."""
+    with agent.db.transaction() as conn:
+        number = store.insert_upgrade(
+            conn, agent.scope(), 1, "2026-10-05T09:00:00Z", **UPGRADE, script_path=path,
+            script_text=agent.roots()[0].read(path),
+        )  # fmt: skip
+        if status != "new":
+            conn.execute(
+                "UPDATE upgrades SET status = ?, decided_at = '2026-10-05T09:40:00Z', owner_note = ?,"
+                " released_version = ? WHERE id = ?",
+                (status, note, "0.20.0" if status == "released" else None, number),
+            )
+    return number
+
+
+def next_cycle(agent: Any, fake: FakeTransport, *calls: tuple[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """One more cycle making ``calls`` (no workshop answers: every call is refused before it is paid for)."""
+    fake.script.extend([Plan(PLAN), ToolCalls(list(calls)), Reply("Done."), JOURNAL])
+    first = rows(agent, "SELECT COALESCE(MAX(id), 0) AS n FROM tool_calls")[0]["n"]
+    agent.run_cycle("schedule")
+    return rows(agent, f"SELECT tool, status, result FROM tool_calls WHERE id > {first} AND tool != 'write_journal'")
+
+
+@pytest.mark.parametrize(
+    ("status", "note", "message"),
+    [
+        (
+            "released",
+            "make_cost_statement does it.",
+            "upgrade request #1 carried workshop/scripts/price-chart-1.py, and your owner released it in 0.20.0: it is "
+            "built in. The release notes of 0.20.0 name the tool that does it, free: use that. Ask again, without "
+            "workshop_script, only for what that tool can't do. Your owner's note: \"make_cost_statement does it.\"",
+        ),
+        ("accepted", None, "upgrade request #1 already carries workshop/scripts/price-chart-1.py and waits for your "),
+        ("declined", "Not now.", "declined upgrade request #1, which carried workshop/scripts/price-chart-1.py. Your"),
+    ],
+)
+def test_a_script_an_earlier_request_carried_is_not_asked_for_again(
+    data_dir: Path, status: str, note: str | None, message: str
+) -> None:
+    agent, fake = workshop_cycle(data_dir, {"script.py": b"print(1)\n", "chart.png": png()}, {"task": "Price chart."})
+    path = "workshop/scripts/price-chart-1.py"
+    asked(agent, path, status, note)
+    agent.roots()[0].write("workshop/scripts/copy.py", "print(1)\n")  # the same code under another name
+    agent.roots()[0].write("workshop/scripts/other.py", "print(2)\n")
+    calls = next_cycle(
+        agent,
+        fake,
+        ("request_upgrade", {**UPGRADE, "workshop_script": path}),
+        ("request_upgrade", {**UPGRADE, "workshop_script": "workshop/scripts/copy.py"}),
+    )
+    assert calls[0]["status"] == "error" and message in calls[0]["result"]
+    assert calls[1]["status"] == "error" and f"copy.py (the same code as {path})" in calls[1]["result"]
+    assert [r["script_path"] for r in rows(agent, "SELECT script_path FROM upgrades")] == [path]
+    # other code is a new request (one a cycle)
+    other = "workshop/scripts/other.py"
+    calls = next_cycle(agent, fake, ("request_upgrade", {**UPGRADE, "workshop_script": other}))
+    assert calls[0]["status"] == "ok" and calls[0]["result"] == f"Upgrade request #2 filed with {other}."
+
+
+def test_a_script_built_in_is_not_paid_for_again(data_dir: Path) -> None:
+    agent, fake = workshop_cycle(data_dir, {"script.py": b"print(1)\n", "chart.png": png()}, {"task": "Price chart."})
+    path = "workshop/scripts/price-chart-1.py"
+    number = asked(agent, path, "released")
+    agent.roots()[0].write("workshop/scripts/copy.py", "print(1)\n")
+    calls = next_cycle(
+        agent,
+        fake,
+        ("workshop", {"task": "Again, with new prices.", "script": path}),
+        ("workshop", {"task": "Again, with new prices.", "script": "workshop/scripts/copy.py"}),
+    )
+    assert [c["status"] for c in calls] == ["error", "error"]
+    assert (
+        f"Error: {path} is built into Ember since 0.20.0 (upgrade request #{number}): the tool its release notes name "
+        "does it free. For what that tool can't do, describe the task without script." == calls[0]["result"]
+    )
+    assert "workshop/scripts/copy.py is built into Ember since 0.20.0" in calls[1]["result"]
+    assert len(rows(agent, "SELECT id FROM llm_calls WHERE purpose = 'workshop'")) == 1  # the first run's only
+    assert len(rows(agent, "SELECT id FROM workshop_runs")) == 1
+
+
+def test_a_script_waiting_to_be_built_in_still_runs(data_dir: Path) -> None:
+    agent, fake = workshop_cycle(data_dir, {"script.py": b"print(1)\n", "chart.png": png()}, {"task": "Price chart."})
+    path = "workshop/scripts/price-chart-1.py"
+    asked(agent, path, "accepted")
+    ids = [fake._new_file("chart.png", png(), True)]
+    fake.script.extend(
+        [Plan(PLAN), ToolCalls([("workshop", {"task": "Again.", "script": path})]), workshop_answer(ids)]
+        + [Reply("Done."), JOURNAL]
+    )
+    agent.run_cycle("schedule")
+    assert [r["script_used"] for r in rows(agent, "SELECT script_used FROM workshop_runs ORDER BY id")] == [None, path]
+
+
+def test_a_script_kept_by_a_run_of_an_asked_script_is_not_proposed(data_dir: Path) -> None:
+    agent, _ = workshop_cycle(data_dir, {"script.py": b"print(1)\n", "chart.png": png()}, {"task": "Price chart."})
+    first = "workshop/scripts/price-chart-1.py"
+
+    def again(used: str, kept: str) -> None:
+        with agent.db.transaction() as conn:
+            store.insert_workshop_run(
+                conn, agent.scope(), 1, "2026-10-05T10:00:00Z", task="Again.", script_used=used, script_path=kept,
+                outputs=[{"path": "workshop/out/chart.png", "bytes": 10}, {"path": kept, "bytes": 9}], status="ok",
+            )  # fmt: skip
+
+    again(first, "workshop/scripts/again-2.py")
+    again("workshop/scripts/again-2.py", "workshop/scripts/again-3.py")
+    again("workshop/scripts/again-3.py", "workshop/scripts/again-4.py")
+    with agent.db.connection() as conn:
+        assert store.proven_scripts(conn, agent.scope()) == [
+            ("workshop/scripts/again-2.py", "run 2 times"),
+            ("workshop/scripts/again-3.py", "run 2 times"),
+        ]
+    asked(agent, first)  # asking for the first ends its changed copies too
+    with agent.db.connection() as conn:
+        assert store.proven_scripts(conn, agent.scope()) == []
+
+
 def test_the_owner_gets_the_script_with_the_request(ingress_client: TestClient) -> None:
     agent = ingress_client.app.state.ember.agent  # type: ignore[attr-defined]
     scope = agent.scope()

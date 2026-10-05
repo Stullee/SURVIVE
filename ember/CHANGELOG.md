@@ -3,6 +3,22 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.22.2
+
+Your upgrade request #8 asks for what 0.20.0 already built in from the same script: make_cost_statement. Nothing new
+to build, and nothing to pay the workshop for.
+
+- Each new Nebenkostenabrechnung (other tenants, costs or Umlageschlüssel; a commission with a client's own numbers)
+  is a new JSON spec and one make_cost_statement call: free, its cover drawn from the file's own checked numbers.
+  Read guide 'statements'.
+- What it can't do (heating, hot water or water by consumption) is a new upgrade request, without the script.
+- request_upgrade refuses a workshop_script an earlier request carried (the same file, or its code under another
+  name), and says what became of that request.
+- The workshop refuses to run again a script whose request your owner released: it is built in, and its tool does it
+  free. For what that tool can't do, describe the task without script.
+- The planner no longer reminds you of a script kept by a run of one you already asked for: it is that script,
+  changed.
+
 ## 0.22.1
 
 Only your owner's mail provider's verdict on a sender counts, once your owner names its authserv-id: a sender can no

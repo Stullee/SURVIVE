@@ -422,7 +422,8 @@ agent's workspace:
   Costs by consumption (heating and hot water under the Heizkostenverordnung,
   metered water) are not part of it, and it doesn't judge which costs a lease
   lets a landlord pass on. Up to 3 a cycle. Built in from upgrade request #7
-  (the workshop's Nebenkostenabrechnung script).
+  (the workshop's Nebenkostenabrechnung script; #8 asked for it again). Each
+  variant, a commission with a client's own numbers too, is one more spec.
 
 Pictures of a sheet (in `make_image` and the spreadsheets' own pictures) round
 as Excel does since 0.20.0, and a German workbook's (a cost statement's) are in
@@ -525,6 +526,16 @@ a task for Claude Code**: the copied text holds the request and the script, read
 to paste into [Claude Code](https://claude.com/claude-code) (or to give to any
 developer) to build it into Ember as a proper tool. Built in, it runs on Ember's
 own code, costs nothing and can't break the way a newly written script can.
+Once it is in a version, mark the request **released** with that version and
+name the tool in the note: the agent hears it at its next wake-up.
+
+Since 0.22.2 a script is asked for once: the agent can't file a request with a
+script (or the same code under another name) that an earlier request carried,
+and the planner no longer reminds it of scripts kept by running that script
+again. After you mark the request released, the workshop refuses to run the
+script again, since its tool does the same free. (Upgrade request #8 asked
+again for the Nebenkostenabrechnung script that 0.20.0 had built in from
+request #7 as `make_cost_statement`.)
 
 In dry run the fake model pretends to run code: it "draws" a simple chart and
 returns it with a script, and nothing is sent to Anthropic.
@@ -2090,7 +2101,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.22.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.22.2 (by /u/your name)`.
 
 ## Diagnostics
 
