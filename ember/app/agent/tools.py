@@ -30,11 +30,13 @@ sandbox; Ember's code checks every file it made before it is kept.
 from __future__ import annotations
 
 import base64
+import contextlib
 import html
 import json
 import logging
 import re
 import secrets
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
@@ -3278,23 +3280,37 @@ def _on_etsy(url: str) -> bool:
     return _on(_host(url), ETSY_DOMAINS)
 
 
-# 0.21.0: in a page read's question, a web address with its scheme, or a host name (shop.example.org)
-_SCHEME = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://")
-_HOST_NAME = re.compile(r"(?i)\b[a-z0-9-]+(?:\.[a-z0-9-]+)+")
+# 0.21.0: in a page read's question, a web address with its scheme, or a host name (shop.example.org, bücher.de)
+_SCHEME = re.compile(r"\b[a-z][a-z0-9+.-]*:/+")
+_HOST_NAME = re.compile(r"[\w-]+(?:\.[\w-]+)+")
+_DOTS = re.compile("[\u3002\uff0e\uff61]")  # dots IDNA reads as dots
+_UNSEEN = re.compile("[\u00ad\u034f\u180b-\u180e\u200b-\u200f\u2060-\u2064\ufe00-\ufe0f\ufeff]")
 
 
 def _names_an_address(question: str, url: str) -> bool:
     """0.21.0: whether a page read's question holds a web address (with its scheme), or a host name on the page's site
-    (its host, a subdomain of it, or its domain without www): the page reader reaches only that site (prompts:
+    (its host, a subdomain of it, or its domain without www), in any form a browser maps to it (NFKC, case, the dots
+    IDNA reads as dots, invisible characters, punycode): the page reader reaches only that site (prompts:
     allowed_domains), so another host can't be read, and a file name or a product name like Node.js is no address."""
-    if _SCHEME.search(question):
+    text = _DOTS.sub(".", _UNSEEN.sub("", unicodedata.normalize("NFKC", question))).casefold()
+    if _SCHEME.search(text):
         return True
-    host = _host(url)
-    site = host.removeprefix("www.")
-    return any(
-        name == site or name.endswith(f".{site}") or (host and name.endswith(f".{host}"))
-        for name in (m.group(0).lower().rstrip(".") for m in _HOST_NAME.finditer(question))
-    )
+    sites = {form.removeprefix("www.") for form in _host_forms(_host(url))} - {""}
+    for match in _HOST_NAME.finditer(text):
+        for name in _host_forms(match.group(0).strip(".-_")):
+            if any(name == site or name.endswith(f".{site}") for site in sites):
+                return True
+    return False
+
+
+def _host_forms(host: str) -> set[str]:
+    """A host name as written and in punycode (bücher.de, xn--bcher-kva.de)."""
+    forms = {host}
+    with contextlib.suppress(UnicodeError, ValueError):
+        forms.add(host.encode("idna").decode("ascii").lower())
+    with contextlib.suppress(UnicodeError, ValueError):
+        forms.add(host.encode("ascii").decode("idna").casefold())
+    return forms
 
 
 def _host(url: str) -> str:
