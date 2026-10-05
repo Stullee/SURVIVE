@@ -127,6 +127,27 @@ def test_a_review_that_isnt_json_is_recorded_and_tried_once_more(data_dir: Path)
     assert len(events) == 2
 
 
+def test_a_bug_after_a_paid_review_ends_no_cycle_and_isnt_paid_for_again_and_again(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0.22.0 (analysis 0.20.1, FIX NOW 17): the review ran outside the guard of the steps before the plan. A bug after
+    its paid call ended the cycle before it planned, nothing recorded the review, and the next cycle paid for it
+    again."""
+    agent, fake = next_day(data_dir)
+
+    def broken(*_: Any) -> None:
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(review, "parse", broken)
+    for _ in range(3):
+        before = len(fake.sent)
+        assert agent.run_cycle("schedule").status == "completed"  # the plan goes on
+        assert "plan" in kinds(fake, before)
+    assert kinds(fake).count("review") == review.MAX_ATTEMPTS  # at most as often as failed reviews
+    events = rows(agent, "SELECT message FROM events WHERE message = 'The daily review failed: RuntimeError'")
+    assert len(events) == review.MAX_ATTEMPTS
+
+
 def test_only_verdicts_on_listed_projects_count() -> None:
     answer = {
         "verdicts": [

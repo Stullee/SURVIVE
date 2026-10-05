@@ -152,7 +152,29 @@ def test_the_section_is_bounded_and_quoted(data_dir: Path) -> None:
     text = owed(agent)
     assert obligations._bytes(text) <= obligations.MAX_BYTES
     assert all(not line.startswith("==") for line in text.split("\n"))
-    assert "- and 7 more obligations, due later." in text
+    assert "- and 7 more obligations, none pressing." in text  # 0.22.0: two are due by tomorrow: shown first
+
+
+def test_what_presses_is_shown_before_older_obligations(data_dir: Path) -> None:
+    """0.22.0 (analysis 0.20.1, FIX NOW 14): OBLIGATIONS showed the oldest five by due date, and a new pressing item hid
+    under "and 1 more, due later" while pressing() made the cycle about it."""
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]))
+    today = agent.clock.today()
+    stale = (today - timedelta(days=obligations.PRESSING_OVERDUE_DAYS + 1)).isoformat()
+    with agent.db.transaction() as conn:
+        for what, due in [
+            *((f"Old promise {i}", stale) for i in range(obligations.SHOWN)),
+            ("Send the numbers", today),
+        ]:
+            message = conn.execute(
+                "INSERT INTO messages (mode, session, life_id, created_at, sender, cycle_id, text)"
+                " VALUES (?, ?, ?, '2026-09-01T12:00:00Z', 'agent', 1, 'x')",
+                _scope(agent.scope()),
+            ).lastrowid
+            obligations.promise(conn, agent.scope(), 1, int(message), what, str(due), "now")
+        assert obligations.pressing(conn, agent.scope(), today) == [f"obligation #{obligations.SHOWN + 1} (promise)"]
+    text = owed(agent)
+    assert "Send the numbers" in text and "- and 1 more obligations, none pressing." in text
 
 
 def _scope(scope: AgentScope) -> tuple[Any, ...]:

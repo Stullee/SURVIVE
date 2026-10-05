@@ -166,10 +166,12 @@ def test_an_unlock_carries_only_what_belongs_to_its_milestone(data_dir: Path) ->
     )
     # An email reply belongs to no product line: a milestone of no project or venture carries it
     she_wrote(agent)
-    unlocked_before(agent, line, "email_reply")
+    unlocked_before(agent, line, "email_reply", "veto_window")
     assert status_of(agent, a_reply(agent, "Yes, in A5 too.")) == ("pending", None)
-    unlock(agent, guide, "email_reply")
+    unlock(agent, guide, "email_reply", "veto_window")  # 0.22.0: replies run at most after the veto window
     reply = a_reply(agent, "Yes, in A4 too.")
+    agent.clock.advance(hours=policy.VETO_HOURS)
+    agent.run_policy()
     assert (status_of(agent, reply), carrier_of(agent, reply)) == (
         ("approved", policy.POLICY_BY),
         [{"milestone_id": guide, "rule": "email_reply"}],
@@ -220,9 +222,13 @@ def test_a_milestone_with_an_unlock_keeps_its_links_and_its_venture_its_projects
         )
     first = goal(agent, "The first sale", venture_id=other)
     unlock(agent, first, "deactivate")
-    calls = [("project_update", {"project_id": LINE, "venture_id": other})]
+    calls = [
+        ("project_update", {"project_id": LINE, "venture_id": other}),  # 0.22.0: refused for its listings first
+        ("project_update", {"project_id": old_line, "venture_id": other}),
+    ]
     made = work_on(agent, first, *calls, change(listing_id, state="deactivate"))[-1]
-    moved = tool_results(agent, "project_update")[-1]
+    listings, moved = tool_results(agent, "project_update")[-2:]
+    assert listings["status"] == "error" and "project #1 has listings" in listings["result"]
     assert moved["status"] == "error" and f"your owner's unlock for milestone #{first}" in moved["result"]
     assert (made["status"], made["decided_by"]) == ("pending", None)
     reject(agent, made["id"])
@@ -369,7 +375,7 @@ def test_never_reads_what_a_request_says_normalised(data_dir: Path) -> None:
     assert legal_in_db(agent, edit) == 0
     # The agent isn't told which words kept a reply from its unlock (the owner's card says it)
     guide = goal(agent, "Answer questions")
-    unlock(agent, guide, "email_reply")
+    unlock(agent, guide, "email_reply", "veto_window")
     with agent.db.transaction() as conn:
         cycle = conn.execute("SELECT MAX(id) FROM cycles").fetchone()[0]
         made = store.insert_approval(
@@ -736,11 +742,11 @@ def test_a_rule_a_milestone_never_covers_cant_be_unlocked_on_it(data_dir: Path) 
     agent, _ = listed(data_dir)
     line, replies = goal(agent, "Ten sales", project_id=LINE), goal(agent, "Answer questions")
     for milestone_id, rule in ((line, "email_reply"), (replies, "deactivate"), (replies, "price_change")):
-        reply = owner(agent).set_autonomy(milestone_id, {"rule": rule, "level": "auto"}, "Stefan")
+        reply = owner(agent).set_autonomy(milestone_id, {"rule": rule, "level": "veto_window"}, "Stefan")
         assert reply.status == 409, (milestone_id, rule)
         assert "this milestone never covers" in str(reply.body)
     unlock(agent, line, "deactivate")
-    unlock(agent, replies, "email_reply")
+    unlock(agent, replies, "email_reply", "veto_window")
     assert owner(agent).set_autonomy(line, {"rule": "email_reply", "level": "manual"}, "Stefan").status == 200
     with agent.db.connection() as conn:
         fits = {r["rule"]: r["fits"] for r in policy.view(conn, agent.scope(), agent.clock, replies)}

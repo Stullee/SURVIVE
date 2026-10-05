@@ -3,6 +3,24 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.22.0
+
+Fixes from the review of 0.20.1, part two: what your owner decides on a venture holds, and planning keeps what
+presses.
+
+- project_update refuses to move a project with listings, recorded revenue or a bet to another venture: what Ember's
+  code counts, grades and settles for it stays its venture's. For another venture, open a project of its own.
+- Your owner's park or kill stops a venture's projects: a kill closes them, a park makes them wait until your owner
+  takes the venture up again. No project goes into a parked venture (project_create, project_update).
+- Email replies run at most unless your owner vetoes them within 12 hours: none goes out at once.
+- OBLIGATIONS shows what presses first (what makes the cycle an ordinary one), then the rest by due date.
+- The daily review sees what settled, the forecasts and the decisions however many projects are open: fewer projects
+  in full, each still named.
+- Your playbook: a too_early case is no evidence; the same cases establish one principle, not also its opposite; an
+  established principle keeps its words (reword only a hypothesis; one that means something else is new).
+- A bug in the daily review, the study or the critic no longer ends the cycle before its plan, and a review whose
+  answer was lost isn't paid for again in every cycle. A cycle whose close failed is closed when the next one begins.
+
 ## 0.21.0
 
 Fixes from the review of 0.20.1: Printify's bills are booked, PDF table headers are readable, an unlock covers only

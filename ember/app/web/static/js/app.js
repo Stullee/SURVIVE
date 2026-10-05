@@ -7316,7 +7316,7 @@
         "and you can't grant one. Put your Home Assistant user ID in owner_user_ids (Configuration tab), outside safe mode." }) : null,
       h("ul", { class: "vt-evidence" }, rules.map(function (r) {
         var level = h("select", { "aria-label": "Level for " + r.label });
-        Object.keys(AUTONOMY_LEVELS).forEach(function (k) {
+        (r.levels || Object.keys(AUTONOMY_LEVELS)).forEach(function (k) {  // 0.22.0: email replies at most veto_window
           var option = h("option", { value: k, text: AUTONOMY_LEVELS[k] });
           if (k === r.level) option.selected = true;
           level.appendChild(option);

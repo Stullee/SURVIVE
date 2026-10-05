@@ -205,13 +205,13 @@ def test_a_machine_s_mail_is_stored_as_no_person_s_but_its_stop_counts(data_dir:
 
 
 def test_a_forged_sender_never_counts_as_someone_who_wrote(data_dir: Path) -> None:
-    """The reproduction: a forged email asks for a price, and the owner's email_reply unlock is on auto. Ember's
-    answer to it waits for the owner as a first contact (in code and in the database); the answer to the dry run's
-    verified reader goes out as before."""
+    """The reproduction: a forged email asks for a price, and the owner's email_reply unlock is on (0.22.0: with its
+    veto window, as replies run at most). Ember's answer to it waits for the owner as a first contact (in code and in
+    the database); the answer to the dry run's verified reader goes out as before."""
     agent, transport = mail_cycle(data_dir, calls(("email_inbox", {})))  # the reader's email (#1), verified
     [forged] = arrive(agent, message(60, "CEO <ceo@bank.example>", FORGED, body="What does a planner cost?"))
     goal = a_milestone(agent)
-    assert owner(agent).set_autonomy(goal, {"rule": "email_reply", "level": "auto"}, "Stefan").status == 200
+    assert owner(agent).set_autonomy(goal, {"rule": "email_reply", "level": "veto_window"}, "Stefan").status == 200
     aimed = json.dumps(
         {
             "assessment": "Two asked.",
@@ -231,6 +231,8 @@ def test_a_forged_sender_never_counts_as_someone_who_wrote(data_dir: Path) -> No
         ]
     )
     assert agent.run_cycle("schedule").status == "completed"
+    agent.clock.advance(hours=policy.VETO_HOURS)
+    agent.run_policy()
     to_forged, to_reader = rows(agent, "SELECT id, status, decided_by FROM approvals ORDER BY id")
     assert (to_forged["status"], to_forged["decided_by"]) == ("pending", None)  # it waits for the owner
     assert (to_reader["status"], to_reader["decided_by"]) == ("approved", policy.POLICY_BY)

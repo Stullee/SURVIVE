@@ -215,11 +215,15 @@ def apply_principles(
     happened: list[str] = []
     where, params = scope.where()
     active = {int(p["id"]): p for p in principles(conn, scope)}
+    # 0.22.0 (analysis 0.20.1, FIX NOW 14): a too_early case is no evidence ("a small number is too_early, not a
+    # lesson", as the review is told): it neither supports a principle nor counts against one
+    early = {int(r[0]) for r in conn.execute(f"SELECT id FROM cases WHERE {where} AND cause = 'too_early'", params)}
+    evidence = known_cases - early
     for item in answer if isinstance(answer, list) else []:
         if not isinstance(item, dict):
             continue
-        supports = [i for i in _ids(json.dumps(item.get("supports") or [])) if i in known_cases]
-        against = [i for i in _ids(json.dumps(item.get("against") or [])) if i in known_cases]
+        supports = [i for i in _ids(json.dumps(item.get("supports") or [])) if i in evidence]
+        against = [i for i in _ids(json.dumps(item.get("against") or [])) if i in evidence]
         text = _one(item.get("text"), 300)
         pid = item.get("id")
         retire = _one(item.get("retire"), 200)
@@ -234,12 +238,15 @@ def apply_principles(
                 continue
             all_for = sorted(set(_ids(old["supports"])) | set(supports))
             all_against = sorted(set(_ids(old["against"])) | set(against))
-            level = confidence(all_for, all_against)
+            level = confidence(_own(all_for, pid, active), all_against)
             confirmed = now if set(supports) - set(_ids(old["supports"])) else old["confirmed_at"]
+            # 0.22.0: only a hypothesis is reworded; what its cases established keeps its words (an established
+            # principle's text could be swapped wholesale, its confidence kept)
+            kept = text if text and old["confidence"] == "hypothesis" else old["text"]
             conn.execute(
                 "UPDATE principles SET text = ?, supports = ?, against = ?, confidence = ?, confirmed_at = ?"
                 " WHERE id = ?",
-                (text or old["text"], json.dumps(all_for), json.dumps(all_against), level, confirmed, pid),
+                (kept, json.dumps(all_for), json.dumps(all_against), level, confirmed, pid),
             )
             happened.append(f"principle #{pid} is {level}")
             continue
@@ -248,7 +255,7 @@ def apply_principles(
         if len(active) >= MAX_PRINCIPLES:
             happened.append(f"no room for a new principle ({MAX_PRINCIPLES} active): retire or merge one first")
             continue
-        level = confidence(supports, against)
+        level = confidence(_own(supports, None, active), against)
         cursor = conn.execute(
             "INSERT INTO principles (mode, session, text, supports, against, confidence, created_at, confirmed_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -268,6 +275,14 @@ def apply_principles(
         ).fetchone()
         happened.append(f"new principle #{cursor.lastrowid} ({level}): {text[:80]}")
     return happened
+
+
+def _own(supports: list[int], pid: int | None, active: dict[int, Any]) -> list[int]:
+    """0.22.0 (analysis 0.20.1, FIX NOW 14): the cases that count toward a principle's confidence: those no older
+    active principle cites in its support (``pid``: this one's, None for a new one). The same 3 cases established a
+    principle and its opposite."""
+    older = {i for p_id, p in active.items() if pid is None or p_id < pid for i in _ids(p["supports"])}
+    return [i for i in supports if i not in older]
 
 
 def fade(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[str]:

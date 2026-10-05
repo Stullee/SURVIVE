@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import sqlite3
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,7 @@ from app.config import LoadedSettings, Settings
 from app.economy import metering
 from app.economy.costs import micros_to_usd
 from app.economy.life import LifeStatus
-from app.economy.metering import Completed, NotSent, usd_cap_to_micros
+from app.economy.metering import STALE_NOTE, Completed, NotSent, usd_cap_to_micros
 from app.economy.pricing import opening_cost, working_cycle_cost
 from tests.economy_helpers import ScriptedTransport, make_economy
 
@@ -603,6 +604,31 @@ def test_the_next_wake_says_how_long_the_agent_chose_to_sleep_and_why(data_dir: 
     agent.clock.advance(minutes=601)
     assert agent.run_cycle("schedule").status == "failed"
     assert agent.agent_fields()["next_wake_reason"] == "after a failed cycle, backing off"
+
+
+def test_a_cycle_whose_close_failed_is_closed_before_the_next_one_begins(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0.22.0 (analysis 0.20.1, FIX NOW 17): a failed close left the cycle running for the rest of the boot: every later
+    cycle was skipped ("another wake cycle is still running"), Wake now too, and no event said why."""
+    agent, _ = make_agent(data_dir, [plan(steps=[]), plan(steps=[])])
+    real = agent.meter.close_cycle
+
+    def failing(cycle_id: int, status: str = "completed", note: str | None = None) -> bool:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(agent.meter, "close_cycle", failing)
+    first = agent.run_cycle("schedule")
+    assert rows(agent, "SELECT status FROM cycles") == [{"status": "running"}]
+    monkeypatch.setattr(agent.meter, "close_cycle", real)
+    agent.clock.advance(minutes=200)
+    assert agent.run_cycle("schedule").status == "idle"  # not skipped
+    assert rows(agent, "SELECT status, note FROM cycles ORDER BY id")[0] == {"status": "failed", "note": STALE_NOTE}
+    said = [e["message"] for e in agent.db.recent_events(limit=20) if "was still open after it ended" in e["message"]]
+    assert said == [
+        f"Cycle #{first.cycle_id} was still open after it ended (closing it failed, see the System log): Ember's code"
+        " closed it as failed, so the next cycle can begin"
+    ]
 
 
 def test_failures_back_off_and_a_crash_loop_waits_for_the_owner(data_dir: Path) -> None:

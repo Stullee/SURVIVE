@@ -725,7 +725,10 @@ euros. The tab's badge counts the ones waiting. On each card:
   one). The agent reads your word on its next wake. A venture you park stays
   parked until you take it up again (**Research again** or **Back it**): the
   agent can't, and its card says **Parked by you**. The agent can take up the
-  ventures it parked itself.
+  ventures it parked itself. 0.22.0: your park or kill stops the venture's
+  projects too: a kill closes them, a park makes them wait (the agent can't
+  make them active again until you take the venture up), and the agent opens
+  no project in a parked venture and moves none into one.
 
 **Each stage's rule, kept by Ember's code.** Before every plan, Ember's code
 parks a venture whose research brings no business case within 21 days of its
@@ -1032,7 +1035,10 @@ no longer shown); a study that failed three times stops until you press
   - new listings in a backed leg, once you approved 5 of its listings
     unchanged;
   - taking a listing of Ember's off Etsy;
-  - email replies in threads the other person started.
+  - email replies in threads the other person started, only with the veto
+    window (0.22.0: Ember's code checks a reply's thread and words, not what
+    it may quote of other people's mail, so none goes out at once; an
+    unlock of them on **Run at once** was taken back at the upgrade).
 
   **Run unless I veto within 12 h** holds such a request on its card with the
   time it will be approved, and you can still reject it. **Run at once**
@@ -2040,7 +2046,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.21.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.22.0 (by /u/your name)`.
 
 ## Diagnostics
 

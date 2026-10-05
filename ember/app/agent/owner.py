@@ -570,6 +570,7 @@ class Owner:
                     stages.drop_milestones(
                         conn, self.scope, venture_id, now, f"Your owner {stage} venture #{venture_id}.", "owner"
                     )
+                    stages.stop_projects(conn, venture_id, stage or "", now)  # 0.22.0
                 elif action == "research":  # more research, asked for: the research clock starts again
                     conn.execute("UPDATE ventures SET stage_at = ? WHERE id = ?", (now, venture_id))
                 after = ventures.get(conn, self.scope, venture_id)
@@ -626,6 +627,12 @@ class Owner:
                 raise OwnerError("rule", f"choose one of {', '.join(policy.RULES)}")
             if level not in policy.LEVELS:
                 raise OwnerError("level", f"choose one of {', '.join(policy.LEVELS)}")
+            if level not in policy.levels(rule):  # 0.22.0: email replies at most with a veto window
+                raise OwnerError(
+                    "level",
+                    "an email reply runs at most unless you veto it within 12 h: Ember's code checks only its thread"
+                    " and its words, not what it may quote",
+                )
             if level != "manual" and self.unlocks_off:  # 0.15.0: only the owner, known by their user ID, unlocks
                 raise OwnerError(
                     "level",

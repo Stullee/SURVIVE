@@ -10,7 +10,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.agent import review, store
+import pytest
+
+from app.agent import learning, review, store
 from app.agent.fake_llm import FakeTransport
 from app.economy.clock import to_iso
 from tests.test_agent import rows
@@ -123,3 +125,43 @@ def test_project_list_shows_every_open_project_with_its_number(data_dir: Path) -
     closed = call(shop_context(agent), "project_update", {"project_id": ids[-1], "status": "abandoned"})
     assert closed.ok, closed.text
     assert f"#{ids[-1]} " not in call(shop_context(agent), "project_list", {}).text
+
+
+def test_many_projects_leave_the_review_its_settled_bets_and_decisions(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0.22.0 (analysis 0.20.1, FIX NOW 14): with no limit on open projects, about 26 of them pushed SETTLED, the
+    forecasts and the decisions out of the scorecard's 9,000 characters for good. The projects take the room the other
+    parts leave (fewer in full), and each is still named."""
+    agent, _ = run(data_dir, FakeTransport(), cycles=1)
+    scope = agent.scope()
+    cycle = rows(agent, "SELECT MAX(id) AS id FROM cycles")[0]["id"]
+    with agent.db.transaction() as conn:
+        for n in range(40):
+            store.create_project(
+                conn,
+                scope,
+                cycle_id=cycle,
+                title=(f"Product line {n} " + "with a long title " * 4)[:80],
+                hypothesis=f"People buy product {n}. " + "Because it is useful. " * 10,
+                next_step=f"List product {n} " + "and look at its numbers " * 4,
+                status="idea",
+                now=to_iso(agent.clock.now()),
+            )
+        ids = [int(p["id"]) for p in store.open_projects(conn, scope)]
+    settled = "SETTLED SINCE YOUR LAST REVIEW (write a retrospective of each: retros)\n" + "- bet #1: missed.\n" * 30
+    monkeypatch.setattr(learning, "settled_text", lambda items: settled)
+    agent.clock.advance(days=1)
+    with agent.db.connection() as conn:
+        card = review.scorecard(
+            conn,
+            scope,
+            agent.clock,
+            agent.economy.books,
+            agent.economy.life.scope(),
+            agent.economy.life.evaluate(),
+            dry_run=True,
+        )
+    assert len(card.text) <= review.SCORECARD_MAX and "[scorecard cut]" not in card.text
+    assert settled.strip() in card.text and "CYCLES" in card.text
+    assert all(f"#{pid} [" in card.text for pid in ids)  # each project named, fewer in full

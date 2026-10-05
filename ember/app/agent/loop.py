@@ -287,6 +287,7 @@ class CycleRunner:
         self.max_steps = (
             min(self.settings.max_tool_steps, agenda.REACTIVE_STEPS) if self.reactive else self.settings.max_tool_steps
         )
+        self._close_stale()
         try:
             cycle_id = self.meter.open_cycle(trigger)
         except CallRefused as exc:
@@ -342,17 +343,46 @@ class CycleRunner:
         end.cycle_id = cycle_id
         if end.sleep_minutes is None:
             end.sleep_minutes, end.sleep_reason = state.sleep_minutes, state.sleep_reason or None
-        # 0.18.0: no long sleep while work waits. 0.21.0: never an idle plan's (the agent chose to do nothing), nor
-        # below the owner's default interval.
-        if end.status == "completed" and trigger != "last_will":
-            mode_now = burn.peek(self.db, self.economy.life.evaluate()).mode
-            shortest = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes)
-            kept = slack.sleep(end.sleep_minutes, self.slack_items, shortest, mode_now)
-            if kept != end.sleep_minutes:  # 0.19.2: the agent's choice and words stay ("Ember chose" the cut)
-                end.asked_minutes, end.sleep_minutes = end.sleep_minutes, kept
-                end.sleep_cut = f"Ember's code cut it to {kept} min: READY lists useful work"
+        try:
+            self._cut_sleep(end, trigger)
+        except Exception:  # noqa: BLE001 - 0.22.0: the cycle is closed whatever happens here
+            log.exception("Working out the sleep of cycle #%d failed", cycle_id)
         self._close(cycle_id, end, state)
         return end
+
+    def _cut_sleep(self, end: CycleEnd, trigger: str) -> None:
+        """0.18.0: no long sleep while work waits. 0.21.0: never an idle plan's (the agent chose to do nothing), nor
+        below the owner's default interval."""
+        if end.status != "completed" or trigger == "last_will":
+            return
+        mode_now = burn.peek(self.db, self.economy.life.evaluate()).mode
+        shortest = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes)
+        kept = slack.sleep(end.sleep_minutes, self.slack_items, shortest, mode_now)
+        if kept != end.sleep_minutes:  # 0.19.2: the agent's choice and words stay ("Ember chose" the cut)
+            end.asked_minutes, end.sleep_minutes = end.sleep_minutes, kept
+            end.sleep_cut = f"Ember's code cut it to {kept} min: READY lists useful work"
+
+    def _close_stale(self) -> None:
+        """0.22.0: a cycle of this boot whose close failed is closed before the next one opens (metering.close_stale),
+        its unfinished tool calls marked as such, and the owner told once (each later cycle was skipped until a
+        restart)."""
+        try:
+            stale = self.meter.close_stale()
+            if stale:
+                with self.db.transaction() as conn:
+                    for cycle_id in stale:
+                        store.interrupt_open_tool_calls(conn, to_iso(self.clock.now()), cycle_id)
+        except Exception:  # noqa: BLE001 - opening the cycle then says what stands in the way
+            log.exception("Closing an earlier cycle failed")
+            return
+        for cycle_id in stale:
+            events.record(
+                self.db,
+                "warning",
+                "agent",
+                f"Cycle #{cycle_id} was still open after it ended (closing it failed, see the System log): Ember's code"
+                " closed it as failed, so the next cycle can begin",
+            )
 
     def _close(self, cycle_id: int, end: CycleEnd, state: tools.CycleTools) -> None:
         try:
@@ -750,17 +780,19 @@ class CycleRunner:
         self._guarded(self._retire_lessons, cycle_id, "the lessons' check after an upgrade")  # 0.19.2
         with self.db.connection() as conn:
             review_due = review.due(conn, self.scope, self.clock) and not self.reactive
+        # 0.22.0 (analysis 0.20.1, FIX NOW 17): the review, the study and the critic are guarded like the learning
+        # steps: a bug after a paid review ended every cycle before its plan, and the next one paid for the review again
         if review_due:
-            self._review(cycle_id, ctx)
+            self._guarded(lambda c: self._review(c, ctx), cycle_id, "the daily review")
         if not self.reactive:
             with self.db.connection() as conn:
                 weekly_due = weekly.due(conn, self.scope, self.clock.today())
             if weekly_due:
                 self._guarded(self._weekly, cycle_id, "the weekly look")  # 0.18.0: after the review's cases
         if self.library_on and not self.reactive:
-            self._study(cycle_id)
+            self._guarded(self._study, cycle_id, "the library study")
         if not self.reactive:
-            self._critique(cycle_id)  # 0.13.0
+            self._guarded(self._critique, cycle_id, "the critic")  # 0.13.0
             self._guarded(self._quality, cycle_id, "the quality check")  # 0.18.0
         snap = self._snapshot(ctx.venture, cycle_id)
         ctx.net_runway_days = self.net_runway_days  # 0.13.0: the knock-outs' slow rule

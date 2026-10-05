@@ -135,6 +135,7 @@ SERVER_TOOL_ROOM = Decimal(5)
 OVERRUN_TOLERANCE = Decimal("0.10")
 OVERRUN_TOLERANCE_MICROS = 20_000
 OVERRUN_STOP = "a call cost more than its worst-case estimate"  # the note of a cycle the guard stopped
+STALE_NOTE = "closing it failed; closed when the next cycle began"  # 0.22.0: close_stale
 CACHE_FRESH_SECONDS = {"5m": 240, "1h": 3_540}
 CONVERSATION_PURPOSES = ("work", "reflect")
 _STANDARD_GEOS = frozenset({"global", "not_available"})
@@ -579,6 +580,25 @@ class MeteredModel:
         if refusal is not None:
             raise CallRefused(refusal[0], refusal[1], state=status.state)
         return cycle_id
+
+    def close_stale(self) -> list[int]:
+        """0.22.0 (analysis 0.20.1, FIX NOW 17): the cycles of this boot still marked running, closed as failed. Call it
+        only where no cycle can be running (the agent runs one at a time): closing one failed (its report or its
+        close raised), and every later cycle was refused as "another wake cycle is still running" until a restart,
+        Wake now included, without an event saying why. Returns their numbers."""
+        now = to_iso(self.clock.now())
+        with self.db.transaction() as conn:
+            stale = [
+                int(r[0])
+                for r in conn.execute("SELECT id FROM cycles WHERE status = 'running' AND boot_id = ?", (self.boot_id,))
+            ]
+            for cycle_id in stale:
+                conn.execute(
+                    "UPDATE cycles SET status = 'failed', ended_at = ?, note = COALESCE(note, ?)"
+                    " WHERE id = ? AND status = 'running'",
+                    (now, STALE_NOTE, cycle_id),
+                )
+        return stale
 
     def _fade_factors(self) -> None:
         """0.15.0: raised safety factors unchanged for SAFETY_FADE_DAYS come down (pricing.fade_safety_factors)."""

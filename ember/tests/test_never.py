@@ -78,8 +78,13 @@ def a_milestone(agent: Any, level: str | None = None, *, line: bool = True, **li
             project_id=project_id,
         )  # fmt: skip
         for rule in policy.RULES if level else ():
-            policy.set_grant(conn, agent.scope(), goal, rule, level, now, by="Stefan", **limits)
+            policy.set_grant(conn, agent.scope(), goal, rule, granted(rule, level), now, by="Stefan", **limits)
     return goal
+
+
+def granted(rule: str, level: str) -> str:
+    """The level a rule is unlocked at when the owner asks for ``level`` (0.22.0: email replies at most veto_window)."""
+    return level if level in policy.levels(rule) else policy.levels(rule)[-1]
 
 
 def request(
@@ -229,7 +234,8 @@ def test_no_unlock_carries_a_never_request_whatever_the_rule_or_level(
                 expected = " It waits for your owner whatever they unlocked (never automatic)."
                 assert said == (expected if approval_id in covered else ""), (kind, rule, level)
             for approval_id in (controls[rule], replies[rule]):  # the checks don't stop what they shouldn't
-                assert ("approved it at once" if level == "auto" else "unless your owner decides first") in carry(
+                at_once = granted(rule, level) == "auto"
+                assert ("approved it at once" if at_once else "unless your owner decides first") in carry(
                     agent, approval_id
                 )
         never_ids = ",".join(str(i) for i, _ in kinds.values())
@@ -265,7 +271,8 @@ def test_no_unlock_carries_a_never_request_whatever_the_rule_or_level(
             " FROM approvals a JOIN approvals_never n ON n.approval_id = a.id WHERE a.mode = ? AND a.decided_by = ?",
             (scope.mode, policy.POLICY_BY),
         ).fetchone()
-    assert tuple(carried) == (2 * len(policy.RULES), 0, 2 * len(policy.RULES))
+    at_once = sum(1 for rule in policy.RULES if granted(rule, "auto") == "auto")  # 0.22.0: not email replies
+    assert tuple(carried) == (2 * at_once, 0, 2 * at_once)
 
 
 def test_each_check_of_the_database_holds_on_its_own(data_dir: Path) -> None:

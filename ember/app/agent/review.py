@@ -30,6 +30,7 @@ from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
 
 WINDOW_DAYS = 7
 SCORECARD_MAX = 9_000  # characters: the review call's profile (pricing.REVIEW) is measured with a full scorecard
+PROJECTS_MIN_CHARS = 2_000  # 0.22.0: the projects' room, whatever the other parts take
 MAX_PROJECTS = 8  # projects the scorecard shows in full (0.19.1: every open one is listed, the others in a line each)
 MAX_DECISIONS = 6
 MAX_SALES = 6  # revenue entries listed in the scorecard
@@ -138,6 +139,15 @@ def due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> bool:
     ).fetchall()
     if any(r["status"] == "ok" for r in rows) or len(rows) >= MAX_ATTEMPTS:
         return False
+    # 0.22.0: the review calls sent today count too: one whose answer a bug kept from being saved was paid for again in
+    # every cycle (its review was never recorded as failed)
+    sent = conn.execute(
+        "SELECT COUNT(*) FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id WHERE c.purpose = 'review'"
+        " AND c.status <> 'refused' AND c.local_day = ? AND y.session = ? AND y.simulated = ?",
+        (today.isoformat(), scope.session, 1 if scope.simulated else 0),
+    ).fetchone()[0]
+    if sent >= MAX_ATTEMPTS:
+        return False
     earlier = conn.execute(
         "SELECT 1 FROM cycles WHERE session = ? AND simulated = ? AND status = 'completed' AND started_at < ? LIMIT 1",
         (scope.session, 1 if scope.simulated else 0, to_iso(clock.day_start(today))),
@@ -194,10 +204,35 @@ def scorecard(
         _cycles(conn, scope, since),
         _upgrades(conn, scope, since),
     ]
+    # 0.22.0 (analysis 0.20.1, FIX NOW 14): the projects take only the room the other parts leave, fewer of them in
+    # full first (each still named), then their last lines left out. With no limit on open projects (0.19.1), about 26
+    # of them pushed what settled, the forecasts and the decisions out for good.
+    index = 5
+    room = max(
+        SCORECARD_MAX - 20 - sum(len(p) + 2 for i, p in enumerate(parts) if p and i != index), PROJECTS_MIN_CHARS
+    )
+    for full, steps in ((MAX_PROJECTS // 2, True), (2, True), (0, True), (0, False)):
+        if len(parts[index]) <= room:
+            break
+        parts[index] = _project_lines(conn, scope, projects, clock, since, reach.funnels(conn, scope), full, steps)
+    parts[index] = _cut_lines(parts[index], room)
     text = "\n\n".join(p for p in parts if p)
     if len(text) > SCORECARD_MAX:
         text = text[: SCORECARD_MAX - 20].rstrip() + "\n[scorecard cut]"
     return Scorecard(text, {int(p["id"]) for p in projects}, settled)
+
+
+def _cut_lines(text: str, room: int) -> str:
+    """``text`` in at most ``room`` characters, whole lines only, saying how many were left out."""
+    if len(text) <= room:
+        return text
+    lines, kept, size = text.split("\n"), [], 0
+    for line in lines:
+        if size + len(line) + 1 > room - 60:
+            break
+        kept.append(line)
+        size += len(line) + 1
+    return "\n".join([*kept, f"[{len(lines) - len(kept)} more lines of projects left out: the scorecard's room]"])
 
 
 def _last_time(conn: sqlite3.Connection, scope: AgentScope, today: date) -> str | None:
@@ -352,21 +387,25 @@ def _project_lines(
     clock: Clock,
     since: str,
     funnels: dict[int, reach.Funnel] | None = None,
+    full: int = MAX_PROJECTS,
+    steps: bool = True,
 ) -> str:
-    """The projects, each with (0.18.0) its funnel and the reach done for it when it has live listings."""
+    """The projects, each with (0.18.0) its funnel and the reach done for it when it has live listings; the first
+    ``full`` in full, the others in a line each, with their next step if ``steps`` (0.22.0: fewer and shorter when
+    the scorecard's room asks for it)."""
     if not projects:
         return "PROJECTS\nNo projects: nothing is being tried."
     lines = ["PROJECTS (open ones, then those closed in the period)"]
-    if len(projects) > MAX_PROJECTS:
+    if len(projects) > full:
         lines[0] = (
-            f"PROJECTS (open ones, then those closed in the period; the first {MAX_PROJECTS} in full, the others in a"
+            f"PROJECTS (open ones, then those closed in the period; the first {full} in full, the others in a"
             " line each)"
         )
     now = clock.now()
     for index, p in enumerate(projects):
         pid = p["id"]
-        if index >= MAX_PROJECTS:  # 0.19.1: an open project beyond the first ones, in one line (the scorecard's size)
-            step = f" · next step: {_one_line(p['next_step'], 100)}" if p["next_step"] else ""
+        if index >= full:  # 0.19.1: an open project beyond the first ones, in one line (the scorecard's size)
+            step = f" · next step: {_one_line(p['next_step'], 100)}" if p["next_step"] and steps else ""
             age = _days(now, p["created_at"])
             lines.append(f"#{pid} [{p['status']}] {_one_line(p['title'], 80)} · open {age}{step}")
             continue

@@ -155,13 +155,19 @@ def pressing(conn: sqlite3.Connection, scope: AgentScope, today: date, messages:
     ).fetchone()[0]
     if waiting and messages:
         found.append(f"{waiting} message{'s' if waiting != 1 else ''} of your owner's to answer")
-    first = (today - timedelta(days=PRESSING_OVERDUE_DAYS)).isoformat()
-    last = (today + timedelta(days=1)).isoformat()
-    since = (today - timedelta(days=PRESSING_NEW_DAYS)).isoformat()
     for r in open_rows(conn, scope):
-        if r["kind"] == "promise" and first <= r["due"] <= last or r["kind"] != "promise" and r["due"] >= since:
+        if presses(r, today):
             found.append(f"obligation #{r['id']} ({r['kind']})")
     return found
+
+
+def presses(row: sqlite3.Row, today: date) -> bool:
+    """Whether an open obligation makes a cycle an ordinary one (``pressing``): a promise due by tomorrow (or overdue
+    for PRESSING_OVERDUE_DAYS at most), a decision or a miss of the last PRESSING_NEW_DAYS days."""
+    if row["kind"] == "promise":
+        first = (today - timedelta(days=PRESSING_OVERDUE_DAYS)).isoformat()
+        return first <= row["due"] <= (today + timedelta(days=1)).isoformat()
+    return row["due"] >= (today - timedelta(days=PRESSING_NEW_DAYS)).isoformat()
 
 
 def stale_strategy(conn: sqlite3.Connection, scope: AgentScope, strategy: str) -> str:
@@ -215,11 +221,18 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date, strategy: str
             f"- {waits} for your answer: {ids}: answer with propose_email and reply_to_email_id (guide 'email'),"
             " or inquiry_done when none is needed."
         )
-    rows = open_rows(conn, scope)
+    # 0.22.0 (analysis 0.20.1, FIX NOW 14): what presses first (what made the cycle an ordinary one: ``pressing``), then
+    # the rest by due date. The oldest five were shown, and a new decision hid under "and 1 more, due later" while the
+    # cycle was about it.
+    rows = sorted(open_rows(conn, scope), key=lambda r: not presses(r, today))
     for r in rows[:SHOWN]:
         lines.append(f"- {line(r, today)}")
     if len(rows) > SHOWN:
-        lines.append(f"- and {len(rows) - SHOWN} more obligations, due later.")
+        hidden = sum(1 for r in rows[SHOWN:] if presses(r, today))
+        lines.append(
+            f"- and {len(rows) - SHOWN} more obligations, "
+            + (f"{hidden} of them pressing too." if hidden else "none pressing.")
+        )
     lines += [f"- {line}" for line in stages.owed(conn, scope, today)]  # 0.16.3 (analysis bug 1)
     overdue = [
         m

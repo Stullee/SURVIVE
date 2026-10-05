@@ -174,6 +174,31 @@ def drop_milestones(
     return dropped
 
 
+def stop_projects(conn: sqlite3.Connection, venture_id: int, stage: str, now: str) -> list[int]:
+    """0.22.0 (analysis 0.20.1, FIX NOW 12): the owner's park or kill (``stage``: parked or killed) stops the venture's
+    project work: its open projects are abandoned when it is killed, and wait while it is parked (project_update
+    doesn't make them active again until the owner takes it up). They stayed active, and the agent worked on them.
+    Returns their numbers."""
+    stopped = []
+    for row in conn.execute(
+        "SELECT id, notes FROM projects WHERE venture_id = ? AND status IN ('idea', 'active', 'waiting') ORDER BY id",
+        (venture_id,),
+    ).fetchall():
+        status = "abandoned" if stage == "killed" else "waiting"
+        said = f"[owner] Your owner {stage} venture #{venture_id}."
+        nxt = (
+            "None: closed with its venture."
+            if stage == "killed"
+            else "None until your owner takes the venture up again."
+        )
+        conn.execute(
+            "UPDATE projects SET status = ?, next_step = ?, notes = ?, updated_at = ? WHERE id = ?",
+            (status, nxt, f"{row['notes']}\n{said}".strip()[-2000:], now, row["id"]),
+        )
+        stopped.append(int(row["id"]))
+    return stopped
+
+
 def park(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any], now: str, why: str) -> str:
     """Ember's code parks a venture by its stage's rule (``why``), reversibly: only the owner takes it up again. Its
     open milestones go with it, the owner's aside. Returns what happened, for the events."""
