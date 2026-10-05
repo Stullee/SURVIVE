@@ -1156,15 +1156,12 @@ class CycleRunner:
         self.db.set_meta(key, running)
         if done is not None:
             _, marked, retired = done
-            quoted = "; ".join(json.dumps(line[:60], ensure_ascii=False) for line in marked[:3])
-            more = f" and {len(marked) - 3} more" if len(marked) > 3 else ""
+            # 0.23.0: both counts first, so the event's 300 characters never hide a retirement
+            gone = f", retired {len(retired)} the file had no room to mark" if retired else ""
+            quoted = "; ".join(json.dumps(line[:50], ensure_ascii=False) for line in [*retired, *marked][:3])
             message = (
-                f"Ember's code marked {len(marked)} lesson(s) to re-check: tools {running} changed: {quoted}{more}"
+                f"Ember's code marked {len(marked)} lesson(s) to re-check{gone} (tools {running} changed): {quoted}"
             )
-            if retired:  # 0.23.0: said, never as marked (the file had no room for their marks)
-                message += f"; it retired {len(retired)} older one(s) to make room: " + "; ".join(
-                    json.dumps(line[:60], ensure_ascii=False) for line in retired[:2]
-                )
             events.record(self.db, "info", "agent", message[:300])
 
     def _guarded(self, step: Callable[[int], None], cycle_id: int, name: str) -> None:
@@ -1874,8 +1871,8 @@ class CycleRunner:
                         cost += more.cost_micros
                     else:
                         partial = (
-                            "\n(The search paused and wasn't continued: that would use the money kept for your"
-                            " reflection. This answer may be partial.)"
+                            "\n(The search paused and wasn't continued: the money left for this cycle, today or above"
+                            " the last will's reserve doesn't allow it. This answer may be partial.)"
                         )
                 except (Unpriceable, CallRefused) as exc:  # 0.23.0: said too (the answer read as complete)
                     reason = exc.reason if isinstance(exc, CallRefused) else str(exc)
