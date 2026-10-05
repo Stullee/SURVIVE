@@ -81,8 +81,17 @@ _HIDDEN_STYLE = re.compile(
 _OPACITY = re.compile(r"opacity:([0-9.]*+)(%?)(?:;|!|$)")
 _STYLE_CHARS = 8_000  # 0.21.0: of an element's style with its style sheet's rules; a longer one hides the element
 _STYLE_WORK = 5_000_000  # 0.21.0: characters of style read per email; past them the rest of its HTML isn't read
-# A url(...), a picture's data inside it included: it neither hides nor shows text, and isn't read (nor counted)
+# A url(...), a picture's data inside it included: not counted toward _STYLE_CHARS (a data: background hid its
+# element's text). Only measured so: the hidden-text checks read the whole style (trimming it could swallow a
+# display:none after a "url(" inside a quoted string)
 _URL = re.compile(r"""url\(\s*(?:"[^"]*+"|'[^']*+'|[^)]*+)\s*\)?""", re.IGNORECASE)
+
+
+def _measured(style: str) -> int:
+    """0.21.0: a style's length as _STYLE_CHARS counts it: without what its url(...)s hold."""
+    return len(_URL.sub("url()", style)) if "url(" in style else len(style)
+
+
 _COLOUR_ARGS = re.compile(r"((?:rgb|hsl)a?\()([^()]*)\)")
 FAINT = 0.05  # 0.15.0: text with less opacity (or a colour with less alpha) can't be read
 _ZERO_BOX = re.compile(r"(?:^|;)(?:max-)?(?:height|width):(?:0(?:\.0*)?[a-z%]*|1px)(?:;|!|$)")
@@ -283,7 +292,6 @@ class Mailbox(Protocol):
 # past that email again, its opt-outs included.
 MAX_NESTING = 64  # multipart and message parts inside one another: each is a level the parser recurses into
 MAX_PARTS = 1_000
-_LINE_ENDS = re.compile(rb"\r\n?")  # as the parser: CRLF, CR and LF all end a line
 # A boundary line, or a Content-Type header with its folded lines
 _STRUCTURE = re.compile(rb"^(?:(--[^\n]*)|content-type:([^\n]*(?:\n[ \t][^\n]*)*))", re.IGNORECASE | re.MULTILINE)
 _CONTAINER = re.compile(rb"\s*(multipart|message)/", re.IGNORECASE)
@@ -324,10 +332,13 @@ def too_complex(raw: bytes) -> bool:
     boundary line, so parts side by side (32 forwarded emails, a digest) count once each, not as levels."""
     stack: list[bytes | None] = []  # the open levels: a multipart's boundary, None for a message part
     parts = 0
-    for match in _STRUCTURE.finditer(_LINE_ENDS.sub(b"\n", raw)):
+    for match in _STRUCTURE.finditer(_lines(raw)):
         line, header = match.group(1), match.group(2)
         if line is not None:
             line = line.rstrip()
+            name = line[2:]
+            if name not in stack and name[:-2] not in stack:  # a line that closes no open level (most lines)
+                continue
             for index in range(len(stack) - 1, -1, -1):
                 boundary = stack[index]
                 if boundary is not None and line in (b"--" + boundary, b"--" + boundary + b"--"):
@@ -344,9 +355,14 @@ def too_complex(raw: bytes) -> bool:
     return False
 
 
+def _lines(raw: bytes) -> bytes:
+    """An email's bytes with every line ending (CRLF, CR, LF: the parser takes all three) as LF."""
+    return raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n") if b"\r" in raw else raw
+
+
 def _head(raw: bytes) -> bytes:
     """An email's headers, without its body (whatever its lines end with)."""
-    text = _LINE_ENDS.sub(b"\n", raw)
+    text = _lines(raw)
     end = text.find(b"\n\n")
     return text[:end] if end >= 0 else text
 
@@ -555,7 +571,7 @@ class _HtmlText(HTMLParser):
         own = _squeeze(values.get("style", ""))
         # 0.21.0: no real email's style is this long (without the data of its pictures): it hides its element rather
         # than make reading slow, and reading stops after _STYLE_WORK characters of style
-        style = "display:none;" if len(own) > _STYLE_CHARS else self._sheet(tag, values) + own
+        style = "display:none;" if _measured(own) > _STYLE_CHARS else self._sheet(tag, values) + own
         self.work += len(style)
         if self.work > _STYLE_WORK:
             self.heavy = True
@@ -591,7 +607,8 @@ class _HtmlText(HTMLParser):
         for key in keys:
             for t, c, i, style in self.rules.get(key, ()):
                 if t in (None, tag) and c <= classes and i in (None, ident):
-                    size += len(style) + 1
+                    size += _measured(style) + 1
+                    self.work += len(style) + 1  # 0.21.0: matching rules is reading style too
                     if size > _STYLE_CHARS:  # 0.21.0: as a style that long (see handle_starttag)
                         return "display:none;"
                     found.append(f"{style};")
@@ -748,7 +765,6 @@ def _background(style: str, values: dict[str, str]) -> str | None:
 def _squeeze(style: str) -> str:
     """A style in lower case without spaces. 0.15.0: a colour's arguments split by spaces or "/" ("rgb(255 255 255 /
     50%)") are split by commas."""
-    style = _URL.sub("url()", style)
     style = _COLOUR_ARGS.sub(lambda m: m[1] + ",".join(re.split(r"[\s,/]+", m[2].strip())) + ")", style.lower())
     return re.sub(r"\s+", "", style)
 

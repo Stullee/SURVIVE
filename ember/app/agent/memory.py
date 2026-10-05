@@ -281,14 +281,21 @@ def recheck_for_release(
     out = marked(False)
     if len(whole(out).encode("utf-8")) > CAPS["lessons"]:
         out = marked(True)
+    if len(whole(lines).encode("utf-8")) > CAPS["lessons"]:  # over the cap already (pinned ones): nothing helps
+        return whole(out), [_plain(lines[i]) for i in targets], []
     retired = []
     for i in targets:  # the oldest first
         if len(whole(out).encode("utf-8")) <= CAPS["lessons"]:
             break
-        retired.append(lesson_text(lines[i]))
+        retired.append(_plain(lines[i]))
         out[i] = None
-    kept = [lesson_text(lines[i]) for i in targets if out[i] is not None]
+    kept = [_plain(lines[i]) for i in targets if out[i] is not None]
     return whole(out), kept, retired
+
+
+def _plain(line: str) -> str:
+    """A lesson's text without its prefix and without an earlier upgrade's re-check mark."""
+    return lesson_text(_RECHECK.sub("", lesson_text(line)))
 
 
 # --- 0.12.0: the owner's pins and the daily consolidation ---
@@ -299,9 +306,9 @@ def json_quote(text: str) -> str:
 
 
 def lesson_text(line: str) -> str:
-    """A lesson line as it is pinned and compared: without its "- [#cN] " prefix (0.21.0: nor a re-check mark), on one
-    line."""
-    return " ".join(_RECHECK.sub("", _PREFIX.sub("", line.strip())).split())
+    """A lesson line as it is pinned and compared: without its "- [#cN] " prefix, on one line (an upgrade's re-check
+    mark stays: the consolidation and the dashboard's pins see it)."""
+    return " ".join(_PREFIX.sub("", line.strip()).split())
 
 
 def pins(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:

@@ -306,7 +306,9 @@ def test_an_upgrade_marks_the_lessons_about_the_tools_its_notes_name_to_re_check
     marked_line = next(line for line in again.splitlines() if "(re-check:" in line)
     assert memory.lesson_key(marked_line) == memory.lesson_key("- [#c1] project_create fails at 8 open projects;"
                                                                " fold new work into an existing project.")  # fmt: skip
-    assert memory.lesson_text(marked_line).startswith("project_create fails")
+    assert memory.lesson_text(marked_line).startswith("(re-check: 0.20.0 changed project_create) project_create")
+    seen = memory.consolidation_input(again, pinned, TOOLS)  # the consolidation sees the mark, so it keeps it
+    assert "(re-check: 0.20.0 changed project_create) project_create fails" in seen
 
 
 def test_a_full_lessons_file_gets_short_marks_and_says_what_it_retired() -> None:
@@ -354,7 +356,7 @@ def test_the_first_cycle_after_an_upgrade_marks_them_once(data_dir: Path) -> Non
     assert "] (re-check: " in text and "changed project_create) project_create fails" in text
     assert "Keep the owner informed." in text
     events = [e["message"] for e in agent.db.recent_events(30)]
-    assert any(e.startswith("Ember's code marked 1 lesson(s) to re-check: tools ") for e in events)
+    assert any(e.startswith("Ember's code marked 1 lesson(s) to re-check (tools ") for e in events)
     assert agent.db.get_meta(f"agent.{agent.scope().mode}.lessons_version")
 
 

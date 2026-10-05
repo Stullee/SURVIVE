@@ -6,6 +6,7 @@ replaced by an in-process fake (``FakeIMAP``) that records how it was used.
 
 from __future__ import annotations
 
+import html
 import imaplib
 import json
 import sqlite3
@@ -529,6 +530,12 @@ def test_a_picture_in_a_style_doesn_t_hide_its_text_and_heavy_styling_ends_readi
     its text; and one style-sheet rule read again for each of 140,000 elements took 77 seconds."""
     picture = "<p style=\"background:url('data:image/png;base64," + "A" * 20_000 + "');color:#333\">Real text</p>"
     assert mail.html_to_text(picture) == "Real text"
+    # The url() is only left out of the length: the checks read all of a style (a 'url(' inside a string or an
+    # unclosed one swallowed what followed, display:none too)
+    for style in ('font-family:"url(";display:none', "background:url(x;display:none", "font:'url(';font-size:0"):
+        assert mail.html_to_text(f'<p>Shown</p><p style="{html.escape(style)}">Hidden</p>') == "Shown", style
+    sheet = "<style>.x { font-family: 'url('; display: none }</style><p>Shown</p><p class=x>Hidden</p>"
+    assert mail.html_to_text(sheet) == "Shown"
     started = time.perf_counter()
     heavy = "<style>b{color:red;" + "x:y;" * 1_970 + "}</style><p>Shown</p>" + "<b></b>" * 140_000 + "<p>Never</p>"
     text = mail.html_to_text(heavy)
