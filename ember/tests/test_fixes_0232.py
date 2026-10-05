@@ -14,7 +14,7 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app import paths  # noqa: E402
-from app.agent import roadmap, stages, store, tools, ventures  # noqa: E402
+from app.agent import context, policy, roadmap, stages, store, tools, ventures  # noqa: E402
 from app.agent.fake_llm import FakeTransport, request_kind  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
@@ -50,8 +50,8 @@ def a_line(agent: Any) -> tuple[int, int, int, int, int]:
 
 def status(agent: Any, *ids: int) -> list[tuple[str, str | None]]:
     marks = ", ".join(str(i) for i in ids)
-    found = rows(agent, f"SELECT status, closed_by FROM milestones WHERE id IN ({marks}) ORDER BY id")
-    return [(r["status"], r["closed_by"]) for r in found]
+    found = {r["id"]: r for r in rows(agent, f"SELECT id, status, closed_by FROM milestones WHERE id IN ({marks})")}
+    return [(found[i]["status"], found[i]["closed_by"]) for i in ids]  # in the order asked
 
 
 def test_the_owner_s_park_takes_the_milestones_of_its_projects_with_it(data_dir: Path) -> None:
@@ -140,20 +140,125 @@ def test_a_plan_can_t_focus_on_a_project_the_owner_s_park_stopped(data_dir: Path
 
 def test_milestones_the_owner_s_earlier_parks_left_open_are_dropped_at_the_upgrade(data_dir: Path) -> None:
     agent, _ = listed(data_dir)
-    a, b, _, goal, step = a_line(agent)
+    a, b, project, goal, step = a_line(agent)
     now = to_iso(agent.clock.now())
+    scope = agent.scope()
     with agent.db.transaction() as conn:
         working = store.create_project(
-            conn, agent.scope(), cycle_id=1, title="Under B", hypothesis="h", next_step="n", status="active",
-            now=now, venture_id=b,
+            conn, scope, cycle_id=1, title="Under B", hypothesis="h", next_step="n", status="active", now=now,
+            venture_id=b,
         )  # fmt: skip
-        kept = roadmap.create(conn, agent.scope(), title="Sales of B", measure="3", due=due(agent), now=now,
-                              project_id=working)  # fmt: skip
-        # as a park before 0.23.2 left them: the venture parked, its project waiting, the agent's milestones open
+        kept = roadmap.create(conn, scope, title="Sales of B", measure="3", due=due(agent), now=now, project_id=working)
+        # as parks before 0.23.2 left them: the venture parked, its project waiting, the agent's milestones open, a
+        # milestone linked to the parked venture after the park (0.23.1 allowed it), and an open step below a done one
         ventures.update(conn, a, now, stage="parked", parked_by="owner")
         conn.execute("UPDATE projects SET status = 'waiting' WHERE venture_id = ?", (a,))
+        later = roadmap.create(conn, scope, title="A again", measure="1", due=due(agent), now=now, venture_id=a)
+        done = roadmap.create(conn, scope, title="A step done", measure="1", due=due(agent, 5), now=now,
+                              parent_id=goal)  # fmt: skip
+        conn.execute(
+            "UPDATE milestones SET status = 'done', result = 'ok', closed_at = ?, closed_by = 'agent' WHERE id = ?",
+            (now, done),
+        )
+        below = roadmap.create(conn, scope, title="Below the done step", measure="1", due=due(agent, 3), now=now,
+                               parent_id=done)  # fmt: skip
         sql = (paths.APP_DIR / "migrations" / "0079_owner_parks_milestones.sql").read_text(encoding="utf-8")
         conn.execute(sql[sql.index("WITH RECURSIVE") :])
-    assert status(agent, goal, step, kept) == [("dropped", "owner"), ("dropped", "owner"), ("open", None)]
-    [result] = rows(agent, f"SELECT result FROM milestones WHERE id = {goal}")
-    assert result["result"].startswith("Your owner parked or killed the venture its project belongs to")
+    assert status(agent, goal, step, later, done, below, kept) == [
+        ("dropped", "owner"),
+        ("dropped", "owner"),
+        ("dropped", "owner"),
+        ("done", "agent"),  # closed ones stay as they were
+        ("dropped", "owner"),
+        ("open", None),
+    ]
+    [result] = rows(agent, f"SELECT result FROM milestones WHERE id = {below}")
+    assert result["result"].startswith("Dropped at the upgrade to 0.23.2: your owner parked or killed the venture")
+    assert project
+
+
+def test_the_owner_s_park_stops_what_the_unlocks_of_its_milestones_approved_at_once(data_dir: Path) -> None:
+    """What an unlock of a milestone the park drops approved and Ember's code hasn't begun waits for the owner, before
+    any executor runs (it waited for the next policy run)."""
+    from tests.test_fixes_0140_unlock_safety import a_small_cut, status_of, unlock  # noqa: PLC0415
+    from tests.test_policy import a_milestone, price_of  # noqa: PLC0415
+
+    agent, listing_id = listed(data_dir)
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        a = ventures.create(conn, agent.scope(), title="A", pitch="p.", stage="building", now=now)
+        line = conn.execute("SELECT project_id FROM approvals WHERE executor = 'etsy_listing' ORDER BY id").fetchone()
+        conn.execute("UPDATE projects SET venture_id = ? WHERE id = ?", (a, line[0]))
+    goal = a_milestone(agent)
+    unlock(agent, goal, "price_change")
+    ran = a_small_cut(agent, goal, listing_id)
+    assert agent.execute_approved() == [(ran["id"], "done")]
+    waiting = a_small_cut(agent, goal, listing_id)  # approved at once, not carried out yet (the shop's daily limit)
+    assert status_of(agent, waiting["id"])["decided_by"] == policy.POLICY_BY
+    assert owner(agent).decide_venture(a, {"action": "park", "comment": "Stop."}, "Stefan").status == 200
+    assert status(agent, goal) == [("dropped", "owner")]
+    after = status_of(agent, waiting["id"])
+    assert (after["status"], after["decided_by"]) == ("pending", None)
+    assert f"taken back (your owner parked venture #{a})" in after["decision_comment"]
+    price = price_of(agent, listing_id)
+    agent.clock.advance(hours=25)
+    assert agent.execute_approved() == [] and price_of(agent, listing_id) == price
+
+
+def test_a_goal_the_owner_s_park_dropped_is_planned_again_without_a_move(data_dir: Path) -> None:
+    """After the owner takes the venture up again, the agent sets the goal its park dropped again: the owner's drop is
+    no move of the agent's (two moves already, and replacing it was refused)."""
+    agent, _ = listed(data_dir)
+    a, b, project, goal, _ = a_line(agent)
+    with agent.db.transaction() as conn:  # the agent moved its date twice, all it may
+        for days in (35, 40):
+            conn.execute("UPDATE milestones SET due = ?, moves = moves + 1 WHERE id = ?", (due(agent, days), goal))
+    assert owner(agent).decide_venture(a, {"action": "park"}, "Stefan").status == 200
+    assert owner(agent).decide_venture(a, {"action": "back", "confirm": True}, "Stefan").status == 200
+    again = {"title": "Ten sales of A", "measure": "10 orders", "due": due(agent, 45), "replaces": goal}
+    made = call(shop_context(agent), "milestone_plan", {"milestones": [again]})
+    assert made.ok, made.text
+    [row] = rows(agent, f"SELECT moves, project_id FROM milestones WHERE replaces_id = {goal}")
+    assert row == {"moves": 2, "project_id": project}  # its link to the project, working again, is kept
+
+
+def test_a_replacement_doesn_t_inherit_a_link_the_park_stopped(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    a, b, project, goal, _ = a_line(agent)
+    assert owner(agent).decide_venture(a, {"action": "park"}, "Stefan").status == 200
+    elsewhere = {"title": "Ten sales of A", "measure": "10 orders", "due": due(agent), "replaces": goal}
+    made = call(shop_context(agent), "milestone_plan", {"milestones": [{**elsewhere, "venture_id": b}]})
+    assert made.ok, made.text  # it was refused for the project it would have inherited, which it never named
+    [row] = rows(agent, f"SELECT venture_id, project_id FROM milestones WHERE replaces_id = {goal}")
+    assert row == {"venture_id": b, "project_id": None}
+    assert project
+
+
+def test_the_set_aside_focus_doesn_t_cut_the_venture_s_pitch() -> None:
+    from tests.test_owner_news import section, snapshot_with  # noqa: PLC0415
+
+    row = {
+        "id": 4, "parent_id": 1, "stage": "researching", "title": "T" * 80, "pitch": "p " * 200,
+        "next_question": "q " * 200, "notes": "n " * 200, **{name: "c " * 200 for name, _, _ in ventures.CASE},
+        **{score.name: 3 for score in ventures.SCORES}, "scores_by": "research", "owner_action": "note",
+        "owner_comment": "o " * 200, "owner_at": "2026-09-29T08:00:00Z", "created_by": "agent",
+        "created_at": "2026-09-27T08:00:00Z", "researched": 3, "research_from": "2026-09-27T08:00:00Z",
+    }  # fmt: skip
+    text = ventures.focus_text(
+        row,  # type: ignore[arg-type]
+        ventures.Money(),
+        2_300,
+        [],
+        ["ventures/4-t.md"],
+        evidence="Evidence: 9 claims (3 independent, 3 marketing, 3 unchecked); the newest: " + "e " * 200,
+        numbers="Numbers (case #7, 2026-09-29): " + "n " * 150,
+        knocked="Knock-outs (Ember's code; it isn't proposed while one stands): " + "k " * 300,
+        critic=("Critic (a separate call on case #7): test; fatal flaw: " + "f " * 150, "Critic's numbers: x"),
+    )
+    text = f"Decision desk: you took appraise #4: knocked out: fix its case (cash, slow)\n{text}"
+    note = "No focus project: your plan's #123 waits, because your owner parked venture #45."
+    brief, _ = context.brief(
+        snapshot_with([], []), False, {"goal": "g", "steps": ["s"]}, None, 12, venture_focus=text, set_aside=note
+    )
+    focus = section(brief, "FOCUS") or ""
+    assert focus.startswith(note) and "Pitch: " in focus

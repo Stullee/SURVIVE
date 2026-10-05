@@ -878,8 +878,6 @@ class CycleRunner:
                     milestone_focus = roadmap.focus_text(
                         milestone, self.clock.today(), parent, spent, replaced, last=last, unlocked=unlocked
                     )
-        if stopped:  # the brief's FOCUS says why the plan's project isn't it
-            venture_focus = f"{stopped}\n\n{venture_focus}" if venture_focus else stopped
         ctx.state.focus_project_id = plan.focus_project_id
         ctx.state.focus_venture_id = plan.focus_venture_id
         self._progress(
@@ -914,6 +912,7 @@ class CycleRunner:
             venture_focus=venture_focus,
             milestone_focus=milestone_focus,
             knowledge=self._knowledge(plan),
+            set_aside=stopped,  # the brief's FOCUS says why the plan's project isn't it
         )
         act = self._act(cycle_id, ctx, brief, planned.listed & briefed.items)
         if act.end_reason == "refusal":

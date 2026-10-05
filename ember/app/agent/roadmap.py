@@ -305,8 +305,10 @@ _TITLE_WORD = re.compile(r"[a-z0-9äöüß]+")
 
 def replaced_moves(old: Mapping[str, Any]) -> int:
     """The moves a replacement starts with (0.12.0): a dropped milestone's and one more, as the replacement moves its
-    date again; a missed one's as they were (the miss is on record, and a new attempt is honest)."""
-    return int(old["moves"] or 0) + (1 if old["status"] == "dropped" else 0)
+    date again; a missed one's as they were (the miss is on record, and a new attempt is honest). 0.23.2: one your
+    owner or Ember's code dropped (a venture parked) as it was: the agent didn't move it."""
+    agent = old["closed_by"] in (None, "agent")
+    return int(old["moves"] or 0) + (1 if old["status"] == "dropped" and agent else 0)
 
 
 def _words(title: str) -> set[str]:

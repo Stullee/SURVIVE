@@ -933,12 +933,16 @@ def brief(
     venture_focus: str = "",
     milestone_focus: str = "",
     knowledge: str = "",
+    set_aside: str = "",
 ) -> tuple[str, Shown]:
     """The act phase's brief (the same for every step and the reflection: built from the cycle's snapshot only), and
     which of the owner's items it shows. ``venture_focus`` and ``milestone_focus``: the plan's venture and milestone
     as ``ventures.focus_text`` and ``roadmap.focus_text`` show them; ``knowledge``: the learnings from the owner's
-    library that match the plan (0.12.0)."""
-    focus_parts = [cut(milestone_focus, MILESTONE_FOCUS_BUDGET)] if milestone_focus else []
+    library that match the plan (0.12.0). ``set_aside`` (0.23.2): why the plan's focus project isn't the cycle's,
+    first and in its own room (inside the venture's, it cut the venture's pitch)."""
+    focus_parts = [set_aside] if set_aside else []
+    if milestone_focus:
+        focus_parts.append(cut(milestone_focus, MILESTONE_FOCUS_BUDGET))
     if venture_focus:
         focus_parts.append(cut(venture_focus, VENTURE_FOCUS_BUDGET))
     if focus is not None:

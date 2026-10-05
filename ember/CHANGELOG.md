@@ -12,8 +12,11 @@ Your owner's park or kill of a venture stops all of its project work, and nothin
 - milestone_plan and milestone_update link no milestone to a parked venture (take one you parked up again first) or
   to a project of a venture your owner parked or killed.
 - A listing or product doesn't join a project of a venture your owner parked or killed.
-- Your owner's park or kill takes every open milestone of the venture's projects with it, yours included (before,
-  only the bars Ember's code set). The ones earlier parks left open were dropped at this upgrade.
+- Your owner's park or kill takes every open milestone of the venture and its projects with it, yours included
+  (before, only the bars Ember's code set), and their unlocks at once: what they approved and Ember's code hadn't
+  begun waits for your owner. The ones earlier parks left open were dropped at this upgrade.
+- Once your owner takes the venture up again, you can set such a goal again with replaces: their drop is no move of
+  yours. A replacement doesn't take over a link to a parked venture or a stopped project.
 
 ## 0.23.1
 

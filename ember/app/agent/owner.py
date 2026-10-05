@@ -567,9 +567,16 @@ class Owner:
                     case = ventures.latest_case(conn, venture_id)
                     predictions.add_first_sale(conn, self.scope, venture_id, case, self.clock.today(), now)
                 elif action in ("park", "kill"):
-                    stages.drop_milestones(
+                    unlocked = policy.standing(conn, self.scope)
+                    dropped = stages.drop_milestones(
                         conn, self.scope, venture_id, now, f"Your owner {stage} venture #{venture_id}.", "owner"
                     )
+                    for mid in dropped:  # 0.23.2: what their unlocks approved stops at once, not at the next policy run
+                        for grant in unlocked.get(mid, []):
+                            policy.set_grant(
+                                conn, self.scope, mid, grant["rule"], "manual", now, by=policy.REVOKED_BY,
+                                why=f"your owner {stage} venture #{venture_id}",
+                            )  # fmt: skip
                     stages.stop_projects(conn, venture_id, stage or "", now)  # 0.22.0
                 elif action == "research":  # more research, asked for: the research clock starts again
                     conn.execute("UPDATE ventures SET stage_at = ? WHERE id = ?", (now, venture_id))

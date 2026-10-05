@@ -2089,6 +2089,15 @@ def _working_venture(conn: Any, scope: AgentScope, venture_id: int, what: str = 
     return row
 
 
+def _linkable(conn: Any, scope: AgentScope, name: str, value: int) -> bool:
+    """0.23.2: whether a milestone may be linked to this venture (``name`` venture_id) or project (project_id)."""
+    try:
+        (_milestone_venture if name == "venture_id" else _open_project)(conn, scope, value)
+    except ToolError:
+        return False
+    return True
+
+
 def _milestone_venture(conn: Any, scope: AgentScope, venture_id: int) -> Any:
     """0.23.2: a venture a milestone may be linked to: open and not parked (a park dropped its milestones, and a new
     one carried its work on, its unlocks included)."""
@@ -2643,8 +2652,12 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
     if replaces is not None:  # 0.12.0: it serves what the one it replaces served, unless it says otherwise
         for name in ("parent_id", "venture_id", "project_id"):
             if args.get(name) is None and replaces[name] is not None:
-                linked = roadmap.get(conn, ctx.scope, replaces[name]) if name == "parent_id" else True
-                if linked is not None and (name != "parent_id" or linked["status"] == "open"):
+                if name == "parent_id":
+                    parent = roadmap.get(conn, ctx.scope, replaces[name])
+                    kept = parent is not None and parent["status"] == "open"
+                else:  # 0.23.2: not a link to a venture parked or a project stopped since
+                    kept = _linkable(conn, ctx.scope, name, replaces[name])
+                if kept:
                     args = {**args, name: replaces[name]}
     parent_id = args.get("parent_id")
     if parent_id is not None:
