@@ -233,6 +233,15 @@ configuration:
   email_daily_limit:
     name: Emails per day
     description: The most emails Ember sends in one day (0 to 20). Approved emails beyond it wait for the next day.
+  email_authserv_id:
+    name: Your mail provider's authserv-id
+    description: >-
+      The name your mail provider writes first in the Authentication-Results
+      header of an email it received (for example mx.google.com). Separate
+      several with commas; enter none if the header starts with spf= or dkim=
+      (Outlook). Only that header then counts as the provider's verdict on the
+      sender, never one the sender wrote. Empty: the topmost header counts.
+      See the Documentation tab, "Ember's mailbox".
   etsy_enabled:
     name: Etsy shop
     description: >-

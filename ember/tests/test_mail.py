@@ -503,10 +503,10 @@ def test_an_email_nested_too_deeply_is_stored_with_its_headers_and_its_stop_coun
 def test_an_email_the_parser_fails_on_is_stored_with_its_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     real = mail._parsed
 
-    def failing(raw: bytes, uid: int, note: str | None) -> mail.IncomingMail:
+    def failing(raw: bytes, uid: int, note: str | None, *rest: Any) -> mail.IncomingMail:
         if note is None:
             raise RuntimeError("a parser bug")
-        return real(raw, uid, note)
+        return real(raw, uid, note, *rest)
 
     monkeypatch.setattr(mail, "_parsed", failing)
     parsed = mail.parse_message(raw_mail(5, subject="Unsubscribe"), 5)
@@ -662,6 +662,132 @@ def test_a_live_mailbox_error_is_recorded_and_never_ends_the_cycle(data_dir: Pat
     agent.run_cycle("schedule")
     email = agent.integrations()["email"]
     assert email["status"] == "ok" and email["last_error"] is None and email["unread"] == 2
+
+
+# --- 0.22.0: only the provider's Authentication-Results header counts (analysis 0.20.1, finding 13) ---
+
+# What a sender can write into its own email: a pass for the domain in its From:, under Gmail's name.
+FORGED_PASS = "mx.google.com; dkim=pass header.d=bank.example; dmarc=pass header.from=bank.example"
+PROVIDER = "mx1.mail.example"
+
+
+def with_verdicts(raw: bytes, *verdicts: str) -> bytes:
+    """``raw`` with these Authentication-Results headers on top, the first topmost."""
+    return b"".join(f"Authentication-Results: {v}\n".encode() for v in verdicts) + raw
+
+
+def test_a_forged_verdict_without_the_provider_s_header_verifies_no_one(data_dir: Path, imap: type[FakeIMAP]) -> None:
+    """A mail provider that adds no Authentication-Results header to an email leaves the sender's own the topmost. Its
+    forged dkim=pass made the sender verified (emails.authenticated = 1): someone who had written to Ember, so an
+    email to them was no first contact (NEVER, mailstore.person). With email_authserv_id only the provider's header
+    counts, whatever the sender writes below it or names in it."""
+    imap.mails = {
+        1: with_verdicts(raw_mail(1, sender="CEO <ceo@bank.example>"), FORGED_PASS),  # no header of the provider's
+        2: with_verdicts(raw_mail(2), f"{PROVIDER}; dkim=pass header.d=example.org", FORGED_PASS),
+        3: with_verdicts(raw_mail(3, sender="Bo <bo@bank.example>"), f"{PROVIDER}; dkim=fail", FORGED_PASS),
+    }
+    settings = LIVE.model_copy(update={"email_authserv_id": PROVIDER})
+    agent = live_agent(data_dir, [plan(steps=[])], settings)
+    agent.run_cycle("schedule")
+    stored = rows(agent, "SELECT uid, from_addr, authenticated FROM emails WHERE direction = 'in' ORDER BY uid")
+    assert [(r["uid"], r["from_addr"], r["authenticated"]) for r in stored] == [
+        (1, "ceo@bank.example", 0),
+        (2, "ann@example.org", 1),
+        (3, "bo@bank.example", 0),
+    ]
+    scope = agent.scope()
+    with agent.db.connection() as conn:
+        assert not mailstore.has_written(conn, scope, "ceo@bank.example")  # an email to them is a first contact
+        assert not mailstore.has_written(conn, scope, "bo@bank.example")
+        assert mailstore.has_written(conn, scope, "ann@example.org")
+    check = agent.integrations()["email"]["sender_check"]
+    assert check["state"] == "complete" and check["authserv_ids"] == [PROVIDER] and PROVIDER in check["note"]
+
+    # Without the option the topmost header still counts, the forged one too: the dashboard says so.
+    assert mail.parse_message(imap.mails[1], 1).authenticated is True
+    assert mail.sender_check(LIVE, "live") == {
+        "state": "incomplete",
+        "authserv_ids": [],
+        "note": mail.SENDER_CHECK_INCOMPLETE,
+    }
+    assert mail.sender_check(settings, "dry_run") is None  # the fake mailbox's emails
+    assert mail.sender_check(settings.model_copy(update={"email_enabled": False}), "live") is None
+
+
+GMAIL_PASS = "mx.google.com; dkim=pass header.d=example.org"
+OUTLOOK_PASS = "spf=pass (sender IP is 1.2.3.4) smtp.mailfrom=example.org; dkim=pass header.d=example.org"
+OUTLOOK_FAIL = "spf=fail (sender IP is 6.6.6.6) smtp.mailfrom=example.org; dmarc=fail header.from=example.org"
+
+
+@pytest.mark.parametrize(
+    ("listed", "verdicts", "expected"),
+    [
+        ((), [GMAIL_PASS], True),  # empty: the topmost counts, whoever wrote it
+        (("mx.google.com",), [GMAIL_PASS], True),
+        (("mx.google.com",), ["MX.Google.COM; dkim=pass header.d=example.org"], True),
+        (("mx.google.com",), ["mx.google.com 1; dkim=pass header.d=example.org"], True),  # with a version
+        (("mx.google.com",), ['"mx.google.com"; dkim=pass header.d=example.org'], True),  # quoted
+        (("mx.google.com",), ["(checked) mx.google.com; dkim=pass header.d=example.org"], True),
+        (("mx.google.com",), ["mx2.google.com; dkim=pass header.d=example.org"], False),
+        (("mx.google.com",), ["mx1.mail.example; dkim=pass header.d=example.org"], False),
+        (("mx.google.com",), [], False),
+        # The topmost of the listed ones: the provider's, above anything the sender wrote
+        (("mx.google.com",), ["mx.google.com; dkim=fail header.d=example.org", GMAIL_PASS], False),
+        (("mx.google.com",), ["mx1.mail.example; dkim=pass header.d=example.org", GMAIL_PASS], True),
+        # An entry covers the names under it, and only those
+        (("mail.example",), ["mx2.mail.example; dkim=pass header.d=example.org"], True),
+        (("mail.example",), ["mx2.evilmail.example; dkim=pass header.d=example.org"], False),
+        (("mail.example",), ["mail.example.attacker.example; dkim=pass header.d=example.org"], False),
+        (("mail.example", "mx.google.com"), [GMAIL_PASS], True),
+        # Microsoft's header has no authserv-id: only "none" lists it
+        (("none",), [OUTLOOK_PASS], True),
+        (("mx.google.com",), [OUTLOOK_PASS], False),
+        (("none",), [GMAIL_PASS], False),
+        (("none",), [OUTLOOK_FAIL, OUTLOOK_PASS], False),
+        (("none",), [OUTLOOK_PASS, GMAIL_PASS], True),
+        (("none",), ["none; dkim=pass header.d=example.org"], False),  # an authserv-id called "none" isn't none
+        (("none",), ["mx.google.com; none", OUTLOOK_PASS], True),
+        (("none", "mx.google.com"), [GMAIL_PASS], True),
+    ],
+)
+def test_only_a_header_of_the_provider_s_authserv_id_is_its_verdict(
+    listed: tuple[str, ...], verdicts: list[str], expected: bool
+) -> None:
+    raw = with_verdicts(raw_mail(1), *verdicts)
+    assert mail.parse_message(raw, 1, authserv_ids=listed).authenticated is expected
+    assert mail.parse_message(raw, 1, headers_only=True, size=2_000_000, authserv_ids=listed).authenticated is expected
+
+
+@pytest.mark.parametrize(
+    ("value", "ids", "valid"),
+    [
+        ("", (), True),
+        ("mx.google.com", ("mx.google.com",), True),
+        (" MX.Google.com , none,, mx.google.com,", ("mx.google.com", "none"), True),
+        ("NONE", ("none",), True),
+        ("com", ("com",), False),  # it would cover every name under com
+        ("mx google com", ("mx google com",), False),
+        ("mx.google.com; dkim=pass", ("mx.google.com; dkim=pass",), False),
+        (",".join(f"mx{n}.mail.example" for n in range(11)), tuple(f"mx{n}.mail.example" for n in range(11)), False),
+    ],
+)
+def test_the_authserv_id_option_is_checked(value: str, ids: tuple[str, ...], valid: bool) -> None:
+    settings = LIVE.model_copy(update={"email_authserv_id": value})
+    assert mail.provider_authserv_ids(settings) == ids
+    assert any("email_authserv_id" in p for p in mail.config_problems(settings)) is not valid
+    assert (mail.status(settings, "live")[0] == "ok") is valid
+
+
+def test_the_sender_s_headers_are_read_in_time_linear_in_their_length() -> None:
+    """0.22.0: a header the provider's authserv-id doesn't name is skipped, so a sender can make Ember read every one
+    it writes. Their comments were taken out a level at a time: 250 headers nested 2,000 deep took 9 seconds."""
+    nested = "(" * 1_990 + ")" * 1_990
+    headers = [f"x{n}.attacker.example {nested}; dkim=pass header.d=bank.example" for n in range(250)]
+    raw = with_verdicts(raw_mail(1, sender="CEO <ceo@bank.example>"), *headers)
+    started = time.perf_counter()
+    assert mail.parse_message(raw, 1, authserv_ids=(PROVIDER,)).authenticated is False
+    assert time.perf_counter() - started < 5
+    assert mail._uncommented("a (b (c) d) e (f") == "a   e "  # an unclosed comment runs to the end
 
 
 # --- the tools ---
@@ -821,6 +947,7 @@ def test_the_mail_tools_are_absent_without_a_mailbox(data_dir: Path, imap: type[
         "daily_limit": 3,
         "suppressed_count": 0,
         "suppressed": [],
+        "sender_check": None,
     }
 
 

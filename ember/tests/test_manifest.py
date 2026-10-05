@@ -85,13 +85,15 @@ def test_options_match_settings_defaults() -> None:
     # workshop's model (the worker model when empty), the strategy and research models (0.12.0: the planner and the
     # worker model when empty), the Etsy app's keystring and shared secret, and (0.13.0) the Pinterest app's id and
     # secret, the Printify token and the website's texts (the owner's data for its Impressum among them), (0.14.0)
-    # the blog's SFTP login, and (0.19.0) the Bluesky account's handle and app password.
+    # the blog's SFTP login, (0.19.0) the Bluesky account's handle and app password, and (0.22.0) the mail
+    # provider's authserv-id.
     optional = {key for key, rule in schema.items() if isinstance(rule, str) and rule.endswith("?")}
     assert optional == {
         "anthropic_api_key",
         "email_address",
         "email_password",
         "email_owner_name",
+        "email_authserv_id",
         "workshop_model",
         "strategy_model",
         "research_model",
@@ -133,9 +135,10 @@ def test_options_match_settings_defaults() -> None:
 
 
 def test_schema_bounds_match_settings() -> None:
-    """The Supervisor's schema bounds and the app's own validation must agree."""
+    """The Supervisor's schema bounds and the app's own validation must agree. 0.22.0: an optional option's too
+    (``str(,300)?``): they were skipped."""
     schema = MANIFEST["schema"]
-    pattern = re.compile(r"^(int|float|str)\((-?[\d.]*),(-?[\d.]*)\)$")
+    pattern = re.compile(r"^(int|float|str)\((-?[\d.]*),(-?[\d.]*)\)\??$")
     for key, rule in schema.items():
         if not isinstance(rule, str):
             continue
@@ -146,7 +149,7 @@ def test_schema_bounds_match_settings() -> None:
         metadata = Settings.model_fields[key].metadata
         bounds = {type(m).__name__: m for m in metadata}
         if kind == "str":
-            assert bounds["MinLen"].min_length == int(low), key
+            assert (bounds["MinLen"].min_length if "MinLen" in bounds else 0) == int(low or 0), key
             assert bounds["MaxLen"].max_length == int(high), key
         else:
             assert float(bounds["Ge"].ge) == float(low), key

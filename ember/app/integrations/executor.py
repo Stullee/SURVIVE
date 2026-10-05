@@ -176,6 +176,7 @@ def integration(
         "daily_limit": settings.email_daily_limit,
         "suppressed_count": 0,
         "suppressed": [],  # 0.12.0: the newest addresses Ember never emails
+        "sender_check": mail.sender_check(settings, mode),  # 0.22.0: whose Authentication-Results header counts
     }
     if mailbox is None or db is None or clock is None or scope is None:
         return info

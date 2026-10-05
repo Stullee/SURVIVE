@@ -11,7 +11,9 @@ SQLite, and the model has no tool that sends (an approved email is sent by ``exe
   smuggle instructions to an AI); attachments are listed by name and size, never opened; sizes are capped.
   0.15.0: each email keeps whether the receiving mail provider verified its sender (``_authenticated``) and
   whether it is a list's or a machine's (``_bulk``, ``_machine``): only a verified person's email counts as someone
-  writing. The hidden-text filter is best-effort: it knows the common ways, not every way CSS can hide text.
+  writing. 0.22.0: once the owner names the provider's authserv-ids (email_authserv_id), only a header of theirs is
+  its verdict; without them the topmost header counts, the sender's own if the provider added none. The hidden-text
+  filter is best-effort: it knows the common ways, not every way CSS can hide text.
 * An outgoing message is plain text for exactly one recipient, who is also the envelope recipient (never
   taken from the headers). The email package refuses line breaks in header values.
 
@@ -158,7 +160,25 @@ def config_problems(settings: Settings) -> list[str]:
             problems.append(f"{option} must be a host name like imap.example.org")
     if settings.email_smtp_port not in SMTP_PORTS:
         problems.append("email_smtp_port must be 465 (TLS) or 587 (STARTTLS)")
+    ids = provider_authserv_ids(settings)
+    if len(ids) > AUTHSERV_IDS or any(i != NO_AUTHSERV_ID and not valid_host(i) for i in ids):
+        problems.append(
+            f"email_authserv_id must be at most {AUTHSERV_IDS} authserv-ids like mx.google.com, separated by commas"
+            f" ({NO_AUTHSERV_ID}: a header without one, as Outlook's)"
+        )
     return problems
+
+
+# 0.22.0: in email_authserv_id, the provider's Authentication-Results header that has no authserv-id (Microsoft's
+# starts with its first result: "spf=pass ...; dkim=pass ...").
+NO_AUTHSERV_ID = "none"
+AUTHSERV_IDS = 10
+
+
+def provider_authserv_ids(settings: Settings) -> tuple[str, ...]:
+    """0.22.0: the authserv-ids in email_authserv_id, lower case (none: every header counts, the topmost first)."""
+    parts = (part.strip().lower() for part in settings.email_authserv_id.split(","))
+    return tuple(dict.fromkeys(part for part in parts if part))
 
 
 SUBJECT_MAX = 150
@@ -286,17 +306,25 @@ TOO_COMPLEX = "[This email has more nested parts than any real email, so only it
 UNREADABLE = "[Ember couldn't read this email, so only its headers were stored.]"
 
 
-def parse_message(raw: bytes, uid: int, *, headers_only: bool = False, size: int | None = None) -> IncomingMail:
+def parse_message(
+    raw: bytes,
+    uid: int,
+    *,
+    headers_only: bool = False,
+    size: int | None = None,
+    authserv_ids: tuple[str, ...] = (),
+) -> IncomingMail:
     """One email as Ember stores it: decoded, cleaned and capped. 0.21.0: never raises. An email too deeply nested
     (``too_complex``), or one the parser fails on, is stored with its headers only, so it can't stop the mailbox
-    being read past it, and a "stop" in its subject still counts."""
+    being read past it, and a "stop" in its subject still counts. 0.22.0: ``authserv_ids`` are the provider's
+    (email_authserv_id, see ``_authenticated``)."""
     note = _too_large(size) if headers_only else TOO_COMPLEX if too_complex(raw) else None
     try:
-        return _parsed(_head(raw) if note else raw, uid, note)
+        return _parsed(_head(raw) if note else raw, uid, note, authserv_ids)
     except Exception:  # noqa: BLE001 - one email Ember can't read must never stop the mailbox being read
         if note is None:
             with contextlib.suppress(Exception):
-                return _parsed(_head(raw), uid, UNREADABLE)
+                return _parsed(_head(raw), uid, UNREADABLE, authserv_ids)
     return IncomingMail(
         uid=uid,
         message_id=None,
@@ -324,7 +352,7 @@ def _head(raw: bytes) -> bytes:
     return raw[: min(ends)] if ends else raw
 
 
-def _parsed(raw: bytes, uid: int, note: str | None) -> IncomingMail:
+def _parsed(raw: bytes, uid: int, note: str | None, authserv_ids: tuple[str, ...] = ()) -> IncomingMail:
     """The email in ``raw``; with a ``note`` only its headers, and the note as its text."""
     msg = BytesParser(policy=policy.default).parsebytes(raw)
     from_addr, from_name = "", None
@@ -359,7 +387,7 @@ def _parsed(raw: bytes, uid: int, note: str | None) -> IncomingMail:
         attachments=attachments,
         bulk=_bulk(msg),
         machine=_machine(msg, from_addr),
-        authenticated=_authenticated(msg, from_addr),
+        authenticated=_authenticated(msg, from_addr, authserv_ids),
     )
 
 
@@ -398,26 +426,25 @@ def _machine(msg: Message, sender: str) -> bool:
     return False
 
 
-def _authenticated(msg: Message, sender: str) -> bool:
+def _authenticated(msg: Message, sender: str, authserv_ids: tuple[str, ...] = ()) -> bool:
     """0.15.0: whether the receiving mail provider verified the sender. Its verdict is the topmost
     Authentication-Results header, the one its receiving server added (any below it may come from the sender): dmarc
     pass, or dkim or spf pass for the From: domain (or a parent or subdomain of it), unless dmarc failed. No
-    verdict: unverified."""
+    verdict: unverified. 0.22.0: with ``authserv_ids`` (email_authserv_id) the topmost header of the provider's
+    authserv-id: when the provider added none, the topmost was the sender's own, and its forged pass counted."""
     try:
         verdicts = msg.get_all("Authentication-Results") or []
     except Exception:  # noqa: BLE001 - a header the parser can't decode is no verdict
         return False
-    if not verdicts or "@" not in sender:
+    if "@" not in sender:
+        return False
+    found = (_verdict(v) for v in verdicts)  # one at a time: the provider's is the first, a sender may add many
+    results = next((r for authserv_id, r in found if not authserv_ids or _listed(authserv_id, authserv_ids)), None)
+    if results is None:
         return False
     domain = sender.rsplit("@", 1)[1].lower()
-    text = one_line(verdicts[0], 4_000).lower()
-    while "(" in text:  # comments, nested ones too (they may hold a ";")
-        shorter = re.sub(r"\([^()]*\)", " ", text)
-        if shorter == text:
-            break
-        text = shorter
     passed = False
-    for result in text.split(";"):
+    for result in results:
         method, _, rest = result.strip().partition("=")
         words = rest.split()
         if method == "dmarc" and words[:1] == ["fail"]:
@@ -432,6 +459,41 @@ def _authenticated(msg: Message, sender: str) -> bool:
         if signer and _aligned(signer.strip("."), domain):
             passed = True
     return passed
+
+
+def _verdict(header: Any) -> tuple[str, list[str]]:
+    """0.22.0: an Authentication-Results header's authserv-id (lower case; "" when it has none) and its results,
+    without comments (they may hold a ";"). The authserv-id comes first, maybe with a version ("mx.google.com 1;
+    dkim=pass ..."); Microsoft's header starts with its first result instead ("spf=pass ...; dkim=pass ...")."""
+    first, *results = _uncommented(one_line(header, 4_000).lower()).split(";")
+    if "=" in first:
+        return "", [first, *results]
+    words = first.split()
+    return (words[0].strip('"') if words else ""), results
+
+
+def _uncommented(text: str) -> str:
+    """0.22.0: text without its comments, nested ones too, each a space, in time linear in its length (the regex
+    before went over the text once per level, and a sender can write many headers). An unclosed one runs to the end."""
+    kept, depth = [], 0
+    for char in text:
+        if char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+            if not depth:
+                kept.append(" ")
+        elif not depth:
+            kept.append(char)
+    return "".join(kept)
+
+
+def _listed(authserv_id: str, listed: tuple[str, ...]) -> bool:
+    """0.22.0: whether an authserv-id is one in email_authserv_id or under one (a provider's receiving servers
+    mx1.example.net and mx2.example.net under example.net); no authserv-id only when it lists NO_AUTHSERV_ID."""
+    if not authserv_id:
+        return NO_AUTHSERV_ID in listed
+    return any(i != NO_AUTHSERV_ID and (authserv_id == i or authserv_id.endswith(f".{i}")) for i in listed)
 
 
 def _aligned(signer: str, domain: str) -> bool:
@@ -802,6 +864,7 @@ class LiveMailbox:
         self._password = settings.email_password
         self.imap = (settings.email_imap_host, settings.email_imap_port)
         self.smtp = (settings.email_smtp_host, settings.email_smtp_port)
+        self.authserv_ids = provider_authserv_ids(settings)  # 0.22.0
 
     @staticmethod
     def tls() -> ssl.SSLContext:
@@ -868,7 +931,11 @@ class LiveMailbox:
                 # after REFUSED_TRIES).
                 refused = uid
                 break
-            mails.append(parse_message(raw[: MAX_MESSAGE_BYTES + 1], uid, headers_only=not whole, size=size))
+            mails.append(
+                parse_message(
+                    raw[: MAX_MESSAGE_BYTES + 1], uid, headers_only=not whole, size=size, authserv_ids=self.authserv_ids
+                )
+            )
             last = uid
         return FetchResult(mails, last, validity, len(found) - len(mails), refused)
 
@@ -1060,3 +1127,24 @@ def status(settings: Settings, mode: str) -> tuple[str, str | None]:
     if problems:
         return "not_configured", "; ".join(problems)
     return "ok", None
+
+
+SENDER_CHECK_INCOMPLETE = (
+    "Incomplete: email_authserv_id is empty, so Ember takes the topmost Authentication-Results header as your mail"
+    " provider's verdict on the sender. If your provider adds none to an email, that header is one the sender wrote,"
+    " and a sender can make their email look verified. See the Documentation tab, 'Ember's mailbox'."
+)
+
+
+def sender_check(settings: Settings, mode: str) -> dict[str, Any] | None:
+    """0.22.0: how Ember reads the provider's verdict on a sender, for the dashboard and the diagnostics: complete
+    when email_authserv_id names the provider's authserv-ids, incomplete when it is empty. None without a live
+    mailbox (the dry run's fake one adds its own headers)."""
+    if mode == "dry_run" or not settings.email_enabled or config_problems(settings):
+        return None
+    ids = provider_authserv_ids(settings)
+    if not ids:
+        return {"state": "incomplete", "authserv_ids": [], "note": SENDER_CHECK_INCOMPLETE}
+    shown = ", ".join("a header without an authserv-id" if i == NO_AUTHSERV_ID else i for i in ids)
+    note = f"Only an Authentication-Results header of {shown} counts as your mail provider's verdict on the sender."
+    return {"state": "complete", "authserv_ids": list(ids), "note": note}

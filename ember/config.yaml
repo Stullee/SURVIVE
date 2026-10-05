@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.21.0"
+version: "0.22.0"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -85,8 +85,8 @@ options:
   # who can open the panel counts as the owner, and the dashboard shows your ID.
   owner_user_ids: []
   log_level: info
-  # Ember's own mailbox (see the Documentation tab). The address, the app password and your name are
-  # optional options: turn on "Show unused optional configuration options" to fill them in.
+  # Ember's own mailbox (see the Documentation tab). The address, the app password, your name and your mail
+  # provider's authserv-id are optional options: turn on "Show unused optional configuration options" to fill them in.
   email_enabled: false
   email_imap_host: imap.mailbox.org
   email_imap_port: 993
@@ -202,6 +202,7 @@ schema:
   email_smtp_port: int(1,65535)
   email_owner_name: str?
   email_daily_limit: int(0,20)
+  email_authserv_id: str(,300)?
   etsy_enabled: bool
   etsy_keystring: str(,100)?
   etsy_shared_secret: password?

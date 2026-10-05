@@ -4103,6 +4103,12 @@
     disabled: { icon: "–", label: "Off", tone: "" },
   };
 
+  // 0.22.0: whose Authentication-Results header counts as the mail provider's verdict on a sender (email_authserv_id).
+  var SENDER_CHECK = {
+    complete: { icon: "✓", label: "Complete", tone: "good" },
+    incomplete: { icon: "!", label: "Incomplete", tone: "warning" },
+  };
+
   // System → Email: the agent's own mailbox (integrations.email). Missing on older servers: the card stays hidden.
   function renderEmail(d) {
     var e = isObject(d.integrations) && isObject(d.integrations.email) ? d.integrations.email : null;
@@ -4117,6 +4123,9 @@
       h("dt", { text: "Status" }), h("dd", null, chip(EMAIL_STATUS, e.status, sentence(String(e.status || "unknown").replace(/_/g, " "))),
         e.available === false && e.status === "ok" ? " (not available)" : null),
       showReason ? [h("dt", { text: "Why" }), h("dd", { class: "pre-line", text: reason })] : null,
+      isObject(e.sender_check) ? [h("dt", { text: "Sender check" }), h("dd", null,
+        chip(SENDER_CHECK, e.sender_check.state, sentence(String(e.sender_check.state || "unknown"))), " ",
+        String(e.sender_check.note || ""))] : null,
       h("dt", { text: "Address" }), h("dd", { class: "link-text", text: e.address ? String(e.address) : "–" }),
       h("dt", { text: "Mailbox" }), h("dd", { text: mode }),
       h("dt", { text: "Last fetch" }), h("dd", null, e.last_fetch_at ? timeEl(e.last_fetch_at, fmtDateTime(e.last_fetch_at) + " (" + relTime(e.last_fetch_at) + ")") : "Never"),

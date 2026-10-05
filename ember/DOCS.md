@@ -58,6 +58,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Log level | info | Detail in the app log. |
 | Ember's mailbox | off | Lets Ember read its own mailbox and propose emails. See [Ember's mailbox](#embers-mailbox). |
 | Mailbox address, app password, your name for emails | empty | Needed when the mailbox is on. The password is never logged or shown. |
+| Your mail provider's authserv-id | empty | The name your mail provider writes first in its *Authentication-Results* header. Set, only that header counts as the provider's verdict on a sender; empty, the topmost one does, which a sender can write. See [Ember's mailbox](#embers-mailbox). |
 | IMAP server / port | imap.mailbox.org / 993 | Where Ember reads mail (always TLS). |
 | SMTP server / port | smtp.mailbox.org / 465 | Where Ember sends approved emails: 465 (TLS) or 587 (STARTTLS). |
 | Emails per day | 3 | The most emails Ember sends in one day (0 to 20). |
@@ -1241,7 +1242,10 @@ automated mail, and Outlook.com no longer accepts passwords for IMAP and SMTP.
    address**, the **Mailbox app password** and **Your name for emails**. The
    servers default to mailbox.org's; for Posteo use `posteo.de` for both, with
    ports 993 and 465. Save and restart the app.
-5. The dashboard's **System** panel shows the mailbox's status, when it was
+5. Set **Your mail provider's authserv-id** (0.22.0), so that only your
+   provider's verdict on a sender counts (see [Your provider's
+   authserv-id](#your-providers-authserv-id) below).
+6. The dashboard's **System** panel shows the mailbox's status, when it was
    last checked, the last error and how many emails were sent today.
 
 To cut Ember off at once, revoke the app password at your provider (or switch
@@ -1265,12 +1269,17 @@ included: encrypt your backups.
   you when the address never wrote to Ember (a first contact). Since 0.15.0
   only an email whose sender your mail provider verified counts as having
   written: anyone can put any address in *From:*. Ember reads the provider's
-  verdict in the topmost *Authentication-Results* header, which the provider
-  adds above any the sender wrote (DMARC, or DKIM or SPF of the sender's
-  domain or a parent or subdomain of it, passed). Most providers add one; an
-  email without it is unverified. If your provider adds none to an email, a
-  header the sender wrote is the topmost one and counts.
-  Someone who wrote before 0.15.0 counts again once they write again.
+  verdict in its *Authentication-Results* header, which the provider adds
+  above any the sender wrote (DMARC, or DKIM or SPF of the sender's domain or
+  a parent or subdomain of it, passed). With **Your mail provider's
+  authserv-id** set, that is the topmost header of that authserv-id, and an
+  email without one is unverified (0.22.0). Without it, Ember takes the
+  topmost header: if your provider adds none to an email, that is a header the
+  sender wrote, and it counts. The **System → Email** card then shows the
+  sender check as incomplete.
+  Someone who wrote before 0.15.0 counts again once they write again. An
+  email keeps the verdict it was stored with: setting the option doesn't
+  change it for emails already stored.
 - **Approve** it and Ember sends it itself, exactly once: plain text, to that
   one recipient, no copies, no attachments, from "Ember (AI agent of *your
   name*)" (or the agent's name, if you changed it), with a footer the agent
@@ -1339,6 +1348,41 @@ included: encrypt your backups.
   version of a planner in the first cycle, a newsletter with hidden
   instructions arrives in the third, and the reader's "stop" in the fifth.
   Approved emails are recorded, not sent.
+
+### Your provider's authserv-id
+
+Every *Authentication-Results* header starts with the name of the server that
+checked the email, its authserv-id, and then the results, each after a `;`.
+A sender can write such a header too, with any name and `dkim=pass` in it;
+your provider adds its own above it. To find your provider's:
+
+1. Send an email from another address (a Gmail or Outlook.com address works)
+   to Ember's mailbox.
+2. Open it in the webmail of Ember's mailbox and show its original or its
+   source (**Show original**, **View source**, **Show headers** or similar).
+3. Find the topmost line that starts with `Authentication-Results:`. The word
+   between the colon and the first `;` is the authserv-id, for example
+   `mx.google.com` in
+   `Authentication-Results: mx.google.com; dkim=pass header.i=@example.org …`.
+   A number after it (`mx.example.net 1;`) is a version: leave it out.
+4. Enter that word as **Your mail provider's authserv-id**, save and restart
+   the app.
+
+- If the line starts with the first result instead (`spf=pass …; dkim=pass
+  …`), as Microsoft's Outlook and Exchange Online write it, there is no
+  authserv-id: enter `none`.
+- An entry also covers the names under it: `example.net` covers
+  `mx1.example.net` and `mx2.example.net`, if your provider's receiving
+  servers each use their own. Never enter a domain anyone can have names
+  under, such as `com` or `co.uk`.
+- Separate several with commas (at most 10). If your provider adds several
+  headers, one per check, enter the one whose header holds `dmarc=`.
+- Check a second email from another provider: the authserv-id should be the
+  same. If an email from a known person later shows as unverified, compare its
+  header with the option.
+
+Without the option, the **System → Email** card shows the sender check as
+*incomplete*, and the diagnostics say the same (`sender_check`).
 
 ### What Ember may send
 
@@ -2040,7 +2084,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.21.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.22.0 (by /u/your name)`.
 
 ## Diagnostics
 
