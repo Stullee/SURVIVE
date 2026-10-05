@@ -1818,7 +1818,8 @@ class CycleRunner:
                 return tools.Outcome(
                     False,
                     f"Error: research could cost about ${micros_to_usd(expected):.3f}, more than this cycle has left"
-                    f"{_kept(ctx)}.",
+                    f"{_kept(ctx)}, or the day or the balance allows (a search needs several times its hold above the "
+                    "last will's reserve).",  # 0.23.0: meter.affordable judges it as the guard
                     "refused: budget",
                 )
             try:

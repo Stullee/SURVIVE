@@ -29,7 +29,8 @@ Fixes from the review of 0.21.0:
 
 - Email: a forward of many emails or a digest (parts side by side, not inside one another) is read again; 0.21.0
   stored such an email with its headers only. An email whose lines end in a bare CR keeps its sender and its "stop",
-  and a picture in an element's style no longer hides the text with it.
+  and a picture in an element's style no longer hides the text with it. An email nested deeper than any real one is
+  stored with its headers only however it names its boundaries.
 - research with a url: its question may name files and products; only a web address with its scheme, or a host name
   of that page's site in any spelling (punycode, look-alike letters), is refused.
 - Lessons: when your lessons file is nearly full, an upgrade marks a lesson "(re-check)" only, pinned lessons are never

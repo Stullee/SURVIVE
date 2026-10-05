@@ -245,15 +245,16 @@ class Workshop:
             if quote > room:
                 run.failure = (
                     f"{going_on} could cost up to ${micros_to_usd(quote):.3f}, but only ${micros_to_usd(room):.3f} "
-                    "is left for it (the workshop's cap per run, the daily cap or the balance" + kept
+                    "is left for it (the workshop's cap per run, the daily cap, or the balance: a run needs several "
+                    "times its hold above the last will's reserve" + kept  # 0.23.0: meter.rooms, as the guard
                 )
                 break
             money = self.meter.rooms(cycle_id, WORKSHOP, keep=keep)[1]
             if held > money:
                 run.failure = (
                     f"{going_on} holds ${micros_to_usd(held):.3f} of the day (the workshop's cap per run, or what "
-                    f"recent runs cost), but only ${micros_to_usd(money):.3f} is left (the daily cap or the balance"
-                    + kept
+                    f"recent runs cost), but only ${micros_to_usd(money):.3f} is left (the daily cap, or the balance: "
+                    "a run needs several times its hold above the last will's reserve" + kept
                 )
                 break
             try:

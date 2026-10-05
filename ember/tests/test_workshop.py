@@ -408,7 +408,7 @@ def test_the_cap_of_a_run_covers_its_continuations() -> None:
     assert meter.calls == 1 and run_.cost == 450_000
     assert run_.failure == (
         "going on (the run paused) could cost up to $0.100, but only $0.050 is left for it (the workshop's cap per "
-        "run, the daily cap or the balance)"
+        "run, the daily cap, or the balance: a run needs several times its hold above the last will's reserve)"
     )
 
 

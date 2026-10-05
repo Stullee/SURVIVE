@@ -180,8 +180,8 @@ configuration:
     name: Let the agent read whole web pages
     description: >-
       Off: the agent can only search the web. On: it can also read pages it
-      found (only from that page's site, and the agent's question may hold no
-      web address). PDFs have no size limit, so one read can cost more than
+      found (only from that page's site, and the agent's question may name no
+      address on that site). PDFs have no size limit, so one read can cost more than
       the per-cycle cap before the budget guard notices and stops the cycle.
   kill_switch_reset:
     name: Kill switch reset
