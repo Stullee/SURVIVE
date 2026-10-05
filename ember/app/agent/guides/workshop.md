@@ -28,4 +28,6 @@ that costs more than its estimate closes the workshop for the rest of the cycle.
 GROWING
 The workshop is where you grow new abilities. When a script proves itself (you run it again, or its files go into
 a product your owner approves), ask for it to be built into Ember: request_upgrade with workshop_script. Built
-in, it costs nothing to run and never breaks. The planner reminds you when a script has proved itself.
+in, it costs nothing to run and never breaks. The planner reminds you when a script has proved itself. A script is
+asked for once; once your owner releases its request, it is built in and the workshop won't run it again: use its
+tool.

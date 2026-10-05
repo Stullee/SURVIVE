@@ -44,6 +44,8 @@ WHAT YOU GET
   make_image (square or portrait keeps it readable); make_image shows the sheets as 'name.xlsx#Abrechnung'.
 - Ember's code works out every formula and keeps nothing unless each number equals its own sums, so the cover shows
   the file's numbers: never type them yourself, and never pay the workshop for a statement or its cover.
+- Each variant (other tenants, costs or keys; a commission with a client's own numbers) is a new spec and one more
+  call, free.
 
 SAY IT IN THE NOTES AND THE LISTING
 - Heating and hot water (Heizkostenverordnung) and metered water come from the Messdienst's statement as Direkt: the

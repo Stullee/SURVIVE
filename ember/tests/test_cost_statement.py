@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from PIL import Image
 
 from app.agent import tools
@@ -493,3 +493,51 @@ def test_the_tool_in_a_cycle(data_dir: Path) -> None:
         and "building.units (1) is less than the tenants' together (2)" in (refused["result"])
     )
     assert workspace.size_of("shop/nk-cover.png") > 0
+
+
+def test_what_the_script_did_with_a_file_already_made_is_free(tmp_path: Path) -> None:
+    """0.22.2, upgrade request #8: the script asked for again (open-shop-nebenkostenabrechnung-de-16.py) read a file the
+    agent had made before (Stammdaten, Kostenarten, Mieterabrechnung) and worked out its Mieterabrechnung apart from the
+    file's formulas, to draw it. Ember's code works out such formulas itself: workspace_read shows the results and
+    make_image draws the sheet with them, free."""
+    book = Workbook()
+    stamm = book.active
+    stamm.title = "Stammdaten"
+    stamm["A8"], stamm["B8"], stamm["A9"], stamm["B9"] = "Gesamtfläche (qm)", 300, "Personen gesamt", 8
+    costs = book.create_sheet("Kostenarten")
+    costs.append(["Kostenarten"])
+    costs.append([])
+    costs.append(["Kostenart", "Betrag (EUR)", "Umlageschlüssel"])
+    for row in (["Grundsteuer", 1200, "Wohnfläche"], ["Wasser/Abwasser", 1600, "Personenzahl"]):
+        costs.append(row)
+    costs.append(["Versicherung", 900, "Wohnfläche"])
+    split = book.create_sheet("Mieterabrechnung")
+    split.append(["Mieterabrechnung – Abrechnung je Mieter"])
+    split.append([])
+    split.append(["Mieter", "Wohnfläche (qm)", "Personenzahl", "Anteil Wohnfläche", "Anteil Personen",
+                  "Kostenanteil (EUR)", "Vorauszahlungen (EUR)", "Saldo (EUR)"])  # fmt: skip
+    keyed = 'SUMIF(Kostenarten!$C$4:$C$17,"{}",Kostenarten!$B$4:$B$17)'
+    for r, (name, area, persons, prepaid) in enumerate((("Müller", 90, 3, 1500), ("Schmidt", 120, 4, 1400)), start=4):
+        split.append([
+            name, area, persons, f"=B{r}/Stammdaten!$B$8", f"=C{r}/Stammdaten!$B$9",
+            f"=D{r}*{keyed.format('Wohnfläche')}+E{r}*{keyed.format('Personenzahl')}", prepaid, f"=G{r}-F{r}",
+        ])  # fmt: skip
+    split["F6"], split["G6"], split["H6"] = "=SUM(F4:F5)", "=SUM(G4:G5)", "=SUM(H4:H5)"
+    out = io.BytesIO()
+    book.save(out)
+    data = out.getvalue()
+
+    # the script's own sums: 2,100 € by Wohnfläche, 1,600 € by Personenzahl
+    script = {4: (0.3, 0.375, 0.3 * 2100 + 0.375 * 1600), 5: (0.4, 0.5, 0.4 * 2100 + 0.5 * 1600)}
+    shown = sheets.values(data)["Mieterabrechnung"]
+    for r, (by_area, by_persons, part) in script.items():
+        assert [shown[(r, c)] for c in (4, 5, 6)] == pytest.approx([by_area, by_persons, part])
+        assert shown[(r, 8)] == pytest.approx(shown[(r, 7)] - part)
+    assert [shown[(6, c)] for c in (6, 7, 8)] == pytest.approx([2870, 2900, 30])
+    assert "=SUM(F4:F5) → 2870" in sheets.workbook_text(data)
+    j = jail(tmp_path)
+    j.write_bytes("shop/nebenkostenabrechnung_de.xlsx", data)
+    photo = make.image(j, "shop/cover.png", "shop/nebenkostenabrechnung_de.xlsx#Mieterabrechnung", "Mieterabrechnung")
+    assert photo.paths == ["shop/cover.png"]
+    number, picture = sheets.picture(data, "Mieterabrechnung")
+    assert number == 3 and picture.width > picture.height

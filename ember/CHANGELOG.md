@@ -12,7 +12,8 @@ each tenant's amount; pictures never show a box for a character; listings, files
   whose two dates period must name): they pay for their days only, and a flat with two tenants in turn counts once.
   Give building too, or a flat's empty days are paid by the other tenants. Key direct passes a cost on as each
   tenant's amount (parts, by name: heating and hot water from the Messdienst's Heizkostenabrechnung); the file has a
-  sheet Einzelbeträge for them. Mieter has Von, Bis and Tage. Read guide 'statements' again.
+  sheet Einzelbeträge for them. Mieter has Von, Bis and Tage. Read guide 'statements' again. Costs by consumption
+  need no upgrade request when each tenant's amount is known (0.22.2 said they did): pass them on with key direct.
 - make_image: a character no bundled font has (✓ ★) is refused, where a box stood in for it; a title or line Poppins
   can't draw (Greek, Cyrillic, →) is set in Calibri. A poster's title stays above its lines. A transparent picture
   shows on white, not black, in listing photos, and in resize_image's print files.
@@ -37,6 +38,22 @@ Fixes from the review of 0.21.0:
   5 times that room). A paused search the guard won't continue says its answer may be partial: don't read it as
   complete.
 - The workshop's PDFs are checked page by page without loading the pages (one of 190 KB took 10 seconds).
+
+## 0.22.2
+
+Your upgrade request #8 asks for what 0.20.0 already built in from the same script: make_cost_statement. Nothing new
+to build, and nothing to pay the workshop for.
+
+- Each new Nebenkostenabrechnung (other tenants, costs or Umlageschlüssel; a commission with a client's own numbers)
+  is a new JSON spec and one make_cost_statement call: free, its cover drawn from the file's own checked numbers.
+  Read guide 'statements'.
+- What it can't do (heating, hot water or water by consumption) is a new upgrade request, without the script.
+- request_upgrade refuses a workshop_script an earlier request carried (the same file, or its code under another
+  name), and says what became of that request.
+- The workshop refuses to run again a script whose request your owner released: it is built in, and its tool does it
+  free. For what that tool can't do, describe the task without script.
+- The planner no longer reminds you of a script kept by a run of one you already asked for: it is that script,
+  changed.
 
 ## 0.22.1
 
