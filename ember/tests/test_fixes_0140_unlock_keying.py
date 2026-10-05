@@ -18,7 +18,7 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import never, policy, roadmap, store  # noqa: E402
+from app.agent import never, policy, roadmap, store, ventures  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.economy.life import KILLED_KEY  # noqa: E402
 from app.integrations import connectors, etsy  # noqa: E402
@@ -177,6 +177,59 @@ def test_an_unlock_carries_only_what_belongs_to_its_milestone(data_dir: Path) ->
     # The card says what a milestone's unlock covers
     items = {m["id"]: m for m in agent.roadmap()["items"]}
     assert (items[line]["project_id"], items[venture]["venture_id"], items[guide]["project_id"]) == (LINE, 1, None)
+
+
+def test_a_milestone_with_an_unlock_keeps_its_links_and_its_venture_its_projects(data_dir: Path) -> None:
+    """0.21.0 (analysis 0.20.1, FIX NOW 4): the owner unlocked taking listings off Etsy for "Retire the old CV
+    templates". One milestone_update linking it to the best seller's project, or one project_update moving that project
+    into the unlocked venture, and Ember's code took the best seller off at once."""
+    agent, listing_id = listed(data_dir)
+    with agent.db.transaction() as conn:
+        old_line = store.create_project(
+            conn,
+            agent.scope(),
+            cycle_id=conn.execute("SELECT MAX(id) FROM cycles").fetchone()[0],
+            title="Old CV templates",
+            hypothesis="They sell no more.",
+            next_step="Retire them.",
+            status="active",
+            now=to_iso(agent.clock.now()),
+        )
+    retire = goal(agent, "Retire the old CV templates", project_id=old_line)
+    unlock(agent, retire, "deactivate")
+    calls = [("milestone_update", {"milestone_id": retire, "project_id": LINE, "note": "Same thing."})]
+    made = work_on(agent, retire, *calls, change(listing_id, state="deactivate"))[-1]
+    refused = tool_results(agent, "milestone_update")[-1]
+    assert refused["status"] == "error" and "it stays linked as it is while that stands" in refused["result"]
+    assert (made["status"], made["decided_by"]) == ("pending", None)  # the best seller waits for the owner
+    reject(agent, made["id"])
+    with (
+        pytest.raises(sqlite3.IntegrityError, match="keeps its links while an unlock of it stands"),
+        agent.db.transaction() as conn,
+    ):  # the database refuses it on its own
+        conn.execute("UPDATE milestones SET project_id = ? WHERE id = ?", (LINE, retire))
+    # A venture's unlock covers its projects: none moves in (or out) while it stands.
+    with agent.db.transaction() as conn:
+        other = ventures.create(
+            conn,
+            agent.scope(),
+            title="Wedding planners",
+            pitch="Planners.",
+            stage="building",
+            now=to_iso(agent.clock.now()),
+        )
+    first = goal(agent, "The first sale", venture_id=other)
+    unlock(agent, first, "deactivate")
+    calls = [("project_update", {"project_id": LINE, "venture_id": other})]
+    made = work_on(agent, first, *calls, change(listing_id, state="deactivate"))[-1]
+    moved = tool_results(agent, "project_update")[-1]
+    assert moved["status"] == "error" and f"your owner's unlock for milestone #{first}" in moved["result"]
+    assert (made["status"], made["decided_by"]) == ("pending", None)
+    reject(agent, made["id"])
+    # Taken back, the links are the agent's again.
+    unlock(agent, retire, "deactivate", level="manual")
+    work_on(agent, retire, ("milestone_update", {"milestone_id": retire, "project_id": LINE, "note": "Same thing."}))
+    assert tool_results(agent, "milestone_update")[-1]["status"] == "ok"
 
 
 # --- FIX 21b: a milestone that closed ends its unlock, and what the unlock held waits for the owner ---------------

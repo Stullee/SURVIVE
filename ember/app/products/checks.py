@@ -47,6 +47,10 @@ OFFICE = frozenset({".docx", ".xlsx", ".pptx"})
 KEPT = frozenset({*TEXT_EXTENSIONS, *PICTURES, ".pdf", *OFFICE})
 MAX_TEXT_BYTES = 64 * 1024
 MAX_PDF_PAGES = 300
+# 0.21.0: a page's sides in points (1/72 inch): from a quarter inch to PDF's own largest page, 200 inches
+MIN_PAGE_POINTS = 18
+MAX_PAGE_POINTS = 14_400
+MAX_PAGE_RATIO = 20  # a bookmark is 4 times as long as it is wide; a page 1000 x 10 points wide was kept
 MAX_UNPACKED_BYTES = 100 * 1024 * 1024  # what the streams of a PDF or the parts of an Office file may unpack to
 READ_BYTES = 50_000_000  # 0.15.0: at most what an Office file Ember reads (library, workspace_read) unpacks to
 MAX_PREDICTED_BYTES = 4 * 1024 * 1024  # 0.15.0: a PDF's streams whose predictor Ember undoes (about 1 s a MB)
@@ -223,10 +227,19 @@ def _pdf(data: bytes) -> bytes:
     try:
         pages = images.page_count(data)
         active = images.pdf_active(data)
+        sizes = images.page_sizes(data) if 1 <= pages <= MAX_PDF_PAGES else []
     except Exception:  # noqa: BLE001
         raise Refused("the PDF can't be opened") from None
     if not 1 <= pages <= MAX_PDF_PAGES:
         raise Refused(f"the PDF has {pages} pages; at most {MAX_PDF_PAGES}")
+    for number, (width, height) in enumerate(sizes, 1):  # 0.21.0: no page any printer or screen shows
+        short, long = min(width, height), max(width, height)
+        if short < MIN_PAGE_POINTS or long > MAX_PAGE_POINTS or long > MAX_PAGE_RATIO * short:
+            raise Refused(
+                f"page {number} is {width:.0f} x {height:.0f} points: a page must be {MIN_PAGE_POINTS} to"
+                f" {MAX_PAGE_POINTS} points (0.25 to 200 inches) wide and high, at most {MAX_PAGE_RATIO} times as long"
+                " as it is wide"
+            )
     if active:  # 0.15.0: what a viewer finds, whatever the search above missed
         raise Refused(f"the PDF has active content ({', '.join(active)}), which Ember never keeps")
     return data

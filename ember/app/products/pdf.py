@@ -525,7 +525,7 @@ class Renderer:
         for r, row in enumerate(rows):
             bold = r == 0 and block.header is not None
             for c, cell in enumerate(row):
-                words = self.words(cell, t.font, t.size, look.text, bold=bold)
+                words = self.words(cell, t.font, t.size, header_look.text if bold else look.text, bold=bold)
                 if words:
                     minimum[c] = max(minimum[c], max(w.width for w in words) + 2 * pad_x)
                     natural[c] = max(natural[c], sum(w.width + w.space for w in words) + 2 * pad_x)
@@ -536,8 +536,10 @@ class Renderer:
         cell_lines: list[list[list[Line]]] = []
         for r, row in enumerate(rows):
             bold = r == 0 and block.header is not None
+            # 0.21.0: the header's words in the header's colour (they were the body's, #222 on #2C3E50: 1.45 to 1)
+            colour = header_look.text if bold else look.text
             lines = [
-                self.break_lines(self.words(cell, t.font, t.size, look.text, bold=bold), widths[c] - 2 * pad_x)
+                self.break_lines(self.words(cell, t.font, t.size, colour, bold=bold), widths[c] - 2 * pad_x)
                 for c, cell in enumerate(row)
             ]
             cell_lines.append(lines)

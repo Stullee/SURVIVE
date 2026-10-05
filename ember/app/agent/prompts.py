@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from functools import cache
 from typing import Any
+from urllib.parse import urlsplit
 
 from .. import paths
 from ..config import Settings
@@ -552,10 +553,7 @@ FETCH_TOOL = {
     "name": "web_fetch",
     "max_uses": 1,
     "max_content_tokens": FETCH_MAX_CONTENT_TOKENS,
-    # Etsy's API terms forbid programs reading its website: the research tool refuses its pages, and so does the
-    # server (the API refuses blocked_domains together with allowed_domains, so a page read never has both).
-    "blocked_domains": list(tools.ETSY_DOMAINS),
-}
+}  # 0.21.0: with allowed_domains, its page's host (research_request)
 
 
 @cache
@@ -758,7 +756,11 @@ def research_request(
     tool: dict[str, Any] = SEARCH_TOOL
     if url:
         ask += f"\nRead this page: {url}"
-        tool = FETCH_TOOL
+        # 0.21.0: its own host only. web_fetch may read any address in the request, the question's too, and an
+        # address could carry data out of the container (the research tool refuses one in the question too). Etsy's
+        # API terms forbid programs reading its website: the research tool refuses its pages, so the server never
+        # reads one either (it barred Etsy's domains, and the API refuses blocked_domains with allowed_domains).
+        tool = {**FETCH_TOOL, "allowed_domains": [(urlsplit(url).hostname or "").lower().rstrip(".")]}
     elif site:
         ask += f"\nSearch only this site: {site}"
         tool = {**SEARCH_TOOL, "allowed_domains": [site]}

@@ -42,7 +42,7 @@ from ..agent.sandbox import Jail, SandboxError
 from ..agent.store import AgentScope
 from ..config import Settings
 from ..db import Database
-from ..economy.clock import Clock, from_iso, to_iso
+from ..economy.clock import Clock, from_iso, normalized, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.ledger import PreparedEntry
 from ..products import images
@@ -468,7 +468,7 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
         found.append(
             {
                 "order_id": r["order_id"],
-                "created_at": r["created_at"],
+                "created_at": normalized(str(r["created_at"])) or r["created_at"],  # 0.21.0: stored before 0.21.0
                 "status": r["status"],
                 "quantity": r["quantity"],
                 "titles": r["titles"] or "",
@@ -485,6 +485,8 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
 
 
 COST_NOTE = "Printify: making, shipping and tax of order {order} ({titles})"  # as the owner's button says
+UNREADABLE_KEY = "printify.cost_unreadable."  # 0.21.0: + an order's key: the owner was told its time can't be read
+ISO_GLOB = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z"  # TIMESTAMP_FORMAT's shape
 
 
 def record_costs(db: Database, clock: Clock, economy: Economy, scope: AgentScope, settings: Settings) -> list[int]:
@@ -510,6 +512,17 @@ def record_costs(db: Database, clock: Clock, economy: Economy, scope: AgentScope
             if clock.local_day(order["created_at"]).isoformat() < since:
                 continue  # from before it was turned on: the owner's
         except ValueError:
+            # 0.21.0: never silently (every order was skipped so, every sync, while its sale's revenue was booked)
+            if not db.get_meta(UNREADABLE_KEY + order["key"]):
+                db.set_meta(UNREADABLE_KEY + order["key"], "1")
+                events.record(
+                    db,
+                    "warning",
+                    "ledger",
+                    f"Ember's code did not record the cost of Printify order {order['order_id']}: it can't read when"
+                    f" the order was made ({str(order['created_at'])[:40]!r}). Record it yourself: Printify card,"
+                    " Record the cost.",
+                )
             continue
         micros, euros, fx = amount
         prepared = PreparedEntry(
@@ -1051,7 +1064,10 @@ class Publisher:
                             " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (mode, session, order_id, product_id)"
                             " DO UPDATE SET quantity = excluded.quantity, cost_cents = excluded.cost_cents,"
                             " shipping_cents = excluded.shipping_cents, tax_cents = excluded.tax_cents,"
-                            " currency = excluded.currency, status = excluded.status, synced_at = excluded.synced_at",
+                            " currency = excluded.currency, status = excluded.status, synced_at = excluded.synced_at,"
+                            # 0.21.0: a time stored as Printify wrote it, before 0.21.0, as Ember writes times
+                            f" created_at = CASE WHEN printify_orders.created_at GLOB '{ISO_GLOB}'"
+                            " THEN printify_orders.created_at ELSE excluded.created_at END",
                             (
                                 scope.mode,
                                 scope.session,
@@ -1063,7 +1079,8 @@ class Publisher:
                                 max(0, line.tax_cents),
                                 line.currency or ours[line.product_id],  # 0.15.0: Printify's, when it states one
                                 line.status or "?",
-                                line.created_at or to_iso(now),
+                                # 0.21.0: as Ember writes times (Printify's "2026-09-30 10:00:00+00:00" was kept)
+                                normalized(line.created_at) or to_iso(now),
                                 to_iso(now),
                             ),
                         )

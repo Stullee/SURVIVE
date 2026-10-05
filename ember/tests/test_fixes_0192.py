@@ -280,7 +280,8 @@ def test_a_full_lessons_file_drops_tool_limits_before_the_review_s_lesson() -> N
     assert memory.identifiers(["research", "look", "project_create"]) == {"project_create"}
 
 
-def test_an_upgrade_retires_the_lessons_about_the_tools_its_notes_name() -> None:
+def test_an_upgrade_marks_the_lessons_about_the_tools_its_notes_name_to_re_check() -> None:
+    """0.21.0 (analysis 0.20.1, FIX NOW 14): they were deleted, each upgrade, also "photos must be visibly distinct"."""
     lessons = (
         "# Lessons\n\n"
         "- [#c96] project_create fails at 8 open projects; fold new work into an existing project.\n"
@@ -290,13 +291,22 @@ def test_an_upgrade_retires_the_lessons_about_the_tools_its_notes_name() -> None
     )
     notes = "## 0.19.1\n- project_create no longer refuses a ninth open project. project_list shows them."
     pinned = {memory.lesson_key("Pinned: project_create a project per product line.")}
-    new, gone = memory.retire_for_release(lessons, notes, TOOLS, pinned) or ("", [])
-    assert gone == ["project_create fails at 8 open projects; fold new work into an existing project."]
-    assert "workspace_write" in new and "A decided action" in new and "Pinned: project_create" in new
-    assert memory.retire_for_release(lessons, "## 0.19.2\n- research is cheaper.", TOOLS, set()) is None
+    new, marked = memory.recheck_for_release(lessons, notes, TOOLS, pinned, "0.19.1") or ("", [])
+    assert marked == ["project_create fails at 8 open projects; fold new work into an existing project."]
+    assert (
+        "- [#c96] (re-check: 0.19.1 changed project_create) project_create fails at 8 open projects; fold new work"
+        " into an existing project.\n" in new
+    )
+    assert "workspace_write" in new and "A decided action" in new and "- [#c37] Pinned: project_create" in new
+    assert memory.recheck_for_release(lessons, "## 0.19.2\n- research is cheaper.", TOOLS, set(), "0.19.2") is None
+    again, _ = memory.recheck_for_release(new, notes, TOOLS, pinned, "0.20.0") or ("", [])
+    assert "(re-check: 0.20.0 changed project_create) project_create fails" in again and "0.19.1" not in again
+    full = "# Lessons\n\n" + "".join(f"- [#c{i}] project_create note {i}: {'x' * 60}\n" for i in range(55))
+    kept, _ = memory.recheck_for_release(full, notes, TOOLS, set(), "0.21.0") or ("", [])
+    assert len(kept.encode()) <= memory.CAPS["lessons"] and "note 54:" in kept and "note 0:" not in kept
 
 
-def test_the_first_cycle_after_an_upgrade_retires_them_once(data_dir: Path) -> None:
+def test_the_first_cycle_after_an_upgrade_marks_them_once(data_dir: Path) -> None:
     def before(agent: Any) -> None:
         agent.db.set_meta(news.changelog_key(agent.scope().mode), "0.19.0")
         lessons = "# Lessons\n\n- [#c96] project_create fails at 8 open projects.\n- [#c9] Keep the owner informed.\n"
@@ -305,9 +315,10 @@ def test_the_first_cycle_after_an_upgrade_retires_them_once(data_dir: Path) -> N
 
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), before=before)
     text = agent.memory().read("lessons")
-    assert "project_create fails" not in text and "Keep the owner informed." in text
+    assert "] (re-check: " in text and "changed project_create) project_create fails" in text
+    assert "Keep the owner informed." in text
     events = [e["message"] for e in agent.db.recent_events(30)]
-    assert any(e.startswith("Ember's code retired 1 lesson(s) about tools ") for e in events)
+    assert any(e.startswith("Ember's code marked 1 lesson(s) to re-check: tools ") for e in events)
     assert agent.db.get_meta(f"agent.{agent.scope().mode}.lessons_version")
 
 

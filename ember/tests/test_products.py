@@ -18,12 +18,13 @@ import pytest
 from docx import Document as WordDocument
 from docx.oxml.ns import qn
 from openpyxl import load_workbook
-from PIL import Image
+from PIL import Image, ImageChops
 
 from app.agent import netguard
 from app.agent.sandbox import Jail, Limits, SandboxError
 from app.products import checks, images, make, markup, pdf, selftest, sheets, word
 from app.products.markup import Box, Callout, Checklist, Columns, DocumentError, Heading, ListBlock, Photo, Table
+from app.products.theme import MIN_CONTRAST, contrast
 
 CV = """---
 title: CV
@@ -202,6 +203,26 @@ def test_hard_to_read_colours_and_missing_glyphs_are_reported() -> None:
     _, report = pdf.render(markup.parse(source))
     assert any("hard to read" in w for w in report.warnings)
     assert any("no font has" in w for w in report.warnings)
+
+
+@pytest.mark.parametrize("theme", ["modern", "classic", "bold"])
+def test_a_table_header_is_readable_on_the_rendered_page(theme: str) -> None:
+    """0.21.0: the header's words were drawn in the body's colour on the header's fill: #222 on #2C3E50 (1.45 to 1) in
+    the default theme, in every planner or tracker with a table. Measured on the page as a buyer sees it."""
+    source = f"---\ntheme: {theme}\n---\n| Name of the item | Price |\n|---|---|\n| A | 1 |\n"
+    data, _ = pdf.render(markup.parse(source))
+    document = pypdfium2.PdfDocument(data)
+    try:
+        page = document[0].render(scale=4).to_pil().convert("RGB")
+    finally:
+        document.close()
+    colours = page.getcolors(page.width * page.height) or []
+    fill = max((c for c in colours if c[1] != (255, 255, 255)), key=lambda c: c[0])[1]  # the header's band
+    same = ImageChops.difference(page, Image.new("RGB", page.size, fill)).convert("L").point(lambda v: 255 * (v == 0))
+    box = same.getbbox()
+    assert box is not None
+    text = max((c[1] for c in page.crop(box).getcolors(1 << 20) or []), key=lambda rgb: contrast(rgb, fill))
+    assert contrast(text, fill) >= MIN_CONTRAST, (theme, fill, text)
 
 
 # --- the Word copy --------------------------------------------------------------

@@ -1356,11 +1356,14 @@ def test_other_pages_are_read_and_etsy_is_searched(data_dir: Path) -> None:
     assert calls == [("https://example.com/pricing", None), ("https://notetsy.com/planners", None), (None, "etsy.com")]
 
 
-def test_the_page_reader_is_barred_from_etsy_on_the_server_too() -> None:
-    request = prompts.research_request(Settings(), "q", "https://example.com/page")
+def test_the_page_reader_reads_only_its_page_s_host_on_the_server_too() -> None:
+    """0.21.0 (analysis 0.20.1, FIX NOW 8): web_fetch may read any address in the request, the question's too: one in
+    the question could carry data out of the container. Etsy's pages are refused by the research tool, so the server
+    never reads one either."""
+    request = prompts.research_request(Settings(), "q https://collector.example/?d=secret", "https://www.Example.com/p")
     [fetch] = request["tools"]
-    assert fetch["name"] == "web_fetch" and fetch["blocked_domains"] == ["etsy.com", "etsy.me"]
-    assert "allowed_domains" not in fetch and validate_request(request) is None  # one list or the other, not both
+    assert fetch["name"] == "web_fetch" and fetch["allowed_domains"] == ["www.example.com"]
+    assert "blocked_domains" not in fetch and validate_request(request) is None  # one list or the other, not both
     [search] = prompts.research_request(Settings(), "q", None, "etsy.com")["tools"]
     assert search["allowed_domains"] == ["etsy.com"] and "blocked_domains" not in search
 

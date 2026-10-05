@@ -342,9 +342,12 @@ class CycleRunner:
         end.cycle_id = cycle_id
         if end.sleep_minutes is None:
             end.sleep_minutes, end.sleep_reason = state.sleep_minutes, state.sleep_reason or None
-        if end.status in ("completed", "idle") and trigger != "last_will":  # 0.18.0: no long sleep while work waits
+        # 0.18.0: no long sleep while work waits. 0.21.0: never an idle plan's (the agent chose to do nothing), nor
+        # below the owner's default interval.
+        if end.status == "completed" and trigger != "last_will":
             mode_now = burn.peek(self.db, self.economy.life.evaluate()).mode
-            kept = slack.sleep(end.sleep_minutes, self.slack_items, self.settings.min_sleep_minutes, mode_now)
+            shortest = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes)
+            kept = slack.sleep(end.sleep_minutes, self.slack_items, shortest, mode_now)
             if kept != end.sleep_minutes:  # 0.19.2: the agent's choice and words stay ("Ember chose" the cut)
                 end.asked_minutes, end.sleep_minutes = end.sleep_minutes, kept
                 end.sleep_cut = f"Ember's code cut it to {kept} min: READY lists useful work"
@@ -1096,10 +1099,11 @@ class CycleRunner:
             events.record(self.db, "info", "agent", f"The daily review's lesson was kept: {line}"[:300])
 
     def _retire_lessons(self, cycle_id: int) -> None:
-        """0.19.2: once a version, before its first plan: the lessons that name a tool its release notes name go
-        (memory_files.retire_for_release), before the plan and the work steps read them. Live, an hour after 0.19.1
-        lifted project_create's limit, a lesson that it refuses a ninth open project made the work step skip its plan's
-        project_create, and it told its owner the limit still held. Free: no call."""
+        """0.19.2: once a version, before its first plan: the lessons that name a tool its release notes name are
+        marked to re-check (memory_files.recheck_for_release; 0.21.0: they were deleted), before the plan and the work
+        steps read them. Live, an hour after 0.19.1 lifted project_create's limit, a lesson that it refuses a ninth
+        open project made the work step skip its plan's project_create, and it told its owner the limit still held.
+        Free: no call."""
         running = app_version()
         key = f"agent.{self.scope.mode}.lessons_version"
         checked = self.db.get_meta(key)
@@ -1112,7 +1116,7 @@ class CycleRunner:
         if notes:
             with self.db.connection() as conn:
                 pinned = {memory_files.lesson_key(p["text"]) for p in memory_files.pins(conn, self.scope)}
-            done = memory_files.retire_for_release(text, notes, tools.SPECS, pinned)
+            done = memory_files.recheck_for_release(text, notes, tools.SPECS, pinned, running)
         if done is not None:
             with self.db.transaction() as conn:
                 if self.memory.read("lessons") == text:
@@ -1121,7 +1125,9 @@ class CycleRunner:
         if done is not None:
             quoted = "; ".join(json.dumps(line[:60], ensure_ascii=False) for line in done[1][:3])
             more = f" and {len(done[1]) - 3} more" if len(done[1]) > 3 else ""
-            message = f"Ember's code retired {len(done[1])} lesson(s) about tools {running} changed: {quoted}{more}"
+            message = (
+                f"Ember's code marked {len(done[1])} lesson(s) to re-check: tools {running} changed: {quoted}{more}"
+            )
             events.record(self.db, "info", "agent", message[:300])
 
     def _guarded(self, step: Callable[[int], None], cycle_id: int, name: str) -> None:

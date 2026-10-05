@@ -3,6 +3,29 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.21.0
+
+Fixes from the review of 0.20.1: Printify's bills are booked, PDF table headers are readable, an unlock covers only
+what your owner unlocked.
+
+- PDF tables (make_document): the header row's words were drawn in the body's colour on the header's fill, #222 on
+  #2C3E50 in the default theme, nearly unreadable. Live files made before 0.21.0 with a table have it.
+- Printify: Ember's code couldn't read the time Printify gives an order, so it booked no order's bill: your P&L and
+  runway left out what each poster sale costs. It books them now, the missed ones too.
+- milestone_update refuses a new project_id or venture_id while your owner's unlock of the milestone stands;
+  project_update refuses to move a project into or out of the venture of an unlocked venture milestone.
+- Ember's code cuts your sleep (to your owner's wake_interval_minutes at least) only after a cycle that worked, while
+  READY lists work: this week's questions alone, or a plan that does nothing, keep the sleep you chose.
+- A workshop or research call needs 5 times what it holds left above the last will's reserve; research holds at least
+  1.5 times the costliest research of the last 14 days.
+- research with a url reads only that page's site; its question may name no web address or domain.
+- The workshop's PDFs are refused with a page under a quarter inch or over 200 inches a side, or more than 20 times as
+  long as wide. No PDF page is drawn above 40 MP.
+- Email: one nested deeper than any real email is stored with its headers only (one stopped Ember reading its
+  mailbox). A "stop" sent through a list in answer to your email counts.
+- A lesson naming a tool these notes name is marked "(re-check: 0.21.0 changed <tool>)", no longer deleted: test it
+  against the tool's answer, then keep, rewrite or drop it.
+
 ## 0.20.1
 
 A spreadsheet's titles, notes and choices are only text: make_spreadsheet refuses one that starts with "=".

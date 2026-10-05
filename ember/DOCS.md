@@ -369,9 +369,12 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   review.
 - **Waiting time.** An ordinary cycle's plan gets **READY**: what is useful
   while projects wait (bringing buyers to unseen listings, the critic's fixes, a
-  missing demand note, the week's questions). While it lists something, the
-  agent's sleep is cut to 3 hours (never below your shortest sleep, not in
-  maintenance).
+  missing demand note, the week's questions). While it lists work, the sleep
+  of a cycle that worked is cut to 3 hours, never below your default interval
+  (*Wake interval*) or shortest sleep, and not in maintenance. The week's
+  questions alone cut no sleep, nor does a plan that chose to do nothing
+  (0.21.0: under the default options it cut every cycle's sleep, up to 8 plans
+  a day; raising the wake interval now slows Ember down again).
 
 All of it counts toward the daily cap, not the cycle cap, and none of it ends a
 cycle. The diagnostics report lists the bets, cases, principles, weekly looks
@@ -426,7 +429,8 @@ German notation, 1.234,56 € and 31,97%.
 
 The agent reads the text of its PDF, Word and Excel files and copies files
 itself, for free (the workshop was paid for this). Pictures may have up to
-40 megapixels, enough for a print-size poster.
+40 megapixels, enough for a print-size poster; a PDF page is never drawn
+larger than that either (0.21.0).
 
 A long text (a guide, a planner's pages) no longer goes through the agent's
 replies 2,500 characters at a time: with **draft** the worker model writes the
@@ -474,7 +478,9 @@ one before it goes into the agent's workspace (by default `workshop/out`):
   or an action when the file opens other than showing a page. Only web and
   mail links may point outside the file. Ember decodes the compressed parts to
   search them, so a PDF whose parts it can't decode, or an encrypted one, is
-  refused too.
+  refused too. So is one with a page no printer or screen shows: smaller than a
+  quarter inch or larger than 200 inches a side, or more than 20 times as long
+  as it is wide (0.21.0: one photo of a page 1000 x 10 points took 4 GB).
 - Word, Excel and PowerPoint files are refused if they hold macros, ActiveX or
   embedded objects, links to other files or templates, DDE (also split over
   several runs), data connections or web queries, formulas or names that reach
@@ -1016,7 +1022,10 @@ no longer shown); a study that failed three times stops until you press
   that project's listings, one of a venture the listings of its projects, and
   one of neither covers email replies, so the box offers only those rules;
   it ends when its milestone closes, also when it is met, and what it held
-  waits for you):
+  waits for you; 0.21.0: while it stands, nobody can change the milestone's
+  project or venture, and no project moves into or out of the venture of an
+  unlocked venture milestone, so the agent can't widen what it covers; take
+  the unlock back to change them):
   - QA fixes: up to 5 distinct photos (no copies) on a live listing;
   - price changes within 15% of the price you last approved on a live listing
     (several automatic changes can't add up past it);
@@ -1292,7 +1301,12 @@ included: encrypt your backups.
   like, also on its own line after a greeting ("Hallo, … Stopp."). A "stop"
   in answer to Ember's email also covers the address Ember wrote to, if
   someone else answered (0.15.0). A newsletter's or an automatic reply's
-  "unsubscribe" doesn't count.
+  "unsubscribe" doesn't count, unless it answers Ember's email (0.21.0: a
+  "stop" sent through a group or a mailing list was ignored).
+  An email Ember can't read (one nested deeper or with more parts than any
+  real email, or one the parser fails on) is stored with its headers only, and
+  a "stop" in its subject still counts (0.21.0: one such email stopped Ember
+  reading its mailbox for good).
   When a sender asks in words the check misses, the agent marks it
   (`mark_opt_out`). You can add any address under **System → Email → Never
   emailed** (someone asked you, by phone for example). An opt-out is final: the
@@ -1761,7 +1775,11 @@ it made and what their orders cost you.
   recorded once). With **Record Etsy revenue automatically** on, Ember's code
   records that cost itself at each Etsy sync, for orders from the day you
   turned it on (EUR at your exchange rate). A cancelled order's cost recorded
-  before is yours to correct. The sale itself is an order in your Etsy shop: its revenue,
+  before is yours to correct. Before 0.21.0 Ember's code recorded none of
+  them: it couldn't read the time Printify gives an order. It records the
+  orders it missed at the next Etsy sync, for orders from the day you turned
+  the option on; check the costs of older ones at Printify by hand. An order
+  whose time it still can't read is never skipped silently: you get a warning. The sale itself is an order in your Etsy shop: its revenue,
   with the shipping the buyer paid, is recorded as for any listing of Ember's.
 - The agent's plan shows each product with what its prices keep and the orders
   (PRINTIFY); the metrics `pod_products_live` (products whose listing is live
@@ -2022,7 +2040,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.20.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.21.0 (by /u/your name)`.
 
 ## Diagnostics
 
@@ -2186,12 +2204,18 @@ more than its hold, say), so it always runs; never past the balance or the last
 will's reserve.
 Workshop runs have their own cap per run instead of the cycle cap, and the
 daily review, library study, the lessons' consolidation and the critic count
-only toward the daily cap (in maintenance the cycle's $0.40 bounds them all). A small reserve is always kept
+only toward the daily cap (in maintenance the cycle's $0.40 bounds them all). A small reserve is kept
 so the agent can write its last will. The worst case of a call with Anthropic's
 server tools (the workshop, research) is priced under assumptions the request
 can't enforce (how much a code run prints, how long a search result is), so
 for those the daily cap and the balance hold only up to what Ember keeps back
-for them (see [The workshop](#the-workshop)). If a call ever costs more than its
+for them (see [The workshop](#the-workshop); research keeps back at least 1.5
+times the costliest research call of the last 14 days too, 0.21.0). Near the
+bottom of the balance such a call could still cost more than is left, and
+Ember would die below zero without its last will, your Anthropic account
+paying the rest: so a workshop or research call needs 5 times what it keeps
+back (or more, if one ever cost more than that many times its hold) left
+above the last will's reserve (0.21.0). If a call ever costs more than its
 worst case, Ember scales up the estimates for that kind of call (planning, a
 work step, the reflection, research, ...) on that model, up to 8 times; the
 other kinds keep theirs. That kind of call makes no more calls in the cycle,

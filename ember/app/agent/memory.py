@@ -241,22 +241,44 @@ def _drop_oldest(
     return "".join(head + body), dropped
 
 
-def retire_for_release(text: str, notes: str, tools: Collection[str], pinned: set[str]) -> tuple[str, list[str]] | None:
-    """0.19.2: the lessons file without the lessons that name a tool the release ``notes`` name (except the pinned
-    ones), and those lessons; None when none does. An upgrade changes what its tools do: live, a lesson said
-    project_create refuses a ninth open project an hour after 0.19.1 lifted the limit, and the work step believed the
-    lesson over its plan and told its owner the limit still held. A lesson about a tool is relearned from its answer
-    if it still holds."""
+_RECHECK = re.compile(r"^\(re-check: [^()]*\)\s*")
+
+
+def recheck_for_release(
+    text: str, notes: str, tools: Collection[str], pinned: set[str], version: str
+) -> tuple[str, list[str]] | None:
+    """0.19.2: an upgrade changes what its tools do: live, a lesson said project_create refuses a ninth open project an
+    hour after 0.19.1 lifted the limit, and the work step believed the lesson over its plan and told its owner the limit
+    still held. 0.21.0 (analysis 0.20.1, FIX NOW 14): a lesson that names a tool the release ``notes`` name (except the
+    pinned ones) is marked "(re-check: ``version`` changed <tool>)", not deleted: each upgrade deleted all of them, also
+    "photos must be visibly distinct". The lessons file with them marked (the oldest marked ones dropped if the marks
+    don't fit its cap), and the lessons marked; None when none is."""
     words = set(re.findall(r"[a-z][a-z0-9_]+", notes.lower()))
     named = {name for name in identifiers(tools) if name in words}
     if not named:
         return None
     head, lines = lesson_lines(text)
-    gone = [line for line in lines if about_tool(line, named) and lesson_key(line) not in pinned]
-    if not gone:
+    marked: list[str] = []
+    out: list[str] = []
+    for line in lines:
+        if not about_tool(line, named) or lesson_key(line) in pinned:
+            out.append(line)
+            continue
+        prefix = _PREFIX.match(line)
+        start = prefix.end() if prefix else 0
+        body = _RECHECK.sub("", line[start:])
+        own = set(re.findall(r"[a-z][a-z0-9_]+", body.lower()))
+        mark = f"(re-check: {version} changed {', '.join(sorted(named & own))})"
+        out.append(f"{line[:start]}{mark} {body}")
+        marked.append(lesson_text(body))
+    if not marked:
         return None
-    kept = [line for line in lines if line not in gone]
-    return head + "".join(f"{line}\n" for line in kept), [lesson_text(line) for line in gone]
+    while len((head + "".join(f"{line}\n" for line in out)).encode("utf-8")) > CAPS["lessons"]:
+        oldest = next((i for i, line in enumerate(out) if _RECHECK.match(line[_PREFIX.match(line).end() :])), None)
+        if oldest is None:
+            break
+        del out[oldest]
+    return head + "".join(f"{line}\n" for line in out), marked
 
 
 # --- 0.12.0: the owner's pins and the daily consolidation ---

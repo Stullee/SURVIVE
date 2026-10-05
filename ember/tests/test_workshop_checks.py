@@ -14,7 +14,7 @@ from fpdf import FPDF
 from openpyxl import Workbook
 from PIL import Image
 
-from app.products import checks
+from app.products import checks, images
 from tests.test_workshop import a_docx, a_pdf, with_parts
 
 WORD = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
@@ -153,3 +153,34 @@ def test_a_file_that_cannot_be_read_whole_is_refused_not_an_error() -> None:
     data[start : start + 20] = b"\x00" * 20  # corrupt the compressed document
     with pytest.raises(checks.Refused, match=r"the \.docx file can't be read whole"):
         checks.check("letter.docx", bytes(data))
+
+
+def a_page(width: float, height: float) -> bytes:
+    document = FPDF(unit="pt", format=(width, height))
+    document.add_page()
+    document.set_font("helvetica", size=6)
+    document.text(2, min(height, 12) - 2, "x")
+    return bytes(document.output())
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "kept"),
+    [(144, 576, True), (595, 842, True), (1000, 10, False), (14_401, 600, False), (10, 10, False), (2000, 99, False)],
+)
+def test_a_page_no_printer_or_screen_shows_is_refused(width: float, height: float, kept: bool) -> None:
+    """0.21.0: a workshop PDF 1000 x 10 points wide was kept, and one listing photo of it took 27.5 s and 3.9 GB."""
+    data = a_page(width, height)
+    if kept:
+        assert checks.check("page.pdf", data) == data
+    else:
+        with pytest.raises(checks.Refused, match=r"page 1 is .* points: a page must be 18 to 14400 points"):
+            checks.check("page.pdf", data)
+
+
+def test_a_page_is_never_drawn_larger_than_the_pixel_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0.21.0: the scale came from the page's height alone, so a wide page was drawn as wide as that made it."""
+    monkeypatch.setattr(images, "MAX_PIXELS", 1_000_000)
+    [wide] = images.pdf_pages(a_page(1000, 10), [1], height=2_250)
+    assert wide.width * wide.height <= 1_000_000 and wide.width > 20 * wide.height
+    [normal] = images.pdf_pages(a_page(595, 842), [1], height=1_000)
+    assert normal.height == 1_000

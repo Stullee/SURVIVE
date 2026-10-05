@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import math
 import struct
 import zlib
 from collections.abc import Callable, Sequence
@@ -80,7 +81,8 @@ def pdf_pages(
     region: tuple[float, float, float, float] = FULL,
 ) -> list[Image.Image]:
     """Pages of a PDF as images, at ``dpi`` or scaled to ``height`` pixels; with a region (0.15.0), only that part of
-    each page, drawn at ``height`` pixels itself."""
+    each page, drawn at ``height`` pixels itself. 0.21.0: never more than MAX_PIXELS (a smaller picture instead): the
+    scale came from the height alone, and one photo of a page 1000 x 10 points wide took 27.5 s and 3.9 GB."""
     left, top, right, bottom = region
     document = pypdfium2.PdfDocument(pdf)
     try:
@@ -92,11 +94,30 @@ def pdf_pages(
             try:
                 width, tall = page.get_width(), page.get_height()
                 scale = (height / (tall * (bottom - top))) if height else dpi / 72
+                area = width * (right - left) * tall * (bottom - top) * scale * scale
+                if area > MAX_PIXELS:
+                    scale *= math.sqrt(MAX_PIXELS / area)
                 crop = (left * width, (1 - bottom) * tall, (1 - right) * width, top * tall)
                 images.append(page.render(scale=scale, crop=crop).to_pil().convert("RGB"))
             finally:
                 page.close()
         return images
+    finally:
+        document.close()
+
+
+def page_sizes(pdf: bytes) -> list[tuple[float, float]]:
+    """0.21.0: each page's width and height in points."""
+    document = pypdfium2.PdfDocument(pdf)
+    try:
+        sizes = []
+        for index in range(len(document)):
+            page = document[index]
+            try:
+                sizes.append((page.get_width(), page.get_height()))
+            finally:
+                page.close()
+        return sizes
     finally:
         document.close()
 

@@ -1980,6 +1980,13 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     venture_id = args.get("venture_id")
     if venture_id is not None and venture_id != row["venture_id"]:
         _open_venture(conn, ctx.scope, venture_id)
+        for vid in (row["venture_id"], venture_id):
+            held = policy.venture_unlock(conn, ctx.scope, vid)
+            if held is not None:  # 0.21.0: it covers the venture's projects, so none moves in or out
+                raise ToolError(
+                    f"your owner's unlock for milestone #{held} covers the projects of venture #{vid}: no project "
+                    "moves into or out of it while that stands"
+                )
         changes["venture_id"] = venture_id
     placed = ""
     if args.get("bet"):  # 0.18.0: settled by Ember's code (bets.py); a refused bet changes nothing
@@ -2800,6 +2807,12 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
                     f"Ember's code {who} milestone #{mid}: what Ember's code counts for it is fixed, so it stays "
                     "linked as it is"
                 )
+            held = policy.unlocked(conn, ctx.scope, mid)
+            if held:  # 0.21.0: an unlock covers what its milestone is linked to
+                raise ToolError(
+                    f"your owner unlocked {policy.unlocked_text(held, short=True)} for milestone #{mid}, for what it "
+                    "is linked to: it stays linked as it is while that stands"
+                )
             check(conn, ctx.scope, value)
             changes[name] = value
     if status:
@@ -3184,6 +3197,9 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     question = args["question"].strip()
     if not question:
         raise ToolError("the question is empty")
+    if url is not None and _ADDRESS_LIKE.search(question):
+        # 0.21.0: the page reader may read any address in the request, the question's too: one could carry data out
+        raise ToolError("when you read a page, the question names no web address or domain: only what to find on it")
     # 0.12.0: research counts for a venture: the one it names or, in a venture cycle, the focus venture (a venture
     # cycle's research is always a venture's). A question asked again is answered from before, free; a new call for a
     # venture that isn't backed needs what is left of its research budget. 0.15.0: in any other cycle too, research
@@ -3257,6 +3273,10 @@ def _words(text: str) -> str:
 def _on_etsy(url: str) -> bool:
     """Whether ``url`` is a page of Etsy's website or one of its short links (see ETSY_DOMAINS)."""
     return _on(_host(url), ETSY_DOMAINS)
+
+
+# 0.21.0: a web address or a domain (shop.example.org), in a page read's question
+_ADDRESS_LIKE = re.compile(r"(?i)[a-z][a-z0-9+.-]*://|\bwww\.|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,63}\b")
 
 
 def _host(url: str) -> str:

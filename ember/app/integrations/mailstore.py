@@ -107,12 +107,15 @@ def _store(db: Database, scope: Scope, mailbox: Mailbox, fetched: FetchResult, n
                 continue
             result.stored.append(email_id)
             own = mail.from_addr.lower() == mailbox.address.lower()  # Ember's own address is never suppressed
-            # A newsletter's "unsubscribe" is about Ember leaving it (0.12.0).
-            words = opt_out(mail.subject, mail.body) if mail.from_addr and not own and not mail.bulk else None
-            if words is None:
+            if not mail.from_addr or own:
                 continue
             # 0.15.0: "replied" only to an email Ember sent (live: a provider's own mail was said to reply)
             answered = _answered(conn, scope, mail)
+            # A newsletter's "unsubscribe" is about Ember leaving it (0.12.0). 0.21.0: unless it answers Ember's own
+            # email: a "stop" sent through a group or a list (with its List-Id) was ignored.
+            words = opt_out(mail.subject, mail.body) if answered or not mail.bulk else None
+            if words is None:
+                continue
             how = "replied" if answered else "wrote"
             if suppress(conn, scope, mail.from_addr, now, f'{how} "{words}"', email_id):
                 result.suppressed.append(mail.from_addr)

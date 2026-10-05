@@ -530,6 +530,56 @@ def test_the_sync_reads_orders_and_a_product_deleted_at_printify(data_dir: Path)
     assert made_rows(agent)[0]["status"] == "deleted"
 
 
+def test_printify_s_own_time_format_is_read_and_its_bill_booked(data_dir: Path) -> None:
+    """0.21.0: Printify writes an order's time as "2026-09-30 10:00:00+00:00". It was stored as it came, the ledger's
+    day couldn't be read from it, and record_costs skipped every order, every sync, without a word: each poster sale
+    booked its revenue but not Printify's bill. The fake account wrote Ember's own format, so no test saw it."""
+    agent, _, request = proposed(data_dir)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    agent.execute_approved()
+    account = agent.printify.account()
+    [product_id] = list(account.state["products"])
+    account.sell(product_id)
+    assert account.state["orders"][0]["created_at"] == printify.live_time(agent.clock.now())  # Printify's format
+    assert agent.pod.sync(force=True) is None
+    stored = rows(agent, "SELECT order_id, created_at FROM printify_orders")
+    assert [r["created_at"] for r in stored] == [to_iso(agent.clock.now())]
+    on = agent.settings.model_copy(update={"etsy_auto_record_revenue": True, "etsy_usd_per_eur": 1.10})
+    scope = agent.scope()
+    assert len(printify_publisher.record_costs(agent.db, agent.clock, agent.economy, scope, on)) == 1
+    # An order stored before 0.21.0 in Printify's format is read, and the next sync stores it as Ember writes times.
+    second = account.sell(product_id)
+    with agent.db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO printify_orders (mode, session, order_id, product_id, quantity, cost_cents, shipping_cents,"
+            " currency, status, created_at, synced_at) VALUES (?, ?, ?, ?, 1, 790, 450, 'EUR', 'fulfilled', ?, ?)",
+            (scope.mode, scope.session, second, product_id, "2026-09-30 10:00:00+00:00", to_iso(agent.clock.now())),
+        )
+    assert len(printify_publisher.record_costs(agent.db, agent.clock, agent.economy, scope, on)) == 1
+    assert agent.pod.sync(force=True) is None
+    assert rows(agent, f"SELECT created_at FROM printify_orders WHERE order_id = '{second}'") == [
+        {"created_at": to_iso(agent.clock.now())}  # Printify's, as Ember writes times
+    ]
+    # A time Printify sends that nobody can read is stored as the sync's: booked.
+    account.sell(product_id)
+    account.state["orders"][-1]["created_at"] = "yesterday"
+    assert agent.pod.sync(force=True) is None
+    assert len(printify_publisher.record_costs(agent.db, agent.clock, agent.economy, scope, on)) == 1
+    # One stored so is never skipped silently: the owner hears of it once.
+    fourth = account.sell(product_id)
+    with agent.db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO printify_orders (mode, session, order_id, product_id, quantity, cost_cents, shipping_cents,"
+            " currency, status, created_at, synced_at) VALUES (?, ?, ?, ?, 1, 790, 450, 'EUR', 'fulfilled', 'soon',"
+            " ?)",
+            (scope.mode, scope.session, fourth, product_id, to_iso(agent.clock.now())),
+        )
+    for _ in range(2):
+        assert printify_publisher.record_costs(agent.db, agent.clock, agent.economy, scope, on) == []
+    warned = [r for r in rows(agent, "SELECT message FROM events") if "can't read when" in r["message"]]
+    assert len(warned) == 1 and fourth in warned[0]["message"] and "'soon'" in warned[0]["message"]
+
+
 def test_the_print_on_demand_venture_s_first_test_is_a_first_order(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(), cycles=1, settings=PRINTING)
     with agent.db.transaction() as conn:

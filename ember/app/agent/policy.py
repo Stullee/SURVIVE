@@ -269,6 +269,29 @@ def standing(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, list[sqli
     return {mid: sorted(rows, key=lambda g: order.index(g["rule"])) for mid, rows in found.items()}
 
 
+def unlocked(conn: sqlite3.Connection, scope: AgentScope, milestone_id: int) -> list[sqlite3.Row]:
+    """0.21.0: a milestone's unlocks that stand (each rule's newest grant, not manual), open or closed. An unlock covers
+    what its milestone is linked to, so while one stands its links stay (the tool refuses, migration 0075 too): the
+    agent re-linked a milestone, and its unlock carried a request for another product line at once."""
+    return [g for g in grants(conn, scope, milestone_id) if g["level"] != "manual"]
+
+
+def venture_unlock(conn: sqlite3.Connection, scope: AgentScope, venture_id: int | None) -> int | None:
+    """0.21.0: an open milestone of a venture (of no project) whose unlock stands: it covers the listings of the
+    venture's projects (approvals_scope), so no project moves into or out of it (the tool refuses). None without one."""
+    if venture_id is None:
+        return None
+    where, params = scope.where("m")
+    found = conn.execute(
+        f"SELECT m.id FROM milestones m JOIN policy_grants g ON g.milestone_id = m.id WHERE {where}"
+        " AND m.venture_id = ? AND m.project_id IS NULL AND m.status = 'open' AND g.level <> 'manual'"
+        " AND g.id = (SELECT MAX(h.id) FROM policy_grants h WHERE h.milestone_id = g.milestone_id AND h.rule = g.rule)"
+        " ORDER BY m.id LIMIT 1",
+        (*params, venture_id),
+    ).fetchone()
+    return int(found[0]) if found is not None else None
+
+
 def granted_text(g: Mapping[str, Any], short: bool = False) -> str:
     """0.16.3 (analysis bug 5): one unlock in words: its rule, level, daily limit and budget (``short``: its rule's
     short name and level, as the plan's ROADMAP says it every plan)."""

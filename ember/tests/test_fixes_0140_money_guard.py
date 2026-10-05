@@ -22,7 +22,7 @@ from app.agent import prompts
 from app.agent.fake_llm import FakeTransport, Overrun
 from app.config import Settings
 from app.db import Database, discover_migrations, migrate
-from app.economy import pricing
+from app.economy import metering, pricing
 from app.economy.estimate import MAX_SERVER_ITERATIONS, plan_request, worst_case_micros
 from app.economy.metering import OVERRUN_STOP, REVIEW, WORKSHOP, CallFailed, CallRefused, Completed, Interrupted
 from app.economy.pricing import safety_factor
@@ -67,6 +67,40 @@ def test_a_run_like_423_cant_take_the_day_past_its_cap(data_dir: Path) -> None:
     with pytest.raises(CallRefused, match="daily cap"):
         model.call(cycle, WORKSHOP, workshop(settings))
     assert not transport.trace  # refused before anything was sent
+
+
+def test_a_run_like_423_near_the_bottom_is_refused_rather_than_kill_ember(data_dir: Path) -> None:
+    """0.21.0 (analysis 0.20.1, FIX NOW 6): admitted with its hold just above the last will's reserve, a run like #423
+    cost $1.89 on a $1.00 balance: Ember was dead at -$0.89 without a last will, and the owner's Anthropic account paid
+    the rest. A workshop or research call needs 5 times its hold left above the reserve."""
+    settings = Settings(starting_balance_usd=2.0, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
+    economy = make_economy(data_dir, settings)
+    transport = FakeTransport(script=[Overrun()])
+    model = economy.metered(transport)
+    cycle = model.open_cycle("test")
+    assert model.reservation(workshop(settings), WORKSHOP) == 750_000  # fits above the reserve, as before
+    assert metering.server_tool_room(economy.db, economy.clock, True) == metering.SERVER_TOOL_ROOM == 5
+    with pytest.raises(CallRefused, match=r"can cost more than it holds \(\$0.7500\), so it needs 5.0 times that"):
+        model.call(cycle, WORKSHOP, workshop(settings))
+    assert not transport.trace and economy.life.evaluate().state == "alive"
+    research = prompts.research_request(settings, "What sells?", None)
+    assert 5 * model.reservation(research, metering.RESEARCH) < 1_900_000  # a search still fits
+    model.call(cycle, metering.RESEARCH, research)
+
+
+def test_a_research_call_holds_the_tail_of_recent_research(data_dir: Path) -> None:
+    """0.21.0: like a workshop call's, a research call's hold is at least 1.5 times the costliest recent one."""
+    economy = make_economy(data_dir, OWNER)
+    costly = Completed(message(60_000, 6_000, server_tool_use={"web_search_requests": 5}))
+    model, _ = metered(economy, ScriptedTransport(outcomes=[costly]))
+    cycle = model.open_cycle("test")
+    research = prompts.research_request(OWNER, "What sells?", None)
+    quote = model.quote(research, metering.RESEARCH)
+    assert model.reservation(research, metering.RESEARCH) == quote
+    cost = model.call(cycle, metering.RESEARCH, research).cost_micros
+    assert model.reservation(research, metering.RESEARCH) == max(
+        model.quote(research, metering.RESEARCH), -(-cost * 3 // 2)
+    )
 
 
 def test_a_workshop_call_holds_the_tail_of_recent_runs(data_dir: Path) -> None:

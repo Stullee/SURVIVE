@@ -70,14 +70,16 @@ _SOURCE_SPACE = re.compile(r"\s+")
 _SPACES = re.compile(r"[ \t\f\v\xa0\u2000-\u200a\u202f\u205f\u3000]+")
 _HIDDEN_STYLE = re.compile(
     r"display:none|visibility:(?:hidden|collapse)|font-size:0(?:\.0*)?[a-z%]*(?:;|!|$)"
-    # 0.15.0: an opacity below 0.05 too
-    r"|opacity:(?:0*\.?0*|0*\.0[0-4]\d*|0*[0-4](?:\.\d*)?%|0*\.\d+%)(?:;|!|$)"
     # 0.15.0: text of 2px or less, far off the screen, clipped away, or hidden from Outlook's reader
     r"|font-size:(?:[0-2](?:\.\d*)?|3(?:\.0*)?)(?:px|pt)(?:;|!|$)|mso-hide:all|clip:rect\((?:0(?:px)?,?){4}\)"
     r"|font-size:(?:0?\.(?:[01]\d*|20*)r?em|(?:1?\d|20)(?:\.\d*)?%)(?:;|!|$)|transform:scale[xy]?\(0(?:\.0*)?[,)]"
     r"|(?:left|top|right|text-indent|margin(?:-left|-top)?):-(?:(?:\d{4,}|[3-9]\d\d)(?:\.\d*)?[a-z%]*"
     r"|(?:\d{3,}|[5-9]\d)(?:\.\d*)?r?em)(?:;|!|$)"
 )
+# 0.15.0: an opacity below FAINT hides too. 0.21.0: its number is compared in code: the pattern that compared it took
+# time growing with the square of its digits (16,000 zeros: 2 seconds, the whole app waiting).
+_OPACITY = re.compile(r"opacity:([0-9.]*+)(%?)(?:;|!|$)")
+_STYLE_CHARS = 8_000  # 0.21.0: of an element's style with its style sheet's rules; a longer one hides the element
 _COLOUR_ARGS = re.compile(r"((?:rgb|hsl)a?\()([^()]*)\)")
 FAINT = 0.05  # 0.15.0: text with less opacity (or a colour with less alpha) can't be read
 _ZERO_BOX = re.compile(r"(?:^|;)(?:max-)?(?:height|width):(?:0(?:\.0*)?[a-z%]*|1px)(?:;|!|$)")
@@ -273,8 +275,57 @@ class Mailbox(Protocol):
     def send(self, message: EmailMessage, to: str) -> SendResult: ...
 
 
+# 0.21.0: an email whose MIME structure is deeper or has more parts than a real email's is stored with its headers
+# only. The parser recurses once per level: 1,000 levels (70 KB) raised RecursionError, and the mailbox was never read
+# past that email again, its opt-outs included.
+MAX_CONTAINERS = 64  # multipart and message parts: each is a level the parser may recurse into
+MAX_PARTS = 1_000
+_CONTAINER = re.compile(rb"^content-type:\s*(?:multipart|message)/", re.IGNORECASE | re.MULTILINE)
+_PART = re.compile(rb"^content-type:", re.IGNORECASE | re.MULTILINE)
+TOO_COMPLEX = "[This email has more nested parts than any real email, so only its headers were stored.]"
+UNREADABLE = "[Ember couldn't read this email, so only its headers were stored.]"
+
+
 def parse_message(raw: bytes, uid: int, *, headers_only: bool = False, size: int | None = None) -> IncomingMail:
-    """One email as Ember stores it: decoded, cleaned and capped."""
+    """One email as Ember stores it: decoded, cleaned and capped. 0.21.0: never raises. An email too deeply nested
+    (``too_complex``), or one the parser fails on, is stored with its headers only, so it can't stop the mailbox
+    being read past it, and a "stop" in its subject still counts."""
+    note = _too_large(size) if headers_only else TOO_COMPLEX if too_complex(raw) else None
+    try:
+        return _parsed(_head(raw) if note else raw, uid, note)
+    except Exception:  # noqa: BLE001 - one email Ember can't read must never stop the mailbox being read
+        if note is None:
+            with contextlib.suppress(Exception):
+                return _parsed(_head(raw), uid, UNREADABLE)
+    return IncomingMail(
+        uid=uid,
+        message_id=None,
+        in_reply_to=None,
+        references=None,
+        from_addr="",
+        from_name=None,
+        to_addr="",
+        subject="",
+        sent_at=None,
+        body="[Ember couldn't read this email.]",
+        body_cut=True,
+    )
+
+
+def too_complex(raw: bytes) -> bool:
+    """0.21.0: whether an email has more multipart or message parts than MAX_CONTAINERS, or more parts than MAX_PARTS
+    (counted before it is parsed)."""
+    return len(_CONTAINER.findall(raw)) > MAX_CONTAINERS or len(_PART.findall(raw)) > MAX_PARTS
+
+
+def _head(raw: bytes) -> bytes:
+    """An email's headers, without its body."""
+    ends = [i for i in (raw.find(b"\r\n\r\n"), raw.find(b"\n\n")) if i >= 0]
+    return raw[: min(ends)] if ends else raw
+
+
+def _parsed(raw: bytes, uid: int, note: str | None) -> IncomingMail:
+    """The email in ``raw``; with a ``note`` only its headers, and the note as its text."""
     msg = BytesParser(policy=policy.default).parsebytes(raw)
     from_addr, from_name = "", None
     with contextlib.suppress(Exception):  # a malformed header must not lose the email
@@ -288,8 +339,8 @@ def parse_message(raw: bytes, uid: int, *, headers_only: bool = False, size: int
     with contextlib.suppress(Exception):
         moment = parsedate_to_datetime(str(msg["Date"]))
         sent_at = to_iso(moment) if moment.tzinfo is not None else None
-    if headers_only:
-        body, cut, attachments = _too_large(size), True, []
+    if note is not None:
+        body, cut, attachments = note, True, []
     else:
         body, cut = _body_text(msg)
         attachments = _attachments(msg)
@@ -425,13 +476,16 @@ def _body_text(msg: EmailMessage) -> tuple[str, bool]:
 def _attachments(msg: EmailMessage) -> list[dict[str, Any]]:
     """Names and sizes only: an attachment is never opened or kept."""
     found: list[dict[str, Any]] = []
+    used = len("[]")  # 0.21.0: the list's length as JSON, counted once per attachment (it was measured again per pop)
     with contextlib.suppress(Exception):
         for part in msg.iter_attachments():
             payload = part.get_payload(decode=True)
             name = one_line(part.get_filename() or "(no name)", 100)
-            found.append({"name": name, "size": len(payload) if isinstance(payload, bytes) else 0})
-    while found and len(json.dumps(found, ensure_ascii=False)) > ATTACHMENTS_CHARS:
-        found.pop()
+            item = {"name": name, "size": len(payload) if isinstance(payload, bytes) else 0}
+            used += len(json.dumps(item, ensure_ascii=False)) + (len(", ") if found else 0)
+            if used > ATTACHMENTS_CHARS:
+                break
+            found.append(item)
     return found
 
 
@@ -469,7 +523,9 @@ class _HtmlText(HTMLParser):
             self.stack.append((tag, False, host, None))
             return
         values = {name.lower(): (value or "") for name, value in attrs}
-        style = self._sheet(tag, values) + _squeeze(values.get("style", ""))
+        own = values.get("style", "")
+        # 0.21.0: no real email's style is this long: it hides its element rather than make reading slow
+        style = "display:none;" if len(own) > _STYLE_CHARS else self._sheet(tag, values) + _squeeze(own)
         background = _background(style, values) if style or "bgcolor" in values or "background" in values else None
         hides = tag in _SKIP or self._hides(tag, values, style, background)
         self.stack.append((tag, hides, host, background))
@@ -497,12 +553,15 @@ class _HtmlText(HTMLParser):
         keys = [tag, *(f".{c}" for c in classes), *([f"#{ident}"] if ident else [])]
         if not self.hiding.isdisjoint(keys):
             return "display:none;"
-        return "".join(
-            f"{style};"
-            for key in keys
-            for t, c, i, style in self.rules.get(key, ())
-            if t in (None, tag) and c <= classes and i in (None, ident)
-        )
+        found, size = [], 0
+        for key in keys:
+            for t, c, i, style in self.rules.get(key, ()):
+                if t in (None, tag) and c <= classes and i in (None, ident):
+                    size += len(style) + 1
+                    if size > _STYLE_CHARS:  # 0.21.0: as a style that long (see handle_starttag)
+                        return "display:none;"
+                    found.append(f"{style};")
+        return "".join(found)
 
     def _read_sheet(self) -> None:
         """0.15.0: keeps the rules of a style sheet. Each is kept under one class, id or tag it selects, at most
@@ -566,7 +625,20 @@ class _HtmlText(HTMLParser):
 
 def _hides_style(style: str) -> bool:
     """Whether CSS declarations (lower case, without spaces) hide an element's content."""
-    return bool(_HIDDEN_STYLE.search(style) or ("overflow:hidden" in style and _ZERO_BOX.search(style)))
+    return bool(
+        _HIDDEN_STYLE.search(style)
+        or any(_faint(*m) for m in _OPACITY.findall(style))
+        or ("overflow:hidden" in style and _ZERO_BOX.search(style))
+    )
+
+
+def _faint(number: str, percent: str) -> bool:
+    """Whether an opacity is below FAINT (an empty or unreadable number counts as 0, as it did)."""
+    try:
+        value = float(number) if number.strip(".") else 0.0
+    except ValueError:  # "1.2.3"
+        return False
+    return value / (100 if percent else 1) < FAINT
 
 
 def _css_rules(css: str) -> tuple[list[tuple[str | None, frozenset[str], str | None, str]], str | None, bool]:

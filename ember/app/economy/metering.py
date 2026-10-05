@@ -97,6 +97,7 @@ _KNOWN_SERVER_TOOLS = frozenset({"web_search_requests", "web_fetch_requests", "c
 # but not toward the cycle cap: one run can cost more than a whole wake cycle may. The daily review (0.7.1), once a
 # day before the first plan, doesn't count toward the cycle cap either, so the cycle it opens can still do its work.
 WORKSHOP = "workshop"
+RESEARCH = "research"
 REVIEW = "review"
 STUDY = "study"  # 0.12.0: Ember studying its owner's library, within the owner's daily study budget
 CONSOLIDATE = "consolidate"  # 0.12.0: the lessons' consolidation after the daily review
@@ -118,8 +119,15 @@ EXPECTED_FACTOR = Decimal("1.5")
 EXPECTED_WINDOW = 20
 EXPECTED_SAMPLES = 5
 # 0.15.0: a workshop call holds at least what the workshop calls of the last WORKSHOP_TAIL_DAYS cost (see
-# workshop_reservation).
+# workshop_reservation). 0.21.0: a research call too.
 WORKSHOP_TAIL_DAYS = 14
+# 0.21.0 (analysis 0.20.1, FIX NOW 6): a call with server tools can cost more than it holds: a workshop run admitted
+# with its hold just above the last will's reserve, booked at what live call #423 used, cost $1.89 on a $1.00 balance,
+# and Ember died $0.89 below zero without a last will (the owner's Anthropic account paid the rest). A workshop or
+# research call is admitted only while what is left above that reserve is SERVER_TOOL_ROOM times its hold, or the most
+# such a call cost of its hold in the last WORKSHOP_TAIL_DAYS if that is more (server_tool_room).
+SERVER_TOOL_PURPOSES = (WORKSHOP, RESEARCH)
+SERVER_TOOL_ROOM = Decimal(5)
 # 0.15.0: an overrun stops the cycle only when its call counts toward the cycle cap and it is more than
 # OVERRUN_TOLERANCE of the estimate or more than OVERRUN_TOLERANCE_MICROS. Otherwise the cycle goes on without further
 # calls of that purpose. Live, a workshop run $0.0025 (0.7%) over its estimate stopped a cycle mid-plan, and the
@@ -457,9 +465,28 @@ def workshop_reservation(
     0.16.2: the costliest call, not the 95th percentile (of 20 calls, that left the costliest out); and the owner's
     Reset estimates no longer clears the tail: one click on it dropped the hold after a run like #423 from $2.76 to
     the $1.50 cap per run, which the same run would have broken the daily cap with."""
-    costs = [cost for _, cost in _workshop_tail(db, clock, simulated, model)]
-    tail = int((Decimal(max(costs)) * EXPECTED_FACTOR).to_integral_value(rounding=ROUND_CEILING)) if costs else 0
-    return max(quote, usd_cap_to_micros(settings.workshop_run_cap_usd), tail)
+    return max(quote, usd_cap_to_micros(settings.workshop_run_cap_usd), _tail_hold(db, clock, simulated, model))
+
+
+def _tail_hold(db: Database, clock: Clock, simulated: bool, model: str, purpose: str = WORKSHOP) -> int:
+    """EXPECTED_FACTOR times the costliest recent ``purpose`` call on ``model`` (``_workshop_tail``; 0 without one)."""
+    costs = [cost for _, cost in _workshop_tail(db, clock, simulated, model, purpose)]
+    return int((Decimal(max(costs)) * EXPECTED_FACTOR).to_integral_value(rounding=ROUND_CEILING)) if costs else 0
+
+
+def server_tool_room(db: Database, clock: Clock, simulated: bool) -> Decimal:
+    """0.21.0: how many times its hold a workshop or research call needs above the last will's reserve:
+    SERVER_TOOL_ROOM, or the most such a call cost of what it held in the last WORKSHOP_TAIL_DAYS if that is more."""
+    since = to_iso(clock.now() - timedelta(days=WORKSHOP_TAIL_DAYS))
+    marks = ", ".join("?" for _ in SERVER_TOOL_PURPOSES)
+    with db.connection() as conn:
+        rows = conn.execute(
+            f"SELECT floor_micros, estimate_micros FROM llm_calls WHERE purpose IN ({marks}) AND simulated = ?"
+            " AND status IN ('ok', 'interrupted') AND estimate_micros > 0 AND floor_micros > estimate_micros"
+            " AND ts >= ?",
+            (*SERVER_TOOL_PURPOSES, 1 if simulated else 0, since),
+        ).fetchall()
+    return max([SERVER_TOOL_ROOM, *(Decimal(int(r[0])) / Decimal(int(r[1])) for r in rows)])
 
 
 def workshop_tail_ends(db: Database, clock: Clock, simulated: bool, model: str, above: int) -> datetime | None:
@@ -469,7 +496,9 @@ def workshop_tail_ends(db: Database, clock: Clock, simulated: bool, model: str, 
     return from_iso(max(costly)) + timedelta(days=WORKSHOP_TAIL_DAYS) if costly else None
 
 
-def _workshop_tail(db: Database, clock: Clock, simulated: bool, model: str) -> list[tuple[str, int]]:
+def _workshop_tail(
+    db: Database, clock: Clock, simulated: bool, model: str, purpose: str = WORKSHOP
+) -> list[tuple[str, int]]:
     """(when, what it is known to cost) of the last EXPECTED_WINDOW workshop calls on ``model`` in the last
     WORKSHOP_TAIL_DAYS days that are known to have cost something. What they are known to cost, not what they were
     booked at: an uncertain call booked at its hold would raise the next hold with every call. 0.16.2: an interrupted
@@ -480,7 +509,7 @@ def _workshop_tail(db: Database, clock: Clock, simulated: bool, model: str) -> l
         rows = conn.execute(
             "SELECT ts, floor_micros FROM llm_calls WHERE model = ? AND purpose = ? AND simulated = ?"
             " AND status IN ('ok', 'interrupted') AND floor_micros > 0 AND ts >= ? ORDER BY id DESC LIMIT ?",
-            (model, WORKSHOP, 1 if simulated else 0, since, EXPECTED_WINDOW),
+            (model, purpose, 1 if simulated else 0, since, EXPECTED_WINDOW),
         ).fetchall()
     return [(str(r[0]), int(r[1])) for r in rows]
 
@@ -658,6 +687,8 @@ class MeteredModel:
         return self._held(purpose, str(request.get("model") or ""), self.quote(request, purpose))
 
     def _held(self, purpose: str, model: str, estimate: int) -> int:
+        if purpose == RESEARCH:  # 0.21.0: what recent research calls cost, like a workshop call's
+            return max(estimate, _tail_hold(self.db, self.clock, self.simulated, model, RESEARCH))
         if purpose != WORKSHOP:
             return estimate
         return workshop_reservation(self.db, self.settings, self.clock, self.simulated, model, estimate)
@@ -1106,6 +1137,7 @@ class MeteredModel:
                 f" ${micros_to_usd(max(available, 0)):.4f} is available{held}",
                 "balance",
             ), opening and estimate > settled
+        reserve = 0
         if purpose != "last_will" and status.last_will_at is None:
             reserve = last_will_reserve(self.settings, self.db, self.life.mode) or 0
             if available - estimate < reserve:
@@ -1113,6 +1145,16 @@ class MeteredModel:
                     f"this call would dip into the ${micros_to_usd(reserve):.4f} kept back for the last will{held}",
                     "balance",
                 ), opening and settled - estimate < reserve
+        if purpose in SERVER_TOOL_PURPOSES:  # 0.21.0: it can cost more than it holds
+            room = server_tool_room(self.db, self.clock, self.simulated)
+            needed = int((Decimal(estimate) * room).to_integral_value(rounding=ROUND_CEILING))
+            if available - reserve < needed:
+                return (
+                    f"a {purpose} call can cost more than it holds (${micros_to_usd(estimate):.4f}), so it needs"
+                    f" {room:.1f} times that left above the last will's reserve;"
+                    f" ${micros_to_usd(max(available, 0)):.4f} is available{held}",
+                    "balance",
+                ), False
         return None, False
 
     def _insert_call(

@@ -8,6 +8,7 @@ wait, with no long sleep while it lists something."""
 from __future__ import annotations
 
 import json
+import math
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -16,15 +17,32 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import bets, context, learning, prompts, quality, reach, slack, tools, ventures, weekly  # noqa: E402
+from app.agent import (  # noqa: E402
+    bets,
+    context,
+    learning,
+    prompts,
+    quality,
+    reach,
+    review,
+    slack,
+    tools,
+    ventures,
+    weekly,
+)
+from app.config import Settings  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import etsy_publisher  # noqa: E402
 from app.integrations.etsy import NotSent  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
+from tests.test_agent import make_agent, plan, rows, text  # noqa: E402
+from tests.test_agent import tools as calls  # noqa: E402
 from tests.test_etsy import call, shop_context  # noqa: E402
 from tests.test_listing_gates import started  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
 from tests.test_printify import proposed  # noqa: E402
+
+# The default sleeps (without venture cycles, as the tests' ROOMY)
+DEFAULTS = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=0)
 
 
 def now(agent: Any) -> str:
@@ -328,6 +346,48 @@ def test_an_ordinary_plan_gets_ready_and_no_long_sleep_while_it_lists_something(
     assert slack.sleep(720, found, 240, "explore") == 240  # not below the owner's shortest sleep
     assert slack.sleep(720, found, 30, "maintenance") == 720
     assert slack.sleep(720, [], 30, "explore") == 720
+
+
+WORK = slack.Item("reach #1", "bring buyers to project #1's listings")
+QUESTIONS = [slack.Item("question 1", "Which poster sells?"), slack.Item("question 2", "Do pins bring views?")]
+
+
+def test_this_week_s_questions_and_an_idle_plan_keep_the_agent_s_sleep(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0.21.0 (analysis 0.20.1, FIX NOW 5): READY always holds the weekly look's questions (for 7 days), so every
+    completed or idle cycle's sleep was cut to 3 hours, "Nothing until 10-07." too: up to 8 paid plans a day."""
+    assert slack.sleep(720, QUESTIONS, 30, "explore") == 720
+    assert slack.sleep(720, [*QUESTIONS, WORK], 30, "explore") == slack.SLEEP_MINUTES
+    monkeypatch.setattr(slack, "items", lambda *_: [WORK, *QUESTIONS])
+    agent, _ = make_agent(data_dir, [plan(steps=[], sleep=720)], DEFAULTS)
+    end = agent.run_cycle("schedule")
+    assert (end.status, end.sleep_minutes, end.sleep_cut) == ("idle", 720, None)
+    assert agent._meta_time("next_wake_at") == agent.clock.now() + timedelta(minutes=720)
+
+
+@pytest.mark.parametrize(
+    ("ready", "worked", "most"),
+    [([WORK, *QUESTIONS], False, 2), (QUESTIONS, True, 2), ([WORK, *QUESTIONS], True, 6)],
+)
+def test_cycles_a_day_under_the_default_options(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, ready: list[slack.Item], worked: bool, most: int
+) -> None:
+    """0.21.0: the scheduled cycles of a day, projected from the wakes Ember's code sets after each, when the agent
+    asks for 12 hours of sleep: an idle plan's or a sleep with only questions in READY stands; with work in READY a
+    cycle that worked sleeps the owner's default interval (wake_interval_minutes, 4 hours), not 3 hours."""
+    monkeypatch.setattr(slack, "items", lambda *_: ready)
+    monkeypatch.setattr(review, "due", lambda *_: False)  # the day's review would answer a plan of this script
+    journal = calls(("write_journal", {"summary": "Worked", "entry": "Looked around."}))
+    script = [plan(steps=["look around"], sleep=720), text("Done."), journal] if worked else [plan(steps=[], sleep=720)]
+    agent, _ = make_agent(data_dir, script * 12, DEFAULTS)
+    day_ends, cycles = agent.clock.now() + timedelta(days=1), 0
+    while agent.clock.now() < day_ends:
+        assert agent.run_cycle("schedule").status == ("completed" if worked else "idle")
+        cycles += 1
+        asleep = agent._meta_time("next_wake_at") - agent.clock.now()
+        agent.clock.advance(minutes=math.ceil(asleep.total_seconds() / 60))
+    assert cycles <= most
 
 
 # --- 0.18.1: the quality critic reads a print-on-demand product line's Printify product ---

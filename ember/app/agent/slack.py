@@ -13,6 +13,10 @@ worth doing meanwhile, the most pressing first:
 While READY lists something, the sleep a cycle chooses is cut to SLEEP_MINUTES (but not below the owner's shortest
 sleep), unless the burn mode is maintenance or dormant: a cycle that could do something useful doesn't sleep half a
 day.
+
+0.21.0 (analysis 0.20.1, FIX NOW 5): only a cycle that worked has its sleep cut, only for work (this week's questions
+are always in READY for 7 days: every cycle's sleep was cut, "Nothing until 10-07." too, up to 8 paid plans a day), and
+never below the owner's default interval (wake_interval_minutes), so raising it slows Ember down again.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from . import reach, weekly
 from .store import AgentScope
 
 SLEEP_MINUTES = 180
+QUESTION = "question"  # an item's key: what this week's look asked (not work that cuts a sleep)
 MAX_ITEMS = 6
 HEADING = "Useful while your projects wait, ranked by Ember's code (work on one when nothing more pressing is due):"
 
@@ -69,7 +74,7 @@ def items(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[Item
             asked = json.loads(look["answer"] or "{}").get("questions") or []
         except ValueError:
             asked = []
-        found += [Item(f"question {i}", str(q)[:200]) for i, q in enumerate(asked, 1)]
+        found += [Item(f"{QUESTION} {i}", str(q)[:200]) for i, q in enumerate(asked, 1)]
     return found[:MAX_ITEMS]
 
 
@@ -80,7 +85,9 @@ def text(found: list[Item]) -> str:
 
 
 def sleep(minutes: int | None, found: list[Item], shortest: int, burn_mode: str) -> int | None:
-    """The sleep a cycle keeps: cut to SLEEP_MINUTES while READY lists something (not in maintenance or dormant)."""
-    if minutes is None or not found or burn_mode in ("maintenance", "dormant"):
+    """The sleep a cycle that worked keeps: cut to SLEEP_MINUTES, or ``shortest`` if longer, while READY lists work
+    (not in maintenance or dormant). 0.21.0: this week's questions aren't work to cut a sleep for."""
+    work = [i for i in found if not i.key.startswith(QUESTION)]
+    if minutes is None or not work or burn_mode in ("maintenance", "dormant"):
         return minutes
     return min(minutes, max(SLEEP_MINUTES, shortest))

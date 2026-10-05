@@ -43,6 +43,17 @@ def from_iso(text: str) -> datetime:
     return datetime.strptime(text, TIMESTAMP_FORMAT).replace(tzinfo=UTC)
 
 
+def normalized(text: str) -> str | None:
+    """0.21.0: a time from outside in ISO 8601 (Printify's "2026-09-30 10:00:00+00:00", with fractions of a second or
+    an offset) as Ember writes its own, in UTC; None when it isn't one. Without an offset it is UTC. Printify's was
+    stored as it came, ``from_iso`` refused it, and no Printify order's cost was ever booked."""
+    try:
+        moment = datetime.fromisoformat(text.strip())
+    except (ValueError, TypeError, AttributeError):
+        return None
+    return to_iso(moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC))
+
+
 class Clock:
     """Current time and the owner's time zone; tests pass a fixed ``now``."""
 

@@ -36,6 +36,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from pathlib import PurePosixPath
 from typing import Any, Protocol
@@ -518,8 +519,13 @@ class FakePrintify:
                 "cost_cents": cost * quantity,
                 "shipping_cents": 450,
                 "status": "fulfilled",
-                "created_at": to_iso(self.clock.now()),
+                "created_at": live_time(self.clock.now()),  # 0.21.0: as Printify writes it, not as Ember does
             }
         )
         self._on_change(self.state)
         return order_id
+
+
+def live_time(moment: datetime) -> str:
+    """0.21.0: a time as Printify's API writes it (``2026-09-30 10:00:00+00:00``)."""
+    return moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S+00:00")

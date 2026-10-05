@@ -10,6 +10,7 @@ import imaplib
 import json
 import sqlite3
 import ssl
+import time
 from collections.abc import Callable
 from email.message import EmailMessage
 from pathlib import Path
@@ -471,6 +472,150 @@ def test_a_stop_reply_suppresses_its_sender_but_never_ember_itself(db_agent: Age
     assert again.stored == []  # the same UIDs are stored once
 
 
+def nested_mail(depth: int, subject: str = "Stop", sender: str = "Mo <mo@example.org>") -> bytes:
+    """An email whose text sits ``depth`` multipart levels down."""
+    head = f"From: {sender}\r\nTo: ember@mail.example\r\nSubject: {subject}\r\nMessage-ID: <deep@example.org>\r\n"
+    levels = "".join(f'Content-Type: multipart/mixed; boundary="b{i}"\r\n\r\n--b{i}\r\n' for i in range(depth))
+    ends = "".join(f"--b{i}--\r\n" for i in reversed(range(depth)))
+    return f"{head}MIME-Version: 1.0\r\n{levels}Content-Type: text/plain\r\n\r\nPlease stop.\r\n{ends}".encode()
+
+
+def test_an_email_nested_too_deeply_is_stored_with_its_headers_and_its_stop_counts(
+    data_dir: Path, imap: type[FakeIMAP]
+) -> None:
+    """0.21.0: 1,000 levels (70 KB) raised RecursionError in the parser, the fetch failed, its UID never advanced, and
+    every later check failed on the same email: no mail was read again, "stop" replies included."""
+    assert mail.parse_message(nested_mail(mail.MAX_CONTAINERS - 1), 1).body == "Please stop."
+    imap.mails[3] = nested_mail(1_000)
+    imap.mails[4] = raw_mail(4, subject="After it")
+    agent = live_agent(data_dir, [])
+    scope = agent.scope()
+    fetched = mailstore.fetch(agent.db, agent.clock, scope, mail.LiveMailbox(LIVE))
+    assert fetched.error is None and len(fetched.stored) == 4 and fetched.suppressed == ["mo@example.org"]
+    stored = rows(agent, "SELECT uid, from_addr, subject, body FROM emails WHERE uid >= 3 ORDER BY uid")
+    assert stored == [
+        {"uid": 3, "from_addr": "mo@example.org", "subject": "Stop", "body": mail.TOO_COMPLEX},
+        {"uid": 4, "from_addr": "ann@example.org", "subject": "After it", "body": "Hi!"},
+    ]
+    assert agent.db.get_meta(mailstore.meta_key(scope.mode, "last_uid")) == "4"
+
+
+def test_an_email_the_parser_fails_on_is_stored_with_its_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = mail._parsed
+
+    def failing(raw: bytes, uid: int, note: str | None) -> mail.IncomingMail:
+        if note is None:
+            raise RuntimeError("a parser bug")
+        return real(raw, uid, note)
+
+    monkeypatch.setattr(mail, "_parsed", failing)
+    parsed = mail.parse_message(raw_mail(5, subject="Unsubscribe"), 5)
+    assert (parsed.uid, parsed.subject, parsed.body) == (5, "Unsubscribe", mail.UNREADABLE)
+    assert parsed.from_addr == "ann@example.org"
+    monkeypatch.setattr(mail, "_parsed", lambda *_: (_ for _ in ()).throw(RecursionError()))
+    unreadable = mail.parse_message(raw_mail(6), 6)  # its headers fail too: still stored, so the UID advances
+    assert unreadable.uid == 6 and unreadable.body == "[Ember couldn't read this email.]"
+
+
+def test_an_email_with_more_parts_than_a_real_one_is_stored_with_its_headers() -> None:
+    def parts(count: int) -> bytes:
+        one = "--x\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=a.txt\r\n\r\nhi\r\n"
+        return (
+            "From: ann@example.org\r\nSubject: Files\r\nMIME-Version: 1.0\r\n"
+            f'Content-Type: multipart/mixed; boundary="x"\r\n\r\n{one * count}--x--\r\n'
+        ).encode()
+
+    assert mail.parse_message(parts(mail.MAX_PARTS - 1), 1).body != mail.TOO_COMPLEX
+    many = mail.parse_message(parts(mail.MAX_PARTS), 1)
+    assert many.body == mail.TOO_COMPLEX and many.subject == "Files" and many.attachments == []
+
+
+def test_hidden_text_is_found_in_time_linear_in_the_style() -> None:
+    """0.21.0: the opacity pattern took time growing with the square of its digits (16,000 zeros: 2 seconds, 128,000:
+    over 2 minutes), and the whole app waited: the regex holds the GIL."""
+    for style, hidden in (
+        ("opacity:0", True),
+        ("opacity:.049;", True),
+        ("opacity:0.05", False),
+        ("opacity:4.9%", True),
+        ("opacity:5%", False),
+        ("color:red;-moz-opacity:0!important", True),
+        ("opacity:1.2.3", False),
+    ):
+        assert mail._hides_style(style) is hidden, style
+    started = time.perf_counter()
+    long_zeros = f'<p style="opacity:{"0" * 7_000}x">shown</p><p style="opacity:{"0" * 7_000}">hidden</p>'
+    assert mail.html_to_text(long_zeros) == "shown"
+    longer = f'<p style="opacity:{"0" * 1_000_000}x">no real email has such a style</p><p>shown</p>'
+    assert mail.html_to_text(longer) == "shown"  # a style that long hides its element
+    sheet = "<style>" + "p { color: red; opacity: 1 }" * 49 + "</style>" + "<p>a</p>" * 2_000
+    assert mail.html_to_text(sheet).startswith("a\n\na")
+    many = "\r\n".join(
+        f"--x\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename={n}.txt\r\n\r\nhi"
+        for n in range(900)
+    )
+    raw = f'Subject: Files\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="x"\r\n\r\n{many}\r\n--x--'
+    attachments = mail.parse_message(raw.encode(), 1).attachments
+    assert attachments[:2] == [{"name": "0.txt", "size": 2}, {"name": "1.txt", "size": 2}]
+    assert len(json.dumps(attachments, ensure_ascii=False)) <= mail.ATTACHMENTS_CHARS
+    assert len(json.dumps([*attachments, attachments[0]], ensure_ascii=False)) > mail.ATTACHMENTS_CHARS
+    assert time.perf_counter() - started < 5
+
+
+def test_a_stop_through_a_list_counts_when_it_answers_embers_email(db_agent: Agent) -> None:
+    """0.21.0: an answer to Ember's email sent through a group or a list (with its List-Id) was bulk, so its "stop" was
+    ignored; a newsletter's "unsubscribe" that answers nothing of Ember's still is."""
+    scope = db_agent.scope()
+    with db_agent.db.transaction() as conn:
+        mailstore.store_outgoing(
+            conn,
+            scope,
+            approval_id=_approval(db_agent),
+            message_id="<ember-1@mail.example>",
+            in_reply_to=None,
+            references=None,
+            from_addr="ember@example.invalid",
+            from_name="Ember",
+            to_addr="team@example.org",
+            subject="Your planner",
+            body="Hello",
+            now="2026-10-01T10:00:00Z",
+        )
+
+    def listed(uid: int, sender: str, body: str, reply_to: str | None) -> mail.IncomingMail:
+        msg = EmailMessage()
+        msg["From"], msg["To"], msg["Subject"] = sender, "ember@example.invalid", "Re: Your planner"
+        msg["Message-ID"], msg["List-Id"] = f"<l{uid}@example.org>", "<team.example.org>"
+        if reply_to:
+            msg["In-Reply-To"] = reply_to
+        msg.set_content(body)
+        return mail.parse_message(msg.as_bytes(), uid)
+
+    answer = listed(60, "Kim <kim@example.org>", "Stop", "<ember-1@mail.example>")
+    newsletter = listed(61, "news@example.org", "Unsubscribe", None)
+
+    class Box(mail.FakeMailbox):
+        def fetch_new(self, after_uid: int, limit: int = 20, uidvalidity: Any = None, deadline: Any = None) -> Any:
+            return mail.FetchResult([answer, newsletter], 61, self.uidvalidity)
+
+    fetched = mailstore.fetch(db_agent.db, db_agent.clock, scope, Box(scope.session))
+    assert sorted(fetched.suppressed) == ["kim@example.org", "team@example.org"]
+
+
+def _approval(agent: Agent) -> int:
+    scope = agent.scope()
+    cycle_id = rows(agent, "SELECT id FROM cycles")[0]["id"]
+    with agent.db.transaction() as conn:
+        return int(
+            conn.execute(
+                "INSERT INTO approvals (mode, session, life_id, cycle_id, created_at, type, title, description,"
+                " payload, payload_sha256, expected_cost, expected_benefit, executor, action) VALUES (?, ?, ?, ?,"
+                " 'now', 'contact', 't', 'd', 'p', 'h', 'none', 'b', 'email', '{}')",
+                (scope.mode, scope.session, scope.life_id, cycle_id),
+            ).lastrowid
+        )
+
+
 # --- the live mailbox (fake IMAP) ---
 
 
@@ -711,7 +856,7 @@ def test_research_can_be_limited_to_one_site(data_dir: Path) -> None:
     assert all(r["status"] == "error" and "bare domain" in r["result"] for r in results[1:3])
     assert results[3]["status"] == "error" and "Reddit blocks Anthropic's web tools" in results[3]["result"]
     fetching = prompts.research_request(Settings(), "q", "https://example.org/page", "etsy.com")
-    assert "allowed_domains" not in fetching["tools"][0]  # a page read ignores the site
+    assert fetching["tools"][0]["allowed_domains"] == ["example.org"]  # a page read: its own site (0.21.0), not this
 
 
 def test_research_says_which_site_blocks_the_web_tools(data_dir: Path) -> None:
