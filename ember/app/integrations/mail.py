@@ -295,7 +295,12 @@ MAX_PARTS = 1_000
 # A boundary line, or a Content-Type header with its folded lines
 _STRUCTURE = re.compile(rb"^(?:(--[^\n]*)|content-type:([^\n]*(?:\n[ \t][^\n]*)*))", re.IGNORECASE | re.MULTILINE)
 _CONTAINER = re.compile(rb"\s*(multipart|message)/", re.IGNORECASE)
-_BOUNDARY = re.compile(rb'boundary\s*=\s*(?:"([^"\n]*)"|([^\s;]+))', re.IGNORECASE)
+# 0.23.0: a container's type and boundary are read as the parser reads them (_container); that read takes time
+# growing faster than its header, so a container's Content-Type has at most this many bytes, and all of them this many
+_CONTAINER_HEADER = 1_000
+_CONTAINER_BYTES = 32_000
+_NEVER = b"\n"  # a boundary no line matches: the parser's has characters no line holds
+_CONTENT_TYPE = re.compile(rb"^content-type:[^\n]*(?:\n[ \t][^\n]*)*\n?", re.IGNORECASE | re.MULTILINE)
 TOO_COMPLEX = "[This email is nested deeper or has more parts than any real email, so only its headers were stored.]"
 UNREADABLE = "[Ember couldn't read this email, so only its headers were stored.]"
 
@@ -331,11 +336,11 @@ def too_complex(raw: bytes) -> bool:
     has more than MAX_PARTS parts, read before it is parsed. A multipart part's level ends at its parent's next
     boundary line, so parts side by side (32 forwarded emails, a digest) count once each, not as levels."""
     stack: list[bytes | None] = []  # the open levels: a multipart's boundary, None for a message part
-    parts = 0
+    parts = work = 0
     for match in _STRUCTURE.finditer(_lines(raw)):
         line, header = match.group(1), match.group(2)
         if line is not None:
-            line = line.rstrip()
+            line = line.rstrip(b" \t")  # 0.23.0: as the parser: only spaces and tabs may follow a boundary
             name = line[2:]
             if name not in stack and name[:-2] not in stack:  # a line that closes no open level (most lines)
                 continue
@@ -346,13 +351,35 @@ def too_complex(raw: bytes) -> bool:
                     break
             continue
         parts += 1
-        container = _CONTAINER.match(header)
-        if container is not None:
-            found = _BOUNDARY.search(header) if container[1].lower() == b"multipart" else None
-            stack.append((found[1] if found[1] is not None else found[2]) if found else None)
+        if _CONTAINER.match(header) is not None:
+            # 0.23.0: the boundary the parser uses (a regex of its own took "xboundary=" for it, and a line the parser
+            # skips closed the level: hundreds of levels passed). One the parser can't read fails it too.
+            work += len(header)
+            if len(header) > _CONTAINER_HEADER or work > _CONTAINER_BYTES:
+                return True
+            try:
+                stack.append(_container(header))
+            except Exception:  # noqa: BLE001 - whatever the parser raises on it
+                return True
         if len(stack) > MAX_NESTING or parts > MAX_PARTS:
             return True
     return False
+
+
+def _container(header: bytes) -> bytes | None:
+    """A container's Content-Type ``header`` (what follows its colon) read as the parser reads it (feedparser:
+    set_raw, then get_boundary): a multipart's boundary, None for a message part (or a multipart without one)."""
+    msg = EmailMessage(policy=policy.default)
+    msg.set_raw(*policy.default.header_source_parse(["Content-Type:" + header.decode("ascii", "surrogateescape")]))
+    if msg.get_content_maintype() != "multipart":
+        return None
+    boundary = msg.get_boundary()
+    if boundary is None:
+        return None
+    try:
+        return boundary.encode("ascii")
+    except UnicodeEncodeError:
+        return _NEVER
 
 
 def _lines(raw: bytes) -> bytes:
@@ -361,10 +388,11 @@ def _lines(raw: bytes) -> bytes:
 
 
 def _head(raw: bytes) -> bytes:
-    """An email's headers, without its body (whatever its lines end with)."""
+    """An email's headers, without its body (whatever its lines end with). 0.23.0: without its Content-Type, which
+    the headers don't need and the parser may fail on (a comment nested a thousand deep raises RecursionError)."""
     text = _lines(raw)
     end = text.find(b"\n\n")
-    return text[:end] if end >= 0 else text
+    return _CONTENT_TYPE.sub(b"", text[:end] if end >= 0 else text)
 
 
 def _parsed(raw: bytes, uid: int, note: str | None) -> IncomingMail:

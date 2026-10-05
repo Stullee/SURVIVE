@@ -525,6 +525,33 @@ def test_parts_side_by_side_aren_t_levels_and_any_line_end_counts() -> None:
         )
 
 
+def test_the_depth_check_reads_each_boundary_as_the_parser_does() -> None:
+    """0.23.0 (review of 0.21.0): the check found its own boundary in "xboundary=", and a line the parser skips (that
+    boundary, or one with a form feed after it) closed the level for the check only: 400 levels passed, 11 seconds of
+    parsing each. And a Content-Type the parser can't read lost the email's sender and its "stop"."""
+    assert mail.too_complex(nested_mail(mail.MAX_NESTING + 1))  # by its levels, not its parts
+    assert not mail.too_complex(nested_mail(mail.MAX_NESTING - 1))
+    head = "From: Mo <mo@example.org>\r\nTo: ember@mail.example\r\nSubject: Stop\r\nMIME-Version: 1.0\r\n"
+    tricks = {
+        "xboundary": 'Content-Type: multipart/mixed; xboundary="x{i}"; boundary="b{i}"\r\n\r\n--x{i}--\r\n--b{i}\r\n',
+        "form feed": 'Content-Type: multipart/mixed; boundary="b{i}"\r\n\r\n--b{i}--\x0c\r\n--b{i}\r\n',
+        "twice": 'Content-Type: multipart/mixed; boundary="b{i}"; boundary="c{i}"\r\n\r\n--c{i}--\r\n--b{i}\r\n',
+        "rfc 2231": 'Content-Type: multipart/mixed; boundary*0="b{i}"; boundary*1="x"\r\n\r\n--b{i}--\r\n--b{i}x\r\n',
+    }
+    for trick, level in tricks.items():
+        for depth, deep in ((mail.MAX_NESTING - 1, False), (200, True)):
+            levels = "".join(level.format(i=i) for i in range(depth))
+            raw = f"{head}{levels}Content-Type: text/plain\r\n\r\nPlease stop.\r\n".encode()
+            parsed = mail.parse_message(raw, 1)
+            assert (parsed.from_addr, parsed.subject) == ("mo@example.org", "Stop"), trick
+            assert parsed.body == (mail.TOO_COMPLEX if deep else "Please stop."), (trick, depth)
+    comments = f"{head}Content-Type: multipart/mixed; boundary=b {'(' * 3_000}\r\n\r\n--b\r\n\r\nHi\r\n--b--\r\n"
+    parsed = mail.parse_message(comments.encode(), 2)  # the parser raises RecursionError on it
+    assert (parsed.from_addr, parsed.subject, parsed.body) == ("mo@example.org", "Stop", mail.TOO_COMPLEX)
+    long = f"{head}Content-Type: multipart/mixed; boundary=b {'(a)' * 400}\r\n\r\n--b\r\n\r\nHi\r\n--b--\r\n"
+    assert mail.too_complex(long.encode())  # no real one is that long, and reading it as the parser does is slow
+
+
 def test_a_picture_in_a_style_doesn_t_hide_its_text_and_heavy_styling_ends_reading() -> None:
     """0.21.0 (pre-release review): an element whose style held a picture's data (over 8,000 characters) was hidden with
     its text; and one style-sheet rule read again for each of 140,000 elements took 77 seconds."""
