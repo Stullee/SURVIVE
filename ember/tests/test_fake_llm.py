@@ -490,6 +490,18 @@ def test_the_same_requests_get_the_same_answers() -> None:
     assert second.response["usage"]["cache_read_input_tokens"] > first.response["usage"]["cache_read_input_tokens"]
 
 
+def test_the_nonce_of_untrusted_text_doesnt_change_the_answer() -> None:
+    # 0.16.2: the <data> wrapper's nonce is random for every cycle, and answers seeded with it differed from run to
+    # run: a test waiting for the fake to research failed one CI run in several.
+    def answer(nonce: str) -> tuple[Any, Any]:
+        mail = f'<data src="email:1" id="{nonce}">\nIs your planner available?\n</data id="{nonce}">'
+        outcome = FakeTransport(seed=3).send(prompts.work_request(SETTINGS, f"Some brief.\n{mail}", []))
+        assert isinstance(outcome, Completed)
+        return outcome.response["content"], outcome.response["id"]
+
+    assert answer("afc9c9") == answer("7dc00c")
+
+
 # --- the validator ---
 
 USE = {"type": "tool_use", "id": "toolu_1", "name": "workspace_list", "input": {}}
