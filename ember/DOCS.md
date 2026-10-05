@@ -404,6 +404,25 @@ agent's workspace:
   workshop run; the agent hears what was cut off and when a picture is drawn so
   much larger that it may print soft. Up to 6 a cycle. Built in from upgrade
   request #4 (the workshop's resize script).
+- **Cost statements** (`make_cost_statement`, 0.20.0): a Nebenkostenabrechnung
+  from a JSON description of the tenants (Wohnfläche, Personen,
+  Vorauszahlungen), the costs with their Umlageschlüssel (Wohnfläche, Personen
+  or Einheiten) and, when the building has more units than those listed, its
+  whole Wohnfläche, Personen and Einheiten. Ember's code makes the Excel file
+  (each tenant's shares, costs and Saldo; each tenant's part of each cost, to
+  the cent; a statement to print for the tenant chosen in a dropdown), with
+  formulas doing every sum so buyers can use their own numbers, and its cover
+  picture: the tenants' table as German Excel shows it, 3000 x 2250. It works
+  out every formula of the file itself and keeps nothing unless each number
+  equals its own exact sums, so the cover always shows the file's numbers.
+  Costs by consumption (heating and hot water under the Heizkostenverordnung,
+  metered water) are not part of it, and it doesn't judge which costs a lease
+  lets a landlord pass on. Up to 3 a cycle. Built in from upgrade request #7
+  (the workshop's Nebenkostenabrechnung script).
+
+Pictures of a sheet (in `make_image` and the spreadsheets' own pictures) round
+as Excel does since 0.20.0, and a German workbook's (a cost statement's) are in
+German notation, 1.234,56 € and 31,97%.
 
 The agent reads the text of its PDF, Word and Excel files and copies files
 itself, for free (the workshop was paid for this). Pictures may have up to
@@ -2003,7 +2022,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.19.4 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.20.0 (by /u/your name)`.
 
 ## Diagnostics
 

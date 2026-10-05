@@ -13,6 +13,8 @@ right, center, top-left, top-right, bottom-left, bottom-right).
 - badge: a few words in a coloured box, e.g. 'Instant download' or 'Editable in Word'.
 - accent colours the title and badge (use the product's own accent); background is a light tint of it unless you
   give one (#RRGGBB).
+- A cover that shows a product's numbers (a Nebenkostenabrechnung's table) comes from the product's own tool
+  (make_cost_statement): never type numbers onto a photo yourself.
 
 A LISTING NEEDS {MIN_PHOTOS} DIFFERENT PHOTOS (Etsy allows up to 10; the first is the thumbnail buyers see in search).
 QA counts what they show: the same pages under another title, or a copy of a picture, add no photo.

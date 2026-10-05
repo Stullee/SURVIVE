@@ -7,6 +7,11 @@ never gets links, other workbooks, DDE ("cmd|...") or functions that reach outsi
 
 0.15.0: any Excel file in the workspace can be read too (``workbook_text``: its cells, sheet by sheet, for
 workspace_read) and drawn (``picture``: one sheet, for make_image's 'file.xlsx#2'). The workshop was paid for both.
+
+0.20.0: ROUND works out as Excel's (half away from zero, on the 15 digits Excel keeps: 2.675 is 2.68, not Python's
+2.67), and so does a number shown with a fixed number of decimals. A workbook in German (its language, as the cost
+statements of products/statement.py are) is drawn in German notation, 1.234,56 € and 31,97%, and a percentage with
+the decimals its format asks for. ``values`` gives every cell's value once worked out, for the statements' check.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ import io
 import json
 import re
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from openpyxl import Workbook, load_workbook
@@ -634,6 +640,19 @@ def _grids(sheets: list[tuple[str, dict[tuple[int, int], Any]]]) -> dict[str, _G
     return book  # type: ignore[return-value]
 
 
+def values(data: bytes) -> dict[str, dict[tuple[int, int], Any]]:
+    """0.20.0: every cell of an Excel file that holds something, by sheet title and (row, column) from 1, as Excel
+    shows it once calculated, as far as Ember's code can work it out: a formula it can't work out stays as written
+    ("=..."). The cost statements (products/statement.py) check their own file's numbers with it."""
+    book = _book(data)
+    try:
+        sheets = [(sheet.title, _cells(sheet, READ_ROWS, READ_COLUMNS)) for sheet in book.worksheets]
+    finally:
+        book.close()
+    grids = _grids(sheets)
+    return {title: {key: grids[title.casefold()].value(*key) for key in cells} for title, cells in sheets}
+
+
 def picture(data: bytes, which: str = "") -> tuple[int, Image.Image]:
     """One sheet of an Excel file drawn as a table (its first rows and columns), for listing photos, with its number
     (from 1): the first sheet, or the one ``which`` names by number or name. Formulas show their result where the
@@ -651,6 +670,7 @@ def picture(data: bytes, which: str = "") -> tuple[int, Image.Image]:
             listed = ", ".join(f"{i} '{n}'" for i, n in enumerate(names, start=1))
             raise SheetError(f"the workbook has no sheet {which!r}; its sheets are {listed}")
         sheets = [(sheet.title, _cells(sheet, READ_ROWS, READ_COLUMNS)) for sheet in book.worksheets]
+        german = _german(book)
     finally:
         book.close()
     cells = sheets[index][1]
@@ -662,7 +682,7 @@ def picture(data: bytes, which: str = "") -> tuple[int, Image.Image]:
     for (r, c), cell in shown.items():
         value = grid.value(r, c)
         unknown = isinstance(value, str) and value.startswith("=")
-        texts[(r, c)] = (_cell_text(value, cell.number_format), unknown)
+        texts[(r, c)] = (cell_text(value, cell.number_format, german), unknown)
     scale = 2
     widths = []
     for c in range(1, last_column + 1):
@@ -714,12 +734,35 @@ def _plain(value: Any) -> str:
     return str(value)
 
 
-def _cell_text(value: Any, number_format: str) -> str:
-    """A cell's value as Excel shows it, near enough: in its number format, or the nearest of FORMATS."""
+def _german(book: Any) -> bool:
+    """0.20.0: whether a workbook says it is in German (its language, as Ember's cost statements do)."""
+    language = getattr(getattr(book, "properties", None), "language", None)
+    return isinstance(language, str) and language.lower().startswith("de")
+
+
+def cell_text(value: Any, number_format: str, german: bool = False) -> str:
+    """A cell's value as Excel shows it, near enough: in its number format, or the nearest of FORMATS. 0.20.0: a
+    percentage with the decimals its format has ('0.00%' is 31.97%), and with ``german`` as German Excel shows numbers:
+    1.234,56 € and 31,97%."""
     if isinstance(value, dt.datetime | dt.date):
         shown = {"dd.mm.yyyy": "%d.%m.%Y", "mm/dd/yyyy": "%m/%d/%Y"}.get(number_format, "%Y-%m-%d")
         return value.strftime(shown)
-    return _shown(value, _FORMAT_KEYS.get(number_format) or _format_key(number_format))
+    number = isinstance(value, int | float) and not isinstance(value, bool)
+    if number and "%" in number_format:
+        places = _places(number_format)
+        text = f"{_displayed(value * 100, places):.{places}f}%"
+    else:
+        text = _shown(value, _FORMAT_KEYS.get(number_format) or _format_key(number_format))
+    return text.translate(_GERMAN) if german and number else text
+
+
+_GERMAN = str.maketrans({",": ".", ".": ","})  # 1,234.56 is 1.234,56 in German
+
+
+def _places(number_format: str) -> int:
+    """The decimals a number format shows (of its first part, for positive numbers): '0.00%' has 2."""
+    found = re.search(r"\.(0+)", number_format.split(";")[0])
+    return len(found[1]) if found else 0
 
 
 def _format_key(number_format: str) -> str:
@@ -1003,7 +1046,7 @@ class _Formulas:
         if name == "ROUND":
             if len(args) != 2:
                 raise _Unknown
-            return round(_number(self._value(args[0])), int(_number(self._value(args[1]))))
+            return excel_round(_number(self._value(args[0])), int(_number(self._value(args[1]))))
         if name == "ABS":
             if len(args) != 1:
                 raise _Unknown
@@ -1147,15 +1190,36 @@ def _shown(value: Any, fmt: str) -> str:
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
     if isinstance(value, int | float):
+        # 0.20.0: rounded as Excel shows it (0.125 € is 0.13 €, where Python's own rounding shows 0.12 €)
         if fmt == "eur":
-            return f"{value:,.2f} €"
+            return f"{_displayed(value, 2):,.2f} €"
         if fmt == "usd":  # 0.19.2: "-$32.50", as Excel shows it (the critic saw "$-32.50" on a cover)
-            return f"-${-value:,.2f}" if value < 0 else f"${value:,.2f}"
+            amount = abs(_displayed(value, 2))
+            return f"-${amount:,.2f}" if value < 0 else f"${amount:,.2f}"
         if fmt == "percent":
-            return f"{value * 100:.1f}%"
+            return f"{_displayed(value * 100, 1):.1f}%"
         if fmt == "integer":
-            return f"{value:,.0f}"
+            return f"{_displayed(value, 0):,.0f}"
         if fmt == "number":
-            return f"{value:,.2f}"
+            return f"{_displayed(value, 2):,.2f}"
         return f"{value:g}"
     return str(value)
+
+
+def excel_round(value: float, digits: int) -> float:
+    """0.20.0: ``value`` rounded to ``digits`` decimals as Excel's ROUND does: half away from zero, on the 15
+    significant digits Excel keeps of a number. Python's round() goes to the even neighbour on the binary number, so
+    the preview showed ROUND(2.675, 2) as 2.67, and 0.125 € as 0.12 €, where Excel shows 2.68 and 0.13 €."""
+    try:
+        kept = Decimal(f"{value:.15g}")
+        # + 0.0: Excel has no -0 (ROUND of -1E-14 is 0, shown 0.00, never -0.00)
+        return float(kept.quantize(Decimal(1).scaleb(-digits), rounding=ROUND_HALF_UP)) + 0.0
+    except InvalidOperation:  # not a number (inf, nan), or more digits than it has: nothing to round
+        return value
+
+
+def _displayed(value: float, places: int) -> float:
+    """``value`` as Excel shows it with ``places`` decimals: rounded as excel_round, but a negative number that comes
+    to 0 keeps its minus (Excel shows -0.001 as -0.00)."""
+    rounded = excel_round(value, places)
+    return -0.0 if rounded == 0 and value < 0 else rounded

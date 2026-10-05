@@ -20,7 +20,8 @@ for Ember) and the Etsy tools.
 
 The making tools (``make_document``, ``make_spreadsheet``, ``make_image``) turn
 the agent's text into PDF, Word, Excel and PNG files with Ember's own code
-(app.products), and ``resize_image`` (0.17.0) makes print files of its pictures;
+(app.products), ``resize_image`` (0.17.0) makes print files of its pictures and
+``make_cost_statement`` (0.20.0) a Nebenkostenabrechnung with its cover picture;
 ``look`` shows the model one of its pictures. ``workshop`` (like
 ``research``, a metered model call) has code written and run in Anthropic's
 sandbox; Ember's code checks every file it made before it is kept.
@@ -117,7 +118,7 @@ LOOK_PIXELS = 1_000  # the longer side of a picture the agent looks at: about 1,
 CATEGORIES_SHOWN = 10  # etsy_categories' answer, shortest paths first
 DEPARTMENT = " (a whole department: too broad for a listing)"
 # Making files takes a moment: these run sealed, but outside the database transaction the other tools share.
-MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image", "resize_image"})
+MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image", "resize_image", "make_cost_statement"})
 GUIDES = (
     "documents",
     "spreadsheets",
@@ -131,6 +132,7 @@ GUIDES = (
     "printify",
     "website",
     "blog",
+    "statements",  # 0.20.0: make_cost_statement's
 )
 WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
 # Offered only with an Etsy shop (demand_note 0.12.0: a product line's first listing needs one).
@@ -162,6 +164,7 @@ ORDINARY_TOOLS = (
             "make_spreadsheet",
             "make_image",
             "resize_image",
+            "make_cost_statement",
             "look",
             "workshop",
             "draft",
@@ -839,6 +842,14 @@ SPECS: dict[str, Spec] = {
                 "height": _i(""),
             },
             per_cycle=6,
+        ),
+        Spec(
+            "make_cost_statement",
+            "A Nebenkostenabrechnung from your JSON (tenants, costs, Umlageschlüssel): an Excel file and its cover "
+            "picture, every number checked against Ember's own sums. Free; guide 'statements'.",
+            # a .json and a .xlsx: make.cost_statement says so (the prompt has no room for more)
+            {"source": _s("", 200), "output": _s("", 200)},
+            per_cycle=3,
         ),
         Spec(
             "look",
@@ -3305,6 +3316,11 @@ def _resize_image(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     return _made(made, "made a print file")
 
 
+def _make_cost_statement(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
+    """0.20.0: upgrade request #7, the workshop's Nebenkostenabrechnung script built in."""
+    return _made(make.cost_statement(ctx.workspace, args["source"], args["output"]), "made a cost statement")
+
+
 def _workshop(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     if ctx.workshop is None:
         raise ToolError("the workshop isn't available")
@@ -4546,6 +4562,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "make_spreadsheet": _make_spreadsheet,
     "make_image": _make_image,
     "resize_image": _resize_image,
+    "make_cost_statement": _make_cost_statement,
     "look": _look,
     "guide": _guide,
     "email_inbox": _email_inbox,

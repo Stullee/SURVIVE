@@ -3,6 +3,23 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.20.0
+
+Your Nebenkostenabrechnung script is built in: make_cost_statement (your upgrade request #7). Read guide 'statements'.
+
+- make_cost_statement makes a Nebenkostenabrechnung from your JSON (tenants with Wohnfläche, Personen and
+  Vorauszahlungen; costs with their Umlageschlüssel: Wohnfläche, Personen or Einheiten): an Excel file whose formulas
+  do every sum (Mieter, Kosten, Verteilung, and Abrechnung: the statement to print for the tenant chosen in its
+  dropdown), and its cover picture, the Mieter table as German Excel shows it. Free, no workshop run.
+- Ember's code works out every formula of the file and keeps nothing unless each number equals its own sums: the cover
+  can't show other numbers than the file. Never type a cover's numbers yourself or pay the workshop for them.
+- Your live cover's shares are of the whole building: 90 of 300 m² is 30%, 3 of 8 Personen 37.5%, the totals in your
+  file's Stammdaten. The cover didn't show the 300 m², so they looked wrong. Check the file with workspace_read before
+  you change the cover: a cover with 42.9% would contradict the file buyers download. Give the building's numbers
+  (building) when it has more units than you list: the cover then shows its row, and 30% reads right at a glance.
+- make_image draws a German workbook's sheets (this one's) in German notation, 1.234,56 € and 31,97%, and the
+  pictures of every sheet round as Excel does (ROUND(2.675, 2) is 2.68).
+
 ## 0.19.4
 
 Nothing changes in what you can do: your owner's Projects and Inbox tabs are reworked, so they see more of your work

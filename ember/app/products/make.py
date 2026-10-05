@@ -9,6 +9,8 @@
 * ``resize`` (0.17.0, resize_image): one of the agent's pictures at an exact size for printing,
   ``shop/poster-a3.png``: cut to its proportions at the centre and resized, without paying for the picture to be made
   again.
+* ``cost_statement`` (0.20.0, make_cost_statement): a Nebenkostenabrechnung from a JSON spec, ``shop/nk.xlsx`` with
+  its cover picture ``shop/nk-cover.png``, their numbers checked against each other (statement.py).
 
 The agent never writes the bytes of these files: Ember's code makes them from the agent's text and writes them
 with ``Jail.write_bytes``. Every problem the agent can fix comes back as a ProductError naming what to change.
@@ -17,11 +19,14 @@ with ``Jail.write_bytes``. Every problem the agent can fix comes back as a Produ
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass, field
 
 from ..agent.sandbox import Jail
-from . import checks, images, markup, pdf, sheets, word
+from . import checks, images, markup, pdf, sheets, statement, word
+
+log = logging.getLogger(__name__)
 
 PAGE_PREVIEWS = 4  # pictures of the first pages of a document
 PREVIEW_DPI = 100  # an A4 page is 827 x 1169 pixels
@@ -340,4 +345,32 @@ def resize(jail: Jail, source: str, output: str, width: int, height: int) -> Mad
             "printed, so look at it first."
         )
     made.report.append(line)
+    return made
+
+
+# --- cost statements (0.20.0) ---
+
+
+def cost_statement(jail: Jail, source: str, output: str) -> Made:
+    """Make ``output`` (an Excel file) of a Nebenkostenabrechnung from the JSON spec ``source``, and its cover picture
+    next to it (``-cover.png``). Upgrade request #7 built in: the workshop script that drew the cover's table apart
+    from the file's formulas (open-shop-nebenkostenabrechnung-de-16.py), without a run."""
+    base = _base(output, ".xlsx", "output")
+    if not source.lower().endswith(".json"):
+        raise ProductError("source must be the .json file you wrote the statement in")
+    try:
+        result = statement.make(jail.read(source))
+    except statement.StatementError as exc:
+        raise ProductError(f"{source}: {exc}") from None
+    except statement.Mismatch as exc:  # nothing is written: a file whose cover shows other numbers is never kept
+        log.error("A cost statement's file and Ember's sums disagree: %s", exc)
+        raise ProductError(
+            f"Ember's code found that the file's formulas and its own sums disagree ({exc}), so nothing was kept. "
+            "That is a bug in Ember's code, not in your spec: tell your owner"
+        ) from None
+    made = Made()
+    picture = f"{base}-cover.png"
+    _write(jail, made, output, result.workbook)
+    _write(jail, made, picture, result.cover)
+    made.report.extend(statement.report(result, output, picture, _size(len(result.workbook))))
     return made

@@ -71,6 +71,7 @@ _PRODUCT_TOOLS = {
     "make_spreadsheet": "spreadsheets",
     "make_image": "listing photos",
     "resize_image": "print files",
+    "make_cost_statement": "cost statements",
     "workshop": "workshop runs that kept files",
 }
 
