@@ -145,8 +145,8 @@ def png(image: Image.Image) -> bytes:
 
 def open_png(data: bytes, longest: int | None = None) -> Image.Image:
     """One of Ember's own pictures (PNG or JPEG), checked before it is decoded; with ``longest``, no wider or higher
-    than that."""
-    return _reduced(data, longest) if longest else _decoded(lambda: _checked(data).convert("RGB"))
+    than that. 0.23.0: on white where it is transparent (it was black in a listing photo showing it)."""
+    return _flattened(data, longest)
 
 
 def png_size(data: bytes) -> tuple[int, int]:
@@ -158,7 +158,7 @@ def png_size(data: bytes) -> tuple[int, int]:
 def thumbnail(data: bytes, longest: int) -> tuple[bytes, int, int]:
     """A PNG no wider or higher than ``longest`` pixels (for the model to look at) of a PNG or JPEG, and its
     size."""
-    image = _reduced(data, longest)
+    image = _flattened(data, longest)
     return png(image), image.width, image.height
 
 
@@ -184,7 +184,7 @@ def look(data: bytes) -> str:
     has nearly the same bits; the same layout with other pages or words doesn't."""
     image = _checked(data)
     mark = str(image.info.get(MARK, "")) if image.format == "PNG" else ""
-    grey = _reduced(data, 512).convert("L")
+    grey = _flattened(data, 512).convert("L")
     across = grey.resize((LOOK_SIZE + 1, LOOK_SIZE), Image.Resampling.BOX).tobytes()
     down = grey.resize((LOOK_SIZE, LOOK_SIZE + 1), Image.Resampling.BOX).tobytes()
     bits = 0
@@ -221,20 +221,6 @@ def looks(read: Callable[[str], bytes], photos: Sequence[tuple[str, str]]) -> li
     return found
 
 
-def _reduced(data: bytes, longest: int) -> Image.Image:
-    """0.15.0: a picture no wider or higher than ``longest``, in RGB. A JPEG is decoded at 1/2 to 1/8 of its size
-    where that is enough, and a picture is reduced before it is converted."""
-    image = _checked(data)
-
-    def reduce() -> Image.Image:
-        image.draft("RGB", (longest, longest))
-        shown = image if image.mode in ("RGB", "L", "RGBA", "LA") else image.convert("RGB")  # (a palette: nearest)
-        shown.thumbnail((longest, longest), Image.Resampling.LANCZOS, reducing_gap=3.0)
-        return shown.convert("RGB")
-
-    return _decoded(reduce)
-
-
 def _decoded(decode: Callable[[], Image.Image]) -> Image.Image:
     """What ``decode`` makes of a picture; a picture that breaks the decoder (cut short, damaged) is an ImageError."""
     try:
@@ -268,6 +254,21 @@ def _checked(data: bytes) -> Image.Image:
 
 def _font(family: str, style: str, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(str(fonts.path(family, style)), size)
+
+
+def _family(where: str, text: str, family: str, style: str) -> str:
+    """0.23.0: a family that has every character of ``text``: ``family``, else Carlito (fonts.FALLBACK: Poppins has
+    no Greek, Cyrillic or arrows). A character no bundled font has is refused, as on the statement's cover: Pillow drew
+    a box for it (a title with ✓ or ★), and nobody was told."""
+    if not fonts.undrawable(text, family, style):
+        return family
+    missing = fonts.undrawable(text, fonts.FALLBACK, style)
+    if missing:
+        raise ImageError(
+            f"the {where} has characters Ember's fonts can't draw (a box instead of each): {' '.join(missing[:8])};"
+            " use other characters"
+        )
+    return fonts.FALLBACK
 
 
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, width: int) -> list[str]:
@@ -354,6 +355,9 @@ def listing(
         raise ImageError(f"shape must be one of {', '.join(SHAPES)}")
     if not 1 <= len(pages) <= 3:
         raise ImageError("show one to three pages")
+    title_family = _family("title", title, "display", "B")
+    sub_family = _family("subtitle", subtitle, "sans", "")
+    badge_family = _family("badge", badge, "sans", "B")
     width, height = SHAPES[shape]
     accent_rgb: RGB = hex_rgb(accent) if accent else (44, 62, 80)
     bg: RGB = hex_rgb(background) if background else tint(accent_rgb, 0.88)
@@ -383,12 +387,12 @@ def listing(
     th = text_box[3] - text_box[1]
     start = int(th * (0.16 if shape == "landscape" else 0.3))
     while True:  # the largest title at which title, subtitle and badge fit their box together
-        title_font, title_lines = _fit(draw, title, "display", "B", start, tw, 4)
+        title_font, title_lines = _fit(draw, title, title_family, "B", start, tw, 4)
         sub_font, sub_lines = (None, [])
         if subtitle:
             parts = max(4, len([p for p in subtitle.split("\n") if p.strip()]))
-            sub_font, sub_lines = _fit(draw, subtitle, "sans", "", int(title_font.size * 0.42), tw, parts)
-        badge_font = _font("sans", "B", max(28, int(title_font.size * 0.33))) if badge else None
+            sub_font, sub_lines = _fit(draw, subtitle, sub_family, "", int(title_font.size * 0.42), tw, parts)
+        badge_font = _font(badge_family, "B", max(28, int(title_font.size * 0.33))) if badge else None
         heights = [title_font.size * 1.12 * len(title_lines)]
         if sub_lines and sub_font is not None:
             heights.append(sub_font.size * 0.6 + sub_font.size * 1.3 * len(sub_lines))
@@ -440,13 +444,16 @@ def text_photo(
     badge."""
     if shape not in SHAPES:
         raise ImageError(f"shape must be one of {', '.join(SHAPES)}")
+    title_family = _family("title", title, "display", "B")
+    lines_family = _family("lines", "".join(lines), "sans", "")
+    badge_family = _family("badge", badge, "sans", "B")
     width, height = SHAPES[shape]
     accent_rgb, bg, ink = _colours(background, accent)
     canvas = Image.new("RGB", (width, height), bg)
     draw = ImageDraw.Draw(canvas)
     margin = int(min(width, height) * 0.08)
     box_w = width - 2 * margin
-    title_font, title_lines = _fit(draw, title, "display", "B", int(height * 0.1), box_w, 3)
+    title_font, title_lines = _fit(draw, title, title_family, "B", int(height * 0.1), box_w, 3)
     y = margin
     for line in title_lines:
         draw.text((margin, y), line, font=title_font, fill=accent_rgb if _visible(accent_rgb, bg) else ink)
@@ -456,7 +463,7 @@ def text_photo(
     y += int(title_font.size * 0.6)
     room = height - margin - y - (int(height * 0.12) if badge else 0)
     size = int(min(height * 0.06, room / max(1, len(lines)) / 1.5))
-    font = _font("sans", "", max(24, size))
+    font = _font(lines_family, "", max(24, size))
     bullet = max(8, font.size // 3)
     for line in lines:
         shown = _wrap(draw, line, font, box_w - 2 * bullet)[:2]
@@ -467,7 +474,7 @@ def text_photo(
             y += int(font.size * 1.25)
         y += int(font.size * 0.25)
     if badge:
-        badge_font = _font("sans", "B", max(28, int(height * 0.035)))
+        badge_font = _font(badge_family, "B", max(28, int(height * 0.035)))
         pad_x, pad_y = int(badge_font.size * 0.8), int(badge_font.size * 0.45)
         text_w = draw.textlength(badge, font=badge_font)
         box = (margin, height - margin - badge_font.size - 2 * pad_y, int(margin + text_w + 2 * pad_x), height - margin)
@@ -515,8 +522,9 @@ def fitted(data: bytes, width: int, height: int) -> Fitted:
     mark = str(image.info.get(MARK, "")) if image.format == "PNG" else ""
     source = image.size
     kept = centre_part(image.width, image.height, width, height)
-    # the kept part only, without cutting it out first (transparency is dropped: a print has none)
-    resized = _decoded(lambda: image.convert("RGB").resize((width, height), Image.Resampling.LANCZOS, box=kept))
+    # the kept part only, without cutting it out first; 0.23.0: on white where it is transparent (it was black)
+    flat = _flattened(data)
+    resized = _decoded(lambda: flat.resize((width, height), Image.Resampling.LANCZOS, box=kept))
     info = PngImagePlugin.PngInfo()
     if mark:
         info.add_text(MARK, mark)
@@ -555,15 +563,20 @@ def within(data: bytes, max_bytes: int, longest: int) -> Sized:
     raise ImageError(f"no JPEG of it fits in {max_bytes:,} bytes")
 
 
-def _flattened(data: bytes, longest: int) -> Image.Image:
-    """A picture no wider or higher than ``longest``, in RGB, on white where it was transparent."""
+def _flattened(data: bytes, longest: int | None = None) -> Image.Image:
+    """A picture (no wider or higher than ``longest``, if given), in RGB, on white where it was transparent: what a
+    buyer sees of it, and what paper shows where a print has no ink. A JPEG is decoded at 1/2 to 1/8 of its size where
+    that is enough (0.15.0). 0.23.0: every picture Ember's code decodes; converted to RGB, a transparent part turned
+    black in print files and listing photos."""
     image = _checked(data)
 
     def reduce() -> Image.Image:
-        image.draft("RGB", (longest, longest))
+        if longest:
+            image.draft("RGB", (longest, longest))
         clear = image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info
         shown = image.convert("RGBA" if clear else "RGB")
-        shown.thumbnail((longest, longest), Image.Resampling.LANCZOS, reducing_gap=3.0)
+        if longest:
+            shown.thumbnail((longest, longest), Image.Resampling.LANCZOS, reducing_gap=3.0)
         if not clear:
             return shown
         white = Image.new("RGB", shown.size, (255, 255, 255))
@@ -571,6 +584,11 @@ def _flattened(data: bytes, longest: int) -> Image.Image:
         return white
 
     return _decoded(reduce)
+
+
+def _title_height(font: ImageFont.FreeTypeFont, lines: list[str]) -> int:
+    """A poster's title from its top to its rule: its lines and the space under them."""
+    return int(font.size * 1.08) * len(lines) + int(font.size * 0.25)
 
 
 def poster_size(shape: str) -> tuple[int, int]:
@@ -591,26 +609,37 @@ def poster(
     proportions (drawn by Ember's code: a simple poster needs no workshop run)."""
     if shape not in SHAPES:
         raise ImageError(f"shape must be one of {', '.join(SHAPES)}")
+    title_family = _family("title", title, "display", "B")
+    lines_family = _family("lines", "".join(lines), "sans", "")
     width, height = poster_size(shape)
     accent_rgb, bg, ink = _colours(background, accent)
     canvas = Image.new("RGB", (width, height), bg)
     draw = ImageDraw.Draw(canvas)
     margin = int(min(width, height) * 0.09)
     box_w = width - 2 * margin
-    title_font, title_lines = _fit(draw, title, "display", "B", int(height * 0.16), box_w, 5)
+    font = _font(lines_family, "", max(24, int(height * 0.028)))
+    shown = [part for line in lines for part in _wrap(draw, line, font, box_w)][:12]
+    leading = int(font.size * 1.35)
+    bottom = height - margin - leading * len(shown)  # where the lines begin
+    rule = max(8, height // 120)
+    # 0.23.0: the title, its rule and a line's space above the lines fit above them (a long title ran into them)
+    room = bottom - margin - rule - (leading if shown else 0)
+    start = int(height * 0.16)
+    while True:
+        title_font, title_lines = _fit(draw, title, title_family, "B", start, box_w, 5)
+        if _title_height(title_font, title_lines) <= room or title_font.size <= 24:
+            break
+        start = int(title_font.size * 0.92)
     y = margin
     for line in title_lines:
         draw.text((margin, y), line, font=title_font, fill=accent_rgb if _visible(accent_rgb, bg) else ink)
         y += int(title_font.size * 1.08)
     y += int(title_font.size * 0.25)
-    draw.rectangle([margin, y, margin + int(box_w * 0.3), y + max(8, height // 120)], fill=accent_rgb)
-    if lines:
-        font = _font("sans", "", max(24, int(height * 0.028)))
-        shown = [part for line in lines for part in _wrap(draw, line, font, box_w)][:12]
-        y = height - margin - int(font.size * 1.35) * len(shown)
-        for part in shown:
-            draw.text((margin, y), part, font=font, fill=ink)
-            y += int(font.size * 1.35)
+    draw.rectangle([margin, y, margin + int(box_w * 0.3), y + rule], fill=accent_rgb)
+    y = bottom
+    for part in shown:
+        draw.text((margin, y), part, font=font, fill=ink)
+        y += leading
     out = io.BytesIO()
     canvas.save(out, "PNG", compress_level=6)  # optimize would take seconds at this size
     return out.getvalue()

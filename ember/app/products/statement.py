@@ -20,18 +20,24 @@ Excel's ROUND does), then works out the formulas of the file it made with the pr
 (``sheets.values``). The file is kept only when every number it shows equals Ember's own, and the cover shows those
 same numbers; otherwise nothing is kept (``Mismatch``), so a cover can't show other numbers than its file.
 
-Only the keys that need no meter readings: costs by consumption (heating and hot water under the Heizkostenverordnung,
-water with meters) are not part of it. Ember's code doesn't judge which costs may be passed on (§ 2 BetrKV).
+0.23.0: a tenant who moved in or out during the period pays for their days only (``from`` and ``to``, within the
+period's dates): each share is of Wohnfläche, Personen or Einheiten times days, and the tenants' bases are those
+together (a flat with two tenants in turn counts once). A cost by consumption (heating and hot water under the
+Heizkostenverordnung, from the Messdienst's statement) is passed on with the key ``direct``: each tenant's amount as
+given, on the sheet Einzelbeträge. Ember's code reads no meters, and doesn't judge which costs may be passed on (§ 2
+BetrKV).
 """
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from datetime import date
 from fractions import Fraction
 from typing import Any
 
@@ -53,24 +59,30 @@ MAX_AREA = 100_000  # m²
 MAX_PERSONS = 999
 MAX_UNITS = 999
 MAX_EUROS = 10_000_000
-KEYS = {"area": "Wohnfläche", "persons": "Personen", "units": "Einheiten"}
+KEYS = {"area": "Wohnfläche", "persons": "Personen", "units": "Einheiten", "direct": "Direkt"}
+SHARED = ("area", "persons", "units")  # the keys by shares (0.23.0: "direct" takes each tenant's amount as given)
+MAX_DAYS = 366  # a period of at most 12 months (§ 556 Abs. 3 BGB)
 LANGUAGE = "de-DE"  # the workbook's language: make_image draws its sheets in German notation (sheets.picture)
 COVER_SIZE = (3000, 2250)  # Etsy's 4:3, as make_image's landscape photos
 
 NOTES, TENANTS, COSTS, SPLIT, LETTER = "Anleitung", "Mieter", "Kosten", "Verteilung", "Abrechnung"
+DIRECT = "Einzelbeträge"  # 0.23.0: each tenant's amount of the costs by key "Direkt"
 FIRST = 4  # Mieter, Kosten and Verteilung: a title in row 1, the header in row 3, the data from row 4
 HEADER = 3
-# Abrechnung: the tenant chosen, what the shares are of, the result first, then a line for each cost
-L_ADDRESS, L_PERIOD, L_TENANT, L_AREA, L_PERSONS, L_UNITS = 3, 4, 5, 6, 7, 8
-L_COSTS, L_PREPAID, L_RESULT = 10, 11, 12
-L_HEADER, L_FIRST = 14, 15
+# Abrechnung: the tenant chosen, what the shares are of (0.23.0: and their days), the result first, then a line for
+# each cost
+L_ADDRESS, L_PERIOD, L_TENANT, L_AREA, L_PERSONS, L_UNITS, L_DAYS = 3, 4, 5, 6, 7, 8, 9
+L_COSTS, L_PREPAID, L_RESULT = 11, 12, 13
+L_HEADER, L_FIRST = 15, 16
 
 # Number formats as Excel writes them; German Excel shows 1.234,56 € and 31,97%.
 EUR = sheets.FORMATS["eur"]
 SALDO = '#,##0.00 "€";-#,##0.00 "€"'  # a Guthaben is negative, but no loss: not red
 AREA = sheets.FORMATS["number"]
 COUNT = sheets.FORMATS["integer"]
+BASE = AREA  # 0.23.0: Personen and Einheiten by time have decimals (2 tenants for 4 and 8 months are 1,00 Einheiten)
 SHARE = "0.00%"
+DAY = sheets.FORMATS["date_de"]
 TEXT = ""
 
 TENANT_COLUMNS = (  # Mieter: (header, width, format)
@@ -78,6 +90,9 @@ TENANT_COLUMNS = (  # Mieter: (header, width, format)
     ("Wohnfläche (m²)", 13, AREA),
     ("Personen", 10, COUNT),
     ("Vorauszahlungen (€)", 15, EUR),
+    ("Von", 12, DAY),  # 0.23.0: the tenant's days of the period, when they moved in or out during it
+    ("Bis", 12, DAY),
+    ("Tage", 8, COUNT),
     ("Anteil Wohnfläche", 12, SHARE),
     ("Anteil Personen", 12, SHARE),
     ("Anteil Einheiten", 12, SHARE),
@@ -85,7 +100,9 @@ TENANT_COLUMNS = (  # Mieter: (header, width, format)
     ("Saldo (€)", 14, SALDO),
     ("Ergebnis", 14, TEXT),
 )
-SHARE_COLUMN = {"area": 5, "persons": 6, "units": 7}  # Mieter's share columns, by key
+C_FROM, C_TO, C_DAYS = 5, 6, 7  # Mieter's columns (from 1)
+SHARE_COLUMN = {"area": 8, "persons": 9, "units": 10}  # Mieter's share columns, by key
+C_PAYS, C_SALDO, C_RESULT = 11, 12, 13
 RESULT_WORDS = ("Nachzahlung", "Guthaben", "ausgeglichen")  # Saldo above, below or at 0
 LETTER_RESULTS = ("Ihre Nachzahlung", "Ihr Guthaben", "Ausgeglichen")
 NACHZAHLUNG: RGB = (176, 32, 24)  # the cover's colours for the result (both readable on white and the zebra rows)
@@ -108,6 +125,8 @@ class Tenant:
     area: Fraction
     persons: int
     prepaid: Fraction
+    begins: date | None = None  # 0.23.0: when they moved in, if during the period (from)
+    ends: date | None = None  # and out (to)
 
 
 @dataclass(frozen=True)
@@ -115,6 +134,8 @@ class Cost:
     name: str
     amount: Fraction
     key: str  # one of KEYS
+    # 0.23.0: key "direct": each tenant's amount, by name
+    parts: dict[str, Fraction] = dataclasses.field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -130,6 +151,32 @@ class Spec:
     tenant_rows: int
     cost_rows: int
     notes: tuple[str, ...]
+    start: date | None = None  # 0.23.0: the period's first and last day, when ``period`` names them
+    end: date | None = None
+
+    @property
+    def days(self) -> int | None:
+        """The period's days, when its dates are known."""
+        return (self.end - self.start).days + 1 if self.start and self.end else None
+
+    @property
+    def timed(self) -> bool:
+        """Whether a tenant moved in or out during the period."""
+        return any(t.begins or t.ends for t in self.tenants)
+
+
+def tenant_days(tenant: Tenant, start: date | None, end: date | None) -> int | None:
+    """0.23.0: a tenant's days of the period: from the day they moved in to the day they moved out, within it (None
+    without the period's dates)."""
+    if start is None or end is None:
+        return None
+    return ((tenant.ends or end) - (tenant.begins or start)).days + 1
+
+
+def time_share(tenant: Tenant, start: date | None, end: date | None) -> Fraction:
+    """0.23.0: the part of the period a tenant pays for: their days of its days (all of it without its dates)."""
+    days = tenant_days(tenant, start, end)
+    return Fraction(days, (end - start).days + 1) if days is not None and start and end else Fraction(1)
 
 
 # --- reading the spec ---
@@ -197,10 +244,35 @@ def _name(where: str, value: Any, taken: set[str]) -> str:
 
 def _drawable(where: str, text: str, family: str, styles: str = "B") -> None:
     """Refuse a text the cover can't draw with its fonts (a box instead of a character)."""
-    have = set.intersection(*(set(fonts.codepoints(family, style)) for style in {"", styles}))
-    missing = sorted({char for char in text if ord(char) not in have and not char.isspace()})
+    missing = fonts.undrawable(text, family, "", styles)
     if missing:
         raise StatementError(f"{where} has characters the cover's fonts can't draw: {' '.join(missing[:8])}")
+
+
+_DATE = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b|\b(\d{4})-(\d{2})-(\d{2})\b")
+
+
+def _day(where: str, value: Any) -> date:
+    """0.23.0: a date of the spec: TT.MM.JJJJ (or JJJJ-MM-TT)."""
+    found = _DATE.fullmatch(value.strip()) if isinstance(value, str) else None
+    if found is None:
+        raise StatementError(f"{where} must be a date like 01.05.2025")
+    day, month, year = (found[1], found[2], found[3]) if found[1] else (found[6], found[5], found[4])
+    try:
+        return date(int(year), int(month), int(day))
+    except ValueError:
+        raise StatementError(f"{where} ({value}) is no day of the calendar") from None
+
+
+def _period(period: str) -> tuple[date, date] | tuple[None, None]:
+    """0.23.0: the first and last day ``period`` names ("01.01.2025 – 31.12.2025"), or none."""
+    found = list(_DATE.finditer(period))
+    if len(found) != 2:
+        return None, None
+    start, end = (_day("period", match[0]) for match in found)
+    if end < start or (end - start).days + 1 > MAX_DAYS:
+        raise StatementError(f"period ({period}) must run forward, and for at most 12 months (§ 556 BGB)")
+    return start, end
 
 
 def parse(text: str) -> Spec:
@@ -239,6 +311,7 @@ def parse(text: str) -> Spec:
     address = _text("address", top.get("address"), 80, required=False)
     _drawable("title", title, "display")
     _drawable("period and address", period + address, "sans", "")
+    start, end = _period(period)
 
     tenants_data = top.get("tenants")
     if not isinstance(tenants_data, list) or not 1 <= len(tenants_data) <= MAX_TENANT_ROWS:
@@ -247,15 +320,28 @@ def parse(text: str) -> Spec:
     tenants = []
     for i, item in enumerate(tenants_data):
         where = f"tenants[{i}]"
-        t = _keys(where, item, {"name", "area", "persons", "prepaid"})
+        t = _keys(where, item, {"name", "area", "persons", "prepaid", "from", "to"})
         name = _name(f"{where}.name", t.get("name"), taken)
         _drawable(f"{where}.name", name, font)
+        moved = {edge: _day(f"{where}.{edge}", t[edge]) for edge in ("from", "to") if t.get(edge) is not None}
+        if moved and (start is None or end is None):
+            raise StatementError(
+                f"{where}: from and to need the period's dates in period, like '01.01.2025 – 31.12.2025'"
+            )
+        if start is not None and end is not None and moved:
+            first, last = moved.get("from", start), moved.get("to", end)
+            if not start <= first <= last <= end:
+                raise StatementError(
+                    f"{where}: from and to must lie within the period ({start:%d.%m.%Y} – {end:%d.%m.%Y}), from first"
+                )
         tenants.append(
             Tenant(
                 name=name,
                 area=_number(f"{where}.area (Wohnfläche, m²)", t.get("area"), MAX_AREA, 2),
                 persons=int(_number(f"{where}.persons", t.get("persons"), MAX_PERSONS, 0)),
                 prepaid=_number(f"{where}.prepaid (Vorauszahlungen, €)", t.get("prepaid"), MAX_EUROS, 2),
+                begins=moved.get("from"),
+                ends=moved.get("to"),
             )
         )
     costs_data = top.get("costs")
@@ -264,21 +350,23 @@ def parse(text: str) -> Spec:
     costs = []
     for i, item in enumerate(costs_data):
         where = f"costs[{i}]"
-        c = _keys(where, item, {"name", "amount", "key"})
+        c = _keys(where, item, {"name", "amount", "key", "parts"})
         key = c.get("key")
         if key not in KEYS:
             raise StatementError(f"{where}.key must be {', '.join(KEYS)} ({', '.join(KEYS.values())})")
+        amount = _number(f"{where}.amount (€)", c.get("amount"), MAX_EUROS, 2)
         costs.append(
             Cost(
                 name=_text(f"{where}.name", c.get("name"), 60),
-                amount=_number(f"{where}.amount (€)", c.get("amount"), MAX_EUROS, 2),
+                amount=amount,
                 key=key,
+                parts=_parts(where, key, c.get("parts"), amount, [t.name for t in tenants]),
             )
         )
 
-    sums = _listed(tenants)
+    sums = _listed(tenants, start, end)
     building: dict[str, Fraction] = {}
-    given = _keys("building", top.get("building") or {}, set(KEYS))
+    given = _keys("building", top.get("building") or {}, set(SHARED))
     for key, limit, places in (("area", MAX_AREA, 2), ("persons", MAX_PERSONS, 0), ("units", MAX_UNITS, 0)):
         if given.get(key) is None:
             continue
@@ -289,7 +377,7 @@ def parse(text: str) -> Spec:
                 "whole building's, the tenants listed and any others"
             )
         building[key] = value
-    for key in KEYS:  # in KEYS' order: the same message every time
+    for key in SHARED:  # in KEYS' order: the same message every time
         if any(cost.key == key for cost in costs) and not building.get(key, sums[key]):
             raise StatementError(
                 f"costs by {key} ({KEYS[key]}) need tenants with a {KEYS[key]}: theirs add up to 0, so nobody would "
@@ -318,16 +406,41 @@ def parse(text: str) -> Spec:
         costs=tuple(costs),
         building=building,
         notes=tuple(_text(f"notes[{i}]", line, 500) for i, line in enumerate(notes)),
+        start=start,
+        end=end,
         **rows,
     )
 
 
-def _listed(tenants: Sequence[Tenant]) -> dict[str, Fraction]:
-    """The listed tenants' Wohnfläche, Personen and Einheiten together."""
+def _parts(where: str, key: str, given: Any, amount: Fraction, names: list[str]) -> dict[str, Fraction]:
+    """0.23.0: a cost by key "direct": each tenant's amount, by name (a tenant left out pays none of it); together at
+    most the cost (what is left isn't passed on: a vacant flat's heating, say)."""
+    if key != "direct":
+        if given is not None:
+            raise StatementError(f"{where}.parts is only for key direct (each tenant's amount as given)")
+        return {}
+    if not isinstance(given, dict) or not given:
+        raise StatementError(f'{where}.parts must name each tenant\'s amount: {{"{names[0]}": 512.40, ...}}')
+    parts = {}
+    for name, value in given.items():
+        if name not in names:
+            raise StatementError(f"{where}.parts: {name!r} is none of the tenants' names")
+        parts[name] = _number(f"{where}.parts[{name!r}] (€)", value, MAX_EUROS, 2)
+    if sum(parts.values()) > amount:
+        raise StatementError(
+            f"{where}.parts add up to {_plain(sum(parts.values()))} €, more than its amount ({_plain(amount)} €)"
+        )
+    return parts
+
+
+def _listed(tenants: Sequence[Tenant], start: date | None = None, end: date | None = None) -> dict[str, Fraction]:
+    """The listed tenants' Wohnfläche, Personen and Einheiten together; 0.23.0: each for their part of the period (a
+    flat with two tenants in turn counts once)."""
+    times = [time_share(t, start, end) for t in tenants]
     return {
-        "area": sum((t.area for t in tenants), Fraction(0)),
-        "persons": Fraction(sum(t.persons for t in tenants)),
-        "units": Fraction(len(tenants)),
+        "area": sum((t.area * time for t, time in zip(tenants, times, strict=True)), Fraction(0)),
+        "persons": sum((t.persons * time for t, time in zip(tenants, times, strict=True)), Fraction(0)),
+        "units": sum(times, Fraction(0)),
     }
 
 
@@ -354,6 +467,7 @@ class Share:
     parts: tuple[Fraction, ...]
     pays: Fraction
     saldo: Fraction
+    days: int | None = None  # 0.23.0: their days of the period (None without its dates)
 
     @property
     def outcome(self) -> int:
@@ -397,15 +511,22 @@ class Sums:
 
 
 def work_out(spec: Spec) -> Sums:
-    listed = _listed(spec.tenants)
-    bases = {key: spec.building.get(key, listed[key]) for key in KEYS}
+    listed = _listed(spec.tenants, spec.start, spec.end)
+    bases = {key: spec.building.get(key, listed[key]) for key in SHARED}
     shares = []
     for tenant in spec.tenants:
-        own = {"area": tenant.area, "persons": Fraction(tenant.persons), "units": Fraction(1)}
-        fractions = {key: own[key] / bases[key] if bases[key] else Fraction(0) for key in KEYS}
-        parts = tuple(cent(cost.amount * fractions[cost.key]) for cost in spec.costs)
+        time = time_share(tenant, spec.start, spec.end)  # 0.23.0: their days of the period's
+        own = {"area": tenant.area * time, "persons": tenant.persons * time, "units": time}
+        fractions = {key: own[key] / bases[key] if bases[key] else Fraction(0) for key in SHARED}
+        parts = tuple(
+            cost.parts.get(tenant.name, Fraction(0))
+            if cost.key == "direct"
+            else cent(cost.amount * fractions[cost.key])
+            for cost in spec.costs
+        )
         pays = sum(parts, Fraction(0))
-        shares.append(Share(tenant, fractions, parts, pays, pays - tenant.prepaid))
+        days = tenant_days(tenant, spec.start, spec.end)
+        shares.append(Share(tenant, fractions, parts, pays, pays - tenant.prepaid, days))
     rests = tuple(
         cost.amount - sum((s.parts[index] for s in shares), Fraction(0)) for index, cost in enumerate(spec.costs)
     )
@@ -448,6 +569,11 @@ class Layout:
     def base(self) -> int:
         """Mieter's row of the bases the shares are of: the larger of the two rows above."""
         return self.listed + 2
+
+    @property
+    def period(self) -> int:
+        """0.23.0: Mieter's row of the period's first and last day and its days (under its header, below the bases)."""
+        return self.base + 3
 
     def cost(self, index: int) -> int:
         return FIRST + index
@@ -562,6 +688,7 @@ def build(spec: Spec, layout: Layout) -> bytes:
             cell.alignment = Alignment(wrap_text=True, vertical="top")
     _tenant_sheet(book.create_sheet(TENANTS), spec, layout, style)
     _cost_sheet(book.create_sheet(COSTS), spec, layout, style)
+    _direct_sheet(book.create_sheet(DIRECT), spec, layout, style)
     _split_sheet(book.create_sheet(SPLIT), spec, layout, style)
     _letter_sheet(book.create_sheet(LETTER), spec, layout, style)
     book.properties.title = spec.title
@@ -578,8 +705,9 @@ def _tenant_sheet(ws: Any, spec: Spec, layout: Layout, style: _Style) -> None:
     style.title(ws, spec.title)
     style.header(ws, HEADER, [title for title, _, _ in TENANT_COLUMNS])
     style.widths(ws, [width for _, width, _ in TENANT_COLUMNS])
-    first, last, total, base = FIRST, layout.tenant_last, layout.tenant_sum, layout.base
+    first, last, total, base, period = FIRST, layout.tenant_last, layout.tenant_sum, layout.base, layout.period
     names = f"$A${first}:$A${last}"
+    days = f"$D${period}"  # the period's days ("" without its dates: then each tenant pays for all of it)
     for index in range(layout.tenants):
         row = layout.tenant(index)
         tenant = spec.tenants[index] if index < len(spec.tenants) else None
@@ -587,37 +715,52 @@ def _tenant_sheet(ws: Any, spec: Spec, layout: Layout, style: _Style) -> None:
         style.put(ws, row, 2, float(tenant.area) if tenant else None, AREA, fill=True)
         style.put(ws, row, 3, tenant.persons if tenant else None, COUNT, fill=True)
         style.put(ws, row, 4, float(tenant.prepaid) if tenant else None, EUR, fill=True)
+        style.put(ws, row, C_FROM, tenant.begins if tenant else None, DAY, fill=True)
+        style.put(ws, row, C_TO, tenant.ends if tenant else None, DAY, fill=True)
         named = f'IF($A{row}="","",'
-        style.put(ws, row, 5, f"={named}IFERROR($B{row}/$B${base},0))", SHARE)
-        style.put(ws, row, 6, f"={named}IFERROR($C{row}/$C${base},0))", SHARE)
-        style.put(ws, row, 7, f"={named}IFERROR(1/$D${base},0))", SHARE)
-        style.put(ws, row, 8, f"={named}{SPLIT}!{_col(layout.column(index))}${layout.cost_sum})", EUR)
-        style.put(ws, row, 9, f"={named}ROUND($H{row}-$D{row},2))", SALDO)
+        moved_in, moved_out = f'IF($E{row}="",$B${period},$E{row})', f'IF($F{row}="",$C${period},$F{row})'
+        style.put(ws, row, C_DAYS, f'={named}IF({days}="","",MAX(0,{moved_out}-{moved_in}+1)))', COUNT)
+        time = f'IF($G{row}="",1,$G{row}/{days})'  # their part of the period
+        style.put(ws, row, SHARE_COLUMN["area"], f"={named}IFERROR($B{row}*{time}/$B${base},0))", SHARE)
+        style.put(ws, row, SHARE_COLUMN["persons"], f"={named}IFERROR($C{row}*{time}/$C${base},0))", SHARE)
+        style.put(ws, row, SHARE_COLUMN["units"], f"={named}IFERROR({time}/$D${base},0))", SHARE)
+        style.put(ws, row, C_PAYS, f"={named}{SPLIT}!{_col(layout.column(index))}${layout.cost_sum})", EUR)
+        style.put(ws, row, C_SALDO, f"={named}ROUND($K{row}-$D{row},2))", SALDO)
         nachzahlung, guthaben, even = RESULT_WORDS
-        style.put(ws, row, 10, f'={named}IF($I{row}>0,"{nachzahlung}",IF($I{row}<0,"{guthaben}","{even}")))')
+        style.put(ws, row, C_RESULT, f'={named}IF($L{row}>0,"{nachzahlung}",IF($L{row}<0,"{guthaben}","{even}")))')
     style.total(ws, total, 1, "Summe")
-    for column in (2, 3, 5, 6, 7):
+    for column in (2, 3, *SHARE_COLUMN.values()):
         letter = _col(column)
         style.total(ws, total, column, f"=SUM({letter}{first}:{letter}{last})", TENANT_COLUMNS[column - 1][2])
-    for column in (4, 8, 9):
+    for column in (4, C_PAYS, C_SALDO):
         letter = _col(column)
         style.total(ws, total, column, f"=ROUND(SUM({letter}{first}:{letter}{last}),2)", TENANT_COLUMNS[column - 1][2])
-    # What the shares are of: the tenants listed, or the whole building's numbers when it has more (vacant flats, the
-    # owner's own, tenants without a statement).
+    # What the shares are of: the tenants listed (0.23.0: each for their days of the period), or the whole building's
+    # numbers when it has more (vacant flats, the owner's own, tenants without a statement).
     style.header(ws, layout.listed - 1, ("Die Anteile sind bezogen auf", "Wohnfläche (m²)", "Personen", "Einheiten"))
-    style.put(ws, layout.listed, 1, "Mieter oben zusammen")
-    style.put(ws, layout.listed, 2, f"=$B${total}", AREA)
-    style.put(ws, layout.listed, 3, f"=$C${total}", COUNT)
-    style.put(ws, layout.listed, 4, f"=COUNTA({names})", COUNT)
+    style.put(ws, layout.listed, 1, "Mieter oben zusammen (je nach Tagen)")
+    timed = f"$G${first}:$G${last}"
+    for column in (2, 3):
+        letter = _col(column)
+        plain = f"${letter}${total}"
+        weighted = f"SUMPRODUCT(${letter}${first}:${letter}${last},{timed})/{days}"
+        style.put(ws, layout.listed, column, f'=IF({days}="",{plain},{weighted})', BASE)
+    style.put(ws, layout.listed, 4, f'=IF({days}="",COUNTA({names}),SUM({timed})/{days})', BASE)
     style.put(ws, layout.building, 1, "Ganzes Objekt (falls größer)")
     for column, key, fmt in ((2, "area", AREA), (3, "persons", COUNT), (4, "units", COUNT)):
         value = spec.building.get(key)
         number = None if value is None else (float(value) if key == "area" else int(value))
         style.put(ws, layout.building, column, number, fmt, fill=True)
     style.total(ws, base, 1, "Umlagebasis")
-    for column, fmt in ((2, AREA), (3, COUNT), (4, COUNT)):
+    for column in (2, 3, 4):
         letter = _col(column)
-        style.total(ws, base, column, f"=MAX(${letter}${layout.listed},${letter}${layout.building})", fmt)
+        style.total(ws, base, column, f"=MAX(${letter}${layout.listed},${letter}${layout.building})", BASE)
+    # 0.23.0: the period, for the tenants who moved in or out during it (Von and Bis above)
+    style.header(ws, period - 1, ("Abrechnungszeitraum", "Von", "Bis", "Tage"))
+    style.put(ws, period, 1, "Zeitraum")
+    style.put(ws, period, 2, spec.start, DAY, fill=True)
+    style.put(ws, period, 3, spec.end, DAY, fill=True)
+    style.put(ws, period, 4, f'=IF($B${period}="","",IF($C${period}="","",$C${period}-$B${period}+1))', COUNT)
     ws.freeze_panes = f"B{FIRST}"
     _print(ws, landscape=True)
 
@@ -650,37 +793,71 @@ def _cost_sheet(ws: Any, spec: Spec, layout: Layout, style: _Style) -> None:
         row = layout.key_row(key)
         style.put(ws, row, 1, label)
         style.put(ws, row, 2, f'=ROUND(SUMIF($C${first}:$C${last},"{label}",$B${first}:$B${last}),2)', EUR)
-    keyed = f"$B${layout.key_row('area')}:$B${layout.key_row('units')}"
+    keyed = f"$B${layout.key_row(next(iter(KEYS)))}:$B${layout.key_row(list(KEYS)[-1])}"
     style.total(ws, layout.keyless, 1, "Ohne gültigen Umlageschlüssel (wird nicht verteilt)")
     style.total(ws, layout.keyless, 2, f"=ROUND($B${total}-SUM({keyed}),2)", EUR)
     ws.freeze_panes = f"A{FIRST}"
     _print(ws, landscape=False)
 
 
-def _split_sheet(ws: Any, spec: Spec, layout: Layout, style: _Style) -> None:
-    style.title(ws, "Verteilung der Kosten auf die Mieter")
-    heads = ["Kostenart", "Betrag (€)", "Umlageschlüssel"]
-    heads += [
-        f'=IF({TENANTS}!$A${layout.tenant(i)}="","",{TENANTS}!$A${layout.tenant(i)})' for i in range(layout.tenants)
-    ]
-    heads.append("Nicht umgelegt (€)")
-    style.header(ws, HEADER, heads)
-    style.widths(ws, (30, 14, 16, *([15] * layout.tenants), 15))
-    first, last = FIRST, layout.cost_last
-    left, right = _col(layout.column(0)), _col(layout.column(layout.tenants - 1))
+def _mirror(ws: Any, layout: Layout, style: _Style) -> None:
+    """Verteilung's and Einzelbeträge's first columns: each cost's name, amount and key as on Kosten."""
     for index in range(layout.costs):
         row = layout.cost(index)
         for column in (1, 2, 3):
             letter = _col(column)
             fmt = EUR if column == 2 else TEXT
             style.put(ws, row, column, f'=IF({COSTS}!${letter}{row}="","",{COSTS}!${letter}{row})', fmt)
+
+
+def _tenant_heads(layout: Layout) -> list[str]:
+    """Verteilung's and Einzelbeträge's tenant columns: the names on Mieter."""
+    return [
+        f'=IF({TENANTS}!$A${layout.tenant(i)}="","",{TENANTS}!$A${layout.tenant(i)})' for i in range(layout.tenants)
+    ]
+
+
+def _direct_sheet(ws: Any, spec: Spec, layout: Layout, style: _Style) -> None:
+    """0.23.0: each tenant's amount of the costs by key Direkt (heating and hot water from the Messdienst's statement,
+    say), to type in: Verteilung takes it as it is. Its rows are Kosten's."""
+    style.title(ws, "Einzelbeträge: Kosten mit Umlageschlüssel Direkt (z. B. laut Heizkostenabrechnung)")
+    style.header(ws, HEADER, ["Kostenart", "Betrag (€)", "Umlageschlüssel", *_tenant_heads(layout), "Summe (€)"])
+    style.widths(ws, (30, 14, 16, *([15] * layout.tenants), 15))
+    _mirror(ws, layout, style)
+    left, right = _col(layout.column(0)), _col(layout.column(layout.tenants - 1))
+    for index in range(layout.costs):
+        row = layout.cost(index)
+        cost = spec.costs[index] if index < len(spec.costs) else None
         for tenant in range(layout.tenants):
-            at = layout.tenant(tenant)
+            name = spec.tenants[tenant].name if tenant < len(spec.tenants) else ""
+            part = cost.parts.get(name) if cost is not None else None
+            style.put(ws, row, layout.column(tenant), None if part is None else float(part), EUR, fill=True)
+        together = f"ROUND(SUM(${left}{row}:${right}{row}),2)"
+        style.put(ws, row, layout.rest, f'=IF($C{row}="{KEYS["direct"]}",{together},"")', EUR)
+    ws.freeze_panes = f"D{FIRST}"
+    _print(ws, landscape=True)
+
+
+def _split_sheet(ws: Any, spec: Spec, layout: Layout, style: _Style) -> None:
+    style.title(ws, "Verteilung der Kosten auf die Mieter")
+    style.header(
+        ws, HEADER, ["Kostenart", "Betrag (€)", "Umlageschlüssel", *_tenant_heads(layout), "Nicht umgelegt (€)"]
+    )
+    style.widths(ws, (30, 14, 16, *([15] * layout.tenants), 15))
+    first, last = FIRST, layout.cost_last
+    left, right = _col(layout.column(0)), _col(layout.column(layout.tenants - 1))
+    _mirror(ws, layout, style)
+    for index in range(layout.costs):
+        row = layout.cost(index)
+        for tenant in range(layout.tenants):
+            at, column = layout.tenant(tenant), _col(layout.column(tenant))
             share = "0"
-            for key, label in reversed(KEYS.items()):
-                share = f'IF($C{row}="{label}",{TENANTS}!${_col(SHARE_COLUMN[key])}${at},{share})'
-            part = f'=IF($B{row}="","",IF({TENANTS}!$A${at}="","",ROUND($B{row}*{share},2)))'
-            style.put(ws, row, layout.column(tenant), part, EUR)
+            for key in reversed(SHARED):
+                share = f'IF($C{row}="{KEYS[key]}",{TENANTS}!${_col(SHARE_COLUMN[key])}${at},{share})'
+            # 0.23.0: a cost by key Direkt: the tenant's amount on Einzelbeträge, as it is
+            given = f"ROUND('{DIRECT}'!{column}{row},2)"
+            part = f'IF($C{row}="{KEYS["direct"]}",{given},ROUND($B{row}*{share},2))'
+            style.put(ws, row, layout.column(tenant), f'=IF($B{row}="","",IF({TENANTS}!$A${at}="","",{part}))', EUR)
         rest = f'=IF($B{row}="","",ROUND($B{row}-SUM(${left}{row}:${right}{row}),2))'
         style.put(ws, row, layout.rest, rest, EUR)
     total = layout.cost_sum
@@ -727,7 +904,13 @@ def _letter_sheet(ws: Any, spec: Spec, layout: Layout, style: _Style) -> None:
         style.put(ws, row, 1, label)
         style.put(ws, row, 2, value, fmt)
         style.put(ws, row, 3, "von")
-        style.put(ws, row, 4, total, fmt)
+        style.put(ws, row, 4, total, BASE)
+    # 0.23.0: their days of the period's (nothing without the period's dates: then they pay for all of it)
+    period = f"{TENANTS}!$D${layout.period}"
+    style.put(ws, L_DAYS, 1, "Tage im Abrechnungszeitraum")
+    style.put(ws, L_DAYS, 2, f'=IF({period}="","",{of(_col(C_DAYS))})', COUNT)
+    style.put(ws, L_DAYS, 3, "von")
+    style.put(ws, L_DAYS, 4, f'=IF({period}="","",{period})', COUNT)
     saldo = f"ROUND($B${L_COSTS}-$B${L_PREPAID},2)"
     owes, owed, even = LETTER_RESULTS
     style.put(ws, L_COSTS, 1, "Ihre Kosten")
@@ -742,9 +925,13 @@ def _letter_sheet(ws: Any, spec: Spec, layout: Layout, style: _Style) -> None:
         line, row = layout.line(index), layout.cost(index)
         for column, fmt in ((1, TEXT), (2, EUR), (3, TEXT)):
             style.put(ws, line, column, f"={SPLIT}!${_col(column)}{row}", fmt)
-        share = "0"  # the chosen tenant's share by the line's key: their number of the key's whole
+        # the chosen tenant's share by the line's key: their number of the key's whole, for their days (as on Mieter);
+        # by key Direkt (0.23.0) their amount of the cost
+        time = f'IF($D${L_DAYS}="",1,$B${L_DAYS}/$D${L_DAYS})'
+        share = "0"
         for key, at in reversed(((KEYS["area"], L_AREA), (KEYS["persons"], L_PERSONS), (KEYS["units"], L_UNITS))):
-            share = f'IF($C{line}="{key}",IFERROR($B${at}/$D${at},0),{share})'
+            share = f'IF($C{line}="{key}",IFERROR($B${at}*{time}/$D${at},0),{share})'
+        share = f'IF($C{line}="{KEYS["direct"]}",IFERROR($E{line}/$B{line},0),{share})'
         style.put(ws, line, 4, f'=IF($B{line}="","",{share})', SHARE)
         mine = f"SUMIF({SPLIT}!${left}${HEADER}:${right}${HEADER},$B${L_TENANT},{SPLIT}!${left}{row}:${right}{row})"
         style.put(ws, line, 5, f'=IF($B{line}="","",{mine})', EUR)
@@ -771,6 +958,7 @@ def expected(sums: Sums, layout: Layout) -> dict[str, Cells]:
     the first; the empty rows show nothing."""
     spec = sums.spec
     listed, costs = len(sums.shares), len(spec.costs)
+    period: Any = spec.days if spec.days is not None else ""
     tenants: Cells = {}
     for index in range(layout.tenants):
         row = layout.tenant(index)
@@ -781,30 +969,44 @@ def expected(sums: Sums, layout: Layout) -> dict[str, Cells]:
                 s.tenant.area,
                 s.tenant.persons,
                 s.tenant.prepaid,
-                *(s.shares[key] for key in KEYS),
+                s.tenant.begins,
+                s.tenant.ends,
+                "" if s.days is None else s.days,
+                *(s.shares[key] for key in SHARED),
                 s.pays,
                 s.saldo,
                 RESULT_WORDS[s.outcome],
             )
         else:
-            values = (None,) * 4 + ("",) * 6
+            values = (None,) * (C_TO) + ("",) * (len(TENANT_COLUMNS) - C_TO)
         for column, value in enumerate(values, start=1):
             tenants[(row, column)] = (value, TENANT_COLUMNS[column - 1][2])
-    together = {key: sum((s.shares[key] for s in sums.shares), Fraction(0)) for key in KEYS}
-    sums_row = (sums.listed["area"], sums.listed["persons"], sums.prepaid, *together.values(), sums.paid, sums.saldo)
-    for column, value in enumerate(sums_row, start=2):
+    together = {key: sum((s.shares[key] for s in sums.shares), Fraction(0)) for key in SHARED}
+    sums_row = {
+        2: sum((t.area for t in spec.tenants), Fraction(0)),
+        3: sum(t.persons for t in spec.tenants),
+        4: sums.prepaid,
+        **{SHARE_COLUMN[key]: value for key, value in together.items()},
+        C_PAYS: sums.paid,
+        C_SALDO: sums.saldo,
+    }
+    for column, value in sums_row.items():
         tenants[(layout.tenant_sum, column)] = (value, TENANT_COLUMNS[column - 1][2])
     for row, numbers in ((layout.listed, sums.listed), (layout.base, sums.bases)):
-        for column, key, fmt in ((2, "area", AREA), (3, "persons", COUNT), (4, "units", COUNT)):
-            tenants[(row, column)] = (numbers[key], fmt)
+        for column, key in ((2, "area"), (3, "persons"), (4, "units")):
+            tenants[(row, column)] = (numbers[key], BASE)
+    tenants[(layout.period, 2)] = (spec.start, DAY)
+    tenants[(layout.period, 3)] = (spec.end, DAY)
+    tenants[(layout.period, 4)] = (period, COUNT)
 
     cost_cells: Cells = {(layout.cost_sum, 2): (sums.costs, EUR), (layout.keyless, 2): (Fraction(0), EUR)}
     for key in KEYS:
         cost_cells[(layout.key_row(key), 2)] = (sums.by_key[key], EUR)
     split: Cells = {}
+    direct: Cells = {}
     for tenant in range(layout.tenants):
         name = sums.shares[tenant].tenant.name if tenant < listed else ""
-        split[(HEADER, layout.column(tenant))] = (name, TEXT)
+        split[(HEADER, layout.column(tenant))] = direct[(HEADER, layout.column(tenant))] = (name, TEXT)
         pays = sums.shares[tenant].pays if tenant < listed else ""
         split[(layout.cost_sum, layout.column(tenant))] = (pays, EUR)
     for index in range(layout.costs):
@@ -813,11 +1015,15 @@ def expected(sums: Sums, layout: Layout) -> dict[str, Cells]:
         inputs = (cost.name, cost.amount, KEYS[cost.key]) if cost else (None, None, None)
         for column, value, fmt in zip((1, 2, 3), inputs, (TEXT, EUR, TEXT), strict=True):
             cost_cells[(row, column)] = (value, fmt)
-            split[(row, column)] = (value if cost else "", fmt)
+            split[(row, column)] = direct[(row, column)] = (value if cost else "", fmt)
         for tenant in range(layout.tenants):
             part = sums.shares[tenant].parts[index] if cost and tenant < listed else ""
             split[(row, layout.column(tenant))] = (part, EUR)
+            name = sums.shares[tenant].tenant.name if tenant < listed else ""
+            direct[(row, layout.column(tenant))] = (cost.parts.get(name) if cost else None, EUR)
         split[(row, layout.rest)] = (sums.rests[index] if cost else "", EUR)
+        given = sum(cost.parts.values(), Fraction(0)) if cost and cost.key == "direct" else ""
+        direct[(row, layout.rest)] = (given, EUR)
     split[(layout.cost_sum, 2)] = (sums.costs, EUR)
     split[(layout.cost_sum, layout.rest)] = (sum(sums.rests, Fraction(0)), EUR)
 
@@ -825,11 +1031,13 @@ def expected(sums: Sums, layout: Layout) -> dict[str, Cells]:
     letter: Cells = {
         (L_TENANT, 2): (first.tenant.name, TEXT),
         (L_AREA, 2): (first.tenant.area, AREA),
-        (L_AREA, 4): (sums.bases["area"], AREA),
+        (L_AREA, 4): (sums.bases["area"], BASE),
         (L_PERSONS, 2): (first.tenant.persons, COUNT),
-        (L_PERSONS, 4): (sums.bases["persons"], COUNT),
+        (L_PERSONS, 4): (sums.bases["persons"], BASE),
         (L_UNITS, 2): (1, COUNT),
-        (L_UNITS, 4): (sums.bases["units"], COUNT),
+        (L_UNITS, 4): (sums.bases["units"], BASE),
+        (L_DAYS, 2): ("" if first.days is None else first.days, COUNT),
+        (L_DAYS, 4): (period, COUNT),
         (L_COSTS, 2): (first.pays, EUR),
         (L_PREPAID, 2): (first.tenant.prepaid, EUR),
         (L_RESULT, 1): (LETTER_RESULTS[first.outcome], TEXT),
@@ -839,12 +1047,15 @@ def expected(sums: Sums, layout: Layout) -> dict[str, Cells]:
     }
     for index in range(layout.costs):
         cost = spec.costs[index] if index < costs else None
-        line = (
-            (cost.name, cost.amount, KEYS[cost.key], first.shares[cost.key], first.parts[index]) if cost else ("",) * 5
-        )
+        line: tuple[Any, ...] = ("",) * 5
+        if cost is not None:
+            part = first.parts[index]
+            mine = (part / cost.amount if cost.amount else Fraction(0)) if cost.key == "direct" else None
+            share = first.shares[cost.key] if mine is None else mine
+            line = (cost.name, cost.amount, KEYS[cost.key], share, part)
         for column, (value, fmt) in enumerate(zip(line, (TEXT, EUR, TEXT, SHARE, EUR), strict=True), start=1):
             letter[(layout.line(index), column)] = (value, fmt)
-    return {TENANTS: tenants, COSTS: cost_cells, SPLIT: split, LETTER: letter}
+    return {TENANTS: tenants, COSTS: cost_cells, DIRECT: direct, SPLIT: split, LETTER: letter}
 
 
 def check(sums: Sums, layout: Layout, data: bytes) -> None:
@@ -890,6 +1101,8 @@ class _Table:
     row_h: int
     head_h: int
     rows: list[CoverRow]
+    left: frozenset[int] = frozenset()  # the columns of text (left-aligned, as Excel aligns text; numbers right)
+    results: frozenset[int] = frozenset()  # the columns a tenant's Nachzahlung or Guthaben colours
 
     @property
     def width(self) -> int:
@@ -898,9 +1111,6 @@ class _Table:
     @property
     def height(self) -> int:
         return self.head_h + self.row_h * len(self.rows)
-
-
-_LEFT = {0, 9}  # the cover's columns of text (left-aligned, as Excel aligns text; numbers right)
 
 
 def _font(family: str, style: str, size: int) -> ImageFont.FreeTypeFont:
@@ -925,7 +1135,13 @@ def _heads(draw: ImageDraw.ImageDraw, title: str, font: ImageFont.FreeTypeFont) 
 
 
 def _table(
-    draw: ImageDraw.ImageDraw, family: str, header: list[str], rows: list[CoverRow], size: int, room: int
+    draw: ImageDraw.ImageDraw,
+    family: str,
+    header: list[str],
+    rows: list[CoverRow],
+    size: int,
+    room: int,
+    columns: Sequence[int] = (),
 ) -> _Table:
     body, bold = _font(family, "", size), _font(family, "B", size)
     pad = round(size * 0.55)
@@ -941,7 +1157,9 @@ def _table(
     widths[0] = min(widths[0], round(room * 0.3))  # a long name is cut ("…"), not every column shrunk for it
     line_h = round(size * 1.22)
     head_h = max(len(lines) for lines in heads) * line_h + round(size * 0.9)
-    return _Table(widths, heads, size, round(size * 2.05), head_h, rows)
+    left = frozenset(i for i, column in enumerate(columns) if column in (1, C_RESULT))
+    results = frozenset(i for i, column in enumerate(columns) if column in (C_SALDO, C_RESULT))
+    return _Table(widths, heads, size, round(size * 2.05), head_h, rows, left, results)
 
 
 def _draw_table(draw: ImageDraw.ImageDraw, family: str, table: _Table, x: int, y: int, accent: RGB) -> None:
@@ -957,7 +1175,7 @@ def _draw_table(draw: ImageDraw.ImageDraw, family: str, table: _Table, x: int, y
         top = y + (table.head_h - line_h * len(lines)) / 2
         for line in lines:
             text = _cut(draw, line, bold, width - 2 * pad)
-            tx = left + pad if column in _LEFT else left + width - pad - draw.textlength(text, font=bold)
+            tx = left + pad if column in table.left else left + width - pad - draw.textlength(text, font=bold)
             draw.text((tx, top + _baseline(draw, bold, line_h)), text, font=bold, fill=on_accent)
             top += line_h
         left += width
@@ -973,10 +1191,10 @@ def _draw_table(draw: ImageDraw.ImageDraw, family: str, table: _Table, x: int, y
         left = x
         for column, (width, text) in enumerate(zip(table.widths, row.texts, strict=True)):
             fill = ink
-            if row.kind == "tenant" and column in (8, 9) and row.outcome != 2:
+            if row.kind == "tenant" and column in table.results and row.outcome != 2:
                 fill = NACHZAHLUNG if row.outcome == 0 else GUTHABEN
             text = _cut(draw, text, font, width - 2 * pad)
-            tx = left + pad if column in _LEFT else left + width - pad - draw.textlength(text, font=font)
+            tx = left + pad if column in table.left else left + width - pad - draw.textlength(text, font=font)
             draw.text((tx, y + _baseline(draw, font, table.row_h)), text, font=font, fill=fill)
             left += width
         y += table.row_h
@@ -990,37 +1208,44 @@ def _baseline(draw: ImageDraw.ImageDraw, font: ImageFont.FreeTypeFont, height: i
     return (height - (box[3] - box[1])) / 2 - box[1]
 
 
+def cover_columns(sums: Sums) -> list[int]:
+    """The Mieter sheet's columns the cover shows (from 1): all but the days, and (0.23.0) Von and Bis only when a
+    tenant moved in or out during the period."""
+    moved = [C_FROM, C_TO] if sums.spec.timed else []
+    return [1, 2, 3, 4, *moved, *SHARE_COLUMN.values(), C_PAYS, C_SALDO, C_RESULT]
+
+
 def cover_rows(sums: Sums, layout: Layout) -> list[CoverRow]:
     """The cover's table: the Mieter sheet's rows of the spec's tenants and their sum, cell for cell as German Excel
     shows them (the very texts ``check`` compared with the file), and, when the shares are of more than the tenants
     listed, the whole building's row (its numbers are the file's Umlagebasis and the costs' sum)."""
     cells = expected(sums, layout)[TENANTS]
+    columns = cover_columns(sums)
     rows = [
-        CoverRow([shown(*cells[(layout.tenant(i), c)]) for c in range(1, 11)], "tenant", s.outcome)
+        CoverRow([shown(*cells[(layout.tenant(i), c)]) for c in columns], "tenant", s.outcome)
         for i, s in enumerate(sums.shares)
     ]
-    rows.append(CoverRow(["Summe", *(shown(*cells[(layout.tenant_sum, c)]) for c in range(2, 10)), ""], "sum"))
+    # 0.23.0: when a flat had two tenants in turn, the sum of Wohnfläche and Personen counts it twice: the cover leaves
+    # them out (the shares and the money add up as they are; the file's bases count each tenant for their days)
+    plain = {2, 3} if sums.spec.timed else set()
+    total = [cells.get((layout.tenant_sum, c), ("", TEXT)) if c not in plain else ("", TEXT) for c in columns[1:-1]]
+    rows.append(CoverRow(["Summe", *(shown(*cell) for cell in total), ""], "sum"))
     if sums.whole_building:
         whole = shown(1, SHARE)
-        units = shown(sums.bases["units"], COUNT)
-        rows.append(
-            CoverRow(
-                [
-                    f"Ganzes Objekt ({units} Einheiten)",
-                    shown(sums.bases["area"], AREA),
-                    shown(sums.bases["persons"], COUNT),
-                    "",
-                    whole,
-                    whole,
-                    whole,
-                    shown(sums.costs, EUR),
-                    "",
-                    "",
-                ],
-                "building",
-            )
-        )
+        building = {
+            1: f"Ganzes Objekt ({_count(sums.bases['units'])} Einheiten)",
+            2: shown(sums.bases["area"], BASE),
+            3: shown(sums.bases["persons"], BASE),
+            **dict.fromkeys(SHARE_COLUMN.values(), whole),
+            C_PAYS: shown(sums.costs, EUR),
+        }
+        rows.append(CoverRow([building.get(c, "") for c in columns], "building"))
     return rows
+
+
+def _count(value: Fraction) -> str:
+    """Personen or Einheiten as German Excel would show them, without decimals when it has none."""
+    return shown(value, COUNT if value.denominator == 1 else BASE)
 
 
 def cover(sums: Sums, layout: Layout) -> bytes:
@@ -1043,10 +1268,11 @@ def cover(sums: Sums, layout: Layout) -> bytes:
     subline = "  ·  ".join(part for part in (spec.address, spec.period) if part)
     sub_font = _font("sans", "", max(32, round(size * 0.4)))
     head_h = round(size * 1.3) + (round(sub_font.size * 1.5) if subline else 0)
-    header = [title for title, _, _ in TENANT_COLUMNS]
+    columns = cover_columns(sums)
+    header = [TENANT_COLUMNS[column - 1][0] for column in columns]
     room_w, room_h = inner - 2 * pad, height - 2 * margin - head_h - gap - 2 * pad
     for table_size in range(60, 15, -2):
-        table = _table(draw, spec.font, header, rows, table_size, room_w)
+        table = _table(draw, spec.font, header, rows, table_size, room_w, columns)
         if table.width <= room_w and table.height <= room_h:
             break
     # A few tenants leave room below: taller rows fill some of it (up to 2.6 times the text), not a strip of table.
@@ -1084,7 +1310,7 @@ class Made:
 
     @property
     def sheet_names(self) -> list[str]:
-        return [*([NOTES] if self.sums.spec.notes else []), TENANTS, COSTS, SPLIT, LETTER]
+        return [*([NOTES] if self.sums.spec.notes else []), TENANTS, COSTS, DIRECT, SPLIT, LETTER]
 
 
 def make(text: str) -> Made:
@@ -1112,14 +1338,18 @@ def report(made: Made, output: str, picture: str, size: str) -> list[str]:
         "own sums, and the cover shows the same.",
     ]
     bases = (
-        f"{shown(sums.bases['area'], AREA)} m² Wohnfläche, {shown(sums.bases['persons'], COUNT)} Personen, "
-        f"{shown(sums.bases['units'], COUNT)} Einheiten"
+        f"{shown(sums.bases['area'], AREA)} m² Wohnfläche, {_count(sums.bases['persons'])} Personen, "
+        f"{_count(sums.bases['units'])} Einheiten"
     )
     of = "the whole building's" if sums.whole_building else "the tenants' together"
+    if spec.timed:  # 0.23.0
+        bases += " (each tenant for their days of the period)"
     by_key = ", ".join(f"by {KEYS[k]} {shown(v, EUR)}" for k, v in sums.by_key.items() if v)
     rest = sums.costs - sums.paid
     if rest > 0:
         why = "the building's other units, and cents from rounding" if sums.whole_building else "cents from rounding"
+        if any(c.key == "direct" and sum(c.parts.values()) < c.amount for c in spec.costs):
+            why += "; of the costs by Direkt, what the tenants' amounts leave"
         left = f": {shown(rest, EUR)} of the costs is not passed on to them ({why})."
     elif rest < 0:  # each part rounded up by half a cent or less, more often than down
         left = f": {shown(-rest, EUR)} more than the costs, from rounding each part to the cent."
@@ -1129,11 +1359,20 @@ def report(made: Made, output: str, picture: str, size: str) -> list[str]:
         f"Shares of {of} {bases}. Costs {shown(sums.costs, EUR)} ({by_key}); the tenants listed pay "
         f"{shown(sums.paid, EUR)}{left} Verteilung shows it for each cost (Nicht umgelegt)."
     )
-    for s in sums.shares[:REPORT_TENANTS]:
-        shares = ", ".join(f"{shown(s.shares[k], SHARE)} {KEYS[k]}" for k in KEYS)
-        result = f"{RESULT_WORDS[s.outcome]} {shown(abs(s.saldo), EUR)}" if s.outcome != 2 else RESULT_WORDS[2]
+    if spec.timed and not spec.building:
         lines.append(
-            f"- {s.tenant.name}: {shares}: pays {shown(s.pays, EUR)}, prepaid {shown(s.tenant.prepaid, EUR)}: {result}."
+            "Tenants moved in or out: without building (its whole Wohnfläche, Personen, Einheiten), a flat's empty "
+            "days are paid by the other tenants. Give building to leave them with the landlord."
+        )
+    for s in sums.shares[:REPORT_TENANTS]:
+        shares = ", ".join(f"{shown(s.shares[k], SHARE)} {KEYS[k]}" for k in SHARED)
+        result = f"{RESULT_WORDS[s.outcome]} {shown(abs(s.saldo), EUR)}" if s.outcome != 2 else RESULT_WORDS[2]
+        days = ""
+        if s.tenant.begins or s.tenant.ends:
+            days = f" ({s.days} of {spec.days} days)"
+        lines.append(
+            f"- {s.tenant.name}{days}: {shares}: pays {shown(s.pays, EUR)}, prepaid {shown(s.tenant.prepaid, EUR)}: "
+            f"{result}."
         )
     if len(sums.shares) > REPORT_TENANTS:
         lines.append(f"- and {len(sums.shares) - REPORT_TENANTS} more (the cover and the Mieter sheet show them all).")

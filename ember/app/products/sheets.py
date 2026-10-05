@@ -519,8 +519,8 @@ def preview(spec: Spec, max_rows: int = 18, index: int = 0) -> bytes:
     dashboard.
 
     Formulas show their result when the preview can work it out (arithmetic, SUM, AVERAGE, MIN, MAX, COUNT, ROUND
-    and ABS; 0.19.2: IF, IFERROR, COUNTIF, SUMIF and the other sheets' cells); any other formula is shown as written,
-    in italics.
+    and ABS; 0.19.2: IF, IFERROR, COUNTIF, SUMIF and the other sheets' cells; 0.23.0: SUMPRODUCT, and dates as Excel's
+    day numbers) within the workbook's work budget (WORK); any other formula is shown as written, in italics.
     """
     sheet = spec.sheets[index]
     values = _spec_book(spec)[sheet.name.casefold()]
@@ -575,8 +575,9 @@ def preview(spec: Spec, max_rows: int = 18, index: int = 0) -> bytes:
 def _spec_book(spec: Spec) -> dict[str, _Results]:
     """0.19.2: each sheet's values by its name (any case), each able to read the others'."""
     book: dict[str, _Formulas] = {}
+    budget = [WORK]
     for sheet in spec.sheets:
-        book[sheet.name.casefold()] = _Results(sheet, book)
+        book[sheet.name.casefold()] = _Results(sheet, book, budget)
     return book  # type: ignore[return-value]
 
 
@@ -647,8 +648,9 @@ def workbook_text(data: bytes) -> str:
 def _grids(sheets: list[tuple[str, dict[tuple[int, int], Any]]]) -> dict[str, _Grid]:
     """0.19.2: each sheet's values by its name (any case), each able to read the others' (a summary's formulas)."""
     book: dict[str, _Formulas] = {}
+    budget = [WORK]
     for title, cells in sheets:
-        book[title.casefold()] = _Grid({key: cell.value for key, cell in cells.items()}, book)
+        book[title.casefold()] = _Grid({key: cell.value for key, cell in cells.items()}, book, budget)
     return book  # type: ignore[return-value]
 
 
@@ -808,7 +810,12 @@ _COLUMNS = re.compile(r"\$?([A-Z]{1,3}):\$?([A-Z]{1,3})")
 # cells from another (a summary's "=SUM(Income!C4:C12)") and COUNTIF/SUMIF (a tracker's counts by status)
 _PREVIEW_FUNCTIONS = {"SUM", "AVERAGE", "MIN", "MAX", "COUNT", "COUNTA", "ROUND", "ABS"}
 _PREVIEW_FUNCTIONS |= {"IF", "IFERROR", "IFNA", "COUNTIF", "SUMIF"}
+_PREVIEW_FUNCTIONS |= {"SUMPRODUCT"}  # 0.23.0: a cost statement's bases by time (Wohnfläche times days)
+_EPOCH = dt.datetime(1899, 12, 30)  # day 0 of Excel's dates (as Excel counts them from March 1900 on)
 _MAX_CELLS = 50  # formulas worked out at once (a chain of references), before the preview gives up
+# 0.23.0: the work a workbook's formulas may take, all its sheets together: a formula worked out, and each cell a range
+# reads. Beyond it the rest are shown as written (a summary's 400 SUMIFs over 2,000 rows read 1.6 million cells).
+WORK = 1_000_000
 _Tok = tuple[str, str]  # a formula's token: (kind, text)
 
 
@@ -852,13 +859,17 @@ def _split(tokens: list[_Tok]) -> tuple[list[list[_Tok]], list[_Tok]]:
 
 
 def _number(value: Any) -> float:
-    """A value as a number for arithmetic: empty is 0, text isn't one (Excel's #VALUE!)."""
+    """A value as a number for arithmetic: empty is 0, text isn't one (Excel's #VALUE!); 0.23.0: a date is its day
+    number, as Excel keeps dates (a tenant's days are Bis - Von + 1)."""
     if value is None:
         return 0.0
     if isinstance(value, bool):
         return float(value)
     if isinstance(value, int | float):
         return float(value)
+    if isinstance(value, dt.date):
+        moment = value if isinstance(value, dt.datetime) else dt.datetime.combine(value, dt.time())
+        return (moment - _EPOCH) / dt.timedelta(days=1)
     raise _Unknown
 
 
@@ -900,10 +911,16 @@ class _Formulas:
     cells it names, on this sheet or (0.19.2) another of the workbook (``book``: by name, any case). ``_cell`` gives a
     cell's value by Excel's row and column (from 1), ``_rows`` the rows a whole column holds."""
 
-    def __init__(self, book: dict[str, _Formulas] | None = None) -> None:
+    def __init__(self, book: dict[str, _Formulas] | None = None, budget: list[int] | None = None) -> None:
         self.book = book if book is not None else {}
+        self.budget = budget if budget is not None else [WORK]  # what is left of WORK, shared by the book's sheets
         self.cache: dict[tuple[int, int], Any] = {}
         self.busy: set[tuple[int, int]] = set()
+
+    def _spend(self, work: int) -> None:
+        self.budget[0] -= work
+        if self.budget[0] < 0:
+            raise _Unknown
 
     def _cell(self, row: int, column: int) -> Any:
         raise NotImplementedError
@@ -917,6 +934,7 @@ class _Formulas:
             return self.cache[key]
         if key in self.busy or len(self.busy) > _MAX_CELLS:
             raise _Unknown
+        self._spend(1)
         self.busy.add(key)
         try:
             result, rest = self._compare(_tokens(text[1:]))
@@ -960,6 +978,7 @@ class _Formulas:
             rows = range(int(start[2]), int(end[2]) + 1)
         if last < first or len(rows) * (last - first + 1) > READ_ROWS * 4:
             raise _Unknown
+        self._spend(len(rows) * (last - first + 1))
         return [sheet._cell(row, column) for row in rows for column in range(first, last + 1)]
 
     def _compare(self, tokens: list[_Tok]) -> tuple[Any, list[_Tok]]:
@@ -1063,6 +1082,17 @@ class _Formulas:
             if len(args) != 1:
                 raise _Unknown
             return abs(_number(self._value(args[0])))
+        if name == "SUMPRODUCT":  # 0.23.0: what isn't a number counts as 0, as in Excel
+            lists = [self._values(arg) for arg in args]
+            if not lists or len({len(values) for values in lists}) != 1:
+                raise _Unknown
+            total = 0.0
+            for row in zip(*lists, strict=True):
+                product = 1.0
+                for value in row:
+                    product *= float(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0.0
+                total += product
+            return total
         values = [v for arg in args for v in self._values(arg)]
         if name == "COUNTA":
             return float(sum(1 for v in values if v is not None and v != ""))
@@ -1085,11 +1115,12 @@ class _Results(_Formulas):
     """The values a sheet of a spec shows once Excel has calculated it, as far as a preview needs them (``book``:
     0.19.2, the workbook's other sheets, by name)."""
 
-    def __init__(self, sheet: Sheet, book: dict[str, _Formulas] | None = None) -> None:
-        super().__init__(book)
+    def __init__(self, sheet: Sheet, book: dict[str, _Formulas] | None = None, budget: list[int] | None = None) -> None:
+        super().__init__(book, budget)
         self.sheet = sheet
         self.first = first_row(bool(sheet.title))
         self.last = self.first + len(sheet.rows) + sheet.empty_rows - 1
+        self.totals: dict[int, float] = {}  # 0.23.0: worked out once (each formula naming one read the column again)
 
     def cell(self, index: int, column: int) -> Any:
         """The value of a data cell: a formula's result, or the formula itself when it can't be worked out."""
@@ -1102,6 +1133,8 @@ class _Results(_Formulas):
             return value
 
     def total(self, column: int) -> float | None:
+        if column in self.totals:
+            return self.totals[column]
         fn = self.sheet.totals.get(column)
         found: list[float] = []
         for index in range(len(self.sheet.rows)):
@@ -1110,7 +1143,10 @@ class _Results(_Formulas):
                 return None
             if isinstance(value, int | float) and not isinstance(value, bool):
                 found.append(float(value))
-        return _total(fn, found) if fn and found else None
+        if not fn or not found:
+            return None
+        self.totals[column] = _total(fn, found)
+        return self.totals[column]
 
     def _rows(self) -> range:
         return range(self.first, self.last + 1)
@@ -1142,8 +1178,13 @@ class _Grid(_Formulas):
     """0.15.0: the values of any Excel file's sheet, by (row, column): formulas worked out as the preview does, over
     whole ranges (text in them is left out, as Excel does); 0.19.2: with the workbook's other sheets (``book``)."""
 
-    def __init__(self, cells: dict[tuple[int, int], Any], book: dict[str, _Formulas] | None = None) -> None:
-        super().__init__(book)
+    def __init__(
+        self,
+        cells: dict[tuple[int, int], Any],
+        book: dict[str, _Formulas] | None = None,
+        budget: list[int] | None = None,
+    ) -> None:
+        super().__init__(book, budget)
         self.cells = cells
 
     def value(self, row: int, column: int) -> Any:
@@ -1178,12 +1219,25 @@ def _row(
 ) -> None:
     for i, (text, width) in enumerate(zip(texts, widths, strict=True)):
         f = font[i] if isinstance(font, list) else font
-        shown = text
-        while shown and draw.textlength(shown, font=f) > width - 12 * scale:
-            shown = shown[:-2] + "…" if len(shown) > 2 else ""
+        shown = _cut(draw, text, f, width - 12 * scale)
         box = draw.textbbox((0, 0), "Ag", font=f)
         draw.text((x + 6 * scale, y + (h - (box[3] - box[1])) / 2 - box[1]), shown, font=f, fill=color)
         x += width
+
+
+def _cut(draw: Any, text: str, font: Any, room: int) -> str:
+    """The longest start of ``text`` that fits ``room`` pixels, ending in "…" when cut. 0.23.0: found by halving; cut a
+    character pair at a time, a picture of 360 long formulas shown as written took 114 seconds."""
+    if draw.textlength(text, font=font) <= room:
+        return text
+    fits, too_long = 0, len(text)
+    while too_long - fits > 1:
+        middle = (fits + too_long) // 2
+        if draw.textlength(text[:middle] + "…", font=font) <= room:
+            fits = middle
+        else:
+            too_long = middle
+    return text[:fits] + "…" if fits else ""
 
 
 def _total(fn: str, values: list[float]) -> float:

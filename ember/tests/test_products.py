@@ -17,7 +17,7 @@ import pypdfium2
 import pytest
 from docx import Document as WordDocument
 from docx.oxml.ns import qn
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from PIL import Image, ImageChops
 
 from app.agent import netguard
@@ -381,6 +381,41 @@ def test_the_preview_shows_results_not_formulas() -> None:
     assert picture.format == "PNG" and picture.width > 400
 
 
+def test_a_workbooks_formulas_have_a_work_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 0.23.0: no budget: a summary's SUMIFs over a long sheet read every row again for each formula.
+    book = Workbook()
+    summary, data = book.active, book.create_sheet("Data")
+    for r in range(1, 501):
+        data.cell(r, 1, f"cat{r % 5}")
+        data.cell(r, 2, r)
+    for r in range(1, 51):
+        summary.cell(r, 1, f"cat{r % 5}")
+        summary.cell(r, 2, f"=SUMIF(Data!A:A,A{r},Data!B:B)")
+    buffer = io.BytesIO()
+    book.save(buffer)
+    monkeypatch.setattr(sheets, "WORK", 10_000)  # each formula reads 2 x 500 cells: 9 of them fit
+    found = sheets.values(buffer.getvalue())[summary.title]
+    results = [found[(r, 2)] for r in range(1, 51)]
+    assert results[:9] == [sum(v for v in range(1, 501) if v % 5 == r % 5) for r in range(1, 10)]
+    assert all(isinstance(v, str) and v.startswith("=SUMIF(") for v in results[9:])  # shown as written
+
+
+def test_a_long_text_is_cut_to_its_cell_in_few_measurements() -> None:
+    # 0.23.0: cut two characters at a time, a picture of 360 long formulas shown as written took 114 seconds.
+    class Measure:
+        calls = 0
+
+        def textlength(self, text: str, font: object) -> float:
+            self.calls += 1
+            return 10.0 * len(text)  # every character 10 pixels wide
+
+    draw = Measure()
+    assert sheets._cut(draw, "x" * 5_000, object(), 305) == "x" * 29 + "…"
+    assert draw.calls <= 15
+    assert sheets._cut(Measure(), "short", object(), 305) == "short"
+    assert sheets._cut(Measure(), "wide", object(), 5) == ""
+
+
 # --- pictures -------------------------------------------------------------------
 
 
@@ -398,6 +433,50 @@ def test_listing_photos_refuse_what_they_cant_show() -> None:
         images.listing([page], "T", shape="round")
     with pytest.raises(images.ImageError, match="one to three pages"):
         images.listing([page] * 4, "T")
+
+
+def where_coloured(picture: Image.Image, colour: tuple[int, int, int]) -> tuple[int, int, int, int] | None:
+    """The box around a picture's pixels of exactly ``colour``."""
+    bands = [band.point(lambda v, c=c: 255 if v == c else 0) for band, c in zip(picture.split(), colour, strict=True)]
+    return ImageChops.multiply(ImageChops.multiply(bands[0], bands[1]), bands[2]).getbbox()
+
+
+def test_a_posters_title_stays_above_its_lines() -> None:
+    # 0.23.0: the title wasn't limited in height: a long one ran into the lines at the bottom.
+    title = "Stay Calm And Carry On"  # a word a line, at the largest size
+    lines = ["Printed on matte paper", "Designed in Berlin", "Frame not included"]
+    accent, ink = images._colours("#FFFFFF", "#B03A2E")[0], images._colours("#FFFFFF", "#B03A2E")[2]
+    picture = Image.open(io.BytesIO(images.poster(title, lines, "#FFFFFF", "#B03A2E"))).convert("RGB")
+    title_box, lines_box = where_coloured(picture, accent), where_coloured(picture, ink)
+    assert title_box is not None and lines_box is not None
+    assert title_box[3] < lines_box[1]  # the title and its rule end above the first line
+
+
+def test_pictures_never_draw_a_box_for_a_character() -> None:
+    # 0.23.0: Poppins has no Greek, Cyrillic or arrows, and no bundled font has ✓ or ★: Pillow drew boxes, unsaid.
+    assert images._family("title", "Ωμέγα → Жизнь", "display", "B") == "sans"  # Carlito has them
+    assert images._family("title", "Café Müller", "display", "B") == "display"
+    images.poster("Ωμέγα → Жизнь", ["Ελληνικά"], shape="square")
+    for make_one in (
+        lambda: images.poster("Done ✓", []),
+        lambda: images.text_photo("Features", ["Fast ★", "Neat"]),
+        lambda: images.listing([Image.new("RGB", (60, 85))], "Title", badge="★ Bestseller"),
+    ):
+        with pytest.raises(images.ImageError, match="Ember's fonts can't draw .*: [✓★]; use other characters"):
+            make_one()
+
+
+def test_a_transparent_picture_is_on_white_not_black() -> None:
+    # 0.23.0: converted to RGB, a transparent part of a picture turned black in listing photos and thumbnails.
+    buffer = io.BytesIO()
+    clear = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+    clear.paste((200, 30, 30, 255), (0, 0, 20, 40))
+    clear.save(buffer, "PNG")
+    for picture in (images.open_png(buffer.getvalue()), images.open_png(buffer.getvalue(), longest=20)):
+        assert picture.getpixel((picture.width - 1, 0)) == (255, 255, 255)
+        assert picture.getpixel((0, 0)) == (200, 30, 30)
+    small = Image.open(io.BytesIO(images.thumbnail(buffer.getvalue(), 20)[0]))
+    assert small.convert("RGB").getpixel((19, 10)) == (255, 255, 255)
 
 
 def test_only_pngs_and_jpegs_are_opened_and_thumbnails_are_small() -> None:
@@ -510,3 +589,8 @@ def test_the_self_test_makes_one_of_each() -> None:
     lines = selftest.run()
     assert lines[0].startswith("Made out/test.pdf: 2 pages") and lines[1].startswith("Made out/test.xlsx")
     assert lines[2].startswith("Made out/photo.png: a landscape listing photo")
+    # 0.23.0: every layout of make_image, a print file and a cost statement too
+    assert lines[3].startswith("Made out/text.png: a landscape text listing photo")
+    assert lines[4].startswith("Made out/poster.png: a poster, 6000 x 4500 pixels (landscape)")
+    assert lines[5].startswith("Made out/print.png: 1200 x 900 pixels")
+    assert lines[6].startswith("Made out/statement.xlsx: a Nebenkostenabrechnung of 2 tenants") and len(lines) == 7

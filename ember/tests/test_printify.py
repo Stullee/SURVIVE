@@ -37,6 +37,7 @@ from app.integrations.printify import (  # noqa: E402
 from app.integrations.printify_live import LiveAccount, _Allowlist  # noqa: E402
 from app.logging_setup import redact  # noqa: E402
 from app.products import images  # noqa: E402
+from tests.economy_helpers import owner as owner_entry  # noqa: E402
 from tests.test_agent import ROOMY, rows  # noqa: E402
 from tests.test_etsy import Etsy, call, shop_context, views_approval  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
@@ -578,6 +579,33 @@ def test_printify_s_own_time_format_is_read_and_its_bill_booked(data_dir: Path) 
         assert printify_publisher.record_costs(agent.db, agent.clock, agent.economy, scope, on) == []
     warned = [r for r in rows(agent, "SELECT message FROM events") if "can't read when" in r["message"]]
     assert len(warned) == 1 and fourth in warned[0]["message"] and "'soon'" in warned[0]["message"]
+
+
+def test_the_cost_of_an_order_cancelled_after_it_was_booked_is_taken_back(data_dir: Path) -> None:
+    # 0.23.0: it stayed booked, so the P&L and the runway kept a bill Printify never charged.
+    agent, _, request = proposed(data_dir)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    agent.execute_approved()
+    account = agent.printify.account()
+    [product_id] = list(account.state["products"])
+    first, second = account.sell(product_id), account.sell(product_id)
+    assert agent.pod.sync(force=True) is None
+    scope = agent.scope()
+    on = agent.settings.model_copy(update={"etsy_auto_record_revenue": True, "etsy_usd_per_eur": 1.10})
+    key = printify_publisher.order_key(second)  # the owner booked the second one's: it stays theirs to correct
+    owner_entry(agent.economy, "expense", "15.00", idempotency_key=key, source=f"Printify order {second}")
+    assert len(printify_publisher.record_costs(agent.db, agent.clock, agent.economy, scope, on)) == 1
+    for order in account.state["orders"]:
+        order["status"] = "canceled"
+    assert agent.pod.sync(force=True) is None
+    [taken] = printify_publisher.record_costs(agent.db, agent.clock, agent.economy, scope, on)
+    assert printify_publisher.record_costs(agent.db, agent.clock, agent.economy, scope, on) == []  # once
+    [booked] = rows(agent, f"SELECT * FROM ledger WHERE source = 'Printify order {first}'")
+    [back] = rows(agent, f"SELECT * FROM ledger WHERE id = {taken}")
+    assert (back["type"], back["corrects_id"], back["amount_micros"]) == ("expense", booked["id"], -13_640_000)
+    assert (back["project_id"], back["venture_id"]) == (booked["project_id"], booked["venture_id"])
+    assert back["note"] == f"Printify order {first} was cancelled: its cost is taken back"
+    assert rows(agent, f"SELECT COUNT(*) AS n FROM ledger WHERE note LIKE '%{second} was cancelled%'")[0]["n"] == 0
 
 
 def test_the_print_on_demand_venture_s_first_test_is_a_first_order(data_dir: Path) -> None:

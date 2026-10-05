@@ -443,6 +443,11 @@ def order_key(order_id: str) -> str:
     return hashlib.sha256(f"printify-order-{order_id}".encode()).hexdigest()[:32]
 
 
+def cancel_key(order_id: str) -> str:
+    """0.23.0: the ledger's key of the correction that takes back the cost of an order cancelled after it was booked."""
+    return hashlib.sha256(f"printify-cancel-{order_id}".encode()).hexdigest()[:32]
+
+
 def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> list[dict[str, Any]]:
     """The Printify orders of Ember's products, newest first: what making and shipping each costs the owner, and
     whether that cost is in the ledger."""
@@ -494,7 +499,10 @@ def record_costs(db: Database, clock: Clock, economy: Economy, scope: AgentScope
     venture, when the owner turned on etsy_auto_record_revenue (as its sale's revenue is recorded): orders from the
     day it was turned on, not cancelled, that nobody recorded yet. An order in EUR needs the owner's exchange rate;
     other currencies stay the owner's. An entry that would kill the agent or leave it unfunded waits for the owner,
-    who is told once. Returns the entries recorded."""
+    who is told once. Returns the entries recorded.
+
+    0.23.0: the cost of an order cancelled after Ember's code booked it is taken back, with a correction of that entry
+    (the P&L and runway kept a bill Printify never charged). One the owner booked stays theirs to correct."""
     if not settings.etsy_auto_record_revenue:
         return []
     from . import etsy_revenue  # here: it imports etsy_publisher, which imports this module
@@ -502,11 +510,16 @@ def record_costs(db: Database, clock: Clock, economy: Economy, scope: AgentScope
     since = db.get_meta(etsy_revenue.SINCE_KEY) or clock.today().isoformat()
     rate = Decimal(str(settings.etsy_usd_per_eur)) if settings.etsy_usd_per_eur else None
     with db.connection() as conn:
-        orders = [o for o in orders_json(conn, scope, ORDERS_KEPT) if not o["recorded"] and o["cost_cents"] > 0]
+        kept = orders_json(conn, scope, ORDERS_KEPT)
+        reversals = [taken for o in kept if o["recorded"] and _cancelled(o) and (taken := _taken_back(conn, o))]
     recorded: list[int] = []
-    for order in orders:
+    for prepared in reversals:  # money back: a fact, never held
+        result = economy.record_integration(prepared, fact=True)
+        if result.entry_id is not None:
+            recorded.append(result.entry_id)
+    for order in [o for o in kept if not o["recorded"] and o["cost_cents"] > 0]:
         amount = etsy_revenue._usd(order["cost_cents"], str(order["currency"]), rate)
-        if str(order["status"]).lower() in ("canceled", "cancelled") or amount is None:
+        if _cancelled(order) or amount is None:
             continue
         try:
             if clock.local_day(order["created_at"]).isoformat() < since:
@@ -556,6 +569,47 @@ def record_costs(db: Database, clock: Clock, economy: Economy, scope: AgentScope
                 " card, Record the cost.",
             )
     return recorded
+
+
+def _cancelled(order: dict[str, Any]) -> bool:
+    return str(order["status"]).lower() in ("canceled", "cancelled")
+
+
+def _taken_back(conn: sqlite3.Connection, order: dict[str, Any]) -> PreparedEntry | None:
+    """0.23.0: the correction that takes back what is left of a cancelled order's cost Ember's code booked, or None
+    (booked by the owner, or taken back already)."""
+    entry = conn.execute(
+        "SELECT id, created_by, amount_micros, simulated, occurred_on, project_id, venture_id FROM ledger"
+        " WHERE idempotency_key = ?",
+        (order["key"],),
+    ).fetchone()
+    key = cancel_key(str(order["order_id"]))
+    if (
+        entry is None
+        or entry["created_by"] != "etsy"
+        or conn.execute("SELECT 1 FROM ledger WHERE idempotency_key = ?", (key,)).fetchone()
+    ):
+        return None
+    corrected = conn.execute(
+        "SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE corrects_id = ?", (entry["id"],)
+    ).fetchone()[0]
+    left = int(entry["amount_micros"]) + int(corrected)
+    if left <= 0:
+        return None
+    return PreparedEntry(
+        type="expense",
+        amount_micros=-left,
+        simulated=bool(entry["simulated"]),
+        source=None,
+        note=f"Printify order {order['order_id']} was cancelled: its cost is taken back",
+        occurred_on=entry["occurred_on"],
+        day_given=True,
+        idempotency_key=key,
+        corrects_id=entry["id"],
+        project_id=entry["project_id"],  # a correction belongs where the entry it corrects belongs
+        venture_id=entry["venture_id"],
+        created_by="etsy",
+    )
 
 
 def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:

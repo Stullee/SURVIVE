@@ -25,7 +25,7 @@ from app.agent.fake_llm import FakeTransport, request_kind, validate_request  # 
 from app.config import Settings  # noqa: E402
 from app.economy.clock import Clock, to_iso  # noqa: E402
 from app.economy.life import KILLED_KEY  # noqa: E402
-from app.integrations import etsy, etsy_publisher  # noqa: E402
+from app.integrations import connectors, etsy, etsy_publisher  # noqa: E402
 from app.integrations.etsy import (  # noqa: E402
     DISCLOSURE,
     EtsyError,
@@ -591,6 +591,63 @@ def test_a_crash_while_creating_is_unclear_and_never_repeated(data_dir: Path) ->
     assert agent.execute_approved() == []
 
 
+def journal(agent: Any, approval_id: int) -> list[dict[str, Any]]:
+    return rows(agent, f"SELECT status, undo FROM action_journal WHERE approval_id = {approval_id} ORDER BY id")
+
+
+def listing_fee_notes(agent: Any) -> list[str]:
+    return [r["note"] for r in rows(agent, "SELECT note FROM ledger WHERE source LIKE 'Etsy listing %' ORDER BY id")]
+
+
+def test_a_draft_the_owner_finished_at_etsy_is_live_for_the_agent(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 0.23.0: it stayed 'draft' for good though Etsy had it live: the agent couldn't change, renew or pin it.
+    agent, _, request = proposed(data_dir)
+    monkeypatch.setattr(FakeShop, "upload_file", lambda *a: (_ for _ in ()).throw(NotSent("HTTP 400: too large")))
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    assert agent.execute_approved() == [(request, "draft")]
+    ctx = shop_context(agent)
+    assert not call(ctx, "etsy_listing", {"listing_id": 900_000_001}).ok
+    item = agent.etsy.shop().state["listings"]["900000001"]  # the owner adds the file and publishes it at Etsy
+    item["state"], item["live_since"], item["files"] = "active", to_iso(agent.clock.now()), 1
+    assert agent.publisher.sync(force=True) is None and agent.publisher.sync(force=True) is None
+    [made] = listing_rows(agent)
+    assert made["status"] == "active" and made["error"] is None
+    assert made["result"] == "Live at Etsy after all (the sync found it): https://www.etsy.com/listing/900000001"
+    assert listing_fee_notes(agent) == ["Etsy's listing fee for listing 900000001: the owner published it"]
+    assert [e["status"] for e in journal(agent, request)] == ["partial", "simulated"]
+    assert json.loads(journal(agent, request)[-1]["undo"]) == {"action": "deactivate", "listing_id": 900_000_001}
+    assert call(ctx, "etsy_listing", {"listing_id": 900_000_001}).ok
+    assert a_change(agent, ctx, 900_000_001, title="Weekly Planner, A4")  # the agent can change it now
+
+
+def test_a_listing_whose_making_was_unclear_is_adopted_with_its_fee(data_dir: Path) -> None:
+    # 0.23.0: an unclear row Etsy reports live stayed 'unclear', and its listing fee was never booked.
+    agent, _, request = proposed(data_dir)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    shop = agent.etsy.shop()
+    listing_id = shop.create_draft(a_listing())  # made at Etsy before the app stopped
+    scope = agent.scope()
+    with agent.db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO etsy_listings (mode, session, approval_id, started_at, status, title, listing_id)"
+            " VALUES (?, ?, ?, ?, 'running', 'Planner', ?)",
+            (scope.mode, scope.session, request, to_iso(agent.clock.now()), listing_id),
+        )
+        connectors.begin(conn, request, to_iso(agent.clock.now()))
+    assert agent.publisher.recover() == 1 and listing_rows(agent)[0]["status"] == "unclear"
+    assert agent.publisher.sync(force=True) is None and listing_rows(agent)[0]["status"] == "unclear"  # a draft
+    item = shop.state["listings"][str(listing_id)]
+    item["state"], item["live_since"] = "active", to_iso(agent.clock.now())
+    assert agent.publisher.sync(force=True) is None and agent.publisher.sync(force=True) is None
+    assert listing_rows(agent)[0]["status"] == "active"
+    assert listing_fee_notes(agent) == [f"Etsy's listing fee for listing {listing_id}: it went live"]
+    assert [e["status"] for e in journal(agent, request)] == ["unclear", "simulated"]  # once, however many syncs
+    told = [e["message"] for e in agent.db.recent_events(limit=50) if "after all" in e["message"]]
+    assert told == [f"Request #{request}: Live at Etsy after all (the sync found it): {etsy.listing_url(listing_id)}"]
+
+
 def test_the_owner_can_cancel_before_it_is_created(data_dir: Path) -> None:
     agent, _, request = proposed(data_dir)
     who = owner(agent)
@@ -934,6 +991,58 @@ def test_new_photos_come_first_and_the_old_ones_go_without_ever_leaving_none() -
     count[0] = 2
     etsy_publisher._replace([7, 8], upload, delete, items[:1], etsy.MAX_PHOTOS, [])
     assert log == ["+n1@1", "-7", "-8"] and count[0] == 1
+
+
+def test_files_etsy_kept_under_an_unknown_number_are_not_recorded_as_replaced(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 0.23.0: Etsy said "File 77 is already attached" for a number its list of the listing's files didn't have, so
+    # no old file was deleted; the change still said its files were replaced, and the record listed only the new ones.
+    agent, listing_id = listed(data_dir)
+    ctx = shop_context(agent)
+    old = list(agent.etsy.shop().file_ids(listing_id))
+    request = a_change(agent, ctx, listing_id, files="shop/same.pdf, shop/new.pdf")
+    upload = FakeShop.upload_file
+
+    def attached(self: FakeShop, listing: int, name: str, data: bytes, rank: int) -> None:
+        if name == "same.pdf":
+            raise NotSent("HTTP 400: File 77 is already attached to this listing.")
+        upload(self, listing, name, data, rank)
+
+    monkeypatch.setattr(FakeShop, "upload_file", attached)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    assert agent.execute_approved() == [(request, "partial")]
+    assert set(old) <= set(agent.etsy.shop().file_ids(listing_id))  # the old ones are still at Etsy
+    [change] = rows(agent, "SELECT listing, result FROM etsy_edits")
+    assert change["listing"] is None  # the record keeps the files it had
+    assert change["result"].startswith(
+        "Partly changed: nothing changed; files not, Etsy said a file was attached already under a number Ember"
+        f" doesn't know, so Ember deleted none of the {len(old)} old one(s): delete them at Etsy. Its files were left"
+        " half replaced."
+    )
+    assert "same.pdf" not in call(ctx, "etsy_listing", {"listing_id": listing_id}).text
+
+
+def test_the_files_etsy_holds_are_read_back_after_a_change() -> None:
+    held = [11, 12]
+    uploaded: list[str] = []
+
+    def upload(name: str, data: bytes, rank: int) -> None:
+        if name == "again.pdf":  # the change's own first file twice: Etsy names the number it just gave it
+            raise NotSent(f"HTTP 400: File {held[0]} is already attached to this listing.")
+        uploaded.append(name)
+        held.insert(rank - 1, 20 + len(uploaded))
+
+    progress: list[str] = []
+    items = [("letter.pdf", b"a"), ("again.pdf", b"a")]
+    left = etsy_publisher._replace(list(held), upload, held.remove, items, 5, progress, lambda: list(held))
+    assert left is None and held == [21] and progress == ["uploaded", "kept", "deleted", "deleted"]
+    # a deletion Etsy answered but didn't make: what it holds isn't the change
+    held[:] = [11]
+    left = etsy_publisher._replace([11], upload, lambda i: None, items[:1], 5, [], lambda: list(held))
+    assert left == "Etsy holds 2 file(s) where the change has 1"
+    # Etsy couldn't say: what was made stands
+    assert etsy_publisher._replace([11], upload, lambda i: None, items[:1], 5, [], lambda: None) is None
 
 
 def test_the_dashboard_shows_changes_and_can_cancel_them() -> None:

@@ -571,6 +571,7 @@ class Publisher:
         """The change at Etsy, part by part; what was made is recorded, whatever happens."""
         listing_id = edit.listing_id
         steps: list[tuple[set[str], Callable[[list[str]], None]]] = []
+        leftover: list[str] = []  # 0.23.0: why Etsy's files, read back, aren't just the change's
         answered: list[str] = []  # 0.15.0: the state Etsy answers with is recorded, not the one asked for
 
         def set_state(_: list[str]) -> None:
@@ -600,14 +601,17 @@ class Publisher:
         if edit.files is not None:
 
             def new_files(progress: list[str]) -> None:
-                _replace(
+                left = _replace(
                     shop.file_ids(listing_id),
                     lambda name, data, rank: shop.upload_file(listing_id, name, data, rank),
                     lambda file_id: shop.delete_file(listing_id, file_id),
                     files,
                     etsy.MAX_FILES,
                     progress,
+                    lambda: _read_back(shop, listing_id),
                 )
+                if left is not None:
+                    leftover.append(left)
 
             steps.append(({"files"}, new_files))
         if edit.auto_renew is not None:  # 0.13.0: only in the owner's Undo
@@ -637,10 +641,15 @@ class Publisher:
             error = str(exc) if isinstance(exc, EtsyError) else type(exc).__name__
             if not isinstance(exc, EtsyError):
                 log.exception("Changing Etsy listing %d (request #%d) failed", listing_id, approval_id)
+        if leftover and "files" in made:  # 0.23.0: not replaced, whatever the steps said: the record keeps the old
+            made.discard("files")
+            halfway.add("files")
+            if status == "done":
+                status, error = "partial", leftover[0]
         if "photos" in made:
             self._saw_photos(shop, scope, listing_id)
         after = etsy.edited(before, edit, made) if made else None
-        note = _change_note(shop, edit, status, made, halfway, error)
+        note = _change_note(shop, edit, status, made, halfway, error, leftover[0] if leftover else None)
         title = edit.title if "title" in made else None
         state = next((etsy.STATES[part] for part in ("renew", "deactivate") if part in made), None)
         if state is not None and answered:
@@ -817,7 +826,7 @@ class Publisher:
             ours = set(ids)
             processing = self._processing_fees(shop, orders, ours, known)
             try:
-                skipped = self._store(scope, stamp, remote, unseen, orders, ours, processing)
+                skipped = self._store(scope, stamp, remote, unseen, orders, ours, processing, shop.simulated)
             except Exception as exc:  # noqa: BLE001 - 0.15.0: it stopped every sync, seen only in the log
                 error = f"Etsy's numbers couldn't be stored ({type(exc).__name__})"
                 log.exception("Storing the Etsy sync failed")
@@ -864,14 +873,18 @@ class Publisher:
         orders: list[etsy.Order],
         ours: set[int],
         processing: dict[int, int],
+        simulated: bool = False,
     ) -> list[str]:
         """What a sync read, in one transaction. Returns the orders that couldn't be stored (0.15.0: one such order
         stopped every sync for 30 days; now it is skipped, and the dashboard says so)."""
         where, params = scope.where()
         rate = self.settings.etsy_usd_per_eur or econ.DEFAULT_USD_PER_EUR
-        skipped = []
+        skipped: list[str] = []
+        adopted: list[str] = []
         with self.db.transaction() as conn:
             for item in remote:
+                if item.state == etsy.LIVE_STATE:
+                    adopted += _adopt(conn, scope, item, stamp, simulated)
                 for table in LISTING_TABLES:
                     _renewed(conn, scope, table, item, stamp)
                     conn.execute(
@@ -942,6 +955,8 @@ class Publisher:
                     skipped.append(f"Etsy order {order.receipt_id} couldn't be stored ({exc})")
                 conn.execute("RELEASE etsy_order")
             observe(conn, scope, self.clock.today().isoformat(), stamp, self.settings.etsy_stats_history)
+        for message in adopted:
+            events.record(self.db, "info", "etsy", message[:300])
         return skipped
 
     def _processing_fees(self, shop: Shop, orders: list[etsy.Order], ours: set[int], known: set[int]) -> dict[int, int]:
@@ -1027,13 +1042,19 @@ def _replace(
     items: list[tuple[str, bytes]],
     most: int,
     progress: list[str],
-) -> None:
+    read: Callable[[], list[int] | None] | None = None,
+) -> str | None:
     """Put ``items`` first (ranks 1, 2, ...) and delete the old ones, one old one earlier only where Etsy's limit
     (``most``) needs the room: a live digital listing never is without a photo or a file. 0.18.1: a file Etsy says is
     attached already (the same file uploaded again: "File N is already attached to this listing") stays as it is,
-    and is not deleted with the old ones; live, every change of a listing's files that kept one of them failed."""
+    and is not deleted with the old ones; live, every change of a listing's files that kept one of them failed.
+
+    0.23.0: with ``read`` (the numbers Etsy lists now, None if it couldn't say), what Etsy holds is read back. A kept
+    file whose number Etsy lists only now is one of the change's own (the same file twice), so the old ones go after
+    all. Returns why Etsy doesn't hold just the change's items (old ones left, or too few), or None."""
     old = list(old_ids)
-    unsure = False  # a kept file whose number isn't among the old ones: deleting any old one could lose it
+    unknown: set[int] = set()  # kept files whose number isn't among the old ones: deleting any old one could lose it
+    meant = 0  # the files Etsy should hold when done: the change's uploads, and old ones it kept
     for rank, (name, data) in enumerate(items, 1):
         while old and len(old) + rank - 1 >= most:
             delete(old.pop())
@@ -1046,18 +1067,54 @@ def _replace(
                 raise
             if int(kept[1]) in old:
                 old.remove(int(kept[1]))
+                meant += 1
             else:
-                unsure = True
+                unknown.add(int(kept[1]))
             progress.append("kept")
             continue
+        meant += 1
         progress.append("uploaded")
-    for item_id in [] if unsure else old:
+    if unknown and old and read is not None:
+        listed = read()
+        if listed is not None and unknown <= set(listed):
+            unknown.clear()  # numbers that appeared while the change was made: its own files, not old ones
+    for item_id in [] if unknown else old:
         delete(item_id)
         progress.append("deleted")
+    if read is None:
+        return None
+    if unknown and old:
+        return (
+            "Etsy said a file was attached already under a number Ember doesn't know, so Ember deleted none of the"
+            f" {len(old)} old one(s): delete them at Etsy"
+        )
+    found = read()
+    if found is None or len(found) == meant:
+        return None
+    return f"Etsy holds {len(found)} file(s) where the change has {meant}"
 
 
-def _change_note(shop: Shop, edit: Edit, status: str, made: set[str], halfway: set[str], error: str | None) -> str:
-    """What happened to an approved change, for the owner and the agent."""
+def _read_back(shop: Shop, listing_id: int) -> list[int] | None:
+    """0.23.0: the listing's file numbers as Etsy lists them now, or None if it couldn't say (the change stands as
+    made; the next change of its files starts from what Etsy lists then)."""
+    try:
+        return shop.file_ids(listing_id)
+    except Exception as exc:  # noqa: BLE001 - only a check: what was made is recorded either way
+        log.warning("Etsy listing %d's files couldn't be read back: %s", listing_id, exc)
+        return None
+
+
+def _change_note(
+    shop: Shop,
+    edit: Edit,
+    status: str,
+    made: set[str],
+    halfway: set[str],
+    error: str | None,
+    leftover: str | None = None,
+) -> str:
+    """What happened to an approved change, for the owner and the agent; ``leftover``: why Etsy's files, read back
+    after it, aren't just the change's (0.23.0)."""
 
     def words(parts: set[str] | list[str]) -> str:
         named = {"renew": "renewal", "deactivate": "deactivation", "auto_renew": "automatic renewal"}
@@ -1073,8 +1130,9 @@ def _change_note(shop: Shop, edit: Edit, status: str, made: set[str], halfway: s
     if status == "failed":
         return f"Not changed: Etsy refused it ({error})."
     if status == "partial":
+        why = error if error == leftover else f"Etsy refused it ({error})"
         return (
-            f"Partly changed: {words(made)} changed; {words(rest)} not, Etsy refused it ({error}).{half} Check it at"
+            f"Partly changed: {words(made)} changed; {words(rest)} not, {why}.{half} Check it at"
             f" Etsy: {etsy.edit_url(edit.listing_id)}"
         )
     return (
@@ -1526,24 +1584,55 @@ def listing_fee_due(
 LISTING_TABLES = ("etsy_listings", "printify_products")
 
 
+def _adopt(
+    conn: sqlite3.Connection, scope: AgentScope, item: etsy.RemoteListing, now: str, simulated: bool
+) -> list[str]:
+    """0.23.0: a listing of Ember's that Etsy reports live while its row says 'draft' (the owner finished it at Etsy)
+    or 'unclear' (Ember's code stopped while making it) is active from now on, like Printify's products (``_adopt``
+    there): the agent can change, renew and pin it. Etsy's fee for publishing it is noted (the ledger's key books it
+    once; an unclear one's was never booked), and the journal gets the entry whose Undo deactivates it. Returns the
+    news, for the events once the sync is stored."""
+    where, params = scope.where()
+    rows = conn.execute(
+        f"SELECT approval_id, status FROM etsy_listings WHERE {where} AND listing_id = ?"
+        " AND status IN ('draft', 'unclear')",
+        (*params, item.listing_id),
+    ).fetchall()
+    url = etsy.listing_url(item.listing_id)
+    news = []
+    for row in rows:
+        why = "the owner published it" if row["status"] == "draft" else "it went live"
+        listing_fee_due(conn, scope.mode, scope.session, item.listing_id, "listed", now, why)
+        result = f"Live at Etsy after all (the sync found it): {url}"
+        conn.execute(
+            "UPDATE etsy_listings SET status = 'active', error = NULL, result = ? WHERE approval_id = ?",
+            (result, row["approval_id"]),
+        )
+        if not conn.execute(
+            "SELECT 1 FROM action_journal WHERE approval_id = ? AND status IN ('done', 'simulated')",
+            (row["approval_id"],),
+        ).fetchone():
+            connectors.begin(conn, row["approval_id"], now, subject=str(item.listing_id))
+            after = {"listing_id": item.listing_id, "status": "active"}
+            connectors.finish(conn, row["approval_id"], "simulated" if simulated else "done", now, after, result)
+        news.append(f"Request #{row['approval_id']}: {result}")
+    return news
+
+
 def _renewed(conn: sqlite3.Connection, scope: AgentScope, table: str, item: etsy.RemoteListing, now: str) -> None:
     """0.15.0: a renewal Etsy made (a listing that renews itself, at its end; or the owner's, at Etsy), seen as its end
     moving on from one that had passed: a listing fee for each four months (a renewal Ember made is noted with it). A
-    listing Printify made is first seen live here: the fee for publishing it (Ember's own are noted in ``_after``). So
-    is a draft of Ember's the owner published at Etsy (the ledger's key books its fee once)."""
+    listing Printify made is first seen live here: the fee for publishing it (Ember's own are noted in ``_after``, and
+    0.23.0: a draft or unclear one Etsy reports live, in ``_adopt``)."""
     where, params = scope.where()
     row = conn.execute(
-        f"SELECT ends_at, synced_at, state, status FROM {table} WHERE {where} AND listing_id = ?"
-        " AND status IN ('active', 'draft')",
+        f"SELECT ends_at, synced_at, state, status FROM {table} WHERE {where} AND listing_id = ? AND status = 'active'",
         (*params, item.listing_id),
     ).fetchone()
     if row is None:
         return
     if table == "printify_products" and row["synced_at"] is None and item.state == etsy.LIVE_STATE:
         listing_fee_due(conn, scope.mode, scope.session, item.listing_id, "listed", now, "Printify published it")
-        return
-    if row["status"] == "draft" and row["state"] != etsy.LIVE_STATE and item.state == etsy.LIVE_STATE:
-        listing_fee_due(conn, scope.mode, scope.session, item.listing_id, "listed", now, "the owner published it")
         return
     if not row["ends_at"] or not item.ends_at or not row["ends_at"] <= now < item.ends_at:
         return

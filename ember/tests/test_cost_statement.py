@@ -14,6 +14,7 @@ own formula engine.
 
 from __future__ import annotations
 
+import datetime as dt
 import io
 import json
 import math
@@ -98,7 +99,7 @@ def test_the_live_covers_shares_were_of_the_whole_building(tmp_path: Path) -> No
     assert result.paths == ["shop/nk.xlsx", "shop/nk-cover.png"]
     report = result.text()
     assert report.startswith("Made shop/nk.xlsx: a Nebenkostenabrechnung of 2 tenants (rows for 8) and 4 costs (rows ")
-    assert "sheets Anleitung, Mieter, Kosten, Verteilung, Abrechnung" in report
+    assert "sheets Anleitung, Mieter, Kosten, Einzelbeträge, Verteilung, Abrechnung" in report
     assert "Shares of the whole building's 300,00 m² Wohnfläche, 8 Personen, 4 Einheiten." in report
     assert "- Müller: 30,00% Wohnfläche, 37,50% Personen, 25,00% Einheiten: pays 1.350,00 €" in report
     assert "prepaid 1.500,00 €: Guthaben 150,00 €." in report
@@ -130,7 +131,19 @@ def test_the_live_covers_shares_were_of_the_whole_building(tmp_path: Path) -> No
         ("sum", ["Summe", "210,00", "7", "2.900,00 €", "70,00%", "87,50%", "50,00%", "3.110,00 €", "210,00 €", ""]),
         (
             "building",
-            ["Ganzes Objekt (4 Einheiten)", "300,00", "8", "", "100,00%", "100,00%", "100,00%", "4.180,00 €", "", ""],
+            # 0.23.0: Personen as the Umlagebasis shows them (by days, they have decimals)
+            [
+                "Ganzes Objekt (4 Einheiten)",
+                "300,00",
+                "8,00",
+                "",
+                "100,00%",
+                "100,00%",
+                "100,00%",
+                "4.180,00 €",
+                "",
+                "",
+            ],
         ),
     ]
     picture = Image.open(io.BytesIO(j.read_bytes("shop/nk-cover.png")))
@@ -200,10 +213,10 @@ def test_a_file_whose_numbers_disagree_is_never_kept(tmp_path: Path, monkeypatch
     """A formula of Ember's that went wrong (here: a share of the wrong base) is caught before anything is written."""
     result = made(HOUSE)
     book = load_workbook(io.BytesIO(result.workbook))
-    book[statement.TENANTS]["E4"] = '=IF($A4="","",IFERROR($B4/$B$5,0))'  # Müller's area of Yılmaz's, not the whole
+    book[statement.TENANTS]["H4"] = '=IF($A4="","",IFERROR($B4/$B$5,0))'  # Müller's area of Yılmaz's, not the whole
     broken = io.BytesIO()
     book.save(broken)
-    with pytest.raises(statement.Mismatch, match=r"Mieter!E4 shows '130,21%' where Ember's sums say '31,97%'"):
+    with pytest.raises(statement.Mismatch, match=r"Mieter!H4 shows '130,21%' where Ember's sums say '31,97%'"):
         statement.check(result.sums, result.layout, broken.getvalue())
 
     real_build = statement.build
@@ -222,14 +235,109 @@ def test_the_file_is_a_safe_german_workbook() -> None:
     assert checks.check("nk.xlsx", result.workbook) == result.workbook
     book = load_workbook(io.BytesIO(result.workbook))
     assert book.properties.language == "de-DE" and not book.properties.creator  # no name in the file
-    assert book.sheetnames == ["Anleitung", "Mieter", "Kosten", "Verteilung", "Abrechnung"]
+    assert book.sheetnames == ["Anleitung", "Mieter", "Kosten", "Einzelbeträge", "Verteilung", "Abrechnung"]
     costs = book["Kosten"].data_validations.dataValidation
-    assert [(rule.formula1, str(rule.sqref)) for rule in costs] == [('"Wohnfläche,Personen,Einheiten"', "C4:C15")]
+    keys = '"Wohnfläche,Personen,Einheiten,Direkt"'  # 0.23.0: Direkt, each tenant's amount on Einzelbeträge
+    assert [(rule.formula1, str(rule.sqref)) for rule in costs] == [(keys, "C4:C15")]
     letter = book["Abrechnung"].data_validations.dataValidation
     assert [(rule.formula1, str(rule.sqref)) for rule in letter] == [("Mieter!$A$4:$A$11", "B5")]
     # under the 8 tenant rows (4-11) and their sum (12): what the shares are of, the larger of the two rows
     assert book["Mieter"]["B14"].value == "Wohnfläche (m²)" and book["Mieter"]["B16"].value == 300
     assert book["Mieter"]["B17"].value == "=MAX($B$15,$B$16)"
+
+
+# 0.23.0: a flat whose tenant moved out on 30.04.2025, and the next one in on 01.05.2025; a flat let all year.
+MOVED = {
+    "title": "Nebenkostenabrechnung 2025",
+    "period": "01.01.2025 – 31.12.2025",
+    "tenants": [
+        {"name": "EG – Müller", "area": 62.5, "persons": 2, "prepaid": 400, "to": "30.04.2025"},
+        {"name": "EG – Yılmaz", "area": 62.5, "persons": 1, "prepaid": 800, "from": "01.05.2025"},
+        {"name": "OG – Schneider", "area": 85, "persons": 4, "prepaid": 1800},
+    ],
+    "costs": [
+        {"name": "Grundsteuer", "amount": 1180.40, "key": "area"},
+        {"name": "Wasser und Abwasser", "amount": 1895.20, "key": "persons"},
+        {"name": "Hausmeister", "amount": 600, "key": "units"},
+    ],
+}
+
+
+def test_a_tenant_who_moved_in_or_out_pays_for_their_days() -> None:
+    """0.23.0: a statement couldn't prorate a partial year: a tenant who moved out in April paid for all of it, and the
+    flat of two tenants in turn counted twice in the shares' base."""
+    result = made(MOVED)
+    sums = result.sums
+    müller, yılmaz, schneider = sums.shares
+    assert (müller.days, yılmaz.days, schneider.days) == (120, 245, 365)
+    # the flat counts once: 62.5 m² for 120 days and 62.5 m² for 245 days are 62.5 m² for the year
+    assert sums.bases == {
+        "area": Fraction(295, 2),
+        "persons": Fraction(2 * 120 + 245, 365) + 4,
+        "units": Fraction(2),
+    }
+    assert müller.shares["units"] == Fraction(120, 365) / 2 and yılmaz.shares["units"] == Fraction(245, 365) / 2
+    assert müller.shares["area"] == Fraction(125, 2) * Fraction(120, 365) / Fraction(295, 2)
+    assert [part for share in sums.shares for part in share.parts[2:]] == [  # Hausmeister by Einheiten
+        Fraction("98.63"),
+        Fraction("201.37"),
+        Fraction("300.00"),
+    ]
+    assert müller.pays == sum(müller.parts) and müller.parts[0] == statement.cent(
+        Fraction("1180.40") * müller.shares["area"]
+    )
+    # the file: Von, Bis and Tage on Mieter, worked out to Ember's own sums (make checked them), and each letter
+    found = sheets.values(result.workbook)
+    mieter = found[statement.TENANTS]
+    assert [mieter[(4, c)] for c in (statement.C_TO, statement.C_DAYS)] == [dt.datetime(2025, 4, 30), 120]
+    assert mieter[(result.layout.period, 4)] == 365
+    letter = sheets.values(with_tenant(result.workbook, "EG – Yılmaz"))[statement.LETTER]
+    assert (letter[(statement.L_DAYS, 2)], letter[(statement.L_DAYS, 4)]) == (245, 365)
+    assert letter[(statement.L_COSTS, 2)] == float(yılmaz.pays)
+    assert [letter[(result.layout.line(i), 5)] for i in range(3)] == [float(p) for p in yılmaz.parts]
+    # the cover shows Von and Bis, the report each mover's days, and that a vacancy would go to the others
+    cover = statement.cover_rows(sums, result.layout)
+    assert cover[0].texts[:6] == ["EG – Müller", "62,50", "2", "400,00 €", "", "30.04.2025"]
+    assert cover[3].texts[:3] == ["Summe", "", ""]  # 210 m² would count the flat twice
+    report = "\n".join(statement.report(result, "x.xlsx", "x-cover.png", "20 KB"))
+    assert "- EG – Müller (120 of 365 days): 13,93% Wohnfläche" in report
+    assert "without building (its whole Wohnfläche, Personen, Einheiten), a flat's empty days" in report
+    # the buyer changes a date: the file follows (Müller stays a month longer)
+    book = load_workbook(io.BytesIO(result.workbook))
+    book[statement.TENANTS].cell(row=4, column=statement.C_TO, value=dt.date(2025, 5, 31))
+    changed = io.BytesIO()
+    book.save(changed)
+    assert sheets.values(changed.getvalue())[statement.TENANTS][(4, statement.C_DAYS)] == 151
+
+
+def test_heating_is_passed_on_as_each_tenants_amount() -> None:
+    """0.23.0: costs by consumption (heating and hot water, from the Messdienst's statement) had no key: Direkt passes
+    each tenant's amount on as it is, from the sheet Einzelbeträge; what the amounts leave isn't passed on."""
+    heating = {"name": "Heizung und Warmwasser", "amount": 4200, "key": "direct"}
+    heating["parts"] = {"Müller": 1310.50, "Schmidt": 1720.25}
+    result = made({**LIVE, "costs": [*LIVE["costs"], heating]})
+    müller, schmidt = result.sums.shares
+    assert (müller.parts[-1], schmidt.parts[-1]) == (Fraction("1310.50"), Fraction("1720.25"))
+    assert result.sums.rests[-1] == Fraction("1169.25") and result.sums.by_key["direct"] == 4200
+    found = sheets.values(result.workbook)
+    row = result.layout.cost(4)
+    assert found[statement.DIRECT][(row, result.layout.column(0))] == 1310.5  # typed in, as the buyer would
+    assert found[statement.DIRECT][(row, result.layout.rest)] == 3030.75
+    assert found[statement.SPLIT][(row, result.layout.column(1))] == 1720.25
+    letter = found[statement.LETTER]
+    assert letter[(result.layout.line(4), 3)] == "Direkt" and letter[(result.layout.line(4), 5)] == 1310.5
+    assert letter[(result.layout.line(4), 4)] == pytest.approx(1310.5 / 4200)
+    report = "\n".join(statement.report(result, "x.xlsx", "x-cover.png", "20 KB"))
+    assert "by Direkt 4.200,00 €" in report and "of the costs by Direkt, what the tenants' amounts leave" in report
+    # the buyer turns another cost into one by Direkt and types the amounts: Verteilung takes them
+    book = load_workbook(io.BytesIO(result.workbook))
+    book[statement.COSTS].cell(row=result.layout.cost(0), column=3, value="Direkt")
+    book[statement.DIRECT].cell(row=result.layout.cost(0), column=result.layout.column(0), value=99.99)
+    changed = io.BytesIO()
+    book.save(changed)
+    split = sheets.values(changed.getvalue())[statement.SPLIT]
+    assert split[(result.layout.cost(0), result.layout.column(0))] == 99.99
+    assert split[(result.layout.cost(0), result.layout.column(1))] == 0  # nothing typed for Schmidt
 
 
 def test_the_largest_statement_fits_what_ember_reads() -> None:
@@ -280,6 +388,36 @@ def test_the_largest_statement_fits_what_ember_reads() -> None:
         ({"tenant_rows": 1}, "tenant_rows must be a whole number from 2 \\(the sample's\\) to 20"),
         ({"cost_rows": 41}, "cost_rows must be a whole number from 4"),
         ({"rows": []}, "unknown key 'rows'"),
+        # 0.23.0: days of the period, and costs by Direkt
+        (
+            {"tenants": [{"name": "A", "area": 1, "persons": 1, "prepaid": 0, "from": "01.05.2024"}]},
+            r"tenants\[0\]: from and to must lie within the period \(01.01.2025 – 31.12.2025\)",
+        ),
+        (
+            {
+                "tenants": [
+                    {"name": "A", "area": 1, "persons": 1, "prepaid": 0, "from": "01.06.2025", "to": "31.05.2025"}
+                ]
+            },
+            "from and to must lie within the period",
+        ),
+        (
+            {"period": "2025", "tenants": [{"name": "A", "area": 1, "persons": 1, "prepaid": 0, "to": "30.04.2025"}]},
+            "from and to need the period's dates in period",
+        ),
+        ({"tenants": [{"name": "A", "area": 1, "persons": 1, "prepaid": 0, "from": "31.02.2025"}]}, "no day of the"),
+        ({"tenants": [{"name": "A", "area": 1, "persons": 1, "prepaid": 0, "from": "May"}]}, "a date like 01.05.2025"),
+        ({"period": "01.01.2025 – 31.03.2026"}, "for at most 12 months"),
+        ({"costs": [{"name": "Heizung", "amount": 100, "key": "direct"}]}, r"costs\[0\].parts must name each tenant"),
+        ({"costs": [{"name": "Heizung", "amount": 100, "key": "area", "parts": {}}]}, "parts is only for key direct"),
+        (
+            {"costs": [{"name": "Heizung", "amount": 100, "key": "direct", "parts": {"Meier": 50}}]},
+            "'Meier' is none of the tenants' names",
+        ),
+        (
+            {"costs": [{"name": "Heizung", "amount": 100, "key": "direct", "parts": {"Müller": 60, "Schmidt": 50}}]},
+            r"parts add up to 110 €, more than its amount \(100 €\)",
+        ),
     ],
 )
 def test_a_mistake_in_the_spec_says_what_to_change(tmp_path: Path, change: dict[str, Any], message: str) -> None:

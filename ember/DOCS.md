@@ -409,18 +409,21 @@ agent's workspace:
   request #4 (the workshop's resize script).
 - **Cost statements** (`make_cost_statement`, 0.20.0): a Nebenkostenabrechnung
   from a JSON description of the tenants (Wohnfläche, Personen,
-  Vorauszahlungen), the costs with their Umlageschlüssel (Wohnfläche, Personen
-  or Einheiten) and, when the building has more units than those listed, its
-  whole Wohnfläche, Personen and Einheiten. Ember's code makes the Excel file
+  Vorauszahlungen; since 0.23.0 the days of a tenant who moved in or out during
+  the period), the costs with their Umlageschlüssel (Wohnfläche, Personen,
+  Einheiten, or since 0.23.0 Direkt: each tenant's amount as the Messdienst's
+  Heizkostenabrechnung gives it, on the sheet Einzelbeträge) and, when the
+  building has more units than those listed, its whole Wohnfläche, Personen and
+  Einheiten. Ember's code makes the Excel file
   (each tenant's shares, costs and Saldo; each tenant's part of each cost, to
   the cent; a statement to print for the tenant chosen in a dropdown), with
   formulas doing every sum so buyers can use their own numbers, and its cover
   picture: the tenants' table as German Excel shows it, 3000 x 2250. It works
   out every formula of the file itself and keeps nothing unless each number
   equals its own exact sums, so the cover always shows the file's numbers.
-  Costs by consumption (heating and hot water under the Heizkostenverordnung,
-  metered water) are not part of it, and it doesn't judge which costs a lease
-  lets a landlord pass on. Up to 3 a cycle. Built in from upgrade request #7
+  It reads no meters (heating and hot water under the Heizkostenverordnung come
+  in as the Messdienst's amounts), and it doesn't judge which costs a lease lets
+  a landlord pass on. Up to 3 a cycle. Built in from upgrade request #7
   (the workshop's Nebenkostenabrechnung script).
 
 Pictures of a sheet (in `make_image` and the spreadsheets' own pictures) round
@@ -1408,7 +1411,10 @@ can also remove the app's access at Etsy).
   refuses something after the draft exists, the listing stays a draft at Etsy
   and the card links to it, so you can finish it there. Ember never creates a
   listing twice: if it can't tell whether Etsy created it (a lost connection),
-  it says so and doesn't try again.
+  it says so and doesn't try again. Since 0.23.0, once the sync sees such a
+  draft (or unclear listing) live at Etsy, it is Ember's live listing again:
+  the agent can change, renew and pin it, its listing fee is recorded, and the
+  journal offers its Undo.
 - At most **Etsy listings per day** are created a day; approved listings beyond
   that wait for the next day.
 - Every listing belongs to a product line: a project (the one the agent names,
@@ -1457,6 +1463,10 @@ can also remove the app's access at Etsy).
 - If a file changed after you approved, nothing is changed. If Etsy refuses a
   part, the card says what changed and what didn't and links to the listing's
   editor at Etsy. Ember never makes a change twice.
+- Since 0.23.0 Ember reads a listing's files back after changing them: if Etsy
+  holds other files than the change's (an old file it kept under a number Ember
+  couldn't match), the card says the files were left half replaced and which to
+  delete at Etsy, instead of calling them replaced.
 - Ember knows only its own changes: what you change at Etsy yourself isn't in
   its records, so tell the agent when you do. A new set of photos or files
   replaces every one the listing has at Etsy, also ones you added there
@@ -1780,8 +1790,10 @@ it made and what their orders cost you.
   expense form filled in, for the product's project and venture (it can be
   recorded once). With **Record Etsy revenue automatically** on, Ember's code
   records that cost itself at each Etsy sync, for orders from the day you
-  turned it on (EUR at your exchange rate). A cancelled order's cost recorded
-  before is yours to correct. Before 0.21.0 Ember's code recorded none of
+  turned it on (EUR at your exchange rate). Since 0.23.0 the cost of an order
+  cancelled after Ember's code recorded it is taken back with a correction of
+  that entry; one you recorded yourself stays yours to correct. Before 0.21.0
+  Ember's code recorded none of
   them: it couldn't read the time Printify gives an order. It records the
   orders it missed at the next Etsy sync, for orders from the day you turned
   the option on; check the costs of older ones at Printify by hand. An order

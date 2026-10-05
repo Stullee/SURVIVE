@@ -64,6 +64,13 @@ def codepoints(family: str, style: str) -> frozenset[int]:
         return frozenset(font.getBestCmap())
 
 
+def undrawable(text: str, family: str, *styles: str) -> list[str]:
+    """0.23.0: the characters of ``text`` (spaces aside) that the family's ``styles`` (its regular one when none is
+    named) don't all have: Pillow draws a box for each. The statement's cover and make_image's pictures share it."""
+    have = frozenset.intersection(*(codepoints(family, style) for style in set(styles or ("",))))
+    return sorted({char for char in text if ord(char) not in have and not char.isspace()})
+
+
 @cache
 def metrics(family: str) -> tuple[float, float]:
     """(ascender, descender) as fractions of the font size, from the regular face's hhea table."""

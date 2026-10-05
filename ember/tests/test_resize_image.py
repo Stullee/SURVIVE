@@ -53,6 +53,18 @@ def test_the_centre_in_the_size_proportions_is_kept(size: tuple, target: tuple, 
     assert images.centre_part(*size, *target) == kept
 
 
+def test_a_transparent_picture_prints_on_white() -> None:
+    # 0.23.0: transparency was dropped by converting to RGB, so the print file was black where the picture was clear
+    # (paper shows white where a print has no ink).
+    clear = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+    clear.paste((*BLUE, 255), (50, 50, 150, 150))
+    buffer = io.BytesIO()
+    clear.save(buffer, "PNG")
+    printed = Image.open(io.BytesIO(images.fitted(buffer.getvalue(), 400, 400).data))
+    assert printed.mode == "RGB" and printed.getpixel((5, 5)) == (255, 255, 255)
+    assert printed.getpixel((200, 200)) == BLUE
+
+
 def test_the_bauhaus_posters_print_files(tmp_path: Path) -> None:
     """The two sizes the workshop script made, from one picture: exact pixels, 300 dpi, the centre kept."""
     j = jail(tmp_path)

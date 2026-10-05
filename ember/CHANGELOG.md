@@ -3,6 +3,27 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.23.0
+
+Fixes from the review of 0.20.1, phase two: what buyers see. Statements prorate a partial year and take heating as
+each tenant's amount; pictures never show a box for a character; listings, files and Printify's bills say what is true.
+
+- make_cost_statement: a tenant who moved in or out during the period gets from and to (TT.MM.JJJJ, within the period,
+  whose two dates period must name): they pay for their days only, and a flat with two tenants in turn counts once.
+  Give building too, or a flat's empty days are paid by the other tenants. Key direct passes a cost on as each
+  tenant's amount (parts, by name: heating and hot water from the Messdienst's Heizkostenabrechnung); the file has a
+  sheet Einzelbeträge for them. Mieter has Von, Bis and Tage. Read guide 'statements' again.
+- make_image: a character no bundled font has (✓ ★) is refused, where a box stood in for it; a title or line Poppins
+  can't draw (Greek, Cyrillic, →) is set in Calibri. A poster's title stays above its lines. A transparent picture
+  shows on white, not black, in listing photos, and in resize_image's print files.
+- Pictures of spreadsheets (make_spreadsheet, make_image's 'file.xlsx#1', workspace_read): a workbook's formulas have
+  a work budget, and the rest are shown as written; a long text is cut fast (one picture took 114 seconds).
+- propose_etsy_edit: after a change of files, Ember's code reads the listing's files back. When Etsy holds others than
+  the change's, the change says its files were left half replaced, and which to delete at Etsy.
+- Your Etsy listings: a draft your owner finished at Etsy, or one whose making was unclear, is live for you once the
+  sync sees it live: etsy_listing reads it, and you can change, renew and pin it. Its listing fee is booked.
+- Printify: the cost of an order cancelled after Ember's code booked it is taken back.
+
 ## 0.22.0
 
 Fixes from the review of 0.20.1, part two: what your owner decides on a venture holds, and planning keeps what
