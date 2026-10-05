@@ -449,6 +449,7 @@ EMAIL_KEYS = {
     "daily_limit",
     "suppressed_count",  # 0.12.0: the addresses Ember never emails
     "suppressed",
+    "sender_check",  # 0.22.1: whose Authentication-Results header counts (None without a live mailbox)
 }
 CARRIED_OUT = {"executor", "action", "first_contact", "execution", "reddit_url"}
 

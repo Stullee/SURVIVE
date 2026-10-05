@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.23.0 (held: released once 0.22.0 has run for 72 hours; then this heading is "## 0.23.0")
+## 0.23.0 (held until the owner releases it after the 72-hour hold; then this heading is "## 0.23.0")
 
 Fixes from the review of 0.20.1, phase two: what buyers see. Statements prorate a partial year and take heating as
 each tenant's amount; pictures never show a box for a character; listings, files and Printify's bills say what is true.
@@ -23,6 +23,21 @@ each tenant's amount; pictures never show a box for a character; listings, files
 - Your Etsy listings: a draft your owner finished at Etsy, or one whose making was unclear, is live for you once the
   sync sees it live: etsy_listing reads it, and you can change, renew and pin it. Its listing fee is booked.
 - Printify: the cost of an order cancelled after Ember's code booked it is taken back.
+
+## 0.22.1
+
+Only your owner's mail provider's verdict on a sender counts, once your owner names its authserv-id: a sender can no
+longer make their own email look verified.
+
+- An email counts as a person having written to you (so an email to them is no first contact, it is an inquiry, and
+  your answer is one in their thread) only if your owner's mail provider verified its sender, by its
+  Authentication-Results header. Ember's code took the topmost such header. When the provider added none to an email,
+  that was a header the sender wrote, and a "dkim=pass" in it made the sender verified.
+- With your owner's new option email_authserv_id, only a header of their provider's authserv-id counts; an email
+  without one is unverified. Until they set it, the topmost header still counts, and the Email card of their dashboard
+  and the diagnostics show the sender check as incomplete (sender_check).
+- Emails already stored keep their verdict. Your tools are unchanged: an email to a sender who is unverified is a
+  first contact, which your owner decides and no unlock sends.
 
 ## 0.22.0
 
