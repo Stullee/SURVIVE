@@ -11,7 +11,7 @@ SQLite, and the model has no tool that sends (an approved email is sent by ``exe
   smuggle instructions to an AI); attachments are listed by name and size, never opened; sizes are capped.
   0.15.0: each email keeps whether the receiving mail provider verified its sender (``_authenticated``) and
   whether it is a list's or a machine's (``_bulk``, ``_machine``): only a verified person's email counts as someone
-  writing. 0.22.0: once the owner names the provider's authserv-ids (email_authserv_id), only a header of theirs is
+  writing. 0.22.1: once the owner names the provider's authserv-ids (email_authserv_id), only a header of theirs is
   its verdict; without them the topmost header counts, the sender's own if the provider added none. The hidden-text
   filter is best-effort: it knows the common ways, not every way CSS can hide text.
 * An outgoing message is plain text for exactly one recipient, who is also the envelope recipient (never
@@ -169,14 +169,14 @@ def config_problems(settings: Settings) -> list[str]:
     return problems
 
 
-# 0.22.0: in email_authserv_id, the provider's Authentication-Results header that has no authserv-id (Microsoft's
+# 0.22.1: in email_authserv_id, the provider's Authentication-Results header that has no authserv-id (Microsoft's
 # starts with its first result: "spf=pass ...; dkim=pass ...").
 NO_AUTHSERV_ID = "none"
 AUTHSERV_IDS = 10
 
 
 def provider_authserv_ids(settings: Settings) -> tuple[str, ...]:
-    """0.22.0: the authserv-ids in email_authserv_id, lower case (none: every header counts, the topmost first)."""
+    """0.22.1: the authserv-ids in email_authserv_id, lower case (none: every header counts, the topmost first)."""
     parts = (part.strip().lower() for part in settings.email_authserv_id.split(","))
     return tuple(dict.fromkeys(part for part in parts if part))
 
@@ -316,7 +316,7 @@ def parse_message(
 ) -> IncomingMail:
     """One email as Ember stores it: decoded, cleaned and capped. 0.21.0: never raises. An email too deeply nested
     (``too_complex``), or one the parser fails on, is stored with its headers only, so it can't stop the mailbox
-    being read past it, and a "stop" in its subject still counts. 0.22.0: ``authserv_ids`` are the provider's
+    being read past it, and a "stop" in its subject still counts. 0.22.1: ``authserv_ids`` are the provider's
     (email_authserv_id, see ``_authenticated``)."""
     note = _too_large(size) if headers_only else TOO_COMPLEX if too_complex(raw) else None
     try:
@@ -430,7 +430,7 @@ def _authenticated(msg: Message, sender: str, authserv_ids: tuple[str, ...] = ()
     """0.15.0: whether the receiving mail provider verified the sender. Its verdict is the topmost
     Authentication-Results header, the one its receiving server added (any below it may come from the sender): dmarc
     pass, or dkim or spf pass for the From: domain (or a parent or subdomain of it), unless dmarc failed. No
-    verdict: unverified. 0.22.0: with ``authserv_ids`` (email_authserv_id) the topmost header of the provider's
+    verdict: unverified. 0.22.1: with ``authserv_ids`` (email_authserv_id) the topmost header of the provider's
     authserv-id: when the provider added none, the topmost was the sender's own, and its forged pass counted."""
     try:
         verdicts = msg.get_all("Authentication-Results") or []
@@ -462,7 +462,7 @@ def _authenticated(msg: Message, sender: str, authserv_ids: tuple[str, ...] = ()
 
 
 def _verdict(header: Any) -> tuple[str, list[str]]:
-    """0.22.0: an Authentication-Results header's authserv-id (lower case; "" when it has none) and its results,
+    """0.22.1: an Authentication-Results header's authserv-id (lower case; "" when it has none) and its results,
     without comments (they may hold a ";"). The authserv-id comes first, maybe with a version ("mx.google.com 1;
     dkim=pass ..."); Microsoft's header starts with its first result instead ("spf=pass ...; dkim=pass ...")."""
     first, *results = _uncommented(one_line(header, 4_000).lower()).split(";")
@@ -473,7 +473,7 @@ def _verdict(header: Any) -> tuple[str, list[str]]:
 
 
 def _uncommented(text: str) -> str:
-    """0.22.0: text without its comments, nested ones too, each a space, in time linear in its length (the regex
+    """0.22.1: text without its comments, nested ones too, each a space, in time linear in its length (the regex
     before went over the text once per level, and a sender can write many headers). An unclosed one runs to the end."""
     kept, depth = [], 0
     for char in text:
@@ -489,7 +489,7 @@ def _uncommented(text: str) -> str:
 
 
 def _listed(authserv_id: str, listed: tuple[str, ...]) -> bool:
-    """0.22.0: whether an authserv-id is one in email_authserv_id or under one (a provider's receiving servers
+    """0.22.1: whether an authserv-id is one in email_authserv_id or under one (a provider's receiving servers
     mx1.example.net and mx2.example.net under example.net); no authserv-id only when it lists NO_AUTHSERV_ID."""
     if not authserv_id:
         return NO_AUTHSERV_ID in listed
@@ -864,7 +864,7 @@ class LiveMailbox:
         self._password = settings.email_password
         self.imap = (settings.email_imap_host, settings.email_imap_port)
         self.smtp = (settings.email_smtp_host, settings.email_smtp_port)
-        self.authserv_ids = provider_authserv_ids(settings)  # 0.22.0
+        self.authserv_ids = provider_authserv_ids(settings)  # 0.22.1
 
     @staticmethod
     def tls() -> ssl.SSLContext:
@@ -1137,7 +1137,7 @@ SENDER_CHECK_INCOMPLETE = (
 
 
 def sender_check(settings: Settings, mode: str) -> dict[str, Any] | None:
-    """0.22.0: how Ember reads the provider's verdict on a sender, for the dashboard and the diagnostics: complete
+    """0.22.1: how Ember reads the provider's verdict on a sender, for the dashboard and the diagnostics: complete
     when email_authserv_id names the provider's authserv-ids, incomplete when it is empty. None without a live
     mailbox (the dry run's fake one adds its own headers)."""
     if mode == "dry_run" or not settings.email_enabled or config_problems(settings):

@@ -189,7 +189,7 @@ class Settings(BaseModel):
     email_smtp_port: int = Field(default=465, ge=1, le=65_535)
     email_owner_name: str = ""
     email_daily_limit: int = Field(default=3, ge=0, le=20)
-    # 0.22.0: the authserv-ids of the owner's mail provider (comma-separated; "none": its header has none, as
+    # 0.22.1: the authserv-ids of the owner's mail provider (comma-separated; "none": its header has none, as
     # Outlook's): only an Authentication-Results header of one of them is its verdict (mail._authenticated).
     email_authserv_id: str = Field(default="", max_length=300)
     # Etsy (0.8.0): Ember's code lists approved products in the owner's Etsy shop, through the owner's own Etsy app

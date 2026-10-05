@@ -27,7 +27,7 @@ pytest.importorskip("httpx2")
 
 from app import db as dbmod  # noqa: E402
 from app import diagnostics, events, privacy  # noqa: E402
-from app.agent import library, obligations  # noqa: E402
+from app.agent import library, obligations, policy  # noqa: E402
 from app.agent.context import RESEARCH_CALLS  # noqa: E402
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls  # noqa: E402
 from app.agent.scheduler import Scheduler  # noqa: E402
@@ -187,7 +187,7 @@ def test_the_open_sensor_carries_counts_and_no_one_s_address(data_dir: Path) -> 
     """The digest named the address of a person who asked to stop, and /api/sensors needs no user."""
     agent, transport = mail_cycle(data_dir, calls(("email_inbox", {})))
     goal = a_milestone(agent)
-    assert owner(agent).set_autonomy(goal, {"rule": "email_reply", "level": "auto"}, "Stefan").status == 200
+    assert owner(agent).set_autonomy(goal, {"rule": "email_reply", "level": "veto_window"}, "Stefan").status == 200
     aimed = json.dumps(
         {"assessment": "A reader asked.", "goal": "Answer", "steps": ["answer"], "focus_milestone_id": goal}
     )
@@ -195,6 +195,8 @@ def test_the_open_sensor_carries_counts_and_no_one_s_address(data_dir: Path) -> 
         [reply([{"type": "text", "text": aimed}], "end_turn"), calls(("propose_email", REPLY)), text("Ok."), JOURNAL]
     )
     assert agent.run_cycle("schedule").status == "completed"
+    agent.clock.advance(hours=policy.VETO_HOURS)  # 0.22.0: an email reply runs at most after its veto window
+    agent.run_policy()
     [made] = rows(agent, "SELECT id FROM approvals")
     assert agent.execute_approved() == [(made["id"], "simulated")]
     agent.clock.advance(minutes=30)

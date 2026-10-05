@@ -1902,7 +1902,7 @@ def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         raise ToolError("an open project already has this title")
     venture_id = args.get("venture_id")
     if venture_id is not None:
-        _open_venture(conn, ctx.scope, venture_id)
+        _working_venture(conn, ctx.scope, venture_id)
     project_id = store.create_project(
         conn,
         ctx.scope,
@@ -1957,6 +1957,15 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         raise ToolError(f"project #{row['id']} is {row['status']}, which is final")
     changes: dict[str, Any] = {}
     status = args.get("status")
+    if status in ("idea", "active") and status != row["status"] and row["venture_id"] is not None:
+        held = ventures.get(conn, ctx.scope, row["venture_id"])
+        if held is not None and (held["stage"] == "killed" or held["parked_by"] == "owner"):
+            # 0.22.0 (analysis 0.20.1, FIX NOW 12): the owner's park or kill stops the venture's project work
+            what = "killed" if held["stage"] == "killed" else "parked"
+            raise ToolError(
+                f"your owner {what} venture #{held['id']}: its projects wait"
+                + (" until they take it up again" if what == "parked" else "; close this one")
+            )
     if status and status != row["status"]:
         if status == "succeeded":
             earned, cost = project_net(conn, ctx.scope, row["id"])
@@ -1979,7 +1988,14 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         changes["notes"] = notes[-2000:]
     venture_id = args.get("venture_id")
     if venture_id is not None and venture_id != row["venture_id"]:
-        _open_venture(conn, ctx.scope, venture_id)
+        _working_venture(conn, ctx.scope, venture_id)
+        tied = _tied(conn, ctx.scope, row["id"])
+        if tied:  # 0.22.0 (analysis 0.20.1, FIX NOW 11): what Ember's code counted for it stays the venture's
+            where = f"venture #{row['venture_id']}" if row["venture_id"] is not None else "its channel's venture"
+            raise ToolError(
+                f"project #{row['id']} has {tied}: what Ember's code counts, grades and settles for it belongs to "
+                f"{where}, so it stays there. For another venture, open a project of its own"
+            )
         for vid in (row["venture_id"], venture_id):
             held = policy.venture_unlock(conn, ctx.scope, vid)
             if held is not None:  # 0.21.0: it covers the venture's projects, so none moves in or out
@@ -2045,6 +2061,32 @@ def project_net(conn: Any, scope: AgentScope, project_id: int) -> tuple[int, int
         (project_id, 1 if scope.simulated else 0),
     ).fetchone()[0]
     return int(earned), int(cost)
+
+
+def _working_venture(conn: Any, scope: AgentScope, venture_id: int) -> Any:
+    """0.22.0 (analysis 0.20.1, FIX NOW 12): a venture a project may join: open (not killed) and not parked. A project
+    could be opened under a venture the owner parked or killed, and work went on."""
+    row = _open_venture(conn, scope, venture_id)
+    if row["stage"] == "parked":
+        who, then = {
+            "owner": ("your owner", "it is theirs to take up again"),
+            "code": ("Ember's code", "only your owner takes it up again"),
+        }.get(row["parked_by"] or "", ("you", "take it up again first (venture_update)"))
+        raise ToolError(f"{who} parked venture #{venture_id}: no project goes into it while it is parked; {then}")
+    return row
+
+
+def _tied(conn: Any, scope: AgentScope, project_id: int) -> str:
+    """0.22.0 (analysis 0.20.1, FIX NOW 11): what ties a project to its venture ("" when nothing does): its listings,
+    the revenue recorded for it, or a bet. Moving such a project closed another venture's "listings_live >= 1" as met,
+    settled its forecast as a hit, and let an empty venture escape its park."""
+    if metrics.listings(conn, scope, project_id, None):
+        return "listings"
+    if conn.execute("SELECT 1 FROM ledger WHERE project_id = ? AND type = 'revenue' LIMIT 1", (project_id,)).fetchone():
+        return "revenue"
+    if conn.execute("SELECT 1 FROM bets WHERE project_id = ? LIMIT 1", (project_id,)).fetchone():
+        return "a bet"
+    return ""
 
 
 def _open_venture(conn: Any, scope: AgentScope, venture_id: int) -> Any:

@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 pytest.importorskip("httpx2")
 
+from app import paths  # noqa: E402
 from app.agent import news, policy, prompts  # noqa: E402
 from app.agent.owner import Owner, apply_kill_switch_reset, kill  # noqa: E402
 from app.config import LoadedSettings, Settings  # noqa: E402
@@ -79,15 +80,24 @@ def answer(agent: Any, transport: Any, goal: int, **email: Any) -> dict[str, Any
 # --- (a) the footer of an automatic email tells the truth ---
 
 
+def replies_after_the_veto_window(agent: Any) -> None:
+    """0.22.0: an email reply an unlock carries runs at most after its veto window (policy.MOST)."""
+    agent.clock.advance(hours=policy.VETO_HOURS)
+    agent.run_policy()
+
+
 def test_an_automatic_reply_says_its_owner_did_not_review_it(data_dir: Path) -> None:
     agent, transport = mail_cycle(data_dir, calls(("email_inbox", {})))  # the dry run's reader wrote (email #1)
     goal = a_milestone(agent)
-    unlock(agent, goal, "email_reply")
+    unlock(agent, goal, "email_reply", "veto_window")
     made = answer(agent, transport, goal)
-    assert (made["status"], made["decided_by"]) == ("approved", policy.POLICY_BY)
     said = tool_results(agent, "propose_email")[-1]["result"]
-    assert said.startswith(f"Approval request #{made['id']}: Ember's code approved it at once: your owner unlocked")
-    assert "is waiting for your owner" not in said and "Nothing has been sent. If they approve it" not in said
+    assert said.endswith(
+        " It is approved 12 hours from now unless your owner decides first: your owner unlocked email"
+        " replies in threads the other person started for milestone #4 (veto window)."
+    )
+    replies_after_the_veto_window(agent)
+    assert status_of(agent, made["id"])["decided_by"] == policy.POLICY_BY
     assert agent.execute_approved() == [(made["id"], "simulated")]
     [sent] = agent.mailbox.sent  # type: ignore[union-attr]
     body = sent.get_content()
@@ -312,7 +322,7 @@ def test_an_unlock_needs_owner_user_ids(client_factory: Callable[..., Iterator[T
             milestone = {"title": f"Ten sales ({granted})", "measure": "10 orders", "due": due}
             goal = client.post("api/roadmap", json=milestone, headers=headers).json()["id"]
             path = f"api/milestones/{goal}/autonomy"
-            said = client.post(path, json={"rule": "email_reply", "level": "auto"}, headers=headers)
+            said = client.post(path, json={"rule": "email_reply", "level": "veto_window"}, headers=headers)
             if granted:
                 assert said.status_code == 200, said.json()
             else:
@@ -396,7 +406,7 @@ def test_the_agent_hears_that_unlocks_are_off(data_dir: Path, safe_mode: bool) -
 def test_an_unlock_does_not_carry_a_reply_that_fails_its_qa(data_dir: Path) -> None:
     agent, transport = mail_cycle(data_dir, calls(("email_inbox", {})))
     goal = a_milestone(agent)
-    unlock(agent, goal, "email_reply")
+    unlock(agent, goal, "email_reply", "veto_window")
     long = " ".join(["word"] * 329)
     made = answer(agent, transport, goal, subject="Planner in German", body=long)
     assert (made["status"], made["decided_by"]) == ("pending", None)
@@ -408,7 +418,8 @@ def test_an_unlock_does_not_carry_a_reply_that_fails_its_qa(data_dir: Path) -> N
     assert agent.execute_approved() == [] and agent.mailbox.sent == []  # type: ignore[union-attr]
     assert rows(agent, "SELECT COUNT(*) AS n FROM policy_uses") == [{"n": 0}]
     passing = answer(agent, transport, goal)  # the same unlock carries an answer that passes
-    assert (passing["status"], passing["decided_by"]) == ("approved", policy.POLICY_BY)
+    replies_after_the_veto_window(agent)
+    assert status_of(agent, passing["id"])["decided_by"] == policy.POLICY_BY
 
 
 def distinct_photos(photo: dict[str, Any], count: int) -> list[dict[str, Any]]:
@@ -590,3 +601,39 @@ def test_the_constitution_says_what_ember_s_code_carries_out() -> None:
     assert "Revenue counts when your owner records it, or Ember's code from Etsy's numbers" in said
     assert "your owner carries out the rest" in said
     assert "must go through request_approval" in said
+
+
+def test_email_replies_run_at_most_after_a_veto_window(data_dir: Path) -> None:
+    """0.22.0 (analysis 0.20.1, FIX NOW 13): an email-reply unlock has no thread scope and no content gate beyond its
+    words (an auto-reply could quote other people's mail), so none goes out at once: the owner can't grant "auto", the
+    database refuses it, and the upgrade takes back the ones that stood."""
+    agent, _ = mail_cycle(data_dir, calls(("email_inbox", {})))
+    goal = a_milestone(agent)
+    said = owner(agent).set_autonomy(goal, {"rule": "email_reply", "level": "auto"}, "Stefan")
+    assert said.status == 422 and "at most unless you veto it within 12 h" in said.body["error"]
+    assert policy.levels("email_reply") == ("manual", "veto_window") and policy.levels("deactivate") == policy.LEVELS
+    with agent.db.connection() as conn:
+        items = {i["rule"]: i for i in policy.view(conn, agent.scope(), agent.clock, goal)}
+    assert items["email_reply"]["levels"] == ["manual", "veto_window"]
+    now = to_iso(agent.clock.now())
+    with (
+        pytest.raises(sqlite3.IntegrityError, match="email replies run at most with a veto window"),
+        agent.db.transaction() as conn,
+    ):
+        conn.execute(
+            "INSERT INTO policy_grants (mode, session, milestone_id, rule, level, per_day, budget, by, created_at)"
+            " VALUES (?, ?, ?, 'email_reply', 'auto', 3, 10, 'Stefan', ?)",
+            (agent.scope().mode, agent.scope().session, goal, now),
+        )
+    migration = (paths.APP_DIR / "migrations" / "0076_reply_unlocks.sql").read_text(encoding="utf-8")
+    with agent.db.transaction() as conn:  # an "auto" one granted before 0.22.0
+        conn.execute("DROP TRIGGER policy_grants_replies_veto")
+        conn.execute(
+            "INSERT INTO policy_grants (mode, session, milestone_id, rule, level, per_day, budget, by, created_at)"
+            " VALUES (?, ?, ?, 'email_reply', 'auto', 3, 10, 'Stefan', ?)",
+            (agent.scope().mode, agent.scope().session, goal, now),
+        )
+        conn.execute(migration[migration.index("INSERT INTO policy_grants") :])
+    with agent.db.connection() as conn:
+        assert policy.grant(conn, agent.scope(), goal, "email_reply") is None  # taken back: manual
+        assert policy.grants(conn, agent.scope(), goal)[0]["by"] == policy.REVOKED_BY

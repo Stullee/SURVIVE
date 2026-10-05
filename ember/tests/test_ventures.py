@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.agent import context, econ, prompts, tools, ventures
+from app.agent import context, econ, prompts, store, tools, ventures
 from app.agent.fake_llm import FakeTransport, Plan, Raw, Reply, ToolCalls, request_kind, validate_request
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
@@ -813,3 +813,96 @@ def test_the_rules_ask_for_a_path_never_a_no() -> None:
     assert "brainstorm" not in {d["name"] for d in tools.definitions(mail=True, etsy=True)}
     request = prompts.brainstorm_request(Settings(), "context")
     assert request_kind(request) == "brainstorm" and validate_request(request) is None
+
+
+def test_a_project_with_listings_revenue_or_a_bet_keeps_its_venture(data_dir: Path) -> None:
+    """0.22.0 (analysis 0.20.1, FIX NOW 11): moving the shop's project into a venture closed its "listings_live >= 1"
+    as met, settled a forecast of 10% as a hit, and let an empty venture escape its park."""
+    from tests.test_etsy import call, listed, shop_context  # noqa: PLC0415
+
+    agent, _ = listed(data_dir)
+    ctx = shop_context(agent)
+    with agent.db.transaction() as conn:
+        other = ventures.create(
+            conn,
+            agent.scope(),
+            title="Wedding planners",
+            pitch="Planners.",
+            stage="building",
+            now=to_iso(agent.clock.now()),
+        )
+    moved = call(ctx, "project_update", {"project_id": 1, "venture_id": other})
+    assert not moved.ok and "project #1 has listings: what Ember's code counts" in moved.text
+    made = call(
+        ctx, "project_create", {"title": "Seating charts", "hypothesis": "h", "next_step": "n", "status": "idea"}
+    )
+    assert (
+        made.ok and call(ctx, "project_update", {"project_id": made.project_id, "venture_id": other}).ok
+    )  # nothing ties it
+    assert rows(agent, f"SELECT venture_id FROM projects WHERE id = {made.project_id}") == [{"venture_id": other}]
+
+
+def test_the_owner_s_park_or_kill_stops_its_projects(data_dir: Path) -> None:
+    """0.22.0 (analysis 0.20.1, FIX NOW 12): the venture's projects stayed active after the owner parked or killed it,
+    and the agent could open new ones under it."""
+    from tests.test_etsy import call, listed, shop_context  # noqa: PLC0415
+
+    agent, _ = listed(data_dir)
+    ctx = shop_context(agent)
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        parked, killed = (
+            ventures.create(conn, agent.scope(), title=t, pitch="p.", stage="building", now=now) for t in ("A", "B")
+        )
+    project = {"hypothesis": "h", "next_step": "n", "status": "active"}
+    first = call(ctx, "project_create", {"title": "Under A", "venture_id": parked, **project}).project_id
+    with agent.db.transaction() as conn:
+        second = store.create_project(
+            conn, agent.scope(), cycle_id=ctx.cycle_id, title="Under B", now=now, **{**project, "venture_id": killed}
+        )
+    who = owner(agent)
+    assert who.decide_venture(parked, {"action": "park", "comment": "Not now."}, "Stefan").status == 200
+    assert who.decide_venture(killed, {"action": "kill", "comment": "No."}, "Stefan").status == 200
+    found = rows(agent, f"SELECT id, status, next_step FROM projects WHERE id IN ({first}, {second}) ORDER BY id")
+    assert found == [
+        {"id": first, "status": "waiting", "next_step": "None until your owner takes the venture up again."},
+        {"id": second, "status": "abandoned", "next_step": "None: closed with its venture."},
+    ]
+    again = call(ctx, "project_update", {"project_id": first, "status": "active"})
+    assert not again.ok and f"your owner parked venture #{parked}: its projects wait until" in again.text
+    new = call(ctx, "project_create", {"title": "Under A again", "venture_id": parked, **project})
+    assert not new.ok and f"your owner parked venture #{parked}: no project goes into it" in new.text
+    assert call(ctx, "project_update", {"project_id": first, "note": "Waiting for the owner."}).ok
+    assert who.decide_venture(parked, {"action": "back", "confirm": True}, "Stefan").status == 200
+    assert call(ctx, "project_update", {"project_id": first, "status": "active"}).ok
+
+
+def test_ventures_parked_or_killed_before_the_upgrade_stop_their_projects(data_dir: Path) -> None:
+    """0.22.0: migration 0077 does for the ventures the owner parked or killed before what the owner's word does now."""
+    from app import paths  # noqa: PLC0415
+
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        ids = {
+            t: ventures.create(conn, agent.scope(), title=t, pitch="p.", stage="researching", now=now) for t in "ABC"
+        }
+    who = owner(agent)
+    assert who.decide_venture(ids["A"], {"action": "park"}, "Stefan").status == 200
+    assert who.decide_venture(ids["B"], {"action": "kill"}, "Stefan").status == 200
+    with agent.db.transaction() as conn:
+        ventures.update(conn, ids["C"], now, stage="parked", parked_by="agent")
+        for title, vid in ids.items():  # as projects stood under them before 0.22.0
+            store.create_project(
+                conn, agent.scope(), cycle_id=1, title=f"Under {title}", hypothesis="h", next_step="n",
+                status="active", now=now, venture_id=vid,
+            )  # fmt: skip
+        sql = (paths.APP_DIR / "migrations" / "0077_owner_parks.sql").read_text(encoding="utf-8")
+        conn.execute(sql[sql.index("UPDATE projects") :])
+    found = {r["title"]: r for r in rows(agent, "SELECT title, status, notes FROM projects WHERE title LIKE 'Under %'")}
+    assert {t: r["status"] for t, r in found.items()} == {
+        "Under A": "waiting",
+        "Under B": "abandoned",
+        "Under C": "active",
+    }
+    assert found["Under B"]["notes"] == f"[owner] Your owner killed venture #{ids['B']}."

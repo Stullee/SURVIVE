@@ -664,7 +664,7 @@ def test_a_live_mailbox_error_is_recorded_and_never_ends_the_cycle(data_dir: Pat
     assert email["status"] == "ok" and email["last_error"] is None and email["unread"] == 2
 
 
-# --- 0.22.0: only the provider's Authentication-Results header counts (analysis 0.20.1, finding 13) ---
+# --- 0.22.1: only the provider's Authentication-Results header counts (analysis 0.20.1, finding 13) ---
 
 # What a sender can write into its own email: a pass for the domain in its From:, under Gmail's name.
 FORGED_PASS = "mx.google.com; dkim=pass header.d=bank.example; dmarc=pass header.from=bank.example"
@@ -779,7 +779,7 @@ def test_the_authserv_id_option_is_checked(value: str, ids: tuple[str, ...], val
 
 
 def test_the_sender_s_headers_are_read_in_time_linear_in_their_length() -> None:
-    """0.22.0: a header the provider's authserv-id doesn't name is skipped, so a sender can make Ember read every one
+    """0.22.1: a header the provider's authserv-id doesn't name is skipped, so a sender can make Ember read every one
     it writes. Their comments were taken out a level at a time: 250 headers nested 2,000 deep took 9 seconds."""
     nested = "(" * 1_990 + ")" * 1_990
     headers = [f"x{n}.attacker.example {nested}; dkim=pass header.d=bank.example" for n in range(250)]

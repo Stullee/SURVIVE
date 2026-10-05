@@ -77,6 +77,9 @@ RULES: dict[str, Rule] = {
     )
 }
 LEVELS = ("manual", "veto_window", "auto")
+# 0.22.0 (analysis 0.20.1, FIX NOW 13): an email reply runs at most unless the owner vetoes it in time. Ember's code
+# checks only its thread and its words (it could quote other people's mail), so none goes out at once.
+MOST = {"email_reply": "veto_window"}
 VETO_HOURS = 12
 PRICE_BAND = Decimal("0.15")
 VARIANTS_FIRST = 5
@@ -306,6 +309,11 @@ def unlocked_text(rows: Sequence[Mapping[str, Any]], short: bool = False) -> str
     return (", " if short else "; ").join(granted_text(g, short) for g in rows)
 
 
+def levels(rule: str) -> tuple[str, ...]:
+    """0.22.0: the levels the owner may grant a rule (MOST: email replies at most with a veto window)."""
+    return LEVELS[: LEVELS.index(MOST.get(rule, LEVELS[-1])) + 1]
+
+
 def set_grant(
     conn: sqlite3.Connection,
     scope: AgentScope,
@@ -322,6 +330,8 @@ def set_grant(
 ) -> int:
     if rule not in RULES or level not in LEVELS:
         raise ValueError("unknown rule or level")
+    if level not in levels(rule):
+        raise ValueError(f"{rule} is granted at most {levels(rule)[-1]}")
     if level != "manual" and by in CODE:
         raise ValueError("only the owner unlocks (NEVER: the policies)")
     cursor = conn.execute(
@@ -682,6 +692,7 @@ def view(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, milestone_id
                 "label": rule.label,
                 "action_class": rule.action_class,
                 "fits": fits(conn, milestone_id, rule.name),
+                "levels": list(levels(rule.name)),  # 0.22.0
                 "level": g["level"] if g is not None else "manual",
                 "per_day": g["per_day"] if g is not None else PER_DAY,
                 "budget": g["budget"] if g is not None else BUDGET,

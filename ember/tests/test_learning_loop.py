@@ -240,6 +240,38 @@ def test_the_playbook_s_confidence_is_set_by_ember_s_code_and_old_guesses_fade(d
     assert playbook.startswith("Your playbook") and "[established, 3 case(s) for] Listings without" in playbook
 
 
+def test_a_principle_and_its_opposite_can_t_share_their_cases_and_established_words_stay(data_dir: Path) -> None:
+    """0.22.0 (analysis 0.20.1, FIX NOW 14): the same 3 cases established a principle and its opposite, an established
+    principle's text could be swapped wholesale, and a too_early case counted as evidence."""
+    agent, _ = started(data_dir)
+    scope, stamp = agent.scope(), now(agent)
+    with agent.db.transaction() as conn:
+        ids = []
+        for i, cause in enumerate(["no_reach", "no_reach", "no_reach", "too_early", "too_early", "too_early"]):
+            retro = {"subject": f"bet #{i}", "expected": "", "happened": "", "why": "Few views.", "cause": cause}
+            ids += learning.save_cases(conn, scope, None, [{**retro, "sure": "high", "lesson": ""}], [], stamp)
+        said = learning.apply_principles(
+            conn,
+            scope,
+            [
+                {"id": None, "text": "Pins bring views.", "supports": ids[:3], "against": [], "retire": ""},
+                {"id": None, "text": "Pins bring no views.", "supports": ids[:3], "against": [], "retire": ""},
+                {"id": None, "text": "Wait a week.", "supports": ids[3:], "against": [], "retire": ""},
+            ],
+            set(ids),
+            stamp,
+        )
+        assert said == [
+            "new principle #1 (established): Pins bring views.",
+            "new principle #2 (hypothesis): Pins bring no views.",  # its cases are #1's
+        ]  # and "Wait a week." cites only too_early cases: no evidence, no principle
+        learning.apply_principles(
+            conn, scope, [{"id": 1, "text": "Pins bring no views.", "supports": [], "against": [], "retire": ""}],
+            set(ids), stamp,
+        )  # fmt: skip
+        assert [p["text"] for p in learning.principles(conn, scope)] == ["Pins bring views.", "Pins bring no views."]
+
+
 def test_the_weekly_look_rewrites_the_strategy_unless_it_names_a_parked_venture(data_dir: Path) -> None:
     agent, _ = started(data_dir)
     scope, mem = agent.scope(), agent.memory()

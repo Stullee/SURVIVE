@@ -385,8 +385,8 @@ def test_code_parks_a_venture_with_its_projects_bars(data_dir: Path) -> None:
 
 def test_the_agents_park_leaves_its_projects_bars_open(data_dir: Path) -> None:
     agent, project = started(data_dir)
-    moved = call(agent, "project_update", project_id=project, venture_id=DROPSHIPPING)
-    assert moved.ok, moved.text
+    with agent.db.transaction() as conn:  # 0.22.0: a project with listings keeps its venture: one of Dropshipping's
+        conn.execute("UPDATE projects SET venture_id = ? WHERE id = ?", (DROPSHIPPING, project))
     parked = call(agent, "venture_update", venture_id=DROPSHIPPING, stage="parked", note="not now")
     assert parked.ok, parked.text
     assert bars(agent)["day7_views"]["status"] == "open"  # the agent can't end a listing test by a park

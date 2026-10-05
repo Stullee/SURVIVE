@@ -175,7 +175,7 @@ def test_the_inquiry_metrics(data_dir: Path) -> None:
 def test_an_opt_out_after_an_automatic_reply_takes_the_unlock_back(data_dir: Path) -> None:
     agent, transport = mail_cycle(data_dir, calls(("email_inbox", {})))  # the dry run's reader wrote (email #1)
     goal = a_milestone(agent)
-    assert owner(agent).set_autonomy(goal, {"rule": "email_reply", "level": "auto"}, "Stefan").status == 200
+    assert owner(agent).set_autonomy(goal, {"rule": "email_reply", "level": "veto_window"}, "Stefan").status == 200
     aimed = json.dumps(
         {
             "assessment": "A reader asked.",
@@ -194,6 +194,8 @@ def test_an_opt_out_after_an_automatic_reply_takes_the_unlock_back(data_dir: Pat
         ]
     )
     assert agent.run_cycle("schedule").status == "completed"
+    agent.clock.advance(hours=policy.VETO_HOURS)  # 0.22.0: an email reply runs at most after its veto window
+    agent.run_policy()
     [made] = rows(agent, "SELECT id, status, decided_by FROM approvals")
     assert (made["status"], made["decided_by"]) == ("approved", policy.POLICY_BY)  # an automatic reply
     assert agent.execute_approved() == [(made["id"], "simulated")]
