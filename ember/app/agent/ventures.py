@@ -320,6 +320,13 @@ def get(conn: sqlite3.Connection, scope: AgentScope, venture_id: int) -> sqlite3
     ).fetchone()
 
 
+def owner_stopped(conn: sqlite3.Connection, scope: AgentScope, venture_id: int | None) -> sqlite3.Row | None:
+    """0.23.2: the venture when the owner parked or killed it (its projects wait, or were closed), else None. The
+    owner's word stops its project work (0.22.0, stages.stop_projects): what reaches it, it stops too."""
+    row = get(conn, scope, venture_id) if venture_id is not None else None
+    return row if row is not None and (row["stage"] == "killed" or row["parked_by"] == "owner") else None
+
+
 def all_ventures(conn: sqlite3.Connection, scope: AgentScope, limit: int = MAX_VENTURES) -> list[sqlite3.Row]:
     """The whole tree (the oldest first, so a parent comes before its branches)."""
     where, params = scope.where()

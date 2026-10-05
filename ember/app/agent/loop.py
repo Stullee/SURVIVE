@@ -835,11 +835,18 @@ class CycleRunner:
             news.mark_changelog_seen(self.db, self.scope, snap.news)
         taken = self._take_ready(cycle_id, plan) if ctx.venture else None  # 0.13.0
         focus = None
-        venture_focus = milestone_focus = ""
+        venture_focus = milestone_focus = stopped = ""
         with self.db.connection() as conn:
             if plan.focus_project_id is not None:
                 focus = store.project(conn, self.scope, plan.focus_project_id)
                 if focus is None or focus["status"] not in store.OPEN_STATUSES:
+                    plan.focus_project_id, focus = None, None
+                elif (held := ventures.owner_stopped(conn, self.scope, focus["venture_id"])) is not None:
+                    # 0.23.2: the owner's park stops its projects' work; a plan's focus on one carried it on
+                    stopped = (
+                        f"No focus project: your plan's #{focus['id']} waits, because your owner {held['stage']} "
+                        f"venture #{held['id']}. Work on what doesn't need it, until they take the venture up again."
+                    )
                     plan.focus_project_id, focus = None, None
             if plan.focus_venture_id is not None:
                 venture = ventures.get(conn, self.scope, plan.focus_venture_id)
@@ -871,6 +878,8 @@ class CycleRunner:
                     milestone_focus = roadmap.focus_text(
                         milestone, self.clock.today(), parent, spent, replaced, last=last, unlocked=unlocked
                     )
+        if stopped:  # the brief's FOCUS says why the plan's project isn't it
+            venture_focus = f"{stopped}\n\n{venture_focus}" if venture_focus else stopped
         ctx.state.focus_project_id = plan.focus_project_id
         ctx.state.focus_venture_id = plan.focus_venture_id
         self._progress(

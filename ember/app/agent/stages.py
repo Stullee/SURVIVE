@@ -152,13 +152,15 @@ def drop_milestones(
     """A venture parked or killed takes its open milestones with it, and the open steps leading to them: all of them
     when the owner parked or killed it (``by`` 'owner'), else all but the owner's (which stay theirs to drop). 0.15.0:
     when the owner or Ember's code parks or kills it, also the bars Ember's code set for its projects (their listing
-    tests end with it). The agent's own park leaves them open: it can't end a listing test. Returns their numbers."""
+    tests end with it). The agent's own park leaves them open: it can't end a listing test. 0.23.2: the owner's park or
+    kill takes every milestone of its projects too (it stops their work: stop_projects), the agent's own included.
+    Returns their numbers."""
     where, params = scope.where()
-    bars = by in ("owner", "code")
+    bars, owner = by in ("owner", "code"), by == "owner"
     linked = conn.execute(
-        f"SELECT * FROM milestones WHERE {where} AND status = 'open' AND (venture_id = ? OR (? AND created_by = 'code'"
-        " AND project_id IN (SELECT id FROM projects WHERE venture_id = ?))) ORDER BY id",
-        (*params, venture_id, bars, venture_id),
+        f"SELECT * FROM milestones WHERE {where} AND status = 'open' AND (venture_id = ? OR (project_id IN"
+        " (SELECT id FROM projects WHERE venture_id = ?) AND (? OR (? AND created_by = 'code')))) ORDER BY id",
+        (*params, venture_id, venture_id, owner, bars),
     ).fetchall()
     dropped: list[int] = []
     for row in [*linked, *(s for r in linked for s in roadmap.open_steps(conn, r["id"]))]:

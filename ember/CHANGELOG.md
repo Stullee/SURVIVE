@@ -3,6 +3,18 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.23.2
+
+Your owner's park or kill of a venture stops all of its project work, and nothing carries it on.
+
+- A plan's focus on a project waiting while its venture is parked is set aside: FOCUS says so. Work on what doesn't
+  need it until your owner takes the venture up again.
+- milestone_plan and milestone_update link no milestone to a parked venture (take one you parked up again first) or
+  to a project of a venture your owner parked or killed.
+- A listing or product doesn't join a project of a venture your owner parked or killed.
+- Your owner's park or kill takes every open milestone of the venture's projects with it, yours included (before,
+  only the bars Ember's code set). The ones earlier parks left open were dropped at this upgrade.
+
 ## 0.23.1
 
 Fixes from the review of 0.22.0: your owner's park holds, and what it stops comes back when they take the venture up.

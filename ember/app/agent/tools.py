@@ -1960,9 +1960,9 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         raise ToolError(f"project #{row['id']} is {row['status']}, which is final")
     changes: dict[str, Any] = {}
     status = args.get("status")
-    if status in ("idea", "active") and status != row["status"] and row["venture_id"] is not None:
-        held = ventures.get(conn, ctx.scope, row["venture_id"])
-        if held is not None and (held["stage"] == "killed" or held["parked_by"] == "owner"):
+    if status in ("idea", "active") and status != row["status"]:
+        held = ventures.owner_stopped(conn, ctx.scope, row["venture_id"])
+        if held is not None:
             # 0.22.0 (analysis 0.20.1, FIX NOW 12): the owner's park or kill stops the venture's project work
             what = "killed" if held["stage"] == "killed" else "parked"
             raise ToolError(
@@ -1991,8 +1991,8 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         changes["notes"] = notes[-2000:]
     venture_id = args.get("venture_id")
     if venture_id is not None and venture_id != row["venture_id"]:
-        held = ventures.get(conn, ctx.scope, row["venture_id"]) if row["venture_id"] is not None else None
-        if held is not None and (held["stage"] == "killed" or held["parked_by"] == "owner"):
+        held = ventures.owner_stopped(conn, ctx.scope, row["venture_id"])
+        if held is not None:
             # 0.23.1: moved out, then set active, a project of the venture worked on as before the owner's park
             what = "killed" if held["stage"] == "killed" else "parked"
             raise ToolError(
@@ -2075,17 +2075,24 @@ def project_net(conn: Any, scope: AgentScope, project_id: int) -> tuple[int, int
     return int(earned), int(cost)
 
 
-def _working_venture(conn: Any, scope: AgentScope, venture_id: int) -> Any:
+def _working_venture(conn: Any, scope: AgentScope, venture_id: int, what: str = "no project goes into it") -> Any:
     """0.22.0 (analysis 0.20.1, FIX NOW 12): a venture a project may join: open (not killed) and not parked. A project
-    could be opened under a venture the owner parked or killed, and work went on."""
+    could be opened under a venture the owner parked or killed, and work went on. 0.23.2: a milestone's link too
+    (``what``)."""
     row = _open_venture(conn, scope, venture_id)
     if row["stage"] == "parked":
         who, then = {
             "owner": ("your owner", "it is theirs to take up again"),
             "code": ("Ember's code", "only your owner takes it up again"),
         }.get(row["parked_by"] or "", ("you", "take it up again first (venture_update)"))
-        raise ToolError(f"{who} parked venture #{venture_id}: no project goes into it while it is parked; {then}")
+        raise ToolError(f"{who} parked venture #{venture_id}: {what} while it is parked; {then}")
     return row
+
+
+def _milestone_venture(conn: Any, scope: AgentScope, venture_id: int) -> Any:
+    """0.23.2: a venture a milestone may be linked to: open and not parked (a park dropped its milestones, and a new
+    one carried its work on, its unlocks included)."""
+    return _working_venture(conn, scope, venture_id, "no milestone is linked to it")
 
 
 def _tied(conn: Any, scope: AgentScope, project_id: int) -> str:
@@ -2462,12 +2469,27 @@ def _open_milestone(conn: Any, scope: AgentScope, milestone_id: int) -> Any:
 
 
 def _open_project(conn: Any, scope: AgentScope, project_id: int) -> Any:
+    """A project a milestone may be linked to: open, and (0.23.2) not one whose venture the owner parked or killed (a
+    milestone for a project the owner's park stopped carried its work on, its unlocks included)."""
     row = store.project(conn, scope, project_id)
     if row is None:
         raise ToolError(f"there is no project #{project_id}")
     if row["status"] not in OPEN_STATUSES:
         raise ToolError(f"project #{project_id} is {row['status']}")
+    held = ventures.owner_stopped(conn, scope, row["venture_id"])
+    if held is not None:
+        raise ToolError(_stopped(project_id, held))
     return row
+
+
+def _stopped(project_id: int, venture: Any) -> str:
+    """0.23.2: why a project the owner's park or kill stopped takes no new work."""
+    if venture["stage"] == "killed":
+        return f"project #{project_id} belongs to venture #{venture['id']}, which your owner killed"
+    return (
+        f"project #{project_id} belongs to venture #{venture['id']}, which your owner parked: its projects wait until "
+        "they take it up again"
+    )
 
 
 def _parent(conn: Any, scope: AgentScope, parent_id: int, due: date, milestone_id: int | None = None) -> Any:
@@ -2628,7 +2650,7 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
     if parent_id is not None:
         _parent(conn, ctx.scope, parent_id, due)
     if args.get("venture_id") is not None:
-        _open_venture(conn, ctx.scope, args["venture_id"])
+        _milestone_venture(conn, ctx.scope, args["venture_id"])
     if args.get("project_id") is not None:
         _open_project(conn, ctx.scope, args["project_id"])
     checked = _metric(ctx, args, conn)
@@ -2852,7 +2874,7 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     elif moved_to is not None:
         due = moved_to
         changes.update(due=moved_to.isoformat(), moves=int(row["moves"]) + 1)
-    for name, check in (("venture_id", _open_venture), ("project_id", _open_project)):
+    for name, check in (("venture_id", _milestone_venture), ("project_id", _open_project)):
         value = args.get(name)
         if value is not None and value != row[name]:
             if row["created_by"] == "code" or row["metric"]:  # 0.15.0: links decide what Ember's code counts
@@ -3818,8 +3840,12 @@ def _product_line(ctx: ToolContext, conn: Any, args: dict[str, Any], what: str) 
                 f"name its project (project_id): your focus project #{project_id} belongs to venture "
                 f"#{focus['venture_id']}, and this cycle works on venture #{venture}"
             )
-    if store.project(conn, ctx.scope, project_id) is None:
+    row = store.project(conn, ctx.scope, project_id)
+    if row is None:
         raise ToolError(f"there is no project #{project_id}")
+    held = ventures.owner_stopped(conn, ctx.scope, row["venture_id"])
+    if held is not None:  # 0.23.2: a listing or product for it carried its work on
+        raise ToolError(_stopped(int(project_id), held))
     return int(project_id)
 
 

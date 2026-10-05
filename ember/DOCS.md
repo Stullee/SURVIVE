@@ -745,7 +745,10 @@ euros. The tab's badge counts the ones waiting. On each card:
   make them active again until you take the venture up), and the agent opens
   no project in a parked venture and moves none into one. 0.23.1: nor out of
   one you parked or killed. A park keeps each project's next step in its
-  notes, and taking the venture up again gives it back.
+  notes, and taking the venture up again gives it back. 0.23.2: it also
+  drops the open milestones of the venture's projects (the agent's too), and
+  the agent can't focus a plan on a waiting project, link a milestone to the
+  venture or its projects, or add listings and products to them.
 
 **Each stage's rule, kept by Ember's code.** Before every plan, Ember's code
 parks a venture whose research brings no business case within 21 days of its
@@ -2115,7 +2118,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.23.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.23.2 (by /u/your name)`.
 
 ## Diagnostics
 
