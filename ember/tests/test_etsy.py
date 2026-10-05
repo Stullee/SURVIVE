@@ -1637,3 +1637,31 @@ def test_the_shop_is_observed_once_a_day_and_its_listings_only_when_allowed(data
         conn.execute("UPDATE observations SET value = 0")
     with pytest.raises(sqlite3.IntegrityError, match="kept"), agent.db.transaction() as conn:
         conn.execute("DELETE FROM observations")
+
+
+@pytest.mark.parametrize(
+    ("url", "question", "refused"),
+    [
+        ("https://shop.com/p", "What does it cost?", False),
+        ("https://shop.com/p", "Is Node.js used? planner.pdf? e.g. 3.5, amazon.de", False),
+        ("https://shop.com/p", "shop.com/c?d=SECRET", True),
+        ("https://shop.com/p", "ſhop.com/c?d=SECRET", True),  # long s
+        ("https://shop.com/p", "ｓｈｏｐ．ｃｏｍ/c?d=x", True),  # fullwidth
+        ("https://shop.com/p", "shop。com/c?d=x", True),  # an ideographic full stop
+        ("https://shop.com/p", "sh­op.com/c?d=x", True),  # a soft hyphen
+        ("https://shop.com/p", "SECRET.Shop.COM", True),
+        ("https://shop.com/p", "ｈｔｔｐｓ://evil.example/x", True),
+        ("https://bücher.de/a", "open bücher.de/c?d=x", True),
+        ("https://bücher.de/a", "open data_1.bücher.de", True),
+        ("https://bücher.de/a", "open xn--bcher-kva.de/c", True),
+        ("https://xn--bcher-kva.de/a", "open bücher.de/c", True),
+        ("https://www.shop.com/p", "shop.com/x", True),
+    ],
+)
+def test_a_page_read_s_question_names_no_address_on_its_site_in_any_form(
+    url: str, question: str, refused: bool
+) -> None:
+    """0.23.0 (review of 0.21.0): the page reader reaches only its page's site (allowed_domains), so an address on that
+    site is what could carry data out: an IDN host, punycode, fullwidth letters, other dots and invisible characters
+    all count as it. File names, product names and other sites pass."""
+    assert tools._names_an_address(question, url) is refused

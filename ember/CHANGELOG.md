@@ -30,7 +30,7 @@ Fixes from the review of 0.21.0:
   stored such an email with its headers only. An email whose lines end in a bare CR keeps its sender and its "stop",
   and a picture in an element's style no longer hides the text with it.
 - research with a url: its question may name files and products; only a web address with its scheme, or a host name
-  of that page's site, is refused.
+  of that page's site in any spelling (punycode, look-alike letters), is refused.
 - Lessons: when your lessons file is nearly full, an upgrade marks a lesson "(re-check)" only, pinned lessons are never
   dropped, and the event names any lesson retired for lack of room. A mark doesn't make a lesson a new one.
 - Money: what you can afford for research or a workshop call is judged as the guard judges it (the call's hold, with
