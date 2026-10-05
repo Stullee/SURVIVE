@@ -3,6 +3,15 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.20.1
+
+A spreadsheet's titles, notes and choices are only text: make_spreadsheet refuses one that starts with "=".
+
+- Excel reads a text starting with "=" as a formula, and Ember's code checked only the formulas in rows and a
+  column's formula (common functions, cells of this workbook). A note, the title of the workbook, a sheet or a
+  column, or a dropdown choice starting with "=" went into the file as a formula nobody checked. Write formulas in
+  rows or a column's formula.
+
 ## 0.20.0
 
 Your Nebenkostenabrechnung script is built in: make_cost_statement (your upgrade request #7). Read guide 'statements'.

@@ -3,7 +3,8 @@
 The spec names sheets, columns (title, width, number format, dropdown choices), rows (or a CSV file of rows),
 extra empty rows to fill in, totals, a chart and a "How to use" sheet. Values are data; a text starting with "="
 is a formula, allowed only with common functions and references to cells of this workbook: a file for strangers
-never gets links, other workbooks, DDE ("cmd|...") or functions that reach outside Excel.
+never gets links, other workbooks, DDE ("cmd|...") or functions that reach outside Excel. Titles, notes and choices
+are never formulas (0.20.1): they can't start with "=".
 
 0.15.0: any Excel file in the workspace can be read too (``workbook_text``: its cells, sheet by sheet, for
 workspace_read) and drawn (``picture``: one sheet, for make_image's 'file.xlsx#2'). The workshop was paid for both.
@@ -71,6 +72,7 @@ _REF = re.compile(
 )
 _SHEET_BAD = re.compile(r"[\[\]:*?/\\]")
 _CHOICE_BAD = re.compile(r"[\",]")
+_FORMULA_START = re.compile(r"^\s*=")
 
 
 class SheetError(ValueError):
@@ -127,6 +129,16 @@ def _text(where: str, value: Any, limit: int, required: bool = True) -> str:
     return value
 
 
+def _label(where: str, value: Any, limit: int, required: bool = True) -> str:
+    """0.20.1: a text Ember's code writes as it is (a title, a note, a dropdown's choice), never a formula. openpyxl
+    stores any text starting with "=" as one, and Excel enters a picked choice as if typed; only the rows' and the
+    columns' formulas are checked (check_formula), so a note "=HYPERLINK(...)" was a live link in the buyer's file."""
+    text = _text(where, value, limit, required)
+    if _FORMULA_START.match(text):
+        raise SheetError(f"{where} can't start with '=' (Excel would read it as a formula)")
+    return text
+
+
 def _keys(where: str, data: Any, allowed: set[str]) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise SheetError(f"{where} must be an object ({{...}})")
@@ -158,11 +170,11 @@ def parse(source: str, read_csv: Any) -> Spec:
     if not isinstance(notes, list) or len(notes) > MAX_NOTES:
         raise SheetError(f"notes must be a list of at most {MAX_NOTES} lines")
     spec = Spec(
-        title=_text("title", top.get("title"), 200, required=False),
+        title=_label("title", top.get("title"), 200, required=False),
         accent=hex_rgb(accent),
         font=font,
         sheets=[],
-        notes=[_text(f"notes[{i}]", n, 500) for i, n in enumerate(notes)],
+        notes=[_label(f"notes[{i}]", n, 500) for i, n in enumerate(notes)],
     )
     names: set[str] = {"how to use"} if spec.notes else set()
     for index, sheet_data in enumerate(sheets_data):
@@ -263,7 +275,7 @@ def _sheet(where: str, data: Any, read_csv: Any) -> Sheet:
         choices = c.get("choices") or []
         if not isinstance(choices, list) or len(choices) > 40:
             raise SheetError(f"{where}.columns[{i}].choices must be a list of at most 40 values")
-        clean = [_text(f"{where}.columns[{i}].choices", x, 60) for x in choices]
+        clean = [_label(f"{where}.columns[{i}].choices", x, 60) for x in choices]
         if any(_CHOICE_BAD.search(x) for x in clean):
             raise SheetError(f"{where}.columns[{i}].choices can't contain commas or quotes")
         if len(",".join(clean)) > 250:
@@ -271,14 +283,14 @@ def _sheet(where: str, data: Any, read_csv: Any) -> Sheet:
         formula = _text(f"{where}.columns[{i}].formula", c.get("formula"), MAX_FORMULA_CHARS, required=False)
         if formula and not formula.startswith("="):
             raise SheetError(f"{where}.columns[{i}].formula must start with '=', e.g. '=B{{row}}-C{{row}}'")
-        title = _text(f"{where}.columns[{i}].title", c.get("title"), 60)
+        title = _label(f"{where}.columns[{i}].title", c.get("title"), 60)
         columns.append(Column(title, float(width), fmt, clean, formula))
     titles = [c.title.lower() for c in columns]
     rows = _rows(where, s, read_csv, len(columns))
     empty = s.get("empty_rows", 0)
     if not isinstance(empty, int) or isinstance(empty, bool) or not 0 <= empty <= MAX_EMPTY_ROWS:
         raise SheetError(f"{where}.empty_rows must be a whole number from 0 to {MAX_EMPTY_ROWS}")
-    sheet_title = _text(f"{where}.title", s.get("title"), 120, required=False)
+    sheet_title = _label(f"{where}.title", s.get("title"), 120, required=False)
     first = first_row(bool(sheet_title))
     last = first + len(rows) + empty - 1
     for r, row in enumerate(rows):

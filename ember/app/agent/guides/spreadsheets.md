@@ -36,7 +36,8 @@ it. workspace_read shows any Excel file's cells (formulas with their results); m
   data rows, e.g. "=SUM(B{first}:B{last})". Rows are numbered like Excel: the header is row 1, or row 3 under a
   title; data starts on row 2, or row 4 under a title. Formulas may use common functions (SUM, AVERAGE, IF,
   IFERROR, VLOOKUP, XLOOKUP, SUMIF, COUNTIF, ROUND, TODAY, DATE, TEXT and similar) and cells of this workbook
-  ('Other sheet'!A1); links to other files or the web are refused.
+  ('Other sheet'!A1); links to other files or the web are refused. Titles, notes and choices are text: they can't
+  start with "=".
 - totals: a bold row under the data with sum, average, count, min or max per column.
 - freeze (the header stays visible), filter (filter buttons) and zebra (striped rows) are on unless set false.
 - chart: bar, line or pie of one column (values) by another (labels), placed right of the table.

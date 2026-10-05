@@ -22,7 +22,7 @@ from PIL import Image
 
 from app.agent import netguard
 from app.agent.sandbox import Jail, Limits, SandboxError
-from app.products import images, make, markup, pdf, selftest, sheets, word
+from app.products import checks, images, make, markup, pdf, selftest, sheets, word
 from app.products.markup import Box, Callout, Checklist, Columns, DocumentError, Heading, ListBlock, Photo, Table
 
 CV = """---
@@ -300,6 +300,42 @@ def test_formulas_only_reach_this_workbook(formula: str) -> None:
         sheets.parse(spec(rows=[["Rent", 1, 2, formula]]), no_csv)
 
 
+@pytest.mark.parametrize(
+    ("path", "field"),
+    [
+        (["title"], "title"),
+        (["notes", 0], "notes[0]"),
+        (["sheets", 0, "title"], "sheets[0].title"),
+        (["sheets", 0, "columns", 2, "title"], "sheets[0].columns[2].title"),
+        (["sheets", 0, "columns", 0, "choices", 1], "sheets[0].columns[0].choices"),
+    ],
+)
+@pytest.mark.parametrize("text", ['=HYPERLINK("https://evil.example","click")', " \t=SUM(B4:B5)", "=cmd|' /C calc'!A0"])
+def test_titles_notes_and_choices_are_never_formulas(path: list[str | int], field: str, text: str) -> None:
+    """0.20.1: openpyxl stores any text starting with "=" as a formula, and Excel enters a picked choice as if typed;
+    only the rows' and the columns' formulas were checked, so a note "=HYPERLINK(...)" was a live link."""
+    data = json.loads(spec())
+    *parents, last = path
+    place = data
+    for key in parents:
+        place = place[key]
+    place[last] = text
+    with pytest.raises(sheets.SheetError, match=re.escape(f"{field} can't start with '=' (Excel would read")):
+        sheets.parse(json.dumps(data), no_csv)
+
+
+def test_an_equals_sign_inside_a_text_stays_text() -> None:
+    data = json.loads(spec())
+    data["notes"] = ["Left = Planned - Actual.", "The totals add up each column (like =SUM)."]
+    data["sheets"][0]["columns"][3]["title"] = "Left (= B - C)"
+    data["sheets"][0]["totals"] = {"Planned": "sum", "Left (= B - C)": "sum"}
+    made = sheets.build(sheets.parse(json.dumps(data), no_csv))
+    book = load_workbook(io.BytesIO(made))
+    assert [book["How to use"].cell(row=r, column=1).data_type for r in (3, 4)] == ["s", "s"]
+    assert book["Budget"]["D3"].value == "Left (= B - C)" and book["Budget"]["D3"].data_type == "s"
+    checks.check("budget.xlsx", made)  # Ember's own workshop check keeps the file (it refuses links)
+
+
 def test_rows_can_come_from_a_csv_file() -> None:
     parsed = sheets.parse(spec(rows_csv="data/rows.csv"), lambda path: "Rent,900,880\nFood,400,390\n")
     assert parsed.sheets[0].rows[1][:3] == ["Food", 400, 390]
@@ -411,6 +447,16 @@ def test_a_spreadsheet_comes_with_a_picture(tmp_path: Path) -> None:
     with pytest.raises(make.ProductError, match=r"b\.json: .*must be one of"):
         ws.write("b.json", spec(columns=[{"title": "A", "format": "money"}]), append=False)
         make.spreadsheet(ws, "b.json", "shop/budget.xlsx")
+
+
+def test_a_note_that_is_a_formula_makes_no_spreadsheet(tmp_path: Path) -> None:
+    ws = jail(tmp_path)
+    data = json.loads(spec())
+    data["notes"].append('=HYPERLINK("https://evil.example","click")')
+    ws.write("b.json", json.dumps(data))
+    with pytest.raises(make.ProductError, match=re.escape("b.json: notes[1] can't start with '='")):
+        make.spreadsheet(ws, "b.json", "shop/budget.xlsx")
+    assert ws.size_of("shop/budget.xlsx") is None and ws.size_of("shop/budget-preview.png") is None
 
 
 def test_a_listing_photo_shows_pdf_pages_and_pictures(tmp_path: Path) -> None:
