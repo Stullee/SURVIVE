@@ -1161,7 +1161,7 @@ class CycleRunner:
             message = (
                 f"Ember's code marked {len(marked)} lesson(s) to re-check: tools {running} changed: {quoted}{more}"
             )
-            if retired:  # 0.21.0: said, never as marked (the file had no room for their marks)
+            if retired:  # 0.23.0: said, never as marked (the file had no room for their marks)
                 message += f"; it retired {len(retired)} older one(s) to make room: " + "; ".join(
                     json.dumps(line[:60], ensure_ascii=False) for line in retired[:2]
                 )
@@ -1877,7 +1877,7 @@ class CycleRunner:
                             "\n(The search paused and wasn't continued: that would use the money kept for your"
                             " reflection. This answer may be partial.)"
                         )
-                except (Unpriceable, CallRefused) as exc:  # 0.21.0: said too (the answer read as complete)
+                except (Unpriceable, CallRefused) as exc:  # 0.23.0: said too (the answer read as complete)
                     reason = exc.reason if isinstance(exc, CallRefused) else str(exc)
                     partial = f"\n(The search paused and couldn't be continued: {reason}. This answer may be partial.)"
                 except CallFailed as exc:  # 0.15.0: paid, so it counts toward the budget too

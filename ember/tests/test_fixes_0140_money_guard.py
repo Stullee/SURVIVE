@@ -89,7 +89,7 @@ def test_a_run_like_423_near_the_bottom_is_refused_rather_than_kill_ember(data_d
 
 
 def test_the_pre_check_judges_a_server_tool_call_as_the_guard_does(data_dir: Path) -> None:
-    """0.21.0 (pre-release review): affordable() still compared a research call's quote, not its hold, and knew nothing
+    """0.23.0 (review of 0.21.0): affordable() still compared a research call's quote, not its hold, and knew nothing
     of the 5x room: the guard refused a paused search's continuation the pre-check let through, and the agent got a
     partial answer as if it were whole."""
     settings = Settings(starting_balance_usd=2.0, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)

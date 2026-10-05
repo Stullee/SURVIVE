@@ -757,7 +757,7 @@ class MeteredModel:
             allowance = self._allowance(cycle_id, purpose, miss)
         cycle_room, money_room = self.rooms(cycle_id, purpose, keep, keep_money, allowance)
         own = expected if purpose not in OUTSIDE_CYCLE_CAP else worst
-        # 0.21.0: what the call holds of the day and the balance, as the guard counts it (research: its tail too)
+        # 0.23.0: what the call holds of the day and the balance, as the guard counts it (research: its tail too)
         held = self._held(purpose, str(request.get("model") or ""), worst)
         return own <= cycle_room and held <= money_room, expected, worst
 
@@ -889,7 +889,7 @@ class MeteredModel:
         if purpose != "last_will" and status.last_will_at is None:
             reserve = last_will_reserve(self.settings, self.db, self.life.mode) or 0
             money = min(money, status.balance - pending - reserve)
-        if purpose in SERVER_TOOL_PURPOSES:  # 0.21.0: as _money_refusal judges it, SERVER_TOOL_ROOM times the hold
+        if purpose in SERVER_TOOL_PURPOSES:  # 0.23.0: as _money_refusal judges it, SERVER_TOOL_ROOM times the hold
             room = server_tool_room(self.db, self.clock, self.simulated)
             money = min(money, int(Decimal(status.balance - pending - reserve) / room))
         return max(0, own_cap - in_cap), max(0, money)

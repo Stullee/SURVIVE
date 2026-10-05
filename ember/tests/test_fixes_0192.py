@@ -302,7 +302,7 @@ def test_an_upgrade_marks_the_lessons_about_the_tools_its_notes_name_to_re_check
     assert memory.recheck_for_release(lessons, "## 0.19.2\n- research is cheaper.", TOOLS, set(), "0.19.2") is None
     again, _, _ = memory.recheck_for_release(new, notes, TOOLS, pinned, "0.20.0") or ("", [], [])
     assert "(re-check: 0.20.0 changed project_create) project_create fails" in again and "0.19.1" not in again
-    # A marked lesson still is itself: for duplicates and pins (0.21.0, the pre-release review)
+    # A marked lesson still is itself: for duplicates and pins (0.23.0, the review of 0.21.0)
     marked_line = next(line for line in again.splitlines() if "(re-check:" in line)
     assert memory.lesson_key(marked_line) == memory.lesson_key("- [#c1] project_create fails at 8 open projects;"
                                                                " fold new work into an existing project.")  # fmt: skip
@@ -310,7 +310,7 @@ def test_an_upgrade_marks_the_lessons_about_the_tools_its_notes_name_to_re_check
 
 
 def test_a_full_lessons_file_gets_short_marks_and_says_what_it_retired() -> None:
-    """0.21.0 (pre-release review): on a full file the marks deleted the oldest marked lessons, a pinned one marked by
+    """0.23.0 (review of 0.21.0): on a full file the marks deleted the oldest marked lessons, a pinned one marked by
     an earlier upgrade too, and the event said they were only marked. Now: shorter marks first; only the oldest
     unpinned ones the marks have no room for are retired, and said so."""
     notes = "## 0.21.0\n- project_create changed."

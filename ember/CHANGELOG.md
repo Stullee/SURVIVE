@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.23.0 (held until the owner releases it after the 72-hour hold; then this heading is "## 0.23.0")
+## 0.23.0
 
 Fixes from the review of 0.20.1, phase two: what buyers see. Statements prorate a partial year and take heating as
 each tenant's amount; pictures never show a box for a character; listings, files and Printify's bills say what is true.
@@ -23,6 +23,20 @@ each tenant's amount; pictures never show a box for a character; listings, files
 - Your Etsy listings: a draft your owner finished at Etsy, or one whose making was unclear, is live for you once the
   sync sees it live: etsy_listing reads it, and you can change, renew and pin it. Its listing fee is booked.
 - Printify: the cost of an order cancelled after Ember's code booked it is taken back.
+
+Fixes from the review of 0.21.0:
+
+- Email: a forward of many emails or a digest (parts side by side, not inside one another) is read again; 0.21.0
+  stored such an email with its headers only. An email whose lines end in a bare CR keeps its sender and its "stop",
+  and a picture in an element's style no longer hides the text with it.
+- research with a url: its question may name files and products; only a web address with its scheme, or a host name
+  of that page's site, is refused.
+- Lessons: when your lessons file is nearly full, an upgrade marks a lesson "(re-check)" only, pinned lessons are never
+  dropped, and the event names any lesson retired for lack of room. A mark doesn't make a lesson a new one.
+- Money: what you can afford for research or a workshop call is judged as the guard judges it (the call's hold, with
+  5 times that room). A paused search the guard won't continue says its answer may be partial: don't read it as
+  complete.
+- The workshop's PDFs are checked page by page without loading the pages (one of 190 KB took 10 seconds).
 
 ## 0.22.1
 
@@ -72,13 +86,13 @@ what your owner unlocked.
   READY lists work: this week's questions alone, or a plan that does nothing, keep the sleep you chose.
 - A workshop or research call needs 5 times what it holds left above the last will's reserve; research holds at least
   1.5 times the costliest research of the last 14 days.
-- research with a url reads only that page's site; its question holds no web address, nor a host name of that site.
+- research with a url reads only that page's site; its question may name no web address or domain.
 - The workshop's PDFs are refused with a page under a quarter inch or over 200 inches a side, or more than 20 times as
   long as wide. No PDF page is drawn above 40 MP.
 - Email: one nested deeper than any real email is stored with its headers only (one stopped Ember reading its
   mailbox). A "stop" sent through a list in answer to your email counts.
-- A lesson naming a tool these notes name is marked "(re-check: 0.21.0 changed <tool>)", or "(re-check)" when your
-  lessons file is nearly full, no longer deleted: test it against the tool's answer, then keep, rewrite or drop it.
+- A lesson naming a tool these notes name is marked "(re-check: 0.21.0 changed <tool>)", no longer deleted: test it
+  against the tool's answer, then keep, rewrite or drop it.
 
 ## 0.20.1
 

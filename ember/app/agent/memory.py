@@ -213,7 +213,7 @@ class Memory:
 
 
 def lesson_key(line: str) -> str:
-    """A line as compared for duplicates: without its "- [#cN] " prefix, case or extra spaces (0.21.0: nor an upgrade's
+    """A line as compared for duplicates: without its "- [#cN] " prefix, case or extra spaces (0.23.0: nor an upgrade's
     "(re-check ...)" mark, so a marked lesson still matches itself and its pin)."""
     return " ".join(_RECHECK.sub("", _PREFIX.sub("", line.strip())).split()).casefold()
 
@@ -299,7 +299,7 @@ def json_quote(text: str) -> str:
 
 
 def lesson_text(line: str) -> str:
-    """A lesson line as it is pinned and compared: without its "- [#cN] " prefix (0.21.0: nor a re-check mark), on one
+    """A lesson line as it is pinned and compared: without its "- [#cN] " prefix (0.23.0: nor a re-check mark), on one
     line."""
     return " ".join(_RECHECK.sub("", _PREFIX.sub("", line.strip())).split())
 

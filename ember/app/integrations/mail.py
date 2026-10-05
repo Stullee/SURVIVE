@@ -82,7 +82,7 @@ _HIDDEN_STYLE = re.compile(
 # time growing with the square of its digits (16,000 zeros: 2 seconds, the whole app waiting).
 _OPACITY = re.compile(r"opacity:([0-9.]*+)(%?)(?:;|!|$)")
 _STYLE_CHARS = 8_000  # 0.21.0: of an element's style with its style sheet's rules; a longer one hides the element
-_STYLE_WORK = 5_000_000  # 0.21.0: characters of style read per email; past them the rest of its HTML isn't read
+_STYLE_WORK = 5_000_000  # 0.23.0: characters of style read per email; past them the rest of its HTML isn't read
 # A url(...), a picture's data inside it included: it neither hides nor shows text, and isn't read (nor counted)
 _URL = re.compile(r"""url\(\s*(?:"[^"]*+"|'[^']*+'|[^)]*+)\s*\)?""", re.IGNORECASE)
 _COLOUR_ARGS = re.compile(r"((?:rgb|hsl)a?\()([^()]*)\)")
@@ -599,7 +599,7 @@ class _HtmlText(HTMLParser):
         self.rules: dict[str, list[tuple[str | None, frozenset[str], str | None, str]]] = {}
         self.hiding: set[str] = set()  # classes, ids and tags with more hiding rules than are kept: they hide
         self.page: str = _WHITE
-        self.work = 0  # 0.21.0: characters of style read (_STYLE_WORK)
+        self.work = 0  # 0.23.0: characters of style read (_STYLE_WORK)
         self.heavy = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:

@@ -501,7 +501,7 @@ def test_an_email_nested_too_deeply_is_stored_with_its_headers_and_its_stop_coun
 
 
 def test_parts_side_by_side_aren_t_levels_and_any_line_end_counts() -> None:
-    """0.21.0 (pre-release review): every multipart or message part counted as a level, so a forward of 32 customer
+    """0.23.0 (review of 0.21.0): every multipart or message part counted as a level, so a forward of 32 customer
     emails lost its whole text; and lines ending in a bare CR passed the check, the parser recursed, and the email was
     stored without its sender and subject (a "stop" in it lost)."""
     outer = EmailMessage()
@@ -525,7 +525,7 @@ def test_parts_side_by_side_aren_t_levels_and_any_line_end_counts() -> None:
 
 
 def test_a_picture_in_a_style_doesn_t_hide_its_text_and_heavy_styling_ends_reading() -> None:
-    """0.21.0 (pre-release review): an element whose style held a picture's data (over 8,000 characters) was hidden with
+    """0.23.0 (review of 0.21.0): an element whose style held a picture's data (over 8,000 characters) was hidden with
     its text; and one style-sheet rule read again for each of 140,000 elements took 77 seconds."""
     picture = "<p style=\"background:url('data:image/png;base64," + "A" * 20_000 + "');color:#333\">Real text</p>"
     assert mail.html_to_text(picture) == "Real text"
