@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.23.0
+## 0.23.0 (held: released once 0.22.0 has run for 72 hours; then this heading is "## 0.23.0")
 
 Fixes from the review of 0.20.1, phase two: what buyers see. Statements prorate a partial year and take heating as
 each tenant's amount; pictures never show a box for a character; listings, files and Printify's bills say what is true.
