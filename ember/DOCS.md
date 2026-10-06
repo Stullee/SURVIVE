@@ -571,7 +571,19 @@ returns it with a script, and nothing is sent to Anthropic.
 Ventures are the agent's ways to earn beyond what it does now: a new market,
 platform or business model, or a channel that brings buyers to what it already
 sells (a Pinterest account for the Etsy shop is a venture of its own). The
-**Ventures** tab shows them as a tree that keeps growing.
+**Ventures** tab shows them as a tree that keeps growing, and the projects that
+do their work (0.27.0: the Projects tab is part of it). It has two views, and
+this browser keeps the one you chose last:
+
+- **Pipeline**: the tree, the decision desk, and the ventures still being
+  decided: business cases for you, ventures being researched and ideas, then
+  the parked and killed ones. Its badge counts the business cases waiting for
+  you, as the tab's does.
+- **Running**: the ventures you backed (building) and the live ones, each
+  card with the projects that do its work inside it, then the other projects
+  (of no venture, or of a venture that isn't backed or live). A venture you
+  back moves here with its card; one you park or kill moves back to Pipeline.
+  When the card still has your focus, the view goes with it.
 
 **The tree.** Every idea branches from the one it grew out of: a variant, a
 niche, another customer group, a channel, a next step research turned up. The
@@ -1042,13 +1054,16 @@ no longer shown); a study that failed three times stops until you press
   ideas on the Ventures tab (see [Ventures](#ventures)).
 - **Roadmap**: add milestones you want reached by a date, leave notes, drop
   what no longer matters (see [Roadmap](#roadmap)).
-- **Projects**: the agent's open projects as cards (its hypothesis, next step,
-  what it earned and cost, and what it nets after its expenses such as Etsy's
-  fees), the closed ones as rows that open. Choose Open, Closed or All and a
-  sort; this browser keeps them. A card's **approvals waiting** opens them on
-  the Approvals tab, its venture opens the venture, and a cycle in its log
-  opens that cycle on the Activity tab (the last 10 cycles are there) (0.19.4).
-  Its **Files** shows the files written for it on the Workspace tab (0.26.0).
+- **Projects** (the Ventures tab's **Running** view since 0.27.0): the
+  agent's open projects as cards (its hypothesis, next step, what it earned
+  and cost, and what it nets after its expenses such as Etsy's fees), the
+  closed ones as rows that open. A backed or live venture's projects are in
+  its card; the others follow under **Other projects**. Choose Open, Closed or
+  All and a sort; this browser keeps them. A card's **approvals waiting**
+  opens them on the Approvals tab, its venture opens the venture, and a cycle
+  in its log opens that cycle on the Activity tab (the last 10 cycles are
+  there) (0.19.4). Its **Files** shows the files written for it on the
+  Workspace tab (0.26.0), whose **Open in Ventures** brings you back to it.
 - **Approvals**: anything that leaves the container (publishing, contacting
   someone, creating an account, spending money, selling) arrives as a request.
   Approve it, approve it with your own changes to the text, or reject it, with
@@ -2189,7 +2204,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.26.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.27.0 (by /u/your name)`.
 
 ## Amazon KDP
 
