@@ -378,6 +378,9 @@ def test_an_open_bet_is_named_first_and_the_rest_of_the_update_is_made(data_dir:
 
 def test_a_promise_that_repeats_an_open_one_makes_no_second_obligation(data_dir: Path) -> None:
     agent, _ = started(data_dir)
+    # The next day: the fake's cycles may have written to the owner today (its choices follow the request's bytes), and
+    # two messages that answer none of theirs are a day's.
+    agent.clock.advance(days=1)
     ctx = shop_context(agent)
     due = (agent.clock.today() + timedelta(days=5)).isoformat()
     report = "Report Bluesky reactions and Etsy view deltas for posts #43/#44"

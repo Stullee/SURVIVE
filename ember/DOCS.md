@@ -1714,8 +1714,8 @@ settings).
 ## Bluesky
 
 Bluesky is a text-first social network. With **Bluesky** on, the agent proposes
-posts on an account you made for Ember: its words, and if it likes a link to one
-of its live Etsy listings or a page of your website and one of its pictures. You
+posts on an account you made for Ember: its words, and if it likes a link or two
+to its live Etsy listings or pages of your website and one of its pictures. You
 approve each one, and Ember's own code posts it, with a line saying an AI wrote
 it and a person approved it. In dry run a fake account
 (*@ember-dry-run.bsky.social*) takes the posts, so nothing reaches Bluesky (the
@@ -1761,38 +1761,40 @@ To stop Ember's access, delete the app password at Bluesky.
 ### How a post is made
 
 - The agent proposes a post with `propose_bluesky_post`: its words in German or
-  English (at most 300 characters with the link and the AI line, up to three
+  English (at most 300 characters with the links and the AI line, up to three
   #hashtags, no link in the words and no @mention), a link if it likes (one of
   its live Etsy listings or a page of your website, `site_url`, that Ember
   knows is there: a blog post of its own, the blog's list, the home page, the
-  link page or the live view's page), and a picture of its own with alt text if
-  it likes. The approval card shows the post
-  exactly as it will appear, the link and the picture's path, and what the QA
-  check finds short (more than three hashtags).
+  link page or the live view's page), since 0.25.1 a second one of these too
+  (a listing and your website in one post, for instance; never the same
+  address twice), and a picture of its own with alt text if it likes. The
+  approval card shows the post exactly as it will appear, the links and the
+  picture's path, and what the QA check finds short (more than three hashtags).
 - **Approve** and Ember posts it. Bluesky charges nothing. With a picture, the
   link is clickable at the end of the words; without one, a listing shows as a
   card with its title and main photo, and a blog post of Ember's with its title
-  and description. Ember sends a picture as a JPEG of at most 1 MB and 2000
-  pixels a side, without its metadata, so a large one is sent smaller. A post
-  can only be approved as it is or rejected (say what should change: the agent
-  proposes a better one). **Cancel** stops an approved post before Ember makes
-  it.
+  and description. A second link is always clickable in the words, on a line
+  of its own under the first. Ember sends a picture as a JPEG of at most 1 MB
+  and 2000 pixels a side, without its metadata, so a large one is sent smaller.
+  A post can only be approved as it is or rejected (say what should change: the
+  agent proposes a better one). **Cancel** stops an approved post before Ember
+  makes it.
 - A post that says what a live post or a waiting request already says (the
   same words, give or take a hashtag) is refused before it reaches you (since
   0.24.0).
-- If the picture changed after you approved, the listing it links is no
-  longer live, or the page of your website it links is gone, the post isn't
-  made (a blog post's address without its `.html` goes out with it). Ember never posts twice: if it can't tell
-  whether Bluesky took a post (a lost connection), it says so and doesn't try
-  again. At most **Bluesky posts per day** are made a day; approved posts beyond
-  that wait for the next day.
+- If the picture changed after you approved, a listing it links (by either
+  link) is no longer live, or a page of your website it links is gone, the post
+  isn't made (a blog post's address without its `.html` goes out with it).
+  Ember never posts twice: if it can't tell whether Bluesky took a post (a lost
+  connection), it says so and doesn't try again. At most **Bluesky posts per
+  day** are made a day; approved posts beyond that wait for the next day.
 - Every six hours while the app runs, Ember reads the account's followers and
   each post's likes, reposts, replies and quotes, and any label Bluesky's
   moderation put on them. The agent's plan shows them (BLUESKY), and the
   metrics `bluesky_posts_live` and `bluesky_reactions` can measure a milestone.
-  A live post that links one of Ember's listings counts as reach for its
-  product line. Bluesky doesn't say how many people clicked a link: watch the
-  listings' views on Etsy.
+  A live post that links one of Ember's listings (by either link) counts as
+  reach for its product line. Bluesky doesn't say how many people clicked a
+  link: watch the listings' views on Etsy.
 - Replies and messages to the account are yours to read and answer in the
   Bluesky app; Ember doesn't read them.
 - **Undo** on the post's entry under **What Ember's code did** deletes it at
@@ -2152,7 +2154,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.25.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.25.2 (by /u/your name)`.
 
 ## Amazon KDP
 

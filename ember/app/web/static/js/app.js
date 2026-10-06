@@ -4603,10 +4603,11 @@
       h("tbody", null, posts.map(function (q) {
         var numbers = function (v) { return q.synced_at && v !== null && v !== undefined ? count(v) : "–"; };
         var words = asText(q.text).split("\n")[0];
-        var link = q.link ? (/^https:\/\/www\.etsy\.com\//.test(String(q.link)) ? etsyLink(q.link, "its listing") : siteLink(q.link, "its page")) : null;
+        var linkTo = function (u, i) { return /^https:\/\/www\.etsy\.com\//.test(String(u)) ? etsyLink(u, i ? "a listing" : "its listing") : siteLink(u, i ? "a page" : "its page"); };
+        var links = [q.link, q.second_link].filter(function (u) { return !!u; }).map(linkTo);  // 0.25.1: and its second link
         return h("tr", null,
           h("td", null, q.url && !fake ? blueskyLink(q.url, words) : h("span", { text: words }),
-            link && !fake ? [h("span", { class: "muted small", text: " → " }), link] : null,
+            links.length && !fake ? [h("span", { class: "muted small", text: " → " }), links[0], links[1] ? [h("span", { class: "muted small", text: " and " }), links[1]] : null] : null,
             q.labels ? h("p", { class: "fact-error small" }, "Labelled by moderation: " + String(q.labels)) : null,
             q.status !== "active" && q.result ? h("p", { class: "muted small pre-line", text: asText(q.result) }) : null),
           h("td", null, chip(POST_STATUS, q.status, sentence(String(q.status || "?")))),
