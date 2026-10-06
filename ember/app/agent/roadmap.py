@@ -556,6 +556,15 @@ def _links(row: Mapping[str, Any], open_ids: set[int] | None = None) -> str:
     return "".join(f" · {p}" for p in parts)
 
 
+def _codes(row: Mapping[str, Any]) -> str:
+    """0.24.0: what the daily review can't change about a milestone: Ember's code checks it (and closes it from its
+    metric), or set it (its date doesn't move). Live, a review extended six bars of listing tests, all refused."""
+    parts = (["Ember's code checks and closes it"] if _column(row, "metric") else []) + (
+        ["its date doesn't move"] if row["created_by"] == "code" else []
+    )
+    return "".join(f", {part}" for part in parts)
+
+
 def _moved(row: Mapping[str, Any]) -> str:
     moves = int(row["moves"] or 0)
     if not moves:
@@ -568,10 +577,15 @@ def _proposed(row: Mapping[str, Any]) -> str:
     return f" · you proposed moving it to {row['proposed_due']} (your owner decides)" if row["proposed_due"] else ""
 
 
+CODE_SET = "set by Ember's code (its date doesn't move)"
+
+
 def owner_said(row: Mapping[str, Any]) -> str:
     """The owner's part in a milestone, as a short clause ("" if none); Ember's code's milestone says so (0.12.0)."""
-    if row["created_by"] == "code":
-        return " · set by Ember's code" + (
+    if (
+        row["created_by"] == "code"
+    ):  # 0.24.0: its date doesn't move (milestone_update refuses it; live, every plan meant to)
+        return f" · {CODE_SET}" + (
             f", your owner's note: {_q(row['owner_comment'], 160)}" if row["owner_comment"] else ""
         )
     if row["created_by"] != "owner" and not row["owner_comment"]:
@@ -730,7 +744,7 @@ def goal_line(
     if row["created_by"] == "owner":
         said = " · your owner's" + (f": {_q(row['owner_comment'], 60)}" if row["owner_comment"] else "")
     elif row["created_by"] == "code":
-        said = " · set by Ember's code"
+        said = f" · {CODE_SET}"
     measure = _checked(row) or f" · measure: {_q(row['measure'], 90)}"
     return (
         f"#{row['id']} {_q(row['title'], 70)} · due {_day(due)} ({when(due, today)}){measure}{_stake(row)}"
@@ -929,7 +943,8 @@ def review_text(conn: sqlite3.Connection, scope: AgentScope, today: date, since:
 
     def listed(members: list[sqlite3.Row]) -> str:
         return ", ".join(
-            f"#{r['id']} {_q(r['title'], 60)} ({r['due']}{_moved(r).replace(' · ', ', ')})" for r in members[:6]
+            f"#{r['id']} {_q(r['title'], 60)} ({r['due']}{_moved(r).replace(' · ', ', ')}{_codes(r)})"
+            for r in members[:6]
         )
 
     if overdue:

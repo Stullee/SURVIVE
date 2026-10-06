@@ -338,7 +338,7 @@ SPECS: dict[str, Spec] = {
             "memory_update",
             f"Change one of your memory files: strategy (at most {CAPS['strategy']:,} bytes, replace it), identity "
             f"({CAPS['identity']:,} bytes) or lessons ({CAPS['lessons']:,} bytes; append up to {MAX_APPEND_LINES} "
-            "short lines, the oldest drop off when it is full). Read lessons whole (memory_read) before you replace "
+            "short lines, older ones drop off when it is full). Read lessons whole (memory_read) before you replace "
             "them.",
             {
                 "file": _s("", 10, enum=("strategy", "identity", "lessons")),
@@ -1368,6 +1368,9 @@ class CycleTools:
     focus_project_id: int | None = None
     focus_venture_id: int | None = None
     journal_written: bool = False
+    # 0.24.0: a journal a work step wrote (write_journal's checked arguments): the cycle's, unless the reflection writes
+    # one (loop._keep_draft)
+    journal_draft: dict[str, Any] | None = None
     strikes: int = 0
     counts: dict[str, int] = field(default_factory=dict)
     # 0.12.0: what the reflection may cost, as the last work step was checked against: research, brainstorms and
@@ -1520,7 +1523,31 @@ class ToolContext:
 
 
 def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_id: int, phase: str) -> Outcome:
-    """Validate and run one tool call; always returns an Outcome (never raises)."""
+    """Validate and run one tool call; always returns an Outcome (never raises). 0.24.0: a call of another tool the
+    model wrote inside one of its texts (``unleaked``) runs after it, as a call of its own, and its answer is added."""
+    leaked: list[tuple[str, dict[str, Any]]] = []
+    outcome = _run(ctx, name, raw_input, tool_use_id, llm_call_id, phase, leaked)
+    for number, (other, args) in enumerate(leaked, 1):
+        more = _run(ctx, other, args, f"{tool_use_id}~{number}", llm_call_id, phase, None)
+        outcome = replace(
+            outcome,
+            text=f"{outcome.text}\nEmber's code ran the {other} call you wrote inside {name} as a call of its own: "
+            f"{more.text}",
+        )
+    return _clip(outcome, RESULT_CHARS.get(str(name), MAX_RESULT_CHARS)) if leaked else outcome
+
+
+def _run(
+    ctx: ToolContext,
+    name: str,
+    raw_input: Any,
+    tool_use_id: str,
+    llm_call_id: int,
+    phase: str,
+    leaked: list[tuple[str, dict[str, Any]]] | None,
+) -> Outcome:
+    """One tool call (run): ``leaked`` collects the calls of other tools written inside its texts (None: a call taken
+    out of another's, whose texts are not searched again)."""
     tool_input = raw_input if isinstance(raw_input, dict) else {"_raw": raw_input}
     ctx.state.reply = llm_call_id
     with ctx.db.transaction() as conn:
@@ -1561,7 +1588,12 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
                 "roadmap, sleep, messages and upgrade requests (nothing reads a tool's answer after this last reply)"
             )
         if phase == "act" and not spec.act:
-            raise ToolError(f"{name} is for the reflect phase at the end of the cycle")
+            if name != "write_journal":
+                raise ToolError(f"{name} is for the reflect phase at the end of the cycle")
+            outcome = _journal_draft(ctx, spec, raw_input, leaked)  # 0.24.0
+            with ctx.db.transaction() as conn:
+                store.finish_tool_call(conn, call_id, "ok", outcome.summary, outcome.text, ctx.now())
+            return _clip(outcome, RESULT_CHARS.get(name, MAX_RESULT_CHARS))
         limit = per_cycle(ctx, spec)
         if ctx.state.counts.get(name, 0) >= limit:
             more = f" ({ventures.RESEARCH_CALLS} in a venture cycle)" if name == "research" and not ctx.venture else ""
@@ -1571,7 +1603,7 @@ def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_
             if other:
                 raise ToolError(f"{other[0]} is set in a venture cycle; here {name} takes {', '.join(spec.fields)}")
         cut_notes: list[str] = []
-        args = validate(spec, unleaked(spec, raw_input, cut_notes), cut_notes)
+        args = validate(spec, unleaked(spec, raw_input, cut_notes, leaked), cut_notes)
         handler = HANDLERS[name]
         if name in CALLING_TOOLS:  # model calls: network, and no transaction held meanwhile
             outcome = _noted(handler(ctx, args), cut_notes)
@@ -1634,15 +1666,24 @@ def skip(
 # name="next">..."): live, five journals kept their handoff inside the entry, and the next plan had none.
 _LEAKED = re.compile(r'<parameter name="([a-z_]{1,40})">')
 _CLOSING = re.compile(r"(?:\s*</[a-z_:]{1,40}>)+\s*$", re.IGNORECASE)
+# 0.24.0: another tool's whole call written inside a text, its last field's text beside this call's fields:
+# '...</entry>\n<parameter name="next">...</parameter>\n</invoke>\n<invoke name="memory_update">\n<parameter
+# name="file">lessons', with "content" and "mode" given as if they were this call's. Live, two reflections lost their
+# journal to it ("unknown field 'content'", "unknown field 'next_step'"), with the lessons or the project update in it.
+_INVOKE = re.compile(r'</invoke>\s*<invoke name="([a-z_]{1,40})">', re.IGNORECASE)
 
 
-def unleaked(spec: Spec, raw: Any, notes: list[str]) -> Any:
+def unleaked(spec: Spec, raw: Any, notes: list[str], leaked: list[tuple[str, dict[str, Any]]] | None = None) -> Any:
     """The input with each text field another one's markup holds moved to its own field (unless that field is
-    given), when every such mark names another text field of the tool; what was moved is noted."""
+    given), when every such mark names another text field of the tool; what was moved is noted. 0.24.0: with
+    ``leaked`` (a list), a call of another tool written inside a text is taken out of it, with the fields it was
+    given beside this call's, and added to ``leaked`` to run on its own."""
     if not isinstance(raw, dict):
         return raw
     fixed = dict(raw)
-    for name, value in raw.items():
+    if leaked is not None:
+        _take_out(spec, raw, fixed, notes, leaked)
+    for name, value in list(fixed.items()):
         field = spec.fields.get(name)
         if field is None or field.type != "string" or not isinstance(value, str):
             continue
@@ -1659,6 +1700,47 @@ def unleaked(spec: Spec, raw: Any, notes: list[str]) -> Any:
                 fixed[mark[1]] = text
                 notes.append(f"Ember's code moved the {mark[1]} you wrote inside {name} to {mark[1]}")
     return fixed
+
+
+def _take_out(
+    spec: Spec, raw: dict[str, Any], fixed: dict[str, Any], notes: list[str], leaked: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """0.24.0: the first call of another tool written inside one of the input's texts, taken out of ``fixed`` (the
+    text cut where it starts, its fields this tool doesn't have removed) into ``leaked``."""
+    for name, value in raw.items():
+        field = spec.fields.get(name)
+        if field is None or field.type != "string" or not isinstance(value, str):
+            continue
+        found = _INVOKE.search(value)
+        if found is None or found[1] not in SPECS or found[1] == spec.name:
+            continue
+        other = SPECS[found[1]]
+        call: dict[str, Any] = {}
+        tail = value[found.end() :]
+        marks = list(_LEAKED.finditer(tail))
+        for mark, after in zip(marks, [*marks[1:], None], strict=True):
+            if mark[1] in other.fields:
+                call[mark[1]] = _CLOSING.sub("", tail[mark.end() : after.start() if after else len(tail)]).strip()
+        for key in raw:
+            if key not in spec.fields and key in other.fields:
+                call[key] = fixed.pop(key)
+        fixed[name] = value[: found.start()]
+        leaked.append((found[1], _typed(other, call)))
+        notes.append(f"Ember's code took the {found[1]} call you wrote inside {name} out of it")
+        return
+
+
+def _typed(spec: Spec, call: dict[str, Any]) -> dict[str, Any]:
+    """A call taken out of a text, its whole numbers and true or false as their fields take them (markup holds text)."""
+    for key, value in call.items():
+        kind = spec.fields[key].type if key in spec.fields else ""
+        if not isinstance(value, str):
+            continue
+        if kind == "integer" and re.fullmatch(r"-?\d{1,12}", value.strip()):
+            call[key] = int(value.strip())
+        elif kind == "boolean" and value.strip().lower() in ("true", "false"):
+            call[key] = value.strip().lower() == "true"
+    return call
 
 
 def validate(spec: Spec, raw: Any, notes: list[str] | None = None) -> dict[str, Any]:
@@ -2017,14 +2099,18 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
                 )
         changes["venture_id"] = venture_id
     placed = ""
-    if args.get("bet"):  # 0.18.0: settled by Ember's code (bets.py); a refused bet changes nothing
-        refused = _stopped(conn, ctx.scope, row["id"])  # 0.23.3: no bet on the work the owner's park stopped
-        if refused:
-            raise ToolError(f"bet: {refused}; nothing was changed")
+    if args.get("bet"):  # 0.18.0: settled by Ember's code (bets.py)
         try:
+            refused = _stopped(conn, ctx.scope, row["id"])  # 0.23.3: no bet on the work the owner's park stopped
+            if refused:
+                raise bets.BetError(refused)
             placed = bets.place(conn, ctx.scope, row["id"], args["bet"], ctx.cycle_id, ctx.clock.today(), ctx.now())
-        except bets.BetError as exc:  # 0.19.2: said so (live, the agent took its other changes for made)
-            raise ToolError(f"bet: {exc}; nothing was changed, so send the update again") from None
+        except bets.BetError as exc:
+            # 0.24.0: the rest of the update is made, and the answer says the bet wasn't. 0.19.2 refused it all ("so
+            # send the update again"), and live the agent sent the bet again without its note, which was lost.
+            if not changes:
+                raise ToolError(f"bet: {exc}") from None
+            placed = f"Your bet was not placed: {exc}."
     if not changes and not placed:
         raise ToolError("nothing to change")
     if changes:
@@ -2215,9 +2301,24 @@ def _venture_case(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
         if ctx.usd_per_eur > 0
         else f" (at an assumed USD {econ.DEFAULT_USD_PER_EUR:.2f} per EUR: your owner set no exchange rate)"
     )
+    # 0.24.0: the knock-outs these numbers meet, at once (live, a case's research went on for two more calls, and its
+    # proposal was refused for a first sale after half the runway, which the case had shown from the start)
+    row = ventures.get(conn, ctx.scope, venture_id)
+    knocked = (
+        knockouts.active(knockouts.check(conn, row, cash_eur=ctx.venture_cash_eur, net_days=ctx.net_runway_days))
+        if row is not None and row["stage"] in ventures.EXPLORING
+        else []
+    )
+    out = (
+        " Knocked out by Ember's code (it isn't proposed while one stands): "
+        + "; ".join(f"{k.label} ({k.why})" for k in knocked)
+        + "."
+        if knocked
+        else ""
+    )
     return Outcome(
         True,
-        f"Saved the numbers of venture #{venture_id} as case #{number}{rate}. {result.text(case)}",
+        f"Saved the numbers of venture #{venture_id} as case #{number}{rate}. {result.text(case)}{out}",
         f"case #{number} for venture #{venture_id}: EUR {result.ev_eur:.0f} a month expected",
     )
 
@@ -2308,7 +2409,9 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
             raise ToolError("say why in note when you park a venture")
         changes["parked_by"] = "agent" if stage == "parked" else None
         if stage == "proposed":
-            gaps = ventures.proposal_gaps({**dict(row), **changes}, current)
+            # 0.24.0: an idea researched enough is proposed at once (the room researching takes is checked above):
+            # live, its whole case was refused for "the researching stage first", and sent again for it
+            gaps = ventures.proposal_gaps({**dict(row), **changes}, "researching" if current == "idea" else current)
             if gaps:
                 raise ToolError(f"venture #{vid} can't be proposed yet: a business case needs {'; '.join(gaps)}")
             knocked = knockouts.active(
@@ -3162,7 +3265,13 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     message_id = store.insert_message(conn, ctx.scope, ctx.cycle_id, args["text"].strip(), ctx.now())
     answered = store.mark_answered(conn, ctx.scope, named, message_id)
     text = f"Message #{message_id} is in your owner's inbox."
-    if promised is not None:
+    again = obligations.repeated_promise(conn, ctx.scope, *promised) if promised is not None else None
+    if again is not None:  # 0.24.0: no second obligation for the same promise
+        text += (
+            f" Its promise repeats your open promise #{again['id']} (due {again['due']}): no new obligation; close "
+            f"#{again['id']} with obligation_done once kept."
+        )
+    elif promised is not None:
         made = obligations.promise(conn, ctx.scope, ctx.cycle_id, message_id, promised[0], promised[1], ctx.now())
         text += f" Your promise is obligation #{made}, due {promised[1]}: close it with obligation_done once kept."
     if answered:
@@ -3237,7 +3346,7 @@ def _obligation_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
     for number in named:
         row = conn.execute(f"SELECT * FROM obligations WHERE id = ? AND {where}", (number, *params)).fetchone()
         if row is None or row["status"] != "open":
-            refused.append(f"#{number} is not an open obligation of yours")
+            refused.append(_not_open(conn, ctx.scope, number, row))
         elif row["kind"] == "promise" and not obligations.told_since(conn, ctx.scope, row["message_id"]):
             refused.append(
                 f"#{number} is a promise: tell your owner it is kept (or why not) with message_owner first, naming "
@@ -3250,6 +3359,24 @@ def _obligation_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
         raise ToolError("; ".join(refused))
     text = f"Closed {_numbers(closed)}." + (f" Not closed: {'; '.join(refused)}." if refused else "")
     return Outcome(True, text, f"closed {_numbers(closed)}")
+
+
+def _not_open(conn: Any, scope: AgentScope, number: int, row: Any) -> str:
+    """Why obligation_done didn't close #number. 0.24.0: it says when that is a message of your owner's (live, three
+    cycles named their owner's messages, which their answer had already taken out of FROM YOUR OWNER)."""
+    if row is not None:
+        return f"#{number} is not an open obligation of yours (it is {row['status']})"
+    where, params = scope.where()
+    message = conn.execute(
+        f"SELECT answered_by FROM messages WHERE id = ? AND {where} AND sender = 'owner'", (number, *params)
+    ).fetchone()
+    if message is None:
+        return f"#{number} is not an open obligation of yours"
+    answered = f", which your message #{message['answered_by']} answered" if message["answered_by"] else ""
+    return (
+        f"#{number} is your owner's message{answered}, not an obligation: a message of yours that names it in "
+        "answers is all it needs"
+    )
 
 
 def _request_upgrade(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -3295,6 +3422,22 @@ def _set_sleep(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     ctx.state.sleep_reason = args["reason"].strip()[:200]
     note = "" if minutes == asked else f" (asked {asked}; allowed {ctx.min_sleep}–{ctx.max_sleep})"
     return Outcome(True, f"Next wake in {minutes} min{note}.", f"sleep {minutes} min")
+
+
+JOURNAL_DRAFT = (
+    "Kept as your journal's draft: your work steps end here, and your reflection comes next. Ember's code saves this "
+    "draft as the cycle's journal unless your reflection calls write_journal again: do that only to correct it (what "
+    "wasn't done, a better next)."
+)
+
+
+def _journal_draft(ctx: ToolContext, spec: Spec, raw: Any, leaked: list[tuple[str, dict[str, Any]]] | None) -> Outcome:
+    """0.24.0: a journal written in a work step, kept for the reflection (loop._keep_draft saves it when that writes
+    none). Live, 11 of 12 cycles wrote their journal in a work step: refused, it was written again in the reflection,
+    and the two reflections whose own journal was refused left their cycles without one."""
+    notes: list[str] = []
+    ctx.state.journal_draft = validate(spec, unleaked(spec, raw, notes, leaked), notes)
+    return _noted(Outcome(True, JOURNAL_DRAFT, "kept as the journal's draft"), notes)
 
 
 def _write_journal(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -4325,11 +4468,16 @@ def _propose_bluesky_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
             f"the post would be {bluesky.TEXT_MAX - left} characters with the {links} and the AI line Ember's code"
             f" adds; Bluesky takes {bluesky.TEXT_MAX}: shorten your words by {-left}"
         )
+    payload = bluesky.payload(post, account.handle)
+    if store.pending_approval_by_payload(conn, ctx.scope, store.sha256(payload)) is None:  # that one: as before
+        repeated = _repeated_post(conn, ctx.scope, text)
+        if repeated:
+            raise ToolError(f"it says what {repeated} says: never the same post twice; write a new one (or none)")
     reason = args["reason"].strip()
     made_id = _new_request(
         ctx,
         conn,
-        bluesky.payload(post, account.handle),
+        payload,
         post.to_action(),
         type="publish",
         title=_cut(f"Bluesky: {' '.join(text.split())}", 120),
@@ -4350,6 +4498,27 @@ def _propose_bluesky_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
         answer += f" QA (Ember's code): {'; '.join(short)}."
     answer += _unlocked(ctx)
     return Outcome(True, answer, f"#{made_id} post: {_cut(' '.join(text.split()), 60)}")
+
+
+def _repeated_post(conn: Any, scope: AgentScope, text: str) -> str | None:
+    """0.24.0: the live post or the waiting request that says what ``text`` says (bluesky.same_words), or None. Before,
+    only a request waiting with exactly the same post was caught: one repeating a live post reached the owner."""
+    where, params = scope.where("a")
+    rows = conn.execute(
+        f"SELECT a.id, a.status, a.action, p.rkey, p.text, p.status AS posted FROM approvals a LEFT JOIN bluesky_posts"
+        f" p ON p.approval_id = a.id WHERE {where} AND a.executor = 'bluesky_post' AND (a.status IN ('pending',"
+        " 'approved', 'approved_with_changes') OR p.status IN ('running', 'active', 'unclear')) ORDER BY a.id DESC",
+        params,
+    ).fetchall()
+    for row in rows:
+        said = [str(row["text"] or "")]
+        with contextlib.suppress(bluesky.BlueskyError, ValueError, TypeError, KeyError):
+            said.append(bluesky.post_from_action(row["action"]).text)
+        if any(bluesky.same_words(text, words) for words in said if words):
+            if row["posted"] in ("running", "active", "unclear"):
+                return f"your post {row['rkey'] or 'of request #' + str(row['id'])} on Bluesky"
+            return f"request #{row['id']}, which waits for your owner"
+    return None
 
 
 def _printify(ctx: ToolContext) -> PrintifyAccess:

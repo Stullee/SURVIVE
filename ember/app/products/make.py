@@ -34,8 +34,9 @@ MAX_LISTING_PAGES = 3
 _COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
 # 0.15.0: 'shop/cv.pdf#2' (a page), 'shop/b.xlsx#2' or 'shop/b.xlsx#Budget' (a sheet), 'shop/p.png', each with an
 # optional region to zoom in on: 'shop/cv.pdf#1@top'.
+# 0.24.0: '#' before a region with no page ('shop/cover.png#@top') is no page: live, it was refused twice in a cycle
 _PAGE_REF = re.compile(
-    r"^(?P<path>.+?\.(?P<kind>pdf|xlsx|png|jpg))(?:#(?P<part>[^@#]{1,31}))?(?:@(?P<region>[a-z-]+))?$", re.IGNORECASE
+    r"^(?P<path>.+?\.(?P<kind>pdf|xlsx|png|jpg))(?:#(?P<part>[^@#]{0,31}))?(?:@(?P<region>[a-z-]+))?$", re.IGNORECASE
 )
 
 
@@ -214,7 +215,7 @@ def _pictures(jail: Jail, pages: str, height: int) -> tuple[list[images.Image.Im
         if match is None:
             raise ProductError(
                 f"{ref!r} is not a page: use 'file.pdf#2', 'file.xlsx#2' (a sheet) or a .png or .jpg file in your "
-                "workspace, with '@top' or another region to zoom in"
+                "workspace, with a region after it to zoom in ('file.png@top', 'file.xlsx#2@top')"
             )
         path, kind, part = match.group("path"), match.group("kind").lower(), match.group("part") or ""
         name = (match.group("region") or "").lower()

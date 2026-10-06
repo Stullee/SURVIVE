@@ -344,6 +344,10 @@ class CycleRunner:
         if end.sleep_minutes is None:
             end.sleep_minutes, end.sleep_reason = state.sleep_minutes, state.sleep_reason or None
         try:
+            self._keep_draft(cycle_id, ctx)  # 0.24.0: also when the cycle stopped before its reflection
+        except Exception:  # noqa: BLE001 - the cycle is closed whatever happens here
+            log.exception("Keeping the journal draft of cycle #%d failed", cycle_id)
+        try:
             self._cut_sleep(end, trigger)
         except Exception:  # noqa: BLE001 - 0.22.0: the cycle is closed whatever happens here
             log.exception("Working out the sleep of cycle #%d failed", cycle_id)
@@ -1059,6 +1063,21 @@ class CycleRunner:
             critic=judged,
         )
 
+    def _waiting_channels(self) -> str:
+        """0.24.0: the channels switched on that wait for the owner's setup, for the daily review (as the plan shows
+        them, _waiting). Live, four reviews in a row ordered "send the Pinterest request today" while no Pinterest tool
+        could, and the owner had said three times that Pinterest still had to approve their app."""
+        lines = []
+        if self.pinterest is not None and not self.pinterest_on:
+            lines.append(("Pinterest", _waiting("Pinterest", self.pinterest.status(), self._etsy_state())))
+        if self.bluesky is not None and not self.bluesky_on:
+            lines.append(("Bluesky", _waiting("Bluesky", self.bluesky.status(), "ok", venture=False)))
+        if self.printify is not None and not self.printify_on:
+            waits = _waiting("Printify", self.printify.status(), self._etsy_state(), self.printify_waits)
+            lines.append(("Printify", waits))
+        found = [f"- {name}: {line}" for name, line in lines if line]
+        return "CHANNELS NOT READY (no request or tool can use them until then)\n" + "\n".join(found) if found else ""
+
     def _review(self, cycle_id: int, ctx: tools.ToolContext) -> None:
         """The daily review, before the first plan of the day. It never ends the cycle: a review the budget can't
         cover now is tried at the next cycle, and a failed one is recorded (at most review.MAX_ATTEMPTS a day). Its
@@ -1074,6 +1093,7 @@ class CycleRunner:
                 self.economy.life.scope(),
                 status,
                 dry_run=self.dry_run,
+                channels=self._waiting_channels(),
             )
         request = prompts.review_request(self.settings, card.text)
         if not context.fits(request, REVIEW_CALL.input_tokens):
@@ -1363,10 +1383,12 @@ class CycleRunner:
         """0.18.0: the quality critic, before the plan: one product line's live listing a cycle (quality.py). It
         counts toward the daily cap only, leaves what the cycle needs to work, and never ends the cycle."""
         with self.db.connection() as conn:
-            project_id = quality.due(conn, self.scope, self.clock.today())
-            if project_id is None:
+            chosen = quality.due(conn, self.scope, self.clock.today())
+            if chosen is None:
                 return
-            text, picture = quality.case(conn, self.scope, self.workspace, project_id)
+            project_id, listing_id = chosen  # 0.24.0: each listing of a product line, the one judged named
+            text, picture = quality.case(conn, self.scope, self.workspace, project_id, listing_id)
+            judged = quality.label(conn, self.scope, listing_id)
         request = prompts.quality_request(self.settings, text, picture)
         try:
             quote = self.meter.quote(request, CRITIC)
@@ -1377,7 +1399,7 @@ class CycleRunner:
         if quote > self.meter.headroom(cycle_id, CRITIC, keep=working):
             log.info("The quality check can't be afforded now; project #%d waits for the next cycle", project_id)
             return
-        self._progress(cycle_id, current_action=f"The quality critic looks at project #{project_id}")
+        self._progress(cycle_id, current_action=f"The quality critic looks at listing #{listing_id}")
         answer, note, call_id = None, None, None
         try:
             result = self._call(cycle_id, CRITIC, request)
@@ -1395,12 +1417,16 @@ class CycleRunner:
             if answer is None:
                 note = "its answer wasn't usable" if stop == "end_turn" else f"it was cut off ({stop})"
         with self.db.transaction() as conn:
-            quality.save(conn, self.scope, project_id, call_id, answer, note, to_iso(self.clock.now()))
+            quality.save(conn, self.scope, project_id, call_id, answer, note, to_iso(self.clock.now()), listing_id)
         if answer is None:
-            events.record(self.db, "warning", "agent", f"The quality check of project #{project_id} failed: {note}")
+            events.record(
+                self.db, "warning", "agent", f"The quality check of {judged} (project #{project_id}) failed: {note}"
+            )
         else:
             said = f"{answer['score']}/10, {answer['verdict']}" + (f": {answer['fixes']}" if answer["fixes"] else "")
-            events.record(self.db, "info", "agent", f"The quality critic on project #{project_id}: {said}"[:300])
+            events.record(
+                self.db, "info", "agent", f"The quality critic on {judged} (project #{project_id}): {said}"[:300]
+            )
 
     def _study(self, cycle_id: int) -> None:
         """0.12.0: study the owner's library before the plan: the next parts of the documents waiting, a few calls a
@@ -1694,6 +1720,7 @@ class CycleRunner:
             **_offered(ctx),
             blog=self.blog_on,
             bluesky=self.bluesky_on,
+            drafted=True,  # 0.24.0: the longer of its two prompts
         )
         try:
             step_worst = self.meter.quote(request, "work")
@@ -1774,18 +1801,22 @@ class CycleRunner:
             **_offered(ctx),
             blog=self.blog_on,
             bluesky=self.bluesky_on,
+            drafted=ctx.state.journal_draft is not None,
         )
         # 0.12.0: why the work ended is kept first, also when the reflection can't be paid for.
         self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)
         try:
             if not self.meter.affordable(request, "reflect", cycle_id)[0]:
+                self._keep_draft(cycle_id, ctx)
                 return False
         except Unpriceable:
+            self._keep_draft(cycle_id, ctx)
             return False
         self._progress(cycle_id, phase="reflect", current_action="Reflecting")
         try:
             result = self._call(cycle_id, "reflect", request)
         except (CallRefused, CallFailed):
+            self._keep_draft(cycle_id, ctx)
             return False
         response = result.response or {}
         text = _text_of(response)
@@ -1803,6 +1834,7 @@ class CycleRunner:
                 tools.skip(
                     ctx, u.get("name", "?"), u.get("input"), u.get("id", ""), result.call_id, "reflect", CUT_CALL
                 )
+        self._keep_draft(cycle_id, ctx)  # 0.24.0: before the reply's text, which has no next
         if not ctx.state.journal_written and text.strip():
             with self.db.transaction() as conn:
                 first = text.strip().splitlines()[0][:240]
@@ -1810,6 +1842,24 @@ class CycleRunner:
                     conn, self.scope, cycle_id, "agent", first, text.strip()[:2000], to_iso(self.clock.now())
                 )
         return True
+
+    def _keep_draft(self, cycle_id: int, ctx: tools.ToolContext) -> None:
+        """0.24.0: the journal a work step wrote (tools.JOURNAL_DRAFT), saved as the cycle's when its reflection wrote
+        none: it wasn't asked to, it couldn't be paid for, or its own journal was refused."""
+        draft = ctx.state.journal_draft
+        if draft is None or ctx.state.journal_written:
+            return
+        with self.db.transaction() as conn:
+            ctx.state.journal_written = store.write_journal(
+                conn,
+                self.scope,
+                cycle_id,
+                "agent",
+                draft["summary"].strip(),
+                draft["entry"].strip(),
+                to_iso(self.clock.now()),
+                " ".join((draft.get("next") or "").split()),
+            )
 
     # --- research (a metered sub-call with Anthropic's web tools) ---
 
@@ -2253,6 +2303,8 @@ def _waiting(name: str, status: tuple[str, str | None], etsy: str, why: str = ""
         return ""
     why = why.rstrip(".")
     line = f"Switched on, but it waits for your owner's setup ({why}): no {name} tools until then."
+    # 0.24.0: live, the agent asked its owner for the same setup 5 times in 3 days, after they said it was pending
+    line += " Your owner's dashboard shows it: don't ask them about it again."
     return f"{line} A venture it serves starts its first test only then." if venture else line
 
 

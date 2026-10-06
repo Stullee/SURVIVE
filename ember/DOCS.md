@@ -215,7 +215,12 @@ it runs one **wake cycle**:
 3. **Reflect**: it writes a journal entry, updates its memory and chooses how
    long to sleep. It is told which of the cycle's tool calls were not done
    (refused, failed, skipped or cut off), so it can't report them as done.
-   Every cycle that worked reflects: the journal is written only here.
+   Every cycle that worked reflects. Since 0.24.0 a journal the agent writes in
+   a work step is kept as the reflection's draft: the reflection writes it again
+   only to correct it, and when it writes none, or its own is refused, the draft
+   is the cycle's journal. When the model writes another tool's call inside a
+   text (a lesson inside the journal's entry), Ember's code takes it out and runs
+   it as a call of its own.
 
 When a cycle ends, however it ends, Ember's code writes its **digest** from its
 records: what it was aimed at, its goal, what its tools did and what they
@@ -290,7 +295,10 @@ products and workshop runs, and its verdicts from the last review.
 
 Since 0.18.0 each project with live listings also shows its funnel (views,
 favorites, orders: where it is stuck) and the reach done for it (blog posts,
-pins, listing edits).
+pins, listing edits). Since 0.24.0 it also sees the channels that wait for your
+setup (such as Pinterest without its app secret), so it doesn't plan with them,
+and its roadmap says which milestones Ember's code checks and closes itself and
+whose dates don't move (a product line's listing test, the money goal).
 
 The agent then judges every project (**continue**, **change** or **stop**, with
 its bottleneck: **reach**, **appeal**, **conversion**, **quality**,
@@ -316,7 +324,8 @@ is tried at the next cycle.
 
 **Lessons.** The agent's lessons file holds 4,000 bytes. When it is full, a
 new lesson pushes the oldest out: those without numbers first, so a no backed by
-data ("dropshipping ruled out: margins under 5%") lasts. After each daily review,
+data ("dropshipping ruled out: margins under 5%") lasts. Since 0.24.0 the
+lessons just added go last, and the answer names the ones that went. After each daily review,
 once the file holds 12 lessons or more, one more call on the planner model
 (about a cent) **consolidates** it: lessons that say the same become one, and
 those a newer lesson contradicts are retired, each with why. Ember's code checks
@@ -362,12 +371,15 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
 - **Recall.** The work steps get the principles and cases that match their plan,
   knowledge_search finds them, and creating a project or venture names the most
   similar case.
-- **The quality critic.** Before a plan, one product line's newest live listing
-  a cycle is scored by the strategy model (its cover photo, title, tags, price
-  and description against the demand note's market prices, and your rule that a
-  product must beat a free AI chat): 7 of 10 passes. It checks again after 14
-  days or after a change of its listings. The score and fixes show in the daily
-  review.
+- **The quality critic.** Before a plan, one live listing a cycle is scored by
+  the strategy model (its cover photo, title, tags, price and description
+  against the demand note's market prices, and your rule that a product must
+  beat a free AI chat): 7 of 10 passes. Since 0.24.0 each listing of a product
+  line is checked in turn (one never checked first), again after 14 days or
+  after a change of it, and every verdict names its listing: before, only a
+  line's newest listing was checked, and its verdicts were read as verdicts on
+  another listing of the line. A line whose work your park stopped gets no
+  check. The score and fixes show in the daily review.
 - **Waiting time.** An ordinary cycle's plan gets **READY**: what is useful
   while projects wait (bringing buyers to unseen listings, the critic's fixes, a
   missing demand note, the week's questions). While it lists work, the sleep
@@ -496,9 +508,12 @@ one before it goes into the agent's workspace (by default `workshop/out`):
   programs, fonts), and any file that can't be read whole, is refused.
 
 The run's script is kept in `workshop/scripts/`, so the agent can run it again
-instead of paying for it to be written anew. The files handed over are uploaded
-for the run only (they expire within the hour), and every file is deleted from
-Anthropic's storage when the run is over.
+instead of paying for it to be written anew. Since 0.24.0 a script run again
+without files gets the files its first run had (a script that read a workbook
+ran without it and made up its numbers), and a task that names a file of the
+workspace it doesn't hand over is refused before it is paid for. The files
+handed over are uploaded for the run only (they expire within the hour), and
+every file is deleted from Anthropic's storage when the run is over.
 
 **What it costs.** A run is one metered call (up to three if a long run
 pauses): tokens at the workshop model's prices, plus sandbox time. Anthropic's
@@ -1754,6 +1769,9 @@ To stop Ember's access, delete the app password at Bluesky.
   A post can only be approved as it is or rejected (say what should change: the
   agent proposes a better one). **Cancel** stops an approved post before Ember
   makes it.
+- A post that says what a live post or a waiting request already says (the
+  same words, give or take a hashtag) is refused before it reaches you (since
+  0.24.0).
 - If the picture changed after you approved, a listing it links (by either
   link) is no longer live, or a page of your website it links is gone, the post
   isn't made (a blog post's address without its `.html` goes out with it).
