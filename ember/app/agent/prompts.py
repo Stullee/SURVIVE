@@ -173,6 +173,12 @@ REFLECT_PROMPT = (
     "lessons; replace the strategy only if it changed). If something blocked you that a new ability would fix, and "
     "you haven't asked for it yet, file request_upgrade. Optionally call set_sleep."
 )
+# 0.24.0: when a work step wrote the journal (tools.JOURNAL_DRAFT), the reflection writes it again only to correct it
+JOURNAL_FIRST = "write_journal first, with next."
+JOURNAL_DRAFTED = (
+    "your journal's draft from your work step is kept: Ember's code saves it unless you call write_journal again, only "
+    "to correct it (what wasn't done, a better next)."
+)
 # Why the work steps ended (loop's end reasons), as the reflection reads it; any other reason is shown as it is.
 WORK_ENDED = {
     "": "the plan is done",
@@ -183,11 +189,15 @@ WORK_ENDED = {
 ENDED_CHARS = 120  # the longest reason shown
 
 
-def reflect_prompt(ended: str = "", undone: Sequence[str] = ()) -> str:
+def reflect_prompt(ended: str = "", undone: Sequence[str] = (), drafted: bool = False) -> str:
     """The reflect phase's instructions, saying why the work steps ended (``ended``: the act phase's end reason) and,
-    0.12.0, which of its tool calls were not done (Ember's code's list: they can't be reported as done)."""
+    0.12.0, which of its tool calls were not done (Ember's code's list: they can't be reported as done). 0.24.0
+    (``drafted``): a work step wrote the journal, kept as its draft, so the reflection writes it again only to correct
+    it."""
     why = WORK_ENDED.get(ended) or " ".join(ended.split())[:ENDED_CHARS]
     text = REFLECT_PROMPT.replace("{ended}", why)
+    if drafted:
+        text = text.replace(JOURNAL_FIRST, JOURNAL_DRAFTED)
     if undone:
         text += (
             " Not done in this cycle (refused, failed, skipped or cut off; never write or save them as done): "
@@ -215,7 +225,8 @@ numbers below come from Ember's records: they are exact, so never argue with the
 - Look at your venture tree: which venture is closest to a first euro, which research is going nowhere (park it), and
   whether the tree needs new ideas.
 - Check your roadmap: judge each milestone overdue or due this week (Ember's code applies your verdicts), say
-  whether your work leads there, and whether the roadmap still reaches three months ahead.
+  whether your work leads there, and whether the roadmap still reaches three months ahead. Leave out the ones Ember's
+  code checks and closes, and never extend one whose date doesn't move.
 Reply only with JSON matching the schema:
 - verdicts: one per project listed: project_id, verdict (continue, change or stop), bottleneck (reach, appeal,
   conversion, quality, too_early or none) and why (<= {REVIEW_WHY_CHARS} characters, with the numbers that decide it)
@@ -705,10 +716,11 @@ def reflect_request(
     brainstorm: bool = True,
     blog: bool = False,
     bluesky: bool = False,
+    drafted: bool = False,
 ) -> dict[str, Any]:
     """The final turn of the same conversation (so the cached prefix is reused: its tool list stays the work's, which
     it reads from the cache at a tenth of the price); ``ended`` says why the work ended, ``undone`` which of its tool
-    calls were not done (0.12.0).
+    calls were not done (0.12.0), ``drafted`` that a work step wrote the journal's draft (0.24.0).
 
     Roles must alternate: when there was no act turn at all, the reflect prompt joins the brief's turn.
     """
@@ -729,7 +741,7 @@ def reflect_request(
         bluesky=bluesky,
     )
     messages = request["messages"]
-    prompt = _text(reflect_prompt(ended, undone))
+    prompt = _text(reflect_prompt(ended, undone, drafted))
     if messages[-1]["role"] == "user":
         messages[-1] = {"role": "user", "content": [*messages[-1]["content"], *pending_results, prompt]}
     else:

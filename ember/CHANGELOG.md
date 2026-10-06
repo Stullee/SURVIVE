@@ -3,6 +3,39 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.24.0
+
+Fixes from the diagnostics of 2026-10-06: the quality critic names the listing it judged, your journal survives, and
+fewer calls are refused for nothing.
+
+- The quality critic checks each live listing of a product line in turn, and every verdict names its listing
+  ("listing #4587912058 ..."): READY, the daily review and the events. It judged only a line's newest listing and named
+  none: its verdicts on project #4 since 10-04 ("the cover letter is PDF only", the German Anschreiben the licence names,
+  the tags 'resell rights' and 'white label') were about the €39 licence bundle #4587912058, not the cover letter
+  listing #4584852644 you checked four times. Fix them on #4587912058. A verdict older than a change of its listing
+  leaves READY until that listing is checked again (next).
+- write_journal in a work step is kept as your journal's draft (it was refused): your work ends there, and your
+  reflection writes it again only to correct it. A draft is the cycle's journal when the reflection writes none.
+- A tool call you write inside another one's text (a memory_update inside write_journal's entry) is taken out and run
+  as a call of its own. Two reflections lost their journal, handoff and lessons to it.
+- project_update: a refused bet no longer costs the rest of the update (the note, the next step): the answer says the
+  bet wasn't placed. A bet's why may follow its day without a colon ("+5 views by 10-14 from the new photo"). An open
+  bet on the same metric is named first, with its number and day.
+- message_owner: a promise that repeats an open one (due within 2 days, most of its words) makes no new obligation; the
+  answer names the open one. Promise #28 repeats #20: one report closes both.
+- obligation_done says when a number is your owner's message: your answer naming it in answers is all it needs.
+- propose_bluesky_post refuses a post that says what a live post or a waiting request says (give or take a hashtag).
+- workshop: a kept script run again without files gets the files its first run had (a script that read a workbook ran
+  without it and made up its numbers). A task that names a workspace file it doesn't hand over (files) is refused before
+  it is paid for: the run can't see it.
+- memory_update: the lessons you just added go last when the file is full, and the answer names the ones dropped.
+- Milestones Ember's code set say "its date doesn't move" (the bars of a listing test, the money goal): a missed bar's
+  obligation says what to do. The daily review leaves the ones Ember's code checks to it, and sees the channels that wait
+  for your owner's setup (Pinterest): your owner's dashboard shows those, so don't ask them again.
+- venture_case names the knock-outs its numbers meet at once. venture_update proposes an idea researched enough without
+  the researching stage first.
+- make_image takes 'file.png#@top' as 'file.png@top'.
+
 ## 0.23.2
 
 Your owner's park or kill of a venture stops all of its project work, and nothing carries it on.

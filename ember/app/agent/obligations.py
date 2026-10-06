@@ -41,6 +41,12 @@ PROMISE_DAYS = 14  # a promise is due within this many days
 PRESSING_OVERDUE_DAYS = 3  # a promise overdue this long still makes the cycle an ordinary one
 PRESSING_NEW_DAYS = 2  # a decision or a miss is pressing this long
 HEADING = "OBLIGATIONS (kept by Ember's code: deal with them first)"
+SAME_PROMISE_DAYS = 2  # 0.24.0: a promise due this close to an open one, with most of its words, repeats it
+SAME_WORDS = 0.6
+_COMMON = frozenset(
+    {"and", "the", "for", "with", "from", "all", "again", "your", "you", "our", "this", "that", "then"}
+    | {"und", "der", "die", "das", "den", "dem", "des", "mit", "von", "für", "bis"}
+)
 SINCE_KEY = "agent.{mode}.obligations_since"  # decisions and misses from then on (not the history before)
 
 
@@ -110,6 +116,32 @@ def promise(
         (scope.mode, scope.session, what, due, now, cycle_id, message_id),
     )
     return int(cursor.lastrowid)
+
+
+def repeated_promise(conn: sqlite3.Connection, scope: AgentScope, what: str, due: str) -> sqlite3.Row | None:
+    """0.24.0: the open promise a new one repeats: due within SAME_PROMISE_DAYS of it, and sharing at least SAME_WORDS
+    of the words the two hold (_promise_words). Live, "Bluesky reaction + view delta report for posts #43/#44" became
+    promise #28 beside the same report's #20, both due 2026-10-11."""
+    new = _promise_words(what)
+    day = roadmap.parse_day(due)
+    if not new or day is None:
+        return None
+    where, params = scope.where()
+    for row in conn.execute(
+        f"SELECT * FROM obligations WHERE {where} AND kind = 'promise' AND status = 'open' ORDER BY id", params
+    ).fetchall():
+        old = _promise_words(row["what"])
+        other = roadmap.parse_day(row["due"])
+        if not old or other is None or abs((other - day).days) > SAME_PROMISE_DAYS:
+            continue
+        if len(new & old) >= SAME_WORDS * len(new | old):
+            return row
+    return None
+
+
+def _promise_words(text: str) -> set[str]:
+    """A promise's words that say what it is: lower case, a plural's s dropped, without the short and common ones."""
+    return {w.removesuffix("s") for w in re.findall(r"[#\w/]{3,}", str(text).lower()) if w not in _COMMON}
 
 
 def open_rows(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:

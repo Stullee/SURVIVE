@@ -300,8 +300,9 @@ def test_the_agent_hears_that_a_channel_waits_for_its_owner(data_dir: Path) -> N
     text = plan_request["messages"][0]["content"][0]["text"]
     line = (
         "\n== PINTEREST ==\nSwitched on, but it waits for your owner's setup (pinterest_app_id is missing; "
-        "pinterest_app_secret is missing, then System, Pinterest, Connect): no Pinterest tools until then. A venture "
-        "it serves starts its first test only then.\n"
+        "pinterest_app_secret is missing, then System, Pinterest, Connect): no Pinterest tools until then. Your "
+        "owner's dashboard shows it: don't ask them about it again. A venture it serves starts its first test only "
+        "then.\n"
     )
     assert line in text
     assert "\n== PRINTIFY ==\nSwitched on, but it waits for your owner's setup (printify_api_token is missing):" in text

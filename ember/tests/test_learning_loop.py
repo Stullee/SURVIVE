@@ -312,22 +312,26 @@ def test_the_weekly_look_runs_once_a_week_and_every_plan_sees_its_questions(data
 
 def test_the_quality_critic_checks_a_live_product_line_once_and_again_later(data_dir: Path) -> None:
     agent, project = started(data_dir)
+    [listing] = [r["listing_id"] for r in rows(agent, "SELECT listing_id FROM etsy_listings")]
     with agent.db.connection() as conn:
-        assert quality.due(conn, agent.scope(), agent.clock.today()) == project
-        text, _ = quality.case(conn, agent.scope(), agent.roots()[0], project)
-    assert "Title: " in text and "Price: " in text and "funnel: " in text
+        assert quality.due(conn, agent.scope(), agent.clock.today()) == (project, listing)
+        text, _ = quality.case(conn, agent.scope(), agent.roots()[0], project, listing)
+    assert f"LISTING: #{listing}" in text and "Title: " in text and "Price: " in text and "funnel: " in text
     assert quality.parse('{"score": 8, "fixes": ""}') == {"score": 8, "verdict": "pass", "fixes": ""}
     assert quality.parse('{"score": 11, "fixes": ""}') is None
     agent.clock.advance(days=1)
     agent.run_cycle("schedule")
     [check] = rows(agent, "SELECT * FROM quality_checks")
     assert (check["status"], check["score"], check["verdict"]) == ("ok", 6, "improve")
+    assert check["listing_id"] == listing
     with agent.db.connection() as conn:
         assert quality.due(conn, agent.scope(), agent.clock.today()) is None
-        assert "quality 6/10, improve" in reach.research_text(conn, agent.scope(), project, None)
+        said = quality.review_text(conn, agent.scope(), project)
+        assert said.startswith("quality 6/10, improve (") and f"listing #{listing} " in said
+        assert said in reach.research_text(conn, agent.scope(), project, None, said)
     agent.clock.advance(days=quality.RECHECK_DAYS)
     with agent.db.connection() as conn:
-        assert quality.due(conn, agent.scope(), agent.clock.today()) == project
+        assert quality.due(conn, agent.scope(), agent.clock.today()) == (project, listing)
 
 
 # --- recall ---
@@ -429,9 +433,9 @@ def test_the_quality_critic_reads_a_printify_product(data_dir: Path) -> None:
     agent, _, request = proposed(data_dir)
     assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
     agent.execute_approved()
-    [row] = rows(agent, f"SELECT project_id FROM approvals WHERE id = {request}")
+    [row] = rows(agent, f"SELECT listing_id FROM printify_products WHERE approval_id = {request}")
     with agent.db.connection() as conn:
-        found = quality._printify(conn, agent.scope(), int(row["project_id"]))
+        found = quality._printify(conn, agent.scope(), int(row["listing_id"]))  # 0.24.0: the listing's product
     assert found is not None
     product, prices = found
     assert product.title and "EUR" in prices

@@ -6,7 +6,7 @@ cycle's plan gets READY (the list a venture cycle's plan gets from the decision 
 worth doing meanwhile, the most pressing first:
 
 * reach: a product line its buyers haven't seen (reach.py: not seen, less than reach.ENOUGH done to bring them);
-* improve: what the quality critic's last check of a product line said to fix (quality.py);
+* improve: what the quality critic's last check of each listing said to fix (quality.py, 0.24.0: the listing named);
 * research: a product line live without a demand note;
 * question: what this week's look asked the week to answer (weekly.py).
 
@@ -26,7 +26,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date
 
-from . import reach, weekly
+from . import quality, reach, weekly
 from .store import AgentScope
 
 SLEEP_MINUTES = 180
@@ -55,13 +55,14 @@ def items(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[Item
                 )
             )
     for project_id in sorted(funnels):
-        row = conn.execute(
-            f"SELECT verdict, fixes FROM quality_checks WHERE {where} AND project_id = ? AND status = 'ok'"
-            " ORDER BY id DESC LIMIT 1",
-            (*params, project_id),
-        ).fetchone()
-        if row is not None and row["verdict"] == "improve" and row["fixes"]:
-            found.append(Item(f"improve #{project_id}", f"the quality critic said: {row['fixes'][:200]}"))
+        # 0.24.0: each listing's newest check, with the listing it judged (a check from before names none)
+        checked = quality.newest(conn, scope, project_id) or quality.unplaced(conn, scope, project_id)
+        for row in checked:  # one changed at Etsy since its check waits for the next check (quality.due)
+            if row["verdict"] == "improve" and row["fixes"] and not quality.changed_since(conn, scope, row):
+                judged = quality.label(conn, scope, row["listing_id"])
+                found.append(
+                    Item(f"improve #{project_id}", f"the quality critic said of {judged}: {row['fixes'][:200]}")
+                )
     for project_id, f in sorted(funnels.items()):
         note = conn.execute(
             f"SELECT 1 FROM demand_notes WHERE {where} AND project_id = ? LIMIT 1", (*params, project_id)

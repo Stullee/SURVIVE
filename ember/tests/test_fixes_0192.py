@@ -529,7 +529,8 @@ def test_a_bet_can_be_written_as_ember_shows_it() -> None:
             bets.parse(wrong, None if wrong.endswith(": x") else today)
 
 
-def test_a_refused_bet_says_nothing_was_changed(data_dir: Path) -> None:
+def test_a_refused_bet_keeps_the_rest_of_the_update(data_dir: Path) -> None:
+    # 0.24.0: 0.19.2 refused it all ("nothing was changed"), and live the agent sent the bet again without its note
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]))
     ctx = shop_context(agent)
     with agent.db.transaction() as conn:
@@ -543,9 +544,11 @@ def test_a_refused_bet_says_nothing_was_changed(data_dir: Path) -> None:
             status="active",
             now="2026-09-01T12:00:00Z",
         )
-    refused = call(ctx, "project_update", {"project_id": project, "next_step": "New", "bet": "more views soon"})
-    assert not refused.ok and "nothing was changed, so send the update again" in refused.text
-    assert rows(agent, f"SELECT next_step FROM projects WHERE id = {project}")[0]["next_step"] == "Old"
+    made = call(ctx, "project_update", {"project_id": project, "next_step": "New", "bet": "more views soon"})
+    assert made.ok and "Your bet was not placed: write it as" in made.text
+    assert rows(agent, f"SELECT next_step FROM projects WHERE id = {project}")[0]["next_step"] == "New"
+    alone = call(ctx, "project_update", {"project_id": project, "bet": "more views soon"})
+    assert not alone.ok and alone.text.startswith("Error: bet: write it as")
 
 
 # --- the model's markup inside a text ------------------------------------------------------------------------------

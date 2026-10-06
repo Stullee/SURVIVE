@@ -20,6 +20,7 @@ session: nothing reaches Bluesky.
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import re
@@ -54,6 +55,7 @@ ALT_MAX = 1_000  # a picture's alt text
 CARD_TITLE_MAX = 300  # a link card's title
 TAG_MAX = 64  # a hashtag's characters (Bluesky's limit, without the #)
 LINK_MAX = 300
+SAME_RATIO = 0.85  # 0.24.0: two posts this alike (plain) say the same
 IMAGE_KINDS = frozenset({".png", ".jpg"})  # the workspace's pictures
 IMAGE_MAX_BYTES = 10 * 1024 * 1024  # a picture proposed (Ember's code makes a smaller copy for Bluesky when needed)
 BLOB_MAX_BYTES = 1_000_000  # a post's picture or a card's (Bluesky's own servers take 2 MB since 2026-04, others 1)
@@ -184,6 +186,24 @@ def hashtags(text: str) -> list[tuple[int, int, str]]:
         start = match.start(1) - 1  # the # itself
         found.append((start, start + 1 + len(tag), tag))
     return found
+
+
+def plain(text: str) -> str:
+    """0.24.0: what a post says, to compare it with another: its words in lower case, without the AI line, hashtags or
+    a link as a post shows it (bluesky_posts keeps the text with both)."""
+    for line in DISCLOSURE.values():
+        text = text.replace(line, " ")
+    text = _TAG.sub(" ", text)
+    text = re.sub(r"\S+\.[a-z]{2,}/\S*|(?:https?://|www\.)\S+", " ", text, flags=re.IGNORECASE)
+    return " ".join(re.findall(r"\w+", text.lower()))
+
+
+def same_words(text: str, other: str) -> bool:
+    """0.24.0: whether two posts say the same: their words (plain) at least SAME_RATIO alike. Live, a post that repeated
+    one posted four hours before, with a hashtag added, reached the owner ("don't we have the exact one already
+    posted???")."""
+    a, b = plain(text), plain(other)
+    return bool(a and b) and difflib.SequenceMatcher(None, a, b, autojunk=False).ratio() >= SAME_RATIO
 
 
 def check_words(text: str) -> None:

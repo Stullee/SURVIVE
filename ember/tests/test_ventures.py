@@ -463,9 +463,9 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
     assert updates[0]["status"] == "error"
     assert "scores come from research: research venture #3 first (research with venture_id 3" in updates[0]["result"]
     assert updates[1]["status"] == "error" and updates[1]["result"] == (
-        "Error: venture #3 can't be proposed yet: a business case needs the researching stage first; 2 research "
-        "calls for it that found something (it has 0); scores for revenue, doability, difficulty, risk, speed, cost; "
-        "demand, economics, setup, first_euro, risks, first_test filled in; its numbers (venture_case)."
+        "Error: venture #3 can't be proposed yet: a business case needs 2 research calls for it that found something "
+        "(it has 0); scores for revenue, doability, difficulty, risk, speed, cost; demand, economics, setup, "
+        "first_euro, risks, first_test filled in; its numbers (venture_case)."  # 0.24.0: an idea needs no stage first
     )
     research = tool_results(agent, "research")
     assert [r["status"] for r in research] == ["ok", "ok"]

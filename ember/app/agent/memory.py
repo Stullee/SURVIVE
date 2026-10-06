@@ -40,6 +40,7 @@ MAX_APPEND_LINES = 5
 MAX_PINS = 6  # the owner's pinned lessons at once (every plan shows them all)
 PIN_CHARS = 300  # a pinned lesson
 LINE_CHARS = 300  # a lesson the consolidation writes
+DROPPED_CHARS = 60  # 0.24.0: of each lesson a full file dropped, as memory_update's answer names it
 WHY_CHARS = 100  # why it drops one
 CONSOLIDATE_FROM = 12  # lessons in the file before a consolidation is worth its call
 _PREFIX = re.compile(r"^[-\s]*(?:\[#c\d+\]\s*)?")
@@ -137,6 +138,7 @@ class Memory:
         if heading_line(text):
             raise MemoryError_(HEADING_REFUSAL.format(name="the content"))
         dropped = skipped = 0
+        gone: list[str] = []  # 0.24.0: the lessons dropped to make room
         pinned = {lesson_key(p["text"]): p["text"] for p in pins(conn, self.scope)} if name == "lessons" else {}
         if mode == "replace":
             new = text + "\n"
@@ -168,14 +170,16 @@ class Memory:
             if len(new.encode("utf-8")) > cap:
                 if name != "lessons":
                     raise MemoryError_(f"{path} is full ({cap:,} bytes); replace it with a shorter version")
-                new, dropped = _drop_oldest(new, cap, set(pinned), tools)
+                new, dropped = _drop_oldest(new, cap, set(pinned), tools, {lesson_key(f) for f in fresh}, gone)
                 if len(new.encode("utf-8")) > cap:
                     raise MemoryError_(f"{path} is full of the lessons your owner pinned: replace it shorter")
         self.jail.write(path, new)
         self._version(conn, name, cycle_id, "agent", new, now)
         size = len(new.encode("utf-8"))
         note = f", {skipped} line(s) already noted" if skipped else ""
-        note += f", {dropped} oldest line(s) dropped" if dropped else ""
+        if dropped:  # 0.24.0: which ones (it said "oldest", and the lessons naming a tool go first)
+            said = "; ".join(json_quote(_clipped(lesson_text(line), DROPPED_CHARS)) for line in gone[:3])
+            note += f", {dropped} line(s) dropped to make room ({said}{'; …' if dropped > 3 else ''})"
         return f"{path}: {'replaced' if mode == 'replace' else 'appended'}{note} ({size:,} of {cap:,} bytes)"
 
     def rewrite(self, conn: sqlite3.Connection, name: str, text: str, source: str, now: str) -> None:
@@ -219,12 +223,19 @@ def lesson_key(line: str) -> str:
 
 
 def _drop_oldest(
-    text: str, cap: int, keep: frozenset[str] | set[str] = frozenset(), tools: Collection[str] = ()
+    text: str,
+    cap: int,
+    keep: frozenset[str] | set[str] = frozenset(),
+    tools: Collection[str] = (),
+    fresh: frozenset[str] | set[str] = frozenset(),
+    gone: list[str] | None = None,
 ) -> tuple[str, int]:
     """Drop the oldest lesson lines (keeping the heading and, 0.12.0, the pinned ones: ``keep``) until the file
     fits; 0.19.2: those naming one of ``tools`` first (a tool's limit is no lesson: its refusal states it), then
     (0.12.0) those without numbers, so a no backed by data outlives them. Live, tool limits nearly always state a
-    number: the daily review's lesson, which states none, went first, and 8 of the 11 lessons left were tool limits."""
+    number: the daily review's lesson, which states none, went first, and 8 of the 11 lessons left were tool limits.
+    0.24.0: the lessons just added (``fresh``) go last: live, "Before any propose_bluesky_post, call bluesky_posts
+    first" named a tool and was dropped by the call that added it. What went is added to ``gone``."""
     lines = text.splitlines(keepends=True)
     head = [line for line in lines[:2] if not line.startswith("- ")]
     body = lines[len(head) :]
@@ -232,12 +243,15 @@ def _drop_oldest(
     dropped = 0
     while len("".join(head + body).encode("utf-8")) > cap:
         droppable = [i for i, line in enumerate(body) if lesson_key(line) not in keep]
+        droppable = [i for i in droppable if lesson_key(body[i]) not in fresh] or droppable
         if not droppable:
             break
         first = next((i for i in droppable if about_tool(body[i], named)), None)
         if first is None:
             first = next((i for i in droppable if not _numbers(body[i])), droppable[0])
-        body.pop(first)
+        line = body.pop(first)
+        if gone is not None:
+            gone.append(line.strip())
         dropped += 1
     return "".join(head + body), dropped
 
@@ -303,6 +317,10 @@ def _plain(line: str) -> str:
 
 def json_quote(text: str) -> str:
     return json.dumps(text, ensure_ascii=False)
+
+
+def _clipped(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def lesson_text(line: str) -> str:
