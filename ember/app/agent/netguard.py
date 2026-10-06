@@ -37,7 +37,8 @@ BLOCKED_EVENTS = frozenset(
         "os.spawn",
         "os.startfile",
         "ctypes.dlopen",
-        "_thread.start_new_thread",
+        "_thread.start_new_thread",  # and threading.Thread.start up to Python 3.12
+        "_thread.start_joinable_thread",  # threading.Thread.start since Python 3.13
         "webbrowser.open",
     }
 )
