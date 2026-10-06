@@ -5,11 +5,12 @@ agent and links their Impressum, makes an app password for Ember in the account'
 app password in the options (Bluesky on). Then:
 
 * the agent proposes a post (``propose_bluesky_post``): its words with a few #hashtags, a link to one of Ember's live
-  Etsy listings or a page of the owner's website if it likes, and one of its pictures if it likes;
+  Etsy listings or a page of the owner's website if it likes (0.25.1: and a second one), and one of its pictures if it
+  likes;
 * the owner approves it as it is, or rejects it;
 * Ember's code posts it (bluesky_publisher.py) with a line saying an AI wrote it and a person approved it: a link
   clickable at the end of the words (with a picture) or as a card (without one: an Etsy listing's card shows its title
-  and main photo); the owner's Undo deletes it;
+  and main photo), a second link always clickable in the words; the owner's Undo deletes it;
 * the sync reads the account's followers and each post's likes, reposts, replies and quotes, and the labels moderation
   put on them, for the plan.
 
@@ -54,7 +55,7 @@ TEXT_CHARS = TEXT_MAX - max(len(d) for d in DISCLOSURE.values()) - 2  # the agen
 ALT_MAX = 1_000  # a picture's alt text
 CARD_TITLE_MAX = 300  # a link card's title
 TAG_MAX = 64  # a hashtag's characters (Bluesky's limit, without the #)
-LINK_MAX = 300
+LINK_MAX = 300  # an address the agent gives (0.25.1: link takes two, separated by a space)
 SAME_RATIO = 0.85  # 0.24.0: two posts this alike (plain) say the same
 IMAGE_KINDS = frozenset({".png", ".jpg"})  # the workspace's pictures
 IMAGE_MAX_BYTES = 10 * 1024 * 1024  # a picture proposed (Ember's code makes a smaller copy for Bluesky when needed)
@@ -110,6 +111,8 @@ class Post:
     alt_text: str = ""
     card_photo: Upload | None = None  # an Etsy listing's main photo, the picture on its card (without a picture)
     tags: tuple[str, ...] = field(default=())  # the #hashtags in the words, as Bluesky indexes them
+    # 0.25.1: another of Ember's live listings or a page of the owner's website (never the link), shown in the words
+    second_link: str | None = None
 
     def card(self) -> bool:
         """Whether the link shows as a card (a post without a picture, linking a page Ember's records know the title
@@ -150,6 +153,7 @@ def post_from_action(raw: str | dict[str, Any]) -> Post:
             alt_text=str(data.get("alt_text") or ""),
             card_photo=_upload(data.get("card_photo")),
             tags=tuple(str(t) for t in data.get("tags") or ()),
+            second_link=None if data.get("second_link") is None else str(data["second_link"]),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise BlueskyError(f"the post isn't readable ({type(exc).__name__})") from None
@@ -228,20 +232,19 @@ def _bytes(text: str, index: int) -> int:
 
 def layout(post: Post) -> tuple[str, list[dict[str, Any]]]:
     """The post's text as Bluesky shows it, and its facets (Bluesky's marks of what is a link and a hashtag, by UTF-8
-    byte): the agent's words, the link (with a picture: in the words; without one it is a card), the AI line."""
-    parts = [post.text]
+    byte): the agent's words, the link (with a picture: in the words; without one it is a card), the AI line. 0.25.1:
+    the second link in the words, on a line of its own under the link (alone when the link is a card)."""
+    text = post.text
     facets: list[dict[str, Any]] = []
     for start, end, tag in hashtags(post.text):
         facets.append(_facet(post.text, start, end, {"$type": "app.bsky.richtext.facet#tag", "tag": tag}))
-    if post.link is not None and not post.card():
-        shown = shown_link(post.link)
-        start = len(post.text) + 2
-        parts.append(shown)
-        text = "\n\n".join(parts)
-        link = {"$type": "app.bsky.richtext.facet#link", "uri": post.link}
-        facets.append(_facet(text, start, start + len(shown), link))
-    parts.append(DISCLOSURE[post.language])
-    return "\n\n".join(parts), facets
+    shown = [link for link in (None if post.card() else post.link, post.second_link) if link is not None]
+    for number, link in enumerate(shown):
+        text += "\n" if number else "\n\n"
+        start = len(text)
+        text += shown_link(link)
+        facets.append(_facet(text, start, len(text), {"$type": "app.bsky.richtext.facet#link", "uri": link}))
+    return f"{text}\n\n{DISCLOSURE[post.language]}", facets
 
 
 def _facet(text: str, start: int, end: int, feature: dict[str, Any]) -> dict[str, Any]:
@@ -310,6 +313,8 @@ def payload(post: Post, handle: str) -> str:
             lines.append(f"Link: {post.link} (a card: {post.link_title!r}{photo})")
         else:
             lines.append(f"Link: {post.link}")
+    if post.second_link is not None:  # 0.25.1
+        lines.append(f"Second link: {post.second_link}")
     if post.image is not None:
         lines.append(f"Picture: {post.image.path} ({post.width} x {post.height} pixels)")
         lines.append(f"Alt text: {post.alt_text}")
@@ -454,6 +459,7 @@ class FakeBluesky:
         self.state["posts"][rkey] = {
             "text": full_text(post),
             "link": post.link,
+            "second_link": post.second_link,
             "card": post.card(),
             "image_bytes": len(image.data) if image is not None else 0,
             "thumb_bytes": len(thumb.data) if thumb is not None else 0,

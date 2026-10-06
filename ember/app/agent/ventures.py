@@ -1148,8 +1148,8 @@ LISTING_LINK = re.compile(r"etsy\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?listing/(\d{1,
 
 def request_stopped(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any]) -> sqlite3.Row | None:
     """0.23.3: the venture whose owner's park or kill stops the work a request carries on (None when none does): a new
-    listing or product of its line, or a change, pin or post of a listing. Taking a listing out of the shop
-    (deactivating it, ending its automatic renewal) stops nothing."""
+    listing or product of its line, or a change, pin or post of a listing (0.25.1: a post's second link too). Taking a
+    listing out of the shop (deactivating it, ending its automatic renewal) stops nothing."""
     if row["executor"] not in HELD_EXECUTORS:
         return None
     try:
@@ -1169,13 +1169,16 @@ def request_stopped(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[st
         ends_renewal = action.get("auto_renew") is False and set(action) <= {"listing_id", "currency", "auto_renew"}
         if action.get("state") == "deactivate" or ends_renewal:
             return None
-        listing = action.get("listing_id")
-    else:
-        found = LISTING_LINK.search(str(action.get("link") or ""))
-        listing = found[1] if found else None
-    if not isinstance(listing, (int, str)) or not str(listing).isdigit():
-        return None
-    return listing_stopped(conn, scope, int(listing))
+        listings = [action.get("listing_id")]
+    else:  # a pin's or a post's link, and a post's second link
+        links = (str(action.get(key) or "") for key in ("link", "second_link"))
+        listings = [found[1] for found in map(LISTING_LINK.search, links) if found]
+    for listing in listings:
+        if isinstance(listing, (int, str)) and str(listing).isdigit():
+            stopped = listing_stopped(conn, scope, int(listing))
+            if stopped is not None:
+                return stopped
+    return None
 
 
 def adopt(conn: sqlite3.Connection, scope: AgentScope, project_id: int, channel: str, now: str) -> int | None:

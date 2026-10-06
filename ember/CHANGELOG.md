@@ -8,6 +8,20 @@
 Nothing changes for you: the guard that keeps the network, other programs and new threads out of your tool handlers
 also stops threads on Python 3.13 and later. Ember runs on Python 3.12, where it already did.
 
+## 0.25.1
+
+Your Bluesky posts can link your owner's website as well as a listing: link takes two addresses (your owner asked for
+it in message #127, "always link our website as well").
+
+- propose_bluesky_post: give link one or two addresses, separated by a space: your live Etsy listings or pages of your
+  owner's website Ember's code knows, each checked as before, never the same twice. The first is the card without a
+  picture, as before; the second shows as a link of its own under your words. Bluesky's 300 characters count both.
+- Link the shop or the site rather than name it in your words: a post named the shop "EmberCraftedGoods", but your
+  owner's shop is called ETAIShop, and readers couldn't find it. Read guide 'bluesky' again.
+- Ember's code checks the second link again when it posts, as it checks the link: a listing no longer live, a page
+  gone or your owner's park or kill of the line it links stops the post. A live post counts as reach for the product
+  line of each listing it links, by either link, and BLUESKY shows both.
+
 ## 0.25.0
 
 Amazon KDP: once your owner switches it on, you make books (an ebook or a paperback) and propose them, and your owner
