@@ -781,7 +781,7 @@ SPECS: dict[str, Spec] = {
             "pandas, matplotlib, pillow, reportlab, python-pptx, openpyxl and more; no internet), for what your "
             "make_ tools can't do: charts, PowerPoint files, data work, pictures drawn by code. Its files are "
             "checked and kept in your workspace, its script in workshop/scripts/ (run it again with script). A run "
-            "costs cents to dollars: read guide 'workshop' first.",
+            "costs cents to dollars. Guide 'workshop' first.",
             {
                 "task": _s("Each file to make (name, size, format) and what is in it.", ONE_REPLY_CHARS),
                 "files": _s(
@@ -1096,9 +1096,9 @@ SPECS: dict[str, Spec] = {
                 ),
                 "language": _s("The post's language.", 2, enum=bluesky.LANGUAGES),
                 "link": _s(
-                    "A live Etsy listing's address, or a page of your owner's website that Ember's code knows (a blog "
-                    "post's address as BLOG gives it, ending in .html).",
-                    bluesky.LINK_MAX,
+                    "One or two, space-separated: a live Etsy listing's address or a page of your owner's website "
+                    "that Ember's code knows (a blog post's address as BLOG gives it, ending in .html).",
+                    2 * bluesky.LINK_MAX + 1,
                     required=False,
                 ),
                 "image": _s("A .png or .jpg of yours shown with the post.", 200, required=False),
@@ -1152,7 +1152,7 @@ SPECS: dict[str, Spec] = {
             "site_page",
             "Write a page of your owner's website from your markdown file (as for make_document, without photos, "
             "writing lines or page breaks), or remove one. Ember's code adds the Impressum and privacy page; your "
-            f"owner publishes it. '{site.HOME}' is the home page; at most {site.MAX_PAGES} pages. Read guide "
+            f"owner publishes it. '{site.HOME}' is the home page; at most {site.MAX_PAGES} pages. Guide "
             "'website' first. Free.",
             {
                 "name": _s(f"Lower-case letters, digits and dashes, e.g. '{site.HOME}'.", site.SLUG_MAX),
@@ -1173,7 +1173,7 @@ SPECS: dict[str, Spec] = {
             "for it is withdrawn). Guide 'blog' first. Free.",
             {
                 "source": _s("e.g. 'blog/bewerbung-nachfassen.md'.", 200),
-                "reason": _s("Why this post now, and what you expect from it.", 300, cut=True),
+                "reason": _s("Why now, and what you expect.", 300, cut=True),
             },
             per_cycle=2,
         ),
@@ -4410,14 +4410,15 @@ def _bluesky_posts(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     return Outcome(True, f"{head}\n{bluesky_publisher.text(conn, ctx.scope, 12)}", f"{len(made)} posts")
 
 
-def _post_link(ctx: ToolContext, conn: Any, raw: str) -> tuple[str, str, str, etsy.Upload | None]:
+def _post_link(ctx: ToolContext, conn: Any, raw: str, what: str = "link") -> tuple[str, str, str, etsy.Upload | None]:
     """0.19.0: a post's link, checked: one of Ember's live Etsy listings (its card: the listing's title and main
     photo) or a page of the owner's website (a blog post of Ember's: its title and description on the card). Returns
-    the link, the card's title and description ("": the link shows in the words) and its photo."""
+    the link, the card's title and description ("": the link shows in the words) and its photo. 0.25.1: a second link
+    is checked the same way (``what``: "the second link"; its address only: it shows in the words)."""
     link = raw.strip()
     parts = urlsplit(link)
     if parts.scheme != "https" or not parts.netloc or any(ch.isspace() for ch in link):
-        raise ToolError("link must be an https address")
+        raise ToolError(f"{what} must be an https address")
     listing = _ETSY_LISTING.match(link)
     if listing is not None:
         listing_id = int(listing.group(1))
@@ -4450,7 +4451,7 @@ def _post_link(ctx: ToolContext, conn: Any, raw: str) -> tuple[str, str, str, et
         return address, "", "", None
     where = f" ({site})" if site else " (your owner hasn't set its address, site_url)"
     raise ToolError(
-        "link goes to one of your live Etsy listings (https://www.etsy.com/listing/...) or a page of your owner's "
+        f"{what} goes to one of your live Etsy listings (https://www.etsy.com/listing/...) or a page of your owner's "
         f"website{where}: other sites aren't yours to promote"
     )
 
@@ -4463,10 +4464,17 @@ def _propose_bluesky_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
         bluesky.check_words(text)
     except bluesky.BlueskyError as exc:
         raise ToolError(str(exc)) from None
-    link = title = description = None
+    link = title = description = second = None
     photo = None
-    if (args.get("link") or "").strip():
-        link, title, description, photo = _post_link(ctx, conn, args["link"])
+    addresses = (args.get("link") or "").split()  # 0.25.1: a second one after a space, shown in the words
+    if len(addresses) > 2:
+        raise ToolError("link takes one address, or two separated by a space")
+    if addresses:
+        link, title, description, photo = _post_link(ctx, conn, addresses[0])
+    if len(addresses) == 2:
+        second = _post_link(ctx, conn, addresses[1], "the second link")[0]
+        if second == link:
+            raise ToolError(f"link names {link} twice: give two different addresses, or one")
     upload = None
     width = height = 0
     alt = bluesky.one_line(args.get("alt_text") or "")
@@ -4499,12 +4507,14 @@ def _propose_bluesky_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
         alt_text=alt,
         card_photo=photo if upload is None and title else None,
         tags=tuple(tag for _, _, tag in bluesky.hashtags(text)),
+        second_link=second,
     )
     left = bluesky.room(post)
     if left < 0:
+        links = "links" if second else "link"
         raise ToolError(
-            f"the post would be {bluesky.TEXT_MAX - left} characters with the link and the AI line Ember's code adds;"
-            f" Bluesky takes {bluesky.TEXT_MAX}: shorten your words by {-left}"
+            f"the post would be {bluesky.TEXT_MAX - left} characters with the {links} and the AI line Ember's code"
+            f" adds; Bluesky takes {bluesky.TEXT_MAX}: shorten your words by {-left}"
         )
     payload = bluesky.payload(post, account.handle)
     if store.pending_approval_by_payload(conn, ctx.scope, store.sha256(payload)) is None:  # that one: as before

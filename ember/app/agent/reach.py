@@ -8,8 +8,8 @@ bring any. Now Ember's code works out, for each project with live listings:
   is stuck (``stage``): not seen (a reach problem: market it), seen but not liked (the listing's appeal: photos,
   title, price), liked but not bought (price or trust), or selling;
 * its reach: what was done to bring buyers to its listings, from Ember's records: blog posts published on the owner's
-  site that recommend one of them, pins live at Pinterest that link one, (0.19.0) posts live on Bluesky that link one,
-  and changes of them carried out at Etsy (titles, tags, photos).
+  site that recommend one of them, pins live at Pinterest that link one, (0.19.0) posts live on Bluesky that link one
+  (0.25.1: by their link or their second link), and changes of them carried out at Etsy (titles, tags, photos).
 
 The daily review reads both (``review_text``) and names each project's bottleneck; the listing test parks a product
 line for too few views only once it had ENOUGH reach (gates.py), and owes a push to bring buyers otherwise.
@@ -156,12 +156,14 @@ def _pins(conn: sqlite3.Connection, scope: AgentScope) -> list[str]:
 
 
 def _bluesky(conn: sqlite3.Connection, scope: AgentScope) -> list[str]:
-    """0.19.0: the links of Ember's Bluesky posts live now."""
+    """0.19.0: the links of Ember's Bluesky posts live now, a post's in one text (0.25.1: with its second link, so a
+    post counts once for each product line it links)."""
     where, params = scope.where()
     return [
-        str(r["link"])
+        f"{r['link']} {r['second_link'] or ''}"
         for r in conn.execute(
-            f"SELECT link FROM bluesky_posts WHERE {where} AND status = 'active' AND link IS NOT NULL", params
+            f"SELECT link, second_link FROM bluesky_posts WHERE {where} AND status = 'active' AND link IS NOT NULL",
+            params,
         )
     ]
 
