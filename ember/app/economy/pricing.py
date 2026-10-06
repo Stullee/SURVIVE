@@ -61,7 +61,7 @@ class CallProfile:
 # lessons the owner pinned, and the burn mode in STATUS: 0.12.0; the decision desk's READY with the forecasts' record,
 # PINTEREST, PRINTIFY and WEBSITE: 0.13.0; BLOG: 0.14.0; LESSONS at 2,600 bytes: 0.18.0; BLUESKY: 0.19.0; KDP: 0.25.0),
 # and the last will. The agent never sends a bigger one.
-PLANNER_OPENING = CallProfile(input_tokens=26_400, max_tokens=1_200)
+PLANNER_OPENING = CallProfile(input_tokens=26_800, max_tokens=1_200)  # 0.27.0: ROADMAP with the owner's goal
 LAST_WILL = CallProfile(input_tokens=6_600, max_tokens=1_000)  # 0.18.0: the constitution grew
 # The first work step with the largest brief, and the reflection after it (with the room the loop keeps for one
 # step's growth), measured the same way: a wake cycle is only worth starting if both fit after its plan. Measured with

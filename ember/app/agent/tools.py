@@ -555,24 +555,18 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "milestone_plan",
-            f"Put 1 to {PLAN_MILESTONES} milestones on your roadmap, each leading to the goal at its root (ROADMAP "
-            "names it first): sub-goals for the next months, the milestones leading to them and this week's steps, "
-            "each due no later than its parent. With a metric, Ember's code checks it and closes it (done once met, "
-            "missed after its date) and measures how far it got; without, your done is self-reported. Title, "
-            f"measure, metric and costs are final; a date can move. At most {roadmap.MAX_OPEN - roadmap.OWNER_SLOTS} "
-            "open (Ember's code's aside). Free.",
+            f"Put 1 to {PLAN_MILESTONES} milestones on your roadmap: sub-goals of the goal, the milestones leading "
+            "to them and this week's steps, each due no later than its parent. With a metric, "
+            "Ember's code checks it and closes it (done once met, missed after its date); without, your done is "
+            f"self-reported. Title, measure, metric and costs are final; a date can move. At most "
+            f"{roadmap.MAX_OPEN - roadmap.OWNER_SLOTS} open (Ember's code's aside). Free.",
             {
                 "milestones": _a(
                     "Parents first.",
                     PLAN_MILESTONES,
                     {
                         "key": _s("Its name in this call, for others' parent.", 20, required=False),
-                        "parent": _s(
-                            "What it leads to: a key from this call, or a milestone's number (the goal's for a "
-                            "sub-goal). Needed while a goal stands.",
-                            20,
-                            required=False,
-                        ),
+                        "parent": _s("A key from this call, or a milestone's number.", 20, required=False),
                         "title": _s("What you will reach.", roadmap.LIMITS["title"]),
                         "measure": _s(
                             "How you will know: a number or a fact (optional with a metric).",
@@ -580,15 +574,13 @@ SPECS: dict[str, Spec] = {
                             required=False,
                         ),
                         "metric": _s(
-                            "Checked by Ember's code, for the linked project or venture (else all): "
-                            f"{metrics.help_text()}.",
+                            f"Checked by Ember's code, for its project or venture (else all): {metrics.help_text()}.",
                             24,
                             required=False,
                             enum=metrics.NAMES,
                         ),
                         "target": _s(
-                            "A number (USD for *_usd) or, for stage_reached, a stage; none for case_complete and "
-                            "qa_clean.",
+                            "A number (USD for *_usd); a stage for stage_reached; none for case_complete and qa_clean.",
                             12,
                             required=False,
                         ),

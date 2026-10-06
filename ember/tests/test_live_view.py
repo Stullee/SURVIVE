@@ -284,14 +284,15 @@ def test_a_title_goes_up_only_once_the_owner_showed_it(data_dir: Path) -> None:
     page = agent.blog.fake.files[live.PAGE].decode()
     for text in ("Lebenslauf", "Schmidt", "example.com", "Erster Verkauf", "Etsy digital products"):
         assert text not in page, text
-    assert "Geschäftsideen in Arbeit: 4" in page and "Offene Ziele: 4." in page  # counted (the fake had 1 and 3)
+    # counted (the fake had 1 and 6: 0.27.0, its first cycle splits the goal into three of its own)
+    assert "Geschäftsideen in Arbeit: 4" in page and "Offene Ziele: 7." in page
     card = agent.decide_live_title(found["Lebenslauf-Vorlagen"].id, True, "Stefan")
     assert {t["text"]: t["state"] for t in card["titles"]}["Lebenslauf-Vorlagen"] == "shown"
     assert agent.live.due() == "options"  # at once
     assert agent.publish_live() == "done"
     page = agent.blog.fake.files[live.PAGE].decode()
     assert "<li>Lebenslauf-Vorlagen <small>(Im Aufbau)</small></li>" in page and "Weitere in Arbeit: 3" in page
-    assert "Schmidt" not in page and "Offene Ziele: 4." in page
+    assert "Schmidt" not in page and "Offene Ziele: 7." in page
     # never one Ember's code keeps off, never one the page doesn't hold now
     with pytest.raises(ValueError, match="it holds an @"):
         agent.decide_live_title(found["Kunde max@example.com fragen"].id, True, "Stefan")

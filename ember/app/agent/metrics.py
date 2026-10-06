@@ -189,12 +189,10 @@ CATALOGUE: dict[str, Metric] = {
 NAMES = tuple(name for name, m in CATALOGUE.items() if not m.code_only)  # the ones the agent can set
 # The catalogue in the tool's words, as short as it can be: every request of a work step carries it.
 HELP = (
-    "listings_live, views_total and favorites_total count now, revenue_month_usd the last 30 days; the deltas, "
-    "orders_observed, revenue_verified_usd (recorded revenue less expenses), research_calls_ok (found something), "
-    "inquiries_received and inquiries_answered (people's emails; your answers) and api_spend_usd (a ceiling) count "
-    "from when it is set; "
-    f"case_complete and stage_reached are a venture's; qa_clean: {qa.MIN_PHOTOS}+ photos on each live "
-    "listing"
+    "listings_live, views_total, favorites_total count now, revenue_month_usd 30 days; the deltas, orders_observed, "
+    "revenue_verified_usd (revenue less expenses), research_calls_ok (found something), inquiries_received, "
+    "inquiries_answered (emails; your answers) and api_spend_usd (a ceiling) count since it is set; "
+    f"case_complete and stage_reached are a venture's; qa_clean: {qa.MIN_PHOTOS}+ photos per live listing"
 )
 # 0.13.0: a channel's metrics, offered with the channel (tools.definitions), and their words for HELP.
 CHANNEL_METRICS = {
