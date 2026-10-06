@@ -378,7 +378,8 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   line is checked in turn (one never checked first), again after 14 days or
   after a change of it, and every verdict names its listing: before, only a
   line's newest listing was checked, and its verdicts were read as verdicts on
-  another listing of the line. The score and fixes show in the daily review.
+  another listing of the line. A line whose work your park stopped gets no
+  check. The score and fixes show in the daily review.
 - **Waiting time.** An ordinary cycle's plan gets **READY**: what is useful
   while projects wait (bringing buyers to unseen listings, the critic's fixes, a
   missing demand note, the week's questions). While it lists work, the sleep
@@ -762,7 +763,13 @@ euros. The tab's badge counts the ones waiting. On each card:
   notes, and taking the venture up again gives it back. 0.23.2: it also
   drops the open milestones of the venture's projects (the agent's too), and
   the agent can't focus a plan on a waiting project, link a milestone to the
-  venture or its projects, or add listings and products to them.
+  venture or its projects, or add listings and products to them. 0.23.3: nor
+  change, pin, post or blog about, or bet on their listings (it can still ask
+  to deactivate one), nor research the venture; what you approved for them
+  that hadn't run yet isn't carried out (your own Undo still is). Parking the
+  Etsy leg or the print-on-demand venture stops that channel's work for its
+  lines and for lines of no venture (parking print on demand stops the Etsy
+  leg's Printify products); a venture you backed sells on.
 
 **Each stage's rule, kept by Ember's code.** Before every plan, Ember's code
 parks a venture whose research brings no business case within 21 days of its

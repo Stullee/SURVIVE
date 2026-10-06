@@ -2101,6 +2101,9 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     placed = ""
     if args.get("bet"):  # 0.18.0: settled by Ember's code (bets.py)
         try:
+            refused = _stopped(conn, ctx.scope, row["id"])  # 0.23.3: no bet on the work the owner's park stopped
+            if refused:
+                raise bets.BetError(refused)
             placed = bets.place(conn, ctx.scope, row["id"], args["bet"], ctx.cycle_id, ctx.clock.today(), ctx.now())
         except bets.BetError as exc:
             # 0.24.0: the rest of the update is made, and the answer says the bet wasn't. 0.19.2 refused it all ("so
@@ -2203,6 +2206,15 @@ def _tied(conn: Any, scope: AgentScope, project_id: int) -> str:
     return ""
 
 
+def _researched_venture(conn: Any, scope: AgentScope, venture_id: int, what: str) -> Any:
+    """0.23.3: a venture research, evidence or a business case may be for: open, and not parked by the owner (its
+    research budget was spent after the owner's park)."""
+    row = _open_venture(conn, scope, venture_id)
+    if row["parked_by"] == "owner":
+        raise ToolError(f"your owner parked venture #{venture_id}: no {what} for it until they take it up again")
+    return row
+
+
 def _open_venture(conn: Any, scope: AgentScope, venture_id: int) -> Any:
     row = ventures.get(conn, scope, venture_id)
     if row is None:
@@ -2227,7 +2239,7 @@ def _evidence(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     venture_id = args.get("venture_id", ctx.state.focus_venture_id)  # offered in venture cycles only
     if venture_id is None:
         raise ToolError("name the venture it is evidence for (venture_id): this cycle has no focus venture")
-    _open_venture(conn, ctx.scope, venture_id)
+    _researched_venture(conn, ctx.scope, venture_id, "evidence")
     number, grade = evidence.add(
         conn, ctx.scope, venture_id, ctx.cycle_id, **texts, low=low, high=high, url=url, now=ctx.now()
     )
@@ -2256,7 +2268,7 @@ def _venture_case(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     venture_id = args.get("venture_id", ctx.state.focus_venture_id)
     if venture_id is None:
         raise ToolError("name the venture (venture_id): this cycle has no focus venture")
-    _open_venture(conn, ctx.scope, venture_id)
+    _researched_venture(conn, ctx.scope, venture_id, "business case")
     amounts = {}
     for name, most in CASE_LIMITS.items():
         amounts[name] = _value(args[name], name)
@@ -2588,20 +2600,37 @@ def _open_project(conn: Any, scope: AgentScope, project_id: int) -> Any:
         raise ToolError(f"there is no project #{project_id}")
     if row["status"] not in OPEN_STATUSES:
         raise ToolError(f"project #{project_id} is {row['status']}")
-    held = ventures.owner_stopped(conn, scope, row["venture_id"])
-    if held is not None:
-        raise ToolError(_stopped(project_id, held))
+    refused = _stopped(conn, scope, project_id)
+    if refused:
+        raise ToolError(refused)
     return row
 
 
-def _stopped(project_id: int, venture: Any) -> str:
-    """0.23.2: why a project the owner's park or kill stopped takes no new work."""
+def _stopped(conn: Any, scope: AgentScope, project_id: int, channel: str | None = None) -> str:
+    """0.23.2: why a project the owner's park or kill stopped takes no new work ("" when it does). 0.23.3: a product
+    line of no venture by its channel's venture (ventures.project_stopped)."""
+    venture = ventures.project_stopped(conn, scope, project_id, channel)
+    if venture is None:
+        return ""
+    own = conn.execute("SELECT venture_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    how = "belongs to" if own is not None and own["venture_id"] == venture["id"] else "sells in the channel of"
     if venture["stage"] == "killed":
-        return f"project #{project_id} belongs to venture #{venture['id']}, which your owner killed"
+        return f"project #{project_id} {how} venture #{venture['id']}, which your owner killed"
     return (
-        f"project #{project_id} belongs to venture #{venture['id']}, which your owner parked: its projects wait until "
-        "they take it up again"
+        f"project #{project_id} {how} venture #{venture['id']}, which your owner parked: its work waits until they "
+        "take it up again"
     )
+
+
+def _listing_stopped(conn: Any, scope: AgentScope, listing_id: int, what: str) -> None:
+    """0.23.3: no work on a listing of a product line the owner's park or kill stopped (``what`` is refused)."""
+    venture = ventures.listing_stopped(conn, scope, listing_id)
+    if venture is not None:
+        did = "killed" if venture["stage"] == "killed" else "parked"
+        raise ToolError(
+            f"#{listing_id} is a listing of venture #{venture['id']}, which your owner {did}: no {what} for it"
+            + (" until they take it up again" if did == "parked" else "")
+        )
 
 
 def _parent(conn: Any, scope: AgentScope, parent_id: int, due: date, milestone_id: int | None = None) -> Any:
@@ -3471,7 +3500,7 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
             focus = ventures.get(conn, ctx.scope, ctx.state.focus_venture_id)
             if focus is not None and focus["stage"] in ventures.BUDGETED:
                 venture_id = ctx.state.focus_venture_id
-        venture = _open_venture(conn, ctx.scope, venture_id) if venture_id is not None else None
+        venture = _researched_venture(conn, ctx.scope, venture_id, "research") if venture_id is not None else None
         earlier = _asked_before(conn, ctx, question, url, None if url else site)
         if earlier is not None:
             return earlier
@@ -3999,9 +4028,10 @@ def _product_line(ctx: ToolContext, conn: Any, args: dict[str, Any], what: str) 
     row = store.project(conn, ctx.scope, project_id)
     if row is None:
         raise ToolError(f"there is no project #{project_id}")
-    held = ventures.owner_stopped(conn, ctx.scope, row["venture_id"])
-    if held is not None:  # 0.23.2: a listing or product for it carried its work on
-        raise ToolError(_stopped(int(project_id), held))
+    # 0.23.2: a listing or product for it carried its work on; 0.23.3: a line of no venture in a stopped channel too
+    refused = _stopped(conn, ctx.scope, int(project_id), "etsy" if what == "listing" else "printify")
+    if refused:
+        raise ToolError(refused)
     return int(project_id)
 
 
@@ -4117,6 +4147,8 @@ def _propose_etsy_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
     if now is None or row is None:
         raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
     state, action, stands = etsy_publisher.etsy_state(row), args.get("state"), etsy_publisher.state_text(row)
+    if action != "deactivate":  # 0.23.3: taking it out of the shop stays possible
+        _listing_stopped(conn, ctx.scope, listing_id, "change or renewal (deactivate it, if it shouldn't sell)")
     if action == "renew" and state not in etsy.RENEWABLE:
         raise ToolError(f"#{listing_id} is {stands} at Etsy: only an expired, sold-out or deactivated one is renewed")
     if action != "renew" and state != etsy.LIVE_STATE:  # 0.12.0: Etsy's state counts, not Ember's record
@@ -4242,6 +4274,7 @@ def _propose_pin(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
         raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
     if etsy_publisher.etsy_state(row) != etsy.LIVE_STATE:
         raise ToolError(f"#{listing_id} isn't live at Etsy ({etsy_publisher.state_text(row)}): pin a live listing")
+    _listing_stopped(conn, ctx.scope, listing_id, "pin")  # 0.23.3
     board_id = str(args.get("board_id") or "").strip() or None
     board_name = pinterest.one_line(args.get("board_name") or "") or None
     if (board_id is None) == (board_name is None):
@@ -4349,6 +4382,7 @@ def _post_link(ctx: ToolContext, conn: Any, raw: str) -> tuple[str, str, str, et
             raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
         if etsy_publisher.etsy_state(row) != etsy.LIVE_STATE:
             raise ToolError(f"#{listing_id} isn't live at Etsy ({etsy_publisher.state_text(row)}): link a live listing")
+        _listing_stopped(conn, ctx.scope, listing_id, "post")  # 0.23.3
         photo = current.photos[0] if current.photos else None
         return etsy.listing_url(listing_id), bluesky.one_line(current.title)[: bluesky.CARD_TITLE_MAX], "", photo
     site = _bluesky(ctx).site_url
@@ -4710,6 +4744,9 @@ def _propose_blog_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
         post = blog.read_post(source, access.owner)
     except blog.BlogError as exc:
         raise ToolError(f"{path}: {exc}") from None
+    recommended = ventures.LISTING_LINK.search(post.product_url) if post.product_url else None
+    if recommended is not None:  # 0.23.3: no page recommends a listing whose work the owner's park stopped
+        _listing_stopped(conn, ctx.scope, int(recommended[1]), "blog post recommending it")
     earlier = site_publisher.known(conn, ctx.scope, post.slug)
     day = str(earlier["day"]) if earlier is not None else ctx.clock.today().isoformat()
     page = blog.render_post(post, day, access.owner)

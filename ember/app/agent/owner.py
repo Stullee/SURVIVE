@@ -578,6 +578,7 @@ class Owner:
                                 why=f"your owner {stage} venture #{venture_id}",
                             )  # fmt: skip
                     stages.stop_projects(conn, venture_id, stage or "", now)  # 0.22.0
+                    stages.hold_requests(conn, self.scope, venture_id, stage or "", now)  # 0.23.3
                 elif action == "research":  # more research, asked for: the research clock starts again
                     conn.execute("UPDATE ventures SET stage_at = ? WHERE id = ?", (now, venture_id))
                 if action in ("back", "research") and row["stage"] == "parked":  # 0.23.1: its projects too

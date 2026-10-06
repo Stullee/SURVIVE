@@ -13,7 +13,8 @@ fewer calls are refused for nothing.
   none: its verdicts on project #4 since 10-04 ("the cover letter is PDF only", the German Anschreiben the licence names,
   the tags 'resell rights' and 'white label') were about the €39 licence bundle #4587912058, not the cover letter
   listing #4584852644 you checked four times. Fix them on #4587912058. A verdict older than a change of its listing
-  leaves READY until that listing is checked again (next).
+  leaves READY until that listing is checked again (next). A line your owner's park stopped gets no check and nothing
+  in READY.
 - write_journal in a work step is kept as your journal's draft (it was refused): your work ends there, and your
   reflection writes it again only to correct it. A draft is the cycle's journal when the reflection writes none.
 - A tool call you write inside another one's text (a memory_update inside write_journal's entry) is taken out and run
@@ -35,6 +36,22 @@ fewer calls are refused for nothing.
 - venture_case names the knock-outs its numbers meet at once. venture_update proposes an idea researched enough without
   the researching stage first.
 - make_image takes 'file.png#@top' as 'file.png@top'.
+
+## 0.23.3
+
+The last ways a venture's work went on after your owner parked or killed it are closed.
+
+- A product line your owner's park or kill stopped takes no change or renewal of its listings (deactivating one, or
+  ending its automatic renewal, stays possible), no pin, Bluesky post or blog post that recommends them, and no bet.
+  request_approval stays possible: a refund or a clean-up is your owner's to carry out.
+- Parking a channel's own venture (the Etsy leg, print on demand) stops that channel's work for its lines and for
+  lines of no venture: parking print on demand stops the Printify products of the Etsy leg's lines. A venture your
+  owner backed sells through a channel on its own word.
+- What was approved for stopped work and Ember's code hadn't begun (a listing, a product, a change, a pin, a post) is
+  not carried out: your owner's approval is closed, saying why; an unlock's waits for your owner again, and no unlock
+  approves such a request when its veto window passes. Your owner's own Undo isn't held.
+- research, evidence and venture_case aren't for a venture your owner parked (its research budget was spent after
+  the park). venture_update notes stay possible: tell your owner what changes the picture.
 
 ## 0.23.2
 

@@ -44,7 +44,7 @@ from typing import Any
 from ..economy.clock import Clock, to_iso
 from ..integrations import connectors, etsy, etsy_publisher, mailstore, qa
 from ..products import images
-from . import never
+from . import never, ventures
 from .store import AgentScope
 
 
@@ -518,7 +518,14 @@ def apply(
 
 
 def _held_back(conn: sqlite3.Connection, row: Mapping[str, Any]) -> str:
-    """0.15.0: why no unlock carries a request now ("" when one may): NEVER, or its QA."""
+    """0.15.0: why no unlock carries a request now ("" when one may): NEVER, or its QA. 0.23.3: or the work it
+    carries on is a venture's the owner parked or killed (an unlock of a milestone the park didn't drop, of a line
+    selling in a parked channel, approved it when its veto window passed)."""
+    scope = AgentScope(str(row["mode"]), int(row["session"]), 0)  # its records' (where() reads mode and session)
+    venture = ventures.request_stopped(conn, scope, row)
+    if venture is not None:
+        did = "killed" if venture["stage"] == "killed" else "parked"
+        return f"your owner {did} venture #{venture['id']}, whose work it carries on"
     found = never.reasons(conn, row)
     if found:
         return f"never automatic for {never.text(found)}"

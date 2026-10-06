@@ -27,7 +27,7 @@ from typing import Any
 
 from ..integrations import etsy_publisher, printify
 from ..products import images
-from . import prompts, reach
+from . import prompts, reach, ventures
 from .sandbox import Jail, SandboxError
 from .store import AgentScope
 
@@ -57,6 +57,8 @@ def due(conn: sqlite3.Connection, scope: AgentScope, today: date) -> tuple[int, 
         if rows and rows[0]["status"] == "failed" and str(rows[0]["created_at"])[:10] == today.isoformat():
             continue  # failed today: tomorrow
         for listing in funnel.listings:
+            if ventures.listing_stopped(conn, scope, listing) is not None:
+                continue  # 0.24.0: none for a listing the owner's park stopped (0.23.3: none may change it)
             ok = next((r for r in rows if r["status"] == "ok" and r["listing_id"] == listing), None)
             if ok is None:
                 candidates.append(("", project_id, listing))

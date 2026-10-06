@@ -26,7 +26,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date
 
-from . import quality, reach, weekly
+from . import quality, reach, ventures, weekly
 from .store import AgentScope
 
 SLEEP_MINUTES = 180
@@ -45,7 +45,12 @@ def items(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[Item
     where, params = scope.where()
     found: list[Item] = []
     funnels = reach.funnels(conn, scope)
+    # 0.24.0: nothing for a product line whose work the owner's park or kill stopped (0.23.3: no change, pin, post or
+    # blog post for its listings)
+    stopped = {p for p in funnels if ventures.project_stopped(conn, scope, p) is not None}
     for project_id, f in sorted(funnels.items()):
+        if project_id in stopped:
+            continue
         if f.listings and f.stage == "not_seen" and f.reach < reach.ENOUGH:
             found.append(
                 Item(
@@ -54,7 +59,7 @@ def items(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[Item
                     " reach actions): a blog post that recommends them, pins, better titles and tags",
                 )
             )
-    for project_id in sorted(funnels):
+    for project_id in sorted(set(funnels) - stopped):
         # 0.24.0: each listing's newest check, with the listing it judged (a check from before names none)
         checked = quality.newest(conn, scope, project_id) or quality.unplaced(conn, scope, project_id)
         for row in checked:  # one changed at Etsy since its check waits for the next check (quality.due)
@@ -64,6 +69,8 @@ def items(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[Item
                     Item(f"improve #{project_id}", f"the quality critic said of {judged}: {row['fixes'][:200]}")
                 )
     for project_id, f in sorted(funnels.items()):
+        if project_id in stopped:
+            continue
         note = conn.execute(
             f"SELECT 1 FROM demand_notes WHERE {where} AND project_id = ? LIMIT 1", (*params, project_id)
         ).fetchone()

@@ -42,7 +42,7 @@ from typing import Any
 
 from ..economy.clock import from_iso
 from ..integrations import pinterest_publisher, printify_publisher
-from . import knockouts, metrics, roadmap, store, ventures
+from . import knockouts, metrics, policy, roadmap, store, ventures
 from .store import AgentScope
 
 RESEARCH_DAYS = ventures.RESEARCH_DAYS
@@ -232,6 +232,51 @@ def resume_projects(conn: sqlite3.Connection, venture_id: int) -> list[int]:
         )
         resumed.append(int(row["id"]))
     return resumed
+
+
+def hold_requests(conn: sqlite3.Connection, scope: AgentScope, venture_id: int, stage: str, now: str) -> list[int]:
+    """0.23.3: what was approved for the work the owner's park or kill (``stage``) of a venture stops, and Ember's code
+    hasn't begun (no journal entry, nothing claimed in its executor's table), isn't carried out
+    (ventures.request_stopped): a new listing or product, a change, a pin or a post of a stopped line. An unlock's
+    approval waits for the owner again (as policy._stop); the owner's own is closed, saying why (a listing approved
+    before the park went live after it). The owner's Undo of an action isn't held: it ends work, it doesn't carry it
+    on. Returns their numbers."""
+    where, params = scope.where("a")
+    marks = ", ".join("?" for _ in ventures.HELD_EXECUTORS)
+    claimed = " ".join(
+        f"AND NOT (a.executor = '{executor}' AND EXISTS (SELECT 1 FROM {table} c WHERE c.approval_id = a.id))"
+        for executor, table in ventures.HELD_EXECUTORS.items()
+    )
+    held = []
+    for row in conn.execute(
+        f"SELECT a.* FROM approvals a WHERE {where} AND a.status IN ('approved', 'approved_with_changes')"
+        f" AND a.executor IN ({marks}) AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = a.id)"
+        f" AND NOT EXISTS (SELECT 1 FROM action_undos u WHERE u.approval_id = a.id) {claimed} ORDER BY a.id",
+        (*params, *ventures.HELD_EXECUTORS),
+    ).fetchall():
+        venture = ventures.request_stopped(conn, scope, row)
+        if venture is None or venture["id"] != venture_id:
+            continue
+        said = f"your owner {stage} venture #{venture_id} before Ember's code carried it out"
+        twin = conn.execute(
+            "SELECT id FROM approvals WHERE mode = ? AND session = ? AND payload_sha256 = ? AND status = 'pending'",
+            (row["mode"], row["session"], row["payload_sha256"]),
+        ).fetchone()
+        if row["decided_by"] == policy.POLICY_BY and row["status"] == "approved" and twin is None:
+            conn.execute(
+                "UPDATE approvals SET status = 'pending', decided_at = NULL, decided_by = NULL, decision_comment = ?,"
+                " version = version + 1, seen_cycle_id = NULL WHERE id = ? AND status = 'approved'",
+                (f"Approved by your unlock, but {said}: it waits for you.", row["id"]),
+            )
+        else:
+            conn.execute(
+                "UPDATE approvals SET status = 'failed', closed_at = ?, closed_by = ?, result_note = ?,"
+                " version = version + 1, seen_cycle_id = NULL WHERE id = ? AND status IN ('approved',"
+                " 'approved_with_changes')",
+                (now, policy.REVOKED_BY, f"Not carried out: {said}.", row["id"]),
+            )
+        held.append(int(row["id"]))
+    return held
 
 
 def park(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any], now: str, why: str) -> str:

@@ -152,6 +152,25 @@ def quality_label(agent: Any, listing: int) -> str:
         return quality.label(conn, agent.scope(), listing)
 
 
+def test_a_line_whose_work_the_owner_s_park_stopped_gets_no_check_and_nothing_in_ready(data_dir: Path) -> None:
+    """With 0.23.3 nothing may change, pin, post or recommend such a line's listings: no paid check, no READY item."""
+    agent, project = started(data_dir)
+    with agent.db.transaction() as conn:
+        leg = ventures.create(conn, agent.scope(), title="A", pitch="p.", stage="building", now=now(agent))
+        conn.execute("UPDATE projects SET venture_id = ? WHERE id = ?", (leg, project))
+    [listing] = [r["listing_id"] for r in rows(agent, "SELECT listing_id FROM etsy_listings")]
+    checked(agent, project, listing)
+    today = agent.clock.today()
+    with agent.db.connection() as conn:
+        assert any(i.key == f"improve #{project}" for i in slack.items(conn, agent.scope(), today))
+    assert owner(agent).decide_venture(leg, {"action": "park", "comment": "Stop."}, "Stefan").status == 200
+    agent.clock.advance(days=quality.RECHECK_DAYS + 1)  # due again by its age, if it weren't stopped
+    with agent.db.connection() as conn:
+        assert quality.due(conn, agent.scope(), agent.clock.today()) is None
+        items = slack.items(conn, agent.scope(), agent.clock.today())
+    assert not [i for i in items if i.key.endswith(f" #{project}")]
+
+
 def test_the_upgrade_names_the_listing_each_earlier_check_judged(data_dir: Path) -> None:
     """Before 0.24.0 the critic judged the newest listing of the line live by then: 0080 fills that in."""
     agent, project, first, second = two_listings(data_dir)
