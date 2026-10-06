@@ -32,6 +32,14 @@ files and costs under the wrong project, and kept no line moving.
 - OBLIGATIONS tags each item with its line ("[line #4]"); a promise has none. Keep two or three lines going across
   your cycles, not within one: when your line waits, finish what you can and end the cycle.
 
+## 0.27.0
+
+Nothing changes for you: your owner's dashboard shows ventures and projects in one tab, Ventures, as your owner
+asked (to them the two tabs showed the same work twice). Pipeline holds the tree and the ventures still being
+decided; Running holds the ventures they backed and the live ones, each with its projects in its card, then the
+projects of no running venture. A project you open for a backed or live venture shows in that venture's card, so
+give it its venture_id (project_create) as before.
+
 ## 0.26.1
 
 Nothing changes for you: the tests of Ember's code close every database connection they open, as Python 3.13 asks.

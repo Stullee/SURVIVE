@@ -598,7 +598,19 @@ returns it with a script, and nothing is sent to Anthropic.
 Ventures are the agent's ways to earn beyond what it does now: a new market,
 platform or business model, or a channel that brings buyers to what it already
 sells (a Pinterest account for the Etsy shop is a venture of its own). The
-**Ventures** tab shows them as a tree that keeps growing.
+**Ventures** tab shows them as a tree that keeps growing, and the projects that
+do their work (0.27.0: the Projects tab is part of it). It has two views, and
+this browser keeps the one you chose last:
+
+- **Pipeline**: the tree, the decision desk, and the ventures still being
+  decided: business cases for you, ventures being researched and ideas, then
+  the parked and killed ones. Its badge counts the business cases waiting for
+  you, as the tab's does.
+- **Running**: the ventures you backed (building) and the live ones, each
+  card with the projects that do its work inside it, then the other projects
+  (of no venture, or of a venture that isn't backed or live). A venture you
+  back moves here with its card; one you park or kill moves back to Pipeline.
+  When the card still has your focus, the view goes with it.
 
 **The tree.** Every idea branches from the one it grew out of: a variant, a
 niche, another customer group, a channel, a next step research turned up. The
@@ -889,10 +901,10 @@ doesn't show Pinterest, Bluesky or the blog. A Reddit draft stays an ordinary
 cycle's tool too, as it is often a first test of demand. With the share at 0,
 or nothing live to market, ordinary cycles market as before.
 
-The **Line desk** on the **Projects** tab shows today's marketing share and
-what marketing cycles had of the day's spending, the lines as Ember's code
-ranks them now for an ordinary and for a marketing plan, and what the last
-plans took or why they took none. The **Activity** list marks each cycle with
+The **Line desk** in the Ventures tab's **Running** view shows today's
+marketing share and what marketing cycles had of the day's spending, the lines
+as Ember's code ranks them now for an ordinary and for a marketing plan, and
+what the last plans took or why they took none. The **Activity** list marks each cycle with
 its kind and its line (*Marketing · #4 Nebenkosten*, *Product line · #7 …*).
 
 ## Roadmap
@@ -1112,15 +1124,18 @@ no longer shown); a study that failed three times stops until you press
   ideas on the Ventures tab (see [Ventures](#ventures)).
 - **Roadmap**: add milestones you want reached by a date, leave notes, drop
   what no longer matters (see [Roadmap](#roadmap)).
-- **Projects**: the agent's open projects as cards (its hypothesis, next step,
-  what it earned and cost, and what it nets after its expenses such as Etsy's
-  fees), the closed ones as rows that open. Choose Open, Closed or All and a
-  sort; this browser keeps them. A card's **approvals waiting** opens them on
-  the Approvals tab, its venture opens the venture, and a cycle in its log
-  opens that cycle on the Activity tab (the last 10 cycles are there) (0.19.4).
-  Its **Files** shows the files written for it on the Workspace tab (0.26.0).
-  The **Line desk** above the cards shows how Ember's code ranks the lines for
-  the next plans and what the last ones took (0.28.0, see [Marketing
+- **Projects** (the Ventures tab's **Running** view since 0.27.0): the
+  agent's open projects as cards (its hypothesis, next step, what it earned
+  and cost, and what it nets after its expenses such as Etsy's fees), the
+  closed ones as rows that open. A backed or live venture's projects are in
+  its card; the others follow under **Other projects**. Choose Open, Closed or
+  All and a sort; this browser keeps them. A card's **approvals waiting**
+  opens them on the Approvals tab, its venture opens the venture, and a cycle
+  in its log opens that cycle on the Activity tab (the last 10 cycles are
+  there) (0.19.4). Its **Files** shows the files written for it on the
+  Workspace tab (0.26.0), whose **Open in Ventures** brings you back to it.
+  The **Line desk** above them shows how Ember's code ranks the lines for the
+  next plans and what the last ones took (0.28.0, see [Marketing
   cycles](#marketing-cycles)).
 - **Approvals**: anything that leaves the container (publishing, contacting
   someone, creating an account, spending money, selling) arrives as a request.

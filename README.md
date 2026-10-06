@@ -104,9 +104,9 @@ code refuses another line's work for the rest of the cycle. Marketing gets
 cycles of its own with a new option, **Share for marketing** (20 % of each day's
 spending by default, like the ventures' 25 %): a marketing cycle brings buyers
 to one line's live listings with pins, Bluesky posts, blog posts and better
-titles and tags. Venture cycles are unchanged. The Projects tab gets a **Line
-desk** and the Activity list says what each cycle was about. See [Marketing
-cycles](ember/DOCS.md#marketing-cycles).
+titles and tags. Venture cycles are unchanged. The Ventures tab's Running view
+gets a **Line desk** and the Activity list says what each cycle was about. See
+[Marketing cycles](ember/DOCS.md#marketing-cycles).
 
 ## Install in Home Assistant
 
