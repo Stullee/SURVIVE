@@ -1148,7 +1148,7 @@ LISTING_LINK = re.compile(r"etsy\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?listing/(\d{1,
 
 def request_stopped(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any]) -> sqlite3.Row | None:
     """0.23.3: the venture whose owner's park or kill stops the work a request carries on (None when none does): a new
-    listing or product of its line, or a change, pin or post of a listing (0.24.1: a post's second link too). Taking a
+    listing or product of its line, or a change, pin or post of a listing (0.25.1: a post's second link too). Taking a
     listing out of the shop (deactivating it, ending its automatic renewal) stops nothing."""
     if row["executor"] not in HELD_EXECUTORS:
         return None

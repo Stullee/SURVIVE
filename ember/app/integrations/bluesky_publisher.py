@@ -5,7 +5,7 @@ anything is sent, so a crash never posts it twice ('unclear' when it can't be kn
 crash left running). Its picture must be exactly the file the owner approved (its SHA-256); Ember's code sends a
 smaller copy when it is larger than Bluesky takes (images.within: the same picture always gives the same copy). The
 link must still be Ember's: a listing still live, as the pin's, or (0.19.2) a page of the owner's website that Ember's
-code knows is there; 0.24.1: its second link too. At most bluesky_posts_per_day posts a day. Before the first post of a
+code knows is there; 0.25.1: its second link too. At most bluesky_posts_per_day posts a day. Before the first post of a
 round Ember's code logs in: while Bluesky refuses the login, approved posts wait (nothing is begun). The owner's Undo of
 a post is a request of theirs (executor 'bluesky_delete'), carried out here too. The sync reads the account's followers
 and each live post's numbers (likes, reposts, replies, quotes, moderation's labels) at most every SYNC_HOURS.
@@ -84,7 +84,7 @@ def post_json(r: sqlite3.Row) -> dict[str, Any]:
         "rkey": r["rkey"],
         "text": r["text"],
         "link": r["link"],
-        "second_link": r["second_link"],  # 0.24.1
+        "second_link": r["second_link"],  # 0.25.1
         "status": r["status"],
         "url": url_of(r),
         "likes": r["likes"],
@@ -185,7 +185,7 @@ def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
             numbers += f"; labelled by moderation: {r['labels']}"
         words = " ".join(str(r["text"]).split())[:60]
         link = f" -> {r['link']}" if r["link"] else ""
-        link += f" and {r['second_link']}" if r["second_link"] else ""  # 0.24.1
+        link += f" and {r['second_link']}" if r["second_link"] else ""  # 0.25.1
         lines.append(f"- post {r['rkey'] or '-'} ({r['status']}): {words}{link}: {numbers}")
     return "\n".join(lines)
 
@@ -345,7 +345,7 @@ class Publisher:
             if not problem:
                 try:
                     fixed = self._link(conn, scope, post.link, stamp)
-                    second = self._link(conn, scope, post.second_link, stamp)  # 0.24.1: checked as the link is
+                    second = self._link(conn, scope, post.second_link, stamp)  # 0.25.1: checked as the link is
                 except BlueskyError as exc:
                     problem = str(exc)
                 else:

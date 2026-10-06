@@ -29,6 +29,11 @@ FONT_KEYS = {"sans": "sans", "calibri": "sans", "carlito": "sans", "serif": "ser
              "caladea": "serif", "display": "display", "poppins": "display"}  # fmt: skip
 TABLE_STYLES = ("lines", "grid", "zebra", "plain")
 _COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+# 0.25.0: KDP's paperback trim sizes, width x height in inches (kdp.TRIMS; a test keeps them the same), as page sizes
+KDP_PAGES = (
+    "5x8", "5.06x7.81", "5.25x8", "5.5x8.5", "6x9", "6.14x9.21", "6.69x9.61", "7x10", "7.44x9.69", "7.5x9.25", "8x10",
+    "8.25x6", "8.25x8.25", "8.5x8.5", "8.5x11", "8.27x11.69",
+)  # fmt: skip
 _DIRECTIVE = re.compile(r"^:::\s*(.*?)\s*$")
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _RULE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,})$")
@@ -202,6 +207,17 @@ def _font(key: str, raw: str) -> str:
     return value
 
 
+def _page(key: str, raw: str) -> str:
+    """A4, Letter, or (0.25.0) one of KDP's paperback trim sizes in inches ('6x9', '6 x 9 in'): '6x9in'."""
+    value = re.sub(r"\s+|\"", "", raw).lower().replace("×", "x")
+    value = re.sub(r"(?:inches|inch|in)$", "", value)
+    if value in ("a4", "letter"):
+        return {"a4": "A4", "letter": "Letter"}[value]
+    if value in KDP_PAGES:
+        return f"{value}in"
+    raise DocumentError(f"{key} must be A4, Letter or a KDP book size in inches: {', '.join(KDP_PAGES)}")
+
+
 def _bool(key: str, raw: str) -> bool:
     value = raw.lower()
     if value in ("true", "yes", "on"):
@@ -214,7 +230,7 @@ def _bool(key: str, raw: str) -> bool:
 SETTINGS: dict[str, Any] = {
     "title": lambda k, v: v[:200],
     "theme": lambda k, v: _choice(k, v, THEMES),
-    "page": lambda k, v: {"a4": "A4", "letter": "Letter"}.get(v.lower()) or _choice(k, v, ("A4", "Letter")),
+    "page": _page,
     "landscape": _bool,
     "font": _font,
     "heading_font": _font,

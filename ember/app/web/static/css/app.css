@@ -1038,6 +1038,9 @@ body[data-stale="true"] .live { display: none; }
 /* Etsy (0.8.0): the listing's photos on its approval card, and the connect steps in System. */
 .etsy-photos { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 .etsy-photos img { display: block; width: 120px; height: 90px; object-fit: cover; border-radius: 6px; border: 1px solid var(--grid); }
+.kdp-list { margin: 0; padding-left: 1.4em; }
+.kdp-changed { color: var(--critical-text); }
+.kdp-cover img { width: 100px; height: 160px; }  /* an ebook cover: 1.6 high to 1 wide */
 .etsy-connect { display: grid; gap: 8px; margin-top: 12px; }
 .etsy-step { display: grid; gap: 6px; }
 .etsy-step input[type="url"] { width: 100%; }

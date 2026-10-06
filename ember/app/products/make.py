@@ -11,6 +11,10 @@
   again.
 * ``cost_statement`` (0.20.0, make_cost_statement): a Nebenkostenabrechnung from a JSON spec, ``shop/nk.xlsx`` with
   its cover picture ``shop/nk-cover.png``, their numbers checked against each other (statement.py).
+* ``kdp_cover`` (0.25.0, propose_kdp_book makes it from a book's spec): a book's cover for Amazon KDP from the agent's
+  front picture: an ebook's JPEG, ``books/journal-cover.jpg``, or a paperback's full wrap, ``books/journal-cover.pdf``
+  (back, spine and front with bleed, as wide as the interior's pages make the spine) with
+  ``books/journal-cover-preview.png``.
 
 The agent never writes the bytes of these files: Ember's code makes them from the agent's text and writes them
 with ``Jail.write_bytes``. Every problem the agent can fix comes back as a ProductError naming what to change.
@@ -22,8 +26,10 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 from ..agent.sandbox import Jail
+from ..integrations import kdp
 from . import checks, images, markup, pdf, sheets, statement, word
 
 log = logging.getLogger(__name__)
@@ -106,7 +112,7 @@ def document(jail: Jail, source: str, output: str, word_copy: bool = True, previ
             shown.append(path)
     # Pictures of pages this version no longer has would show an old document.
     first_stale = len(shown) + 1 if previews else 1
-    for number in range(first_stale, pdf.MAX_PAGES + 1):
+    for number in range(first_stale, pdf.BOOK_PAGES + 1):
         path = f"{base}-page{number}.png"
         if jail.size_of(path, "product") is None:
             if number > PAGE_PREVIEWS:
@@ -375,3 +381,153 @@ def cost_statement(jail: Jail, source: str, output: str) -> Made:
     _write(jail, made, picture, result.cover)
     made.report.extend(statement.report(result, output, picture, _size(len(result.workbook))))
     return made
+
+
+# --- KDP covers (0.25.0) ---
+
+BACK_MARGIN = Decimal("0.5")  # inches between the back's text and the trim, and above the barcode's space
+SOFT_COVER = 1.5  # a front picture drawn more than this many times larger says it may print soft
+BACK_CHARS = 1_200  # the back's text (a spec's cover.back)
+SPINE_CHARS = 80  # the spine's (cover.spine)
+
+
+def kdp_cover(
+    jail: Jail,
+    output: str,
+    front: str,
+    interior: str = "",
+    paper: str = "",
+    back_text: str = "",
+    spine_text: str = "",
+    background: str | None = None,
+) -> Made:
+    """Make ``output``: an ebook's cover (a .jpg, KDP's ideal size) or a paperback's full cover (a .pdf) from the
+    picture ``front``, the paperback's sized from its ``interior`` (a PDF at a KDP trim: its pages make the spine) and
+    its ``paper``, with ``back_text`` on the back and ``spine_text`` on the spine."""
+    paperback = output.lower().endswith(".pdf")
+    _base(output, ".pdf" if paperback else ".jpg", "output (a .jpg: an ebook's cover; a .pdf: a paperback's)")
+    if not front.lower().endswith((".png", ".jpg")):
+        raise ProductError("front must be your front cover picture, a .png or .jpg in your workspace")
+    if background is not None and not _COLOR.fullmatch(background):
+        raise ProductError("background must be a colour like #1F2A44")
+    picture = jail.read_bytes(front)
+    if not paperback:
+        if interior or paper or back_text or spine_text:
+            raise ProductError("an ebook's cover is its front alone: leave out cover.back and cover.spine")
+        width, height = kdp.EBOOK_COVER
+        try:
+            result = images.ebook_cover(picture, width, height)
+        except images.ImageError as exc:
+            raise ProductError(f"{front}: {exc}") from None
+        made = Made()
+        _write(jail, made, output, result.data)
+        made.report.append(
+            f"Made {output}: an ebook cover, {width} x {height} pixels (KDP's ideal), {_size(len(result.data))}, "
+            f"from {front}."
+        )
+        made.report += _fitting(result.scale, 1 - _kept_share(result), front)
+        return made
+    if not interior.lower().endswith(".pdf"):
+        raise ProductError("a paperback's cover needs its interior PDF (manuscript): its pages make the spine")
+    try:
+        paper = kdp.check_paper(paper)
+        sizes = images.page_sizes(jail.read_bytes(interior))
+        if not sizes:
+            raise ProductError(f"{interior} has no pages")
+        found = kdp.trim_of(sizes[0])
+        if found is None:
+            width_in, height_in = (kdp.inches(v / 72) for v in sizes[0])
+            raise ProductError(
+                f"{interior}'s pages are {width_in} x {height_in}: no KDP trim size (make_document's page setting "
+                f"takes them: {', '.join(kdp.TRIM_NAMES)})"
+            )
+        trim, _ = found
+        pages = len(sizes)
+        low, high = kdp.page_limits(paper, trim)
+    except kdp.KdpError as exc:
+        raise ProductError(str(exc)) from None
+    except images.ImageError as exc:
+        raise ProductError(f"{interior}: {exc}") from None
+    if not low <= pages <= high:
+        raise ProductError(f"{interior} has {pages} pages; KDP prints {low} to {high} at {trim} on {paper} paper")
+    spine_text = " ".join(spine_text.split())
+    if len(back_text) > BACK_CHARS or len(spine_text) > SPINE_CHARS:
+        raise ProductError(f"cover.back holds at most {BACK_CHARS:,} characters, cover.spine {SPINE_CHARS}")
+    if spine_text and pages <= kdp.SPINE_TEXT_PAGES:
+        raise ProductError(
+            f"KDP prints spine text only on books of more than {kdp.SPINE_TEXT_PAGES} pages ({interior} has {pages}): "
+            "leave out cover.spine"
+        )
+    back = [line.strip() for line in back_text.replace("|", "\n").split("\n") if line.strip()]
+    panels, size = _panels(trim, pages, paper)
+    try:
+        wrap = images.book_wrap(picture, panels, back, spine_text, background)
+    except images.ImageError as exc:
+        raise ProductError(f"{front}: {exc}") from None
+    width_in, height_in = size
+    data = pdf.picture_page(images.jpeg(wrap.picture), float(width_in) * 72, float(height_in) * 72, spine_text or front)
+    base = output[: -len(".pdf")]
+    made = Made()
+    _write(jail, made, output, data)
+    _write(jail, made, f"{base}-preview.png", wrap.preview)
+    spine = kdp.spine_width(pages, paper)
+    made.report.append(
+        f"Made {output}: a paperback cover for {pages} pages at {trim} on {paper} paper, {kdp.inches(width_in)} x "
+        f"{kdp.inches(height_in)} with bleed (the spine {kdp.inches(spine)}), at {images.COVER_DPI} dpi, "
+        f"{_size(len(data))}. The back and spine are {_hex(wrap.background)}."
+    )
+    made.report.append(
+        f"Look at {base}-preview.png: it marks the trim, the spine's folds and the space KDP prints its barcode in."
+    )
+    made.report += _fitting(wrap.scale, wrap.cut, front)
+    if not spine_text and pages > kdp.SPINE_TEXT_PAGES:
+        made.report.append("The spine has no text: give cover.spine (title and author) for one.")
+    return made
+
+
+def _panels(trim: str, pages: int, paper: str) -> tuple[images.Panels, tuple[Decimal, Decimal]]:
+    """A paperback cover's parts in pixels, and its size in inches."""
+    bleed, gap = kdp.BLEED, kdp.BARCODE_GAP
+    trim_w, trim_h = kdp.trim_size(trim)
+    width, height = kdp.cover_size(trim, pages, paper)
+    fold = bleed + trim_w
+    code_w, code_h = kdp.BARCODE
+    barcode = (fold - gap - code_w, height - bleed - gap - code_h, fold - gap, height - bleed - gap)
+    text = (bleed + BACK_MARGIN, bleed + BACK_MARGIN, fold - BACK_MARGIN, barcode[1] - BACK_MARGIN / 2)
+
+    def px(value: Decimal) -> int:
+        return round(value * images.COVER_DPI)
+
+    panels = images.Panels(
+        size=(px(width), px(height)),
+        spine=(px(fold), px(fold + kdp.spine_width(pages, paper))),
+        trim=(px(bleed), px(bleed), px(width - bleed), px(height - bleed)),
+        text=(px(text[0]), px(text[1]), px(text[2]), px(text[3])),
+        barcode=(px(barcode[0]), px(barcode[1]), px(barcode[2]), px(barcode[3])),
+        spine_margin=px(kdp.SPINE_TEXT_MARGIN),
+    )
+    return panels, (width, height)
+
+
+def _kept_share(result: images.Fitted) -> float:
+    left, top, right, bottom = result.kept
+    source_w, source_h = result.source
+    return (right - left) * (bottom - top) / (source_w * source_h)
+
+
+def _fitting(scale: float, cut: float, front: str) -> list[str]:
+    """What the agent should know about how its front picture was fitted."""
+    notes = []
+    if cut > CUT_NOTE:
+        notes.append(f"{cut:.0%} of {front} was cut off to fit the cover's proportions.")
+    if scale > SOFT_COVER:
+        notes.append(
+            f"{front} is drawn {scale:.1f} times larger than it is: it may print soft (make_image's poster layout "
+            "makes a larger one)."
+        )
+    notes.append("KDP cuts 0.125 in off the front's outer edges: keep its words 0.25 in (4% of its width) from them.")
+    return notes
+
+
+def _hex(color: tuple[int, int, int]) -> str:
+    return "#{:02X}{:02X}{:02X}".format(*color)

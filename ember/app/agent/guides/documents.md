@@ -8,7 +8,7 @@ SETTINGS: optional 'key: value' lines between two '---' lines at the very top (n
 ---
 title: Weekly Planner
 theme: modern          modern, classic, minimal or bold (each sets fonts, colours, heading and table styles)
-page: A4               A4 or Letter; landscape: true for a wide page
+page: A4               A4, Letter, or a KDP book size in inches (6x9: guide kdp); landscape: true
 font: sans             sans (looks like Calibri), serif (Cambria), display (Poppins); heading_font: the same
 size: 10.5             text size in pt (7-16); line_height: 1.35 (1.0-2.2); margin: 18 (mm, 5-35)
 accent: #2C3E50        colours as #RRGGBB: accent (headings, lines, table headers), text, muted, background

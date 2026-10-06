@@ -199,6 +199,8 @@ class News:
                     head += ". Ember's code carries it out in the Etsy shop and you'll hear the result"
                 elif executor == "reddit_link":
                     head += ". Your owner posts it and reports back"
+                elif executor == "kdp_package":  # 0.25.0
+                    head += ". Your owner publishes it at KDP and reports back with its link"
                 elif executor in connectors.EXECUTORS:  # 0.19.2: a Bluesky post was "your owner will carry it out"
                     head += ". Ember's code carries it out and you'll hear the result"
                 else:

@@ -13,7 +13,7 @@ model call with Anthropic's server-side web tools, not a local fetch) or touch
 the constitution. No tool sends anything: the email tools read what Ember's
 code fetched into the database, and ``propose_email`` and ``propose_reddit_post``
 only create approval requests, which Ember's code (an email) or the owner (a
-Reddit post) carries out once the owner approves them. So do ``propose_pin``
+Reddit post, 0.25.0: a KDP book) carries out once the owner approves them. So do ``propose_pin``
 (0.13.0: Ember's code makes the pin on the owner's Pinterest account),
 ``propose_bluesky_post`` (0.19.0: Ember's code posts it on the account the owner made
 for Ember) and the Etsy tools.
@@ -54,6 +54,7 @@ from ..integrations import (
     connectors,
     etsy,
     etsy_publisher,
+    kdp,
     mail,
     mailstore,
     pinterest,
@@ -66,7 +67,7 @@ from ..integrations import (
 )
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
-from ..products import blog, checks, images, make, sheets, site
+from ..products import blog, checks, images, make, pdf, sheets, site
 from ..products.site import Owner as SiteOwner
 from . import (
     bets,
@@ -121,6 +122,9 @@ CATEGORIES_SHOWN = 10  # etsy_categories' answer, shortest paths first
 DEPARTMENT = " (a whole department: too broad for a listing)"
 # Making files takes a moment: these run sealed, but outside the database transaction the other tools share.
 MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image", "resize_image", "make_cost_statement"})
+# 0.25.0: makes a KDP book's cover and reads and draws its files before it asks the owner: sealed, outside the database
+# transaction the other tools share, which it opens itself for the request.
+CHECKING_TOOLS = frozenset({"propose_kdp_book"})
 GUIDES = (
     "documents",
     "spreadsheets",
@@ -135,6 +139,7 @@ GUIDES = (
     "website",
     "blog",
     "statements",  # 0.20.0: make_cost_statement's
+    "kdp",  # 0.25.0: Amazon KDP's books
 )
 WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
 # Offered only with an Etsy shop (demand_note 0.12.0: a product line's first listing needs one).
@@ -145,6 +150,8 @@ PINTEREST_TOOLS = frozenset({"pinterest_boards", "propose_pin"})
 BLUESKY_TOOLS = frozenset({"bluesky_posts", "propose_bluesky_post"})
 # Offered only with the owner's Printify account and an Etsy shop (0.13.0, Phase E4): a product becomes a listing there.
 PRINTIFY_TOOLS = frozenset({"printify_catalog", "propose_printify_product"})
+# Offered only when the owner switched Amazon KDP on (0.25.0): the book they publish at KDP, from the agent's spec.
+KDP_TOOLS = frozenset({"propose_kdp_book"})
 # Offered only when the owner switched their website on (0.13.0, Phase E3): its pages.
 SITE_TOOLS = frozenset({"site_page"})
 # Offered only when the owner switched their blog on (0.14.0): posts and the link page, uploaded once they approve.
@@ -181,6 +188,7 @@ ORDINARY_TOOLS = (
     | SITE_TOOLS
     | BLOG_TOOLS
     | MAIL_TOOLS
+    | KDP_TOOLS
 )
 # Model calls of their own (and, 0.12.0, the Etsy market probe of a demand note): they need the network, and no
 # database transaction is held meanwhile.
@@ -201,6 +209,10 @@ FIRST_CONTACT = (
 REDDIT_NOTE = (
     "After you approve, the dashboard opens Reddit with this text filled in: post it from your own account, then "
     "mark it done with the link. Check the subreddit's rules on AI-written content and self-promotion first."
+)
+KDP_NOTE = (
+    "Check the files before you approve. Once published at KDP, mark it done with the book's link at Amazon, and "
+    "record its royalties in the ledger."
 )
 _SITE = re.compile(r"^(?=.{4,60}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 # 0.12.0: a research question asked again within this many days is answered from before (the last REPEAT_LOOKBACK
@@ -734,7 +746,7 @@ SPECS: dict[str, Spec] = {
                     required=False,
                 ),
                 "mode": _s(
-                    "create (default), overwrite, or append (to go on where a draft was cut off: give it as a source).",
+                    "Default create; append goes on where a draft was cut off (give it as a source).",
                     10,
                     enum=("create", "overwrite", "append"),
                     required=False,
@@ -768,7 +780,7 @@ SPECS: dict[str, Spec] = {
             "pandas, matplotlib, pillow, reportlab, python-pptx, openpyxl and more; no internet), for what your "
             "make_ tools can't do: charts, PowerPoint files, data work, pictures drawn by code. Its files are "
             "checked and kept in your workspace, its script in workshop/scripts/ (run it again with script). A run "
-            "costs cents to dollars: read guide 'workshop' first.",
+            "costs cents to dollars. Guide 'workshop' first.",
             {
                 "task": _s("Each file to make (name, size, format) and what is in it.", ONE_REPLY_CHARS),
                 "files": _s(
@@ -788,8 +800,8 @@ SPECS: dict[str, Spec] = {
             "its first pages, next to the output. For its layout (sidebars, columns, boxes, checklists, writing "
             "lines) read guide 'documents' first.",
             {
-                "source": _s("Your .md file, e.g. 'drafts/cv.md'.", 200),
-                "output": _s("The PDF to make, e.g. 'shop/cv.pdf'.", 200),
+                "source": _s("e.g. 'drafts/cv.md'.", 200),
+                "output": _s("e.g. 'shop/cv.pdf'.", 200),
                 "word": _b("Also make the Word copy (default true)."),
                 "pictures": _b(f"Also make pictures of the first {make.PAGE_PREVIEWS} pages (default true)."),
             },
@@ -798,10 +810,10 @@ SPECS: dict[str, Spec] = {
         Spec(
             "make_spreadsheet",
             "Make an Excel file from your JSON spec (sheets, columns with formats and dropdowns, formulas, totals, a "
-            "chart, a 'How to use' sheet), and a picture of each sheet. Read guide 'spreadsheets' first.",
+            "chart, a 'How to use' sheet), and a picture of each sheet. Guide 'spreadsheets' first.",
             {
-                "source": _s("Your .json spec, e.g. 'drafts/budget.json'.", 200),
-                "output": _s("The Excel file to make, e.g. 'shop/budget.xlsx'.", 200),
+                "source": _s("e.g. 'drafts/budget.json'.", 200),
+                "output": _s("e.g. 'shop/budget.xlsx'.", 200),
             },
             per_cycle=3,
         ),
@@ -811,7 +823,7 @@ SPECS: dict[str, Spec] = {
             "with a title, subtitle and badge; a text photo; or a print-size poster. Read guide 'listing_photos' "
             "first.",
             {
-                "output": _s("The .png to make, e.g. 'shop/cv-photo-1.png'.", 200),
+                "output": _s("e.g. 'shop/cv-photo-1.png'.", 200),
                 "pages": _s(
                     f"1 to {make.MAX_LISTING_PAGES}, separated by commas: 'shop/cv.pdf#2', a sheet 'shop/b.xlsx#2', "
                     "a .png; '@top' zooms in.",
@@ -822,7 +834,7 @@ SPECS: dict[str, Spec] = {
                 "subtitle": _s("A line under the title (| splits lines).", 160, required=False),
                 "badge": _s("A few words in a coloured box.", 30, required=False),
                 "shape": _s(
-                    "landscape (default), square, portrait (4:5) or pin (2:3).",
+                    "Default landscape; portrait is 4:5, pin 2:3.",
                     10,
                     required=False,
                     enum=images.SHAPE_NAMES,
@@ -862,10 +874,8 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "guide",
-            "Read a manual: documents (make_document's layout), spreadsheets (make_spreadsheet's spec), "
-            "listing_photos (make_image, what a listing needs), workshop (running code, growing your own tools), a "
-            "channel's, or ventures (researching, scoring, a venture's business case, what selling needs in "
-            "Germany).",
+            "Read a manual: a tool's or a channel's (its tool names it; listing_photos: what a listing needs), or "
+            "ventures (researching, scoring, a business case, what selling needs in Germany).",
             {"topic": _s("", 20, enum=GUIDES)},
             per_cycle=3,
         ),
@@ -934,6 +944,12 @@ SPECS: dict[str, Spec] = {
             per_cycle=2,
         ),
         Spec(
+            "propose_kdp_book",
+            "Propose the KDP book of your .json spec (guide 'kdp'); check: only make its cover and check it.",
+            {"spec": _s("", 200), "check": _b("")},
+            per_cycle=4,
+        ),
+        Spec(
             "etsy_categories",
             "Find the Etsy category for a listing, with its number. Free.",
             {"search": _s("A few words, e.g. 'digital prints'.", 100)},
@@ -963,7 +979,7 @@ SPECS: dict[str, Spec] = {
         Spec(
             "propose_etsy_listing",
             "Ask your owner to approve a listing in their Etsy shop: once approved, Ember's code publishes it with "
-            "its photos and files (USD 0.20) and a line saying AI helped design it. Read guide 'etsy' first.",
+            "its photos and files (USD 0.20) and a line saying AI helped design it. Guide 'etsy' first.",
             {
                 "title": _s("What it is and for whom, the words buyers search for first.", etsy.TITLE_CHARS),
                 "description": _s(
@@ -1040,7 +1056,7 @@ SPECS: dict[str, Spec] = {
             "propose_pin",
             "Ask your owner to approve a pin on their Pinterest account: one of your pictures linking to one of your "
             "live Etsy listings, on a board. Once approved, Ember's code makes it (free), with a line saying AI "
-            "helped design it. Read guide 'pinterest' first.",
+            "helped design it. Guide 'pinterest' first.",
             {
                 "listing_id": _i("The live Etsy listing it links to.", minimum=1),
                 "image": _s("A .png or .jpg, best 2:3 (make_image shape pin).", 200),
@@ -1071,7 +1087,7 @@ SPECS: dict[str, Spec] = {
             "propose_bluesky_post",
             "Ask your owner to approve a post on Ember's Bluesky account: your words and, if you like, a link to one "
             "of your live Etsy listings or your owner's website and one of your pictures. Once approved, Ember's code "
-            "posts it (free) with a line saying an AI wrote it. Read guide 'bluesky' first.",
+            "posts it (free) with a line saying an AI wrote it. Guide 'bluesky' first.",
             {
                 "text": _s(
                     f"The post: plain text, at most {qa.POST_TAGS} #hashtags, no link (give it as link), no @mention.",
@@ -1107,7 +1123,7 @@ SPECS: dict[str, Spec] = {
             "Ask your owner to approve a Printify product sold in their Etsy shop: one of your pictures on a "
             "product (printify_catalog first), variants of one print area's shape with prices, and its listing. Once "
             f"approved, Ember's code publishes it if each price keeps {printify.MIN_MARGIN * 100:.0f}% after fees, "
-            "making and shipping, with a line saying AI helped design it. Read guide 'printify' first.",
+            "making and shipping, with a line saying AI helped design it. Guide 'printify' first.",
             {
                 "blueprint_id": _i("", minimum=1),
                 "provider_id": _i("", minimum=1),
@@ -1135,7 +1151,7 @@ SPECS: dict[str, Spec] = {
             "site_page",
             "Write a page of your owner's website from your markdown file (as for make_document, without photos, "
             "writing lines or page breaks), or remove one. Ember's code adds the Impressum and privacy page; your "
-            f"owner publishes it. '{site.HOME}' is the home page; at most {site.MAX_PAGES} pages. Read guide "
+            f"owner publishes it. '{site.HOME}' is the home page; at most {site.MAX_PAGES} pages. Guide "
             "'website' first. Free.",
             {
                 "name": _s(f"Lower-case letters, digits and dashes, e.g. '{site.HOME}'.", site.SLUG_MAX),
@@ -1149,13 +1165,13 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "propose_blog_post",
-            "Propose a post for your owner's blog on their own website, from your Markdown file: its front matter "
-            "(slug, title, description, lead and the product it recommends) and its text. Ember's code renders it "
-            "in the site's design; your owner previews it and approves it or not; then Ember's code uploads it and "
-            "adds it to the blog's list. The same slug again replaces that post (a waiting request for it is "
-            "withdrawn). Read guide 'blog' first. Free.",
+            "Propose a post for your owner's blog on their own website, from a Markdown file in your workspace: its "
+            "front matter (slug, title, description, lead and the product it recommends) and its text. Ember's code "
+            "renders it in the site's design and, once your owner approves its preview, uploads it and adds it to the "
+            "blog's list. The same slug again replaces that post (a waiting request "
+            "for it is withdrawn). Guide 'blog' first. Free.",
             {
-                "source": _s("The Markdown file in your workspace, e.g. 'blog/bewerbung-nachfassen.md'.", 200),
+                "source": _s("e.g. 'blog/bewerbung-nachfassen.md'.", 200),
                 "reason": _s("Why now, and what you expect.", 300, cut=True),
             },
             per_cycle=2,
@@ -1164,7 +1180,7 @@ SPECS: dict[str, Spec] = {
             "propose_link_page",
             "Propose the link page of your owner's website (links.html, the address on their profiles): a "
             "one-sentence bio and the buttons in order, the first highlighted. It replaces the whole page; once your "
-            "owner approves it, Ember's code uploads it. Read guide 'blog' first. Free.",
+            "owner approves it, Ember's code uploads it. Guide 'blog' first. Free.",
             {
                 "bio": _s("One sentence under the site's name: who makes what, for whom.", blog.BIO_MAX),
                 "links": _a(
@@ -1230,6 +1246,7 @@ def definitions(
     brainstorm: bool = True,
     blog: bool = False,
     bluesky: bool = False,
+    kdp: bool = False,
 ) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds (the
     reflection reads it from the cache at a tenth of the price; a list of its own would write the whole conversation
@@ -1238,13 +1255,14 @@ def definitions(
     and, 0.12.0, the tools for building and selling only in an ordinary one, the library's only while it holds
     documents; 0.13.0: the Pinterest and Printify tools, and their manuals, only with the owner's account and a
     shop, and the website's only when the owner switched it on; 0.14.0: the blog's too; 0.15.0: brainstorm only when
-    the burn mode allows it; 0.19.0: Bluesky's with the account)."""
+    the burn mode allows it; 0.19.0: Bluesky's with the account; 0.25.0: KDP's when the owner switched it on)."""
     channels = {
         "pinterest": pinterest and etsy,
         "printify": printify and etsy,
         "website": site,
         "blog": blog,
         "bluesky": bluesky,
+        "kdp": kdp,
     }
     return [
         _definition(_channel_guides(spec_of(spec.name, venture) or spec, channels))
@@ -1262,6 +1280,7 @@ def definitions(
             brainstorm=brainstorm,
             blog=blog,
             bluesky=bluesky,
+            kdp=kdp,
         )
     ]
 
@@ -1303,9 +1322,10 @@ def offered(
     brainstorm: bool = True,
     blog: bool = False,
     bluesky: bool = False,
+    kdp: bool = False,
 ) -> bool:
     """Whether tool ``name`` is offered in a cycle of this configuration and kind (``venture``: a venture cycle;
-    ``brainstorm``: the burn mode allows brainstorms, 0.15.0)."""
+    ``brainstorm``: the burn mode allows brainstorms, 0.15.0; ``kdp``: the owner switched Amazon KDP on, 0.25.0)."""
     return (
         (mail or name not in MAIL_TOOLS)
         and (workshop or name not in WORKSHOP_TOOLS)
@@ -1315,6 +1335,7 @@ def offered(
         and ((printify and etsy) or name not in PRINTIFY_TOOLS)
         and (site or name not in SITE_TOOLS)
         and (blog or name not in BLOG_TOOLS)
+        and (kdp or name not in KDP_TOOLS)
         and (venture or name not in VENTURE_TOOLS)
         and (brainstorm or name != "brainstorm")
         and not (venture and name in ORDINARY_TOOLS)
@@ -1485,6 +1506,13 @@ class BlogAccess:
     problems: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class KdpAccess:
+    """0.25.0: what the KDP tools know: the author name the owner's books carry ("": they enter it at KDP)."""
+
+    author: str = ""
+
+
 @dataclass
 class ToolContext:
     db: Database
@@ -1507,6 +1535,7 @@ class ToolContext:
     catalog: CatalogFn | None = None  # Printify's catalog (0.13.0): kept by Ember's code, read at Printify when old
     site: SiteOwner | None = None  # the owner's data, when they switched their website on (0.13.0): its pages
     blog: BlogAccess | None = None  # the owner's blog, when they switched it on (0.14.0)
+    kdp: KdpAccess | None = None  # Amazon KDP, when the owner switched it on (0.25.0)
     venture: bool = False  # a venture cycle (0.10.0): brainstorm, and more research
     usd_per_eur: float = 0.0  # the owner's exchange rate (etsy_usd_per_eur; 0: none, econ assumes one), 0.13.0
     venture_cash_eur: float = 20.0  # the owner's cash for a venture's first test (a knock-out beyond it), 0.13.0
@@ -1566,7 +1595,7 @@ def _run(
         if spec is not None and ctx.venture and name in ORDINARY_TOOLS:
             raise ToolError(
                 f"{name} is not one of your tools in a venture cycle: making files, the shop, Pinterest, Bluesky, "
-                "email, Reddit and laying out the roadmap belong to ordinary cycles"
+                "KDP, email, Reddit and laying out the roadmap belong to ordinary cycles"
             )
         if spec is None or not offered(
             name,
@@ -1580,6 +1609,7 @@ def _run(
             site=ctx.site is not None,
             blog=ctx.blog is not None,
             bluesky=ctx.bluesky is not None,
+            kdp=ctx.kdp is not None,
         ):
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
@@ -1607,7 +1637,7 @@ def _run(
         handler = HANDLERS[name]
         if name in CALLING_TOOLS:  # model calls: network, and no transaction held meanwhile
             outcome = _noted(handler(ctx, args), cut_notes)
-        elif name in MAKERS:
+        elif name in MAKERS or name in CHECKING_TOOLS:
             with netguard.sealed():
                 outcome = _noted(handler(ctx, args), cut_notes)
         else:
@@ -3696,6 +3726,10 @@ def guide_text(topic: str) -> str:
         .replace("{SITE_PAGES}", str(site.MAX_PAGES))
         .replace("{BLOG_BODY_MIN}", str(blog.BODY_MIN))
         .replace("{BLOG_LINKS}", str(blog.LINKS_MAX))
+        .replace("{KDP_WEEKLY}", str(kdp.WEEKLY_TITLES))
+        .replace("{BOOK_PAGES}", str(pdf.BOOK_PAGES))
+        .replace("{KDP_LEAST}", str(kdp.LEAST_PAGES))
+        .replace("{SPINE_PAGES}", str(kdp.SPINE_TEXT_PAGES))
     )
 
 
@@ -4365,7 +4399,7 @@ def _bluesky_posts(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
 def _post_link(ctx: ToolContext, conn: Any, raw: str, what: str = "link") -> tuple[str, str, str, etsy.Upload | None]:
     """0.19.0: a post's link, checked: one of Ember's live Etsy listings (its card: the listing's title and main
     photo) or a page of the owner's website (a blog post of Ember's: its title and description on the card). Returns
-    the link, the card's title and description ("": the link shows in the words) and its photo. 0.24.1: a second link
+    the link, the card's title and description ("": the link shows in the words) and its photo. 0.25.1: a second link
     is checked the same way (``what``: "the second link"; its address only: it shows in the words)."""
     link = raw.strip()
     parts = urlsplit(link)
@@ -4418,7 +4452,7 @@ def _propose_bluesky_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
         raise ToolError(str(exc)) from None
     link = title = description = second = None
     photo = None
-    addresses = (args.get("link") or "").split()  # 0.24.1: a second one after a space, shown in the words
+    addresses = (args.get("link") or "").split()  # 0.25.1: a second one after a space, shown in the words
     if len(addresses) > 2:
         raise ToolError("link takes one address, or two separated by a space")
     if addresses:
@@ -4878,6 +4912,189 @@ def _propose_link_page(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
     return Outcome(True, text, f"#{made} link page")
 
 
+def _kdp(ctx: ToolContext) -> KdpAccess:
+    if ctx.kdp is None:
+        raise ToolError("Amazon KDP is off: your owner hasn't switched it on")
+    return ctx.kdp
+
+
+def _read_file(ctx: ToolContext, path: str) -> bytes:
+    try:
+        return ctx.workspace.read_bytes(path)
+    except SandboxError as exc:
+        raise ToolError(str(exc)) from None
+
+
+def _book_cover(ctx: ToolContext, spec: dict[str, Any], path: str) -> tuple[str, make.Made | None]:
+    """0.25.0: a spec's cover: the file it names, or the one Ember's code makes now from its cover object (front, back,
+    spine, background), so a paperback's spine always fits its interior's pages."""
+    cover = spec["cover"]
+    if isinstance(cover, str):
+        return cover, None
+    out = kdp.cover_path(path, spec["format"])
+    paperback = spec["format"] == "paperback"
+    made = make.kdp_cover(
+        ctx.workspace,
+        out,
+        cover["front"],
+        spec["manuscript"] if paperback else "",
+        spec.get("paper", "") if paperback else "",
+        html.unescape(cover.get("back", "")),
+        html.unescape(cover.get("spine", "")),
+        cover.get("background") or None,
+    )
+    return out, made
+
+
+def _book(ctx: ToolContext, spec: dict[str, Any], cover_path: str) -> tuple[kdp.Book, list[str]]:
+    """0.25.0: a KDP book's package, checked against KDP's rules (a paperback's interior drawn to find what it prints
+    in its margins), and what its card notes; a package KDP would refuse is a ToolError that says why."""
+    access = _kdp(ctx)
+    form = spec["format"]
+    paper = spec.get("paper", "")
+    notes: list[str] = []
+    try:
+        title, subtitle = kdp.check_title(spec["title"], spec.get("subtitle"))
+        words = {
+            "title": title,
+            "subtitle": subtitle,
+            "author": access.author,
+            "description": kdp.check_description(spec["description"]),
+            "keywords": kdp.check_keywords(spec["keywords"]),
+            "categories": kdp.check_categories(spec["categories"]),
+            "language": kdp.check_language(spec["language"]),
+        }
+        text_data = _read_file(ctx, spec["manuscript"])
+        what = "the manuscript" if form == "ebook" else "the interior"
+        text = kdp.upload(spec["manuscript"], text_data, kdp.MANUSCRIPT_KINDS[form], what)
+        cover_data = _read_file(ctx, cover_path)
+        cover = kdp.upload(cover_path, cover_data, kdp.COVER_KINDS[form], "the cover")
+        if form == "ebook":
+            kdp.check_docx(text_data, text.path)
+            try:
+                width, height = images.png_size(cover_data)
+            except images.ImageError as exc:
+                raise ToolError(f"{cover.path}: {exc}") from None
+            notes += kdp.check_ebook_cover(cover_data, width, height, cover.path)
+            price = kdp.check_price(spec["price"], form, file_bytes=text.bytes)
+            return kdp.Book(format=form, **words, price=price, manuscript=text, cover=cover), notes
+        try:
+            sizes = images.page_sizes(text_data)
+            found = kdp.trim_of(sizes[0]) if sizes else None
+            if found is None:
+                shown = " x ".join(kdp.inches(v / 72) for v in sizes[0]) if sizes else "missing"
+                raise ToolError(
+                    f"{text.path}'s pages are {shown}: no KDP trim size (make_document's page setting takes them: "
+                    f"{', '.join(kdp.TRIM_NAMES)})"
+                )
+            trim = found[0]
+            interior = kdp.check_interior(
+                sizes, lambda: images.ink_boxes(text_data, kdp.INK_DPI, kdp.INK_LEVEL), trim, paper
+            )
+            if interior.findings:
+                raise ToolError(f"{text.path} isn't ready for KDP: {'; '.join(interior.findings)}")
+            cover_sizes = images.page_sizes(cover_data)
+        except images.ImageError as exc:
+            raise ToolError(f"{text.path} or {cover.path}: {exc}") from None
+        if len(cover_sizes) != 1:
+            raise ToolError(f"{cover.path} must be one page, the full cover (give cover.front to have it made)")
+        wrong = kdp.check_cover(cover_sizes[0], interior.pages, trim, paper)
+        if wrong:
+            raise ToolError("; ".join(wrong))
+        price = kdp.check_price(spec["price"], form, pages=interior.pages, paper=paper, trim=trim)
+        if interior.bleed:
+            keep = kdp.inches(kdp.OUTSIDE_MARGIN_BLEED)
+            notes.append(f"the interior has bleed: KDP's previewer checks that its words keep {keep} from its edges")
+        book = kdp.Book(
+            format=form,
+            **words,
+            price=price,
+            manuscript=text,
+            cover=cover,
+            trim=trim,
+            paper=paper,
+            bleed=interior.bleed,
+            pages=interior.pages,
+            low_content=bool(spec.get("low_content")),
+        )
+        return book, notes
+    except kdp.KdpError as exc:
+        raise ToolError(str(exc)) from None
+
+
+def _weekly_titles(ctx: ToolContext, conn: Any, form: str) -> int:
+    """0.25.0: the books of this format proposed in the last 7 days that KDP may still count (not rejected,
+    withdrawn, expired or failed)."""
+    where, params = ctx.scope.where()
+    since = to_iso(ctx.clock.now() - timedelta(days=7))
+    rows = conn.execute(
+        f"SELECT action FROM approvals WHERE {where} AND executor = 'kdp_package' AND created_at >= ?"
+        " AND status NOT IN ('rejected', 'withdrawn', 'expired', 'failed')",
+        (*params, since),
+    ).fetchall()
+    return sum(1 for r in rows if json.loads(r["action"] or "{}").get("format") == form)
+
+
+def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
+    """0.25.0: a book for Amazon KDP from the agent's .json spec: Ember's code makes its cover, checks the package and
+    (without check) asks the owner, who publishes it at kdp.amazon.com from their own account (Amazon has no API for
+    KDP). Its files are made, read and drawn outside the database transaction."""
+    _kdp(ctx)
+    path = args["spec"]
+    if not path.lower().endswith(".json"):
+        raise ToolError("spec must be your book's .json file in your workspace (guide 'kdp')")
+    try:
+        spec = kdp.read_spec(ctx.workspace.read(path), path)
+    except SandboxError as exc:
+        raise ToolError(str(exc)) from None
+    except kdp.KdpError as exc:
+        raise ToolError(str(exc)) from None
+    cover_path, made = _book_cover(ctx, spec, path)
+    book, notes = _book(ctx, spec, cover_path)
+    cover = f"{made.text()} " if made is not None else ""
+    noted = "".join(f" Note: {note}." for note in notes)
+    if args.get("check"):
+        return Outcome(
+            True,
+            f"{cover}Checked {path}: KDP would take this {book.format} as it is. Price {book.price} {kdp.CURRENCY}: "
+            f"{kdp.royalty(book)}.{noted} Nothing went to your owner: propose it with check false.",
+            f"checked KDP {book.format}: {_cut(book.title, 60)}",
+        )
+    reason = " ".join(str(spec.get("reason") or "").split())
+    if not reason:
+        raise ToolError(f"{path} needs reason: why this book, for your owner")
+    with ctx.db.transaction() as conn:
+        project_id = _product_line(ctx, conn, spec, "book")
+        proposed = _weekly_titles(ctx, conn, book.format)
+        if proposed >= kdp.WEEKLY_TITLES:
+            raise ToolError(
+                f"you proposed {proposed} {book.format}s in the last 7 days, and KDP lets an account create at most "
+                f"{kdp.WEEKLY_TITLES} new {book.format}s a week: propose the next one later"
+            )
+        made_request = _new_request(
+            ctx,
+            conn,
+            kdp.payload(book),
+            book.to_action(),
+            project_id=project_id,
+            type="sell",
+            title=_cut(f"KDP {book.format}: {book.title}", 120),
+            description=f"{reason}\n\n{KDP_NOTE}",
+            expected_cost="none: publishing at KDP is free (Amazon keeps its share of each sale)",
+            expected_benefit=reason,
+            executor=kdp.EXECUTOR,
+        )
+    if isinstance(made_request, str):
+        return Outcome(True, made_request, "duplicate book")
+    text = (
+        f"{cover}Approval request #{made_request} is waiting for your owner. Nothing is at Amazon yet. If they approve "
+        "it, they publish it at KDP from their own account and mark it done with the book's link; its royalties count "
+        f"once they record them. Price {book.price} {kdp.CURRENCY}: {kdp.royalty(book)}.{noted}"
+    )
+    text += _unlocked(ctx)
+    return Outcome(True, text, f"#{made_request} KDP {book.format}: {_cut(book.title, 60)}", project_id)
+
+
 def _propose_reddit_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     try:
         action = reddit.action(args["kind"], args["subreddit"], args.get("title"), args["body"], args.get("thread_url"))
@@ -4954,6 +5171,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "inquiry_done": _inquiry_done,
     "propose_email": _propose_email,
     "propose_reddit_post": _propose_reddit_post,
+    "propose_kdp_book": _propose_kdp_book,
     "pinterest_boards": _pinterest_boards,
     "propose_pin": _propose_pin,
     "bluesky_posts": _bluesky_posts,

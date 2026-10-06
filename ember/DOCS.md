@@ -96,6 +96,8 @@ code from Etsy's own numbers): the agent never reports its own.
 | SFTP server, port, user, password | empty, 22, empty, empty | Your web host's SFTP login (at STRATO: Customer login → Your package → Databases and webspace → SFTP & SSH). Only Ember's code uses it, never the agent; the password is never logged or shown. |
 | SFTP server key | empty | The server's key fingerprint (`SHA256:...`) or public key line, so Ember connects only to your server. Empty: the key seen at the first connection is kept (and shown on the dashboard). |
 | Website folder on the server | empty | The folder your domain shows, e.g. `/ember-ai.de`. Empty: the folder the login opens. |
+| Amazon KDP (books you publish) | off | Lets the agent make books for Amazon KDP, which you publish at KDP yourself after you approve them. See [Amazon KDP](#amazon-kdp). |
+| KDP author name | empty | The author name Ember's books carry: yours or a pen name. Empty: you enter it at KDP. |
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -420,6 +422,12 @@ agent's workspace:
   workshop run; the agent hears what was cut off and when a picture is drawn so
   much larger that it may print soft. Up to 6 a cycle. Built in from upgrade
   request #4 (the workshop's resize script).
+- **KDP books** (0.25.0, with Amazon KDP on): a document's page can be one of
+  KDP's trim sizes (`page: 6x9`), and such a book's interior can have up to
+  160 pages. When the agent proposes a book, Ember's code makes its cover from
+  the agent's front picture: an ebook's JPEG, or a paperback's full cover as a
+  PDF (back, spine and front with bleed, as wide as its interior's pages make
+  the spine). See [Amazon KDP](#amazon-kdp).
 - **Cost statements** (`make_cost_statement`, 0.20.0): a Nebenkostenabrechnung
   from a JSON description of the tenants (Wohnfläche, Personen,
   Vorauszahlungen; since 0.23.0 the days of a tenant who moved in or out during
@@ -1044,10 +1052,12 @@ no longer shown); a study that failed three times stops until you press
   an optional comment. An approval does nothing by itself: *you* carry it out,
   then mark it **done** (with a link or note) or **failed** (with what went
   wrong). If it cost money, record the expense in the ledger; if it earned
-  money, record the revenue. Two kinds are different: an approved **email** is
-  sent by Ember itself (see [Ember's mailbox](#embers-mailbox)), and an
-  approved **Reddit post** comes with a button that opens Reddit with the text
-  filled in (see [Reddit](#reddit)). A request you don't decide **expires**
+  money, record the revenue. Three kinds are different: an approved **email** is
+  sent by Ember itself (see [Ember's mailbox](#embers-mailbox)), an approved
+  **Reddit post** comes with a button that opens Reddit with the text filled
+  in (see [Reddit](#reddit)), and an approved **KDP book** (0.25.0) comes
+  with its files, Copy buttons and a button that opens your KDP Bookshelf (see
+  [Amazon KDP](#amazon-kdp)). A request you don't decide **expires**
   (emails and posts after 7 days, spending after 14, the rest after 30; the
   card says when), the agent can **withdraw** one that is outdated (with its
   reason), and each kind has its own limit of waiting requests (6 sales, 5
@@ -1755,7 +1765,7 @@ To stop Ember's access, delete the app password at Bluesky.
   #hashtags, no link in the words and no @mention), a link if it likes (one of
   its live Etsy listings or a page of your website, `site_url`, that Ember
   knows is there: a blog post of its own, the blog's list, the home page, the
-  link page or the live view's page), since 0.24.1 a second one of these too
+  link page or the live view's page), since 0.25.1 a second one of these too
   (a listing and your website in one post, for instance; never the same
   address twice), and a picture of its own with alt text if it likes. The
   approval card shows the post exactly as it will appear, the links and the
@@ -2144,7 +2154,85 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.24.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.25.1 (by /u/your name)`.
+
+## Amazon KDP
+
+Amazon has no API for Kindle Direct Publishing: nothing a program can use to
+create a book, change one or read its sales, and Amazon's terms forbid robots on
+its pages. So Ember works with KDP the way it works with Reddit: the agent makes
+the whole book, Ember's code checks it against KDP's rules, and after you
+approve it, you publish it at [kdp.amazon.com](https://kdp.amazon.com) from your
+own account. Ember never logs in to Amazon or reads its pages.
+
+### Setting it up
+
+1. You need a KDP account in your name, with its tax interview and bank account
+   done: the books and their royalties are yours.
+2. In Ember's **Configuration** tab, switch **Amazon KDP** on. If you like, set
+   **KDP author name** (yours or a pen name): the agent's books carry it.
+   Empty, you enter the author yourself at KDP.
+3. Save and restart the app. The agent reads its manual (`guide kdp`) and gets
+   the tool `propose_kdp_book` and a KDP section in its plans that lists its
+   books.
+
+### How a book is made
+
+- **A paperback**: its interior is a document at one of KDP's trim sizes
+  (`make_document` with `page: 6x9`, or 5x8, 5.5x8.5, 8.5x11 and the other
+  KDP sizes; A4 and Letter are KDP sizes too), up to 160 pages (other documents
+  stay at 40).
+- **An ebook**: a Word manuscript, the `.docx` that `make_document` makes next
+  to its PDF.
+- The agent describes the book in a JSON file in its workspace (its spec): the
+  format, title and subtitle, the description Amazon shows (up to 4,000
+  characters; Ember's code adds a line saying AI helped make the book), up to 7
+  keywords, up to 3 categories, the language, the list price in USD at
+  Amazon.com, the manuscript or interior, a paperback's paper (white or cream
+  for black ink, or premium colour) and whether it is a low-content book (a
+  journal, planner or notebook: no ISBN needed), and its cover: its front
+  picture, the blurb for the back and the text for the spine.
+- `propose_kdp_book` reads the spec, and Ember's code makes the cover next to
+  it: an ebook's JPEG of 1,600 x 2,560 pixels (KDP's ideal), or a paperback's
+  full cover as one PDF: the back with its blurb and the space KDP prints the
+  barcode in, the spine (with its text once the book has more than 79 pages),
+  the front, and 0.125 in of bleed all around, as wide as the interior's page
+  count and paper make the spine. A preview next to it marks the trim, the
+  spine's folds and the barcode's space. With `check`, the agent has the cover
+  made and the book checked without asking you, so it can look at the cover
+  first.
+- Ember's code refuses what KDP would refuse, and tells the agent why: a title
+  and subtitle of 200 characters or more, a keyword longer than 50 characters,
+  a page that isn't the trim size (with bleed: 0.125 in wider and 0.25 in
+  higher), fewer than 24 pages or more than KDP prints at that size and paper,
+  anything printed in KDP's margins without bleed (0.25 in at the top, bottom
+  and outside edge; 0.375 in to 0.875 in at the inside edge, by page count), a
+  cover that isn't this interior's full wrap, an ebook cover out of KDP's
+  proportions, or a price outside KDP's band or below what printing costs.
+  KDP's previewer checks the files again when you upload them.
+- KDP lets an account create at most 2 new titles of each format a week
+  (since September 2026). Ember's code holds the agent to that: it can't
+  propose a third ebook or paperback within 7 days (rejected, withdrawn,
+  expired and failed requests don't count).
+
+### Publishing it
+
+- The card shows every field as KDP asks for it, **Copy** buttons for the
+  title, subtitle and description, the files to download (flagged if one
+  changed in the workspace since it was proposed), what one sale at
+  Amazon.com earns (an estimate; KDP's own figure counts), and how to answer
+  KDP's question on AI: Ember's texts and covers are *AI-generated* in KDP's
+  words, so answer **Yes**, as the card says.
+- **Approve** or **Reject** it (no approval with changes: the files can't take
+  them). You can still change the words as you type them in at KDP; say so
+  when you mark it done.
+- After you approve, **Open your KDP Bookshelf** takes you to KDP. Create the
+  title there, enter the fields, upload the files, check KDP's previewer, and
+  publish (KDP reviews a book for up to 72 hours). Then mark the request
+  **done** with the book's link at Amazon, or **failed** with what went wrong.
+- Royalties come from KDP's reports (KDP pays about 60 days after the end of
+  each month): record them in the ledger as revenue for the book's project.
+  Ember doesn't read KDP's reports.
 
 ## Diagnostics
 

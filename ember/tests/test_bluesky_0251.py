@@ -1,4 +1,4 @@
-"""0.24.1: a Bluesky post carries a second link. The owner asked for the website in every post as well as the shop
+"""0.25.1: a Bluesky post carries a second link. The owner asked for the website in every post as well as the shop
 ("double chance for traffic", message #127); a post had one link, so the agent named the shop in its words, under a
 name that wasn't the shop's. propose_bluesky_post's link takes two addresses, separated by a space: each is checked as
 the link is (one of Ember's live listings, or a page of the owner's website Ember's code knows), never the same twice;
@@ -100,7 +100,7 @@ def test_the_post_keeps_its_second_link_and_the_owner_sees_it() -> None:
     card = Post("Planner of the week", "en", LISTING_URL, link_title="Weekly planner", second_link=PAGE)
     action = json.loads(json.dumps(card.to_action()))
     assert action["second_link"] == PAGE and bluesky.post_from_action(action) == card
-    del action["second_link"]  # a post proposed before 0.24.1
+    del action["second_link"]  # a post proposed before 0.25.1
     assert bluesky.post_from_action(action) == replace(card, second_link=None)
     shown = bluesky.payload(card, "ember-shop.bsky.social")
     assert shown.split("\n")[:4] == [

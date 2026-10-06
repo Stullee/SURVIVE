@@ -58,7 +58,7 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, since: str) -> l
     decided = conn.execute(
         f"SELECT * FROM approvals WHERE {where} AND (status = 'rejected' AND decided_at >= ?"
         " OR status = 'failed' AND closed_at >= ? OR status = 'done' AND closed_at >= ?"
-        " AND (executor IS NULL OR executor = 'reddit_link'))"
+        " AND (executor IS NULL OR executor IN ('reddit_link', 'kdp_package')))"
         " AND NOT EXISTS (SELECT 1 FROM obligations o WHERE o.approval_id = approvals.id) ORDER BY id",
         (*params, since, since, since),
     ).fetchall()

@@ -23,6 +23,9 @@ it. With your own website's SFTP login, Ember writes blog posts and the link
 page in your site's design, and its code uploads each one after you approve it
 (and puts back what it replaced if you undo it). On a Bluesky account you make
 for it, Ember posts what you approve, each post saying that an AI wrote it.
+With Amazon KDP switched on, Ember makes books (an ebook, or a paperback with
+its interior and full cover) checked against KDP's rules, which you publish at
+KDP yourself after approving them: Amazon has no API for KDP.
 
 > The term 'Etsy' is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or certified by Etsy, Inc.
 

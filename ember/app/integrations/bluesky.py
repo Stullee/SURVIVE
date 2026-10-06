@@ -5,7 +5,7 @@ agent and links their Impressum, makes an app password for Ember in the account'
 app password in the options (Bluesky on). Then:
 
 * the agent proposes a post (``propose_bluesky_post``): its words with a few #hashtags, a link to one of Ember's live
-  Etsy listings or a page of the owner's website if it likes (0.24.1: and a second one), and one of its pictures if it
+  Etsy listings or a page of the owner's website if it likes (0.25.1: and a second one), and one of its pictures if it
   likes;
 * the owner approves it as it is, or rejects it;
 * Ember's code posts it (bluesky_publisher.py) with a line saying an AI wrote it and a person approved it: a link
@@ -55,7 +55,7 @@ TEXT_CHARS = TEXT_MAX - max(len(d) for d in DISCLOSURE.values()) - 2  # the agen
 ALT_MAX = 1_000  # a picture's alt text
 CARD_TITLE_MAX = 300  # a link card's title
 TAG_MAX = 64  # a hashtag's characters (Bluesky's limit, without the #)
-LINK_MAX = 300  # an address the agent gives (0.24.1: link takes two, separated by a space)
+LINK_MAX = 300  # an address the agent gives (0.25.1: link takes two, separated by a space)
 SAME_RATIO = 0.85  # 0.24.0: two posts this alike (plain) say the same
 IMAGE_KINDS = frozenset({".png", ".jpg"})  # the workspace's pictures
 IMAGE_MAX_BYTES = 10 * 1024 * 1024  # a picture proposed (Ember's code makes a smaller copy for Bluesky when needed)
@@ -111,7 +111,7 @@ class Post:
     alt_text: str = ""
     card_photo: Upload | None = None  # an Etsy listing's main photo, the picture on its card (without a picture)
     tags: tuple[str, ...] = field(default=())  # the #hashtags in the words, as Bluesky indexes them
-    # 0.24.1: another of Ember's live listings or a page of the owner's website (never the link), shown in the words
+    # 0.25.1: another of Ember's live listings or a page of the owner's website (never the link), shown in the words
     second_link: str | None = None
 
     def card(self) -> bool:
@@ -232,7 +232,7 @@ def _bytes(text: str, index: int) -> int:
 
 def layout(post: Post) -> tuple[str, list[dict[str, Any]]]:
     """The post's text as Bluesky shows it, and its facets (Bluesky's marks of what is a link and a hashtag, by UTF-8
-    byte): the agent's words, the link (with a picture: in the words; without one it is a card), the AI line. 0.24.1:
+    byte): the agent's words, the link (with a picture: in the words; without one it is a card), the AI line. 0.25.1:
     the second link in the words, on a line of its own under the link (alone when the link is a card)."""
     text = post.text
     facets: list[dict[str, Any]] = []
@@ -313,7 +313,7 @@ def payload(post: Post, handle: str) -> str:
             lines.append(f"Link: {post.link} (a card: {post.link_title!r}{photo})")
         else:
             lines.append(f"Link: {post.link}")
-    if post.second_link is not None:  # 0.24.1
+    if post.second_link is not None:  # 0.25.1
         lines.append(f"Second link: {post.second_link}")
     if post.image is not None:
         lines.append(f"Picture: {post.image.path} ({post.width} x {post.height} pixels)")
