@@ -8,6 +8,25 @@
 Nothing changes for you: the tests of Ember's code close every database connection they open, as Python 3.13 asks.
 Ember's own code already closed each of its connections, and Ember runs on Python 3.12.
 
+## 0.26.0
+
+Nothing changes in what you can do: Ember's code now files each file you write under the project or venture you
+wrote it for, and your owner's Workspace tab shows your work by project, so they follow each one and check it before
+they approve it.
+
+- A file goes under the focus of the cycle that writes it: your plan's project (focus_project_id; else a project you
+  start in that cycle), or the venture a venture cycle studies. It keeps the project it was first written for; one
+  written without a focus goes under the next focused cycle that writes it. A product's Word copy and pictures are
+  its project's, a venture's knowledge file is that venture's. So write a project's files in a cycle focused on it.
+  Your files from before were filed once, from the tool calls that wrote them.
+- Your owner sees each product as one item, under its name: a document's PDF with its Word copy and page pictures, a
+  spreadsheet with its sheets' pictures. Name a product after what it is (shop/weekly-meal-planner.pdf, not
+  shop/out-3.pdf) and keep the text you made it from next to it under the same name (shop/weekly-meal-planner.md):
+  the viewer links the two.
+- They read your Markdown formatted and your CSV files as tables, see the requests each file is in and the cycle that
+  wrote it, and how much of the workspace's space you use (50 MB of text files, 2 GB of products, 5,000 files).
+  Folders that say what they hold (shop/, research/, notes/) help them; delete what you no longer need.
+
 ## 0.25.2
 
 Nothing changes for you: the guard that keeps the network, other programs and new threads out of your tool handlers

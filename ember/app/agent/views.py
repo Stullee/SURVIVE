@@ -6,6 +6,8 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
+from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -52,6 +54,7 @@ from . import (
     stages,
     store,
     ventures,
+    workfiles,
 )
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
 
@@ -560,6 +563,17 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
             linked.setdefault(int(p["venture_id"]), []).append(
                 {"id": p["id"], "title": p["title"], "status": p["status"]}
             )
+        # 0.26.0: the files in the workspace written for each venture or its projects (the Workspace tab lists them):
+        # a file of a project counts for the project's venture
+        filed = {
+            int(r[0]): int(r[1])
+            for r in conn.execute(
+                "SELECT owner, COUNT(*) FROM (SELECT CASE WHEN f.project_id IS NULL THEN f.venture_id"
+                " ELSE p.venture_id END AS owner FROM workspace_files f LEFT JOIN projects p ON p.id = f.project_id"
+                " WHERE f.mode = ? AND f.session = ?) WHERE owner IS NOT NULL GROUP BY owner",
+                (scope.mode, scope.session),
+            )
+        }
         cycles = conn.execute(
             "SELECT COUNT(*) FROM cycles WHERE simulated = ? AND session = ? AND venture = 1",
             (simulated, scope.session),
@@ -643,6 +657,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
                 "proposed_at": v["proposed_at"],
                 "file": file,
                 "file_bytes": size,
+                "files": filed.get(v["id"], 0),  # 0.26.0: its files in the workspace and its projects'
                 "spent_usd": _usd(m.spent),
                 "earned_usd": _usd(m.earned),
                 # 0.12.0: its P&L: revenue before refunds, the refunds, its expenses (Etsy's fees, say) and the net
@@ -951,6 +966,7 @@ def _project(conn: sqlite3.Connection, p: sqlite3.Row) -> dict[str, Any]:
     pending = conn.execute(
         "SELECT COUNT(*) FROM approvals WHERE project_id = ? AND status = 'pending'", (p["id"],)
     ).fetchone()[0]
+    files = conn.execute("SELECT COUNT(*) FROM workspace_files WHERE project_id = ?", (p["id"],)).fetchone()[0]
     return {
         "id": p["id"],
         "title": p["title"],
@@ -965,6 +981,7 @@ def _project(conn: sqlite3.Connection, p: sqlite3.Row) -> dict[str, Any]:
         "net_usd": _usd(earned - expenses - spent[0]),
         "cycles": int(spent[1]),
         "pending_approvals": int(pending),
+        "files": int(files),  # 0.26.0: the files in the workspace written for it (the Workspace tab lists them)
         "created_at": p["created_at"],
         "updated_at": p["updated_at"],
     }
@@ -1131,27 +1148,85 @@ PRODUCT_TYPES = {
 
 
 def workspace(agent: Agent) -> dict[str, Any]:
-    """The files in the agent's workspace, walked folder by folder through the jail (links are never listed)."""
+    """The files in the agent's workspace, walked folder by folder through the jail (links are never listed).
+    0.26.0: with its folders and limits, so the owner's overview shows how full it is, and with the project or venture
+    each file was written for, the cycle and tool that wrote it last (agent/workfiles.py), and those projects' and
+    ventures' titles and states."""
     jail = agent.roots()[0]
     tree = jail.walk(jail.limits.max_entries)
     files = [e for e in tree.files if _openable(jail, e.path)]
     text_bytes = sum(e.size for e in files if kind_of(e.path) == "text")
+    limits = jail.limits
+    scope = agent.scope()
+    with agent.db.connection() as conn:
+        rows = workfiles.filed(conn, scope)
+        listed = [{"path": e.path, **_filed_under(e.path, rows.get(e.path))} for e in files]
+        owners = _owners(conn, scope, listed)
     return {
         "mode": agent.mode,
         "files": [
             {
-                "path": e.path,
+                **filed,
                 "size": e.size,
                 "kind": kind_of(e.path),
                 "modified_at": to_iso(datetime.fromtimestamp(e.modified, UTC)),
             }
-            for e in files
+            for e, filed in zip(files, listed, strict=True)
         ],
         "file_count": len(files),
+        "folder_count": sum(1 for e in tree.entries if e.is_dir),
         "total_bytes": sum(e.size for e in files),
         "text_bytes": text_bytes,
         "product_bytes": sum(e.size for e in files) - text_bytes,
         "truncated": tree.truncated,
+        "limits": {
+            "files": limits.max_files,
+            "folders": limits.max_folders,
+            "text_bytes": limits.max_total_bytes,
+            "product_bytes": limits.max_product_total_bytes,
+            "text_file_bytes": limits.max_file_bytes,
+            "product_file_bytes": limits.max_product_bytes,
+        },
+        "owners": owners,
+    }
+
+
+def _filed_under(path: str, row: sqlite3.Row | None) -> dict[str, Any]:
+    """The project or venture a file was written for (a venture's knowledge file is that venture's by its name, even
+    one written before 0.26.0 that no row names), the cycle and the tool that wrote it last."""
+    named = workfiles.by_name(path)
+    project_id, venture_id = named or ((row["project_id"], row["venture_id"]) if row else (None, None))
+    return {
+        "project_id": project_id,
+        "venture_id": venture_id,
+        "cycle_id": row["cycle_id"] if row else None,
+        "tool": row["tool"] if row else None,
+    }
+
+
+def _owners(conn: sqlite3.Connection, scope: store.AgentScope, files: list[dict[str, Any]]) -> dict[str, Any]:
+    """The projects and ventures the files were written for (and those projects' ventures): title and state."""
+    where, params = scope.where()
+    project_ids = sorted({f["project_id"] for f in files if f["project_id"] is not None})
+    projects = conn.execute(
+        f"SELECT id, title, status, venture_id FROM projects WHERE {where} AND id IN"
+        f" ({', '.join('?' for _ in project_ids)}) ORDER BY id",
+        (*params, *project_ids),
+    ).fetchall()
+    venture_ids = sorted(
+        {f["venture_id"] for f in files if f["venture_id"] is not None}
+        | {p["venture_id"] for p in projects if p["venture_id"] is not None}
+    )
+    found = conn.execute(
+        f"SELECT id, title, stage FROM ventures WHERE {where} AND id IN ({', '.join('?' for _ in venture_ids)})"
+        " ORDER BY id",
+        (*params, *venture_ids),
+    ).fetchall()
+    return {
+        "projects": [
+            {"id": p["id"], "title": p["title"], "status": p["status"], "venture_id": p["venture_id"]} for p in projects
+        ],
+        "ventures": [{"id": v["id"], "title": v["title"], "stage": v["stage"]} for v in found],
     }
 
 
@@ -1203,6 +1278,56 @@ def workspace_product(agent: Agent, path: str) -> tuple[str, bytes, str]:
         raise WorkspaceFileError(str(exc), 404) from None
     except SandboxError as exc:
         raise WorkspaceFileError(str(exc)) from None
+
+
+THUMB_SIDE = 480  # 0.26.0: a thumbnail's longer side, twice the largest the dashboard shows it at
+THUMBS_KEPT = 300  # thumbnails kept in memory (about 30 KB each)
+_thumbs: OrderedDict[tuple[str, str, float, int], bytes] = OrderedDict()
+_thumbs_lock = threading.Lock()
+_drawing = threading.Lock()  # one picture decoded at a time: a list asks for many at once, a poster may have 40 MP
+
+
+def workspace_thumb(agent: Agent, path: str, draw: bool = True) -> tuple[str, bytes | None]:
+    """0.26.0: (file name, JPEG) of a small copy of a PNG or JPEG in the workspace, for the dashboard's lists and its
+    overview. Kept in memory by the file's path, size and time, so a list shown again costs nothing. With ``draw``
+    False, only one drawn before (None: it is still to be drawn)."""
+    jail = agent.roots()[0]
+    try:
+        parts = jail.parts(path, kinds="product")
+        name = parts[-1]
+        if not name.lower().endswith((".png", ".jpg")):
+            raise WorkspaceFileError(f"{'/'.join(parts)} isn't a picture: only a PNG or JPEG has a thumbnail")
+        entry = _find(jail, parts)
+        if entry is None:
+            raise WorkspaceFileError(f"{'/'.join(parts)} doesn't exist", 404)
+        if entry.is_dir:
+            raise WorkspaceFileError(f"{entry.path} is a folder, not a file")
+        key = (str(jail.root), entry.path, entry.modified, entry.size)
+        small = _thumb(key)
+        if small is None and draw:
+            with _drawing:
+                small = _thumb(key)  # drawn while this request waited for its turn
+                if small is None:
+                    small = images.small_jpeg(jail.read_bytes(entry.path), THUMB_SIDE)
+                    with _thumbs_lock:
+                        _thumbs[key] = small
+                        while len(_thumbs) > THUMBS_KEPT:
+                            _thumbs.popitem(last=False)
+        return f"{name.rsplit('.', 1)[0]}-thumbnail.jpg", small
+    except Missing as exc:
+        raise WorkspaceFileError(str(exc), 404) from None
+    except images.ImageError as exc:
+        raise WorkspaceFileError(f"{path} can't be shown: {exc}") from None
+    except SandboxError as exc:
+        raise WorkspaceFileError(str(exc)) from None
+
+
+def _thumb(key: tuple[str, str, float, int]) -> bytes | None:
+    with _thumbs_lock:
+        small = _thumbs.get(key)
+        if small is not None:
+            _thumbs.move_to_end(key)
+        return small
 
 
 def upgrade_script(agent: Agent, upgrade_id: int) -> tuple[str, str] | None:

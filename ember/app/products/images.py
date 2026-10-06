@@ -191,6 +191,14 @@ def thumbnail(data: bytes, longest: int) -> tuple[bytes, int, int]:
     return png(image), image.width, image.height
 
 
+def small_jpeg(data: bytes, longest: int) -> bytes:
+    """0.26.0: a JPEG no wider or higher than ``longest`` pixels of a PNG or JPEG, on white where it is transparent:
+    what the dashboard's lists show of a picture (a listing photo of several MB as a few dozen KB)."""
+    out = io.BytesIO()
+    _flattened(data, longest).save(out, "JPEG", quality=82, optimize=True)
+    return out.getvalue()
+
+
 def cropped(image: Image.Image, where: tuple[float, float, float, float]) -> Image.Image:
     """0.15.0: the part of a picture a region names (REGIONS)."""
     left, top, right, bottom = where

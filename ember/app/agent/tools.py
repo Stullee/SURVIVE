@@ -87,6 +87,7 @@ from . import (
     store,
     ventures,
     website,
+    workfiles,
 )
 from .memory import CAPS, HEADING_REFUSAL, MAX_APPEND_LINES, Memory, MemoryError_, heading_line
 from .sandbox import Jail, Limits, QuotaError, SandboxError, kind_of
@@ -1590,6 +1591,7 @@ def _run(
             tool_input=tool_input,
             now=ctx.now(),
         )
+    ctx.workspace.noticed = []  # 0.26.0: the files it writes or deletes, filed under the cycle's focus (_file)
     try:
         spec = spec_of(name, ctx.venture)
         if spec is not None and ctx.venture and name in ORDINARY_TOOLS:
@@ -1622,6 +1624,7 @@ def _run(
                 raise ToolError(f"{name} is for the reflect phase at the end of the cycle")
             outcome = _journal_draft(ctx, spec, raw_input, leaked)  # 0.24.0
             with ctx.db.transaction() as conn:
+                _file(conn, ctx, name)
                 store.finish_tool_call(conn, call_id, "ok", outcome.summary, outcome.text, ctx.now())
             return _clip(outcome, RESULT_CHARS.get(name, MAX_RESULT_CHARS))
         limit = per_cycle(ctx, spec)
@@ -1646,6 +1649,7 @@ def _run(
                 outcome = _noted(handler(ctx, args, conn), cut_notes)
                 if outcome.ok:
                     ctx.state.counts[name] = ctx.state.counts.get(name, 0) + 1
+                _file(conn, ctx, name)
                 store.finish_tool_call(
                     conn, call_id, "ok" if outcome.ok else "error", outcome.summary, outcome.text, ctx.now()
                 )
@@ -1662,8 +1666,18 @@ def _run(
         log.exception("Tool %s failed", name)
         outcome = Outcome(False, f"Error: the tool failed ({type(exc).__name__}).", f"failed: {type(exc).__name__}")
     with ctx.db.transaction() as conn:
+        _file(conn, ctx, str(name))
         store.finish_tool_call(conn, call_id, "ok" if outcome.ok else "error", outcome.summary, outcome.text, ctx.now())
     return _clip(outcome, RESULT_CHARS.get(str(name), MAX_RESULT_CHARS))
+
+
+def _file(conn: Any, ctx: ToolContext, name: str) -> None:
+    """0.26.0: the files a call wrote or deleted (a refused call may have written some before it was), filed under
+    its cycle's focus: the project or venture the owner's Workspace tab groups them by (agent/workfiles.py)."""
+    noticed, ctx.workspace.noticed = ctx.workspace.noticed, None
+    if noticed:
+        focus = ctx.state.focus_project_id, ctx.state.focus_venture_id
+        workfiles.record(conn, ctx.scope, noticed, *focus, ctx.cycle_id, name, ctx.now())
 
 
 def per_cycle(ctx: ToolContext, spec: Spec) -> int:

@@ -922,33 +922,345 @@ button.owed-item:hover { border-color: var(--ring); border-left-color: var(--acc
   max-height: 60vh; overflow: auto; overscroll-behavior: contain; tab-size: 4;
 }
 
-/* --- Workspace ---------------------------------------------------------- */
+/* --- Workspace (0.26.0) --------------------------------------------------- */
+/* An overview (what there is, how full it is, what waits for the owner, the latest work), every file as an item (a
+   product's PDF, Word copy and pictures are one) under the project or venture it was written for, and a viewer in a
+   dialog. A kind has its tone, never alone: its letters (PDF, MD) or its picture say it too. */
 
 #ws-status { margin: 4px 0; }
-.ws-summary { margin: 4px 0 0; }
-.ws-list { margin-top: 8px; }
-.ws-files td { vertical-align: top; }
-/* Paths wrap anywhere so the table fits a phone without scrolling sideways. */
-.ws-files .ws-path { width: 100%; overflow-wrap: anywhere; }
-.ws-files .ws-when { white-space: nowrap; overflow-wrap: normal; color: var(--text-2); }
-.ws-open {
-  background: none; border: 0; padding: 2px 0; margin: 0; text-align: start; cursor: pointer;
-  color: var(--accent-text); text-decoration: underline; overflow-wrap: anywhere;
+#ws-title:focus, #ws-files-title:focus { outline: none; }
+.ws-overview .empty-state { padding: 20px 8px 8px; }
+
+.ws-stats {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 28px; margin: 6px 0 0;
 }
-.ws-open .ws-dir { color: var(--text-2); }
-.ws-open[aria-current="true"] { color: var(--text); font-weight: 600; text-decoration: none; }
-.ws-files tr[data-open="true"] td { background: var(--surface-2); }
-.ws-file-title { overflow-wrap: anywhere; }
+.ws-stat { display: grid; align-content: start; gap: 1px; min-width: 0; }
+.ws-stat dt { font-size: 0.8rem; color: var(--text-2); }
+.ws-stat dd { margin: 0; min-width: 0; }
+.ws-stat-value { font-size: 1.4rem; font-weight: 650; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.ws-stat-sub { font-size: 0.8rem; color: var(--muted); }
+.ws-stat-sub .ws-link { font-size: 1em; color: var(--accent-text); font-weight: 600; }
+.ws-stat-line { display: block; }
+.ws-stat .ws-meters { display: grid; gap: 4px; margin: 4px 0 2px; }
+.ws-meter { display: grid; grid-template-columns: 4.6rem minmax(40px, 1fr); gap: 0 8px; align-items: center; font-size: 0.75rem; color: var(--text-2); }
+.ws-meter .meter { margin: 0; height: 6px; }
+/* A neutral track: a sliver of use must not read as a full meter (the blue track does in the dark theme). */
+.ws-meter .meter[data-level="normal"] { background: var(--grid); }
+.ws-meter-value { grid-column: 1 / -1; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* For the owner: files in requests that wait for them, a nearly full workspace, a list that is cut short. */
+.ws-alerts { list-style: none; margin: 14px 0 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.ws-alert {
+  display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border-radius: 8px;
+  background: var(--surface-2); border-left: 4px solid var(--accent);
+}
+.ws-alert[data-kind="warning"] { border-left-color: var(--warning); }
+.ws-alert[data-kind="error"] { border-left-color: var(--critical); }
+.ws-alert-icon { font-weight: 700; color: var(--accent-text); width: 1em; text-align: center; }
+.ws-alert[data-kind="warning"] .ws-alert-icon { color: var(--warning-text); }
+.ws-alert[data-kind="error"] .ws-alert-icon { color: var(--critical-text); }
+.ws-alert-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; flex: 1 1 auto; font-size: 0.9rem; }
+.ws-alert-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ws-req-button { max-width: min(100%, 420px); }
+
+/* Latest work: the newest items, a row that scrolls sideways where it doesn't fit. */
+.ws-recent-part { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--grid); }
+.ws-part-head { font-size: 0.95rem; }
+.ws-part-note { color: var(--accent-text); font-weight: 600; font-size: 0.85rem; }
+.ws-recent {
+  list-style: none; margin: 10px 0 0; padding: 2px 2px 8px; display: grid; grid-auto-flow: column;
+  grid-auto-columns: minmax(126px, 1fr); gap: 10px; overflow-x: auto; overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity; scrollbar-width: thin;
+}
+.ws-recent > li { min-width: 0; scroll-snap-align: start; }
+.ws-tile {
+  position: relative; display: grid; grid-template-rows: auto auto 1fr; gap: 4px; width: 100%; height: 100%; min-width: 0;
+  padding: 6px 6px 8px; text-align: start; font: inherit; color: var(--text); cursor: pointer; overflow-wrap: anywhere;
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 10px;
+}
+.ws-tile:hover { background: var(--surface-2); border-color: var(--axis); }
+.ws-tile[aria-current="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.ws-tile-name {
+  font-size: 0.85rem; font-weight: 600; line-height: 1.3; padding: 0 2px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ws-tile-meta { font-size: 0.75rem; color: var(--muted); padding: 0 2px; align-self: end; }
+.ws-tile .ws-req { position: absolute; top: 10px; right: 10px; }
+.ws-tile-new { position: absolute; top: 10px; left: 10px; }
+
+/* By project: a card for each project or venture with files (its newest items' pictures, what it has), a
+   filter for the list below; pressed, it shows. A project's state has its icon's tone, and its word says it too. */
+.ws-owners-part { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--grid); }
+.ws-part-sub { color: var(--muted); font-weight: 400; font-size: 0.85rem; }
+/* Positioned, so the words for screen readers in a card (out of sight, absolutely placed) stay inside a row that
+   scrolls sideways instead of widening the page. */
+.ws-owners {
+  position: relative; list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr));
+}
+.ws-owners > li { min-width: 0; }
+.ws-owner-card {
+  position: relative; display: grid; align-content: start; gap: 3px; width: 100%; height: 100%; min-width: 0; padding: 8px 10px 10px;
+  text-align: start; font: inherit; color: var(--text); cursor: pointer; overflow-wrap: anywhere;
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 10px;
+}
+.ws-owner-card:hover { background: var(--surface-2); border-color: var(--axis); }
+.ws-owner-card[aria-pressed="true"] {
+  border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.ws-owner-card[data-type="none"] { border-style: dashed; }
+.ws-owner-card[data-type="none"][aria-pressed="true"] { border-style: solid; }
+.ws-owner-pics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-bottom: 5px; }
+.ws-owner-pic { aspect-ratio: 1; width: 100%; }
+.ws-owner-pic .ws-badge { font-size: 0.62rem; padding: 0 4px; }
+.ws-owner-card-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-weight: 650; line-height: 1.3; }
+.ws-owner-card-title .ws-owner-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ws-owner-icon { flex: none; color: var(--text-2); }
+.ws-owner-icon[data-tone="accent"] { color: var(--accent-text); }
+.ws-owner-icon[data-tone="good"] { color: var(--good-text); }
+.ws-owner-icon[data-tone="warning"] { color: var(--warning-text); }
+.ws-owner-icon[data-tone="critical"] { color: var(--critical-text); }
+.ws-owner-state { font-size: 0.8rem; color: var(--text-2); }
+.ws-owner-what { font-size: 0.8rem; color: var(--muted); }
+.ws-owner-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.ws-owners-all { display: flex; align-items: center; justify-content: center; padding: 8px; }
+.ws-owners-all .link-button { font-size: 0.9rem; }
+
+/* A small picture of an item (a page, a sheet, the picture itself), or its kind in letters. */
+.ws-thumb {
+  --ws-tone: var(--text-2);
+  position: relative; display: grid; place-items: center; overflow: hidden;
+  background: var(--surface-2); border: 1px solid var(--ring); border-radius: 6px;
+}
+.ws-thumb[data-kind="document"] { --ws-tone: var(--accent-text); }
+.ws-thumb[data-kind="spreadsheet"] { --ws-tone: var(--good-text); }
+.ws-thumb[data-kind="picture"] { --ws-tone: var(--warning-text); }
+.ws-thumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* Pages and sheets show their top, where their title is. */
+.ws-thumb[data-kind="document"] img { object-fit: cover; object-position: top center; }
+.ws-thumb[data-kind="spreadsheet"] img { object-fit: cover; object-position: top left; }
+.ws-badge {
+  padding: 1px 6px; border-radius: 5px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; line-height: 1.5;
+  color: var(--ws-tone); background: color-mix(in srgb, var(--ws-tone) 11%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--ws-tone) 35%, transparent); overflow-wrap: normal;
+}
+.ws-tile-thumb { aspect-ratio: 4 / 3; width: 100%; }
+.ws-tile-thumb .ws-badge { font-size: 0.85rem; padding: 3px 9px; }
+/* A text file in a tile or a grid card: a sheet of ruled paper with its kind on it. */
+.ws-tile-thumb:not([data-picture])::before, .ws-list[data-view="grid"] .ws-item-thumb:not([data-picture])::before {
+  content: ""; position: absolute; top: 12%; bottom: -1px; left: 50%; width: 56%; transform: translateX(-50%);
+  border: 1px solid var(--ring); border-bottom: 0; border-radius: 5px 5px 0 0; background-color: var(--surface);
+  background-image: repeating-linear-gradient(to bottom, transparent 0 8px, var(--grid) 8px 9px);
+  background-size: 72% calc(100% - 22px); background-position: 50% 14px; background-repeat: no-repeat;
+}
+.ws-thumb .ws-badge { position: relative; z-index: 1; }
+
+.ws-new {
+  display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 0.7rem; font-weight: 700; line-height: 18px;
+  color: #fff; background: var(--badge-bg); overflow-wrap: normal;
+}
+.ws-req { font-size: 0.72rem; padding: 0 7px; line-height: 18px; background: var(--surface); white-space: nowrap; overflow-wrap: normal; }
+.ws-format {
+  display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 650; line-height: 18px;
+  color: var(--text-2); background: var(--surface-2); border: 1px solid var(--ring); white-space: nowrap; overflow-wrap: normal;
+}
+
+/* The browser: search, kind, folder, sort and layout above the list (outside it, so focus there never holds it back). */
+.ws-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 2px 0 10px; }
+.ws-search { position: relative; flex: 1 1 260px; min-width: 0; }
+.ws-search-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.ws-search input {
+  width: 100%; min-height: 36px; padding: 5px 10px 5px 32px; color: var(--text); background: var(--surface);
+  border: 1px solid var(--field-border); border-radius: 999px;
+}
+.ws-search input::placeholder { color: var(--muted); }
+/* The kinds stay one row: it scrolls sideways where it doesn't fit, its focus ring inside it. */
+.ws-kinds { position: relative; max-width: 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.ws-kinds .seg:focus-visible { outline-offset: -2px; }
+.ws-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.ws-controls select { max-width: 13rem; }
+.ws-result { font-size: 0.85rem; color: var(--text-2); margin: -2px 0 8px; }
+.ws-result .link-button { font-size: 1em; }
+
+.ws-list { min-width: 0; }
+.ws-items { list-style: none; margin: 0; padding: 0; }
+.ws-group + .ws-group { margin-top: 14px; }
+.ws-group-head {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 4px 8px 6px; margin-bottom: 4px;
+  font-size: 0.85rem; border-bottom: 1px solid var(--grid);
+}
+.ws-group-name { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
+.ws-group-meta { color: var(--muted); font-weight: 400; font-size: 0.8rem; }
+/* A project's group: its title (in the text font), what it is, and a way to it. A venture's section holds its own
+   files, then its projects' groups, set in under it. */
+.ws-owner-title { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; margin: 0; font-size: 0.95rem; overflow-wrap: anywhere; }
+.ws-owner-head[data-type="none"] .ws-owner-title { color: var(--text-2); }
+.ws-owner-go { margin-left: auto; font-size: 0.8rem; white-space: nowrap; }
+.ws-venture-body { margin: 2px 0 0 9px; padding-left: 12px; border-left: 2px solid var(--grid); }
+.ws-venture-body > .ws-group.ws-subgroup { margin-top: 10px; }
+.ws-subgroup .ws-owner-title { font-size: 0.9rem; }
+.ws-more { display: flex; margin: 12px auto 0; }
+
+/* An item: a row in the list, a card in the grid. */
+.ws-open {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) auto 5.5rem 8rem;
+  grid-template-areas: "thumb main tags size when"; align-items: center; gap: 4px 14px;
+  width: 100%; padding: 7px 8px; text-align: start; font: inherit; color: var(--text); cursor: pointer;
+  background: none; border: 0; border-radius: 8px; overflow-wrap: anywhere;
+}
+.ws-items > li + li .ws-open { box-shadow: 0 -1px 0 var(--grid); }
+.ws-items > li + li .ws-open:hover, .ws-items > li + li .ws-open[aria-current="true"] { box-shadow: none; }
+.ws-open:hover { background: var(--surface-2); }
+.ws-open[aria-current="true"] { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.ws-open:focus-visible { outline-offset: -2px; }
+.ws-item-thumb { grid-area: thumb; width: 44px; height: 44px; }
+.ws-item-thumb .ws-badge { font-size: 0.62rem; padding: 0 4px; }
+.ws-item-main { grid-area: main; display: grid; min-width: 0; }
+.ws-item-name { font-weight: 600; line-height: 1.35; }
+.ws-item-path { font-size: 0.8rem; color: var(--muted); }
+.ws-item-sub { display: flex; flex-wrap: wrap; gap: 0 10px; min-width: 0; }
+.ws-item-owner { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; font-size: 0.8rem; color: var(--text-2); }
+.ws-item-tags { grid-area: tags; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; }
+.ws-item-size { grid-area: size; font-size: 0.85rem; color: var(--text-2); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; overflow-wrap: normal; }
+.ws-item-when { grid-area: when; font-size: 0.85rem; color: var(--text-2); text-align: right; white-space: nowrap; overflow-wrap: normal; }
+
+.ws-list[data-view="grid"] .ws-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(176px, 100%), 1fr)); gap: 12px; }
+.ws-list[data-view="grid"] .ws-group .ws-items { padding-top: 6px; }
+.ws-list[data-view="grid"] .ws-open {
+  height: 100%; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto 1fr auto;
+  grid-template-areas: "thumb thumb" "main main" "tags tags" "size when";
+  align-items: start; gap: 6px 8px; padding: 6px 6px 8px;
+  border: 1px solid var(--ring); background: var(--surface); border-radius: 10px; box-shadow: none;
+}
+.ws-list[data-view="grid"] .ws-open:hover { background: var(--surface-2); border-color: var(--axis); }
+.ws-list[data-view="grid"] .ws-open[aria-current="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.ws-list[data-view="grid"] .ws-item-thumb { width: 100%; height: auto; aspect-ratio: 4 / 3; }
+.ws-list[data-view="grid"] .ws-item-thumb .ws-badge { font-size: 0.85rem; padding: 3px 9px; }
+.ws-list[data-view="grid"] .ws-item-main { padding: 0 2px; }
+.ws-list[data-view="grid"] .ws-item-tags { justify-content: flex-start; padding: 0 2px; }
+.ws-list[data-view="grid"] .ws-item-size { text-align: left; padding-left: 2px; }
+.ws-list[data-view="grid"] .ws-item-size, .ws-list[data-view="grid"] .ws-item-when { font-size: 0.78rem; color: var(--muted); }
+
+/* --- The viewer: one item in a dialog ----------------------------------- */
+
+.ws-viewer {
+  width: min(1080px, calc(100% - 32px)); height: calc(100% - 32px); max-width: none; max-height: none;
+  padding: 0; overflow: hidden; color: var(--text); background: var(--surface);
+  border: 1px solid var(--ring); border-radius: 14px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+}
+.ws-viewer::backdrop { background: rgba(0, 0, 0, 0.55); }
+.ws-v { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.ws-v-head {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 4px 12px;
+  padding: 12px 12px 12px 16px; border-bottom: 1px solid var(--grid);
+}
+.ws-v-icon:empty { display: none; }
+.ws-v-thumb { width: 44px; height: 44px; }
+.ws-v-thumb .ws-badge { font-size: 0.62rem; padding: 0 4px; }
+.ws-v-titles { min-width: 0; display: grid; gap: 1px; }
+.ws-file-title { font-size: 1.1rem; overflow-wrap: anywhere; }
 .ws-file-title:focus { outline: none; }
-#ws-file-status { margin-bottom: 8px; }
-/* The file as plain text: capped height, scrolls inside (focusable, so the keyboard can scroll it too). */
+.ws-v-meta { color: var(--text-2); font-size: 0.85rem; }
+.ws-v-nav { display: inline-flex; align-items: center; gap: 2px; }
+.ws-v-step, .ws-v-close { min-width: 38px; font-size: 1.05rem; padding: 4px 10px; }
+.ws-v-pos { min-width: 4.5em; text-align: center; font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ws-v-bar {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px;
+  padding: 10px 16px; border-bottom: 1px solid var(--grid);
+}
+.ws-v-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ws-btn-size { font-weight: 400; font-size: 0.85em; }
+.ws-v-body {
+  flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain;
+  padding: 14px 16px 24px; display: grid; gap: 12px; align-content: start;
+}
+.ws-v-body:focus-visible { outline-offset: -3px; }
+.ws-v-body > .card-note { margin: 0; }
+/* What it was written for and by which cycle. */
+.ws-v-owner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0; font-size: 0.9rem; color: var(--text-2); }
+.ws-v-owner .chip-button { max-width: min(100%, 360px); }
+.ws-chip-state { font-weight: 400; opacity: 0.85; white-space: nowrap; }
+.ws-chip-state::before { content: "· "; }
+.ws-v-owner-cycle { flex: 1 1 auto; text-align: end; font-size: 0.85rem; }
+.ws-v-owner-cycle .link-button { font-size: 1em; }
+.ws-v-owner code { font-size: 0.85em; }
+#ws-file-status { margin: 0; }
+.ws-copy-holder { position: fixed; left: -10000px; top: 0; width: 1px; height: 1px; overflow: hidden; white-space: pre; }
+
+.ws-v-requests { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ws-v-request {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border-radius: 8px;
+  background: var(--surface-2); border-left: 3px solid var(--accent);
+}
+.ws-v-request[data-tone="warning"] { border-left-color: var(--warning); }
+.ws-v-request[data-tone="good"] { border-left-color: var(--good); }
+.ws-v-request-title { flex: 1 1 220px; min-width: 0; font-size: 0.9rem; }
+
+/* A product's pictures: pages side by side (as many as fit), a single picture whole. */
+.ws-product { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); align-items: start; }
+.ws-product.single { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+.ws-figure { margin: 0; display: grid; gap: 6px; min-width: 0; }
+.ws-figure-link { display: block; border-radius: 6px; }
+.ws-image {
+  display: block; width: 100%; height: auto; background: #fff;
+  border: 1px solid var(--ring); border-radius: 6px; box-shadow: 0 1px 3px var(--ring);
+}
+.ws-product.single .ws-image { width: auto; max-width: 100%; max-height: min(68vh, 1000px); }
+.ws-figure-caption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; font-size: 0.8rem; color: var(--text-2); }
+.ws-figure-size { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ws-no-pictures { padding: 16px; text-align: center; background: var(--surface-2); border-radius: 8px; }
+
+/* The file as plain text, and its formats: Markdown, a table, indented JSON. */
 .ws-text {
-  line-height: 1.5; tab-size: 4;
+  line-height: 1.5; tab-size: 4; margin: 0;
   background: var(--surface-2); border: 1px solid var(--ring); border-radius: 8px; padding: 10px 12px;
-  max-height: 60vh; overflow: auto; overscroll-behavior: contain;
 }
 .ws-text.mono { line-height: 1.45; }
-.ws-kind { margin-inline-start: 6px; }
+.ws-doc { min-width: 0; }
+.ws-doc-md { max-width: 78ch; line-height: 1.6; unicode-bidi: plaintext; }
+.ws-doc.ws-doc-md > * + *, .ws-doc .md-quote > * + * { margin-top: 0.75em; }
+.ws-doc.ws-doc-md > .md-h { line-height: 1.3; margin-top: 1.2em; }
+.ws-doc.ws-doc-md > .md-h:first-child, .ws-doc.ws-doc-md > .md-settings + .md-h { margin-top: 0.4em; }
+.md-h1 { font-size: 1.45rem; font-weight: 700; }
+.md-h2 { font-size: 1.2rem; }
+.md-h3 { font-size: 1.05rem; }
+.md-h4, .md-h5, .md-h6 { font-size: 0.95rem; }
+.md-p { margin: 0; }
+.md-list { margin: 0; padding-inline-start: 1.6em; }
+.md-list .md-list { margin-top: 0.2em; }
+.md-list li + li { margin-top: 0.2em; }
+.md-task { list-style: none; }
+.md-box { display: inline-block; width: 1.4em; margin-inline-start: -1.4em; color: var(--text-2); }
+.md-task[data-done="true"] { color: var(--text-2); }
+.md-quote { margin: 0; padding: 2px 0 2px 14px; border-inline-start: 3px solid var(--axis); color: var(--text-2); }
+.md-code, .ws-doc .ws-text {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.8rem; line-height: 1.45; margin: 0;
+  background: var(--surface-2); border: 1px solid var(--ring); border-radius: 8px; padding: 10px 12px;
+}
+.md-code-inline { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.85em; padding: 1px 5px; border-radius: 4px; background: var(--surface-2); }
+.md-url { color: var(--muted); font-size: 0.9em; overflow-wrap: anywhere; }
+.md-rule { border: 0; border-top: 1px solid var(--grid); margin: 1.2em 0; }
+.md-layout { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.78rem; color: var(--muted); }
+.md-settings { padding: 8px 12px; border-radius: 8px; background: var(--surface-2); border: 1px dashed var(--axis); }
+.md-settings-head { font-size: 0.72rem; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-2); }
+.md-settings pre { color: var(--text-2); }
+.md-table-wrap, .ws-table-wrap { margin-top: 0; }
+.md-table { font-size: 0.88rem; width: auto; min-width: min(100%, 420px); }
+.md-table th, .md-table td { border: 1px solid var(--grid); padding: 5px 10px; vertical-align: top; }
+.md-table thead th { background: var(--surface-2); }
+.md-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+.md-right { text-align: right; font-variant-numeric: tabular-nums; }
+.md-center { text-align: center; }
+
+.ws-v-files { border-top: 1px solid var(--grid); padding-top: 4px; }
+.ws-parts { list-style: none; margin: 0; padding: 0; display: grid; }
+.ws-part { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px 14px; padding: 7px 0; }
+.ws-part + .ws-part { border-top: 1px solid var(--grid); }
+.ws-part-main { display: grid; min-width: 0; }
+.ws-part-name { font-weight: 600; font-size: 0.9rem; overflow-wrap: anywhere; }
+.ws-part-role { font-size: 0.8rem; color: var(--text-2); }
+.ws-part-size { font-size: 0.85rem; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 /* An upgrade request's workshop script, and the task copied for Claude Code. */
 .upgrade-script { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--ring); border-radius: 8px; background: var(--surface-2); }
 .upgrade-script p { margin: 4px 0; }
@@ -957,15 +1269,6 @@ button.owed-item:hover { border-color: var(--ring); border-left-color: var(--acc
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.8rem; line-height: 1.45;
   max-height: 40vh; overflow: auto; background: var(--surface); border: 1px solid var(--ring); border-radius: 6px;
   padding: 8px 10px; margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere;
-}
-/* A product's pictures: pages side by side (as many as fit), a single picture at full width. */
-.ws-product { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); align-items: start; }
-.ws-product.single { grid-template-columns: minmax(0, 720px); }
-.ws-figure { margin: 0; }
-.ws-figure figcaption { margin-top: 4px; }
-.ws-image {
-  display: block; width: 100%; height: auto; background: #fff;
-  border: 1px solid var(--ring); border-radius: 6px;
 }
 
 /* --- Footer ------------------------------------------------------------- */
@@ -980,6 +1283,7 @@ body[data-stale="true"] .live { display: none; }
 
 @media (max-width: 900px) {
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ws-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tile-hero { grid-column: 1 / -1; }
   .now-grid { grid-template-columns: minmax(0, 1fr); }
 }
@@ -1009,8 +1313,36 @@ body[data-stale="true"] .live { display: none; }
   .steps .kind { grid-column: 1 / -1; }
   .detail-tools { padding-left: 8px; }
   .capped { max-height: 14rem; }
-  .ws-files th, .ws-files td { padding: 6px; }
-  .ws-files .ws-when { white-space: normal; }
+  .ws-stats { gap: 12px 16px; }
+  .ws-stat-value { font-size: 1.2rem; }
+  .ws-open { grid-template-columns: 40px minmax(0, 1fr) auto auto; grid-template-areas: "thumb main main main" "thumb tags size when"; gap: 2px 10px; padding: 7px 4px; }
+  .ws-item-thumb { width: 40px; height: 40px; }
+  .ws-item-tags { justify-content: flex-start; }
+  .ws-item-size, .ws-item-when { font-size: 0.78rem; }
+  .ws-list[data-view="grid"] .ws-items { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  /* One row that scrolls sideways, like Latest work: the overview stays short. */
+  .ws-owners {
+    grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(150px, 44%); gap: 8px;
+    overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scrollbar-width: thin; padding: 2px 2px 8px;
+  }
+  .ws-owners > li { scroll-snap-align: start; }
+  .ws-owner-card { padding: 6px 8px 8px; }
+  .ws-owner-go { margin-left: 0; }
+  .ws-venture-body { margin-left: 4px; padding-left: 8px; }
+  .ws-v-owner-cycle { flex-basis: 100%; text-align: start; }
+  .ws-controls { width: 100%; }
+  /* The selects one under the other, their labels in a column; Sort shares its row with List and Grid. */
+  .ws-controls .pj-sort { flex: 1 1 100%; display: grid; grid-template-columns: 3.6rem minmax(0, 1fr); white-space: nowrap; }
+  .ws-controls .pj-sort:last-of-type { flex: 1 1 0; min-width: 0; }
+  .ws-controls select { max-width: none; min-width: 0; }
+  .ws-viewer { width: 100%; height: 100%; margin: 0; border: 0; border-radius: 0; }
+  .ws-v-head { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "icon titles close" "nav nav nav"; padding: 10px 8px 6px 12px; }
+  .ws-v-icon { grid-area: icon; }
+  .ws-v-titles { grid-area: titles; }
+  .ws-v-close { grid-area: close; }
+  .ws-v-nav { grid-area: nav; justify-content: space-between; }
+  .ws-v-bar { padding: 8px 12px; }
+  .ws-v-body { padding: 12px 12px 20px; }
   .pj-bar { padding: 12px; }
   .pj-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; width: 100%; }
   .pj-stat-value { font-size: 1.2rem; }
@@ -1089,6 +1421,7 @@ body[data-stale="true"] .live { display: none; }
 .vt-scores dt { color: var(--text-2); }
 .vt-scores dd { margin: 0; font-weight: 600; }
 .vt-file { display: grid; gap: 8px; justify-items: start; margin: 8px 0; }
+.vt-files { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 8px 0; }  /* 0.26.0 */
 .vt-knowledge { width: 100%; }
 .vt-evidence { display: grid; gap: 6px; margin: 6px 0 0; padding: 0; list-style: none; }
 .vt-evidence li { overflow-wrap: anywhere; }

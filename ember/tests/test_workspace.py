@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import threading
@@ -10,10 +11,14 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
+from app import paths
+from app.agent import views
 from app.agent.sandbox import Jail
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
+from app.products import images
 from app.security import AccessPolicy
 from app.web import _attachment
 from tests.conftest import HA_CORE, INGRESS
@@ -61,11 +66,33 @@ def test_an_empty_workspace(ingress_client: TestClient) -> None:
         "mode": "dry_run",
         "files": [],
         "file_count": 0,
+        "folder_count": 0,
         "total_bytes": 0,
         "text_bytes": 0,
         "product_bytes": 0,
         "truncated": False,
+        "limits": {
+            "files": 5_000,
+            "folders": 1_000,
+            "text_bytes": 50 * 1024 * 1024,
+            "product_bytes": 2 * 1024 * 1024 * 1024,
+            "text_file_bytes": 64 * 1024,
+            "product_file_bytes": 15 * 1024 * 1024,
+        },
+        "owners": {"projects": [], "ventures": []},
     }
+
+
+def test_the_list_counts_folders_for_the_overview(ingress_client: TestClient) -> None:
+    """0.26.0: the overview shows how full the workspace is, folders included (they have a limit of their own)."""
+    jail = workspace(ingress_client)
+    jail.write("notes.md", "x")
+    jail.write("shop/cv.md", "x")
+    jail.write("workshop/out/chart.md", "x")
+    jail.write_bytes("workshop/scripts/old.png", b"\x89PNG")
+    data = ingress_client.get("api/workspace").json()
+    assert data["file_count"] == 4 and data["folder_count"] == 4  # shop, workshop, workshop/out, workshop/scripts
+    assert data["limits"]["folders"] == jail.limits.max_folders and data["limits"]["files"] == jail.limits.max_files
 
 
 def test_the_list_stops_at_the_file_limit(ingress_client: TestClient) -> None:
@@ -419,3 +446,119 @@ def test_the_dashboard_has_a_workspace_tab_after_mind(ingress_client: TestClient
     tabs = re.findall(r'role="tab" class="tab" id="tab-([a-z]+)"', page)
     assert tabs[tabs.index("mind") + 1] == "workspace"
     assert 'id="panel-workspace"' in page
+
+
+# --- thumbnails (0.26.0): what the overview and the lists show of a picture ---------------------------------------
+
+
+def picture(width: int, height: int, kind: str = "PNG", mode: str = "RGB") -> bytes:
+    out = io.BytesIO()
+    Image.new(mode, (width, height), (200, 40, 40, 0) if mode == "RGBA" else (200, 40, 40)).save(out, kind)
+    return out.getvalue()
+
+
+BROKEN = "shop/broken.png can't be shown: it isn't a PNG or JPEG picture Ember's code can read"
+
+
+def thumb(client: TestClient, path: str):  # noqa: ANN201
+    return client.get("api/workspace/thumb", params={"path": path, "v": "2026-10-06T10:00:00Z"})
+
+
+@pytest.mark.parametrize(("name", "kind"), [("shop/photo.png", "PNG"), ("books/cover.jpg", "JPEG")])
+def test_a_picture_has_a_small_thumbnail(ingress_client: TestClient, name: str, kind: str) -> None:
+    workspace(ingress_client).write_bytes(name, picture(3000, 2250, kind))
+    response = thumb(ingress_client, name)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    stem = name.rsplit("/", 1)[1].rsplit(".", 1)[0]
+    assert response.headers["content-disposition"].startswith(f'inline; filename="{stem}-thumbnail.jpg"')
+    assert response.headers["content-security-policy"] == "sandbox; default-src 'none'"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    # Its address carries the file's time and size, so the browser may keep it.
+    assert response.headers["cache-control"] == "private, max-age=86400"
+    small = Image.open(io.BytesIO(response.content))
+    assert small.format == "JPEG" and small.size == (views.THUMB_SIDE, views.THUMB_SIDE * 3 // 4)
+    assert len(response.content) < 20_000
+
+
+def test_a_thumbnail_is_white_where_the_picture_is_clear(ingress_client: TestClient) -> None:
+    workspace(ingress_client).write_bytes("shop/badge.png", picture(400, 300, mode="RGBA"))
+    small = Image.open(io.BytesIO(thumb(ingress_client, "shop/badge.png").content)).convert("RGB")
+    assert small.size == (400, 300)  # never larger than the picture
+    assert min(small.getpixel((200, 150))) > 245
+
+
+def test_a_thumbnail_is_made_once_and_again_when_its_picture_changes(
+    ingress_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jail = workspace(ingress_client)
+    jail.write_bytes("shop/photo.png", picture(1200, 900))
+    made = []
+    real = images.small_jpeg
+    monkeypatch.setattr(images, "small_jpeg", lambda data, side: made.append(len(data)) or real(data, side))
+    first = thumb(ingress_client, "shop/photo.png").content
+    assert thumb(ingress_client, "shop/photo.png").content == first and len(made) == 1
+    jail.write_bytes("shop/photo.png", picture(600, 900))
+    assert Image.open(io.BytesIO(thumb(ingress_client, "shop/photo.png").content)).size == (320, 480)
+    assert len(made) == 2
+
+
+@pytest.mark.parametrize(
+    ("path", "status", "error"),
+    [
+        ("shop/cv.pdf", 400, "shop/cv.pdf isn't a picture: only a PNG or JPEG has a thumbnail"),
+        ("notes.md", 400, None),
+        ("shop/missing.png", 404, "shop/missing.png doesn't exist"),
+        ("../ember.db", 400, None),
+        ("/data/dry_run/workspace/shop/photo.png", 400, None),
+        ("shop", 400, None),
+        ("", 400, None),
+        ("shop/broken.png", 400, BROKEN),
+    ],
+)
+def test_only_pictures_have_thumbnails(ingress_client: TestClient, path: str, status: int, error: str | None) -> None:
+    jail = workspace(ingress_client)
+    jail.write("notes.md", "a note")
+    jail.write_bytes("shop/cv.pdf", b"%PDF-1.7")
+    jail.write_bytes("shop/photo.png", picture(40, 30))
+    jail.write_bytes("shop/broken.png", b"\x89PNG\r\n\x1a\n not really")
+    response = thumb(ingress_client, path)
+    assert response.status_code == status
+    assert isinstance(response.json()["error"], str)
+    if error:
+        assert response.json()["error"] == error
+    assert "content-disposition" not in response.headers
+
+
+def test_a_thumbnail_is_ingress_only(client_factory: Callable) -> None:
+    assert not AccessPolicy().allows(HA_CORE[0], "/api/workspace/thumb", "GET")
+    with client_factory(client=HA_CORE) as client:
+        workspace(client).write_bytes("shop/photo.png", picture(40, 30))
+        assert thumb(client, "shop/photo.png").status_code == 403
+
+
+def test_the_viewer_draws_the_agents_text_without_links_or_pictures() -> None:
+    """0.26.0: Markdown and CSV are drawn element by element from the agent's text, never parsed as HTML (the page
+    shares Home Assistant's origin): a link shows its words and its address as text, and nothing the agent wrote
+    becomes a link, a picture or anything that loads."""
+    script = (paths.WEB_DIR / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    start = script.index("  function wsFormatted(ext, text) {")
+    end = script.index("  // ------------------------------------------------------------------ ventures", start)
+    drawing = script[start:end]
+    for sink in ('h("a"', 'h("img"', "href", "src:", "setAttribute(", ".style"):
+        assert sink not in drawing, sink
+    assert 'h("span", { class: "md-url" }, " (", address, ")")' in drawing  # the address, as text
+    assert 'h("code", { class: "md-code-inline", text: code })' in drawing
+    index = (paths.WEB_DIR / "index.html").read_text(encoding="utf-8")
+    assert '<dialog class="ws-viewer" id="ws-viewer"' in index
+
+
+def test_a_thumbnail_drawn_before_is_found_without_drawing(ingress_client: TestClient) -> None:
+    """The route looks for one drawn before first; only a new one waits for its turn to be drawn."""
+    agent = ingress_client.app.state.ember.agent
+    workspace(ingress_client).write_bytes("shop/photo.png", picture(800, 600))
+    assert agent.workspace_thumb("shop/photo.png", draw=False) == ("photo-thumbnail.jpg", None)
+    name, drawn = agent.workspace_thumb("shop/photo.png")
+    assert name == "photo-thumbnail.jpg" and drawn
+    assert agent.workspace_thumb("shop/photo.png", draw=False) == (name, drawn)
+    assert thumb(ingress_client, "shop/photo.png").content == drawn

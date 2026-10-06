@@ -45,8 +45,16 @@
     cycles: {},          // cycle id -> the Activity item built for it (patched in place on each poll)
     nowPlanKey: null,
     diag: { text: null, loadedAt: null, busy: false, full: false },
-    // The agent's files: the list and the open file are loaded when the tab opens and on Refresh, never polled.
-    ws: { list: null, loadedAt: null, busy: false, error: null, file: null, fileBusy: false, fileError: null, fileSeq: 0 },
+    // The agent's files: the list and the open file are loaded when the tab opens and on Refresh (0.26.0: and again
+    // after each step of the agent's while the tab is open), never polled otherwise. model: the list as items; kind,
+    // sort and view: the browser's choices (kept in this browser), folder, owner (the project or venture, "p:1", "v:2",
+    // or "none") and query its others; order and recentOrder: the items as listed (the viewer steps through nav,
+    // the list it was opened from); texts: texts once opened (by path, with their time); as: how a kind of text is
+    // shown; seenBefore: the newest change seen before this visit; reveal: the list is brought into view once shown.
+    ws: { list: null, loadedAt: null, busy: false, error: null, file: null, fileBusy: false, fileError: null, fileSeq: 0,
+      model: null, stamp: null, kind: loadPref("ember-ws-kind", "all"), sort: loadPref("ember-ws-sort", "project"),
+      view: loadPref("ember-ws-view", "list"), folder: "", owner: "", query: "", shown: 0, order: [], recentOrder: [], nav: [],
+      opener: null, texts: {}, as: {}, seenBefore: null, visit: false, pending: null, keepFocus: false, reveal: false },
     // The venture tree: loaded while its tab is open, again whenever the dashboard's ventures_stamp changes.
     // files: venture id -> what Ember learned about it (its knowledge file), loaded when the owner opens it.
     vt: { data: null, byId: {}, stamp: null, loadedAt: null, busy: false, again: false, error: null, selected: null,
@@ -255,7 +263,8 @@
   function byteSize(n) {
     if (n < 1024) return intFmt.format(n) + " bytes";
     if (n < 1024 * 1024) return oneDecimalFmt.format(n / 1024) + " KB";
-    return oneDecimalFmt.format(n / (1024 * 1024)) + " MB";
+    if (n < 1024 * 1024 * 1024) return oneDecimalFmt.format(n / (1024 * 1024)) + " MB";
+    return oneDecimalFmt.format(n / (1024 * 1024 * 1024)) + " GB";
   }
 
   // Agent-written values are shown as plain text; anything that isn't a string is shown as JSON.
@@ -640,6 +649,8 @@
     if (ui.tab === "roadmap" && !ui.rm.busy && isObject(d.roadmap) && d.roadmap.stamp !== ui.rm.stamp) loadRoadmap();
     if (ui.tab === "library" && !ui.lib.busy && isObject(d.library) && d.library.stamp !== ui.lib.stamp) loadLibrary();
     section("mind", [d.mind, ui.mind, minute], ["mind-body"], function () { renderMind(d.mind); });
+    // 0.26.0: the workspace again after the agent's steps while its tab is open, and the requests its files are in.
+    if (ui.tab === "workspace") safely("workspace", function () { workspaceOnPoll(d); });
 
     ui.refocus = null;  // only for the render right after the owner's action
     // Again, now that section errors are known (only changed banners reach the DOM).
@@ -1756,7 +1767,8 @@
     var s = PROJECT_STATUS[p.status] || {};
     return h("article", { class: "card project", "data-id": String(p.id), "data-tone": s.tone || null, "aria-labelledby": "pj-title-" + p.id },
       h("div", { class: "pj-chips" }, chip(PROJECT_STATUS, p.status, sentence(p.status || "unknown")),
-        num(p.pending_approvals) > 0 ? approvalsButton(p) : null, ventureChip(p, ctx)),
+        num(p.pending_approvals) > 0 ? approvalsButton(p) : null, ventureChip(p, ctx),
+        num(p.files) > 0 ? filesButton("p:" + p.id, "this project") : null),
       h("h3", { class: "pj-title", id: "pj-title-" + p.id, text: p.title || "Untitled project" }),
       p.hypothesis ? h("p", { class: "hypothesis", text: p.hypothesis }) : null,
       p.next_step ? h("div", { class: "pj-next" }, h("p", { class: "pj-next-label", text: "Next step" }), h("p", { class: "pj-next-text", text: String(p.next_step) })) : null,
@@ -1768,6 +1780,7 @@
   // A closed project: one line (how it ended, what it netted, when), its card's contents when opened.
   function projectRow(p, ctx) {
     var key = "row-" + p.id;
+    var chips = [ventureChip(p, ctx), num(p.files) > 0 ? filesButton("p:" + p.id, "this project") : null].filter(Boolean);
     return h("li", { class: "pj-row", "data-id": String(p.id) },
       h("details", { "data-id": key, open: ctx.open[key] },
         h("summary", null,
@@ -1776,7 +1789,7 @@
           h("span", { class: "pj-row-net", "data-tone": netTone(p.net_usd), title: "Net: earned less its expenses and API cost", text: netText(p.net_usd) }),
           h("span", { class: "pj-row-when" }, "closed ", timeEl(p.updated_at))),
         h("div", { class: "pj-row-body" },
-          ventureChip(p, ctx),
+          chips.length ? h("div", { class: "pj-chips" }, chips) : null,
           p.hypothesis ? h("p", { class: "hypothesis", text: p.hypothesis }) : null,
           projectMoney(p),
           projectLog(p, ctx, false),
@@ -1887,6 +1900,34 @@
     var details = item.li.querySelector("details");
     if (details) details.open = true;
     revealEl(details || item.li, details ? details.querySelector("summary") : null);
+  }
+
+  // 0.26.0: a project's card (a closed one's row, opened), from the workspace: all projects shown if it is closed and
+  // only the open ones were.
+  function revealProject(id) {
+    selectTab("projects", false);
+    function find() {
+      return Array.prototype.filter.call($("projects").querySelectorAll("article[data-id], li[data-id]"), function (c) {
+        return c.getAttribute("data-id") === String(id);
+      })[0];
+    }
+    var el = find();
+    if (!el && ui.pj.filter !== "all") {
+      setProjectView("all", null);
+      el = find();
+    }
+    if (!el) return;
+    var details = el.tagName === "LI" ? el.querySelector("details") : null;
+    if (details) details.open = true;
+    revealEl(el, details ? details.querySelector("summary") : el.querySelector("h3"));
+  }
+
+  // 0.26.0: a project's or a venture's files, in the workspace.
+  function filesButton(owner, what) {
+    var b = h("button", { type: "button", class: "chip chip-button", "aria-label": "Files written for " + what + ": open them in Workspace" },
+      h("span", { "aria-hidden": "true", text: "▤" }), "Files", h("span", { class: "chip-arrow", "aria-hidden": "true", text: "→" }));
+    b.addEventListener("click", function () { showWorkspaceFor(owner); });
+    return b;
   }
 
   function revealVenture(id) {
@@ -2671,7 +2712,8 @@
       content = payload ? h("div", { class: "payload-wrap" },
         final ? h("h4", { class: "small-head", text: "The agent's original" }) : null,
         h("p", { class: "payload-note" }, h("span", { "aria-hidden": "true", text: "! " }), "Written by the agent; check it before acting."),
-        h("pre", { class: "payload capped", tabindex: "0", text: payload })) : null;
+        h("pre", { class: "payload capped", tabindex: "0", text: payload }),
+        workspaceButton(wsPathsIn(action))) : null;  // 0.26.0: a pin's picture, a product's design
     }
     var note = null;
     if (todo && !executor) note = "You approved this; carry it out, then mark it done or failed.";
@@ -2781,7 +2823,7 @@
           var role = f.role === "cover" ? "Cover" : paperback ? "Interior" : "Manuscript";
           return [i ? h("br") : null, role + ": ", h("a", { href: wsProductUrl(String(f.path), false), text: String(f.path) }), " (" + byteSize(num(f.bytes) || 0) + ")",
             f.unchanged === false ? h("strong", { class: "kdp-changed", text: " changed or deleted since it was proposed: check it, or reject and ask for it again" }) : null];
-        })),
+        }), files.length ? [h("br"), workspaceButton(files.map(function (f) { return f.path; }))] : null),
         h("dt", { text: "AI content" }), h("dd", { text: "KDP asks whether AI tools made the book: " + asText(info.ai_answer) })),
       !paperback && files.length > 1 ? h("div", { class: "etsy-photos kdp-cover" }, h("a", { href: wsProductUrl(String(files[1].path), true), target: "_blank", rel: "noopener" },
         h("img", { src: wsProductUrl(String(files[1].path), true), alt: "Cover: " + String(files[1].path), loading: "lazy" }))) : null,
@@ -2839,7 +2881,7 @@
         h("dt", { text: "Category" }), h("dd", { text: asText(action.category) || "–" }),
         h("dt", { text: "Files" }), h("dd", null, files.map(function (f, i) {
           return [i ? ", " : "", h("a", { href: wsProductUrl(String(f.path), false), text: String(f.path) }), " (" + byteSize(num(f.bytes) || 0) + ")"];
-        }))),
+        }), photos.length || files.length ? [h("br"), workspaceButton(photos.concat(files).map(function (f) { return f.path; }))] : null)),
       h("h4", { class: "small-head", text: final ? "The agent's original description" : "Description" }),
       h("pre", { class: "payload capped", tabindex: "0", text: asText(action.description) }),
       h("p", { class: "muted small", text: "Ember adds this line at the end: \"This digital product was designed with the help of AI and reviewed by the seller before listing.\"" }));
@@ -2874,6 +2916,7 @@
       files.length ? h("p", { class: "muted small" }, "New files: ", files.map(function (f, i) {
         return [i ? ", " : "", h("a", { href: wsProductUrl(String(f.path), false), text: String(f.path) }), " (" + byteSize(num(f.bytes) || 0) + ")"];
       })) : null,
+      photos.length || files.length ? h("p", null, workspaceButton(photos.concat(files).map(function (f) { return f.path; }))) : null,
       h("h4", { class: "small-head", text: final ? "The agent's original change" : "The change" }),
       h("pre", { class: "payload capped", tabindex: "0", text: payload }));
   }
@@ -5982,13 +6025,50 @@
   $("diag-download").addEventListener("click", downloadDiagnostics);
 
   // ------------------------------------------------------------------ workspace
-  // The files the agent wrote. Their text is only ever shown with textContent, never rendered (an .html or .svg
-  // file stays text), and the server sends them as downloads, so opening the URL itself never renders them either.
-  // Products (PDF, Word, Excel, PNG) are made by Ember's code from the agent's text: they are shown as the PNG
-  // pictures made with them and downloaded as files, never opened in the dashboard.
+  // The files the agent wrote. Their text is only ever shown with textContent, never rendered as a page (an .html or
+  // .svg file stays text, and Markdown is drawn element by element from its text, a link as its words and its
+  // address), and the server sends them as downloads, so opening the URL itself never renders them either. Products
+  // (PDF, Word, Excel, PNG) are made by Ember's code from the agent's text: they are shown as the PNG pictures made
+  // with them and downloaded as files, never opened in the dashboard.
+  // 0.26.0: an overview (what there is, how full it is, what waits for the owner, the latest work), every file as an
+  // item (a product's files are one: shop/cv.pdf with shop/cv.docx and its page pictures), and a viewer in a dialog.
+  // Each item is under the project or venture it was written for (Ember's code files it as the agent writes it): the
+  // overview's projects, a filter, the list grouped by them, and the viewer's way to the project and the cycle.
 
-  var WS_MONO = /\.(csv|tsv|json|ya?ml|xml|html|css)$/i;
-  var WS_KINDS = { pdf: "PDF", docx: "Word", xlsx: "Excel", pptx: "PowerPoint", png: "Picture", jpg: "Picture" };
+  var WS_MONO = /\.(csv|tsv|json|ya?ml|xml|html|css|py)$/i;
+  var WS_PAGE = 48;            // items listed before "Show more"
+  var WS_RECENT = 8;           // items under Latest work
+  var WS_OWNERS = 6;           // projects and ventures in the overview (the list groups them all)
+  var WS_TEXTS_KEPT = 30;      // texts kept once opened, so stepping back and forth doesn't load them again
+  var WS_TABLE_ROWS = 500;     // rows of a CSV or TSV file shown as a table (the plain text has them all)
+  var WS_TABLE_COLUMNS = 40;
+  // What a file's ending says it is: its label, and for a text file which kind of text.
+  var WS_FILES = {
+    pdf: { label: "PDF" }, docx: { label: "Word" }, pptx: { label: "PowerPoint" }, xlsx: { label: "Excel" },
+    png: { label: "PNG" }, jpg: { label: "JPEG" },
+    md: { label: "Markdown", text: "notes" }, txt: { label: "Text", text: "notes" },
+    csv: { label: "CSV", text: "data" }, tsv: { label: "TSV", text: "data" }, json: { label: "JSON", text: "data" },
+    yaml: { label: "YAML", text: "data" }, yml: { label: "YAML", text: "data" }, xml: { label: "XML", text: "data" },
+    html: { label: "HTML", text: "web" }, css: { label: "CSS", text: "web" }, py: { label: "Python", text: "script" },
+  };
+  var WS_KINDS = {
+    document: { one: "document", many: "documents" }, spreadsheet: { one: "spreadsheet", many: "spreadsheets" },
+    picture: { one: "picture", many: "pictures" }, text: { one: "text file", many: "text files" },
+  };
+  var WS_TEXTS = {
+    notes: { one: "note or draft", many: "notes and drafts" }, data: { one: "data file", many: "data files" },
+    web: { one: "web file", many: "web files" }, script: { one: "script", many: "scripts" },
+  };
+  var WS_KIND_FILTERS = ["all", "document", "spreadsheet", "picture", "text"];
+  var WS_SORTS = ["project", "folder", "newest", "name", "size"];
+  var WS_VIEWS = ["list", "grid"];
+  // The requests whose files the workspace marks, by how much they need the owner: waiting for them first.
+  var WS_REQUEST_ORDER = { pending: 0, approved: 1, approved_with_changes: 1, done: 2 };
+  // A product's pictures next to it: a document's pages (-page1.png ...), a spreadsheet's sheets (-preview.png, then
+  // -sheet2.png ...), a KDP cover's preview (-preview.png), a cost statement's cover (-cover.png).
+  var WS_PART = /^(.+)-(page(\d{1,3})|preview|sheet(\d{1,3})|cover)\.png$/i;
+  var WS_PRODUCT_RANK = { pdf: 0, xlsx: 1, docx: 2, pptx: 3 };
+  var wsCollator = typeof Intl.Collator === "function" ? new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }) : null;
 
   function wsType(path) {
     var match = /\.([a-z]+)$/i.exec(String(path));
@@ -5999,14 +6079,10 @@
     return "api/workspace/product?path=" + encodeURIComponent(path) + (inline ? "&inline=1" : "");
   }
 
-  // The pictures that show a product: a PNG itself, a document's page pictures, a spreadsheet's table.
-  function wsPictures(path) {
-    var type = wsType(path);
-    if (type === "png" || type === "jpg") return [path];
-    var base = path.replace(/\.[a-z]+$/i, "");
-    var wanted = type === "xlsx" ? [base + "-preview.png"] : [1, 2, 3, 4].map(function (n) { return base + "-page" + n + ".png"; });
-    return wanted.filter(function (p) { return wsFileInfo(p) !== null; });
-  }
+  // The file's time and size in the address: a changed picture loads again, an unchanged one may come from the cache.
+  function wsVersion(f) { return "&v=" + encodeURIComponent(String(f.modified_at || "") + "~" + String(f.size || 0)); }
+  function wsThumbUrl(f) { return "api/workspace/thumb?path=" + encodeURIComponent(f.path) + wsVersion(f); }
+  function wsPictureUrl(f) { return wsProductUrl(f.path, true) + wsVersion(f); }
 
   function baseName(path) {
     var parts = String(path).split("/");
@@ -6020,104 +6096,1148 @@
     el.setAttribute("data-kind", kind || "");
   }
 
-  function wsFileInfo(path) {
-    var files = ui.ws.list ? arr(ui.ws.list.files) : [];
-    for (var i = 0; i < files.length; i++) if (isObject(files[i]) && files[i].path === path) return files[i];
+  function wsFolder(path) { var at = path.lastIndexOf("/"); return at < 0 ? "" : path.slice(0, at); }
+  function wsTime(iso) { var t = new Date(iso).getTime(); return isNaN(t) ? 0 : t; }
+  function wsCompare(a, b) { return wsCollator ? wsCollator.compare(a, b) : a < b ? -1 : a > b ? 1 : 0; }
+  function wsCount(n, words) { return intFmt.format(n) + " " + (n === 1 ? words.one : words.many); }
+  function wsFolderName(folder) { return folder ? folder + "/" : "the top folder"; }
+
+  // "just now", "12 min ago", "5 h ago", "yesterday", "3 days ago", then the date: short enough for a list.
+  function wsAgo(iso) {
+    var t = wsTime(iso);
+    if (!t) return "–";
+    var seconds = (Date.now() - t) / 1000;
+    if (seconds < 60) return "just now";
+    if (seconds < 3600) return intFmt.format(Math.floor(seconds / 60)) + " min ago";
+    if (seconds < 86400) return intFmt.format(Math.floor(seconds / 3600)) + " h ago";
+    var then = new Date(t);
+    var today = new Date();
+    var days = Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()) -
+      new Date(then.getFullYear(), then.getMonth(), then.getDate())) / 86400000);
+    return days < 30 ? relFmt.format(-Math.max(1, days), "day") : dateFmt.format(then);
+  }
+
+  // A time that says how long ago (short in lists, long in the overview), kept current while the tab is open.
+  function wsWhen(iso, long) {
+    return h("time", { datetime: iso, title: fmtDateTime(iso), "data-ws-rel": long ? "long" : "short", text: long ? relTime(iso) : wsAgo(iso) });
+  }
+
+  function wsTick() {
+    Array.prototype.forEach.call(document.querySelectorAll("time[data-ws-rel]"), function (t) {
+      var iso = t.getAttribute("datetime");
+      var text = t.getAttribute("data-ws-rel") === "long" ? relTime(iso) : wsAgo(iso);
+      if (t.textContent !== text) t.textContent = text;
+    });
+  }
+
+  // ---- The list as items: a product with its Word copy and its pictures, a picture of its own, a text file.
+
+  function wsModel(list) {
+    var files = arr(list.files).filter(function (f) { return isObject(f) && typeof f.path === "string" && f.path; });
+    var byPath = {};
+    var groups = {};
+    var items = [];
+    files.forEach(function (f) {
+      byPath[f.path] = f;
+      var ext = wsType(f.path);
+      if (WS_PRODUCT_RANK[ext] === undefined) return;
+      var base = f.path.slice(0, -ext.length - 1);
+      (groups[base] = groups[base] || { files: [], pictures: [] }).files.push(f);
+    });
+    files.forEach(function (f) {
+      var ext = wsType(f.path);
+      if (ext !== "png" && ext !== "jpg") return;
+      var m = WS_PART.exec(f.path);
+      var group = m ? groups[m[1]] : null;
+      var part = m ? m[2].toLowerCase() : "";
+      var sheet = !!group && group.files.some(function (g) { return wsType(g.path) === "xlsx"; });
+      if (!group || (part === "cover" && !sheet)) {
+        items.push(wsItem("picture", f.path, f, [f], [{ file: f, order: 0, label: null }]));
+        return;
+      }
+      var n = m[3] || m[4];
+      group.pictures.push({
+        file: f,
+        order: n ? Number(n) : part === "cover" ? -1 : sheet ? 1 : 0,
+        label: m[3] ? "Page " + m[3] : m[4] ? "Sheet " + m[4] : part === "cover" ? "Cover" : sheet ? "Sheet 1" : "Preview",
+      });
+    });
+    Object.keys(groups).forEach(function (base) {
+      var g = groups[base];
+      g.files.sort(function (a, b) { return WS_PRODUCT_RANK[wsType(a.path)] - WS_PRODUCT_RANK[wsType(b.path)]; });
+      g.pictures.sort(function (a, b) { return a.order - b.order || wsCompare(a.file.path, b.file.path); });
+      var item = wsItem(wsType(g.files[0].path) === "xlsx" ? "spreadsheet" : "document", base, g.files[0],
+        g.files.concat(g.pictures.map(function (p) { return p.file; })), g.pictures);
+      // The text it was most likely made from: written next to it, under the same name.
+      ["md", "txt", "json"].forEach(function (ext) { if (byPath[base + "." + ext]) item.related.push(base + "." + ext); });
+      items.push(item);
+    });
+    files.forEach(function (f) {
+      var type = WS_FILES[wsType(f.path)];
+      if (!type || type.text) items.push(wsItem("text", f.path, f, [f], []));
+    });
+    var byKey = {};
+    items.forEach(function (item) { byKey[item.key] = item; });
+    items.forEach(function (item) {
+      item.related.forEach(function (path) { if (byKey[path]) byKey[path].made.push(item.key); });
+    });
+    var owners = wsOwners(list);
+    items.forEach(function (item) {
+      wsFiledUnder(item);
+      if (item.owner !== "none") item.search += "\n" + wsOwner(owners, item.owner).title.toLowerCase();  // found by its project too
+    });
+    return { items: items, byKey: byKey, byPath: byPath, owners: owners, ownersKey: JSON.stringify(list.owners || null) };
+  }
+
+  function wsItem(kind, key, primary, files, pictures) {
+    var size = 0;
+    var time = 0;
+    var modified = primary.modified_at;
+    files.forEach(function (f) {
+      size += num(f.size) || 0;
+      var t = wsTime(f.modified_at);
+      if (t > time) { time = t; modified = f.modified_at; }
+    });
+    var ext = wsType(primary.path);
+    var parts = pictures.map(function (p) { return p.file; });
+    var formats = files.filter(function (f) { return kind === "picture" || parts.indexOf(f) < 0; }).map(function (f) {
+      var type = WS_FILES[wsType(f.path)];
+      return type ? type.label : wsType(f.path).toUpperCase() || "File";
+    });
+    var sheets = pictures.filter(function (p) { return /^Sheet /.test(p.label || ""); }).length;
+    return {
+      key: key, kind: kind, ext: ext, text: kind === "text" ? (WS_FILES[ext] || {}).text || "notes" : null,
+      primary: primary, files: files, pictures: pictures, thumb: pictures.length ? pictures[0].file : null,
+      name: baseName(primary.path), folder: wsFolder(primary.path), size: size, time: time, modified: modified,
+      formats: formats, sheets: sheets, related: [], made: [], requests: [], fresh: false,
+      search: files.map(function (f) { return f.path.toLowerCase(); }).join("\n"),
+    };
+  }
+
+  // "PDF + Word", "Excel, 3 sheets", "Markdown"
+  function wsFormatText(item) { return item.formats.join(" + ") + (item.sheets > 1 ? ", " + item.sheets + " sheets" : ""); }
+
+  // The item a file belongs to now (a picture that was on its own may have become a product's page since).
+  function wsFindItem(key, path) {
+    var model = ui.ws.model;
+    if (!model) return null;
+    if (key !== null && model.byKey[key]) return model.byKey[key];
+    for (var i = 0; i < model.items.length; i++) {
+      if (model.items[i].files.some(function (f) { return f.path === path; })) return model.items[i];
+    }
     return null;
   }
+
+  // ---- Whose an item is: the project or venture it was written for ("p:1", "v:2"; "none": written with
+  // neither in focus), from its main file (else the first of its files that says), and the cycle that wrote it last.
+
+  // An id the server sent (a whole number above 0) as text, else null.
+  function wsId(value) { var n = num(value); return n > 0 && Math.floor(n) === n ? String(n) : null; }
+
+  function wsOwners(list) {
+    var owners = { projects: {}, ventures: {} };
+    var o = isObject(list.owners) ? list.owners : {};
+    arr(o.projects).forEach(function (p) { if (isObject(p) && wsId(p.id)) owners.projects[wsId(p.id)] = p; });
+    arr(o.ventures).forEach(function (v) { if (isObject(v) && wsId(v.id)) owners.ventures[wsId(v.id)] = v; });
+    return owners;
+  }
+
+  function wsFiledUnder(item) {
+    var by = item.files.filter(function (f) { return wsId(f.project_id) || wsId(f.venture_id); })[0] || item.primary;
+    item.project = wsId(by.project_id);
+    item.venture = item.project ? null : wsId(by.venture_id);
+    item.owner = item.project ? "p:" + item.project : item.venture ? "v:" + item.venture : "none";
+    var wrote = null;
+    item.files.forEach(function (f) {
+      if (wsId(f.cycle_id) && (!wrote || wsTime(f.modified_at) > wsTime(wrote.modified_at))) wrote = f;
+    });
+    item.cycle = wrote ? wsId(wrote.cycle_id) : null;
+    item.tool = wrote && typeof wrote.tool === "string" && wrote.tool ? wrote.tool : null;
+  }
+
+  // What an owner key stands for: its title, kind and state, and a project's venture.
+  function wsOwner(owners, key) {
+    var m = /^([pv]):(\d+)$/.exec(key || "");
+    if (!m) return { key: "none", type: "none", id: null, known: true, title: "Not filed", state: "", icon: "", tone: "", venture: null };
+    if (m[1] === "p") {
+      var p = owners.projects[m[2]];
+      var s = p ? PROJECT_STATUS[p.status] || {} : {};
+      return { key: key, type: "project", id: m[2], known: !!p, title: p && p.title ? String(p.title) : "Project #" + m[2],
+        state: p ? s.label || sentence(String(p.status || "unknown")) : "",
+        icon: p && p.status === "abandoned" ? "⊘" : s.icon || "●", tone: s.tone || "",  // "–" would read as a dash
+        order: p ? statusOrder(PROJECT_STATUS, p.status) : 10, venture: p ? wsId(p.venture_id) : null };
+    }
+    var v = owners.ventures[m[2]];
+    var st = v ? VENTURE_STAGE[v.stage] || {} : {};
+    return { key: key, type: "venture", id: m[2], known: !!v, title: v && v.title ? String(v.title) : "Venture #" + m[2],
+      state: v ? st.label || sentence(String(v.stage || "unknown")) : "", icon: "◆", tone: st.tone || "", order: 0, venture: null };
+  }
+
+  // A venture's filter holds its own files and its projects'.
+  function wsOwnedBy(item, owner, owners) {
+    if (!owner || item.owner === owner) return true;
+    if (owner.charAt(0) !== "v" || !item.project) return false;
+    var p = owners.projects[item.project];
+    return !!p && "v:" + wsId(p.venture_id) === owner;
+  }
+
+  // The venture an item's files count toward: its own, or its project's ("none" for neither).
+  function wsCluster(item, owners) {
+    if (item.owner === "none" || item.venture) return item.owner;
+    var p = owners.projects[item.project];
+    var v = p ? wsId(p.venture_id) : null;
+    return v ? "v:" + v : item.owner;
+  }
+
+  // By project: a venture's own files, then each of its projects' (the one with the newest work first), the venture
+  // or project of no venture with the newest work first, and the files of neither last. Newest first in each.
+  function wsOwnerSorter(list, owners) {
+    var newest = {};
+    var cluster = {};
+    list.forEach(function (item) {
+      var c = wsCluster(item, owners);
+      if (newest[item.owner] === undefined || item.time > newest[item.owner]) newest[item.owner] = item.time;
+      if (cluster[c] === undefined || item.time > cluster[c]) cluster[c] = item.time;
+    });
+    return function (a, b) {
+      var ca = wsCluster(a, owners);
+      var cb = wsCluster(b, owners);
+      if (ca !== cb) return (ca === "none") - (cb === "none") || cluster[cb] - cluster[ca] || wsCompare(ca, cb);
+      if (a.owner !== b.owner) return (a.owner.charAt(0) === "p") - (b.owner.charAt(0) === "p") || newest[b.owner] - newest[a.owner] || wsCompare(a.owner, b.owner);
+      return b.time - a.time || wsCompare(a.name, b.name) || wsCompare(a.key, b.key);
+    };
+  }
+
+  // ---- The requests that name a file (a listing's photos and files, a book's manuscript and cover): only those the
+  // owner has to decide or that are carried out, waiting first. Read from the dashboard's approvals on every poll.
+
+  function wsRequestsByPath(d) {
+    var named = {};
+    arr(d && d.approvals).forEach(function (a) {
+      if (!isObject(a) || !Object.prototype.hasOwnProperty.call(WS_REQUEST_ORDER, a.status)) return;
+      wsPathsIn([a.action, isObject(a.kdp) ? a.kdp.files : null]).forEach(function (path) { (named[path] = named[path] || []).push(a); });
+    });
+    return named;
+  }
+
+  // The names of workspace files in a request's action (a listing's photos, a pin's picture), by their shape: folders
+  // and a name the workspace allows, and an ending it holds.
+  var WS_PATH = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,63}){0,3}\.(?:pdf|docx|xlsx|pptx|png|jpg|md|txt|csv|tsv|json|ya?ml|xml|html|css|py)$/i;
+
+  function wsPathsIn(value) {
+    var found = [];
+    (function walk(v, depth) {
+      if (depth > 8) return;
+      if (typeof v === "string") { if (v.length <= 200 && WS_PATH.test(v) && found.indexOf(v) < 0) found.push(v); }
+      else if (Array.isArray(v)) v.forEach(function (x) { walk(x, depth + 1); });
+      else if (isObject(v)) Object.keys(v).forEach(function (k) { walk(v[k], depth + 1); });
+    })(value, 0);
+    return found;
+  }
+
+  function wsItemRequests(item, named) {
+    var found = {};
+    var list = [];
+    item.files.forEach(function (f) {
+      arr(named[f.path]).forEach(function (a) {
+        if (!found[a.id]) { found[a.id] = true; list.push(a); }
+      });
+    });
+    return list.sort(function (x, y) { return WS_REQUEST_ORDER[x.status] - WS_REQUEST_ORDER[y.status] || num(y.id) - num(x.id); });
+  }
+
+  function wsRequestChip(item, long) {
+    var a = item.requests[0];
+    if (!a) return null;
+    var s = APPROVAL_STATUS[a.status] || { icon: "", label: a.status, tone: "" };
+    var label = a.status === "pending" ? "waits for you" : a.status === "done" ? "done" : "approved";
+    return h("span", { class: "chip ws-req", "data-tone": s.tone || null, title: "Request #" + a.id + ": " + asText(a.title) + " (" + s.label.toLowerCase() + ")" },
+      h("span", { "aria-hidden": "true", text: s.icon }), long ? "Request #" + a.id + " " + label : "#" + a.id,
+      long ? null : h("span", { class: "visually-hidden", text: " " + label }));
+  }
+
+  function revealRequest(id) {
+    if ($("ws-viewer").open) ui.ws.keepFocus = true;  // the request gets the focus, not what the dialog was opened with
+    closeWorkspaceDialog();
+    selectTab("approvals", false);
+    var card = Array.prototype.filter.call($("approvals").querySelectorAll("article[data-id]"), function (c) {
+      return c.getAttribute("data-id") === String(id);
+    })[0];
+    revealEl(card, card && card.querySelector("h3"));
+  }
+
+  // ---- What the owner saw last: items changed since are marked New (in this browser, per mode).
+
+  function wsSeenKey(list) { return "ember-ws-seen-" + (list.mode === "dry_run" ? "dry_run" : "live"); }
+
+  function wsNoteSeen(list, model) {
+    var ws = ui.ws;
+    if (ui.tab !== "workspace") return;
+    var stored = num(loadPref(wsSeenKey(list), ""));
+    if (ws.visit) {
+      ws.seenBefore = isNaN(stored) ? null : stored;
+      ws.visit = false;
+    }
+    var newest = 0;
+    model.items.forEach(function (item) { if (item.time > newest) newest = item.time; });
+    if (newest && (isNaN(stored) || newest > stored)) savePref(wsSeenKey(list), String(newest));
+  }
+
+  // ---- Loading
 
   function refreshWorkspace() {
     loadWorkspace();
     if (ui.ws.file) loadWorkspaceFile();
   }
 
+  // Changes with each step of the agent's (a cycle writes files): the list loads again while the tab is open.
+  function wsStamp(d) {
+    var now = d && isObject(d.now) ? d.now : null;
+    return now ? [now.cycle_id, now.status, now.phase, now.step].join("|") : "";
+  }
+
   function loadWorkspace() {
     var ws = ui.ws;
     if (ws.busy) return;
     ws.busy = true;
+    ws.stamp = wsStamp(ui.data);
     safely("workspace", renderWorkspace);
     request("GET", "api/workspace").then(function (res) {
       if (!res.ok) throw httpError(res);
       if (!isObject(res.data) || !Array.isArray(res.data.files)) throw new RequestError("malformed", res.data === undefined ? "not JSON" : "the file list is missing");
       ws.list = res.data;
+      ws.model = wsModel(res.data);
       ws.loadedAt = new Date();
       ws.error = null;
+      wsNoteSeen(ws.list, ws.model);
       // A file from the other mode's folder (dry run was switched) is not in this workspace.
-      if (ws.file && ws.file.mode !== ws.list.mode) closeWorkspaceFile();
+      if (ws.file && ws.file.mode !== ws.list.mode) closeWorkspaceDialog();
     }).catch(function (err) {
       if (!(err instanceof RequestError)) console.error(err);
       ws.error = err;
     }).then(function () {
       ws.busy = false;
       safely("workspace", renderWorkspace);
+      safely("workspaceFile", renderWorkspaceFile);
+      var pending = ws.pending;
+      ws.pending = null;
+      if (pending) safely("workspaceFile", function () { wsOpenPending(pending); });
+      // The open text changed since it was loaded: load it again.
+      var file = ws.file;
+      var item = file ? wsFindItem(file.key, file.path) : null;
+      if (file && !file.product && item && file.text !== null && !ws.fileBusy && item.primary.modified_at !== file.modified) loadWorkspaceFile();
       safely("banners", renderBanners);
     });
   }
 
+  // 0.26.0: a request's files (an Etsy listing's photos and files, a book's) in the viewer, from its card in Approvals:
+  // a PDF's pages without downloading it. ← and → step through that request's files.
+  function workspaceButton(paths) {
+    var list = arr(paths).filter(function (p) { return typeof p === "string" && p; });
+    if (!list.length) return null;
+    return h("button", { type: "button", class: "btn btn-small ws-preview", "data-ws-preview": JSON.stringify(list) }, "View the files");
+  }
+
+  function previewWorkspaceFiles(paths, opener) {
+    ui.ws.pending = { paths: paths, opener: opener };
+    loadWorkspace();  // opens them once the list is in (a list on its way opens them too)
+  }
+
+  function wsOpenPending(pending) {
+    var keys = [];
+    pending.paths.forEach(function (path) {
+      var item = ui.ws.list ? wsFindItem(null, path) : null;
+      if (item && keys.indexOf(item.key) < 0) keys.push(item.key);
+    });
+    var b = pending.opener;
+    if (!keys.length) {
+      if (b && document.body.contains(b)) {
+        b.textContent = ui.ws.error ? "Couldn't load the files: try again" : "Not in the workspace any more";
+        b.disabled = !ui.ws.error;
+      }
+      return;
+    }
+    openWorkspaceItem(keys[0], keys, b);
+  }
+
+  // On each dashboard poll while the tab is open: the list again after the agent's steps; otherwise what changed with
+  // time or the dashboard (the requests its files are in), each part rebuilt only when what it shows changed.
+  function workspaceOnPoll(d) {
+    var ws = ui.ws;
+    if (ws.list && !ws.busy && wsStamp(d) !== ws.stamp) { loadWorkspace(); return; }
+    if (ws.list) renderWorkspace();
+    wsTick();
+  }
+
+  // ---- The overview
+
   function renderWorkspace() {
     var ws = ui.ws;
     var list = ws.list;
-    $("ws-refresh").textContent = ws.busy ? "Refreshing…" : "Refresh";
+    var items = ws.model ? ws.model.items : [];
     var dry = list ? list.mode === "dry_run" : isDryRun(ui.data);
-    $("ws-sub").textContent = "Drafts, notes and research the agent wrote in its own folder, and the PDF, Word, Excel and " +
-      "picture files Ember made from them. Read-only." +
+    $("ws-refresh").textContent = ws.busy ? "Refreshing…" : "Refresh";
+    $("ws-sub").textContent = "What the agent wrote in its own folder, and the PDF, Word, Excel and picture files Ember's code " +
+      "made from it. Read-only: check a file before you use it or sell it." +
       (dry ? " Dry run: this is the dry-run folder, which starts empty with every dry-run session." : "");
-    setStatusText("ws-status", ws.error && !ws.busy ? "Couldn't load the file list (" + errorText(ws.error) + ")." +
-      (list ? " The list below is the one loaded earlier." : " Try Refresh.") : "", ws.error && !ws.busy ? "error" : "");
-    var summary = $("ws-summary");
-    summary.hidden = !list;
-    var el = $("ws-list");
-    if (!list) {
-      replace(el, ws.busy ? h("p", { class: "muted", text: "Loading the file list…" }) : []);
-      el.removeAttribute("data-key");
+    setStatusText("ws-status", ws.error && !ws.busy ? "Couldn't load the files (" + errorText(ws.error) + ")." +
+      (list ? " What you see was loaded at " + timeFmt.format(ws.loadedAt) + "." : " Try Refresh.") : "", ws.error && !ws.busy ? "error" : "");
+    var shown = items.length > 0;
+    var empty = $("ws-empty");
+    empty.hidden = shown || (!list && !ws.busy);
+    var emptyKey = list ? "empty" : "loading";
+    if (!shown && empty.getAttribute("data-key") !== emptyKey) {
+      empty.setAttribute("data-key", emptyKey);
+      replace(empty, list ? [h("p", { class: "empty-title", text: "No files yet." }), h("p", { class: "muted", text: "Drafts, notes and research show up here " +
+        "once the agent writes them, and its products once it makes them." })] : h("p", { class: "muted", text: "Loading the files…" }));
+    }
+    ["ws-stats", "ws-recent-part", "ws-browser"].forEach(function (id) { $(id).hidden = !shown; });
+    if (!shown) {
+      $("ws-alerts").hidden = true;
+      $("ws-owners-part").hidden = true;
       return;
     }
-    var files = arr(list.files).filter(function (f) { return isObject(f) && typeof f.path === "string" && f.path; });
-    var parts = [plural(num(list.file_count) >= 0 ? list.file_count : files.length, "file"), byteSize(num(list.total_bytes) || 0)];
-    if (list.truncated) parts.push("only the first " + count(files.length) + " are listed");
-    parts.push(ws.busy ? "refreshing…" : "loaded at " + timeFmt.format(ws.loadedAt));
-    summary.textContent = parts.join(" · ");
-    var open = ws.file ? ws.file.path : null;
-    var key = JSON.stringify([files, open, dry]);
-    if (el.getAttribute("data-key") === key) return;
+    var named = wsRequestsByPath(ui.data);
+    items.forEach(function (item) {
+      item.requests = wsItemRequests(item, named);
+      item.fresh = ws.seenBefore !== null && item.time > ws.seenBefore;
+    });
+    renderWsStats(list, items);
+    renderWsAlerts(list, items);
+    renderWsOwners(items);
+    renderWsRecent(items);
+    renderWsBrowser(items);
+    wsRevealList();
+  }
+
+  function renderWsStats(list, items) {
+    var kinds = { document: 0, spreadsheet: 0, picture: 0, text: 0 };
+    var texts = {};
+    var newest = null;
+    items.forEach(function (item) {
+      kinds[item.kind]++;
+      if (item.text) texts[item.text] = (texts[item.text] || 0) + 1;
+      if (!newest || item.time > newest.time) newest = item;
+    });
+    var products = kinds.document + kinds.spreadsheet + kinds.picture;
+    var day = 0;
+    var since = Date.now() - 86400000;
+    items.forEach(function (item) { if (item.time > since) day++; });
+    var limits = isObject(list.limits) ? list.limits : {};
+    var el = $("ws-stats");
+    var key = JSON.stringify([kinds, texts, newest.key, newest.modified, newest.folder, day, list.text_bytes, list.product_bytes,
+      list.file_count, list.folder_count, limits]);
+    if (el.getAttribute("data-key") === key || isBusy(el)) return;  // its link has focus: rebuilt with the next change
     el.setAttribute("data-key", key);
-    // Keep keyboard focus on the same file when the list is rebuilt under it.
-    var focused = el.contains(document.activeElement) ? document.activeElement.getAttribute("data-path") : null;
-    if (!files.length) {
-      replace(el, emptyState("div", "No files yet.", "Drafts, notes and research show up here once the agent writes them." +
-        (dry ? " In dry run the folder starts empty with every session." : "")));
-      return;
+    function stat(label, value, sub, cls) {
+      return h("div", { class: "ws-stat" + (cls ? " " + cls : "") }, h("dt", { text: label }),
+        h("dd", { class: "ws-stat-value" }, value), sub ? h("dd", { class: "ws-stat-sub" }, sub) : null);
     }
-    replace(el, h("table", { class: "ws-files" },
-      h("caption", { class: "visually-hidden", text: "Files in the agent's workspace, by path" }),
-      h("thead", null, h("tr", null, h("th", { scope: "col", text: "File" }), h("th", { scope: "col", class: "num", text: "Size" }),
-        h("th", { scope: "col", text: "Modified" }))),
-      h("tbody", null, files.map(function (f) {
-        var slash = f.path.lastIndexOf("/");
-        var current = f.path === open;
-        return h("tr", { "data-open": current ? "true" : null },
-          h("td", { class: "ws-path" }, h("button", { type: "button", class: "ws-open", "data-path": f.path, "aria-current": current ? "true" : null },
-            slash >= 0 ? h("span", { class: "ws-dir", text: f.path.slice(0, slash + 1) }) : null,
-            h("span", { class: "ws-name", text: f.path.slice(slash + 1) })),
-            f.kind === "product" && WS_KINDS[wsType(f.path)] ? h("span", { class: "chip ws-kind", text: WS_KINDS[wsType(f.path)] }) : null),
-          h("td", { class: "num", text: byteSize(num(f.size) || 0) }),
-          h("td", { class: "ws-when" }, f.modified_at ? timeEl(f.modified_at, fmtDateTime(f.modified_at)) : "–"));
-      }))));
-    if (focused !== null) {
-      Array.prototype.forEach.call(el.querySelectorAll("button[data-path]"), function (b) { if (b.getAttribute("data-path") === focused) b.focus(); });
+    var made = ["document", "spreadsheet", "picture"].filter(function (k) { return kinds[k]; }).map(function (k) { return wsCount(kinds[k], WS_KINDS[k]); });
+    var written = Object.keys(WS_TEXTS).filter(function (k) { return texts[k]; }).map(function (k) { return wsCount(texts[k], WS_TEXTS[k]); });
+    var text = num(list.text_bytes) || 0;
+    var product = num(list.product_bytes) || 0;
+    replace(el, [
+      stat("Products", intFmt.format(products), made.join(" · ") || "none yet"),
+      stat("Text files", intFmt.format(kinds.text), written.join(" · ") || "none yet"),
+      stat("Last change", wsWhen(newest.modified, true), [h("button", { type: "button", class: "link-button ws-link", "data-ws-open": newest.key, text: newest.name }),
+        " in " + wsFolderName(newest.folder), day > 1 ? h("span", { class: "ws-stat-line", text: intFmt.format(day) + " items changed in the last 24 hours" }) : null]),
+      h("div", { class: "ws-stat ws-space" }, h("dt", { text: "Space" }),
+        h("dd", { class: "ws-stat-value", text: byteSize(text + product) }),
+        h("dd", { class: "ws-meters" }, wsMeter("Text files", text, limits.text_bytes), wsMeter("Products", product, limits.product_bytes)),
+        h("dd", { class: "ws-stat-sub", text: count(list.file_count) + (num(limits.files) ? " of " + count(limits.files) : "") + " files · " +
+          count(list.folder_count) + (num(limits.folders) ? " of " + count(limits.folders) : "") + " folders" })),
+    ]);
+  }
+
+  // How much of what it may hold a kind of file takes. A sliver shows as soon as anything is used.
+  function wsMeter(label, used, cap) {
+    var limit = num(cap);
+    var ratio = limit > 0 ? used / limit : 0;
+    var fill = h("div", { class: "meter-fill" });
+    fill.style.width = (used > 0 ? Math.max(1.5, Math.min(100, ratio * 100)) : 0).toFixed(1) + "%";
+    var text = byteSize(used) + (limit > 0 ? " of " + byteSize(limit) : "");
+    return h("div", { class: "ws-meter" },
+      h("span", { class: "ws-meter-label", text: label }),
+      h("div", { class: "meter", role: "meter", "aria-label": label + ": space used", "aria-valuemin": "0", "aria-valuemax": "100",
+        "aria-valuenow": String(Math.min(100, Math.round(ratio * 100))), "aria-valuetext": text + " (" + pct(ratio) + ")",
+        "data-level": ratio >= 0.95 ? "critical" : ratio >= 0.8 ? "warning" : "normal" }, fill),
+      h("span", { class: "ws-meter-value", text: text }));
+  }
+
+  function renderWsAlerts(list, items) {
+    var alerts = [];
+    var waiting = {};
+    var order = [];
+    items.forEach(function (item) {
+      item.requests.forEach(function (a) {
+        if (a.status !== "pending") return;
+        if (!waiting[a.id]) { waiting[a.id] = { a: a, items: 0 }; order.push(a.id); }
+        waiting[a.id].items++;
+      });
+    });
+    if (order.length) {
+      var n = 0;
+      order.forEach(function (id) { n += waiting[id].items; });
+      alerts.push(wsAlert("warning", "◔", [plural(n, "item") + (n === 1 ? " is" : " are") + " in " +
+        (order.length === 1 ? "a request that waits" : order.length + " requests that wait") + " for your decision. Check " +
+        (n === 1 ? "it" : "them") + " here before you approve."],
+        order.map(function (id) {
+          var a = waiting[id].a;
+          return h("button", { type: "button", class: "chip chip-button ws-req-button", "data-tone": "warning", "data-ws-request": String(a.id),
+            "aria-label": "Request #" + a.id + ": " + asText(a.title) + ". Open it in Approvals" },
+            h("span", { class: "chip-text", text: "#" + a.id + " " + asText(a.title) }), h("span", { class: "chip-arrow", "aria-hidden": "true", text: "→" }));
+        })));
+    }
+    var limits = isObject(list.limits) ? list.limits : {};
+    [["text_bytes", "text_bytes", "Text files", true], ["product_bytes", "product_bytes", "Products", true],
+      ["file_count", "files", "Files", false], ["folder_count", "folders", "Folders", false]].forEach(function (s) {
+      var used = num(list[s[0]]) || 0;
+      var cap = num(limits[s[1]]);
+      if (!(cap > 0) || used / cap < 0.8) return;
+      var amount = s[3] ? byteSize(used) + " of the " + byteSize(cap) : count(used) + " of the " + count(cap);
+      alerts.push(wsAlert(used / cap >= 0.95 ? "error" : "warning", "▲", [s[2] + " take " + amount + " the workspace may hold. Once " +
+        (s[3] ? "they fill it" : "it is full") + ", the agent's new files are refused until it deletes old ones; it hears so when it writes."]));
+    });
+    if (list.truncated) {
+      alerts.push(wsAlert("warning", "!", ["The workspace holds more than the list shows: only its first " + count(arr(list.files).length) +
+        " files are listed, by path."]));
+    }
+    var el = $("ws-alerts");
+    el.hidden = !alerts.length;
+    var key = JSON.stringify([order.map(function (id) { return [id, waiting[id].items, waiting[id].a.title]; }), list.text_bytes,
+      list.product_bytes, list.file_count, list.folder_count, list.truncated, limits]);
+    if (el.getAttribute("data-key") === key || isBusy(el)) return;  // a button with focus is rebuilt with the next change
+    el.setAttribute("data-key", key);
+    replace(el, alerts);
+  }
+
+  function wsAlert(kind, icon, text, actions) {
+    return h("li", { class: "ws-alert", "data-kind": kind },
+      h("span", { class: "ws-alert-icon", "aria-hidden": "true", text: icon }),
+      h("div", { class: "ws-alert-body" }, h("p", null, text), actions && actions.length ? h("div", { class: "ws-alert-actions" }, actions) : null));
+  }
+
+  // The projects and ventures with files, the one with the newest work first (WS_OWNERS of them, then the
+  // files of none): what each has, its latest items' pictures, and what of it waits for the owner or is new. Each
+  // shows only its files in the list below (pressed again, all of them).
+  function renderWsOwners(items) {
+    var ws = ui.ws;
+    var owners = ws.model.owners;
+    var groups = {};
+    var list = [];
+    function add(key, item) {
+      var g = groups[key];
+      if (!g) list.push(g = groups[key] = { key: key, items: [], newest: null, products: 0, texts: 0, waiting: 0, fresh: 0, projects: {} });
+      g.items.push(item);
+      if (!g.newest || item.time > g.newest.time) g.newest = item;
+      if (item.kind === "text") g.texts++;
+      else g.products++;
+      if (item.requests.some(function (a) { return a.status === "pending"; })) g.waiting++;
+      if (item.fresh) g.fresh++;
+      if (item.project && key !== item.owner) g.projects[item.project] = true;
+    }
+    items.forEach(function (item) {
+      add(item.owner, item);
+      var c = wsCluster(item, owners);
+      if (c !== item.owner) add(c, item);  // a venture holds its projects' items too
+    });
+    var filed = list.filter(function (g) { return g.key !== "none"; });
+    var part = $("ws-owners-part");
+    part.hidden = !filed.length;
+    if (!filed.length) return;
+    filed.sort(function (a, b) { return b.newest.time - a.newest.time || wsCompare(a.key, b.key); });
+    var shown = filed.slice(0, WS_OWNERS).concat(groups.none ? [groups.none] : []);
+    var projects = filed.filter(function (g) { return g.key.charAt(0) === "p"; }).length;
+    $("ws-owners-note").textContent = "· " + [projects ? plural(projects, "project") : "", filed.length - projects ? plural(filed.length - projects, "venture") : ""]
+      .filter(Boolean).join(", ") + ", the newest work first";
+    var el = $("ws-owners");
+    var key = JSON.stringify([shown.map(function (g) {
+      return [g.key, g.items.length, g.products, g.texts, g.waiting, g.fresh, g.newest.key, g.newest.modified,
+        wsOwnerPictures(g).map(function (item) { return [item.key, item.thumb && item.thumb.modified_at]; })];
+    }), filed.length, ws.owner, ws.model.ownersKey]);
+    if (el.getAttribute("data-key") === key) return;
+    var focused = el.contains(document.activeElement) ? document.activeElement.getAttribute("data-ws-owner") || "all" : null;
+    el.setAttribute("data-key", key);
+    replace(el, shown.map(function (g) { return wsOwnerCard(g, wsOwner(owners, g.key)); }).concat(filed.length > WS_OWNERS ? [
+      h("li", { class: "ws-owners-all" }, h("button", { type: "button", class: "link-button", "data-ws-owners": "all" },
+        "All " + intFmt.format(filed.length) + " in the list, grouped", h("span", { "aria-hidden": "true", text: " →" })))] : []));
+    if (focused) {
+      Array.prototype.forEach.call(el.querySelectorAll("button"), function (b) {
+        if ((b.getAttribute("data-ws-owner") || "all") === focused) b.focus();
+      });
     }
   }
 
-  function openWorkspaceFile(path) {
+  // Its newest items, three at most, those with a picture first.
+  function wsOwnerPictures(g) {
+    return g.items.slice().sort(function (a, b) { return !!b.thumb - !!a.thumb || b.time - a.time; }).slice(0, 3);
+  }
+
+  function wsOwnerCard(g, o) {
+    var what = [g.products ? wsCount(g.products, { one: "product", many: "products" }) : "", g.texts ? wsCount(g.texts, WS_KINDS.text) : ""];
+    return h("li", null, h("button", { type: "button", class: "ws-owner-card", "data-ws-owner": g.key, "data-type": o.type,
+      "aria-pressed": String(ui.ws.owner === g.key) },
+      h("span", { class: "ws-owner-pics", "aria-hidden": "true" }, wsOwnerPictures(g).map(function (item) { return wsThumb(item, "ws-owner-pic"); })),
+      h("span", { class: "ws-owner-card-title" },
+        o.icon ? h("span", { class: "ws-owner-icon", "data-tone": o.tone || null, "aria-hidden": "true", text: o.icon }) : null,
+        h("span", { class: "visually-hidden", text: "Show the files of " }),
+        h("span", { class: "ws-owner-name", text: o.type === "none" ? "Not filed" : o.title }), h("span", { class: "visually-hidden", text: ". " })),
+      h("span", { class: "ws-owner-state", text: o.type === "none" ? "No project or venture in focus" : (o.type === "venture" ? "Venture" : "Project") +
+        (o.state ? " · " + o.state : "") + (Object.keys(g.projects).length ? " · " + plural(Object.keys(g.projects).length, "project") : "") },
+        h("span", { class: "visually-hidden", text: ". " })),
+      h("span", { class: "ws-owner-what" }, what.filter(Boolean).join(" · "), h("span", { "aria-hidden": "true", text: " · " }),
+        h("span", { class: "visually-hidden", text: ", changed " }), wsWhen(g.newest.modified)),
+      g.waiting || g.fresh ? h("span", { class: "ws-owner-flags" }, h("span", { class: "visually-hidden", text: ". " }),
+        g.fresh ? h("span", { class: "ws-new", text: intFmt.format(g.fresh) + " new" }) : null,
+        g.waiting ? h("span", { class: "chip ws-req", "data-tone": "warning" }, h("span", { "aria-hidden": "true", text: "◔" }),
+          intFmt.format(g.waiting) + " waiting for you") : null) : null));
+  }
+
+  function renderWsRecent(items) {
     var ws = ui.ws;
-    if (!ws.file || ws.file.path !== path) {
-      var info = wsFileInfo(path);
-      ws.file = { path: path, mode: ws.list ? ws.list.mode : null, text: null, loadedAt: null,
-        product: !!(info && info.kind === "product") };
+    var recent = items.slice().sort(function (a, b) { return b.time - a.time || wsCompare(a.name, b.name); }).slice(0, WS_RECENT);
+    ws.recentOrder = recent.map(function (item) { return item.key; });
+    var fresh = items.filter(function (item) { return item.fresh; }).length;
+    $("ws-recent-note").textContent = fresh ? "· " + intFmt.format(fresh) + " new since you last looked" : "";
+    var el = $("ws-recent");
+    var open = ws.file ? ws.file.key : null;
+    var key = JSON.stringify(recent.map(function (item) { return [item.key, item.modified, item.size, item.thumb && item.thumb.path, item.fresh, wsReqState(item)]; }));
+    if (el.getAttribute("data-key") === key) return;
+    var focused = el.contains(document.activeElement) ? document.activeElement.getAttribute("data-ws-open") : null;
+    el.setAttribute("data-key", key);
+    replace(el, recent.map(function (item) {
+      return h("li", null, h("button", { type: "button", class: "ws-tile", "data-ws-open": item.key, "data-from": "recent", "aria-current": item.key === open ? "true" : null },
+        wsThumb(item, "ws-tile-thumb"),
+        item.fresh ? h("span", { class: "ws-new ws-tile-new", text: "New" }) : null,
+        h("span", { class: "ws-tile-name", text: item.name }),
+        h("span", { class: "ws-tile-meta" }, item.formats.slice(0, 2).join(" · "), " · ", wsWhen(item.modified)),
+        wsRequestChip(item, false)));
+    }));
+    wsRefocus(el, focused);
+  }
+
+  function wsReqState(item) { return item.requests.map(function (a) { return [a.id, a.status]; }); }
+
+  function wsRefocus(el, key) {
+    if (key === null) return;
+    Array.prototype.forEach.call(el.querySelectorAll("[data-ws-open]"), function (b) { if (b.getAttribute("data-ws-open") === key) b.focus(); });
+  }
+
+  // A small picture of the item (a page, a sheet, the picture itself), or its kind in letters.
+  function wsThumb(item, cls) {
+    var box = h("span", { class: "ws-thumb" + (cls ? " " + cls : ""), "data-kind": item.kind });
+    var badge = h("span", { class: "ws-badge", "aria-hidden": "true", text: item.ext.toUpperCase() || "FILE" });
+    if (!item.thumb) {
+      append(box, badge);
+      return box;
     }
-    loadWorkspaceFile();
-    safely("workspace", renderWorkspace);
+    var img = h("img", { src: wsThumbUrl(item.thumb), alt: "", loading: "lazy", decoding: "async" });
+    img.addEventListener("error", function () { box.removeAttribute("data-picture"); replace(box, badge); });
+    box.setAttribute("data-picture", "true");
+    append(box, img);
+    return box;
+  }
+
+  // ---- The browser: search, kind, folder, sort and layout (the last three kept in this browser)
+
+  function initWorkspace() {
+    var ws = ui.ws;
+    if (WS_KIND_FILTERS.indexOf(ws.kind) < 0) ws.kind = "all";
+    if (WS_SORTS.indexOf(ws.sort) < 0) ws.sort = "project";
+    if (WS_VIEWS.indexOf(ws.view) < 0) ws.view = "list";
+    Array.prototype.forEach.call(document.querySelectorAll("[data-ws-kind]"), function (b) {
+      b.addEventListener("click", function () { setWorkspaceView({ kind: b.getAttribute("data-ws-kind") }); });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-ws-view]"), function (b) {
+      b.addEventListener("click", function () { setWorkspaceView({ view: b.getAttribute("data-ws-view") }); });
+    });
+    $("ws-sort").addEventListener("change", function () { setWorkspaceView({ sort: $("ws-sort").value }); });
+    $("ws-folder").addEventListener("change", function () { setWorkspaceView({ folder: $("ws-folder").value }); });
+    $("ws-owner").addEventListener("change", function () { setWorkspaceView({ owner: $("ws-owner").value }); });
+    var typing = null;
+    $("ws-search").addEventListener("input", function () {
+      window.clearTimeout(typing);
+      typing = window.setTimeout(function () { setWorkspaceView({ query: $("ws-search").value }); }, 150);
+    });
+    $("ws-search").addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape" && $("ws-search").value) {
+        ev.preventDefault();
+        window.clearTimeout(typing);
+        $("ws-search").value = "";
+        setWorkspaceView({ query: "" });
+      }
+    });
+    $("ws-refresh").addEventListener("click", refreshWorkspace);
+    $("approvals").addEventListener("click", function (ev) {
+      var b = ev.target.closest ? ev.target.closest("[data-ws-preview]") : null;
+      if (!b) return;
+      var paths;
+      try { paths = JSON.parse(b.getAttribute("data-ws-preview")); } catch (e) { return; }
+      previewWorkspaceFiles(arr(paths), b);
+    });
+    $("panel-workspace").addEventListener("click", function (ev) {
+      var t = ev.target.closest ? ev.target.closest("[data-ws-open], [data-ws-request], [data-ws-more], [data-ws-clear], [data-ws-owner], [data-ws-owners], [data-ws-reveal]") : null;
+      if (!t) return;
+      if (t.hasAttribute("data-ws-open")) {
+        openWorkspaceItem(t.getAttribute("data-ws-open"), t.getAttribute("data-from") === "recent" ? ws.recentOrder : ws.order, t);
+      } else if (t.hasAttribute("data-ws-request")) {
+        revealRequest(t.getAttribute("data-ws-request"));
+      } else if (t.hasAttribute("data-ws-reveal")) {
+        wsReveal(t.getAttribute("data-ws-reveal"));
+      } else if (t.hasAttribute("data-ws-owner")) {
+        // An overview's project: only its files below (pressed again, all of them).
+        var owner = t.getAttribute("data-ws-owner");
+        if (ws.owner === owner) { setWorkspaceView({ owner: "" }); return; }
+        ws.reveal = Date.now();
+        setWorkspaceView({ owner: owner });
+        wsRevealList();
+      } else if (t.hasAttribute("data-ws-owners")) {
+        ws.reveal = Date.now();
+        setWorkspaceView({ owner: "", sort: "project" });
+        wsRevealList();
+      } else if (t.hasAttribute("data-ws-more")) {
+        var first = ws.order[ws.shown];
+        ws.shown += WS_PAGE;
+        renderWsBrowser(ws.model ? ws.model.items : []);
+        wsRefocus($("ws-list"), first || null);
+      } else {
+        $("ws-search").value = "";
+        setWorkspaceView({ query: "", folder: "", owner: "", kind: "all" });
+        $("ws-search").focus();
+      }
+    });
+    ws.shown = WS_PAGE;
+    syncWorkspaceControls();
+    initWorkspaceViewer();
+  }
+
+  function setWorkspaceView(change) {
+    var ws = ui.ws;
+    if (change.kind !== undefined && WS_KIND_FILTERS.indexOf(change.kind) >= 0) { ws.kind = change.kind; savePref("ember-ws-kind", ws.kind); }
+    if (change.sort !== undefined && WS_SORTS.indexOf(change.sort) >= 0) { ws.sort = change.sort; savePref("ember-ws-sort", ws.sort); }
+    if (change.view !== undefined && WS_VIEWS.indexOf(change.view) >= 0) { ws.view = change.view; savePref("ember-ws-view", ws.view); }
+    if (change.folder !== undefined) ws.folder = String(change.folder);
+    if (change.owner !== undefined) ws.owner = String(change.owner);
+    if (change.query !== undefined) ws.query = String(change.query).trim().toLowerCase();
+    ws.shown = WS_PAGE;
+    syncWorkspaceControls();
+    if (ws.model) safely("workspace", function () { renderWsBrowser(ws.model.items); renderWsOwners(ws.model.items); });
+  }
+
+  // From a project's card or a venture's: the workspace with only its files.
+  function showWorkspaceFor(owner) {
+    $("ws-search").value = "";
+    ui.ws.reveal = Date.now();
+    setWorkspaceView({ owner: owner, folder: "", kind: "all", query: "" });
+    selectTab("workspace", false);
+    wsRevealList();  // now if the list is in, else once it is
+  }
+
+  // The list brought into view (its heading gets the focus) after the owner asked for a project's files: once it is
+  // shown, if that was a moment ago.
+  function wsRevealList() {
+    var ws = ui.ws;
+    if (!ws.reveal || ui.tab !== "workspace" || $("ws-browser").hidden) return;
+    var asked = ws.reveal;
+    ws.reveal = false;
+    if (Date.now() - asked > 15000) return;
+    var motion = !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    $("ws-browser").scrollIntoView({ block: "start", behavior: motion ? "smooth" : "auto" });
+    $("ws-files-title").focus({ preventScroll: true });
+  }
+
+  // A project's card in Projects, a venture's in Ventures (from the list's groups and the viewer).
+  function wsReveal(key) {
+    var m = /^([pv]):(\d+)$/.exec(key || "");
+    if (!m) return;
+    if ($("ws-viewer").open) ui.ws.keepFocus = true;  // the card gets the focus, not what the dialog was opened with
+    closeWorkspaceDialog();
+    if (m[1] === "p") revealProject(m[2]);
+    else revealVenture(Number(m[2]));
+  }
+
+  function wsRevealCycle(id) {
+    if ($("ws-viewer").open) ui.ws.keepFocus = true;
+    closeWorkspaceDialog();
+    revealCycle(id);
+  }
+
+  function syncWorkspaceControls() {
+    var ws = ui.ws;
+    Array.prototype.forEach.call(document.querySelectorAll("[data-ws-kind]"), function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-ws-kind") === ws.kind));
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-ws-view]"), function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-ws-view") === ws.view));
+    });
+    $("ws-sort").value = ws.sort;
+    $("ws-list").setAttribute("data-view", ws.view);
+    wsShowKind();
+  }
+
+  // The kind shown stays in sight where its row scrolls sideways (a phone). Laid out only while the tab is shown.
+  function wsShowKind() {
+    var row = document.querySelector(".ws-kinds");
+    var on = row.querySelector('[aria-pressed="true"]');
+    if (!on || !row.clientWidth) return;
+    if (on.offsetLeft < row.scrollLeft || on.offsetLeft + on.offsetWidth > row.scrollLeft + row.clientWidth) row.scrollLeft = on.offsetLeft - 4;
+  }
+
+  function wsInFolder(item, folder) { return !folder || item.folder === folder || item.folder.indexOf(folder + "/") === 0; }
+
+  function wsMatches(item, query) {
+    if (!query) return true;
+    return query.split(/\s+/).every(function (term) { return item.search.indexOf(term) >= 0; });
+  }
+
+  function wsSorter(sort) {
+    return function (a, b) {
+      var by = sort === "newest" ? b.time - a.time : sort === "size" ? b.size - a.size : sort === "folder" ? wsCompare(a.folder, b.folder) : 0;
+      return by || wsCompare(a.name, b.name) || wsCompare(a.key, b.key);
+    };
+  }
+
+  function renderWsFolders(items) {
+    var ws = ui.ws;
+    var counts = {};
+    items.forEach(function (item) {
+      var parts = item.folder ? item.folder.split("/") : [];
+      for (var i = 1; i <= parts.length; i++) {
+        var folder = parts.slice(0, i).join("/");
+        counts[folder] = (counts[folder] || 0) + 1;
+      }
+    });
+    if (ws.folder && !counts[ws.folder]) ws.folder = "";
+    var folders = Object.keys(counts).sort(wsCompare);
+    var select = $("ws-folder");
+    var key = JSON.stringify([folders, counts, items.length]);
+    if (select.getAttribute("data-key") !== key) {
+      select.setAttribute("data-key", key);
+      replace(select, [h("option", { value: "", text: "All (" + intFmt.format(items.length) + ")" })].concat(folders.map(function (folder) {
+        return h("option", { value: folder, text: folder + "/ (" + intFmt.format(counts[folder]) + ")" });
+      })));
+    }
+    select.value = ws.folder;
+    select.disabled = !folders.length;
+  }
+
+  // The projects and ventures with files (a venture counts its projects' too), open projects first; those not
+  // filed under one; one asked for from elsewhere is kept with none.
+  function renderWsOwnerSelect(items, owners) {
+    var ws = ui.ws;
+    var counts = {};
+    items.forEach(function (item) {
+      counts[item.owner] = (counts[item.owner] || 0) + 1;
+      var c = wsCluster(item, owners);
+      if (c !== item.owner) counts[c] = (counts[c] || 0) + 1;
+    });
+    var keys = Object.keys(counts).filter(function (k) { return k !== "none"; });
+    if (/^[pv]:/.test(ws.owner) && keys.indexOf(ws.owner) < 0) keys.push(ws.owner);
+    var list = keys.map(function (k) { return wsOwner(owners, k); });
+    var projects = list.filter(function (o) { return o.type === "project"; }).sort(function (a, b) { return a.order - b.order || wsCompare(a.title, b.title); });
+    var ventures = list.filter(function (o) { return o.type === "venture"; }).sort(function (a, b) { return wsCompare(a.title, b.title); });
+    var select = $("ws-owner");
+    var key = JSON.stringify([counts, list.map(function (o) { return [o.key, o.title, o.state]; }), items.length]);
+    if (select.getAttribute("data-key") !== key) {
+      select.setAttribute("data-key", key);
+      var option = function (o) {
+        var closed = o.type === "project" && o.known && o.order >= statusOrder(PROJECT_STATUS, "succeeded");
+        return h("option", { value: o.key, text: o.title + (closed ? " · " + o.state : "") + " (" + intFmt.format(counts[o.key] || 0) + ")" });
+      };
+      replace(select, [h("option", { value: "", text: "All (" + intFmt.format(items.length) + ")" }),
+        projects.length ? h("optgroup", { label: "Projects" }, projects.map(option)) : null,
+        ventures.length ? h("optgroup", { label: "Ventures" }, ventures.map(option)) : null,
+        counts.none && list.length || ws.owner === "none" ? h("option", { value: "none", text: "Not filed (" + intFmt.format(counts.none || 0) + ")" }) : null]);
+    }
+    select.value = ws.owner;
+    select.disabled = !list.length && ws.owner !== "none";
+  }
+
+  function renderWsBrowser(items) {
+    var ws = ui.ws;
+    var owners = ws.model ? ws.model.owners : { projects: {}, ventures: {} };
+    renderWsFolders(items);
+    renderWsOwnerSelect(items, owners);
+    wsShowKind();
+    var inScope = items.filter(function (item) { return wsInFolder(item, ws.folder) && wsOwnedBy(item, ws.owner, owners) && wsMatches(item, ws.query); });
+    var counts = { all: inScope.length, document: 0, spreadsheet: 0, picture: 0, text: 0 };
+    inScope.forEach(function (item) { counts[item.kind]++; });
+    WS_KIND_FILTERS.forEach(function (k) { $("ws-count-" + k).textContent = intFmt.format(counts[k]); });
+    var shown = inScope.filter(function (item) { return ws.kind === "all" || item.kind === ws.kind; });
+    shown.sort(ws.sort === "project" ? wsOwnerSorter(shown, owners) : wsSorter(ws.sort));
+    ws.order = shown.map(function (item) { return item.key; });
+    var files = 0;
+    var filed = 0;
+    items.forEach(function (item) { files += item.files.length; if (item.owner !== "none") filed++; });
+    $("ws-files-sub").textContent = plural(items.length, "item") + " from " + plural(files, "file") +
+      ": a product's PDF, Word copy and pictures are one item" + (filed ? ", filed under the project or venture it was written for." : ".");
+    var owner = ws.owner ? wsOwner(owners, ws.owner) : null;
+    var ownerText = !owner ? "" : owner.type === "none" ? " not filed under a project or venture" : " for " + owner.title;
+    var filtered = ws.query || ws.folder || ws.owner || ws.kind !== "all";
+    var result = filtered ? [intFmt.format(shown.length) + " of " + plural(items.length, "item"),
+      ws.kind !== "all" ? " · " + WS_KINDS[ws.kind].many : "", ownerText, ws.folder ? " in " + ws.folder + "/" : "",
+      ws.query ? " matching “" + ws.query + "”" : ""].join("") : "";
+    var resultEl = $("ws-result");
+    if (resultEl.getAttribute("data-text") !== result) {
+      resultEl.setAttribute("data-text", result);
+      replace(resultEl, filtered ? [result + " ", h("button", { type: "button", class: "link-button ws-clear", "data-ws-clear": "true", text: "Show everything" })] : []);
+    }
+    resultEl.hidden = !filtered;
+    var el = $("ws-list");
+    var page = shown.slice(0, Math.max(WS_PAGE, ws.shown || WS_PAGE));
+    var open = ws.file ? ws.file.key : null;
+    var total = 0;
+    shown.forEach(function (item) { total += item.size; });
+    // Each item says whose it is where the list doesn't: not grouped by project, nor only one project's.
+    var withOwner = filed > 0 && ws.sort !== "project" && !/^p:|^none$/.test(ws.owner);
+    var key = JSON.stringify([page.map(function (item) { return [item.key, item.modified, item.size, item.formats, item.fresh, item.owner, wsReqState(item)]; }),
+      shown.length, total, ws.sort, withOwner, ws.model ? ws.model.ownersKey : null]);
+    if (el.getAttribute("data-key") === key) return;
+    var focused = el.contains(document.activeElement) ? document.activeElement.getAttribute("data-ws-open") : null;
+    el.setAttribute("data-key", key);
+    if (!shown.length) {
+      replace(el, h("div", { class: "empty-state" }, h("p", { class: "empty-title", text: "Nothing matches." }),
+        h("p", { class: "muted" }, "No " + (ws.kind === "all" ? "items" : WS_KINDS[ws.kind].many) + ownerText + (ws.folder ? " in " + ws.folder + "/" : "") +
+          (ws.query ? " match “" + ws.query + "”" : "") + ". ", h("button", { type: "button", class: "link-button", "data-ws-clear": "true", text: "Show everything" }))));
+      return;
+    }
+    var parts = [];
+    if (ws.sort === "project") {
+      parts = wsOwnerGroups(page, shown, owners, open);
+    } else if (ws.sort === "folder") {
+      var groups = [];
+      page.forEach(function (item) {
+        var last = groups[groups.length - 1];
+        if (!last || last.key !== item.folder) groups.push(last = { key: item.folder, items: [] });
+        last.items.push(item);
+      });
+      groups.forEach(function (g, i) {
+        var id = "ws-group-" + i;
+        parts.push(h("section", { class: "ws-group", "aria-labelledby": id },
+          h("h3", { class: "ws-group-head", id: id }, h("span", { class: "ws-group-name", text: g.key ? g.key + "/" : "Top folder" }),
+            h("span", { class: "ws-group-meta", text: wsGroupStats(shown, function (item) { return item.folder === g.key; }) })),
+          h("ul", { class: "ws-items" }, g.items.map(function (item) { return wsItemEl(item, open, false, withOwner, owners); }))));
+      });
+    } else {
+      parts.push(h("ul", { class: "ws-items" }, page.map(function (item) { return wsItemEl(item, open, true, withOwner, owners); })));
+    }
+    var left = shown.length - page.length;
+    if (left > 0) {
+      parts.push(h("button", { type: "button", class: "btn ws-more", "data-ws-more": "true" },
+        "Show " + intFmt.format(Math.min(WS_PAGE, left)) + " more", h("span", { class: "muted", text: " · " + intFmt.format(left) + " not shown yet" })));
+    }
+    replace(el, parts);
+    wsRefocus(el, focused);
+  }
+
+  // How many of the items listed a group has (all of them, not only those shown so far), and their size.
+  function wsGroupStats(shown, test) {
+    var n = 0;
+    var size = 0;
+    shown.forEach(function (item) { if (test(item)) { n++; size += item.size; } });
+    return plural(n, "item") + " · " + byteSize(size);
+  }
+
+  // By project: a venture's section holds its own files, then a group for each of its projects; a project of no
+  // venture is a group of its own, and the files of neither come last.
+  function wsOwnerGroups(page, shown, owners, open) {
+    var clusters = [];
+    page.forEach(function (item) {
+      var key = wsCluster(item, owners);
+      var c = clusters[clusters.length - 1];
+      if (!c || c.key !== key) clusters.push(c = { key: key, groups: [] });
+      var g = c.groups[c.groups.length - 1];
+      if (!g || g.key !== item.owner) c.groups.push(g = { key: item.owner, items: [] });
+      g.items.push(item);
+    });
+    var n = 0;
+    function list(items) { return h("ul", { class: "ws-items" }, items.map(function (item) { return wsItemEl(item, open, true, false, owners); })); }
+    function own(key) { return function (item) { return item.owner === key; }; }
+    return clusters.map(function (c) {
+      var id = "ws-group-" + n++;
+      if (c.key.charAt(0) !== "v") {
+        return h("section", { class: "ws-group", "aria-labelledby": id },
+          wsOwnerHead(wsOwner(owners, c.key), "h3", id, wsGroupStats(shown, own(c.key))), list(c.groups[0].items));
+      }
+      var projects = {};
+      var inVenture = function (item) { return wsCluster(item, owners) === c.key; };
+      shown.forEach(function (item) { if (item.project && inVenture(item)) projects[item.project] = true; });
+      var count = Object.keys(projects).length;
+      return h("section", { class: "ws-group ws-venture", "aria-labelledby": id },
+        wsOwnerHead(wsOwner(owners, c.key), "h3", id, (count ? plural(count, "project") + " · " : "") + wsGroupStats(shown, inVenture)),
+        h("div", { class: "ws-venture-body" }, c.groups.map(function (g) {
+          if (g.key === c.key) return list(g.items);  // its own files: research, what it learned
+          var gid = "ws-group-" + n++;
+          return h("section", { class: "ws-group ws-subgroup", "aria-labelledby": gid },
+            wsOwnerHead(wsOwner(owners, g.key), "h4", gid, wsGroupStats(shown, own(g.key))), list(g.items));
+        })));
+    });
+  }
+
+  // A project's group (a venture's): its title and state, and a way to it in Projects (in Ventures).
+  function wsOwnerHead(o, tag, id, stats) {
+    var what = o.type === "none" ? "written with no project or venture in focus"
+      : (o.type === "venture" ? "Venture" : "Project") + (o.state ? " · " + o.state : "");
+    return h("div", { class: "ws-group-head ws-owner-head", "data-type": o.type },
+      h(tag, { class: "ws-owner-title", id: id },
+        o.icon ? h("span", { class: "ws-owner-icon", "data-tone": o.tone || null, "aria-hidden": "true", text: o.icon }) : null,
+        h("span", { class: "ws-owner-name", text: o.type === "none" ? "Not filed under a project" : o.title })),
+      h("span", { class: "ws-group-meta", text: what + " · " + stats }),
+      o.type !== "none" && o.known ? h("button", { type: "button", class: "link-button ws-owner-go", "data-ws-reveal": o.key,
+        "aria-label": o.title + ": open it in " + (o.type === "venture" ? "Ventures" : "Projects") },
+        "Open in " + (o.type === "venture" ? "Ventures" : "Projects"), h("span", { "aria-hidden": "true", text: " →" })) : null);
+  }
+
+  function wsItemEl(item, open, withFolder, withOwner, owners) {
+    var o = withOwner && item.owner !== "none" ? wsOwner(owners, item.owner) : null;
+    var sub = [withFolder && item.folder ? h("span", { class: "ws-item-path", text: item.folder + "/" }) : null,
+      o ? h("span", { class: "ws-item-owner", "data-type": o.type },
+        h("span", { class: "ws-owner-icon", "data-tone": o.tone || null, "aria-hidden": "true", text: o.icon }),
+        h("span", { class: "visually-hidden", text: o.type === "venture" ? "Venture: " : "Project: " }), o.title) : null].filter(Boolean);
+    return h("li", { class: "ws-item" },
+      h("button", { type: "button", class: "ws-open", "data-ws-open": item.key, "aria-current": item.key === open ? "true" : null },
+        wsThumb(item, "ws-item-thumb"),
+        h("span", { class: "ws-item-main" },
+          h("span", { class: "ws-item-name", text: item.name }),
+          sub.length ? h("span", { class: "ws-item-sub" }, sub) : null),
+        h("span", { class: "ws-item-tags" },
+          item.fresh ? h("span", { class: "ws-new", text: "New" }) : null,
+          item.kind === "text" ? null : item.formats.map(function (f) { return h("span", { class: "ws-format", text: f }); }),
+          item.sheets > 1 ? h("span", { class: "ws-format", text: item.sheets + " sheets" }) : null,
+          wsRequestChip(item, true)),
+        h("span", { class: "ws-item-size", text: byteSize(item.size) }),
+        h("span", { class: "ws-item-when" }, wsWhen(item.modified))));
+  }
+
+  // ---- The viewer: one item in a dialog; ← and → step through the list it was opened from.
+
+  function initWorkspaceViewer() {
+    var dialog = $("ws-viewer");
+    $("ws-close").addEventListener("click", closeWorkspaceDialog);
+    $("ws-prev").addEventListener("click", function () { wsStep(-1); });
+    $("ws-next").addEventListener("click", function () { wsStep(1); });
+    // A click on the backdrop (outside the dialog's box) closes it too.
+    dialog.addEventListener("click", function (ev) { if (ev.target === dialog) closeWorkspaceDialog(); });
+    dialog.addEventListener("close", onWorkspaceDialogClosed);
+    dialog.addEventListener("keydown", function (ev) {
+      if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey || (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight")) return;
+      // Where the arrow keys move something else: fields, and tables that scroll sideways.
+      if (ev.target.closest && ev.target.closest("input, select, textarea, .table-wrap")) return;
+      ev.preventDefault();
+      wsStep(ev.key === "ArrowLeft" ? -1 : 1);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-ws-as]"), function (b) {
+      b.addEventListener("click", function () {
+        var file = ui.ws.file;
+        if (!file) return;
+        ui.ws.as[wsType(file.path)] = b.getAttribute("data-ws-as");
+        safely("workspaceFile", renderWorkspaceFile);
+      });
+    });
+    $("ws-actions").addEventListener("click", function (ev) {
+      var b = ev.target.closest ? ev.target.closest("[data-ws-download], [data-ws-copy]") : null;
+      if (!b) return;
+      if (b.hasAttribute("data-ws-copy")) copyWorkspaceText();
+      else downloadWorkspaceFile(b.getAttribute("data-ws-download"));
+    });
+    $("ws-v-body").addEventListener("click", function (ev) {
+      var b = ev.target.closest ? ev.target.closest("[data-ws-open], [data-ws-request], [data-ws-reveal], [data-ws-cycle]") : null;
+      if (!b) return;
+      if (b.hasAttribute("data-ws-request")) revealRequest(b.getAttribute("data-ws-request"));
+      else if (b.hasAttribute("data-ws-reveal")) wsReveal(b.getAttribute("data-ws-reveal"));
+      else if (b.hasAttribute("data-ws-cycle")) wsRevealCycle(b.getAttribute("data-ws-cycle"));
+      else openWorkspaceItem(b.getAttribute("data-ws-open"), ui.ws.nav, null);
+    });
+  }
+
+  function openWorkspaceItem(key, nav, opener) {
+    var ws = ui.ws;
+    var item = ws.model ? ws.model.byKey[key] : null;
+    if (!item) return;
+    ws.nav = arr(nav).indexOf(key) >= 0 ? nav.slice() : ws.order.indexOf(key) >= 0 ? ws.order.slice() : [key];
+    if (opener) ws.opener = opener;
+    showWorkspaceItem(key);
+    var dialog = $("ws-viewer");
+    if (!dialog.open) {
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+    }
     $("ws-file-title").focus();
+  }
+
+  function showWorkspaceItem(key) {
+    var ws = ui.ws;
+    var item = ws.model.byKey[key];
+    if (!ws.file || ws.file.key !== key) {
+      ws.fileSeq++;  // an answer for the item shown before is dropped
+      ws.file = { key: key, path: item.primary.path, mode: ws.list.mode, product: item.kind !== "text", text: null, loadedAt: null, modified: null };
+      ws.fileBusy = false;
+      ws.fileError = null;
+      var kept = ws.texts[item.primary.path];
+      if (kept && kept.modified === item.primary.modified_at) {
+        ws.file.text = kept.text;
+        ws.file.loadedAt = kept.loadedAt;
+        ws.file.modified = kept.modified;
+      }
+      $("ws-v-body").scrollTop = 0;
+    }
+    if (!ws.file.product && ws.file.text === null) loadWorkspaceFile();
+    safely("workspaceFile", renderWorkspaceFile);
+    wsMarkOpen();
+  }
+
+  // The open item, marked in the lists behind the dialog.
+  function wsMarkOpen() {
+    var open = ui.ws.file ? ui.ws.file.key : null;
+    ["ws-list", "ws-recent"].forEach(function (id) {
+      Array.prototype.forEach.call($(id).querySelectorAll("[data-ws-open]"), function (b) {
+        if (b.getAttribute("data-ws-open") === open) b.setAttribute("aria-current", "true");
+        else b.removeAttribute("aria-current");
+      });
+    });
+  }
+
+  function wsStep(delta) {
+    var ws = ui.ws;
+    if (!ws.file || !ws.model) return;
+    var next = ws.nav[ws.nav.indexOf(ws.file.key) + delta];
+    if (!next || !ws.model.byKey[next]) return;
+    var hadFocus = document.activeElement;
+    showWorkspaceItem(next);
+    // A step button that is now at the end of the list is disabled: the focus goes to the title then.
+    if (!hadFocus || hadFocus.disabled || !$("ws-viewer").contains(hadFocus)) $("ws-file-title").focus();
+    else $("ws-announce").textContent = ws.model.byKey[next].name + ", " + $("ws-pos").textContent;  // the focus stays: say what is shown
+  }
+
+  function closeWorkspaceDialog() {
+    var dialog = $("ws-viewer");
+    if (dialog.open && typeof dialog.close === "function") dialog.close();
+    else if (dialog.hasAttribute("open")) { dialog.removeAttribute("open"); onWorkspaceDialogClosed(); }
+  }
+
+  function onWorkspaceDialogClosed() {
+    var ws = ui.ws;
+    var key = ws.file ? ws.file.key : null;
+    closeWorkspaceFile();
+    wsMarkOpen();
+    $("ws-announce").textContent = "";
+    // Back to the item shown last, in the list it was opened from, or to what opened it (a request's card); after
+    // Open in Approvals the request keeps the focus.
+    var target = null;
+    if (ui.tab === "workspace") {
+      ["ws-list", "ws-recent"].forEach(function (id) {
+        Array.prototype.forEach.call($(id).querySelectorAll("[data-ws-open]"), function (b) {
+          if (!target && b.getAttribute("data-ws-open") === key) target = b;
+        });
+      });
+    }
+    var opener = ws.opener;
+    ws.opener = null;
+    if (ws.keepFocus) { ws.keepFocus = false; return; }
+    if (!target && opener && document.body.contains(opener) && !opener.closest("[hidden]")) target = opener;
+    if (target) target.focus();
+    else if (ui.tab === "workspace") $("ws-files-title").focus();
   }
 
   function closeWorkspaceFile() {
@@ -6126,21 +7246,15 @@
     ws.fileSeq++;  // an answer still on its way is dropped
     ws.fileBusy = false;
     ws.fileError = null;
-    safely("workspaceFile", renderWorkspaceFile);
   }
 
   function loadWorkspaceFile() {
     var ws = ui.ws;
     var file = ws.file;
-    if (!file) return;
-    if (file.product) {  // nothing to load: its pictures load as images, the file itself only as a download
-      ws.fileSeq++;
-      ws.fileBusy = false;
-      ws.fileError = null;
-      safely("workspaceFile", renderWorkspaceFile);
-      return;
-    }
-    var seq = ++ws.fileSeq;  // only the latest request counts (the owner may open another file meanwhile)
+    if (!file || file.product) return;
+    var item = wsFindItem(file.key, file.path);
+    var modified = item ? item.primary.modified_at : null;
+    var seq = ++ws.fileSeq;  // only the latest request counts (the owner may step to another file meanwhile)
     ws.fileBusy = true;
     ws.fileError = null;
     safely("workspaceFile", renderWorkspaceFile);
@@ -6150,6 +7264,10 @@
       if (typeof res.text !== "string") throw new RequestError("malformed", "no text");
       file.text = res.text;
       file.loadedAt = new Date();
+      file.modified = modified;
+      ws.texts[file.path] = { text: res.text, loadedAt: file.loadedAt, modified: modified };
+      var kept = Object.keys(ws.texts);
+      if (kept.length > WS_TEXTS_KEPT) delete ws.texts[kept[0]];
     }).catch(function (err) {
       if (seq !== ws.fileSeq) return;
       if (!(err instanceof RequestError)) console.error(err);
@@ -6162,97 +7280,584 @@
     });
   }
 
+  // How a kind of text can be shown besides as it is: Markdown formatted, a table as a table, JSON indented.
+  function wsTextViews(ext) {
+    if (ext === "md") return "Formatted";
+    if (ext === "csv" || ext === "tsv") return "Table";
+    if (ext === "json") return "Indented";
+    return null;
+  }
+
   function renderWorkspaceFile() {
     var ws = ui.ws;
     var file = ws.file;
-    $("ws-viewer").hidden = !file;
     if (!file) return;
+    var item = wsFindItem(file.key, file.path);
+    var ext = wsType(file.path);
     var has = typeof file.text === "string";
-    var info = wsFileInfo(file.path);
-    $("ws-file-title").textContent = file.path;
+    $("ws-file-title").textContent = item ? item.name : baseName(file.path);
     var meta = [];
-    if (file.product && WS_KINDS[wsType(file.path)]) meta.push(WS_KINDS[wsType(file.path)]);
-    if (info) meta.push(byteSize(num(info.size) || 0), "modified " + fmtDateTime(info.modified_at));
-    if (has) meta.push(ws.fileBusy ? "reloading…" : "loaded at " + timeFmt.format(file.loadedAt));
-    $("ws-file-meta").textContent = meta.join(" · ");
+    if (item) {
+      meta.push("In " + wsFolderName(item.folder), wsFormatText(item), byteSize(item.size), "changed " + fmtDateTime(item.modified));
+    }
+    if (has && !file.product) meta.push(ws.fileBusy ? "reloading…" : "loaded at " + timeFmt.format(file.loadedAt));
+    setStatusText("ws-file-meta", meta.join(" · "), "");
+    $("ws-v-body").setAttribute("aria-label", item ? item.name : baseName(file.path));
+    var icon = $("ws-file-icon");
+    var iconKey = item ? item.key + "|" + (item.thumb ? item.thumb.modified_at : "") : "";
+    if (icon.getAttribute("data-key") !== iconKey) {
+      icon.setAttribute("data-key", iconKey);
+      replace(icon, item ? wsThumb(item, "ws-v-thumb") : []);
+    }
+    var at = ws.nav.indexOf(file.key);
+    var prev = at > 0 ? ws.model.byKey[ws.nav[at - 1]] : null;
+    var next = at >= 0 ? ws.model.byKey[ws.nav[at + 1]] : null;
+    $("ws-prev").disabled = !prev;
+    $("ws-next").disabled = !next;
+    $("ws-prev").title = prev ? "Previous: " + prev.name + " (←)" : "";
+    $("ws-next").title = next ? "Next: " + next.name + " (→)" : "";
+    $("ws-prev").lastChild.textContent = prev ? "Previous file: " + prev.name : "Previous file";
+    $("ws-next").firstChild.textContent = next ? "Next file: " + next.name : "Next file";
+    setStatusText("ws-pos", at >= 0 && ws.nav.length > 1 ? intFmt.format(at + 1) + " of " + intFmt.format(ws.nav.length) : "", "");
     $("ws-file-note").textContent = file.product
       ? "Made by Ember's code from the agent's text. Check it before you use it or sell it."
       : "Written by the agent. Check it before you use it.";
-    renderWorkspaceProduct(file, info);
+    renderWsFileRequests(item);
+    renderWsFileOwner(item);
+    renderWsActions(item, file, has);
+    var views = file.product ? null : wsTextViews(ext);
+    var as = views && (ws.as[ext] || "formatted") === "formatted" ? "formatted" : "plain";
+    $("ws-as").hidden = !views || !has || !file.text;
+    if (views) {
+      $("ws-as-formatted").textContent = views;
+      Array.prototype.forEach.call(document.querySelectorAll("[data-ws-as]"), function (b) {
+        b.setAttribute("aria-pressed", String(b.getAttribute("data-ws-as") === as));
+      });
+    }
+    renderWorkspaceProduct(file, item);
+    renderWsParts(item, file);
     if (file.product) {
-      $("ws-download").disabled = !info;
+      $("ws-doc").hidden = true;
       $("ws-text").hidden = true;
-      setStatusText("ws-file-status", info ? "" : "This file is no longer in the workspace.", info ? "" : "error");
+      setStatusText("ws-file-status", item ? "" : "This file is no longer in the workspace.", item ? "" : "error");
       return;
     }
-    $("ws-download").disabled = !has;
     var status = "";
-    if (ws.fileError && !ws.fileBusy) status = "Couldn't open the file (" + errorText(ws.fileError) + ")." + (has ? " The text below is the one loaded earlier." : "");
+    if (!item) status = "This file is no longer in the workspace." + (has ? " The text below is the one loaded earlier." : "");
+    else if (ws.fileError && !ws.fileBusy) status = "Couldn't open the file (" + errorText(ws.fileError) + ")." + (has ? " The text below is the one loaded earlier." : "");
     else if (!has && ws.fileBusy) status = "Loading the file…";
     else if (has && !file.text) status = "The file is empty.";
-    setStatusText("ws-file-status", status, ws.fileError && !ws.fileBusy ? "error" : "");
+    setStatusText("ws-file-status", status, (!item || ws.fileError) && !ws.fileBusy ? "error" : "");
+    var formatted = has && file.text && as === "formatted" ? wsFormatted(ext, file.text) : null;
+    var doc = $("ws-doc");
     var pre = $("ws-text");
-    pre.hidden = !has || !file.text;
+    doc.hidden = !formatted;
+    pre.hidden = !has || !file.text || !!formatted;
+    if (formatted) {
+      var key = file.path + "|" + file.modified + "|" + file.text.length;
+      if (doc.getAttribute("data-key") !== key) {  // unchanged, it keeps any selection
+        doc.setAttribute("data-key", key);
+        doc.className = "ws-doc ws-doc-" + ext;
+        replace(doc, formatted);
+      }
+      return;
+    }
     if (!has) return;
     pre.className = "ws-text" + (WS_MONO.test(file.path) ? " mono" : "");
-    // Unchanged text keeps its scroll position and any selection.
-    if (pre.getAttribute("data-path") !== file.path) {
+    // Unchanged text keeps any selection.
+    if (pre.getAttribute("data-path") !== file.path || pre.textContent !== file.text) {
       pre.textContent = file.text;
       pre.setAttribute("data-path", file.path);
-      pre.scrollTop = 0;
-    } else if (pre.textContent !== file.text) {
-      pre.textContent = file.text;
     }
   }
 
-  function renderWorkspaceProduct(file, info) {
+  // Each request that names one of the item's files, with a way to it in Approvals.
+  function renderWsFileRequests(item) {
+    var el = $("ws-file-requests");
+    var requests = item ? item.requests : [];
+    el.hidden = !requests.length;
+    var key = JSON.stringify(requests.map(function (a) { return [a.id, a.status, a.title]; }));
+    if (el.getAttribute("data-key") === key) return;
+    el.setAttribute("data-key", key);
+    replace(el, requests.map(function (a) {
+      var s = APPROVAL_STATUS[a.status] || {};
+      return h("li", { class: "ws-v-request", "data-tone": s.tone || null },
+        chip(APPROVAL_STATUS, a.status, sentence(String(a.status).replace(/_/g, " "))),
+        h("span", { class: "ws-v-request-title" }, h("strong", { text: "#" + a.id + " " }), asText(a.title)),
+        h("button", { type: "button", class: "btn btn-small", "data-ws-request": String(a.id) }, "Open in Approvals ", h("span", { "aria-hidden": "true", text: "→" })));
+    }));
+  }
+
+  // The project or venture it was written for (a project's venture too), each a way to its card, and the
+  // cycle that wrote it last (a way to it in Activity while Activity lists it).
+  function renderWsFileOwner(item) {
+    var el = $("ws-file-owner");
+    el.hidden = !item;
+    if (!item) return;
+    var owners = ui.ws.model.owners;
+    var o = wsOwner(owners, item.owner);
+    var venture = o.venture ? wsOwner(owners, "v:" + o.venture) : null;
+    var listed = item.cycle && ui.cycles[item.cycle];
+    var key = JSON.stringify([item.key, o.key, o.title, o.state, venture && [venture.title, venture.state], item.cycle, item.tool, !!listed]);
+    if (el.getAttribute("data-key") === key) return;
+    var focused = el.contains(document.activeElement) ? document.activeElement.getAttribute("data-ws-reveal") || "cycle" : null;
+    el.setAttribute("data-key", key);
+    function to(owner) {
+      if (!owner.known) return h("span", { class: "chip", text: owner.title });
+      return h("button", { type: "button", class: "chip chip-button", "data-tone": owner.tone || null, "data-ws-reveal": owner.key,
+        "aria-label": (owner.type === "venture" ? "Venture: " : "Project: ") + owner.title + (owner.state ? " (" + owner.state.toLowerCase() + ")" : "") +
+          ". Open it in " + (owner.type === "venture" ? "Ventures" : "Projects") },
+        h("span", { "aria-hidden": "true", text: owner.icon }), h("span", { class: "chip-text", text: owner.title }),
+        owner.state ? h("span", { class: "ws-chip-state", "aria-hidden": "true", text: owner.state }) : null,
+        h("span", { class: "chip-arrow", "aria-hidden": "true", text: "→" }));
+    }
+    var parts = o.type === "none" ? [h("span", { class: "ws-v-owner-none", text: "Not filed under a project or venture: written with neither in focus." })]
+      : [h("span", { class: "ws-v-owner-label", text: o.type === "venture" ? "For venture" : "For project" }), to(o),
+        venture ? [h("span", { class: "ws-v-owner-label", text: "of venture" }), to(venture)] : null];
+    if (item.cycle) {
+      parts.push(h("span", { class: "ws-v-owner-cycle" }, "Last written by ",
+        listed ? h("button", { type: "button", class: "link-button", "data-ws-cycle": item.cycle, "aria-label": "Cycle #" + item.cycle + ": open it in Activity" }, "cycle #" + item.cycle)
+          : "cycle #" + item.cycle,
+        item.tool ? [" with ", h("code", { text: item.tool })] : null));
+    }
+    replace(el, parts);
+    if (focused) {
+      Array.prototype.forEach.call(el.querySelectorAll("button"), function (b) {
+        if ((b.getAttribute("data-ws-reveal") || "cycle") === focused) b.focus();
+      });
+    }
+  }
+
+  function renderWsActions(item, file, has) {
+    var buttons = [];
+    if (file.product) {
+      if (item) {
+        item.files.forEach(function (f, i) {
+          var part = item.pictures.some(function (p) { return p.file === f; }) && item.kind !== "picture";
+          if (part) return;
+          var type = WS_FILES[wsType(f.path)];
+          buttons.push(h("button", { type: "button", class: "btn" + (i === 0 ? " btn-primary" : ""), "data-ws-download": f.path },
+            "Download " + (type ? type.label : "file"), h("span", { class: "muted ws-btn-size", text: " " + byteSize(num(f.size) || 0) })));
+        });
+      }
+    } else {
+      buttons.push(h("button", { type: "button", class: "btn btn-primary", "data-ws-download": file.path, disabled: !has }, "Download"));
+      buttons.push(h("button", { type: "button", class: "btn", "data-ws-copy": "true", disabled: !has || !file.text }, "Copy text"));
+    }
+    var el = $("ws-actions");
+    var key = JSON.stringify([file.path, item ? item.files.map(function (f) { return [f.path, f.size]; }) : null, has, !!(has && file.text)]);
+    if (el.getAttribute("data-key") === key) return;
+    var focused = el.contains(document.activeElement) ? document.activeElement.getAttribute("data-ws-download") || "copy" : null;
+    el.setAttribute("data-key", key);
+    replace(el, buttons);
+    if (focused) {
+      Array.prototype.forEach.call(el.querySelectorAll("button"), function (b) {
+        if ((b.getAttribute("data-ws-download") || "copy") === focused) b.focus();
+      });
+    }
+  }
+
+  // A product's pictures: pages side by side (as many as fit), a single picture at full width. Each opens at full
+  // size in a new tab (the server shows pictures inline, nothing else).
+  function renderWorkspaceProduct(file, item) {
     var el = $("ws-product");
-    var pictures = file.product && info ? wsPictures(file.path) : [];
-    el.hidden = !pictures.length;
-    var key = JSON.stringify(pictures.map(function (p) { var i = wsFileInfo(p); return [p, i ? i.modified_at : null]; }));
+    var pictures = file.product && item ? item.pictures : [];
+    var none = file.product && item && !pictures.length;
+    el.hidden = !pictures.length && !none;
+    var key = JSON.stringify([file.key, pictures.map(function (p) { return [p.file.path, p.file.modified_at, p.file.size]; }), none]);
     if (el.getAttribute("data-key") === key) return;
     el.setAttribute("data-key", key);
     el.className = "ws-product" + (pictures.length === 1 ? " single" : "");
+    if (none) {
+      replace(el, h("p", { class: "muted ws-no-pictures", text: item.ext === "pptx" ? "Ember's code makes no pictures of a presentation: download it to see it."
+        : "There are no pictures of its pages (it was made without them): download it to see it." }));
+      return;
+    }
     replace(el, pictures.map(function (p, index) {
-      var i = wsFileInfo(p);
-      var label = p === file.path ? baseName(p) : wsType(file.path) === "xlsx" ? "The first sheet of " + baseName(file.path)
-        : "Page " + (index + 1) + " of " + baseName(file.path);
-      // The modification time makes a remade picture load again instead of an old copy.
-      var src = wsProductUrl(p, true) + "&v=" + encodeURIComponent(i ? i.modified_at : "");
-      return h("figure", { class: "ws-figure" }, h("img", { class: "ws-image", src: src, alt: label, loading: "lazy" }),
-        pictures.length > 1 ? h("figcaption", { class: "muted small", text: label }) : null);
+      var label = p.label ? p.label + " of " + item.name : item.name;
+      var size = h("span", { class: "ws-figure-size" });
+      var img = h("img", { class: "ws-image", src: wsPictureUrl(p.file), alt: label, loading: index < 4 ? "eager" : "lazy", decoding: "async" });
+      img.addEventListener("load", function () {
+        if (img.naturalWidth) size.textContent = intFmt.format(img.naturalWidth) + " × " + intFmt.format(img.naturalHeight) + " px";
+      });
+      return h("figure", { class: "ws-figure" },
+        h("a", { class: "ws-figure-link", href: wsPictureUrl(p.file), target: "_blank", rel: "noopener" }, img,
+          h("span", { class: "visually-hidden", text: " (opens at full size in a new tab)" })),
+        h("figcaption", { class: "ws-figure-caption" }, h("span", { text: p.label || "Opens at full size in a new tab" }), size));
     }));
+  }
+
+  // The item's files (a product's formats and pictures), the text it was made from, and what was made from a text.
+  function renderWsParts(item, file) {
+    var section = $("ws-file-parts");
+    var rows = [];
+    if (item && item.files.length > 1) {
+      item.files.forEach(function (f) {
+        var picture = item.pictures.filter(function (p) { return p.file === f; })[0];
+        var type = WS_FILES[wsType(f.path)];
+        var role = picture ? wsPictureRole(picture.label) : f === item.primary ? (type ? type.label : "File")
+          : type && type.label === "Word" ? "Word copy (editable)" : type ? type.label : "File";
+        rows.push(h("li", { class: "ws-part" },
+          h("span", { class: "ws-part-main" }, h("span", { class: "ws-part-name", text: baseName(f.path) }), h("span", { class: "ws-part-role", text: role })),
+          h("span", { class: "ws-part-size", text: byteSize(num(f.size) || 0) }),
+          h("a", { class: "btn btn-small", href: wsProductUrl(f.path, false), download: baseName(f.path), "aria-label": "Download " + baseName(f.path) }, "Download")));
+      });
+    }
+    var links = [];
+    if (item) {
+      item.related.forEach(function (path) {
+        if (ui.ws.model.byKey[path]) links.push([path, "The text it was made from, by its name"]);
+      });
+      item.made.forEach(function (key) {
+        var made = ui.ws.model.byKey[key];
+        if (made) links.push([key, "Made from this text: " + wsFormatText(made)]);
+      });
+    }
+    links.forEach(function (l) {
+      var other = ui.ws.model.byKey[l[0]];
+      rows.push(h("li", { class: "ws-part" },
+        h("span", { class: "ws-part-main" }, h("span", { class: "ws-part-name", text: other.name }), h("span", { class: "ws-part-role", text: l[1] })),
+        h("span", { class: "ws-part-size", text: byteSize(other.size) }),
+        h("button", { type: "button", class: "btn btn-small", "data-ws-open": other.key }, "Open")));
+    });
+    section.hidden = !rows.length;
+    $("ws-file-parts-head").textContent = item && item.files.length > 1 ? "Its files" : "Related";
+    var key = JSON.stringify([file.key, item ? item.files.map(function (f) { return [f.path, f.size]; }) : null, links]);
+    if (section.getAttribute("data-key") === key) return;
+    section.setAttribute("data-key", key);
+    replace($("ws-parts"), rows);
+  }
+
+  function wsPictureRole(label) {
+    if (/^(Page|Sheet) /.test(label || "")) return "Picture of " + lowerFirst(label);
+    return (label || "Picture") === "Picture" ? "Picture" : label + " picture";
   }
 
   // Text is saved from the text already loaded (like the diagnostics report), never by opening the file's URL;
   // a product is downloaded from the server, which always sends it as an attachment.
-  function downloadWorkspaceFile() {
+  function downloadWorkspaceFile(path) {
     var file = ui.ws.file;
-    if (file && file.product) {
-      var link = h("a", { href: wsProductUrl(file.path, false), download: baseName(file.path), hidden: true });
-      document.body.appendChild(link);
+    if (!file) return;
+    if (file.product) {
+      var link = h("a", { href: wsProductUrl(path, false), download: baseName(path), hidden: true });
+      $("ws-viewer").appendChild(link);  // the page behind the dialog is inert
       link.click();
-      document.body.removeChild(link);
-      setStatusText("ws-file-status", "Downloading " + baseName(file.path) + " (check your downloads).", "ok");
+      link.remove();
+      setStatusText("ws-file-status", "Downloading " + baseName(path) + " (check your downloads).", "ok");
       return;
     }
-    if (!file || typeof file.text !== "string") return;
+    if (typeof file.text !== "string") return;
     var name = baseName(file.path);
     var url = window.URL.createObjectURL(new Blob([file.text], { type: "text/plain;charset=utf-8" }));
-    var link = h("a", { href: url, download: name, hidden: true });
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    var save = h("a", { href: url, download: name, hidden: true });
+    $("ws-viewer").appendChild(save);
+    save.click();
+    save.remove();
     window.setTimeout(function () { window.URL.revokeObjectURL(url); }, 60000);
     setStatusText("ws-file-status", "Saved as " + name + " (check your downloads).", "ok");
   }
 
-  $("ws-refresh").addEventListener("click", refreshWorkspace);
-  $("ws-download").addEventListener("click", downloadWorkspaceFile);
-  $("ws-list").addEventListener("click", function (ev) {
-    var btn = ev.target.closest ? ev.target.closest("button[data-path]") : null;
-    if (btn) openWorkspaceFile(btn.getAttribute("data-path"));
-  });
+  // The text as it is, whichever way it is shown: without the clipboard API (Home Assistant over plain http), from
+  // a copy of it selected out of sight.
+  function copyWorkspaceText() {
+    var file = ui.ws.file;
+    if (!file || typeof file.text !== "string") return;
+    var text = file.text;
+    var holder = h("pre", { class: "ws-copy-holder", text: text });
+    $("ws-viewer").appendChild(holder);
+    var name = baseName(file.path);
+    copyText(text, holder, function () {
+      holder.remove();
+      setStatusText("ws-file-status", "Copied the text of " + name + " (" + byteSize(new Blob([text]).size) + ").", "ok");
+    }, function () {
+      holder.remove();
+      setStatusText("ws-file-status", "This browser didn't allow copying. Choose Plain text, select the text and copy it with Ctrl+C (Cmd+C on a Mac).", "error");
+    });
+  }
+
+  // ---- A text formatted: Markdown, a table, JSON indented (null: shown as it is)
+
+  function wsFormatted(ext, text) {
+    if (ext === "md") return wsMarkdown(text, 0);
+    if (ext === "csv" || ext === "tsv") return wsTable(wsSeparated(text, ext === "tsv" ? "\t" : ","));
+    if (ext === "json") {
+      try { return [h("pre", { class: "ws-text mono", text: JSON.stringify(JSON.parse(text), null, 2) })]; } catch (e) { return null; }
+    }
+    return null;
+  }
+
+  // Comma- or tab-separated values, with quoted fields ("a, b" and "say ""hi"""), as rows of cells.
+  function wsSeparated(text, separator) {
+    var rows = [];
+    var row = [];
+    var field = "";
+    var quoted = false;
+    for (var i = 0; i < text.length && rows.length <= WS_TABLE_ROWS + 1; i++) {
+      var c = text.charAt(i);
+      if (quoted) {
+        if (c !== "\"") field += c;
+        else if (text.charAt(i + 1) === "\"") { field += "\""; i++; }
+        else quoted = false;
+      } else if (c === "\"" && field === "") quoted = true;
+      else if (c === separator) { row.push(field); field = ""; }
+      else if (c === "\n" || c === "\r") {
+        if (c === "\r" && text.charAt(i + 1) === "\n") i++;
+        row.push(field);
+        rows.push(row);
+        row = [];
+        field = "";
+      } else field += c;
+    }
+    if (field || row.length) { row.push(field); rows.push(row); }
+    return rows.filter(function (r) { return r.length > 1 || r[0] !== ""; });
+  }
+
+  function wsTable(rows) {
+    if (rows.length < 2) return null;
+    var head = rows[0].slice(0, WS_TABLE_COLUMNS);
+    var body = rows.slice(1, WS_TABLE_ROWS + 1);
+    var numeric = head.map(function (_, k) {
+      var cells = body.map(function (r) { return (r[k] || "").trim(); }).filter(Boolean);
+      return cells.length > 0 && cells.every(function (c) { return /^[-+]?[$€£]?\s?\d[\d\s.,']*%?\s?[$€£]?$/.test(c); });
+    });
+    var out = [h("div", { class: "table-wrap ws-table-wrap" }, h("table", { class: "md-table ws-csv" },
+      h("thead", null, h("tr", null, head.map(function (c, k) { return h("th", { scope: "col", class: numeric[k] ? "md-right" : null, text: c }); }))),
+      h("tbody", null, body.map(function (r) {
+        return h("tr", null, head.map(function (_, k) { return h("td", { class: numeric[k] ? "md-right" : null, text: r[k] || "" }); }));
+      }))))];
+    if (rows.length > WS_TABLE_ROWS + 1 || rows[0].length > WS_TABLE_COLUMNS) {
+      out.push(h("p", { class: "muted small", text: "The table shows the first " + intFmt.format(Math.min(body.length, WS_TABLE_ROWS)) +
+        " rows and " + intFmt.format(head.length) + " columns: Plain text shows the whole file." }));
+    }
+    return out;
+  }
+
+  // Markdown drawn from its text, element by element (never parsed as HTML): headings, paragraphs, lists and
+  // checklists, quotes, code, tables and rules, with **bold**, *italic*, `code` and links (their words, then their
+  // address as text). Ember's settings block and layout lines (::: sidebar) stay visible as they are.
+  // Each read in linear time, whatever the line (a pattern that splits a run of spaces two ways takes seconds on one).
+  var MD_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
+  var MD_HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?$/;
+  var MD_RULE = /^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/;
+  var MD_ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+  var MD_TASK = /^\[([ xX])\]\s+(.*)$/;
+  var MD_QUOTE = /^\s{0,3}>/;
+  // [words](address) | ***both*** | **bold** | *italic*, and the same with underscores. Emphasis closes within 500
+  // characters, at its first closing mark: a line full of unclosed marks is read in linear time, not quadratic.
+  var MD_INLINE = /\[([^\]\n]{1,300})\]\(\s*([^()\s]{1,800})(?:\s+"[^"\n]*")?\s*\)|(\*\*\*|___)(\S(?:.{0,500}?\S)??)\3|(\*\*|__)(\S(?:.{0,500}?\S)??)\5|(\*|_)(\S(?:.{0,500}?\S)??)\7/g;
+  // Code spans and escaped marks, held aside before emphasis is read: what they hold is never emphasis (`a_b`, \*).
+  var MD_HELD = /\\([\\`*_{}[\]()#+\-.!|~<>])|`([^`\n]+)`/g;
+  var MD_SLOT = "\uE000";  // where a held part goes back, in order
+
+  function wsMarkdown(text, depth) {
+    var lines = text.replace(/\r\n?/g, "\n").split("\n");
+    var out = [];
+    var i = 0;
+    if (!depth && /^---\s*$/.test(lines[0])) {
+      var end = 1;
+      while (end < lines.length && end <= 80 && !/^---\s*$/.test(lines[end])) end++;
+      if (end < lines.length && end <= 80) {
+        out.push(h("div", { class: "md-settings" }, h("p", { class: "md-settings-head", text: "Settings" }),
+          h("pre", { class: "mono", text: lines.slice(1, end).join("\n") })));
+        i = end + 1;
+      }
+    }
+    while (i < lines.length) {
+      var line = lines[i];
+      var m;
+      if (!line.trim()) { i++; continue; }
+      if ((m = MD_FENCE.exec(line))) {
+        var fence = m[1];
+        var code = [];
+        i++;
+        while (i < lines.length && lines[i].trim().indexOf(fence) !== 0) { code.push(lines[i]); i++; }
+        i++;  // the closing fence
+        out.push(h("pre", { class: "md-code", text: code.join("\n") }));
+      } else if (/^:::/.test(line.trim())) {
+        out.push(h("p", { class: "md-layout", text: line.trim() }));
+        i++;
+      } else if ((m = MD_HEADING.exec(line))) {
+        out.push(h("h" + Math.min(6, m[1].length + 2), { class: "md-h md-h" + m[1].length }, mdInline(mdHeading(m[2] || ""), 0)));
+        i++;
+      } else if (MD_RULE.test(line)) {
+        out.push(h("hr", { class: "md-rule" }));
+        i++;
+      } else if (MD_QUOTE.test(line)) {
+        var quote = [];
+        while (i < lines.length && MD_QUOTE.test(lines[i])) { quote.push(lines[i].replace(/^\s{0,3}>\s?/, "")); i++; }
+        out.push(h("blockquote", { class: "md-quote" }, depth < 3 ? wsMarkdown(quote.join("\n"), depth + 1) : h("p", { class: "pre-line", text: quote.join("\n") })));
+      } else if (mdTableStart(lines, i)) {
+        var table = mdTable(lines, i);
+        out.push(table.el);
+        i = table.next;
+      } else if (MD_ITEM.test(line)) {
+        var list = mdList(lines, i);
+        out.push(list.el);
+        i = list.next;
+      } else {
+        var para = [line];
+        i++;
+        while (i < lines.length && lines[i].trim() && !mdBlockStart(lines, i)) { para.push(lines[i]); i++; }
+        out.push(h("p", { class: "md-p" }, mdLines(para)));
+      }
+    }
+    return out;
+  }
+
+  // A heading's words, without the #s that may close it ("## Notes ##").
+  function mdHeading(text) {
+    var t = text.trim();
+    var end = t.length;
+    while (end > 0 && t.charAt(end - 1) === "#") end--;
+    return end < t.length && (end === 0 || /\s/.test(t.charAt(end - 1))) ? t.slice(0, end).trim() : t;
+  }
+
+  // A table: a row with a | over a line of its columns' dashes (|---|:--:|).
+  function mdTableStart(lines, i) {
+    var rule = i + 1 < lines.length ? lines[i + 1] : "";
+    if (lines[i].indexOf("|") < 0 || rule.indexOf("-") < 0) return false;
+    return mdCells(rule).every(function (c) { return /^:?-+:?$/.test(c); });
+  }
+
+  function mdBlockStart(lines, i) {
+    var line = lines[i];
+    return MD_FENCE.test(line) || /^:::/.test(line.trim()) || MD_HEADING.test(line) || MD_RULE.test(line) || MD_QUOTE.test(line) ||
+      MD_ITEM.test(line) || mdTableStart(lines, i);
+  }
+
+  // Lines of a paragraph: joined by spaces, or broken where a line ends in two spaces or a backslash.
+  function mdLines(lines) {
+    var out = [];
+    var hard = false;
+    lines.forEach(function (line, k) {
+      if (k) out.push(hard ? h("br") : " ");
+      var spaces = 0;
+      while (spaces < 2 && line.charAt(line.length - 1 - spaces) === " ") spaces++;
+      hard = spaces === 2 || line.charAt(line.length - 1) === "\\";
+      out.push(mdInline(line.trim().replace(/\\$/, ""), 0));
+    });
+    return out;
+  }
+
+  function mdInline(text, depth, held) {
+    if (!held) {
+      held = { parts: [], next: 0 };
+      text = text.split(MD_SLOT).join("\uFFFD").replace(MD_HELD, function (all, escaped, code) {
+        held.parts.push(escaped !== undefined ? escaped : h("code", { class: "md-code-inline", text: code }));
+        return MD_SLOT;
+      });
+    }
+    if (depth > 3) return mdHeld(text, held);
+    var out = [];
+    var pos = 0;
+    var m;
+    var re = new RegExp(MD_INLINE.source, "g");  // its own: the parts inside call this again
+    while ((m = re.exec(text))) {
+      var marker = m[3] || m[5] || m[7] || "";
+      // Underscores inside a word (snake_case) stay as they are.
+      if (marker.charAt(0) === "_" && (/[A-Za-z0-9]/.test(text.charAt(m.index - 1)) || /[A-Za-z0-9]/.test(text.charAt(re.lastIndex)))) {
+        re.lastIndex = m.index + 1;
+        continue;
+      }
+      if (m.index > pos) out.push(mdHeld(text.slice(pos, m.index), held));
+      if (m[1] !== undefined) {
+        var words = mdInline(m[1], depth + 1, held);
+        var address = mdHeld(m[2], held);
+        out.push(h("span", { class: "md-link" }, words, m[2] !== m[1] ? h("span", { class: "md-url" }, " (", address, ")") : null));
+      } else if (m[3]) out.push(h("strong", null, h("em", null, mdInline(m[4], depth + 1, held))));
+      else if (m[5]) out.push(h("strong", null, mdInline(m[6], depth + 1, held)));
+      else out.push(h("em", null, mdInline(m[8], depth + 1, held)));
+      pos = re.lastIndex;
+    }
+    if (pos < text.length) out.push(mdHeld(text.slice(pos), held));
+    return out;
+  }
+
+  // Text with the held parts back in their places, in the order they were held.
+  function mdHeld(text, held) {
+    var pieces = text.split(MD_SLOT);
+    var out = [pieces[0]];
+    for (var k = 1; k < pieces.length; k++) out.push(held.parts[held.next++], pieces[k]);
+    return out;
+  }
+
+  // A list's lines: its items (an item indented below another is in a list inside it), lines that go on an item,
+  // and blank lines between items.
+  function mdList(lines, i) {
+    var entries = [];
+    var first = MD_ITEM.exec(lines[i]);
+    var level = first[1].replace(/\t/g, "    ").length;
+    var ordered = /\d/.test(first[2]);
+    function another(m) { return m[1].replace(/\t/g, "    ").length <= level && /\d/.test(m[2]) !== ordered; }
+    while (i < lines.length) {
+      var line = lines[i];
+      var m = MD_ITEM.exec(line);
+      if (m) {
+        if (entries.length && another(m)) break;  // another kind of list starts at its level
+        entries.push({ indent: m[1].replace(/\t/g, "    ").length, ordered: /\d/.test(m[2]), start: parseInt(m[2], 10), text: m[3] });
+        i++;
+      } else if (!line.trim()) {
+        var j = i;
+        while (j < lines.length && !lines[j].trim()) j++;
+        var next = j < lines.length ? MD_ITEM.exec(lines[j]) : null;
+        if (next && !another(next)) i = j;
+        else break;
+      } else if (!mdBlockStart(lines, i) && lines[i - 1].trim()) {
+        entries[entries.length - 1].text += "\n" + line.trim();
+        i++;
+      } else break;
+    }
+    var root = null;
+    var stack = [];
+    entries.forEach(function (e) {
+      while (stack.length > 1 && e.indent < stack[stack.length - 1].indent) stack.pop();
+      var top = stack[stack.length - 1];
+      if (!top || (e.indent > top.indent && top.last && stack.length < 6)) {
+        var el = e.ordered ? h("ol", { class: "md-list", start: e.start > 1 ? String(e.start) : null }) : h("ul", { class: "md-list" });
+        if (top) top.last.appendChild(el);
+        else root = el;
+        stack.push(top = { indent: e.indent, el: el, last: null });
+      }
+      var task = MD_TASK.exec(e.text);
+      var done = task && task[1] !== " ";
+      var li = task ? h("li", { class: "md-task", "data-done": String(done) },
+        h("span", { class: "md-box", "aria-hidden": "true", text: done ? "☑" : "☐" }), h("span", { class: "visually-hidden", text: done ? "Done: " : "To do: " }),
+        mdLines(task[2].split("\n"))) : h("li", null, mdLines(e.text.split("\n")));
+      top.el.appendChild(li);
+      top.last = li;
+    });
+    return { el: root, next: i };
+  }
+
+  function mdCells(line) {
+    var s = line.trim();
+    if (s.charAt(0) === "|") s = s.slice(1);
+    if (s.charAt(s.length - 1) === "|" && s.charAt(s.length - 2) !== "\\") s = s.slice(0, -1);
+    var cells = [];
+    var cell = "";
+    for (var k = 0; k < s.length; k++) {
+      var c = s.charAt(k);
+      if (c === "\\" && s.charAt(k + 1) === "|") { cell += "|"; k++; }
+      else if (c === "|") { cells.push(cell.trim()); cell = ""; }
+      else cell += c;
+    }
+    cells.push(cell.trim());
+    return cells;
+  }
+
+  function mdTable(lines, i) {
+    var head = mdCells(lines[i]).slice(0, WS_TABLE_COLUMNS);
+    var align = mdCells(lines[i + 1]).map(function (c) { return /^:-+:$/.test(c) ? "md-center" : /-:$/.test(c) ? "md-right" : null; });
+    var rows = [];
+    i += 2;
+    while (i < lines.length && lines[i].trim() && lines[i].indexOf("|") >= 0) { rows.push(mdCells(lines[i])); i++; }
+    var el = h("div", { class: "table-wrap md-table-wrap" }, h("table", { class: "md-table" },
+      h("thead", null, h("tr", null, head.map(function (c, k) { return h("th", { scope: "col", class: align[k] || null }, mdInline(c, 0)); }))),
+      h("tbody", null, rows.map(function (r) {
+        return h("tr", null, head.map(function (_, k) { return h("td", { class: align[k] || null }, mdInline(r[k] || "", 0)); }));
+      }))));
+    return { el: el, next: i };
+  }
 
   // ------------------------------------------------------------------ ventures (0.10.0)
   // The venture tree: every idea Ember or the owner had, branching from the one it grew out of, weighted by its
@@ -6648,6 +8253,8 @@
       v.notes ? h("details", { class: "notes" }, h("summary", { text: "Notes" }), h("pre", { class: "notes-text", text: asText(v.notes) })) : null,
       lastDigest(v),
       ventureKnowledge(v),
+      num(v.files) > 0 ? h("p", { class: "vt-files" }, filesButton("v:" + v.id, "this venture and its projects"),
+        h("span", { class: "muted small", text: " Every file " + agentName() + " wrote for it or its projects, in Workspace." })) : null,
       h("p", { class: "muted small" }, (v.created_by === "owner" ? "Added by " + (v.entered_by || "you") : "Added by " + name) + " ",
         timeEl(v.created_at), " · updated ", timeEl(v.updated_at)),
     ];
@@ -8069,7 +9676,7 @@
     });
     if (focus) $("tab-" + name).focus();
     if (name === "overview" && ui.charts.flow) { ui.charts.flow.resize(); ui.charts.balance.resize(); }
-    if (name === "workspace") refreshWorkspace();
+    if (name === "workspace") { ui.ws.visit = true; refreshWorkspace(); }
     if (name === "ventures") loadVentures();
     if (name === "roadmap") loadRoadmap();
     if (name === "library") loadLibrary();
@@ -8149,6 +9756,7 @@
   initVentures();
   initRoadmap();
   initLibrary();
+  initWorkspace();
   selectTab(ui.tab, false);
   selectMind(ui.mind, false);
   refresh();
