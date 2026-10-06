@@ -3,7 +3,7 @@
 The image build runs this on every platform, so a library that doesn't work there (a missing native part, say)
 fails the build instead of the owner's first product. 0.23.0: every layout make_image draws (a text photo and a
 poster too), a print file of a photo (resize_image) and a Nebenkostenabrechnung (make_cost_statement: its formulas
-worked out and checked, its cover drawn). 0.24.0: a book's interior at a KDP trim size and its KDP covers (a JPEG in a
+worked out and checked, its cover drawn). 0.25.0: a book's interior at a KDP trim size and its KDP covers (a JPEG in a
 PDF, and an ebook's JPEG).
 """
 
@@ -88,7 +88,7 @@ STATEMENT = {
 }
 
 
-# 0.24.0: a book's interior at a KDP trim size, with the 24 pages KDP prints at least
+# 0.25.0: a book's interior at a KDP trim size, with the 24 pages KDP prints at least
 BOOK = "---\npage: 6x9\nmargin: 12\n---\n# Self-test book\n\n" + "Text.\n\n::: pagebreak\n" * 23 + "The end.\n"
 
 

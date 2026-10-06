@@ -410,7 +410,7 @@ PERSONAL_OPTIONS = (
     "site_email",
     "site_phone",
     "site_vat_id",
-    "kdp_author",  # 0.24.0: the author name of the owner's books (theirs, or a pen name)
+    "kdp_author",  # 0.25.0: the author name of the owner's books (theirs, or a pen name)
 )
 
 

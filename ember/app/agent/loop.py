@@ -250,7 +250,7 @@ class CycleRunner:
         self.printify_waits = ""  # 0.15.0: why Printify's tools are off although it is set up (its shop isn't known)
         self.site_on = settings.site_enabled  # 0.13.0 (Phase E3): the owner's website: its tool and WEBSITE section
         self.blog_on = settings.blog_enabled  # 0.14.0: the owner's blog: its tools and BLOG section
-        self.kdp_on = settings.kdp_enabled  # 0.24.0: Amazon KDP: its tools and KDP section
+        self.kdp_on = settings.kdp_enabled  # 0.25.0: Amazon KDP: its tools and KDP section
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
         self.news_kept: frozenset[news.Item] = frozenset()  # 0.15.0: the owner's news marked seen once the cycle ends
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
@@ -332,7 +332,7 @@ class CycleRunner:
                 self._sync_printify(cycle_id, ctx)
                 ctx.site = website.owner(self.settings) if self.site_on else None  # 0.13.0 (Phase E3)
                 ctx.blog = self._blog_access() if self.blog_on else None  # 0.14.0
-                ctx.kdp = tools.KdpAccess(self.settings.kdp_author) if self.kdp_on else None  # 0.24.0
+                ctx.kdp = tools.KdpAccess(self.settings.kdp_author) if self.kdp_on else None  # 0.25.0
                 self._expire_requests()
             with netguard.sealed() if self.dry_run else contextlib.nullcontext():
                 end = self._last_will(cycle_id) if trigger == "last_will" else self._plan_act_reflect(cycle_id, ctx)
@@ -725,7 +725,7 @@ class CycleRunner:
                 pod = _waiting("Printify", self.printify.status(), self._etsy_state(), self.printify_waits)
             site_text = website.planner_text(conn, self.scope, website.owner(self.settings)) if self.site_on else ""
             blog_text = site_publisher.text(conn, self.db, self.scope, self.settings) if self.blog_on else ""
-            books = (  # 0.24.0
+            books = (  # 0.25.0
                 kdp.text(conn, self.scope, self.clock.now(), self.settings.kdp_author) if self.kdp_on else ""
             )
             return context.snapshot(

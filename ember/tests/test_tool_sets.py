@@ -27,7 +27,7 @@ EVERYTHING = {
     "site": True,
     "blog": True,
     "bluesky": True,
-    "kdp": True,  # 0.24.0
+    "kdp": True,  # 0.25.0
 }
 
 

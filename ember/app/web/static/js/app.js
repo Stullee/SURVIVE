@@ -2428,7 +2428,7 @@
   function isApproved(status) { return status === "approved" || status === "approved_with_changes"; }
 
   // Requests the agent's code carries out itself after approval ("email") or prepares for the owner ("reddit_link",
-  // 0.24.0: "kdp_package"). Without a parsed action they are shown like any other request.
+  // 0.25.0: "kdp_package"). Without a parsed action they are shown like any other request.
   function executorOf(a) {
     if (!isObject(a.action)) return null;
     return a.executor === "email" || a.executor === "reddit_link" || a.executor === "kdp_package" || a.executor === "etsy_listing" || a.executor === "etsy_edit" ||
@@ -2758,7 +2758,7 @@
       h("pre", { class: "payload capped", tabindex: "0", "data-copy": "body", text: asText(action.body) }));
   }
 
-  // 0.24.0: a book for Amazon KDP, which the owner publishes from their account: every field as KDP asks for it, the
+  // 0.25.0: a book for Amazon KDP, which the owner publishes from their account: every field as KDP asks for it, the
   // files as they are in the workspace now (a file changed since it was proposed is flagged), and KDP's AI question.
   function kdpDraft(a) {
     var action = a.action;
@@ -2789,7 +2789,7 @@
       h("pre", { class: "payload capped", tabindex: "0", "data-copy": "kdp-description", text: asText(info.description || action.description) }));
   }
 
-  // 0.24.0: the owner's KDP Bookshelf, from the server: a real link only when it is a plain kdp.amazon.com https address.
+  // 0.25.0: the owner's KDP Bookshelf, from the server: a real link only when it is a plain kdp.amazon.com https address.
   function kdpLink(value) {
     var url;
     try { url = new URL(String(value || "")); } catch (e) { url = null; }
@@ -3059,7 +3059,7 @@
     return a;
   }
 
-  // A Reddit post's title or body; 0.24.0: or ``value``, which ``word`` names (a KDP book's fields).
+  // A Reddit post's title or body; 0.25.0: or ``value``, which ``word`` names (a KDP book's fields).
   function copyButton(it, what, label, value, word) {
     var b = h("button", { type: "button", class: "btn", "data-copy-button": what, text: label });
     b.addEventListener("click", function () {
@@ -3101,7 +3101,7 @@
     if (a.status === "pending") {
       // A Reddit draft is posted by the owner, who can still edit it on Reddit: no separate "with changes".
       if (executor === "reddit_link") return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
-      // 0.24.0: a KDP book's files can't take changes: the owner changes words as they enter them at KDP.
+      // 0.25.0: a KDP book's files can't take changes: the owner changes words as they enter them at KDP.
       if (executor === "kdp_package") return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
       // 0.13.0: a pin or a product is approved as it is (the agent proposes a better one after a rejection).
       if (isAsIs(a)) return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];

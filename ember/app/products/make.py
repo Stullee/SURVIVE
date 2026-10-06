@@ -11,7 +11,7 @@
   again.
 * ``cost_statement`` (0.20.0, make_cost_statement): a Nebenkostenabrechnung from a JSON spec, ``shop/nk.xlsx`` with
   its cover picture ``shop/nk-cover.png``, their numbers checked against each other (statement.py).
-* ``kdp_cover`` (0.24.0, propose_kdp_book makes it from a book's spec): a book's cover for Amazon KDP from the agent's
+* ``kdp_cover`` (0.25.0, propose_kdp_book makes it from a book's spec): a book's cover for Amazon KDP from the agent's
   front picture: an ebook's JPEG, ``books/journal-cover.jpg``, or a paperback's full wrap, ``books/journal-cover.pdf``
   (back, spine and front with bleed, as wide as the interior's pages make the spine) with
   ``books/journal-cover-preview.png``.
@@ -382,7 +382,7 @@ def cost_statement(jail: Jail, source: str, output: str) -> Made:
     return made
 
 
-# --- KDP covers (0.24.0) ---
+# --- KDP covers (0.25.0) ---
 
 BACK_MARGIN = Decimal("0.5")  # inches between the back's text and the trim, and above the barcode's space
 SOFT_COVER = 1.5  # a front picture drawn more than this many times larger says it may print soft

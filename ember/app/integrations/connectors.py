@@ -139,7 +139,7 @@ CLASSES: dict[str, ActionClass] = {
             {"reaches_people", "first_contact", "owner_identity"},
             by_owner=True,
         ),
-        # 0.24.0: Amazon KDP has no API: Ember's code prepares the book, the owner publishes it from their account
+        # 0.25.0: Amazon KDP has no API: Ember's code prepares the book, the owner publishes it from their account
         _class(
             "kdp.publish",
             "a book you publish at Amazon KDP from your account",
@@ -157,7 +157,7 @@ _EXECUTORS = {
     "email": "email.send",
     "etsy_listing": "etsy.create_listing",
     "reddit_link": "reddit.post",
-    "kdp_package": "kdp.publish",  # 0.24.0: the owner carries it out (never on an unlock: no rule names it)
+    "kdp_package": "kdp.publish",  # 0.25.0: the owner carries it out (never on an unlock: no rule names it)
     "pinterest_pin": "pinterest.create_pin",  # 0.13.0 (Phase E2)
     "pinterest_delete": "pinterest.delete_pin",  # the owner's Undo of a pin
     "bluesky_post": "bluesky.create_post",  # 0.19.0: never on an unlock (no rule of the policy engine names it)

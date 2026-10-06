@@ -88,7 +88,7 @@ post's likes, reposts, replies and quotes come back into the agent's plans.
 Expect little from it: the [Bluesky section of the docs](ember/DOCS.md#bluesky)
 says why.
 
-0.24.0 adds Amazon KDP, which has no API, so it works like Reddit: the agent
+0.25.0 adds Amazon KDP, which has no API, so it works like Reddit: the agent
 writes a book (an ebook's Word manuscript, or a paperback's interior at a KDP
 trim size) and describes it in a JSON spec; Ember's code makes its cover from
 the agent's front picture (a paperback's full wrap, as wide as the pages make
@@ -173,7 +173,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   exactly as approved, once, to one recipient, with a footer saying an AI wrote
   it and within a daily limit; a send is recorded before it starts and never
   retried (`ember/app/integrations/executor.py`). A Reddit post becomes a link
-  the owner opens and posts from their own account; a KDP book (0.24.0) becomes
+  the owner opens and posts from their own account; a KDP book (0.25.0) becomes
   a package the owner publishes at KDP from their own account (Ember's code
   never reaches Amazon).
 - **CSRF.** State-changing requests must carry an `X-Ember-Request: 1` header,

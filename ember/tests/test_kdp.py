@@ -1,4 +1,4 @@
-"""0.24.0: Amazon KDP, phase A: books the agent makes and the owner publishes at KDP from their own account (Amazon
+"""0.25.0: Amazon KDP, phase A: books the agent makes and the owner publishes at KDP from their own account (Amazon
 has no API for KDP). Ember's code checks the package against KDP's rules: the words, the price, a paperback's interior
 (its trim, page count and margins) and its full cover (as wide as the pages make the spine), an ebook's Word file and
 its JPEG cover; the card gives the owner every field and file, and the plan lists the books."""

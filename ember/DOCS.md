@@ -410,7 +410,7 @@ agent's workspace:
   workshop run; the agent hears what was cut off and when a picture is drawn so
   much larger that it may print soft. Up to 6 a cycle. Built in from upgrade
   request #4 (the workshop's resize script).
-- **KDP books** (0.24.0, with Amazon KDP on): a document's page can be one of
+- **KDP books** (0.25.0, with Amazon KDP on): a document's page can be one of
   KDP's trim sizes (`page: 6x9`), and such a book's interior can have up to
   160 pages. When the agent proposes a book, Ember's code makes its cover from
   the agent's front picture: an ebook's JPEG, or a paperback's full cover as a
@@ -1034,7 +1034,7 @@ no longer shown); a study that failed three times stops until you press
   money, record the revenue. Three kinds are different: an approved **email** is
   sent by Ember itself (see [Ember's mailbox](#embers-mailbox)), an approved
   **Reddit post** comes with a button that opens Reddit with the text filled
-  in (see [Reddit](#reddit)), and an approved **KDP book** (0.24.0) comes
+  in (see [Reddit](#reddit)), and an approved **KDP book** (0.25.0) comes
   with its files, Copy buttons and a button that opens your KDP Bookshelf (see
   [Amazon KDP](#amazon-kdp)). A request you don't decide **expires**
   (emails and posts after 7 days, spending after 14, the rest after 30; the
@@ -2128,7 +2128,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.24.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.25.0 (by /u/your name)`.
 
 ## Amazon KDP
 

@@ -172,7 +172,7 @@ class Owner:
                 if row["executor"] in AS_IS_EXECUTORS and final is not None:  # 0.13.0 (Phase E2, E4), 0.14.0
                     what = _AS_IS_WHAT[row["executor"].split("_")[0]][0]
                     raise OwnerError("decision", f"approve {what} as it is, or reject it and say what should change")
-                if row["executor"] == "kdp_package" and final is not None:  # 0.24.0: its files can't take changes
+                if row["executor"] == "kdp_package" and final is not None:  # 0.25.0: its files can't take changes
                     raise OwnerError(
                         "decision",
                         "approve the book as it is, or reject it and say what should change (change its words as you "

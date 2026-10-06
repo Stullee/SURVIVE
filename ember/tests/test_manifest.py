@@ -86,7 +86,7 @@ def test_options_match_settings_defaults() -> None:
     # worker model when empty), the Etsy app's keystring and shared secret, and (0.13.0) the Pinterest app's id and
     # secret, the Printify token and the website's texts (the owner's data for its Impressum among them), (0.14.0)
     # the blog's SFTP login, (0.19.0) the Bluesky account's handle and app password, (0.22.1) the mail provider's
-    # authserv-id, and (0.24.0) the author name of the owner's KDP books.
+    # authserv-id, and (0.25.0) the author name of the owner's KDP books.
     optional = {key for key, rule in schema.items() if isinstance(rule, str) and rule.endswith("?")}
     assert optional == {
         "anthropic_api_key",

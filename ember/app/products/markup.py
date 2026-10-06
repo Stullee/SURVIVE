@@ -29,7 +29,7 @@ FONT_KEYS = {"sans": "sans", "calibri": "sans", "carlito": "sans", "serif": "ser
              "caladea": "serif", "display": "display", "poppins": "display"}  # fmt: skip
 TABLE_STYLES = ("lines", "grid", "zebra", "plain")
 _COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
-# 0.24.0: KDP's paperback trim sizes, width x height in inches (kdp.TRIMS; a test keeps them the same), as page sizes
+# 0.25.0: KDP's paperback trim sizes, width x height in inches (kdp.TRIMS; a test keeps them the same), as page sizes
 KDP_PAGES = (
     "5x8", "5.06x7.81", "5.25x8", "5.5x8.5", "6x9", "6.14x9.21", "6.69x9.61", "7x10", "7.44x9.69", "7.5x9.25", "8x10",
     "8.25x6", "8.25x8.25", "8.5x8.5", "8.5x11", "8.27x11.69",
@@ -208,7 +208,7 @@ def _font(key: str, raw: str) -> str:
 
 
 def _page(key: str, raw: str) -> str:
-    """A4, Letter, or (0.24.0) one of KDP's paperback trim sizes in inches ('6x9', '6 x 9 in'): '6x9in'."""
+    """A4, Letter, or (0.25.0) one of KDP's paperback trim sizes in inches ('6x9', '6 x 9 in'): '6x9in'."""
     value = re.sub(r"\s+|\"", "", raw).lower().replace("×", "x")
     value = re.sub(r"(?:inches|inch|in)$", "", value)
     if value in ("a4", "letter"):

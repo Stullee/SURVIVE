@@ -32,7 +32,7 @@ PRESETS: dict[str, dict[str, object]] = {
 }  # fmt: skip
 
 PAGE_SIZES = {"A4": (210.0, 297.0), "Letter": (215.9, 279.4)}  # mm, portrait
-# 0.24.0: KDP's paperback trim sizes ('6x9in'), for a book's interior
+# 0.25.0: KDP's paperback trim sizes ('6x9in'), for a book's interior
 PAGE_SIZES |= {f"{name}in": (float(name.split("x")[0]) * 25.4, float(name.split("x")[1]) * 25.4) for name in KDP_PAGES}
 WHITE: RGB = (255, 255, 255)
 DARK: RGB = (34, 34, 34)

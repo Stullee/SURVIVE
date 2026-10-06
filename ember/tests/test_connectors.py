@@ -46,7 +46,7 @@ def test_every_request_has_an_action_class_and_its_flags() -> None:
     assert (listing.costs_money, listing.publishes_under_owner_identity, listing.undo) == (True, True, "deactivate it")
     for c in connectors.CLASSES.values():
         assert c.reversible == bool(c.undo) and c.connector == c.name.split(".")[0]
-        # Ember's code can't carry those out (0.24.0: nor a KDP book: KDP has no API)
+        # Ember's code can't carry those out (0.25.0: nor a KDP book: KDP has no API)
         assert c.by_owner == (c.connector in ("owner", "reddit", "kdp")), c.name
 
 

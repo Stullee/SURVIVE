@@ -269,7 +269,7 @@ class Settings(BaseModel):
     blog_sftp_password: SecretStr = SecretStr("")
     blog_sftp_host_key: str = Field(default="", max_length=800)
     blog_sftp_folder: str = Field(default="", max_length=200)
-    # Amazon KDP (0.24.0): books the agent makes (an ebook's Word manuscript and cover, a paperback's interior and full
+    # Amazon KDP (0.25.0): books the agent makes (an ebook's Word manuscript and cover, a paperback's interior and full
     # cover), checked by Ember's code against KDP's rules and, once the owner approved one, published by the owner at
     # kdp.amazon.com from their own account (Amazon has no API for KDP). kdp_author: the author name the books carry
     # (empty: the owner enters it at KDP). Off until the owner turns it on.

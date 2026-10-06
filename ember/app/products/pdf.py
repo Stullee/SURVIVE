@@ -46,7 +46,7 @@ from .theme import warnings as theme_warnings
 
 MM_PER_PT = 25.4 / 72
 MAX_PAGES = 40
-BOOK_PAGES = 160  # 0.24.0: a book's interior at a KDP trim size (KDP prints 24 pages and more)
+BOOK_PAGES = 160  # 0.25.0: a book's interior at a KDP trim size (KDP prints 24 pages and more)
 SIDEBAR_PADDING = 7.0
 COLUMN_GAP = 6.0
 BOX_PADDING = 4.0
@@ -752,7 +752,7 @@ def _rgb(value: str) -> RGB:
 
 
 def picture_page(jpeg: bytes, width_pt: float, height_pt: float, title: str) -> bytes:
-    """0.24.0: a PDF of one page ``width_pt`` x ``height_pt`` points that is the JPEG ``jpeg`` (a KDP cover)."""
+    """0.25.0: a PDF of one page ``width_pt`` x ``height_pt`` points that is the JPEG ``jpeg`` (a KDP cover)."""
     pdf = FPDF(unit="pt", format=(width_pt, height_pt))
     pdf.set_auto_page_break(False)
     pdf.set_margins(0, 0, 0)

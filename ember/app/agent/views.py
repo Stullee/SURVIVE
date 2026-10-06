@@ -793,7 +793,7 @@ def _never(conn: sqlite3.Connection, r: sqlite3.Row) -> list[str]:
 
 
 def _kdp_view(agent: Agent, r: sqlite3.Row, action: dict[str, Any]) -> dict[str, Any] | None:
-    """0.24.0: what a KDP book's card adds: where the owner publishes it, how they answer KDP's question on AI, what
+    """0.25.0: what a KDP book's card adds: where the owner publishes it, how they answer KDP's question on AI, what
     one sale earns, and, while it is theirs to publish, whether each file in the workspace is still the one proposed
     (they download it from there)."""
     try:
@@ -821,7 +821,7 @@ def _kdp_view(agent: Agent, r: sqlite3.Row, action: dict[str, Any]) -> dict[str,
 
 
 def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope, r: sqlite3.Row) -> dict[str, Any]:
-    """How an approval is carried out: by Ember's code (an email), the owner's click (Reddit) or the owner (0.24.0: a
+    """How an approval is carried out: by Ember's code (an email), the owner's click (Reddit) or the owner (0.25.0: a
     KDP book, with what its card shows)."""
     action = None
     if r["action"]:
@@ -836,7 +836,7 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
         first_contact = not mailstore.has_written(conn, scope, str(action.get("to") or ""))
     if r["executor"] == "reddit_link" and action is not None:
         reddit_url = reddit.prefilled_url(action, r["final_payload"] or None)  # the owner's text, if they changed it
-    book = _kdp_view(agent, r, action) if r["executor"] == kdp.EXECUTOR and action is not None else None  # 0.24.0
+    book = _kdp_view(agent, r, action) if r["executor"] == kdp.EXECUTOR and action is not None else None  # 0.25.0
     editable = None
     shortfalls: list[str] = []  # 0.13.0: what the QA registry finds short in it
     kind = connectors.class_of(r["executor"], action, r["type"])

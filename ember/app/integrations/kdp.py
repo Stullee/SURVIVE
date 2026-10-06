@@ -1,4 +1,4 @@
-"""Amazon KDP (0.24.0), phase A: no KDP API, no Amazon credentials.
+"""Amazon KDP (0.25.0), phase A: no KDP API, no Amazon credentials.
 
 Amazon offers no API for Kindle Direct Publishing: nothing that creates a book, changes one or reads its sales, and
 Amazon's terms forbid robots on its pages. So the agent describes a book in a JSON spec (its words, the manuscript or

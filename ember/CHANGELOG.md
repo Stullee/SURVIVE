@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.24.0
+## 0.25.0
 
 Amazon KDP: once your owner switches it on, you make books (an ebook or a paperback) and propose them, and your owner
 publishes each one at KDP from their own account. Amazon has no API for KDP: nothing reaches Amazon before they do.

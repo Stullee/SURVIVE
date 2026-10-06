@@ -13,7 +13,7 @@ model call with Anthropic's server-side web tools, not a local fetch) or touch
 the constitution. No tool sends anything: the email tools read what Ember's
 code fetched into the database, and ``propose_email`` and ``propose_reddit_post``
 only create approval requests, which Ember's code (an email) or the owner (a
-Reddit post, 0.24.0: a KDP book) carries out once the owner approves them. So do ``propose_pin``
+Reddit post, 0.25.0: a KDP book) carries out once the owner approves them. So do ``propose_pin``
 (0.13.0: Ember's code makes the pin on the owner's Pinterest account),
 ``propose_bluesky_post`` (0.19.0: Ember's code posts it on the account the owner made
 for Ember) and the Etsy tools.
@@ -122,7 +122,7 @@ CATEGORIES_SHOWN = 10  # etsy_categories' answer, shortest paths first
 DEPARTMENT = " (a whole department: too broad for a listing)"
 # Making files takes a moment: these run sealed, but outside the database transaction the other tools share.
 MAKERS = frozenset({"make_document", "make_spreadsheet", "make_image", "resize_image", "make_cost_statement"})
-# 0.24.0: makes a KDP book's cover and reads and draws its files before it asks the owner: sealed, outside the database
+# 0.25.0: makes a KDP book's cover and reads and draws its files before it asks the owner: sealed, outside the database
 # transaction the other tools share, which it opens itself for the request.
 CHECKING_TOOLS = frozenset({"propose_kdp_book"})
 GUIDES = (
@@ -139,7 +139,7 @@ GUIDES = (
     "website",
     "blog",
     "statements",  # 0.20.0: make_cost_statement's
-    "kdp",  # 0.24.0: Amazon KDP's books
+    "kdp",  # 0.25.0: Amazon KDP's books
 )
 WORKSHOP_TOOLS = frozenset({"workshop"})  # offered only when the owner's options allow workshop runs
 # Offered only with an Etsy shop (demand_note 0.12.0: a product line's first listing needs one).
@@ -150,7 +150,7 @@ PINTEREST_TOOLS = frozenset({"pinterest_boards", "propose_pin"})
 BLUESKY_TOOLS = frozenset({"bluesky_posts", "propose_bluesky_post"})
 # Offered only with the owner's Printify account and an Etsy shop (0.13.0, Phase E4): a product becomes a listing there.
 PRINTIFY_TOOLS = frozenset({"printify_catalog", "propose_printify_product"})
-# Offered only when the owner switched Amazon KDP on (0.24.0): the book they publish at KDP, from the agent's spec.
+# Offered only when the owner switched Amazon KDP on (0.25.0): the book they publish at KDP, from the agent's spec.
 KDP_TOOLS = frozenset({"propose_kdp_book"})
 # Offered only when the owner switched their website on (0.13.0, Phase E3): its pages.
 SITE_TOOLS = frozenset({"site_page"})
@@ -1255,7 +1255,7 @@ def definitions(
     and, 0.12.0, the tools for building and selling only in an ordinary one, the library's only while it holds
     documents; 0.13.0: the Pinterest and Printify tools, and their manuals, only with the owner's account and a
     shop, and the website's only when the owner switched it on; 0.14.0: the blog's too; 0.15.0: brainstorm only when
-    the burn mode allows it; 0.19.0: Bluesky's with the account; 0.24.0: KDP's when the owner switched it on)."""
+    the burn mode allows it; 0.19.0: Bluesky's with the account; 0.25.0: KDP's when the owner switched it on)."""
     channels = {
         "pinterest": pinterest and etsy,
         "printify": printify and etsy,
@@ -1325,7 +1325,7 @@ def offered(
     kdp: bool = False,
 ) -> bool:
     """Whether tool ``name`` is offered in a cycle of this configuration and kind (``venture``: a venture cycle;
-    ``brainstorm``: the burn mode allows brainstorms, 0.15.0; ``kdp``: the owner switched Amazon KDP on, 0.24.0)."""
+    ``brainstorm``: the burn mode allows brainstorms, 0.15.0; ``kdp``: the owner switched Amazon KDP on, 0.25.0)."""
     return (
         (mail or name not in MAIL_TOOLS)
         and (workshop or name not in WORKSHOP_TOOLS)
@@ -1505,7 +1505,7 @@ class BlogAccess:
 
 @dataclass(frozen=True)
 class KdpAccess:
-    """0.24.0: what the KDP tools know: the author name the owner's books carry ("": they enter it at KDP)."""
+    """0.25.0: what the KDP tools know: the author name the owner's books carry ("": they enter it at KDP)."""
 
     author: str = ""
 
@@ -1532,7 +1532,7 @@ class ToolContext:
     catalog: CatalogFn | None = None  # Printify's catalog (0.13.0): kept by Ember's code, read at Printify when old
     site: SiteOwner | None = None  # the owner's data, when they switched their website on (0.13.0): its pages
     blog: BlogAccess | None = None  # the owner's blog, when they switched it on (0.14.0)
-    kdp: KdpAccess | None = None  # Amazon KDP, when the owner switched it on (0.24.0)
+    kdp: KdpAccess | None = None  # Amazon KDP, when the owner switched it on (0.25.0)
     venture: bool = False  # a venture cycle (0.10.0): brainstorm, and more research
     usd_per_eur: float = 0.0  # the owner's exchange rate (etsy_usd_per_eur; 0: none, econ assumes one), 0.13.0
     venture_cash_eur: float = 20.0  # the owner's cash for a venture's first test (a knock-out beyond it), 0.13.0
@@ -4710,7 +4710,7 @@ def _read_file(ctx: ToolContext, path: str) -> bytes:
 
 
 def _book_cover(ctx: ToolContext, spec: dict[str, Any], path: str) -> tuple[str, make.Made | None]:
-    """0.24.0: a spec's cover: the file it names, or the one Ember's code makes now from its cover object (front, back,
+    """0.25.0: a spec's cover: the file it names, or the one Ember's code makes now from its cover object (front, back,
     spine, background), so a paperback's spine always fits its interior's pages."""
     cover = spec["cover"]
     if isinstance(cover, str):
@@ -4731,7 +4731,7 @@ def _book_cover(ctx: ToolContext, spec: dict[str, Any], path: str) -> tuple[str,
 
 
 def _book(ctx: ToolContext, spec: dict[str, Any], cover_path: str) -> tuple[kdp.Book, list[str]]:
-    """0.24.0: a KDP book's package, checked against KDP's rules (a paperback's interior drawn to find what it prints
+    """0.25.0: a KDP book's package, checked against KDP's rules (a paperback's interior drawn to find what it prints
     in its margins), and what its card notes; a package KDP would refuse is a ToolError that says why."""
     access = _kdp(ctx)
     form = spec["format"]
@@ -4807,7 +4807,7 @@ def _book(ctx: ToolContext, spec: dict[str, Any], cover_path: str) -> tuple[kdp.
 
 
 def _weekly_titles(ctx: ToolContext, conn: Any, form: str) -> int:
-    """0.24.0: the books of this format proposed in the last 7 days that KDP may still count (not rejected,
+    """0.25.0: the books of this format proposed in the last 7 days that KDP may still count (not rejected,
     withdrawn, expired or failed)."""
     where, params = ctx.scope.where()
     since = to_iso(ctx.clock.now() - timedelta(days=7))
@@ -4820,7 +4820,7 @@ def _weekly_titles(ctx: ToolContext, conn: Any, form: str) -> int:
 
 
 def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
-    """0.24.0: a book for Amazon KDP from the agent's .json spec: Ember's code makes its cover, checks the package and
+    """0.25.0: a book for Amazon KDP from the agent's .json spec: Ember's code makes its cover, checks the package and
     (without check) asks the owner, who publishes it at kdp.amazon.com from their own account (Amazon has no API for
     KDP). Its files are made, read and drawn outside the database transaction."""
     _kdp(ctx)

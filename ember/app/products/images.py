@@ -107,7 +107,7 @@ def pdf_pages(
 
 
 def _opened(pdf: bytes) -> pypdfium2.PdfDocument:
-    """0.24.0: a PDF opened for reading; one pdfium can't open is an ImageError."""
+    """0.25.0: a PDF opened for reading; one pdfium can't open is an ImageError."""
     try:
         return pypdfium2.PdfDocument(pdf)
     except pypdfium2.PdfiumError:
@@ -125,7 +125,7 @@ def page_sizes(pdf: bytes) -> list[tuple[float, float]]:
 
 
 def ink_boxes(pdf: bytes, dpi: int, level: int) -> list[tuple[float, float, float, float] | None]:
-    """0.24.0: each page's printed part, in inches from its top left corner (left, top, right, bottom; None for a blank
+    """0.25.0: each page's printed part, in inches from its top left corner (left, top, right, bottom; None for a blank
     page): where any channel is darker than ``level``, the page drawn at ``dpi`` on white. KDP's margin check reads
     it; a page larger than MAX_PIXELS at ``dpi`` is drawn smaller."""
     document = _opened(pdf)
@@ -674,7 +674,7 @@ def poster(
     return out.getvalue()
 
 
-# --- KDP covers (0.24.0) ---
+# --- KDP covers (0.25.0) ---
 
 COVER_DPI = 300  # what KDP asks of a cover's pictures
 GUIDE: RGB = (230, 0, 126)  # the preview's marks: trim, folds and the barcode's space
