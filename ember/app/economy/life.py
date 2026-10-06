@@ -88,6 +88,15 @@ class Runway:
     window_net_in: int = 0  # revenue less expenses in the same days (their corrections included)
 
 
+def ledger_scope(db: Database, mode: str) -> Scope:
+    """Which ledger rows belong to ``mode``'s economy now (0.27.0: for the agent's tools too, which read the books
+    through a metric such as revenue_month_usd)."""
+    if mode == "live":
+        return Scope("live")
+    mark = db.get_meta(SESSION_KEY)
+    return Scope("dry_run", int(mark) if mark and mark.isdigit() else 0)
+
+
 @dataclass
 class LifeStatus:
     """Everything the dashboard, the sensors and the budget guard need to know."""
@@ -138,10 +147,7 @@ class Life:
     # --- helpers ---
 
     def scope(self) -> Scope:
-        if self.mode == "live":
-            return Scope("live")
-        mark = self.db.get_meta(SESSION_KEY)
-        return Scope("dry_run", int(mark) if mark and mark.isdigit() else 0)
+        return ledger_scope(self.db, self.mode)
 
     def session(self) -> int:
         """The dry-run session number (0 in live mode): the agent keeps its projects, files and journal per session."""

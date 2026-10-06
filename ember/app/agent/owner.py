@@ -30,7 +30,7 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import etsy, executor, mailstore
 from ..integrations.mail import BODY_MAX, valid_address
-from . import audit, knockouts, library, memory, policy, predictions, roadmap, stages, store, ventures
+from . import audit, knockouts, library, memory, metrics, policy, predictions, roadmap, stages, store, ventures
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
@@ -76,6 +76,9 @@ VENTURE_ACTIONS: dict[str, tuple[tuple[str, ...], str | None]] = {
 VENTURE_COMMENT_MAX = 1_000
 _BAD_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _VERSION = re.compile(r"^\d{1,4}\.\d{1,4}\.\d{1,4}$")
+
+
+_THOUSANDS = re.compile(r"^\d{1,3}(,\d{3})+(\.\d{1,2})?$")  # 0.27.0: an amount written with thousands separators
 
 
 class OwnerError(ValueError):
@@ -746,11 +749,15 @@ class Owner:
             ):
                 raise OwnerError("parent_id", "parent_id must be a milestone number")
             with self.db.transaction() as conn:
+                if parent_id is None:  # 0.27.0: everything leads to the goal, the owner's milestones too
+                    top = roadmap.root(conn, self.scope)
+                    parent_id = int(top["id"]) if top is not None else None
                 if parent_id is not None:
                     parent = roadmap.get(conn, self.scope, parent_id)
                     if parent is None or parent["status"] != "open":
                         raise OwnerError("parent_id", "there is no such open milestone", 404)
-                    if due.isoformat() > parent["due"]:
+                    # the money goal stands in for the owner's goal: what leads to it may be due later
+                    if due.isoformat() > parent["due"] and parent["kind"] != "money_goal":
                         raise OwnerError(
                             "due", f"the milestone it leads to is due {parent['due']}: choose that or earlier"
                         )
@@ -776,6 +783,72 @@ class Owner:
                 )
             events.record(self.db, "info", "owner", f"{who or 'The owner'} added milestone #{milestone_id}")
             return Reply(201, {"id": milestone_id})
+
+        return _reply(run)
+
+    def set_goal(self, body: Any, who: str | None) -> Reply:
+        """0.27.0: the owner's goal at the roadmap's root: earn an amount (USD) a month or in total, by a date, which
+        everything on the roadmap leads to. One set while another stands takes its place; ``replaces`` names the goal
+        the owner saw (none: they saw none), so one set meanwhile isn't replaced unseen."""
+
+        def run() -> Reply:
+            data = _body(body, {"amount_usd", "per", "due", "comment", "replaces"})
+            per = data.get("per")
+            if per not in roadmap.GOAL_METRICS:
+                raise OwnerError("per", "choose month or total")
+            amount = data.get("amount_usd")
+            if isinstance(amount, bool) or not isinstance(amount, str | int | float):
+                raise OwnerError("amount_usd", "give the amount in USD, e.g. 1000")
+            if isinstance(amount, str) and _THOUSANDS.match(amount.strip().removeprefix("$")):
+                amount = amount.strip().removeprefix("$").replace(",", "")  # "1,000" is a thousand, not one
+            try:
+                target = metrics.parse_target(metrics.CATALOGUE[roadmap.GOAL_METRICS[per]], amount)
+            except metrics.TargetError:
+                raise OwnerError(
+                    "amount_usd", f"give the amount in USD, from 1 to {metrics.MAX_USD:,}, in cents at most"
+                ) from None
+            if target < metrics.MICROS:
+                raise OwnerError("amount_usd", "give at least $1")
+            comment = _text(data, "comment", roadmap.LIMITS["comment"])
+            today = self.clock.today()
+            due = roadmap.parse_day(data.get("due"))
+            if due is None:
+                raise OwnerError("due", "give the date as YYYY-MM-DD")
+            first = today + timedelta(days=roadmap.GOAL_DAYS_MIN)
+            last = today + timedelta(days=roadmap.AHEAD_DAYS)
+            if due < first or due > last:
+                raise OwnerError("due", f"choose a date from {first.isoformat()} to {last.isoformat()}")
+            seen = data.get("replaces")
+            if seen is not None and (not isinstance(seen, int) or isinstance(seen, bool) or seen < 1):
+                raise OwnerError("replaces", "replaces must be the number of the goal you change")
+            with self.db.transaction() as conn:
+                old = roadmap.owner_goal(conn, self.scope)
+                if "replaces" in data and (old["id"] if old is not None else None) != seen:
+                    raise OwnerError(
+                        "replaces",
+                        f"your goal changed meanwhile (#{old['id']} stands now)"
+                        if old
+                        else "your goal was closed meanwhile",
+                        409,
+                    )
+                if roadmap.count(conn, self.scope) >= roadmap.MAX_MILESTONES:
+                    raise OwnerError("amount_usd", "the roadmap holds as many milestones as it can", 409)
+                goal_id, happened = roadmap.set_goal(
+                    conn,
+                    self.scope,
+                    per=per,
+                    target=target,
+                    due=due,
+                    today=today,
+                    now=self._now(),
+                    who=who,
+                    comment=comment,
+                )
+            what = f"{who or 'The owner'} set the goal #{goal_id}" + (f" in place of #{old['id']}" if old else "")
+            events.record(self.db, "info", "owner", what)
+            for line in happened:
+                events.record(self.db, "info", "agent", line[:300])
+            return Reply(200, {"id": goal_id, "replaced": old["id"] if old is not None else None})
 
         return _reply(run)
 

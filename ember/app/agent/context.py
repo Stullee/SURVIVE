@@ -83,12 +83,12 @@ PLANNER_BUDGETS = {
     "kdp": 900,  # 0.25.0: when the owner switched Amazon KDP on
     "ventures": 2_600,
     "ready": 1_550,  # 0.13.0: a venture cycle's READY list (desk.MAX_ITEMS items) and the forecasts' record
-    "roadmap": 1_800,  # 0.11.0 (and never less than ROADMAP_FLOOR, whatever the scale: 0.12.0)
+    "roadmap": 2_200,  # 0.11.0 (and never less than ROADMAP_FLOOR, whatever the scale: 0.12.0; 0.27.0: the goal)
     "library": 1_200,  # 0.12.0: the owner's library, when it holds documents
 }
 # 0.12.0: the ROADMAP isn't scaled down with the other sections (its checks and goals come first, and the cut took
-# every goal once the budget shrank).
-ROADMAP_FLOOR = 1_800
+# every goal once the budget shrank). 0.27.0: with the owner's goal first, and how far each milestone got.
+ROADMAP_FLOOR = 2_200
 # 0.15.0: what the sections leave of their budgets goes to the sections that were cut, in this order (the day's review
 # lost its advice and ROADMAP a first test while 8.6 KB went unused). The plan stays within the budgets' sum.
 SPARE_ORDER = (
@@ -267,6 +267,8 @@ class Snapshot:
     # 0.16.3 (analysis bug 5): what stands unlocked for each open milestone, from the grants: its rules' short names
     # and levels (policy.unlocked_text), so the ROADMAP keeps its room (the work step's FOCUS says them in full)
     roadmap_unlocks: dict[int, str] = field(default_factory=dict)
+    # 0.27.0: how far each open milestone got (roadmap.progress), the goal at the root's from the books
+    roadmap_progress: dict[int, roadmap.Progress] = field(default_factory=dict)
     library: library.Shelf | None = None  # the owner's library (0.12.0): None while it is empty
     decision_wakes: bool = False  # the owner's decisions wake the agent (0.12.0, the wake_on_decision option)
     burn: str = ""  # 0.12.0: the burn mode Ember's code set from the net runway (burn.Burn.text)
@@ -308,6 +310,7 @@ def snapshot(
     ready: str = "",
     agenda: list[sqlite3.Row] | None = None,
     reactive: bool = False,
+    books: tuple[int, int] | None = None,
 ) -> Snapshot:
     """What the planner, the brief and the will see; ``today`` (the owner's local date) finds the day's review and
     the day's spending on ventures."""
@@ -401,6 +404,7 @@ def snapshot(
         roadmap_closed=_closed_lately(conn, scope, today),
         roadmap_spent={mid: cost for mid, (_, cost) in roadmap.effort(conn, scope).items()},
         roadmap_unlocks={mid: policy.unlocked_text(rows, True) for mid, rows in policy.standing(conn, scope).items()},
+        roadmap_progress=roadmap.progress_for(conn, scope, today, books) if today is not None else {},  # 0.27.0
         library=shelf,
         decision_wakes=decision_wakes,
         burn=burn,
@@ -421,7 +425,13 @@ def roadmap_text(s: Snapshot) -> str:
     ended is a check of its own (0.12.0)."""
     since = dict(s.last_cycle).get("ended_at") if s.last_cycle is not None else None
     return roadmap.planner_text(
-        s.roadmap, s.roadmap_closed, s.today or date.today(), since, s.roadmap_spent, s.roadmap_unlocks
+        s.roadmap,
+        s.roadmap_closed,
+        s.today or date.today(),
+        since,
+        s.roadmap_spent,
+        s.roadmap_unlocks,
+        s.roadmap_progress,
     )
 
 

@@ -42,6 +42,7 @@ from app.integrations.etsy_connection import EtsyConnection  # noqa: E402
 from app.integrations.etsy_live import LiveShop, _Allowlist, connect  # noqa: E402
 from app.logging_setup import redact  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
+from tests.roadmap_helpers import led_to_goal  # noqa: E402
 from tests.test_agent import ROOMY, make_agent, rows  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
@@ -693,7 +694,7 @@ def shop_context(agent: Any) -> tools.ToolContext:
 def call(ctx: tools.ToolContext, name: str, args: dict[str, Any]) -> tools.Outcome:
     """A tool as the model calls it while working: checked, recorded and limited per cycle."""
     llm_call = rows_of(ctx, "SELECT MAX(id) AS id FROM llm_calls")[0]["id"]
-    return tools.run(ctx, name, args, f"toolu_{name}", llm_call, "act")
+    return tools.run(ctx, name, led_to_goal(ctx, name, args), f"toolu_{name}", llm_call, "act")
 
 
 def rows_of(ctx: tools.ToolContext, sql: str) -> list[dict[str, Any]]:

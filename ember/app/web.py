@@ -649,6 +649,17 @@ def add_milestone(request: Request, body: Annotated[Any, Body()] = None) -> JSON
     return _reply(actions.add_milestone(body, _owner(request)))
 
 
+@router.post("/api/roadmap/goal")
+def set_goal(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.27.0: the owner's goal at the roadmap's root; the agent wakes to plan toward it (like a decision)."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    reply = actions.set_goal(body, _owner(request))
+    _wake_for_decision(request, reply)
+    return _reply(reply)
+
+
 @router.post("/api/roadmap/{milestone_id}/decide")
 def decide_milestone(request: Request, milestone_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
     actions = _owner_actions(request)

@@ -15,6 +15,7 @@ from app.agent import roadmap, tools
 from app.agent.fake_llm import FakeTransport
 from app.agent.service import Agent
 from tests.economy_helpers import owner as owner_entry
+from tests.roadmap_helpers import led_to_goal
 from tests.test_agent import rows
 from tests.test_loop_shapes import run
 from tests.test_owner_loop import owner
@@ -34,7 +35,7 @@ def call(agent: Agent, tool: str, **args: Any) -> tools.Outcome:
         state=tools.CycleTools(),
     )
     llm_call = rows(agent, "SELECT MAX(id) AS id FROM llm_calls")[0]["id"]
-    return tools.run(ctx, tool, args, f"toolu_{tool}", llm_call, "act")
+    return tools.run(ctx, tool, led_to_goal(ctx, tool, args), f"toolu_{tool}", llm_call, "act")
 
 
 def milestones(agent: Agent) -> list[dict[str, Any]]:

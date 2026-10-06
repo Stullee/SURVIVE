@@ -63,6 +63,8 @@
     pj: { filter: loadPref("ember-projects-filter", "open"), sort: loadPref("ember-projects-sort", "status") },
     // The roadmap (0.11.0): loaded while its tab is open, again whenever the dashboard's roadmap stamp changes.
     rm: { data: null, byId: {}, stamp: null, busy: false, again: false, error: null, selected: null, saving: false },
+    // 0.27.0: the owner's goal: its form is being saved, its removal is being confirmed or sent
+    goal: { saving: false, removing: false },
     // The library (0.12.0): loaded while its tab is open, again whenever the dashboard's library stamp changes.
     // docs: document id -> its text and learnings, loaded when the owner opens them.
     lib: { data: null, stamp: null, busy: false, again: false, error: null, saving: false, docs: {} },
@@ -616,6 +618,7 @@
     section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d, agent); });
     safely("controls", function () { renderControls(agent); });
     section("kpis", [d.agent, d.economy, d.mode, d.now && d.now.started_at, minute], ["kpis"], function () { renderKpis(d, agent); });
+    section("goal", [d.roadmap && d.roadmap.goal, agent.name, minute], null, function () { renderGoalStrip(d); });  // 0.27.0
     safely("badges", function () { renderBadges(d); });
 
     var dead = agent.state === "dead" && isObject(d.memorial);
@@ -8612,6 +8615,8 @@
   // Where Ember is heading: goals for the next months, the milestones that lead to them and this week's steps, each
   // with a date and a measure of done. Drawn as a timeline (a row per milestone, under the goal it leads to; today
   // marked) and listed below as cards by horizon. The owner adds milestones, leaves notes and drops them.
+  // 0.27.0: the owner's goal leads it (its card first, with its form), then the goal tree: every milestone under the
+  // one it leads to, with how far it got.
 
   var MILESTONE_STATE = {
     overdue: { icon: "▲", label: "Overdue", tone: "critical", order: 0 },
@@ -8697,14 +8702,17 @@
     $("rm-refresh").textContent = rm.busy ? "Refreshing…" : "Refresh";
     setStatusText("rm-load-status", rm.error && !rm.busy ? "Couldn't load the roadmap (" + errorText(rm.error) + ")." +
       (data ? " What you see is the roadmap loaded earlier." : " Try Refresh.") : "", rm.error && !rm.busy ? "error" : "");
-    $("rm-sub").textContent = "Where " + name + " is heading: goals for the next months, the milestones that lead to them and " +
-      "this week's steps, each with a date and a measure of done. " + name + " plans every cycle toward the one due first.";
+    $("rm-sub").textContent = "Where " + name + " is heading: your goal at the top, the sub-goals that lead to it, this " +
+      "month's milestones and this week's steps, each with a date, a measure of done and how far it got. " + name +
+      " plans every cycle toward the one due first.";
+    safely("goal", function () { renderGoalCard(data); });
     if (!data) {
       replace($("rm-chart"), rm.busy ? h("p", { class: "muted rm-loading", text: "Loading the roadmap…" }) : []);
       return;
     }
     var items = arr(data.items).filter(function (m) { return isObject(m) && m.id !== undefined; });
     renderRoadmapSummary(data, items);
+    renderGoalTree(data, items);
     renderRoadmapLegend();
     renderRoadmapChart(data, items);
     fillMilestoneParents(items);
@@ -8730,9 +8738,10 @@
   }
 
   function renderRoadmapSummary(data, items) {
-    var open = items.filter(function (m) { return m.status === "open"; });
+    var name = agentName();
+    var open = items.filter(function (m) { return m.status === "open" && !isGoal(m); });
     var counts = {};
-    items.forEach(function (m) { counts[m.horizon] = (counts[m.horizon] || 0) + 1; });
+    items.forEach(function (m) { if (!isGoal(m)) counts[m.horizon] = (counts[m.horizon] || 0) + 1; });
     var parts = [];
     if (open.length) {
       var tally = ["overdue", "week", "month", "quarter", "later"].filter(function (k) { return counts[k]; }).map(function (k) {
@@ -8936,6 +8945,7 @@
       num(m.moves) > 0 ? h("p", { class: "muted", text: "Moved " + plural(m.moves, "time") + "; first due " + fmtDay(m.first_due) }) : null,
       m.proposed_due ? h("p", { class: "muted", text: agentName() + " proposes " + fmtDay(m.proposed_due) + ": your decision" }) : null,
       h("p", null, h("strong", { text: "Done when: " }), asText(m.measure)),
+      progressOf(m) ? h("p", null, h("strong", { text: "Progress: " }), progressLine(progressOf(m))) : null,  // 0.27.0
       ended && m.result ? h("p", null, h("strong", { text: ended + ": " }), asText(m.result)) : null,
     ]);
     tip.hidden = false;
@@ -9071,13 +9081,15 @@
       h("div", { class: "item-head" },
         h("h3", { class: "rm-card-title", tabindex: "-1", text: m.title || "Untitled milestone" }),
         chip(MILESTONE_STATE, m.horizon, sentence(String(m.horizon || "unknown"))),
-        m.created_by === "owner" ? plainChip("Your milestone") : m.created_by === "code" ? plainChip("Set by Ember's code") : null,
+        m.owner_goal ? plainChip("Your goal") : m.kind === "money_goal" ? plainChip("Ember's own goal") :
+          m.created_by === "owner" ? plainChip("Your milestone") : m.created_by === "code" ? plainChip("Set by Ember's code") : null,
         m.simulated ? testTag() : null),
       h("p", { class: "muted small", text: "#" + m.id + (parent ? " · leads to #" + parent.id + " " + parent.title : "") +
         (m.replaces_id ? " · replaces #" + m.replaces_id : "") }),
       h("dl", { class: "item-grid" },
         h("div", null, h("dt", { text: "Due" }), h("dd", { text: due })),
         h("div", null, h("dt", { text: "Done when" }), h("dd", { class: "pre-line", text: asText(m.measure) })),
+        progressRow(m),  // 0.27.0
         m.checked ? h("div", null, h("dt", { text: "Checked by Ember's code" }), h("dd", { text: asText(m.checked) })) : null,
         predictionRow(m.prediction, name + "'s odds"),
         // 0.16.3 (analysis bug 1): a backed venture's first test can be met until a week after its date
@@ -9162,7 +9174,11 @@
     var specs = {
       note: { title: "A note for " + name, submit: "Send note",
         intro: [h("p", { text: name + " reads it with the milestone on its next wake." })] },
-      drop: { title: "Drop this milestone?", submit: "Drop", danger: true,
+      drop: isGoal(it.row) ? { title: it.row.owner_goal ? "Remove your goal?" : "Drop " + name + "'s own goal?", submit: it.row.owner_goal ? "Remove goal" : "Drop", danger: true,
+        intro: [h("p", { text: it.row.owner_goal ?
+          "What leads to it goes on: " + name + "'s own goal (earn what it spends) stands in for it from its next wake, until you set another." :
+          "What leads to it goes on, but " + name + "'s code sets no money goal of its own again. Setting your own goal takes its place instead." })] } :
+        { title: "Drop this milestone?", submit: "Drop", danger: true,
         intro: [h("p", { text: name + " stops working toward it. It stays on the roadmap, marked dropped, and so do the open milestones that lead to it: they are dropped with it." })] },
       accept: { title: "Move it to " + fmtDay(it.row.proposed_due) + "?", submit: "Accept new date",
         intro: [h("p", { text: name + " proposed it" + (it.row.proposed_note ? ": " + asText(it.row.proposed_note) : ".") }),
@@ -9197,6 +9213,333 @@
     return spec;
   }
 
+  // ---- The goal (0.27.0)
+  // The owner's goal leads the roadmap: an amount to earn a month or in total, by a date. Ember's code checks it from
+  // the books, and everything else leads to it. Until the owner sets one, the money goal Ember's code keeps stands in.
+
+  var PACE = {
+    ahead: { icon: "↑", label: "Ahead of pace", tone: "good" },
+    "on pace": { icon: "→", label: "On pace", tone: "accent" },
+    behind: { icon: "↓", label: "Behind pace", tone: "warning" },
+  };
+
+  // The goal at the root: the owner's, or the money goal Ember's code keeps in its place.
+  function isGoal(m) { return isObject(m) && (m.owner_goal === true || m.kind === "money_goal"); }
+  function progressOf(m) { return isObject(m) && isObject(m.progress) ? m.progress : null; }
+  function measured(p) { return !!p && p.percent !== null && p.percent !== undefined && !isNaN(num(p.percent)); }
+  function percentText(p) { return measured(p) ? num(p.percent) + "%" : "–"; }
+
+  // How far it got, in words: "34% · $340 of $1,000 · behind pace (60% of its time gone)".
+  function progressLine(p) {
+    if (!p) return "–";
+    if (p.basis === "done") return "Done";
+    if (p.basis === "open") return "0%: measured when it is done (no metric and nothing leading to it yet)";
+    if (p.basis === "dropped" || p.basis === "missed") return "–";
+    var parts = [measured(p) ? percentText(p) : p.text ? "" : "–"];
+    if (p.text) parts.push(asText(p.text));
+    if (p.pace && PACE[p.pace]) parts.push(PACE[p.pace].label.toLowerCase() + (isNaN(num(p.elapsed)) ? "" : " (" + num(p.elapsed) + "% of its time gone)"));
+    return parts.filter(Boolean).join(" · ");
+  }
+
+  // A bar (a meter): how far it got; for a paced one, a mark where a straight line to its date would be now.
+  function progressBar(p, label, big) {
+    var bar = h("div", { class: "pbar" + (big ? " pbar-big" : ""), role: "meter", "aria-label": label, "aria-valuemin": "0", "aria-valuemax": "100" });
+    var fill = h("div", { class: "pbar-fill" });
+    bar.appendChild(fill);
+    if (!measured(p)) {
+      bar.setAttribute("data-state", "none");
+      bar.setAttribute("aria-valuenow", "0");
+      bar.setAttribute("aria-valuetext", p && p.text ? asText(p.text) : "not measured");
+      return bar;
+    }
+    var percent = Math.max(0, Math.min(100, num(p.percent)));
+    fill.style.width = percent + "%";
+    bar.setAttribute("aria-valuenow", String(percent));
+    bar.setAttribute("aria-valuetext", progressLine(p));
+    bar.setAttribute("data-state", p.basis === "done" || percent >= 100 ? "done" : p.pace === "behind" ? "behind" : "open");
+    if (p.pace && !isNaN(num(p.elapsed))) {
+      var mark = h("div", { class: "pbar-pace" });
+      mark.style.left = Math.max(0, Math.min(100, num(p.elapsed))) + "%";
+      bar.appendChild(mark);
+    }
+    return bar;
+  }
+
+  function progressRow(m) {
+    var p = progressOf(m);
+    if (!p || p.basis === "dropped") return null;
+    return h("div", { class: "item-wide" }, h("dt", { text: "Progress" }),
+      h("dd", null, progressBar(p, "How far #" + m.id + " got"), h("span", { class: "small", text: progressLine(p) })));
+  }
+
+  function currentGoal() { return ui.rm.data && isObject(ui.rm.data.goal) ? ui.rm.data.goal : null; }
+
+  function renderGoalCard(data) {
+    var name = agentName();
+    var g = data && isObject(data.goal) ? data.goal : null;
+    var last = data && isObject(data.last_goal) ? data.last_goal : null;
+    var mine = !!(g && g.owner);
+    $("rm-goal-eyebrow").textContent = mine ? "Your goal" : g ? name + "'s own goal, until you set yours" : data ? "No goal yet" : "Your goal";
+    $("rm-goal-title").textContent = g ? g.title : data ? "Set the goal " + name + " works toward" : "–";
+    var sub = " ";
+    if (g) {
+      sub = "By " + fmtDay(g.due) + " (" + whenText(g.days) + ") · " + (mine ? "checked by " + name + "'s code from the revenue less expenses you record" +
+        (g.per === "total" ? (g.counts_from ? ", counted from " + fmtDay(g.counts_from) : "") : ", over the last " + roadmapLimit("window_days", 30) + " days") : asText(g.measure));
+    } else if (data) {
+      sub = "Everything on the roadmap leads to your goal: an amount to earn a month or in total, by a date.";
+    }
+    $("rm-goal-sub").textContent = sub;
+    var p = g ? progressOf(g) : null;
+    replace($("rm-goal-progress"), g ? [
+      h("div", { class: "goal-figures" },
+        h("span", { class: "goal-percent", text: percentText(p) }),
+        h("span", { class: "goal-amount", text: p && p.text ? asText(p.text) : "" }),
+        p && p.pace ? chip(PACE, p.pace, p.pace) : null),
+      progressBar(p, "How far the goal got", true),
+      p && p.pace && !isNaN(num(p.elapsed)) ? h("p", { class: "hint", text: num(p.elapsed) + "% of its time has gone; the mark on the bar is where a straight line to its date would be now." }) : null,
+    ] : []);
+    var note = "";
+    if (last) {
+      note = (last.status === "done" ? "You reached your goal “" + last.title + "”" : "Your goal “" + last.title + "” was missed") +
+        (last.closed_at ? " on " + fmtDate(last.closed_at) : "") + ". " + (g ? name + "'s own goal stands in until you set the next one." : "Set the next one.");
+    } else if (mine && g.comment) {
+      note = "Why it matters: " + g.comment;
+    } else if (g) {
+      note = "Set your own goal to lead the roadmap: it takes the place of this one, and what leads to this one leads to yours.";
+    }
+    $("rm-goal-note").textContent = note;
+    $("rm-goal-note").hidden = !note;
+    $("rm-goal-set").textContent = mine ? "Change goal" : "Set your goal";
+    $("rm-goal-set").disabled = !data;
+    $("rm-goal-remove").hidden = !mine;
+    if (!mine) showGoalConfirm(false);
+  }
+
+  function setGoalFieldError(id, message) { setMilestoneFieldError(id, message); }
+
+  function openGoalForm(open) {
+    var name = agentName();
+    $("rm-goal-form").hidden = !open;
+    $("rm-goal-set").setAttribute("aria-expanded", String(open));
+    if (!open) { $("rm-goal-set").focus(); return; }
+    showGoalConfirm(false);
+    var g = currentGoal();
+    var mine = !!(g && g.owner);
+    $("rm-goal-form-intro").textContent = "What " + name + " works toward: everything on the roadmap leads to it. " + name +
+      "'s code checks it from the revenue less expenses you record in the Ledger (in USD, like the books)." +
+      (mine ? " Your new goal takes the place of the one standing; what leads to it stays." : "");
+    ["amount", "due"].forEach(function (k) { setGoalFieldError("rm-goal-" + k, ""); });
+    if (mine) {
+      $("rm-goal-amount").value = String(g.target_usd);
+      $("rm-goal-due").value = g.due;
+      $("rm-goal-comment").value = g.comment || "";
+    }
+    var per = mine && g.per ? g.per : "month";
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="rm-goal-per"]'), function (r) { r.checked = r.value === per; });
+    var today = dayNumber(ui.rm.data && ui.rm.data.today);
+    if (!isNaN(today)) {
+      $("rm-goal-due").min = isoOf(today + roadmapLimit("goal_min_days", 7));
+      $("rm-goal-due").max = isoOf(today + roadmapLimit("ahead_days", 366));
+    }
+    $("rm-goal-amount").focus();
+  }
+
+  // An amount as the owner may write it ("$1,000", "1000.50", "1000,50"), as the server reads it ("1000.50"); "" if
+  // it isn't one.
+  function goalAmount(text) {
+    var t = String(text || "").trim().replace(/^\$\s*/, "").replace(/\s*(usd|\$)$/i, "").replace(/\s/g, "");
+    if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(t)) t = t.replace(/,/g, "");
+    else if (/^\d+,\d{1,2}$/.test(t)) t = t.replace(",", ".");
+    return /^\d+(\.\d{1,2})?$/.test(t) ? t : "";
+  }
+
+  function submitGoalForm() {
+    if (ui.goal.saving) return;
+    var problems = [];
+    ["amount", "due"].forEach(function (k) { setGoalFieldError("rm-goal-" + k, ""); });
+    var amount = goalAmount($("rm-goal-amount").value);
+    var most = roadmapLimit("goal_max_usd", 100000);
+    if (!amount || num(amount) < 1) problems.push(["amount", "Give the amount in USD, at least 1, like 1000 or 250.50."]);
+    else if (num(amount) > most) problems.push(["amount", "Keep it at " + usd(most) + " or less."]);
+    var due = dayNumber($("rm-goal-due").value);
+    var today = dayNumber(ui.rm.data && ui.rm.data.today);
+    var first = today + roadmapLimit("goal_min_days", 7);
+    if (isNaN(due)) problems.push(["due", "Pick the date it is due."]);
+    else if (!isNaN(today) && (due < first || due > today + roadmapLimit("ahead_days", 366))) {
+      problems.push(["due", "Pick a date from " + fmtDay(isoOf(first)) + " to a year ahead."]);
+    }
+    if (problems.length) {
+      problems.forEach(function (pr) { setGoalFieldError("rm-goal-" + pr[0], pr[1]); });
+      setStatusText("rm-goal-status", problems.length === 1 ? "Please fix the marked field." : "Please fix the marked fields.", "error");
+      $("rm-goal-" + problems[0][0]).focus();
+      return;
+    }
+    var checked = document.querySelector('input[name="rm-goal-per"]:checked');
+    var g = currentGoal();
+    var body = { amount_usd: amount, per: checked ? checked.value : "month", due: $("rm-goal-due").value, replaces: g && g.owner ? g.id : null };
+    var comment = $("rm-goal-comment").value.trim();
+    if (comment) body.comment = comment.slice(0, roadmapLimit("comment", 1000));
+    ui.goal.saving = true;
+    $("rm-goal-save").disabled = true;
+    setStatusText("rm-goal-status", "Saving…", "");
+    request("POST", "api/roadmap/goal", body).then(function (res) {
+      if (res.status === 200) {
+        openGoalForm(false);
+        setStatusText("rm-goal-status", "Your goal is set. " + decisionWake(res, agentName()), "ok");
+        loadRoadmap();
+        return;
+      }
+      var data = isObject(res.data) ? res.data : {};
+      var msg = typeof data.error === "string" && data.error ? endSentence(sentence(data.error)) : "";
+      var field = data.field === "amount_usd" ? "amount" : data.field;
+      if ((res.status === 422 || res.status === 409) && msg && (field === "amount" || field === "due")) {
+        setGoalFieldError("rm-goal-" + field, msg);
+        setStatusText("rm-goal-status", "Please fix the marked field.", "error");
+        $("rm-goal-" + field).focus();
+        return;
+      }
+      if (res.status === 409) loadRoadmap();
+      setStatusText("rm-goal-status", msg ? "Nothing was saved: " + lowerFirst(msg) : "Nothing was saved (" + httpError(res).message + ").", "error");
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("rm-goal-status", "Couldn't reach " + agentName() + ", so it's not clear whether your goal was saved. Refresh the roadmap before you try again.", "error");
+    }).then(function () {
+      ui.goal.saving = false;
+      $("rm-goal-save").disabled = false;
+    });
+  }
+
+  function showGoalConfirm(open) {
+    var g = currentGoal();
+    $("rm-goal-confirm").hidden = !open;
+    if (!open) return;
+    openGoalForm(false);
+    $("rm-goal-confirm-text").textContent = "Remove your goal “" + (g ? g.title : "") + "”? What leads to it goes on: " +
+      agentName() + "'s own goal (earn what it spends) stands in for it from its next wake, until you set another.";
+    $("rm-goal-confirm-no").focus();
+  }
+
+  function removeGoal() {
+    var g = currentGoal();
+    if (ui.goal.removing || !g || !g.owner) return;
+    var row = ui.rm.byId[String(g.id)];
+    var body = { action: "drop" };
+    if (row && !isNaN(num(row.owner_version))) body.expected_version = num(row.owner_version);
+    ui.goal.removing = true;
+    $("rm-goal-confirm-yes").disabled = true;
+    setStatusText("rm-goal-status", "Removing…", "");
+    request("POST", "api/roadmap/" + encodeURIComponent(String(g.id)) + "/decide", body).then(function (res) {
+      if (res.ok) {
+        showGoalConfirm(false);
+        setStatusText("rm-goal-status", "Your goal is removed. " + decisionWake(res, agentName()), "ok");
+        loadRoadmap();
+        $("rm-goal-set").focus();
+        return;
+      }
+      var data = isObject(res.data) ? res.data : {};
+      var msg = typeof data.error === "string" && data.error ? endSentence(sentence(data.error)) : "";
+      setStatusText("rm-goal-status", msg ? "Nothing was changed: " + lowerFirst(msg) : "Nothing was changed (" + httpError(res).message + ").", "error");
+      loadRoadmap();
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("rm-goal-status", "Couldn't reach " + agentName() + ". Refresh the roadmap to see whether your goal stands.", "error");
+    }).then(function () {
+      ui.goal.removing = false;
+      $("rm-goal-confirm-yes").disabled = false;
+    });
+  }
+
+  // The goal tree: the open milestones and those met or missed in the last two weeks (the dropped ones are in the
+  // list below), each under the one it leads to, the goal first, then by date.
+  function treeOrder(x, y) {
+    if (isGoal(x) !== isGoal(y)) return isGoal(x) ? -1 : 1;
+    var closedX = x.status !== "open";
+    var closedY = y.status !== "open";
+    if (closedX !== closedY) return closedX ? 1 : -1;
+    return dayNumber(x.due) - dayNumber(y.due) || num(x.id) - num(y.id);
+  }
+
+  function renderGoalTree(data, items) {
+    var el = $("rm-tree");
+    if (isBusy(el)) return;
+    var today = dayNumber(data.today);
+    var shown = {};
+    items.forEach(function (m) {
+      var closed = stampDay(m.closed_at);
+      if (m.status === "open" || (m.status !== "dropped" && !isNaN(closed) && !isNaN(today) && today - closed <= 14)) shown[String(m.id)] = m;
+    });
+    var below = {};
+    var roots = [];
+    Object.keys(shown).forEach(function (k) {
+      var m = shown[k];
+      var parent = m.parent_id !== null && m.parent_id !== undefined ? shown[String(m.parent_id)] : null;
+      if (parent) (below[String(parent.id)] = below[String(parent.id)] || []).push(m);
+      else roots.push(m);
+    });
+    if (!roots.length) {
+      replace(el, emptyState("div", "Nothing on the roadmap yet.", agentName() + " lays it out toward your goal in its next wake cycle."));
+      return;
+    }
+    replace(el, h("ul", { class: "gt" }, roots.sort(treeOrder).map(function (m) { return treeNode(m, below); })));
+  }
+
+  function treeNode(m, below) {
+    var kids = (below[String(m.id)] || []).sort(treeOrder);
+    var p = progressOf(m);
+    var goal = isGoal(m);
+    var state = markState(m);
+    var when = m.status === "open" ? "due " + fmtDay(m.due) + " (" + whenText(m.days) + ")" :
+      (MILESTONE_STATE[m.status] || { label: String(m.status) }).label.toLowerCase() + (m.closed_at ? " " + fmtDate(m.closed_at) : "");
+    var who = m.owner_goal ? "your goal" : m.kind === "money_goal" ? agentName() + "'s own goal" : m.created_by === "owner" ? "yours" :
+      m.created_by === "code" ? "set by Ember's code" : "";
+    var glyph = goal ? "◎" : (MILESTONE_STATE[m.horizon] || MILESTONE_STATE[m.status] || { icon: "" }).icon;
+    var open = h("button", { type: "button", class: "gt-name", text: m.title || "Untitled milestone" });
+    open.addEventListener("click", function () { showMilestoneCard(m.id); });
+    var row = h("div", { class: "gt-row", "data-state": state, "data-goal": goal ? "true" : null },
+      h("span", { class: "gt-glyph", "aria-hidden": "true", text: glyph }),
+      h("span", { class: "gt-text" }, open,
+        h("span", { class: "gt-meta", text: ["#" + m.id, when, who, p && p.basis !== "open" && p.text ? asText(p.text) : ""].filter(Boolean).join(" · ") })),
+      h("span", { class: "gt-progress" }, progressBar(p, "How far #" + m.id + " got"), h("span", { class: "gt-pct", text: p && p.basis === "done" ? "Done" : percentText(p) })));
+    return h("li", { class: "gt-node" }, row, kids.length ? h("ul", { class: "gt" }, kids.map(function (k) { return treeNode(k, below); })) : null);
+  }
+
+  // The Overview's strip: the goal and how far it got.
+  function renderGoalStrip(d) {
+    var strip = $("goal-strip");
+    var known = isObject(d.roadmap);
+    strip.hidden = !known;
+    if (!known) return;
+    var g = isObject(d.roadmap.goal) ? d.roadmap.goal : null;
+    var name = agentName();
+    var mine = !!(g && g.owner);
+    $("goal-strip-label").textContent = mine ? "Your goal" : g ? name + "'s own goal, until you set yours" : "No goal yet";
+    $("goal-strip-title").textContent = g ? g.title + " · by " + fmtDay(g.due) + " (" + whenText(g.days) + ")" :
+      "Set the goal " + name + " works toward on the Roadmap tab.";
+    var p = g ? progressOf(g) : null;
+    replace($("goal-strip-bar"), g ? [progressBar(p, "How far the goal got"), h("p", { class: "tile-sub", text: progressLine(p) })] : []);
+    $("goal-strip-open").textContent = mine ? "Roadmap" : "Set your goal";
+  }
+
+  function initGoal() {
+    $("rm-goal-set").addEventListener("click", function () { openGoalForm($("rm-goal-form").hidden); });
+    $("rm-goal-cancel").addEventListener("click", function () { openGoalForm(false); });
+    $("rm-goal-form").addEventListener("submit", function (ev) { ev.preventDefault(); submitGoalForm(); });
+    $("rm-goal-form").addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") { ev.preventDefault(); openGoalForm(false); }
+      else if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); submitGoalForm(); }
+    });
+    $("rm-goal-amount").addEventListener("input", function () { setGoalFieldError("rm-goal-amount", ""); });
+    $("rm-goal-due").addEventListener("input", function () { setGoalFieldError("rm-goal-due", ""); });
+    $("rm-goal-remove").addEventListener("click", function () { showGoalConfirm(true); });
+    $("rm-goal-confirm-no").addEventListener("click", function () { showGoalConfirm(false); $("rm-goal-remove").focus(); });
+    $("rm-goal-confirm-yes").addEventListener("click", removeGoal);
+    $("goal-strip-open").addEventListener("click", function () {
+      selectTab("roadmap", true);
+      var g = ui.data && isObject(ui.data.roadmap) && isObject(ui.data.roadmap.goal) ? ui.data.roadmap.goal : null;
+      if (!(g && g.owner) && ui.rm.data) openGoalForm(true);
+    });
+  }
+
   // ---- Add milestone
 
   function roadmapLimit(key, fallback) {
@@ -9214,7 +9557,10 @@
     var open = items.filter(function (m) { return m.status === "open"; }).sort(function (x, y) {
       return dayNumber(x.due) - dayNumber(y.due) || num(x.id) - num(y.id);
     });
-    replace(select, [h("option", { value: "", text: "Nothing (a goal of its own)" })].concat(open.map(function (m) {
+    // 0.27.0: everything leads to the goal: without a choice, a milestone leads to it
+    var top = open.filter(isGoal)[0] || null;
+    var first = top ? "The goal: #" + top.id + " " + shortTitle(top.title, 50) : "Nothing (a goal of its own)";
+    replace(select, [h("option", { value: "", text: first })].concat(open.filter(function (m) { return m !== top; }).map(function (m) {
       return h("option", { value: String(m.id), text: "#" + m.id + " " + shortTitle(m.title, 50) + " (due " + m.due + ")" });
     })));
     select.value = current && ui.rm.byId[current] && ui.rm.byId[current].status === "open" ? current : "";
@@ -9310,6 +9656,7 @@
   }
 
   function initRoadmap() {
+    initGoal();  // 0.27.0
     $("rm-refresh").addEventListener("click", loadRoadmap);
     $("rm-add").addEventListener("click", function () { openMilestoneForm($("rm-form").hidden); });
     $("rm-form-cancel").addEventListener("click", function () { openMilestoneForm(false); });

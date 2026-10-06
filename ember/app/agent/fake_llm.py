@@ -738,10 +738,19 @@ _TREE_TITLE = re.compile(r"^\s*- #\d+ (.+?) \([a-z]+(?:, weight \d+)?\)$", re.MU
 # The roadmap (0.11.0): the planner's ROADMAP lines, and what the brief's PLAN asks of it.
 ROADMAP_SECTION = "ROADMAP"
 ROADMAP_STEP = "Lay out my roadmap: a goal for the next three months, this month's milestone and this week's"
+# 0.27.0: under the goal at the root (the owner's, or the money goal): a sub-goal, this month's and this week's
+GOAL_STEP = "Lay out my roadmap toward goal #{id} (due {due}): a sub-goal, this month's milestone and this week's"
 MOVE_MILESTONE_STEP = "Move overdue milestone #{id} a week"
 CLOSE_MILESTONE_STEP = "Close overdue milestone #{id}"
 DECIDE_MILESTONE_STEP = "Decide at overdue milestone #{id}"  # 0.12.0: a decision point Ember's code set never moves
 _EMPTY_ROADMAP = "Roadmap check: your roadmap is empty"
+_NOTHING_MINE = "Roadmap check: nothing of yours leads to the goal"  # 0.27.0
+_ROOT_LINE = re.compile(
+    r"^(?:Your owner's goal|The goal \(Ember's code's, until your owner sets theirs\)): #(\d+) "
+    r'"(?:[^"\\]|\\.)*" · due \w+ (\d{4}-\d{2}-\d{2})',
+    re.MULTILINE,
+)
+_GOAL_STEP = re.compile(r"toward goal #(\d+) \(due (\d{4}-\d{2}-\d{2})\)")
 _MILESTONE_LINE = re.compile(r'^#(\d+) "(?:[^"\\]|\\.)*" · due \w+ (\d{4}-\d{2}-\d{2}) \(([^)]*)\)(.*)$', re.MULTILINE)
 _OVERDUE_STEP = re.compile(r"(move|close|decide at) overdue milestone #(\d+)")
 _TODAY = re.compile(r"^Time: [A-Za-z]+ (\d{4}-\d{2}-\d{2}) ", re.MULTILINE)
@@ -905,6 +914,9 @@ def roadmap_plan(text: str) -> tuple[list[str], int | None]:
     roadmap = section(text, ROADMAP_SECTION) or ""
     if _EMPTY_ROADMAP in roadmap:
         return [ROADMAP_STEP], None
+    root = _ROOT_LINE.search(roadmap)
+    if root is not None and _NOTHING_MINE in roadmap:  # 0.27.0: split the goal
+        return [GOAL_STEP.format(id=root[1], due=root[2])], None
     lines = list(_MILESTONE_LINE.finditer(roadmap))
     focus = int(min(lines, key=lambda m: m[2])[1]) if lines else None  # the one due first (the goals come first)
     late = next((m for m in lines if m[3].endswith("late")), None)
@@ -1672,6 +1684,8 @@ class FakeTransport:
             vid = int(top[2])
             focus = next((v for v in tree if v[0] == vid), (vid, top[1], f"venture #{vid}"))
         ahead, milestone = roadmap_plan(context) if state != "critical" else ([], None)
+        # laying out the roadmap belongs to ordinary cycles (milestone_plan refuses a venture cycle's)
+        ahead = [s for s in ahead if not s.lower().startswith("lay out my roadmap")]
         steps = [*answer, *ahead]
         if (len(ideas) < BRAINSTORM_BELOW or (top is not None and top[1] == "brainstorm")) and state != "critical":
             steps.append(BRAINSTORM_STEP)
@@ -2063,33 +2077,44 @@ class FakeTransport:
 
     def _roadmap(self, conv: _Conversation, idea: Idea) -> tuple[str, dict] | None:
         """A new roadmap in one milestone_plan call (0.12.0): a goal about three months ahead, this month's milestone
-        leading to it, and this week's leading to that."""
+        leading to it, and this week's leading to that. 0.27.0: under the goal at the root the plan named, the first a
+        sub-goal of it, none due after it."""
         today = today_of(conv.brief)
         if today is None:
             return None
+        plan = _PLAN_SECTION.search(conv.brief)
+        root = _GOAL_STEP.search(plan[1]) if plan else None
+        last = date.fromisoformat(root[2]) if root else date.max
+
+        def due(days: int) -> str:
+            return min(today + timedelta(days=days), last).isoformat()
+
         month: dict[str, Any] = {
             "key": "month",
             "parent": "goal",
             "title": f"First sale: {idea.title}"[:100],
             "measure": "My owner records the first revenue for it",
-            "due": (today + timedelta(days=25)).isoformat(),
+            "due": due(25),
         }
         if conv.project_id is not None:
             month["project_id"] = conv.project_id
+        goal: dict[str, Any] = {
+            "key": "goal",
+            "title": "Two legs that earn: 30 EUR a month in all",
+            "measure": "Revenue my owner recorded reaches 30 EUR in one month, from two different legs",
+            "due": due(84),
+        }
+        if root is not None:
+            goal["parent"] = f"#{root[1]}"
         return "milestone_plan", {
             "milestones": [
-                {
-                    "key": "goal",
-                    "title": "Two legs that earn: 30 EUR a month in all",
-                    "measure": "Revenue my owner recorded reaches 30 EUR in one month, from two different legs",
-                    "due": (today + timedelta(days=84)).isoformat(),
-                },
+                goal,
                 month,
                 {
                     "parent": "month",
                     "title": f"Listing ready for my owner: {idea.title}"[:100],
                     "measure": "The PDF, the photos and the listing text are finished and proposed to my owner",
-                    "due": (today + timedelta(days=5)).isoformat(),
+                    "due": due(5),
                 },
             ]
         }

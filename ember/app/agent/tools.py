@@ -48,6 +48,7 @@ from .. import paths
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
+from ..economy.life import ledger_scope
 from ..integrations import (
     bluesky,
     bluesky_publisher,
@@ -554,18 +555,24 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "milestone_plan",
-            f"Put 1 to {PLAN_MILESTONES} milestones on your roadmap: goals for the next months, the milestones "
-            "leading to them and this week's steps, each due no later than its parent. With a metric, Ember's code "
-            "checks it and closes it (done once met, missed after its date); without, your done is self-reported. "
-            f"Title, measure, metric and costs are final; a date can move. At most "
-            f"{roadmap.MAX_OPEN - roadmap.OWNER_SLOTS} open (Ember's code's aside). Free.",
+            f"Put 1 to {PLAN_MILESTONES} milestones on your roadmap, each leading to the goal at its root (ROADMAP "
+            "names it first): sub-goals for the next months, the milestones leading to them and this week's steps, "
+            "each due no later than its parent. With a metric, Ember's code checks it and closes it (done once met, "
+            "missed after its date) and measures how far it got; without, your done is self-reported. Title, "
+            f"measure, metric and costs are final; a date can move. At most {roadmap.MAX_OPEN - roadmap.OWNER_SLOTS} "
+            "open (Ember's code's aside). Free.",
             {
                 "milestones": _a(
                     "Parents first.",
                     PLAN_MILESTONES,
                     {
                         "key": _s("Its name in this call, for others' parent.", 20, required=False),
-                        "parent": _s("A key from this call, or a milestone's number.", 20, required=False),
+                        "parent": _s(
+                            "What it leads to: a key from this call, or a milestone's number (the goal's for a "
+                            "sub-goal). Needed while a goal stands.",
+                            20,
+                            required=False,
+                        ),
                         "title": _s("What you will reach.", roadmap.LIMITS["title"]),
                         "measure": _s(
                             "How you will know: a number or a fact (optional with a metric).",
@@ -2682,7 +2689,8 @@ def _parent(conn: Any, scope: AgentScope, parent_id: int, due: date, milestone_i
     parent = _open_milestone(conn, scope, parent_id)
     if milestone_id is not None and roadmap.leads_to(conn, milestone_id, parent_id):
         raise ToolError(f"milestone #{parent_id} leads to #{milestone_id} already")
-    if due.isoformat() > parent["due"]:
+    # 0.27.0: the money goal stands in for the owner's: what leads to it may be due later (it leads to the next one)
+    if due.isoformat() > parent["due"] and parent["kind"] != "money_goal":
         raise ToolError(
             f"milestone #{parent_id} is due {parent['due']}: a milestone leading to it is due by then at the latest"
         )
@@ -2722,7 +2730,11 @@ def _metric(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tuple[metrics.
     if m.history:
         baseline = metrics.listing_counts(conn, ctx.scope, row, "views" if name == "views_delta" else "favorites")
     elif not m.since_set:  # how things are now: a target met already is no milestone
-        books = metrics.Books(None, ctx.clock, ctx.db.get_meta(etsy_publisher.meta_key(ctx.scope.mode, "last_sync_at")))
+        books = metrics.Books(  # 0.27.0: the books too (revenue_month_usd)
+            ledger_scope(ctx.db, ctx.scope.mode),
+            ctx.clock,
+            ctx.db.get_meta(etsy_publisher.meta_key(ctx.scope.mode, "last_sync_at")),
+        )
         now = metrics.read(conn, ctx.scope, row, books, ctx.now(), new=True)
         if isinstance(now, metrics.Reading) and now.value >= target:
             raise ToolError(
@@ -2838,6 +2850,13 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
     parent_id = args.get("parent_id")
     if parent_id is not None:
         _parent(conn, ctx.scope, parent_id, due)
+    else:
+        top = roadmap.root(conn, ctx.scope)
+        if top is not None:  # 0.27.0: everything leads to the goal
+            raise ToolError(
+                f"every milestone leads to the goal #{top['id']} {roadmap.title_q(top)}: give parent #{top['id']} "
+                "for a sub-goal of it, or the milestone it leads to"
+            )
     if args.get("venture_id") is not None:
         _milestone_venture(conn, ctx.scope, args["venture_id"])
     if args.get("project_id") is not None:
@@ -2990,6 +3009,12 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     theirs = row["created_by"] == "owner"  # 0.12.0: the owner's milestone is theirs to move and drop
     drop = "ask your owner to drop it" if theirs else "drop it (why)"
     changes: dict[str, Any] = {}
+    fields = ("status", "due", "wait_for", "check_at", "parent_id", "venture_id", "project_id")
+    if roadmap.is_goal(row) and any(args.get(name) not in (None, "") for name in fields):  # 0.27.0
+        raise ToolError(
+            f"milestone #{mid} is your owner's goal: they set it and change it, and Ember's code checks it from the "
+            "books. Work on what leads to it; a note is all you add to it"
+        )
     if status and args.get("due"):
         raise ToolError("close a milestone or move its date, not both")
     if result and not status:
@@ -3047,7 +3072,12 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         changes["parent_id"] = parent_id
     elif row["parent_id"] is not None and moved_to is not None:
         parent = roadmap.get(conn, ctx.scope, row["parent_id"])
-        if parent is not None and parent["status"] == "open" and moved_to.isoformat() > parent["due"]:
+        if (
+            parent is not None
+            and parent["status"] == "open"
+            and parent["kind"] != "money_goal"  # 0.27.0: as in _parent
+            and moved_to.isoformat() > parent["due"]
+        ):
             raise ToolError(
                 f"it leads to milestone #{parent['id']}, due {parent['due']}: move that first, or link it elsewhere"
             )

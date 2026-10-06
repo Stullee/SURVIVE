@@ -41,6 +41,7 @@ from . import ventures
 from .store import AgentScope
 
 FRESH_HOURS = 3  # Etsy's numbers count while the last sync is at most this old (it runs hourly)
+MONTH_DAYS = 30  # 0.27.0: revenue_month_usd's window, the money goal's too (roadmap.MONEY_WINDOW_DAYS)
 MAX_COUNT = 1_000_000
 MAX_USD = Decimal("100000")
 MICROS = 1_000_000
@@ -117,6 +118,8 @@ CATALOGUE: dict[str, Metric] = {
             "owner",
             since_set=True,
         ),
+        # 0.27.0: what a month brings now, the measure of a goal "a month" (the owner's, or a leg's toward it)
+        Metric("revenue_month_usd", f"revenue less expenses recorded in the last {MONTH_DAYS} days", "usd", "owner"),
         Metric(
             "research_calls_ok",
             "research calls that found something since it was set",
@@ -186,9 +189,10 @@ CATALOGUE: dict[str, Metric] = {
 NAMES = tuple(name for name, m in CATALOGUE.items() if not m.code_only)  # the ones the agent can set
 # The catalogue in the tool's words, as short as it can be: every request of a work step carries it.
 HELP = (
-    "listings_live, views_total and favorites_total count now; the deltas, orders_observed, revenue_verified_usd "
-    "(recorded revenue less expenses), research_calls_ok (found something), inquiries_received and "
-    "inquiries_answered (people's emails; your answers) and api_spend_usd (a ceiling) count from when it is set; "
+    "listings_live, views_total and favorites_total count now, revenue_month_usd the last 30 days; the deltas, "
+    "orders_observed, revenue_verified_usd (recorded revenue less expenses), research_calls_ok (found something), "
+    "inquiries_received and inquiries_answered (people's emails; your answers) and api_spend_usd (a ceiling) count "
+    "from when it is set; "
     f"case_complete and stage_reached are a venture's; qa_clean: {qa.MIN_PHOTOS}+ photos on each live "
     "listing"
 )
@@ -377,8 +381,12 @@ def read(
         if m.history and not books.history:
             return Unread("the views history is off (your owner's etsy_stats_history option)")
         return _read_etsy(conn, scope, m, row, synced)
-    if m.name == "revenue_verified_usd":
-        return _read_revenue(conn, books.ledger, project_id, venture_id, books.clock.local_day(since).isoformat(), now)
+    if m.name == "revenue_verified_usd":  # 0.27.0: from counts_from on, for a goal the owner raised
+        first = _column(row, "counts_from") or books.clock.local_day(since).isoformat()
+        return _read_revenue(conn, books.ledger, project_id, venture_id, first, now)
+    if m.name == "revenue_month_usd":  # 0.27.0: the owner's days of the last MONTH_DAYS, as the money goal counts them
+        first = books.clock.local_day(to_iso(from_iso(now) - timedelta(days=MONTH_DAYS))).isoformat()
+        return _read_revenue(conn, books.ledger, project_id, venture_id, first, now)
     if m.name == "api_spend_usd":
         return _read_spend(conn, scope, project_id, venture_id, since, now)
     if m.name in ("pins_live", "pin_clicks"):  # 0.13.0 (Phase E2)

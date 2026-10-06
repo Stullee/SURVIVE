@@ -85,11 +85,11 @@ def _q(text: Any) -> str:
 
 def first_test(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any], today: date, now: str) -> int:
     """The milestone of a backed venture's first test: set by Ember's code (its date never moves, only the owner drops
-    it), due in FIRST_TEST_DAYS, leading to the money goal when that is due later, measured by the business case's
-    first test. Returns its number."""
+    it), due in FIRST_TEST_DAYS, leading to the goal at the root (0.27.0: the owner's or the money goal, whenever it is
+    due), measured by the business case's first test. Returns its number."""
     due = today + timedelta(days=FIRST_TEST_DAYS)
-    goal = roadmap.money_goal(conn, scope)
-    parent = goal["id"] if goal is not None and goal["due"] >= due.isoformat() else None
+    goal = roadmap.root(conn, scope)
+    parent = goal["id"] if goal is not None else None
     text = " ".join(str(venture["first_test"] or "").split())
     measure = f"Its first test is met: {text}" if text else NO_TEST
     metric, target = None, None

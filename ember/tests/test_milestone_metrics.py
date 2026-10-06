@@ -19,6 +19,7 @@ pytest.importorskip("httpx2")
 from app.agent import metrics, roadmap, tools, ventures  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
+from tests.roadmap_helpers import led_to_goal  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import listed, proposed, shop_context  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
@@ -31,7 +32,7 @@ def call(agent: Any, tool: str, history: bool = False, shop: bool = True, **args
     elif history:
         ctx.etsy = tools.EtsyAccess("EmberTestShop", "EUR", 3, ctx.etsy.categories, stats_history=True)
     llm_call = rows(agent, "SELECT MAX(id) AS id FROM llm_calls")[0]["id"]
-    return tools.run(ctx, tool, args, f"toolu_{tool}", llm_call, "act")
+    return tools.run(ctx, tool, led_to_goal(ctx, tool, args), f"toolu_{tool}", llm_call, "act")
 
 
 def day(agent: Any, days: int) -> str:
@@ -58,6 +59,7 @@ def test_the_catalogue() -> None:
         "favorites_delta",
         "orders_observed",
         "revenue_verified_usd",
+        "revenue_month_usd",  # 0.27.0: a goal "a month"
         "research_calls_ok",
         "case_complete",
         "stage_reached",

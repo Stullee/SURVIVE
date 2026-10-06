@@ -25,6 +25,7 @@ from app.agent.service import Agent  # noqa: E402
 from app.agent.store import AgentScope  # noqa: E402
 from app.db import Database, discover_migrations, migrate  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
+from tests.roadmap_helpers import led_to_goal  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import listed, shop_context  # noqa: E402
 from tests.test_listing_gates import bars, close, started  # noqa: E402
@@ -38,7 +39,7 @@ def call(agent: Agent, tool: str, **args: Any) -> tools.Outcome:
     """A tool as the model calls it in the agent's last cycle, with its shop."""
     ctx = shop_context(agent)
     llm_call = rows(agent, "SELECT MAX(id) AS id FROM llm_calls")[0]["id"]
-    return tools.run(ctx, tool, args, f"toolu_{tool}", llm_call, "act")
+    return tools.run(ctx, tool, led_to_goal(ctx, tool, args), f"toolu_{tool}", llm_call, "act")
 
 
 def create(agent: Agent, **fields: Any) -> int:
@@ -98,7 +99,8 @@ def test_the_money_goal_comes_back_on_a_full_roadmap(data_dir: Path) -> None:
         )
         after = roadmap.money_goal(conn, agent.scope())
     assert goal is not None and after is not None and after["id"] != goal["id"], happened
-    assert happened[-1].startswith(f"Ember's code set the money goal #{after['id']} (Earn twice what you spend")
+    assert happened[-2].startswith(f"Ember's code set the money goal #{after['id']} (Earn twice what you spend")
+    assert happened[-1].startswith("Ember's code linked #")  # 0.27.0: the steps of no goal lead to it
 
 
 def test_a_product_line_holds_one_open_bar_at_a_time(data_dir: Path) -> None:

@@ -1480,6 +1480,87 @@ body[data-stale="true"] .live { display: none; }
 .card.milestone .notes { margin-top: 8px; font-size: 0.9rem; }
 .card.milestone .notes > summary { cursor: pointer; color: var(--text-2); width: max-content; max-width: 100%; }
 
+/* The goal (0.27.0): the owner's goal leads the roadmap. A progress bar (a meter) has a mark where a straight line to
+   its date would be now; behind its pace it turns amber, and the words say so too (never color alone). */
+.pbar {
+  position: relative; height: 8px; border-radius: 999px; background: var(--accent-track);
+  overflow: visible; min-width: 60px;
+}
+.pbar-big { height: 14px; margin: 10px 0 6px; }
+.pbar-fill { height: 100%; width: 0; background: var(--accent); border-radius: 999px; }
+.pbar[data-state="done"] .pbar-fill { background: var(--good); }
+.pbar[data-state="behind"] { background: color-mix(in srgb, var(--warning) 30%, var(--surface)); }
+.pbar[data-state="behind"] .pbar-fill { background: var(--warning); }
+.pbar[data-state="none"] { background: repeating-linear-gradient(135deg, var(--surface-2) 0 4px, var(--grid) 4px 6px); }
+.pbar-pace {
+  position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px;
+  background: var(--text-2); border-radius: 1px;
+}
+.pbar-big .pbar-pace { top: -4px; bottom: -4px; width: 3px; margin-left: -1.5px; }
+
+.goal-card { border-left: 4px solid var(--accent); }
+.goal-eyebrow { font-size: 0.8rem; font-weight: 600; color: var(--accent-text); text-transform: uppercase; letter-spacing: 0.04em; }
+.goal-card h2 { font-size: 1.5rem; }
+.goal-figures { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.goal-percent { font-size: 2.4rem; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.goal-amount { color: var(--text-2); font-variant-numeric: tabular-nums; }
+.goal-note { font-size: 0.9rem; color: var(--text-2); margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); }
+.goal-card .confirm { margin-top: 10px; }
+.goal-card .vt-form { margin-top: 12px; }
+
+.item-grid > .item-wide { grid-column: 1 / -1; }
+.item-wide .pbar { margin: 6px 0 4px; max-width: 420px; }
+
+/* The goal tree: each milestone under the one it leads to, with a line to its parent. */
+.gt-wrap { margin-bottom: 12px; }
+.gt { list-style: none; margin: 0; padding: 0; }
+.gt .gt { margin-left: 14px; padding-left: 12px; border-left: 1px solid var(--grid); }
+.gt-node { margin: 0; }
+.gt-row {
+  display: grid; grid-template-columns: 1.2em minmax(0, 1fr) minmax(120px, 220px); gap: 4px 10px; align-items: center;
+  padding: 6px 8px; border-radius: 8px;
+}
+.gt-row:hover { background: var(--surface-2); }
+.gt-row[data-goal="true"] { background: var(--surface-2); }
+.gt-glyph { color: var(--text-2); font-size: 0.85rem; text-align: center; }
+.gt-row[data-state="overdue"] .gt-glyph { color: var(--critical-text); }
+.gt-row[data-state="done"] .gt-glyph { color: var(--good-text); }
+.gt-text { display: grid; min-width: 0; }
+.gt-name {
+  font: inherit; text-align: left; color: var(--text); background: none; border: 0; padding: 0; cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.gt-row[data-goal="true"] .gt-name { font-weight: 600; }
+.gt-name:hover { text-decoration: underline; }
+.gt-name:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.gt-row[data-state="done"] .gt-name, .gt-row[data-state="missed"] .gt-name, .gt-row[data-state="dropped"] .gt-name { color: var(--muted); }
+.gt-row[data-state="dropped"] .gt-name { text-decoration: line-through; }
+.gt-meta { color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
+.gt-progress { display: grid; grid-template-columns: minmax(0, 1fr) 3.2em; gap: 8px; align-items: center; }
+.gt-pct { font-size: 0.85rem; font-variant-numeric: tabular-nums; text-align: right; color: var(--text-2); }
+
+/* The Overview's strip: the goal under the key numbers. */
+.goal-strip {
+  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.5fr) auto; gap: 8px 16px; align-items: center;
+  background: var(--surface); border: 1px solid var(--ring); border-left: 4px solid var(--accent);
+  border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px;
+}
+.goal-strip-title { font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+.goal-strip-bar { min-width: 0; }
+.goal-strip-bar .pbar { margin: 4px 0; }
+
+@media (max-width: 600px) {
+  .gt-row { grid-template-columns: 1.2em minmax(0, 1fr); }
+  .gt-progress { grid-column: 2; }
+  .gt .gt { margin-left: 6px; padding-left: 8px; }
+  .goal-strip { grid-template-columns: minmax(0, 1fr); }
+  .goal-strip .btn { justify-self: start; }
+  .goal-percent { font-size: 2rem; }
+}
+@media (forced-colors: active) {
+  .pbar, .pbar-fill, .pbar-pace { forced-color-adjust: none; }
+}
+
 /* The library (0.12.0): what the agent learned from a document. */
 .lib-learnings { margin: 0.5rem 0; padding-left: 1.2rem; }
 .lib-learnings li { margin: 0.3rem 0; }

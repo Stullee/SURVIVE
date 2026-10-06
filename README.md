@@ -97,6 +97,15 @@ cover's width, the words and the price), and after the owner approves it, the
 owner publishes it at KDP from their own account with the card's fields and
 files. See the [Amazon KDP section of the docs](ember/DOCS.md#amazon-kdp).
 
+0.27.0 puts your goal at the head of the roadmap: you set it on the Roadmap tab
+(earn an amount in USD a month, or in total, by a date), Ember's code checks it
+from the books, and everything on the roadmap leads to it. The agent splits it
+into sub-goals, this month's milestones and this week's steps; every milestone
+shows how far it got (by its metric, or by the steps that lead to it) and
+whether it keeps its pace, on the Roadmap tab's goal tree and in every plan. Until
+you set one, the money goal Ember's code keeps stands in for it. See the
+[Roadmap section of the docs](ember/DOCS.md#roadmap).
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

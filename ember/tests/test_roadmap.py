@@ -389,7 +389,7 @@ def test_a_cycle_aims_at_a_milestone_and_the_brief_says_what_done_means(data_dir
         'Measure of done: "Owner records revenue"',
         "Measure met: close it done, with the evidence. Out of reach by its date: move it (why; twice at most, and "
         "your owner decides on theirs), or close it missed once the date has passed.",
-        'Leads to: #1 "Two legs" (due 2026-10-31, open)',
+        'Leads to: #1 "Two legs" (due 2026-10-31, open) · 0% (0 of 1 step done, on pace)',  # 0.27.0: how far it got
     ]
 
 
@@ -543,10 +543,14 @@ def test_the_roadmap_tab(ingress_client: TestClient) -> None:
         "open": 20,
         "owner_slots": 4,
         "moves": 2,
+        "goal_min_days": 7,  # 0.27.0: the owner's goal
+        "goal_max_usd": 100_000.0,
+        "window_days": 30,
     }
+    assert empty["goal"] is None and empty["last_goal"] is None  # 0.27.0: no goal stands before the first plan
     today = date.fromisoformat(empty["today"])
     dashboard = ingress_client.get("api/dashboard").json()
-    assert dashboard["roadmap"] == {"stamp": empty["stamp"], "overdue": 0, "proposals": 0}
+    assert dashboard["roadmap"] == {"stamp": empty["stamp"], "overdue": 0, "proposals": 0, "goal": None}
     due = (today + timedelta(days=10)).isoformat()
     added = post(ingress_client, "api/roadmap", {"title": "Pinterest live", "measure": "10 pins", "due": due})
     assert added.status_code == 201 and added.json() == {"id": 1}

@@ -3,6 +3,25 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.27.0
+
+Your owner's goal leads your roadmap now: they set it on the Roadmap tab (earn an amount in USD a month, or in total,
+by a date), and everything on your roadmap leads to it. ROADMAP names it first, with how far it got and its pace.
+
+- Split it into 2 to 4 sub-goals that together reach it (milestone_plan, parent: the goal's number), with this month's
+  milestones and this week's steps under them. Every milestone you plan names its parent while a goal stands; one
+  that leads to nothing is refused, and one Ember's code finds leading to no open milestone is linked to the goal.
+- Until your owner sets theirs, the money goal Ember's code keeps is the goal. When they set theirs, the money goal
+  gives way: what led to it leads to theirs, and their goal gets its own two decision points.
+- The goal is theirs: you can't close, move or re-link it, only add a note. Ember's code closes it from the books (the
+  metric revenue_month_usd, the last 30 days, or revenue_verified_usd, from its day on).
+- Every line of ROADMAP says how far it got: a metric's reading against its target, or the mean of the steps that lead
+  to it (a step without a metric counts once it is done), and whether it is ahead of, on or behind its pace. Set a
+  metric where one fits, so your progress is measured: revenue_month_usd is new, for what a leg brings a month (with
+  venture_id or project_id for its own).
+- New roadmap checks: nothing of yours leads to the goal yet, and the goal or a sub-goal of it behind its pace. Say in
+  your plan what changes to catch up.
+
 ## 0.26.1
 
 Nothing changes for you: the tests of Ember's code close every database connection they open, as Python 3.13 asks.

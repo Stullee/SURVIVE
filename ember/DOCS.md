@@ -273,7 +273,7 @@ covers a cycle. It never happens while the agent is dormant, while it backs off
 after a failed, stopped or refused cycle, after three interrupted cycles, or
 while its cycle cap leaves no room for work. Orders, favorites and the last day
 of a milestone Ember's code checks itself (one with a metric, such as a listing
-test's bars, or the money goal) wake no one: Ember's code records them. An
+test's bars, your goal or the money goal) wake no one: Ember's code records them. An
 event that can't wake the agent waits for its next cycle.
 
 To keep money for these wake-ups, a scheduled cycle leaves **a fifth of the
@@ -300,7 +300,7 @@ favorites, orders: where it is stuck) and the reach done for it (blog posts,
 pins, listing edits). Since 0.24.0 it also sees the channels that wait for your
 setup (such as Pinterest without its app secret), so it doesn't plan with them,
 and its roadmap says which milestones Ember's code checks and closes itself and
-whose dates don't move (a product line's listing test, the money goal).
+whose dates don't move (a product line's listing test, your goal, the money goal).
 
 The agent then judges every project (**continue**, **change** or **stop**, with
 its bottleneck: **reach**, **appeal**, **conversion**, **quality**,
@@ -310,8 +310,8 @@ and its roadmap. Each milestone that is overdue or due this week gets a
 verdict, **hit** (its measure is met, with the evidence), **miss** (past its
 date and not met), **extend** (a new date) or **park** (it waits a week), and
 Ember's code applies each one with the same rules as the agent's own changes (a
-milestone with a metric is left to Ember's code, the money goal can't be
-closed, a date moves twice at most): the review keeps what came of each
+milestone with a metric is left to Ember's code, your goal and the money goal
+can't be closed, a date moves twice at most): the review keeps what came of each
 verdict, and the day's plans see it. Every plan that day shows the
 review, and the agent is told to carry it out: close what it stopped, change
 what it changed, work on each bottleneck. Ember's code adds the review's lesson
@@ -827,35 +827,80 @@ numbers. Live legs show spent and earned in the tab's summary.
 
 ## Roadmap
 
-The **Roadmap** tab shows where the agent is heading: goals for the next three
-months, the milestones this month that lead to them, and this week's steps.
-Each milestone has a due date and a *measure of done*, a number or a fact the
-agent can check ("10 pins that link to the shop", "business case for venture
-#3 proposed"), and can serve a venture or a project.
+Everything on the roadmap is led by **your goal**: what you want Ember to earn.
+You set it on the **Roadmap** tab, and the agent splits it into sub-goals that
+lead to it (the legs and ventures that bring the money), the milestones this
+month that lead to those, and this week's steps. Each milestone has a due date
+and a *measure of done*, a number or a fact the agent can check ("10 pins that
+link to the shop", "business case for venture #3 proposed"), can serve a venture
+or a project, and shows **how far it got**.
 
-**Planning ahead.** The agent lays the roadmap out itself and keeps it filled,
-up to 12 milestones in one step (a goal and the milestones that lead to it,
-each naming its parent in the same step): every plan sees its goals first (the milestones the rest leads to, one line
-each, never cut), then the rest by horizon (overdue, this week, this month,
-the next three months, later), and aims the cycle at the milestone due first, which the cycle's
-work step sees with its measure. Ember's code flags an empty roadmap, overdue
-milestones, a week with nothing due and a roadmap that ends within the month,
+**Your goal** (0.27.0). **Set your goal** asks for an amount in USD (the books'
+currency), whether it counts **a month** (revenue less expenses over the last 30
+days reaches it: a steady income) or **in total** (everything from the day you
+set it adds up to it), and the date to reach it by, at least a week and at most
+a year ahead, with an optional word on why it matters, which the agent reads with
+it. Ember's code checks it from the revenue and expenses you record in the
+Ledger, before every plan and whenever you open the Roadmap tab: met, it closes it
+**done**; past its date, **missed**. Only you change it: **Change goal** sets a new
+one in its place (what led to the old one leads to the new one, and a goal in
+total you raise keeps counting from the old one's day), and **Remove goal** takes
+it off (what led to it stays). The agent can't move, close or re-link it; it may
+only leave a note on it.
+
+**Ember's own goal.** While you have set none (and after yours is met, missed or
+removed, until you set the next), Ember's code keeps a money goal of its own at
+the root, **Earn as much as you spend** (over the last 30 days, the revenue
+recorded less expenses at least equals the API spending), due in 90 days, so the
+agent always has a goal. It checks it from the books before every plan: once it
+is met it closes it **done** and sets the next, which asks for more (twice, then
+three times what the agent spends); past its date it closes it **missed** and
+sets it again. The moment you set your goal, it gives way to yours: it is closed
+(dropped by Ember's code), and what led to it leads to your goal. You can drop
+it: then Ember's code sets no more of its own, and only your goal leads the
+roadmap.
+
+**Decision points.** Ember's code puts two **decision points** under the goal at
+the root (yours or its own), at a quarter and at half of its time (or of the net
+runway, when that is shorter), where the agent decides from the numbers which
+projects and ventures go on, change or stop. It closes a decision point with its
+decision; their dates don't move, and they go with their goal.
+
+**Everything leads to the goal.** Every milestone the agent plans names the one
+it leads to (the goal for a sub-goal), up to 12 in one step; one that leads to
+nothing is refused. Yours lead to the goal unless you choose another milestone.
+The tests Ember's code sets (a venture's first test, a product line's listing
+bars, a scale point) lead to it too, and whatever is left leading to no open
+milestone (its parent closed) is linked to the nearest open one above it, or to
+the goal, before every plan. A sub-goal is due by your goal's date at the latest
+(Ember's own goal is the exception: what leads to it moves on to the next one).
+
+**How far each milestone got.** Every milestone shows a share from 0 to 100%:
+
+- one with a **metric** (below): its reading against its target, as Ember's code
+  read it ("$340 of $1,000", "12 of 30 views");
+- **Ember's own goal**: the last 30 days' revenue less expenses against what it
+  needs;
+- one without a metric that milestones lead to: the mean of theirs, open and done
+  ones ("1 of 3 steps done"); dropped and missed ones don't count;
+- one without either: nothing until it is done (then 100%).
+
+A ceiling (API spending at most so much) shows what it used instead. An open,
+measured milestone also shows its **pace**: ahead of, on, or behind the share of
+its time gone (since it was set), and its bar marks where a straight line to its
+date would be today. The agent sees all of it in every plan: your goal first,
+with how far it got and its pace, then each sub-goal and milestone with its share.
+Ember's code flags a goal that nothing of the agent's leads to yet, and the goal
+or a sub-goal behind its pace, and asks the agent to act on it in its next plan.
+
+**Planning ahead.** Every plan sees the goal first, then the sub-goals that lead
+straight to it (one line each, never cut), then the rest by horizon (overdue, this
+week, this month, the next three months, later), and aims the cycle at the
+milestone due first, which the cycle's work step sees with its measure, how far it
+and the goal got, and what it leads to. Ember's code flags an empty roadmap,
+overdue milestones, a week with nothing due and nothing planned beyond the month,
 and asks the agent to fix that in its next plan. The daily review checks the
-roadmap too.
-
-**The money goal.** The roadmap is never empty: Ember's code keeps a money
-goal at its root, **Earn as much as you spend** (over the last 30 days, the
-revenue recorded less expenses at least equals the API spending), due in 90
-days, with two **decision points** under it, at a quarter and at half of the
-net runway (of the 90 days at most), where the agent decides from the numbers which
-projects and ventures go on, change or stop. Ember's code checks the goal from
-the books before every plan: once it is met it closes it **done** and sets the
-next, which asks for more (twice, then three times what the agent spends); past
-its date it closes it **missed** and sets it again. The agent can't move, drop
-or close the goal, nor move a decision point; it closes a decision point with
-its decision. You can drop the goal: then Ember's code sets no more, and the
-roadmap's goals are yours and the agent's (the first tests that led to it go
-on, leading to no goal).
+roadmap too, the goal's pace included.
 
 **Milestones Ember's code checks.** A milestone can name a **metric** and a
 target, and then Ember's code checks it from its records, with no model call:
@@ -874,7 +919,8 @@ The metrics:
 | `listings_live` | the agent's listings live on Etsy now | Etsy |
 | `views_delta`, `favorites_delta` | views or favorites gained since it was set (only while `etsy_stats_history` is on) | Etsy |
 | `orders_observed` | Etsy orders of the agent's listings since it was set | Etsy |
-| `revenue_verified_usd` | revenue less expenses recorded since it was set | the ledger |
+| `revenue_verified_usd` | revenue less expenses recorded since it was set (your goal in total: since its day) | the ledger |
+| `revenue_month_usd` | revenue less expenses recorded in the last 30 days (your goal a month; a leg's income too) | the ledger |
 | `research_calls_ok` | research calls that found something since it was set | Ember |
 | `case_complete` | the venture's business case is complete (researched, scored, filled in) | Ember |
 | `stage_reached` | the venture reached a stage (researching, proposed, building, live) | Ember |
@@ -979,23 +1025,33 @@ shows as **self-reported**: the agent's word, not checked from Ember's records,
 also in its daily review. Ember keeps who closed each milestone (the agent,
 you, or Ember's code from its records).
 
+**The Roadmap tab.** Your goal comes first, with a large bar of how far it got,
+the amount, its pace and its date (and, while you have none, Ember's own goal,
+with **Set your goal**). The **goal tree** below it shows every open milestone
+under the one it leads to (and those met or missed in the last two weeks), each
+with its bar and share; choose one for its card. The Overview shows the goal and
+its bar under the key numbers.
+
 **The timeline.** A row per milestone, under the goal it leads to: a bar from
 when it was planned to its date, a mark on its date (open ◆, overdue ▲, done ●,
 missed ✕, dropped –), a hollow ◇ where it was first due if its date moved, and a
-line for today. Hover or focus a row for its measure; click it for its card.
-The cards below are grouped by horizon. The tab's badges count overdue
-milestones (▲) and the new dates the agent proposed for yours (◔).
+line for today. Hover or focus a row for its measure and how far it got; click it
+for its card. The cards below are grouped by horizon, each with its progress. The
+tab's badges count overdue milestones (▲) and the new dates the agent proposed
+for yours (◔).
 
-**Your part.** **Add milestone** puts a milestone of yours on the roadmap
-(optionally leading to another one); the agent plans toward it, and it stays
-yours: only you can drop it, and the agent can't move its date. When the agent
-wants a new date for it, it proposes one with the reason, and the card shows
-**Accept new date** and **Keep the date**; until you accept, the date stands.
-**Note** leaves a comment on any milestone, and **Drop** takes an open one (and
-the open milestones leading to it) off the plan. Of the 20 open places on the
-roadmap, the agent fills 16 at most: the last 4 are kept for yours. The
-milestones Ember's code sets (the money goal, decision points, first tests and
-listing bars) take none of them. The agent reads your word on its next wake.
+**Your part.** **Set your goal** (or **Change goal**) leads everything, as above.
+**Add milestone** puts a milestone of yours on the roadmap, leading to the goal
+or to the milestone you choose; the agent plans toward it, and it stays yours:
+only you can drop it, and the agent can't move its date. When the agent wants a
+new date for it, it proposes one with the reason, and the card shows **Accept new
+date** and **Keep the date**; until you accept, the date stands. **Note** leaves a
+comment on any milestone, and **Drop** takes an open one (and the open milestones
+leading to it) off the plan; dropping a goal at the root keeps what leads to it.
+Of the 20 open places on the roadmap, the agent fills 16 at most: the last 4 are
+kept for yours. Your goal and the milestones Ember's code sets (its own goal,
+decision points, first tests and listing bars) take none of them. The agent reads
+your word on its next wake, and setting your goal wakes it like a decision.
 
 ## Library
 
@@ -2083,8 +2139,8 @@ What the page shows, each part switched off by its option:
 | **Live: track record** (`live_show_record`) | How often its forecasts came true (milestones met against the odds it gave, the Brier score). |
 | **Live: memorial** (`live_show_memorial`) | If it dies: its life in numbers, and its last will once you approved it. Off by default. |
 
-What it never shows: emails, senders, orders, customers, inquiries, the
-agent's journal, plans or prompts. The ventures' and milestones' titles and the
+What it never shows: emails, senders, orders, customers, inquiries, your
+goal (0.27.0), the agent's journal, plans or prompts. The ventures' and milestones' titles and the
 last will are the agent's words, and it reads emails and web pages, so they go
 up only as you approved them:
 
@@ -2189,7 +2245,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.26.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.27.0 (by /u/your name)`.
 
 ## Amazon KDP
 

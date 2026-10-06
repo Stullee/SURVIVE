@@ -212,7 +212,9 @@ def work(conn: sqlite3.Connection, agent: Agent, masker: privacy.Masker, scope: 
             if ventures <= VENTURES_SHOWN:
                 found.append(title("venture", int(row["id"]), row["title"], stage))
     for row in conn.execute(
-        f"SELECT id, title, due FROM milestones WHERE {where} AND life_id = ? AND status = 'open' ORDER BY due, id",
+        # 0.27.0: not the owner's goal (what they want to earn is theirs to publish)
+        f"SELECT id, title, due FROM milestones WHERE {where} AND life_id = ? AND status = 'open' AND owner_goal = 0"
+        " ORDER BY due, id",
         (*params, scope.life_id),
     ):
         milestones += 1

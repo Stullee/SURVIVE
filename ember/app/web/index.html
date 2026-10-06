@@ -73,6 +73,15 @@
     </article>
   </section>
 
+  <section class="goal-strip" id="goal-strip" aria-labelledby="goal-strip-label" hidden>
+    <div class="goal-strip-head">
+      <h2 class="tile-label" id="goal-strip-label">Your goal</h2>
+      <p class="goal-strip-title" id="goal-strip-title"></p>
+    </div>
+    <div class="goal-strip-bar" id="goal-strip-bar"></div>
+    <button type="button" class="btn" id="goal-strip-open">Roadmap</button>
+  </section>
+
   <nav class="tabs" role="tablist" aria-label="Sections">
     <button type="button" role="tab" class="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true">Overview</button>
     <button type="button" role="tab" class="tab" id="tab-ledger" aria-controls="panel-ledger" aria-selected="false">Ledger</button>
@@ -272,6 +281,59 @@
     </section>
 
     <section class="panel" id="panel-roadmap" role="tabpanel" aria-labelledby="tab-roadmap" hidden>
+      <article class="card goal-card" id="rm-goal-card" aria-labelledby="rm-goal-title">
+        <div class="card-head">
+          <div>
+            <p class="goal-eyebrow" id="rm-goal-eyebrow">Your goal</p>
+            <h2 id="rm-goal-title" tabindex="-1">–</h2>
+            <p class="card-sub" id="rm-goal-sub">&nbsp;</p>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn btn-primary" id="rm-goal-set" aria-controls="rm-goal-form" aria-expanded="false">Set your goal</button>
+            <button type="button" class="btn" id="rm-goal-remove" hidden>Remove goal</button>
+          </div>
+        </div>
+        <div class="goal-progress" id="rm-goal-progress"></div>
+        <p class="goal-note" id="rm-goal-note" hidden></p>
+        <div class="confirm" id="rm-goal-confirm" hidden>
+          <p id="rm-goal-confirm-text"></p>
+          <div class="form-actions">
+            <button type="button" class="btn btn-danger" id="rm-goal-confirm-yes">Remove goal</button>
+            <button type="button" class="btn" id="rm-goal-confirm-no">Keep it</button>
+          </div>
+        </div>
+        <form class="vt-form" id="rm-goal-form" novalidate hidden>
+          <p class="form-intro" id="rm-goal-form-intro">What Ember works toward: everything on the roadmap leads to it. Ember's code checks it from the revenue less expenses you record in the Ledger.</p>
+          <div class="field">
+            <label for="rm-goal-amount">Earn (USD)</label>
+            <input type="text" id="rm-goal-amount" inputmode="decimal" autocomplete="off" aria-describedby="rm-goal-amount-error">
+            <p class="field-error" id="rm-goal-amount-error" hidden></p>
+          </div>
+          <fieldset class="field" id="rm-goal-per">
+            <legend>Counted</legend>
+            <div class="choices">
+              <label class="choice"><input type="radio" name="rm-goal-per" value="month" checked> A month (the last 30 days)</label>
+              <label class="choice"><input type="radio" name="rm-goal-per" value="total"> In total</label>
+            </div>
+            <p class="hint" id="rm-goal-per-hint">A month: met once 30 days bring the amount. In total: met once everything from the day you set it adds up to it.</p>
+          </fieldset>
+          <div class="field">
+            <label for="rm-goal-due">By</label>
+            <input type="date" id="rm-goal-due" aria-describedby="rm-goal-due-error">
+            <p class="field-error" id="rm-goal-due-error" hidden></p>
+          </div>
+          <div class="field">
+            <label for="rm-goal-comment">Why it matters (optional)</label>
+            <textarea id="rm-goal-comment" rows="2" aria-describedby="rm-goal-comment-hint"></textarea>
+            <p class="hint" id="rm-goal-comment-hint">Ember reads it with the goal.</p>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="rm-goal-save">Save goal</button>
+            <button type="button" class="btn" id="rm-goal-cancel">Cancel</button>
+          </div>
+        </form>
+        <p class="form-status" id="rm-goal-status" role="status"></p>
+      </article>
       <article class="card" id="rm-card">
         <div class="card-head">
           <div>
@@ -314,6 +376,10 @@
         <p class="form-status" id="rm-status" role="status"></p>
         <p class="form-status" id="rm-load-status" role="status"></p>
         <p class="rm-summary" id="rm-summary"></p>
+        <h3 class="small-head" id="rm-tree-head">Goal tree</h3>
+        <p class="hint" id="rm-tree-hint">Each milestone under the one it leads to, with how far it got. Choose one for its card.</p>
+        <div class="gt-wrap" id="rm-tree"></div>
+        <h3 class="small-head" id="rm-timeline-head">Timeline</h3>
         <div class="rm-legend" id="rm-legend" aria-hidden="true"></div>
         <div class="rm-chart" id="rm-chart"></div>
         <div class="rm-tip" id="rm-tip" hidden></div>

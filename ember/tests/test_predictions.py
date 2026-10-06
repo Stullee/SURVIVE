@@ -41,11 +41,12 @@ def test_a_milestones_odds_are_settled_by_code(data_dir: Path) -> None:
     agent, _ = run(data_dir, fake)  # ordinary cycles: the roadmap is laid out there
     today = agent.clock.today()
     soon, later = (today + timedelta(days=7)).isoformat(), (today + timedelta(days=14)).isoformat()
-    odds = [
+    odds = [  # 0.27.0: each leads to the money goal #1
         {"title": "Research that finds", "metric": "research_calls_ok", "target": "1", "due": soon, "likely": 70},
         {"title": "First revenue", "metric": "revenue_verified_usd", "target": "5", "due": later, "likely": 40},
     ]
-    guess = [{"title": "A guess", "measure": "Something good", "due": soon, "likely": 50}]
+    odds = [{**m, "parent": "#1"} for m in odds]
+    guess = [{"title": "A guess", "measure": "Something good", "due": soon, "likely": 50, "parent": "#1"}]
     calls = ToolCalls([("milestone_plan", {"milestones": odds}), ("milestone_plan", {"milestones": guess})])
     fake.script.extend([plan(steps=["lay out the roadmap"]), calls, Reply("Done."), JOURNAL])
     agent.run_cycle("schedule")

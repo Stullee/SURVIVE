@@ -27,7 +27,8 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from typing import Any
 
@@ -178,11 +179,13 @@ def count(conn: sqlite3.Connection, scope: AgentScope, status: str | None = None
 
 
 def placed(conn: sqlite3.Connection, scope: AgentScope) -> int:
-    """0.15.0: the open milestones that take a place of MAX_OPEN: the agent's and the owner's."""
+    """0.15.0: the open milestones that take a place of MAX_OPEN: the agent's and the owner's (0.27.0: not the
+    owner's goal)."""
     where, params = scope.where()
     marks = ", ".join("?" for _ in PLACED_BY)
     row = conn.execute(
-        f"SELECT COUNT(*) FROM milestones WHERE {where} AND status = 'open' AND created_by IN ({marks})",
+        f"SELECT COUNT(*) FROM milestones WHERE {where} AND status = 'open' AND owner_goal = 0"
+        f" AND created_by IN ({marks})",
         (*params, *PLACED_BY),
     )
     return int(row.fetchone()[0])
@@ -258,9 +261,14 @@ def create(
     cash_cents: int | None = None,
     owner_minutes: int | None = None,
     replaces: Mapping[str, Any] | None = None,
+    owner_goal: bool = False,
+    counts_from: str | None = None,
+    comment: str | None = None,
+    replaces_id: int | None = None,
 ) -> int:
-    """A new open milestone; one the owner adds is news for the agent (owner_action 'added'). With a metric (0.12.0),
-    Ember's code checks it (metrics.grade)."""
+    """A new open milestone; one the owner adds is news for the agent (owner_action 'added', with their ``comment``).
+    With a metric (0.12.0), Ember's code checks it (metrics.grade). 0.27.0: ``owner_goal``, the owner's goal at the
+    root (``set_goal``), counting from ``counts_from``; ``replaces_id``, the goal it took the place of."""
     owner = created_by == "owner"
     columns = {
         "mode": scope.mode,
@@ -280,8 +288,9 @@ def create(
         "first_due": replaces["first_due"] if replaces is not None else due,
         "due": due,
         "moves": replaced_moves(replaces) if replaces is not None else 0,
-        "replaces_id": replaces["id"] if replaces is not None else None,
+        "replaces_id": replaces["id"] if replaces is not None else replaces_id,
         "owner_action": "added" if owner else None,
+        "owner_comment": comment if owner else None,
         "owner_at": now if owner else None,
         "owner_by": entered_by if owner else None,
         "owner_version": 1 if owner else 0,
@@ -292,6 +301,8 @@ def create(
         "budget_micros": budget_micros,  # what it may cost (0.12.0): API spending, the owner's cash and time
         "cash_cents": cash_cents,
         "owner_minutes": owner_minutes,
+        "owner_goal": 1 if owner_goal else 0,
+        "counts_from": counts_from,
     }
     names = ", ".join(columns)
     marks = ", ".join("?" for _ in columns)
@@ -364,6 +375,33 @@ def _money_level(conn: sqlite3.Connection, scope: AgentScope) -> int:
     return 1 + int(met)
 
 
+def money_needed(conn: sqlite3.Connection, scope: AgentScope, spent: int) -> int:
+    """0.27.0: what the open money goal asks the last 30 days to bring (revenue less expenses, micros): its level
+    times the API spending ``spent`` in them."""
+    return _money_level(conn, scope) * spent
+
+
+def _goal_decision(row: Mapping[str, Any]) -> bool:
+    """A decision point of a goal (a venture's or a product line's scale point is linked to it, and isn't)."""
+    return (
+        _column(row, "kind") == "decision" and _column(row, "venture_id") is None and _column(row, "project_id") is None
+    )
+
+
+def _drop_decisions(conn: sqlite3.Connection, goal_id: int, now: str, result: str) -> list[int]:
+    """The open decision points of goal ``goal_id``, dropped by Ember's code: a goal brings its own."""
+    dropped = []
+    for step in children(conn, goal_id):
+        if step["status"] == "open" and _goal_decision(step):
+            conn.execute(
+                "UPDATE milestones SET status = 'dropped', result = ?, closed_at = ?, closed_by = 'code',"
+                " updated_at = ? WHERE id = ?",
+                (result[: LIMITS["result"]], now, now, step["id"]),
+            )
+            dropped.append(int(step["id"]))
+    return dropped
+
+
 def keep_money_goal(
     conn: sqlite3.Connection,
     scope: AgentScope,
@@ -372,39 +410,43 @@ def keep_money_goal(
     earned: int,
     spent: int,
     runway_days: float | None,
+    settle: bool = True,
 ) -> list[str]:
-    """Settle the open money goal from the books (``earned``: revenue less expenses, ``spent``: API spending, both over
-    the last MONEY_WINDOW_DAYS, in micros) and set a new one, with its decision points, while none is open. None is set
-    once the owner dropped one: then the roadmap is theirs to shape. Returns what happened, for the events."""
-    happened = []
+    """The goal at the roadmap's root, kept before every plan (``earned``: revenue less expenses, ``spent``: API
+    spending, both over the last MONEY_WINDOW_DAYS, in micros). 0.27.0: while the owner's goal stands, Ember's code
+    keeps no money goal of its own (one still open gives way to it) and sets the owner's goal its decision points;
+    otherwise it settles its money goal from the books (not without ``settle``: once a plan) and sets a new one, with
+    its decision points, while none is open (none once the owner dropped one: then the roadmap is theirs to shape).
+    Then everything leads to the goal (``adopt``). Returns what happened, for the events."""
+    happened: list[str] = []
+    mine = owner_goal(conn, scope)
+    if mine is not None:
+        money = money_goal(conn, scope)
+        if money is not None:
+            happened += _give_way(conn, money, int(mine["id"]), now)
+        happened += _goal_decisions(conn, scope, mine, today, now, runway_days)
+        return happened + _adopted(conn, scope, int(mine["id"]), now)
     moving: list[int] = []  # the agent's and the owner's milestones that led to a closed goal: they lead to the next
     goal = money_goal(conn, scope)
     if goal is not None:
         level = _money_level(conn, scope)
         met = spent > 0 and earned >= level * spent
-        if not met and _due(goal) >= today:
-            return happened
+        if not settle or (not met and _due(goal) >= today):
+            return happened + _adopted(conn, scope, int(goal["id"]), now)
         numbers = (
             f"Over the last {MONEY_WINDOW_DAYS} days: revenue less expenses ${earned / 1_000_000:.2f}, API spending "
             f"${spent / 1_000_000:.2f}."
         )
         status = "done" if met else "missed"
         update(conn, goal["id"], now, status=status, result=numbers, closed_at=now, closed_by="code")
-        for step in children(conn, goal["id"]):
-            if step["status"] != "open":
-                continue
-            if step["kind"] == "decision":  # its decision points: the next goal brings its own
-                conn.execute(
-                    "UPDATE milestones SET status = 'dropped', result = ?, closed_at = ?, closed_by = 'code',"
-                    " updated_at = ? WHERE id = ?",
-                    (f"The money goal #{goal['id']} was closed {status}.", now, now, step["id"]),
-                )
-            else:
-                moving.append(int(step["id"]))
+        _drop_decisions(conn, goal["id"], now, f"The money goal #{goal['id']} was closed {status}.")
+        moving += [int(step["id"]) for step in children(conn, goal["id"]) if step["status"] == "open"]
         happened.append(f"Ember's code closed the money goal #{goal['id']} {status}: {numbers}")
     where, params = scope.where()
-    dropped = conn.execute(
-        f"SELECT 1 FROM milestones WHERE {where} AND kind = 'money_goal' AND status = 'dropped' LIMIT 1", params
+    dropped = conn.execute(  # 0.27.0: the owner's drop (one that gave way to their goal was Ember's code's)
+        f"SELECT 1 FROM milestones WHERE {where} AND kind = 'money_goal' AND status = 'dropped' AND closed_by = 'owner'"
+        " LIMIT 1",
+        params,
     ).fetchone()
     if dropped is not None:  # 0.15.0: the goal and its decision points take none of the agent's or owner's places
         return happened
@@ -439,7 +481,370 @@ def keep_money_goal(
     for step_id in moving:
         conn.execute("UPDATE milestones SET parent_id = ?, updated_at = ? WHERE id = ?", (goal_id, now, step_id))
     happened.append(f"Ember's code set the money goal #{goal_id} ({money_goal_title(level)}, due {due.isoformat()})")
-    return happened
+    return happened + _adopted(conn, scope, goal_id, now)
+
+
+# --- the owner's goal (0.27.0) ---
+
+# The owner's goal leads the roadmap: an amount to earn a month (revenue_month_usd: the last 30 days) or in total
+# (revenue_verified_usd: from counts_from on), by a date, at its root. Ember's code checks it from the books
+# (metrics.grade) and keeps everything else leading to it (``adopt``). While it stands, Ember's code keeps no money goal
+# of its own; once it closes (met, missed, or removed by the owner), the money goal stands in for it until the owner
+# sets the next one.
+GOAL_METRICS = {"month": "revenue_month_usd", "total": "revenue_verified_usd"}
+GOAL_DAYS_MIN = 7  # how soon the owner's goal can be due, at the earliest
+PACE_MARGIN = 10  # points of progress ahead of, or behind, the share of its time gone: "ahead", "behind"
+
+
+def owner_goal(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | None:
+    """The owner's open goal, if any (one at a time: migration 0083)."""
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT * FROM milestones WHERE {where} AND owner_goal = 1 AND status = 'open' LIMIT 1", params
+    ).fetchone()
+
+
+def root(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | None:
+    """The goal everything leads to: the owner's, or the money goal Ember's code keeps in its place (None: neither)."""
+    return owner_goal(conn, scope) or money_goal(conn, scope)
+
+
+def is_goal(row: Mapping[str, Any]) -> bool:
+    """Whether a milestone is the owner's goal."""
+    return bool(_column(row, "owner_goal"))
+
+
+def is_root(row: Mapping[str, Any]) -> bool:
+    """Whether a milestone is a goal at the root: the owner's, or Ember's code's money goal."""
+    return is_goal(row) or _column(row, "kind") == "money_goal"
+
+
+def title_q(row: Mapping[str, Any]) -> str:
+    """A milestone's title, JSON-quoted and short, for a tool's words."""
+    return _q(row["title"], 80)
+
+
+def goal_per(row: Mapping[str, Any]) -> str | None:
+    """'month' or 'total' for the owner's goal (its metric), else None."""
+    metric = _column(row, "metric")
+    return next((per for per, name in GOAL_METRICS.items() if name == metric), None) if is_goal(row) else None
+
+
+def dollars(micros: int) -> str:
+    """An amount as the owner writes it: $1,000, $12.50 or -$3."""
+    sign, cents = ("-" if micros < 0 else ""), abs(int(micros)) // 10_000
+    return f"{sign}${cents // 100:,}" if cents % 100 == 0 else f"{sign}${cents / 100:,.2f}"
+
+
+def goal_title(per: str, target: int) -> str:
+    return f"Earn {dollars(target)} {'a month' if per == 'month' else 'in total'}"
+
+
+def goal_measure(per: str, target: int, counts_from: str | None) -> str:
+    if per == "month":
+        return (
+            f"Over the last {MONEY_WINDOW_DAYS} days, the revenue recorded, less expenses, is at least "
+            f"{dollars(target)} (Ember's code checks it from the books)"
+        )
+    return (
+        f"From {counts_from} on, the revenue recorded, less expenses, adds up to at least {dollars(target)} (Ember's "
+        "code checks it from the books)"
+    )
+
+
+def set_goal(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    *,
+    per: str,
+    target: int,
+    due: date,
+    today: date,
+    now: str,
+    who: str | None,
+    comment: str | None = None,
+) -> tuple[int, list[str]]:
+    """The owner's goal at the roadmap's root: earn ``target`` (micros) a month or in total (``per``) by ``due``. One
+    set in place of another closes that one (dropped by the owner) and takes over what led to it; a goal in total set
+    in place of one in total keeps counting from that one's day. The money goal Ember's code kept gives way the same
+    way. The decision points of either go with it: the keeper sets the new goal its own. Returns the goal's number and
+    what happened."""
+    if per not in GOAL_METRICS:
+        raise ValueError("per is 'month' or 'total'")
+    old = owner_goal(conn, scope)
+    money = money_goal(conn, scope)
+    counts_from = None
+    if per == "total":
+        kept = old["counts_from"] if old is not None and goal_per(old) == "total" else None
+        counts_from = kept or today.isoformat()
+    happened = []
+    if old is not None:
+        conn.execute(
+            "UPDATE milestones SET status = 'dropped', result = ?, closed_at = ?, closed_by = 'owner', updated_at = ?"
+            " WHERE id = ?",
+            ("Your owner set a new goal in its place.", now, now, old["id"]),
+        )
+    goal_id = create(
+        conn,
+        scope,
+        title=goal_title(per, target),
+        measure=goal_measure(per, target, counts_from),
+        due=due.isoformat(),
+        now=now,
+        created_by="owner",
+        entered_by=who,
+        metric=GOAL_METRICS[per],
+        target=target,
+        owner_goal=True,
+        counts_from=counts_from,
+        comment=comment,
+        replaces_id=int(old["id"]) if old is not None else None,
+    )
+    if old is not None:
+        _drop_decisions(conn, old["id"], now, f"Your owner set the goal #{goal_id} in place of #{old['id']}.")
+        _move_steps(conn, int(old["id"]), goal_id, now)
+        happened.append(f"the goal #{old['id']} gave way to #{goal_id}")
+    if money is not None:
+        happened += _give_way(conn, money, goal_id, now)
+    _adopted(conn, scope, goal_id, now)
+    return goal_id, happened
+
+
+def _move_steps(conn: sqlite3.Connection, from_id: int, to_id: int, now: str) -> None:
+    for step in children(conn, from_id):
+        if step["status"] == "open":
+            conn.execute("UPDATE milestones SET parent_id = ?, updated_at = ? WHERE id = ?", (to_id, now, step["id"]))
+
+
+def _give_way(conn: sqlite3.Connection, money: Mapping[str, Any], goal_id: int, now: str) -> list[str]:
+    """The money goal Ember's code kept, closed (dropped by Ember's code) in favour of the owner's goal ``goal_id``:
+    its decision points go with it, what led to it leads to the owner's goal."""
+    _drop_decisions(conn, money["id"], now, f"Your owner set their goal #{goal_id}: it leads the roadmap now.")
+    _move_steps(conn, int(money["id"]), goal_id, now)
+    conn.execute(
+        "UPDATE milestones SET status = 'dropped', result = ?, closed_at = ?, closed_by = 'code', updated_at = ?"
+        " WHERE id = ?",
+        (f"Your owner set their goal #{goal_id}: it takes the place of this one.", now, now, money["id"]),
+    )
+    return [f"Ember's code closed the money goal #{money['id']}: your owner's goal #{goal_id} takes its place"]
+
+
+def _goal_decisions(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    goal: Mapping[str, Any],
+    today: date,
+    now: str,
+    runway_days: float | None,
+) -> list[str]:
+    """The owner's goal's two decision points, set once (at a quarter and at half of its days left, or of the net
+    runway when that is shorter), each before its date."""
+    if any(_goal_decision(step) for step in children(conn, goal["id"])):
+        return []
+    left = (_due(goal) - today).days
+    base = min(runway_days or left, left)
+    made, last = [], 0
+    for fraction in DECISION_FRACTIONS:
+        days = max(3, last + 1, round(base * fraction))
+        if days >= left:
+            break
+        last = days
+        made.append(
+            create(
+                conn,
+                scope,
+                title=DECISION_TITLE,
+                measure=DECISION_MEASURE,
+                due=(today + timedelta(days=days)).isoformat(),
+                now=now,
+                parent_id=int(goal["id"]),
+                created_by="code",
+                kind="decision",
+            )
+        )
+    if not made:
+        return []
+    return [f"Ember's code set the decision points {', '.join(f'#{i}' for i in made)} of your owner's goal"]
+
+
+def _nearest_open(conn: sqlite3.Connection, parent_id: int | None) -> int | None:
+    """The nearest open milestone at or above ``parent_id`` (None: there is none)."""
+    seen: set[int] = set()
+    current = parent_id
+    while current is not None and current not in seen:
+        seen.add(current)
+        row = conn.execute("SELECT id, status, parent_id FROM milestones WHERE id = ?", (current,)).fetchone()
+        if row is None:
+            return None
+        if row["status"] == "open":
+            return int(row["id"])
+        current = row["parent_id"]
+    return None
+
+
+def adopt(conn: sqlite3.Connection, scope: AgentScope, root_id: int, now: str) -> list[int]:
+    """0.27.0: everything leads to the goal ``root_id``. An open milestone that leads to no open one (to none, or to
+    one that closed) is linked to the nearest open milestone above it, else to the goal (one Ember's code set, to the
+    goal: migration 0083); a decision point of a goal that closed goes with that goal. Returns the milestones
+    linked."""
+    rows = open_milestones(conn, scope)
+    open_ids = {int(r["id"]) for r in rows}
+    linked = []
+    for r in rows:
+        if int(r["id"]) == root_id or is_root(r) or r["parent_id"] in open_ids:
+            continue
+        if r["parent_id"] is not None and _goal_decision(r):
+            above = conn.execute("SELECT * FROM milestones WHERE id = ?", (r["parent_id"],)).fetchone()
+            if above is not None and is_root(above):
+                conn.execute(
+                    "UPDATE milestones SET status = 'dropped', result = ?, closed_at = ?, closed_by = 'code',"
+                    " updated_at = ? WHERE id = ?",
+                    (f"The goal #{above['id']} it led to was closed {above['status']}.", now, now, r["id"]),
+                )
+                continue
+        target = root_id
+        if r["created_by"] != "code":
+            target = _nearest_open(conn, r["parent_id"]) or root_id
+        conn.execute("UPDATE milestones SET parent_id = ?, updated_at = ? WHERE id = ?", (target, now, r["id"]))
+        linked.append(int(r["id"]))
+    return linked
+
+
+def _adopted(conn: sqlite3.Connection, scope: AgentScope, root_id: int, now: str) -> list[str]:
+    linked = adopt(conn, scope, root_id, now)
+    if not linked:
+        return []
+    return [
+        f"Ember's code linked {', '.join(f'#{i}' for i in linked[:8])} to the goal #{root_id}: everything leads to it"
+    ]
+
+
+# --- progress (0.27.0) ---
+
+
+@dataclass(frozen=True)
+class Progress:
+    """How far a milestone got."""
+
+    percent: int | None  # 0 to 100; None: not measured (a ceiling, a dropped or missed one without a metric)
+    # 'metric': Ember's code's reading of its metric; 'books': the money goal's; 'steps': from what leads to it;
+    # 'done'; 'open': no measure until it is done; 'dropped', 'missed'
+    basis: str
+    text: str = ""  # where it stands, in words: "$340 of $1,000", "2 of 5 steps done"
+    pace: str | None = None  # open and measured: 'ahead', 'on pace' or 'behind' the share of its time gone
+    elapsed: int | None = None  # that share, in percent (from the day it was set, or counts from)
+
+
+def _metered(m: metrics.Metric, value: int | None, target: int) -> Progress:
+    """A metric's reading against its target (a ceiling isn't progress: what it used, of what it may)."""
+    amount = (lambda v: dollars(v)) if m.kind == "usd" else (lambda v: metrics.amount(m, v))
+    if m.ceiling:
+        return Progress(None, "metric", f"{amount(value or 0)} of {amount(target)} at most")
+    if value is None:
+        return Progress(0, "metric", "not checked yet")
+    if m.kind == "yes":
+        return Progress(100 if value else 0, "metric", "met" if value else "not yet")
+    if m.kind == "stage":
+        return Progress(
+            min(100, max(0, value) * 100 // max(1, target)),
+            "metric",
+            f"{metrics.amount(m, value)}, {metrics.amount(m, target)} wanted",
+        )
+    of = f"{value:,} of {amount(target)}" if m.kind == "count" else f"{amount(value)} of {amount(target)}"
+    return Progress(min(100, max(0, value) * 100 // max(1, target)), "metric", of)
+
+
+def _paced(row: Mapping[str, Any], p: Progress, today: date) -> Progress:
+    if row["status"] != "open" or p.percent is None or p.basis not in ("metric", "books", "steps"):
+        return p
+    start = parse_day(_column(row, "counts_from")) or parse_day(str(row["created_at"])[:10]) or today
+    total = (_due(row) - start).days
+    gone = 100 if total <= 0 else min(100, max(0, (today - start).days * 100 // total))
+    pace = "ahead" if p.percent >= gone + PACE_MARGIN else "behind" if p.percent + PACE_MARGIN < gone else "on pace"
+    return replace(p, pace=pace, elapsed=gone)
+
+
+def progress(
+    rows: Iterable[Mapping[str, Any]],
+    today: date,
+    money: tuple[int, int] | None = None,
+    readings: Mapping[int, int] | None = None,
+) -> dict[int, Progress]:
+    """How far each milestone of ``rows`` got. One with a metric: its reading against its target (``readings``: newer
+    ones than the rows', by milestone); the open money goal: ``money`` (revenue less expenses over the last 30 days,
+    and what it needs); one without, that open steps or done ones lead to: their mean; one without either: nothing
+    until it is done. An open, measured one says its pace: ahead of, on, or behind the share of its time gone."""
+    rows = list(rows)
+    below: dict[int, list[Mapping[str, Any]]] = {}
+    for r in rows:
+        if r["parent_id"] is not None:
+            below.setdefault(int(r["parent_id"]), []).append(r)
+    found: dict[int, Progress] = {}
+
+    def of(r: Mapping[str, Any], seen: frozenset[int]) -> Progress:
+        rid = int(r["id"])
+        if rid not in found:
+            found[rid] = _paced(r, measure(r, seen | {rid}), today)
+        return found[rid]
+
+    def measure(r: Mapping[str, Any], seen: frozenset[int]) -> Progress:
+        status = r["status"]
+        if status == "done":
+            return Progress(100, "done")
+        if status == "dropped":
+            return Progress(None, "dropped")
+        m = metrics.CATALOGUE.get(_column(r, "metric") or "")
+        if m is not None:
+            value = (readings or {}).get(int(r["id"]), _column(r, "progress"))
+            return _metered(m, None if value is None else int(value), int(r["target"]))
+        if status != "open":
+            return Progress(None, status)
+        if _column(r, "kind") == "money_goal":
+            if money is None:
+                return Progress(None, "books")
+            earned, needed = money
+            if needed <= 0:
+                return Progress(0, "books", f"{dollars(earned)} earned; no API spending in the last 30 days")
+            return Progress(
+                min(100, max(0, earned) * 100 // needed), "books", f"{dollars(earned)} of {dollars(needed)}"
+            )
+        steps = [s for s in below.get(int(r["id"]), []) if s["status"] in ("open", "done") and int(s["id"]) not in seen]
+        counted = [(s, of(s, seen)) for s in steps]
+        counted = [(s, p) for s, p in counted if p.percent is not None]
+        if not counted:
+            return Progress(0, "open")
+        done = sum(1 for s, _ in counted if s["status"] == "done")
+        mean = round(sum(p.percent or 0 for _, p in counted) / len(counted))
+        return Progress(
+            min(100, mean), "steps", f"{done} of {len(counted)} step{'s' if len(counted) != 1 else ''} done"
+        )
+
+    for r in rows:
+        of(r, frozenset())
+    return found
+
+
+def tree_rows(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
+    """The open milestones and the closed ones that lead to an open one: what progress is counted from."""
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT * FROM milestones WHERE {where} AND (status = 'open' OR parent_id IN"
+        f" (SELECT id FROM milestones WHERE {where} AND status = 'open')) ORDER BY due, id",
+        (*params, *params),
+    ).fetchall()
+
+
+def progress_for(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    today: date,
+    money: tuple[int, int] | None = None,
+    readings: Mapping[int, int] | None = None,
+) -> dict[int, Progress]:
+    """``progress`` of the open milestones (``money``: the money goal's revenue less expenses and API spending over
+    the last 30 days, as Ember's code's keeper reads them; its level makes what it needs)."""
+    needed = (money[0], money_needed(conn, scope, money[1])) if money is not None else None
+    return progress(tree_rows(conn, scope), today, needed, readings)
 
 
 def update(conn: sqlite3.Connection, milestone_id: int, now: str, **columns: Any) -> None:
@@ -455,9 +860,11 @@ def owner_word(
 ) -> list[int]:
     """The owner's note on a milestone, their dropping it (its open steps with it), or their answer to the agent's
     proposed date (accept moves the date, a counted move; reject keeps it): news for the agent again (a new
-    owner_version). Returns the steps dropped with it."""
+    owner_version). Returns the steps dropped with it. 0.27.0: a goal at the root (the owner's, or the money goal)
+    takes only its decision points with it: what leads to it goes on, and leads to the goal that stands next."""
     if action not in ("note", "drop", "accept", "reject"):
         raise ValueError("unknown owner action")
+    top = conn.execute("SELECT * FROM milestones WHERE id = ?", (milestone_id,)).fetchone()
     change = ""
     params: tuple[Any, ...] = ()
     why = f": {' '.join(comment.split())}" if comment else "."
@@ -475,6 +882,24 @@ def owner_word(
     )
     if action != "drop":
         return []
+    if top is not None and is_root(top):  # what led to it leads to no goal until the next one stands (``adopt``)
+        conn.execute(
+            "UPDATE milestones SET parent_id = NULL, updated_at = ? WHERE parent_id = ? AND status = 'open'"
+            " AND NOT (kind IS 'decision' AND venture_id IS NULL AND project_id IS NULL)",
+            (now, milestone_id),
+        )
+        dropped = [
+            int(step["id"])
+            for step in children(conn, milestone_id)
+            if step["status"] == "open" and _goal_decision(step)
+        ]
+        for step_id in dropped:
+            conn.execute(
+                "UPDATE milestones SET status = 'dropped', result = ?, closed_at = ?, closed_by = 'owner',"
+                " updated_at = ? WHERE id = ?",
+                (f"Dropped by your owner with #{milestone_id}{why}"[: LIMITS["result"]], now, now, step_id),
+            )
+        return dropped
     # 0.15.0: the first tests under it (a venture's, a product line's bars) go on, leading to no goal: the owner's drop
     # of the money goal brought them back one by one, and ended a backed venture's test without a word on it
     conn.execute(
@@ -653,6 +1078,18 @@ def _stake(row: Mapping[str, Any]) -> str:
     return f" · unmet by {ends}, Ember's code parks venture #{row['venture_id']}" if ends else ""
 
 
+def _progressed(row: Mapping[str, Any], progress: Mapping[int, Progress] | None, full: bool = False) -> str:
+    """0.27.0: how far a milestone got, as a short clause ("" when nothing measures it before it is done): the share,
+    and for one measured by its steps or the books (``full``: by its metric too), where it stands; and its pace."""
+    p = (progress or {}).get(int(row["id"]))
+    if p is None or p.percent is None or p.basis not in ("metric", "books", "steps"):
+        return ""
+    pace = f", {p.pace}" if p.pace else ""
+    if p.basis == "metric" and not full:  # where it stands is in Ember's code's check
+        return f" · {p.percent}%{pace}"
+    return f" · {p.percent}% ({p.text}{pace})"
+
+
 def milestone_line(
     row: Mapping[str, Any],
     today: date,
@@ -660,12 +1097,13 @@ def milestone_line(
     open_ids: set[int] | None = None,
     spent: Mapping[int, int] | None = None,
     unlocks: Mapping[int, str] | None = None,
+    progress: Mapping[int, Progress] | None = None,
 ) -> str:
     """One milestone for the planner: its number, title, date, and (with ``detail``) its measure and newest note; with
     a metric, where it stands; what it may cost and spent (``spent``: its work's cost by milestone), and its wait;
-    (0.16.3) what stands unlocked for it (``unlocks``)."""
+    (0.16.3) what stands unlocked for it (``unlocks``); (0.27.0) how far it got (``progress``)."""
     due = _due(row)
-    line = f"#{row['id']} {_q(row['title'], 100)} · due {_day(due)} ({when(due, today)})"
+    line = f"#{row['id']} {_q(row['title'], 100)} · due {_day(due)} ({when(due, today)})" + _progressed(row, progress)
     if detail and not _column(row, "metric"):
         line += f" · measure: {_q(row['measure'], 160)}"
     line += _checked(row) + _stake(row) + _money(row, spent) + _waits(row, today)
@@ -682,10 +1120,24 @@ def _column(row: Mapping[str, Any], name: str) -> Any:
         return None
 
 
-def checks(rows: list[Mapping[str, Any]], today: date, spent: Mapping[int, int] | None = None) -> list[str]:
+def _top(rows: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """The goal at the root among ``rows``: the owner's, else the money goal (0.27.0)."""
+    rows = list(rows)
+    return next((r for r in rows if is_goal(r)), None) or next(
+        (r for r in rows if _column(r, "kind") == "money_goal"), None
+    )
+
+
+def checks(
+    rows: list[Mapping[str, Any]],
+    today: date,
+    spent: Mapping[int, int] | None = None,
+    progress: Mapping[int, Progress] | None = None,
+) -> list[str]:
     """Ember's code's notes on the roadmap's shape, for the planner: empty, overdue (not what waits, 0.12.0, nor a
     venture's first test in its week of grace, 0.16.3), checks due, spending over a milestone's budget, nothing
-    due this week, nothing planned beyond this month."""
+    due this week, nothing planned beyond this month. 0.27.0: nothing of the agent's leads to the goal, and the goal
+    or a sub-goal of it behind its pace."""
     if not rows:
         return [
             "Roadmap check: your roadmap is empty. Plan a step that lays it out with milestone_plan: 1 to 3 goals "
@@ -693,10 +1145,20 @@ def checks(rows: list[Mapping[str, Any]], today: date, spent: Mapping[int, int] 
             "this month that lead to them, and this week's."
         ]
     notes = []
-    kinds = [horizon(_due(r), today) for r in rows]
+    top = _top(rows)
+    work = [r for r in rows if r is not top]
+    mine = any(r["created_by"] == "agent" for r in work)
+    if top is not None and not mine:
+        notes.append(
+            f"Roadmap check: nothing of yours leads to the goal #{top['id']} yet. Split it with milestone_plan: 2 to 4 "
+            f"sub-goals that together reach it (parent #{top['id']}; with a metric where one fits, like "
+            "revenue_month_usd for what a leg brings a month), this month's milestones under them and this week's "
+            "step."
+        )
+    kinds = [horizon(_due(r), today) for r in work]
     overdue = [
         r
-        for r, k in zip(rows, kinds, strict=True)
+        for r, k in zip(work, kinds, strict=True)
         if k == OVERDUE[0] and not waiting(r, today) and not ventures.is_first_test(r)  # 0.16.3 (analysis bug 1)
     ]
     if overdue:
@@ -721,13 +1183,53 @@ def checks(rows: list[Mapping[str, Any]], today: date, spent: Mapping[int, int] 
             f"${r['budget_micros'] / 1_000_000:.2f}: go on only if it is still worth it (say why in a note), or drop "
             "it."
         )
+    if top is not None:
+        notes += _behind(top, work, progress)
+    if top is not None and not mine:
+        return notes
     if "week" not in kinds:
         notes.append(
             "Roadmap check: nothing is due this week. Add this week's milestone: the next step toward your nearest "
             "goal."
         )
-    if not any(k in ("quarter", LATER[0]) for k in kinds):
+    if top is None and not any(k in ("quarter", LATER[0]) for k in kinds):
         notes.append("Roadmap check: nothing is planned beyond this month. Add a goal for the next three months.")
+    elif (
+        top is not None
+        and _due(top) > today + timedelta(days=30)
+        and not any(k in ("quarter", LATER[0]) for k in kinds)
+    ):
+        notes.append(
+            f"Roadmap check: nothing is planned beyond this month. Add a sub-goal toward the goal #{top['id']} for the "
+            f"months up to its date ({top['due']})."
+        )
+    return notes
+
+
+def _behind(
+    top: Mapping[str, Any], work: list[Mapping[str, Any]], progress: Mapping[int, Progress] | None
+) -> list[str]:
+    """0.27.0: the goal, and the sub-goals that lead straight to it, behind their pace."""
+    found = progress or {}
+    notes = []
+    p = found.get(int(top["id"]))
+    if p is not None and p.pace == "behind":
+        notes.append(
+            f"Roadmap check: the goal #{top['id']} is at {p.percent}% with {p.elapsed}% of its time gone. Say in your "
+            "plan what changes to catch up (a leg that brings more, a faster test, more reach for what sells), and "
+            "what stops."
+        )
+    late = [
+        (r, found[int(r["id"])])
+        for r in work
+        if r["parent_id"] == top["id"] and int(r["id"]) in found and found[int(r["id"])].pace == "behind"
+    ]
+    if late:
+        listed = ", ".join(f"#{r['id']} ({q.percent}% at {q.elapsed}% of its time)" for r, q in late[:4])
+        notes.append(
+            f"Roadmap check: behind their pace toward the goal: {listed}. Change how you reach them, or move or drop "
+            "what won't pay."
+        )
     return notes
 
 
@@ -736,8 +1238,11 @@ def goal_line(
     today: date,
     spent: Mapping[int, int] | None = None,
     unlocks: Mapping[int, str] | None = None,
+    progress: Mapping[int, Progress] | None = None,
+    detail: bool = False,
 ) -> str:
-    """A goal for the plan, compact on one line (0.12.0: the ROADMAP's cut took every goal)."""
+    """A goal for the plan, compact on one line (0.12.0: the ROADMAP's cut took every goal); 0.27.0: a sub-goal of the
+    goal at the root, with how far it got, and (``detail``: overdue or due this week) its newest note."""
     due = _due(row)
     links = "".join(f" · {name} #{row[f'{name}_id']}" for name in ("venture", "project") if row[f"{name}_id"])
     said = ""
@@ -747,9 +1252,10 @@ def goal_line(
         said = f" · {CODE_SET}"
     measure = _checked(row) or f" · measure: {_q(row['measure'], 90)}"
     return (
-        f"#{row['id']} {_q(row['title'], 70)} · due {_day(due)} ({when(due, today)}){measure}{_stake(row)}"
-        f"{_money(row, spent)}"
+        f"#{row['id']} {_q(row['title'], 70)} · due {_day(due)} ({when(due, today)}){_progressed(row, progress)}"
+        f"{measure}{_stake(row)}{_money(row, spent)}"
         f"{_waits(row, today)}{links}{_moved(row)}{_replaces(row)}{_proposed(row)}{said}{_unlocked(row, unlocks)}"
+        f"{_last_note(row) if detail else ''}"
     )
 
 
@@ -780,6 +1286,26 @@ def code_closed(closed: list[Mapping[str, Any]], since: str | None) -> list[str]
     ]
 
 
+def root_line(row: Mapping[str, Any], today: date, progress: Mapping[int, Progress] | None = None) -> str:
+    """0.27.0: the goal at the root, first in ROADMAP: the owner's, or the money goal standing in for it."""
+    due = _due(row)
+    p = (progress or {}).get(int(row["id"]))
+    where = ""
+    if p is not None and p.percent is not None:
+        where = f" · {p.percent}%: {p.text}" + (f" ({p.elapsed}% of its time gone: {p.pace})" if p.pace else "")
+    head = f"#{row['id']} {_q(row['title'])} · due {_day(due)} ({when(due, today)}){where}"
+    if is_goal(row):
+        said = f" Their word on it: {_q(row['owner_comment'], 200)}." if row["owner_comment"] else ""
+        return (
+            f"Your owner's goal: {head} · Ember's code checks it from the books; only your owner changes it. "
+            f"Everything on your roadmap leads to it.{said}"
+        )
+    return (
+        f"The goal (Ember's code's, until your owner sets theirs): {head} · {_q(row['measure'], 160)}. Everything on "
+        "your roadmap leads to it."
+    )
+
+
 def planner_text(
     rows: list[Mapping[str, Any]],
     closed: list[Mapping[str, Any]],
@@ -787,34 +1313,50 @@ def planner_text(
     since: str | None = None,
     spent: Mapping[int, int] | None = None,
     unlocks: Mapping[int, str] | None = None,
+    progress: Mapping[int, Progress] | None = None,
 ) -> str:
-    """The ROADMAP section: a count by horizon and the checks (what Ember's code closed since ``since`` among them),
-    then the goals (the open milestones that lead to no other: what the rest is for) one line each, so a cut never
-    takes them (0.12.0: with 18 milestones, the cut took all 3 goals at every budget); then the other open milestones
-    by horizon (the measure shown for what is overdue or due this week), and what was closed lately. 0.16.3 (analysis
-    bug 5): each open milestone says what stands unlocked for it (``unlocks``: policy.unlocked_text by milestone)."""
+    """The ROADMAP section: a count by horizon, (0.27.0) the goal at the root with how far it got, and the checks
+    (what Ember's code closed since ``since`` among them); then the sub-goals (the open milestones that lead to the
+    goal, or to no open one: what the rest is for) one line each, so a cut never takes them (0.12.0: with 18
+    milestones, the cut took all 3 goals at every budget); then the other open milestones by horizon (the measure shown
+    for what is overdue or due this week), and what was closed lately. 0.16.3 (analysis bug 5): each open milestone
+    says what stands unlocked for it (``unlocks``: policy.unlocked_text by milestone). 0.27.0: each says how far it
+    got (``progress``)."""
     open_ids = {int(r["id"]) for r in rows}
-    goals = [r for r in rows if r["parent_id"] not in open_ids]
+    top = _top(rows)
+    work = [r for r in rows if r is not top]
+    goals = [r for r in work if r["parent_id"] not in open_ids or (top is not None and r["parent_id"] == top["id"])]
+    tops = {int(r["id"]) for r in goals}
     groups: dict[str, list[Mapping[str, Any]]] = {}
-    for r in rows:
+    for r in work:
         groups.setdefault(horizon(_due(r), today), []).append(r)
     labels = [OVERDUE, *((k, label) for k, label, _ in HORIZONS), LATER]
     tally = ", ".join(f"{len(groups[k])} {label.lower()}" for k, label in labels if groups.get(k))
     head = f"Today: {today:%A} {today.isoformat()}. " + (
-        f"{len(rows)} open milestone{'s' if len(rows) != 1 else ''}: {tally}." if rows else "No open milestones."
+        f"{len(work)} open milestone{'s' if len(work) != 1 else ''}: {tally}." if work else "No open milestones."
     )
-    lines = [head, *checks(rows, today, spent), *code_closed(closed, since)]
+    lines = [head]
+    if top is not None:
+        lines.append(root_line(top, today, progress))
+    lines += [*checks(rows, today, spent, progress), *code_closed(closed, since)]
     if goals:
-        lines.append("Goals (the rest leads to them):")
-        lines.extend(goal_line(r, today, spent, unlocks) for r in goals)
+        lines.append(
+            f"Sub-goals (they lead to the goal #{top['id']}; the rest leads to them):"
+            if top is not None
+            else "Goals (the rest leads to them):"
+        )
+        lines.extend(
+            goal_line(r, today, spent, unlocks, progress, horizon(_due(r), today) in (OVERDUE[0], "week"))
+            for r in goals
+        )
     ends = {key: today + timedelta(days=last) for key, _, last in HORIZONS}
     for key, label in labels:
-        members = [r for r in groups.get(key, []) if r["parent_id"] in open_ids]  # the goals are listed above
+        members = [r for r in groups.get(key, []) if int(r["id"]) not in tops]  # the (sub-)goals are listed above
         if not members:
             continue
         lines.append(f"{label} (to {_day(ends[key])}):" if key in ends else f"{label}:")
         for r in members:
-            lines.append(milestone_line(r, today, key in (OVERDUE[0], "week"), open_ids, spent, unlocks))
+            lines.append(milestone_line(r, today, key in (OVERDUE[0], "week"), open_ids, spent, unlocks, progress))
     if closed:
         done = "; ".join(
             f"#{r['id']} {_q(r['title'], 60)} {closed_as(r)} {str(r['closed_at'])[:10]}"
@@ -833,11 +1375,13 @@ def focus_text(
     replaced: Mapping[str, Any] | None = None,
     last: str = "",
     unlocked: str = "",
+    goal: Mapping[str, Any] | None = None,
+    progress: Mapping[int, Progress] | None = None,
 ) -> str:
     """The brief's FOCUS for the plan's milestone: what it takes to be done and how to close it first (a cut takes
-    the end), then (0.12.0) the digest of the last cycle aimed at it (``last``), what it leads to and serves, the
-    owner's word, (0.16.3, analysis bug 5) what stands unlocked for it (``unlocked``: policy.unlocked_text) and the
-    notes."""
+    the end), (0.27.0) how far it got, then (0.12.0) the digest of the last cycle aimed at it (``last``), what it leads
+    to, (0.27.0) the goal at the root (``goal``) and what it serves, the owner's word, (0.16.3, analysis bug 5) what
+    stands unlocked for it (``unlocked``: policy.unlocked_text) and the notes."""
     due = _due(row)
     checked = metrics.status_text(row)
     ends = ventures.test_ends(row)
@@ -850,6 +1394,11 @@ def focus_text(
             )
             + f" Unmet by {ends} (a week after its date), Ember's code closes it missed and parks venture "
             f"#{row['venture_id']}. Its date never moves, and only your owner drops it."
+        )
+    elif is_goal(row):  # 0.27.0: the owner's goal itself
+        how = (
+            f"{checked}. It is your owner's goal: Ember's code closes it done once met, missed if its date passes "
+            "first, and only your owner changes it. Work on what leads to it."
         )
     elif checked:
         how = (
@@ -868,14 +1417,23 @@ def focus_text(
     lines = [
         f"Focus milestone: #{row['id']} {_q(row['title'])} [{row['status']}] · due {_day(due)} ({when(due, today)})"
         + _moved(row)
-        + _proposed(row),
+        + _proposed(row)
+        + _progressed(row, progress),
         f"Measure of done: {_q(row['measure'])}",
         how,
     ]
     if last:
         lines.append(f"Its last cycle (Ember's code's digest): {last}")
     if parent is not None:
-        lines.append(f"Leads to: #{parent['id']} {_q(parent['title'], 100)} (due {parent['due']}, {parent['status']})")
+        lines.append(
+            f"Leads to: #{parent['id']} {_q(parent['title'], 100)} (due {parent['due']}, {parent['status']})"
+            + _progressed(parent, progress)
+        )
+    if goal is not None and goal["id"] not in (row["id"], parent["id"] if parent is not None else None):
+        lines.append(
+            f"Toward the goal: #{goal['id']} {_q(goal['title'], 100)} (due {goal['due']})"
+            + _progressed(goal, progress, full=True)
+        )
     if replaced is not None:  # 0.12.0: what it stands for, and what that one asked
         lines.append(
             f"Replaces: #{replaced['id']} {_q(replaced['title'], 80)} ({replaced['status']} "
@@ -904,7 +1462,19 @@ def news_line(row: Mapping[str, Any]) -> str:
     """The owner's latest word on a milestone, for FROM YOUR OWNER (texts JSON-quoted, like every owner line)."""
     name = f"milestone #{row['id']} {_q(row['title'])}"
     action = row["owner_action"]
-    if action == "added":
+    if action == "added" and is_goal(row):  # 0.27.0
+        replaced = f" in place of #{row['replaces_id']}" if _column(row, "replaces_id") else ""
+        line = (
+            f"Your owner set their goal{replaced}: {name}, due {row['due']}: done when {_q(row['measure'])}. "
+            "Everything on your roadmap leads to it now: split it into sub-goals that reach it (milestone_plan, "
+            f"parent #{row['id']})"
+        )
+    elif action == "drop" and is_goal(row):
+        line = (
+            f"Your owner removed their goal {name}: what led to it goes on, under the goal Ember's code sets in its "
+            "place at your next plan"
+        )
+    elif action == "added":
         parent = f", leading to #{row['parent_id']}" if row["parent_id"] else ""
         line = (
             f"Your owner put {name} on your roadmap{parent}, due {row['due']}: done when {_q(row['measure'])}. Plan "
@@ -924,12 +1494,14 @@ def news_line(row: Mapping[str, Any]) -> str:
 
 
 def review_text(conn: sqlite3.Connection, scope: AgentScope, today: date, since: str) -> str:
-    """The scorecard's ROADMAP: what is overdue, due this week and planned further out, and what was closed and
-    moved (``since``: the start of the period)."""
+    """The scorecard's ROADMAP: (0.27.0) the goal at the root and how far it got, what is overdue, due this week and
+    planned further out, and what was closed and moved (``since``: the start of the period)."""
     rows = open_milestones(conn, scope)
     closed = closed_since(conn, scope, since, limit=50)
     if not rows and not closed:
         return "ROADMAP\nYour roadmap is empty: nothing is planned ahead."
+    top = _top(rows)
+    rows = [r for r in rows if r is not top]  # the goal isn't the review's to judge
     kinds = [horizon(_due(r), today) for r in rows]
     overdue = [r for r, k in zip(rows, kinds, strict=True) if k == OVERDUE[0]]
     week = [r for r, k in zip(rows, kinds, strict=True) if k == "week"]
@@ -940,6 +1512,8 @@ def review_text(conn: sqlite3.Connection, scope: AgentScope, today: date, since:
         split[r["status"]] = split.get(r["status"], 0) + 1
     ended = ", ".join(f"{n} {status}" for status, n in split.items()) or "none closed"
     lines = [f"ROADMAP ({len(rows)} open, {len(overdue)} overdue; in the period: {ended})"]
+    if top is not None:
+        lines.append(f"- {root_line(top, today, progress_for(conn, scope, today))}")
 
     def listed(members: list[sqlite3.Row]) -> str:
         return ", ".join(
