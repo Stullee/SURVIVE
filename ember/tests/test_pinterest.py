@@ -375,6 +375,7 @@ def test_the_owner_connects_their_account_in_two_steps(data_dir: Path, tmp_path:
     assert off.status() == ("disabled", None) and off.account() is None
     with pytest.raises(PinterestError, match="switch Pinterest on"):
         off.start()
+    db.close()
 
 
 # --- the agent's tools, with the dry run's fake account ------------------------------------------------------------

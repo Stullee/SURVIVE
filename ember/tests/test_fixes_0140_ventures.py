@@ -251,6 +251,7 @@ def test_a_proposal_from_before_the_gates_goes_back_to_researching(tmp_path: Pat
     assert ev == pytest.approx(-100.0)
     with new.transaction() as conn, pytest.raises(sqlite3.IntegrityError, match="a case never changes"):
         conn.execute("UPDATE venture_cases SET ev_eur = 1")
+    new.close()
 
 
 def test_the_owners_back_sends_a_knocked_out_proposal_back_to_researching_first(data_dir: Path) -> None:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -65,9 +66,9 @@ def review_row(conn: sqlite3.Connection) -> dict[str, Any]:
 
 def test_the_reviews_advice_comes_before_its_verdicts() -> None:
     # Live: '…[1262 bytes cut]', and Focus today, Lesson and Act on it never reached a plan.
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    text = review.planner_text(conn, review_row(conn))  # type: ignore[arg-type]
+    with closing(sqlite3.connect(":memory:")) as conn:
+        conn.row_factory = sqlite3.Row
+        text = review.planner_text(conn, review_row(conn))  # type: ignore[arg-type]
     kept = context.cut(text, context.PLANNER_BUDGETS["review"])
     for advice in ("Focus today: Sleep longer", "Lesson: Each extra", "Ventures: Park #4", "Act on it: "):
         assert advice in kept, advice

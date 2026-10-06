@@ -485,6 +485,7 @@ def test_the_connection_says_what_it_waits_for(tmp_path: Path) -> None:
     off = BlueskyConnection(db, clock, LIVE.model_copy(update={"bluesky_enabled": False}), "live", 1)
     assert off.status() == ("disabled", None) and off.account() is None and off.handle() is None
     assert PASSWORD not in json.dumps(connection.describe())
+    db.close()
 
 
 # --- the agent's tools, with the dry run's fake account ------------------------------------------------------------

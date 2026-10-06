@@ -15,6 +15,9 @@ from app.economy.metering import Completed, MeteredModel, Outcome
 from app.economy.service import Economy
 
 START = datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC)
+# The databases make_economy opened, closed when the test ends (conftest.py): Python 3.13 warns about a connection left
+# to the garbage collector, in whatever test happens to be running when it collects.
+_opened: list[Database] = []
 
 
 class FakeClock(Clock):
@@ -75,11 +78,18 @@ def make_economy(
     safe_mode: bool = False,
 ) -> Economy:
     db = Database(data_dir / "ember.db")
+    _opened.append(db)
     migrate(db.path)
     loaded = LoadedSettings(settings or Settings(), errors=["broken option"] if safe_mode else [])
     economy = Economy(db, loaded, clock=clock or FakeClock())
     economy.start()
     return economy
+
+
+def close_databases() -> None:
+    """Close the databases make_economy opened (conftest.py does at the end of every test)."""
+    while _opened:
+        _opened.pop().close()
 
 
 def restart(economy: Economy, settings: Settings | None = None) -> Economy:

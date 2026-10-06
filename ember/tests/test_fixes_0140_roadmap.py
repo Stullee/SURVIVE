@@ -494,6 +494,7 @@ def test_the_pod_ventures_prose_first_test_becomes_a_first_order(tmp_path: Path)
         assert any(line.startswith("Ember's code set the first test of venture #7 as milestone #") for line in happened)
         with pytest.raises(sqlite3.IntegrityError, match="once its first test is met"):
             conn.execute("UPDATE ventures SET stage = 'live' WHERE id = 7")
+    upgraded.close()
 
 
 # --- X23: a first sale recorded late still counts ---

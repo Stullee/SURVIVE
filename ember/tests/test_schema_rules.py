@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -15,10 +16,11 @@ DAY = "2026-09-01"
 
 
 @pytest.fixture
-def db(data_dir: Path) -> Database:
+def db(data_dir: Path) -> Iterator[Database]:
     database = Database(data_dir / "ember.db")
     migrate(database.path)
-    return database
+    yield database
+    database.close()
 
 
 def insert(conn: sqlite3.Connection, **row: object) -> int:

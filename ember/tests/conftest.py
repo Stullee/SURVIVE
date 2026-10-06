@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.config import LoadedSettings, Settings, load_settings
 from app.main import create_app
+from tests.economy_helpers import close_databases
 
 INGRESS = ("172.30.32.2", 50000)
 HA_CORE = ("172.30.32.1", 50000)
@@ -27,6 +28,13 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("EMBER_SCHEDULER", "off")
     monkeypatch.setenv("EMBER_FAKE_DELAY_MS", "0")
     return directory
+
+
+@pytest.fixture(autouse=True)
+def helper_databases() -> Iterator[None]:
+    """The databases the test helpers opened (make_economy) are closed when the test ends."""
+    yield
+    close_databases()
 
 
 @pytest.fixture

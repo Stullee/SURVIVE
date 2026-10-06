@@ -560,3 +560,4 @@ def test_the_migration_keeps_the_calls_and_their_guard(tmp_path: Path) -> None:
                 " cost_micros) VALUES ('b', 1, 'work', 'm', 0, 'pending', 'then', '2026-09-30', 0)"
             )
             conn.execute(f"UPDATE llm_calls SET {bad} WHERE status = 'pending'")
+    db.close()

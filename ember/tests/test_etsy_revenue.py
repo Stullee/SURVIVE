@@ -261,3 +261,4 @@ def test_the_ledger_keeps_its_rows_and_takes_etsys_numbers(tmp_path: Path) -> No
                 conn.execute(insert.replace("'owner'", "'etsy'"), (11, kind, 1_000, None, "d"))
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             conn.execute("UPDATE ledger SET amount_micros = 1 WHERE id = 5")
+    upgraded.close()

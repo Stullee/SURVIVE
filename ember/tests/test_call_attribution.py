@@ -115,3 +115,4 @@ def test_the_history_is_attributed_from_its_cycles(tmp_path: Path) -> None:
         assert got == [(1, None, 1), (2, 7, 0)]
         with pytest.raises(sqlite3.IntegrityError, match="finalized call cannot change"):
             conn.execute("UPDATE llm_calls SET venture_id = NULL WHERE id = 2")
+    upgraded.close()

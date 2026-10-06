@@ -755,6 +755,7 @@ def test_the_migration_keeps_the_catalog_adds_order_tax_and_links_product_lines(
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("UPDATE printify_orders SET tax_cents = -1")
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    new.close()
 
 
 # --- review round 2 --------------------------------------------------------------------------------------------------

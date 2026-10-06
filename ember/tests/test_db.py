@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ def test_fresh_database_gets_all_migrations(tmp_path: Path) -> None:
     assert database.schema_version() == discover_migrations()[-1].version
     with database.connection() as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    database.close()
     assert {"schema_migrations", "meta", "events"} <= tables
     # A brand-new database has nothing to back up.
     assert not (tmp_path / "backups").exists()
@@ -36,7 +38,7 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
 def test_wal_mode_enabled(tmp_path: Path) -> None:
     db_file = tmp_path / "ember.db"
     migrate(db_file)
-    with Database(db_file).connection() as conn:
+    with closing(Database(db_file)) as database, database.connection() as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
 
@@ -45,7 +47,7 @@ def test_new_migration_applies_and_backs_up(tmp_path: Path) -> None:
     _write(mig_dir, "0001_first.sql", "CREATE TABLE a (x INTEGER);")
     db_file = tmp_path / "ember.db"
     migrate(db_file, discover_migrations(mig_dir), backup_dir=tmp_path / "backups")
-    with Database(db_file).connection() as conn:
+    with closing(Database(db_file)) as database, database.connection() as conn:
         conn.execute("INSERT INTO a (x) VALUES (42)")
 
     _write(mig_dir, "0002_second.sql", "ALTER TABLE a ADD COLUMN y TEXT;")
@@ -53,7 +55,7 @@ def test_new_migration_applies_and_backs_up(tmp_path: Path) -> None:
 
     backups = list((tmp_path / "backups").glob("ember-schema0001-*.db"))
     assert len(backups) == 1
-    with sqlite3.connect(backups[0]) as conn:
+    with closing(sqlite3.connect(backups[0])) as conn:
         assert conn.execute("SELECT x FROM a").fetchone()[0] == 42
         columns = [row[1] for row in conn.execute("PRAGMA table_info(a)")]
     assert columns == ["x"]  # the backup is the pre-migration state
@@ -73,6 +75,7 @@ def test_failed_migration_rolls_back(tmp_path: Path) -> None:
     assert database.schema_version() == 1
     with database.connection() as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    database.close()
     assert "b" not in tables  # the half-applied migration left nothing behind
 
 
@@ -160,13 +163,14 @@ def test_meta_and_events(tmp_path: Path) -> None:
     assert [e["message"] for e in events] == ["boom", "hello"]  # newest first, debug hidden
     assert events[1]["details"] == {"a": 1}
     assert len(database.recent_events(min_level="debug")) == 3
+    database.close()
 
 
 def test_event_level_is_constrained(tmp_path: Path) -> None:
     db_file = tmp_path / "ember.db"
     migrate(db_file)
-    with pytest.raises(sqlite3.IntegrityError):
-        Database(db_file).add_event("catastrophic", "x", "y")
+    with closing(Database(db_file)) as database, pytest.raises(sqlite3.IntegrityError):
+        database.add_event("catastrophic", "x", "y")
 
 
 def test_transaction_rolls_back_on_error(tmp_path: Path) -> None:
@@ -177,6 +181,7 @@ def test_transaction_rolls_back_on_error(tmp_path: Path) -> None:
         conn.execute("INSERT INTO meta (key, value, updated_at) VALUES ('k', 'v', 'now')")
         raise RuntimeError("abort")
     assert database.get_meta("k") is None
+    database.close()
 
 
 def test_utcnow_format() -> None:
@@ -193,6 +198,7 @@ def test_prune_events_keeps_newest(tmp_path: Path) -> None:
     assert database.prune_events(5) == 7
     assert [e["message"] for e in database.recent_events()] == [f"event {i}" for i in range(11, 6, -1)]
     assert database.prune_events(5) == 0
+    database.close()
 
 
 def test_table_rebuild_migration_keeps_child_rows(tmp_path: Path) -> None:
@@ -255,7 +261,7 @@ def test_transaction_statements_in_migrations_are_refused(tmp_path: Path, statem
     db_file = tmp_path / "ember.db"
     with pytest.raises(MigrationError, match="transaction statement"):
         migrate(db_file, discover_migrations(mig_dir))
-    with Database(db_file).connection() as conn:
+    with closing(Database(db_file)) as database, database.connection() as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert "a" not in tables and "b" not in tables
 
@@ -268,7 +274,7 @@ def test_bad_later_migration_prevents_earlier_pending_ones(tmp_path: Path) -> No
     db_file = tmp_path / "ember.db"
     with pytest.raises(MigrationError):
         migrate(db_file, discover_migrations(mig_dir))
-    with Database(db_file).connection() as conn:
+    with closing(Database(db_file)) as database, database.connection() as conn:
         assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 0
 
 

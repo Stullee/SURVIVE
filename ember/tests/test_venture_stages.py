@@ -253,3 +253,4 @@ def test_the_0_11_tree_and_roadmap_come_through_the_rebuild(tmp_path: Path) -> N
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         with pytest.raises(sqlite3.IntegrityError, match="out of their park"):
             conn.execute("UPDATE ventures SET stage = 'researching' WHERE id = 1")
+    upgraded.close()

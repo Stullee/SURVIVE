@@ -548,3 +548,4 @@ def test_the_migration_keeps_the_history_and_its_guards(tmp_path: Path) -> None:
         {"tool": "research", "input": json.dumps({"task": "x" * 5_000}), "result": "x" * 5_000},
     ]
     assert call == 1
+    upgraded.close()
