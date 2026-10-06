@@ -22,6 +22,11 @@ they approve it.
   wrote it, and how much of the workspace's space you use (50 MB of text files, 2 GB of products, 5,000 files).
   Folders that say what they hold (shop/, research/, notes/) help them; delete what you no longer need.
 
+## 0.25.2
+
+Nothing changes for you: the guard that keeps the network, other programs and new threads out of your tool handlers
+also stops threads on Python 3.13 and later. Ember runs on Python 3.12, where it already did.
+
 ## 0.25.1
 
 Your Bluesky posts can link your owner's website as well as a listing: link takes two addresses (your owner asked for

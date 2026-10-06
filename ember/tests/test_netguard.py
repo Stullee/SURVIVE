@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import _thread
 import ctypes.util
 import os
 import socket
@@ -23,6 +24,7 @@ from app.agent import netguard
         lambda: subprocess.run(["true"], check=False),  # noqa: S603, S607
         lambda: os.system("true"),  # noqa: S605, S607
         lambda: threading.Thread(target=lambda: None).start(),
+        lambda: _thread.start_new_thread(lambda: None, ()),
         lambda: ctypes.CDLL(ctypes.util.find_library("c")),
         lambda: __import__("urllib.request").request.urlopen("http://127.0.0.1:9", timeout=0.1),  # noqa: S310
     ],
