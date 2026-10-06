@@ -722,9 +722,15 @@ _CLOSE = re.compile(r"close project #(\d+)")
 PROMOTE_STEP = "Ask for this workshop script to be built into Ember:"
 # Venture cycles (0.10.0): the planner's VENTURES lines, the brief's focus venture, a brainstorm's tree.
 VENTURE_TASK = "Plan this venture cycle"
+MARKETING_TASK = "Plan this marketing cycle"  # 0.28.0: a marketing cycle (lines.py)
+REACTIVE_TASK = "Plan this reactive cycle"
+BLUESKY_STEP = "Post about a live listing of line #{id} on Bluesky"  # 0.28.0: a marketing cycle's
+_LISTING_FOCUS = re.compile(r"^- listing #(\d+)", re.MULTILINE)  # the live listings a marketing cycle's FOCUS lists
 VENTURE_SECTION = "VENTURES"
 READY_SECTION = "READY"  # 0.13.0: the decision desk's ranked items
-_READY_ITEM = re.compile(r"^\d+\. ((build|appraise|answer|triage|brainstorm)(?: #(\d+))?): ", re.MULTILINE)
+_READY_ITEM = re.compile(
+    r"^\d+\. ((build|appraise|answer|triage|brainstorm|line|market|new line)(?: #(\d+))?): ", re.MULTILINE
+)
 BRAINSTORM_STEP = "Brainstorm new ventures for my tree"
 BRAINSTORM_BELOW = 8  # the fake brainstorms while its tree has fewer ideas than this
 RESEARCH_VENTURE_STEP = "Research venture #{id}: {title}"
@@ -1558,11 +1564,26 @@ class FakeTransport:
         cycle = int(last[1]) + 1 if last else 1
         if VENTURE_TASK in context:
             return self._venture_plan(context, rng, state, balance)
+        if MARKETING_TASK in context:
+            return self._marketing_plan(context, rng, state, balance)
         open_ = [p for p in parse_projects(section(context, "OPEN PROJECTS") or "") if p.status in _OPEN_STATUSES]
         stopped = {int(m[1]) for m in _REVIEW_STOP.finditer(context)} & {p.id for p in open_}
         close = [CLOSE_STEP.format(id=pid) for pid in sorted(stopped)][:1]  # one project closed a cycle
         open_ = [p for p in open_ if p.id not in stopped]
         focus = next((p for p in open_ if p.status == "active"), open_[0] if open_ else None)
+        # 0.28.0: an ordinary plan takes READY's first line (its project is the focus), a new line only without one:
+        # the fake builds one line to a listing before it starts another (as before 0.28.0, its tests count on it)
+        ready = [(m[1], m[2], m[3]) for m in _READY_ITEM.finditer(section(context, READY_SECTION) or "")]
+        took = next((r for r in ready if r[1] == "line"), ready[0] if ready else None)
+        if took is not None and took[1] == "line" and took[2]:
+            line = int(took[2])
+            focus = next((p for p in open_ if p.id == line), None) or Project(line, "active", f"project #{line}")
+        elif took is not None and took[1] == "new line":
+            focus = None
+        if REACTIVE_TASK in context:
+            pick = "none: an event woke me"
+        else:
+            pick = took[0] if took is not None else "none: READY lists nothing to take"
         news = owner_news(context, NEWS_SECTION)
         heard = _following(standing_instructions(context)) + _heard(news)
         answer = [ANSWER_STEP if len(news.messages) == 1 else "Answer my owner's messages"] if news.messages else []
@@ -1584,6 +1605,7 @@ class FakeTransport:
                 "focus_milestone_id": None,
                 "steps": answer,
                 "sleep_minutes": rng.choice([480, 720, 1_440]),
+                "ready": "none: nothing is worth spending money on right now",
             }
         taken = {p.title.lower() for p in open_}
         idea = (
@@ -1647,6 +1669,7 @@ class FakeTransport:
             "focus_milestone_id": milestone,
             "steps": steps,
             "sleep_minutes": 720 if critical else rng.choice([120, 180, 240, 360]),
+            "ready": pick,
         }
         if self.scenario == "drain":
             plan["assessment"] = (plan["assessment"] + " " + _filler(rng, 600))[:590]
@@ -1695,6 +1718,33 @@ class FakeTransport:
             "steps": steps,
             "sleep_minutes": rng.choice([60, 120, 180]),
             "ready": top[0] if top else "none: READY lists nothing to decide now",
+        }
+
+    def _marketing_plan(self, context: str, rng: random.Random, state: str, balance: str) -> dict[str, Any]:
+        """0.28.0: a marketing cycle: answer the owner, then bring buyers to READY's first line (a Bluesky post that
+        links one of its live listings, when Ember has the account)."""
+        news = owner_news(context, NEWS_SECTION)
+        answer = [ANSWER_STEP if len(news.messages) == 1 else "Answer my owner's messages"] if news.messages else []
+        ready = [(m[1], m[2], m[3]) for m in _READY_ITEM.finditer(section(context, READY_SECTION) or "")]
+        top = ready[0] if ready else None
+        line = int(top[2]) if top is not None and top[2] else None
+        steps = [*answer]
+        if line is not None:
+            if "\n== BLUESKY ==\n" in context:
+                steps.append(BLUESKY_STEP.format(id=line))
+            steps.append(f"Update project #{line} with what the reach should bring")
+        return {
+            "assessment": f"I am {state} with ${balance}. A marketing cycle: {len(ready)} line(s) to bring buyers to."[
+                :600
+            ],
+            "goal": f"Bring buyers to line #{line}'s listings."[:300] if line else "Nothing to market now.",
+            "money_path": "Buyers who see a listing can buy it: views, then favorites, then orders show it works.",
+            "focus_project_id": line,
+            "focus_venture_id": None,
+            "focus_milestone_id": None,
+            "steps": steps,
+            "sleep_minutes": rng.choice([120, 180, 240]),
+            "ready": top[0] if top is not None else "none: READY lists no line to market",
         }
 
     # work
@@ -1751,6 +1801,7 @@ class FakeTransport:
             "venture_save": "save what i learned to venture #" in steps,
             "milestone_close": "overdue milestone #" in steps,
             "roadmap": "lay out my roadmap" in steps,
+            "bluesky": "on bluesky" in steps,  # 0.28.0: a marketing cycle's post
         }
         wanted["research"] = wanted["research"] or wanted["etsy_propose"]  # 0.12.0: a demand note cites research
         wanted["guide"] = wanted["make"] and crng.random() < 0.5
@@ -1787,6 +1838,7 @@ class FakeTransport:
                 "demand",
                 "etsy_propose",
                 "workshop",
+                "bluesky",
                 "update",
                 "promote",
                 "approval",
@@ -1907,6 +1959,16 @@ class FakeTransport:
                 "body": email_reply(name, ask.subject),
                 "reason": f"{_quote(ask.sender, 80)} asked me a question by email; this answers it (a reply, not a "
                 "cold email).",
+            }
+        if stage == "bluesky":  # 0.28.0: a marketing cycle links one of its line's live listings
+            listing = _LISTING_FOCUS.search(conv.brief)
+            if listing is None:
+                return None
+            return "propose_bluesky_post", {
+                "text": f"Made by an AI and checked by a person: {idea.title}, for {idea.audience}.",
+                "language": "en",
+                "link": f"https://www.etsy.com/listing/{listing[1]}",
+                "reason": "Buyers who never saw the listing can't buy it: the post brings some of them.",
             }
         if stage == "reddit":
             return "propose_reddit_post", {
@@ -2489,6 +2551,7 @@ _STAGE_TOOLS = {
     "update": "project_update",
     "approval": "request_approval",
     "reddit": "propose_reddit_post",
+    "bluesky": "propose_bluesky_post",
     "mail_read": "email_read",
     "mail_reply": "propose_email",
     "message": "message_owner",

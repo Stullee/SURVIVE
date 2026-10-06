@@ -145,6 +145,19 @@ def started(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, list[sqlit
     return found
 
 
+def owes_push(conn: sqlite3.Connection, scope: AgentScope, project_id: int, milestone_id: int) -> bool:
+    """0.28.0: whether a product line's missed bar owes a push to bring buyers (MARKET), a marketing cycle's work: its
+    day-14 views bar, missed with too little reach, which set the retry bar (_retry)."""
+    where, params = scope.where()
+    bars = {
+        str(r["gate"]): int(r["milestone_id"])
+        for r in conn.execute(
+            f"SELECT gate, milestone_id FROM listing_gates WHERE {where} AND project_id = ?", (*params, project_id)
+        )
+    }
+    return bars.get("day14_views") == milestone_id and RETRY in bars
+
+
 def _live_projects(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, sqlite3.Row]:
     """The open projects with a listing of Ember's live on Etsy, by number."""
     rows = etsy_publisher.live_rows(metrics.listings(conn, scope, None, None), {})

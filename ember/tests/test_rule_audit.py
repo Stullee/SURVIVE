@@ -42,10 +42,10 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
     ],
     "planner": [
         ("PLANNING Decide what this wake cycle", GUIDANCE, "what a plan is for; OBLIGATIONS are Ember's code's"),
-        ("- Keep 2-3 experiments in flight", GUIDANCE, "waiting on the owner is never idle time"),
+        ("- One line a cycle", POINTER, "0.28.0: Ember's code ranks the lines and keeps the tools on one"),
         ("- Build first, then ask", GUIDANCE, "what the owner's time is for"),
         ("- Spend on work that can earn", GUIDANCE, "spending and sleep (the burn modes and the stance are code)"),
-        ("- In an ordinary cycle, work on your projects", POINTER, "Ember's code runs the venture cycles"),
+        ("- In an ordinary cycle, work on your line", POINTER, "Ember's code runs the venture cycles"),
         ("- Plan ahead with your roadmap", GUIDANCE, "how far ahead to plan and what to aim at"),
         ("Reply only with JSON matching the schema:", PROTOCOL, "the plan's reply"),
         ("- assessment:", SCHEMA, ""),
@@ -56,6 +56,7 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
         ("- focus_milestone_id:", SCHEMA, ""),
         ("- steps:", SCHEMA, ""),
         ("- sleep_minutes:", SCHEMA, ""),
+        ("- ready:", SCHEMA, "0.13.0: a venture plan's field; 0.28.0: every plan's"),
     ],
     "venture": [
         ("VENTURE CYCLE This cycle belongs to your ventures", GUIDANCE, "what a venture cycle is for, and a no"),
@@ -67,13 +68,18 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
         ("- One venture a cycle", GUIDANCE, "what research is for, and saving it"),
         ("- Decide every venture that isn't backed", POINTER, "Ember's code refuses research past the budget"),
         ("- Your owner's ideas and wishes come first", GUIDANCE, "whose ideas first"),
-        ("- ready:", SCHEMA, "the venture plan's field (0.13.0)"),
+    ],
+    "marketing": [
+        ("MARKETING CYCLE This cycle belongs to marketing", GUIDANCE, "0.28.0: what a marketing cycle is for"),
+        ("- Your owner's waiting messages come first", GUIDANCE, "a marketing cycle answers them first"),
+        ("- Reach the buyers of this one line", POINTER, "Ember's code keeps every link on the line (tools._line)"),
+        ("- Bet on what this cycle's reach will bring", GUIDANCE, "how the next marketing cycle learns"),
     ],
     "reflect": [
         ("REFLECT PHASE.", PROTOCOL, "the marker"),
         ("Your work steps for this cycle are over", PROTOCOL, "why the work ended, and what still works"),
         ("This is your last reply", PROTOCOL, "one reply, the journal first (4 calls besides it: code)"),
-        ("Update your projects, ventures, roadmap and memory", GUIDANCE, "what to keep of the cycle"),
+        ("Update what this cycle worked on", GUIDANCE, "what to keep of the cycle (0.28.0: its line or venture)"),
         ("If something blocked you that a new ability would fix", GUIDANCE, "asking for abilities"),
         ("Optionally call set_sleep.", PROTOCOL, ""),
     ],
@@ -105,6 +111,9 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
     ],
     "venture_brief": [
         ("This is a venture cycle: answer your owner's waiting messages first", GUIDANCE, "its work steps"),
+    ],
+    "marketing_brief": [
+        ("This is a marketing cycle: answer your owner's waiting messages first", GUIDANCE, "0.28.0: its work steps"),
     ],
 }
 
@@ -216,16 +225,18 @@ def prompt_texts() -> dict[str, str]:
         "operating": prompts.operating_rules(True),
         "planner": prompts.PLANNER_RULES,
         "venture": prompts.VENTURE_RULES,
+        "marketing": prompts.MARKETING_RULES,
         "reflect": prompts.REFLECT_PROMPT,
         "review": prompts.REVIEW_RULES,
         "venture_brief": context.VENTURE_BRIEF,
+        "marketing_brief": context.MARKETING_BRIEF,
     }
 
 
 def units(name: str, text: str) -> list[str]:
     """A prompt's rules: its lead (the heading with the paragraph under it), each bullet with the lines it goes on
     over, and each other line; the reflection's paragraph and the venture brief sentence by sentence."""
-    if name in ("reflect", "venture_brief"):
+    if name in ("reflect", "venture_brief", "marketing_brief"):
         return re.split(r"(?<=[.?!])\s+(?=[A-Z])", " ".join(text.split()))
     found: list[str] = []
     for line in text.split("\n"):
@@ -281,7 +292,7 @@ def test_no_sentence_is_said_twice_in_one_request() -> None:
     rules = {
         "work step": [prompts.operating_rules(True)],
         "reflection": [prompts.operating_rules(True), prompts.REFLECT_PROMPT],
-        "plan": [prompts.PLANNER_RULES, prompts.VENTURE_RULES],
+        "plan": [prompts.PLANNER_RULES, prompts.VENTURE_RULES, prompts.MARKETING_RULES],
         "review": [prompts.REVIEW_RULES],
     }
     for request, texts in rules.items():
@@ -292,6 +303,9 @@ def test_no_sentence_is_said_twice_in_one_request() -> None:
         assert repeated == [], (request, repeated)
 
 
+KINDS = ("venture", "marketing", "marketing_apart")  # 0.28.0: the cycle's kind, not a channel of the owner's
+
+
 def every_channel() -> dict[str, bool]:
     """0.21.0 (analysis 0.20.1, FIX NOW 9): every channel of work_request on, read from its own signature (its flags
     that are off by default), so a new channel can't be left out of the measure: the blog (0.14.0) and Bluesky (0.19.0)
@@ -299,7 +313,7 @@ def every_channel() -> dict[str, bool]:
     found = {
         name: True
         for name, p in inspect.signature(prompts.work_request).parameters.items()
-        if p.kind is p.KEYWORD_ONLY and p.default is False and name not in ("final", "venture")
+        if p.kind is p.KEYWORD_ONLY and p.default is False and name not in ("final", *KINDS)
     }
     assert {"mail", "etsy", "library", "pinterest", "printify", "site", "blog", "bluesky"} <= set(found)
     return found
@@ -310,12 +324,14 @@ def test_the_fixed_prompt_is_smaller() -> None:
     cycle's at least 30% smaller; the reflection reads its work's from the cache. 0.15.0: with every channel of the
     owner's on (it was 48.5 KB with Printify on, measured without). 0.21.0: every channel is the blog and Bluesky too
     (every_channel): an ordinary cycle's was 50,510 bytes at 0.20.1, its bound now. Room for more comes from elsewhere
-    in the prompt, not from a higher bound."""
+    in the prompt, not from a higher bound. 0.28.0: a marketing cycle's carries less than an ordinary one's, and an
+    ordinary one's while marketing cycles run (they take the marketing tools) less still."""
 
-    def fixed(venture: bool) -> int:
-        request = prompts.work_request(SETTINGS, "brief", [], venture=venture, **every_channel())
+    def fixed(**kind: bool) -> int:
+        request = prompts.work_request(SETTINGS, "brief", [], **kind, **every_channel())
         assert prompts.workshop_on(SETTINGS)
         return len(json.dumps([request["system"], request["tools"]], ensure_ascii=False).encode())
 
     assert fixed(venture=True) <= 0.7 * 45_866
-    assert fixed(venture=False) <= 50_510
+    assert fixed() <= 50_510
+    assert fixed(marketing=True) < 0.8 * fixed() and fixed(marketing_apart=True) < fixed()

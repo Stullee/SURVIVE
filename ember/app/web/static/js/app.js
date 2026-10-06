@@ -1621,7 +1621,7 @@
 
   function projectsKey(d) {
     return [d.projects, arr(d.activity).map(function (c) { return c.cycle_id; }), d.venture_choices, ui.pj.filter, ui.pj.sort,
-      agentName(), Math.floor(Date.now() / 60000)];
+      agentName(), Math.floor(Date.now() / 60000), d.lines];
   }
 
   function renderProjectsNow() {
@@ -1678,6 +1678,7 @@
   }
 
   function renderProjects(d) {
+    renderLineDesk(d);
     var el = $("projects");
     var name = agentName();
     var projects = arr(d.projects).filter(function (p) { return isObject(p) && p.id !== undefined; });
@@ -1991,13 +1992,79 @@
     return item;
   }
 
+  // 0.28.0: each cycle is about one thing: a product line (an ordinary cycle), a line's buyers (a marketing cycle), a
+  // venture, or an event.
+  var CYCLE_KINDS = { ordinary: "Product line", marketing: "Marketing", venture: "Venture", event: "Event" };
+
+  function cycleKindChip(c) {
+    var about = isObject(c.about) ? c.about : null;
+    var label = CYCLE_KINDS[c.kind] || "Cycle";
+    if (about) {
+      var title = about.title ? " " + String(about.title) : "";
+      label += " · #" + about.id + (title.length > 41 ? title.slice(0, 40) + "…" : title);
+    } else if (c.kind === "ordinary") {
+      label = "No line";
+    }
+    return h("span", { class: "chip", text: label, title: "What cycle #" + c.cycle_id + " was about" });
+  }
+
+  // 0.28.0: the Line desk: what Ember's code ranks for an ordinary and a marketing plan now (each plan takes one line
+  // or says why none, and Ember's code keeps that cycle's tools on it), what the last plans took, and the marketing
+  // share of each day's spending.
+  function renderLineDesk(d) {
+    var el = $("pj-desk");
+    if (!el) return;
+    var desk = isObject(d.lines) ? d.lines : null;
+    if (!desk) { replace(el, []); return; }
+    var name = agentName();
+    var ready = arr(desk.ready);
+    var market = arr(desk.market);
+    var picks = arr(desk.picks);
+    var today = isObject(desk.today) ? desk.today : {};
+    function ranked(items, empty) {
+      return items.length ?
+        h("ol", { class: "vt-ready" }, items.map(function (item) {
+          return h("li", null, h("strong", { text: String(item.key) }), " · " + String(item.text));
+        })) :
+        h("p", { class: "muted small", text: empty });
+    }
+    var share = num(desk.share) || 0;
+    var paused = desk.mode === "maintenance" || desk.mode === "dormant";
+    var shareText = !share ?
+      "Marketing cycles are off (Share for marketing is 0 in the app's options, or the ventures' share takes all of " +
+        "it): the ordinary cycles market." :
+      paused ?
+        "Marketing cycles pause in the " + desk.mode + " burn mode (they run in explore and focus): the ordinary " +
+          "cycles market meanwhile." :
+        "Marketing cycles get " + share + "% of each day's spending: " + usd(today.marketing_usd) + " of today's " +
+          usd(today.spent_usd) + " so far, in " + plural(num(desk.marketing_cycles) || 0, "marketing cycle") + " in all.";
+    var taken = picks.length ?
+      h("ul", { class: "vt-picks muted small" }, picks.map(function (p) {
+        var what = p.pick ? "took " + p.pick + (p.pressed ? " (an obligation pressed)" : "") : "took none: " + String(p.why_not);
+        return h("li", null, "Cycle #" + p.cycle_id + (p.kind === "market" ? " (marketing) " : " ") + what + " · ", timeEl(p.created_at));
+      })) : null;
+    var lines = ready.filter(function (i) { return i.kind === "line"; }).length;
+    replace(el, h("details", { class: "vt-desk-box" },
+      h("summary", null, h("strong", { text: "Line desk: " }),
+        "one product line a cycle · " + plural(lines, "line") + " ranked · " + plural(market.length, "line") + " to market"),
+      h("p", { class: "muted small", text: "Ranked by " + name + "'s code: what a line owes, its milestone due, its jobs " +
+        "(the critic's fixes, a demand note, building or scaling it), then the one worked on longest ago. Each cycle's plan " +
+        "takes one line or says why none, and " + name + "'s code keeps that cycle's tools on it." }),
+      h("p", { class: "muted small", text: shareText }),
+      h("p", { class: "small" }, h("strong", { text: "For an ordinary cycle" })),
+      ranked(ready, "No line to work on now."),
+      h("p", { class: "small" }, h("strong", { text: "For a marketing cycle" })),
+      ranked(market, share ? "Nothing live to market now." : "No marketing cycles while their share is 0."),
+      taken));
+  }
+
   function cycleSummary(c) {
     var took = c.ended_at ? duration(c.started_at, c.ended_at) : "";
     var meta = [triggerText(c.trigger), " · ", timeEl(c.started_at)];
     if (took) meta.push(" · took " + took);
     meta.push(" · " + plural(c.calls, "model call") + ", " + plural(c.tools, "tool call"));
     return [
-      h("span", { class: "cycle-title" }, h("strong", { text: "Cycle #" + c.cycle_id }), " ", chip(CYCLE_STATUS, c.status, sentence(c.status || "unknown"))),
+      h("span", { class: "cycle-title" }, h("strong", { text: "Cycle #" + c.cycle_id }), " ", chip(CYCLE_STATUS, c.status, sentence(c.status || "unknown")), " ", cycleKindChip(c)),
       h("span", { class: "cycle-cost", text: usd(c.cost_usd) }),
       h("span", { class: "cycle-meta" }, meta),
       c.summary || c.note ? h("span", { class: "cycle-text" },

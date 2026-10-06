@@ -41,6 +41,7 @@ from . import (
     evidence,
     knockouts,
     library,
+    lines,
     memory,
     metrics,
     never,
@@ -131,6 +132,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
             (simulated, scope.session, ACTIVITY_CYCLES),
         ).fetchall()
         activity = [_activity(conn, c) for c in cycles]
+        line_desk = _line_desk(agent, conn, scope)  # 0.28.0
         journal = [
             {
                 "cycle_id": j["cycle_id"],
@@ -216,6 +218,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "projects": projects,
         "venture_choices": venture_choices,
         "activity": activity,
+        "lines": line_desk,  # 0.28.0: the Projects tab's Line desk
         "mind": {**agent.memory_files(), "journal": journal, "reviews": reviews, "lesson_pins": pinned},
         "models": models,
         "approvals": approvals,
@@ -537,7 +540,9 @@ def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated
         f" WHERE {where}",
         params,
     ).fetchone()
-    picked = conn.execute("SELECT COALESCE(MAX(id), 0) FROM desk_picks").fetchone()  # 0.13.0
+    picked = conn.execute(  # 0.13.0 (0.28.0: a venture plan's, not an ordinary or marketing one's)
+        "SELECT COALESCE(MAX(id), 0) FROM desk_picks WHERE kind = 'venture'"
+    ).fetchone()
     return (
         f"{int(tree[0])}|{tree[1]}|{int(cycle[0])}|{int(booked[0])}|{int(claims[0])}|{int(numbers[0])}|{int(judged[0])}"
         f"|{int(picked[0])}"
@@ -1020,6 +1025,45 @@ def _review(conn: sqlite3.Connection, r: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def _line_desk(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope) -> dict[str, Any]:
+    """0.28.0: the Line desk: the share of each day's spending the owner gives marketing cycles and what they had
+    today, how Ember's code ranks the lines for an ordinary and a marketing plan now (lines.py; what presses takes its
+    line when a cycle runs), and what the last plans took or why they took none."""
+    mode = burn.peek(agent.db, agent.economy.life.evaluate())
+    today = agent.clock.today()
+    share = lines.marketing_share(agent.settings.venture_share, agent.settings.marketing_share)
+    spent, _, marketed = ventures.day_spends(conn, scope, today)
+    blog = agent.settings.blog_enabled
+    market = lines.marketing(conn, scope, blog=blog) if share and mode.marketing_cycles else []
+    ordinary = lines.ready(conn, scope, today=today, explore=mode.mode == burn.EXPLORE, markets=bool(market))
+    cycles = conn.execute(
+        "SELECT COUNT(*) FROM cycles WHERE simulated = ? AND session = ? AND marketing = 1",
+        (1 if scope.simulated else 0, scope.session),
+    ).fetchone()[0]
+    return {
+        "mode": mode.mode,
+        "share": share,
+        "owner_share": agent.settings.marketing_share,  # what the options say (the share is within the ventures')
+        "today": {"spent_usd": _usd(spent), "marketing_usd": _usd(marketed)},
+        "marketing_cycles": int(cycles),
+        "ready": [i.to_json() for i in ordinary],
+        "market": [i.to_json() for i in market],
+        "picks": [
+            {
+                "cycle_id": p["cycle_id"],
+                "created_at": p["created_at"],
+                "kind": p["kind"],
+                "pick": p["pick"],
+                "project_id": p["project_id"],
+                "pressed": bool(p["pressed"]),
+                "why_not": p["why_not"],
+                "shown": len(json.loads(p["items"])),
+            }
+            for p in lines.recent(conn, scope, 8)
+        ],
+    }
+
+
 def _activity(conn: sqlite3.Connection, c: sqlite3.Row) -> dict[str, Any]:
     calls = conn.execute("SELECT * FROM llm_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
     tool_rows = conn.execute("SELECT * FROM tool_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
@@ -1035,6 +1079,7 @@ def _activity(conn: sqlite3.Connection, c: sqlite3.Row) -> dict[str, Any]:
     journal = conn.execute("SELECT summary FROM journal WHERE cycle_id = ?", (c["id"],)).fetchone()
     return {
         "cycle_id": c["id"],
+        **_kind_of(conn, c),  # 0.28.0: what the cycle was, and the one thing it was about
         "trigger": c["trigger"],
         "status": c["status"],
         "app_version": c["app_version"],  # which release ran it (0.12.0)
@@ -1047,6 +1092,20 @@ def _activity(conn: sqlite3.Connection, c: sqlite3.Row) -> dict[str, Any]:
         "tools": len(tool_rows),
         "steps": steps,
     }
+
+
+def _kind_of(conn: sqlite3.Connection, c: sqlite3.Row) -> dict[str, Any]:
+    """0.28.0: a cycle's kind (an ordinary one on a product line, a marketing one, a venture one, or an event's) and
+    what it was about: its line or its venture, with the title."""
+    kind = "venture" if c["venture"] else "marketing" if c["marketing"] else "event" if c["trigger"] == "event" else ""
+    about = None
+    if c["venture"] and c["venture_id"]:
+        row = conn.execute("SELECT title FROM ventures WHERE id = ?", (c["venture_id"],)).fetchone()
+        about = {"type": "venture", "id": c["venture_id"], "title": row["title"] if row else None}
+    elif c["project_id"]:
+        row = conn.execute("SELECT title FROM projects WHERE id = ?", (c["project_id"],)).fetchone()
+        about = {"type": "line", "id": c["project_id"], "title": row["title"] if row else None}
+    return {"kind": kind or "ordinary", "about": about}
 
 
 def _call_step(call: sqlite3.Row) -> dict[str, Any]:

@@ -26,6 +26,13 @@ configuration:
       This percent of each day's spending goes to venture cycles, where the
       agent researches new ways to earn beyond what it does now and brings you
       business cases on the Ventures tab. 0 switches venture cycles off.
+  marketing_share:
+    name: Share for marketing (%)
+    description: >-
+      This percent of each day's spending goes to marketing cycles, each of
+      which brings buyers to one product line's listings (pins, Bluesky posts,
+      blog posts, better titles and tags). 0 switches marketing cycles off:
+      the ordinary cycles market then.
   spending_stance:
     name: Spending stance
     description: >-

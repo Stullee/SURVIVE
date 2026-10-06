@@ -66,6 +66,16 @@ def record(
         )
 
 
+def adopt(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, project_id: int) -> None:
+    """0.28.0: the files a cycle without a line wrote before it took one (tools._lock), filed under that line now: a
+    file written without a focus goes under the next focused cycle that writes it, and this cycle is that one."""
+    conn.execute(
+        "UPDATE workspace_files SET project_id = ? WHERE mode = ? AND session = ? AND cycle_id = ?"
+        " AND project_id IS NULL AND venture_id IS NULL",
+        (project_id, scope.mode, scope.session, cycle_id),
+    )
+
+
 def filed(conn: sqlite3.Connection, scope: AgentScope) -> dict[str, sqlite3.Row]:
     """Each recorded file's row, by path."""
     rows = conn.execute(

@@ -79,6 +79,7 @@ from . import (
     knockouts,
     learning,
     library,
+    lines,
     metrics,
     netguard,
     news,
@@ -255,15 +256,20 @@ class CycleRunner:
         self.news_kept: frozenset[news.Item] = frozenset()  # 0.15.0: the owner's news marked seen once the cycle ends
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
         self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
-        self.slack_items: list[slack.Item] = []  # 0.18.0: the READY list the last ordinary plan was shown
+        # 0.18.0: the READY list the last ordinary plan was shown (0.28.0: the lines it takes one from, lines.py; or a
+        # marketing plan's)
+        self.line_items: list[lines.Item] = []
         self.reactive = False  # 0.13.0: a cycle an event woke (run sets it)
+        self.kind = lines.ORDINARY  # 0.28.0: what the cycle is (lines.kind; _plan_act_reflect sets it)
+        self.marketing_apart = False  # 0.28.0: marketing cycles run, so an ordinary cycle has no marketing tools
+        self.owner_waits = False  # 0.28.0: the owner woke the cycle and their messages wait: READY isn't forced
         self.max_steps = settings.max_tool_steps
         # 0.15.0: why the owner's unlocks don't act in this cycle (policy.off; the service knows safe mode)
         self.unlocks_off = policy.off(settings.owner_user_ids, False) if unlocks_off is None else unlocks_off
 
     # --- the cycle ---
 
-    def planner_preview(self, venture: bool) -> str:
+    def planner_preview(self) -> tuple[str, str]:
         """The planner's context as a wake cycle would build it now (the diagnostics report shows it): nothing is
         fetched, synced, marked or spent. 0.15.0: and nothing kept: Ember's code's keepers run in a cycle only (they
         ran here, outside the cycle's lock, and parked ventures and closed milestones when the report was made). So
@@ -272,15 +278,17 @@ class CycleRunner:
         self.pinterest_on = self.etsy_on and self.pinterest is not None and self.pinterest.account() is not None
         self.printify_on = self.etsy_on and self.printify is not None and self.printify.account() is not None
         self.bluesky_on = self.bluesky is not None and self.bluesky.account() is not None
-        snap = self._snapshot(venture, keep=False)
+        kind = self._cycle_kind(None)  # 0.28.0: as the next scheduled cycle would be, nothing recorded
+        snap = self._snapshot(kind, keep=False)
         planner = ""
         for scale in PLANNER_SCALES:
             planner, _ = context.planner_context(snap, self.dry_run, scale)
-            if context.fits(
-                prompts.plan_request(self.settings, planner, venture=venture), PLANNER_OPENING.input_tokens
-            ):
+            request = prompts.plan_request(
+                self.settings, planner, venture=kind == lines.VENTURE, marketing=kind == lines.MARKETING
+            )
+            if context.fits(request, PLANNER_OPENING.input_tokens):
                 break
-        return planner
+        return kind, planner
 
     def run(self, trigger: str) -> CycleEnd:
         # 0.13.0: an event's wake-up is a lean reactive cycle: no venture work, review, study or critic, few steps
@@ -320,9 +328,8 @@ class CycleRunner:
             # 0.15.0: no workshop runs in maintenance (a run costs about what the whole cycle may)
             ctx.workshop = self._workshop_fn(ctx) if prompts.workshop_on(self.settings) and mode.workshop else None
             if trigger != "last_will":
-                ctx.venture = self._venture_cycle(cycle_id, trigger) if not self.reactive else False
-                # 0.12.0: brainstorms only while the burn mode is explore
-                ctx.brainstorm = self._brainstorm_fn(ctx) if ctx.venture and mode.brainstorms else None
+                # 0.28.0: what the cycle is (an ordinary, a marketing or a venture one) is decided once Ember's code
+                # kept its rules, right before the plan (_plan_act_reflect): it reads the obligations they keep
                 with self.db.connection() as conn:
                     self.library_on = ctx.library = library.totals(conn, self.scope)[0] > 0
                 self._fetch_mail(cycle_id)
@@ -335,7 +342,11 @@ class CycleRunner:
                 ctx.kdp = tools.KdpAccess(self.settings.kdp_author) if self.kdp_on else None  # 0.25.0
                 self._expire_requests()
             with netguard.sealed() if self.dry_run else contextlib.nullcontext():
-                end = self._last_will(cycle_id) if trigger == "last_will" else self._plan_act_reflect(cycle_id, ctx)
+                end = (
+                    self._last_will(cycle_id)
+                    if trigger == "last_will"
+                    else self._plan_act_reflect(cycle_id, ctx, trigger, mode)
+                )
         except Stopping:
             end = CycleEnd("interrupted", "the app was stopping")
         except EndCycle as exc:
@@ -364,7 +375,8 @@ class CycleRunner:
             return
         mode_now = burn.peek(self.db, self.economy.life.evaluate()).mode
         shortest = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes)
-        kept = slack.sleep(end.sleep_minutes, self.slack_items, shortest, mode_now)
+        found = self.line_items if self.kind == lines.ORDINARY else []  # 0.28.0: an ordinary cycle's READY
+        kept = slack.sleep(end.sleep_minutes, found, shortest, mode_now)
         if kept != end.sleep_minutes:  # 0.19.2: the agent's choice and words stay ("Ember chose" the cut)
             end.asked_minutes, end.sleep_minutes = end.sleep_minutes, kept
             end.sleep_cut = f"Ember's code cut it to {kept} min: READY lists useful work"
@@ -450,36 +462,49 @@ class CycleRunner:
             return burn.peek(self.db, self.economy.life.evaluate())
         return burn.Burn(row["burn_mode"], None)
 
-    def _venture_cycle(self, cycle_id: int, trigger: str = "schedule") -> bool:
-        """Whether this is a venture cycle: venture cycles have had less than the owner's share of the day's spending
-        (``ventures.venture_turn``). Recorded on the cycle; an empty venture tree gets its first ideas first. 0.19.3:
-        the owner's waiting messages make it an ordinary cycle only when one woke it (``trigger`` 'owner': they wait
-        for what they asked); otherwise the venture cycle answers them first. Live, messages turned 4 of 12 cycles
-        that were the ventures' turn into ordinary ones, and 2 of 12 were venture cycles."""
-        allowed = self._burn_allows_ventures()  # 0.12.0: read before the transaction
+    def _cycle_kind(self, cycle_id: int | None, trigger: str = "schedule") -> str:
+        """What the wake cycle is (lines.kind), recorded on it (0.28.0; 0.12.0's venture cycles): a venture cycle while
+        venture cycles have had less than the owner's share of the day's spending, a marketing cycle while marketing
+        cycles have had less than theirs (the share furthest behind first), unless what is owed comes first: an
+        ordinary cycle, or a marketing one for a pressing push to bring buyers to a line. An empty venture tree gets its
+        first ideas first. 0.19.3: the owner's waiting messages make it an ordinary cycle only when one woke it
+        (``trigger`` 'owner': they wait for what they asked); otherwise the cycle answers them first. Live, messages
+        turned 4 of 12 cycles that were the ventures' turn into ordinary ones, and 2 of 12 were venture cycles.
+        ``cycle_id`` None: the diagnostics' preview, which keeps nothing."""
+        mode = burn.peek(self.db, self.economy.life.evaluate())
+        today = self.clock.today()
+        share = lines.marketing_share(self.settings.venture_share, self.settings.marketing_share)
         with self.db.transaction() as conn:
-            ventures.seed(conn, self.scope, to_iso(self.clock.now()))
-            spent, ventured = ventures.day_spend(conn, self.scope, self.clock.today())
-            turn = allowed and ventures.venture_turn(self.settings.venture_share, spent, ventured)
-            # 0.12.0: what the agent owes comes first (a venture cycle deferred the owner's quick fix)
-            today = self.clock.today()
-            owed = obligations.pressing(conn, self.scope, today, messages=trigger == "owner") if turn else []
-            if turn and not owed:
-                store.update_cycle(conn, cycle_id, venture=1)
-        if owed:
+            if cycle_id is not None:
+                ventures.seed(conn, self.scope, to_iso(self.clock.now()))
+            spends = ventures.day_spends(conn, self.scope, today)
+            runs = share > 0 and mode.marketing_cycles and self.etsy_on
+            marketable = lines.marketable(conn, self.scope, self.blog_on) if runs else []
+            self.marketing_apart = bool(marketable)  # nothing live to market: no marketing cycles, nor a share kept
+            owed = [o for _, o in obligations.pressing_owed(conn, self.scope, today)]
+            self.owner_waits = trigger == "owner" and obligations.messages_waiting(conn, self.scope) > 0
+            turn = lines.kind(
+                venture_share=self.settings.venture_share,
+                share=share,
+                spends=spends,
+                ventures_run=mode.venture_cycles,
+                markets=self.marketing_apart,
+                marketable=marketable,
+                owed=owed,
+                messages=self.owner_waits,
+            )
+            if cycle_id is not None and turn.kind in (lines.VENTURE, lines.MARKETING):
+                store.update_cycle(conn, cycle_id, **{turn.kind: 1})
+            owner = trigger == "owner"
+            first = obligations.pressing(conn, self.scope, today, messages=owner) if turn.owed_first else []
+        if cycle_id is not None and first:
             events.record(
                 self.db,
                 "info",
                 "agent",
-                f"Cycle #{cycle_id} is an ordinary cycle: {owed[0]} {_comes(owed[0])} first"[:300],
+                f"Cycle #{cycle_id} is an ordinary cycle: {first[0]} {_comes(first[0])} first"[:300],
             )
-        return turn and not owed
-
-    def _burn_allows_ventures(self) -> bool:
-        """0.12.0: venture cycles run in the explore burn mode (0.19.3: no longer in focus, where they ran only the
-        backed ventures' tests: a backed venture's work is its project's, in ordinary cycles); not in maintenance or
-        dormant."""
-        return burn.peek(self.db, self.economy.life.evaluate()).venture_cycles
+        return turn.kind
 
     def _expire_requests(self) -> None:
         """0.12.0: the requests the owner didn't decide within their type's days expire (news for the agent)."""
@@ -653,23 +678,30 @@ class CycleRunner:
         if self.stop.is_set():
             raise Stopping
 
-    def _snapshot(self, venture: bool = False, cycle_id: int | None = None, keep: bool = True) -> context.Snapshot:
-        """What the plan, the brief and the will see; ``cycle_id``: the cycle's (none for the diagnostics' preview).
-        First (``keep``) Ember's code keeps its rules: the money goal, the stages, the grading, the listing tests, the
-        predictions and the obligations."""
+    def _keep(self, cycle_id: int | None) -> None:
+        """Ember's code keeps its rules before a plan: the money goal, the stages, the grading, the listing tests, the
+        bets, the predictions and the obligations (0.28.0: before what the cycle is, which reads what they keep)."""
+        status = self.economy.life.evaluate()
+        scope = self.economy.life.scope()
+        self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
+        self._keep_stages(cycle_id)
+        metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
+        self._keep_gates()  # 0.13.0: after the grading, so a bar missed now is owed at once
+        self._keep_bets()  # 0.18.0: after the grading, from the same Etsy numbers
+        predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
+        self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
+
+    def _snapshot(self, kind: str = lines.ORDINARY, cycle_id: int | None = None, keep: bool = True) -> context.Snapshot:
+        """What the plan, the brief and the will see; ``kind``: the cycle's (lines.kind); ``cycle_id``: the cycle's
+        (none for the diagnostics' preview). First (``keep``) Ember's code keeps its rules (``_keep``)."""
+        if keep:
+            self._keep(cycle_id)
+        venture = kind == lines.VENTURE
         status = self.economy.life.evaluate()
         scope = self.economy.life.scope()
         self.net_runway_days = status.runway.net_days  # 0.13.0
         mode = burn.peek(self.db, status)
         room, why = self.meter.cycle_room(cycle_id, mode)  # 0.15.0: the cap in force, not the options'
-        if keep:
-            self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
-            self._keep_stages(cycle_id)
-            metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
-            self._keep_gates()  # 0.13.0: after the grading, so a bar missed now is owed at once
-            self._keep_bets()  # 0.18.0: after the grading, from the same Etsy numbers
-            predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
-            self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
         local = self.clock.now().astimezone(self.clock.tz).strftime("%A %Y-%m-%d %H:%M %Z")
         with self.db.connection() as conn:
@@ -687,10 +719,9 @@ class CycleRunner:
                 if venture
                 else []
             )
-            # 0.18.0: an ordinary plan's READY: useful work while projects wait (slack.py)
-            self.slack_items = (
-                slack.items(conn, self.scope, self.clock.today()) if not venture and not self.reactive else []
-            )
+            # 0.18.0: an ordinary plan's READY; 0.28.0: the lines an ordinary or marketing plan takes one from
+            self.line_items = self._line_items(conn, kind, mode)
+            asked = lines.questions(conn, self.scope, self.clock.today()) if kind == lines.ORDINARY else []
             shop = ""
             if self.etsy_on and self.etsy is not None:
                 name = self.etsy.shop_name() or "your shop"
@@ -757,6 +788,14 @@ class CycleRunner:
                 kdp=books,
                 venture=venture,
                 venture_share=self.settings.venture_share,
+                marketing=kind == lines.MARKETING,  # 0.28.0
+                # the marketing cycles' share while they run (nothing live to market: none run, nor a share shown)
+                marketing_share=(
+                    lines.marketing_share(self.settings.venture_share, self.settings.marketing_share)
+                    if self.marketing_apart
+                    else 0
+                ),
+                marketing_apart=self.marketing_apart and kind == lines.ORDINARY,
                 shelf=library.shelf(conn, self.scope),
                 decision_wakes=self.settings.wake_on_decision,
                 burn=_burn_line(mode, self.clock),
@@ -764,7 +803,7 @@ class CycleRunner:
                 ready=(
                     desk.text(self.ready_items, predictions.calibration(conn, self.scope) if venture else "")
                     if venture
-                    else slack.text(self.slack_items)
+                    else lines.text(self.line_items, asked)
                 ),
                 agenda=agenda.unseen(conn, self.scope),  # 0.13.0: what happened between cycles
                 reactive=self.reactive,
@@ -787,7 +826,9 @@ class CycleRunner:
 
     # --- plan, act, reflect ---
 
-    def _plan_act_reflect(self, cycle_id: int, ctx: tools.ToolContext) -> CycleEnd:
+    def _plan_act_reflect(
+        self, cycle_id: int, ctx: tools.ToolContext, trigger: str = "schedule", mode: burn.Burn | None = None
+    ) -> CycleEnd:
         self._guarded(self._retire_lessons, cycle_id, "the lessons' check after an upgrade")  # 0.19.2
         with self.db.connection() as conn:
             review_due = review.due(conn, self.scope, self.clock) and not self.reactive
@@ -805,14 +846,24 @@ class CycleRunner:
         if not self.reactive:
             self._guarded(self._critique, cycle_id, "the critic")  # 0.13.0
             self._guarded(self._quality, cycle_id, "the quality check")  # 0.18.0
-        snap = self._snapshot(ctx.venture, cycle_id)
+        # 0.28.0: Ember's code keeps its rules first, then decides what the cycle is: an ordinary, a marketing or a
+        # venture cycle (a reactive one reacts to its event), each about one thing
+        self._keep(cycle_id)
+        self.kind = lines.REACTIVE if self.reactive else self._cycle_kind(cycle_id, trigger)
+        ctx.venture = self.kind == lines.VENTURE
+        ctx.marketing = self.kind == lines.MARKETING
+        ctx.marketing_apart = self.marketing_apart and self.kind == lines.ORDINARY
+        ctx.state.one_line = not ctx.venture  # an ordinary, marketing or reactive cycle works on one product line
+        mode = mode or self._cycle_burn(cycle_id)
+        ctx.brainstorm = self._brainstorm_fn(ctx) if ctx.venture and mode.brainstorms else None  # 0.12.0: explore
+        snap = self._snapshot(self.kind, cycle_id, keep=False)
         ctx.net_runway_days = self.net_runway_days  # 0.13.0: the knock-outs' slow rule
-        action = "Planning this venture cycle" if ctx.venture else "Planning this cycle"
-        self._progress(cycle_id, phase="plan", current_action=action)
+        kind = "venture " if ctx.venture else "marketing " if ctx.marketing else ""
+        self._progress(cycle_id, phase="plan", current_action=f"Planning this {kind}cycle")
         request = None
         for scale in PLANNER_SCALES:
             planner, planned = context.planner_context(snap, self.dry_run, scale)
-            request = prompts.plan_request(self.settings, planner, venture=ctx.venture)
+            request = prompts.plan_request(self.settings, planner, venture=ctx.venture, marketing=ctx.marketing)
             if context.fits(request, PLANNER_OPENING.input_tokens):
                 break
         else:
@@ -845,6 +896,10 @@ class CycleRunner:
         if planned.changelog:
             news.mark_changelog_seen(self.db, self.scope, snap.news)
         taken = self._take_ready(cycle_id, plan) if ctx.venture else None  # 0.13.0
+        # 0.28.0: an ordinary or marketing plan takes one line from READY (lines.py)
+        notes = [self._take_line(cycle_id, plan)] if self.kind in (lines.ORDINARY, lines.MARKETING) else []
+        if not ctx.venture:
+            plan.focus_venture_id = None  # 0.28.0: another venture is a venture cycle's work; a line's counts by it
         focus = None
         venture_focus = milestone_focus = stopped = ""
         with self.db.connection() as conn:
@@ -874,6 +929,8 @@ class CycleRunner:
                     venture_focus = self._venture_focus(conn, venture, cycle_id)
                     if taken is not None and taken.venture_id == plan.focus_venture_id:
                         venture_focus = f"Decision desk: you took {taken.key}: {taken.text}\n{venture_focus}"
+            if not ctx.venture and plan.focus_project_id is not None:  # 0.28.0: aimed at the line's milestone
+                notes.append(self._line_milestone(conn, plan, focus))
             if plan.focus_milestone_id is not None:
                 milestone = roadmap.get(conn, self.scope, plan.focus_milestone_id)
                 if milestone is None or milestone["status"] != "open":
@@ -915,6 +972,9 @@ class CycleRunner:
                 )
             return CycleEnd("idle", "nothing to do", sleep_minutes=plan.sleep_minutes)
 
+        line = plan.focus_project_id if not ctx.venture else None
+        with self.db.connection() as conn:
+            line_focus = lines.focus_text(conn, self.scope, line, ctx.marketing) if line is not None else ""
         brief, briefed = context.brief(
             snap,
             self.dry_run,
@@ -924,7 +984,10 @@ class CycleRunner:
             venture_focus=venture_focus,
             milestone_focus=milestone_focus,
             knowledge=self._knowledge(plan),
-            set_aside=stopped,  # the brief's FOCUS says why the plan's project isn't it
+            # the brief's FOCUS says why the plan's project isn't it, and (0.28.0) what Ember's code chose for the line
+            set_aside="\n".join(note for note in (stopped, *notes) if note),
+            line=line if ctx.state.one_line else None,
+            line_focus=line_focus,
         )
         act = self._act(cycle_id, ctx, brief, planned.listed & briefed.items)
         if act.end_reason == "refusal":
@@ -948,6 +1011,82 @@ class CycleRunner:
         if ctx.state.sleep_minutes:  # set_sleep, the last call winning (the reflection's after the act phase's)
             return CycleEnd(status, note, sleep_minutes=ctx.state.sleep_minutes, sleep_reason=ctx.state.sleep_reason)
         return CycleEnd(status, note, sleep_minutes=plan.sleep_minutes)
+
+    def _take_line(self, cycle_id: int, plan: Plan) -> str:
+        """0.28.0: the READY line an ordinary or marketing plan took (its project becomes the cycle's line), kept with
+        the list it came from, or why it took none; what FOCUS says of it. A line a pressing obligation takes is taken
+        whatever the plan said, and the plan's steps give way to the obligation. A plan that named its line as its focus
+        but no key of READY's (a slip, or a line beyond its first MAX_LINES) takes that line."""
+        items = self.line_items
+        taken, why = lines.choose(items, plan.ready)
+        note = ""
+        if items and items[0].pressed and taken is not items[0]:
+            taken, why = items[0], ""
+            note = (
+                f"Ember's code took {taken.key} for this cycle: an obligation of it presses (OBLIGATIONS). What your "
+                "plan meant for another line waits for its own cycle."
+            )
+            plan.steps = [f"Deal with what line #{taken.project_id} owes first (OBLIGATIONS), then its next step"]
+        elif taken is None and not plan.ready.lower().startswith("none") and plan.focus_project_id is not None:
+            named = self._named_line(plan.focus_project_id)
+            if named is not None:
+                taken, why = named, ""
+        if items or taken is not None:
+            kind = "market" if self.kind == lines.MARKETING else "line"
+            with self.db.transaction() as conn:
+                lines.record(conn, cycle_id, kind, items, taken, why, to_iso(self.clock.now()))
+        if taken is None and plan.focus_project_id is not None:
+            with self.db.connection() as conn:
+                held = ventures.project_stopped(conn, self.scope, plan.focus_project_id) is not None
+            if held:
+                return note  # a line the owner's park or kill stopped: FOCUS says why it waits (0.23.2), and drops it
+        plan.focus_project_id = taken.project_id if taken is not None else None
+        return note
+
+    def _named_line(self, project_id: int) -> lines.Item | None:
+        """0.28.0: the line a plan named as its focus, as an item of its READY (None if it can't be the cycle's)."""
+        found = next((i for i in self.line_items if i.project_id == project_id), None)
+        if found is not None:
+            return found
+        with self.db.connection() as conn:
+            if self.kind == lines.MARKETING:
+                ok = project_id in lines.marketable(conn, self.scope, self.blog_on)
+            else:
+                row = store.project(conn, self.scope, project_id)
+                ok = row is not None and row["status"] in store.OPEN_STATUSES
+                ok = ok and ventures.project_stopped(conn, self.scope, project_id) is None
+        kind = lines.MARKET if self.kind == lines.MARKETING else lines.LINE
+        return lines.Item(kind, project_id, "the line your plan named as its focus") if ok else None
+
+    def _line_milestone(self, conn: Any, plan: Plan, focus: Any) -> str:
+        """0.28.0: a cycle on one line is aimed at a milestone the line may serve (its own, its venture's, or one of no
+        line): another line's gives way to the line's milestone due first, and so does none. What FOCUS says of it."""
+        line = int(plan.focus_project_id or 0)
+        venture = focus["venture_id"] if focus is not None else None
+        aimed = roadmap.get(conn, self.scope, plan.focus_milestone_id) if plan.focus_milestone_id else None
+        if aimed is not None and roadmap.serves_line(aimed, line, venture):
+            return ""
+        own = roadmap.line_milestone(conn, self.scope, line, self.clock.today())
+        plan.focus_milestone_id = own
+        if aimed is None:
+            return ""
+        then = f"#{own}, its milestone due first" if own is not None else "none of its milestones (none is open)"
+        return f"Your plan aimed at milestone #{aimed['id']}, which isn't line #{line}'s: the cycle is aimed at {then}."
+
+    def _line_items(self, conn: Any, kind: str, mode: burn.Burn) -> list[lines.Item]:
+        """0.28.0: an ordinary or marketing plan's READY (lines.py): a pressing obligation's line alone, unless the
+        owner woke the cycle with messages waiting (they wait for what they asked)."""
+        if kind not in (lines.ORDINARY, lines.MARKETING) or self.reactive:
+            return []
+        today = self.clock.today()
+        owed = [] if self.owner_waits else [o for _, o in obligations.pressing_owed(conn, self.scope, today)]
+        since = to_iso(self.clock.now() - timedelta(hours=lines.PRESS_HOURS))
+        if kind == lines.MARKETING:
+            return lines.marketing(conn, self.scope, blog=self.blog_on, owed=owed, since=since)
+        explore = mode.mode == burn.EXPLORE
+        return lines.ready(
+            conn, self.scope, today=today, explore=explore, markets=self.marketing_apart, owed=owed, since=since
+        )
 
     def _take_ready(self, cycle_id: int, plan: Plan) -> desk.Item | None:
         """0.13.0: the READY item the venture plan took (its venture becomes the cycle's focus), kept with the list it
@@ -1590,23 +1729,7 @@ class CycleRunner:
                 act.end_reason = "the conversation got too long"
                 break
             final = step == max_steps
-            request = prompts.work_request(
-                self.settings,
-                brief,
-                turns,
-                final=final,
-                mail=self.mail,
-                etsy=self.etsy_on,
-                venture=ctx.venture,
-                library=self.library_on,
-                pinterest=self.pinterest_on,
-                printify=self.printify_on,
-                site=self.site_on,
-                **_offered(ctx),
-                blog=self.blog_on,
-                bluesky=self.bluesky_on,
-                kdp=self.kdp_on,
-            )
+            request = prompts.work_request(self.settings, brief, turns, final=final, **self._flags(ctx))
             if not self._affordable(cycle_id, request, brief, turns, ctx):
                 act.end_reason = "the budget left in this cycle is kept for reflecting" if act.steps else NO_STEP
                 break
@@ -1695,6 +1818,25 @@ class CycleRunner:
             act.end_reason = act.end_reason or "step limit reached"
         return act
 
+    def _flags(self, ctx: tools.ToolContext) -> dict[str, Any]:
+        """What a work step's and the reflection's tool list follows, the same for every step of a cycle (so the prompt
+        cache holds): the owner's channels, what the burn mode leaves the cycle, and (0.28.0) its kind."""
+        return {
+            "mail": self.mail,
+            "etsy": self.etsy_on,
+            "venture": ctx.venture,
+            "marketing": ctx.marketing,
+            "marketing_apart": ctx.marketing_apart,
+            "library": self.library_on,
+            "pinterest": self.pinterest_on,
+            "printify": self.printify_on,
+            "site": self.site_on,
+            "blog": self.blog_on,
+            "bluesky": self.bluesky_on,
+            "kdp": self.kdp_on,
+            **_offered(ctx),
+        }
+
     def _with_pending(self, act: _Act) -> list[dict[str, Any]]:
         if not act.pending:
             return list(act.turns)
@@ -1705,7 +1847,6 @@ class CycleRunner:
     ) -> bool:
         """Only take a step if a reflect call still fits after it; what that costs is kept in the cycle's state, for
         the step's calls of their own (research, brainstorms, workshop runs) to leave (0.12.0)."""
-        venture = ctx.venture
         growth = _step_growth(ctx.state, turns)
         # The reflection as _reflect sends it: a trailing user turn's tool results come with its prompt.
         past, pending = list(turns), []
@@ -1717,19 +1858,9 @@ class CycleRunner:
             brief,
             past,
             pending,
-            mail=self.mail,
-            etsy=self.etsy_on,
             ended=longest,
-            venture=venture,
-            library=self.library_on,
-            pinterest=self.pinterest_on,
-            printify=self.printify_on,
-            site=self.site_on,
-            **_offered(ctx),
-            blog=self.blog_on,
-            bluesky=self.bluesky_on,
-            kdp=self.kdp_on,
             drafted=True,  # 0.24.0: the longer of its two prompts
+            **self._flags(ctx),
         )
         try:
             step_worst = self.meter.quote(request, "work")
@@ -1798,20 +1929,10 @@ class CycleRunner:
             brief,
             turns,
             pending,
-            mail=self.mail,
-            etsy=self.etsy_on,
             ended=act.end_reason,
-            venture=ctx.venture,
-            library=self.library_on,
             undone=undone,
-            pinterest=self.pinterest_on,
-            printify=self.printify_on,
-            site=self.site_on,
-            **_offered(ctx),
-            blog=self.blog_on,
-            bluesky=self.bluesky_on,
-            kdp=self.kdp_on,
             drafted=ctx.state.journal_draft is not None,
+            **self._flags(ctx),
         )
         # 0.12.0: why the work ended is kept first, also when the reflection can't be paid for.
         self._progress(cycle_id, act_end_reason=act.end_reason[:300] or None)

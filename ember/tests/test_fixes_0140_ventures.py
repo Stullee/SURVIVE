@@ -337,14 +337,35 @@ def test_the_agent_cant_start_a_venture_live(data_dir: Path) -> None:
 # --- FIX 18e: research in an ordinary cycle that focuses a venture ---
 
 
-def test_an_ordinary_cycles_research_counts_toward_its_focus_ventures_budget(
+def test_an_ordinary_cycles_research_counts_toward_its_lines_ventures_budget(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """0.28.0: an ordinary cycle works on one product line and has no focus venture (a venture that isn't backed is a
+    venture cycle's work): its research counts toward the budget of its line's venture while that isn't backed."""
     monkeypatch.setattr(ventures, "RESEARCH_BUDGET_USD", 0.02)  # a found() call costs about $0.013
     failing = Fail(Interrupted("stream broke", partial_usage={"input_tokens": 1_000, "output_tokens": 50}))
-    fake = FakeTransport(
-        script=[
-            plan(venture=DROPSHIPPING),
+    fake = FakeTransport(script=[plan(steps=[])])  # a first cycle, for the line's project to be made in
+
+    def researching(agent: Agent) -> None:
+        with agent.db.transaction() as conn:
+            ventures.update(conn, DROPSHIPPING, to_iso(agent.clock.now()), stage="researching")
+
+    agent, _ = run(data_dir, fake, before=researching, settings=ORDINARY)
+    with agent.db.transaction() as conn:
+        line = store.create_project(
+            conn,
+            agent.scope(),
+            cycle_id=1,
+            title="Phone cases",
+            hypothesis="Phone cases sell.",
+            next_step="Find sellers.",
+            status="active",
+            now=to_iso(agent.clock.now()),
+            venture_id=DROPSHIPPING,
+        )
+    fake.script.extend(
+        [
+            plan(venture=DROPSHIPPING, project=line),  # its venture is no focus of an ordinary cycle
             ToolCalls([research("Who sells phone cases?"), research("At what price?"), research("How many?")]),
             research_found("https://example.invalid/sellers"),
             failing,  # charged at its worst case: it counts toward the budget, which is used now
@@ -352,13 +373,10 @@ def test_an_ordinary_cycles_research_counts_toward_its_focus_ventures_budget(
             JOURNAL,
         ]
     )
-
-    def researching(agent: Agent) -> None:
-        with agent.db.transaction() as conn:
-            ventures.update(conn, DROPSHIPPING, to_iso(agent.clock.now()), stage="researching")
-
-    agent, _ = run(data_dir, fake, before=researching, settings=ORDINARY)
-    assert rows(agent, "SELECT venture FROM cycles") == [{"venture": 0}]  # an ordinary cycle
+    agent.run_cycle("schedule")
+    assert rows(agent, "SELECT venture, project_id, venture_id FROM cycles WHERE id = 2") == [
+        {"venture": 0, "project_id": line, "venture_id": None}  # an ordinary cycle on the line
+    ]
     results = tool_results(agent, "research")
     assert [r["status"] for r in results] == ["ok", "error", "error"]
     assert "research failed" in results[1]["result"]

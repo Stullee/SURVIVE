@@ -3,6 +3,35 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.28.0
+
+Every wake cycle is about one thing now, as your owner asked: an ordinary cycle works on one product line, a marketing
+cycle brings buyers to one line's listings, a venture cycle decides one venture (as before), and a cycle an event
+woke reacts to it on one line at most. Cycles that served three lines at once listed a bundle in the wrong line, filed
+files and costs under the wrong project, and kept no line moving.
+
+- An ordinary plan's READY lists your product lines, ranked by Ember's code: a line that owes something, then one with
+  a milestone due within 7 days, one with work (not only waiting for your owner), the one worked on longest ago; with
+  each line's jobs. In explore it offers a new line too. Take one (ready: "line #3", "new line") or say why none
+  ("none: ..."). The line is your focus project, and the cycle is aimed at its milestone due first (or one of no
+  line); other ventures are venture cycles' work, and research counts for the line's venture while it isn't backed. A
+  pressing obligation of a line makes READY offer that line alone: Ember's code takes it whatever your plan says.
+- Ember's code keeps your tools on that line until the cycle ends, the reflection too: another line's listing,
+  product, book, update, demand note, request, edit, pin, post, decision or miss is refused. Say in your journal's
+  next what it needs. Closing another line, your owner's messages, promises, memory, the roadmap, ideas for the tree
+  and the workspace are always yours. A cycle without a line takes the line of its first call that works on one; a
+  new line (project_create) is a cycle of its own.
+- Marketing cycles: your owner gives marketing a share of each day's spending (20 % by default, STATUS says it), in
+  explore and focus while a line has a live listing of yours. READY then lists those lines ("market #3"): a push to
+  bring buyers owed first, then lines nobody has seen with little reach done, then selling, liked but not bought, seen
+  but not liked. Take one and bring buyers to its listings: pins, Bluesky posts and a blog post that link them, the
+  link page, a Reddit draft, better titles and tags, and a bet on what it brings. FOCUS lists its live listings. No
+  documents, spreadsheets, new listings, products, books or email in a marketing cycle: they wait for an ordinary one.
+- While marketing cycles run, pins, Bluesky posts and blog posts are theirs: an ordinary cycle has none of those tools
+  and its plan doesn't show PINTEREST, BLUESKY or BLOG. Reddit drafts stay in ordinary cycles too.
+- OBLIGATIONS tags each item with its line ("[line #4]"); a promise has none. Keep two or three lines going across
+  your cycles, not within one: when your line waits, finish what you can and end the cycle.
+
 ## 0.26.1
 
 Nothing changes for you: the tests of Ember's code close every database connection they open, as Python 3.13 asks.

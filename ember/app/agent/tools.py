@@ -91,7 +91,7 @@ from . import (
 )
 from .memory import CAPS, HEADING_REFUSAL, MAX_APPEND_LINES, Memory, MemoryError_, heading_line
 from .sandbox import Jail, Limits, QuotaError, SandboxError, kind_of
-from .store import OPEN_STATUSES, AgentScope
+from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
 
 log = logging.getLogger(__name__)
 
@@ -190,6 +190,19 @@ ORDINARY_TOOLS = (
     | BLOG_TOOLS
     | MAIL_TOOLS
     | KDP_TOOLS
+)
+# 0.28.0: the tools that bring buyers to a line's listings (a pin, a Bluesky post, a blog post, the link page): a
+# marketing cycle's (lines.py), and an ordinary cycle's only while no marketing cycles run (the owner's share is 0, the
+# burn mode, nothing live to market). A Reddit post stays an ordinary cycle's too (a first test of demand, often).
+MARKETING_TOOLS = PINTEREST_TOOLS | BLUESKY_TOOLS | BLOG_TOOLS
+# 0.28.0: what a marketing cycle doesn't carry: making documents, spreadsheets and statements, the workshop, new
+# listings and products, KDP, email and the owner's site pages (an ordinary cycle's work).
+BUILDING_TOOLS = (
+    frozenset({"make_document", "make_spreadsheet", "make_cost_statement", "workshop", "propose_etsy_listing"})
+    | PRINTIFY_TOOLS
+    | KDP_TOOLS
+    | MAIL_TOOLS
+    | SITE_TOOLS
 )
 # Model calls of their own (and, 0.12.0, the Etsy market probe of a demand note): they need the network, and no
 # database transaction is held meanwhile.
@@ -1248,6 +1261,8 @@ def definitions(
     blog: bool = False,
     bluesky: bool = False,
     kdp: bool = False,
+    marketing: bool = False,
+    marketing_apart: bool = False,
 ) -> list[dict[str, Any]]:
     """The tool definitions the model sees: the same list in act and reflect, so the prompt cache holds (the
     reflection reads it from the cache at a tenth of the price; a list of its own would write the whole conversation
@@ -1282,6 +1297,8 @@ def definitions(
             blog=blog,
             bluesky=bluesky,
             kdp=kdp,
+            marketing=marketing,
+            marketing_apart=marketing_apart,
         )
     ]
 
@@ -1324,9 +1341,13 @@ def offered(
     blog: bool = False,
     bluesky: bool = False,
     kdp: bool = False,
+    marketing: bool = False,
+    marketing_apart: bool = False,
 ) -> bool:
     """Whether tool ``name`` is offered in a cycle of this configuration and kind (``venture``: a venture cycle;
-    ``brainstorm``: the burn mode allows brainstorms, 0.15.0; ``kdp``: the owner switched Amazon KDP on, 0.25.0)."""
+    ``brainstorm``: the burn mode allows brainstorms, 0.15.0; ``kdp``: the owner switched Amazon KDP on, 0.25.0;
+    0.28.0: ``marketing``, a marketing cycle; ``marketing_apart``, marketing cycles run, so an ordinary cycle leaves
+    the marketing tools to them)."""
     return (
         (mail or name not in MAIL_TOOLS)
         and (workshop or name not in WORKSHOP_TOOLS)
@@ -1340,6 +1361,8 @@ def offered(
         and (venture or name not in VENTURE_TOOLS)
         and (brainstorm or name != "brainstorm")
         and not (venture and name in ORDINARY_TOOLS)
+        and not (marketing and name in BUILDING_TOOLS)
+        and not (marketing_apart and not marketing and name in MARKETING_TOOLS)
         and (library or name not in LIBRARY_TOOLS)
     )
 
@@ -1389,6 +1412,11 @@ class CycleTools:
     seen_urls: set[str] = field(default_factory=set)  # URLs from this cycle's research results
     focus_project_id: int | None = None
     focus_venture_id: int | None = None
+    # 0.28.0: one product line a cycle (lines.py): set by the loop for an ordinary, marketing or reactive cycle, whose
+    # tools then work on its line (focus_project_id) only; until it has one, a call takes the line it works on
+    # (touched) once it succeeds (_lock).
+    one_line: bool = False
+    touched: int | None = None
     journal_written: bool = False
     # 0.24.0: a journal a work step wrote (write_journal's checked arguments): the cycle's, unless the reflection writes
     # one (loop._keep_draft)
@@ -1538,6 +1566,8 @@ class ToolContext:
     blog: BlogAccess | None = None  # the owner's blog, when they switched it on (0.14.0)
     kdp: KdpAccess | None = None  # Amazon KDP, when the owner switched it on (0.25.0)
     venture: bool = False  # a venture cycle (0.10.0): brainstorm, and more research
+    marketing: bool = False  # 0.28.0: a marketing cycle (lines.py): the marketing tools, none for building
+    marketing_apart: bool = False  # 0.28.0: marketing cycles run, so an ordinary cycle has no marketing tools
     usd_per_eur: float = 0.0  # the owner's exchange rate (etsy_usd_per_eur; 0: none, econ assumes one), 0.13.0
     venture_cash_eur: float = 20.0  # the owner's cash for a venture's first test (a knock-out beyond it), 0.13.0
     net_runway_days: float | None = None  # at the cycle's start (None: it earns what it spends), 0.13.0
@@ -1592,12 +1622,23 @@ def _run(
             now=ctx.now(),
         )
     ctx.workspace.noticed = []  # 0.26.0: the files it writes or deletes, filed under the cycle's focus (_file)
+    ctx.state.touched = None  # 0.28.0: the line it works on, which a cycle without one takes once it succeeds (_lock)
     try:
         spec = spec_of(name, ctx.venture)
         if spec is not None and ctx.venture and name in ORDINARY_TOOLS:
             raise ToolError(
                 f"{name} is not one of your tools in a venture cycle: making files, the shop, Pinterest, Bluesky, "
-                "KDP, email, Reddit and laying out the roadmap belong to ordinary cycles"
+                "KDP, email, Reddit and laying out the roadmap belong to ordinary and marketing cycles"
+            )
+        if spec is not None and ctx.marketing and name in BUILDING_TOOLS:  # 0.28.0
+            raise ToolError(
+                f"{name} is not one of your tools in a marketing cycle: making documents and spreadsheets, the "
+                "workshop, new listings and products, KDP and email belong to ordinary cycles"
+            )
+        if spec is not None and ctx.marketing_apart and not ctx.marketing and name in MARKETING_TOOLS:  # 0.28.0
+            raise ToolError(
+                f"{name} belongs to marketing cycles: your owner gives marketing a share of your spending, and a "
+                "marketing cycle brings buyers to one line's listings with pins, Bluesky posts and blog posts"
             )
         if spec is None or not offered(
             name,
@@ -1612,6 +1653,8 @@ def _run(
             blog=ctx.blog is not None,
             bluesky=ctx.bluesky is not None,
             kdp=ctx.kdp is not None,
+            marketing=ctx.marketing,
+            marketing_apart=ctx.marketing_apart,
         ):
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
@@ -1649,6 +1692,7 @@ def _run(
                 outcome = _noted(handler(ctx, args, conn), cut_notes)
                 if outcome.ok:
                     ctx.state.counts[name] = ctx.state.counts.get(name, 0) + 1
+                    _lock(ctx, conn)
                 _file(conn, ctx, name)
                 store.finish_tool_call(
                     conn, call_id, "ok" if outcome.ok else "error", outcome.summary, outcome.text, ctx.now()
@@ -1666,6 +1710,8 @@ def _run(
         log.exception("Tool %s failed", name)
         outcome = Outcome(False, f"Error: the tool failed ({type(exc).__name__}).", f"failed: {type(exc).__name__}")
     with ctx.db.transaction() as conn:
+        if outcome.ok:
+            _lock(ctx, conn)
         _file(conn, ctx, str(name))
         store.finish_tool_call(conn, call_id, "ok" if outcome.ok else "error", outcome.summary, outcome.text, ctx.now())
     return _clip(outcome, RESULT_CHARS.get(str(name), MAX_RESULT_CHARS))
@@ -2025,6 +2071,12 @@ def _no_heading(args: dict[str, Any], *names: str) -> None:
 
 def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     _no_heading(args, "title", "hypothesis", "next_step")
+    line = ctx.state.focus_project_id
+    if ctx.state.one_line and line is not None:  # 0.28.0: one line a cycle
+        raise ToolError(
+            f"this cycle works on product line #{line}: a new product line is a cycle of its own (READY offers 'new "
+            "line' when Ember's code ranks your lines)"
+        )
     open_ = store.open_projects(conn, ctx.scope)  # 0.19.1: as many as the agent needs (it was at most 8)
     if any(p["title"].strip().lower() == args["title"].strip().lower() for p in open_):
         raise ToolError("an open project already has this title")
@@ -2042,7 +2094,9 @@ def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         now=ctx.now(),
         venture_id=venture_id,
     )
-    if ctx.state.focus_project_id is None:
+    if ctx.state.one_line:
+        ctx.state.touched = project_id  # 0.28.0: the cycle's line once the call succeeds (_lock), aimed at it too
+    elif ctx.state.focus_project_id is None:
         ctx.state.focus_project_id = project_id
     cycle = conn.execute("SELECT project_id FROM cycles WHERE id = ?", (ctx.cycle_id,)).fetchone()
     if cycle is not None and cycle["project_id"] is None:
@@ -2086,6 +2140,8 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         raise ToolError(f"project #{row['id']} is {row['status']}, which is final")
     changes: dict[str, Any] = {}
     status = args.get("status")
+    if status not in CLOSED_STATUSES:  # 0.28.0: closing another line (a review's stop) is no work on it
+        _line(ctx, int(row["id"]), "update")
     if status in ("idea", "active") and status != row["status"]:
         held = ventures.owner_stopped(conn, ctx.scope, row["venture_id"])
         if held is not None:
@@ -2408,6 +2464,7 @@ def _venture_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
 
 def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     row = _open_venture(conn, ctx.scope, args["venture_id"])
+    _line_venture(ctx, conn, int(row["id"]), "update")  # 0.28.0
     vid, current = row["id"], row["stage"]
     changes: dict[str, Any] = {}
     for name in ("pitch", "next_question", *ventures.CASE_FIELDS):
@@ -2675,6 +2732,64 @@ def _listing_stopped(conn: Any, scope: AgentScope, listing_id: int, what: str) -
             f"#{listing_id} is a listing of venture #{venture['id']}, which your owner {did}: no {what} for it"
             + (" until they take it up again" if did == "parked" else "")
         )
+
+
+def _line(ctx: ToolContext, project_id: int | None, what: str) -> None:
+    """0.28.0: one product line a cycle (lines.py). An ordinary, marketing or reactive cycle works on its line only;
+    until it has one, on the line of its first call that works on one (it takes it once the call succeeds, _lock).
+    Refuses ``what`` for another line."""
+    if not ctx.state.one_line or project_id is None:
+        return
+    line = ctx.state.focus_project_id
+    if line is None:
+        ctx.state.touched = int(project_id)
+        return
+    if int(project_id) != line:
+        raise ToolError(
+            f"this cycle works on product line #{line}: no {what} for project #{project_id}, whose work waits for a "
+            "cycle of its own (say so in your journal's next)"
+        )
+
+
+def _listing_line(ctx: ToolContext, conn: Any, listing_id: int, what: str) -> None:
+    """0.28.0: ``_line`` for a call about one of Ember's listings (an edit, a pin, a post, a blog post): its line."""
+    _line(ctx, ventures.listing_project(conn, ctx.scope, listing_id), what)
+
+
+def _line_venture(ctx: ToolContext, conn: Any, venture_id: int | None, what: str) -> None:
+    """0.28.0: in a cycle on one product line, research and updates of a venture are for its line's own venture
+    only: another venture's (an idea, one being researched) are a venture cycle's work."""
+    if not ctx.state.one_line or venture_id is None:
+        return
+    line = ctx.state.focus_project_id
+    project = store.project(conn, ctx.scope, line) if line is not None else None
+    if project is None or project["venture_id"] != venture_id:
+        on = f": this cycle works on product line #{line}" if line is not None else ""
+        raise ToolError(f"venture #{venture_id}'s {what} is a venture cycle's work{on}")
+
+
+def _lock(ctx: ToolContext, conn: Any) -> None:
+    """0.28.0: a cycle without a line yet takes the line a call that succeeded worked on (_line): the cycle counts
+    for it from then on (its cost, its requests, the files it wrote so far), aimed at its milestone due first unless
+    the plan's is one the line may serve."""
+    line, ctx.state.touched = ctx.state.touched, None
+    if line is None or ctx.state.focus_project_id is not None:
+        return
+    ctx.state.focus_project_id = line
+    cycle = conn.execute("SELECT project_id, milestone_id FROM cycles WHERE id = ?", (ctx.cycle_id,)).fetchone()
+    if cycle is None:
+        return
+    changes: dict[str, Any] = {}
+    if cycle["project_id"] is None:
+        changes["project_id"] = line
+    project = store.project(conn, ctx.scope, line)
+    venture = project["venture_id"] if project is not None else None
+    aimed = roadmap.get(conn, ctx.scope, cycle["milestone_id"]) if cycle["milestone_id"] else None
+    if aimed is None or not roadmap.serves_line(aimed, line, venture):
+        changes["milestone_id"] = roadmap.line_milestone(conn, ctx.scope, line, ctx.clock.today())
+    if changes:
+        store.update_cycle(conn, ctx.cycle_id, **changes)
+    workfiles.adopt(conn, ctx.scope, ctx.cycle_id, line)
 
 
 def _parent(conn: Any, scope: AgentScope, parent_id: int, due: date, milestone_id: int | None = None) -> Any:
@@ -3255,6 +3370,7 @@ def _request_approval(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     project_id = args.get("project_id")
     if project_id is not None and store.project(conn, ctx.scope, project_id) is None:
         raise ToolError(f"there is no project #{project_id}")
+    _line(ctx, project_id, "request")  # 0.28.0
     approval_id = store.insert_approval(conn, ctx.scope, ctx.cycle_id, ctx.now(), **args)
     return Outcome(
         True,
@@ -3391,6 +3507,8 @@ def _obligation_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
         row = conn.execute(f"SELECT * FROM obligations WHERE id = ? AND {where}", (number, *params)).fetchone()
         if row is None or row["status"] != "open":
             refused.append(_not_open(conn, ctx.scope, number, row))
+        elif (other := _other_line(ctx, conn, row)) is not None:  # 0.28.0
+            refused.append(f"#{number} is line #{other}'s: it closes in a cycle on that line")
         elif row["kind"] == "promise" and not obligations.told_since(conn, ctx.scope, row["message_id"]):
             refused.append(
                 f"#{number} is a promise: tell your owner it is kept (or why not) with message_owner first, naming "
@@ -3403,6 +3521,16 @@ def _obligation_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
         raise ToolError("; ".join(refused))
     text = f"Closed {_numbers(closed)}." + (f" Not closed: {'; '.join(refused)}." if refused else "")
     return Outcome(True, text, f"closed {_numbers(closed)}")
+
+
+def _other_line(ctx: ToolContext, conn: Any, row: Any) -> int | None:
+    """0.28.0: the other product line a decision or a miss is about, in a cycle on one line (None when it is this
+    line's, of no line, or the cycle has none yet)."""
+    line = ctx.state.focus_project_id
+    if not ctx.state.one_line or line is None or row["kind"] == "promise":
+        return None
+    owed = obligations.owed(conn, ctx.scope, row).line
+    return owed if owed is not None and owed != line else None
 
 
 def _not_open(conn: Any, scope: AgentScope, number: int, row: Any) -> str:
@@ -3533,7 +3661,8 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     # 0.12.0: research counts for a venture: the one it names or, in a venture cycle, the focus venture (a venture
     # cycle's research is always a venture's). A question asked again is answered from before, free; a new call for a
     # venture that isn't backed needs what is left of its research budget. 0.15.0: in any other cycle too, research
-    # counts for a focus venture that has a research budget (it escaped the budget, while its cost was the venture's).
+    # counts for a focus venture that has a research budget (it escaped the budget, while its cost was the venture's);
+    # 0.28.0: for the venture of the cycle's line.
     venture_id = args.get("venture_id")
     if venture_id is None and ctx.venture:
         if ctx.state.focus_venture_id is None:
@@ -3544,7 +3673,15 @@ def _research(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
             focus = ventures.get(conn, ctx.scope, ctx.state.focus_venture_id)
             if focus is not None and focus["stage"] in ventures.BUDGETED:
                 venture_id = ctx.state.focus_venture_id
+        if venture_id is None and not ctx.venture and ctx.state.focus_project_id is not None:
+            # 0.28.0: a cycle on one line has no focus venture: its research counts for the line's own venture while
+            # that isn't backed (its research budget)
+            line = store.project(conn, ctx.scope, ctx.state.focus_project_id)
+            own = ventures.get(conn, ctx.scope, line["venture_id"]) if line and line["venture_id"] else None
+            if own is not None and own["stage"] in ventures.EXPLORING:
+                venture_id = int(own["id"])
         venture = _researched_venture(conn, ctx.scope, venture_id, "research") if venture_id is not None else None
+        _line_venture(ctx, conn, venture_id, "research")  # 0.28.0
         earlier = _asked_before(conn, ctx, question, url, None if url else site)
         if earlier is not None:
             return earlier
@@ -4076,10 +4213,12 @@ def _product_line(ctx: ToolContext, conn: Any, args: dict[str, Any], what: str) 
     row = store.project(conn, ctx.scope, project_id)
     if row is None:
         raise ToolError(f"there is no project #{project_id}")
-    # 0.23.2: a listing or product for it carried its work on; 0.23.3: a line of no venture in a stopped channel too
-    refused = _stopped(conn, ctx.scope, int(project_id), "etsy" if what == "listing" else "printify")
+    # 0.23.2: a listing or product for it carried its work on; 0.23.3: a line of no venture in a stopped channel too;
+    # 0.28.0: a KDP book sells in no channel of Printify's (a park of print on demand stopped it)
+    refused = _stopped(conn, ctx.scope, int(project_id), {"listing": "etsy", "product": "printify"}.get(what))
     if refused:
         raise ToolError(refused)
+    _line(ctx, int(project_id), f"new {what}")  # 0.28.0
     return int(project_id)
 
 
@@ -4099,6 +4238,7 @@ def _demand_note(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     with ctx.db.connection() as conn:
         if store.project(conn, ctx.scope, project_id) is None:
             raise ToolError(f"there is no project #{project_id}")
+        _line(ctx, project_id, "demand note")  # 0.28.0: before the market probe
         problem = demand.source_problem(conn, ctx.scope, source, project_id, said) if source is not None else ""
     if problem:
         raise ToolError(problem)
@@ -4195,8 +4335,9 @@ def _propose_etsy_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
     if now is None or row is None:
         raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
     state, action, stands = etsy_publisher.etsy_state(row), args.get("state"), etsy_publisher.state_text(row)
-    if action != "deactivate":  # 0.23.3: taking it out of the shop stays possible
+    if action != "deactivate":  # 0.23.3: taking it out of the shop stays possible (0.28.0: from any line's cycle)
         _listing_stopped(conn, ctx.scope, listing_id, "change or renewal (deactivate it, if it shouldn't sell)")
+        _listing_line(ctx, conn, listing_id, "change")
     if action == "renew" and state not in etsy.RENEWABLE:
         raise ToolError(f"#{listing_id} is {stands} at Etsy: only an expired, sold-out or deactivated one is renewed")
     if action != "renew" and state != etsy.LIVE_STATE:  # 0.12.0: Etsy's state counts, not Ember's record
@@ -4323,6 +4464,7 @@ def _propose_pin(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     if etsy_publisher.etsy_state(row) != etsy.LIVE_STATE:
         raise ToolError(f"#{listing_id} isn't live at Etsy ({etsy_publisher.state_text(row)}): pin a live listing")
     _listing_stopped(conn, ctx.scope, listing_id, "pin")  # 0.23.3
+    _listing_line(ctx, conn, listing_id, "pin")  # 0.28.0
     board_id = str(args.get("board_id") or "").strip() or None
     board_name = pinterest.one_line(args.get("board_name") or "") or None
     if (board_id is None) == (board_name is None):
@@ -4432,6 +4574,7 @@ def _post_link(ctx: ToolContext, conn: Any, raw: str, what: str = "link") -> tup
         if etsy_publisher.etsy_state(row) != etsy.LIVE_STATE:
             raise ToolError(f"#{listing_id} isn't live at Etsy ({etsy_publisher.state_text(row)}): link a live listing")
         _listing_stopped(conn, ctx.scope, listing_id, "post")  # 0.23.3
+        _listing_line(ctx, conn, listing_id, "post")  # 0.28.0
         photo = current.photos[0] if current.photos else None
         return etsy.listing_url(listing_id), bluesky.one_line(current.title)[: bluesky.CARD_TITLE_MAX], "", photo
     site = _bluesky(ctx).site_url
@@ -4805,6 +4948,7 @@ def _propose_blog_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
     recommended = ventures.LISTING_LINK.search(post.product_url) if post.product_url else None
     if recommended is not None:  # 0.23.3: no page recommends a listing whose work the owner's park stopped
         _listing_stopped(conn, ctx.scope, int(recommended[1]), "blog post recommending it")
+        _listing_line(ctx, conn, int(recommended[1]), "blog post recommending it")  # 0.28.0
     earlier = site_publisher.known(conn, ctx.scope, post.slug)
     day = str(earlier["day"]) if earlier is not None else ctx.clock.today().isoformat()
     page = blog.render_post(post, day, access.owner)
@@ -5114,6 +5258,10 @@ def _propose_reddit_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> O
         action = reddit.action(args["kind"], args["subreddit"], args.get("title"), args["body"], args.get("thread_url"))
     except reddit.RedditError as exc:
         raise ToolError(str(exc)) from None
+    for word in f"{action.get('title') or ''} {action['body']}".split():  # 0.28.0: the listings it links
+        linked = ventures.LISTING_LINK.search(word.strip("()[]<>.,;\"'"))
+        if linked:
+            _listing_line(ctx, conn, int(linked[1]), "Reddit post linking it")
     where = f"r/{action['subreddit']}"
     title = f"Reddit post in {where}: {action['title']}" if action["kind"] == "post" else f"Reddit comment in {where}"
     reason = args["reason"].strip()

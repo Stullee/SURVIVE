@@ -21,6 +21,7 @@ from app.agent import (  # noqa: E402
     bets,
     context,
     learning,
+    lines,
     prompts,
     quality,
     reach,
@@ -374,18 +375,23 @@ def test_cases_and_principles_are_found_by_their_words(data_dir: Path) -> None:
 def test_an_ordinary_plan_gets_ready_and_no_long_sleep_while_it_lists_something(data_dir: Path) -> None:
     agent, project = started(data_dir)
     with agent.db.connection() as conn:
-        found = slack.items(conn, agent.scope(), agent.clock.today())
-    keys = [i.key for i in found]
-    assert f"reach #{project}" in keys
-    assert slack.text(found).startswith(slack.HEADING)
+        found = lines.ready(conn, agent.scope(), today=agent.clock.today(), explore=True, markets=True)
+        market = lines.marketing(conn, agent.scope(), blog=False)
+    # 0.28.0: one line in flight, so a new line comes first; the line's jobs: its listing test's bar is due
+    assert [i.key for i in found] == ["new line", f"line #{project}"] and found[1].job and not found[0].job
+    assert "milestone #" in found[1].text and "its marketing cycles bring buyers" in found[1].text
+    assert [i.key for i in market] == [f"market #{project}"] and market[0].job  # nobody saw it: buyers to bring
+    assert lines.text(found).startswith(lines.HEADING)
     assert slack.sleep(720, found, 30, "explore") == slack.SLEEP_MINUTES
     assert slack.sleep(720, found, 240, "explore") == 240  # not below the owner's shortest sleep
     assert slack.sleep(720, found, 30, "maintenance") == 720
     assert slack.sleep(720, [], 30, "explore") == 720
 
 
-WORK = slack.Item("reach #1", "bring buyers to project #1's listings")
-QUESTIONS = [slack.Item("question 1", "Which poster sells?"), slack.Item("question 2", "Do pins bring views?")]
+WORK = lines.Item(lines.LINE, 1, "no demand note", job=True)
+# 0.28.0: a line only waiting for the owner and a new line are no work to wake sooner for (this week's questions are
+# READY's context lines, no items)
+IDLE = [lines.Item(lines.LINE, 2, "waits for your owner: request #3"), lines.Item(lines.NEW, None, "a new line")]
 
 
 def test_this_week_s_questions_and_an_idle_plan_keep_the_agent_s_sleep(
@@ -393,9 +399,9 @@ def test_this_week_s_questions_and_an_idle_plan_keep_the_agent_s_sleep(
 ) -> None:
     """0.21.0 (analysis 0.20.1, FIX NOW 5): READY always holds the weekly look's questions (for 7 days), so every
     completed or idle cycle's sleep was cut to 3 hours, "Nothing until 10-07." too: up to 8 paid plans a day."""
-    assert slack.sleep(720, QUESTIONS, 30, "explore") == 720
-    assert slack.sleep(720, [*QUESTIONS, WORK], 30, "explore") == slack.SLEEP_MINUTES
-    monkeypatch.setattr(slack, "items", lambda *_: [WORK, *QUESTIONS])
+    assert slack.sleep(720, IDLE, 30, "explore") == 720
+    assert slack.sleep(720, [*IDLE, WORK], 30, "explore") == slack.SLEEP_MINUTES
+    monkeypatch.setattr(lines, "ready", lambda *_, **__: [WORK, *IDLE])
     agent, _ = make_agent(data_dir, [plan(steps=[], sleep=720)], DEFAULTS)
     end = agent.run_cycle("schedule")
     assert (end.status, end.sleep_minutes, end.sleep_cut) == ("idle", 720, None)
@@ -404,15 +410,15 @@ def test_this_week_s_questions_and_an_idle_plan_keep_the_agent_s_sleep(
 
 @pytest.mark.parametrize(
     ("ready", "worked", "most"),
-    [([WORK, *QUESTIONS], False, 2), (QUESTIONS, True, 2), ([WORK, *QUESTIONS], True, 6)],
+    [([WORK, *IDLE], False, 2), (IDLE, True, 2), ([WORK, *IDLE], True, 6)],
 )
 def test_cycles_a_day_under_the_default_options(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch, ready: list[slack.Item], worked: bool, most: int
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, ready: list[lines.Item], worked: bool, most: int
 ) -> None:
     """0.21.0: the scheduled cycles of a day, projected from the wakes Ember's code sets after each, when the agent
     asks for 12 hours of sleep: an idle plan's or a sleep with only questions in READY stands; with work in READY a
     cycle that worked sleeps the owner's default interval (wake_interval_minutes, 4 hours), not 3 hours."""
-    monkeypatch.setattr(slack, "items", lambda *_: ready)
+    monkeypatch.setattr(lines, "ready", lambda *_, **__: ready)
     monkeypatch.setattr(review, "due", lambda *_: False)  # the day's review would answer a plan of this script
     journal = calls(("write_journal", {"summary": "Worked", "entry": "Looked around."}))
     script = [plan(steps=["look around"], sleep=720), text("Done."), journal] if worked else [plan(steps=[], sleep=720)]

@@ -600,14 +600,21 @@ def money_text(m: Money) -> str:
 def day_spend(conn: sqlite3.Connection, scope: AgentScope, day: date) -> tuple[int, int]:
     """(all, venture cycles') spending on the owner's local ``day``, in micros: every model call of the scope's
     cycles, finished (an uncertain one at what it is known to cost, 0.12.0) or still reserved at its estimate."""
+    spent, ventured, _ = day_spends(conn, scope, day)
+    return spent, ventured
+
+
+def day_spends(conn: sqlite3.Connection, scope: AgentScope, day: date) -> tuple[int, int, int]:
+    """(all, venture cycles', 0.28.0: marketing cycles') spending on the owner's local ``day``, as ``day_spend``."""
     amount = "CASE WHEN c.status = 'pending' THEN c.estimate_micros ELSE c.floor_micros END"
     row = conn.execute(
-        f"SELECT COALESCE(SUM({amount}), 0), COALESCE(SUM(CASE WHEN y.venture = 1 THEN {amount} ELSE 0 END), 0)"
+        f"SELECT COALESCE(SUM({amount}), 0), COALESCE(SUM(CASE WHEN y.venture = 1 THEN {amount} ELSE 0 END), 0),"
+        f" COALESCE(SUM(CASE WHEN y.marketing = 1 THEN {amount} ELSE 0 END), 0)"
         " FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id"
         " WHERE c.local_day = ? AND y.session = ? AND y.simulated = ?",
         (day.isoformat(), scope.session, 1 if scope.simulated else 0),
     ).fetchone()
-    return int(row[0]), int(row[1])
+    return int(row[0]), int(row[1]), int(row[2])
 
 
 def call_costs(conn: sqlite3.Connection, scope: AgentScope) -> dict[str, int]:
@@ -1113,10 +1120,10 @@ def _lists_in(conn: sqlite3.Connection, table: str, project_id: int) -> bool:
     )
 
 
-def listing_stopped(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> sqlite3.Row | None:
-    """0.23.3: the venture whose owner's park or kill stops the work on one of Ember's listings (an edit, a pin, a
-    post or a blog post recommending it): its product line's in its channel (``project_stopped``). None when none
-    does, or it isn't Ember's."""
+def listing_line(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> tuple[str, int | None] | None:
+    """0.28.0: the channel and the product line (its project) of one of Ember's listings, as metrics.listings counts
+    them: by its request's project or its cycle's. None when it isn't Ember's; the line is None for a listing of no
+    project."""
     where, params = scope.where("l")
     for name, table in CHANNEL_TABLES:
         row = conn.execute(
@@ -1125,12 +1132,28 @@ def listing_stopped(conn: sqlite3.Connection, scope: AgentScope, listing_id: int
             " ORDER BY l.id DESC LIMIT 1",
             (*params, listing_id),
         ).fetchone()
-        if row is None:
-            continue
-        if row["project_id"] is None:
-            return channel_stopped(conn, scope, name)
-        return project_stopped(conn, scope, int(row["project_id"]), name)
+        if row is not None:
+            return name, int(row["project_id"]) if row["project_id"] is not None else None
     return None
+
+
+def listing_project(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> int | None:
+    """0.28.0: the product line one of Ember's listings belongs to (None: not Ember's, or of no project)."""
+    found = listing_line(conn, scope, listing_id)
+    return found[1] if found is not None else None
+
+
+def listing_stopped(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> sqlite3.Row | None:
+    """0.23.3: the venture whose owner's park or kill stops the work on one of Ember's listings (an edit, a pin, a
+    post or a blog post recommending it): its product line's in its channel (``project_stopped``). None when none
+    does, or it isn't Ember's."""
+    found = listing_line(conn, scope, listing_id)
+    if found is None:
+        return None
+    name, project_id = found
+    if project_id is None:
+        return channel_stopped(conn, scope, name)
+    return project_stopped(conn, scope, project_id, name)
 
 
 # 0.23.3: the requests that carry on a product line's work when Ember's code carries them out (an email, a page of the
@@ -1144,6 +1167,54 @@ HELD_EXECUTORS = {
 }
 _NEW_LINE = {"etsy_listing": "etsy", "printify_product": "printify"}
 LISTING_LINK = re.compile(r"etsy\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?listing/(\d{1,18})(?:[/?#]|$)", re.IGNORECASE)
+
+
+def request_line(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any]) -> int | None:
+    """0.28.0: the product line a request carries on: the line of the listing it is about (an edit's, a pin's or a
+    post's link, the listing a blog post recommends), else its own project or its cycle's. Requests made before 0.28.0
+    by a cycle that worked on several lines named the cycle's project, not the listing's."""
+    for text in (row["action"], row["payload"]):
+        listing = _listing_named(text)
+        if listing is not None:
+            found = listing_project(conn, scope, listing)
+            if found is not None:
+                return found
+    project = row["project_id"]
+    if project is None and row["cycle_id"] is not None:
+        cycle = conn.execute("SELECT project_id FROM cycles WHERE id = ?", (row["cycle_id"],)).fetchone()
+        project = cycle["project_id"] if cycle is not None else None
+    return int(project) if project is not None else None
+
+
+def _listing_named(text: Any) -> int | None:
+    """The listing a request's action or payload names: its listing_id, else the first Etsy listing one of its texts
+    links (LISTING_LINK reads an address on its own, as the requests keep them)."""
+    try:
+        data = json.loads(text or "{}")
+    except (TypeError, ValueError):
+        return None
+    listing = data.get("listing_id") if isinstance(data, dict) else None
+    if isinstance(listing, int) and not isinstance(listing, bool):
+        return listing
+    if isinstance(listing, str) and listing.isdigit():
+        return int(listing)
+    for value in _texts(data):
+        for word in value.split():
+            found = LISTING_LINK.search(word.strip("()[]<>.,;\"'"))
+            if found:
+                return int(found[1])
+    return None
+
+
+def _texts(data: Any) -> list[str]:
+    """The strings of a JSON value, nested ones included."""
+    if isinstance(data, str):
+        return [data]
+    if isinstance(data, dict):
+        return [s for value in data.values() for s in _texts(value)]
+    if isinstance(data, list):
+        return [s for value in data for s in _texts(value)]
+    return []
 
 
 def request_stopped(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any]) -> sqlite3.Row | None:

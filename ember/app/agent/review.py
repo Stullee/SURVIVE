@@ -343,6 +343,21 @@ def _largest(item: tuple[str, int]) -> tuple[int, str]:
     return -item[1], item[0]
 
 
+def _marketing(conn: sqlite3.Connection, session: tuple[int, int], since: str) -> list[str]:
+    """0.28.0: the marketing cycles' share of the period's spending (the venture cycles' is under VENTURES)."""
+    spent, marketed, cycles = conn.execute(
+        "SELECT COALESCE(SUM(c.cost_micros), 0), COALESCE(SUM(CASE WHEN y.marketing = 1 THEN c.cost_micros ELSE 0 END),"
+        " 0), COUNT(DISTINCT CASE WHEN y.marketing = 1 THEN y.id END) FROM llm_calls c JOIN cycles y ON y.id ="
+        " c.cycle_id WHERE y.session = ? AND y.simulated = ? AND c.ts >= ?",
+        (*session, since),
+    ).fetchone()
+    if not cycles:
+        return []
+    share = f"{100 * int(marketed) / int(spent):.0f}%" if spent else "none"
+    many = "marketing cycle" if int(cycles) == 1 else "marketing cycles"
+    return [f"{int(cycles)} {many} had ${micros_to_usd(int(marketed)):.2f}, {share} of your spending."]
+
+
 def _cycles(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
     session = (scope.session, 1 if scope.simulated else 0)
     statuses = conn.execute(
@@ -374,6 +389,7 @@ def _cycles(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
     else:
         split = ", ".join(f"{int(r[1])} {r[0]}" for r in statuses)
         lines.append(f"{count} cycles ({split}); {len(tools)} tool calls, {errors} of them refused or failed.")
+        lines += _marketing(conn, session, since)
     lines.append(
         "Made: " + (", ".join(f"{n} {label}" for label, n in made.items()) if made else "no finished products") + "."
     )
@@ -771,9 +787,9 @@ def planner_text(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
             said = ""
         if said:
             lines.append(f"{label}: {_one_line(said, 400)}")
-    lines.append(
-        "Act on it: carry out every stop and change (project_update), and work on each bottleneck (reach: bring"
-        " buyers to it). Ember's code kept the lesson."
+    lines.append(  # 0.28.0: one line a cycle: a stop now (closing another line is allowed), the rest on its line
+        "Act on it: carry out each stop now (project_update closes any line); a change, and work on a bottleneck"
+        " (reach: its marketing cycles bring buyers), waits for its line's cycle. Ember's code kept the lesson."
     )
     kept = []
     for v in _verdicts(row):

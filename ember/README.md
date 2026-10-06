@@ -15,7 +15,9 @@ written and run in Anthropic's sandbox, and a script that proves useful becomes
 an upgrade request, so Ember grows new abilities. With your Etsy shop connected,
 Ember lists the products you approve there itself. A share of its spending goes
 to ventures: a growing tree of new ways to earn, which Ember brainstorms,
-scores and researches, bringing you business cases to back, park or kill. Ember
+scores and researches, bringing you business cases to back, park or kill.
+Another share goes to marketing cycles, which bring buyers to one product line's
+listings at a time, and every other cycle works on one product line. Ember
 plans ahead on a roadmap it keeps itself: goals for the next months and the
 dated milestones toward them, each with a measure of done. Optionally Ember gets its own
 mailbox: it reads its mail on its own and sends an email only after you approve

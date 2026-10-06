@@ -1269,11 +1269,8 @@ class Agent:
             bluesky=self.bluesky,
             bluesky_posts=self.bluesky_posts,
         )
-        with self.db.connection() as conn:
-            spent, ventured = ventures.day_spend(conn, scope, self.clock.today())
-        venture = ventures.venture_turn(self.settings.venture_share, spent, ventured)
-        kind = "a venture cycle" if venture else "an ordinary cycle"
-        return f"(the next cycle is {kind})\n{runner.planner_preview(venture)}"
+        kind, planner = runner.planner_preview()  # 0.28.0: as lines.kind decides it (a scheduled wake-up's)
+        return f"(the next cycle is {'an' if kind == 'ordinary' else 'a'} {kind} cycle)\n{planner}"
 
     def cycle_detail(self, cycle_id: int) -> dict[str, Any] | None:
         from . import views

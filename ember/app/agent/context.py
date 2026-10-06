@@ -137,6 +137,14 @@ VENTURE_BRIEF = (
     f"{BRAINSTORM_BRIEF}save each number your research finds with evidence and "
     "the rest with venture_update (learned, with sources), and rescore the venture from the evidence."
 )
+# 0.28.0: a marketing cycle's work steps (lines.py): what the cycle is for, beside its line in FOCUS.
+MARKETING_BRIEF = (
+    "This is a marketing cycle: answer your owner's waiting messages first, read the guides of the channels you use "
+    "('pinterest', 'bluesky', 'blog'), and bring buyers to this line's listings (FOCUS lists them): pins and Bluesky "
+    "posts that link them, a blog post that recommends one, a Reddit post, better titles and tags; then bet on what "
+    "it will bring."
+)
+LINE_FOCUS_BUDGET = 900  # 0.28.0: the line's funnel and reach in FOCUS (a marketing cycle's live listings too)
 # 0.12.0: the brief's copy of OBLIGATIONS (the plan's is never cut), on top of the brief's budget like the owner's.
 OBLIGATIONS_BRIEF_BUDGET = 1_000
 # 0.12.0: the lessons the owner pinned come first in LESSONS, on top of its budget (at most memory.MAX_PINS of them).
@@ -259,6 +267,10 @@ class Snapshot:
     venture: bool = False  # a venture cycle
     venture_share: int = 0  # the owner's share of the spending for ventures, in percent
     venture_day: tuple[int, int] = (0, 0)  # today's spending, and the venture cycles' part of it
+    marketing: bool = False  # 0.28.0: a marketing cycle (lines.py)
+    marketing_share: int = 0  # 0.28.0: marketing cycles' share of the spending, in percent (0: none run)
+    marketing_spent: int = 0  # 0.28.0: today's spending in marketing cycles
+    marketing_apart: bool = False  # 0.28.0: marketing cycles run, so an ordinary cycle has no marketing tools
     call_costs: dict[str, int] = field(default_factory=dict)  # what research and brainstorms cost lately (0.10.1)
     today: date | None = None  # the owner's local date (the roadmap's horizons are counted from it)
     roadmap: list[sqlite3.Row] = field(default_factory=list)  # the open milestones, the first due first (0.11.0)
@@ -296,6 +308,9 @@ def snapshot(
     etsy: str = "",
     venture: bool = False,
     venture_share: int = 0,
+    marketing: bool = False,
+    marketing_share: int = 0,
+    marketing_apart: bool = False,
     shelf: library.Shelf | None = None,
     pinterest: str = "",
     printify: str = "",
@@ -341,6 +356,7 @@ def snapshot(
     ).fetchone()
     files = _safe_listing(workspace)
     standing = store.standing_instructions(conn, scope)
+    spent, ventured, marketed = ventures.day_spends(conn, scope, today) if today is not None else (0, 0, 0)
     memories = memory.read_all()
     return Snapshot(
         status=status,
@@ -394,7 +410,11 @@ def snapshot(
         venture_money=ventures.money(conn, scope),
         venture=venture,
         venture_share=venture_share,
-        venture_day=ventures.day_spend(conn, scope, today) if today is not None else (0, 0),
+        venture_day=(spent, ventured),
+        marketing=marketing,
+        marketing_share=marketing_share,
+        marketing_spent=marketed,
+        marketing_apart=marketing_apart,
         call_costs=ventures.call_costs(conn, scope) if venture else {},
         today=today,
         roadmap=roadmap.open_milestones(conn, scope),
@@ -475,17 +495,37 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
         lines.append(f"Burn mode, set by Ember's code: {s.burn}.")
     if s.workspace_usage:
         lines.append(s.workspace_usage)
-    if s.venture_share:
-        spent, ventured = s.venture_day
-        lines.append(
-            f"Your owner gives ventures {s.venture_share}% of your spending: ${micros_to_usd(ventured):.2f} of today's"
-            f" ${micros_to_usd(spent):.2f} so far." + (" This is a venture cycle." if s.venture else "")
-        )
+    if s.venture_share or s.marketing_share:
+        lines.append(_share_line(s))
         if s.venture:
             lines.append(ventures.room_text(s.cycle_cap, s.call_costs, s.brainstorm))
     if st.last_will_due:
         lines.append("Your money is nearly gone: your last will is due.")
     return "\n".join(lines)
+
+
+def _share_line(s: Snapshot) -> str:
+    """STATUS's line on the shares of the spending the owner gives ventures and (0.28.0) marketing, in one line (the
+    section's room is small), and what kind of cycle this is."""
+    spent, ventured = s.venture_day
+    given = [
+        (name, share, part)
+        for name, share, part in (
+            ("ventures", s.venture_share, ventured),
+            ("marketing", s.marketing_share, s.marketing_spent),
+        )
+        if share
+    ]
+    names = " and ".join(f"{name} {share}%" for name, share, _ in given)
+    parts = " and ".join(f"${micros_to_usd(part):.2f}" for _, _, part in given)
+    text = f"Your owner gives {names} of your spending: {parts} of today's ${micros_to_usd(spent):.2f} so far."
+    if s.venture:
+        return text + " This is a venture cycle."
+    if s.marketing:
+        return text + " This is a marketing cycle."
+    if s.marketing_apart:
+        return text + " Pins, Bluesky posts and blog posts belong to marketing cycles."
+    return text
 
 
 def flat(text: Any) -> str:
@@ -837,7 +877,7 @@ def _planner_texts(s: Snapshot, dry_run: bool, journal: int = PLANNER_BUDGETS["j
         "review": s.review,
         "roadmap": roadmap_text(s),
         "projects": project_lines(s),
-        "ready": s.ready,  # 0.18.0: an ordinary plan's too (slack.py)
+        "ready": s.ready,  # 0.18.0: an ordinary plan's too; 0.28.0: the lines it takes one from (lines.py)
         "ventures": ventures.planner_lines(s.ventures, s.venture_money, s.venture),
         "pending": pending,
         "mail": mail_text(s),
@@ -887,6 +927,8 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
     own = [since, software, *(text for _, text in standing)]
     used = sum(map(json_bytes, own)) + min(json_bytes(lessons), b["lessons"])
     t = _allot(_planner_texts(s, dry_run, b["journal"]), b, used)
+    # 0.28.0: while marketing cycles run, an ordinary plan leaves the marketing channels (and their tools) to them
+    elsewhere = s.marketing_apart and not (s.marketing or s.venture or s.reactive)
     parts = [
         ("STATUS", t["status"]),
         *([(obligations.HEADING, s.obligations)] if s.obligations else []),  # 0.12.0: first, never cut
@@ -897,16 +939,16 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *([("TODAY'S REVIEW", t["review"])] if t["review"] else []),
         ("ROADMAP", t["roadmap"]),
         ("OPEN PROJECTS", t["projects"]),
-        *([("READY", t["ready"])] if t["ready"] else []),  # 0.13.0: the decision desk (0.18.0: or slack.py)
+        *([("READY", t["ready"])] if t["ready"] else []),  # 0.13.0: the decision desk (0.28.0: or lines.py)
         ("VENTURES", t["ventures"]),
         ("WAITING FOR YOUR OWNER", t["pending"]),
         *([("MAIL", t["mail"])] if s.mail is not None else []),
         *([("ETSY SHOP", t["etsy"])] if t["etsy"] else []),
-        *([("PINTEREST", t["pinterest"])] if t["pinterest"] else []),
-        *([("BLUESKY", t["bluesky"])] if t["bluesky"] else []),
+        *([("PINTEREST", t["pinterest"])] if t["pinterest"] and not elsewhere else []),
+        *([("BLUESKY", t["bluesky"])] if t["bluesky"] and not elsewhere else []),
         *([("PRINTIFY", t["printify"])] if t["printify"] else []),
         *([("WEBSITE", t["website"])] if t["website"] else []),
-        *([("BLOG", t["blog"])] if t["blog"] else []),
+        *([("BLOG", t["blog"])] if t["blog"] and not elsewhere else []),
         *([("KDP", t["kdp"])] if t["kdp"] else []),
         (STRATEGY_HEADING, t["strategy"]),
         (IDENTITY_HEADING, t["identity"]),
@@ -928,7 +970,8 @@ def _task(s: Snapshot) -> str:
             f"Plan this reactive cycle: an event woke you (Agenda in SINCE YOUR LAST WAKE). React to it first, in at "
             f"most {REACTIVE_STEPS} steps. Reply with the JSON plan only."
         )
-    return f"Plan this {'venture' if s.venture else 'wake'} cycle. Reply with the JSON plan only."
+    kind = "venture" if s.venture else "marketing" if s.marketing else "wake"  # 0.28.0: a marketing cycle's
+    return f"Plan this {kind} cycle. Reply with the JSON plan only."
 
 
 def brief(
@@ -941,13 +984,19 @@ def brief(
     milestone_focus: str = "",
     knowledge: str = "",
     set_aside: str = "",
+    line: int | None = None,
+    line_focus: str = "",
 ) -> tuple[str, Shown]:
     """The act phase's brief (the same for every step and the reflection: built from the cycle's snapshot only), and
     which of the owner's items it shows. ``venture_focus`` and ``milestone_focus``: the plan's venture and milestone
     as ``ventures.focus_text`` and ``roadmap.focus_text`` show them; ``knowledge``: the learnings from the owner's
     library that match the plan (0.12.0). ``set_aside`` (0.23.2): why the plan's focus project isn't the cycle's,
-    first and in its own room (inside the venture's, it cut the venture's pitch)."""
+    first and in its own room (inside the venture's, it cut the venture's pitch). 0.28.0: ``line``, the product line a
+    cycle on one line works on (another line's obligations wait for its own cycle), and ``line_focus``, what Ember's
+    code says of it (lines.focus_text)."""
     focus_parts = [set_aside] if set_aside else []
+    if line_focus:
+        focus_parts.append(cut(line_focus, LINE_FOCUS_BUDGET))
     if milestone_focus:
         focus_parts.append(cut(milestone_focus, MILESTONE_FOCUS_BUDGET))
     if venture_focus:
@@ -969,7 +1018,8 @@ def brief(
     research = cut(research_text(s), RESEARCH_BUDGET)
     researched = [(RESEARCH_HEADING, research)] if research else []
     learned = [(KNOWLEDGE_HEADING, cut(knowledge, KNOWLEDGE_BUDGET))] if knowledge else []
-    owed = [(obligations.HEADING, cut(s.obligations, OBLIGATIONS_BRIEF_BUDGET))] if s.obligations else []
+    owing = obligations.for_line(s.obligations, line) if line is not None else s.obligations  # 0.28.0
+    owed = [(obligations.HEADING, cut(owing, OBLIGATIONS_BRIEF_BUDGET))] if s.obligations else []
     parts = [
         *head,
         *standing,
@@ -977,6 +1027,7 @@ def brief(
         *mailed,
         *owed,  # 0.12.0: what the agent owes, with the numbers obligation_done closes
         *([("VENTURE CYCLE", _venture_brief(s))] if s.venture else []),
+        *([("MARKETING CYCLE", MARKETING_BRIEF)] if s.marketing else []),  # 0.28.0
         *learned,  # before the FOCUS: a brief over its budget loses its end, and this section's room is its own
         ("FOCUS", focus_text),
         (LESSONS_HEADING, lessons_text(s, 800)),

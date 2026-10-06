@@ -63,6 +63,7 @@ def update_cycle(conn: sqlite3.Connection, cycle_id: int, **columns: Any) -> Non
         "venture",
         "venture_id",
         "milestone_id",
+        "marketing",  # 0.28.0
     }
     unknown = set(columns) - allowed
     if unknown:
