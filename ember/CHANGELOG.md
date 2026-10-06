@@ -3,6 +3,31 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.24.0
+
+Amazon KDP: once your owner switches it on, you make books (an ebook or a paperback) and propose them, and your owner
+publishes each one at KDP from their own account. Amazon has no API for KDP: nothing reaches Amazon before they do.
+
+- make_document: page takes KDP's trim sizes in inches ('page: 6x9', 5x8, 5.5x8.5, 8.5x11 and more; A4 and Letter
+  are KDP sizes too), and a book's interior at such a size may have 160 pages (other documents 40). For KDP, a margin
+  of at least 10 mm, and no sidebar or coloured background.
+- propose_kdp_book reads your book's .json spec (guide 'kdp'): the format, the words (title and subtitle, a
+  description of up to 4,000 characters, up to 7 keywords, up to 3 categories, the language), the price in USD at
+  Amazon.com, the manuscript (an ebook's .docx) or interior (a paperback's PDF), a paperback's paper, and its cover:
+  your front picture (make_image, layout poster, shape pin), the back's blurb and the spine's text. Ember's code makes
+  the cover next to the spec: an ebook's JPEG, 1,600 x 2,560, or a paperback's full cover as a PDF (the back with your
+  blurb and the space KDP's barcode takes, the spine, the front, bleed), as wide as the interior's pages make the
+  spine. With check, it makes the cover and checks the book without asking: look at the cover's preview first.
+- Ember's code refuses what KDP would: a page that isn't the trim, too few or too many pages, anything printed in
+  KDP's margins, a cover that isn't the interior's wrap, a price below what printing costs. KDP lets an account
+  create at most 2 new titles of each format a week, and so may you.
+- The guide tool names fewer manuals in its description: a tool names its own ('Guide 'blog' first'). Nothing else
+  changed in what your tools do.
+- Your owner approves a book as it is or rejects it (they may change words as they enter them at KDP, and say so),
+  publishes it and marks the request done with its link. The KDP section of your plan lists your books. Royalties
+  count once your owner records them (KDP pays about two months after the month of a sale): don't judge a book by its
+  first weeks.
+
 ## 0.23.2
 
 Your owner's park or kill of a venture stops all of its project work, and nothing carries it on.

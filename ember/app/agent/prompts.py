@@ -636,13 +636,14 @@ def work_request(
     brainstorm: bool = True,
     blog: bool = False,
     bluesky: bool = False,
+    kdp: bool = False,
 ) -> dict[str, Any]:
     """One step of the act loop. The prefix (system, tools, brief) stays byte-identical, so it is cached; ``mail``,
     ``etsy``, ``venture``, ``library``, ``pinterest``, ``printify`` and ``site`` (whether Ember has a mailbox, a shop, a
     library, the owner's Pinterest and Printify accounts and their website, and a venture cycle's tools; 0.14.0: and
-    ``blog``, their blog; 0.19.0: ``bluesky``, Ember's Bluesky account) are the same for every step of a cycle, and so
-    are ``workshop`` and ``brainstorm`` (0.15.0: whether the burn mode leaves the cycle workshop runs, which the owner's
-    options must allow too, and brainstorms)."""
+    ``blog``, their blog; 0.19.0: ``bluesky``, Ember's Bluesky account; 0.24.0: ``kdp``, Amazon KDP) are the same for
+    every step of a cycle, and so are ``workshop`` and ``brainstorm`` (0.15.0: whether the burn mode leaves the cycle
+    workshop runs, which the owner's options must allow too, and brainstorms)."""
     offered = tools.definitions(
         mail,
         workshop=workshop_on(settings) and workshop,
@@ -655,6 +656,7 @@ def work_request(
         brainstorm=brainstorm,
         blog=blog,
         bluesky=bluesky,
+        kdp=kdp,
     )
     return {
         "model": settings.worker_model,
@@ -705,6 +707,7 @@ def reflect_request(
     brainstorm: bool = True,
     blog: bool = False,
     bluesky: bool = False,
+    kdp: bool = False,
 ) -> dict[str, Any]:
     """The final turn of the same conversation (so the cached prefix is reused: its tool list stays the work's, which
     it reads from the cache at a tenth of the price); ``ended`` says why the work ended, ``undone`` which of its tool
@@ -727,6 +730,7 @@ def reflect_request(
         brainstorm=brainstorm,
         blog=blog,
         bluesky=bluesky,
+        kdp=kdp,
     )
     messages = request["messages"]
     prompt = _text(reflect_prompt(ended, undone))

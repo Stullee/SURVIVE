@@ -11,6 +11,7 @@ Everything happens in memory; the caller writes the bytes through the workspace 
 
 from __future__ import annotations
 
+import io
 import math
 import re
 from dataclasses import dataclass, field, replace
@@ -45,6 +46,7 @@ from .theme import warnings as theme_warnings
 
 MM_PER_PT = 25.4 / 72
 MAX_PAGES = 40
+BOOK_PAGES = 160  # 0.24.0: a book's interior at a KDP trim size (KDP prints 24 pages and more)
 SIDEBAR_PADDING = 7.0
 COLUMN_GAP = 6.0
 BOX_PADDING = 4.0
@@ -112,9 +114,10 @@ class Look:
 class Canvas:
     """The PDF and its pages; a new page gets its background, sidebar and footer before anything else."""
 
-    def __init__(self, theme: Theme, title: str, footer: str) -> None:
+    def __init__(self, theme: Theme, title: str, footer: str, max_pages: int = MAX_PAGES) -> None:
         self.theme = theme
         self.footer = footer
+        self.max_pages = max_pages
         pdf = FPDF(unit="mm", format=(theme.page_width, theme.page_height))
         pdf.set_auto_page_break(False)
         pdf.set_margins(0, 0, 0)
@@ -138,8 +141,8 @@ class Canvas:
                 ttfont.close()
 
     def goto(self, number: int) -> None:
-        if number > MAX_PAGES:
-            raise TooLong(f"the document would be longer than {MAX_PAGES} pages; split it into several files")
+        if number > self.max_pages:
+            raise TooLong(f"the document would be longer than {self.max_pages} pages; split it into several files")
         while self.pdf.pages_count < number:
             if self.pdf.pages_count:
                 self.pdf.page = self.pdf.pages_count  # add_page() on an earlier page would step, not append
@@ -265,7 +268,7 @@ class Renderer:
         title = document.settings.title or next(
             (plain(b.runs) for b in document.main if isinstance(b, Heading)), "Document"
         )
-        self.canvas = Canvas(self.theme, title, document.settings.footer)
+        self.canvas = Canvas(self.theme, title, document.settings.footer, max_pages(document.settings.page))
         self.report = Report(warnings=[*document.warnings, *theme_warnings(self.theme)])
         t = self.theme
         self.body_lh = t.size * t.line_height * MM_PER_PT
@@ -746,6 +749,23 @@ def _share(total: float, minimum: list[float], natural: list[float]) -> list[flo
 
 def _rgb(value: str) -> RGB:
     return int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16)
+
+
+def picture_page(jpeg: bytes, width_pt: float, height_pt: float, title: str) -> bytes:
+    """0.24.0: a PDF of one page ``width_pt`` x ``height_pt`` points that is the JPEG ``jpeg`` (a KDP cover)."""
+    pdf = FPDF(unit="pt", format=(width_pt, height_pt))
+    pdf.set_auto_page_break(False)
+    pdf.set_margins(0, 0, 0)
+    pdf.set_title(title[:200])
+    pdf.set_creator("Ember")
+    pdf.add_page()
+    pdf.image(io.BytesIO(jpeg), x=0, y=0, w=width_pt, h=height_pt)
+    return bytes(pdf.output())
+
+
+def max_pages(page: str) -> int:
+    """How many pages a document of this page size may have: a book's interior at a KDP trim size more."""
+    return BOOK_PAGES if page.endswith("in") else MAX_PAGES
 
 
 def render(document: Document) -> tuple[bytes, Report]:

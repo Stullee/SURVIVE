@@ -484,6 +484,20 @@ configuration:
     description: >-
       The folder your domain shows, e.g. /ember-ai.de. Empty: the folder the
       login opens.
+  kdp_enabled:
+    name: Amazon KDP (books you publish)
+    description: >-
+      Let the agent make books for Amazon's Kindle Direct Publishing: an
+      ebook or a paperback with its cover and listing, checked by Ember's
+      code against KDP's rules. Amazon has no API for KDP, so after you
+      approve one you publish it yourself at kdp.amazon.com from your own
+      account: the approval card has every field to copy and the files to
+      download.
+  kdp_author:
+    name: KDP author name
+    description: >-
+      The name your KDP books carry as their author: yours or a pen name.
+      Empty: you enter it at KDP yourself.
   live_enabled:
     name: Ember live (on your website)
     description: >-

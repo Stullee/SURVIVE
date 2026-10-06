@@ -106,12 +106,47 @@ def pdf_pages(
         document.close()
 
 
+def _opened(pdf: bytes) -> pypdfium2.PdfDocument:
+    """0.24.0: a PDF opened for reading; one pdfium can't open is an ImageError."""
+    try:
+        return pypdfium2.PdfDocument(pdf)
+    except pypdfium2.PdfiumError:
+        raise ImageError("it isn't a PDF Ember's code can read") from None
+
+
 def page_sizes(pdf: bytes) -> list[tuple[float, float]]:
     """0.21.0: each page's width and height in points, read without loading the page (loading one parses its whole
     content: a 190 KB file took 10 s and 1.8 GB)."""
-    document = pypdfium2.PdfDocument(pdf)
+    document = _opened(pdf)
     try:
         return [document.get_page_size(index) for index in range(len(document))]
+    finally:
+        document.close()
+
+
+def ink_boxes(pdf: bytes, dpi: int, level: int) -> list[tuple[float, float, float, float] | None]:
+    """0.24.0: each page's printed part, in inches from its top left corner (left, top, right, bottom; None for a blank
+    page): where any channel is darker than ``level``, the page drawn at ``dpi`` on white. KDP's margin check reads
+    it; a page larger than MAX_PIXELS at ``dpi`` is drawn smaller."""
+    document = _opened(pdf)
+    try:
+        boxes: list[tuple[float, float, float, float] | None] = []
+        for index in range(len(document)):
+            page = document[index]
+            try:
+                width, height = page.get_width(), page.get_height()
+                scale = min(dpi / 72, math.sqrt(MAX_PIXELS / max(1.0, width * height)))
+                picture = page.render(scale=scale).to_pil().convert("RGB")
+            finally:
+                page.close()
+            box = picture.point(lambda v: 255 if v < level else 0).convert("L").getbbox()
+            if box is None:
+                boxes.append(None)
+                continue
+            per_inch = scale * 72
+            left, top, right, bottom = box
+            boxes.append((left / per_inch, top / per_inch, right / per_inch, bottom / per_inch))
+        return boxes
     finally:
         document.close()
 
@@ -636,4 +671,155 @@ def poster(
         y += leading
     out = io.BytesIO()
     canvas.save(out, "PNG", compress_level=6)  # optimize would take seconds at this size
+    return out.getvalue()
+
+
+# --- KDP covers (0.24.0) ---
+
+COVER_DPI = 300  # what KDP asks of a cover's pictures
+GUIDE: RGB = (230, 0, 126)  # the preview's marks: trim, folds and the barcode's space
+PREVIEW_WIDTH = 1_600
+JPEG_QUALITY = 92
+
+
+@dataclass(frozen=True)
+class Panels:
+    """A paperback cover's parts in pixels at COVER_DPI, left to right: the back (its bleed included), the spine and
+    the front (with its bleed); ``trim`` is the cut (left, top, right, bottom), ``text`` where the back's words go and
+    ``barcode`` the space KDP prints its barcode in. ``spine_margin`` is what spine text keeps from each fold."""
+
+    size: tuple[int, int]
+    spine: tuple[int, int]  # the spine's left and right folds
+    trim: tuple[int, int, int, int]
+    text: tuple[int, int, int, int]
+    barcode: tuple[int, int, int, int]
+    spine_margin: int
+
+
+@dataclass(frozen=True)
+class Wrap:
+    """A paperback's cover as a picture, its preview with the marks, and how the front picture was fitted."""
+
+    picture: Image.Image
+    preview: bytes
+    background: RGB
+    scale: float  # how many times larger (above 1) the front picture was drawn
+    cut: float  # the share of the front picture cut off to fit the front's proportions
+
+
+def _edge_colour(picture: Image.Image) -> RGB:
+    """The mean colour of a picture's left edge: the back and the spine continue the front."""
+    strip = picture.crop((0, 0, max(1, picture.width // 33), picture.height))
+    r, g, b = strip.resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))  # type: ignore[misc]
+    return int(r), int(g), int(b)
+
+
+def _fill(
+    width: int, height: int, family: str, lines: list[str], start: int, least: int
+) -> tuple[ImageFont.FreeTypeFont, list[str]]:
+    """The largest font from ``start`` down to ``least`` pixels at which the paragraphs ``lines`` fit ``width`` x
+    ``height`` (a paragraph's space below each), and their wrapped lines ('' between paragraphs)."""
+    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    size = start
+    while True:
+        font = _font(family, "", size)
+        wrapped: list[str] = []
+        for paragraph in lines:
+            wrapped += [*_wrap(draw, paragraph, font, width), ""]
+        wrapped = wrapped[:-1]
+        tall = sum(int(size * (0.6 if not line else 1.35)) for line in wrapped)
+        if tall <= height:
+            return font, wrapped
+        if size <= least:
+            raise ImageError("the back's text doesn't fit the back cover: shorten it")
+        size = max(least, int(size * 0.94))
+
+
+def book_wrap(front: bytes, panels: Panels, back: list[str], spine_text: str, background: str | None = None) -> Wrap:
+    """A paperback's full cover: the front picture cut to the front's proportions at its centre (with its bleed), the
+    back in ``background`` (default: the front's left edge) with the paragraphs ``back`` in the text space, and the
+    spine with ``spine_text`` (top to bottom) between its margins."""
+    width, height = panels.size
+    if too_large(width, height):
+        raise ImageError(f"the cover would be {too_large(width, height)}")
+    source = _flattened(front)
+    fold_left, fold_right = panels.spine
+    front_w = width - fold_right
+    kept = centre_part(source.width, source.height, front_w, height)
+    shown = _decoded(lambda: source.resize((front_w, height), Image.Resampling.LANCZOS, box=kept))
+    bg: RGB = hex_rgb(background) if background else _edge_colour(source)
+    ink = readable_on(bg)
+    canvas = Image.new("RGB", (width, height), bg)
+    canvas.paste(shown, (fold_right, 0))
+    draw = ImageDraw.Draw(canvas)
+    if back:
+        family = _family("back text", "".join(back), "sans", "")
+        left, top, right, bottom = panels.text
+        point = COVER_DPI / 72
+        font, lines = _fill(right - left, bottom - top, family, back, int(13 * point), int(8 * point))
+        y = top
+        for line in lines:
+            if line:
+                draw.text((left, y), line, font=font, fill=ink)
+            y += int(font.size * (0.6 if not line else 1.35))
+    if spine_text:
+        family = _family("spine text", spine_text, "display", "B")
+        room = fold_right - fold_left - 2 * panels.spine_margin
+        length = panels.trim[3] - panels.trim[1] - 2 * int(0.25 * COVER_DPI)
+        size = int(room * 0.8)
+        font = _font(family, "B", max(1, size))
+        while draw.textlength(spine_text, font=font) > length and size > 1:
+            size = int(size * 0.94)
+            font = _font(family, "B", max(1, size))
+        if size < 6 * COVER_DPI / 72:
+            raise ImageError(
+                f"the spine is {(fold_right - fold_left) / COVER_DPI:.3f} in wide: its text would be smaller than 6 "
+                "points; leave spine_text empty, or shorten it"
+            )
+        strip = Image.new("RGB", (panels.trim[3] - panels.trim[1], fold_right - fold_left), bg)
+        strip_draw = ImageDraw.Draw(strip)
+        text_w = strip_draw.textlength(spine_text, font=font)
+        ascent, descent = font.getmetrics()
+        strip_draw.text(
+            ((strip.width - text_w) / 2, (strip.height - ascent - descent) / 2), spine_text, font=font, fill=ink
+        )
+        canvas.paste(strip.rotate(-90, expand=True), (fold_left, panels.trim[1]))
+    return Wrap(canvas, _wrap_preview(canvas, panels), bg, front_w / (kept[2] - kept[0]), _cut(source, kept))
+
+
+def _cut(source: Image.Image, kept: tuple[int, int, int, int]) -> float:
+    left, top, right, bottom = kept
+    return 1 - (right - left) * (bottom - top) / (source.width * source.height)
+
+
+def _wrap_preview(canvas: Image.Image, panels: Panels) -> bytes:
+    """The cover at PREVIEW_WIDTH, with the trim, the spine's folds and the barcode's space marked."""
+    scale = PREVIEW_WIDTH / canvas.width
+    preview = canvas.resize((PREVIEW_WIDTH, max(1, round(canvas.height * scale))), Image.Resampling.LANCZOS)
+    draw = ImageDraw.Draw(preview)
+
+    def at(box: tuple[int, ...]) -> list[int]:
+        return [round(v * scale) for v in box]
+
+    draw.rectangle(at(panels.trim), outline=GUIDE, width=2)
+    for fold in panels.spine:
+        draw.line([round(fold * scale), 0, round(fold * scale), preview.height], fill=GUIDE, width=1)
+    barcode = at(panels.barcode)
+    draw.rectangle(barcode, fill=(255, 255, 255), outline=GUIDE, width=2)
+    font = _font("sans", "B", max(10, (barcode[3] - barcode[1]) // 5))
+    draw.text((barcode[0] + 6, barcode[1] + 6), "KDP barcode", font=font, fill=GUIDE)
+    return png(preview)
+
+
+def ebook_cover(front: bytes, width: int, height: int) -> Fitted:
+    """An ebook's cover: a JPEG of exactly ``width`` x ``height`` pixels, the front picture's centre in those
+    proportions (``fitted``, without its PNG note)."""
+    result = fitted(front, width, height)
+    picture = _decoded(lambda: Image.open(io.BytesIO(result.data), formats=("PNG",)).convert("RGB"))
+    return Fitted(jpeg(picture), result.size, result.source, result.kept)
+
+
+def jpeg(picture: Image.Image) -> bytes:
+    out = io.BytesIO()
+    picture.save(out, "JPEG", quality=JPEG_QUALITY, optimize=True, dpi=(COVER_DPI, COVER_DPI))
     return out.getvalue()

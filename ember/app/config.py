@@ -269,6 +269,12 @@ class Settings(BaseModel):
     blog_sftp_password: SecretStr = SecretStr("")
     blog_sftp_host_key: str = Field(default="", max_length=800)
     blog_sftp_folder: str = Field(default="", max_length=200)
+    # Amazon KDP (0.24.0): books the agent makes (an ebook's Word manuscript and cover, a paperback's interior and full
+    # cover), checked by Ember's code against KDP's rules and, once the owner approved one, published by the owner at
+    # kdp.amazon.com from their own account (Amazon has no API for KDP). kdp_author: the author name the books carry
+    # (empty: the owner enters it at KDP). Off until the owner turns it on.
+    kdp_enabled: bool = False
+    kdp_author: str = Field(default="", max_length=100)
     # 0.16.0: Ember live on the owner's website: a page (live.html) and a banner for the home page (live/banner.svg)
     # that Ember's code renders from its own numbers and uploads over the blog's SFTP login every 15 minutes, without
     # asking each time. Off until the owner turns it on; each part below can then be switched off. The two parts that
@@ -340,6 +346,7 @@ class Settings(BaseModel):
         "blog_sftp_user",
         "blog_sftp_host_key",
         "blog_sftp_folder",
+        "kdp_author",
         mode="before",
     )
     @classmethod
