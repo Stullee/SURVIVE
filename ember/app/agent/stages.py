@@ -42,7 +42,7 @@ from typing import Any
 
 from ..economy.clock import from_iso
 from ..integrations import pinterest_publisher, printify_publisher
-from . import knockouts, metrics, roadmap, store, ventures
+from . import knockouts, metrics, policy, roadmap, store, ventures
 from .store import AgentScope
 
 RESEARCH_DAYS = ventures.RESEARCH_DAYS
@@ -232,6 +232,76 @@ def resume_projects(conn: sqlite3.Connection, venture_id: int) -> list[int]:
         )
         resumed.append(int(row["id"]))
     return resumed
+
+
+# 0.23.3: the requests that carry on a venture's project work when Ember's code carries them out (an email, a page of
+# the owner's site or a Reddit link isn't a product line's)
+HELD_EXECUTORS = ("etsy_listing", "printify_product", "etsy_edit", "pinterest_pin", "bluesky_post")
+_LISTING_LINK = re.compile(r"/listing/(\d{1,18})(?:[/?#]|$)")
+_CHANNELS = {"etsy_listing": "etsy", "printify_product": "printify"}
+
+
+def hold_requests(conn: sqlite3.Connection, scope: AgentScope, venture_id: int, stage: str, now: str) -> list[int]:
+    """0.23.3: what was approved for the work the owner's park or kill (``stage``) stops, and Ember's code hasn't begun,
+    isn't carried out: a new listing or product of its product lines, a change to one of their listings (deactivating
+    it aside), a pin or a post that links one. An unlock's approval waits for the owner again (as policy._stop); the
+    owner's own is closed, saying why (a listing approved before the park went live after it). Returns their numbers."""
+    where, params = scope.where("a")
+    marks = ", ".join("?" for _ in HELD_EXECUTORS)
+    held = []
+    for row in conn.execute(
+        f"SELECT a.*, y.project_id AS cycle_project FROM approvals a LEFT JOIN cycles y ON y.id = a.cycle_id"
+        f" WHERE {where} AND a.status IN ('approved', 'approved_with_changes') AND a.executor IN ({marks})"
+        " AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = a.id) ORDER BY a.id",
+        (*params, *HELD_EXECUTORS),
+    ).fetchall():
+        venture = _request_venture(conn, scope, row)
+        if venture is None or venture["id"] != venture_id:
+            continue
+        said = f"your owner {stage} venture #{venture_id} before Ember's code carried it out"
+        twin = conn.execute(
+            "SELECT id FROM approvals WHERE mode = ? AND session = ? AND payload_sha256 = ? AND status = 'pending'",
+            (row["mode"], row["session"], row["payload_sha256"]),
+        ).fetchone()
+        if row["decided_by"] == policy.POLICY_BY and row["status"] == "approved" and twin is None:
+            conn.execute(
+                "UPDATE approvals SET status = 'pending', decided_at = NULL, decided_by = NULL, decision_comment = ?,"
+                " version = version + 1, seen_cycle_id = NULL WHERE id = ? AND status = 'approved'",
+                (f"Approved by your unlock, but {said}: it waits for you.", row["id"]),
+            )
+        else:
+            conn.execute(
+                "UPDATE approvals SET status = 'failed', closed_at = ?, closed_by = ?, result_note = ?,"
+                " version = version + 1, seen_cycle_id = NULL WHERE id = ? AND status IN ('approved',"
+                " 'approved_with_changes')",
+                (now, policy.REVOKED_BY, f"Not carried out: {said}.", row["id"]),
+            )
+        held.append(int(row["id"]))
+    return held
+
+
+def _request_venture(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any]) -> Any:
+    """The venture whose owner's park or kill stops the work a request carries on (None when none does)."""
+    try:
+        action = json.loads(row["action"] or "{}")
+    except ValueError:
+        return None
+    if not isinstance(action, dict):
+        return None
+    executor = row["executor"]
+    if executor in _CHANNELS:
+        project = row["project_id"] or row["cycle_project"]
+        if project is None:
+            return None
+        return ventures.project_stopped(conn, scope, int(project), _CHANNELS[executor])
+    if executor == "etsy_edit":
+        listing = action.get("listing_id") if action.get("state") != "deactivate" else None
+    else:
+        found = _LISTING_LINK.search(str(action.get("link") or ""))
+        listing = found[1] if found else None
+    if not isinstance(listing, (int, str)) or not str(listing).isdigit():
+        return None
+    return ventures.listing_stopped(conn, scope, int(listing))
 
 
 def park(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any], now: str, why: str) -> str:

@@ -841,11 +841,12 @@ class CycleRunner:
                 focus = store.project(conn, self.scope, plan.focus_project_id)
                 if focus is None or focus["status"] not in store.OPEN_STATUSES:
                     plan.focus_project_id, focus = None, None
-                elif (held := ventures.owner_stopped(conn, self.scope, focus["venture_id"])) is not None:
+                elif (held := ventures.project_stopped(conn, self.scope, focus["id"])) is not None:
                     # 0.23.2: the owner's park stops its projects' work; a plan's focus on one carried it on
                     stopped = (
                         f"No focus project: your plan's #{focus['id']} waits, because your owner {held['stage']} "
-                        f"venture #{held['id']}. Work on what doesn't need it, until they take the venture up again."
+                        f"venture #{held['id']}. Work on what doesn't need it"
+                        + (", until they take the venture up again." if held["stage"] == "parked" else ".")
                     )
                     plan.focus_project_id, focus = None, None
             if plan.focus_venture_id is not None:

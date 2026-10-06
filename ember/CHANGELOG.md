@@ -3,6 +3,19 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.23.3
+
+The last ways a venture's work went on after your owner parked or killed it are closed.
+
+- A product line your owner's park or kill stopped (its venture's, or for a line of no venture, its channel's: the
+  Etsy leg for Etsy listings, print on demand for Printify products) takes no change or renewal of its listings
+  (deactivating one stays possible), no pin and no Bluesky post linking them, no bet, and no request_approval.
+- A new product line of no venture doesn't list or make products in the channel of a venture your owner parked.
+- What was approved for such a line and Ember's code hadn't begun (a listing, a product, a change, a pin, a post) is
+  not carried out: your owner's approval is closed, saying why; an unlock's waits for your owner again.
+- research, evidence and venture_case aren't for a venture your owner parked (its research budget was spent after
+  the park). venture_update notes stay possible: tell your owner what changes the picture.
+
 ## 0.23.2
 
 Your owner's park or kill of a venture stops all of its project work, and nothing carries it on.
