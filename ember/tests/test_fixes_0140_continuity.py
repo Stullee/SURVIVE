@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from app.agent import context, digest, tools
+from app.agent import context, digest, prompts, tools
 from app.agent.fake_llm import FakeTransport, Raw, Reply, ToolCalls, request_kind
 from app.agent.service import Agent
 from app.config import LoadedSettings
@@ -79,15 +79,17 @@ def test_a_journal_written_while_working_ends_the_work_and_the_reflection_still_
     assert (ends[0].status, ends[0].sleep_minutes) == ("completed", 600)
     assert purposes(agent, 1) == ["plan", "work", "reflect"]
     journal = rows(agent, "SELECT phase, status, result FROM tool_calls WHERE tool = 'write_journal' ORDER BY id")
-    assert [(j["phase"], j["status"]) for j in journal] == [("act", "error"), ("reflect", "ok")]
-    assert "is for the reflect phase at the end of the cycle" in journal[0]["result"]
+    # 0.24.0: kept as the reflection's draft, which the reflection may correct (it did: its journal is the one kept)
+    assert [(j["phase"], j["status"]) for j in journal] == [("act", "ok"), ("reflect", "ok")]
+    assert journal[0]["result"].startswith("Kept as your journal's draft")
     assert rows(agent, "SELECT author, summary, handoff FROM journal") == [
         {"author": "agent", "summary": "Made the poster", "handoff": HANDOFF}
     ]
     assert rows(agent, "SELECT act_end_reason FROM cycles") == [{"act_end_reason": "done"}]
     [reflection] = [r for r in fake.sent if request_kind(r) == "reflect"]
     told = reflection["messages"][-1]["content"][-1]["text"]
-    assert "(you ended them)" in told and "Not done in this cycle" not in told  # the journal's refusal isn't work
+    assert "(you ended them)" in told and "Not done in this cycle" not in told  # the draft isn't work left undone
+    assert prompts.JOURNAL_DRAFTED in told and prompts.JOURNAL_FIRST not in told
     lines = digest_of(agent, 1)
     assert lines[-2:] == ["Work ended: the agent ended it.", "Reflection: yes; journal by the agent."]
     assert not any(line.startswith("Not done") for line in lines)
@@ -169,7 +171,7 @@ def test_a_cycle_the_guard_stopped_mid_work_is_not_recorded_as_done(data_dir: Pa
 
 
 def test_only_the_journal_tried_while_working_is_left_out_of_not_done(data_dir: Path) -> None:
-    # The refused early journal isn't work left undone (the reflection writes it); a refused set_sleep still is.
+    # The early journal (0.24.0: kept as a draft) isn't work left undone; a refused set_sleep still is.
     early = ToolCalls(
         [
             ("set_sleep", {"minutes": -5, "reason": "Waiting"}),

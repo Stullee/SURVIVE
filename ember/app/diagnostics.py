@@ -890,7 +890,11 @@ def _agent(state: AppState, full: bool = True) -> str:
             ("cases", ["id", "subject", "cause", "sure", "expected", "happened", "why", "lesson"], 20),
             ("principles", ["id", "status", "confidence", "supports", "against", "text", "retired_why"], 40),
             ("weekly_reviews", ["id", "day", "status", "answer", "outcome", "note"], 4),
-            ("quality_checks", ["id", "project_id", "created_at", "status", "score", "verdict", "fixes", "note"], 10),
+            (
+                "quality_checks",
+                ["id", "project_id", "listing_id", "created_at", "status", "score", "verdict", "fixes", "note"],
+                10,
+            ),
             (
                 "etsy_listings",
                 [

@@ -84,7 +84,7 @@ def test_no_milestone_links_to_a_parked_venture_or_a_project_it_stopped(data_dir
     )
     linked = call(ctx, "milestone_plan", {"milestones": [{**item, "project_id": project}]})
     assert not linked.ok and (
-        f"project #{project} belongs to venture #{a}, which your owner parked: its projects wait until they take it "
+        f"project #{project} belongs to venture #{a}, which your owner parked: its work waits until they take it "
         "up again" in linked.text
     )
     free = call(ctx, "milestone_plan", {"milestones": [{**item, "title": "A free goal"}]})

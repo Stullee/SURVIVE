@@ -24,6 +24,7 @@ workshop calls in the cycle and raises the workshop's estimates.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Mapping
@@ -76,6 +77,10 @@ _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 _WORD = re.compile(r"[a-z0-9]+")
 # 0.15.0: the file names a helper's answer mentions (it said it made a poster that never came back).
 _NAMED = re.compile(r"[\w./-]+\.(?:png|jpe?g|pdf|docx|xlsx|pptx|csv|txt|md|json|html)\b", re.IGNORECASE)
+# 0.24.0: a workspace path in a task: a folder, then a file
+_PATH = re.compile(
+    r"(?<![\w./-])(?:[\w-][\w.-]*/)+[\w.-]+\.(?:png|jpe?g|pdf|docx|xlsx|pptx|csv|txt|md|json|html|py)\b", re.IGNORECASE
+)
 
 
 class WorkshopError(ValueError):
@@ -96,6 +101,7 @@ class Run:
     cost: int = 0
     failure: str | None = None
     calls: int = 0  # 0.12.0: metered calls sent (a failed one too): a run that sent one counts toward the limits
+    again: list[str] = field(default_factory=list)  # 0.24.0: its script's first run's files, handed over again
 
 
 class Workshop:
@@ -135,10 +141,18 @@ class Workshop:
             raise WorkshopError(f"folder: {exc}") from None
         if len(levels) >= MAX_DEPTH:  # 0.15.0: its files go inside it, so this is refused before the run is paid for
             raise WorkshopError(f"folder: at most {MAX_DEPTH - 1} folder levels, so that its files fit inside it")
+        again = self._first_inputs(script) if script is not None and not files else []
+        files = files or again
+        unseen = self._not_handed(task, files, script, folder)
+        if unseen:
+            raise WorkshopError(
+                f"the task names {', '.join(unseen[:3])}, which the run can't see: hand it over in files (at most "
+                f"{MAX_INPUTS}), or leave its name out (a file the run makes is named without a folder)"
+            )
         inputs = self._inputs(files, script)
         if script is not None:
             self._check_not_built_in(script, next(data for path, _, data in inputs if path == script))
-        run = Run(task=task, script_used=script, inputs=[path for path, _, _ in inputs])
+        run = Run(task=task, script_used=script, inputs=[path for path, _, _ in inputs], again=again)
         uploaded: list[str] = []
         made: list[str] = []
         try:
@@ -179,6 +193,47 @@ class Workshop:
                 f"{script} is built into Ember since {version} (upgrade request #{released['id']}): the tool its "
                 f"release notes name does it free. For what that tool can't do, describe the task without script"
             )
+
+    def _first_inputs(self, script: str) -> list[str]:
+        """0.24.0: the files the run that kept a script was handed (not its own script), as far as they are still in the
+        workspace: a script run again without files reads them as its first run did. Live, a run of a kept script that
+        read a workbook was handed only the script, drew a listing cover from sample numbers it made up, and that cover
+        went live."""
+        where, params = self.scope.where()
+        with self.db.connection() as conn:
+            row = conn.execute(
+                f"SELECT inputs, script_used FROM workshop_runs WHERE {where} AND script_path = ? ORDER BY id DESC"
+                " LIMIT 1",
+                (*params, script),
+            ).fetchone()
+        if row is None:
+            return []
+        try:
+            paths = json.loads(row["inputs"] or "[]")
+        except ValueError:
+            return []
+        found = [
+            path
+            for path in paths
+            if isinstance(path, str) and path != row["script_used"] and not path.endswith(".py") and self._there(path)
+        ]
+        return found[:MAX_INPUTS]
+
+    def _not_handed(self, task: str, files: list[str], script: str | None, folder: str) -> list[str]:
+        """0.24.0: the workspace files the task names (with their folder) that aren't handed over: the run can't see
+        them. Live, a run asked to match the look of a cover it wasn't given drew one from the task's words alone."""
+        given = {*files, *([script] if script else [])}
+        return [
+            path
+            for path in dict.fromkeys(m.group(0) for m in _PATH.finditer(task))
+            if path not in given and not path.startswith(f"{folder}/") and self._there(path)
+        ]
+
+    def _there(self, path: str) -> bool:
+        try:
+            return self.jail.size_of(path) is not None
+        except SandboxError:
+            return False
 
     def _inputs(self, files: list[str], script: str | None) -> list[tuple[str, str, bytes]]:
         """(workspace path, name in the container, bytes) of every file handed over."""
@@ -379,8 +434,13 @@ def report(run: Run, wrap: Any) -> tuple[bool, str, str]:
     if run.kept:
         kept = "; ".join(f"{path} ({size / 1024:,.0f} KB)" for path, size in run.kept)
         lines.append(f"Kept: {kept}.")
+    if run.again:
+        lines.append(f"Handed over with the script, as its first run had them: {', '.join(run.again)}.")
     if run.script_path:
-        lines.append(f"The script is {run.script_path}: run it again with script, instead of writing it anew.")
+        lines.append(
+            f"The script is {run.script_path}: run it again with script, instead of writing it anew (the files its "
+            "run had go with it when you give none)."
+        )
     if run.refused:
         lines.append("Not kept: " + "; ".join(f"{name}: {why}" for name, why in run.refused) + ".")
     if run.failure:

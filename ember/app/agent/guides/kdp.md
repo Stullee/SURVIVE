@@ -1,7 +1,7 @@
 PUBLISHING ON AMAZON KDP (propose_kdp_book)
 Amazon has no API for KDP: you make the book, Ember's code makes its cover and checks it against KDP's rules, and
-your owner publishes it at kdp.amazon.com from their account once they approve it. KDP lets an account create at
-most {KDP_WEEKLY} new titles of each format a week: propose few, and only books you would buy yourself.
+your owner publishes it at kdp.amazon.com from their account once they approve it. KDP lets an account create
+at most {KDP_WEEKLY} new titles of each format a week: propose few, and only books you would buy yourself.
 
 WHAT SELLS: books people search for by need, where a small publisher can be found: low-content books (journals,
 planners, logbooks, workbooks) and short practical guides. Research the searches and the competing books first

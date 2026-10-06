@@ -171,9 +171,12 @@ def review_text(funnel: Funnel | None) -> str:
     return funnel.text() if funnel is not None and funnel.listings else ""
 
 
-def research_text(conn: sqlite3.Connection, scope: AgentScope, project_id: int, venture_id: int | None) -> str:
+def research_text(
+    conn: sqlite3.Connection, scope: AgentScope, project_id: int, venture_id: int | None, checked: str = ""
+) -> str:
     """0.18.0: how deep a project's research went, for the daily review: its newest demand note (with the market
-    probe's prices if any), its venture's independent evidence, and its newest quality check (quality.py)."""
+    probe's prices if any), its venture's independent evidence, and its quality checks (``checked``:
+    quality.review_text, 0.24.0: with the listing each one judged)."""
     where, params = scope.where()
     note = conn.execute(
         f"SELECT * FROM demand_notes WHERE {where} AND project_id = ? ORDER BY id DESC LIMIT 1", (*params, project_id)
@@ -189,13 +192,6 @@ def research_text(conn: sqlite3.Connection, scope: AgentScope, project_id: int, 
             f"SELECT COUNT(*) FROM evidence WHERE {where} AND venture_id = ? AND source = 'independent'",
             (*params, venture_id),
         ).fetchone()[0]
-    check = conn.execute(
-        f"SELECT * FROM quality_checks WHERE {where} AND project_id = ? AND status = 'ok' ORDER BY id DESC LIMIT 1",
-        (*params, project_id),
-    ).fetchone()
-    quality = (
-        f"quality {check['score']}/10, {check['verdict']} ({str(check['created_at'])[:10]}): {check['fixes'][:160]}"
-        if check
-        else "no quality check yet"
+    return (
+        f"research: {demand}; {independent} independent claim(s) for its venture · {checked or 'no quality check yet'}"
     )
-    return f"research: {demand}; {independent} independent claim(s) for its venture · {quality}"

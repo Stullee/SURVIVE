@@ -26,7 +26,7 @@ from ..economy.ledger import Books, Scope
 from ..economy.life import LifeStatus, Runway
 from ..integrations import etsy, etsy_publisher
 from ..version import app_version
-from . import learning, predictions, prompts, reach, roadmap, ventures
+from . import learning, predictions, prompts, quality, reach, roadmap, ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope, open_projects
 
 WINDOW_DAYS = 7
@@ -198,8 +198,10 @@ def scorecard(
     status: LifeStatus,
     *,
     dry_run: bool,
+    channels: str = "",
 ) -> Scorecard:
-    """The facts of the last WINDOW_DAYS days and today so far, as text for the review call."""
+    """The facts of the last WINDOW_DAYS days and today so far, as text for the review call. ``channels``: the
+    channels waiting for the owner's setup (0.24.0, loop._waiting_channels), with the shop's listings."""
     today = clock.today()
     first = today - timedelta(days=WINDOW_DAYS)
     since = to_iso(clock.day_start(first))
@@ -212,7 +214,7 @@ def scorecard(
         # 0.19.2: before the projects, a few lines whose milestones the review judges (live, 8 projects in full left
         # no room for it: "Milestones were not shown, so I can't judge them today")
         roadmap.review_text(conn, scope, today, since),
-        _etsy(conn, scope, since),
+        "\n\n".join(part for part in (_etsy(conn, scope, since), channels) if part),
         _project_lines(conn, scope, projects, clock, since, reach.funnels(conn, scope)),
         learning.settled_text(settled),
         predictions.review_text(conn, scope, since),  # 0.13.0: the forecasts against the results
@@ -455,7 +457,8 @@ def _project_lines(
         funnel = reach.review_text((funnels or {}).get(int(pid)))
         if funnel:
             lines.append(f"   {funnel}")
-            lines.append(f"   {reach.research_text(conn, scope, int(pid), p['venture_id'])}")  # 0.18.0
+            checked = quality.review_text(conn, scope, int(pid))  # 0.24.0: each with the listing it judged
+            lines.append(f"   {reach.research_text(conn, scope, int(pid), p['venture_id'], checked)}")  # 0.18.0
         if p["next_step"]:
             lines.append(f"   next step: {_one_line(p['next_step'], 150)}")
     return "\n".join(lines)

@@ -55,7 +55,7 @@ from ..integrations.mail import Mailbox, select_mailbox
 from ..integrations.pinterest_connection import PinterestConnection
 from ..integrations.printify_connection import PrintifyConnection
 from ..products import blog, site
-from . import agenda, audit, metrics, netguard, news, policy, store, ventures, website
+from . import agenda, audit, metrics, netguard, news, policy, stages, store, ventures, website
 from .loop import NO_STEP, CycleEnd, CycleRunner, recover_records
 from .memory import CAPS, Memory
 from .sandbox import Jail, SandboxError, kind_of
@@ -279,6 +279,11 @@ class Agent:
                 ventures.seed(conn, scope, to_iso(now))  # the tree's first ideas (0.10.0), once
         except Exception:  # noqa: BLE001 - the ventures must never keep the agent from starting
             log.exception("Could not plant the first ventures")
+        try:
+            with self.db.transaction() as conn:
+                held_once(conn, scope, to_iso(now))
+        except Exception:  # noqa: BLE001 - it must never keep the agent from starting
+            log.exception("Could not hold the requests of the ventures the owner parked")
         etsy_revenue.audit(self.db, self.clock, self.settings)  # 0.12.0: the owner turned it on or off
         self.take_back_while_off()  # 0.15.0: no owner_user_ids, or safe mode
         wake = self._meta_time("next_wake_at")
@@ -1312,3 +1317,24 @@ class Agent:
         from . import views
 
         return views.workspace_product(self, path)
+
+
+HELD_ONCE = "parks_held_0233"
+
+
+def held_once(conn: Any, scope: AgentScope, now: str) -> list[int]:
+    """0.23.3: at the first start of 0.23.3, what was approved for the work of a venture the owner parked or killed
+    before it (stages.hold_requests runs at the owner's word since), once per scope."""
+    key = f"agent.{scope.mode}.{scope.session}.{HELD_ONCE}"
+    if conn.execute("SELECT 1 FROM meta WHERE key = ?", (key,)).fetchone() is not None:
+        return []
+    where, params = scope.where()
+    held = []
+    for venture in conn.execute(
+        f"SELECT id, stage FROM ventures WHERE {where} AND (stage = 'killed' OR (stage = 'parked'"
+        " AND parked_by = 'owner')) ORDER BY id",
+        params,
+    ).fetchall():
+        held += stages.hold_requests(conn, scope, int(venture["id"]), str(venture["stage"]), now)
+    conn.execute("INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?)", (key, now, now))
+    return held

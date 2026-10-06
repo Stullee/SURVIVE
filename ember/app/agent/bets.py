@@ -37,11 +37,14 @@ _WHEN = (
     r"(?:(?:in|within)\s+(?P<days>\d+)\s+days?"
     r"|by\s+(?P<day>\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}|\d{1,2}\.\d{1,2}\.(?:\d{4})?))"
 )
+# 0.24.0: the why after the day without a colon too ("+5 views by 10-14 from the new photo"): live, six bets were
+# refused in four cycles for it.
 _BET = re.compile(
     rf"^\+?\s*(?P<gain>\d+)\s+(?:[a-z][a-z-]*\s+){{0,2}}?(?P<metric>[a-z]+)\s+{_WHEN}(?:\s*\([^()]{{0,80}}\))?"
-    r"\s*[:,;\u2013\u2014-]\s*(?P<why>.+)$",
+    r"(?:\s*[:,;\u2013\u2014-]\s*|\s+)(?P<why>\S.*)$",
     re.IGNORECASE | re.DOTALL,
 )
+_METRIC_WORD = re.compile(r"\b(" + "|".join(sorted(METRICS, key=len, reverse=True)) + r")\b", re.IGNORECASE)
 FORMAT = (
     "write it as '+15 views in 7 days: why you expect it' or '+15 views by 2026-10-17: why' (views, favorites or "
     "orders; 3 to 28 days)"
@@ -91,8 +94,20 @@ def value(funnel: reach.Funnel, metric: str) -> int:
 def place(
     conn: sqlite3.Connection, scope: AgentScope, project_id: int, text: str, cycle_id: int | None, today: date, now: str
 ) -> str:
-    """Place a bet on a project (raises BetError); the line project_update's answer adds."""
-    gain, metric, days, expect = parse(text, today)
+    """Place a bet on a project (raises BetError); the line project_update's answer adds. 0.24.0: a bet on a metric with
+    an open bet is refused for that first, also when it isn't written right (live, the agent rewrote a bet to the format
+    and was then told the project had one open)."""
+    try:
+        gain, metric, days, expect = parse(text, today)
+    except BetError:
+        word = _METRIC_WORD.search(text)
+        held = _open(conn, scope, project_id, METRICS[word[1].lower()]) if word else None
+        if held is not None:
+            raise BetError(f"{held}; a new one on it waits") from None
+        raise
+    held = _open(conn, scope, project_id, metric)
+    if held is not None:
+        raise BetError(held)
     funnel = reach.funnels(conn, scope).get(project_id)
     if funnel is None or not funnel.listings:
         raise BetError("a bet needs the project's live listings: Ember's code settles it from their numbers")
@@ -104,12 +119,6 @@ def place(
         last = quality_verdict(conn, scope, project_id)
         if last == "improve":
             raise BetError("its last quality check said improve: fix what it named before betting on orders")
-    where, params = scope.where()
-    if conn.execute(
-        f"SELECT 1 FROM bets WHERE {where} AND project_id = ? AND metric = ? AND status = 'open'",
-        (*params, project_id, metric),
-    ).fetchone():
-        raise BetError(f"project #{project_id} has an open bet on {metric}: it settles first")
     due = (today + timedelta(days=days)).isoformat()
     cursor = conn.execute(
         "INSERT INTO bets (mode, session, cycle_id, project_id, metric, gain, baseline, reach, expect, placed_at, due)"
@@ -131,15 +140,28 @@ def place(
     return f"Bet #{cursor.lastrowid}: +{gain} {metric} by {due} (now {value(funnel, metric)}); Ember's code settles it."
 
 
-def quality_verdict(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> str:
-    """The verdict of a project's newest quality check that came through, or "" without one."""
+def _open(conn: sqlite3.Connection, scope: AgentScope, project_id: int, metric: str) -> str | None:
+    """Why a project's open bet on ``metric`` stops a new one ("project #5 has an open bet on views (bet #1, +10 views
+    by 2026-10-07): it settles first"), or None without one."""
     where, params = scope.where()
     row = conn.execute(
-        f"SELECT verdict FROM quality_checks WHERE {where} AND project_id = ? AND status = 'ok' ORDER BY id DESC"
-        " LIMIT 1",
-        (*params, project_id),
+        f"SELECT id, gain, due FROM bets WHERE {where} AND project_id = ? AND metric = ? AND status = 'open'",
+        (*params, project_id, metric),
     ).fetchone()
-    return str(row["verdict"]) if row else ""
+    if row is None:
+        return None
+    return (
+        f"project #{project_id} has an open bet on {metric} (bet #{row['id']}, +{row['gain']} {metric} by "
+        f"{row['due']}): it settles first"
+    )
+
+
+def quality_verdict(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> str:
+    """The quality critic's verdict on a project's live listings (quality.verdict: improve while any says so), or ""
+    without a check."""
+    from . import quality  # 0.24.0: here, not at the top: quality imports prompts, which imports tools, then this
+
+    return quality.verdict(conn, scope, project_id)
 
 
 def settle(conn: sqlite3.Connection, scope: AgentScope, today: date, now: str) -> list[str]:
