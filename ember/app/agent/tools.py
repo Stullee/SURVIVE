@@ -3108,9 +3108,6 @@ def _request_approval(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     project_id = args.get("project_id")
     if project_id is not None and store.project(conn, ctx.scope, project_id) is None:
         raise ToolError(f"there is no project #{project_id}")
-    refused = _stopped(conn, ctx.scope, project_id) if project_id is not None else ""
-    if refused:  # 0.23.3
-        raise ToolError(refused)
     approval_id = store.insert_approval(conn, ctx.scope, ctx.cycle_id, ctx.now(), **args)
     return Outcome(
         True,
@@ -4578,6 +4575,9 @@ def _propose_blog_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
         post = blog.read_post(source, access.owner)
     except blog.BlogError as exc:
         raise ToolError(f"{path}: {exc}") from None
+    recommended = ventures.LISTING_LINK.search(post.product_url) if post.product_url else None
+    if recommended is not None:  # 0.23.3: no page recommends a listing whose work the owner's park stopped
+        _listing_stopped(conn, ctx.scope, int(recommended[1]), "blog post recommending it")
     earlier = site_publisher.known(conn, ctx.scope, post.slug)
     day = str(earlier["day"]) if earlier is not None else ctx.clock.today().isoformat()
     page = blog.render_post(post, day, access.owner)

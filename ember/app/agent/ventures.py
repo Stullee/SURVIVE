@@ -1066,34 +1066,47 @@ def _channel_row(conn: sqlite3.Connection, scope: AgentScope, channel: str) -> s
 CHANNEL_TABLES = (("etsy", "etsy_listings"), ("printify", "printify_products"))  # where a channel's listings are kept
 
 
+def is_channel(venture: Mapping[str, Any]) -> bool:
+    """0.23.3: a channel's own venture (the Etsy leg, print on demand), not a product venture that sells through it."""
+    return venture["channel"] is not None or (venture["title"] == ETSY_LEG and venture["parent_id"] is None)
+
+
 def project_stopped(
     conn: sqlite3.Connection, scope: AgentScope, project_id: int, channel: str | None = None
 ) -> sqlite3.Row | None:
-    """0.23.3: the venture whose owner's park or kill stops a project's work (None when none does): its own, or for a
-    product line of no venture, its channel's (``channel``, else the channels it has listings in), which it counts
-    for (metrics.listings). A line opened without a venture went on selling in the channel of the parked Etsy leg."""
+    """0.23.3: the venture whose owner's park or kill stops a product line's work (None when none does): its own; or,
+    for a line of no venture or of a channel's own venture (the Etsy leg's lines make Printify products too), the
+    venture of the channel it works in: ``channel`` (a new listing or product, an edit), else the channels it sells
+    in (its focus, milestones, bets), when every one of them is stopped. A product venture the owner backed sells
+    through a channel on its own word. Live, a line of no venture went on selling in the parked Etsy leg's channel,
+    and parking print on demand stopped no Printify product (they were the Etsy leg's lines')."""
     project = conn.execute("SELECT venture_id FROM projects WHERE id = ?", (project_id,)).fetchone()
     if project is None:
         return None
-    if project["venture_id"] is not None:
-        return owner_stopped(conn, scope, project["venture_id"])
-    for name, table in CHANNEL_TABLES:
-        if channel not in (None, name) or (channel is None and not _lists_in(conn, table, project_id)):
-            continue
-        row = _channel_row(conn, scope, name)
-        held = owner_stopped(conn, scope, row["id"]) if row is not None else None
-        if held is not None:
-            return held
-    return None
+    own = get(conn, scope, project["venture_id"]) if project["venture_id"] is not None else None
+    held = owner_stopped(conn, scope, project["venture_id"])
+    if held is not None:
+        return held
+    if own is not None and not is_channel(own):
+        return None
+    names = [channel] if channel else [name for name, table in CHANNEL_TABLES if _lists_in(conn, table, project_id)]
+    stopped = [channel_stopped(conn, scope, name) for name in names]
+    return stopped[0] if stopped and all(v is not None for v in stopped) else None
+
+
+def channel_stopped(conn: sqlite3.Connection, scope: AgentScope, channel: str) -> sqlite3.Row | None:
+    """0.23.3: the channel's own venture when the owner parked or killed it, else None."""
+    row = _channel_row(conn, scope, channel)
+    return owner_stopped(conn, scope, row["id"]) if row is not None else None
 
 
 def _lists_in(conn: sqlite3.Connection, table: str, project_id: int) -> bool:
     """Whether a product line has listings in ``table`` (etsy_listings, printify_products), as metrics.listings
-    links them: by its request's project, or its cycle's."""
+    counts them: made (a listing number), by its request's project or its cycle's."""
     return (
         conn.execute(
-            f"SELECT 1 FROM {table} l JOIN approvals a ON a.id = l.approval_id LEFT JOIN cycles y"
-            " ON y.id = a.cycle_id WHERE COALESCE(a.project_id, y.project_id) = ? LIMIT 1",
+            f"SELECT 1 FROM {table} l JOIN approvals a ON a.id = l.approval_id LEFT JOIN cycles y ON y.id = a.cycle_id"
+            " WHERE l.listing_id IS NOT NULL AND COALESCE(a.project_id, y.project_id) = ? LIMIT 1",
             (project_id,),
         ).fetchone()
         is not None
@@ -1102,7 +1115,8 @@ def _lists_in(conn: sqlite3.Connection, table: str, project_id: int) -> bool:
 
 def listing_stopped(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> sqlite3.Row | None:
     """0.23.3: the venture whose owner's park or kill stops the work on one of Ember's listings (an edit, a pin, a
-    post linking it): its product line's (``project_stopped``). None when none does, or it isn't Ember's."""
+    post or a blog post recommending it): its product line's in its channel (``project_stopped``). None when none
+    does, or it isn't Ember's."""
     where, params = scope.where("l")
     for name, table in CHANNEL_TABLES:
         row = conn.execute(
@@ -1114,10 +1128,54 @@ def listing_stopped(conn: sqlite3.Connection, scope: AgentScope, listing_id: int
         if row is None:
             continue
         if row["project_id"] is None:
-            channel = _channel_row(conn, scope, name)
-            return owner_stopped(conn, scope, channel["id"]) if channel is not None else None
+            return channel_stopped(conn, scope, name)
         return project_stopped(conn, scope, int(row["project_id"]), name)
     return None
+
+
+# 0.23.3: the requests that carry on a product line's work when Ember's code carries them out (an email, a page of the
+# owner's site or a Reddit link isn't a line's), with the table each executor claims a request in when it begins
+HELD_EXECUTORS = {
+    "etsy_listing": "etsy_listings",
+    "printify_product": "printify_products",
+    "etsy_edit": "etsy_edits",
+    "pinterest_pin": "pinterest_pins",
+    "bluesky_post": "bluesky_posts",
+}
+_NEW_LINE = {"etsy_listing": "etsy", "printify_product": "printify"}
+LISTING_LINK = re.compile(r"etsy\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?listing/(\d{1,18})(?:[/?#]|$)", re.IGNORECASE)
+
+
+def request_stopped(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any]) -> sqlite3.Row | None:
+    """0.23.3: the venture whose owner's park or kill stops the work a request carries on (None when none does): a new
+    listing or product of its line, or a change, pin or post of a listing. Taking a listing out of the shop
+    (deactivating it, ending its automatic renewal) stops nothing."""
+    if row["executor"] not in HELD_EXECUTORS:
+        return None
+    try:
+        action = json.loads(row["action"] or "{}")
+    except ValueError:
+        return None
+    if not isinstance(action, dict):
+        return None
+    if row["executor"] in _NEW_LINE:
+        project = row["project_id"]
+        if project is None and row["cycle_id"] is not None:
+            cycle = conn.execute("SELECT project_id FROM cycles WHERE id = ?", (row["cycle_id"],)).fetchone()
+            project = cycle["project_id"] if cycle is not None else None
+        channel = _NEW_LINE[row["executor"]]
+        return project_stopped(conn, scope, int(project), channel) if project else channel_stopped(conn, scope, channel)
+    if row["executor"] == "etsy_edit":
+        ends_renewal = action.get("auto_renew") is False and set(action) <= {"listing_id", "currency", "auto_renew"}
+        if action.get("state") == "deactivate" or ends_renewal:
+            return None
+        listing = action.get("listing_id")
+    else:
+        found = LISTING_LINK.search(str(action.get("link") or ""))
+        listing = found[1] if found else None
+    if not isinstance(listing, (int, str)) or not str(listing).isdigit():
+        return None
+    return listing_stopped(conn, scope, int(listing))
 
 
 def adopt(conn: sqlite3.Connection, scope: AgentScope, project_id: int, channel: str, now: str) -> int | None:

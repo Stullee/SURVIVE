@@ -51,11 +51,11 @@ def test_no_change_bet_or_request_for_a_line_the_owner_parked(data_dir: Path) ->
         ctx,
         "request_approval",
         {
-            "type": "spend_money", "title": "Ads for planners", "description": "x", "payload": "Etsy ads, 5 EUR",
-            "expected_cost": "5 EUR", "expected_benefit": "sales", "project_id": project,
+            "type": "spend_money", "title": "Refund for a buyer", "description": "x", "payload": "Refund 4.50 EUR",
+            "expected_cost": "4.50 EUR", "expected_benefit": "a fair end", "project_id": project,
         },
     )  # fmt: skip
-    assert not asked.ok and f"project #{project} belongs to venture #{leg}, which your owner parked" in asked.text
+    assert asked.ok, asked.text  # your owner carries it out, and a stopped line's wind-down is work too
 
 
 def test_no_pin_links_a_listing_the_owner_parked(data_dir: Path) -> None:
@@ -144,3 +144,112 @@ def test_no_research_evidence_or_case_for_a_venture_the_owner_parked(data_dir: P
             tools._evidence(ctx, claim, conn)
         with pytest.raises(tools.ToolError, match=f"your owner parked venture #{idea}: no business case for it"):
             tools._venture_case(ctx, {"venture_id": idea}, conn)
+
+
+def test_parking_print_on_demand_stops_printify_products_of_the_etsy_leg_s_lines(data_dir: Path) -> None:
+    """The agent's product lines are the Etsy leg's, and they made Printify products: parking print on demand stopped
+    none. A product venture the owner backed sells through the channel on its own word."""
+    agent, _ = listed(data_dir)
+    project, leg = line_of(agent)
+    ctx = shop_context(agent)
+    [pod] = rows(agent, "SELECT id FROM ventures WHERE channel = 'printify'")
+    park(agent, pod["id"])
+    with agent.db.transaction() as conn:
+        with pytest.raises(tools.ToolError, match=f"sells in the channel of venture #{pod['id']}, which your owner"):
+            tools._product_line(ctx, conn, {"project_id": project}, "product")
+        assert tools._product_line(ctx, conn, {"project_id": project}, "listing") == project  # the leg sells on
+        assert ventures.project_stopped(conn, ctx.scope, project) is None  # it sells in Etsy's channel too
+        backed = ventures.create(
+            conn, ctx.scope, title="B", pitch="p.", stage="building", now=to_iso(agent.clock.now())
+        )
+        conn.execute("UPDATE projects SET venture_id = ? WHERE id = ?", (backed, project))
+        assert tools._product_line(ctx, conn, {"project_id": project}, "product") == project
+    assert leg
+
+
+def test_an_unlock_doesn_t_approve_stopped_work_when_its_veto_window_passes(data_dir: Path) -> None:
+    """A line of no venture sells in the Etsy leg's channel: its milestone isn't the leg's, so the park didn't drop it,
+    and its veto-window unlock approved a price change after the park."""
+    from decimal import Decimal  # noqa: PLC0415
+
+    from app.agent import policy  # noqa: PLC0415
+    from tests.test_policy import a_milestone, change, price_of, work_on  # noqa: PLC0415
+
+    agent, listing = listed(data_dir)
+    project, leg = line_of(agent)
+    with agent.db.transaction() as conn:  # listed while its channel had no venture it could join
+        conn.execute("UPDATE projects SET venture_id = NULL WHERE id = ?", (project,))
+    goal = a_milestone(agent)
+    assert owner(agent).set_autonomy(goal, {"rule": "price_change", "level": "veto_window"}, "Stefan").status == 200
+    price = price_of(agent, listing)
+    made = work_on(agent, goal, change(listing, price=f"{price * Decimal('0.95'):.2f}"))[-1]
+    assert made["status"] == "pending"
+    park(agent, leg)
+    agent.clock.advance(hours=policy.VETO_HOURS, minutes=1)
+    agent.run_policy()
+    [row] = rows(agent, f"SELECT status, decision_comment FROM approvals WHERE id = {made['id']}")
+    assert row["status"] == "pending" and f"your owner parked venture #{leg}, whose work it" in row["decision_comment"]
+    assert agent.execute_approved() == [] and price_of(agent, listing) == price
+
+
+def test_the_owner_s_undo_isn_t_held_by_their_park(data_dir: Path) -> None:
+    from decimal import Decimal  # noqa: PLC0415
+
+    from tests.test_audit import feed, undo  # noqa: PLC0415
+    from tests.test_policy import a_milestone, change, price_of, work_on  # noqa: PLC0415
+
+    agent, listing = listed(data_dir)
+    _, leg = line_of(agent)
+    goal = a_milestone(agent)
+    assert owner(agent).set_autonomy(goal, {"rule": "price_change", "level": "auto"}, "Stefan").status == 200
+    price = price_of(agent, listing)
+    work_on(agent, goal, change(listing, price=f"{(price * Decimal('1.10')).quantize(Decimal('0.01'))}"))
+    agent.execute_approved()
+    back = undo(agent, feed(agent)[0]["id"])  # the owner: change it back
+    park(agent, leg)  # and park the venture, in the same minute
+    assert rows(agent, f"SELECT status FROM approvals WHERE id = {back}") == [{"status": "approved"}]
+    agent.execute_approved()
+    assert price_of(agent, listing) == price
+
+
+def test_no_blog_post_recommends_a_listing_the_owner_parked(data_dir: Path) -> None:
+    from app.integrations import etsy  # noqa: PLC0415
+    from tests.test_blog import POST, blog_context  # noqa: PLC0415
+
+    agent, listing = listed(data_dir)
+    _, leg = line_of(agent)
+    park(agent, leg)
+    agent.roots()[0].write(
+        "blog/post.md", POST.replace("https://www.etsy.com/listing/4584899301", etsy.listing_url(listing))
+    )
+    made = call(blog_context(agent), "propose_blog_post", {"source": "blog/post.md", "reason": "Search traffic."})
+    assert not made.ok and "which your owner parked: no blog post recommending it for it" in made.text
+
+
+def test_a_failed_listing_attempt_isn_t_selling_in_a_channel(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    project, leg = line_of(agent)
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE projects SET venture_id = NULL WHERE id = ?", (project,))
+        conn.execute("UPDATE etsy_listings SET listing_id = NULL, status = 'failed'")
+    park(agent, leg, "kill")
+    with agent.db.connection() as conn:
+        assert ventures.project_stopped(conn, agent.scope(), project) is None
+        assert ventures.project_stopped(conn, agent.scope(), project, "etsy")["id"] == leg
+
+
+def test_requests_approved_before_an_earlier_park_are_held_at_the_first_start(data_dir: Path) -> None:
+    """0.23.2 didn't hold them at the park: the first start of 0.23.3 does, once."""
+    from app.agent import service  # noqa: PLC0415
+
+    agent, _, request = proposed(data_dir)
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
+    _, leg = line_of(agent)
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:  # parked as 0.23.2 did it, and before 0.23.3 started
+        ventures.update(conn, leg, now, stage="parked", parked_by="owner")
+        conn.execute("DELETE FROM meta WHERE key LIKE '%parks_held_0233'")
+    agent.recover()
+    assert rows(agent, f"SELECT status FROM approvals WHERE id = {request}") == [{"status": "failed"}]
+    with agent.db.transaction() as conn:
+        assert service.held_once(conn, agent.scope(), now) == []  # once

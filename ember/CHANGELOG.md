@@ -7,12 +7,15 @@
 
 The last ways a venture's work went on after your owner parked or killed it are closed.
 
-- A product line your owner's park or kill stopped (its venture's, or for a line of no venture, its channel's: the
-  Etsy leg for Etsy listings, print on demand for Printify products) takes no change or renewal of its listings
-  (deactivating one stays possible), no pin and no Bluesky post linking them, no bet, and no request_approval.
-- A new product line of no venture doesn't list or make products in the channel of a venture your owner parked.
-- What was approved for such a line and Ember's code hadn't begun (a listing, a product, a change, a pin, a post) is
-  not carried out: your owner's approval is closed, saying why; an unlock's waits for your owner again.
+- A product line your owner's park or kill stopped takes no change or renewal of its listings (deactivating one, or
+  ending its automatic renewal, stays possible), no pin, Bluesky post or blog post that recommends them, and no bet.
+  request_approval stays possible: a refund or a clean-up is your owner's to carry out.
+- Parking a channel's own venture (the Etsy leg, print on demand) stops that channel's work for its lines and for
+  lines of no venture: parking print on demand stops the Printify products of the Etsy leg's lines. A venture your
+  owner backed sells through a channel on its own word.
+- What was approved for stopped work and Ember's code hadn't begun (a listing, a product, a change, a pin, a post) is
+  not carried out: your owner's approval is closed, saying why; an unlock's waits for your owner again, and no unlock
+  approves such a request when its veto window passes. Your owner's own Undo isn't held.
 - research, evidence and venture_case aren't for a venture your owner parked (its research budget was spent after
   the park). venture_update notes stay possible: tell your owner what changes the picture.
 

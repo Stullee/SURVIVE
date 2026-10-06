@@ -749,10 +749,12 @@ euros. The tab's badge counts the ones waiting. On each card:
   drops the open milestones of the venture's projects (the agent's too), and
   the agent can't focus a plan on a waiting project, link a milestone to the
   venture or its projects, or add listings and products to them. 0.23.3: nor
-  change, pin, post about or bet on their listings (it can still ask to
-  deactivate one), nor research the venture; what you approved for them that
-  hadn't run yet isn't carried out. Parking the Etsy leg or the print-on-demand
-  venture stops new product lines of no venture in that channel too.
+  change, pin, post or blog about, or bet on their listings (it can still ask
+  to deactivate one), nor research the venture; what you approved for them
+  that hadn't run yet isn't carried out (your own Undo still is). Parking the
+  Etsy leg or the print-on-demand venture stops that channel's work for its
+  lines and for lines of no venture (parking print on demand stops the Etsy
+  leg's Printify products); a venture you backed sells on.
 
 **Each stage's rule, kept by Ember's code.** Before every plan, Ember's code
 parks a venture whose research brings no business case within 21 days of its
