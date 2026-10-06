@@ -1,8 +1,9 @@
 """Pinterest (0.13.0, Phase E2): pins that bring buyers to the owner's Etsy shop, from the owner's account.
 
-The owner creates the (business) account and a Pinterest app for it (its trial access posts to the owner's own
-account, which is all Ember needs), adds their Impressum link to the business profile, switches Pinterest on and sets
-the app's id, secret and redirect URI in the options, and connects the account in the dashboard (like Etsy: PKCE).
+The owner creates the (business) account and a Pinterest app for it (with standard access: a new app's trial access
+makes pins only in Pinterest's API sandbox, never on the owner's account), adds their Impressum link to the business
+profile, switches Pinterest on and sets the app's id, secret and redirect URI in the options, and connects the account
+in the dashboard (like Etsy: PKCE).
 Then:
 
 * the agent proposes a pin (``propose_pin``): an image it made, a title, a description, the link to one of Ember's

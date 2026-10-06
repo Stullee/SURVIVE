@@ -1690,9 +1690,11 @@ need the Etsy shop: each one links to one of Ember's live listings.
    (its website or "about" text): a board of pins for your shop is a public
    presence of your business (§ 5 DDG).
 2. Create an app for it at
-   [developers.pinterest.com](https://developers.pinterest.com/apps/). A new
-   app has **trial access**, which may post to your own account only: all
-   Ember needs. Note its **app ID** and **app secret**.
+   [developers.pinterest.com](https://developers.pinterest.com/apps/). Note
+   its **app ID** and **app secret**. A new app has **trial access**, which
+   can't make pins on Pinterest itself, not even on your own account: only in
+   Pinterest's API sandbox, where no one but you sees them. Ember needs
+   **standard access** (step 6).
 3. In the app's settings, add the redirect URI
    `https://localhost/ember-pinterest`, or whatever you set as **Pinterest
    redirect URI**; it must match exactly. Nothing needs to answer at that
@@ -1705,6 +1707,13 @@ need the Etsy shop: each one links to one of Ember's live listings.
    Pinterest then sends your browser to the redirect address, which shows an
    error page: that's expected. Copy the whole address from the address bar,
    paste it into the dashboard and press **Finish connecting**.
+6. On the app's page at developers.pinterest.com, request **standard
+   access**. Pinterest asks for a screen recording of the app using its API,
+   with the connection of step 5 (Pinterest's page asking you to allow
+   access). Until Pinterest grants it, every pin Ember makes fails with "Not
+   pinned: Pinterest refused it (HTTP 403: Apps with Trial access may not
+   create Pins in production ...)": nothing is pinned. Ember doesn't use the
+   sandbox: no buyer would see its pins.
 
 The connection lasts as long as Pinterest says when it is made (60 days from
 its last use if Pinterest doesn't say). Every six hours while the app runs and
