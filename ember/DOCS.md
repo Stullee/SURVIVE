@@ -2152,7 +2152,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.25.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.25.2 (by /u/your name)`.
 
 ## Amazon KDP
 
