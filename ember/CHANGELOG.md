@@ -3,6 +3,11 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.25.3
+
+Nothing changes for you: the tests of Ember's code close every database connection they open, as Python 3.13 asks.
+Ember's own code already closed each of its connections, and Ember runs on Python 3.12.
+
 ## 0.25.2
 
 Nothing changes for you: the guard that keeps the network, other programs and new threads out of your tool handlers
