@@ -3,7 +3,8 @@
 The image build runs this on every platform, so a library that doesn't work there (a missing native part, say)
 fails the build instead of the owner's first product. 0.23.0: every layout make_image draws (a text photo and a
 poster too), a print file of a photo (resize_image) and a Nebenkostenabrechnung (make_cost_statement: its formulas
-worked out and checked, its cover drawn).
+worked out and checked, its cover drawn). 0.25.0: a book's interior at a KDP trim size and its KDP covers (a JPEG in a
+PDF, and an ebook's JPEG).
 """
 
 from __future__ import annotations
@@ -87,6 +88,10 @@ STATEMENT = {
 }
 
 
+# 0.25.0: a book's interior at a KDP trim size, with the 24 pages KDP prints at least
+BOOK = "---\npage: 6x9\nmargin: 12\n---\n# Self-test book\n\n" + "Text.\n\n::: pagebreak\n" * 23 + "The end.\n"
+
+
 def run() -> list[str]:
     """What was made, one line each; raises on the first failure."""
     with tempfile.TemporaryDirectory() as folder:
@@ -95,6 +100,7 @@ def run() -> list[str]:
         jail.write("test.md", DOCUMENT)
         jail.write("test.json", json.dumps(SHEET))
         jail.write("statement.json", json.dumps(STATEMENT, ensure_ascii=False))
+        jail.write("book.md", BOOK)
         with netguard.sealed():
             made = [
                 make.document(jail, "test.md", "out/test.pdf"),
@@ -104,6 +110,9 @@ def run() -> list[str]:
                 make.image(jail, "out/poster.png", "", "Self-test", "A line", shape="landscape", layout="poster"),
                 make.resize(jail, "out/photo.png", "out/print.png", 1200, 900),
                 make.cost_statement(jail, "statement.json", "out/statement.xlsx"),
+                make.document(jail, "book.md", "out/book.pdf", word_copy=False, previews=False),
+                make.kdp_cover(jail, "out/book-cover.pdf", "out/poster.png", "out/book.pdf", "cream", "A back | text"),
+                make.kdp_cover(jail, "out/ebook-cover.jpg", "out/poster.png"),
             ]
             if images.page_count(jail.read_bytes("out/test.pdf")) != 2:
                 raise AssertionError("the test document should have two pages")

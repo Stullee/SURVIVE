@@ -403,7 +403,15 @@ def _system(state: AppState) -> str:
 
 # 0.13.0: the owner's data for their website's Impressum, shown only as flags (the website's name, language and address
 # are public).
-PERSONAL_OPTIONS = ("email_owner_name", "site_owner_name", "site_address", "site_email", "site_phone", "site_vat_id")
+PERSONAL_OPTIONS = (
+    "email_owner_name",
+    "site_owner_name",
+    "site_address",
+    "site_email",
+    "site_phone",
+    "site_vat_id",
+    "kdp_author",  # 0.25.0: the author name of the owner's books (theirs, or a pen name)
+)
 
 
 def _options(state: AppState) -> str:

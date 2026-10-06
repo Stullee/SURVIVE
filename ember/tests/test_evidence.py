@@ -171,13 +171,14 @@ def test_a_venture_cycle_has_its_own_tools_and_texts() -> None:
     assert "evidence" in venture and "evidence" not in ordinary
     assert venture["guide"]["input_schema"]["properties"]["topic"]["enum"] == ["ventures"]
     # 0.13.0: a channel's manual comes with the channel
-    channels = ("pinterest", "printify", "website", "blog", "bluesky")  # 0.14.0: the blog's too, 0.19.0: Bluesky's
+    # 0.14.0: the blog's too, 0.19.0: Bluesky's, 0.25.0: KDP's
+    channels = ("pinterest", "printify", "website", "blog", "bluesky", "kdp")
     topics = [topic for topic in tools.GUIDES if topic not in channels]
     assert ordinary["guide"]["input_schema"]["properties"]["topic"]["enum"] == topics
     every = {
         d["name"]: d
         for d in tools.definitions(
-            mail=True, etsy=True, pinterest=True, printify=True, site=True, blog=True, bluesky=True
+            mail=True, etsy=True, pinterest=True, printify=True, site=True, blog=True, bluesky=True, kdp=True
         )
     }
     assert every["guide"]["input_schema"]["properties"]["topic"]["enum"] == list(tools.GUIDES)

@@ -138,6 +138,10 @@ options:
   # folder are optional options too.
   blog_enabled: false
   blog_sftp_port: 22
+  # Amazon KDP (see the Documentation tab): books the agent makes (an ebook or a paperback: its text, its cover, its
+  # listing), checked against KDP's rules; after you approve one, you publish it at KDP from your own account. The
+  # author name the books carry is an optional option too.
+  kdp_enabled: false
   # Ember live on your website (see the Documentation tab): a page with its numbers and a banner for your home page,
   # uploaded by Ember over the blog's SFTP login every 15 minutes, without asking each time. Switch off the parts you
   # don't want to show.
@@ -246,6 +250,8 @@ schema:
   blog_sftp_password: password?
   blog_sftp_host_key: str(,800)?
   blog_sftp_folder: str(,200)?
+  kdp_enabled: bool
+  kdp_author: str(,100)?
   live_enabled: bool
   live_banner: bool
   live_show_money: bool

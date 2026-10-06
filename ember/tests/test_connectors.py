@@ -37,6 +37,7 @@ def test_every_request_has_an_action_class_and_its_flags() -> None:
     assert connectors.class_of("etsy_edit", json.dumps({"listing_id": 1, "state": "renew"})).name == "etsy.renew"
     assert connectors.class_of("etsy_edit", {"listing_id": 1, "state": "deactivate"}).name == "etsy.deactivate"
     assert connectors.class_of("reddit_link").name == "reddit.post"
+    assert connectors.class_of("kdp_package").name == "kdp.publish"
     assert connectors.class_of(None, None, "create_account").name == "owner.create_account"
     assert connectors.class_of(None, None, "spend_money").name == "owner.spend_money"
     assert connectors.class_of(None, None, "publish").name == "owner.other"
@@ -45,7 +46,8 @@ def test_every_request_has_an_action_class_and_its_flags() -> None:
     assert (listing.costs_money, listing.publishes_under_owner_identity, listing.undo) == (True, True, "deactivate it")
     for c in connectors.CLASSES.values():
         assert c.reversible == bool(c.undo) and c.connector == c.name.split(".")[0]
-        assert c.by_owner == (c.connector in ("owner", "reddit")), c.name  # Ember's code can't carry those out
+        # Ember's code can't carry those out (0.25.0: nor a KDP book: KDP has no API)
+        assert c.by_owner == (c.connector in ("owner", "reddit", "kdp")), c.name
 
 
 def test_the_email_executor_writes_the_shared_journal(data_dir: Path) -> None:

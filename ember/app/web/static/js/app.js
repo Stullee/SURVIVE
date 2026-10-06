@@ -2427,11 +2427,11 @@
 
   function isApproved(status) { return status === "approved" || status === "approved_with_changes"; }
 
-  // Requests the agent's code carries out itself after approval ("email") or prepares for the owner ("reddit_link").
-  // Without a parsed action they are shown like any other request.
+  // Requests the agent's code carries out itself after approval ("email") or prepares for the owner ("reddit_link",
+  // 0.25.0: "kdp_package"). Without a parsed action they are shown like any other request.
   function executorOf(a) {
     if (!isObject(a.action)) return null;
-    return a.executor === "email" || a.executor === "reddit_link" || a.executor === "etsy_listing" || a.executor === "etsy_edit" ||
+    return a.executor === "email" || a.executor === "reddit_link" || a.executor === "kdp_package" || a.executor === "etsy_listing" || a.executor === "etsy_edit" ||
       a.executor === "pinterest_pin" || a.executor === "pinterest_delete" ||
       a.executor === "bluesky_post" || a.executor === "bluesky_delete" ||
       a.executor === "printify_product" || a.executor === "printify_delete" ||
@@ -2496,7 +2496,7 @@
       kind: "approval", rows: sorted, groups: APPROVAL_GROUPS, viewKey: [titles, email],
       empty: emptyState("div", "No requests.", "Before the agent publishes, contacts someone or spends money, it asks you here."),
       view: function (a) { return approvalView(a, titles, email); },
-      actionKey: function (a) { return [a.status, a.version, executorOf(a) || "", executionStatus(a), a.reddit_url || ""].join("|"); },
+      actionKey: function (a) { return [a.status, a.version, executorOf(a) || "", executionStatus(a), a.reddit_url || "", isObject(a.kdp) ? JSON.stringify(arr(a.kdp.files).map(function (f) { return f.unchanged; })) : ""].join("|"); },
       actions: approvalActions,
       panel: function (it, mode) { return approvalPanel(it, mode, email); },
     });
@@ -2664,6 +2664,7 @@
     var content;
     if (executor === "email") content = emailDraft(action, final);
     else if (executor === "reddit_link") content = redditDraft(action);
+    else if (executor === "kdp_package") content = kdpDraft(a);
     else if (executor === "etsy_listing") content = etsyDraft(action, final);
     else if (executor === "etsy_edit") content = etsyChangeDraft(action, payload, final);
     else {
@@ -2675,10 +2676,11 @@
     var note = null;
     if (todo && !executor) note = "You approved this; carry it out, then mark it done or failed.";
     if (todo && executor === "reddit_link") note = "You approved this; post it on Reddit with the button below, then mark it done (with the link to your post) or failed.";
+    if (todo && executor === "kdp_package") note = "You approved this; publish it at KDP with the button below (the files are linked above), then mark it done (with the book's link at Amazon) or failed.";
     return [
       h("div", { class: "item-head" },
         h("h3", { text: a.title || "Untitled request" }), plainChip(APPROVAL_TYPES[a.type] || sentence(String(a.type || "other").replace(/_/g, " "))),
-        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : isPinterest(a) ? "Pinterest" : isBluesky(a) ? "Bluesky" : isPrintify(a) ? "Printify" : isSite(a) ? "Website" : isLive(a) ? "Live page" : "Reddit") : null,
+        executor ? plainChip(executor === "email" ? "Email" : isEtsy(a) ? "Etsy" : isPinterest(a) ? "Pinterest" : isBluesky(a) ? "Bluesky" : isPrintify(a) ? "Printify" : isSite(a) ? "Website" : isLive(a) ? "Live page" : executor === "kdp_package" ? "KDP" : "Reddit") : null,
         statusChip, a.simulated ? testTag() : null),
       a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
       actionFlags(a.action_class),
@@ -2697,6 +2699,7 @@
       note ? h("p", { class: "todo-note" }, h("span", { "aria-hidden": "true", text: "☐ " }), note) : null,
       a.status === "pending" && executor === "email" ? h("p", { class: "send-note", text: sendNote(email, name) }) : null,
       a.status === "pending" && executor === "reddit_link" ? h("p", { class: "send-note", text: "After you approve, you post it yourself: this card then offers a button that opens Reddit with it filled in, and Copy buttons." }) : null,
+      a.status === "pending" && executor === "kdp_package" ? h("p", { class: "send-note", text: "After you approve, you publish it yourself at KDP from your account (Amazon has no API for it): this card then offers a button that opens your KDP Bookshelf, and Copy buttons. KDP charges nothing to publish; Amazon keeps its share of each sale." }) : null,
       a.status === "pending" && executor === "etsy_listing" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this listing in your Etsy shop itself: a draft, its photos and files, then live. Etsy charges USD 0.20 per listing." }) : null,
       a.status === "pending" && executor === "etsy_edit" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this change to the live listing itself. Etsy charges nothing for it." }) : null,
       a.status === "pending" && executor === "pinterest_pin" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this pin on your Pinterest account itself (a new board first, if it names one), exactly as shown. Pinterest charges nothing for it; your Undo deletes it." }) : null,
@@ -2753,6 +2756,51 @@
         comment ? null : [h("dt", { text: "Title" }), h("dd", { "data-copy": "title", text: asText(action.title) || "–" })]),
       h("h4", { class: "small-head", text: comment ? "Comment" : "Body" }),
       h("pre", { class: "payload capped", tabindex: "0", "data-copy": "body", text: asText(action.body) }));
+  }
+
+  // 0.25.0: a book for Amazon KDP, which the owner publishes from their account: every field as KDP asks for it, the
+  // files as they are in the workspace now (a file changed since it was proposed is flagged), and KDP's AI question.
+  function kdpDraft(a) {
+    var action = a.action;
+    var info = isObject(a.kdp) ? a.kdp : {};
+    var paperback = action.format === "paperback";
+    var files = arr(info.files);
+    return h("div", { class: "draft" },
+      h("p", { class: "payload-note" }, h("span", { "aria-hidden": "true", text: "! " }), "Written by the agent; check it before acting."),
+      h("dl", { class: "draft-grid" },
+        h("dt", { text: "Format" }), h("dd", { text: paperback ? "Paperback" : "Kindle eBook" }),
+        h("dt", { text: "Title" }), h("dd", { "data-copy": "kdp-title", text: asText(action.title) || "–" }),
+        action.subtitle ? [h("dt", { text: "Subtitle" }), h("dd", { "data-copy": "kdp-subtitle", text: asText(action.subtitle) })] : null,
+        h("dt", { text: "Author" }), h("dd", { text: asText(action.author) || "Yours to enter (or set kdp_author in the Configuration tab)" }),
+        h("dt", { text: "Language" }), h("dd", { text: asText(action.language) || "–" }),
+        h("dt", { text: "Keywords" }), h("dd", null, h("ol", { class: "kdp-list" }, arr(action.keywords).map(function (k) { return h("li", { text: asText(k) }); }))),
+        h("dt", { text: "Categories" }), h("dd", null, h("ol", { class: "kdp-list" }, arr(action.categories).map(function (c) { return h("li", { text: asText(c) }); }))),
+        h("dt", { text: "Price" }), h("dd", { text: asText(action.price) + " USD at Amazon.com" + (info.royalty ? ": " + asText(info.royalty) : "") }),
+        paperback ? [h("dt", { text: "Print" }), h("dd", { text: asText(info.print) + (action.low_content ? "; low-content book (no ISBN needed)" : "") })] : null,
+        h("dt", { text: "Files" }), h("dd", null, files.map(function (f, i) {
+          var role = f.role === "cover" ? "Cover" : paperback ? "Interior" : "Manuscript";
+          return [i ? h("br") : null, role + ": ", h("a", { href: wsProductUrl(String(f.path), false), text: String(f.path) }), " (" + byteSize(num(f.bytes) || 0) + ")",
+            f.unchanged === false ? h("strong", { class: "kdp-changed", text: " changed or deleted since it was proposed: check it, or reject and ask for it again" }) : null];
+        })),
+        h("dt", { text: "AI content" }), h("dd", { text: "KDP asks whether AI tools made the book: " + asText(info.ai_answer) })),
+      !paperback && files.length > 1 ? h("div", { class: "etsy-photos kdp-cover" }, h("a", { href: wsProductUrl(String(files[1].path), true), target: "_blank", rel: "noopener" },
+        h("img", { src: wsProductUrl(String(files[1].path), true), alt: "Cover: " + String(files[1].path), loading: "lazy" }))) : null,
+      h("h4", { class: "small-head", text: "Description (as Amazon shows it, with the AI line)" }),
+      h("pre", { class: "payload capped", tabindex: "0", "data-copy": "kdp-description", text: asText(info.description || action.description) }));
+  }
+
+  // 0.25.0: the owner's KDP Bookshelf, from the server: a real link only when it is a plain kdp.amazon.com https address.
+  function kdpLink(value) {
+    var url;
+    try { url = new URL(String(value || "")); } catch (e) { url = null; }
+    if (!url || !/^https:$/.test(url.protocol) || url.hostname !== "kdp.amazon.com" || url.port || url.username || url.password) return null;
+    var a = document.createElement("a");
+    a.className = "btn btn-primary";
+    a.setAttribute("href", url.href);
+    a.setAttribute("rel", "noopener noreferrer");
+    a.setAttribute("target", "_blank");
+    append(a, ["Open your KDP Bookshelf", h("span", { class: "visually-hidden", text: " (opens in a new tab)" })]);
+    return a;
   }
 
   function listingExecutionView(a, st) {
@@ -3011,12 +3059,13 @@
     return a;
   }
 
-  function copyButton(it, what, label) {
+  // A Reddit post's title or body; 0.25.0: or ``value``, which ``word`` names (a KDP book's fields).
+  function copyButton(it, what, label, value, word) {
     var b = h("button", { type: "button", class: "btn", "data-copy-button": what, text: label });
     b.addEventListener("click", function () {
       var action = it.row && isObject(it.row.action) ? it.row.action : {};
-      var text = asText(what === "title" ? action.title : action.body);
-      var word = what === "title" ? "title" : action.kind === "comment" ? "comment" : "body";
+      var text = value !== undefined ? asText(value) : asText(what === "title" ? action.title : action.body);
+      word = word || (what === "title" ? "title" : action.kind === "comment" ? "comment" : "body");
       copyText(text, it.view.querySelector('[data-copy="' + what + '"]'), function () { setItemStatus(it, "Copied the " + word + ".", "ok"); }, function (selected) {
         setItemStatus(it, selected ? "The browser didn't allow copying. The " + word + " is selected: press Ctrl+C (Cmd+C on a Mac) to copy it."
           : "This browser can't copy for you. Select the " + word + " above and copy it with Ctrl+C (Cmd+C on a Mac).", "error");
@@ -3052,6 +3101,8 @@
     if (a.status === "pending") {
       // A Reddit draft is posted by the owner, who can still edit it on Reddit: no separate "with changes".
       if (executor === "reddit_link") return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
+      // 0.25.0: a KDP book's files can't take changes: the owner changes words as they enter them at KDP.
+      if (executor === "kdp_package") return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
       // 0.13.0: a pin or a product is approved as it is (the agent proposes a better one after a rejection).
       if (isAsIs(a)) return [panelButton(it, "approve", "Approve"), panelButton(it, "reject", "Reject", true)];
       // A change of photos, files or category only has no words to change.
@@ -3078,6 +3129,13 @@
         if (a.action.kind !== "comment") tools.push(copyButton(it, "title", "Copy title"));
         tools.push(copyButton(it, "body", a.action.kind === "comment" ? "Copy comment" : "Copy body"));
       }
+      if (executor === "kdp_package") {
+        var book = isObject(a.kdp) ? a.kdp : {};
+        tools.push(kdpLink(book.bookshelf_url) || h("span", { class: "muted small no-link", text: "Open kdp.amazon.com yourself." }));
+        tools.push(copyButton(it, "kdp-title", "Copy title", a.action.title, "title"));
+        if (a.action.subtitle) tools.push(copyButton(it, "kdp-subtitle", "Copy subtitle", a.action.subtitle, "subtitle"));
+        tools.push(copyButton(it, "kdp-description", "Copy description", book.description || a.action.description, "description"));
+      }
       return tools.concat([panelButton(it, "done", "Mark done"), panelButton(it, "failed", "Mark failed")]);
     }
     return [];
@@ -3102,6 +3160,8 @@
           ", with a footer saying an AI agent wrote it.";
       } else if (executor === "reddit_link") {
         approveIntro = "After approving, you post it yourself: this card then offers a button that opens Reddit with it filled in, and Copy buttons. You can still edit it on Reddit before you post.";
+      } else if (executor === "kdp_package") {
+        approveIntro = "After approving, you publish it yourself at KDP from your account: this card then offers a button that opens your KDP Bookshelf, Copy buttons and the files. Change words there if you like, and say so when you mark it done.";
       } else if (executor === "etsy_listing") {
         approveIntro = name + " then creates this listing in your Etsy shop itself, with the photos and files shown, and publishes it (Etsy charges USD 0.20). You hear the result on this card.";
       } else if (executor === "etsy_edit") {
@@ -3161,6 +3221,7 @@
           return "Approved. " + name + " sends it itself; this card shows when it's sent.";
         }
         if (executor === "reddit_link") return "Approved. Post it with the button below, then mark it done or failed.";
+        if (executor === "kdp_package") return "Approved. Publish it at KDP with the button below, then mark it done (with the book's link) or failed.";
         if (executor === "etsy_listing") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " creates the listing itself; this card shows when it's live.";
         if (executor === "etsy_edit") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " changes the listing itself; this card shows when it's done.";
         if (executor === "pinterest_pin") return "Approved. " + name + " makes the pin itself; this card shows when it's live.";
@@ -3230,7 +3291,7 @@
       intro: [h("p", { text: "Tell " + name + " how it went; it reads this on its next wake." })],
       fields: [
         { name: "result_note", label: failed ? "What went wrong" : "What happened (optional)", rows: 3, max: 2000, required: failed, missing: "Say what went wrong." },
-        { name: "result_link", label: executor === "reddit_link" ? "Link to your Reddit post (optional)" : "Link to the result (optional)", inputmode: "url", check: linkProblem,
+        { name: "result_link", label: executor === "reddit_link" ? "Link to your Reddit post (optional)" : executor === "kdp_package" ? "Link to the book at Amazon (optional)" : "Link to the result (optional)", inputmode: "url", check: linkProblem,
           hint: name + " will see this link and can read it; don't paste links containing access tokens." },
       ],
       extra: extra,
