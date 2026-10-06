@@ -3,6 +3,11 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.24.1
+
+Nothing changes for you: the guard that keeps the network, other programs and new threads out of your tool handlers
+also stops threads on Python 3.13 and later. Ember runs on Python 3.12, where it already did.
+
 ## 0.24.0
 
 Fixes from the diagnostics of 2026-10-06: the quality critic names the listing it judged, your journal survives, and
