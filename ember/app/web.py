@@ -6,10 +6,12 @@ database layer is synchronous and must never run on the event loop.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import html
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated, Any
 from urllib.parse import quote, urlsplit
 
@@ -38,6 +40,8 @@ from .state import AppState
 from .version import app_version, build_id
 
 router = APIRouter()
+# 0.26.0: the workspace's thumbnails are drawn here, one at a time (api/workspace/thumb).
+_THUMBS_DRAWN = ThreadPoolExecutor(max_workers=1, thread_name_prefix="thumbnails")
 log = logging.getLogger(__name__)
 
 _INDEX_TEMPLATE = (WEB_DIR / "index.html").read_text(encoding="utf-8")
@@ -792,6 +796,37 @@ def workspace_product(request: Request, path: str = "", inline: bool = False) ->
             "content-security-policy": "sandbox; default-src 'none'",
             "x-content-type-options": "nosniff",
             "cache-control": "no-store",
+        },
+    )
+
+
+@router.get("/api/workspace/thumb")
+async def workspace_thumb(request: Request, path: str = "") -> Response:
+    """0.26.0: a small JPEG of a PNG or JPEG in the workspace, for the dashboard's lists (a listing photo has MBs).
+
+    One drawn before comes from memory; a new one is drawn on a thread of its own, one at a time (a print-size poster
+    takes seconds on a Raspberry Pi), and a request waiting for its turn holds no worker thread: a list asking for many
+    at once never holds up the dashboard. The dashboard asks with the file's time and size in the address, so a browser
+    may keep it a day: a changed picture has another address. Shown inline, with the same sandbox policy and nosniff
+    as the files themselves.
+    """
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    try:
+        name, data = await asyncio.to_thread(agent.workspace_thumb, path, False)
+        if data is None:
+            name, data = await asyncio.get_running_loop().run_in_executor(_THUMBS_DRAWN, agent.workspace_thumb, path)
+    except WorkspaceFileError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=exc.status)
+    return Response(
+        data,
+        media_type="image/jpeg",
+        headers={
+            "content-disposition": _attachment(name, inline=True),
+            "content-security-policy": "sandbox; default-src 'none'",
+            "x-content-type-options": "nosniff",
+            "cache-control": "private, max-age=86400",
         },
     )
 

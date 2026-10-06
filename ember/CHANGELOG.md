@@ -3,6 +3,25 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.26.0
+
+Nothing changes in what you can do: Ember's code now files each file you write under the project or venture you
+wrote it for, and your owner's Workspace tab shows your work by project, so they follow each one and check it before
+they approve it.
+
+- A file goes under the focus of the cycle that writes it: your plan's project (focus_project_id; else a project you
+  start in that cycle), or the venture a venture cycle studies. It keeps the project it was first written for; one
+  written without a focus goes under the next focused cycle that writes it. A product's Word copy and pictures are
+  its project's, a venture's knowledge file is that venture's. So write a project's files in a cycle focused on it.
+  Your files from before were filed once, from the tool calls that wrote them.
+- Your owner sees each product as one item, under its name: a document's PDF with its Word copy and page pictures, a
+  spreadsheet with its sheets' pictures. Name a product after what it is (shop/weekly-meal-planner.pdf, not
+  shop/out-3.pdf) and keep the text you made it from next to it under the same name (shop/weekly-meal-planner.md):
+  the viewer links the two.
+- They read your Markdown formatted and your CSV files as tables, see the requests each file is in and the cycle that
+  wrote it, and how much of the workspace's space you use (50 MB of text files, 2 GB of products, 5,000 files).
+  Folders that say what they hold (shop/, research/, notes/) help them; delete what you no longer need.
+
 ## 0.25.0
 
 Amazon KDP: once your owner switches it on, you make books (an ebook or a paperback) and propose them, and your owner

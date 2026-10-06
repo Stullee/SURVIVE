@@ -611,8 +611,10 @@ cycle the agent:
 - researches one venture (up to 8 web searches instead of 3), keeps what
   it learns in the venture's knowledge file (`ventures/<number>-<name>.md` in
   its workspace, which the card opens; a full one continues in
-  `…-2.md`, `…-3.md`) and scores it again. In a venture cycle every research
-  call is a venture's (the one it focuses on, unless it names another); in
+  `…-2.md`, `…-3.md`) and scores it again. The card's **Files** opens every
+  file written for the venture or its projects on the Workspace tab (0.26.0).
+  In a venture cycle every research call is a venture's (the one it focuses
+  on, unless it names another); in
   another cycle, one focused on a venture that isn't backed counts for it too
   (0.15.0), and a paid call that failed counts toward its budget. A
   question it asked in the last 30 days that found web pages (the same words,
@@ -1046,6 +1048,7 @@ no longer shown); a study that failed three times stops until you press
   sort; this browser keeps them. A card's **approvals waiting** opens them on
   the Approvals tab, its venture opens the venture, and a cycle in its log
   opens that cycle on the Activity tab (the last 10 cycles are there) (0.19.4).
+  Its **Files** shows the files written for it on the Workspace tab (0.26.0).
 - **Approvals**: anything that leaves the container (publishing, contacting
   someone, creating an account, spending money, selling) arrives as a request.
   Approve it, approve it with your own changes to the text, or reject it, with
@@ -1222,11 +1225,43 @@ no longer shown); a study that failed three times stops until you press
   click one to see its message (0.19.4).
 - **Workspace**: the files the agent writes in its own folder (drafts, notes,
   research), and the PDF, Word, Excel and picture files Ember made from them, so
-  you can review them before you approve anything. Open a text file to read it
-  or download it; it is always shown as plain text, never as a web page. Open a
-  product to see its pictures (a document's pages, a spreadsheet's first sheet)
-  and download the file. Check it before you use it. In dry run you see the
-  dry-run folder.
+  you can review them before you approve anything (0.26.0). Ember's code files
+  each file under the project or venture it was written for: the project the
+  agent's plan focused on when it wrote the file (or the venture a venture cycle
+  studied). A file keeps the project it was first written for; one written
+  without a focus goes under the next focused cycle that writes it; a product's
+  Word copy and pictures go with it; a venture's knowledge file is always that
+  venture's. Files from before 0.26.0 were filed once from the agent's tool
+  calls that wrote them. At the top, an overview: how many products and text
+  files there are, the last change, how much of its space the workspace uses
+  (text files may take 50 MB, products 2 GB, 5,000 files in 1,000 folders), the
+  files in requests that wait for your decision, **By project**, a card for
+  each project and venture with files (what it has, pictures of its latest
+  work, the newest first; a venture counts its projects' files too; click one
+  to show only its files), and **Latest work**, the newest items, those changed
+  since you last looked in this browser marked **New**. Below, **All files**: a
+  product's files are one item (a document's PDF, its Word copy and its page
+  pictures; a spreadsheet and the pictures of its sheets), shown with a small
+  picture of it. Sorted **By project** (the default), a venture's own files
+  come first, then a group for each of its projects; a project of no venture
+  is a group of its own, and the files filed under none come last. Search by
+  name, folder or project, show only documents, spreadsheets, pictures or text
+  files, choose a project or venture and a folder, sort by project, folder,
+  newest, name or size, and switch between a list and a grid (the kind, the
+  sort and the layout are kept in this browser). The list loads again by
+  itself after each of the agent's steps while the tab is open. Open an item to
+  see it in a viewer: its project and venture and the cycle that last wrote it
+  (each opens on its own tab), a product's pictures (a document's first pages,
+  every sheet of a spreadsheet; each opens at full size), a download for each
+  of its files, the requests it is in (**Open in Approvals**), and the text it
+  was made from. A text file shows formatted (Markdown with its headings, lists
+  and tables, a CSV file as a table, JSON indented) or as plain text, and you
+  can download or copy it. It is never shown as a web page: a link shows its
+  address, and HTML stays text. **←** and **→** step through the list you
+  opened it from; Escape closes it. On a request in Approvals that names files
+  of the workspace (a listing's photos and files, a book's, a pin's picture),
+  **View the files** opens them in the same viewer. Check a file before you use
+  it. In dry run you see the dry-run folder.
 - **Etsy listings** the agent proposed are approvals too: after you approve
   one, Ember creates it in your shop (see [Etsy](#etsy)).
 - **Upgrade requests**: ideas for changing Ember's code. Accept, decline, or mark
@@ -2152,7 +2187,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.25.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.26.0 (by /u/your name)`.
 
 ## Amazon KDP
 

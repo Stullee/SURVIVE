@@ -55,7 +55,7 @@ from ..integrations.mail import Mailbox, select_mailbox
 from ..integrations.pinterest_connection import PinterestConnection
 from ..integrations.printify_connection import PrintifyConnection
 from ..products import blog, site
-from . import agenda, audit, metrics, netguard, news, policy, stages, store, ventures, website
+from . import agenda, audit, metrics, netguard, news, policy, stages, store, ventures, website, workfiles
 from .loop import NO_STEP, CycleEnd, CycleRunner, recover_records
 from .memory import CAPS, Memory
 from .sandbox import Jail, SandboxError, kind_of
@@ -284,6 +284,11 @@ class Agent:
                 held_once(conn, scope, to_iso(now))
         except Exception:  # noqa: BLE001 - it must never keep the agent from starting
             log.exception("Could not hold the requests of the ventures the owner parked")
+        try:
+            with self.db.transaction() as conn:
+                workfiles.backfill(conn, scope, workspace, to_iso(now))  # 0.26.0: the files from before, once
+        except Exception:  # noqa: BLE001 - it must never keep the agent from starting
+            log.exception("Could not file the workspace's files under their projects")
         etsy_revenue.audit(self.db, self.clock, self.settings)  # 0.12.0: the owner turned it on or off
         self.take_back_while_off()  # 0.15.0: no owner_user_ids, or safe mode
         wake = self._meta_time("next_wake_at")
@@ -1317,6 +1322,13 @@ class Agent:
         from . import views
 
         return views.workspace_product(self, path)
+
+    def workspace_thumb(self, path: str, draw: bool = True) -> tuple[str, bytes | None]:
+        """0.26.0: (file name, JPEG) of a small copy of a PNG or JPEG file (with draw False, only one drawn before, or
+        None); raises views.WorkspaceFileError."""
+        from . import views
+
+        return views.workspace_thumb(self, path, draw)
 
 
 HELD_ONCE = "parks_held_0233"

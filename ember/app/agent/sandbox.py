@@ -132,6 +132,13 @@ class Jail:
     def __init__(self, root: Path, limits: Limits | None = None) -> None:
         self.root = root
         self.limits = limits or Limits()
+        # 0.26.0: while a tool call runs, the files it wrote or deleted ("write" or "delete", path), so Ember's code
+        # records which project they were for (agent/workfiles.py). None: nobody watches.
+        self.noticed: list[tuple[str, str]] | None = None
+
+    def _notice(self, what: str, parts: list[str]) -> None:
+        if self.noticed is not None:
+            self.noticed.append((what, "/".join(parts)))
 
     # --- paths ---
 
@@ -363,6 +370,7 @@ class Jail:
                     "delete old ones first"
                 )
             _replace(folder, name, data)
+        self._notice("write", [*folders, name])
         return len(data)
 
     def write_bytes(self, path: str, data: bytes) -> int:
@@ -386,6 +394,7 @@ class Jail:
                     "delete old ones first"
                 )
             _replace(folder, name, bytes(data))
+        self._notice("write", [*folders, name])
         return len(data)
 
     def _room_for_folders(self, folders: list[str]) -> None:
@@ -419,6 +428,7 @@ class Jail:
             except FileNotFoundError:
                 raise Missing(f"{path} doesn't exist") from None
             os.fsync(folder)
+        self._notice("delete", [*folders, name])
         # Remove folders left empty, deepest first.
         for depth in range(len(folders), 0, -1):
             parent, child = folders[: depth - 1], folders[depth - 1]

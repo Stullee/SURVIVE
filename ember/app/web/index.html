@@ -486,30 +486,76 @@
     </section>
 
     <section class="panel" id="panel-workspace" role="tabpanel" aria-labelledby="tab-workspace" hidden>
-      <article class="card">
+      <!-- 0.26.0: what the agent made at a glance, then every file. A product's files are one item (a document's PDF,
+           its Word copy and its page pictures), under the project or venture it was written for; an item opens in the
+           viewer (#ws-viewer, a dialog). -->
+      <article class="card ws-overview" id="ws-overview" aria-labelledby="ws-title">
         <div class="card-head">
           <div>
-            <h2>Files</h2>
-            <p class="card-sub" id="ws-sub">Drafts, notes and research the agent wrote in its own folder, and the PDF, Word, Excel and picture files Ember made from them. Read-only.</p>
+            <h2 id="ws-title">Workspace</h2>
+            <p class="card-sub" id="ws-sub">What the agent wrote in its own folder, and the PDF, Word, Excel and picture files Ember's code made from it. Read-only.</p>
           </div>
           <button type="button" class="btn" id="ws-refresh">Refresh</button>
         </div>
         <p class="form-status" id="ws-status" role="status"></p>
-        <p class="muted small ws-summary" id="ws-summary" hidden></p>
-        <div class="table-wrap ws-list" id="ws-list"></div>
+        <div class="empty-state" id="ws-empty" hidden></div>
+        <dl class="ws-stats" id="ws-stats" hidden></dl>
+        <ul class="ws-alerts" id="ws-alerts" aria-label="For your attention" hidden></ul>
+        <section class="ws-owners-part" id="ws-owners-part" aria-labelledby="ws-owners-title" hidden>
+          <h3 class="ws-part-head" id="ws-owners-title">By project <span class="ws-part-sub" id="ws-owners-note"></span></h3>
+          <ul class="ws-owners" id="ws-owners"></ul>
+        </section>
+        <section class="ws-recent-part" id="ws-recent-part" aria-labelledby="ws-recent-title" hidden>
+          <h3 class="ws-part-head" id="ws-recent-title">Latest work <span class="ws-part-note" id="ws-recent-note"></span></h3>
+          <ol class="ws-recent" id="ws-recent"></ol>
+        </section>
       </article>
-      <article class="card" id="ws-viewer" aria-labelledby="ws-file-title" hidden>
+
+      <article class="card ws-browser" id="ws-browser" aria-labelledby="ws-files-title" hidden>
         <div class="card-head">
           <div>
-            <h2 class="ws-file-title" id="ws-file-title" tabindex="-1"></h2>
-            <p class="muted small" id="ws-file-meta"></p>
+            <h2 id="ws-files-title" tabindex="-1">All files</h2>
+            <p class="card-sub" id="ws-files-sub">&nbsp;</p>
           </div>
-          <button type="button" class="btn" id="ws-download" disabled>Download</button>
         </div>
-        <p class="card-note" id="ws-file-note">Written by the agent. Check it before you use it.</p>
-        <p class="form-status" id="ws-file-status" role="status"></p>
-        <div class="ws-product" id="ws-product" hidden></div>
-        <pre class="ws-text" id="ws-text" tabindex="0" hidden></pre>
+        <!-- Outside #ws-list: a control with focus here never holds back the list's next render. -->
+        <div class="ws-toolbar" id="ws-toolbar">
+          <div class="ws-search">
+            <label class="visually-hidden" for="ws-search">Search the files</label>
+            <svg class="ws-search-icon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="5.25" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12.6 12.6l4.4 4.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <input type="search" id="ws-search" placeholder="Search by name, folder or project" autocomplete="off" spellcheck="false" aria-describedby="ws-result">
+          </div>
+          <div class="segmented ws-kinds" role="group" aria-label="Show">
+            <button type="button" class="seg" data-ws-kind="all" aria-pressed="true">All <span class="seg-count" id="ws-count-all"></span></button>
+            <button type="button" class="seg" data-ws-kind="document" aria-pressed="false">Documents <span class="seg-count" id="ws-count-document"></span></button>
+            <button type="button" class="seg" data-ws-kind="spreadsheet" aria-pressed="false">Spreadsheets <span class="seg-count" id="ws-count-spreadsheet"></span></button>
+            <button type="button" class="seg" data-ws-kind="picture" aria-pressed="false">Pictures <span class="seg-count" id="ws-count-picture"></span></button>
+            <button type="button" class="seg" data-ws-kind="text" aria-pressed="false">Text files <span class="seg-count" id="ws-count-text"></span></button>
+          </div>
+          <div class="ws-controls">
+            <label class="pj-sort" for="ws-owner">Project
+              <select id="ws-owner"></select>
+            </label>
+            <label class="pj-sort" for="ws-folder">Folder
+              <select id="ws-folder"></select>
+            </label>
+            <label class="pj-sort" for="ws-sort">Sort
+              <select id="ws-sort">
+                <option value="project">By project</option>
+                <option value="folder">By folder</option>
+                <option value="newest">Newest first</option>
+                <option value="name">By name</option>
+                <option value="size">Largest first</option>
+              </select>
+            </label>
+            <div class="segmented" role="group" aria-label="Layout">
+              <button type="button" class="seg" data-ws-view="list" aria-pressed="true">List</button>
+              <button type="button" class="seg" data-ws-view="grid" aria-pressed="false">Grid</button>
+            </div>
+          </div>
+        </div>
+        <p class="ws-result" id="ws-result" role="status"></p>
+        <div class="ws-list" id="ws-list" data-view="list"></div>
       </article>
     </section>
 
@@ -650,6 +696,47 @@
         <button type="button" class="btn btn-ghost" id="kill-cancel">Cancel</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- 0.26.0: one item of the workspace: a product's pictures and files, or a text (Markdown formatted, a table as a
+       table, always as plain text too). ← and → step through the list it was opened from. -->
+  <dialog class="ws-viewer" id="ws-viewer" aria-labelledby="ws-file-title" aria-describedby="ws-file-meta">
+    <div class="ws-v">
+      <header class="ws-v-head">
+        <span class="ws-v-icon" id="ws-file-icon" aria-hidden="true"></span>
+        <div class="ws-v-titles">
+          <h2 class="ws-file-title" id="ws-file-title" tabindex="-1"></h2>
+          <p class="ws-v-meta" id="ws-file-meta"></p>
+        </div>
+        <div class="ws-v-nav" role="group" aria-label="Other files">
+          <button type="button" class="btn btn-ghost ws-v-step" id="ws-prev"><span aria-hidden="true">←</span><span class="visually-hidden">Previous file</span></button>
+          <span class="ws-v-pos" id="ws-pos"></span>
+          <button type="button" class="btn btn-ghost ws-v-step" id="ws-next"><span class="visually-hidden">Next file</span><span aria-hidden="true">→</span></button>
+        </div>
+        <button type="button" class="btn btn-ghost ws-v-close" id="ws-close"><span aria-hidden="true">✕</span><span class="visually-hidden">Close</span></button>
+      </header>
+      <div class="ws-v-bar">
+        <div class="ws-v-actions" id="ws-actions"></div>
+        <div class="segmented" id="ws-as" role="group" aria-label="Show the text" hidden>
+          <button type="button" class="seg" data-ws-as="formatted" aria-pressed="true" id="ws-as-formatted">Formatted</button>
+          <button type="button" class="seg" data-ws-as="plain" aria-pressed="false">Plain text</button>
+        </div>
+      </div>
+      <div class="ws-v-body" id="ws-v-body" tabindex="0" role="region" aria-label="File">
+        <p class="ws-v-owner" id="ws-file-owner" hidden></p>
+        <p class="card-note" id="ws-file-note">Written by the agent. Check it before you use it.</p>
+        <ul class="ws-v-requests" id="ws-file-requests" aria-label="Requests with this file" hidden></ul>
+        <p class="form-status" id="ws-file-status" role="status"></p>
+        <div class="ws-product" id="ws-product" hidden></div>
+        <div class="ws-doc" id="ws-doc" hidden></div>
+        <pre class="ws-text" id="ws-text" hidden></pre>
+        <section class="ws-v-files" id="ws-file-parts" aria-labelledby="ws-file-parts-head" hidden>
+          <h3 class="small-head" id="ws-file-parts-head">Its files</h3>
+          <ul class="ws-parts" id="ws-parts"></ul>
+        </section>
+      </div>
+      <p class="visually-hidden" id="ws-announce" aria-live="polite"></p>
+    </div>
   </dialog>
 
   <footer class="footer">
