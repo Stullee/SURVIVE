@@ -977,9 +977,9 @@ or a sub-goal behind its pace, and asks the agent to act on it in its next plan.
 
 **Planning ahead.** Every plan sees the goal first, then the sub-goals that lead
 straight to it (one line each, never cut), then the rest by horizon (overdue, this
-week, this month, the next three months, later), and aims the cycle at the
-milestone due first, which the cycle's work step sees with its measure, how far it
-and the goal got, and what it leads to. Ember's code flags an empty roadmap,
+week, this month, the next three months, later), and aims the cycle at its line's
+milestone due first (0.28.0), which the cycle's work step sees with its measure,
+how far it and the goal got, and what it leads to. Ember's code flags an empty roadmap,
 overdue milestones, a week with nothing due and nothing planned beyond the month,
 and asks the agent to fix that in its next plan. The daily review checks the
 roadmap too, the goal's pace included.
