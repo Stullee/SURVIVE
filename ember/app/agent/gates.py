@@ -187,7 +187,7 @@ def _set(
     day (the one before was graded then) is due the next day, so a sync can read it by its date. 0.18.0: after a
     retry, ``later`` days later and at least ``floor`` days from today; it records the start, not the shift."""
     due = max(start + timedelta(days=gate.day + later), today + timedelta(days=floor)).isoformat()
-    goal = roadmap.root(conn, scope)  # 0.27.0: the owner's goal, or the money goal; everything leads to it
+    goal = roadmap.root(conn, scope)  # 0.29.0: the owner's goal, or the money goal; everything leads to it
     milestone_id = roadmap.create(
         conn,
         scope,

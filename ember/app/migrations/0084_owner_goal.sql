@@ -1,4 +1,4 @@
--- 0.27.0: the owner's goal leads the roadmap. The owner sets one goal at its root (earn an amount a month, or in all,
+-- 0.29.0: the owner's goal leads the roadmap. The owner sets one goal at its root (earn an amount a month, or in all,
 -- by a date): a milestone of theirs with owner_goal = 1 and a money metric Ember's code checks from the books
 -- (revenue_month_usd: the last 30 days; revenue_verified_usd: from counts_from on). Everything else on the roadmap
 -- leads to it. While it stands, Ember's code keeps no money goal of its own. It is the root (it leads to nothing), only

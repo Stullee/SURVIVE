@@ -78,7 +78,7 @@ _BAD_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _VERSION = re.compile(r"^\d{1,4}\.\d{1,4}\.\d{1,4}$")
 
 
-_THOUSANDS = re.compile(r"^\d{1,3}(,\d{3})+(\.\d{1,2})?$")  # 0.27.0: an amount written with thousands separators
+_THOUSANDS = re.compile(r"^\d{1,3}(,\d{3})+(\.\d{1,2})?$")  # 0.29.0: an amount written with thousands separators
 
 
 class OwnerError(ValueError):
@@ -749,7 +749,7 @@ class Owner:
             ):
                 raise OwnerError("parent_id", "parent_id must be a milestone number")
             with self.db.transaction() as conn:
-                if parent_id is None:  # 0.27.0: everything leads to the goal, the owner's milestones too
+                if parent_id is None:  # 0.29.0: everything leads to the goal, the owner's milestones too
                     top = roadmap.root(conn, self.scope)
                     parent_id = int(top["id"]) if top is not None else None
                 if parent_id is not None:
@@ -787,7 +787,7 @@ class Owner:
         return _reply(run)
 
     def set_goal(self, body: Any, who: str | None) -> Reply:
-        """0.27.0: the owner's goal at the roadmap's root: earn an amount (USD) a month or in total, by a date, which
+        """0.29.0: the owner's goal at the roadmap's root: earn an amount (USD) a month or in total, by a date, which
         everything on the roadmap leads to. One set while another stands takes its place; ``replaces`` names the goal
         the owner saw (none: they saw none), so one set meanwhile isn't replaced unseen."""
 

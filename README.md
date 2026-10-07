@@ -97,7 +97,7 @@ cover's width, the words and the price), and after the owner approves it, the
 owner publishes it at KDP from their own account with the card's fields and
 files. See the [Amazon KDP section of the docs](ember/DOCS.md#amazon-kdp).
 
-0.27.0 puts your goal at the head of the roadmap: you set it on the Roadmap tab
+0.29.0 puts your goal at the head of the roadmap: you set it on the Roadmap tab
 (earn an amount in USD a month, or in total, by a date), Ember's code checks it
 from the books, and everything on the roadmap leads to it. The agent splits it
 into sub-goals, this month's milestones and this week's steps; every milestone

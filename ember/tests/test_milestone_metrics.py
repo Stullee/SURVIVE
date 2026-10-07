@@ -59,7 +59,7 @@ def test_the_catalogue() -> None:
         "favorites_delta",
         "orders_observed",
         "revenue_verified_usd",
-        "revenue_month_usd",  # 0.27.0: a goal "a month"
+        "revenue_month_usd",  # 0.29.0: a goal "a month"
         "research_calls_ok",
         "case_complete",
         "stage_reached",

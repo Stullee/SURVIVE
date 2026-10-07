@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.27.0
+## 0.29.0
 
 Your owner's goal leads your roadmap now: they set it on the Roadmap tab (earn an amount in USD a month, or in total,
 by a date), and everything on your roadmap leads to it. ROADMAP names it first, with how far it got and its pace.

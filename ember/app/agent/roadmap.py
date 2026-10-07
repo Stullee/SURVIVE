@@ -179,7 +179,7 @@ def count(conn: sqlite3.Connection, scope: AgentScope, status: str | None = None
 
 
 def placed(conn: sqlite3.Connection, scope: AgentScope) -> int:
-    """0.15.0: the open milestones that take a place of MAX_OPEN: the agent's and the owner's (0.27.0: not the
+    """0.15.0: the open milestones that take a place of MAX_OPEN: the agent's and the owner's (0.29.0: not the
     owner's goal)."""
     where, params = scope.where()
     marks = ", ".join("?" for _ in PLACED_BY)
@@ -267,7 +267,7 @@ def create(
     replaces_id: int | None = None,
 ) -> int:
     """A new open milestone; one the owner adds is news for the agent (owner_action 'added', with their ``comment``).
-    With a metric (0.12.0), Ember's code checks it (metrics.grade). 0.27.0: ``owner_goal``, the owner's goal at the
+    With a metric (0.12.0), Ember's code checks it (metrics.grade). 0.29.0: ``owner_goal``, the owner's goal at the
     root (``set_goal``), counting from ``counts_from``; ``replaces_id``, the goal it took the place of."""
     owner = created_by == "owner"
     columns = {
@@ -376,7 +376,7 @@ def _money_level(conn: sqlite3.Connection, scope: AgentScope) -> int:
 
 
 def money_needed(conn: sqlite3.Connection, scope: AgentScope, spent: int) -> int:
-    """0.27.0: what the open money goal asks the last 30 days to bring (revenue less expenses, micros): its level
+    """0.29.0: what the open money goal asks the last 30 days to bring (revenue less expenses, micros): its level
     times the API spending ``spent`` in them."""
     return _money_level(conn, scope) * spent
 
@@ -413,7 +413,7 @@ def keep_money_goal(
     settle: bool = True,
 ) -> list[str]:
     """The goal at the roadmap's root, kept before every plan (``earned``: revenue less expenses, ``spent``: API
-    spending, both over the last MONEY_WINDOW_DAYS, in micros). 0.27.0: while the owner's goal stands, Ember's code
+    spending, both over the last MONEY_WINDOW_DAYS, in micros). 0.29.0: while the owner's goal stands, Ember's code
     keeps no money goal of its own (one still open gives way to it) and sets the owner's goal its decision points;
     otherwise it settles its money goal from the books (not without ``settle``: once a plan) and sets a new one, with
     its decision points, while none is open (none once the owner dropped one: then the roadmap is theirs to shape).
@@ -443,7 +443,7 @@ def keep_money_goal(
         moving += [int(step["id"]) for step in children(conn, goal["id"]) if step["status"] == "open"]
         happened.append(f"Ember's code closed the money goal #{goal['id']} {status}: {numbers}")
     where, params = scope.where()
-    dropped = conn.execute(  # 0.27.0: the owner's drop (one that gave way to their goal was Ember's code's)
+    dropped = conn.execute(  # 0.29.0: the owner's drop (one that gave way to their goal was Ember's code's)
         f"SELECT 1 FROM milestones WHERE {where} AND kind = 'money_goal' AND status = 'dropped' AND closed_by = 'owner'"
         " LIMIT 1",
         params,
@@ -484,7 +484,7 @@ def keep_money_goal(
     return happened + _adopted(conn, scope, goal_id, now)
 
 
-# --- the owner's goal (0.27.0) ---
+# --- the owner's goal (0.29.0) ---
 
 # The owner's goal leads the roadmap: an amount to earn a month (revenue_month_usd: the last 30 days) or in total
 # (revenue_verified_usd: from counts_from on), by a date, at its root. Ember's code checks it from the books
@@ -497,7 +497,7 @@ PACE_MARGIN = 10  # points of progress ahead of, or behind, the share of its tim
 
 
 def owner_goal(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | None:
-    """The owner's open goal, if any (one at a time: migration 0083)."""
+    """The owner's open goal, if any (one at a time: migration 0084)."""
     where, params = scope.where()
     return conn.execute(
         f"SELECT * FROM milestones WHERE {where} AND owner_goal = 1 AND status = 'open' LIMIT 1", params
@@ -683,9 +683,9 @@ def _nearest_open(conn: sqlite3.Connection, parent_id: int | None) -> int | None
 
 
 def adopt(conn: sqlite3.Connection, scope: AgentScope, root_id: int, now: str) -> list[int]:
-    """0.27.0: everything leads to the goal ``root_id``. An open milestone that leads to no open one (to none, or to
+    """0.29.0: everything leads to the goal ``root_id``. An open milestone that leads to no open one (to none, or to
     one that closed) is linked to the nearest open milestone above it, else to the goal (one Ember's code set, to the
-    goal: migration 0083); a decision point of a goal that closed goes with that goal. Returns the milestones
+    goal: migration 0084); a decision point of a goal that closed goes with that goal. Returns the milestones
     linked."""
     rows = open_milestones(conn, scope)
     open_ids = {int(r["id"]) for r in rows}
@@ -719,7 +719,7 @@ def _adopted(conn: sqlite3.Connection, scope: AgentScope, root_id: int, now: str
     ]
 
 
-# --- progress (0.27.0) ---
+# --- progress (0.29.0) ---
 
 
 @dataclass(frozen=True)
@@ -860,7 +860,7 @@ def owner_word(
 ) -> list[int]:
     """The owner's note on a milestone, their dropping it (its open steps with it), or their answer to the agent's
     proposed date (accept moves the date, a counted move; reject keeps it): news for the agent again (a new
-    owner_version). Returns the steps dropped with it. 0.27.0: a goal at the root (the owner's, or the money goal)
+    owner_version). Returns the steps dropped with it. 0.29.0: a goal at the root (the owner's, or the money goal)
     takes only its decision points with it: what leads to it goes on, and leads to the goal that stands next."""
     if action not in ("note", "drop", "accept", "reject"):
         raise ValueError("unknown owner action")
@@ -1079,7 +1079,7 @@ def _stake(row: Mapping[str, Any]) -> str:
 
 
 def _progressed(row: Mapping[str, Any], progress: Mapping[int, Progress] | None, full: bool = False) -> str:
-    """0.27.0: how far a milestone got, as a short clause ("" when nothing measures it before it is done): the share,
+    """0.29.0: how far a milestone got, as a short clause ("" when nothing measures it before it is done): the share,
     and for one measured by its steps or the books (``full``: by its metric too), where it stands; and its pace."""
     p = (progress or {}).get(int(row["id"]))
     if p is None or p.percent is None or p.basis not in ("metric", "books", "steps"):
@@ -1101,7 +1101,7 @@ def milestone_line(
 ) -> str:
     """One milestone for the planner: its number, title, date, and (with ``detail``) its measure and newest note; with
     a metric, where it stands; what it may cost and spent (``spent``: its work's cost by milestone), and its wait;
-    (0.16.3) what stands unlocked for it (``unlocks``); (0.27.0) how far it got (``progress``)."""
+    (0.16.3) what stands unlocked for it (``unlocks``); (0.29.0) how far it got (``progress``)."""
     due = _due(row)
     line = f"#{row['id']} {_q(row['title'], 100)} · due {_day(due)} ({when(due, today)})" + _progressed(row, progress)
     if detail and not _column(row, "metric"):
@@ -1121,7 +1121,7 @@ def _column(row: Mapping[str, Any], name: str) -> Any:
 
 
 def _top(rows: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
-    """The goal at the root among ``rows``: the owner's, else the money goal (0.27.0)."""
+    """The goal at the root among ``rows``: the owner's, else the money goal (0.29.0)."""
     rows = list(rows)
     return next((r for r in rows if is_goal(r)), None) or next(
         (r for r in rows if _column(r, "kind") == "money_goal"), None
@@ -1136,7 +1136,7 @@ def checks(
 ) -> list[str]:
     """Ember's code's notes on the roadmap's shape, for the planner: empty, overdue (not what waits, 0.12.0, nor a
     venture's first test in its week of grace, 0.16.3), checks due, spending over a milestone's budget, nothing
-    due this week, nothing planned beyond this month. 0.27.0: nothing of the agent's leads to the goal, and the goal
+    due this week, nothing planned beyond this month. 0.29.0: nothing of the agent's leads to the goal, and the goal
     or a sub-goal of it behind its pace."""
     if not rows:
         return [
@@ -1209,7 +1209,7 @@ def checks(
 def _behind(
     top: Mapping[str, Any], work: list[Mapping[str, Any]], progress: Mapping[int, Progress] | None
 ) -> list[str]:
-    """0.27.0: the goal, and the sub-goals that lead straight to it, behind their pace."""
+    """0.29.0: the goal, and the sub-goals that lead straight to it, behind their pace."""
     found = progress or {}
     notes = []
     p = found.get(int(top["id"]))
@@ -1241,7 +1241,7 @@ def goal_line(
     progress: Mapping[int, Progress] | None = None,
     detail: bool = False,
 ) -> str:
-    """A goal for the plan, compact on one line (0.12.0: the ROADMAP's cut took every goal); 0.27.0: a sub-goal of the
+    """A goal for the plan, compact on one line (0.12.0: the ROADMAP's cut took every goal); 0.29.0: a sub-goal of the
     goal at the root, with how far it got, and (``detail``: overdue or due this week) its newest note."""
     due = _due(row)
     links = "".join(f" · {name} #{row[f'{name}_id']}" for name in ("venture", "project") if row[f"{name}_id"])
@@ -1287,7 +1287,7 @@ def code_closed(closed: list[Mapping[str, Any]], since: str | None) -> list[str]
 
 
 def root_line(row: Mapping[str, Any], today: date, progress: Mapping[int, Progress] | None = None) -> str:
-    """0.27.0: the goal at the root, first in ROADMAP: the owner's, or the money goal standing in for it."""
+    """0.29.0: the goal at the root, first in ROADMAP: the owner's, or the money goal standing in for it."""
     due = _due(row)
     p = (progress or {}).get(int(row["id"]))
     where = ""
@@ -1315,12 +1315,12 @@ def planner_text(
     unlocks: Mapping[int, str] | None = None,
     progress: Mapping[int, Progress] | None = None,
 ) -> str:
-    """The ROADMAP section: a count by horizon, (0.27.0) the goal at the root with how far it got, and the checks
+    """The ROADMAP section: a count by horizon, (0.29.0) the goal at the root with how far it got, and the checks
     (what Ember's code closed since ``since`` among them); then the sub-goals (the open milestones that lead to the
     goal, or to no open one: what the rest is for) one line each, so a cut never takes them (0.12.0: with 18
     milestones, the cut took all 3 goals at every budget); then the other open milestones by horizon (the measure shown
     for what is overdue or due this week), and what was closed lately. 0.16.3 (analysis bug 5): each open milestone
-    says what stands unlocked for it (``unlocks``: policy.unlocked_text by milestone). 0.27.0: each says how far it
+    says what stands unlocked for it (``unlocks``: policy.unlocked_text by milestone). 0.29.0: each says how far it
     got (``progress``)."""
     open_ids = {int(r["id"]) for r in rows}
     top = _top(rows)
@@ -1379,8 +1379,8 @@ def focus_text(
     progress: Mapping[int, Progress] | None = None,
 ) -> str:
     """The brief's FOCUS for the plan's milestone: what it takes to be done and how to close it first (a cut takes
-    the end), (0.27.0) how far it got, then (0.12.0) the digest of the last cycle aimed at it (``last``), what it leads
-    to, (0.27.0) the goal at the root (``goal``) and what it serves, the owner's word, (0.16.3, analysis bug 5) what
+    the end), (0.29.0) how far it got, then (0.12.0) the digest of the last cycle aimed at it (``last``), what it leads
+    to, (0.29.0) the goal at the root (``goal``) and what it serves, the owner's word, (0.16.3, analysis bug 5) what
     stands unlocked for it (``unlocked``: policy.unlocked_text) and the notes."""
     due = _due(row)
     checked = metrics.status_text(row)
@@ -1395,7 +1395,7 @@ def focus_text(
             + f" Unmet by {ends} (a week after its date), Ember's code closes it missed and parks venture "
             f"#{row['venture_id']}. Its date never moves, and only your owner drops it."
         )
-    elif is_goal(row):  # 0.27.0: the owner's goal itself
+    elif is_goal(row):  # 0.29.0: the owner's goal itself
         how = (
             f"{checked}. It is your owner's goal: Ember's code closes it done once met, missed if its date passes "
             "first, and only your owner changes it. Work on what leads to it."
@@ -1462,7 +1462,7 @@ def news_line(row: Mapping[str, Any]) -> str:
     """The owner's latest word on a milestone, for FROM YOUR OWNER (texts JSON-quoted, like every owner line)."""
     name = f"milestone #{row['id']} {_q(row['title'])}"
     action = row["owner_action"]
-    if action == "added" and is_goal(row):  # 0.27.0
+    if action == "added" and is_goal(row):  # 0.29.0
         replaced = f" in place of #{row['replaces_id']}" if _column(row, "replaces_id") else ""
         line = (
             f"Your owner set their goal{replaced}: {name}, due {row['due']}: done when {_q(row['measure'])}. "
@@ -1494,7 +1494,7 @@ def news_line(row: Mapping[str, Any]) -> str:
 
 
 def review_text(conn: sqlite3.Connection, scope: AgentScope, today: date, since: str) -> str:
-    """The scorecard's ROADMAP: (0.27.0) the goal at the root and how far it got, what is overdue, due this week and
+    """The scorecard's ROADMAP: (0.29.0) the goal at the root and how far it got, what is overdue, due this week and
     planned further out, and what was closed and moved (``since``: the start of the period)."""
     rows = open_milestones(conn, scope)
     closed = closed_since(conn, scope, since, limit=50)

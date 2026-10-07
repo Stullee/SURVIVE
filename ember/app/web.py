@@ -651,7 +651,7 @@ def add_milestone(request: Request, body: Annotated[Any, Body()] = None) -> JSON
 
 @router.post("/api/roadmap/goal")
 def set_goal(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
-    """0.27.0: the owner's goal at the roadmap's root; the agent wakes to plan toward it (like a decision)."""
+    """0.29.0: the owner's goal at the roadmap's root; the agent wakes to plan toward it (like a decision)."""
     actions = _owner_actions(request)
     if actions is None:
         return NO_AGENT

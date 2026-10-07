@@ -2681,7 +2681,7 @@ def _parent(conn: Any, scope: AgentScope, parent_id: int, due: date, milestone_i
     parent = _open_milestone(conn, scope, parent_id)
     if milestone_id is not None and roadmap.leads_to(conn, milestone_id, parent_id):
         raise ToolError(f"milestone #{parent_id} leads to #{milestone_id} already")
-    # 0.27.0: the money goal stands in for the owner's: what leads to it may be due later (it leads to the next one)
+    # 0.29.0: the money goal stands in for the owner's: what leads to it may be due later (it leads to the next one)
     if due.isoformat() > parent["due"] and parent["kind"] != "money_goal":
         raise ToolError(
             f"milestone #{parent_id} is due {parent['due']}: a milestone leading to it is due by then at the latest"
@@ -2722,7 +2722,7 @@ def _metric(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tuple[metrics.
     if m.history:
         baseline = metrics.listing_counts(conn, ctx.scope, row, "views" if name == "views_delta" else "favorites")
     elif not m.since_set:  # how things are now: a target met already is no milestone
-        books = metrics.Books(  # 0.27.0: the books too (revenue_month_usd)
+        books = metrics.Books(  # 0.29.0: the books too (revenue_month_usd)
             ledger_scope(ctx.db, ctx.scope.mode),
             ctx.clock,
             ctx.db.get_meta(etsy_publisher.meta_key(ctx.scope.mode, "last_sync_at")),
@@ -2844,7 +2844,7 @@ def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tupl
         _parent(conn, ctx.scope, parent_id, due)
     else:
         top = roadmap.root(conn, ctx.scope)
-        if top is not None:  # 0.27.0: everything leads to the goal
+        if top is not None:  # 0.29.0: everything leads to the goal
             raise ToolError(
                 f"every milestone leads to the goal #{top['id']} {roadmap.title_q(top)}: give parent #{top['id']} "
                 "for a sub-goal of it, or the milestone it leads to"
@@ -3002,7 +3002,7 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     drop = "ask your owner to drop it" if theirs else "drop it (why)"
     changes: dict[str, Any] = {}
     fields = ("status", "due", "wait_for", "check_at", "parent_id", "venture_id", "project_id")
-    if roadmap.is_goal(row) and any(args.get(name) not in (None, "") for name in fields):  # 0.27.0
+    if roadmap.is_goal(row) and any(args.get(name) not in (None, "") for name in fields):  # 0.29.0
         raise ToolError(
             f"milestone #{mid} is your owner's goal: they set it and change it, and Ember's code checks it from the "
             "books. Work on what leads to it; a note is all you add to it"
@@ -3067,7 +3067,7 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         if (
             parent is not None
             and parent["status"] == "open"
-            and parent["kind"] != "money_goal"  # 0.27.0: as in _parent
+            and parent["kind"] != "money_goal"  # 0.29.0: as in _parent
             and moved_to.isoformat() > parent["due"]
         ):
             raise ToolError(

@@ -41,7 +41,7 @@ from . import ventures
 from .store import AgentScope
 
 FRESH_HOURS = 3  # Etsy's numbers count while the last sync is at most this old (it runs hourly)
-MONTH_DAYS = 30  # 0.27.0: revenue_month_usd's window, the money goal's too (roadmap.MONEY_WINDOW_DAYS)
+MONTH_DAYS = 30  # 0.29.0: revenue_month_usd's window, the money goal's too (roadmap.MONEY_WINDOW_DAYS)
 MAX_COUNT = 1_000_000
 MAX_USD = Decimal("100000")
 MICROS = 1_000_000
@@ -118,7 +118,7 @@ CATALOGUE: dict[str, Metric] = {
             "owner",
             since_set=True,
         ),
-        # 0.27.0: what a month brings now, the measure of a goal "a month" (the owner's, or a leg's toward it)
+        # 0.29.0: what a month brings now, the measure of a goal "a month" (the owner's, or a leg's toward it)
         Metric("revenue_month_usd", f"revenue less expenses recorded in the last {MONTH_DAYS} days", "usd", "owner"),
         Metric(
             "research_calls_ok",
@@ -379,10 +379,10 @@ def read(
         if m.history and not books.history:
             return Unread("the views history is off (your owner's etsy_stats_history option)")
         return _read_etsy(conn, scope, m, row, synced)
-    if m.name == "revenue_verified_usd":  # 0.27.0: from counts_from on, for a goal the owner raised
+    if m.name == "revenue_verified_usd":  # 0.29.0: from counts_from on, for a goal the owner raised
         first = _column(row, "counts_from") or books.clock.local_day(since).isoformat()
         return _read_revenue(conn, books.ledger, project_id, venture_id, first, now)
-    if m.name == "revenue_month_usd":  # 0.27.0: the owner's days of the last MONTH_DAYS, as the money goal counts them
+    if m.name == "revenue_month_usd":  # 0.29.0: the owner's days of the last MONTH_DAYS, as the money goal counts them
         first = books.clock.local_day(to_iso(from_iso(now) - timedelta(days=MONTH_DAYS))).isoformat()
         return _read_revenue(conn, books.ledger, project_id, venture_id, first, now)
     if m.name == "api_spend_usd":

@@ -1,4 +1,4 @@
-"""0.27.0: everything on the roadmap leads to the goal at its root. A milestone a test plans without a parent leads to
+"""0.29.0: everything on the roadmap leads to the goal at its root. A milestone a test plans without a parent leads to
 that goal, as the agent's would have to; the refusal itself is tested in test_owner_goal.py."""
 
 from __future__ import annotations

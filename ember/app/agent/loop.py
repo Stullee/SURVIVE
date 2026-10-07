@@ -254,7 +254,7 @@ class CycleRunner:
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
         self.news_kept: frozenset[news.Item] = frozenset()  # 0.15.0: the owner's news marked seen once the cycle ends
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
-        # 0.27.0: revenue less expenses and API spending over the last 30 days, as the last keeper read them
+        # 0.29.0: revenue less expenses and API spending over the last 30 days, as the last keeper read them
         self.money_numbers: tuple[int, int] | None = None
         self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
         self.slack_items: list[slack.Item] = []  # 0.18.0: the READY list the last ordinary plan was shown
@@ -672,7 +672,7 @@ class CycleRunner:
             self._keep_bets()  # 0.18.0: after the grading, from the same Etsy numbers
             predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
             self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
-            # 0.27.0: once more after the grading (the owner's goal met or missed: the money goal stands in for it) and
+            # 0.29.0: once more after the grading (the owner's goal met or missed: the money goal stands in for it) and
             # the gates (their new bars lead to the goal too); the money goal was settled already
             self._keep_money_goal(scope, status.runway.net_days, settle=False)
         if not keep:  # the diagnostics' preview: the money goal's numbers as they are
@@ -775,7 +775,7 @@ class CycleRunner:
                 ),
                 agenda=agenda.unseen(conn, self.scope),  # 0.13.0: what happened between cycles
                 reactive=self.reactive,
-                books=self.money_numbers,  # 0.27.0: the money goal's progress
+                books=self.money_numbers,  # 0.29.0: the money goal's progress
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any], venture_id: int | None = None) -> CallResult:
@@ -904,7 +904,7 @@ class CycleRunner:
                         replaced,
                         last=last,
                         unlocked=unlocked,
-                        goal=roadmap.root(conn, self.scope),  # 0.27.0
+                        goal=roadmap.root(conn, self.scope),  # 0.29.0
                         progress=roadmap.progress_for(conn, self.scope, today, self.money_numbers),
                     )
         ctx.state.focus_project_id = plan.focus_project_id
@@ -979,7 +979,7 @@ class CycleRunner:
         return taken
 
     def _money_numbers(self, books_scope: Any) -> tuple[int, int]:
-        """0.27.0: revenue less expenses and API spending over the last 30 days, in micros: what the money goal is
+        """0.29.0: revenue less expenses and API spending over the last 30 days, in micros: what the money goal is
         checked by, and where it stands."""
         now = self.clock.now()
         start = now - timedelta(days=roadmap.MONEY_WINDOW_DAYS)

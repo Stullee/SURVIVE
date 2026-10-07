@@ -231,7 +231,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "ventures_stamp": stamp,
         # So is the roadmap (api/roadmap); its tab shows how many milestones are overdue and how many proposed dates
         # wait for the owner.
-        # 0.27.0: and the goal at its root, for the Overview's tile
+        # 0.29.0: and the goal at its root, for the Overview's tile
         "roadmap": {"stamp": roadmap_stamp, "overdue": overdue, "proposals": proposals, "goal": goal_summary(agent)},
         # And the library (api/library, 0.12.0): this changes whenever a document or its study does.
         "library": {"stamp": library_stamp},
@@ -294,7 +294,7 @@ def _roadmap_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated:
     granted = conn.execute(  # 0.13.0: the owner's unlocks and what they carried
         f"SELECT COUNT(*), (SELECT COUNT(*) FROM policy_uses) FROM policy_grants WHERE {where}", params
     ).fetchone()
-    booked = conn.execute(  # 0.27.0: the goal's progress: revenue and expenses recorded (API costs: when a cycle ends)
+    booked = conn.execute(  # 0.29.0: the goal's progress: revenue and expenses recorded (API costs: when a cycle ends)
         "SELECT COALESCE((SELECT id FROM ledger WHERE type IN ('revenue', 'expense') ORDER BY id DESC LIMIT 1), 0)"
     ).fetchone()
     return (
@@ -396,7 +396,7 @@ def library_document(agent: Agent, document_id: int) -> dict[str, Any] | None:
 
 
 def _goal_books(agent: Agent) -> tuple[int, int]:
-    """0.27.0: revenue less expenses and API spending over the last 30 days, in micros: the money goal's numbers."""
+    """0.29.0: revenue less expenses and API spending over the last 30 days, in micros: the money goal's numbers."""
     books_scope = agent.economy.life.scope()
     now = agent.clock.now()
     start = now - timedelta(days=roadmap.MONEY_WINDOW_DAYS)
@@ -407,7 +407,7 @@ def _goal_books(agent: Agent) -> tuple[int, int]:
 
 
 def _goal_reading(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope, row: Any) -> dict[int, int]:
-    """0.27.0: the owner's goal read from the books now (Ember's code reads it before every plan; the owner sees what
+    """0.29.0: the owner's goal read from the books now (Ember's code reads it before every plan; the owner sees what
     they recorded at once), by its number ({} without one)."""
     if row is None or not roadmap.is_goal(row):
         return {}
@@ -430,7 +430,7 @@ def _progress_json(p: roadmap.Progress | None) -> dict[str, Any] | None:
 
 
 def _goal_json(row: Any, p: roadmap.Progress | None, today: Any) -> dict[str, Any]:
-    """0.27.0: the goal at the roadmap's root for the dashboard: the owner's, or the money goal standing in for it."""
+    """0.29.0: the goal at the roadmap's root for the dashboard: the owner's, or the money goal standing in for it."""
     due = roadmap.parse_day(row["due"]) or today
     mine = roadmap.is_goal(row)
     return {
@@ -454,7 +454,7 @@ def _goal_json(row: Any, p: roadmap.Progress | None, today: Any) -> dict[str, An
 
 
 def goal_summary(agent: Agent) -> dict[str, Any] | None:
-    """0.27.0: the goal at the roadmap's root and how far it got, for the Overview's tile (None: no goal stands)."""
+    """0.29.0: the goal at the roadmap's root and how far it got, for the Overview's tile (None: no goal stands)."""
     scope = agent.scope()
     today = agent.clock.today()
     with agent.db.connection() as conn:
@@ -476,11 +476,11 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
     scope = agent.scope()
     simulated = 1 if agent.mode == "dry_run" else 0
     today = agent.clock.today()
-    earned, spent = _goal_books(agent)  # 0.27.0: the money goal's numbers, now
+    earned, spent = _goal_books(agent)  # 0.29.0: the money goal's numbers, now
     with agent.db.connection() as conn:
         rows = roadmap.all_milestones(conn, scope)
         effort = roadmap.effort(conn, scope)
-        # 0.27.0: the goal at the root (its reading now, from the books), and how far every milestone got
+        # 0.29.0: the goal at the root (its reading now, from the books), and how far every milestone got
         top = roadmap.root(conn, scope)
         readings = _goal_reading(agent, conn, scope, top)
         counted = {int(r["id"]): r for r in [*rows, *roadmap.tree_rows(conn, scope)]}
@@ -522,9 +522,9 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
             {
                 "id": m["id"],
                 "parent_id": m["parent_id"],
-                "kind": m["kind"],  # 0.27.0: Ember's code's money_goal, decision or first_test
-                "owner_goal": roadmap.is_goal(m),  # 0.27.0: the owner's goal at the root
-                "progress": _progress_json(found.get(int(m["id"]))),  # 0.27.0: how far it got
+                "kind": m["kind"],  # 0.29.0: Ember's code's money_goal, decision or first_test
+                "owner_goal": roadmap.is_goal(m),  # 0.29.0: the owner's goal at the root
+                "progress": _progress_json(found.get(int(m["id"]))),  # 0.29.0: how far it got
                 "venture_id": m["venture_id"],
                 "venture_title": ventured.get(m["venture_id"]) if m["venture_id"] else None,
                 "project_id": m["project_id"],
@@ -542,7 +542,7 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
                 "closed_by": m["closed_by"],  # "agent": its word only, shown as self-reported (0.12.0)
                 # 0.12.0: a metric Ember's code checks it by, its target and where it stands
                 "metric": m["metric"],
-                # 0.27.0: the owner's goal as read from the books now
+                # 0.29.0: the owner's goal as read from the books now
                 "checked": metrics.progress_text(_read_now(m, readings, agent)) or None,
                 "notes": m["notes"],
                 "created_by": m["created_by"],
@@ -603,11 +603,11 @@ def roadmap_view(agent: Agent) -> dict[str, Any]:
             "open": roadmap.MAX_OPEN,
             "owner_slots": roadmap.OWNER_SLOTS,
             "moves": roadmap.MAX_MOVES,
-            "goal_min_days": roadmap.GOAL_DAYS_MIN,  # 0.27.0: the owner's goal
+            "goal_min_days": roadmap.GOAL_DAYS_MIN,  # 0.29.0: the owner's goal
             "goal_max_usd": float(metrics.MAX_USD),
             "window_days": roadmap.MONEY_WINDOW_DAYS,
         },
-        # 0.27.0: the goal at the root (None: none stands), and the owner's last goal once it was met or missed and
+        # 0.29.0: the goal at the root (None: none stands), and the owner's last goal once it was met or missed and
         # none of theirs stands
         "goal": _goal_json(top, found.get(int(top["id"])), today) if top is not None else None,
         "last_goal": (

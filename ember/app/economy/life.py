@@ -89,7 +89,7 @@ class Runway:
 
 
 def ledger_scope(db: Database, mode: str) -> Scope:
-    """Which ledger rows belong to ``mode``'s economy now (0.27.0: for the agent's tools too, which read the books
+    """Which ledger rows belong to ``mode``'s economy now (0.29.0: for the agent's tools too, which read the books
     through a metric such as revenue_month_usd)."""
     if mode == "live":
         return Scope("live")

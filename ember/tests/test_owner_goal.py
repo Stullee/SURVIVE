@@ -1,4 +1,4 @@
-"""0.27.0: the owner's goal leads the roadmap. The owner sets one goal at its root (earn an amount a month, or in total,
+"""0.29.0: the owner's goal leads the roadmap. The owner sets one goal at its root (earn an amount a month, or in total,
 by a date), Ember's code checks it from the books, and everything else leads to it: the agent splits it into sub-goals,
 and Ember's code links whatever leads to no goal. While it stands, the money goal Ember's code kept gives way to it;
 once it closes (met, missed, removed), the money goal stands in until the owner sets the next one. Every milestone says

@@ -63,7 +63,7 @@
     pj: { filter: loadPref("ember-projects-filter", "open"), sort: loadPref("ember-projects-sort", "status") },
     // The roadmap (0.11.0): loaded while its tab is open, again whenever the dashboard's roadmap stamp changes.
     rm: { data: null, byId: {}, stamp: null, busy: false, again: false, error: null, selected: null, saving: false },
-    // 0.27.0: the owner's goal: its form is being saved, its removal is being confirmed or sent
+    // 0.29.0: the owner's goal: its form is being saved, its removal is being confirmed or sent
     goal: { saving: false, removing: false },
     // The library (0.12.0): loaded while its tab is open, again whenever the dashboard's library stamp changes.
     // docs: document id -> its text and learnings, loaded when the owner opens them.
@@ -618,7 +618,7 @@
     section("header", [agent, d.system.version, d.mode, arr(d.lives).length, economy.simulated_note], null, function () { renderHeader(d, agent); });
     safely("controls", function () { renderControls(agent); });
     section("kpis", [d.agent, d.economy, d.mode, d.now && d.now.started_at, minute], ["kpis"], function () { renderKpis(d, agent); });
-    section("goal", [d.roadmap && d.roadmap.goal, agent.name, minute], null, function () { renderGoalStrip(d); });  // 0.27.0
+    section("goal", [d.roadmap && d.roadmap.goal, agent.name, minute], null, function () { renderGoalStrip(d); });  // 0.29.0
     safely("badges", function () { renderBadges(d); });
 
     var dead = agent.state === "dead" && isObject(d.memorial);
@@ -8615,7 +8615,7 @@
   // Where Ember is heading: goals for the next months, the milestones that lead to them and this week's steps, each
   // with a date and a measure of done. Drawn as a timeline (a row per milestone, under the goal it leads to; today
   // marked) and listed below as cards by horizon. The owner adds milestones, leaves notes and drops them.
-  // 0.27.0: the owner's goal leads it (its card first, with its form), then the goal tree: every milestone under the
+  // 0.29.0: the owner's goal leads it (its card first, with its form), then the goal tree: every milestone under the
   // one it leads to, with how far it got.
 
   var MILESTONE_STATE = {
@@ -8945,7 +8945,7 @@
       num(m.moves) > 0 ? h("p", { class: "muted", text: "Moved " + plural(m.moves, "time") + "; first due " + fmtDay(m.first_due) }) : null,
       m.proposed_due ? h("p", { class: "muted", text: agentName() + " proposes " + fmtDay(m.proposed_due) + ": your decision" }) : null,
       h("p", null, h("strong", { text: "Done when: " }), asText(m.measure)),
-      progressOf(m) ? h("p", null, h("strong", { text: "Progress: " }), progressLine(progressOf(m))) : null,  // 0.27.0
+      progressOf(m) ? h("p", null, h("strong", { text: "Progress: " }), progressLine(progressOf(m))) : null,  // 0.29.0
       ended && m.result ? h("p", null, h("strong", { text: ended + ": " }), asText(m.result)) : null,
     ]);
     tip.hidden = false;
@@ -9089,7 +9089,7 @@
       h("dl", { class: "item-grid" },
         h("div", null, h("dt", { text: "Due" }), h("dd", { text: due })),
         h("div", null, h("dt", { text: "Done when" }), h("dd", { class: "pre-line", text: asText(m.measure) })),
-        progressRow(m),  // 0.27.0
+        progressRow(m),  // 0.29.0
         m.checked ? h("div", null, h("dt", { text: "Checked by Ember's code" }), h("dd", { text: asText(m.checked) })) : null,
         predictionRow(m.prediction, name + "'s odds"),
         // 0.16.3 (analysis bug 1): a backed venture's first test can be met until a week after its date
@@ -9213,7 +9213,7 @@
     return spec;
   }
 
-  // ---- The goal (0.27.0)
+  // ---- The goal (0.29.0)
   // The owner's goal leads the roadmap: an amount to earn a month or in total, by a date. Ember's code checks it from
   // the books, and everything else leads to it. Until the owner sets one, the money goal Ember's code keeps stands in.
 
@@ -9557,7 +9557,7 @@
     var open = items.filter(function (m) { return m.status === "open"; }).sort(function (x, y) {
       return dayNumber(x.due) - dayNumber(y.due) || num(x.id) - num(y.id);
     });
-    // 0.27.0: everything leads to the goal: without a choice, a milestone leads to it
+    // 0.29.0: everything leads to the goal: without a choice, a milestone leads to it
     var top = open.filter(isGoal)[0] || null;
     var first = top ? "The goal: #" + top.id + " " + shortTitle(top.title, 50) : "Nothing (a goal of its own)";
     replace(select, [h("option", { value: "", text: first })].concat(open.filter(function (m) { return m !== top; }).map(function (m) {
@@ -9656,7 +9656,7 @@
   }
 
   function initRoadmap() {
-    initGoal();  // 0.27.0
+    initGoal();  // 0.29.0
     $("rm-refresh").addEventListener("click", loadRoadmap);
     $("rm-add").addEventListener("click", function () { openMilestoneForm($("rm-form").hidden); });
     $("rm-form-cancel").addEventListener("click", function () { openMilestoneForm(false); });

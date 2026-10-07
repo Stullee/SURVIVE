@@ -284,7 +284,7 @@ def test_a_title_goes_up_only_once_the_owner_showed_it(data_dir: Path) -> None:
     page = agent.blog.fake.files[live.PAGE].decode()
     for text in ("Lebenslauf", "Schmidt", "example.com", "Erster Verkauf", "Etsy digital products"):
         assert text not in page, text
-    # counted (the fake had 1 and 6: 0.27.0, its first cycle splits the goal into three of its own)
+    # counted (the fake had 1 and 6: 0.29.0, its first cycle splits the goal into three of its own)
     assert "Geschäftsideen in Arbeit: 4" in page and "Offene Ziele: 7." in page
     card = agent.decide_live_title(found["Lebenslauf-Vorlagen"].id, True, "Stefan")
     assert {t["text"]: t["state"] for t in card["titles"]}["Lebenslauf-Vorlagen"] == "shown"

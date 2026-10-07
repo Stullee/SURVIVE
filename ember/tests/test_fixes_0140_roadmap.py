@@ -100,7 +100,7 @@ def test_the_money_goal_comes_back_on_a_full_roadmap(data_dir: Path) -> None:
         after = roadmap.money_goal(conn, agent.scope())
     assert goal is not None and after is not None and after["id"] != goal["id"], happened
     assert happened[-2].startswith(f"Ember's code set the money goal #{after['id']} (Earn twice what you spend")
-    assert happened[-1].startswith("Ember's code linked #")  # 0.27.0: the steps of no goal lead to it
+    assert happened[-1].startswith("Ember's code linked #")  # 0.29.0: the steps of no goal lead to it
 
 
 def test_a_product_line_holds_one_open_bar_at_a_time(data_dir: Path) -> None:

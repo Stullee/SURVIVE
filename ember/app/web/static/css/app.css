@@ -1480,7 +1480,7 @@ body[data-stale="true"] .live { display: none; }
 .card.milestone .notes { margin-top: 8px; font-size: 0.9rem; }
 .card.milestone .notes > summary { cursor: pointer; color: var(--text-2); width: max-content; max-width: 100%; }
 
-/* The goal (0.27.0): the owner's goal leads the roadmap. A progress bar (a meter) has a mark where a straight line to
+/* The goal (0.29.0): the owner's goal leads the roadmap. A progress bar (a meter) has a mark where a straight line to
    its date would be now; behind its pace it turns amber, and the words say so too (never color alone). */
 .pbar {
   position: relative; height: 8px; border-radius: 999px; background: var(--accent-track);

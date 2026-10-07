@@ -41,7 +41,7 @@ def test_a_milestones_odds_are_settled_by_code(data_dir: Path) -> None:
     agent, _ = run(data_dir, fake)  # ordinary cycles: the roadmap is laid out there
     today = agent.clock.today()
     soon, later = (today + timedelta(days=7)).isoformat(), (today + timedelta(days=14)).isoformat()
-    odds = [  # 0.27.0: each leads to the money goal #1
+    odds = [  # 0.29.0: each leads to the money goal #1
         {"title": "Research that finds", "metric": "research_calls_ok", "target": "1", "due": soon, "likely": 70},
         {"title": "First revenue", "metric": "revenue_verified_usd", "target": "5", "due": later, "likely": 40},
     ]

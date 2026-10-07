@@ -738,13 +738,13 @@ _TREE_TITLE = re.compile(r"^\s*- #\d+ (.+?) \([a-z]+(?:, weight \d+)?\)$", re.MU
 # The roadmap (0.11.0): the planner's ROADMAP lines, and what the brief's PLAN asks of it.
 ROADMAP_SECTION = "ROADMAP"
 ROADMAP_STEP = "Lay out my roadmap: a goal for the next three months, this month's milestone and this week's"
-# 0.27.0: under the goal at the root (the owner's, or the money goal): a sub-goal, this month's and this week's
+# 0.29.0: under the goal at the root (the owner's, or the money goal): a sub-goal, this month's and this week's
 GOAL_STEP = "Lay out my roadmap toward goal #{id} (due {due}): a sub-goal, this month's milestone and this week's"
 MOVE_MILESTONE_STEP = "Move overdue milestone #{id} a week"
 CLOSE_MILESTONE_STEP = "Close overdue milestone #{id}"
 DECIDE_MILESTONE_STEP = "Decide at overdue milestone #{id}"  # 0.12.0: a decision point Ember's code set never moves
 _EMPTY_ROADMAP = "Roadmap check: your roadmap is empty"
-_NOTHING_MINE = "Roadmap check: nothing of yours leads to the goal"  # 0.27.0
+_NOTHING_MINE = "Roadmap check: nothing of yours leads to the goal"  # 0.29.0
 _ROOT_LINE = re.compile(
     r"^(?:Your owner's goal|The goal \(Ember's code's, until your owner sets theirs\)): #(\d+) "
     r'"(?:[^"\\]|\\.)*" · due \w+ (\d{4}-\d{2}-\d{2})',
@@ -915,7 +915,7 @@ def roadmap_plan(text: str) -> tuple[list[str], int | None]:
     if _EMPTY_ROADMAP in roadmap:
         return [ROADMAP_STEP], None
     root = _ROOT_LINE.search(roadmap)
-    if root is not None and _NOTHING_MINE in roadmap:  # 0.27.0: split the goal
+    if root is not None and _NOTHING_MINE in roadmap:  # 0.29.0: split the goal
         return [GOAL_STEP.format(id=root[1], due=root[2])], None
     lines = list(_MILESTONE_LINE.finditer(roadmap))
     focus = int(min(lines, key=lambda m: m[2])[1]) if lines else None  # the one due first (the goals come first)
@@ -2077,7 +2077,7 @@ class FakeTransport:
 
     def _roadmap(self, conv: _Conversation, idea: Idea) -> tuple[str, dict] | None:
         """A new roadmap in one milestone_plan call (0.12.0): a goal about three months ahead, this month's milestone
-        leading to it, and this week's leading to that. 0.27.0: under the goal at the root the plan named, the first a
+        leading to it, and this week's leading to that. 0.29.0: under the goal at the root the plan named, the first a
         sub-goal of it, none due after it."""
         today = today_of(conv.brief)
         if today is None:

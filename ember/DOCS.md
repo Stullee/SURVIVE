@@ -835,7 +835,7 @@ and a *measure of done*, a number or a fact the agent can check ("10 pins that
 link to the shop", "business case for venture #3 proposed"), can serve a venture
 or a project, and shows **how far it got**.
 
-**Your goal** (0.27.0). **Set your goal** asks for an amount in USD (the books'
+**Your goal** (0.29.0). **Set your goal** asks for an amount in USD (the books'
 currency), whether it counts **a month** (revenue less expenses over the last 30
 days reaches it: a steady income) or **in total** (everything from the day you
 set it adds up to it), and the date to reach it by, at least a week and at most
@@ -2140,7 +2140,7 @@ What the page shows, each part switched off by its option:
 | **Live: memorial** (`live_show_memorial`) | If it dies: its life in numbers, and its last will once you approved it. Off by default. |
 
 What it never shows: emails, senders, orders, customers, inquiries, your
-goal (0.27.0), the agent's journal, plans or prompts. The ventures' and milestones' titles and the
+goal (0.29.0), the agent's journal, plans or prompts. The ventures' and milestones' titles and the
 last will are the agent's words, and it reads emails and web pages, so they go
 up only as you approved them:
 
@@ -2245,7 +2245,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.27.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.29.0 (by /u/your name)`.
 
 ## Amazon KDP
 

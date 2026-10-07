@@ -175,7 +175,7 @@ def test_a_first_test_that_never_ran_has_its_grace_starts_once_more_and_is_annou
         owed = obligations.text(conn, agent.scope(), agent.clock.today())
     assert f"unmet by {ends}, Ember's code parks venture #{pod}" in line_of(planned, f"#{test['id']} ")
     assert f"#{test['id']}" not in "".join(line for line in planned.split("\n") if "overdue (" in line)
-    # it can't close, move or drop it: its own line says what happens (0.27.0: the dry run's own steps may be overdue)
+    # it can't close, move or drop it: its own line says what happens (0.29.0: the dry run's own steps may be overdue)
     assert not any(f"#{test['id']}" in line for line in owed.split("\n") if line.startswith("- Overdue milestones"))
     on(agent, ends)
     grade(agent)
