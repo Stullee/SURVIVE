@@ -808,7 +808,7 @@ class CycleRunner:
                 ),
                 marketing_apart=self.marketing_apart and kind == lines.ORDINARY,
                 shelf=library.shelf(conn, self.scope),
-                decision_wakes=self.settings.wake_on_decision,
+                decision_wakes=self.settings.wakes_on("approval") or self.settings.wakes_on("rejection"),  # 0.31.0
                 burn=_burn_line(mode, self.clock),
                 brainstorm=mode.brainstorms,
                 ready=(

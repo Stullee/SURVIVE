@@ -135,8 +135,11 @@ class Agent:
         # The owner wrote (or, 0.12.0, decided): wake for it once one can, if the agent hasn't seen it by then (a cycle
         # running, the minute between wake-ups, and 0.15.0, OWNER_QUIET after the owner's last one: quiet_until).
         # waiting_for: which of the two. 0.15.0: kept in meta too (owner_wake_*), so a restart keeps the promised wake.
+        # 0.31.0: waiting_kinds, what the wake is for (Settings.wakes_on's kinds), so a restart after the owner switched
+        # some of them off keeps it for the others only.
         self.message_waiting = False
         self.waiting_for = "message"
+        self.waiting_kinds: set[str] = set()
         self.quiet_until: datetime | None = None
         self.quiet_by: datetime | None = None  # 0.15.0: OWNER_QUIET_MAX after the first message or decision
         self.running_cycle = False
@@ -303,15 +306,23 @@ class Agent:
             # Give the owner a minute to pause after an update or restart.
             self._set_time("next_wake_at", now + BOOT_GRACE)
         quiet = self._meta_time("owner_wake_at")  # 0.15.0: a wake for the owner's news a restart would have dropped
-        # (unless the owner switched that wake off: changing an option restarts the app)
-        on = {"message": self.settings.wake_on_message, "decision": self.settings.wake_on_decision}
-        if quiet is not None and not on.get(self.db.get_meta(self._key("owner_wake_for")) or "message", True):
+        # (unless the owner switched that wake off: changing an option restarts the app). 0.31.0: for the kinds still
+        # switched on; a wake kept before 0.31.0 names its group only (owner_wake_for).
+        kept = self.db.get_meta(self._key("owner_wake_kinds")) or self.db.get_meta(self._key("owner_wake_for"))
+        kinds = {k for k in (kept or "message").split(",") if self._still_wakes(k)}
+        if quiet is not None and not kinds:
             self._owner_wake_done()
         elif quiet is not None:
             self.message_waiting = True
-            self.waiting_for = self.db.get_meta(self._key("owner_wake_for")) or "message"
+            self.waiting_kinds = kinds
+            self.waiting_for = "message" if "message" in kinds else "decision"
             self.quiet_until = max(quiet, now + BOOT_GRACE)
             self.quiet_by = self._meta_time("owner_wake_by")
+
+    def _still_wakes(self, kind: str) -> bool:
+        """0.31.0: whether the owner's options wake the agent for ``kind`` of news (one kept before 0.31.0: "decision",
+        by its group's switch alone)."""
+        return self.settings.wake_on_decision if kind == "decision" else self.settings.wakes_on(kind)
 
     def _etsy_numbers(self, scope: AgentScope, settings: Settings) -> None:
         """0.12.0: the orders' revenue, Etsy's fees and refunds in the ledger after a sync, when the owner turned that
@@ -445,11 +456,12 @@ class Agent:
         covers a cycle (the events' share included). Otherwise the event waits for the next cycle's plan. 0.15.0: only
         with the owner's wake_on_events option, and behind the schedule's guards: not in a crash loop, nor while the
         agent backs off after a failed, stopped or refused cycle (backoff_until, set by ``_after``). ``preview``: no
-        event is marked as having woken the agent."""
-        if not self.settings.wake_on_events:
+        event is marked as having woken the agent. 0.31.0: only the kinds of event the owner switched on."""
+        kinds = self.settings.waking_events()
+        if not kinds:
             return None
         with self.db.connection() as conn:
-            waiting = agenda.waking(conn, self.scope())
+            waiting = agenda.waking(conn, self.scope(), kinds)
             if not waiting:
                 return None
             woken, last = agenda.wakes(conn, self.scope(), self.clock)
@@ -583,13 +595,13 @@ class Agent:
         """
         return self._wake_for_owner("message")
 
-    def wake_for_decision(self) -> str | None:
+    def wake_for_decision(self, kind: str) -> str | None:
         """0.12.0: the owner decided on one of the agent's requests, ventures or milestones (with the wake_on_decision
-        option): wake the agent to act on it, like a message (the same answers). It slept up to 12 hours with a
-        decision it could have acted on."""
-        return self._wake_for_owner("decision")
+        option; 0.31.0, and the switch of its ``kind``, config.WAKING_DECISIONS): wake the agent to act on it, like a
+        message (the same answers). It slept up to 12 hours with a decision it could have acted on."""
+        return self._wake_for_owner(kind)
 
-    def _wake_for_owner(self, what: str) -> str | None:
+    def _wake_for_owner(self, kind: str) -> str | None:
         if self.wake_requested:  # woken and not started yet: that cycle sees it
             return "now"
         # 0.15.0: one cycle for the owner's messages and decisions, OWNER_QUIET after the last one (each started a
@@ -597,8 +609,12 @@ class Agent:
         if self.blocked_reason() or burn.peek(self.db, self.economy.life.evaluate()).mode == burn.DORMANT:
             return None
         now = self.clock.now()
+        what = "message" if kind == "message" else "decision"
         if not self.message_waiting or what == "message":  # a message waiting says so first
             self.waiting_for = what
+        if not self.message_waiting:
+            self.waiting_kinds = set()
+        self.waiting_kinds.add(kind)
         if not self.message_waiting or self.quiet_by is None:
             self.quiet_by = now + OWNER_QUIET_MAX
         self.message_waiting = True
@@ -606,6 +622,7 @@ class Agent:
         self._set_time("owner_wake_at", self.quiet_until)
         self._set_time("owner_wake_by", self.quiet_by)
         self.db.set_meta(self._key("owner_wake_for"), self.waiting_for)
+        self.db.set_meta(self._key("owner_wake_kinds"), ",".join(sorted(self.waiting_kinds)))
         return "after_cycle" if self.running_cycle else "soon"
 
     def _owner_wake_done(self) -> None:

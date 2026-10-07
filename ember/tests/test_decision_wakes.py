@@ -50,7 +50,7 @@ def test_the_owners_decision_wakes_ember_to_act_on_it(data_dir: Path) -> None:
     request, pokes = request_for(agent, Settings())
     decided = owner(agent).decide(1, {"decision": "approve", "expected_version": 0}, "Stefan")
     assert decided.status == 200
-    web._wake_for_decision(request, decided)
+    web._wake_for_decision(request, decided, "approval")
     assert decided.body["wake"] == "soon" and not agent.wake_requested and pokes == ["x"]
     agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())  # 0.15.0: once the owner has been quiet
     assert agent.decide().trigger == "owner"
@@ -66,7 +66,7 @@ def test_a_decision_during_a_cycle_wakes_ember_after_it_unless_it_saw_it(data_di
     request, pokes = request_for(agent, Settings())
     agent.running_cycle = True  # a cycle is working (it planned before the decision came)
     decided = owner(agent).decide(1, {"decision": "reject", "comment": "Not now.", "expected_version": 0}, None)
-    web._wake_for_decision(request, decided)
+    web._wake_for_decision(request, decided, "rejection")
     assert decided.body["wake"] == "after_cycle" and agent.message_waiting and pokes == []
     assert agent.agent_fields()["next_wake_reason"] == "to act on your decision"
     agent.running_cycle = False  # it ended without seeing the decision
@@ -86,8 +86,8 @@ def test_no_wake_when_the_owner_turned_it_off(data_dir: Path) -> None:
     assert agent.run_cycle("schedule").status == "completed"
     off, pokes = request_for(agent, Settings(wake_on_decision=False))
     decided = owner(agent).decide(1, {"decision": "approve", "expected_version": 0}, None)
-    web._wake_for_decision(off, decided)
+    web._wake_for_decision(off, decided, "approval")
     assert "wake" not in decided.body and not agent.wake_requested and pokes == []
     refused = owner(agent).decide(99, {"decision": "approve"}, None)
-    web._wake_for_decision(request_for(agent, Settings())[0], refused)  # a failed decision wakes nothing
+    web._wake_for_decision(request_for(agent, Settings())[0], refused, "approval")  # a failed decision wakes nothing
     assert not agent.wake_requested

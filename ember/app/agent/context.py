@@ -286,7 +286,9 @@ class Snapshot:
     # 0.29.0: how far each open milestone got (roadmap.progress), the goal at the root's from the books
     roadmap_progress: dict[int, roadmap.Progress] = field(default_factory=dict)
     library: library.Shelf | None = None  # the owner's library (0.12.0): None while it is empty
-    decision_wakes: bool = False  # the owner's decisions wake the agent (0.12.0, the wake_on_decision option)
+    # the owner's decisions on its requests wake the agent (0.12.0, the wake_on_decision option; 0.31.0, and the
+    # wake_on_approval or wake_on_rejection one)
+    decision_wakes: bool = False
     burn: str = ""  # 0.12.0: the burn mode Ember's code set from the net runway (burn.Burn.text)
     ready: str = ""  # READY, ranked by Ember's code: a venture cycle's (desk.text), 0.18.0: an ordinary one's (slack)
     agenda: list[sqlite3.Row] = field(default_factory=list)  # 0.13.0: events no plan has shown yet (agenda.py)

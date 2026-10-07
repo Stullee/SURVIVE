@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.30.2"
+version: "0.31.0"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -72,7 +72,15 @@ options:
   web_fetch: false
   wake_on_message: true
   wake_on_decision: true
+  wake_on_approval: true
+  wake_on_rejection: true
+  wake_on_outcome: true
+  wake_on_venture: true
+  wake_on_roadmap: true
   wake_on_events: true
+  wake_on_reply: true
+  wake_on_inquiry: true
+  wake_on_milestone_due: true
   worker_effort: default
   # The workshop: code the agent has written, run in Anthropic's sandbox (see the Documentation tab). Its model
   # (workshop_model) is an optional option: empty, the worker model writes the code.
@@ -189,7 +197,15 @@ schema:
   web_fetch: bool
   wake_on_message: bool
   wake_on_decision: bool
+  wake_on_approval: bool
+  wake_on_rejection: bool
+  wake_on_outcome: bool
+  wake_on_venture: bool
+  wake_on_roadmap: bool
   wake_on_events: bool
+  wake_on_reply: bool
+  wake_on_inquiry: bool
+  wake_on_milestone_due: bool
   worker_effort: list(default|high|medium|low)
   workshop: bool
   workshop_model: str(,100)?

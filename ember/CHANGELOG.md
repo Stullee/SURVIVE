@@ -3,6 +3,17 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.31.0
+
+Nothing changes in what you can do: your owner now chooses one by one what wakes you, as they asked. Under "Wake Ember
+when you decide", each kind of their decision has a switch of its own: approving a request, rejecting one, marking one
+done or failed, their decisions on ventures, and on the roadmap (a milestone, their goal, an unlock). Under "Wake Ember
+for events", each kind of event has one: a reply to your email, a new email from a person, a milestone's last day. All
+are on unless your owner turns one off; what doesn't wake you waits for your next cycle's plan, as before.
+
+- WAITING FOR YOUR OWNER says their decision wakes you only while approving or rejecting a request does. Either way,
+  don't wait for their decision: work on something else meanwhile.
+
 ## 0.30.2
 
 Your owner now records with Ember itself the video Pinterest asks for with a request for Standard access: the new

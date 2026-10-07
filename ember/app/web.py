@@ -434,7 +434,8 @@ def decide_approval(request: Request, approval_id: ItemId, body: Annotated[Any, 
         return NO_AGENT
     reply = actions.decide(approval_id, body, _owner(request))
     _poke_executor(request, reply)
-    _wake_for_decision(request, reply)
+    rejected = reply.status == 200 and reply.body["approval"]["status"] == "rejected"
+    _wake_for_decision(request, reply, "rejection" if rejected else "approval")
     return _reply(reply)
 
 
@@ -445,7 +446,7 @@ def close_approval(request: Request, approval_id: ItemId, body: Annotated[Any, B
         return NO_AGENT
     reply = actions.close(approval_id, body, _owner(request))
     _poke_executor(request, reply)
-    _wake_for_decision(request, reply)
+    _wake_for_decision(request, reply, "outcome")
     return _reply(reply)
 
 
@@ -484,7 +485,7 @@ def _wake_for_message(request: Request) -> str | None:
     ...): the message waits for the next wake."""
     state = _state(request)
     agent = state.agent
-    if agent is None or not state.loaded.settings.wake_on_message:
+    if agent is None or not state.loaded.settings.wakes_on("message"):
         return None
     if agent.wake_requested:  # already woken and not started yet: that cycle reads the message
         return "now"
@@ -494,16 +495,17 @@ def _wake_for_message(request: Request) -> str | None:
     return wake
 
 
-def _wake_for_decision(request: Request, reply: Any) -> None:
+def _wake_for_decision(request: Request, reply: Any, kind: str) -> None:
     """0.12.0: the owner decided on one of the agent's requests, ventures or milestones: wake it to act on it (the
-    wake_on_decision option), like a message wakes it (the reply says when, as ``wake``: see ``_wake_for_message``)."""
+    wake_on_decision option), like a message wakes it (the reply says when, as ``wake``: see ``_wake_for_message``).
+    0.31.0: only if the owner's switch for this ``kind`` of decision is on too (config.WAKING_DECISIONS)."""
     state = _state(request)
     agent = state.agent
     if reply.status == 200 and agent is not None:
         agent.lift_sleep_cut()  # 0.15.0: no request waits any more: the sleep the agent chose stands
-    if reply.status != 200 or agent is None or not state.loaded.settings.wake_on_decision:
+    if reply.status != 200 or agent is None or not state.loaded.settings.wakes_on(kind):
         return
-    wake = agent.wake_for_decision()
+    wake = agent.wake_for_decision(kind)
     if wake in ("now", "soon") and state.scheduler is not None:
         state.scheduler.poke()
     if isinstance(reply.body, dict):
@@ -587,7 +589,7 @@ def decide_venture(request: Request, venture_id: ItemId, body: Annotated[Any, Bo
     if actions is None:
         return NO_AGENT
     reply = actions.decide_venture(venture_id, body, _owner(request))
-    _wake_for_decision(request, reply)
+    _wake_for_decision(request, reply, "venture")
     return _reply(reply)
 
 
@@ -597,7 +599,7 @@ def override_knockout(request: Request, venture_id: ItemId, body: Annotated[Any,
     if actions is None:
         return NO_AGENT
     reply = actions.override_knockout(venture_id, body, _owner(request))
-    _wake_for_decision(request, reply)
+    _wake_for_decision(request, reply, "venture")
     return _reply(reply)
 
 
@@ -607,7 +609,7 @@ def set_autonomy(request: Request, milestone_id: ItemId, body: Annotated[Any, Bo
     if actions is None:
         return NO_AGENT
     reply = actions.set_autonomy(milestone_id, body, _owner(request))
-    _wake_for_decision(request, reply)
+    _wake_for_decision(request, reply, "roadmap")
     return _reply(reply)
 
 
@@ -618,7 +620,7 @@ def take_back_unlocks(request: Request, body: Annotated[Any, Body()] = None) -> 
     if actions is None:
         return NO_AGENT
     reply = actions.take_back_unlocks(body, _owner(request))
-    _wake_for_decision(request, reply)
+    _wake_for_decision(request, reply, "roadmap")
     return _reply(reply)
 
 
@@ -657,7 +659,7 @@ def set_goal(request: Request, body: Annotated[Any, Body()] = None) -> JSONRespo
     if actions is None:
         return NO_AGENT
     reply = actions.set_goal(body, _owner(request))
-    _wake_for_decision(request, reply)
+    _wake_for_decision(request, reply, "roadmap")
     return _reply(reply)
 
 
@@ -667,7 +669,7 @@ def decide_milestone(request: Request, milestone_id: ItemId, body: Annotated[Any
     if actions is None:
         return NO_AGENT
     reply = actions.decide_milestone(milestone_id, body, _owner(request))
-    _wake_for_decision(request, reply)
+    _wake_for_decision(request, reply, "roadmap")
     return _reply(reply)
 
 
