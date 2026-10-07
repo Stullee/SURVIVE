@@ -3,8 +3,9 @@
 Every request goes to https://api.pinterest.com (anything else is refused before it leaves, and redirects aren't
 followed), with the OAuth access token, refreshed when it is about to expire (the token endpoint takes the app's id and
 secret as HTTP Basic). Errors come back as ``NotSent`` (Pinterest refused: nothing changed; ``Gone`` for what isn't
-there) or ``Unclear`` (a timeout or a lost connection: something may have changed). Responses are size-limited and
-never logged; tokens and the app secret are registered for log redaction.
+there; 0.29.1: a refusal of the app's Trial access says it needs Standard access) or ``Unclear`` (a timeout or a lost
+connection: something may have changed). Responses are size-limited and never logged; tokens and the app secret are
+registered for log redaction.
 """
 
 from __future__ import annotations
@@ -48,6 +49,14 @@ DEFAULT_REFRESH_DAYS = 60
 RENEW_BEFORE = timedelta(days=14)
 REFRESH_EARLY = timedelta(minutes=5)
 MIME = {".png": "image/png", ".jpg": "image/jpeg"}
+# 0.29.1: an app with Trial access connects, but Pinterest refuses its pins (HTTP 403, "Apps with Trial access may not
+# create Pins in production - use API Sandbox instead"). Sandbox pins are seen by nobody but their maker: Ember doesn't
+# make them, and says what the owner can do.
+TRIAL_WORDS = ("trial access", "sandbox")
+NEEDS_STANDARD = (
+    "Standard access needed: the Pinterest app has Trial access, which can't make pins or boards. Request Standard"
+    " access for it at developers.pinterest.com (My apps, Upgrade; Ember's documentation, Pinterest)"
+)
 _REFRESH_LOCK = threading.Lock()
 
 
@@ -94,6 +103,8 @@ def _send(client: httpx2.Client, method: str, path: str, *, changes: bool, **kwa
     if 200 <= status < 300:
         return data
     detail = str(data.get("message") or "").strip()[:200] if isinstance(data, dict) else ""
+    if status == 403 and any(word in detail.lower() for word in TRIAL_WORDS):
+        raise NotSent(NEEDS_STANDARD)
     message = f"HTTP {status}" + (f": {detail}" if detail else "")
     if status >= 500 and changes:
         raise Unclear(message)

@@ -3,6 +3,17 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.29.1
+
+Nothing changes in what you can do. A Pinterest app with Trial access connects, but Pinterest makes none of its pins:
+your owner's app needs Standard access, which they request at Pinterest. A pin or board Pinterest refuses for that
+reason now fails with "Standard access needed: ...", not with Pinterest's own words (which pointed to its sandbox,
+whose pins nobody else sees: Ember's code doesn't use it).
+
+- When a pin fails that way, propose no more pins: each would fail the same way. Tell your owner once that their
+  Pinterest app needs Standard access (Ember's documentation, Pinterest), bring buyers by your other ways meanwhile,
+  and pin again once they say Pinterest granted it.
+
 ## 0.29.0
 
 Your owner's goal leads your roadmap now: they set it on the Roadmap tab (earn an amount in USD a month, or in total,
