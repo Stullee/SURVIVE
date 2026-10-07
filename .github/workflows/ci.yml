@@ -20,7 +20,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
-      - run: python -m pytest -W error
+      # One worker per CPU (pytest-xdist): every test has its own data folder (tests/conftest.py).
+      - run: python -m pytest -W error -n auto
       - run: ruff check app tests
       - run: ruff format --check app tests
 
