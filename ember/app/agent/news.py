@@ -56,9 +56,12 @@ def changelog_key(mode: str) -> str:
     return f"agent.{mode}.changelog_seen"
 
 
-def changelog_at_key(mode: str) -> str:
-    """0.15.0: how far the agent has read the notes of its upgrade: "<seen>><running>@<character>"."""
-    return f"agent.{mode}.changelog_at"
+def changelog_shown_key(mode: str) -> str:
+    """0.32.0: how much of each version's notes the agent was shown since it last read them all (JSON: the version they
+    begin after, and per version the characters of its notes shown). 0.15.0's "changelog_at" kept one place in the
+    notes of one upgrade, and the next upgrade began them again from the newest: live, 17 upgrades in 23 cycles
+    showed the newest 2 KB again and again, and the notes of 0.21.0 to 0.28.0 (23 KB of the 30 unread) never."""
+    return f"agent.{mode}.changelog_shown"
 
 
 def _q(text: str | None) -> str:
@@ -101,16 +104,22 @@ def _fmt(version: tuple[int, int, int]) -> str:
 def changelog_news(changelog: Path, seen: str | None, running: str) -> str:
     """The CHANGELOG sections the agent hasn't read yet, whole (empty when nothing is new): ``changelog_part`` gives
     the part a plan shows."""
+    header, blocks = _notes(changelog, seen, running)
+    return "\n\n".join([header, *(block for _, block in blocks)]) if header else ""
+
+
+def _notes(changelog: Path, seen: str | None, running: str) -> tuple[str, list[tuple[str, str]]]:
+    """``changelog_news``'s header and its versions' notes, newest first: (version, "## x.y.z" and its text)."""
     current = parse_version(running)
     if current is None:
-        return ""
+        return "", []
     previous = parse_version(seen) if seen else None
     if previous == current:
-        return ""
+        return "", []
     try:
         sections = changelog_sections(changelog.read_text(encoding="utf-8"))
     except OSError:
-        return ""
+        return "", []
     if previous is not None and previous > current:
         header = f"Your software was downgraded from {_fmt(previous)} to {_fmt(current)} (maybe a backup was restored)."
         wanted = [(v, body) for v, body in sections if v == current]
@@ -120,10 +129,55 @@ def changelog_news(changelog: Path, seen: str | None, running: str) -> str:
     else:
         header = f"Your software was upgraded from {_fmt(previous)} to {_fmt(current)}. What changed:"
         wanted = [(v, body) for v, body in sections if previous < v <= current]
-    parts = [header]
-    for version, body in sorted(wanted, reverse=True):
-        parts.append(f"## {_fmt(version)}\n{body}")
-    return "\n\n".join(parts)
+    return header, [(_fmt(version), f"## {_fmt(version)}\n{body}") for version, body in sorted(wanted, reverse=True)]
+
+
+# 0.32.0: a version's notes, where the agent goes on with them: (version, where they begin in the text, the characters
+# of its notes shown before, and of them in the text)
+Piece = tuple[str, int, int, int]
+
+
+def unread_notes(changelog: Path, seen: str | None, running: str, shown: dict[str, int]) -> tuple[str, list[Piece]]:
+    """0.32.0: the notes not shown yet, newest first, as one text whose start a plan shows (``changelog_part``), and
+    where each version's notes are in it. ``shown``: the characters of each version's notes shown since ``seen``. A
+    version shown in part goes on where it stopped, after the notes of versions installed meanwhile."""
+    header, blocks = _notes(changelog, seen, running)
+    if not header:
+        return "", []
+    left = [(version, block, shown.get(version, 0)) for version, block in blocks if shown.get(version, 0) < len(block)]
+    if not shown:
+        text, pieces = header, []
+        for version, block, _ in left:
+            text += "\n\n"
+            pieces.append((version, len(text), 0, len(block)))
+            text += block
+        return text, pieces
+    newest = max((parse_version(v) or (0, 0, 0) for v in shown), default=(0, 0, 0))
+    new = [version for version, _, before in left if not before and (parse_version(version) or (0, 0, 0)) > newest]
+    since = f" since {seen}" if seen else ""
+    text = (
+        f"Your software was upgraded to {running} meanwhile. Its notes first, then the rest of your notes{since}:"
+        if new
+        else CONTINUED.rstrip("\n")
+    )
+    pieces = []
+    for number, (version, block, before) in enumerate(left):
+        rest = block[before:]
+        skipped = len(rest) - len(rest.lstrip("\n"))
+        text += "\n\n" if number else "\n"
+        if before and number:  # after other versions' notes: which version these are
+            text += f"## {version} (continued)\n"
+        pieces.append((version, len(text), before + skipped, len(rest) - skipped))
+        text += rest[skipped:]
+    return text, pieces
+
+
+def shown_after(pieces: list[Piece], after: int | None) -> dict[str, int]:
+    """0.32.0: each version's characters shown, once a plan showed the notes up to ``after`` (None: all of them)."""
+    return {
+        version: before + (length if after is None else max(0, min(length, after - start)))
+        for version, start, before, length in pieces
+    }
 
 
 def changelog_part(text: str, at: int = 0) -> tuple[str, int | None]:
@@ -165,6 +219,8 @@ class News:
     milestones: list[sqlite3.Row] = field(default_factory=list)  # the owner's word on a milestone (0.11.0)
     changelog_next: int | None = None  # 0.15.0: where the next part begins (None: this one ends the notes)
     changelog_from: str = ""  # 0.15.0: the version the notes begin after ("" when none was read before)
+    # 0.32.0: each version's characters of notes shown once this plan showed its part (changelog_shown_key)
+    changelog_shown: dict[str, int] = field(default_factory=dict)
     # 0.16.3 (analysis bug 5): the unlock changes the agent hasn't seen (grants, with their milestone's title), oldest
     # first, and the unlocks that stand now on each milestone (policy.standing)
     unlocks: list[sqlite3.Row] = field(default_factory=list)
@@ -315,9 +371,9 @@ def collect(conn: sqlite3.Connection, db: Database, scope: AgentScope, running_v
         granted_params,
     ).fetchall()
     seen = db.get_meta(changelog_key(scope.mode))
-    notes = changelog_news(paths.CHANGELOG_PATH, seen, running_version)
-    mark, _, at = (db.get_meta(changelog_at_key(scope.mode)) or "").rpartition("@")
-    part, after = changelog_part(notes, int(at) if mark == f"{seen or ''}>{running_version}" and at.isdigit() else 0)
+    shown = _shown(db.get_meta(changelog_shown_key(scope.mode)), seen, running_version)
+    notes, pieces = unread_notes(paths.CHANGELOG_PATH, seen, running_version, shown)
+    part, after = changelog_part(notes) if pieces or not shown else ("", None)
     return News(
         decided,
         upgrades,
@@ -327,6 +383,7 @@ def collect(conn: sqlite3.Connection, db: Database, scope: AgentScope, running_v
         milestones,
         changelog_next=after,
         changelog_from=seen or "",
+        changelog_shown={**shown, **shown_after(pieces, after)},
         unlocks=unlocks,
         standing=policy.standing(conn, scope) if unlocks else {},
     )
@@ -396,10 +453,28 @@ def mark_seen(conn: sqlite3.Connection, cycle_id: int, items: Iterable[Item]) ->
 
 def mark_changelog_seen(db: Database, scope: AgentScope, news: News) -> None:
     """After a plan that showed its part of the notes whole: the next plan shows the next part (0.15.0), and after the
-    last part they aren't shown again until the next version."""
+    last part they aren't shown again until the next version. 0.32.0: what each version showed is kept, so a version
+    installed meanwhile adds its notes, and the rest goes on where it stopped."""
     if not news.changelog or parse_version(news.running_version) is None:
         return
     if news.changelog_next is None:
         db.set_meta(changelog_key(scope.mode), news.running_version)
+        db.set_meta(changelog_shown_key(scope.mode), "")
     else:
-        db.set_meta(changelog_at_key(scope.mode), f"{news.changelog_from}>{news.running_version}@{news.changelog_next}")
+        kept = {"from": news.changelog_from, "shown": news.changelog_shown}
+        db.set_meta(changelog_shown_key(scope.mode), json.dumps(kept, sort_keys=True))
+
+
+def _shown(raw: str | None, seen: str | None, running: str) -> dict[str, int]:
+    """0.32.0: the characters of each version's notes shown since ``seen`` (changelog_shown_key), or none: none either
+    when they name a version newer than the one running (a downgrade: its notes say so from their start)."""
+    try:
+        data = json.loads(raw or "{}")
+    except ValueError:
+        return {}
+    if not isinstance(data, dict) or data.get("from") != (seen or "") or not isinstance(data.get("shown"), dict):
+        return {}
+    shown = {str(v): n for v, n in data["shown"].items() if isinstance(n, int) and not isinstance(n, bool) and n > 0}
+    current = parse_version(running)
+    newer = current is None or any((parse_version(v) or current) > current for v in shown)
+    return {} if newer else shown

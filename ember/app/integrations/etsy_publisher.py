@@ -158,6 +158,13 @@ def listing_row(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) ->
     ).fetchone()
 
 
+def shop_listing_row(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> sqlite3.Row | None:
+    """0.32.0: Ember's record of one of its listings in the shop: one it listed itself (``listing_row``), else one
+    Printify made of its products, which the sync keeps alike (LISTING_TABLES), or None. Live, a marketing cycle on the
+    posters couldn't link them in a post or a pin ("isn't one of your live listings"), three times in two days."""
+    return listing_row(conn, scope, listing_id) or printify_publisher.live_listing(conn, scope, listing_id)
+
+
 def etsy_state(row: sqlite3.Row) -> str:
     """A listing's state at Etsy as the last sync read it: live ('active') until a sync says otherwise."""
     return str(row["state"] or etsy.LIVE_STATE)

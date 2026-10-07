@@ -194,6 +194,7 @@ def parse(source: str, read_csv: Any) -> Spec:
                 last = first + len(sheet.rows) + sheet.empty_rows - 1
                 check_formula(_placed(column.formula, first, first, last), names, f"{sheet.name} column {c + 1}")
     spec.warnings.extend(_short_ranges(spec))
+    spec.warnings.extend(_outside_cells(spec))  # 0.32.0
     return spec
 
 
@@ -231,6 +232,58 @@ def _short_ranges(spec: Spec) -> list[str]:
                     elif total is not None and low <= total <= high and low <= bottom:
                         found.append(f"{where} counts the total row of {other.name} (row {total}) besides its data")
     return found[:5]
+
+
+def _outside_cells(spec: Spec) -> list[str]:
+    """0.32.0: a formula's single cell that is no data of its sheet: in its title, the empty row under it or its
+    header, or below its data and its total (an empty cell). Live, a summary's Net was "=B3-B4" in its row 6, the
+    header's "Amount" less the income, while its data were rows 4 to 6; nothing said so until a cycle read the file."""
+    sheets = {sheet.name.casefold(): sheet for sheet in spec.sheets}
+    found: list[str] = []
+    for sheet in spec.sheets:
+        first = first_row(bool(sheet.title))
+        for r, row in enumerate(sheet.rows):
+            for value in row:
+                if not (isinstance(value, str) and value.startswith("=")):
+                    continue
+                for name, column, number in _sheet_cells(value):
+                    other = sheets.get(name.casefold()) if name else sheet
+                    if other is None:
+                        continue
+                    top, bottom = data_rows(other)
+                    end = bottom + 1 if other.totals else bottom
+                    if top <= number <= end:
+                        continue
+                    if number >= top:
+                        what = "an empty cell below the data" + (" and the total" if other.totals else "")
+                    elif number == top - 1:
+                        what = "the header row"
+                    else:
+                        what = "the title" if number == 1 else "the empty row under the title"
+                    cell = f"{name}!{column}{number}" if name else f"{column}{number}"
+                    found.append(
+                        f"{sheet.name} row {first + r}: {cell} is {what} of {other.name}, whose data are rows {top} "
+                        f"to {bottom}" + (f" (its total row {bottom + 1})" if other.totals else "")
+                    )
+    return found[:5]
+
+
+def _sheet_cells(formula: str) -> list[tuple[str, str, int]]:
+    """The single cells in a formula, not ranges: (its sheet, "" for the formula's own, column, row)."""
+    try:
+        items = Tokenizer(formula).items
+    except Exception:  # noqa: BLE001 - check_formula refuses what can't be read
+        return []
+    found = []
+    for token in items:
+        if token.type != Token.OPERAND or token.subtype != Token.RANGE:
+            continue
+        sheet, _, place = token.value.rpartition("!")
+        sheet = sheet[1:-1].replace("''", "'") if sheet.startswith("'") else sheet
+        match = re.fullmatch(r"\$?([A-Za-z]{1,3})\$?(\d{1,7})", place)
+        if match is not None:
+            found.append((sheet, match[1].upper(), int(match[2])))
+    return found
 
 
 def _sheet_ranges(formula: str) -> list[tuple[str, str, int, int]]:

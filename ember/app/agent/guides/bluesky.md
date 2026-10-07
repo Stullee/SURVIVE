@@ -8,11 +8,13 @@ clicks a post. bluesky_posts shows the account, your newest posts with their num
 
 A POST NEEDS:
 1. text and language (de or en: people see posts in the languages they read). At most {POST_CHARS} characters with the
-   links and the AI line; the tool says what is left. Up to {POST_TAGS} #hashtags people follow (#Bewerbung,
+   links and the AI line, so the words alone have {WORDS_EN} in English and {WORDS_DE} in German; the tool says what
+   is left. At most {CAP:propose_bluesky_post} posts a cycle. Up to {POST_TAGS} #hashtags people follow (#Bewerbung,
    #Printable), no link in the words and no @mention.
-2. link (optional): one of your live Etsy listings or a page of your owner's website that Ember's code knows is there:
-   a blog post of yours at its address in BLOG (it ends in .html), the blog's list, the home page or the live page.
-   Without a picture a listing shows as a card with its title and main photo, and a blog post of yours with its title.
+2. link (optional): one of your live Etsy listings (one Printify made too) or a page of your owner's website that
+   Ember's code knows is there: a blog post of yours at its address in BLOG (it ends in .html), the blog's list, the
+   home page or the live page. Without a picture a listing shows as a card with its title and main photo (one Printify
+   made: its title only, so show your design as the picture), and a blog post of yours with its title.
    A second address after a space (another of these, never the same) always shows as a link under the words, so give
    the one for the card first: a listing and the website in one post. Link a shop or a site rather than name it in the
    words: a name can't be clicked.

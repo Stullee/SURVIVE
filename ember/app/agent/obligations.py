@@ -44,6 +44,7 @@ PRESSING_NEW_DAYS = 2  # a decision or a miss is pressing this long
 HEADING = "OBLIGATIONS (kept by Ember's code: deal with them first)"
 SAME_PROMISE_DAYS = 2  # 0.24.0: a promise due this close to an open one, with most of its words, repeats it
 SAME_WORDS = 0.6
+STEM_LETTERS = 6  # 0.32.0: "propose", "proposal" and "proposed" are one word to the comparison
 _COMMON = frozenset(
     {"and", "the", "for", "with", "from", "all", "again", "your", "you", "our", "this", "that", "then"}
     | {"und", "der", "die", "das", "den", "dem", "des", "mit", "von", "für", "bis"}
@@ -135,14 +136,20 @@ def repeated_promise(conn: sqlite3.Connection, scope: AgentScope, what: str, due
         other = roadmap.parse_day(row["due"])
         if not old or other is None or abs((other - day).days) > SAME_PROMISE_DAYS:
             continue
+        named, earlier = {w for w in new if w.startswith("#")}, {w for w in old if w.startswith("#")}
+        if named and earlier and not named & earlier:  # 0.32.0: about other listings or requests, not the same
+            continue
         if len(new & old) >= SAME_WORDS * len(new | old):
             return row
     return None
 
 
 def _promise_words(text: str) -> set[str]:
-    """A promise's words that say what it is: lower case, a plural's s dropped, without the short and common ones."""
-    return {w.removesuffix("s") for w in re.findall(r"[#\w/]{3,}", str(text).lower()) if w not in _COMMON}
+    """A promise's words that say what it is: lower case, a plural's s dropped, without the short and common ones;
+    0.32.0: a word of letters by its first STEM_LETTERS (live, "Propose the Haushaltsbuch 2027 KDP book" and "Send the
+    Haushaltsbuch 2027 KDP proposal" became promises #32 and #33), a number or a reference whole."""
+    words = (w.removesuffix("s") for w in re.findall(r"[#\w/]{3,}", str(text).lower()) if w not in _COMMON)
+    return {w[:STEM_LETTERS] if w.isalpha() else w for w in words}
 
 
 def open_rows(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
@@ -317,9 +324,11 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date, strategy: str
         ids = ", ".join(f"#{r['id']}" for r in waiting[:6]) + (
             f" and {len(waiting) - 6} more" if len(waiting) > 6 else ""
         )
+        them = "them" if len(waiting) != 1 else "it"  # 0.32.0: live, 4 of 12 cycles gave one to obligation_done too
         lines.append(
             f"- Answer your owner's message{'s' if len(waiting) != 1 else ''} {ids} (FROM YOUR OWNER; waiting since"
-            f" {str(waiting[0]['created_at'])[:16].replace('T', ' ')} UTC)."
+            f" {str(waiting[0]['created_at'])[:16].replace('T', ' ')} UTC): message_owner naming {them} in answers"
+            f" closes {them}."
         )
     mail = mailstore.inquiries(conn, scope)
     if mail:

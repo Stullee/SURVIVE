@@ -194,19 +194,20 @@ def marketing(
     conn: sqlite3.Connection,
     scope: AgentScope,
     *,
-    blog: bool,
+    printify_links: bool,
     owed: Sequence[obligations.Owed] = (),
     since: str = "",
     today: date | None = None,
 ) -> list[Item]:
-    """A marketing plan's READY: the open, unstopped lines with a live listing of Ember's own (a pin, a post and an
-    edit take only those; with the owner's blog on, a blog post may recommend one Printify made too), at most
+    """A marketing plan's READY: the open, unstopped lines with a live listing of Ember's own (an edit takes only
+    those), or one Printify made while ``printify_links`` (a channel that links one is on: the owner's blog, whose post
+    may recommend it, and 0.32.0: Bluesky and Pinterest, whose posts and pins took only Ember's own), at most
     MAX_LINES, ranked: a line a pressing push takes, one that owes a push to bring buyers (gates.MARKET), (0.30.0) this
     week's focus lines (``today``: the weekly look's, weekly.focus), then by its funnel (not seen with too little reach
     done, selling, liked but not bought, seen but not liked, not seen though marketed), the one marketed longest ago
     first."""
     funnels = reach.funnels(conn, scope)
-    eligible = _marketable(conn, scope, blog, funnels)
+    eligible = _marketable(conn, scope, printify_links, funnels)
     if not eligible:
         return []
     owes = _owes(conn, scope)
@@ -240,16 +241,18 @@ def marketing(
     return [Item(MARKET, pid, text(pid), job=job(pid)) for pid in sorted(eligible, key=rank)[:MAX_LINES]]
 
 
-def marketable(conn: sqlite3.Connection, scope: AgentScope, blog: bool) -> list[int]:
+def marketable(conn: sqlite3.Connection, scope: AgentScope, printify_links: bool) -> list[int]:
     """The lines a marketing cycle may take (``marketing``'s, unranked)."""
-    return _marketable(conn, scope, blog, reach.funnels(conn, scope))
+    return _marketable(conn, scope, printify_links, reach.funnels(conn, scope))
 
 
-def _marketable(conn: sqlite3.Connection, scope: AgentScope, blog: bool, funnels: dict[int, reach.Funnel]) -> list[int]:
+def _marketable(
+    conn: sqlite3.Connection, scope: AgentScope, printify_links: bool, funnels: dict[int, reach.Funnel]
+) -> list[int]:
     live = etsy_publisher.live_rows(metrics.listings(conn, scope, None, None), {})
     own = {int(r["for_project"]) for r in live if r["for_project"] and not r["printify"]}
     lines = set(_lines(conn, scope))
-    return sorted(pid for pid, f in funnels.items() if f.listings and pid in lines and (pid in own or blog))
+    return sorted(pid for pid, f in funnels.items() if f.listings and pid in lines and (pid in own or printify_links))
 
 
 def text(items: list[Item], questions: Sequence[str] = ()) -> str:
@@ -338,9 +341,10 @@ def focus_text(conn: sqlite3.Connection, scope: AgentScope, line: int, marketing
     if funnel is not None:
         found.append(funnel.text())
         if not marketing and funnel.listings and line not in bets.open_lines(conn, scope):
-            found.append(
-                "No open bet on it: say what you expect this cycle's change to bring (project_update bet), so Ember's"
-                " code checks it and your review learns from it."
+            found.append(  # 0.32.0: a change meant to bring buyers (live, a fix of a file was bet on, refused twice)
+                "No open bet on it: say what you expect this cycle's change to bring (project_update bet, e.g. '+15"
+                " views in 7 days: why'), so Ember's code checks it and your review learns from it. A change that"
+                " brings no views, favorites or orders (a fix) needs none."
             )
     if marketing:
         for r in etsy_publisher.live_rows(metrics.listings(conn, scope, line, None), {})[:MAX_LINES]:

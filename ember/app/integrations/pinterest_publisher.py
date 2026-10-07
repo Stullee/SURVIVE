@@ -335,7 +335,7 @@ class Publisher:
         PinterestError with why it isn't."""
         found = LISTING_LINK.match(link)
         listing_id = int(found.group(1)) if found else 0
-        row = etsy_publisher.listing_row(conn, scope, listing_id)
+        row = etsy_publisher.shop_listing_row(conn, scope, listing_id)  # 0.32.0: one Printify made too
         if row is None:
             raise PinterestError(f"#{listing_id} isn't one of your live listings any more")
         if etsy_publisher.etsy_state(row) != etsy.LIVE_STATE:

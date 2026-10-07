@@ -350,7 +350,7 @@ SPECS: dict[str, Spec] = {
             _write_text(venture=False),
             {
                 "path": _s("e.g. 'drafts/post.md'.", 200),
-                "mode": _s("", 10, enum=("create", "overwrite", "append", "delete", "copy")),
+                "mode": _s("", 10, enum=("create", "overwrite", "append", "edit", "delete", "copy")),
                 "content": Field(
                     "string",
                     "The text; for copy, the file to copy.",
@@ -358,6 +358,10 @@ SPECS: dict[str, Spec] = {
                     max_len=WRITE_CHARS,
                     remedy="create with the first part, then append the rest, one part per call",
                 ),
+                # 0.32.0: live, a fix of two formulas meant rewriting both 4 KB specs in parts of 2,500 characters,
+                # and the cycle's writes ran out halfway: both files were left cut off, unreadable to make_spreadsheet.
+                # No maxLength of its own (the fixed prompt's room): a call's texts together hold CALL_CHARS.
+                "find": Field("string", "For edit: text there once; content replaces it.", required=False),
             },
             per_cycle=10,
         ),
@@ -880,8 +884,8 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "look",
-            f"Look at a picture in your workspace with your own eyes, at most {LOOK_PIXELS:,} pixels wide or high: "
-            "about 1,000 input tokens each.",
+            f"Look at a picture in your workspace, at most {LOOK_PIXELS:,} pixels wide or high: about 1,000 input "
+            "tokens each.",
             {"path": _s("A .png or .jpg file.", 200)},
             per_cycle=8,  # a listing's 5 to 10 photos, each checked (4 until 0.9.0)
         ),
@@ -1067,9 +1071,10 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "propose_pin",
-            "Ask your owner to approve a pin on their Pinterest account: one of your pictures linking to one of your "
-            "live Etsy listings, on a board. Once approved, Ember's code makes it (free), with a line saying AI "
-            "helped design it. Guide 'pinterest' first.",
+            # 0.32.0: which listing is listing_id's (the fixed prompt's room went to workspace_write's edit)
+            "Ask your owner to approve a pin on their Pinterest account: your picture on a board, linking to a "
+            "listing. Once approved, Ember's code makes it (free), with a line saying AI helped design it. Guide "
+            "'pinterest' first.",
             {
                 "listing_id": _i("The live Etsy listing it links to.", minimum=1),
                 "image": _s("A .png or .jpg, best 2:3 (make_image shape pin).", 200),
@@ -1098,13 +1103,14 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "propose_bluesky_post",
-            "Ask your owner to approve a post on Ember's Bluesky account: your words and, if you like, a link to one "
-            "of your live Etsy listings or your owner's website and one of your pictures. Once approved, Ember's code "
-            "posts it (free) with a line saying an AI wrote it. Guide 'bluesky' first.",
+            # 0.32.0: what it may link is link's (the fixed prompt's room went to workspace_write's edit)
+            "Ask your owner to approve a post on Ember's Bluesky account: your words and, if you like, a link and one "
+            "of your pictures. Once approved, Ember's code posts it (free) with a line saying an AI wrote it. Guide "
+            "'bluesky' first.",
             {
-                "text": _s(
+                "text": _s(  # 0.32.0: the English AI line's room (room() refuses a German post's words beyond its own)
                     f"The post: plain text, at most {qa.POST_TAGS} #hashtags, no link (give it as link), no @mention.",
-                    bluesky.TEXT_CHARS,
+                    max(bluesky.WORDS_CHARS.values()),
                 ),
                 "language": _s("The post's language.", 2, enum=bluesky.LANGUAGES),
                 "link": _s(
@@ -2012,6 +2018,10 @@ def _workspace_write(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
         raise ToolError("content is required unless mode is delete")
     if mode == "copy":
         return _copy(ctx, content.strip(), path)
+    if mode == "edit":
+        return _edit(ctx, path, args.get("find") or "", content)
+    if args.get("find"):
+        raise ToolError("find is for mode edit: the passage it replaces")
     size = ctx.workspace.write(path, content, append=mode == "append", create_only=mode == "create")
     total = ctx.workspace.sizes()[0]
     return Outcome(
@@ -2020,6 +2030,26 @@ def _workspace_write(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
         f"{ctx.workspace.limits.max_total_bytes // (1024 * 1024)} MB.",
         f"{mode} {path}",
     )
+
+
+def _edit(ctx: ToolContext, path: str, find: str, content: str) -> Outcome:
+    """0.32.0: one passage of a text file replaced, the rest kept as it is: a small fix of a long file is one small
+    call (it took rewriting the file in parts of WRITE_CHARS)."""
+    if not find:
+        raise ToolError("edit needs find: the passage to replace, exactly as the file holds it")
+    text = ctx.workspace.read(path)
+    count = text.count(find)
+    if count == 0:
+        loose = " ".join(find.split())
+        near = loose and loose in " ".join(text.split())
+        raise ToolError(
+            f"{path} doesn't hold find's passage"
+            + (": it does with other spaces or line breaks, so copy them as workspace_read shows them" if near else "")
+        )
+    if count > 1:
+        raise ToolError(f"find's passage is in {path} {count} times: give more of it around, so it is there once")
+    size = ctx.workspace.write(path, text.replace(find, content, 1))
+    return Outcome(True, f"Edited {path}: one passage replaced ({size:,} bytes now).", f"edit {path}")
 
 
 def _copy(ctx: ToolContext, source: str, path: str) -> Outcome:
@@ -2470,72 +2500,31 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         value = (args.get(name) or "").strip()
         if value and value != row[name]:
             changes[name] = value
+    # 0.32.0: what is refused (scores without research, a stage the venture can't take yet) is said, and the rest of
+    # the update is made: live, a refused proposal threw its whole case away, and the agent sent it again and again
+    # (ten refusals in two venture cycles) until the conversation got too long (project_update's bet: 0.24.0).
+    refused: list[str] = []
     scores = {name: args[name] for name in ventures.SCORE_FIELDS if args.get(name) is not None}
+    if scores and ventures.researched(row) < ventures.RESEARCH_TO_SCORE:  # 0.12.0: labelled research without any
+        refused.append(
+            f"scores come from research: research venture #{vid} first (research with venture_id {vid}; it counts "
+            "once it finds something), then score it"
+        )
+        scores = {}
     if scores:
-        # 0.12.0: scores were labelled research without any research.
-        if ventures.researched(row) < ventures.RESEARCH_TO_SCORE:
-            raise ToolError(
-                f"scores come from research: research venture #{vid} first (research with venture_id {vid}; it "
-                "counts once it finds something), then score it. Save the rest without scores"
-            )
         changes.update(scores)
         changes["scores_by"] = "research"
     stage = args.get("stage")
     if stage and stage != current:
-        busy = ventures.count(conn, ctx.scope, ventures.EXPLORED)  # 0.19.3: backed ones take no room
-        if stage in ventures.EXPLORED and current not in ventures.EXPLORED and busy >= ventures.MAX_ACTIVE:
-            raise ToolError(f"{ventures.MAX_ACTIVE} ventures are being researched already: park or propose one first")
-        if stage == "live" and current != "building":
-            raise ToolError("a venture goes live once your owner backed it (building) and it launched")
-        if stage == "live" and not _tested(conn, ctx.scope, row):  # 0.12.0: the stage's rule, kept by the database too
-            test = f"milestone #{row['test_milestone_id']}" if row["test_milestone_id"] else "a milestone"
-            raise ToolError(
-                f"venture #{vid} goes live once its first test ({test} on your roadmap) is met, as Ember's code checks "
-                "it or your owner confirms it"
-            )
-        if current in ("building", "live") and stage != "parked" and stage != "live":
-            raise ToolError(f"venture #{vid} is {current}: your owner backed it; park it with a note if it should stop")
-        if current == "parked" and row["parked_by"] in ("owner", "code"):  # 0.12.0: the owner's (and code's) park
-            who = (
-                f"your owner parked venture #{vid}: only they take it up again"
-                if row["parked_by"] == "owner"
-                else f"Ember's code parked venture #{vid} by its stage's rule: only your owner takes it up again"
-            )
-            raise ToolError(
-                f"{who} (Research next on the Ventures tab). If you found something that changes the picture, tell "
-                "them with message_owner"
-            )
-        if stage == "parked" and not (args.get("note") or "").strip():
-            raise ToolError("say why in note when you park a venture")
-        changes["parked_by"] = "agent" if stage == "parked" else None
-        if stage == "proposed":
-            # 0.24.0: an idea researched enough is proposed at once (the room researching takes is checked above):
-            # live, its whole case was refused for "the researching stage first", and sent again for it
-            gaps = ventures.proposal_gaps({**dict(row), **changes}, "researching" if current == "idea" else current)
-            if gaps:
-                raise ToolError(f"venture #{vid} can't be proposed yet: a business case needs {'; '.join(gaps)}")
-            knocked = knockouts.active(
-                knockouts.check(
-                    conn,
-                    {**dict(row), **changes},
-                    cash_eur=ctx.venture_cash_eur,
-                    net_days=ctx.net_runway_days,
-                )
-            )
-            if knocked:  # 0.13.0
-                raise ToolError(
-                    f"venture #{vid} is knocked out by Ember's code: "
-                    + "; ".join(f"{k.label} ({k.why})" for k in knocked)
-                    + ". Fix what can be fixed (a new venture_case, evidence), park it with the numbers, or ask your "
-                    "owner to lift a knock-out on the Ventures tab"
-                )
-            changes["proposed_at"] = ctx.now()
-        changes["stage"] = stage
+        try:
+            changes.update(_new_stage(ctx, conn, row, stage, changes, args))
+        except ToolError as exc:
+            refused.append(str(exc))
     if args.get("note"):
         changes["notes"] = ventures.add_note(row["notes"], ctx.cycle_id, args["note"])
     learned = (args.get("learned") or "").strip()
     if not changes and not learned:
-        raise ToolError("nothing to change")
+        raise ToolError("; ".join(refused) if refused else "nothing to change")
     if changes:
         ventures.update(conn, vid, ctx.now(), **changes)
     dropped = []
@@ -2548,7 +2537,65 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     after = " Your owner sees its business case on the Ventures tab." if changes.get("stage") == "proposed" else ""
     if scores:
         after += f" Now {ventures.scores_text({**dict(row), **changes})}."
-    return Outcome(True, f"Venture #{vid}: {transition}.{saved}{after}", f"venture #{vid} {transition}")
+    after += "".join(f" Not done (the rest is saved): {why}." for why in refused)
+    part = " (not all of it)" if refused else ""
+    return Outcome(True, f"Venture #{vid}: {transition}.{saved}{after}", f"venture #{vid} {transition}{part}")
+
+
+def _new_stage(
+    ctx: ToolContext, conn: Any, row: Any, stage: str, changes: dict[str, Any], args: dict[str, Any]
+) -> dict[str, Any]:
+    """The changes that move a venture to ``stage`` (``changes``: the rest of its update), or ToolError with why it
+    can't move there yet."""
+    vid, current = row["id"], row["stage"]
+    busy = ventures.count(conn, ctx.scope, ventures.EXPLORED)  # 0.19.3: backed ones take no room
+    if stage in ventures.EXPLORED and current not in ventures.EXPLORED and busy >= ventures.MAX_ACTIVE:
+        raise ToolError(f"{ventures.MAX_ACTIVE} ventures are being researched already: park or propose one first")
+    if stage == "live" and current != "building":
+        raise ToolError("a venture goes live once your owner backed it (building) and it launched")
+    if stage == "live" and not _tested(conn, ctx.scope, row):  # 0.12.0: the stage's rule, kept by the database too
+        test = f"milestone #{row['test_milestone_id']}" if row["test_milestone_id"] else "a milestone"
+        raise ToolError(
+            f"venture #{vid} goes live once its first test ({test} on your roadmap) is met, as Ember's code checks "
+            "it or your owner confirms it"
+        )
+    if current in ("building", "live") and stage != "parked" and stage != "live":
+        raise ToolError(f"venture #{vid} is {current}: your owner backed it; park it with a note if it should stop")
+    if current == "parked" and row["parked_by"] in ("owner", "code"):  # 0.12.0: the owner's (and code's) park
+        who = (
+            f"your owner parked venture #{vid}: only they take it up again"
+            if row["parked_by"] == "owner"
+            else f"Ember's code parked venture #{vid} by its stage's rule: only your owner takes it up again"
+        )
+        raise ToolError(
+            f"{who} (Research next on the Ventures tab). If you found something that changes the picture, tell "
+            "them with message_owner"
+        )
+    if stage == "parked" and not (args.get("note") or "").strip():
+        raise ToolError("say why in note when you park a venture")
+    moved: dict[str, Any] = {"parked_by": "agent" if stage == "parked" else None}
+    if stage == "proposed":
+        # 0.24.0: an idea researched enough is proposed at once (the room researching takes is checked above):
+        # live, its whole case was refused for "the researching stage first", and sent again for it
+        values = {**dict(row), **changes}
+        gaps = ventures.proposal_gaps(values, "researching" if current == "idea" else current)
+        knocked = knockouts.active(
+            knockouts.check(conn, values, cash_eur=ctx.venture_cash_eur, net_days=ctx.net_runway_days)
+        )
+        out = "; ".join(f"{k.label} ({k.why})" for k in knocked)
+        if gaps:  # 0.32.0: with the knock-outs that stand too (live, the agent met one only once its gaps were filled)
+            raise ToolError(
+                f"venture #{vid} can't be proposed yet: a business case needs {'; '.join(gaps)}"
+                + (f". Ember's code knocks it out too: {out}" if knocked else "")
+            )
+        if knocked:  # 0.13.0
+            raise ToolError(
+                f"venture #{vid} is knocked out by Ember's code: {out}. Fix what can be fixed (a new venture_case, "
+                "evidence), park it with the numbers, or ask your owner to lift a knock-out on the Ventures tab"
+            )
+        moved["proposed_at"] = ctx.now()
+    moved["stage"] = stage
+    return moved
 
 
 def _tested(conn: Any, scope: AgentScope, row: Any) -> bool:
@@ -3524,10 +3571,13 @@ def _obligation_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
     if not named:
         raise ToolError("numbers names the obligations from OBLIGATIONS, e.g. '3, 5'")
     where, params = ctx.scope.where()
-    closed, refused = [], []
+    closed, refused, answered = [], [], []
     for number in named:
         row = conn.execute(f"SELECT * FROM obligations WHERE id = ? AND {where}", (number, *params)).fetchone()
-        if row is None or row["status"] != "open":
+        if row is None and (by := _answered_by(conn, ctx.scope, number)) is not None:
+            # 0.32.0: nothing to close, and no error: live, 4 of 12 cycles named the message they had just answered
+            answered.append(f"#{number} is your owner's message, which your message #{by} answered: nothing to close")
+        elif row is None or row["status"] != "open":
             refused.append(_not_open(conn, ctx.scope, number, row))
         elif (other := _other_line(ctx, conn, row)) is not None:  # 0.28.0
             refused.append(f"#{number} is line #{other}'s: it closes in a cycle on that line")
@@ -3539,10 +3589,22 @@ def _obligation_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
         else:
             obligations.close_one(conn, number, result, "agent", ctx.cycle_id, ctx.now())
             closed.append(number)
-    if not closed:
+    if not closed and not answered:
         raise ToolError("; ".join(refused))
-    text = f"Closed {_numbers(closed)}." + (f" Not closed: {'; '.join(refused)}." if refused else "")
-    return Outcome(True, text, f"closed {_numbers(closed)}")
+    text = " ".join(
+        [*([f"Closed {_numbers(closed)}."] if closed else []), *(f"{a}." for a in answered)]
+        + ([f"Not closed: {'; '.join(refused)}."] if refused else [])
+    )
+    return Outcome(True, text, f"closed {_numbers(closed)}" if closed else "nothing to close")
+
+
+def _answered_by(conn: Any, scope: AgentScope, number: int) -> int | None:
+    """0.32.0: the agent's message that answered owner's message #number, or None (not one, or not answered)."""
+    where, params = scope.where()
+    found = conn.execute(
+        f"SELECT answered_by FROM messages WHERE id = ? AND {where} AND sender = 'owner'", (number, *params)
+    ).fetchone()
+    return int(found["answered_by"]) if found is not None and found["answered_by"] else None
 
 
 def _other_line(ctx: ToolContext, conn: Any, row: Any) -> int | None:
@@ -3562,14 +3624,13 @@ def _not_open(conn: Any, scope: AgentScope, number: int, row: Any) -> str:
         return f"#{number} is not an open obligation of yours (it is {row['status']})"
     where, params = scope.where()
     message = conn.execute(
-        f"SELECT answered_by FROM messages WHERE id = ? AND {where} AND sender = 'owner'", (number, *params)
+        f"SELECT 1 FROM messages WHERE id = ? AND {where} AND sender = 'owner'", (number, *params)
     ).fetchone()
     if message is None:
         return f"#{number} is not an open obligation of yours"
-    answered = f", which your message #{message['answered_by']} answered" if message["answered_by"] else ""
-    return (
-        f"#{number} is your owner's message{answered}, not an obligation: a message of yours that names it in "
-        "answers is all it needs"
+    return (  # 0.32.0: one already answered is no refusal (_answered_by)
+        f"#{number} is your owner's message, not an obligation: a message of yours that names it in answers is all "
+        "it needs"
     )
 
 
@@ -3882,8 +3943,11 @@ def _guide(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
 
 
 def guide_text(topic: str) -> str:
-    """A guide, with the numbers Ember's code keeps filled in (0.13.0: the QA registry's photos)."""
+    """A guide, with the numbers Ember's code keeps filled in (0.13.0: the QA registry's photos). 0.32.0: "{CAP:tool}"
+    is how often a cycle may use the tool (live, the agent met those of make_spreadsheet, propose_pin and
+    propose_bluesky_post only in their refusals, mid-plan; the fixed prompt had no room to say them)."""
     text = (paths.APP_DIR / "agent" / "guides" / f"{topic}.md").read_text(encoding="utf-8").strip()
+    text = re.sub(r"\{CAP:([a-z_]+)\}", lambda found: str(SPECS[found[1]].per_cycle), text)
     return (
         text.replace("{MIN_PHOTOS}", str(qa.MIN_PHOTOS))
         .replace("{SHARP_DPI}", str(qa.SHARP_DPI))
@@ -3895,6 +3959,8 @@ def guide_text(topic: str) -> str:
         .replace("{PIN_TITLE}", str(pinterest.TITLE_MAX))
         .replace("{PIN_DESCRIPTION}", str(pinterest.DESCRIPTION_CHARS))
         .replace("{POST_CHARS}", str(bluesky.TEXT_MAX))
+        .replace("{WORDS_EN}", str(bluesky.WORDS_CHARS["en"]))  # 0.32.0
+        .replace("{WORDS_DE}", str(bluesky.WORDS_CHARS["de"]))
         .replace("{POST_TAGS}", str(qa.POST_TAGS))
         .replace("{SITE_PAGES}", str(site.MAX_PAGES))
         .replace("{BLOG_BODY_MIN}", str(blog.BODY_MIN))
@@ -4341,8 +4407,8 @@ def _printify_listings(conn: Any, scope: AgentScope, listing_id: int | None = No
         for r in rows
     ]
     return (
-        "\nMade through Printify (live at Etsy; Printify keeps them, propose_etsy_edit doesn't change them; PRINTIFY "
-        "in your plan has their prices):\n" + "\n".join(lines)
+        "\nMade through Printify (live at Etsy; Printify keeps them, propose_etsy_edit doesn't change them, and a pin "
+        "or a post may link them; PRINTIFY in your plan has their prices):\n" + "\n".join(lines)
     )
 
 
@@ -4481,7 +4547,9 @@ def _propose_pin(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     except etsy.EtsyError as exc:
         raise ToolError(f"Ember's record of #{listing_id} isn't readable ({exc})") from None
     row = etsy_publisher.listing_row(conn, ctx.scope, listing_id)
-    if listing is None or row is None:
+    if listing is None or row is None:  # 0.32.0: or one Printify made of a product of Ember's
+        row = printify_publisher.live_listing(conn, ctx.scope, listing_id)
+    if row is None:
         raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
     if etsy_publisher.etsy_state(row) != etsy.LIVE_STATE:
         raise ToolError(f"#{listing_id} isn't live at Etsy ({etsy_publisher.state_text(row)}): pin a live listing")
@@ -4591,12 +4659,17 @@ def _post_link(ctx: ToolContext, conn: Any, raw: str, what: str = "link") -> tup
         except etsy.EtsyError as exc:
             raise ToolError(f"Ember's record of #{listing_id} isn't readable ({exc})") from None
         row = etsy_publisher.listing_row(conn, ctx.scope, listing_id)
-        if current is None or row is None:
+        made = None
+        if current is None or row is None:  # 0.32.0: or one Printify made of a product of Ember's
+            row = made = printify_publisher.live_listing(conn, ctx.scope, listing_id)
+        if row is None:
             raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
         if etsy_publisher.etsy_state(row) != etsy.LIVE_STATE:
             raise ToolError(f"#{listing_id} isn't live at Etsy ({etsy_publisher.state_text(row)}): link a live listing")
         _listing_stopped(conn, ctx.scope, listing_id, "post")  # 0.23.3
         _listing_line(ctx, conn, listing_id, "post")  # 0.28.0
+        if made is not None:  # its card: the product's title (Printify keeps its photos, which aren't Ember's files)
+            return etsy.listing_url(listing_id), bluesky.one_line(made["title"])[: bluesky.CARD_TITLE_MAX], "", None
         photo = current.photos[0] if current.photos else None
         return etsy.listing_url(listing_id), bluesky.one_line(current.title)[: bluesky.CARD_TITLE_MAX], "", photo
     site = _bluesky(ctx).site_url
@@ -4676,10 +4749,11 @@ def _propose_bluesky_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
     )
     left = bluesky.room(post)
     if left < 0:
-        links = "links" if second else "link"
+        # 0.32.0: the links the words show, if any (a card's isn't in them): "with the link" was said of none too
+        links = "the links and " if second else "the link and " if link and not post.card() else ""
         raise ToolError(
-            f"the post would be {bluesky.TEXT_MAX - left} characters with the {links} and the AI line Ember's code"
-            f" adds; Bluesky takes {bluesky.TEXT_MAX}: shorten your words by {-left}"
+            f"the post would be {bluesky.TEXT_MAX - left} characters with {links}the AI line Ember's code adds;"
+            f" Bluesky takes {bluesky.TEXT_MAX}: shorten your words by {-left}"
         )
     payload = bluesky.payload(post, account.handle)
     if store.pending_approval_by_payload(conn, ctx.scope, store.sha256(payload)) is None:  # that one: as before

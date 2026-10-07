@@ -37,7 +37,11 @@ it. workspace_read shows any Excel file's cells (formulas with their results); m
   title; data starts on row 2, or row 4 under a title. Formulas may use common functions (SUM, AVERAGE, IF,
   IFERROR, VLOOKUP, XLOOKUP, SUMIF, COUNTIF, ROUND, TODAY, DATE, TEXT and similar) and cells of this workbook
   ('Other sheet'!A1); links to other files or the web are refused. Titles, notes and choices are text: they can't
-  start with "=".
+  start with "=". make_spreadsheet's answer gives each sheet's data rows, and its Check line names a formula whose
+  range leaves data out or whose cell is a title, a header or an empty cell: fix those before you sell it.
+- To fix a spec you wrote, change only what is wrong: workspace_write's edit replaces one passage (the old formula
+  as find, the new one as content). Rewriting the whole file in parts can run out of writes halfway. A cycle makes
+  {CAP:make_spreadsheet} spreadsheets at most: fix every spec first, then make each once.
 - totals: a bold row under the data with sum, average, count, min or max per column.
 - freeze (the header stays visible), filter (filter buttons) and zebra (striped rows) are on unless set false.
 - chart: bar, line or pie of one column (values) by another (labels), placed right of the table.

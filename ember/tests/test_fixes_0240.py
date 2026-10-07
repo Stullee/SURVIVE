@@ -167,7 +167,7 @@ def test_a_line_whose_work_the_owner_s_park_stopped_gets_no_check_and_nothing_in
     with agent.db.connection() as conn:
         assert quality.due(conn, agent.scope(), agent.clock.today()) is None
         items = lines.ready(conn, agent.scope(), today=agent.clock.today(), explore=False, markets=False)
-        items += lines.marketing(conn, agent.scope(), blog=True)
+        items += lines.marketing(conn, agent.scope(), printify_links=True)
     assert not [i for i in items if i.project_id == project]
 
 

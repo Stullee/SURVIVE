@@ -1217,8 +1217,9 @@ def _line_desk(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope) 
     today = agent.clock.today()
     share = lines.marketing_share(agent.settings.venture_share, agent.settings.marketing_share)
     spent, _, marketed = ventures.day_spends(conn, scope, today)
-    blog = agent.settings.blog_enabled
-    market = lines.marketing(conn, scope, blog=blog, today=today) if share and mode.marketing_cycles else []
+    # 0.32.0: a channel that links a listing Printify made (the blog's posts; Bluesky's and Pinterest's took none)
+    links = agent.settings.blog_enabled or agent.settings.bluesky_enabled or agent.settings.pinterest_enabled
+    market = lines.marketing(conn, scope, printify_links=links, today=today) if share and mode.marketing_cycles else []
     ordinary = lines.ready(conn, scope, today=today, explore=mode.mode == burn.EXPLORE, markets=bool(market))
     cycles = conn.execute(
         "SELECT COUNT(*) FROM cycles WHERE simulated = ? AND session = ? AND marketing = 1",
