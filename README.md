@@ -308,6 +308,8 @@ Python dependencies are pinned in `ember/requirements.txt`.
 repository.yaml              Home Assistant app repository metadata
 docker-compose.yml           local development outside Home Assistant
 dev/options.example.json     options for local development
+dev/pinterest_sandbox_demo.py
+                             Ember's Pinterest flow in Pinterest's API sandbox, for the Standard access video
 ember/                       the app
   config.yaml                app manifest (options, schema, Ingress, permissions)
   Dockerfile                 image build (no build.yaml; see below)

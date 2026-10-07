@@ -1841,14 +1841,23 @@ need the Etsy shop: each one links to one of Ember's live listings. While
    "Apps with Trial access may not create Pins in production"), and the
    approved pin then says *Standard access needed*. Ember needs **Standard
    access**: request it for the app (**My apps**, your app, **Upgrade**).
-   Pinterest asks for a demo video of the connection (steps 3 to 5) and an
-   API action
+   Pinterest asks for a demo video of the connection (OAuth) and an API
+   action
    ([access tiers](https://developers.pinterest.com/docs/key-concepts/access-tiers/)).
-   After recording it, **Disconnect** until Pinterest grants Standard access:
-   the seeded venture's first test runs while Pinterest is connected, and
-   would run out without a pin. Pinterest's API sandbox takes pins under
-   Trial access, but nobody else sees them and they never become real pins,
-   so they bring no clicks: Ember doesn't use it.
+   For the video, run `dev/pinterest_sandbox_demo.py` from
+   [Ember's repository](https://github.com/Stullee/SURVIVE) on your computer
+   once the redirect URI is set (step 3), with a picture of yours:
+   `python3 pinterest_sandbox_demo.py picture.png` (Python 3.9 or newer,
+   nothing to install). It makes Ember's calls against Pinterest's API
+   sandbox, which takes pins under Trial access: the consent screen with
+   Ember's scopes and redirect URI, then the account, a board and a pin, each
+   with Pinterest's answer. It asks for the app secret without showing it and
+   prints no token, so you can film the whole run. Sandbox pins are seen by
+   nobody but you and never become real pins, so they bring no clicks: Ember
+   itself doesn't use the sandbox. Connect Ember (step 5) once Pinterest
+   grants Standard access, and if you connected already, **Disconnect** until
+   then: the seeded venture's first test runs while Pinterest is connected,
+   and would run out without a pin.
 3. In the app's settings, add the redirect URI
    `https://localhost/ember-pinterest`, or whatever you set as **Pinterest
    redirect URI**; it must match exactly. Nothing needs to answer at that
