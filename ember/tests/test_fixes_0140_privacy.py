@@ -16,6 +16,7 @@ import asyncio
 import json
 import sqlite3
 import threading
+import time
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,7 +28,7 @@ pytest.importorskip("httpx2")
 
 from app import db as dbmod  # noqa: E402
 from app import diagnostics, events, privacy  # noqa: E402
-from app.agent import library, obligations, policy  # noqa: E402
+from app.agent import library, obligations, policy, scheduler  # noqa: E402
 from app.agent.context import RESEARCH_CALLS  # noqa: E402
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls  # noqa: E402
 from app.agent.scheduler import Scheduler  # noqa: E402
@@ -461,8 +462,13 @@ def test_pruning_keeps_what_ember_still_reads() -> None:
     assert dbmod.RESEARCH_KEPT >= RESEARCH_CALLS
 
 
-def test_the_scheduler_prunes_where_it_prunes_the_event_log(caplog: pytest.LogCaptureFixture) -> None:
-    """In its first round and every PRUNE_EVERY_SECONDS; a failure doesn't stop the round."""
+def test_the_scheduler_prunes_where_it_prunes_the_event_log(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In its first round and every PRUNE_EVERY_SECONDS; a failure doesn't stop the round. 0.31.0: on a machine up for
+    less than PRUNE_EVERY_SECONDS too (time.monotonic counts from its boot): the first round skipped it on CI."""
+    real, booted = time.monotonic, time.monotonic()
+    monkeypatch.setattr(scheduler.time, "monotonic", lambda: real() - booted + 1)  # up for a second
     pruned: list[Any] = []
     decided: list[bool] = []
 
