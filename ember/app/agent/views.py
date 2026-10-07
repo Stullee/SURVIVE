@@ -987,7 +987,8 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
             shortfalls = qa.defects(kind.name, listing, _looks(agent, r, listing.photos))  # 0.15.0: copies named
         except etsy.EtsyError:
             editable = None
-    if r["executor"] in ("pinterest_pin", "pinterest_delete") and action is not None:  # 0.13.0 (Phase E2)
+    pinning = ("pinterest_pin", "pinterest_delete", pinterest_publisher.TEST_EXECUTOR)  # 0.30.2: the sandbox's test
+    if r["executor"] in pinning and action is not None:  # 0.13.0 (Phase E2)
         execution = pinterest_publisher.execution(conn, r, scope, agent.clock, agent.settings.pinterest_pins_per_day)
         if r["executor"] == "pinterest_pin":
             try:

@@ -226,7 +226,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
 cd ember
 python3.12 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
-python -m pytest                 # run the tests
+python -m pytest -n auto         # run the tests, one worker per CPU
 EMBER_DATA_DIR=../dev/data-local EMBER_DEV_MODE=1 python -m app
 # open http://localhost:8099
 ```
@@ -257,7 +257,7 @@ alive, paused, critical and dead states (the dead state shows the memorial).
 
 ```bash
 cd ember
-python -m pytest
+python -m pytest -n auto
 ruff check app tests && ruff format --check app tests
 ```
 
@@ -318,8 +318,6 @@ Python dependencies are pinned in `ember/requirements.txt`.
 repository.yaml              Home Assistant app repository metadata
 docker-compose.yml           local development outside Home Assistant
 dev/options.example.json     options for local development
-dev/pinterest_sandbox_demo.py
-                             Ember's Pinterest flow in Pinterest's API sandbox, for the Standard access video
 ember/                       the app
   config.yaml                app manifest (options, schema, Ingress, permissions)
   Dockerfile                 image build (no build.yaml; see below)

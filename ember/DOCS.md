@@ -81,6 +81,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Pinterest app ID, app secret | empty | From the Pinterest app you create for your own account. The secret is never logged or shown. |
 | Pinterest redirect URI | https://localhost/ember-pinterest | The redirect URI registered for that app, exactly as there. |
 | Pins per day | 3 | The most pins Ember makes in one day (0 to 20). |
+| Pinterest sandbox | off | For your Standard access request at Pinterest: Ember connects to Pinterest's API sandbox and puts a test pin on your list, so you can record the video Pinterest asks for. No other pins while it is on. See [Standard access](#standard-access). |
 | Bluesky | off | Lets the agent propose posts on the Bluesky account you made for Ember, which Ember posts after you approve them. See [Bluesky](#bluesky). |
 | Bluesky handle, app password | empty | The account's handle (such as `ember-shop.bsky.social`) and an app password made for Ember in its settings, never the account's own password. The app password is never logged or shown. |
 | Bluesky posts per day | 2 | The most posts Ember makes in one day (0 to 20). |
@@ -1880,24 +1881,12 @@ need the Etsy shop: each one links to one of Ember's live listings. While
    connects with it, but Pinterest refuses every pin it would make (HTTP 403,
    "Apps with Trial access may not create Pins in production"), and the
    approved pin then says *Standard access needed*. Ember needs **Standard
-   access**: request it for the app (**My apps**, your app, **Upgrade**).
-   Pinterest asks for a demo video of the connection (OAuth) and an API
-   action
-   ([access tiers](https://developers.pinterest.com/docs/key-concepts/access-tiers/)).
-   For the video, run `dev/pinterest_sandbox_demo.py` from
-   [Ember's repository](https://github.com/Stullee/SURVIVE) on your computer
-   once the redirect URI is set (step 3), with a picture of yours:
-   `python3 pinterest_sandbox_demo.py picture.png` (Python 3.9 or newer,
-   nothing to install). It makes Ember's calls against Pinterest's API
-   sandbox, which takes pins under Trial access: the consent screen with
-   Ember's scopes and redirect URI, then the account, a board and a pin, each
-   with Pinterest's answer. It asks for the app secret without showing it and
-   prints no token, so you can film the whole run. Sandbox pins are seen by
-   nobody but you and never become real pins, so they bring no clicks: Ember
-   itself doesn't use the sandbox. Connect Ember (step 5) once Pinterest
-   grants Standard access, and if you connected already, **Disconnect** until
-   then: the seeded venture's first test runs while Pinterest is connected,
-   and would run out without a pin.
+   access**: request it for the app (**My apps**, your app, **Upgrade**) with
+   the demo video Pinterest asks for, which you record with Ember in
+   Pinterest's API sandbox once the steps below are done (see
+   [Standard access](#standard-access)). Until Pinterest grants it, keep the
+   sandbox on, or Pinterest disconnected: the seeded venture's first test runs
+   while Pinterest is connected, and would run out without a pin.
 3. In the app's settings, add the redirect URI
    `https://localhost/ember-pinterest`, or whatever you set as **Pinterest
    redirect URI**; it must match exactly. Nothing needs to answer at that
@@ -1918,6 +1907,42 @@ reads the shop, Ember renews it in time, pins or no pins. If it lapses anyway
 connect again. **Disconnect**
 deletes Ember's tokens (you can also remove the app's access in your Pinterest
 settings).
+
+### Standard access
+
+Pinterest grants **Standard access** when you ask for it with a short video of
+your app connecting to your account and making a pin. Trial access can't make
+that pin on your account, so you record the video with Ember in Pinterest's API
+sandbox, where what it makes is seen only by you:
+
+1. In Ember's **Configuration** tab, turn on **Pinterest sandbox**, save and
+   restart the app. Pinterest, the app ID, the secret and the redirect URI stay
+   as they are.
+2. Start recording your screen (Mac: Cmd+Shift+5, *Record Entire Screen*;
+   Windows 11: the Snipping Tool's *Record*).
+3. On the dashboard, open **System → Pinterest** and connect as in step 5
+   above. Pinterest's page asking you to allow access is what the review looks
+   for: let it show for a moment. Ember asks for `boards:read`, `boards:write`,
+   `pins:read`, `pins:write` and `user_accounts:read`.
+4. A test pin now waits on the **Approvals** tab: Ember's newest live listing
+   with its first picture, on a new test board. **Approve** it. Within a minute
+   or two its card shows the pin; open it on pinterest.com (only you see it).
+5. Stop recording. At
+   [developers.pinterest.com](https://developers.pinterest.com/apps/), press
+   **Upgrade** on your app, upload the video and say what Ember does: it pins
+   your own Etsy listings on your own account, each pin approved by you, with
+   a line saying AI helped design it. Add that the video was recorded in the
+   sandbox because trial access can't make pins.
+6. Once Pinterest granted Standard access, turn **Pinterest sandbox** off,
+   restart, and connect your account if **System → Pinterest** asks for it (the
+   sandbox's connection is kept apart from it).
+
+While the sandbox is on, Ember makes no other pins and reads no numbers: the
+agent waits for you as if Pinterest weren't set up. The test pin isn't one of
+Ember's pins: it counts for nothing and has no **Undo**. For another take,
+press **Disconnect** and connect again: a test pin waits again (the same one,
+if you hadn't approved it). Without a live listing with a .png or .jpg picture
+there is no test pin; the **System log** says so.
 
 ### How a pin is made
 
@@ -2397,7 +2422,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.30.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.30.2 (by /u/your name)`.
 
 ## Amazon KDP
 

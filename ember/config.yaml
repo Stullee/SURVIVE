@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.30.1"
+version: "0.30.2"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -117,6 +117,9 @@ options:
   pinterest_enabled: false
   pinterest_redirect_uri: https://localhost/ember-pinterest
   pinterest_pins_per_day: 3
+  # Pinterest's API sandbox, for your Standard access request at Pinterest (see the Documentation tab): off once
+  # Pinterest granted it.
+  pinterest_sandbox: false
   # Bluesky (see the Documentation tab): posts that bring people to Ember's work, from the account you made for it.
   # Its handle and an app password made in its settings are optional options too.
   bluesky_enabled: false
@@ -224,6 +227,7 @@ schema:
   pinterest_app_secret: password?
   pinterest_redirect_uri: str(1,300)
   pinterest_pins_per_day: int(0,20)
+  pinterest_sandbox: bool
   bluesky_enabled: bool
   bluesky_handle: str(,253)?
   bluesky_app_password: password?

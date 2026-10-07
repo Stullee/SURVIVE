@@ -1,7 +1,8 @@
 """The owner's Pinterest account, through Pinterest's API v5: the only module that talks to Pinterest.
 
-Every request goes to https://api.pinterest.com (anything else is refused before it leaves, and redirects aren't
-followed), with the OAuth access token, refreshed when it is about to expire (the token endpoint takes the app's id and
+Every request goes to https://api.pinterest.com (0.30.2: or, with the sandbox option on, to Pinterest's API sandbox
+at https://api-sandbox.pinterest.com; anything else is refused before it leaves, and redirects aren't followed), with
+the OAuth access token, refreshed when it is about to expire (the token endpoint takes the app's id and
 secret as HTTP Basic). Errors come back as ``NotSent`` (Pinterest refused: nothing changed; ``Gone`` for what isn't
 there; 0.30.1: a refusal of the app's Trial access says it needs Standard access) or ``Unclear`` (a timeout or a lost
 connection: something may have changed). Responses are size-limited and never logged; tokens and the app secret are
@@ -24,7 +25,6 @@ from ..economy.clock import Clock, from_iso, to_iso
 from ..logging_setup import register_secret
 from .pinterest import (
     API_HOST,
-    API_URL,
     AccountInfo,
     Board,
     Gone,
@@ -35,6 +35,7 @@ from .pinterest import (
     TokenFile,
     Tokens,
     Unclear,
+    api_host,
 )
 
 log = logging.getLogger(__name__)
@@ -61,19 +62,27 @@ _REFRESH_LOCK = threading.Lock()
 
 
 class _Allowlist(httpx2.HTTPTransport):
-    """Refuses every request that isn't HTTPS to api.pinterest.com (raised as a connect error)."""
+    """Refuses every request that isn't HTTPS to ``host``, api.pinterest.com or (0.30.2) the sandbox's (raised as a
+    connect error)."""
+
+    def __init__(self, host: str = API_HOST, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.host = host
 
     def handle_request(self, request: Any) -> Any:
         url = request.url
-        if url.scheme != "https" or url.host != API_HOST or url.port not in (None, 443):
-            raise httpx2.ConnectError(f"Ember only talks to {API_URL} for Pinterest, not {url.scheme}://{url.host}")
+        if url.scheme != "https" or url.host != self.host or url.port not in (None, 443):
+            raise httpx2.ConnectError(
+                f"Ember only talks to https://{self.host} for Pinterest, not {url.scheme}://{url.host}"
+            )
         return super().handle_request(request)
 
 
-def _client(transport: Any = None) -> httpx2.Client:
+def _client(settings: Settings, transport: Any = None) -> httpx2.Client:
+    host = api_host(settings)
     return httpx2.Client(
-        base_url=API_URL,
-        transport=transport or _Allowlist(retries=0),
+        base_url=f"https://{host}/v5",
+        transport=transport or _Allowlist(host, retries=0),
         timeout=TIMEOUT,
         follow_redirects=False,
         trust_env=False,
@@ -103,7 +112,8 @@ def _send(client: httpx2.Client, method: str, path: str, *, changes: bool, **kwa
     if 200 <= status < 300:
         return data
     detail = str(data.get("message") or "").strip()[:200] if isinstance(data, dict) else ""
-    if status == 403 and any(word in detail.lower() for word in TRIAL_WORDS):
+    # 0.30.2: the API's refusal only: the sandbox (pinterest_sandbox) takes Trial access, and its words are its own
+    if status == 403 and client.base_url.host == API_HOST and any(word in detail.lower() for word in TRIAL_WORDS):
         raise NotSent(NEEDS_STANDARD)
     message = f"HTTP {status}" + (f": {detail}" if detail else "")
     if status >= 500 and changes:
@@ -119,7 +129,7 @@ def _basic(settings: Settings) -> str:
 
 
 def _token_request(settings: Settings, form: dict[str, str], transport: Any) -> dict[str, Any]:
-    with _client(transport) as client:
+    with _client(settings, transport) as client:
         data = _send(
             client,
             "POST",
@@ -153,7 +163,7 @@ def connect(
         transport,
     )
     access = str(data["access_token"])
-    with _client(transport) as client:
+    with _client(settings, transport) as client:
         me = _send(client, "GET", "/user_account", changes=False, headers={"Authorization": f"Bearer {access}"})
     info = _account(me)
     tokens.save(
@@ -250,7 +260,7 @@ class LiveAccount:
 
     def _call(self, method: str, path: str, *, changes: bool = False, **kwargs: Any) -> Any:
         headers = {"Authorization": f"Bearer {self._access().access_token}", "Accept": "application/json"}
-        with _client(self._transport) as client:
+        with _client(self.settings, self._transport) as client:
             return _send(client, method, path, changes=changes, headers=headers, **kwargs)
 
     def info(self) -> AccountInfo:
