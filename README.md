@@ -117,6 +117,16 @@ whether it keeps its pace, on the Roadmap tab's goal tree and in every plan. Unt
 you set one, the money goal Ember's code keeps stands in for it. See the
 [Roadmap section of the docs](ember/DOCS.md#roadmap).
 
+0.30.0 gives Ember a plan she keeps and a playbook that grows. The list her plans
+take a line from put the line worked on longest ago first, so nearly every cycle
+switched lines (13 dry-run cycles on four lines switched 11 times) and no line was
+finished before the next began. Now she finishes what she starts (the line in
+progress first, three cycles in a row at most), then works on the week's focus lines,
+which her weekly look picks toward your goal, and on the changes her daily review
+asked for. Each lesson of her retrospectives joins her playbook the day it is
+written, and you can read it, with this week's look, under **Mind → Playbook**. See
+[The learning loop](ember/DOCS.md#the-learning-loop).
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

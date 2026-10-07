@@ -860,6 +860,8 @@ button.owed-item:hover { border-color: var(--ring); border-left-color: var(--acc
 .review-line { margin: 0; white-space: pre-wrap; unicode-bidi: plaintext; overflow-wrap: anywhere; }
 .review-numbers summary { cursor: pointer; color: var(--muted); }
 .mind-body pre.journal-entry { background: none; padding: 0; }
+/* 0.30.0: Mind → Playbook: this week's look above the principles */
+.playbook-week { display: grid; gap: 4px; margin: 0 0 14px; padding: 10px 12px; background: var(--surface-2); border-radius: 8px; }
 
 /* --- System ------------------------------------------------------------- */
 

@@ -47,6 +47,7 @@ REFLECT_MARKER = "REFLECT PHASE."
 PLAN_CHARS = {"assessment": 600, "goal": 300, "money_path": 300}  # the plan's texts, cut there
 PLAN_STEPS = 6
 STEP_CHARS = 200  # a plan step; a longer one is shown cut
+LINE_STREAK = 3  # 0.30.0: ordinary cycles in a row READY keeps the line in progress first (lines.MAX_STREAK)
 REVIEW_WHY_CHARS = 200  # a verdict's why, cut there
 # 0.18.0: what holds a project back, as the daily review names it (the funnel and the reach Ember's code counts)
 BOTTLENECKS = ("reach", "appeal", "conversion", "quality", "too_early", "none")
@@ -109,8 +110,10 @@ decided since your last wake. OBLIGATIONS come first: Ember's code keeps each un
 an answer goes in message_owner's commits). Plan work you do yourself with your tools, never your owner's research
 or legwork.
 - One line a cycle: take one from READY. Ember's code keeps your tools on it: another line's work waits for its own
-  cycle. Keep 2-3 lines going across your cycles. Waiting on your owner is never a reason to do nothing: when your
-  line waits, finish what you can and end the cycle; with no open project, start one now.
+  cycle. Finish what you start: READY keeps your line in progress first while it has work ({LINE_STREAK} cycles in a
+  row at most), then this week's focus lines and your review's changes.
+  Waiting on your owner is never a reason to do nothing: when your line waits, finish what you can and end the
+  cycle; with no open project, start one now.
 - Build first, then ask: make the whole thing ready (the finished files, the listing photos and text, the price),
   then ask your owner for one concrete action.
 - Spend on work that can earn or teach you something you can measure, up to your owner's caps.
@@ -166,9 +169,9 @@ test, is a result: park the venture with them.
 # 0.28.0: a marketing cycle's (lines.py): the owner's marketing_share of each day's spending brings buyers to one line.
 MARKETING_RULES = """MARKETING CYCLE
 This cycle belongs to marketing: your owner invests a share of your spending (STATUS says how much) in bringing buyers
-to what you already sell. Take one line from READY (ranked by Ember's code: what it owes, then the lines nobody has
-seen yet, then those selling) and bring buyers to its listings; its funnel (views, favorites, orders) shows where they
-get stuck.
+to what you already sell. Take one line from READY (ranked by Ember's code: what it owes, this week's focus lines, then
+the lines nobody has seen yet, then those selling) and bring buyers to its listings; its funnel (views, favorites,
+orders) shows where they get stuck.
 - Your owner's waiting messages come first (OBLIGATIONS); files, new listings and products wait for your next
   ordinary cycle: say so.
 - Reach the buyers of this one line: pins and Bluesky posts that link its listings, a blog post that recommends one,
@@ -851,6 +854,7 @@ def draft_request(settings: Settings, brief: str, sources: str = "") -> dict[str
 # 0.18.0: the weekly look at the whole business (weekly.py)
 MAX_WEEKLY_ITEMS = 5
 MAX_WEEKLY_QUESTIONS = 3
+MAX_WEEKLY_FOCUS = 3  # 0.30.0: the week's focus lines (weekly.focus)
 WEEKLY_CHARS = {"assessment": 800, "bottleneck": 300, "mix": 400, "question": 200}
 QUALITY_FIXES_CHARS = 600
 WEEKLY_RULES = f"""WEEKLY LOOK
@@ -860,26 +864,31 @@ The numbers below come from Ember's records: they are exact.
   enough, the wrong ideas, too little of your time on what earns)? Building more of what nobody sees doesn't help.
 - Judge the mix: are all your legs one kind of business (products)? Could a service, content or another model earn
   sooner with what you can do? Say what to stop and what to start, at most {MAX_WEEKLY_ITEMS} each.
+- Choose the week's focus: up to {MAX_WEEKLY_FOCUS} product lines (project numbers) that bring THE GOAL nearest
+  soonest, the best first. READY gives them your cycles right after what is owed and the line in progress; a line
+  that only waits for your owner is no focus.
 - Draw principles from your cases: a rule that holds beyond one case, citing the cases for it (and against it). Confirm
-  or dispute your playbook's principles with this week's cases (by id), retire those that no longer hold. A small
-  number is too little for a principle.
+  or dispute your playbook's principles with this week's cases (by id), retire those that no longer hold, and merge
+  two that say the same (retire one, cite its cases in the other): your retrospectives' lessons arrive as hypotheses
+  every day. A small number is too little for a principle.
 - Write your strategy anew from all this (it replaces the old one): short, concrete, never naming a parked or killed
   venture.
 - Ask up to {MAX_WEEKLY_QUESTIONS} questions the coming week must answer, by research or a test.
 Reply only with JSON matching the schema: assessment (<= {WEEKLY_CHARS["assessment"]} characters), bottleneck (<= \
-{WEEKLY_CHARS["bottleneck"]}), mix (<= {WEEKLY_CHARS["mix"]}), stop and start (lists), strategy (<= \
-{memory.CAPS["strategy"]:,} bytes), questions, principles (each: id of a playbook principle
+{WEEKLY_CHARS["bottleneck"]}), mix (<= {WEEKLY_CHARS["mix"]}), stop and start (lists), focus (project numbers),
+strategy (<= {memory.CAPS["strategy"]:,} bytes), questions, principles (each: id of a playbook principle
 or null for a new one, text, supports and against: case numbers, retire: why it no longer holds, or "")."""
 WEEKLY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["assessment", "bottleneck", "mix", "stop", "start", "strategy", "questions", "principles"],
+    "required": ["assessment", "bottleneck", "mix", "stop", "start", "focus", "strategy", "questions", "principles"],
     "properties": {
         "assessment": {"type": "string"},
         "bottleneck": {"type": "string"},
         "mix": {"type": "string"},
         "stop": {"type": "array", "items": {"type": "string"}},
         "start": {"type": "array", "items": {"type": "string"}},
+        "focus": {"type": "array", "items": {"type": "integer"}},  # 0.30.0
         "strategy": {"type": "string"},
         "questions": {"type": "array", "items": {"type": "string"}},
         "principles": {

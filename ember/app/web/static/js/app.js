@@ -4197,6 +4197,8 @@
     var body = $("mind-body");
     if (ui.mind === "reviews") {
       renderReviews(body, mind.reviews);
+    } else if (ui.mind === "playbook") {
+      renderPlaybook(body, mind.playbook);
     } else if (ui.mind === "journal") {
       var entries = arr(mind.journal).slice().sort(function (x, y) { return (new Date(y.created_at).getTime() || 0) - (new Date(x.created_at).getTime() || 0); });
       replace(body, entries.length ? h("ol", { class: "journal" }, entries.map(function (j) {
@@ -4319,6 +4321,75 @@
   function reviewLine(label, text) {
     text = asText(text);
     return text ? h("p", { class: "review-line" }, h("strong", { text: label + ": " }), text) : null;
+  }
+
+  var CONFIDENCE = {
+    established: { icon: "✓", label: "Established", tone: "good" },
+    hypothesis: { icon: "?", label: "Hypothesis", tone: "" },
+    disputed: { icon: "!", label: "Disputed", tone: "warning" },
+  };
+
+  // Mind → Playbook (0.30.0): the agent's rulebook, the principles Ember's code keeps from its own cases, each with
+  // the cases for and against it, and this week's look; older servers send none.
+  function renderPlaybook(body, playbook) {
+    if (!isObject(playbook)) {
+      replace(body, h("p", { class: "muted", text: "This version of Ember keeps no playbook yet." }));
+      return;
+    }
+    var active = arr(playbook.principles);
+    var retired = arr(playbook.retired);
+    var cases = Number(playbook.cases) || 0;
+    var early = Number(playbook.cases_too_early) || 0;
+    var parts = [h("p", { class: "muted small", text: agentName() + "'s rulebook, drawn from its own cases. Each " +
+      "day the lessons of its retrospectives join it as hypotheses; three cases that agree make a principle " +
+      "established, a case against it makes it disputed, and Ember's code retires what no case confirms for weeks. " +
+      "Once a week its weekly look confirms, merges and retires them, and chooses the week's focus lines." })];
+    if (isObject(playbook.weekly)) parts.push(weeklyLook(playbook.weekly));
+    if (!active.length) {
+      parts.push(h("p", { class: "muted", text: "No principles yet: " + plural(cases, "case") + " so far" +
+        (early ? " (" + early + " of them too early to be evidence)" : "") + ". A principle needs a case that " +
+        "settled with a cause: a bet, a listing bar, a closed project, a parked venture or a request you rejected." }));
+    } else {
+      parts.push(h("ol", { class: "journal reviews" }, active.map(principleItem)));
+    }
+    if (retired.length) {
+      parts.push(h("details", { class: "review-numbers" }, h("summary", { text: "Retired lately (" + retired.length + ")" }),
+        h("ol", { class: "journal reviews" }, retired.map(principleItem))));
+    }
+    replace(body, parts);
+  }
+
+  function weeklyLook(w) {
+    var focus = arr(w.focus).map(function (i) { return "#" + i; });
+    return h("div", { class: "playbook-week" },
+      h("p", { class: "when", text: "This week's look (" + fmtDay(w.day) + ")" }),
+      reviewLine("Bottleneck", w.bottleneck),
+      focus.length ? reviewLine("Focus lines", focus.join(", ")) : null,
+      arr(w.start).length ? reviewLine("Start", arr(w.start).join("; ")) : null,
+      arr(w.stop).length ? reviewLine("Stop", arr(w.stop).join("; ")) : null,
+      arr(w.questions).length ? reviewLine("Questions", arr(w.questions).join(" · ")) : null);
+  }
+
+  function principleItem(p) {
+    var supports = arr(p.supports);
+    var against = arr(p.against);
+    var retired = p.status === "retired";
+    var count = plural(supports.length, "case") + " for" + (against.length ? ", " + against.length + " against" : "");
+    return h("li", null,
+      h("p", { class: "when" }, "Principle #" + p.id + " · " + (retired ? "retired " : "since "),
+        timeEl(retired ? p.retired_at : p.created_at)),
+      h("p", { class: "journal-summary" }, retired ? null : chip(CONFIDENCE, p.confidence, String(p.confidence || "?")),
+        retired ? "" : " ", asText(p.text)),
+      retired ? reviewLine("Why it was retired", p.retired_why) : null,
+      supports.length || against.length ? h("details", { class: "review-numbers" }, h("summary", { text: count }),
+        h("ul", { class: "verdicts" }, supports.map(function (c) { return caseItem(c, "for"); })
+          .concat(against.map(function (c) { return caseItem(c, "against"); })))) : null);
+  }
+
+  function caseItem(c, side) {
+    var cause = c.cause ? String(c.cause).replace(/_/g, " ") + ": " : "";
+    return h("li", null, h("strong", { text: "Case #" + c.id + (c.subject ? " (" + asText(c.subject) + ")" : "") +
+      ", " + side + ": " }), cause, asText(c.why), c.lesson ? " Lesson: " + asText(c.lesson) : "");
   }
 
   // ---- System
@@ -10200,7 +10271,7 @@
   // ------------------------------------------------------------------ tabs
 
   var TABS = ["overview", "ledger", "ventures", "roadmap", "library", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
-  var MIND_TABS = ["strategy", "lessons", "identity", "journal", "reviews"];
+  var MIND_TABS = ["strategy", "playbook", "lessons", "identity", "journal", "reviews"];  // 0.30.0: the playbook
   var VENTURE_VIEWS = ["pipeline", "running"];  // 0.27.0
 
   // Arrow keys, Home and End move between tabs; focus follows the selection.
