@@ -105,7 +105,7 @@ RESEARCH_CHECK = "research_check"  # 0.12.0: the research model's check, on the 
 CRITIC = "critic"  # 0.13.0: the independent critic of a proposed venture's case, before the plan
 # 0.13.0: until EVENT_RESERVE_HOUR (the owner's time), EVENT_RESERVE_SHARE of the daily cap is kept for the agenda's
 # event wake-ups (agent/agenda.py): a scheduled cycle's cap leaves it, and a scheduled wake that would need it waits.
-# 0.30.3: only while the owner's wake_on_events is on (event_reserve).
+# 0.30.3: only while the owner's wake_on_events is on (event_reserve); 0.31.0, and a kind of event under it.
 EVENT_RESERVE_SHARE = 0.20
 EVENT_RESERVE_HOUR = 20
 # The purposes outside the cycle cap (WORKSHOP, REVIEW, STUDY, CONSOLIDATE, CRITIC) are ledger.OUTSIDE_CYCLE_CAP, one
@@ -444,8 +444,9 @@ def event_reserve(settings: Settings, clock: Clock, trigger: str, working: int =
     """0.13.0: what a ``trigger``'s cycle leaves of the daily cap for the agenda's event wake-ups: EVENT_RESERVE_SHARE
     of it for a scheduled cycle until EVENT_RESERVE_HOUR (the owner's time), nothing for any other, nor when the rest
     of the cap couldn't pay for a working cycle (``working``: what one needs) anyway. 0.30.3: nor with the owner's
-    wake_on_events off: no event can wake the agent to spend it, and a scheduled wake waited until 20:00 for nothing."""
-    if not settings.wake_on_events:
+    wake_on_events off: no event can wake the agent to spend it, and a scheduled wake waited until 20:00 for nothing.
+    0.31.0: nor while each kind of event is switched off (Settings.waking_events)."""
+    if not settings.waking_events():
         return 0
     if trigger != "schedule" or clock.now().astimezone(clock.tz).hour >= EVENT_RESERVE_HOUR:
         return 0

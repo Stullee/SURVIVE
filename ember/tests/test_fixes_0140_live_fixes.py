@@ -159,7 +159,7 @@ def test_the_owners_last_decision_lifts_the_sleep_cut(data_dir: Path) -> None:
     agent.clock.advance(minutes=30)
     off, _ = request_for(agent, Settings(wake_on_decision=False))
     decided = owner(agent).decide(1, {"decision": "reject", "comment": "No.", "expected_version": 0}, None)
-    web._wake_for_decision(off, decided)
+    web._wake_for_decision(off, decided, "rejection")
     fields = agent.agent_fields()
     assert from_iso(fields["next_wake_at"]) - ended == timedelta(minutes=720)
     assert fields["next_wake_reason"] == "Ember chose 720 min"
@@ -173,7 +173,9 @@ def test_the_cut_stays_while_a_request_waits_or_the_wake_changed(data_dir: Path)
     assert agent.agent_fields()["next_wake_at"] == cut
     agent._set_time("next_wake_at", agent.clock.now() + timedelta(minutes=5))  # something else set the wake
     off, _ = request_for(agent, Settings(wake_on_decision=False))
-    web._wake_for_decision(off, owner(agent).decide(1, {"decision": "approve", "expected_version": 0}, None))
+    web._wake_for_decision(
+        off, owner(agent).decide(1, {"decision": "approve", "expected_version": 0}, None), "approval"
+    )
     assert from_iso(agent.agent_fields()["next_wake_at"]) - agent.clock.now() == timedelta(minutes=5)
 
 

@@ -127,6 +127,14 @@ asked for. Each lesson of her retrospectives joins her playbook the day it is
 written, and you can read it, with this week's look, under **Mind → Playbook**. See
 [The learning loop](ember/DOCS.md#the-learning-loop).
 
+0.31.0 lets you choose one by one what wakes Ember. Under **Wake Ember when you
+decide** each kind of decision has its own switch (approving a request, rejecting
+one, marking one done or failed, ventures, the roadmap), and under **Wake Ember
+for events** each kind of event (a reply to her email, a new email, a milestone's
+last day): she can wake for your approvals but not for your messages, for example.
+All are on by default, so nothing changes until you turn one off. See the
+[options](ember/DOCS.md#options).
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

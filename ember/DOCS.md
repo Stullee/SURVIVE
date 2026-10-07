@@ -51,8 +51,16 @@ code from Etsy's own numbers): the agent never reports its own.
 | Dry run | on | Fake model, no API calls, no cost. |
 | Let the agent read whole web pages | off | Off: live research is web search only. On: it can also read pages from its search results (about $0.01–0.02 each). PDFs and other documents are always refused, because they have no size limit, and so are Etsy's pages, because Etsy's API terms forbid programs reading its site (searching it is fine). |
 | Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, 5 minutes after your last message or decision (at most 15 after the first, and at least 30 after the last such wake), so one cycle reads them all (after a running cycle, unless that cycle saw them; not while the agent is paused or dormant). **Wake now** is immediate. Off: it reads your message at its next scheduled wake-up. |
-| Wake Ember when you decide | on | Your decision on one of its requests (approve, reject, mark done or failed), on a venture (back, park, kill) or on a milestone wakes the agent to act on it, the same way as a message. Off: it sees your decision at its next scheduled wake-up. Either way, while a request waits for you the agent sleeps at most 4 hours (or the **Default sleep**, if that is longer), and works on other things meanwhile. Once no request waits any more, the sleep it chose stands again (counted from the end of that cycle). |
-| Wake Ember for events | on | A reply to Ember's email, a new email from a person or the last day of a milestone that Ember's code doesn't check itself wakes the agent for a short cycle (see [the agenda](#events-wake-it-the-agenda)). Off: they wait for its next scheduled wake-up. |
+| Wake Ember when you decide | on | Your decisions switched on in the five options below wake the agent to act on them, the same way as a message. Off: none of them does, whatever those options say; it sees your decisions at its next scheduled wake-up. Either way, while a request waits for you the agent sleeps at most 4 hours (or the **Default sleep**, if that is longer), and works on other things meanwhile. Once no request waits any more, the sleep it chose stands again (counted from the end of that cycle). |
+| Wake Ember when you approve a request | on | Approving one of its requests, as it is or with your changes, wakes it (0.31.0). Off: it sees your approval at its next scheduled wake-up. |
+| Wake Ember when you reject a request | on | Rejecting one of its requests wakes it. |
+| Wake Ember when you mark a request done or failed | on | Marking an approved request done or failed, or cancelling one Ember carries out itself, wakes it. |
+| Wake Ember for your venture decisions | on | Backing, parking or killing a venture, sending it back to research, a note on it, and lifting or restoring a knock-out wake it. |
+| Wake Ember for your roadmap decisions | on | Your decision on a milestone (a note, dropping it, accepting or rejecting the date Ember proposed), setting or removing your goal, and the unlocks you give or take back wake it. |
+| Wake Ember for events | on | The events switched on in the three options below wake the agent for a short cycle (see [the agenda](#events-wake-it-the-agenda)). Off: none of them does; they wait for its next scheduled wake-up. |
+| Wake Ember for a reply to its email | on | A person's email that answers one Ember sent wakes it (0.31.0). Off: it waits for the next scheduled wake-up. |
+| Wake Ember for a new email from a person | on | A person writing to Ember first wakes it. |
+| Wake Ember on a milestone's last day | on | The last day of a milestone that Ember's code doesn't check itself wakes it. |
 | Worker effort | default | How thoroughly the model works in each step. `medium` or `low` write shorter answers and use fewer tool calls, which costs less but may do a worse job. Not used for Haiku. |
 | Kill switch reset | 0 | Change it to any other number and restart to undo the kill switch. |
 | Owner user IDs | empty | The Home Assistant users who are Ember's owner: only they can use the dashboard and its actions. Empty: everyone who can open the panel. The dashboard shows your ID while this is empty. See [Security](#security). |
@@ -100,6 +108,14 @@ code from Etsy's own numbers): the agent never reports its own.
 | Website folder on the server | empty | The folder your domain shows, e.g. `/ember-ai.de`. Empty: the folder the login opens. |
 | Amazon KDP (books you publish) | off | Lets the agent make books for Amazon KDP, which you publish at KDP yourself after you approve them. See [Amazon KDP](#amazon-kdp). |
 | KDP author name | empty | The author name Ember's books carry: yours or a pen name. Empty: you enter it at KDP. |
+
+What wakes Ember is yours to choose one by one (0.31.0): each option that starts
+with *Wake Ember* is a switch of its own, and a decision's or an event's switch
+counts only while its group's (**Wake Ember when you decide**, **Wake Ember for
+events**) is on. To have Ember wake for your approvals but not for your
+messages, for example, turn off **Wake Ember when you write** and the four other
+decisions' switches. What doesn't wake Ember waits for its next scheduled
+wake-up, and **Wake now** is immediate.
 
 Default prices (USD per million tokens, from Anthropic's pricing page on
 2026-09-27; **check them before going live**):
@@ -307,7 +323,8 @@ the start of a cycle), and warns you once (0.15.0):
 The next plan lists them under *since your last wake*. A reply, a new email
 from a person (see [Ember's mailbox](#embers-mailbox)) or a milestone's last day
 also **wakes** the agent for a short **reactive cycle**, with the option **Wake
-Ember for events**. It works on the event first, in at most 5 work steps, on
+Ember for events** and the event's own (0.31.0: a reply, a new email, a
+milestone's last day). It works on the event first, in at most 5 work steps, on
 one product line at most, with no venture work, daily review, library study or
 critic. That happens at most
 **4 times a day**, at least **30 minutes** apart, and only while the day's cap
@@ -323,7 +340,8 @@ daily cap** unspent until **20:00** (your time), unless the cap is too small to
 spare it. Every call of that cycle leaves it, workshop runs, the daily review,
 library study and the critic too. When a scheduled wake would need that share,
 it waits until 20:00. With **Wake Ember for events** off, nothing is kept: no
-event can wake the agent to spend it (0.30.3).
+event can wake the agent to spend it (0.30.3; 0.31.0, nor with all three of its
+events' options off).
 Your **Wake now**, messages and decisions are never held back. The activity
 list shows an event's cycle as *woken by an event*, and the System log shows
 what was noted.
@@ -2423,7 +2441,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.30.3 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.31.0 (by /u/your name)`.
 
 ## Amazon KDP
 

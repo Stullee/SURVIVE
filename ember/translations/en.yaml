@@ -140,16 +140,64 @@ configuration:
   wake_on_decision:
     name: Wake Ember when you decide
     description: >-
-      On: your decision on one of its requests (approve, reject, done), on a
-      venture or on a milestone wakes the agent to act on it, like a message
-      does. Off: it sees your decision at its next scheduled wake-up.
+      On: your decisions switched on below (approving, rejecting, marking
+      done or failed, on a venture, on the roadmap) wake the agent to act on
+      them, like a message does. Off: none does; it sees your decisions at its
+      next scheduled wake-up.
+  wake_on_approval:
+    name: Wake Ember when you approve a request
+    description: >-
+      With "Wake Ember when you decide": approving one of its requests, as it
+      is or with your changes, wakes the agent. Off: it sees your approval at
+      its next scheduled wake-up.
+  wake_on_rejection:
+    name: Wake Ember when you reject a request
+    description: >-
+      With "Wake Ember when you decide": rejecting one of its requests wakes
+      the agent. Off: it sees your rejection at its next scheduled wake-up.
+  wake_on_outcome:
+    name: Wake Ember when you mark a request done or failed
+    description: >-
+      With "Wake Ember when you decide": marking an approved request done or
+      failed (or cancelling one Ember carries out itself) wakes the agent.
+      Off: it sees it at its next scheduled wake-up.
+  wake_on_venture:
+    name: Wake Ember for your venture decisions
+    description: >-
+      With "Wake Ember when you decide": backing, parking, killing a venture,
+      asking for its research, a note on it, or lifting or restoring a
+      knock-out wakes the agent. Off: it sees them at its next scheduled
+      wake-up.
+  wake_on_roadmap:
+    name: Wake Ember for your roadmap decisions
+    description: >-
+      With "Wake Ember when you decide": your decision on a milestone (a
+      note, dropping it, accepting or rejecting its date), setting or
+      removing your goal, and an unlock you give or take back wake the agent.
+      Off: it sees them at its next scheduled wake-up.
   wake_on_events:
     name: Wake Ember for events
     description: >-
-      On: a reply to Ember's email, a new email from a person or the last day
-      of a milestone Ember's code doesn't check wakes the agent for a short
-      cycle (at most 4 a day). Off: they wait for its next scheduled wake-up,
-      and no share of the daily cap is kept for them.
+      On: the events switched on below (a reply, a new email, a milestone's
+      last day) wake the agent for a short cycle (at most 4 a day). Off: none
+      does; they wait for its next scheduled wake-up, and no share of the
+      daily cap is kept for them (nor while all three below are off).
+  wake_on_reply:
+    name: Wake Ember for a reply to its email
+    description: >-
+      With "Wake Ember for events": a person's email that answers one Ember
+      sent wakes the agent. Off: it waits for its next scheduled wake-up.
+  wake_on_inquiry:
+    name: Wake Ember for a new email from a person
+    description: >-
+      With "Wake Ember for events": a new email from a person (not a reply to
+      Ember's) wakes the agent. Off: it waits for its next scheduled wake-up.
+  wake_on_milestone_due:
+    name: Wake Ember on a milestone's last day
+    description: >-
+      With "Wake Ember for events": the last day of a milestone that Ember's
+      code doesn't check itself wakes the agent. Off: it waits for its next
+      scheduled wake-up.
   worker_effort:
     name: Worker effort
     description: >-

@@ -114,6 +114,13 @@ REFERENCE_PRICES: dict[str, ModelPrice] = {
 REFERENCE_WEB_SEARCH_USD_PER_1000 = 10.0
 
 
+# 0.31.0: what wakes the agent, by kind, each with its own switch (wake_on_<kind>) under its group's: the owner's
+# decisions (wake_on_decision; app/web.py names each route's kind) and the agenda's urgent events (wake_on_events; the
+# kinds of agent/agenda.py). The owner's message has its switch alone (wake_on_message).
+WAKING_DECISIONS = ("approval", "rejection", "outcome", "venture", "roadmap")
+WAKING_EVENTS = ("reply", "inquiry", "milestone_due")
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
@@ -157,10 +164,19 @@ class Settings(BaseModel):
     # decision).
     wake_on_message: bool = True
     # 0.12.0: the owner's decision on a request, venture or milestone wakes the agent to act on it, like a message.
+    # 0.31.0: the decisions switched on below (WAKING_DECISIONS); off, none of them does.
     wake_on_decision: bool = True
+    wake_on_approval: bool = True  # 0.31.0: a request approved (with or without changes)
+    wake_on_rejection: bool = True  # a request rejected
+    wake_on_outcome: bool = True  # an approved request marked done or failed (or cancelled)
+    wake_on_venture: bool = True  # a venture backed, parked, killed, ... and a knock-out lifted or restored
+    wake_on_roadmap: bool = True  # a milestone's decision, the owner's goal, an unlock given or taken back
     # 0.15.0: an urgent event in the agenda (a reply, an inquiry, a milestone's last day) wakes the agent for a short
-    # reactive cycle. Off: it waits for the next cycle's plan.
+    # reactive cycle. Off: it waits for the next cycle's plan. 0.31.0: the events switched on below (WAKING_EVENTS).
     wake_on_events: bool = True
+    wake_on_reply: bool = True  # 0.31.0: a person's email that answers one Ember sent
+    wake_on_inquiry: bool = True  # a new email from a person
+    wake_on_milestone_due: bool = True  # the last day of a milestone Ember's code doesn't check itself
     # Effort for the work steps and the reflection ("default" sends none, which means high). Not sent to Haiku 4.5.
     worker_effort: Literal["default", "high", "medium", "low"] = "default"
     # The workshop (0.7.0): code the agent has written and run in Anthropic's sandbox. A run has its own cap and
@@ -423,6 +439,16 @@ class Settings(BaseModel):
                 f"the published price is {REFERENCE_WEB_SEARCH_USD_PER_1000}"
             )
         return warnings
+
+    def wakes_on(self, kind: str) -> bool:
+        """0.31.0: whether ``kind`` wakes the agent: the owner's message, one of WAKING_DECISIONS (under
+        wake_on_decision) or of WAKING_EVENTS (under wake_on_events), each by its own switch, wake_on_<kind>."""
+        group = "decision" if kind in WAKING_DECISIONS else "events" if kind in WAKING_EVENTS else None
+        return bool(getattr(self, f"wake_on_{kind}")) and (group is None or bool(getattr(self, f"wake_on_{group}")))
+
+    def waking_events(self) -> tuple[str, ...]:
+        """0.31.0: the agenda's kinds of urgent event that wake the agent."""
+        return tuple(kind for kind in WAKING_EVENTS if self.wakes_on(kind))
 
     @property
     def api_key_set(self) -> bool:

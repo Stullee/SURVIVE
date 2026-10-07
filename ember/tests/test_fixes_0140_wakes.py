@@ -280,7 +280,7 @@ def test_the_owners_clicks_wake_one_cycle_after_a_quiet_period(data_dir: Path) -
     assert not decision.run and decision.wait_until == first + service.OWNER_QUIET
     agent.clock.advance(seconds=83)  # an approval 83 seconds later: the same cycle
     decided = owner(agent).decide(1, {"decision": "approve", "expected_version": 0}, "Stefan")
-    web._wake_for_decision(request, decided)
+    web._wake_for_decision(request, decided, "approval")
     assert decided.body["wake"] == "soon" and not agent.wake_requested
     decision = agent.decide()
     assert not decision.run and decision.wait_until == first + timedelta(seconds=83) + service.OWNER_QUIET

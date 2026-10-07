@@ -16,16 +16,18 @@ the agent sleeps), once each:
 
 The next plan lists what it hasn't seen in SINCE YOUR LAST WAKE. An urgent event wakes the agent for a lean reactive
 cycle (no venture work, no review, study or critic, at most REACTIVE_STEPS work steps): at most EVENT_WAKES a day,
-MIN_GAP apart, never while dormant, and (0.15.0) only with the owner's wake_on_events option and behind the schedule's
-guards (agent/service.py). What can't wake it waits in the agenda for the next cycle. Until 20:00, a share of the daily
-cap is kept for these wakes (metering.event_reserve): a scheduled cycle can't spend it (0.30.3: nothing is kept while
-wake_on_events is off).
+MIN_GAP apart, never while dormant, and (0.15.0) only with the owner's wake_on_events option (0.31.0: and the switch of
+its kind, wake_on_reply, wake_on_inquiry or wake_on_milestone_due) and behind the schedule's guards (agent/service.py).
+What can't wake it waits in the agenda for the next cycle. Until 20:00, a share of the daily cap is kept for these
+wakes (metering.event_reserve): a scheduled cycle can't spend it (0.30.3: nothing is kept while wake_on_events is off;
+0.31.0, nor while no kind of event is switched on).
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -198,17 +200,21 @@ def unseen(conn: sqlite3.Connection, scope: AgentScope, limit: int = SHOWN) -> l
     ).fetchall()
 
 
-def waking(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
+def waking(conn: sqlite3.Connection, scope: AgentScope, kinds: Iterable[str] = URGENT) -> list[sqlite3.Row]:
     """The urgent events that haven't woken the agent and no plan has shown yet. 0.15.0: not an order, nor the last
-    day of a milestone Ember's code checks, noted as urgent before 0.15.0 (an event never changes)."""
+    day of a milestone Ember's code checks, noted as urgent before 0.15.0 (an event never changes). 0.31.0: of
+    ``kinds`` only (the ones the owner's options let wake the agent, Settings.waking_events)."""
+    wanted = sorted(URGENT.intersection(kinds))
+    if not wanted:
+        return []
     where, params = scope.where()
-    kinds = ", ".join(f"'{k}'" for k in sorted(URGENT))
+    marks = ", ".join("?" * len(wanted))
     return conn.execute(
         f"SELECT * FROM agenda WHERE {where} AND baseline = 0 AND urgent = 1 AND seen_cycle_id IS NULL"
-        f" AND woke_at IS NULL AND kind IN ({kinds}) AND NOT (kind = 'milestone_due' AND EXISTS ("
+        f" AND woke_at IS NULL AND kind IN ({marks}) AND NOT (kind = 'milestone_due' AND EXISTS ("
         " SELECT 1 FROM milestones m WHERE m.id = CAST(substr(agenda.key, 1, instr(agenda.key, ':') - 1) AS INTEGER)"
         " AND (m.metric IS NOT NULL OR m.kind = 'money_goal'))) ORDER BY id",
-        params,
+        (*params, *wanted),
     ).fetchall()
 
 

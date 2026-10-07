@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import time
 from datetime import datetime
 
@@ -39,7 +40,9 @@ class Scheduler:
         self._poke: asyncio.Event | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task[None] | None = None
-        self._last_prune = 0.0
+        # 0.31.0: the first round prunes, however short the machine's uptime (time.monotonic counts from its boot:
+        # 0.0 skipped it on a machine up for less than PRUNE_EVERY_SECONDS)
+        self._last_prune = -math.inf
 
     def start(self) -> None:
         self._loop = asyncio.get_running_loop()
