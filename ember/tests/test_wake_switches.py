@@ -16,6 +16,7 @@ from app import web
 from app.agent import agenda, context, service
 from app.agent.service import Agent
 from app.config import WAKING_DECISIONS, WAKING_EVENTS, LoadedSettings, Settings
+from app.economy import metering
 from app.economy.clock import to_iso
 from tests.test_agent import ROOMY, make_agent, plan, rows
 from tests.test_autonomy import request_for, send
@@ -209,3 +210,14 @@ def test_the_plan_says_a_decision_wakes_ember_only_when_one_does(
     assert agent.decide().run and agent.run_cycle("schedule").status == "idle"
     planner = transport.sent[-1]["messages"][0]["content"][0]["text"]
     assert "== WAITING FOR YOUR OWNER ==\n" in planner and (context.WAITING_NOTE in planner) is told
+
+
+def test_no_evening_share_is_kept_while_no_kind_of_event_wakes_ember(data_dir: Path) -> None:
+    """0.30.3 keeps none of the daily cap for events while wake_on_events is off; with each kind's switch off too."""
+    agent, _ = make_agent(data_dir, [])
+    clock = agent.clock
+    assert clock.now().astimezone(clock.tz).hour < metering.EVENT_RESERVE_HOUR
+    assert metering.event_reserve(ROOMY, clock, "schedule") > 0
+    assert metering.event_reserve(roomy(wake_on_reply=False, wake_on_inquiry=False), clock, "schedule") > 0
+    off = roomy(wake_on_reply=False, wake_on_inquiry=False, wake_on_milestone_due=False)
+    assert metering.event_reserve(off, clock, "schedule") == 0

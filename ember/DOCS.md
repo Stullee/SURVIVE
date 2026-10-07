@@ -339,7 +339,9 @@ To keep money for these wake-ups, a scheduled cycle leaves **a fifth of the
 daily cap** unspent until **20:00** (your time), unless the cap is too small to
 spare it. Every call of that cycle leaves it, workshop runs, the daily review,
 library study and the critic too. When a scheduled wake would need that share,
-it waits until 20:00.
+it waits until 20:00. With **Wake Ember for events** off, nothing is kept: no
+event can wake the agent to spend it (0.30.3; 0.31.0, nor with all three of its
+events' options off).
 Your **Wake now**, messages and decisions are never held back. The activity
 list shows an event's cycle as *woken by an event*, and the System log shows
 what was noted.

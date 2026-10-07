@@ -19,7 +19,8 @@ cycle (no venture work, no review, study or critic, at most REACTIVE_STEPS work 
 MIN_GAP apart, never while dormant, and (0.15.0) only with the owner's wake_on_events option (0.31.0: and the switch of
 its kind, wake_on_reply, wake_on_inquiry or wake_on_milestone_due) and behind the schedule's guards (agent/service.py).
 What can't wake it waits in the agenda for the next cycle. Until 20:00, a share of the daily cap is kept for these
-wakes (metering.event_reserve): a scheduled cycle can't spend it.
+wakes (metering.event_reserve): a scheduled cycle can't spend it (0.30.3: nothing is kept while wake_on_events is off;
+0.31.0, nor while no kind of event is switched on).
 """
 
 from __future__ import annotations

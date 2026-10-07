@@ -174,3 +174,22 @@ def test_the_evening_share_of_the_daily_cap_is_kept_for_events(data_dir: Path, m
     clock.advance(seconds=(evening - clock.now()).total_seconds() + 60)  # 20:01: the evening releases it
     assert metering.event_reserve(settings, clock, "schedule") == 0
     assert agent.decide().trigger == "schedule"
+
+
+def test_with_event_wake_ups_off_nothing_is_kept_for_events(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """0.30.3: with the owner's wake_on_events off, no event can spend the evening share: a scheduled cycle keeps none
+    of it, and a scheduled wake that would need it runs before 20:00 instead of waiting for it."""
+    agent, _ = listed(data_dir)
+    clock = agent.clock
+    daily = metering.usd_cap_to_micros(agent.settings.daily_spend_cap_usd)
+    assert clock.now().astimezone(clock.tz).hour < metering.EVENT_RESERVE_HOUR
+    held = int(daily * metering.EVENT_RESERVE_SHARE)
+    spent = daily - held // 2 - 150_000  # as above: the events' share kept, the scheduled wake would wait
+    monkeypatch.setattr(agent.economy.books, "cap_spend_on", lambda scope, day: spent)
+    agent._set_time("next_wake_at", clock.now() - timedelta(minutes=1))
+    assert agent.decide().reason.startswith("The rest of the daily cap is kept for event wake-ups")
+    agent.settings = agent.meter.settings = agent.settings.model_copy(update={"wake_on_events": False})
+    assert metering.event_reserve(agent.settings, clock, "schedule") == 0
+    assert agent.meter.held_for_events("schedule") == 0  # every call of a scheduled cycle, its cap too
+    agent._set_time("next_wake_at", clock.now() - timedelta(minutes=1))
+    assert agent.decide().trigger == "schedule"

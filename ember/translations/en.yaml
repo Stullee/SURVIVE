@@ -180,7 +180,8 @@ configuration:
     description: >-
       On: the events switched on below (a reply, a new email, a milestone's
       last day) wake the agent for a short cycle (at most 4 a day). Off: none
-      does; they wait for its next scheduled wake-up.
+      does; they wait for its next scheduled wake-up, and no share of the
+      daily cap is kept for them (nor while all three below are off).
   wake_on_reply:
     name: Wake Ember for a reply to its email
     description: >-
