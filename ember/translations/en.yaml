@@ -148,7 +148,8 @@ configuration:
     description: >-
       On: a reply to Ember's email, a new email from a person or the last day
       of a milestone Ember's code doesn't check wakes the agent for a short
-      cycle (at most 4 a day). Off: they wait for its next scheduled wake-up.
+      cycle (at most 4 a day). Off: they wait for its next scheduled wake-up,
+      and no share of the daily cap is kept for them.
   worker_effort:
     name: Worker effort
     description: >-

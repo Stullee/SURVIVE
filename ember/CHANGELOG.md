@@ -3,6 +3,12 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.30.3
+
+While your owner's wake_on_events is off, no share of the daily cap is kept for event wake-ups: no event can wake you
+to spend it. Your scheduled cycles may then spend all of the day's rest before 20:00, and a scheduled wake-up that
+needed that share no longer waits until 20:00 for it. With the option on, nothing changes.
+
 ## 0.30.2
 
 Your owner now records with Ember itself the video Pinterest asks for with a request for Standard access: the new
