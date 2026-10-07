@@ -135,6 +135,17 @@ last day): she can wake for your approvals but not for your messages, for exampl
 All are on by default, so nothing changes until you turn one off. See the
 [options](ember/DOCS.md#options).
 
+0.32.0 fixes what the diagnostics of 2026-10-07 showed: one tool call in five was
+refused, most for reasons that weren't Ember's. Her posts and pins may now link
+the posters Printify made (refused three times as "not one of your live
+listings"), English posts get the 258 characters their AI line leaves (they were
+held to the German 239), a refused venture proposal keeps the rest of its update
+and names everything it still needs at once, `workspace_write` can replace one
+passage of a file (rewriting the budget planner's specs in parts ran out of writes
+and left them cut off), `make_spreadsheet` names a formula that points at a header
+row, and her release notes no longer start again with each update. See
+[the report](analysis-0.32.0/ember-diagnostics-0.32.0.md).
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
