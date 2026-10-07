@@ -18,7 +18,8 @@ The next plan lists what it hasn't seen in SINCE YOUR LAST WAKE. An urgent event
 cycle (no venture work, no review, study or critic, at most REACTIVE_STEPS work steps): at most EVENT_WAKES a day,
 MIN_GAP apart, never while dormant, and (0.15.0) only with the owner's wake_on_events option and behind the schedule's
 guards (agent/service.py). What can't wake it waits in the agenda for the next cycle. Until 20:00, a share of the daily
-cap is kept for these wakes (metering.event_reserve): a scheduled cycle can't spend it.
+cap is kept for these wakes (metering.event_reserve): a scheduled cycle can't spend it (0.30.3: nothing is kept while
+wake_on_events is off).
 """
 
 from __future__ import annotations
