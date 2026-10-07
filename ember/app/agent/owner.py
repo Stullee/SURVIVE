@@ -44,6 +44,7 @@ CODE_CANCELLED = "Cancelled by the owner before Ember's code carried it out"
 AS_IS_EXECUTORS = (
     "pinterest_pin",
     "pinterest_delete",
+    "pinterest_test_pin",  # 0.29.1: the sandbox's test pin
     "bluesky_post",  # 0.19.0: the post as it was proposed, with its AI line
     "bluesky_delete",
     "printify_product",

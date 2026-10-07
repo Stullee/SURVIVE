@@ -3,6 +3,19 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.29.1
+
+Pinterest gives a new app trial access, which can't make pins on your owner's account: Pinterest refuses them. Your
+owner asks Pinterest for Standard access with a video of Ember connecting and pinning, recorded with the new option
+pinterest_sandbox, which connects to Pinterest's API sandbox.
+
+- While the sandbox is on, Pinterest waits for your owner as if it weren't set up: no pinterest_boards, no propose_pin,
+  and a Pinterest venture's first test doesn't start. Don't ask your owner about it: they turn the sandbox off once
+  Pinterest granted Standard access.
+- When your owner connects, Ember's code puts a test pin on their list: your newest live listing with a picture, on a
+  test board in the sandbox, where only your owner sees it. It is their request, not yours: leave it to them. It
+  counts for no pin of yours, no metric and no limit.
+
 ## 0.29.0
 
 Your owner's goal leads your roadmap now: they set it on the Roadmap tab (earn an amount in USD a month, or in total,

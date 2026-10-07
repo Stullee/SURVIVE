@@ -648,3 +648,158 @@ def test_the_approvals_take_a_new_channel_s_executor_but_only_a_plain_name(data_
         conn.execute(insert, (scope.mode, scope.session, scope.life_id, "p printify", "printify_order"))
         row = conn.execute("SELECT * FROM approvals WHERE executor = 'printify_order'").fetchone()
         assert never.reasons(conn, row) == ["owner_only"]  # no rule covers it yet: only the owner
+
+
+# --- 0.29.1: Pinterest's API sandbox, for the video of the owner's Standard access request -------------------------
+
+SANDBOX = LIVE.model_copy(update={"pinterest_sandbox": True})
+
+
+def test_the_sandbox_is_reached_at_its_own_host(tmp_path: Path) -> None:
+    server, transport = mock(
+        {
+            ("POST", "/v5/oauth/token"): {"access_token": "pina_s", "refresh_token": "pinr_s", "expires_in": 3600},
+            ("GET", "/v5/user_account"): {"username": "plannershop"},
+        }
+    )
+    connect(SANDBOX, Clock(), TokenFile(tmp_path / "tokens.json"), "the-code", "the-verifier", transport)
+    assert [r.url.host for r in server.requests] == ["api-sandbox.pinterest.com"] * 2
+    assert (pinterest.api_host(SANDBOX), pinterest.api_host(LIVE)) == ("api-sandbox.pinterest.com", "api.pinterest.com")
+    sandbox = _Allowlist(pinterest.SANDBOX_HOST, retries=0)
+    with pytest.raises(httpx2.ConnectError, match="only talks to https://api-sandbox.pinterest.com"):
+        sandbox.handle_request(httpx2.Request("GET", "https://api.pinterest.com/v5/pins"))
+
+
+def test_the_sandbox_connects_apart_and_leaves_the_agent_without_pinterest(tmp_path: Path) -> None:
+    from app.agent.loop import _waiting  # noqa: PLC0415
+    from app.db import Database, migrate  # noqa: PLC0415
+
+    server, transport = mock(
+        {
+            ("POST", "/v5/oauth/token"): {"access_token": "pina_s", "refresh_token": "pinr_s", "expires_in": 3600},
+            ("GET", "/v5/user_account"): {"username": "plannershop"},
+        }
+    )
+    db = Database(tmp_path / "ember.db")
+    migrate(db.path)
+    clock = Clock()
+    own = TokenFile(tmp_path / "pinterest" / "tokens.json")
+    own.save(some_tokens(clock))  # the account's own connection, made before
+    asked: list[str] = []
+    connection = PinterestConnection(db, clock, SANDBOX, "live", 1, own, transport, lambda: asked.append("test pin"))
+    state, reason = connection.status()
+    assert state == "sandbox" and "connect your account" in str(reason)
+    assert connection.account() is None and connection.sandbox_account() is None
+    line = _waiting("Pinterest", connection.status(), "ok")
+    assert "waits for your owner's setup (Pinterest's API sandbox" in line and "no Pinterest tools" in line
+    state = parse_qs(urlsplit(connection.start()).query)["state"][0]
+    connection.finish(f"https://localhost/ember-pinterest?code=c&state={state}")
+    assert asked == ["test pin"]  # the owner's test pin, once connected
+    assert all(r.url.host == "api-sandbox.pinterest.com" for r in server.requests)
+    sandbox = connection.tokens
+    assert sandbox.path == tmp_path / "pinterest" / "sandbox_tokens.json"
+    saved = sandbox.load()
+    assert saved is not None and saved.access_token == "pina_s"
+    assert own.load() == some_tokens(clock)  # untouched
+    assert connection.account() is None and connection.username() is None  # the agent has no Pinterest
+    assert isinstance(connection.sandbox_account(), LiveAccount)
+    assert connection.status()[0] == "sandbox" and "waits for your approval" in str(connection.status()[1])
+    shown = connection.describe()
+    assert (shown["mode"], shown["username"]) == ("sandbox", "plannershop") and shown["connected_at"]
+    connection.disconnect()
+    assert sandbox.load() is None and own.load() is not None
+    for mode, settings in (("live", LIVE), ("dry_run", SANDBOX)):  # off, or a dry run (its fake): no sandbox
+        other = PinterestConnection(db, clock, settings, mode, 1, own)
+        assert not other.sandbox and other.sandbox_account() is None and other.account() is not None
+    db.close()
+
+
+def sandboxed(data_dir: Path) -> tuple[Any, Any, pinterest.FakePinterest]:
+    """A dry-run agent with a live listing, and a pin publisher whose sandbox account is a fake one."""
+    from app.integrations import pinterest_publisher  # noqa: PLC0415
+
+    agent, _ = listed(data_dir)
+    account = pinterest.FakePinterest(agent.clock, None, lambda state: None)
+    publisher = pinterest_publisher.Publisher(
+        agent.db, agent.clock, agent.settings, agent.scope, lambda: None, lambda: agent.roots()[0], lambda: account
+    )
+    return agent, publisher, account
+
+
+def test_the_sandbox_s_test_pin_waits_for_the_owner_and_is_made_once(data_dir: Path) -> None:
+    from app.integrations import pinterest_publisher  # noqa: PLC0415
+
+    agent, publisher, account = sandboxed(data_dir)
+    made = publisher.request_test()
+    assert made is not None and publisher.request_test() == made  # one at a time
+    row = rows(agent, f"SELECT * FROM approvals WHERE id = {made}")[0]
+    assert (row["executor"], row["status"]) == ("pinterest_test_pin", "pending")
+    assert row["title"].startswith("Test pin in Pinterest's sandbox: ")
+    pin = pinterest.pin_from_action(row["action"])
+    assert pin.link == etsy.listing_url(LISTING) and pin.board_id is None
+    assert str(pin.board_name).startswith(pinterest_publisher.TEST_BOARD)
+    assert agent.roots()[0].read_bytes(pin.image.path)  # the listing's own picture
+    with agent.db.connection() as conn:
+        assert never.reasons(conn, row) == ["owner_only"]  # never on an unlock
+    assert publisher.run() == []  # it waits for the owner
+    changed = {"decision": "approve_with_changes", "final_payload": "other words"}
+    assert owner(agent).decide(made, changed, "Owner").status == 422  # as it is, or not at all
+    assert owner(agent).decide(made, {"decision": "approve"}, "Owner").status == 200
+    assert views_approval(agent, made)["execution"]["status"] == "waiting"
+    assert publisher.run() == [(made, "active")]
+    assert publisher.run() == []  # never twice
+    [(pin_id, made_pin)] = account.state["pins"].items()
+    [board] = account.state["boards"].values()
+    assert made_pin["link"] == pin.link and board["name"] == pin.board_name
+    closed = rows(agent, f"SELECT status, closed_by, result_note, result_link FROM approvals WHERE id = {made}")[0]
+    assert (closed["status"], closed["closed_by"]) == ("done", "Ember")
+    assert closed["result_link"] == pinterest.pin_url(pin_id)
+    assert "Pinterest's sandbox (only you see it)" in closed["result_note"]
+    journal = rows(agent, f"SELECT class, status, subject, undo FROM action_journal WHERE approval_id = {made}")
+    assert journal == [{"class": "pinterest.test_pin", "status": "done", "subject": pin_id, "undo": None}]
+    shown = views_approval(agent, made)["execution"]
+    assert (shown["status"], shown["url"]) == ("active", pinterest.pin_url(pin_id))
+    # None of Ember's pins: no row, no number, no board for the agent's pins.
+    assert rows(agent, "SELECT COUNT(*) AS n FROM pinterest_pins")[0]["n"] == 0
+    assert rows(agent, "SELECT COUNT(*) AS n FROM pinterest_boards")[0]["n"] == 0
+    # Another take: a new test pin, made on a board of its own.
+    again = publisher.request_test()
+    assert again is not None and again != made
+
+
+def test_a_test_pin_isn_t_made_with_the_sandbox_off_or_after_a_crash(data_dir: Path) -> None:
+    from app.integrations import connectors, pinterest_publisher  # noqa: PLC0415
+
+    agent, publisher, account = sandboxed(data_dir)
+    first = publisher.request_test()
+    assert first is not None and owner(agent).decide(first, {"decision": "approve"}, "Owner").status == 200
+    production = pinterest.FakePinterest(agent.clock, None, lambda state: None)
+    off = pinterest_publisher.Publisher(
+        agent.db, agent.clock, agent.settings, agent.scope, lambda: production, lambda: agent.roots()[0]
+    )
+    assert off.run() == [(first, "failed")]  # the sandbox was turned off before it was made
+    note = rows(agent, f"SELECT status, result_note FROM approvals WHERE id = {first}")[0]
+    assert note["status"] == "failed" and "the sandbox is off" in note["result_note"]
+    assert production.state["pins"] == {} and account.state["pins"] == {}
+    second = publisher.request_test()
+    assert second is not None and owner(agent).decide(second, {"decision": "approve"}, "Owner").status == 200
+    with agent.db.transaction() as conn:  # the app stopped while making it
+        connectors.begin(conn, second, to_iso(agent.clock.now()))
+    assert publisher.recover() == 1
+    assert publisher.run() == []
+    closed = rows(agent, f"SELECT status, result_note FROM approvals WHERE id = {second}")[0]
+    assert closed["status"] == "failed" and "unclear" in closed["result_note"]
+
+
+def test_no_test_pin_without_a_live_listing_with_a_picture(data_dir: Path) -> None:
+    from app.integrations import pinterest_publisher  # noqa: PLC0415
+
+    fake = FakeTransport()
+    agent, _ = run(data_dir, fake, cycles=2, settings=PINNING)
+    publisher = pinterest_publisher.Publisher(
+        agent.db, agent.clock, agent.settings, agent.scope, lambda: None, lambda: agent.roots()[0], lambda: None
+    )
+    assert publisher.request_test() is None
+    assert rows(agent, "SELECT COUNT(*) AS n FROM approvals WHERE executor = 'pinterest_test_pin'")[0]["n"] == 0
+    [event] = rows(agent, "SELECT message FROM events WHERE message LIKE 'No test pin%'")
+    assert "no live Etsy listing with a .png or .jpg photo" in event["message"]

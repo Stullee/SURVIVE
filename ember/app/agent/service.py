@@ -169,9 +169,16 @@ class Agent:
             self.mode,
             economy.life.session(),
             pinterest.TokenFile(paths.pinterest_dir() / "tokens.json"),
+            on_connect=lambda: self.pins.request_test(),  # 0.29.1: the sandbox's test pin
         )
         self.pins = pinterest_publisher.Publisher(
-            db, self.clock, self.settings, self.scope, self.pinterest.account, lambda: self.roots()[0]
+            db,
+            self.clock,
+            self.settings,
+            self.scope,
+            self.pinterest.account,
+            lambda: self.roots()[0],
+            sandbox=self.pinterest.sandbox_account,
         )
         # 0.19.0: the Bluesky account the owner made for Ember (the fake one in dry run), switched on in the options.
         # Only Ember's code reaches it; it posts what the owner approved (and deletes what they undo).

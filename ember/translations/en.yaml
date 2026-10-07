@@ -342,6 +342,14 @@ configuration:
     name: Pins per day
     description: >-
       At most this many approved pins a day; more wait for the next day.
+  pinterest_sandbox:
+    name: Pinterest sandbox
+    description: >-
+      For your Standard access request at Pinterest: Ember connects to
+      Pinterest's API sandbox, and a test pin waits for your approval once you
+      connect, so you can record the video Pinterest asks for. Only you see
+      what it makes there. Ember makes no other pins while it is on: turn it
+      off once Pinterest granted Standard access.
   bluesky_enabled:
     name: Bluesky
     description: >-

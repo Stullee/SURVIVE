@@ -7,6 +7,12 @@ journaled as pinterest.create_board), then the pin (pinterest_pins, journaled as
 Undo deletes it). The image must be exactly the file the owner approved (its SHA-256). At most pinterest_pins_per_day
 pins a day. The owner's Undo of a pin is a request of theirs (executor 'pinterest_delete'), carried out here too. The
 sync reads each live pin's numbers (impressions, saves, outbound clicks) at most every SYNC_HOURS.
+
+0.29.1: the sandbox's test pin (executor 'pinterest_test_pin'), for the video of the owner's Standard access request:
+a request of Ember's code, put on the owner's list when they connect with the sandbox option on (``request_test``):
+Ember's newest live listing with a picture, on a new test board. Approved, it is made in Pinterest's API sandbox, once
+(journaled 'running' first), and is none of Ember's pins: no row of pinterest_pins or pinterest_boards, so it counts
+for no metric, limit or first test, and has no Undo.
 """
 
 from __future__ import annotations
@@ -18,16 +24,18 @@ import re
 import sqlite3
 import threading
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
+from pathlib import PurePosixPath
 from typing import Any
 
 from .. import events
 from ..agent.sandbox import Jail, SandboxError
-from ..agent.store import AgentScope
+from ..agent.store import AgentScope, canonical, insert_approval
 from ..config import Settings
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
-from . import connectors, etsy, etsy_publisher
+from ..products import images
+from . import connectors, etsy, etsy_publisher, pinterest
 from .pinterest import Account, Gone, NotSent, Pin, PinterestError, pin_from_action, pin_url
 
 log = logging.getLogger(__name__)
@@ -39,6 +47,15 @@ INTERRUPTED = "the app stopped while making the pin"
 DELETE_INTERRUPTED = "the app stopped while deleting it"  # 0.15.0: the owner's Undo of a pin
 GONE = "Deleted at Pinterest, not by Ember's code"
 LISTING_LINK = re.compile(r"^https://www\.etsy\.com/listing/(\d{1,18})$")  # etsy.listing_url: what propose_pin links
+# 0.29.1: the sandbox's test pin
+TEST_EXECUTOR = "pinterest_test_pin"
+TEST_BOARD = "Ember test board"  # with the time it was asked for: a board's name is unique on an account
+TEST_WORDS = 200  # of the listing's description
+TEST_WHY = (
+    "Ember's code asks this, not the agent: the test pin for your Standard access request at Pinterest. Approve it "
+    "while you record: Ember's code then makes the board and the pin in Pinterest's API sandbox, where only you see "
+    "them (your profile doesn't change), and this card shows the pin. Disconnect and connect again for another one."
+)
 
 
 def meta_key(mode: str, name: str) -> str:
@@ -116,20 +133,23 @@ def created_today(conn: sqlite3.Connection, clock: Clock, scope: AgentScope) -> 
 def execution(
     conn: sqlite3.Connection, row: sqlite3.Row, scope: AgentScope, clock: Clock, daily_limit: int
 ) -> dict[str, Any] | None:
-    """What happened to an approved pin, or to the owner's Undo of one, for the dashboard (None before approval)."""
-    if row["executor"] == "pinterest_delete":
+    """What happened to an approved pin, to the owner's Undo of one or (0.29.1) to the sandbox's test pin, for the
+    dashboard (None before approval)."""
+    if row["executor"] in ("pinterest_delete", TEST_EXECUTOR):
         entry = conn.execute(
             "SELECT * FROM action_journal WHERE approval_id = ? ORDER BY id DESC LIMIT 1", (row["id"],)
         ).fetchone()
         if entry is not None:
-            status = {"done": "deleted", "simulated": "deleted"}.get(str(entry["status"]), str(entry["status"]))
+            test = row["executor"] == TEST_EXECUTOR
+            done = "active" if test else "deleted"
+            status = {"done": done, "simulated": done}.get(str(entry["status"]), str(entry["status"]))
             return {
                 "status": status,
                 "started_at": entry["started_at"],
                 "finished_at": entry["finished_at"],
                 "result": entry["note"],
                 "error": None,
-                "url": None,
+                "url": pin_url(entry["subject"]) if test and status == "active" and entry["subject"] else None,
             }
     else:
         pin = conn.execute("SELECT * FROM pinterest_pins WHERE approval_id = ?", (row["id"],)).fetchone()
@@ -153,6 +173,37 @@ def execution(
         "error": None,
         "url": None,
     }
+
+
+def test_pin(conn: sqlite3.Connection, scope: AgentScope, workspace: Jail, now: datetime) -> Pin:
+    """0.29.1: the sandbox's test pin: Ember's newest live Etsy listing with a .png or .jpg photo in the workspace (its
+    first such photo, its title, the start of its description, its link), on a new test board. Raises PinterestError
+    when there is none."""
+    for listing_id, listing in etsy_publisher.live_listings(conn, scope):
+        for photo in listing.photos:
+            if PurePosixPath(photo.path).suffix.lower() not in pinterest.IMAGE_KINDS:
+                continue
+            try:
+                data = workspace.read_bytes(photo.path)
+                upload = pinterest.image(photo.path, data)
+                width, height = images.png_size(data)
+            except (SandboxError, PinterestError, images.ImageError):
+                continue
+            title = pinterest.one_line(listing.title)[: pinterest.TITLE_MAX]
+            words = " ".join(listing.description.split())
+            if len(words) > TEST_WORDS:
+                words = words[:TEST_WORDS].rsplit(" ", 1)[0] + "…"
+            return Pin(
+                title=title,
+                description=words or title,
+                link=etsy.listing_url(listing_id),
+                alt_text=title,
+                image=upload,
+                width=width,
+                height=height,
+                board_name=f"{TEST_BOARD} {now:%Y-%m-%d %H:%M:%S}",
+            )
+    raise PinterestError("Ember has no live Etsy listing with a .png or .jpg photo in its workspace to pin")
 
 
 def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
@@ -181,6 +232,7 @@ class Publisher:
         scope: Callable[[], AgentScope],
         account: Callable[[], Account | None],
         workspace: Callable[[], Jail],
+        sandbox: Callable[[], Account | None] = lambda: None,
     ) -> None:
         self.db = db
         self.clock = clock
@@ -188,27 +240,80 @@ class Publisher:
         self.scope = scope
         self.account = account
         self.workspace = workspace
+        self.sandbox = sandbox  # 0.29.1: the owner's account in Pinterest's API sandbox, for the test pin
         self._lock = threading.Lock()  # one run (or sync) at a time in this process
 
     def run(self, undos: bool = False) -> list[tuple[int, str]]:
         """Carry out the approved pins (and the owner's Undos of pins) that are due; with ``undos`` (0.15.0: while the
-        agent is paused or waits for money), only the Undos."""
-        account = self.account()
-        if account is None or not self._lock.acquire(blocking=False):
+        agent is paused or waits for money), only the Undos. 0.29.1: and the sandbox's test pin, which is the owner's
+        too."""
+        account, sandbox = self.account(), self.sandbox()
+        if (account is None and sandbox is None) or not self._lock.acquire(blocking=False):
             return []
         try:
             scope = self.scope()
             done = []
-            for approval_id in [] if undos else self._approved(scope, "pinterest_pin"):
-                outcome = self._one(account, scope, approval_id)
-                done.append((approval_id, outcome))
-                if outcome == "waiting_limit":
-                    break  # the rest waits for tomorrow too, in order
-            for approval_id in self._approved(scope, "pinterest_delete"):
-                done.append((approval_id, self._delete(account, scope, approval_id)))
+            if account is not None:
+                for approval_id in [] if undos else self._approved(scope, "pinterest_pin"):
+                    outcome = self._one(account, scope, approval_id)
+                    done.append((approval_id, outcome))
+                    if outcome == "waiting_limit":
+                        break  # the rest waits for tomorrow too, in order
+                for approval_id in self._approved(scope, "pinterest_delete"):
+                    done.append((approval_id, self._delete(account, scope, approval_id)))
+            for approval_id in self._approved(scope, TEST_EXECUTOR):  # with the sandbox off, it isn't made
+                done.append((approval_id, self._test(sandbox, approval_id)))
             return done
         finally:
             self._lock.release()
+
+    def request_test(self) -> int | None:
+        """0.29.1: the sandbox's test pin on the owner's list, a request of Ember's code (the owner connected with the
+        sandbox option on): the one still open, if any, or a new one; None, with an event saying why, when nothing can
+        be pinned."""
+        scope = self.scope()
+        now = self.clock.now()
+        where, params = scope.where()
+        with self.db.transaction() as conn:
+            waiting = conn.execute(
+                f"SELECT id FROM approvals WHERE {where} AND executor = ? AND status IN ('pending', 'approved',"
+                " 'approved_with_changes') AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id ="
+                " approvals.id) ORDER BY id DESC LIMIT 1",
+                (*params, TEST_EXECUTOR),
+            ).fetchone()
+            if waiting is not None:
+                return int(waiting["id"])
+            cycle = conn.execute(
+                "SELECT MAX(id) FROM cycles WHERE session = ? AND simulated = ?",
+                (scope.session, 1 if scope.simulated else 0),
+            ).fetchone()[0]
+            try:
+                if cycle is None:
+                    raise PinterestError("Ember hasn't run a cycle yet to file it under")
+                pin = test_pin(conn, scope, self.workspace(), now)
+            except PinterestError as exc:
+                why = str(exc)
+            else:
+                why = ""
+                made = insert_approval(
+                    conn,
+                    scope,
+                    int(cycle),
+                    to_iso(now),
+                    payload=pinterest.payload(pin, f"{pin.board_name} (a new board in the sandbox, made first)"),
+                    action=canonical(pin.to_action()),
+                    type="publish",
+                    title=f"Test pin in Pinterest's sandbox: {pin.title}"[:120],
+                    description=TEST_WHY,
+                    expected_cost="none: Pinterest charges nothing, in its sandbox too",
+                    expected_benefit="The video of your Standard access request: Ember connecting and pinning.",
+                    executor=TEST_EXECUTOR,
+                )
+        if why:
+            events.record(self.db, "warning", "pinterest", f"No test pin for the sandbox: {why}"[:300])
+            return None
+        events.record(self.db, "info", "pinterest", f"Request #{made}: a test pin waits for your approval")
+        return made
 
     def _approved(self, scope: AgentScope, executor: str) -> list[int]:
         where, params = scope.where()
@@ -439,6 +544,49 @@ class Publisher:
         events.record(self.db, "info", "pinterest", f"Request #{approval_id}: {note}"[:300])
         return "done"
 
+    def _test(self, account: Account | None, approval_id: int) -> str:
+        """0.29.1: the sandbox's test pin, approved: its new board, then the pin, in Pinterest's API sandbox; failed
+        when the sandbox is off."""
+        stamp = to_iso(self.clock.now())
+        with self.db.transaction() as conn:
+            row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
+            started = conn.execute("SELECT 1 FROM action_journal WHERE approval_id = ?", (approval_id,)).fetchone()
+            if row is None or row["status"] not in ("approved", "approved_with_changes") or started is not None:
+                return "skipped"  # cancelled or decided meanwhile
+            connectors.begin(conn, approval_id, stamp)
+            try:
+                if account is None:
+                    raise PinterestError("the sandbox is off (turn it on and connect again for a test pin)")
+                pin = pin_from_action(row["action"])
+                image = self._image(pin)
+            except PinterestError as exc:
+                note = f"Not pinned: {exc}"
+                connectors.finish(conn, approval_id, "failed", stamp, note=note)
+                self._close(conn, approval_id, "failed", note, None)
+                return "failed"
+        # Committed: from here on the test pin is never made a second time, whatever happens.
+        try:
+            board = account.create_board(str(pin.board_name), "")
+            pin_id = account.create_pin(board.board_id, pin, image)
+        except NotSent as exc:
+            return self._tested(approval_id, "failed", None, f"Not pinned in the sandbox: Pinterest refused it ({exc})")
+        except Exception as exc:  # noqa: BLE001 - Unclear, or anything else: a pin may exist (in the sandbox)
+            error = str(exc) if isinstance(exc, PinterestError) else type(exc).__name__
+            if not isinstance(exc, PinterestError):
+                log.exception("Making the test pin of request #%d failed", approval_id)
+            note = f"It is unclear whether Pinterest made the test pin ({error}). Ember won't try again."
+            return self._tested(approval_id, "unclear", None, note)
+        note = f"Pinned in Pinterest's sandbox (only you see it): {pin_url(pin_id)}"
+        return self._tested(approval_id, "done", pin_id, note)
+
+    def _tested(self, approval_id: int, status: str, pin_id: str | None, note: str) -> str:
+        with self.db.transaction() as conn:
+            after = {"pin_id": pin_id} if pin_id else None
+            connectors.finish(conn, approval_id, status, to_iso(self.clock.now()), after, note, subject=pin_id)
+            self._close(conn, approval_id, "done" if pin_id else "failed", note, pin_url(pin_id) if pin_id else None)
+        events.record(self.db, "info" if pin_id else "warning", "pinterest", f"Request #{approval_id}: {note}"[:300])
+        return "active" if pin_id else status
+
     def recover(self) -> int:
         """Rows left 'running' by a crash: unclear, never retried. 0.15.0: the owner's Undo of a pin too (its journal
         entry was left 'running', the Undo "under way" for good): unclear, and the owner may press it again."""
@@ -460,10 +608,19 @@ class Publisher:
                 )
                 connectors.finish(conn, row["approval_id"], "unclear", to_iso(self.clock.now()), note=note)
                 self._close(conn, row["approval_id"], "failed", note, None)
+            testing = conn.execute(  # 0.29.1: the sandbox's test pin
+                "SELECT j.approval_id FROM action_journal j JOIN approvals a ON a.id = j.approval_id"
+                " WHERE j.status = 'running' AND a.executor = ?",
+                (TEST_EXECUTOR,),
+            ).fetchall()
+            for row in testing:
+                note = f"It is unclear whether Pinterest made the test pin ({INTERRUPTED}). Ember won't try again."
+                connectors.finish(conn, row["approval_id"], "unclear", to_iso(self.clock.now()), note=note)
+                self._close(conn, row["approval_id"], "failed", note, None)
         for row in left:
             note = f"It is unclear whether the pin was made ({INTERRUPTED}). Ember won't try again; check the board."
             self._after(row["approval_id"], "unclear", None, row["board_id"], note, INTERRUPTED)
-        return len(left) + len(deleting)
+        return len(left) + len(deleting) + len(testing)
 
     # --- how the pins do ---
 

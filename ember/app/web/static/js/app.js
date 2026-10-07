@@ -2625,7 +2625,7 @@
   function executorOf(a) {
     if (!isObject(a.action)) return null;
     return a.executor === "email" || a.executor === "reddit_link" || a.executor === "kdp_package" || a.executor === "etsy_listing" || a.executor === "etsy_edit" ||
-      a.executor === "pinterest_pin" || a.executor === "pinterest_delete" ||
+      a.executor === "pinterest_pin" || a.executor === "pinterest_delete" || a.executor === "pinterest_test_pin" ||
       a.executor === "bluesky_post" || a.executor === "bluesky_delete" ||
       a.executor === "printify_product" || a.executor === "printify_delete" ||
       a.executor === "site_post" || a.executor === "site_links" || a.executor === "site_restore" ||
@@ -2635,8 +2635,9 @@
   // A new Etsy listing, or a change to a live one: Ember's code makes both after approval.
   function isEtsy(a) { var e = executorOf(a); return e === "etsy_listing" || e === "etsy_edit"; }
 
-  // 0.13.0 (Phase E2): a pin, or the owner's Undo of one: Ember's code carries both out after approval.
-  function isPinterest(a) { var e = executorOf(a); return e === "pinterest_pin" || e === "pinterest_delete"; }
+  // 0.13.0 (Phase E2): a pin, or the owner's Undo of one: Ember's code carries both out after approval. 0.29.1: and the
+  // test pin of the owner's Standard access request, in Pinterest's API sandbox.
+  function isPinterest(a) { var e = executorOf(a); return e === "pinterest_pin" || e === "pinterest_delete" || e === "pinterest_test_pin"; }
 
   // 0.19.0: a Bluesky post, or the owner's Undo of one: Ember's code carries both out after approval.
   function isBluesky(a) { var e = executorOf(a); return e === "bluesky_post" || e === "bluesky_delete"; }
@@ -2897,6 +2898,7 @@
       a.status === "pending" && executor === "etsy_listing" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this listing in your Etsy shop itself: a draft, its photos and files, then live. Etsy charges USD 0.20 per listing." }) : null,
       a.status === "pending" && executor === "etsy_edit" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this change to the live listing itself. Etsy charges nothing for it." }) : null,
       a.status === "pending" && executor === "pinterest_pin" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this pin on your Pinterest account itself (a new board first, if it names one), exactly as shown. Pinterest charges nothing for it; your Undo deletes it." }) : null,
+      a.status === "pending" && executor === "pinterest_test_pin" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this test pin itself, exactly as shown, on a new board in Pinterest's API sandbox: only you see them there, and your profile doesn't change. This card then shows the pin." }) : null,
       a.status === "pending" && executor === "bluesky_post" ? h("p", { class: "send-note", text: "After you approve, " + name + " posts this on its Bluesky account itself, exactly as shown (with the line saying an AI wrote it and you approved it). Bluesky charges nothing for it; your Undo deletes it." }) : null,
       a.status === "pending" && executor === "printify_product" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this product at Printify and publishes it to your Etsy shop, exactly as shown, if every price keeps 15% after Etsy's fees, making and shipping; otherwise it deletes it there and says what each price needs. Printify charges you for making and shipping each order; your Undo deletes the product." }) : null,
       a.status === "pending" && (executor === "site_post" || executor === "site_links") ? h("p", { class: "send-note", text: "After you approve, " + name + " uploads exactly the page the preview shows to your website over SFTP" + (executor === "site_post" ? ", and adds it to the blog's list" : "") + ". It touches nothing else on your server; your Undo puts back what it replaced." }) : null,
@@ -3363,6 +3365,8 @@
         approveIntro = name + " then changes the live listing at Etsy itself, exactly as shown (Etsy charges nothing for it). You hear the result on this card.";
       } else if (executor === "pinterest_pin") {
         approveIntro = name + " then makes this pin on your Pinterest account itself, exactly as shown (a new board first, if it names one). You hear the result on this card; your Undo deletes it.";
+      } else if (executor === "pinterest_test_pin") {
+        approveIntro = name + " then makes this test pin itself, exactly as shown, on a new board in Pinterest's API sandbox, where only you see them. You see the pin on this card within a minute or two.";
       } else if (executor === "bluesky_post") {
         approveIntro = name + " then posts this on its Bluesky account itself, exactly as shown. You hear the result on this card; your Undo deletes it.";
       } else if (executor === "printify_product") {
@@ -3420,6 +3424,7 @@
         if (executor === "etsy_listing") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " creates the listing itself; this card shows when it's live.";
         if (executor === "etsy_edit") return (mode === "approve_with_changes" && st !== "approved" ? "Approved with your changes. " : "Approved. ") + name + " changes the listing itself; this card shows when it's done.";
         if (executor === "pinterest_pin") return "Approved. " + name + " makes the pin itself; this card shows when it's live.";
+        if (executor === "pinterest_test_pin") return "Approved. " + name + " makes the test pin in Pinterest's sandbox itself; this card shows it within a minute or two.";
         if (executor === "bluesky_post") return "Approved. " + name + " posts it itself; this card shows when it's live.";
         if (executor === "printify_product") return "Approved. " + name + " creates the product itself; this card shows when it's in the shop.";
         if (executor === "site_post" || executor === "site_links") return "Approved. " + name + " uploads the page itself; this card shows when it's online.";
@@ -4446,6 +4451,7 @@
     not_connected: { icon: "○", label: "Not connected", tone: "warning" },
     not_configured: { icon: "○", label: "Not set up", tone: "warning" },
     disabled: { icon: "–", label: "Off", tone: "" },
+    sandbox: { icon: "◐", label: "Sandbox", tone: "accent" },  // 0.29.1: Pinterest's, for the Standard access request
   };
 
   var LISTING_STATUS = {
@@ -4652,9 +4658,10 @@
       });
       c.wrap = h("div", { class: "etsy-connect" });
     }
-    var connected = e.status === "ok";
+    // 0.29.1: Pinterest's sandbox (for the Standard access request) connects like the account itself
+    var connected = e.status === "ok" || (e.status === "sandbox" && !!e.connected_at);
     c.start.textContent = connected ? "Connect again" : w.start;
-    var canConnect = e.status === "ok" || e.status === "not_connected";
+    var canConnect = connected || e.status === "not_connected" || e.status === "sandbox";
     replace(c.wrap, [
       canConnect ? h("div", { class: "form-actions" }, c.start, connected ? c.disconnect : null) : null,
       c.linkBox, c.pasteBox, c.status,

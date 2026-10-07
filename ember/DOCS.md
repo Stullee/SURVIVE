@@ -81,6 +81,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Pinterest app ID, app secret | empty | From the Pinterest app you create for your own account. The secret is never logged or shown. |
 | Pinterest redirect URI | https://localhost/ember-pinterest | The redirect URI registered for that app, exactly as there. |
 | Pins per day | 3 | The most pins Ember makes in one day (0 to 20). |
+| Pinterest sandbox | off | For your Standard access request at Pinterest: Ember connects to Pinterest's API sandbox and puts a test pin on your list, so you can record the video Pinterest asks for. No other pins while it is on. See [Standard access](#standard-access). |
 | Bluesky | off | Lets the agent propose posts on the Bluesky account you made for Ember, which Ember posts after you approve them. See [Bluesky](#bluesky). |
 | Bluesky handle, app password | empty | The account's handle (such as `ember-shop.bsky.social`) and an app password made for Ember in its settings, never the account's own password. The app password is never logged or shown. |
 | Bluesky posts per day | 2 | The most posts Ember makes in one day (0 to 20). |
@@ -1835,9 +1836,11 @@ need the Etsy shop: each one links to one of Ember's live listings. While
    (its website or "about" text): a board of pins for your shop is a public
    presence of your business (§ 5 DDG).
 2. Create an app for it at
-   [developers.pinterest.com](https://developers.pinterest.com/apps/). A new
-   app has **trial access**, which may post to your own account only: all
-   Ember needs. Note its **app ID** and **app secret**.
+   [developers.pinterest.com](https://developers.pinterest.com/apps/). Note
+   its **app ID** and **app secret**. A new app has **trial access**: it
+   connects your account, but Pinterest refuses the pins it makes. Ask for
+   Standard access once the steps below are done (see
+   [Standard access](#standard-access)).
 3. In the app's settings, add the redirect URI
    `https://localhost/ember-pinterest`, or whatever you set as **Pinterest
    redirect URI**; it must match exactly. Nothing needs to answer at that
@@ -1858,6 +1861,42 @@ reads the shop, Ember renews it in time, pins or no pins. If it lapses anyway
 connect again. **Disconnect**
 deletes Ember's tokens (you can also remove the app's access in your Pinterest
 settings).
+
+### Standard access
+
+Pinterest grants **Standard access** when you ask for it with a short video of
+your app connecting to your account and making a pin. Trial access can't make
+that pin on your account, so you record the video with Ember in Pinterest's API
+sandbox, where what it makes is seen only by you:
+
+1. In Ember's **Configuration** tab, turn on **Pinterest sandbox**, save and
+   restart the app. Pinterest, the app ID, the secret and the redirect URI stay
+   as they are.
+2. Start recording your screen (Mac: Cmd+Shift+5, *Record Entire Screen*;
+   Windows 11: the Snipping Tool's *Record*).
+3. On the dashboard, open **System → Pinterest** and connect as in step 5
+   above. Pinterest's page asking you to allow access is what the review looks
+   for: let it show for a moment. Ember asks for `boards:read`, `boards:write`,
+   `pins:read`, `pins:write` and `user_accounts:read`.
+4. A test pin now waits on the **Approvals** tab: Ember's newest live listing
+   with its first picture, on a new test board. **Approve** it. Within a minute
+   or two its card shows the pin; open it on pinterest.com (only you see it).
+5. Stop recording. At
+   [developers.pinterest.com](https://developers.pinterest.com/apps/), press
+   **Upgrade** on your app, upload the video and say what Ember does: it pins
+   your own Etsy listings on your own account, each pin approved by you, with
+   a line saying AI helped design it. Add that the video was recorded in the
+   sandbox because trial access can't make pins.
+6. Once Pinterest granted Standard access, turn **Pinterest sandbox** off,
+   restart, and connect your account if **System → Pinterest** asks for it (the
+   sandbox's connection is kept apart from it).
+
+While the sandbox is on, Ember makes no other pins and reads no numbers: the
+agent waits for you as if Pinterest weren't set up. The test pin isn't one of
+Ember's pins: it counts for nothing and has no **Undo**. For another take,
+press **Disconnect** and connect again: a test pin waits again (the same one,
+if you hadn't approved it). Without a live listing with a .png or .jpg picture
+there is no test pin; the **System log** says so.
 
 ### How a pin is made
 
@@ -2337,7 +2376,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.29.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.29.1 (by /u/your name)`.
 
 ## Amazon KDP
 
