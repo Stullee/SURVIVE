@@ -107,16 +107,16 @@ def view(
         lines.append("Parked or killed: " + "; ".join(gone))
     parts.append("\n".join(lines))
     rows = conn.execute(
-        "SELECT trigger, project_id, venture, COUNT(*) AS n, COALESCE(SUM((SELECT SUM(cost_micros) FROM llm_calls c"
-        " WHERE c.cycle_id = y.id)), 0) AS spent FROM cycles y WHERE session = ? AND simulated = ? AND started_at >= ?"
-        " GROUP BY trigger, project_id, venture",
+        "SELECT trigger, project_id, venture, marketing, COUNT(*) AS n, COALESCE(SUM((SELECT SUM(cost_micros) FROM"
+        " llm_calls c WHERE c.cycle_id = y.id)), 0) AS spent FROM cycles y WHERE session = ? AND simulated = ?"
+        " AND started_at >= ? GROUP BY trigger, project_id, venture, marketing",
         (scope.session, 1 if scope.simulated else 0, since),
     ).fetchall()
     by_trigger: dict[str, int] = {}
     by_focus: dict[str, tuple[int, int]] = {}
     for r in rows:
         by_trigger[str(r["trigger"])] = by_trigger.get(str(r["trigger"]), 0) + int(r["n"])
-        focus = f"project #{r['project_id']}" if r["project_id"] else "venture cycles" if r["venture"] else "no focus"
+        focus = _went_to(r)
         n, spent = by_focus.get(focus, (0, 0))
         by_focus[focus] = (n + int(r["n"]), spent + int(r["spent"]))
     started = ", ".join(f"{n} by {t}" for t, n in sorted(by_trigger.items(), key=lambda x: -x[1])) or "none"
@@ -228,6 +228,15 @@ def save(
         ),
     )
     return int(cursor.lastrowid)
+
+
+def _went_to(row: sqlite3.Row) -> str:
+    """What a group of the week's cycles went to: a product line (0.28.0: its marketing apart), ventures, or none."""
+    if row["venture"]:
+        return "venture cycles"
+    if row["project_id"]:
+        return f"marketing #{row['project_id']}" if row["marketing"] else f"project #{row['project_id']}"
+    return "marketing cycles" if row["marketing"] else "no focus"
 
 
 def latest(conn: sqlite3.Connection, scope: AgentScope, today: date) -> sqlite3.Row | None:

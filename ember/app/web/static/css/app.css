@@ -1434,6 +1434,12 @@ body[data-stale="true"] .live { display: none; }
 .card.venture .notes > summary { cursor: pointer; color: var(--text-2); width: max-content; max-width: 100%; }
 .card.venture .vt-card-title:focus { outline: none; }
 
+/* 0.27.0: the Ventures tab's views (Pipeline, Running); a running venture's projects in its card, as in Projects before. */
+.vt-view { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); min-width: 0; }
+.vt-projects { display: grid; gap: 10px; min-width: 0; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--grid); }
+.vt-projects-head { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 1rem; }
+.vt-projects .pj-title { margin: 0; }
+
 /* The roadmap (0.11.0): a timeline of milestones, a row each, under the goal it leads to. The state has its own
    shape as well as its color (open: diamond, overdue: triangle, done: disc, missed: cross, dropped: dash). */
 #rm-card { position: relative; }

@@ -154,6 +154,30 @@ def open_milestones(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3
     ).fetchall()
 
 
+def of_line(milestone: Mapping[str, Any], line: int, venture_id: int | None) -> bool:
+    """0.28.0: a milestone of a product line: its own, or its venture's without a project of its own (a backed
+    venture's first test)."""
+    if milestone["project_id"] is not None:
+        return milestone["project_id"] == line
+    return venture_id is not None and milestone["venture_id"] == venture_id
+
+
+def serves_line(milestone: Mapping[str, Any], line: int, venture_id: int | None) -> bool:
+    """0.28.0: whether a cycle on product ``line`` (of venture ``venture_id``) may aim at a milestone: the line's own,
+    its venture's, or one of no line (a goal: the money goal and its decision points serve every line)."""
+    return milestone["project_id"] in (None, line) and milestone["venture_id"] in (None, venture_id)
+
+
+def line_milestone(conn: sqlite3.Connection, scope: AgentScope, line: int, today: date) -> int | None:
+    """0.28.0: a product line's open milestone due first that doesn't wait (``of_line``), None without one."""
+    row = conn.execute("SELECT venture_id FROM projects WHERE id = ?", (line,)).fetchone()
+    venture_id = row["venture_id"] if row is not None else None
+    for m in open_milestones(conn, scope):
+        if not waiting(m, today) and of_line(m, line, venture_id):
+            return int(m["id"])
+    return None
+
+
 def closed_since(conn: sqlite3.Connection, scope: AgentScope, since: str, limit: int = 12) -> list[sqlite3.Row]:
     """The milestones closed since ``since`` (a timestamp), the newest first."""
     where, params = scope.where()

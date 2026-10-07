@@ -59,8 +59,12 @@
     // files: venture id -> what Ember learned about it (its knowledge file), loaded when the owner opens it.
     vt: { data: null, byId: {}, stamp: null, loadedAt: null, busy: false, again: false, error: null, selected: null,
       files: {}, saving: false, reveal: null },
-    // 0.19.4: the Projects tab's filter (open, closed, all) and sort, kept in this browser.
-    pj: { filter: loadPref("ember-projects-filter", "open"), sort: loadPref("ember-projects-sort", "status") },
+    // 0.19.4: the projects' filter (open, closed, all) and sort, kept in this browser. 0.27.0: in the Ventures tab's
+    // Running view; reveal: the project to bring into view once the ventures are loaded (its card may be in its venture's).
+    pj: { filter: loadPref("ember-projects-filter", "open"), sort: loadPref("ember-projects-sort", "status"), reveal: null },
+    // 0.27.0: the Ventures tab's view: pipeline (the tree and the ventures being decided) or running (the backed and
+    // live ones with their projects), kept in this browser.
+    vtView: loadPref("ember-ventures-view", "pipeline"),
     // The roadmap (0.11.0): loaded while its tab is open, again whenever the dashboard's roadmap stamp changes.
     rm: { data: null, byId: {}, stamp: null, busy: false, again: false, error: null, selected: null, saving: false },
     // 0.29.0: the owner's goal: its form is being saved, its removal is being confirmed or sent
@@ -85,6 +89,8 @@
 
   // The phase-1 scenario switcher is gone; drop its stored choice.
   try { window.localStorage.removeItem("ember-scenario"); } catch (e) { /* storage unavailable */ }
+  // 0.27.0: the Projects tab is the Ventures tab's Running view.
+  if (ui.tab === "projects") { ui.tab = "ventures"; ui.vtView = "running"; }
 
   // ------------------------------------------------------------------ helpers
 
@@ -634,7 +640,8 @@
     section("ledger", [d.ledger, d.mode], ["ledger-list"], function () { renderLedger(d); });
     safely("forms", function () { updateForms(d, agent); });
 
-    section("projects", projectsKey(d), ["projects"], function () { renderProjects(d); });
+    // 0.27.0: renderProjects leaves each of its lists alone while the owner is busy in it.
+    section("projects", projectsKey(d), null, function () { return renderProjects(d); });
     // Patched item by item, so an open cycle, its loaded details and their scroll positions survive the fast polls.
     section("activity", [d.activity, minute], null, function () { return renderActivity(arr(d.activity)); });
     // Owner queues: patched card by card, so an open decision form keeps what the owner typed.
@@ -970,6 +977,7 @@
     setBadge("badge-inbox", c.unread, "●", "unread");
     setBadge("badge-upgrades", c.upgrades, "◔", "new");
     setBadge("badge-ventures", c.ventures, "◔", "business cases waiting for your decision");
+    setBadge("badge-pipeline", c.ventures, "◔", "business cases waiting for your decision");  // 0.27.0
     setBadge("badge-roadmap", c.overdue, "▲", "overdue milestones");
     setBadge("badge-roadmap-proposals", c.proposals, "◔", "proposed dates waiting for your decision");
     var sys = d.system;
@@ -1624,11 +1632,11 @@
 
   function projectsKey(d) {
     return [d.projects, arr(d.activity).map(function (c) { return c.cycle_id; }), d.venture_choices, ui.pj.filter, ui.pj.sort,
-      agentName(), Math.floor(Date.now() / 60000)];
+      Object.keys(runningSlots()), agentName(), Math.floor(Date.now() / 60000), d.lines];
   }
 
   function renderProjectsNow() {
-    if (ui.data) section("projects", projectsKey(ui.data), ["projects"], function () { renderProjects(ui.data); });
+    if (ui.data) section("projects", projectsKey(ui.data), null, function () { return renderProjects(ui.data); });
   }
 
   function setProjectView(filter, sort) {
@@ -1680,43 +1688,106 @@
     };
   }
 
+  // 0.27.0: the Ventures tab's Running view: the projects of each backed or live venture in its card (renderVentures
+  // puts the cards there, each with an empty box for them), then the others. A list the owner is busy in (focus or a
+  // selection) is left as it is and drawn on the next poll (false).
   function renderProjects(d) {
+    renderLineDesk(d);
     var el = $("projects");
     var name = agentName();
     var projects = arr(d.projects).filter(function (p) { return isObject(p) && p.id !== undefined; });
+    var slots = runningSlots();
+    var running = Object.keys(slots);
     $("projects-bar").hidden = !projects.length;
-    if (!projects.length) {
-      replace(el, emptyState("div", "No projects yet.", "When " + name + " starts a project, it shows up here with its hypothesis, its next step, and what it cost and earned."));
-      return;
-    }
     var ctx = { open: {}, cycles: {}, ventures: {} };
-    Array.prototype.forEach.call(el.querySelectorAll("details[open][data-id]"), function (x) { ctx.open[x.getAttribute("data-id")] = true; });
+    Array.prototype.forEach.call($("vt-running").querySelectorAll("details[open][data-id]"), function (x) { ctx.open[x.getAttribute("data-id")] = true; });
     arr(d.activity).forEach(function (c) { if (isObject(c)) ctx.cycles[String(c.cycle_id)] = true; });
     arr(d.venture_choices).forEach(function (v) { if (isObject(v)) ctx.ventures[String(v.id)] = v.title; });
     var open = [];
     var closed = [];
-    projects.forEach(function (p) { (PROJECT_CLOSED[p.status] ? closed : open).push(p); });
-    renderProjectStats(projects, open);
-    $("pj-count-open").textContent = intFmt.format(open.length);
-    $("pj-count-closed").textContent = intFmt.format(closed.length);
-    $("pj-count-all").textContent = intFmt.format(projects.length);
-    var sorter = projectSorter(ui.pj.sort);
-    open.sort(sorter);
-    closed.sort(sorter);
-    var all = ui.pj.filter === "all";
-    var parts = [];
-    if (ui.pj.filter !== "closed") {
-      parts.push(all && open.length ? projectsHead("Open", open.length) : null);
-      parts.push(open.length ? h("div", { class: "pj-cards" }, open.map(function (p) { return projectCard(p, ctx); }))
-        : emptyState("div", "No open projects.", name + " opens one when it tests an idea." + (closed.length ? " The finished ones are under Closed." : "")));
+    var byVenture = {};
+    var rest = { open: [], closed: [] };
+    projects.forEach(function (p) {
+      var done = !!PROJECT_CLOSED[p.status];
+      (done ? closed : open).push(p);
+      var vid = p.venture_id === null || p.venture_id === undefined ? "" : String(p.venture_id);
+      var group = slots[vid] ? (byVenture[vid] = byVenture[vid] || { open: [], closed: [] }) : rest;
+      (done ? group.closed : group.open).push(p);
+    });
+    if (projects.length) {
+      renderProjectStats(projects, open);
+      $("pj-count-open").textContent = intFmt.format(open.length);
+      $("pj-count-closed").textContent = intFmt.format(closed.length);
+      $("pj-count-all").textContent = intFmt.format(projects.length);
     }
-    if (ui.pj.filter !== "open") {
-      parts.push(all && closed.length ? projectsHead("Closed", closed.length) : null);
-      parts.push(closed.length ? h("ul", { class: "pj-rows", "aria-label": "Closed projects" }, closed.map(function (p) { return projectRow(p, ctx); }))
-        : all ? null : emptyState("div", "No closed projects yet.", "A project closes when it succeeds, fails or is abandoned."));
+    var sorter = projectSorter(ui.pj.sort);
+    var complete = true;
+    var inCard = Object.assign({}, ctx, { inCard: true });
+    running.forEach(function (vid) {
+      var group = byVenture[vid] || { open: [], closed: [] };
+      if (isBusy(slots[vid])) { complete = false; return; }
+      replace(slots[vid], ventureProjects(group.open.sort(sorter), group.closed.sort(sorter), inCard));
+    });
+    if (isBusy(el)) return false;
+    rest.open.sort(sorter);
+    rest.closed.sort(sorter);
+    var parts = [];
+    if (!projects.length) {
+      if (!running.length) parts.push(emptyState("div", "Nothing running yet.", "When you back a venture in Pipeline, " + name + "'s code opens its project, and it shows up here with its hypothesis, its next step, and what it cost and earned. " + name + " starts projects of its own too."));
+    } else if (running.length) {
+      var shown = projectParts(rest.open, rest.closed, ctx);
+      var n = (ui.pj.filter !== "closed" ? rest.open.length : 0) + (ui.pj.filter !== "open" ? rest.closed.length : 0);
+      if (n) {
+        parts.push(h("h2", { class: "queue-head", text: "Other projects (" + intFmt.format(n) + ")" }),
+          h("p", { class: "muted small", text: "Of no venture, or of a venture that isn't backed or live (its chip opens it in Pipeline)." }), shown);
+      }
+    } else {
+      // No running venture (or the ventures aren't loaded): the list as it was before 0.27.0.
+      var all = ui.pj.filter === "all";
+      if (ui.pj.filter !== "closed") {
+        parts.push(all && open.length ? projectsHead("Open", open.length) : null);
+        parts.push(open.length ? h("div", { class: "pj-cards" }, open.sort(sorter).map(function (p) { return projectCard(p, ctx); }))
+          : emptyState("div", "No open projects.", name + " opens one when it tests an idea." + (closed.length ? " The finished ones are under Closed." : "")));
+      }
+      if (ui.pj.filter !== "open") {
+        parts.push(all && closed.length ? projectsHead("Closed", closed.length) : null);
+        parts.push(closed.length ? h("ul", { class: "pj-rows", "aria-label": "Closed projects" }, closed.sort(sorter).map(function (p) { return projectRow(p, ctx); }))
+          : all ? null : emptyState("div", "No closed projects yet.", "A project closes when it succeeds, fails or is abandoned."));
+      }
     }
     if (ui.pj.filter === "open" && closed.length) parts.push(showClosedButton(closed));
     replace(el, parts);
+    return complete;
+  }
+
+  // The open projects as cards and the closed ones as rows, as the filter says.
+  function projectParts(open, closed, ctx) {
+    return [
+      ui.pj.filter !== "closed" && open.length ? h("div", { class: "pj-cards" }, open.map(function (p) { return projectCard(p, ctx); })) : null,
+      ui.pj.filter !== "open" && closed.length ? h("ul", { class: "pj-rows", "aria-label": "Closed projects" }, closed.map(function (p) { return projectRow(p, ctx); })) : null,
+    ].filter(Boolean);
+  }
+
+  // 0.27.0: a running venture's projects, in its card, and what the filter leaves out.
+  function ventureProjects(open, closed, ctx) {
+    var parts = projectParts(open, closed, ctx);
+    var hidden = ui.pj.filter === "open" ? closed.length : ui.pj.filter === "closed" ? open.length : 0;
+    var kind = ui.pj.filter === "open" ? "closed" : "open";
+    var shows = (kind === "closed" ? "Closed" : "Open") + " or All shows " + (hidden === 1 ? "it" : "them");
+    var note = !open.length && !closed.length ? "No project yet."
+      : !hidden ? null
+      : parts.length ? "And " + plural(hidden, kind + " project") + " (" + shows + ")."
+      : "No " + ui.pj.filter + " project; " + plural(hidden, kind + " one") + " (" + shows + ").";
+    return [h("h4", { class: "vt-projects-head" }, "Projects", h("span", { class: "pj-section-count", text: intFmt.format(open.length + closed.length) }))]
+      .concat(parts, note ? h("p", { class: "muted small", text: note }) : []);
+  }
+
+  // The project boxes of the running ventures' cards (venture id -> box), once the ventures are loaded.
+  function runningSlots() {
+    var q = $("vt-running-list").ember;
+    var slots = {};
+    if (q) Object.keys(q.items).forEach(function (id) { if (q.items[id].projects) slots[id] = q.items[id].projects; });
+    return slots;
   }
 
   function projectsHead(title, n) {
@@ -1770,9 +1841,10 @@
     var s = PROJECT_STATUS[p.status] || {};
     return h("article", { class: "card project", "data-id": String(p.id), "data-tone": s.tone || null, "aria-labelledby": "pj-title-" + p.id },
       h("div", { class: "pj-chips" }, chip(PROJECT_STATUS, p.status, sentence(p.status || "unknown")),
-        num(p.pending_approvals) > 0 ? approvalsButton(p) : null, ventureChip(p, ctx),
+        num(p.pending_approvals) > 0 ? approvalsButton(p) : null, ctx.inCard ? null : ventureChip(p, ctx),
         num(p.files) > 0 ? filesButton("p:" + p.id, "this project") : null),
-      h("h3", { class: "pj-title", id: "pj-title-" + p.id, text: p.title || "Untitled project" }),
+      // 0.27.0: in its venture's card, a level below the card's heading (a venture's own card says which it is)
+      h(ctx.inCard ? "h5" : "h3", { class: "pj-title", id: "pj-title-" + p.id, text: p.title || "Untitled project" }),
       p.hypothesis ? h("p", { class: "hypothesis", text: p.hypothesis }) : null,
       p.next_step ? h("div", { class: "pj-next" }, h("p", { class: "pj-next-label", text: "Next step" }), h("p", { class: "pj-next-text", text: String(p.next_step) })) : null,
       projectMoney(p),
@@ -1783,7 +1855,7 @@
   // A closed project: one line (how it ended, what it netted, when), its card's contents when opened.
   function projectRow(p, ctx) {
     var key = "row-" + p.id;
-    var chips = [ventureChip(p, ctx), num(p.files) > 0 ? filesButton("p:" + p.id, "this project") : null].filter(Boolean);
+    var chips = [ctx.inCard ? null : ventureChip(p, ctx), num(p.files) > 0 ? filesButton("p:" + p.id, "this project") : null].filter(Boolean);
     return h("li", { class: "pj-row", "data-id": String(p.id) },
       h("details", { "data-id": key, open: ctx.open[key] },
         h("summary", null,
@@ -1906,12 +1978,22 @@
   }
 
   // 0.26.0: a project's card (a closed one's row, opened), from the workspace: all projects shown if it is closed and
-  // only the open ones were.
+  // only the open ones were. 0.27.0: in the Ventures tab's Running view, once the ventures are loaded (a running
+  // venture's projects are in its card; loadVentures shows it then).
   function revealProject(id) {
-    selectTab("projects", false);
+    ui.pj.reveal = String(id);
+    selectTab("ventures", false);
+    selectVentureView("running", false);
+    if (ui.vt.data) showProject();
+  }
+
+  function showProject() {
+    var id = ui.pj.reveal;
+    ui.pj.reveal = null;
+    if (id === null) return;
     function find() {
-      return Array.prototype.filter.call($("projects").querySelectorAll("article[data-id], li[data-id]"), function (c) {
-        return c.getAttribute("data-id") === String(id);
+      return Array.prototype.filter.call($("vt-running").querySelectorAll(".project[data-id], .pj-row[data-id]"), function (c) {
+        return c.getAttribute("data-id") === id;
       })[0];
     }
     var el = find();
@@ -1922,7 +2004,7 @@
     if (!el) return;
     var details = el.tagName === "LI" ? el.querySelector("details") : null;
     if (details) details.open = true;
-    revealEl(el, details ? details.querySelector("summary") : el.querySelector("h3"));
+    revealEl(el, details ? details.querySelector("summary") : el.querySelector(".pj-title"));
   }
 
   // 0.26.0: a project's or a venture's files, in the workspace.
@@ -1935,7 +2017,7 @@
 
   function revealVenture(id) {
     ui.vt.selected = id;
-    ui.vt.reveal = id;  // shown once the tree is loaded (selectTab loads it)
+    ui.vt.reveal = id;  // shown once the tree is loaded (selectTab loads it), in the view its card is in
     selectTab("ventures", false);
   }
 
@@ -1994,13 +2076,80 @@
     return item;
   }
 
+  // 0.28.0: each cycle is about one thing: a product line (an ordinary cycle), a line's buyers (a marketing cycle), a
+  // venture, or an event.
+  var CYCLE_KINDS = { ordinary: "Product line", marketing: "Marketing", venture: "Venture", event: "Event" };
+
+  function cycleKindChip(c) {
+    var about = isObject(c.about) ? c.about : null;
+    var label = CYCLE_KINDS[c.kind] || "Cycle";
+    if (about) {
+      var title = about.title ? " " + String(about.title) : "";
+      label += " · #" + about.id + (title.length > 41 ? title.slice(0, 40) + "…" : title);
+    } else if (c.kind === "ordinary") {
+      label = "No line";
+    }
+    return h("span", { class: "chip", text: label, title: "What cycle #" + c.cycle_id + " was about" });
+  }
+
+  // 0.28.0: the Line desk: what Ember's code ranks for an ordinary and a marketing plan now (each plan takes one line
+  // or says why none, and Ember's code keeps that cycle's tools on it), what the last plans took, and the marketing
+  // share of each day's spending.
+  function renderLineDesk(d) {
+    var el = $("pj-desk");
+    if (!el) return;
+    var desk = isObject(d.lines) ? d.lines : null;
+    if (!desk) { replace(el, []); return; }
+    var name = agentName();
+    var ready = arr(desk.ready);
+    var market = arr(desk.market);
+    var picks = arr(desk.picks);
+    var today = isObject(desk.today) ? desk.today : {};
+    function ranked(items, empty) {
+      return items.length ?
+        h("ol", { class: "vt-ready" }, items.map(function (item) {
+          return h("li", null, h("strong", { text: String(item.key) }), " · " + String(item.text));
+        })) :
+        h("p", { class: "muted small", text: empty });
+    }
+    var share = num(desk.share) || 0;
+    var paused = desk.mode === "maintenance" || desk.mode === "dormant";
+    var shareText = !share ?
+      "Marketing cycles are off (Share for marketing is 0 in the app's options, or the ventures' share takes all of " +
+        "it): the ordinary cycles market." :
+      paused ?
+        "Marketing cycles pause in the " + desk.mode + " burn mode (they run in explore and focus): the ordinary " +
+          "cycles market meanwhile." :
+        "Marketing cycles get " + share + "% of each day's spending: " + usd(today.marketing_usd) + " of today's " +
+          usd(today.spent_usd) + " so far, in " + plural(num(desk.marketing_cycles) || 0, "marketing cycle") + " in all.";
+    var taken = picks.length ?
+      h("ul", { class: "vt-picks muted small" }, picks.map(function (p) {
+        var what = p.pick ? "took " + p.pick + (p.pressed ? " (an obligation pressed)" : "") : "took none: " + String(p.why_not);
+        return h("li", null, "Cycle #" + p.cycle_id + (p.kind === "market" ? " (marketing) " : " ") + what + " · ", timeEl(p.created_at));
+      })) : null;
+    var lines = ready.filter(function (i) { return i.kind === "line"; }).length;
+    var opened = !!el.querySelector("details[open]");  // drawn again each minute: an open box stays open
+    replace(el, h("details", { class: "vt-desk-box", open: opened },
+      h("summary", null, h("strong", { text: "Line desk: " }),
+        "one product line a cycle · " + plural(lines, "line") + " ranked · " + plural(market.length, "line") + " to market"),
+      h("p", { class: "muted small", text: "Ranked by " + name + "'s code: what a line owes, its milestone due, its jobs " +
+        "(the critic's fixes, a demand note, building or scaling it), then the one worked on longest ago. Each cycle's plan " +
+        "takes one line or says why none, and " + name + "'s code keeps that cycle's tools on it." }),
+      h("p", { class: "muted small", text: shareText }),
+      h("p", { class: "small" }, h("strong", { text: "For an ordinary cycle" })),
+      ranked(ready, "No line to work on now."),
+      h("p", { class: "small" }, h("strong", { text: "For a marketing cycle" })),
+      ranked(market, share ? "Nothing live to market now." : "No marketing cycles while their share is 0."),
+      taken));
+  }
+
   function cycleSummary(c) {
     var took = c.ended_at ? duration(c.started_at, c.ended_at) : "";
     var meta = [triggerText(c.trigger), " · ", timeEl(c.started_at)];
     if (took) meta.push(" · took " + took);
     meta.push(" · " + plural(c.calls, "model call") + ", " + plural(c.tools, "tool call"));
     return [
-      h("span", { class: "cycle-title" }, h("strong", { text: "Cycle #" + c.cycle_id }), " ", chip(CYCLE_STATUS, c.status, sentence(c.status || "unknown"))),
+      h("span", { class: "cycle-title" }, h("strong", { text: "Cycle #" + c.cycle_id }), " ", chip(CYCLE_STATUS, c.status, sentence(c.status || "unknown")), " ", cycleKindChip(c)),
       h("span", { class: "cycle-cost", text: usd(c.cost_usd) }),
       h("span", { class: "cycle-meta" }, meta),
       c.summary || c.note ? h("span", { class: "cycle-text" },
@@ -6850,7 +6999,7 @@
     $("ws-files-title").focus({ preventScroll: true });
   }
 
-  // A project's card in Projects, a venture's in Ventures (from the list's groups and the viewer).
+  // A project's or a venture's card in Ventures (from the list's groups and the viewer).
   function wsReveal(key) {
     var m = /^([pv]):(\d+)$/.exec(key || "");
     if (!m) return;
@@ -7078,7 +7227,7 @@
     });
   }
 
-  // A project's group (a venture's): its title and state, and a way to it in Projects (in Ventures).
+  // A project's group (a venture's): its title and state, and a way to it in Ventures.
   function wsOwnerHead(o, tag, id, stats) {
     var what = o.type === "none" ? "written with no project or venture in focus"
       : (o.type === "venture" ? "Venture" : "Project") + (o.state ? " · " + o.state : "");
@@ -7088,8 +7237,7 @@
         h("span", { class: "ws-owner-name", text: o.type === "none" ? "Not filed under a project" : o.title })),
       h("span", { class: "ws-group-meta", text: what + " · " + stats }),
       o.type !== "none" && o.known ? h("button", { type: "button", class: "link-button ws-owner-go", "data-ws-reveal": o.key,
-        "aria-label": o.title + ": open it in " + (o.type === "venture" ? "Ventures" : "Projects") },
-        "Open in " + (o.type === "venture" ? "Ventures" : "Projects"), h("span", { "aria-hidden": "true", text: " →" })) : null);
+        "aria-label": o.title + ": open it in Ventures" }, "Open in Ventures", h("span", { "aria-hidden": "true", text: " →" })) : null);
   }
 
   function wsItemEl(item, open, withFolder, withOwner, owners) {
@@ -7409,7 +7557,7 @@
       if (!owner.known) return h("span", { class: "chip", text: owner.title });
       return h("button", { type: "button", class: "chip chip-button", "data-tone": owner.tone || null, "data-ws-reveal": owner.key,
         "aria-label": (owner.type === "venture" ? "Venture: " : "Project: ") + owner.title + (owner.state ? " (" + owner.state.toLowerCase() + ")" : "") +
-          ". Open it in " + (owner.type === "venture" ? "Ventures" : "Projects") },
+          ". Open it in Ventures" },
         h("span", { "aria-hidden": "true", text: owner.icon }), h("span", { class: "chip-text", text: owner.title }),
         owner.state ? h("span", { class: "ws-chip-state", "aria-hidden": "true", text: owner.state }) : null,
         h("span", { class: "chip-arrow", "aria-hidden": "true", text: "→" }));
@@ -7876,14 +8024,19 @@
     killed: { icon: "✕", label: "Killed", tone: "critical", order: 6 },
   };
 
+  // 0.27.0: the ventures being decided (and the parked and killed ones) in Pipeline; the backed and live ones, with
+  // their projects, in Running.
   var VENTURE_GROUPS = [
     { key: "proposed", title: "Business cases for your decision", match: function (s) { return s === "proposed"; } },
-    { key: "building", title: "Building (you backed them)", match: function (s) { return s === "building"; } },
-    { key: "live", title: "Live legs", match: function (s) { return s === "live"; } },
     { key: "researching", title: "Being researched", match: function (s) { return s === "researching"; } },
     { key: "idea", title: "Ideas, the heaviest first", match: function (s) { return s === "idea"; } },
     { key: "closed", title: "Parked and killed", match: function () { return true; } },
   ];
+  var RUNNING_GROUPS = [
+    { key: "building", title: "Building (you backed them)", match: function (s) { return s === "building"; } },
+    { key: "live", title: "Live legs", match: function () { return true; } },
+  ];
+  var RUNNING_STAGES = { building: true, live: true };
 
   var VT_LAYOUT = { col: 250, row: 30, left: 30, top: 26, labelChars: 30, charWidth: 6.6 };
   // The SVG namespace, from an empty <svg> in the page (a URL literal here would look like a request off Ingress).
@@ -7938,6 +8091,7 @@
         vt.reveal = null;
         if (vt.byId[String(reveal)]) showVentureCard(reveal);
       }
+      if (!vt.again) showProject();  // 0.27.0: the workspace asked for a project (revealProject)
       if (vt.again) { vt.again = false; loadVentures(); }
     });
   }
@@ -7946,6 +8100,7 @@
     var vt = ui.vt;
     var data = vt.data;
     var name = agentName();
+    renderRunningStatus();
     $("vt-refresh").textContent = vt.busy ? "Refreshing…" : "Refresh";
     setStatusText("vt-load-status", vt.error && !vt.busy ? "Couldn't load the venture tree (" + errorText(vt.error) + ")." +
       (data ? " What you see is the tree loaded earlier." : " Try Refresh.") : "", vt.error && !vt.busy ? "error" : "");
@@ -7962,15 +8117,61 @@
     renderVentureTree(items);
     fillParentSelect(items);
     var rows = items.map(function (v) { return Object.assign({}, v, { status: v.stage }); }).sort(ventureOrder);
-    return renderQueue($("ventures"), {
-      kind: "venture", rows: rows, groups: VENTURE_GROUPS,
-      empty: emptyState("div", "No ventures yet.", name + " plants the first ideas when it starts; add your own with Add idea."),
-      view: ventureView,
-      viewKey: data.criteria,
-      actionKey: function (v) { return String(v.stage) + "|" + String(v.owner_version); },
-      actions: ventureActions,
-      panel: venturePanel,
+    var views = [
+      { view: "pipeline", root: $("ventures"), groups: VENTURE_GROUPS, rows: rows.filter(function (v) { return !RUNNING_STAGES[v.stage]; }),
+        empty: emptyState("div", "No ventures yet.", name + " plants the first ideas when it starts; add your own with Add idea.") },
+      { view: "running", root: $("vt-running-list"), groups: RUNNING_GROUPS, rows: rows.filter(function (v) { return RUNNING_STAGES[v.stage]; }), empty: [] },
+    ];
+    // A venture whose new stage puts it in the other view takes its card along: its status line says what the owner's
+    // decision did, and while it has their focus the view follows it.
+    var follow = null;
+    views.forEach(function (to) {
+      var from = views[1 - views.indexOf(to)];
+      var q = queueRoot(to.root, to.groups, to.empty);
+      var other = queueRoot(from.root, from.groups, from.empty);
+      to.rows.forEach(function (v) {
+        var it = other.items[String(v.id)];
+        if (!it) return;
+        if (it.card.contains(document.activeElement)) follow = { it: it, view: to.view, focus: document.activeElement };
+        delete other.items[String(v.id)];
+        q.items[String(v.id)] = it;
+        if (it.projects) { it.projects.parentNode.removeChild(it.projects); it.projects = null; }
+      });
     });
+    var complete = true;
+    views.forEach(function (v) {
+      complete = renderQueue(v.root, {
+        kind: "venture", rows: v.rows, groups: v.groups, empty: v.empty,
+        view: ventureView,
+        viewKey: data.criteria,
+        actionKey: function (x) { return String(x.stage) + "|" + String(x.owner_version); },
+        actions: ventureActions,
+        panel: venturePanel,
+      }) && complete;
+    });
+    // Each running venture's card holds its projects: renderProjects fills the box.
+    var running = $("vt-running-list").ember;
+    Object.keys(running.items).forEach(function (id) {
+      var it = running.items[id];
+      if (!it.projects) append(it.card, it.projects = h("div", { class: "vt-projects" }));
+    });
+    $("vt-running-list").hidden = !views[1].rows.length;
+    renderProjectsNow();
+    if (follow) {
+      selectVentureView(follow.view, false);
+      revealEl(follow.it.card, follow.it.card.contains(follow.focus) ? follow.focus
+        : follow.it.status.textContent ? follow.it.status : follow.it.card.querySelector(".vt-card-title"));
+    }
+    return complete;
+  }
+
+  // 0.27.0: the Running view says when its ventures are missing (the projects are listed without them then).
+  function renderRunningStatus() {
+    var vt = ui.vt;
+    setStatusText("rn-status", vt.busy && !vt.data ? "Loading the ventures…"
+      : vt.error && !vt.busy ? "Couldn't load the ventures (" + errorText(vt.error) + ")." +
+        (vt.data ? " What you see is from earlier." : " The projects are listed without them; Refresh in Pipeline tries again.") : "",
+      vt.error && !vt.busy ? "error" : "");
   }
 
   function renderVentureSummary(data, items) {
@@ -8170,16 +8371,18 @@
     });
   }
 
-  // A node of the tree was chosen: mark it, and bring its card into view.
+  // A node of the tree was chosen: mark it, and bring its card into view. 0.27.0: a backed or live venture's card is
+  // in the Running view, the others' in Pipeline.
   function showVentureCard(id) {
     ui.vt.selected = id;
     Array.prototype.forEach.call($("vt-tree").querySelectorAll(".vt-node"), function (g) {
       if (g.getAttribute("data-id") === String(id)) g.setAttribute("data-selected", "true");
       else g.removeAttribute("data-selected");
     });
-    var card = $("ventures").querySelector('article[data-id="' + String(id) + '"]');
+    var card = $("panel-ventures").querySelector('article.venture[data-id="' + String(id) + '"]');
     if (!card) return;
-    Array.prototype.forEach.call($("ventures").querySelectorAll("article[data-selected]"), function (c) { c.removeAttribute("data-selected"); });
+    Array.prototype.forEach.call($("panel-ventures").querySelectorAll("article.venture[data-selected]"), function (c) { c.removeAttribute("data-selected"); });
+    selectVentureView($("vt-running").contains(card) ? "running" : "pipeline", false);
     card.setAttribute("data-selected", "true");
     card.scrollIntoView({ block: "center", behavior: "smooth" });
     var title = card.querySelector(".vt-card-title");
@@ -8249,7 +8452,8 @@
           h("dt", { text: "Expenses" }), h("dd", { text: usd(v.expenses_usd) })) : null,
         num(v.earned_usd) || num(v.expenses_usd) ? h("div", { title: "Earned, less its expenses and what it spent." },
           h("dt", { text: "Net" }), h("dd", { text: signedUsd(v.net_usd), "data-tone": num(v.net_usd) < 0 ? "critical" : "" })) : null,
-        projects.length ? h("div", null, h("dt", { text: "Projects" }), h("dd", { text: projects.map(function (p) {
+        // 0.27.0: a running venture's projects are in its card, as cards
+        projects.length && !RUNNING_STAGES[v.stage] ? h("div", null, h("dt", { text: "Projects" }), h("dd", { text: projects.map(function (p) {
           return "#" + p.id + " " + p.title + " (" + p.status + ")";
         }).join(", ") })) : null),
       ventureWord(v),
@@ -9995,8 +10199,9 @@
 
   // ------------------------------------------------------------------ tabs
 
-  var TABS = ["overview", "ledger", "projects", "ventures", "roadmap", "library", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
+  var TABS = ["overview", "ledger", "ventures", "roadmap", "library", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
   var MIND_TABS = ["strategy", "lessons", "identity", "journal", "reviews"];
+  var VENTURE_VIEWS = ["pipeline", "running"];  // 0.27.0
 
   // Arrow keys, Home and End move between tabs; focus follows the selection.
   function tabKeys(names, index, select) {
@@ -10030,6 +10235,24 @@
     if (name === "inbox" && ui.chat.stick) scrollChatToEnd();  // it can't scroll while the tab is hidden
   }
 
+  // 0.27.0: the Ventures tab's views (the Projects tab is its Running view), the one chosen last kept in this browser.
+  function selectVentureView(name, focus) {
+    if (VENTURE_VIEWS.indexOf(name) < 0) name = "pipeline";
+    ui.vtView = name;
+    savePref("ember-ventures-view", name);
+    VENTURE_VIEWS.forEach(function (v) {
+      var tab = $("vt-tab-" + v);
+      var selected = v === name;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      $("vt-" + v).hidden = !selected;
+    });
+    if (focus) $("vt-tab-" + name).focus();
+    // The tree's edges start where its labels end, which can't be measured while the view is hidden.
+    var picture = $("vt-tree").querySelector(".vt-svg");
+    if (name === "pipeline" && picture) fitEdges(picture);
+  }
+
   function selectMind(name, focus) {
     ui.mind = name;
     MIND_TABS.forEach(function (m) {
@@ -10056,6 +10279,12 @@
     var tab = $("mind-tab-" + m);
     tab.addEventListener("click", function () { selectMind(m, false); });
     tab.addEventListener("keydown", tabKeys(MIND_TABS, i, selectMind));
+  });
+
+  VENTURE_VIEWS.forEach(function (v, i) {
+    var tab = $("vt-tab-" + v);
+    tab.addEventListener("click", function () { selectVentureView(v, false); });
+    tab.addEventListener("keydown", tabKeys(VENTURE_VIEWS, i, selectVentureView));
   });
 
   $("table-toggle").addEventListener("click", function () {
@@ -10104,6 +10333,7 @@
   initRoadmap();
   initLibrary();
   initWorkspace();
+  selectVentureView(ui.vtView, false);
   selectTab(ui.tab, false);
   selectMind(ui.mind, false);
   refresh();

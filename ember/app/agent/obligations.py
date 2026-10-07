@@ -23,12 +23,13 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
-from ..integrations import etsy_publisher, mailstore, qa
-from . import roadmap, stages, ventures
-from .store import AgentScope
+from ..integrations import etsy_publisher, mailstore, qa, site_publisher
+from . import gates, roadmap, stages, ventures
+from .store import OPEN_STATUSES, AgentScope
 
 KINDS = ("promise", "decision", "miss")
 WHAT_CHARS = 100  # of a promise, request or milestone, as the plan shows it
@@ -178,19 +179,26 @@ def pressing(conn: sqlite3.Connection, scope: AgentScope, today: date, messages:
     answer (0.19.3: only with ``messages``, when the owner's message woke it; a venture cycle answers them first), a
     promise due by tomorrow (or overdue for PRESSING_OVERDUE_DAYS at most), a decision or a miss of the last
     PRESSING_NEW_DAYS days. Empty when nothing presses."""
-    where, params = scope.where()
     found = []
-    waiting = conn.execute(
-        f"SELECT COUNT(*) FROM messages WHERE {where} AND sender = 'owner' AND answered_by IS NULL"
-        " AND removed_at IS NULL",
-        params,
-    ).fetchone()[0]
+    waiting = messages_waiting(conn, scope)
     if waiting and messages:
         found.append(f"{waiting} message{'s' if waiting != 1 else ''} of your owner's to answer")
     for r in open_rows(conn, scope):
         if presses(r, today):
             found.append(f"obligation #{r['id']} ({r['kind']})")
     return found
+
+
+def messages_waiting(conn: sqlite3.Connection, scope: AgentScope) -> int:
+    """The owner's messages waiting for an answer."""
+    where, params = scope.where()
+    return int(
+        conn.execute(
+            f"SELECT COUNT(*) FROM messages WHERE {where} AND sender = 'owner' AND answered_by IS NULL"
+            " AND removed_at IS NULL",
+            params,
+        ).fetchone()[0]
+    )
 
 
 def presses(row: sqlite3.Row, today: date) -> bool:
@@ -200,6 +208,77 @@ def presses(row: sqlite3.Row, today: date) -> bool:
         first = (today - timedelta(days=PRESSING_OVERDUE_DAYS)).isoformat()
         return first <= row["due"] <= (today + timedelta(days=1)).isoformat()
     return row["due"] >= (today - timedelta(days=PRESSING_NEW_DAYS)).isoformat()
+
+
+# 0.28.0: the requests whose work a marketing cycle does (a pin, a Bluesky post, a blog post, the link page, Reddit)
+MARKETING_EXECUTORS = frozenset(
+    {"pinterest_pin", "bluesky_post", site_publisher.POST, site_publisher.LINKS, "reddit_link"}
+)
+
+
+@dataclass(frozen=True)
+class Owed:
+    """0.28.0: what an open obligation is about: its product line (None: of no line, so any cycle may meet it) and
+    whether it is a marketing cycle's work (else an ordinary cycle's)."""
+
+    line: int | None
+    marketing: bool = False
+
+
+def owed(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> Owed:
+    """0.28.0: an open obligation's line and kind of work, from the records it points to (it has no columns of its own
+    for them): a decision by its request (ventures.request_line), a miss by its milestone (a line's bar, or a backed
+    venture's milestone while the venture has one open project). A decision on a pin, a post, a blog post, the link
+    page or a Reddit post and a push to bring buyers (gates.owes_push) are marketing work. A promise has no line: it is
+    made in an answer to the owner, often about another line than the cycle's. Nor has an obligation of a line that is
+    closed, or that the owner's park or kill stopped: no cycle works on it, so any cycle may close it."""
+    if row["kind"] == "promise":
+        return Owed(None)
+    if row["kind"] == "decision":
+        request = conn.execute("SELECT * FROM approvals WHERE id = ?", (row["approval_id"],)).fetchone()
+        if request is None:
+            return Owed(None)
+        return Owed(_working(conn, scope, ventures.request_line(conn, scope, request)), _markets(request))
+    milestone = conn.execute(
+        "SELECT project_id, venture_id FROM milestones WHERE id = ?", (row["milestone_id"],)
+    ).fetchone()
+    if milestone is None:
+        return Owed(None)
+    project = milestone["project_id"]
+    if project is None and milestone["venture_id"] is not None:
+        project = only_project(conn, scope, int(milestone["venture_id"]))
+    market = project is not None and gates.owes_push(conn, scope, int(project), int(row["milestone_id"]))
+    return Owed(_working(conn, scope, project), market)
+
+
+def _markets(request: sqlite3.Row) -> bool:
+    return request["executor"] in MARKETING_EXECUTORS
+
+
+def _working(conn: sqlite3.Connection, scope: AgentScope, project_id: int | None) -> int | None:
+    """A line some cycle works on: open, and not stopped by the owner's park or kill (None otherwise)."""
+    if project_id is None:
+        return None
+    row = conn.execute("SELECT status FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if row is None or row["status"] not in OPEN_STATUSES:
+        return None
+    return None if ventures.project_stopped(conn, scope, project_id) is not None else project_id
+
+
+def only_project(conn: sqlite3.Connection, scope: AgentScope, venture_id: int) -> int | None:
+    """0.28.0: a venture's one open project (a backed venture's line), None with none or several."""
+    where, params = scope.where()
+    rows = conn.execute(
+        f"SELECT id FROM projects WHERE {where} AND venture_id = ? AND status IN {OPEN_STATUSES}",
+        (*params, venture_id),
+    ).fetchall()
+    return int(rows[0]["id"]) if len(rows) == 1 else None
+
+
+def pressing_owed(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[tuple[int, Owed]]:
+    """0.28.0: the pressing obligations (``presses``) with their line and kind of work, the most urgent first: what
+    decides whether a wake cycle is an ordinary or a marketing one, and which line its READY offers alone."""
+    return [(int(r["id"]), owed(conn, scope, r)) for r in open_rows(conn, scope) if presses(r, today)]
 
 
 def stale_strategy(conn: sqlite3.Connection, scope: AgentScope, strategy: str) -> str:
@@ -258,7 +337,7 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date, strategy: str
     # cycle was about it.
     rows = sorted(open_rows(conn, scope), key=lambda r: not presses(r, today))
     for r in rows[:SHOWN]:
-        lines.append(f"- {line(r, today)}")
+        lines.append(f"- {tag(owed(conn, scope, r).line)}{line(r, today)}")  # 0.28.0: its line
     if len(rows) > SHOWN:
         hidden = sum(1 for r in rows[SHOWN:] if presses(r, today))
         lines.append(
@@ -280,7 +359,10 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date, strategy: str
         lines.append(f"- Overdue milestones {ids}: close, move or drop each (ROADMAP).")
     few = etsy_publisher.few_photos(conn, scope)
     if few:
-        shown = ", ".join(f"#{listing_id} ({count})" for listing_id, count in few[:4])
+        shown = ", ".join(  # 0.28.0: with each listing's line
+            f"#{listing_id} ({count}{_on_line(ventures.listing_project(conn, scope, listing_id))})"
+            for listing_id, count in few[:4]
+        )
         more = f" and {len(few) - 4} more" if len(few) > 4 else ""
         lines.append(
             f"- Live listings with fewer than {qa.MIN_PHOTOS} photos: {shown}{more}: give each the whole"
@@ -311,6 +393,27 @@ def _age(stamp: str, today: date) -> str:
 
 def _bytes(text: str) -> int:
     return len(json.dumps(text, ensure_ascii=False).encode()) - 2
+
+
+def tag(line_id: int | None) -> str:
+    """0.28.0: an obligation's line, first on its line in OBLIGATIONS ("" for one of no line)."""
+    return f"[line #{line_id}] " if line_id is not None else ""
+
+
+def _on_line(line_id: int | None) -> str:
+    return f", line #{line_id}" if line_id is not None else ""
+
+
+LINE_TAG = re.compile(r"\[line #(\d+)\]")
+
+
+def for_line(text: str, line_id: int | None) -> str:
+    """0.28.0: OBLIGATIONS as the work steps of a cycle on product line ``line_id`` see it: what another line owes
+    waits for that line's own cycle (Ember's code refuses another line's work in this one)."""
+    return LINE_TAG.sub(
+        lambda m: m[0] if int(m[1]) == line_id else f"[line #{m[1]}: waits for its own cycle]",
+        text,
+    )
 
 
 def line(r: sqlite3.Row, today: date) -> str:

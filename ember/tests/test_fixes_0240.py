@@ -20,7 +20,7 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app import paths  # noqa: E402
-from app.agent import bets, loop, memory, obligations, prompts, quality, roadmap, slack, tools, ventures  # noqa: E402
+from app.agent import bets, lines, loop, memory, obligations, prompts, quality, roadmap, tools, ventures  # noqa: E402
 from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls, request_kind  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import bluesky  # noqa: E402
@@ -112,12 +112,12 @@ def test_every_verdict_names_the_listing_it_judged(data_dir: Path) -> None:
         named = quality.label(conn, scope, second)
         older = quality.label(conn, scope, first)
         said = quality.review_text(conn, scope, project)
-        items = slack.items(conn, scope, agent.clock.today())
+        items = lines.fixes(conn, scope, project)  # 0.28.0: the line's jobs in READY (slack.py's improve items)
         assert quality.verdict(conn, scope, project) == "improve"
     assert named == f'listing #{second} "Resume Template Commercial License Bundle"'
     assert said.startswith(f"quality 5/10, improve ({agent.clock.today().isoformat()}, {named}): The cover letter")
     assert f"{older}): Add the phrase bank." in said
-    assert [i.text for i in items if i.key == f"improve #{project}"] == [
+    assert items == [
         f"the quality critic said of {named}: The cover letter is PDF only: add the .docx.",
         f"the quality critic said of {older}: Add the phrase bank.",
     ]
@@ -138,7 +138,7 @@ def test_a_verdict_older_than_a_change_of_its_listing_waits_for_the_next_check(d
             (scope.mode, scope.session, approval, first, now(agent), now(agent)),
         )
     with agent.db.connection() as conn:
-        ready = [i.text for i in slack.items(conn, scope, agent.clock.today()) if i.key == f"improve #{project}"]
+        ready = lines.fixes(conn, scope, project)
         said = quality.review_text(conn, scope, project)
         assert quality.due(conn, scope, agent.clock.today()) == (project, first)
     assert ready == [
@@ -160,15 +160,15 @@ def test_a_line_whose_work_the_owner_s_park_stopped_gets_no_check_and_nothing_in
         conn.execute("UPDATE projects SET venture_id = ? WHERE id = ?", (leg, project))
     [listing] = [r["listing_id"] for r in rows(agent, "SELECT listing_id FROM etsy_listings")]
     checked(agent, project, listing)
-    today = agent.clock.today()
     with agent.db.connection() as conn:
-        assert any(i.key == f"improve #{project}" for i in slack.items(conn, agent.scope(), today))
+        assert lines.fixes(conn, agent.scope(), project)
     assert owner(agent).decide_venture(leg, {"action": "park", "comment": "Stop."}, "Stefan").status == 200
     agent.clock.advance(days=quality.RECHECK_DAYS + 1)  # due again by its age, if it weren't stopped
     with agent.db.connection() as conn:
         assert quality.due(conn, agent.scope(), agent.clock.today()) is None
-        items = slack.items(conn, agent.scope(), agent.clock.today())
-    assert not [i for i in items if i.key.endswith(f" #{project}")]
+        items = lines.ready(conn, agent.scope(), today=agent.clock.today(), explore=False, markets=False)
+        items += lines.marketing(conn, agent.scope(), blog=True)
+    assert not [i for i in items if i.project_id == project]
 
 
 def test_the_upgrade_names_the_listing_each_earlier_check_judged(data_dir: Path) -> None:

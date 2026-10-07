@@ -222,16 +222,15 @@ def test_a_milestone_with_an_unlock_keeps_its_links_and_its_venture_its_projects
         )
     first = goal(agent, "The first sale", venture_id=other)
     unlock(agent, first, "deactivate")
-    calls = [
-        ("project_update", {"project_id": LINE, "venture_id": other}),  # 0.22.0: refused for its listings first
-        ("project_update", {"project_id": old_line, "venture_id": other}),
-    ]
+    calls = [("project_update", {"project_id": LINE, "venture_id": other})]  # 0.22.0: refused for its listings first
     made = work_on(agent, first, *calls, change(listing_id, state="deactivate"))[-1]
-    listings, moved = tool_results(agent, "project_update")[-2:]
+    listings = tool_results(agent, "project_update")[-1]
     assert listings["status"] == "error" and "project #1 has listings" in listings["result"]
-    assert moved["status"] == "error" and f"your owner's unlock for milestone #{first}" in moved["result"]
     assert (made["status"], made["decided_by"]) == ("pending", None)
     reject(agent, made["id"])
+    work_on(agent, first, ("project_update", {"project_id": old_line, "venture_id": other}))  # 0.28.0: its own cycle
+    moved = tool_results(agent, "project_update")[-1]
+    assert moved["status"] == "error" and f"your owner's unlock for milestone #{first}" in moved["result"]
     # Taken back, the links are the agent's again.
     unlock(agent, retire, "deactivate", level="manual")
     work_on(agent, retire, ("milestone_update", {"milestone_id": retire, "project_id": LINE, "note": "Same thing."}))

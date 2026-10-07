@@ -70,6 +70,8 @@ def build(conn: sqlite3.Connection, cycle_id: int, status: str, note: str | None
         head += f" · for {', '.join(aims)}"
     if cycle is not None and cycle["venture"]:
         head += " · a venture cycle"
+    elif cycle is not None and cycle["marketing"]:  # 0.28.0
+        head += " · a marketing cycle"
     lines = [head]
     goal = _goal(cycle)
     lines.append(f"Goal: {json.dumps(goal, ensure_ascii=False)}" if goal else "No plan was made.")

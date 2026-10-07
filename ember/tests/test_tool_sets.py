@@ -62,7 +62,7 @@ def test_a_venture_cycle_refuses_them(data_dir: Path) -> None:
     assert made["status"] == "error"
     refusal = (
         "make_document is not one of your tools in a venture cycle: making files, the shop, Pinterest, Bluesky, "
-        "KDP, email, Reddit and laying out the roadmap belong to ordinary cycles"
+        "KDP, email, Reddit and laying out the roadmap belong to ordinary and marketing cycles"
     )
     assert refusal in made["result"]
     work = [r for r in fake.sent if request_kind(r) == "work"]

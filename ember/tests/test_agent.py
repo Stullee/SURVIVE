@@ -25,12 +25,14 @@ from tests.economy_helpers import ScriptedTransport, make_economy
 
 _ids = itertools.count(1)
 # No venture cycles (0.10.0): these tests follow the ordinary cycle; tests/test_ventures.py has the venture ones.
-# 0.15.0: an owner named in owner_user_ids, as the owner's unlocks act only then
+# 0.15.0: an owner named in owner_user_ids, as the owner's unlocks act only then. 0.28.0: no marketing cycles either
+# (tests/test_fixes_0280.py has them)
 ROOMY = Settings(
     starting_balance_usd=50,
     daily_spend_cap_usd=5,
     cycle_spend_cap_usd=1,
     venture_share=0,
+    marketing_share=0,
     owner_user_ids=("8f14e45fceea167a5a36dedd4bea2543",),
 )
 
@@ -158,7 +160,7 @@ def test_the_cycle_that_starts_a_project_counts_toward_it(data_dir: Path) -> Non
             tools(("project_create", project), ("project_create", other)),
             text("Started."),
             text("Reflected."),
-            plan(steps=[], focus=2),
+            plan(steps=[], focus=1),
         ],
     )
     agent.run_cycle("schedule")
@@ -167,11 +169,14 @@ def test_the_cycle_that_starts_a_project_counts_toward_it(data_dir: Path) -> Non
     cost = rows(agent, "SELECT SUM(cost_micros) AS total FROM llm_calls")[0]["total"]
     assert cost > 0
     spent = {p["title"]: (p["spent_usd"], p["cycles"]) for p in agent.dashboard()["projects"]}
-    assert spent == {"Niche guide": (micros_to_usd(cost), 1), "Second idea": (0, 0)}
+    assert spent == {"Niche guide": (micros_to_usd(cost), 1)}
+    # 0.28.0: one product line a cycle: the cycle's line is the one it started, and a second one is a cycle of its own
+    second = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'project_create' ORDER BY id")[1]
+    assert second["status"] == "error" and "a new product line is a cycle of its own" in second["result"]
     agent.run_cycle("schedule")  # the next plan sees what the project cost
     planner = transport.sent[-1]["messages"][0]["content"][0]["text"]
     assert f"#1 [active] Niche guide · next: outline · spent ${micros_to_usd(cost):.2f} · earned $0.00" in planner
-    assert rows(agent, "SELECT project_id FROM cycles ORDER BY id") == [{"project_id": 1}, {"project_id": 2}]
+    assert rows(agent, "SELECT project_id FROM cycles ORDER BY id") == [{"project_id": 1}, {"project_id": 1}]
 
 
 def test_the_agent_sees_the_files_in_every_folder(data_dir: Path) -> None:

@@ -38,6 +38,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Spending cap per wake cycle | 0.50 USD | Hard limit per cycle. Must not exceed the daily cap (if it does, Ember uses the daily cap). A working cycle (its plan, a work step and the reflection) can cost up to about 0.25 USD with the default models; the dashboard warns you below 1.5 times that, when most cycles would end after a step or two. |
 | Spending stance | invest | What happens as the runway shrinks: **invest** keeps the agent exploring at your caps until its last will (under 15 days of runway the System log warns you once), **steady** goes no lower than focus, **conserve** is focus under 30 days and maintenance under 15. See [burn modes](#money). |
 | Share for ventures | 25 % | This share of each day's spending goes to venture cycles, where the agent researches new ways to earn. 0 switches them off. See [Ventures](#ventures). |
+| Share for marketing | 20 % | This share of each day's spending goes to marketing cycles, which bring buyers to one product line's live listings: pins, Bluesky posts, blog posts, Reddit drafts, better titles and tags. They run once a listing of Ember's is live, in the explore and focus [burn modes](#money), within what the ventures' share leaves (25 % and 20 % leave 55 % for product work). 0 switches them off, and ordinary cycles market as before. See [Marketing cycles](#marketing-cycles). |
 | Cash for a venture's first test (EUR) | 20 | A business case that needs more cash than this to start is knocked out: Ember's code won't propose it until you lift that knock-out on its card (see [Ventures](#ventures)). |
 | Daily study budget for the library | 0.50 USD | What the agent may spend a day studying the documents you add on the Library tab. It counts toward the daily cap, not the cycle cap (except in the maintenance [burn mode](#money)). 0: nothing is studied, but the documents can still be searched and read. See [Library](#library). |
 | Default sleep | 240 min | Time between wake cycles when the agent doesn't choose. |
@@ -184,16 +185,27 @@ it runs one **wake cycle**:
    Then it reads its situation (balance, runway, projects, what happened
    since the last cycle, your messages and decisions, its memory) and plans
    the cycle. Every plan says how its goal leads to money (who would pay, for
-   what, and how it will know); you see this as *Path to money*. It is told to
-   do research and legwork itself, to keep two or three experiments going (when
-   one waits for you, it works on another), to build a thing completely before
+   what, and how it will know); you see this as *Path to money*. **Each cycle is
+   about one thing** (0.28.0): an ordinary cycle works on one product line, a
+   [marketing cycle](#marketing-cycles) brings buyers to one line's listings, a
+   [venture cycle](#ventures) decides one venture, and a cycle an event woke
+   works on one line at most. For an ordinary cycle Ember's code ranks the open
+   product lines (**READY**: a line that owes something first, then one with a
+   milestone due within 7 days, one with work rather than only waiting for you,
+   the one worked on longest ago; in the explore burn mode also *a new line*,
+   first while fewer than two lines are in flight), and the plan takes one or
+   says why it takes none. The agent keeps two or three lines going across its
+   cycles: when its line waits for you, it finishes what it can and ends the
+   cycle, and the next one takes another line. It is told to
+   do research and legwork itself, to build a thing completely before
    it asks you for one concrete action, to ask you in one batched message and
    only for decisions, money and what only a person can do, and to spend its
    daily cap on experiments rather than sleep to save it. Every plan and work step
    also sees your [standing instructions](#your-part) and a short list of facts
    about the outside world that you collected (platform rules, German law, what
    earns money), which comes with each Ember update. Every plan also sees its
-   [roadmap](#roadmap) and aims the cycle at the milestone due first.
+   [roadmap](#roadmap) and aims the cycle at its line's milestone due first
+   (Ember's code replaces a milestone of another line, and says so).
    Before anything else it sees its **obligations**, which Ember's code keeps
    (never cut): your messages waiting for an answer, what it promised you (a
    message's promise, with the day it named), your decisions it must react to
@@ -202,9 +214,13 @@ it runs one **wake cycle**:
    few photos. It closes a promise only after telling you it is kept (or why
    not). While something is pressing (a promise due by tomorrow, a decision or
    miss of the last two days, or your unanswered message when the cycle is the
-   one it woke), a wake cycle is an ordinary one, not a venture cycle. A
-   scheduled venture cycle answers your waiting messages first (0.19.3), and
-   leaves what needs files or the shop to the next ordinary cycle.
+   one it woke), a wake cycle is an ordinary one, not a venture or marketing
+   cycle. A pressing obligation of one line makes READY offer only that line
+   (once a day at most), and a pressing push to bring buyers to a line (a
+   missed bar of its listing test) makes the cycle a marketing cycle on it.
+   Each obligation names its line. A scheduled venture or marketing cycle
+   answers your waiting messages first (0.19.3), and leaves what needs files or
+   the shop to the next ordinary cycle.
 2. **Act**: it uses its tools, up to the *Tool steps per cycle* option: files in
    its own workspace, its memory (strategy, identity, lessons), projects, web
    research (also limited to one site, such as etsy.com), requests for your
@@ -213,7 +229,13 @@ it runs one **wake cycle**:
    writes: PDF documents with an editable Word copy, Excel spreadsheets and
    listing photos, and it looks at their pictures to check them. For what
    those tools can't make (charts, PowerPoint files, data work), it has code
-   written and run in its [workshop](#the-workshop).
+   written and run in its [workshop](#the-workshop). Ember's code keeps the
+   tools on the cycle's line (0.28.0): another line's listing, product, update,
+   request, pin or post, or one of its obligations, is refused and waits for a
+   cycle on that line. Closing another line, messages to you, its memory, the
+   roadmap and new ideas for the venture tree are always allowed. A cycle
+   that took no line takes the line of its first tool call that works on one,
+   and the files it wrote until then go under that line.
 3. **Reflect**: it writes a journal entry, updates its memory and chooses how
    long to sleep. It is told which of the cycle's tool calls were not done
    (refused, failed, skipped or cut off), so it can't report them as done.
@@ -236,7 +258,9 @@ next plan still sees the last one the agent wrote. Your decisions and comments s
 the agent's news until a cycle that saw them ends normally.
 
 Every call and every tool use is shown on the dashboard (click a cycle under
-**Activity** for the details, its digest first). In dry run the fake model doesn't understand
+**Activity** for the details, its digest first; since 0.28.0 each cycle there
+says what it was: a product line, marketing, a venture or an event, with its
+line or venture). In dry run the fake model doesn't understand
 your messages, so its replies in the **Inbox** are canned (the Inbox says so
 above the message box); with dry run off, Claude reads and answers them. The
 agent can't reach the internet except through Anthropic's web search (and page
@@ -266,8 +290,9 @@ the start of a cycle), and warns you once (0.15.0):
 The next plan lists them under *since your last wake*. A reply, a new email
 from a person (see [Ember's mailbox](#embers-mailbox)) or a milestone's last day
 also **wakes** the agent for a short **reactive cycle**, with the option **Wake
-Ember for events**. It works on the event first, in at most 5 work steps, with
-no venture work, daily review, library study or critic. That happens at most
+Ember for events**. It works on the event first, in at most 5 work steps, on
+one product line at most, with no venture work, daily review, library study or
+critic. That happens at most
 **4 times a day**, at least **30 minutes** apart, and only while the day's cap
 covers a cycle. It never happens while the agent is dormant, while it backs off
 after a failed, stopped or refused cycle, after three interrupted cycles, or
@@ -382,9 +407,11 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   line's newest listing was checked, and its verdicts were read as verdicts on
   another listing of the line. A line whose work your park stopped gets no
   check. The score and fixes show in the daily review.
-- **Waiting time.** An ordinary cycle's plan gets **READY**: what is useful
-  while projects wait (bringing buyers to unseen listings, the critic's fixes, a
-  missing demand note, the week's questions). While it lists work, the sleep
+- **Waiting time.** An ordinary cycle's plan gets **READY**: its product
+  lines, each with its jobs (what it owes, its milestone due, the critic's
+  fixes, a missing demand note; since 0.28.0 the plan takes one line from it,
+  and marketing cycles bring buyers to unseen listings), and the week's
+  questions. While it lists a job, the sleep
   of a cycle that worked is cut to 3 hours, never below your default interval
   (*Wake interval*) or shortest sleep, and not in maintenance. The week's
   questions alone cut no sleep, nor does a plan that chose to do nothing
@@ -571,7 +598,19 @@ returns it with a script, and nothing is sent to Anthropic.
 Ventures are the agent's ways to earn beyond what it does now: a new market,
 platform or business model, or a channel that brings buyers to what it already
 sells (a Pinterest account for the Etsy shop is a venture of its own). The
-**Ventures** tab shows them as a tree that keeps growing.
+**Ventures** tab shows them as a tree that keeps growing, and the projects that
+do their work (0.27.0: the Projects tab is part of it). It has two views, and
+this browser keeps the one you chose last:
+
+- **Pipeline**: the tree, the decision desk, and the ventures still being
+  decided: business cases for you, ventures being researched and ideas, then
+  the parked and killed ones. Its badge counts the business cases waiting for
+  you, as the tab's does.
+- **Running**: the ventures you backed (building) and the live ones, each
+  card with the projects that do its work inside it, then the other projects
+  (of no venture, or of a venture that isn't backed or live). A venture you
+  back moves here with its card; one you park or kill moves back to Pipeline.
+  When the card still has your focus, the view goes with it.
 
 **The tree.** Every idea branches from the one it grew out of: a variant, a
 niche, another customer group, a channel, a next step research turned up. The
@@ -615,8 +654,9 @@ cycle the agent:
   file written for the venture or its projects on the Workspace tab (0.26.0).
   In a venture cycle every research call is a venture's (the one it focuses
   on, unless it names another); in
-  another cycle, one focused on a venture that isn't backed counts for it too
-  (0.15.0), and a paid call that failed counts toward its budget. A
+  another cycle, one on a product line of a venture that isn't backed counts
+  for that venture too (0.28.0; since 0.15.0 it counted for a venture the plan
+  focused on), and a paid call that failed counts toward its budget. A
   question it asked in the last 30 days that found web pages (the same words,
   site or page) is answered from that research, free, and doesn't count as
   research for a venture;
@@ -660,7 +700,7 @@ your **Share for ventures**; it has no cap of its own.
 
 A venture cycle only researches and decides: its work steps don't carry the
 tools for making files, the workshop, the Etsy shop, email, Reddit or laying out
-the roadmap (they belong to ordinary cycles). With the shorter rules of 0.12.0, which no longer
+the roadmap (they belong to ordinary and marketing cycles). With the shorter rules of 0.12.0, which no longer
 repeat what Ember's code enforces or what the constitution, your knowledge
 file or a tool's description already says, a venture cycle's fixed prompt is
 about 30% shorter than in 0.11.
@@ -824,6 +864,48 @@ venture). Each card shows its P&L: what it **earned** (the revenue recorded
 for it or its projects, less refunds), its **expenses** (Etsy's fees, say), what
 it **spent** and the **net**. The agent's plans and daily review show the same
 numbers. Live legs show spent and earned in the tab's summary.
+
+## Marketing cycles
+
+Since 0.28.0 bringing buyers has cycles of its own. The **Share for marketing**
+option (20 % by default) is the part of each day's spending that goes to them:
+a wake cycle is a marketing cycle while marketing cycles have had less than
+that share of the day's spending (the day's first cycle is an ordinary one).
+When ventures and marketing are both behind their share, the one further
+behind goes first (the ventures when they are even). Marketing cycles run once
+a listing Ember made is live (with the [blog](#blog) on, a Printify product's
+listing counts too), in the explore and focus [burn modes](#money). Like the
+ventures' share, it comes out of the same daily cap. What presses comes first:
+your messages, when they woke the cycle, and an obligation that needs product
+work make it an ordinary cycle; a missed bar of a line's listing test that
+asks for buyers makes it a marketing cycle on that line.
+
+A marketing cycle's plan gets **READY** with the lines that have live listings,
+ranked: a line that owes a push to bring buyers first, then the lines nobody
+has seen while little was done to bring buyers to them, then the lines that
+sell, the ones liked but not bought, the ones seen but not liked, and among
+equals the one marketed longest ago. Each shows its funnel (views, favorites,
+orders) and the reach done for it. The plan takes one line, and the cycle
+brings buyers to its listings: pins and Bluesky posts that link them, a blog
+post that recommends one, the link page, a Reddit draft you post, better
+titles, tags and photos (a change of the listing you approve). Ember's code
+keeps every link on that line's listings. The agent bets on what the reach
+will bring, so the next marketing cycle learns from it, and its work steps see
+the line's live listings with their views and favorites. A marketing cycle
+makes no documents, spreadsheets, new listings, products or books and sends no
+email: that waits for the next ordinary cycle.
+
+While marketing cycles run, pins, Bluesky posts, blog posts and the link page
+belong to them: an ordinary cycle doesn't carry those tools, and its plan
+doesn't show Pinterest, Bluesky or the blog. A Reddit draft stays an ordinary
+cycle's tool too, as it is often a first test of demand. With the share at 0,
+or nothing live to market, ordinary cycles market as before.
+
+The **Line desk** in the Ventures tab's **Running** view shows today's
+marketing share and what marketing cycles had of the day's spending, the lines
+as Ember's code ranks them now for an ordinary and for a marketing plan, and
+what the last plans took or why they took none. The **Activity** list marks each cycle with
+its kind and its line (*Marketing · #4 Nebenkosten*, *Product line · #7 …*).
 
 ## Roadmap
 
@@ -1098,13 +1180,19 @@ no longer shown); a study that failed three times stops until you press
   ideas on the Ventures tab (see [Ventures](#ventures)).
 - **Roadmap**: add milestones you want reached by a date, leave notes, drop
   what no longer matters (see [Roadmap](#roadmap)).
-- **Projects**: the agent's open projects as cards (its hypothesis, next step,
-  what it earned and cost, and what it nets after its expenses such as Etsy's
-  fees), the closed ones as rows that open. Choose Open, Closed or All and a
-  sort; this browser keeps them. A card's **approvals waiting** opens them on
-  the Approvals tab, its venture opens the venture, and a cycle in its log
-  opens that cycle on the Activity tab (the last 10 cycles are there) (0.19.4).
-  Its **Files** shows the files written for it on the Workspace tab (0.26.0).
+- **Projects** (the Ventures tab's **Running** view since 0.27.0): the
+  agent's open projects as cards (its hypothesis, next step, what it earned
+  and cost, and what it nets after its expenses such as Etsy's fees), the
+  closed ones as rows that open. A backed or live venture's projects are in
+  its card; the others follow under **Other projects**. Choose Open, Closed or
+  All and a sort; this browser keeps them. A card's **approvals waiting**
+  opens them on the Approvals tab, its venture opens the venture, and a cycle
+  in its log opens that cycle on the Activity tab (the last 10 cycles are
+  there) (0.19.4). Its **Files** shows the files written for it on the
+  Workspace tab (0.26.0), whose **Open in Ventures** brings you back to it.
+  The **Line desk** above them shows how Ember's code ranks the lines for the
+  next plans and what the last ones took (0.28.0, see [Marketing
+  cycles](#marketing-cycles)).
 - **Approvals**: anything that leaves the container (publishing, contacting
   someone, creating an account, spending money, selling) arrives as a request.
   Approve it, approve it with your own changes to the text, or reject it, with
@@ -1737,7 +1825,8 @@ through to what they saved. With **Pinterest** on, the agent proposes pins that
 link to its live Etsy listings, you approve them, and Ember's own code makes
 them on your account through your own Pinterest app. In dry run a fake account
 (*ember-dry-run*) takes the pins, so you can try the whole flow first. Pins
-need the Etsy shop: each one links to one of Ember's live listings.
+need the Etsy shop: each one links to one of Ember's live listings. While
+[marketing cycles](#marketing-cycles) run, pins are their work.
 
 ### Setting it up
 
@@ -1810,7 +1899,9 @@ to its live Etsy listings or pages of your website and one of its pictures. You
 approve each one, and Ember's own code posts it, with a line saying an AI wrote
 it and a person approved it. In dry run a fake account
 (*@ember-dry-run.bsky.social*) takes the posts, so nothing reaches Bluesky (the
-dry run's built-in model doesn't write posts itself: the live agent does).
+dry run's built-in model writes a canned post now and then in a marketing
+cycle; the live agent writes its own). While [marketing
+cycles](#marketing-cycles) run, posts are their work.
 
 **What to expect (checked in October 2026).** Bluesky's rules allow an account
 like this: automated posting is welcome, as long as it is disclosed and
@@ -2049,7 +2140,8 @@ code publishes each one after you approve it. Your site stays yours: its home
 pages, Impressum, privacy page and stylesheet are the ones you uploaded.
 Ember's code writes three kinds of file there and nothing else: a post
 (`blog/<name>.html`), the blog's list of posts (`blog/index.html`) and the link
-page (`links.html`).
+page (`links.html`). While [marketing cycles](#marketing-cycles) run, posts and
+the link page are their work.
 
 How a post is made:
 

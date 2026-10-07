@@ -100,6 +100,12 @@ class Burn:
         return self.mode == EXPLORE
 
     @property
+    def marketing_cycles(self) -> bool:
+        """0.28.0: whether marketing cycles run: in explore and focus (focus finishes the tests already running, and
+        bringing buyers to them is part of that); not in maintenance's one cycle a day, nor dormant."""
+        return self.mode in (EXPLORE, FOCUS)
+
+    @property
     def brainstorms(self) -> bool:
         return self.mode == EXPLORE
 

@@ -127,6 +127,9 @@ class Settings(BaseModel):
     # Ventures (0.10.0): this percent of each day's spending goes to venture cycles, where the agent researches new
     # ways to earn and brings the owner business cases. 0: no venture cycles.
     venture_share: int = Field(default=25, ge=0, le=100)
+    # 0.28.0: this percent of each day's spending goes to marketing cycles, which bring buyers to one product line's
+    # listings each (pins, posts, blog posts, better titles and tags). 0: no marketing cycles; ordinary cycles market.
+    marketing_share: int = Field(default=20, ge=0, le=100)
     # 0.18.0: how the burn modes treat a shrinking runway (economy/burn.py): invest keeps explore until the last will,
     # steady goes no lower than focus, conserve is the burn modes of 0.12.0 to 0.17.0.
     spending_stance: Literal["invest", "steady", "conserve"] = "invest"

@@ -97,6 +97,17 @@ cover's width, the words and the price), and after the owner approves it, the
 owner publishes it at KDP from their own account with the card's fields and
 files. See the [Amazon KDP section of the docs](ember/DOCS.md#amazon-kdp).
 
+0.28.0 makes every wake cycle about one thing: an ordinary cycle works on one
+product line it takes from a list Ember's code ranks (what a line owes, its
+milestone due, whether it has work, when it was last worked on), and Ember's
+code refuses another line's work for the rest of the cycle. Marketing gets
+cycles of its own with a new option, **Share for marketing** (20 % of each day's
+spending by default, like the ventures' 25 %): a marketing cycle brings buyers
+to one line's live listings with pins, Bluesky posts, blog posts and better
+titles and tags. Venture cycles are unchanged. The Ventures tab's Running view
+gets a **Line desk** and the Activity list says what each cycle was about. See
+[Marketing cycles](ember/DOCS.md#marketing-cycles).
+
 0.29.0 puts your goal at the head of the roadmap: you set it on the Roadmap tab
 (earn an amount in USD a month, or in total, by a date), Ember's code checks it
 from the books, and everything on the roadmap leads to it. The agent splits it

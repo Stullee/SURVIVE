@@ -108,34 +108,35 @@ Decide what this wake cycle should achieve, following your owner's standing inst
 decided since your last wake. OBLIGATIONS come first: Ember's code keeps each until it is met (a promise you make in
 an answer goes in message_owner's commits). Plan work you do yourself with your tools, never your owner's research
 or legwork.
-- Keep 2-3 experiments in flight at different stages. Waiting on your owner is never a reason to do nothing: when a
-  project waits, work on another; with no open project, start one now.
+- One line a cycle: take one from READY. Ember's code keeps your tools on it: another line's work waits for its own
+  cycle. Keep 2-3 lines going across your cycles. Waiting on your owner is never a reason to do nothing: when your
+  line waits, finish what you can and end the cycle; with no open project, start one now.
 - Build first, then ask: make the whole thing ready (the finished files, the listing photos and text, the price),
   then ask your owner for one concrete action.
-- Spend on work that can earn or teach you something you can measure, up to your owner's caps. When work waits
-  (on your owner, on buyers), bring it to buyers or start the next bet.
+- Spend on work that can earn or teach you something you can measure, up to your owner's caps.
   Sleep long only when there is truly nothing useful to do, or when you are critical.
-- In an ordinary cycle, work on your projects: a venture your owner backed is one (Ember's code opens its project).
+- In an ordinary cycle, work on your line: a venture your owner backed is one (Ember's code opens its project).
   An idea that comes up goes into the venture tree (venture_create): Ember's code gives new ventures cycles of their
   own.
 - Plan ahead with your roadmap (ROADMAP): everything on it leads to the goal at its root, your owner's (or the money
   goal Ember's code keeps until they set one). Split it into 2 to 4 sub-goals that together reach it (the legs and
   ventures that bring the money, with a metric where one fits, so Ember's code measures how far they got), the
   milestones this month that lead to them and this week's, each with a date and a measure you can check. Aim each
-  cycle at the milestone due first (focus_milestone_id), work where the goal falls behind its pace, and plan the step
-  a Roadmap check asks for in any cycle.
+  cycle at its line's milestone due first (focus_milestone_id), work where the goal falls behind its pace, and plan the
+  step a Roadmap check asks for in any cycle.
 Reply only with JSON matching the schema:
 - assessment: your honest read of the situation (<= {PLAN_CHARS["assessment"]} characters)
 - goal: what this cycle should achieve (<= {PLAN_CHARS["goal"]} characters)
 - money_path: how this goal leads to income: who would pay, for what, and how you will know (<= \
 {PLAN_CHARS["money_path"]} characters).
   A cheap experiment just to learn is fine; then name the result that would make you continue or stop.
-- focus_project_id: the open project to work on, or null
+- focus_project_id: your line (its open project), or null
 - focus_venture_id: the venture to work on (in a venture cycle, one not backed yet), or null
 - focus_milestone_id: the milestone on your roadmap this cycle works toward, or null
 - steps: at most {PLAN_STEPS} short concrete steps (each <= {STEP_CHARS} characters); an empty list means there is \
 nothing worth doing now
-- sleep_minutes: how long to sleep after this cycle"""
+- sleep_minutes: how long to sleep after this cycle
+- ready: the READY item you take (its key, like "line #3"), or "none: " and why you take none"""
 
 VENTURE_RULES = f"""VENTURE CYCLE
 This cycle belongs to your ventures: your owner invests a share of your spending (STATUS says how much) in finding and
@@ -160,8 +161,19 @@ test, is a result: park the venture with them.
   calls; FOCUS and VENTURES say what is left, and Ember's code refuses research past it): its business case (stage
   proposed), or parked with why.
   A venture your owner backed is project work (its project, in ordinary cycles), not a venture cycle's.
-- Your owner's ideas and wishes come first: an idea they added, a venture they want researched next, their comments.
-- ready: the READY item you take (its key, like "appraise #3"), or "none: " and why you take none."""
+- Your owner's ideas and wishes come first: an idea they added, a venture they want researched next, their comments."""
+
+# 0.28.0: a marketing cycle's (lines.py): the owner's marketing_share of each day's spending brings buyers to one line.
+MARKETING_RULES = """MARKETING CYCLE
+This cycle belongs to marketing: your owner invests a share of your spending (STATUS says how much) in bringing buyers
+to what you already sell. Take one line from READY (ranked by Ember's code: what it owes, then the lines nobody has
+seen yet, then those selling) and bring buyers to its listings; its funnel (views, favorites, orders) shows where they
+get stuck.
+- Your owner's waiting messages come first (OBLIGATIONS); files, new listings and products wait for your next
+  ordinary cycle: say so.
+- Reach the buyers of this one line: pins and Bluesky posts that link its listings, a blog post that recommends one,
+  a Reddit post your owner makes, better titles and tags. Ember's code keeps every link on this line's listings.
+- Bet on what this cycle's reach will bring (project_update bet), so the next marketing cycle learns from it."""
 
 # The reflection is told why the work steps ended (0.9.0: a reflection that wasn't told kept trying to make files,
 # and its refused calls took the place of the journal). {ended} is filled in by reflect_prompt.
@@ -170,8 +182,9 @@ REFLECT_PROMPT = (
     "only journal, memory updates, projects, ventures, the roadmap, messages to your owner, sleep and upgrade requests "
     f"work now. This is your last reply, and its length is limited: make every tool call in it (at most "
     f"{tools.MAX_TOOL_CALLS_PER_TURN} besides "
-    "write_journal), write_journal first, with next. Update your projects, ventures, roadmap and memory if something "
-    "changed (save what you learned about a venture; close a milestone without a metric whose measure is met; append "
+    "write_journal), write_journal first, with next. Update what this cycle worked on (its line or venture), the "
+    "roadmap and memory if something changed (save what you learned about a venture; close a milestone without a "
+    "metric whose measure is met; append "
     "lessons; replace the strategy only if it changed). If something blocked you that a new ability would fix, and "
     "you haven't asked for it yet, file request_upgrade. Optionally call set_sleep."
 )
@@ -425,6 +438,7 @@ PLAN_SCHEMA: dict[str, Any] = {
         "focus_milestone_id",
         "steps",
         "sleep_minutes",
+        "ready",  # 0.13.0: a venture plan's READY item; 0.28.0: every plan's (an ordinary one takes a line)
     ],
     "properties": {
         "assessment": {"type": "string"},
@@ -435,14 +449,8 @@ PLAN_SCHEMA: dict[str, Any] = {
         "focus_milestone_id": {"type": ["integer", "null"]},
         "steps": {"type": "array", "items": {"type": "string"}},
         "sleep_minutes": {"type": "integer"},
+        "ready": {"type": "string"},
     },
-}
-
-# 0.13.0: a venture cycle's plan also says which READY item it takes (the decision desk, agent/desk.py).
-VENTURE_PLAN_SCHEMA: dict[str, Any] = {
-    **PLAN_SCHEMA,
-    "required": [*PLAN_SCHEMA["required"], "ready"],
-    "properties": {**PLAN_SCHEMA["properties"], "ready": {"type": "string"}},
 }
 
 SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 1}
@@ -605,16 +613,20 @@ def strategy_model(settings: Settings) -> str:
     return settings.strategy_model or settings.planner_model
 
 
-def plan_request(settings: Settings, context: str, venture: bool = False) -> dict[str, Any]:
+def plan_request(settings: Settings, context: str, venture: bool = False, marketing: bool = False) -> dict[str, Any]:
     """The plan of a wake cycle; a venture cycle's (``venture``) is told what venture cycles are for, and (0.12.0) is
-    made on the strategy model."""
-    rules = [_text(PLANNER_RULES), *([_text(VENTURE_RULES)] if venture else [])]
+    made on the strategy model; 0.28.0: a marketing cycle's (``marketing``) is told what marketing cycles are for."""
+    rules = [
+        _text(PLANNER_RULES),
+        *([_text(VENTURE_RULES)] if venture else []),
+        *([_text(MARKETING_RULES)] if marketing else []),
+    ]
     model = strategy_model(settings) if venture else settings.planner_model
     return {
         "model": model,
         **_thinking(model, PLAN_MAX_TOKENS),
         "system": [_text(constitution(settings)), _text(knowledge()), *rules],
-        "output_config": {"format": {"type": "json_schema", "schema": VENTURE_PLAN_SCHEMA if venture else PLAN_SCHEMA}},
+        "output_config": {"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
         "messages": [{"role": "user", "content": [_text(context)]}],
     }
 
@@ -650,13 +662,16 @@ def work_request(
     blog: bool = False,
     bluesky: bool = False,
     kdp: bool = False,
+    marketing: bool = False,
+    marketing_apart: bool = False,
 ) -> dict[str, Any]:
     """One step of the act loop. The prefix (system, tools, brief) stays byte-identical, so it is cached; ``mail``,
     ``etsy``, ``venture``, ``library``, ``pinterest``, ``printify`` and ``site`` (whether Ember has a mailbox, a shop, a
     library, the owner's Pinterest and Printify accounts and their website, and a venture cycle's tools; 0.14.0: and
     ``blog``, their blog; 0.19.0: ``bluesky``, Ember's Bluesky account; 0.25.0: ``kdp``, Amazon KDP) are the same for
     every step of a cycle, and so are ``workshop`` and ``brainstorm`` (0.15.0: whether the burn mode leaves the cycle
-    workshop runs, which the owner's options must allow too, and brainstorms)."""
+    workshop runs, which the owner's options must allow too, and brainstorms). 0.28.0: ``marketing``, a marketing
+    cycle's tools; ``marketing_apart``, marketing cycles run, so an ordinary cycle has no marketing tools."""
     offered = tools.definitions(
         mail,
         workshop=workshop_on(settings) and workshop,
@@ -670,6 +685,8 @@ def work_request(
         blog=blog,
         bluesky=bluesky,
         kdp=kdp,
+        marketing=marketing,
+        marketing_apart=marketing_apart,
     )
     return {
         "model": settings.worker_model,
@@ -722,6 +739,8 @@ def reflect_request(
     bluesky: bool = False,
     kdp: bool = False,
     drafted: bool = False,
+    marketing: bool = False,
+    marketing_apart: bool = False,
 ) -> dict[str, Any]:
     """The final turn of the same conversation (so the cached prefix is reused: its tool list stays the work's, which
     it reads from the cache at a tenth of the price); ``ended`` says why the work ended, ``undone`` which of its tool
@@ -745,6 +764,8 @@ def reflect_request(
         blog=blog,
         bluesky=bluesky,
         kdp=kdp,
+        marketing=marketing,
+        marketing_apart=marketing_apart,
     )
     messages = request["messages"]
     prompt = _text(reflect_prompt(ended, undone, drafted))

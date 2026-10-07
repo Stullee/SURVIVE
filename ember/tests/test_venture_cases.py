@@ -79,7 +79,8 @@ def test_a_venture_case_is_saved_with_its_numbers_and_shown(data_dir: Path) -> N
         "exchange rate). A sale at EUR 25.00 keeps EUR 13.00 (fees EUR 0.00, cost EUR 12.00); break-even at 2.4 sales"
     )
     [planned] = tool_results(agent, "milestone_plan")  # 0.13.0: laying out the roadmap is an ordinary cycle's
-    assert planned["status"] == "error" and "laying out the roadmap belong to ordinary cycles" in planned["result"]
+    assert planned["status"] == "error"
+    assert "laying out the roadmap belong to ordinary and marketing cycles" in planned["result"]
     [saved] = rows(
         agent, "SELECT venture_id, channel, sales_low, sales_mid, sales_high, net_eur, break_even FROM venture_cases"
     )

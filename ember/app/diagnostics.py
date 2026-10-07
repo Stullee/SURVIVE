@@ -32,7 +32,7 @@ from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
 from . import privacy
-from .agent import library, ventures
+from .agent import library, lines, ventures
 from .agent.context import RESEARCH_HEADING
 from .agent.sandbox import kind_of
 from .agent.tools import LIBRARY_TOOLS
@@ -575,12 +575,17 @@ def _scheduler(state: AppState) -> str:
             "email_sending_blocked": agent.executor_blocked(),
         }
         with state.db.connection() as conn:
-            spent, ventured = ventures.day_spend(conn, agent.scope(), agent.clock.today())
+            spent, ventured, marketed = ventures.day_spends(conn, agent.scope(), agent.clock.today())
+        share = lines.marketing_share(agent.settings.venture_share, agent.settings.marketing_share)
         data["next_cycle"] = {  # which kind of cycle the next one is (0.11.1: the report didn't say)
             "venture": ventures.venture_turn(agent.settings.venture_share, spent, ventured),
             "venture_share_pct": agent.settings.venture_share,
             "spent_today_usd": micros_to_usd(spent),
             "venture_cycles_today_usd": micros_to_usd(ventured),
+            # 0.28.0: the marketing cycles' turn by share (lines.kind also needs something live to market)
+            "marketing": lines.marketing_turn(share, spent, marketed),
+            "marketing_share_pct": share,
+            "marketing_cycles_today_usd": micros_to_usd(marketed),
         }
         decision = agent.decide(preview=True)  # 0.15.0: nothing marked or kept (the report only reads)
         data["decision_now"] = {
@@ -660,6 +665,7 @@ def _cycle(conn: Any, c: Any, full: bool = True) -> str:
             f"\n    note={_cell(c['note'], TEXT_CHARS)} phase={c['phase']} step={c['step']}/{c['max_steps']} "
             f"act_end={_cell(c['act_end_reason'])} sleep={c['sleep_minutes']} project={_cell(c['project_id'])}"
             + (f" venture_cycle venture={_cell(c['venture_id'])}" if c["venture"] else "")
+            + (" marketing_cycle" if c["marketing"] else "")  # 0.28.0
             + (f" milestone={_cell(c['milestone_id'])}" if c["milestone_id"] else ""),
             _plan(c["plan"]),
             _rows(

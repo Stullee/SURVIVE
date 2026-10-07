@@ -349,7 +349,7 @@ def test_the_rules_ask_for_action_instead_of_waiting() -> None:
     planner = prompts.PLANNER_RULES
     for words in (
         "standing instructions",
-        "Keep 2-3 experiments in flight at different stages",
+        "Keep 2-3 lines going across your cycles",  # 0.28.0: one line a cycle (2-3 experiments in flight before)
         "Waiting on your owner is never a reason to do nothing",
         "with no open project, start one now",
         "Build first, then ask",

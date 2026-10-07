@@ -53,12 +53,13 @@ def test_a_file_keeps_its_first_project_and_a_deleted_file_goes(data_dir: Path) 
     agent, _ = make_agent(
         data_dir,
         [
-            plan(steps=["two projects"]),
-            tools(("project_create", PROJECT), ("project_create", OTHER)),  # the first is the cycle's
+            plan(steps=["the planners"]),
+            tools(("project_create", PROJECT)),  # the cycle's
             tools(write("notes/a.md"), write("notes/gone.md")),
             text("Done."),
             text("Reflected."),
-            plan(steps=["the CVs"], focus=2),
+            plan(steps=["the CVs"]),
+            tools(("project_create", OTHER)),  # 0.28.0: a new product line is a cycle of its own
             tools(write("notes/a.md", " more", "append"), write("notes/b.md"), write("notes/gone.md", "", "delete")),
             text("Done."),
             text("Reflected."),
