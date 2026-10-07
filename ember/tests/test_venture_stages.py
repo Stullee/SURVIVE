@@ -110,7 +110,11 @@ def test_a_missed_first_test_parks_the_venture_until_the_owner_takes_it_up(data_
     assert (parked["stage"], parked["parked_by"]) == ("parked", "code")
     assert parked["notes"].endswith(f"Parked by Ember's code: its first test (milestone #{test}) was missed.")
     refused = call(agent, "venture_update", venture_id=DROPSHIPPING, stage="researching", note="One more try.")
-    assert not refused.ok and "Ember's code parked venture #3 by its stage's rule: only your owner" in refused.text
+    assert "Not done (the rest is saved): Ember's code parked venture #3 by its stage's rule: only your owner" in (
+        refused.text
+    )  # 0.32.0: its note is kept, its stage isn't changed
+    kept = venture(agent, DROPSHIPPING)
+    assert (kept["stage"], kept["parked_by"]) == ("parked", "code") and kept["notes"].endswith("One more try.")
     with agent.db.transaction() as conn, pytest.raises(sqlite3.IntegrityError, match="out of their park"):
         conn.execute("UPDATE ventures SET stage = 'researching' WHERE id = ?", (DROPSHIPPING,))
     again = owner(agent).decide_venture(

@@ -421,6 +421,17 @@ def listing_ids(conn: sqlite3.Connection, scope: AgentScope) -> list[int]:
     ]
 
 
+def live_listing(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> sqlite3.Row | None:
+    """0.32.0: the record of the product of Ember's whose Etsy listing Printify made is ``listing_id`` (its state at
+    Etsy, its end and whether it renews itself as the Etsy sync last read them, like an etsy_listings row), or None."""
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT * FROM printify_products WHERE {where} AND listing_id = ? AND status = 'active' ORDER BY id DESC"
+        " LIMIT 1",
+        (*params, listing_id),
+    ).fetchone()
+
+
 def product_json(r: sqlite3.Row) -> dict[str, Any]:
     return {
         "approval_id": r["approval_id"],

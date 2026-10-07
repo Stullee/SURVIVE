@@ -176,11 +176,11 @@ def test_the_week_s_focus_lines_get_the_marketing_cycles_first(data_dir: Path, m
     unseen = {pid: reach.Funnel(listings=[900 + pid]) for pid in (1, 2, 3)}
     monkeypatch.setattr(reach, "funnels", lambda *_: unseen)
     with agent.db.connection() as conn:
-        before = lines.marketing(conn, agent.scope(), blog=True, today=agent.clock.today())
+        before = lines.marketing(conn, agent.scope(), printify_links=True, today=agent.clock.today())
     assert keys(before) == ["market #1", "market #2", "market #3"]
     looked(agent, [2])
     with agent.db.connection() as conn:
-        after = lines.marketing(conn, agent.scope(), blog=True, today=agent.clock.today())
+        after = lines.marketing(conn, agent.scope(), printify_links=True, today=agent.clock.today())
     assert keys(after) == ["market #2", "market #1", "market #3"] and " · this week's focus · " in after[0].text
 
 

@@ -497,6 +497,11 @@ agent's workspace:
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
   sheet, plus a picture of each sheet. Formulas may only use common
   functions and cells of the same workbook: no links to other files or the web.
+  Ember's code tells the agent where each sheet's data are and names a formula
+  that leaves data out or (since 0.32.0) points at a title, a header or an
+  empty cell below the data. To fix a few words or a formula of a long file,
+  the agent replaces just that passage (`workspace_write`'s `edit`, 0.32.0)
+  instead of writing the file again in parts.
 - **Listing photos** (`make_image`): up to three pages, sheets or pictures (or a
   zoomed-in region of one), fanned out next to a title, a subtitle and a badge,
   in Etsy's 4:3 size (3000 x 2250) or square or portrait; or a photo of words
@@ -796,7 +801,10 @@ against six knock-outs:
   a price or a policy doesn't count).
 
 A knocked-out venture isn't proposed: the agent fixes what can be fixed (new
-numbers, independent evidence) or parks it with the numbers. The card lists
+numbers, independent evidence) or parks it with the numbers. Since 0.32.0 a
+refused proposal names everything it still needs at once, the knock-outs that
+stand too, and keeps the rest of the agent's update (its case, its notes): it
+threw them away, and the agent sent them again and again. The card lists
 its knock-outs, and you can **Lift** one for that venture if you accept it
 (and **Restore** it later); the agent hears it as your note on the venture.
 A venture Ember's code wouldn't back (no numbers, as one proposed before
@@ -933,8 +941,9 @@ a wake cycle is a marketing cycle while marketing cycles have had less than
 that share of the day's spending (the day's first cycle is an ordinary one).
 When ventures and marketing are both behind their share, the one further
 behind goes first (the ventures when they are even). Marketing cycles run once
-a listing Ember made is live (with the [blog](#blog) on, a Printify product's
-listing counts too), in the explore and focus [burn modes](#money). Like the
+a listing Ember made is live (with the [blog](#blog), Bluesky or Pinterest on,
+a Printify product's listing counts too: since 0.32.0 a post or a pin may link
+one), in the explore and focus [burn modes](#money). Like the
 ventures' share, it comes out of the same daily cap. What presses comes first:
 your messages, when they woke the cycle, and an obligation that needs product
 work make it an ordinary cycle; a missed bar of a line's listing test that
@@ -1471,7 +1480,10 @@ no longer shown); a study that failed three times stops until you press
 - **Upgrade requests**: ideas for changing Ember's code. Accept, decline, or mark
   one released with the version that contains it. After an update the agent
   reads what changed in the release notes, about 2 KB a plan until it has read
-  them all. A request built on a workshop script
+  them all, the newest first. Since 0.32.0 a version installed while it reads
+  adds its notes first, and the rest go on where they stopped (each update
+  began them again from the top, so with frequent updates the older notes were
+  never read). A request built on a workshop script
   comes with the script (see [How Ember grows](#the-workshop)).
 - **Pause / Resume** stops and restarts the wake cycles. **Wake now** starts a
   cycle right away.
@@ -1968,7 +1980,8 @@ there is no test pin; the **System log** says so.
 - The agent proposes a pin with `propose_pin`: one of its pictures (best 2:3,
   2000 x 3000 pixels: `make_image` has a **pin** shape), a title (at most 100
   characters), a description (Ember adds a line saying AI helped design it,
-  as on Etsy), alt text, the live listing it links to, and one of its boards
+  as on Etsy), alt text, the live listing it links to (since 0.32.0 one
+  Printify made of its products too), and one of its boards
   or a new board's name. The approval card shows every word, the picture's
   path and size, and what the QA check finds short (a picture that isn't
   portrait).
@@ -2048,8 +2061,11 @@ To stop Ember's access, delete the app password at Bluesky.
 
 - The agent proposes a post with `propose_bluesky_post`: its words in German or
   English (at most 300 characters with the links and the AI line, up to three
-  #hashtags, no link in the words and no @mention), a link if it likes (one of
-  its live Etsy listings or a page of your website, `site_url`, that Ember
+  #hashtags, no link in the words and no @mention; the AI line takes 59
+  characters in German and 40 in English, so the words alone have 239 or 258:
+  until 0.32.0 English posts had 239 too), a link if it likes (one of its live
+  Etsy listings, since 0.32.0 one Printify made of its products too, or a page
+  of your website, `site_url`, that Ember
   knows is there: a blog post of its own, the blog's list, the home page, the
   link page or the live view's page), since 0.25.1 a second one of these too
   (a listing and your website in one post, for instance; never the same
@@ -2058,10 +2074,11 @@ To stop Ember's access, delete the app password at Bluesky.
   picture's path, and what the QA check finds short (more than three hashtags).
 - **Approve** and Ember posts it. Bluesky charges nothing. With a picture, the
   link is clickable at the end of the words; without one, a listing shows as a
-  card with its title and main photo, and a blog post of Ember's with its title
-  and description. A second link is always clickable in the words, on a line
-  of its own under the first. Ember sends a picture as a JPEG of at most 1 MB
-  and 2000 pixels a side, without its metadata, so a large one is sent smaller.
+  card with its title and main photo (a listing Printify made: its title only),
+  and a blog post of Ember's with its title and description. A second link is
+  always clickable in the words, on a line of its own under the first. Ember
+  sends a picture as a JPEG of at most 1 MB and 2000 pixels a side, without its
+  metadata, so a large one is sent smaller.
   A post can only be approved as it is or rejected (say what should change: the
   agent proposes a better one). **Cancel** stops an approved post before Ember
   makes it.
@@ -2441,7 +2458,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.31.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.32.0 (by /u/your name)`.
 
 ## Amazon KDP
 

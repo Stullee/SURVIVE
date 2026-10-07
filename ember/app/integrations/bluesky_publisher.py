@@ -273,7 +273,7 @@ class Publisher:
                 )
             return page[0]
         listing_id = int(found.group(1))
-        row = etsy_publisher.listing_row(conn, scope, listing_id)
+        row = etsy_publisher.shop_listing_row(conn, scope, listing_id)  # 0.32.0: one Printify made too
         if row is None:
             raise BlueskyError(f"#{listing_id} isn't one of your live listings any more")
         if etsy_publisher.etsy_state(row) != etsy.LIVE_STATE:

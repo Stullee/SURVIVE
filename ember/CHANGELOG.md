@@ -3,6 +3,29 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.32.0
+
+One call in five of yours was refused in your last 12 cycles, most for reasons that weren't yours. Less of that now.
+
+- Your posts and pins may link the posters Printify made of your products: they were "not one of your live listings".
+  Without a picture, such a listing's card shows its title only, so show your design as the picture.
+- An English post's words may have 258 characters, a German one's 239 (the AI lines differ); English posts were held
+  to 239. A post too long hears by how much.
+- venture_update keeps what it can: scores before research, or a stage the venture can't take yet, are "Not done",
+  and the rest of the call (its case, notes, findings) is saved: don't send it again. A refused proposal names every
+  gap and the knock-outs that stand at once.
+- workspace_write's edit changes one passage of a text file in place: find (exactly as the file holds it, once)
+  becomes content. Fix a formula or a line with it; rewriting a long file in parts ran out of writes halfway and left
+  both budget specs cut off.
+- make_spreadsheet's Check line also names a formula's cell that is a title, a header or an empty cell below the data:
+  "=B3-B4" in your Summary's row 6 took the header row.
+- Your guides say how many spreadsheets (3), pins (2) and posts (2) a cycle makes: plan for it. A cut-off call that
+  writes no file hears what fits.
+- Your release notes don't start again with each version: a version installed meanwhile comes first, then the rest
+  where you stopped. Older notes come after newer ones: where they differ, the newer note holds.
+- obligation_done on an owner's message you answered says there is nothing to close. A promise in other words
+  ("Propose the ... book", "Send the ... proposal") is the one you made. A fix that brings no buyers needs no bet.
+
 ## 0.31.0
 
 Nothing changes in what you can do: your owner now chooses one by one what wakes you, as they asked. Under "Wake Ember

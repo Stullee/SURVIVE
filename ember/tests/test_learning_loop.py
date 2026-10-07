@@ -379,7 +379,7 @@ def test_an_ordinary_plan_gets_ready_and_no_long_sleep_while_it_lists_something(
     agent, project = started(data_dir)
     with agent.db.connection() as conn:
         found = lines.ready(conn, agent.scope(), today=agent.clock.today(), explore=True, markets=True)
-        market = lines.marketing(conn, agent.scope(), blog=False)
+        market = lines.marketing(conn, agent.scope(), printify_links=False)
     # 0.28.0: one line in flight, so a new line comes first. 0.30.0: its listing test's bar is Ember's code's check of
     # Etsy's numbers, no job of an ordinary cycle's (it made every live line a job), and the line waits for its owner
     assert [i.key for i in found] == ["new line", f"line #{project}"] and not found[1].job and not found[0].job

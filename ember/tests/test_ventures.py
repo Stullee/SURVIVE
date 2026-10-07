@@ -460,12 +460,19 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
     assert created[1]["status"] == "ok" and "Venture #9 is in your tree (idea, a branch of #3)" in created[1]["result"]
     assert venture(agent, 9)["parent_id"] == DROPSHIPPING and venture(agent, 9)["created_cycle_id"] == 1
     updates = tool_results(agent, "venture_update")
-    assert updates[0]["status"] == "error"
-    assert "scores come from research: research venture #3 first (research with venture_id 3" in updates[0]["result"]
+    # 0.32.0: the scores are refused, and the rest of the update (its next question, what it learned) is made
+    assert updates[0]["status"] == "ok" and updates[0]["result"].startswith("Venture #3: updated. What you learned")
+    assert (
+        "Not done (the rest is saved): scores come from research: research venture #3 first (research with "
+        "venture_id 3" in updates[0]["result"]
+    )
     assert updates[1]["status"] == "error" and updates[1]["result"] == (
         "Error: venture #3 can't be proposed yet: a business case needs 2 research calls for it that found something "
         "(it has 0); scores for revenue, doability, difficulty, risk, speed, cost; demand, economics, setup, "
-        "first_euro, risks, first_test filled in; its numbers (venture_case)."  # 0.24.0: an idea needs no stage first
+        "first_euro, risks, first_test filled in; its numbers (venture_case)"  # 0.24.0: an idea needs no stage first
+        # 0.32.0: with the knock-outs that stand
+        ". Ember's code knocks it out too: no independent source for its demand (it has no evidence yet: save an "
+        "independent page's demand numbers with evidence)."
     )
     research = tool_results(agent, "research")
     assert [r["status"] for r in research] == ["ok", "ok"]

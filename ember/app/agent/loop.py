@@ -123,6 +123,18 @@ CUT_CALL = (
     f" file in parts of at most {tools.WRITE_CHARS:,} characters (create, then append, one part per reply) and keep"
     " other texts shorter"
 )
+# 0.32.0: a call that writes no file hears what fits instead (live, a cut-off venture_case was told to write a file)
+CUT_OTHER = (
+    "your reply was cut off at its length limit before this call was complete, so nothing changed. Send it again in"
+    " a reply of its own, with shorter texts"
+)
+
+
+def cut_call(name: str) -> str:
+    """Why a call of a reply cut off by max_tokens didn't run, and how its next try fits."""
+    return CUT_CALL if name in ("workspace_write", "draft") else CUT_OTHER
+
+
 STEP_CHARS = prompts.STEP_CHARS  # a plan step's length (prompts.PLANNER_RULES tells the planner)
 RESEARCH_DIGEST_CHARS = 2_000  # a research digest kept (prompts.RESEARCH_RULES asks for less)
 STEP_GROWTH_BYTES = 20_000  # the most one step can add (4 tool results and a reply): the REFLECT profile's room
@@ -483,7 +495,7 @@ class CycleRunner:
                 ventures.seed(conn, self.scope, to_iso(self.clock.now()))
             spends = ventures.day_spends(conn, self.scope, today)
             runs = share > 0 and mode.marketing_cycles and self.etsy_on
-            marketable = lines.marketable(conn, self.scope, self.blog_on) if runs else []
+            marketable = lines.marketable(conn, self.scope, self._printify_links()) if runs else []
             self.marketing_apart = bool(marketable)  # nothing live to market: no marketing cycles, nor a share kept
             owed = [o for _, o in obligations.pressing_owed(conn, self.scope, today)]
             self.owner_waits = trigger == "owner" and obligations.messages_waiting(conn, self.scope) > 0
@@ -607,6 +619,11 @@ class CycleRunner:
             website.address(self.settings),  # the owner's website, which a post may link
         )
         self.bluesky_on = True
+
+    def _printify_links(self) -> bool:
+        """0.32.0: whether a channel is on that links a listing Printify made: the blog (a post may recommend one), and
+        Bluesky's posts and Pinterest's pins, which took only Ember's own listings until then (lines.marketing)."""
+        return self.blog_on or self.bluesky_on or self.pinterest_on
 
     def _blog_access(self) -> tools.BlogAccess:
         """0.14.0: what the blog's tools know: the site's data, and what keeps the blog from being published."""
@@ -1071,7 +1088,7 @@ class CycleRunner:
             return found
         with self.db.connection() as conn:
             if self.kind == lines.MARKETING:
-                ok = project_id in lines.marketable(conn, self.scope, self.blog_on)
+                ok = project_id in lines.marketable(conn, self.scope, self._printify_links())
             else:
                 row = store.project(conn, self.scope, project_id)
                 ok = row is not None and row["status"] in store.OPEN_STATUSES
@@ -1103,7 +1120,9 @@ class CycleRunner:
         owed = [] if self.owner_waits else [o for _, o in obligations.pressing_owed(conn, self.scope, today)]
         since = to_iso(self.clock.now() - timedelta(hours=lines.PRESS_HOURS))
         if kind == lines.MARKETING:  # 0.30.0: with this week's focus lines (``today``)
-            return lines.marketing(conn, self.scope, blog=self.blog_on, owed=owed, since=since, today=today)
+            return lines.marketing(
+                conn, self.scope, printify_links=self._printify_links(), owed=owed, since=since, today=today
+            )
         explore = mode.mode == burn.EXPLORE
         return lines.ready(
             conn, self.scope, today=today, explore=explore, markets=self.marketing_apart, owed=owed, since=since
@@ -1834,13 +1853,19 @@ class CycleRunner:
                 continue
             if uses:  # never run a tool call that may be incomplete: cut off by max_tokens, only the last one is
                 whole = _whole_calls(content, uses) if stop == "max_tokens" else []
-                why = CUT_CALL if stop == "max_tokens" else f"the reply ended ({stop}) before it could run"
+                ended = f"the reply ended ({stop}) before it could run"
                 act.pending = self._run_tools(ctx, whole, result.call_id, "act") if whole else []
                 act.pending += [
                     self._result_block(
                         u,
                         tools.skip(
-                            ctx, u.get("name", "?"), u.get("input"), u.get("id", ""), result.call_id, "act", why
+                            ctx,
+                            u.get("name", "?"),
+                            u.get("input"),
+                            u.get("id", ""),
+                            result.call_id,
+                            "act",
+                            cut_call(str(u.get("name"))) if stop == "max_tokens" else ended,
                         ),
                     )
                     for u in uses[len(whole) :]
@@ -2011,7 +2036,13 @@ class CycleRunner:
                 self._run_tools(ctx, whole, result.call_id, "reflect")
             for u in uses[len(whole) :]:
                 tools.skip(
-                    ctx, u.get("name", "?"), u.get("input"), u.get("id", ""), result.call_id, "reflect", CUT_CALL
+                    ctx,
+                    u.get("name", "?"),
+                    u.get("input"),
+                    u.get("id", ""),
+                    result.call_id,
+                    "reflect",
+                    cut_call(str(u.get("name"))),
                 )
         self._keep_draft(cycle_id, ctx)  # 0.24.0: before the reply's text, which has no next
         if not ctx.state.journal_written and text.strip():

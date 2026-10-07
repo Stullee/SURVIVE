@@ -51,7 +51,11 @@ DISCLOSURE = {
     "de": "🤖 Von einer KI geschrieben, von einem Menschen freigegeben.",
     "en": "🤖 Written by an AI, approved by a human.",
 }
-TEXT_CHARS = TEXT_MAX - max(len(d) for d in DISCLOSURE.values()) - 2  # the agent's words at most (without a link)
+TEXT_CHARS = TEXT_MAX - max(len(d) for d in DISCLOSURE.values()) - 2  # the words that fit in any language (no link)
+# 0.32.0: the agent's words at most without a link, by the post's language: the room its AI line leaves. The tool held
+# every post to the German line's room, 19 characters less than an English post has: live, 4 of 7 English posts
+# refused for their length would have fitted (room() refuses what doesn't, saying by how much).
+WORDS_CHARS = {language: TEXT_MAX - len(line) - 2 for language, line in DISCLOSURE.items()}
 ALT_MAX = 1_000  # a picture's alt text
 CARD_TITLE_MAX = 300  # a link card's title
 TAG_MAX = 64  # a hashtag's characters (Bluesky's limit, without the #)
