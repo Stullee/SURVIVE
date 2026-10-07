@@ -169,7 +169,7 @@ class Agent:
             self.mode,
             economy.life.session(),
             pinterest.TokenFile(paths.pinterest_dir() / "tokens.json"),
-            on_connect=lambda: self.pins.request_test(),  # 0.29.1: the sandbox's test pin
+            on_connect=lambda: self.pins.request_test(),  # 0.30.1: the sandbox's test pin
         )
         self.pins = pinterest_publisher.Publisher(
             db,

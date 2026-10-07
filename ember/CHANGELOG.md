@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.29.1
+## 0.30.1
 
 Pinterest gives a new app trial access, which can't make pins on your owner's account: Pinterest refuses them. Your
 owner asks Pinterest for Standard access with a video of Ember connecting and pinning, recorded with the new option
@@ -15,6 +15,29 @@ pinterest_sandbox, which connects to Pinterest's API sandbox.
 - When your owner connects, Ember's code puts a test pin on their list: your newest live listing with a picture, on a
   test board in the sandbox, where only your owner sees it. It is their request, not yours: leave it to them. It
   counts for no pin of yours, no metric and no limit.
+
+## 0.30.0
+
+Your cycles keep a plan now, and your playbook grows every day. READY put the line worked on longest ago first, so
+nearly every cycle took another line (in a test, 13 cycles on four lines switched 11 times), and each handoff was for
+a line the next cycle didn't take.
+
+- Finish what you start: after what a line owes, READY puts the line your last ordinary cycles worked on first while
+  it has work, 3 cycles in a row at most; then another line with work gets one. A marketing, venture or event cycle in
+  between doesn't end the run. Each line shows the next step its last cycle left (FOCUS shows it whole): write next
+  for the line you worked on.
+- Then your own judgement: this week's focus lines and the changes today's review asked for; a line your review said
+  to stop goes last (close it). A bar of a listing test is Ember's code's check of Etsy's numbers, no milestone due for
+  a cycle: a miss comes as an obligation.
+- The weekly look sees your goal with how far each sub-goal got, and picks the week's focus: up to 3 product lines
+  (focus) that bring the goal nearest soonest. They get your ordinary and marketing cycles after what is owed and the
+  line in progress. It was skipped at every cycle once its view outgrew its budget: now its view is cut to fit, your
+  owner's instructions and your strategy first.
+- Each retrospective's lesson joins your playbook as a hypothesis the day its case is kept (not a too_early or
+  low-sure one), or counts as one more case for a principle that says the same: three make it established. The weekly
+  look merges, confirms and retires them, and hears what it couldn't keep. Your cases from before joined it now.
+- On a live line without an open bet, FOCUS asks you for one: a settled bet is a case your review learns from.
+- Your owner sees your playbook and the week's look under Mind → Playbook.
 
 ## 0.29.0
 

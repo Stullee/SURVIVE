@@ -227,7 +227,8 @@ def test_the_playbook_s_confidence_is_set_by_ember_s_code_and_old_guesses_fade(d
             stamp,
         )
         assert said[0].startswith("new principle #1 (established)") and said[1].startswith("new principle #2 (hyp")
-        assert len(said) == 2  # the one citing no real case is dropped
+        # the one citing no real case is dropped; 0.30.0: and the answer says so
+        assert said[2:] == ['no principle from "No case behind it.": no case of yours has those numbers']
         learning.apply_principles(
             conn, scope, [{"id": 2, "text": "", "supports": [], "against": [ids[0]], "retire": ""}], set(ids), stamp
         )
@@ -265,7 +266,9 @@ def test_a_principle_and_its_opposite_can_t_share_their_cases_and_established_wo
         assert said == [
             "new principle #1 (established): Pins bring views.",
             "new principle #2 (hypothesis): Pins bring no views.",  # its cases are #1's
-        ]  # and "Wait a week." cites only too_early cases: no evidence, no principle
+            # "Wait a week." cites only too_early cases: no evidence, no principle (0.30.0: said, not dropped silently)
+            'no principle from "Wait a week.": its cases are too_early, which is no evidence yet',
+        ]
         learning.apply_principles(
             conn, scope, [{"id": 1, "text": "Pins bring no views.", "supports": [], "against": [], "retire": ""}],
             set(ids), stamp,
@@ -377,11 +380,19 @@ def test_an_ordinary_plan_gets_ready_and_no_long_sleep_while_it_lists_something(
     with agent.db.connection() as conn:
         found = lines.ready(conn, agent.scope(), today=agent.clock.today(), explore=True, markets=True)
         market = lines.marketing(conn, agent.scope(), blog=False)
-    # 0.28.0: one line in flight, so a new line comes first; the line's jobs: its listing test's bar is due
-    assert [i.key for i in found] == ["new line", f"line #{project}"] and found[1].job and not found[0].job
-    assert "milestone #" in found[1].text and "its marketing cycles bring buyers" in found[1].text
+    # 0.28.0: one line in flight, so a new line comes first. 0.30.0: its listing test's bar is Ember's code's check of
+    # Etsy's numbers, no job of an ordinary cycle's (it made every live line a job), and the line waits for its owner
+    assert [i.key for i in found] == ["new line", f"line #{project}"] and not found[1].job and not found[0].job
+    assert "milestone #" not in found[1].text and "its marketing cycles bring buyers" in found[1].text
     assert [i.key for i in market] == [f"market #{project}"] and market[0].job  # nobody saw it: buyers to bring
     assert lines.text(found).startswith(lines.HEADING)
+    assert slack.sleep(720, found, 30, "explore") == 720
+    with agent.db.transaction() as conn:  # the critic's fixes are the line's own work
+        verdict = {"score": 5, "verdict": "improve", "fixes": "A cover that shows the recipes."}
+        quality.save(conn, agent.scope(), project, None, verdict, None, now(agent))
+    with agent.db.connection() as conn:
+        found = lines.ready(conn, agent.scope(), today=agent.clock.today(), explore=True, markets=True)
+    assert found[1].job and "the critic on " in found[1].text
     assert slack.sleep(720, found, 30, "explore") == slack.SLEEP_MINUTES
     assert slack.sleep(720, found, 240, "explore") == 240  # not below the owner's shortest sleep
     assert slack.sleep(720, found, 30, "maintenance") == 720

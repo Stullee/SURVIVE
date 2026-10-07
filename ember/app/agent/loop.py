@@ -135,7 +135,9 @@ STEP_GROWTH_FACTOR = 1.5
 # square, about 1,300 tokens) like this much, a 1000 x 750 listing photo like 3,750 bytes and a wide spreadsheet picture
 # (1000 x 180) like 900. A picture whose size can't be read counts as the largest.
 IMAGE_EQUIVALENT_BYTES = 5_000
-WEEKLY_INPUT_TOKENS = 12_000  # 0.18.0: the weekly look's prompt at most (its view is cut at weekly.VIEW_CHARS)
+# 0.18.0: the weekly look's prompt at most (its view is cut at weekly.VIEW_CHARS). 0.30.0: a review call's room (the
+# books count the look as a review): at 12,000 tokens a view of 14,000 characters didn't fit, and the look was skipped
+WEEKLY_INPUT_TOKENS = REVIEW_CALL.input_tokens
 PLANNER_SCALES = (1.0, 0.75, 0.5, 0.3)  # the planner's context budgets, until the request fits its profile
 NO_STEP = "not enough money left in this cycle for a work step and the reflection"
 
@@ -682,7 +684,8 @@ class CycleRunner:
 
     def _keep(self, cycle_id: int | None) -> None:
         """Ember's code keeps its rules before a plan: the money goal, the stages, the grading, the listing tests, the
-        bets, the predictions and the obligations (0.28.0: before what the cycle is, which reads what they keep)."""
+        bets, (0.30.0) the playbook, the predictions and the obligations (0.28.0: before what the cycle is, which reads
+        what they keep)."""
         status = self.economy.life.evaluate()
         scope = self.economy.life.scope()
         self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
@@ -690,6 +693,7 @@ class CycleRunner:
         metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
         self._keep_gates()  # 0.13.0: after the grading, so a bar missed now is owed at once
         self._keep_bets()  # 0.18.0: after the grading, from the same Etsy numbers
+        self._guarded(self._keep_playbook, cycle_id or 0, "the playbook's keeper")  # 0.30.0: the cases' lessons
         predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
         self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
         # 0.29.0: once more after the grading (the owner's goal met or missed: the money goal stands in for it) and the
@@ -1098,8 +1102,8 @@ class CycleRunner:
         today = self.clock.today()
         owed = [] if self.owner_waits else [o for _, o in obligations.pressing_owed(conn, self.scope, today)]
         since = to_iso(self.clock.now() - timedelta(hours=lines.PRESS_HOURS))
-        if kind == lines.MARKETING:
-            return lines.marketing(conn, self.scope, blog=self.blog_on, owed=owed, since=since)
+        if kind == lines.MARKETING:  # 0.30.0: with this week's focus lines (``today``)
+            return lines.marketing(conn, self.scope, blog=self.blog_on, owed=owed, since=since, today=today)
         explore = mode.mode == burn.EXPLORE
         return lines.ready(
             conn, self.scope, today=today, explore=explore, markets=self.marketing_apart, owed=owed, since=since
@@ -1166,6 +1170,14 @@ class CycleRunner:
         with self.db.transaction() as conn:
             happened = bets.settle(conn, self.scope, self.clock.today(), to_iso(self.clock.now()))
             happened += learning.fade(conn, self.scope, to_iso(self.clock.now()))  # the playbook's old guesses
+        for line in happened:
+            events.record(self.db, "info", "agent", line[:300])
+
+    def _keep_playbook(self, cycle_id: int) -> None:
+        """0.30.0: the lessons of the cases kept since the last plan join the playbook (learning.adopt), before every
+        plan; guarded like a learning step, so a bug in it never ends the cycle."""
+        with self.db.transaction() as conn:
+            happened = learning.adopt(conn, self.scope, to_iso(self.clock.now()))
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
 
@@ -1393,17 +1405,28 @@ class CycleRunner:
             lines.append(f"Last {days} days: revenue less expenses {_usd(earned)}, API spending {_usd(spent)}.")
         with self.db.connection() as conn:
             standing = store.standing_instructions(conn, self.scope)
-            text = weekly.view(
+            whole = weekly.view(
                 conn,
                 self.scope,
                 now,
                 "MONEY\n" + "\n".join(lines),
                 self.memory.read("strategy"),
                 standing["text"] if standing else "",
+                # 0.30.0: the goal it plans the week toward, with how far each sub-goal got
+                goal=weekly.goal_text(conn, self.scope, self.clock.today(), self._money_numbers(ledger_scope)),
             )
-        request = prompts.weekly_request(self.settings, text)
-        if not context.fits(request, WEEKLY_INPUT_TOKENS):
-            log.warning("The weekly look doesn't fit its budget; skipped")
+        # 0.30.0: the view cut until the request fits; one that never does is a failed look, said, and tried again the
+        # next day (it was skipped with a line in the log only, at every cycle, and no look came through again)
+        for chars in weekly.VIEW_STEPS:
+            text = weekly.cut(whole, chars)
+            request = prompts.weekly_request(self.settings, text)
+            if context.fits(request, WEEKLY_INPUT_TOKENS):
+                break
+        else:
+            note = "its view doesn't fit its budget"
+            with self.db.transaction() as conn:
+                weekly.save(conn, self.scope, cycle_id, to_iso(now), self.clock.today(), text, None, [], note)
+            events.record(self.db, "warning", "agent", f"The weekly look failed: {note}")
             return
         try:
             quote = self.meter.quote(request, REVIEW)

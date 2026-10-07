@@ -650,7 +650,7 @@ def test_the_approvals_take_a_new_channel_s_executor_but_only_a_plain_name(data_
         assert never.reasons(conn, row) == ["owner_only"]  # no rule covers it yet: only the owner
 
 
-# --- 0.29.1: Pinterest's API sandbox, for the video of the owner's Standard access request -------------------------
+# --- 0.30.1: Pinterest's API sandbox, for the video of the owner's Standard access request -------------------------
 
 SANDBOX = LIVE.model_copy(update={"pinterest_sandbox": True})
 

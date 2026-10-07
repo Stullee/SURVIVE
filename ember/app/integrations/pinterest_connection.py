@@ -11,7 +11,7 @@ app's id, secret and redirect URI are set and the owner connected it in the dash
    keeps the tokens in the token file.
 3. ``disconnect`` deletes the tokens (the owner can also remove the app's access at Pinterest).
 
-0.29.1: with the sandbox option on (live), the connection is to Pinterest's API sandbox, for the video of the owner's
+0.30.1: with the sandbox option on (live), the connection is to Pinterest's API sandbox, for the video of the owner's
 Standard access request: its tokens are kept apart (the account's own connection stays for later), the agent has no
 Pinterest account (``account`` is None: no tools, no pins of its, no numbers), and connecting puts a test pin on the
 owner's list (``on_connect``), which Ember's code makes in the sandbox once they approve it (``sandbox_account``).
@@ -52,11 +52,11 @@ class PinterestConnection:
         self.clock = clock
         self.settings = settings
         self.mode = mode
-        # 0.29.1: Pinterest's API sandbox, for the owner's Standard access request (live only: a dry run has its fake)
+        # 0.30.1: Pinterest's API sandbox, for the owner's Standard access request (live only: a dry run has its fake)
         self.sandbox = mode == "live" and settings.pinterest_enabled and settings.pinterest_sandbox
         self.tokens = TokenFile(tokens.path.with_name("sandbox_tokens.json")) if self.sandbox else tokens
         self._http_transport = http_transport  # tests only
-        self._on_connect = on_connect  # 0.29.1: puts the sandbox's test pin on the owner's list
+        self._on_connect = on_connect  # 0.30.1: puts the sandbox's test pin on the owner's list
         self._lock = threading.Lock()
         self._pending: tuple[str, str, datetime] | None = None  # state, verifier, when
         self._fake: FakePinterest | None = None
@@ -76,7 +76,7 @@ class PinterestConnection:
         return None if self.sandbox else self._live()
 
     def sandbox_account(self) -> Account | None:
-        """0.29.1: the owner's account in Pinterest's API sandbox, for the test pin (None unless the sandbox option is
+        """0.30.1: the owner's account in Pinterest's API sandbox, for the test pin (None unless the sandbox option is
         on and the owner connected with it)."""
         return self._live() if self.sandbox else None
 
@@ -141,7 +141,7 @@ class PinterestConnection:
     # --- for the dashboard and the diagnostics (never a token) ---
 
     def status(self) -> tuple[str, str | None]:
-        """ok, disabled, not_configured, not_connected or (0.29.1) sandbox, with a reason."""
+        """ok, disabled, not_configured, not_connected or (0.30.1) sandbox, with a reason."""
         if not self.settings.pinterest_enabled:
             return "disabled", None
         if self.mode == "dry_run":
@@ -150,7 +150,7 @@ class PinterestConnection:
         if problems:
             return "not_configured", "; ".join(problems)
         tokens = self.tokens.load()
-        if self.sandbox:  # 0.29.1: whether connected or not, no pins of the agent's until the owner turns it off
+        if self.sandbox:  # 0.30.1: whether connected or not, no pins of the agent's until the owner turns it off
             then = "it waits for your approval" if tokens is not None else "connect your account (System, Pinterest)"
             return "sandbox", (
                 f"Pinterest's API sandbox, for your Standard access request: a test pin only ({then}). No other pins "

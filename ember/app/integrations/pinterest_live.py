@@ -1,6 +1,6 @@
 """The owner's Pinterest account, through Pinterest's API v5: the only module that talks to Pinterest.
 
-Every request goes to https://api.pinterest.com (0.29.1: or, with the sandbox option on, to Pinterest's API sandbox
+Every request goes to https://api.pinterest.com (0.30.1: or, with the sandbox option on, to Pinterest's API sandbox
 at https://api-sandbox.pinterest.com; anything else is refused before it leaves, and redirects aren't followed), with
 the OAuth access token, refreshed when it is about to expire (the token endpoint takes the app's id and
 secret as HTTP Basic). Errors come back as ``NotSent`` (Pinterest refused: nothing changed; ``Gone`` for what isn't
@@ -53,7 +53,7 @@ _REFRESH_LOCK = threading.Lock()
 
 
 class _Allowlist(httpx2.HTTPTransport):
-    """Refuses every request that isn't HTTPS to ``host``, api.pinterest.com or (0.29.1) the sandbox's (raised as a
+    """Refuses every request that isn't HTTPS to ``host``, api.pinterest.com or (0.30.1) the sandbox's (raised as a
     connect error)."""
 
     def __init__(self, host: str = API_HOST, **kwargs: Any) -> None:

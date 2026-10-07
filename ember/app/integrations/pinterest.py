@@ -2,7 +2,7 @@
 
 The owner creates the (business) account and a Pinterest app for it, adds their Impressum link to the business
 profile, switches Pinterest on and sets the app's id, secret and redirect URI in the options, and connects the account
-in the dashboard (like Etsy: PKCE). 0.29.1: an app with trial access may not make pins at api.pinterest.com (Pinterest
+in the dashboard (like Etsy: PKCE). 0.30.1: an app with trial access may not make pins at api.pinterest.com (Pinterest
 refuses them); its Standard access is asked for with a video of the app connecting and pinning, which the owner records
 with the sandbox option on (pinterest_publisher.request_test). Then:
 
@@ -38,7 +38,7 @@ from .etsy import Upload
 
 API_HOST = "api.pinterest.com"
 API_URL = f"https://{API_HOST}/v5"
-SANDBOX_HOST = "api-sandbox.pinterest.com"  # 0.29.1: Pinterest's API sandbox (pinterest_sandbox)
+SANDBOX_HOST = "api-sandbox.pinterest.com"  # 0.30.1: Pinterest's API sandbox (pinterest_sandbox)
 AUTHORIZE_URL = "https://www.pinterest.com/oauth/"
 SCOPES = ("boards:read", "boards:write", "pins:read", "pins:write", "user_accounts:read")
 TITLE_MAX = 100
@@ -131,7 +131,7 @@ def pin_from_action(raw: str | dict[str, Any]) -> Pin:
 
 
 def api_host(settings: Settings) -> str:
-    """0.29.1: where the owner's account is reached: Pinterest's API, or its sandbox while the owner records the video
+    """0.30.1: where the owner's account is reached: Pinterest's API, or its sandbox while the owner records the video
     for their Standard access request (pinterest_sandbox)."""
     return SANDBOX_HOST if settings.pinterest_sandbox else API_HOST
 

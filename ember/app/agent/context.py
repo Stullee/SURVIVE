@@ -144,7 +144,9 @@ MARKETING_BRIEF = (
     "posts that link them, a blog post that recommends one, a Reddit post, better titles and tags; then bet on what "
     "it will bring."
 )
-LINE_FOCUS_BUDGET = 900  # 0.28.0: the line's funnel and reach in FOCUS (a marketing cycle's live listings too)
+# 0.28.0: the line's funnel and reach in FOCUS (a marketing cycle's live listings too); 0.30.0: and the next step its
+# last cycle left
+LINE_FOCUS_BUDGET = 1_000
 # 0.12.0: the brief's copy of OBLIGATIONS (the plan's is never cut), on top of the brief's budget like the owner's.
 OBLIGATIONS_BRIEF_BUDGET = 1_000
 # 0.12.0: the lessons the owner pinned come first in LESSONS, on top of its budget (at most memory.MAX_PINS of them).
@@ -242,6 +244,8 @@ class Snapshot:
     last_cycle: sqlite3.Row | None = None
     last_journal: sqlite3.Row | None = None
     handoff: sqlite3.Row | None = None  # 0.15.0: the newest handoff the agent wrote (its cycle_id and handoff)
+    # 0.30.0: what the cycles that wrote those handoffs worked on ("line #4", "a venture cycle", ...), by cycle
+    handoff_from: dict[int, str] = field(default_factory=dict)
     digests: list[str] = field(default_factory=list)  # the last cycles' digests, newest first (0.12.0)
     obligations: str = ""  # 0.12.0: what the agent owes (OBLIGATIONS), bounded: never cut in the plan
     memory: dict[str, str] = field(default_factory=dict)
@@ -361,6 +365,7 @@ def snapshot(
     standing = store.standing_instructions(conn, scope)
     spent, ventured, marketed = ventures.day_spends(conn, scope, today) if today is not None else (0, 0, 0)
     memories = memory.read_all()
+    written = {int(r["cycle_id"]) for r in (journal[:1] + ([handoff] if handoff is not None else []))}
     return Snapshot(
         status=status,
         local_time=local_time,
@@ -382,6 +387,7 @@ def snapshot(
         last_cycle=last_cycle,
         last_journal=journal[0] if journal else None,
         handoff=handoff,
+        handoff_from={cycle_id: _worked_on(conn, cycle_id) for cycle_id in written},
         digests=digest.latest(conn, scope),
         obligations=obligations.text(conn, scope, today, memories.get("strategy", "")) if today is not None else "",
         memory=memories,
@@ -432,6 +438,20 @@ def snapshot(
         agenda=agenda or [],
         reactive=reactive,
     )
+
+
+def _worked_on(conn: sqlite3.Connection, cycle_id: int) -> str:
+    """0.30.0: what a cycle worked on, as YOUR LAST CYCLE names the cycle a handoff came from ('' for a cycle on no
+    line, or none)."""
+    row = conn.execute("SELECT project_id, venture, marketing FROM cycles WHERE id = ?", (cycle_id,)).fetchone()
+    if row is None:
+        return ""
+    if row["venture"]:
+        return "a venture cycle"
+    line = f"line #{row['project_id']}" if row["project_id"] is not None else ""
+    if row["marketing"]:
+        return f"a marketing cycle on {line}" if line else "a marketing cycle"
+    return f"a cycle on {line}" if line else ""  # a handoff of no line is for whatever comes next
 
 
 def _closed_lately(conn: sqlite3.Connection, scope: AgentScope, today: date | None) -> list[sqlite3.Row]:
@@ -592,11 +612,14 @@ def last_cycle_text(s: Snapshot, budget: int = PLANNER_BUDGETS["journal"]) -> st
     journal = s.last_journal
     written = journal is not None and _author(journal) != "system"
     if written and journal["handoff"]:
-        lines.append(f"Your handoff to this cycle: {json.dumps(journal['handoff'], ensure_ascii=False)}")
+        cycle = journal["cycle_id"] if "cycle_id" in journal.keys() else None  # noqa: SIM118 - a Row's "in" sees values
+        lines.append(
+            f"Your handoff to this cycle{_written_in(s, cycle)}: " + json.dumps(journal["handoff"], ensure_ascii=False)
+        )
     elif s.handoff is not None:
         lines.append(
-            f"Your last handoff, from cycle #{s.handoff['cycle_id']} (the cycles after it left none): "
-            + json.dumps(s.handoff["handoff"], ensure_ascii=False)
+            f"Your last handoff, from cycle #{s.handoff['cycle_id']}{_written_in(s, s.handoff['cycle_id'])} (the"
+            " cycles after it left none): " + json.dumps(s.handoff["handoff"], ensure_ascii=False)
         )
     goal = _plan_goal(s.last_cycle)
     if goal and not s.digests:
@@ -615,6 +638,13 @@ def last_cycle_text(s: Snapshot, budget: int = PLANNER_BUDGETS["journal"]) -> st
             ]
         lines += digests
     return "\n".join(lines)
+
+
+def _written_in(s: Snapshot, cycle_id: Any) -> str:
+    """0.30.0: where a handoff was written, as YOUR LAST CYCLE says it (a line's next step waits for that line's cycle;
+    READY shows each line's own)."""
+    where = s.handoff_from.get(int(cycle_id)) if isinstance(cycle_id, int) else None
+    return f" (written in {where})" if where else ""
 
 
 def _author(journal: Mapping[str, Any]) -> str:
