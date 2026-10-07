@@ -19,6 +19,17 @@ one (``ready``: its key) or says why it takes none. The tools refuse another lin
 nobody closes doesn't take every cycle). Each pick is kept with the list it came from, in the decision desk's table
 (desk_picks, kind 'line' or 'market'). What a wake cycle is comes from ``kind``: pressing work first, then the share
 furthest behind its part of the day's spending, then an ordinary cycle.
+
+0.30.0: a plan she keeps. READY put the line worked on longest ago first after what was owed and due, so every cycle
+took another line: in a dry run, 13 ordinary cycles on four lines switched lines 11 times, each handoff was written for
+a line the next cycle didn't take, and no line was finished before the next was begun. Now, after what a line owes, the
+line the newest ordinary cycles worked on comes first while it has work, MAX_STREAK cycles in a row at most (a
+marketing, venture or reactive cycle in between doesn't break the run); then the lines the agent's own judgement chose:
+this week's focus lines (the weekly look, weekly.focus) and the changes today's review asked for; a line the review
+said to stop goes after the others, and so does one that only waits for the owner or just had its run. Among the
+rest, a milestone due, another task of its own and selling come first. A bar of a line's listing test is Ember's
+code's check of Etsy's numbers, not the cycle's work: it no longer counts as a milestone due (what a miss asks comes
+as an obligation). Each line shows the next step its last cycle left (``handoffs``), and FOCUS shows it in full.
 """
 
 from __future__ import annotations
@@ -32,7 +43,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..integrations import etsy_publisher
-from . import metrics, obligations, quality, reach, roadmap, ventures, weekly
+from . import bets, metrics, obligations, prompts, quality, reach, review, roadmap, ventures, weekly
 from .store import AgentScope, open_projects
 
 # The kinds of wake cycle (cycles.venture and cycles.marketing record the two that take a share of the spending).
@@ -44,6 +55,9 @@ WHY_CHARS = 200  # why a plan takes no READY item, as kept
 DUE_DAYS = 7  # a milestone of the line due this soon (or overdue) puts it ahead
 IN_FLIGHT = 2  # with fewer lines in flight (open, not waiting), a new line comes first
 PRESS_HOURS = 24  # a pressing obligation takes its line for a cycle at most this often
+MAX_STREAK = prompts.LINE_STREAK  # 0.30.0: ordinary cycles in a row on one line before READY ranks it as usual
+HANDOFF_CHARS = 70  # 0.30.0: of a line's last handoff, as READY quotes it
+HANDOFF_FOCUS_CHARS = 300  # 0.30.0: as FOCUS quotes it
 HEADING = "Ranked by Ember's code. Take one (ready: its key), or say why none:"
 PRESSED_HEADING = "A pressing obligation of this line comes first: Ember's code takes it for this cycle."
 QUESTIONS = "This week's questions (keep them in mind; not items to take):"
@@ -150,16 +164,19 @@ def ready(
     since: str = "",
 ) -> list[Item]:
     """An ordinary plan's READY: the open lines the owner's park or kill doesn't stop, at most MAX_LINES, each with its
-    jobs (what it owes, its milestone due, the critic's fixes, a missing demand note, building or scaling it), ranked:
-    a line a pressing obligation takes, one that owes something, one with a milestone due within DUE_DAYS, one with
-    work (not only waiting for the owner), the one worked on longest ago; and a new line in the explore burn mode
-    (first while fewer than IN_FLIGHT lines are in flight). ``owed``: the pressing obligations (product work; with
-    ``markets``, a push to bring buyers is a marketing cycle's); ``since``: a line a pressing obligation took after
+    jobs (what it owes, its milestone due, the critic's fixes, a missing demand note, building or scaling it), ranked
+    (_Facts.rank): a line a pressing obligation takes, one that owes something, (0.30.0) the line the newest ordinary
+    cycles worked on while it has work, a line today's review said to stop, one that only waits for the owner and one
+    that just had MAX_STREAK cycles in a row after the others, this week's focus lines and the changes today's review
+    asked for, one with a milestone due within DUE_DAYS, one with another task of its own, one that sells, the one
+    worked on longest ago; and a new line in the explore burn mode (first while fewer than IN_FLIGHT lines are in
+    flight). ``owed``: the pressing obligations (product work; with ``markets``, a push to bring buyers is a
+    marketing cycle's, and so is a review's change for reach); ``since``: a line a pressing obligation took after
     this isn't taken again."""
     lines = _lines(conn, scope)
     if not lines:
         return [Item(NEW, None, "start your first product line (project_create)")] if explore else []
-    facts = _facts(conn, scope, today, lines, last=_last(conn, scope, marketing=False))
+    facts = _facts(conn, scope, today, lines, last=_last(conn, scope, marketing=False), markets=markets)
     pressed = _pressed(conn, scope, [o for o in owed if not (o.marketing and markets)], set(lines), since)
     if pressed is not None:
         f = facts[pressed]
@@ -180,12 +197,14 @@ def marketing(
     blog: bool,
     owed: Sequence[obligations.Owed] = (),
     since: str = "",
+    today: date | None = None,
 ) -> list[Item]:
     """A marketing plan's READY: the open, unstopped lines with a live listing of Ember's own (a pin, a post and an
     edit take only those; with the owner's blog on, a blog post may recommend one Printify made too), at most
-    MAX_LINES, ranked: a line a pressing push takes, one that owes a push to bring buyers (gates.MARKET), then by its
-    funnel (not seen with too little reach done, selling, liked but not bought, seen but not liked, not seen though
-    marketed), the one marketed longest ago first."""
+    MAX_LINES, ranked: a line a pressing push takes, one that owes a push to bring buyers (gates.MARKET), (0.30.0) this
+    week's focus lines (``today``: the weekly look's, weekly.focus), then by its funnel (not seen with too little reach
+    done, selling, liked but not bought, seen but not liked, not seen though marketed), the one marketed longest ago
+    first."""
     funnels = reach.funnels(conn, scope)
     eligible = _marketable(conn, scope, blog, funnels)
     if not eligible:
@@ -195,13 +214,15 @@ def marketing(
     pressed = _pressed(conn, scope, [o for o in owed if o.marketing], set(eligible), since)
     last = _last(conn, scope, marketing=True)
     titles = {int(p["id"]): p for p in open_projects(conn, scope)}
+    chosen = set(weekly.focus(conn, scope, today)) if today is not None else set()
 
     def text(pid: int) -> str:
         f = funnels[pid]
         owed_here = [n for n, market in owes[pid][0] if market] if pid in owes else []
         push = f" · owes: obligation #{owed_here[0]}" if owed_here else ""
+        focus = " · this week's focus" if pid in chosen else ""
         when = f"last marketed {last[pid][:10]}" if pid in last else "never marketed"
-        return f"{titles[pid]['title']}: {f.short()}{push} · {when}"
+        return f"{titles[pid]['title']}: {f.short()}{push}{focus} · {when}"
 
     def job(pid: int) -> bool:
         f = funnels[pid]
@@ -214,7 +235,7 @@ def marketing(
         f = funnels[pid]
         unseen = f.stage == "not_seen"
         stage = 0 if unseen and f.reach < reach.ENOUGH else _STAGE_RANK.get(f.stage, 4)
-        return (pid not in pushes, stage, last.get(pid, ""), pid)
+        return (pid not in pushes, pid not in chosen, stage, last.get(pid, ""), pid)
 
     return [Item(MARKET, pid, text(pid), job=job(pid)) for pid in sorted(eligible, key=rank)[:MAX_LINES]]
 
@@ -302,14 +323,25 @@ def recent(conn: sqlite3.Connection, scope: AgentScope, limit: int = 10) -> list
 
 def focus_text(conn: sqlite3.Connection, scope: AgentScope, line: int, marketing: bool) -> str:
     """The work steps' FOCUS on the cycle's line: Ember's code keeps the tools on it, its funnel and the reach done
-    for it, and in a marketing cycle its live listings (a pin, a post and an edit name one)."""
+    for it, and in a marketing cycle its live listings (a pin, a post and an edit name one). 0.30.0: in an ordinary
+    cycle, the next step the last cycle on the line left (the cycles between were often about other things), and on a
+    live line without an open bet, to bet on what the cycle's change brings (a bet settled is a case to learn from)."""
     found = [
         f"Your line this cycle: project #{line}. Ember's code keeps your tools on it: what another line needs waits for"
         " a cycle of its own."
     ]
+    said = handoffs(conn, scope).get(line) if not marketing else None
+    if said is not None:
+        quoted = json.dumps(_one_line(said[1], HANDOFF_FOCUS_CHARS), ensure_ascii=False)
+        found.append(f"Your last cycle on it (#{said[0]}) left as next: {quoted}")
     funnel = reach.funnels(conn, scope).get(line)
     if funnel is not None:
         found.append(funnel.text())
+        if not marketing and funnel.listings and line not in bets.open_lines(conn, scope):
+            found.append(
+                "No open bet on it: say what you expect this cycle's change to bring (project_update bet), so Ember's"
+                " code checks it and your review learns from it."
+            )
     if marketing:
         for r in etsy_publisher.live_rows(metrics.listings(conn, scope, line, None), {})[:MAX_LINES]:
             whose = " (made by Printify)" if r["printify"] else ""
@@ -340,27 +372,95 @@ class _Facts:
     funnel: reach.Funnel | None  # None: nothing live yet
     waiting: list[int]  # its requests waiting for the owner
     last: str  # when a cycle last worked on it ("" never)
+    # 0.30.0: what keeps a plan going and what the agent's own judgement chose
+    streak: int = 0  # the newest ordinary cycles in a row that worked on it (0: the last one worked on another line)
+    handoff: str = ""  # the next step the last cycle on it left
+    focus: bool = False  # one of this week's focus lines (the weekly look)
+    verdict: str = ""  # today's review's verdict on it: continue, change or stop ("" without one)
+    neck: str = ""  # the bottleneck today's review named for it
+    markets: bool = False  # marketing cycles run: a change for reach is theirs
+    focused: bool = False  # this week has a focus line that doesn't only wait (the same for every line)
 
     @property
-    def job(self) -> bool:
-        return bool(self.owes or self.due or self.fixes or self.no_demand)
+    def change(self) -> bool:
+        """0.30.0: today's review asked for a change an ordinary cycle makes (one for reach is the marketing cycles'
+        while they run)."""
+        return self.verdict == "change" and not (self.neck == "reach" and self.markets)
+
+    @property
+    def tasks(self) -> bool:
+        """Concrete work of its own: what it owes, its milestone due, the critic's fixes, a missing demand note, the
+        review's change."""
+        return bool(self.owes or self.due or self.fixes or self.no_demand or self.change)
 
     @property
     def waits(self) -> bool:
-        return self.status == "waiting" or (bool(self.waiting) and not self.job)
+        return self.status == "waiting" or (bool(self.waiting) and not self.tasks)
+
+    @property
+    def continues(self) -> bool:
+        """0.30.0: the line the newest ordinary cycles worked on, while it has work: fewer than MAX_STREAK cycles in a
+        row, not only waiting for the owner, not a line today's review said to stop, and while this week's focus lines
+        have work, one of them or a line with a task of its own (a detour from them stays one cycle)."""
+        return (
+            0 < self.streak < MAX_STREAK
+            and not self.waits
+            and self.verdict != "stop"
+            and (self.focus or self.tasks or not self.focused)
+        )
+
+    @property
+    def rested(self) -> bool:
+        """0.30.0: the line had MAX_STREAK ordinary cycles in a row: the next goes to another line with work."""
+        return self.streak >= MAX_STREAK
+
+    @property
+    def job(self) -> bool:
+        return self.tasks or self.continues or (self.focus and not self.waits)
 
     @property
     def flying(self) -> bool:
         return self.status != "waiting"
 
+    @property
+    def selling(self) -> bool:
+        return self.funnel is not None and self.funnel.stage == "selling"
+
     def rank(self) -> tuple[Any, ...]:
-        return (not self.owes, self.due is None, self.waits, self.last)
+        """0.30.0: what it owes; the line in progress; then not a line to stop, one only waiting or one that just had
+        its MAX_STREAK cycles; this week's focus and the review's changes; a milestone due; another task of its own;
+        selling; the one worked on longest ago (0.28.0 went from what was owed and due straight to the one worked on
+        longest ago, so every cycle took another line)."""
+        return (
+            not self.owes,
+            not self.continues,
+            self.verdict == "stop",
+            self.waits,
+            self.rested,
+            not (self.focus or self.change),
+            self.due is None,
+            not self.tasks,
+            not self.selling,
+            self.last,
+        )
 
     def text(self, markets: bool) -> str:
         """What READY says of the line, the most pressing first (an item holds ITEM_CHARS)."""
         parts = [f"{self.title} [{self.status}]"]
         if self.owes:
             parts.append("owes " + ", ".join(f"obligation #{n}" for n in self.owes[:2]))
+        if self.continues:  # 0.30.0
+            nth = f"cycle {self.streak + 1} of at most {MAX_STREAK} in a row"
+            said = f": next {json.dumps(_one_line(self.handoff, HANDOFF_CHARS), ensure_ascii=False)}"
+            parts.append(f"in progress, {nth}" + (said if self.handoff else ""))
+        elif self.rested:
+            parts.append(f"had {MAX_STREAK} cycles in a row: another line with work first")
+        if self.verdict == "stop":
+            parts.append("your review said stop: close it (project_update)")
+        if self.focus:
+            parts.append("this week's focus")
+        if self.change:
+            parts.append("your review: change" + (f" ({self.neck})" if self.neck else ""))
         if self.due:
             parts.append(f"milestone #{self.due[1]} due {self.due[0]}")
         parts.append(_funnel(self.funnel, markets))
@@ -392,14 +492,24 @@ def _lines(conn: sqlite3.Connection, scope: AgentScope) -> list[int]:
 
 
 def _facts(
-    conn: sqlite3.Connection, scope: AgentScope, today: date, lines: list[int], last: dict[int, str]
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    today: date,
+    lines: list[int],
+    last: dict[int, str],
+    markets: bool = False,
 ) -> dict[int, _Facts]:
     where, params = scope.where()
     projects = {int(p["id"]): p for p in open_projects(conn, scope)}
     funnels = reach.funnels(conn, scope)
     owes = _owes(conn, scope)
     soon = (today + timedelta(days=DUE_DAYS)).isoformat()
-    milestones = [m for m in roadmap.open_milestones(conn, scope) if not roadmap.waiting(m, today)]
+    # 0.30.0: a bar of a line's listing test is Ember's code's check, not the cycle's work (_bar)
+    milestones = [m for m in roadmap.open_milestones(conn, scope) if not roadmap.waiting(m, today) and not _bar(m)]
+    running, streak = _streak(conn, scope)  # 0.30.0: the line in progress
+    said = handoffs(conn, scope)
+    judged = verdicts(conn, scope, today)
+    chosen = set(weekly.focus(conn, scope, today))
     waiting: dict[int, list[int]] = {}
     for r in conn.execute(f"SELECT * FROM approvals WHERE {where} AND status = 'pending' ORDER BY id", params):
         line = ventures.request_line(conn, scope, r)
@@ -417,6 +527,7 @@ def _facts(
         mine = [m for m in milestones if roadmap.of_line(m, pid, venture) and str(m["due"]) <= soon]
         due = (str(mine[0]["due"]), int(mine[0]["id"])) if mine else None
         funnel = funnels.get(pid)
+        verdict, neck = judged.get(pid, ("", ""))
         found[pid] = _Facts(
             title=_one_line(p["title"], 50),
             status=str(p["status"]),
@@ -427,7 +538,77 @@ def _facts(
             funnel=funnel,
             waiting=waiting.get(pid, []),
             last=last.get(pid, ""),
+            streak=streak if pid == running else 0,
+            handoff=said[pid][1] if pid in said else "",
+            focus=pid in chosen,
+            verdict=verdict,
+            neck=neck,
+            markets=markets,
         )
+    focused = any(f.focus and not f.waits for f in found.values())
+    for f in found.values():
+        f.focused = focused
+    return found
+
+
+def _bar(milestone: sqlite3.Row) -> bool:
+    """0.30.0: a bar of a product line's listing test (gates.py): Ember's code checks it from Etsy's numbers, so it is
+    no work of the cycle's (a backed venture's first test, of no line, is)."""
+    code = milestone["created_by"] == "code" and milestone["kind"] == "first_test"
+    return code and milestone["project_id"] is not None
+
+
+def _streak(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int | None, int]:
+    """0.30.0: the line the newest ordinary cycles worked on, and how many of them in a row (MAX_STREAK at most). A
+    marketing, venture or reactive cycle between them doesn't break the run, nor does an idle one; a running cycle
+    isn't counted yet."""
+    rows = conn.execute(
+        "SELECT project_id FROM cycles WHERE session = ? AND simulated = ? AND venture = 0 AND marketing = 0"
+        " AND trigger NOT IN ('event', 'last_will') AND status NOT IN ('running', 'idle') AND project_id IS NOT NULL"
+        " ORDER BY id DESC LIMIT ?",
+        (scope.session, 1 if scope.simulated else 0, MAX_STREAK),
+    ).fetchall()
+    if not rows:
+        return None, 0
+    line = int(rows[0][0])
+    count = 0
+    for r in rows:
+        if int(r[0]) != line:
+            break
+        count += 1
+    return line, count
+
+
+def handoffs(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, tuple[int, str]]:
+    """0.30.0: the next step (its journal's next) the newest cycle on each line left, with that cycle's number: the
+    plan's YOUR LAST CYCLE shows the last cycle's, often of another line, a venture or marketing."""
+    where, params = scope.where("j")
+    found: dict[int, tuple[int, str]] = {}
+    for r in conn.execute(
+        f"SELECT y.project_id, j.cycle_id, j.handoff FROM journal j JOIN cycles y ON y.id = j.cycle_id WHERE {where}"
+        " AND j.author = 'agent' AND j.handoff <> '' AND y.project_id IS NOT NULL AND y.venture = 0"
+        " ORDER BY j.id DESC LIMIT 500",
+        params,
+    ):
+        found.setdefault(int(r[0]), (int(r[1]), str(r[2])))
+    return found
+
+
+def verdicts(conn: sqlite3.Connection, scope: AgentScope, today: date) -> dict[int, tuple[str, str]]:
+    """0.30.0: today's review's verdict on each line it judged, with the bottleneck it named ({} before the day's
+    review)."""
+    row = review.of_day(conn, scope, today)
+    if row is None:
+        return {}
+    try:
+        items = json.loads(row["verdicts"] or "[]")
+    except ValueError:
+        return {}
+    found: dict[int, tuple[str, str]] = {}
+    for v in items if isinstance(items, list) else []:
+        pid = v.get("project_id") if isinstance(v, dict) else None
+        if isinstance(pid, int) and not isinstance(pid, bool) and v.get("verdict") in review.VERDICTS:
+            found[pid] = (str(v["verdict"]), str(v.get("bottleneck") or ""))
     return found
 
 

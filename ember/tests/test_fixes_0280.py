@@ -244,12 +244,15 @@ def test_ready_ranks_the_lines_by_what_they_owe_and_need(data_dir: Path) -> None
         store.update_project(conn, 1, now(agent), status="waiting")
     cycle(agent, project=4)  # a cycle worked on line #4
     found = ready(agent)
-    assert [i.key for i in found] == ["line #2", "line #3", "line #5", "line #4", "line #1", "new line"]
-    assert [i.job for i in found] == [True, True, False, False, False, False]
+    # 0.30.0: the line the last cycle worked on comes right after what is owed (0.28.0 put it after the ones never
+    # worked on, so every cycle took another line)
+    assert [i.key for i in found] == ["line #2", "line #4", "line #3", "line #5", "line #1", "new line"]
+    assert [i.job for i in found] == [True, True, True, False, False, False]
     assert found[0].text.startswith(f"Owing [active] · owes obligation #{obligation_of(agent, owed)} · ")
-    assert f"milestone #{due} due " in found[1].text and "nothing live yet: build it" in found[1].text
-    assert found[3].text.endswith(f"last worked on {agent.clock.today().isoformat()}")
-    assert found[2].text.endswith("never worked on") and found[4].text.startswith("Waiting [waiting]")
+    assert found[1].text.startswith("Worked [active] · in progress, cycle 2 of at most 3 in a row · ")
+    assert found[1].text.endswith(f"last worked on {agent.clock.today().isoformat()}")
+    assert f"milestone #{due} due " in found[2].text and "nothing live yet: build it" in found[2].text
+    assert found[3].text.endswith("never worked on") and found[4].text.startswith("Waiting [waiting]")
     assert found[-1].text == "start a new product line (project_create): 4 in flight"
     assert [i.key for i in ready(agent, explore=False)] == [i.key for i in found[:-1]]  # no new line outside explore
     text = lines.text(found, ["Which line sells first?"])

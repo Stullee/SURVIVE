@@ -14,6 +14,12 @@ Ember's code applies it (``apply``): the strategy replaces the old one unless it
 cases); the questions and the bottleneck reach every plan of the week through TODAY'S REVIEW (``planner_text``).
 It counts toward the daily cap only (as a review), leaves what the cycle needs to work, and never ends the cycle; a
 failed one is kept and tried again the next day.
+
+0.30.0: the week's plan holds. The look rewrote the strategy without seeing the goal it serves (0.29.0's goal and its
+sub-goals were in every plan, not in the view), and what it said to start and stop was text no ranking read, so the
+next cycles took their lines as before. Now the view shows the goal with how far each sub-goal got (``goal_text``), and
+the look chooses the week's focus: up to MAX_FOCUS product lines its ordinary and marketing cycles push first
+(``focus``; lines.ready and lines.marketing rank them after what is owed and the line in progress).
 """
 
 from __future__ import annotations
@@ -25,14 +31,20 @@ from typing import Any
 
 from ..economy.clock import to_iso
 from ..economy.costs import micros_to_usd
-from . import bets, learning, memory, obligations, prompts, reach, ventures
-from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
+from . import bets, learning, memory, obligations, prompts, reach, roadmap, ventures
+from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope, open_projects
 
 DAYS = 7
-VIEW_CHARS = 14_000
+# 0.30.0: the view's room, as weekly_reviews keeps it (was 14,000, while the request had to fit 12,000 tokens: a view
+# over about 12,300 characters didn't, and the look was skipped at every cycle with only a line in the log). The loop
+# cuts it further until its request fits (VIEW_STEPS).
+VIEW_CHARS = 16_000
+VIEW_STEPS = (VIEW_CHARS, 12_000, 9_000, 6_000)
 LIMITS = {**prompts.WEEKLY_CHARS, "strategy": memory.CAPS["strategy"]}
 MAX_LIST = prompts.MAX_WEEKLY_ITEMS  # stop and start items
 MAX_QUESTIONS = prompts.MAX_WEEKLY_QUESTIONS
+MAX_FOCUS = prompts.MAX_WEEKLY_FOCUS  # 0.30.0: the week's focus lines
+GOAL_LINES = 6  # 0.30.0: the sub-goals the view shows under the goal
 
 
 def due(conn: sqlite3.Connection, scope: AgentScope, today: date) -> bool:
@@ -64,12 +76,22 @@ def view(
     money: str,
     strategy: str,
     instructions: str,
+    goal: str = "",
 ) -> str:
-    """The week as the weekly look reads it (``money``: the books' lines Ember's code wrote for it)."""
+    """The week as the weekly look reads it, whole (``cut`` bounds it; ``money``: the books' lines Ember's code wrote
+    for it; 0.30.0: ``goal``, the goal and its sub-goals, ``goal_text``). 0.30.0: the most important first, as a cut
+    takes the end: the owner's standing instructions and the strategy came last, after up to 30 earlier cases and the
+    whole playbook, which now grows every day."""
     since = to_iso(now - timedelta(days=DAYS))
     month = to_iso(now - timedelta(days=30))
     where, params = scope.where()
-    parts = [f"THE WEEK TO {now:%a %Y-%m-%d} (from Ember's records: exact)", money]
+    parts = [
+        f"THE WEEK TO {now:%a %Y-%m-%d} (from Ember's records: exact)",
+        money,
+        goal,
+        f"YOUR OWNER'S STANDING INSTRUCTIONS\n{instructions or 'None.'}",
+        f"YOUR STRATEGY NOW\n{strategy.strip() or 'None.'}",
+    ]
     funnels = reach.funnels(conn, scope)
     open_bets = bets.open_lines(conn, scope)
     lines = ["PROJECTS (open, then those closed in the last 30 days)"]
@@ -132,18 +154,21 @@ def view(
     parts.append(
         "THIS WEEK'S CASES (cite them by number)\n" + ("\n".join(f"- {learning.case_line(c)}" for c in week) or "None.")
     )
+    playbook = learning.principles(conn, scope)
+    parts.append(
+        "YOUR PLAYBOOK (principles: confirm, merge, dispute or retire them by id)\n"
+        + ("\n".join(f"- {learning.principle_line(p)}" for p in playbook) or "Empty.")
+    )
     older = [c for c in learning.cases(conn, scope, None, 60) if c not in week]
     if older:
         parts.append("EARLIER CASES\n" + "\n".join(f"- {learning.case_line(c)}" for c in older[:30]))
-    playbook = learning.principles(conn, scope)
-    parts.append(
-        "YOUR PLAYBOOK (principles: confirm, dispute or retire them by id)\n"
-        + ("\n".join(f"- {learning.principle_line(p)}" for p in playbook) or "Empty.")
-    )
-    parts.append(f"YOUR OWNER'S STANDING INSTRUCTIONS\n{instructions or 'None.'}")
-    parts.append(f"YOUR STRATEGY NOW\n{strategy.strip() or 'None.'}")
-    text = "\n\n".join(p for p in parts if p)
-    return text if len(text) <= VIEW_CHARS else text[: VIEW_CHARS - 20].rstrip() + "\n[view cut]"
+    return "\n\n".join(p for p in parts if p)
+
+
+def cut(text: str, chars: int = VIEW_CHARS) -> str:
+    """The view in at most ``chars`` characters, its end cut (0.30.0: the loop cuts more, VIEW_STEPS, until its request
+    fits the weekly look's budget)."""
+    return text if len(text) <= chars else text[: chars - 20].rstrip() + "\n[view cut]"
 
 
 def parse(text: str) -> dict[str, Any] | None:
@@ -172,6 +197,12 @@ def parse(text: str) -> dict[str, Any] | None:
         if isinstance(asked, list)
         else []
     )
+    chosen = data.get("focus")  # 0.30.0: the week's focus lines (apply keeps the open ones)
+    found["focus"] = list(
+        dict.fromkeys(i for i in chosen if isinstance(i, int) and not isinstance(i, bool))
+        if isinstance(chosen, list)
+        else []
+    )[:MAX_FOCUS]
     found["principles"] = data.get("principles") if isinstance(data.get("principles"), list) else []
     if not found["assessment"] and not found["strategy"]:
         return None
@@ -195,9 +226,50 @@ def apply(
         else:
             mem.rewrite(conn, "strategy", strategy.rstrip() + "\n", "weekly", now)
             happened.append("the strategy was rewritten")
+    # 0.30.0: the week's focus lines: open ones the owner's park or kill doesn't stop (the answer keeps only those)
+    workable = {int(p["id"]) for p in open_projects(conn, scope)}
+    chosen = [
+        i for i in answer.get("focus") or [] if i in workable and ventures.project_stopped(conn, scope, i) is None
+    ]
+    left_out = [i for i in answer.get("focus") or [] if i not in chosen]
+    answer["focus"] = chosen
+    if chosen:
+        happened.append("this week's focus: " + ", ".join(f"#{i}" for i in chosen))
+    if left_out:
+        happened.append("not a focus (no open line of yours): " + ", ".join(f"#{i}" for i in left_out))
     known = {int(c["id"]) for c in learning.cases(conn, scope, None, 10_000)}
     happened += learning.apply_principles(conn, scope, answer.get("principles"), known, now)
     return happened
+
+
+def focus(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[int]:
+    """0.30.0: this week's focus lines, as the newest weekly look chose them, while they are open."""
+    look = latest(conn, scope, today)
+    if look is None:
+        return []
+    try:
+        chosen = json.loads(look["answer"] or "{}").get("focus") or []
+    except (ValueError, AttributeError):
+        return []
+    workable = {int(p["id"]) for p in open_projects(conn, scope)}
+    return [i for i in chosen if isinstance(i, int) and not isinstance(i, bool) and i in workable][:MAX_FOCUS]
+
+
+def goal_text(conn: sqlite3.Connection, scope: AgentScope, today: date, money: tuple[int, int] | None) -> str:
+    """0.30.0: the goal at the root and the sub-goals that lead to it, each with how far it got (``money``: the money
+    goal's numbers, roadmap.progress_for), for the weekly look ("" without a goal)."""
+    top = roadmap.root(conn, scope)
+    if top is None:
+        return ""
+    progress = roadmap.progress_for(conn, scope, today, money)
+    subs = [r for r in roadmap.open_milestones(conn, scope) if r["parent_id"] == top["id"]]
+    lines = ["THE GOAL (choose the week's focus toward it)", roadmap.root_line(top, today, progress)]
+    lines += [f"- {roadmap.goal_line(r, today, progress=progress)}" for r in subs[:GOAL_LINES]]
+    if len(subs) > GOAL_LINES:
+        lines.append(f"- and {len(subs) - GOAL_LINES} more sub-goals")
+    if not subs:
+        lines.append("No sub-goal leads to it yet.")
+    return "\n".join(lines)
 
 
 def save(
@@ -259,6 +331,12 @@ def planner_text(row: sqlite3.Row | None) -> str:
     lines = [f"This week's look at the whole business ({row['day']}):"]
     if answer.get("bottleneck"):
         lines.append(f"The business's bottleneck: {_one(answer['bottleneck'], 300)}")
+    chosen = [i for i in answer.get("focus") or [] if isinstance(i, int) and not isinstance(i, bool)]
+    if chosen:  # 0.30.0
+        lines.append(
+            "This week's focus lines (READY ranks them after what is owed and the line in progress): "
+            + ", ".join(f"#{i}" for i in chosen)
+        )
     if answer.get("stop"):
         lines.append("Stop: " + "; ".join(_one(i, 120) for i in answer["stop"]))
     if answer.get("start"):

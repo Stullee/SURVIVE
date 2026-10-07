@@ -40,6 +40,7 @@ from . import (
     digest,
     evidence,
     knockouts,
+    learning,
     library,
     lines,
     memory,
@@ -55,6 +56,7 @@ from . import (
     stages,
     store,
     ventures,
+    weekly,
     workfiles,
 )
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
@@ -64,6 +66,7 @@ if TYPE_CHECKING:
 
 ACTIVITY_CYCLES = 10
 REVIEWS_SHOWN = 14  # the daily reviews of the last two weeks
+RETIRED_SHOWN = 10  # 0.30.0: the principles retired last, below the active ones in Mind → Playbook
 
 
 class WorkspaceFileError(ValueError):
@@ -145,6 +148,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
             for j in store.journal(conn, scope, 20)
         ]
         reviews = [_review(conn, r) for r in review.recent(conn, scope, REVIEWS_SHOWN)]
+        playbook = _playbook(conn, scope, agent.clock.today())  # 0.30.0
         approvals = [
             {
                 **_carried_out(agent, conn, scope, r),
@@ -219,7 +223,13 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "venture_choices": venture_choices,
         "activity": activity,
         "lines": line_desk,  # 0.28.0: the Projects tab's Line desk
-        "mind": {**agent.memory_files(), "journal": journal, "reviews": reviews, "lesson_pins": pinned},
+        "mind": {
+            **agent.memory_files(),
+            "journal": journal,
+            "reviews": reviews,
+            "lesson_pins": pinned,
+            "playbook": playbook,  # 0.30.0
+        },
         "models": models,
         "approvals": approvals,
         # 0.13.0: what Ember's code did, the owner's Undo, the daily digest (0.15.0: and why unlocks are off, if so)
@@ -1098,6 +1108,73 @@ def _project(conn: sqlite3.Connection, p: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def _playbook(conn: sqlite3.Connection, scope: store.AgentScope, today: Any) -> dict[str, Any]:
+    """0.30.0: Mind → Playbook: the principles Ember's code keeps from the agent's cases (the active ones, the
+    established first, then those retired last), each with the cases for and against it; how many cases there are
+    (too_early ones are no evidence); and this week's look (its bottleneck, focus lines, stop and start, questions)."""
+    where, params = scope.where()
+    active = learning.principles(conn, scope)
+    retired = conn.execute(
+        f"SELECT * FROM principles WHERE {where} AND status = 'retired' ORDER BY retired_at DESC, id DESC LIMIT ?",
+        (*params, RETIRED_SHOWN),
+    ).fetchall()
+    ids = {i for p in [*active, *retired] for side in learning.cited(p) for i in side}
+    marks = ", ".join("?" for _ in ids)
+    found = conn.execute(f"SELECT * FROM cases WHERE {where} AND id IN ({marks})", (*params, *ids)) if ids else []
+    cases = {int(c["id"]): c for c in found}
+
+    def case(case_id: int) -> dict[str, Any]:
+        c = cases.get(case_id)
+        if c is None:
+            return {"id": case_id}
+        return {"id": case_id, "subject": c["subject"], "cause": c["cause"], "why": c["why"], "lesson": c["lesson"]}
+
+    def principle(p: sqlite3.Row) -> dict[str, Any]:
+        supports, against = learning.cited(p)
+        return {
+            "id": p["id"],
+            "text": p["text"],
+            "confidence": p["confidence"],
+            "status": p["status"],
+            "created_at": p["created_at"],
+            "confirmed_at": p["confirmed_at"],
+            "retired_at": p["retired_at"],
+            "retired_why": p["retired_why"],
+            "supports": [case(i) for i in supports],
+            "against": [case(i) for i in against],
+        }
+
+    counted = conn.execute(
+        f"SELECT COUNT(*), COALESCE(SUM(cause = 'too_early'), 0) FROM cases WHERE {where}", params
+    ).fetchone()
+    look = weekly.latest(conn, scope, today)
+    try:
+        answer = json.loads(look["answer"] or "{}") if look is not None else {}
+    except ValueError:
+        answer = {}
+    if not isinstance(answer, dict):
+        answer = {}
+    return {
+        "principles": [principle(p) for p in active],
+        "retired": [principle(p) for p in retired],
+        "cases": int(counted[0]),
+        "cases_too_early": int(counted[1]),
+        "weekly": (
+            {
+                "day": look["day"],
+                "bottleneck": answer.get("bottleneck") or "",
+                "focus": [i for i in answer.get("focus") or [] if isinstance(i, int)],
+                "stop": answer.get("stop") or [],
+                "start": answer.get("start") or [],
+                "questions": answer.get("questions") or [],
+                "outcome": look["outcome"],
+            }
+            if look is not None
+            else None
+        ),
+    }
+
+
 def _review(conn: sqlite3.Connection, r: sqlite3.Row) -> dict[str, Any]:
     verdicts = []
     for v in json.loads(r["verdicts"] or "[]"):
@@ -1140,7 +1217,7 @@ def _line_desk(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope) 
     share = lines.marketing_share(agent.settings.venture_share, agent.settings.marketing_share)
     spent, _, marketed = ventures.day_spends(conn, scope, today)
     blog = agent.settings.blog_enabled
-    market = lines.marketing(conn, scope, blog=blog) if share and mode.marketing_cycles else []
+    market = lines.marketing(conn, scope, blog=blog, today=today) if share and mode.marketing_cycles else []
     ordinary = lines.ready(conn, scope, today=today, explore=mode.mode == burn.EXPLORE, markets=bool(market))
     cycles = conn.execute(
         "SELECT COUNT(*) FROM cycles WHERE simulated = ? AND session = ? AND marketing = 1",

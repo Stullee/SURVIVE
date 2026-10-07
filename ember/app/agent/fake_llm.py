@@ -1471,6 +1471,9 @@ class FakeTransport:
         if chaos == "prose":
             return _Draft([_text("The week went fine; I will keep going.")], note="chaos: prose")
         cases = [int(n) for n in re.findall(r"^- case #(\d+) ", view, re.M)][:3]
+        # 0.30.0: the week's focus: the first open line the view's PROJECTS lists
+        listed = view[view.find("\nPROJECTS") :].split("\n\n", 2)[0] if "\nPROJECTS" in view else ""
+        lines = [int(n) for n in re.findall(r"^#(\d+) \[(?:idea|active)\] ", listed, re.M)][:1]
         strategy = "Bring buyers to what is live before building more; test one service idea this week."
         principles = (
             [
@@ -1491,6 +1494,7 @@ class FakeTransport:
             "mix": "Every leg is a product; no service has been weighed yet.",
             "stop": ["Making new products before the live ones are seen."],
             "start": ["A push to bring buyers to each live listing.", "Research one service idea."],
+            "focus": lines,
             "strategy": strategy,
             "questions": ["Which channel brings the first 30 views to a listing?"],
             "principles": principles,

@@ -190,13 +190,29 @@ it runs one **wake cycle**:
    [marketing cycle](#marketing-cycles) brings buyers to one line's listings, a
    [venture cycle](#ventures) decides one venture, and a cycle an event woke
    works on one line at most. For an ordinary cycle Ember's code ranks the open
-   product lines (**READY**: a line that owes something first, then one with a
-   milestone due within 7 days, one with work rather than only waiting for you,
-   the one worked on longest ago; in the explore burn mode also *a new line*,
-   first while fewer than two lines are in flight), and the plan takes one or
-   says why it takes none. The agent keeps two or three lines going across its
-   cycles: when its line waits for you, it finishes what it can and ends the
-   cycle, and the next one takes another line. It is told to
+   product lines (**READY**), and the plan takes one or says why it takes none.
+   Since 0.30.0 the agent finishes what it starts: after a line that owes
+   something comes the line its last ordinary cycles worked on, while it has
+   work (not only waiting for you, and not one its daily review said to stop),
+   three cycles in a row at most, so the next one goes to another line with
+   work; a marketing, venture or event cycle in between doesn't end the run.
+   Then come the lines its own judgement chose: this week's **focus lines** (its
+   [weekly look](#the-learning-loop) picks up to three toward your goal) and the
+   changes the day's review asked for (while a focus line has work, a detour to
+   a line with nothing of its own to do stays one cycle); then a line with a
+   milestone due within 7 days, one with another task (the critic's fixes, a
+   missing demand note), one that sells, and the one worked on longest ago. A
+   line the review said to stop, one only waiting for you and one that just had
+   its three cycles come after the others; in the explore burn mode READY also
+   offers *a new line*, first while
+   fewer than two lines are in flight. Before 0.30.0 the line worked on longest
+   ago came right after what was owed and due, so nearly every cycle switched
+   lines (in a dry run, 13 cycles on four lines switched 11 times). Each line in
+   READY shows the next step the last cycle on it left, and the work steps see it
+   whole, so a line's handoff waits for that line's cycle. A bar of a line's
+   [listing test](#roadmap) is Ember's code's check of Etsy's numbers, not a
+   milestone due for a cycle (a missed bar's work comes as an obligation). It is
+   told to
    do research and legwork itself, to build a thing completely before
    it asks you for one concrete action, to ask you in one batched message and
    only for decisions, money and what only a person can do, and to spend its
@@ -385,16 +401,37 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   early, outside) and how sure it is. Each is kept as a **case**.
 - **The weekly look.** Once a week, after the daily review, one more call on the
   strategy model (about the price of a review) reads the whole business as
-  Ember's code puts it together: the money, every project's funnel and reach,
-  the ventures, where the week's cycles and money went, who started them, the
-  bets' record and the cases. It rewrites the agent's strategy (refused if it
-  names a parked or killed venture), says what to stop and start and asks up to
-  3 questions for the week, which every plan that week sees.
-- **The playbook.** The weekly look draws principles from the cases, each citing
-  them. Ember's code sets their confidence: established with 3 agreeing cases
-  and none against, disputed once a case is against, a hypothesis otherwise. A
-  principle no case confirms for 6 weeks (4 months once established) is retired.
-  Each plan's LESSONS shows the playbook first, then the newest lessons.
+  Ember's code puts it together: the money, your goal with how far each of its
+  sub-goals got (since 0.30.0), every project's funnel and reach, the ventures,
+  where the week's cycles and money went, who started them, the bets' record and
+  the cases. It rewrites the agent's strategy (refused if it names a parked or
+  killed venture), says what to stop and start, asks up to 3 questions for the
+  week and (since 0.30.0) picks the week's **focus lines**: up to 3 open product
+  lines that bring the goal nearest soonest. Every plan that week sees them, and
+  READY gives them the ordinary and marketing cycles after what is owed and the
+  line in progress. Before 0.30.0 a business that had grown (many projects,
+  ventures and cases) made the look's view too big for its budget, and the look
+  was skipped at every cycle with only a line in the app's log; now the view
+  holds your standing instructions and the strategy first and the older cases
+  last, it is cut until it fits, and a look that still can't come through is
+  shown in the System log and tried again the next day.
+- **The playbook.** The agent's rulebook: principles drawn from its cases, each
+  citing them. Ember's code sets their confidence: established with 3 agreeing
+  cases and none against, disputed once a case is against, a hypothesis
+  otherwise. A principle no case confirms for 6 weeks (4 months once
+  established) is retired. Since 0.30.0 each retrospective's lesson joins the
+  playbook as a hypothesis the day its case is kept (not a too-early or
+  low-confidence one), or counts as one more case for an active principle that
+  says nearly the same (and denies the same things), so it grows every day; the
+  weekly look merges, confirms, disputes and retires, and the System log says
+  which of its principles couldn't be kept and why (before, only the weekly look
+  wrote principles, the first one after 0.18.0 found no case, and one drawn from
+  too-early cases was dropped without a word). At the first cycle of 0.30.0 the
+  lessons of the cases kept before joined it. Each plan's LESSONS shows the
+  playbook first, then the newest lessons. You read it under **Mind → Playbook**:
+  each principle with its confidence and its cases for and against, the ones
+  retired lately with why, how many cases there are (and how many were too early
+  to count), and this week's look with its focus lines.
 - **Recall.** The work steps get the principles and cases that match their plan,
   knowledge_search finds them, and creating a project or venture names the most
   similar case.
@@ -409,9 +446,12 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   check. The score and fixes show in the daily review.
 - **Waiting time.** An ordinary cycle's plan gets **READY**: its product
   lines, each with its jobs (what it owes, its milestone due, the critic's
-  fixes, a missing demand note; since 0.28.0 the plan takes one line from it,
-  and marketing cycles bring buyers to unseen listings), and the week's
-  questions. While it lists a job, the sleep
+  fixes, a missing demand note, a change the day's review asked for; since 0.28.0
+  the plan takes one line from it, and marketing cycles bring buyers to unseen
+  listings), and the week's questions. Since 0.30.0 the line in progress and a
+  focus line that doesn't only wait for you count as jobs too, and a bar of a
+  listing test no longer does (it made every live line a job). On a live line
+  without an open bet, the work steps are asked for one. While it lists a job, the sleep
   of a cycle that worked is cut to 3 hours, never below your default interval
   (*Wake interval*) or shortest sleep, and not in maintenance. The week's
   questions alone cut no sleep, nor does a plan that chose to do nothing
@@ -881,10 +921,10 @@ work make it an ordinary cycle; a missed bar of a line's listing test that
 asks for buyers makes it a marketing cycle on that line.
 
 A marketing cycle's plan gets **READY** with the lines that have live listings,
-ranked: a line that owes a push to bring buyers first, then the lines nobody
-has seen while little was done to bring buyers to them, then the lines that
-sell, the ones liked but not bought, the ones seen but not liked, and among
-equals the one marketed longest ago. Each shows its funnel (views, favorites,
+ranked: a line that owes a push to bring buyers first, then (since 0.30.0) the
+week's focus lines, then the lines nobody has seen while little was done to
+bring buyers to them, the lines that sell, the ones liked but not bought, the
+ones seen but not liked, and among equals the one marketed longest ago. Each shows its funnel (views, favorites,
 orders) and the reach done for it. The plan takes one line, and the cycle
 brings buyers to its listings: pins and Bluesky posts that link them, a blog
 post that recommends one, the link page, a Reddit draft you post, better
@@ -2337,7 +2377,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.29.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.30.0 (by /u/your name)`.
 
 ## Amazon KDP
 
