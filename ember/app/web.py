@@ -391,7 +391,7 @@ def pinterest_finish(request: Request, body: Annotated[Any, Body()] = None) -> J
         info = agent.pinterest.finish(pasted)
     except PinterestError as exc:
         return JSONResponse({"error": str(exc), "field": "address"}, status_code=422)
-    where = " in Pinterest's sandbox" if agent.pinterest.sandbox else ""  # 0.30.1
+    where = " in Pinterest's sandbox" if agent.pinterest.sandbox else ""  # 0.30.2
     event_log.record(_state(request).db, "info", "pinterest", f"Connected the Pinterest account {info.username}{where}")
     _poke(request)
     return JSONResponse({"username": info.username, "profile_url": info.url})

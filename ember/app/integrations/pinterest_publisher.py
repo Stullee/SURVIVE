@@ -8,7 +8,7 @@ Undo deletes it). The image must be exactly the file the owner approved (its SHA
 pins a day. The owner's Undo of a pin is a request of theirs (executor 'pinterest_delete'), carried out here too. The
 sync reads each live pin's numbers (impressions, saves, outbound clicks) at most every SYNC_HOURS.
 
-0.30.1: the sandbox's test pin (executor 'pinterest_test_pin'), for the video of the owner's Standard access request:
+0.30.2: the sandbox's test pin (executor 'pinterest_test_pin'), for the video of the owner's Standard access request:
 a request of Ember's code, put on the owner's list when they connect with the sandbox option on (``request_test``):
 Ember's newest live listing with a picture, on a new test board. Approved, it is made in Pinterest's API sandbox, once
 (journaled 'running' first), and is none of Ember's pins: no row of pinterest_pins or pinterest_boards, so it counts
@@ -47,7 +47,7 @@ INTERRUPTED = "the app stopped while making the pin"
 DELETE_INTERRUPTED = "the app stopped while deleting it"  # 0.15.0: the owner's Undo of a pin
 GONE = "Deleted at Pinterest, not by Ember's code"
 LISTING_LINK = re.compile(r"^https://www\.etsy\.com/listing/(\d{1,18})$")  # etsy.listing_url: what propose_pin links
-# 0.30.1: the sandbox's test pin
+# 0.30.2: the sandbox's test pin
 TEST_EXECUTOR = "pinterest_test_pin"
 TEST_BOARD = "Ember test board"  # with the time it was asked for: a board's name is unique on an account
 TEST_WORDS = 200  # of the listing's description
@@ -133,7 +133,7 @@ def created_today(conn: sqlite3.Connection, clock: Clock, scope: AgentScope) -> 
 def execution(
     conn: sqlite3.Connection, row: sqlite3.Row, scope: AgentScope, clock: Clock, daily_limit: int
 ) -> dict[str, Any] | None:
-    """What happened to an approved pin, to the owner's Undo of one or (0.30.1) to the sandbox's test pin, for the
+    """What happened to an approved pin, to the owner's Undo of one or (0.30.2) to the sandbox's test pin, for the
     dashboard (None before approval)."""
     if row["executor"] in ("pinterest_delete", TEST_EXECUTOR):
         entry = conn.execute(
@@ -176,7 +176,7 @@ def execution(
 
 
 def test_pin(conn: sqlite3.Connection, scope: AgentScope, workspace: Jail, now: datetime) -> Pin:
-    """0.30.1: the sandbox's test pin: Ember's newest live Etsy listing with a .png or .jpg photo in the workspace (its
+    """0.30.2: the sandbox's test pin: Ember's newest live Etsy listing with a .png or .jpg photo in the workspace (its
     first such photo, its title, the start of its description, its link), on a new test board. Raises PinterestError
     when there is none."""
     for listing_id, listing in etsy_publisher.live_listings(conn, scope):
@@ -240,12 +240,12 @@ class Publisher:
         self.scope = scope
         self.account = account
         self.workspace = workspace
-        self.sandbox = sandbox  # 0.30.1: the owner's account in Pinterest's API sandbox, for the test pin
+        self.sandbox = sandbox  # 0.30.2: the owner's account in Pinterest's API sandbox, for the test pin
         self._lock = threading.Lock()  # one run (or sync) at a time in this process
 
     def run(self, undos: bool = False) -> list[tuple[int, str]]:
         """Carry out the approved pins (and the owner's Undos of pins) that are due; with ``undos`` (0.15.0: while the
-        agent is paused or waits for money), only the Undos. 0.30.1: and the sandbox's test pin, which is the owner's
+        agent is paused or waits for money), only the Undos. 0.30.2: and the sandbox's test pin, which is the owner's
         too."""
         account, sandbox = self.account(), self.sandbox()
         if (account is None and sandbox is None) or not self._lock.acquire(blocking=False):
@@ -268,7 +268,7 @@ class Publisher:
             self._lock.release()
 
     def request_test(self) -> int | None:
-        """0.30.1: the sandbox's test pin on the owner's list, a request of Ember's code (the owner connected with the
+        """0.30.2: the sandbox's test pin on the owner's list, a request of Ember's code (the owner connected with the
         sandbox option on): the one still open, if any, or a new one; None, with an event saying why, when nothing can
         be pinned."""
         scope = self.scope()
@@ -545,7 +545,7 @@ class Publisher:
         return "done"
 
     def _test(self, account: Account | None, approval_id: int) -> str:
-        """0.30.1: the sandbox's test pin, approved: its new board, then the pin, in Pinterest's API sandbox; failed
+        """0.30.2: the sandbox's test pin, approved: its new board, then the pin, in Pinterest's API sandbox; failed
         when the sandbox is off."""
         stamp = to_iso(self.clock.now())
         with self.db.transaction() as conn:
@@ -608,7 +608,7 @@ class Publisher:
                 )
                 connectors.finish(conn, row["approval_id"], "unclear", to_iso(self.clock.now()), note=note)
                 self._close(conn, row["approval_id"], "failed", note, None)
-            testing = conn.execute(  # 0.30.1: the sandbox's test pin
+            testing = conn.execute(  # 0.30.2: the sandbox's test pin
                 "SELECT j.approval_id FROM action_journal j JOIN approvals a ON a.id = j.approval_id"
                 " WHERE j.status = 'running' AND a.executor = ?",
                 (TEST_EXECUTOR,),

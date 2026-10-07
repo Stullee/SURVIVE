@@ -1877,10 +1877,16 @@ need the Etsy shop: each one links to one of Ember's live listings. While
    presence of your business (§ 5 DDG).
 2. Create an app for it at
    [developers.pinterest.com](https://developers.pinterest.com/apps/). Note
-   its **app ID** and **app secret**. A new app has **trial access**: it
-   connects your account, but Pinterest refuses the pins it makes. Ask for
-   Standard access once the steps below are done (see
-   [Standard access](#standard-access)).
+   its **app ID** and **app secret**. A new app has **Trial access**: Ember
+   connects with it, but Pinterest refuses every pin it would make (HTTP 403,
+   "Apps with Trial access may not create Pins in production"), and the
+   approved pin then says *Standard access needed*. Ember needs **Standard
+   access**: request it for the app (**My apps**, your app, **Upgrade**) with
+   the demo video Pinterest asks for, which you record with Ember in
+   Pinterest's API sandbox once the steps below are done (see
+   [Standard access](#standard-access)). Until Pinterest grants it, keep the
+   sandbox on, or Pinterest disconnected: the seeded venture's first test runs
+   while Pinterest is connected, and would run out without a pin.
 3. In the app's settings, add the redirect URI
    `https://localhost/ember-pinterest`, or whatever you set as **Pinterest
    redirect URI**; it must match exactly. Nothing needs to answer at that
@@ -2416,7 +2422,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.30.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.30.2 (by /u/your name)`.
 
 ## Amazon KDP
 

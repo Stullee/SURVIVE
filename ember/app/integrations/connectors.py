@@ -101,7 +101,7 @@ CLASSES: dict[str, ActionClass] = {
             "pinterest.create_board", "make a board on your Pinterest profile", {"reaches_people", "owner_identity"}
         ),
         _class("pinterest.delete_pin", "delete a pin of Ember's from Pinterest", {"owner_identity"}),
-        # 0.30.1: the test pin of the owner's Standard access request, in Pinterest's API sandbox (seen by them only)
+        # 0.30.2: the test pin of the owner's Standard access request, in Pinterest's API sandbox (seen by them only)
         _class("pinterest.test_pin", "make a test pin in Pinterest's sandbox, seen only by you", set()),
         # 0.19.0: Bluesky, the account the owner made for Ember
         _class(
@@ -162,7 +162,7 @@ _EXECUTORS = {
     "kdp_package": "kdp.publish",  # 0.25.0: the owner carries it out (never on an unlock: no rule names it)
     "pinterest_pin": "pinterest.create_pin",  # 0.13.0 (Phase E2)
     "pinterest_delete": "pinterest.delete_pin",  # the owner's Undo of a pin
-    "pinterest_test_pin": "pinterest.test_pin",  # 0.30.1: never on an unlock (no rule of the policy engine names it)
+    "pinterest_test_pin": "pinterest.test_pin",  # 0.30.2: never on an unlock (no rule of the policy engine names it)
     "bluesky_post": "bluesky.create_post",  # 0.19.0: never on an unlock (no rule of the policy engine names it)
     "bluesky_delete": "bluesky.delete_post",  # the owner's Undo of a post
     "printify_product": "printify.create_product",  # 0.13.0 (Phase E4)

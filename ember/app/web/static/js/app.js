@@ -2635,7 +2635,7 @@
   // A new Etsy listing, or a change to a live one: Ember's code makes both after approval.
   function isEtsy(a) { var e = executorOf(a); return e === "etsy_listing" || e === "etsy_edit"; }
 
-  // 0.13.0 (Phase E2): a pin, or the owner's Undo of one: Ember's code carries both out after approval. 0.30.1: and the
+  // 0.13.0 (Phase E2): a pin, or the owner's Undo of one: Ember's code carries both out after approval. 0.30.2: and the
   // test pin of the owner's Standard access request, in Pinterest's API sandbox.
   function isPinterest(a) { var e = executorOf(a); return e === "pinterest_pin" || e === "pinterest_delete" || e === "pinterest_test_pin"; }
 
@@ -4522,7 +4522,7 @@
     not_connected: { icon: "○", label: "Not connected", tone: "warning" },
     not_configured: { icon: "○", label: "Not set up", tone: "warning" },
     disabled: { icon: "–", label: "Off", tone: "" },
-    sandbox: { icon: "◐", label: "Sandbox", tone: "accent" },  // 0.30.1: Pinterest's, for the Standard access request
+    sandbox: { icon: "◐", label: "Sandbox", tone: "accent" },  // 0.30.2: Pinterest's, for the Standard access request
   };
 
   var LISTING_STATUS = {
@@ -4729,7 +4729,7 @@
       });
       c.wrap = h("div", { class: "etsy-connect" });
     }
-    // 0.30.1: Pinterest's sandbox (for the Standard access request) connects like the account itself
+    // 0.30.2: Pinterest's sandbox (for the Standard access request) connects like the account itself
     var connected = e.status === "ok" || (e.status === "sandbox" && !!e.connected_at);
     c.start.textContent = connected ? "Connect again" : w.start;
     var canConnect = connected || e.status === "not_connected" || e.status === "sandbox";

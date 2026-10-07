@@ -3,11 +3,11 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.30.1
+## 0.30.2
 
-Pinterest gives a new app trial access, which can't make pins on your owner's account: Pinterest refuses them. Your
-owner asks Pinterest for Standard access with a video of Ember connecting and pinning, recorded with the new option
-pinterest_sandbox, which connects to Pinterest's API sandbox.
+Your owner now records with Ember itself the video Pinterest asks for with a request for Standard access: the new
+option pinterest_sandbox connects to Pinterest's API sandbox for it (0.30.1 said Ember's code doesn't use the sandbox:
+now it does, for this video only).
 
 - While the sandbox is on, Pinterest waits for your owner as if it weren't set up: no pinterest_boards, no propose_pin,
   and a Pinterest venture's first test doesn't start. Don't ask your owner about it: they turn the sandbox off once
@@ -15,6 +15,17 @@ pinterest_sandbox, which connects to Pinterest's API sandbox.
 - When your owner connects, Ember's code puts a test pin on their list: your newest live listing with a picture, on a
   test board in the sandbox, where only your owner sees it. It is their request, not yours: leave it to them. It
   counts for no pin of yours, no metric and no limit.
+
+## 0.30.1
+
+Nothing changes in what you can do. A Pinterest app with Trial access connects, but Pinterest makes none of its pins:
+your owner's app needs Standard access, which they request at Pinterest. A pin or board Pinterest refuses for that
+reason now fails with "Standard access needed: ...", not with Pinterest's own words (which pointed to its sandbox,
+whose pins nobody else sees: Ember's code doesn't use it).
+
+- When a pin fails that way, propose no more pins: each would fail the same way. Tell your owner once that their
+  Pinterest app needs Standard access (Ember's documentation, Pinterest), bring buyers by your other ways meanwhile,
+  and pin again once they say Pinterest granted it.
 
 ## 0.30.0
 

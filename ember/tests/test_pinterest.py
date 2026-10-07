@@ -650,7 +650,7 @@ def test_the_approvals_take_a_new_channel_s_executor_but_only_a_plain_name(data_
         assert never.reasons(conn, row) == ["owner_only"]  # no rule covers it yet: only the owner
 
 
-# --- 0.30.1: Pinterest's API sandbox, for the video of the owner's Standard access request -------------------------
+# --- 0.30.2: Pinterest's API sandbox, for the video of the owner's Standard access request -------------------------
 
 SANDBOX = LIVE.model_copy(update={"pinterest_sandbox": True})
 
@@ -668,6 +668,12 @@ def test_the_sandbox_is_reached_at_its_own_host(tmp_path: Path) -> None:
     sandbox = _Allowlist(pinterest.SANDBOX_HOST, retries=0)
     with pytest.raises(httpx2.ConnectError, match="only talks to https://api-sandbox.pinterest.com"):
         sandbox.handle_request(httpx2.Request("GET", "https://api.pinterest.com/v5/pins"))
+    # The sandbox's own refusal keeps its words: "Standard access needed" (0.30.1) is the API's Trial refusal only.
+    _, refusing = mock({("POST", "/v5/boards"): httpx2.Response(403, json={"message": "Not allowed in sandbox"})})
+    store = TokenFile(tmp_path / "sandbox_tokens.json")
+    store.save(some_tokens(Clock()))
+    with pytest.raises(NotSent, match="^HTTP 403: Not allowed in sandbox$"):
+        LiveAccount(SANDBOX, Clock(), store, refusing).create_board("Ember test board", "")
 
 
 def test_the_sandbox_connects_apart_and_leaves_the_agent_without_pinterest(tmp_path: Path) -> None:

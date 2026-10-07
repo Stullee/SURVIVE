@@ -226,7 +226,7 @@ class Settings(BaseModel):
     pinterest_app_secret: SecretStr = SecretStr("")
     pinterest_redirect_uri: str = Field(default="https://localhost/ember-pinterest", min_length=1, max_length=300)
     pinterest_pins_per_day: int = Field(default=3, ge=0, le=20)
-    # 0.30.1: Pinterest's API sandbox, for the owner's Standard access request: an app with trial access may not make
+    # 0.30.2: Pinterest's API sandbox, for the owner's Standard access request: an app with trial access may not make
     # pins at api.pinterest.com, and Pinterest's review asks for a video of the app connecting and pinning. While it is
     # on (live), the connection goes to api-sandbox.pinterest.com (tokens of its own), the agent has no Pinterest, and
     # a test pin waits for the owner's approval once they connect. Off by default.
