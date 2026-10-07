@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.29.1
+## 0.30.1
 
 Nothing changes in what you can do. A Pinterest app with Trial access connects, but Pinterest makes none of its pins:
 your owner's app needs Standard access, which they request at Pinterest. A pin or board Pinterest refuses for that

@@ -1,6 +1,6 @@
 """Pinterest (0.13.0, Phase E2): pins that bring buyers to the owner's Etsy shop, from the owner's account.
 
-The owner creates the (business) account and a Pinterest app for it (0.29.1: with Standard access; a new app's Trial
+The owner creates the (business) account and a Pinterest app for it (0.30.1: with Standard access; a new app's Trial
 access connects, but Pinterest refuses its pins), adds their Impressum link to the business profile, switches
 Pinterest on and sets the app's id, secret and redirect URI in the options, and connects the account in the dashboard
 (like Etsy: PKCE).

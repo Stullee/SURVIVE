@@ -1,4 +1,4 @@
-"""0.29.1: a Pinterest app with Trial access connects, but Pinterest refuses its pins (HTTP 403, "Apps with Trial access
+"""0.30.1: a Pinterest app with Trial access connects, but Pinterest refuses its pins (HTTP 403, "Apps with Trial access
 may not create Pins in production - use API Sandbox instead"). An approved pin failed with those words, which point to
 a sandbox whose pins nobody but their maker sees (Ember doesn't use it), and nothing said what the owner can do. Such a
 refusal of a pin or a board now says that the app needs Standard access: on the request, in what Ember's code did and
