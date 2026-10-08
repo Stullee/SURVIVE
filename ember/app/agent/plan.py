@@ -31,7 +31,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import from_iso, to_iso
-from . import metrics, quality, reach, templates, ventures, weights
+from . import metrics, quality, reach, roadmap, templates, ventures, weights
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
 
 SEQUENTIAL = (
@@ -152,7 +152,7 @@ def infer_template(conn: sqlite3.Connection, scope: AgentScope, project: Mapping
         if re.search(pattern, text):
             return template
     if used & {"make_spreadsheet", "make_document", "make_cost_statement", "propose_etsy_listing"} or re.search(
-        r"\b(etsy|download|printable|vorlage|template|planner|tracker)\b", text
+        r"\b(etsy|downloads?|printables?|vorlagen?|templates?|planners?|trackers?|bundles?)\b", text
     ):
         return templates.ETSY_DIGITAL
     return templates.GENERIC
@@ -238,7 +238,7 @@ def lay_out(conn: sqlite3.Connection, scope: AgentScope, project: Mapping[str, A
             level="stage",
             project_id=project["id"],
             stage=stage.stage,
-            title=f"{STAGE_TITLES[stage.stage]}: done when {stage.done}"[:160],
+            title=f"{STAGE_TITLES[stage.stage]}: {stage.done}"[:160],
             check_kind=stage.check,
             check_spec=json.dumps(stage.spec) if stage.check else None,
             seq=seq,
@@ -378,10 +378,12 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, cha
     facts = Facts(conn, scope, now)
     where, params = scope.where()
     products = {r["project_id"]: r for r in nodes(conn, scope, "level = 'product'")}
+    laid: set[int] = set()
     for project in conn.execute(f"SELECT * FROM projects WHERE {where} ORDER BY id", params).fetchall():
         product = products.get(project["id"])
         if product is None and project["status"] in OPEN_STATUSES:
             product_id = lay_out(conn, scope, project, now)
+            laid.add(product_id)
             said.append(f"Plan tree: line #{project['id']} laid out as a product (#{product_id}).")
         elif product is not None and product["status"] == "open" and project["status"] in CLOSED_STATUSES:
             ended = "done" if project["status"] == "succeeded" else "dropped"
@@ -396,7 +398,8 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, cha
             earn = could_earn(conn, scope, project, template.could_earn)
             if earn != product["could_earn"]:
                 _update(conn, product["id"], now, could_earn=earn)
-        said += _close_done(facts, product, now)
+        closed = _close_done(facts, product, now)
+        said += closed if product["id"] not in laid else []  # a new product's stages already done: no news
         said += _promises(facts, product, now)
         said += _recurring(facts, product, now, today, channels)
     _clocks(conn, scope, now, today, channels)
@@ -915,25 +918,30 @@ def view(
     pick, found = choose(conn, scope, now, today, channels)
     by_id = {c.step.id: c for c in found}
     parts = weights.parts_by_id(pick.ranked)
+    titles = {r["id"]: str(r["title"]) for r in nodes(conn, scope, "level = 'step' AND status = 'open'")}
     facts = Facts(conn, scope, now)
     projects: list[dict[str, Any]] = []
     for top in nodes(conn, scope, "level = 'project'"):
         products = []
         for product in nodes(conn, scope, "parent_id = ? AND level = 'product'", (top["id"],)):
-            products.append(_product_view(conn, scope, product, by_id, parts, facts, now, today))
+            products.append(_product_view(conn, scope, product, by_id, parts, titles, facts, now))
         if products:
             projects.append({"id": top["id"], "platform": top["platform"], "title": top["title"], "products": products})
     ranked = [(s, p) for s, p in pick.ranked]
-    waiting_owner = [_step_brief(c, None) for c in found if c.waiting == "owner"]
+    waiting_owner = [_step_brief(c, None, titles) for c in found if c.waiting == "owner"]
+    goal = roadmap.root(conn, scope)
     return {
         "preview": True,
         "today": today.isoformat(),
+        "goal": {"title": goal["title"], "due": goal["due"]} if goal is not None else None,
         "projects": projects,
-        "now": _pick_view(pick),
-        "next": [_step_brief(by_id[s.id], p) for s, p in ranked if pick.step is None or s.id != pick.step.id][:3],
+        "now": _pick_view(pick, titles),
+        "next": [_step_brief(by_id[s.id], p, titles) for s, p in ranked if pick.step is None or s.id != pick.step.id][
+            :3
+        ],
         "waiting": waiting_owner,
         "picks": _picks(conn, scope),
-        "stamp": _stamp(conn, scope),
+        "stamp": stamp(conn, scope),
     }
 
 
@@ -943,9 +951,9 @@ def _product_view(
     product: Mapping[str, Any],
     by_id: Mapping[int, Candidate],
     parts: Mapping[int, weights.Parts],
+    titles: Mapping[int, str],
     facts: Facts,
     now: str,
-    today: date,
 ) -> dict[str, Any]:
     pid = int(product["project_id"])
     project = conn.execute("SELECT title, status FROM projects WHERE id = ?", (pid,)).fetchone()
@@ -979,7 +987,7 @@ def _product_view(
                     "check": templates.CHECKS.get(step["check_kind"] or "", ""),
                     "result": step["result"],
                     "weight": round(weight.total, 2) if weight else None,
-                    "why": weight.text() if weight else None,
+                    "why": weight.text(titles.get(weight.carried_from or 0)) if weight else None,
                     "age_days": round(_days(step["ready_since"], now), 1) if step["ready_since"] else None,
                     "stale": bool(step["ready_since"]) and _days(step["ready_since"], now) >= STALE_DAYS,
                 }
@@ -1005,8 +1013,8 @@ def _product_view(
         "stage": stage_name if current is not None else None,
         "audience": product["audience"],
         "could_earn": product["could_earn"],
-        "worth": product["owner_worth"] if product["owner_worth"] is not None else computed,
-        "worth_code": computed,
+        "worth": product["owner_worth"] if product["owner_worth"] is not None else round(computed, 2),
+        "worth_code": round(computed, 2),
         "owner_worth": product["owner_worth"],
         "chance": weights.chance(stage_name, *(_numbers(funnel))),
         "numbers": {
@@ -1025,7 +1033,7 @@ def _numbers(funnel: reach.Funnel | None) -> tuple[int, int, int]:
     return (funnel.views, funnel.favorites, funnel.orders) if funnel else (0, 0, 0)
 
 
-def _step_brief(candidate: Candidate, parts: weights.Parts | None) -> dict[str, Any]:
+def _step_brief(candidate: Candidate, parts: weights.Parts | None, titles: Mapping[int, str]) -> dict[str, Any]:
     return {
         "id": candidate.step.id,
         "line": candidate.step.product,
@@ -1033,11 +1041,11 @@ def _step_brief(candidate: Candidate, parts: weights.Parts | None) -> dict[str, 
         "stage": candidate.stage,
         "waiting": candidate.waiting,
         "weight": round(parts.total, 2) if parts else None,
-        "why": parts.text() if parts else None,
+        "why": parts.text(titles.get(parts.carried_from or 0)) if parts else None,
     }
 
 
-def _pick_view(pick: weights.Pick) -> dict[str, Any] | None:
+def _pick_view(pick: weights.Pick, titles: Mapping[int, str]) -> dict[str, Any] | None:
     if pick.step is None:
         return {"decided": pick.decided, "id": None, "title": None, "line": None, "weight": None, "why": None}
     return {
@@ -1046,7 +1054,7 @@ def _pick_view(pick: weights.Pick) -> dict[str, Any] | None:
         "title": pick.step.title,
         "line": pick.step.product,
         "weight": round(pick.parts.total, 2) if pick.parts else None,
-        "why": pick.parts.text() if pick.parts else None,
+        "why": pick.parts.text(titles.get(pick.parts.carried_from or 0)) if pick.parts else None,
     }
 
 
@@ -1079,7 +1087,7 @@ def _picks(conn: sqlite3.Connection, scope: AgentScope) -> list[dict[str, Any]]:
     ]
 
 
-def _stamp(conn: sqlite3.Connection, scope: AgentScope) -> str:
+def stamp(conn: sqlite3.Connection, scope: AgentScope) -> str:
     """Changes whenever the tree, its words or its picks do (the tab reloads then)."""
     where, params = scope.where()
     tree = conn.execute(f"SELECT COUNT(*), MAX(updated_at) FROM plan_nodes WHERE {where}", params).fetchone()

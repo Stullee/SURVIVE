@@ -125,8 +125,8 @@ def test_a_stage_closes_when_its_check_passes_and_a_later_stage_done_closes_the_
     steps = steps_of(agent, book)
     assert steps["Make the front picture"] == "done" and steps["Propose the book"] == "done"
     assert steps["You publish it at KDP and add its Amazon link"] == "open"
-    results = rows(agent, f"SELECT result FROM plan_nodes WHERE project_id = {book} AND title = 'Make the front picture'")
-    assert results == [{"result": "Ember's code: the stage is done"}]
+    picture = f"SELECT result FROM plan_nodes WHERE project_id = {book} AND title = 'Make the front picture'"
+    assert rows(agent, picture) == [{"result": "Ember's code: the stage is done"}]
     with agent.db.connection() as conn:
         found = plan.candidates(conn, agent.scope(), now(agent), agent.clock.today(), ALL)
     publish = next(c for c in found if c.step.title.startswith("You publish"))
@@ -242,3 +242,7 @@ def test_the_plan_tab_shows_the_tree_and_takes_a_pin_and_a_worth(ingress_client:
     assert [w["action"] for w in words] == ["pin", "worth", "clear_worth"]
     html = ingress_client.get("/").text
     assert 'id="tab-plan"' in html and 'id="panel-plan"' in html
+    report = ingress_client.get("api/diagnostics").text
+    assert "-- plan_nodes" in report and "-- plan_words" in report
+    assert "-- plan tree: the ranking now (it would take: pin)" in report  # the demand note is still pinned
+    assert ingress_client.get("api/dashboard").json()["plan_stamp"] == ingress_client.get("api/plan").json()["stamp"]

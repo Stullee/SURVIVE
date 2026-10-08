@@ -77,7 +77,7 @@ class Template:
 
 _DEMAND = StageT(
     "research",
-    "a demand note from the last 14 days: searches, competitors, prices",
+    "done when a demand note from the last 14 days: searches, competitors, prices",
     "demand",
     {"days": 14},
     (StepT("demand", "Write the demand note: searches, competitors, prices", "create", "demand", {"days": 14}),),
@@ -88,7 +88,7 @@ _POSTS = StepT(
 )
 _BLOG = StepT("blog", "A German blog post with its product box", "market", "blog", {"count": 1}, "blog", ("de", "both"))
 _CRITIC = StepT("critic", "The critic passes it", "fix", "critic")
-_MAINTAIN = StageT("maintain", "never: it recurs (weekly marketing, the critic's fixes) until you drop the product")
+_MAINTAIN = StageT("maintain", "it recurs (weekly marketing, the critic's fixes) until you drop the product")
 
 ETSY_DIGITAL = Template(
     "etsy_digital",
@@ -100,7 +100,7 @@ ETSY_DIGITAL = Template(
         _DEMAND,
         StageT(
             "create",
-            "the files and 5 photos are made and looked at, and the listing proposed",
+            "done when the files and 5 photos are made and looked at, and the listing proposed",
             "any",
             {"of": [{"check": "request", "executor": "etsy_listing"}, {"check": "live", "count": 1}]},
             (
@@ -119,7 +119,7 @@ ETSY_DIGITAL = Template(
         ),
         StageT(
             "release",
-            "you approved the listing and it is live",
+            "done when you approved the listing and it is live",
             "live",
             {"count": 1},
             (
@@ -129,7 +129,7 @@ ETSY_DIGITAL = Template(
         ),
         StageT(
             "launch",
-            "the first week's marketing is out in its channels and the critic passes it",
+            "done when the first week's marketing is out in its channels and the critic passes it",
             None,
             {},
             (_PINS, _POSTS, _BLOG, _CRITIC),
@@ -148,7 +148,7 @@ PRINTIFY_POD = Template(
         _DEMAND,
         StageT(
             "create",
-            "the print file and a room mockup are made, and the product proposed",
+            "done when the print file and a room mockup are made, and the product proposed",
             "any",
             {"of": [{"check": "request", "executor": "printify_product"}, {"check": "live", "count": 1}]},
             (
@@ -170,7 +170,7 @@ PRINTIFY_POD = Template(
         ),
         StageT(
             "release",
-            "you approved the product and it is live",
+            "done when you approved the product and it is live",
             "live",
             {"count": 1},
             (
@@ -180,7 +180,7 @@ PRINTIFY_POD = Template(
         ),
         StageT(
             "launch",
-            "the first week's marketing is out and the critic passes it (its fixes are yours to make)",
+            "done when the first week's marketing is out and the critic passes it (its fixes are yours to make)",
             None,
             {},
             (_PINS, _POSTS, _CRITIC),
@@ -198,7 +198,7 @@ KDP_BOOK = Template(
     (
         StageT(
             "research",
-            "a demand note from the last 14 days: Amazon searches, competing books",
+            "done when a demand note from the last 14 days: Amazon searches, competing books",
             "demand",
             {"days": 14},
             (
@@ -213,7 +213,7 @@ KDP_BOOK = Template(
         ),
         StageT(
             "create",
-            "the interior PDF and the front picture pass KDP's package check",
+            "done when the interior PDF and the front picture pass KDP's package check",
             "any",
             {"of": [{"check": "kdp_check"}, {"check": "request", "executor": "kdp_package"}]},
             (
@@ -231,7 +231,7 @@ KDP_BOOK = Template(
         ),
         StageT(
             "release",
-            "you published it and its Amazon link is in",
+            "done when you published it and its Amazon link is in",
             "request",
             {"executor": "kdp_package", "status": "done"},
             (
@@ -247,7 +247,7 @@ KDP_BOOK = Template(
         ),
         StageT(
             "launch",
-            "the first marketing is out (pins, posts and the blog can't link Amazon yet)",
+            "done when the first marketing is out (pins, posts and the blog can't link Amazon yet)",
             None,
             {},
             (StepT("blog", "A German blog post naming the book", "market", "agent", {}, "blog", waiting="upgrade"),),
@@ -265,14 +265,14 @@ SITE_CONTENT = Template(
     (
         StageT(
             "research",
-            "a demand note from the last 14 days: what people search for",
+            "done when a demand note from the last 14 days: what people search for",
             "demand",
             {"days": 14},
             (StepT("demand", "Write the demand note: the searches a post answers", "create", "demand", {"days": 14}),),
         ),
         StageT(
             "release",
-            "a post is online on your site",
+            "done when a post is online on your site",
             "request",
             {"executor": "site_post", "status": "done"},
             (StepT("post", "Propose the post", "ship", "request", {"executor": "site_post"}),),
@@ -290,7 +290,7 @@ CHANNEL = Template(
     (
         StageT(
             "create",
-            "the channel is set up",
+            "done when the channel is set up",
             None,
             {},
             (StepT("setup", "Set the channel up with your owner", "create", "agent"),),
@@ -307,8 +307,8 @@ GENERIC = Template(
     2.0,
     (
         _DEMAND,
-        StageT("create", "what it needs is made", None, {}, (StepT("make", "Make it", "create", "agent"),)),
-        StageT("release", "it is out", None, {}, (StepT("ship", "Put it out", "ship", "agent"),)),
+        StageT("create", "done when what it needs is made", None, {}, (StepT("make", "Make it", "create", "agent"),)),
+        StageT("release", "done when it is out", None, {}, (StepT("ship", "Put it out", "ship", "agent"),)),
         _MAINTAIN,
     ),
 )

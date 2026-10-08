@@ -67,6 +67,9 @@
     vtView: loadPref("ember-ventures-view", "pipeline"),
     // The roadmap (0.11.0): loaded while its tab is open, again whenever the dashboard's roadmap stamp changes.
     rm: { data: null, byId: {}, stamp: null, busy: false, again: false, error: null, selected: null, saving: false },
+    // 0.34.0: the plan tree (a preview): loaded while its tab is open, again whenever the dashboard's plan stamp
+    // changes; selected: the product opened below the tree; view: the network's zoom and position.
+    pl: { data: null, stamp: null, busy: false, again: false, error: null, selected: null, view: null, size: null, dragged: false },
     // 0.29.0: the owner's goal: its form is being saved, its removal is being confirmed or sent
     goal: { saving: false, removing: false },
     // The library (0.12.0): loaded while its tab is open, again whenever the dashboard's library stamp changes.
@@ -556,7 +559,7 @@
     header: "Header", controls: "Controls", kpis: "Key numbers", badges: "Tab badges", memorial: "Memorial",
     now: "Now", lives: "Previous lives", charts: "Charts", table: "Table", ledger: "Ledger", forms: "Forms",
     projects: "Projects", activity: "Activity", approvals: "Approvals", inbox: "Inbox", instructions: "Standing instructions",
-    upgrades: "Upgrades", mind: "Mind", ventures: "Ventures", roadmap: "Roadmap", library: "Library",
+    upgrades: "Upgrades", mind: "Mind", ventures: "Ventures", roadmap: "Roadmap", plan: "Plan", library: "Library",
     cycleDetail: "Cycle details", diagnostics: "Diagnostics", email: "Email", workspace: "Workspace", workspaceFile: "Workspace file",
   };
 
@@ -657,6 +660,7 @@
     // The tree is loaded apart: again when it changed (a venture, or a cycle that ended), while its tab is open.
     if (ui.tab === "ventures" && !ui.vt.busy && d.ventures_stamp !== undefined && d.ventures_stamp !== ui.vt.stamp) loadVentures();
     if (ui.tab === "roadmap" && !ui.rm.busy && isObject(d.roadmap) && d.roadmap.stamp !== ui.rm.stamp) loadRoadmap();
+    if (ui.tab === "plan" && !ui.pl.busy && d.plan_stamp !== undefined && d.plan_stamp !== ui.pl.stamp) loadPlan();
     if (ui.tab === "library" && !ui.lib.busy && isObject(d.library) && d.library.stamp !== ui.lib.stamp) loadLibrary();
     section("mind", [d.mind, ui.mind, minute], ["mind-body"], function () { renderMind(d.mind); });
     // 0.26.0: the workspace again after the agent's steps while its tab is open, and the requests its files are in.
@@ -10288,9 +10292,416 @@
     $("lib-form-files").addEventListener("change", function () { setLibraryFieldError("files", ""); });
   }
 
+  // ------------------------------------------------------------------ the plan tree (0.34.0)
+
+  // The tree under the owner's goal as a floating node network: its projects (one colour each), their products (as
+  // big as their worth), and the opened product's stages with their steps below, each stage's steps on a line in
+  // their order. A preview: Ember doesn't follow the tree yet, and every cycle records the step it would have taken.
+  var PLAN_W = 960;
+  var PLAN_COLOURS = 6;
+  var PLAN_WAIT = {
+    owner: "waits on you", channel: "its channel is off", upgrade: "waits on an upgrade",
+    step: "after the one before", hold: "on hold",
+  };
+  var PLAN_DECIDED = {
+    pin: "you pinned it", promise: "a promise is due", venture: "a venture cycle (the venture share)",
+    weight: "the heaviest step", margin: "the product worked on last keeps it", none: "nothing is ready",
+  };
+
+  function loadPlan() {
+    var pl = ui.pl;
+    if (pl.busy) { pl.again = true; return; }
+    pl.busy = true;
+    safely("plan", renderPlan);
+    request("GET", "api/plan").then(function (res) {
+      if (!res.ok) throw httpError(res);
+      if (!isObject(res.data) || !Array.isArray(res.data.projects)) throw new RequestError("malformed", res.data === undefined ? "not JSON" : "the plan is missing");
+      pl.data = res.data;
+      pl.stamp = res.data.stamp;
+      pl.error = null;
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      pl.error = err;
+    }).then(function () {
+      pl.busy = false;
+      safely("plan", renderPlan);
+      if (pl.again) { pl.again = false; loadPlan(); }
+    });
+  }
+
+  function planProducts(d) {
+    var all = [];
+    arr(d.projects).forEach(function (p, index) {
+      arr(p.products).forEach(function (q) { all.push({ project: p, colour: index % PLAN_COLOURS, product: q }); });
+    });
+    return all;
+  }
+
+  function renderPlan() {
+    var pl = ui.pl, d = pl.data;
+    setStatusText("pl-load-status", pl.error ? "Couldn't load the plan: " + errorText(pl.error) : !d && pl.busy ? "Loading the plan…" : "", pl.error ? "error" : "");
+    if (!d) { ["pl-now", "pl-net", "pl-detail", "pl-picks"].forEach(function (id) { replace($(id), null); }); return; }
+    var products = planProducts(d);
+    var known = products.some(function (x) { return x.product.id === pl.selected; });
+    if (!known) {
+      var nowLine = isObject(d.now) ? d.now.line : null;
+      var mine = products.filter(function (x) { return x.product.line === nowLine && nowLine !== null; })[0]
+        || products.filter(function (x) { return x.product.status === "open"; })[0];
+      pl.selected = mine ? mine.product.id : null;
+    }
+    var goal = isObject(d.goal) ? d.goal : null;
+    $("pl-sub").textContent = (goal ? "Your goal: " + goal.title + " (by " + fmtDay(goal.due) + "). " : "")
+      + "Ember doesn't follow the tree yet: each cycle records the step it would have taken.";
+    renderPlanNow(d);
+    renderPlanNet(d, products);
+    renderPlanDetail(products);
+    renderPlanPicks(d);
+  }
+
+  function renderPlanNow(d) {
+    var now = isObject(d.now) ? d.now : {};
+    var next = arr(d.next), waiting = arr(d.waiting);
+    replace($("pl-now"), [
+      h("div", { class: "pl-now-card" },
+        h("p", { class: "small-head", text: "Now, if the tree steered" }),
+        h("p", { class: "pl-now-title", text: now.id ? now.title : sentence(PLAN_DECIDED[now.decided] || "nothing is ready") }),
+        now.id ? h("p", { class: "muted", text: sentence(PLAN_DECIDED[now.decided] || now.decided) + (now.line ? " · line #" + now.line : "") }) : null,
+        now.why ? h("p", { class: "pl-why muted", text: now.why }) : null),
+      h("div", { class: "pl-now-card" },
+        h("p", { class: "small-head", text: "Next" }),
+        next.length
+          ? h("ol", { class: "pl-list" }, next.map(function (s) {
+            return h("li", null, s.title, h("span", { class: "muted", text: (s.line ? " · line #" + s.line : "") + (s.weight !== null && s.weight !== undefined ? " · weight " + s.weight : "") }));
+          }))
+          : h("p", { class: "muted", text: "Nothing else is ready." })),
+      h("div", { class: "pl-now-card" },
+        h("p", { class: "small-head", text: "Waiting on you" }),
+        waiting.length
+          ? h("ul", { class: "pl-list" }, waiting.map(function (s) { return h("li", { text: s.title + (s.line ? " (line #" + s.line + ")" : "") }); }))
+          : h("p", { class: "muted", text: "Nothing." })),
+    ]);
+  }
+
+  // A smooth link from a parent's foot to a child's head (vertical tangents at both ends).
+  function planLink(x1, y1, x2, y2) {
+    var m = (y1 + y2) / 2;
+    return "M" + x1 + " " + y1 + "C" + x1 + " " + m + " " + x2 + " " + m + " " + x2 + " " + y2;
+  }
+
+  function planCut(text, chars) {
+    text = String(text || "");
+    return text.length > chars ? text.slice(0, Math.max(1, chars - 1)) + "…" : text;
+  }
+
+  // Two lines of at most ``chars`` characters each, broken after a space or a hyphen where it can.
+  function planLines(text, chars) {
+    text = String(text || "");
+    if (text.length <= chars) return [text];
+    var cut = Math.max(text.lastIndexOf(" ", chars), text.lastIndexOf("-", chars - 1) + 1);
+    if (cut < chars / 3) return [planCut(text, chars)];
+    return [text.slice(0, cut).trim(), planCut(text.slice(cut).trim(), chars)];
+  }
+
+  function renderPlanNet(d, products) {
+    var pl = ui.pl, host = $("pl-net");
+    var projects = arr(d.projects);
+    if (!projects.length) {
+      replace(host, emptyState("div", "No products yet", "Ember's code lays each open product line out here at the next cycle."));
+      pl.size = null;
+      return;
+    }
+    var W = PLAN_W, slot = W / projects.length, top = 200;
+    var links = [], nodes = [], spines = [], placed = {}, bottom = top + 60;
+    var nowId = isObject(d.now) ? d.now.id : null;
+    var goal = { x: W / 2, y: 74, r: 44 };
+    projects.forEach(function (p, i) {
+      var colour = i % PLAN_COLOURS, px = slot * (i + 0.5), py = top + (i % 2 ? 24 : 0);
+      links.push({ d: planLink(goal.x, goal.y + goal.r, px, py - 30), c: colour });
+      nodes.push({ kind: "project", x: px, y: py, r: 30, c: colour, item: p, label: p.title });
+      var items = arr(p.products), perRow = Math.max(1, Math.floor(slot / 112));
+      items.forEach(function (q, j) {
+        var row = Math.floor(j / perRow), col = j % perRow, inRow = Math.min(perRow, items.length - row * perRow);
+        var width = slot / perRow;
+        var qx = px + (col - (inRow - 1) / 2) * width, qy = py + 124 + row * 104 + (col % 2 ? 18 : 0);
+        var worth = Math.max(0, Math.min(10, Number(q.worth) || 0)), r = 10 + worth;
+        links.push({ d: planLink(px, py + 30, qx, qy - r), c: colour });
+        nodes.push({ kind: "product", x: qx, y: qy, r: r, c: colour, item: q, label: q.title, chars: Math.max(8, Math.floor((width - 8) / 6.6)) });
+        placed[q.id] = { x: qx, y: qy, r: r, c: colour };
+        bottom = Math.max(bottom, qy + r + 40);
+      });
+    });
+    var height = bottom + 24;
+    var open = products.filter(function (x) { return x.product.id === pl.selected; })[0];
+    if (open && placed[open.product.id]) {
+      var at = placed[open.product.id], stages = arr(open.product.stages);
+      var sy = height + 56, sslot = W / Math.max(1, stages.length), deepest = sy + 40, bus = sy - 34;
+      // one trunk down from the opened product to a line above its stages, then a short drop into each: it passes
+      // under every other product instead of across them
+      if (stages.length) {
+        links.push({ d: "M" + at.x + " " + (at.y + at.r) + "V" + bus, c: at.c, trunk: true });
+        links.push({ d: "M" + Math.min(at.x, sslot / 2) + " " + bus + "H" + Math.max(at.x, sslot * (stages.length - 0.5)), c: at.c, trunk: true });
+      }
+      stages.forEach(function (s, k) {
+        var sx = sslot * (k + 0.5);
+        links.push({ d: "M" + sx + " " + bus + "V" + (sy - 12), c: at.c });
+        nodes.push({ kind: "stage", x: sx, y: sy, r: 12, c: at.c, item: s, label: sentence(s.stage) + (s.total ? " " + s.done + "/" + s.total : "") });
+        var steps = arr(s.steps), first = sy + 58, last = first + (steps.length - 1) * 40;
+        var lineX = sx - sslot / 2 + 18;
+        if (steps.length) spines.push({ x1: sx, y1: sy + 12, x: lineX, y2: last, c: at.c });
+        steps.forEach(function (st, m) {
+          nodes.push({ kind: "step", x: lineX, y: first + m * 40, r: 7, c: at.c, item: st, label: st.title, chars: Math.max(10, Math.floor((sslot - 36) / 6.4)), now: st.id === nowId });
+        });
+        if (steps.length) deepest = Math.max(deepest, last + 34);
+      });
+      height = deepest + 12;
+    }
+    pl.size = { w: W, h: height };
+    if (!pl.view) pl.view = { k: 1, x: 0, y: 0 };
+    var root = svg("svg", { class: "pl-svg", role: "group", "aria-label": "The plan tree: your goal, " + projects.length + " project" + (projects.length === 1 ? "" : "s") + " and their products" });
+    var linkLayer = svg("g", { class: "pl-links", "aria-hidden": "true" });
+    links.forEach(function (l) { linkLayer.appendChild(svg("path", { class: "pl-link pl-c" + l.c + (l.trunk ? " pl-trunk" : ""), d: l.d })); });
+    spines.forEach(function (s) {
+      linkLayer.appendChild(svg("path", { class: "pl-link pl-c" + s.c, d: planLink(s.x1, s.y1, s.x, s.y1 + 34) }));
+      linkLayer.appendChild(svg("line", { class: "pl-spine pl-c" + s.c, x1: s.x, y1: s.y1 + 34, x2: s.x, y2: s.y2 }));
+    });
+    var nodeLayer = svg("g", { class: "pl-nodes" });
+    nodeLayer.appendChild(svg("g", { class: "pl-node pl-goal", "aria-hidden": "true" },
+      svg("circle", { class: "pl-halo", cx: goal.x, cy: goal.y, r: goal.r + 16 }),
+      svg("circle", { class: "pl-dot", cx: goal.x, cy: goal.y, r: goal.r }),
+      svg("text", { x: goal.x, y: goal.y - 2, "text-anchor": "middle" }, "Your goal"),
+      isObject(d.goal) ? svg("text", { class: "pl-sub", x: goal.x, y: goal.y + 15, "text-anchor": "middle" }, "by " + fmtDay(d.goal.due)) : null));
+    nodes.forEach(function (n) { nodeLayer.appendChild(planNode(n)); });
+    root.appendChild(linkLayer);
+    root.appendChild(nodeLayer);
+    replace(host, root);
+    planApplyView();
+  }
+
+  function planNode(n) {
+    var it = n.item, takes = n.kind === "product" || n.kind === "step";
+    var status = it.status || "open", waiting = it.waiting || null;
+    var said = n.kind === "product"
+      ? it.title + ", " + (it.template || "product") + (it.stage ? ", in " + it.stage : ", " + status) + ", worth " + it.worth + (n.item.id === ui.pl.selected ? ", opened" : "")
+      : n.kind === "step" ? it.title + ", " + planStepState(it) : n.label;
+    var g = svg("g", {
+      class: "pl-node pl-" + n.kind + " pl-c" + n.c,
+      "data-status": status, "data-waiting": waiting, "data-now": n.now ? "true" : null, "data-kind": n.kind === "step" ? it.kind : null,
+      "data-selected": n.kind === "product" && it.id === ui.pl.selected ? "true" : null,
+      "data-pinned": it.pinned ? "true" : null,
+      tabindex: takes ? "0" : null, role: takes ? "button" : null, "aria-label": takes ? said : null,
+      "aria-hidden": takes ? null : "true",
+    }, svg("title", null, said));
+    if (n.now || waiting === "owner" || waiting === "upgrade" || it.pinned) g.appendChild(svg("circle", { class: "pl-ring", cx: n.x, cy: n.y, r: n.r + 5 }));
+    g.appendChild(svg("circle", { class: "pl-dot", cx: n.x, cy: n.y, r: n.r }));
+    if (n.kind === "project") {
+      g.appendChild(svg("text", { x: n.x, y: n.y + 4, "text-anchor": "middle" }, planCut(n.label, 9)));
+    } else if (n.kind === "product") {
+      planLines(n.label, n.chars).forEach(function (line, i) {
+        g.appendChild(svg("text", { x: n.x, y: n.y + n.r + 16 + i * 14, "text-anchor": "middle" }, line));
+      });
+    } else if (n.kind === "stage") {
+      g.appendChild(svg("text", { x: n.x + 18, y: n.y + 4 }, n.label));
+    } else {
+      g.appendChild(svg("text", { x: n.x + 14, y: n.y + 4 }, planCut(n.label, n.chars)));
+    }
+    if (takes) {
+      var act = function () {
+        if (n.kind === "product") { ui.pl.selected = it.id === ui.pl.selected ? null : it.id; safely("plan", renderPlan); planFocusNode("product", it.id); }
+        else planShowStep(it.id);
+      };
+      g.addEventListener("click", function (ev) { if (!ui.pl.dragged) act(); ev.stopPropagation(); });
+      g.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); act(); } });
+      g.setAttribute("data-id", String(it.id));
+    }
+    return g;
+  }
+
+  function planFocusNode(kind, id) {
+    var el = $("pl-net").querySelector(".pl-" + kind + "[data-id=\"" + String(id) + "\"]");
+    if (el && typeof el.focus === "function") el.focus();
+  }
+
+  function planShowStep(id) {
+    var row = $("pl-step-" + id);
+    if (!row) return;
+    row.setAttribute("data-flash", "true");
+    window.setTimeout(function () { row.removeAttribute("data-flash"); }, 1600);
+    row.focus();
+  }
+
+  function planApplyView() {
+    var pl = ui.pl, root = $("pl-net").querySelector("svg");
+    if (!root || !pl.size) return;
+    var v = pl.view || { k: 1, x: 0, y: 0 };
+    var w = pl.size.w / v.k, hgt = pl.size.h / v.k;
+    root.setAttribute("viewBox", [v.x, v.y, w, hgt].map(function (n) { return Math.round(n * 10) / 10; }).join(" "));
+    root.style.aspectRatio = pl.size.w + " / " + pl.size.h;
+  }
+
+  function planZoomAt(factor, clientX, clientY) {
+    var pl = ui.pl, root = $("pl-net").querySelector("svg");
+    if (!root || !pl.size) return;
+    var v = pl.view || { k: 1, x: 0, y: 0 }, rect = root.getBoundingClientRect();
+    var fx = rect.width ? (clientX - rect.left) / rect.width : 0.5, fy = rect.height ? (clientY - rect.top) / rect.height : 0.5;
+    var k = Math.max(0.5, Math.min(4, v.k * factor));
+    var px = v.x + fx * pl.size.w / v.k, py = v.y + fy * pl.size.h / v.k;
+    pl.view = { k: k, x: px - fx * pl.size.w / k, y: py - fy * pl.size.h / k };
+    planApplyView();
+  }
+
+  function planZoom(factor) {
+    var rect = $("pl-net").getBoundingClientRect();
+    planZoomAt(factor, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  }
+
+  function renderPlanDetail(products) {
+    var pl = ui.pl, host = $("pl-detail");
+    var open = products.filter(function (x) { return x.product.id === pl.selected; })[0];
+    if (!open) { replace(host, emptyState("div", "Choose a product", "Its stages and steps open below the tree, with its numbers and its worth.")); return; }
+    var q = open.product, n = isObject(q.numbers) ? q.numbers : {};
+    var audience = { en: "English", de: "German", both: "English and German" }[q.audience] || "";
+    replace(host, [
+      h("div", { class: "pl-detail-head" },
+        h("h3", { class: "pl-detail-title", text: q.title + " · line #" + q.line }),
+        h("p", { class: "hint", text: [q.template, q.stage ? "in " + q.stage : q.status, audience ? "speaks " + audience : ""].filter(Boolean).join(" · ") })),
+      h("p", { class: "pl-numbers", text: "Views " + (n.views || 0) + " · favorites " + (n.favorites || 0) + " · orders " + (n.orders || 0) + " · pins " + (n.pins || 0) + " · Bluesky posts " + (n.posts || 0) + " · blog posts " + (n.blog || 0) }),
+      planWorthForm(q),
+      arr(q.stages).map(function (s) {
+        var state = s.status !== "open" ? s.status : s.current ? "now" : "later";
+        return h("section", { class: "pl-stage", "data-status": s.status, "data-current": s.current ? "true" : null },
+          h("h4", { class: "pl-stage-title", text: s.title + " · " + state + (s.total ? " (" + s.done + " of " + s.total + ")" : "") }),
+          arr(s.steps).length ? h("ul", { class: "pl-steps" }, arr(s.steps).map(planStepRow)) : h("p", { class: "muted", text: s.stage === "maintain" ? "Its recurring steps come once the launch is done." : "No steps." }));
+      }),
+    ]);
+  }
+
+  // A promise to the owner is no step Ember takes: the steps in front of it carry it until it is kept.
+  function planStepState(st) {
+    if (st.status !== "open") return st.status;
+    if (st.kind === "promise") return "promised";
+    return st.waiting ? PLAN_WAIT[st.waiting] || st.waiting : "ready";
+  }
+
+  function planStepRow(st) {
+    var row = h("li", { class: "pl-step", id: "pl-step-" + st.id, tabindex: "-1", "data-status": st.status, "data-waiting": st.waiting || null, "data-kind": st.kind },
+      h("span", { class: "pl-step-state", text: planStepState(st) }),
+      h("span", { class: "pl-step-title", text: st.title }),
+      st.weight !== null && st.weight !== undefined ? h("span", { class: "pl-step-weight", text: "weight " + st.weight }) : null,
+      st.due ? h("span", { class: "muted", text: "due " + fmtDay(st.due) }) : null,
+      st.stale ? h("span", { class: "pl-stale", text: "ready " + Math.floor(st.age_days) + " days" }) : null,
+      planPinButton(st));
+    if (st.why) row.appendChild(h("p", { class: "pl-why muted", text: st.why }));
+    else if (st.status !== "open" && st.result) row.appendChild(h("p", { class: "pl-why muted", text: st.result }));
+    return row;
+  }
+
+  function planPinButton(st) {
+    if (st.status !== "open" || st.kind === "promise" || st.kind === "owner") return null;
+    var button = h("button", { type: "button", class: "btn btn-small", "aria-pressed": st.pinned ? "true" : "false", text: st.pinned ? "Unpin" : "Pin" });
+    button.addEventListener("click", function () { pinPlanStep(st.id, !st.pinned, button); });
+    return button;
+  }
+
+  function pinPlanStep(id, pinned, button) {
+    button.disabled = true;
+    request("POST", "api/plan/steps/" + encodeURIComponent(String(id)) + "/pin", { pinned: pinned }).then(function (res) {
+      if (!res.ok) throw httpError(res);
+      setStatusText("pl-status", pinned ? "Pinned. Once the tree steers, a pinned step comes first." : "Unpinned.", "ok");
+      loadPlan();
+    }).catch(function (err) {
+      button.disabled = false;
+      setStatusText("pl-status", "Couldn't save it: " + errorText(err), "error");
+    });
+  }
+
+  function planWorthForm(q) {
+    var mine = q.owner_worth !== null && q.owner_worth !== undefined;
+    var input = h("input", { type: "number", id: "pl-worth", min: "0.5", max: "10", step: "0.1", inputmode: "decimal", value: mine ? String(q.owner_worth) : "", placeholder: String(q.worth_code), "aria-describedby": "pl-worth-hint" });
+    var save = h("button", { type: "button", class: "btn", text: "Set worth" });
+    var clear = mine ? h("button", { type: "button", class: "btn btn-ghost", text: "Use Ember's code's" }) : null;
+    save.addEventListener("click", function () {
+      var value = input.value.trim() === "" ? null : Number(input.value);
+      if (value !== null && !(value >= 0.5 && value <= 10)) { setStatusText("pl-status", "Give a worth from 0.5 to 10.", "error"); input.focus(); return; }
+      setPlanWorth(q.id, value, save);
+    });
+    if (clear) clear.addEventListener("click", function () { setPlanWorth(q.id, null, clear); });
+    return h("div", { class: "field pl-worth" },
+      h("label", { for: "pl-worth", text: "Worth" + (mine ? " (yours)" : "") }),
+      h("div", { class: "pl-worth-row" }, input, save, clear),
+      h("p", { class: "hint", id: "pl-worth-hint", text: "Ember's code: " + q.worth_code + " (it could earn $" + q.could_earn + " a month, × its chance " + q.chance + "). Yours replaces it, from 0.5 to 10: $5 a month is about 2, $20 about 4.6, $60 about 7.4." }));
+  }
+
+  function setPlanWorth(id, worth, button) {
+    button.disabled = true;
+    request("POST", "api/plan/products/" + encodeURIComponent(String(id)) + "/worth", { worth: worth }).then(function (res) {
+      if (!res.ok) throw httpError(res);
+      setStatusText("pl-status", worth === null ? "Ember's code's worth counts again." : "Saved: worth " + worth + ".", "ok");
+      loadPlan();
+    }).catch(function (err) {
+      button.disabled = false;
+      setStatusText("pl-status", "Couldn't save it: " + errorText(err), "error");
+    });
+  }
+
+  function renderPlanPicks(d) {
+    var picks = arr(d.picks);
+    if (!picks.length) { replace($("pl-picks"), h("p", { class: "muted", text: "No cycle has run with the tree yet." })); return; }
+    replace($("pl-picks"), h("div", { class: "table-wrap" }, h("table", { class: "pl-table" },
+      h("thead", null, h("tr", null, ["Cycle", "When", "Kind", "The cycle worked on", "The tree would have taken", ""].map(function (t) { return h("th", { scope: "col", text: t }); }))),
+      h("tbody", null, picks.map(function (p) {
+        var worked = p.kind === "venture" ? "a venture" : p.line_title ? p.line_title + " (#" + p.line + ")" : p.worked ? "line #" + p.worked : "no line";
+        var tree = p.step ? p.step_title + " · " + (p.product_title || "line #" + p.product) : sentence(PLAN_DECIDED[p.decided] || p.decided);
+        return h("tr", { "data-agrees": p.agrees ? "true" : "false" },
+          h("td", { text: "#" + p.cycle }), h("td", { text: fmtDateTime(p.at) }), h("td", { text: p.kind }),
+          h("td", { text: worked }), h("td", { text: tree }),
+          h("td", { text: p.step ? (p.agrees ? "same product" : "another product") : "" }));
+      })))));
+  }
+
+  function initPlan() {
+    var pl = ui.pl, host = $("pl-net");
+    $("pl-refresh").addEventListener("click", loadPlan);
+    $("pl-zoom-in").addEventListener("click", function () { planZoom(1.25); });
+    $("pl-zoom-out").addEventListener("click", function () { planZoom(0.8); });
+    $("pl-fit").addEventListener("click", function () { pl.view = { k: 1, x: 0, y: 0 }; planApplyView(); });
+    // Ctrl (or Cmd) and the wheel zoom; the wheel alone scrolls the page, as everywhere else
+    host.addEventListener("wheel", function (ev) {
+      if (!(ev.ctrlKey || ev.metaKey) || !pl.size) return;
+      ev.preventDefault();
+      planZoomAt(ev.deltaY < 0 ? 1.15 : 0.87, ev.clientX, ev.clientY);
+    }, { passive: false });
+    var drag = null;
+    host.addEventListener("pointerdown", function (ev) {
+      // a mouse drags the network; a finger scrolls the box (a phone shows it wider than the screen) and the page
+      if (!pl.size || ev.button !== 0 || ev.pointerType !== "mouse") return;
+      drag = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, view: pl.view || { k: 1, x: 0, y: 0 }, moved: false };
+      pl.dragged = false;
+    });
+    host.addEventListener("pointermove", function (ev) {
+      if (!drag || ev.pointerId !== drag.id) return;
+      var root = host.querySelector("svg");
+      if (!root) return;
+      var rect = root.getBoundingClientRect(), dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+      if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+      if (!drag.moved) { drag.moved = true; pl.dragged = true; host.setPointerCapture(ev.pointerId); host.setAttribute("data-dragging", "true"); }
+      var scale = rect.width ? pl.size.w / drag.view.k / rect.width : 1;
+      pl.view = { k: drag.view.k, x: drag.view.x - dx * scale, y: drag.view.y - dy * scale };
+      planApplyView();
+    });
+    var end = function (ev) {
+      if (!drag || ev.pointerId !== drag.id) return;
+      if (drag.moved && host.hasPointerCapture(ev.pointerId)) host.releasePointerCapture(ev.pointerId);
+      host.removeAttribute("data-dragging");
+      drag = null;
+      window.setTimeout(function () { pl.dragged = false; }, 0);
+    };
+    host.addEventListener("pointerup", end);
+    host.addEventListener("pointercancel", end);
+  }
+
   // ------------------------------------------------------------------ tabs
 
-  var TABS = ["overview", "ledger", "ventures", "roadmap", "library", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
+  var TABS = ["overview", "ledger", "ventures", "roadmap", "plan", "library", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
   var MIND_TABS = ["strategy", "playbook", "lessons", "identity", "journal", "reviews"];  // 0.30.0: the playbook
   var VENTURE_VIEWS = ["pipeline", "running"];  // 0.27.0
 
@@ -10322,6 +10733,7 @@
     if (name === "workspace") { ui.ws.visit = true; refreshWorkspace(); }
     if (name === "ventures") loadVentures();
     if (name === "roadmap") loadRoadmap();
+    if (name === "plan") loadPlan();
     if (name === "library") loadLibrary();
     if (name === "inbox" && ui.chat.stick) scrollChatToEnd();  // it can't scroll while the tab is hidden
   }
@@ -10422,6 +10834,7 @@
   initProjects();
   initVentures();
   initRoadmap();
+  initPlan();
   initLibrary();
   initWorkspace();
   selectVentureView(ui.vtView, false);

@@ -125,15 +125,17 @@ class Parts:
     def json(self) -> dict[str, Any]:
         return {k: (round(v, 3) if isinstance(v, float) else v) for k, v in asdict(self).items()}
 
-    def text(self) -> str:
-        """The weight in words, for the owner's Plan tab and the diagnostics."""
+    def text(self, carried_title: str | None = None) -> str:
+        """The weight in words, for the owner's Plan tab and the diagnostics (``carried_title``: the title of the step
+        whose weight it carries, else its number)."""
         said = (
-            f"worth {self.worth:g} × kind {self.kind:g}"
+            f"worth {self.worth:.2g} × kind {self.kind:g}"
             + (f" × channel {self.channel:g}" if self.channel != 1.0 else "")
-            + f" × (1 + urgency {self.urgency:g} + age {self.age:g} + momentum {self.momentum:g}) = {self.own:.1f}"
+            + f" × (1 + urgency {self.urgency:.2g} + age {self.age:.2g} + momentum {self.momentum:g}) = {self.own:.1f}"
         )
         if self.carried_from is not None and self.carried > self.own:
-            said += f"; carries {self.carried:.1f} from step #{self.carried_from} waiting on it"
+            source = f'"{carried_title}"' if carried_title else f"step #{self.carried_from}"
+            said += f"; carries {self.carried:.1f} from {source}, which waits on it"
         return said
 
 

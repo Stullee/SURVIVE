@@ -160,6 +160,19 @@ a file's text from before an overwrite or delete, the workshop's budget hold no
 longer refuses runs late in the day, and **Keep as instruction** on your
 messages in the Inbox turns one into a standing instruction.
 
+0.34.0 starts Release 2: one plan tree under your goal that will decide what
+Ember works on next. Your goal sits at the top; under it each platform (Etsy,
+KDP, Printify, the website, the channels), each product line as a product, and
+each product's stages (research, create, release, launch, maintain) with small
+steps whose checks Ember's code reads from her records, so a stage closes only
+on a result. A promise that names a project becomes a step of that product. In
+this version the tree runs in the shadow: every cycle records the step it would
+have taken, with its weight's parts, next to what READY took, so a week of real
+cycles can tune the weights before the tree steers. The new **Plan** tab shows
+the tree as a floating node network, the step the tree would take now, what
+waits on you and the shadow picks; there you can pin a step or set a product's
+worth.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

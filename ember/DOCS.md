@@ -1225,6 +1225,68 @@ kept for yours. Your goal and the milestones Ember's code sets (its own goal,
 decision points, first tests and listing bars) take none of them. The agent reads
 your word on its next wake, and setting your goal wakes it like a decision.
 
+## Plan (preview)
+
+**Since 0.34.0** Ember's code keeps one **plan tree** under your goal. It is
+the first part of Release 2: the tree will decide what Ember works on next, in
+place of READY's ranking, the spending shares' turns and the chores her code
+generates. For now it runs **in the shadow**: Ember's cycles go exactly as
+before, and every cycle only records the step the tree would have taken.
+
+**The tree.** Your goal sits at the top. Under it are the projects, one for each
+platform (Etsy, KDP, Printify, the website, the channels), and under each project
+its products: every open product line is one, laid out the first time Ember's
+code sees it from its type's template (an Etsy download, a Printify product, a
+KDP book, website content). A product has five stages (research, create,
+release, launch, maintain), and each stage has small steps. A step or a stage
+counts as done only when its check passes in Ember's records: a demand note, a
+request to you, a live listing, pins, Bluesky posts and blog posts that link the
+product. A later stage done closes the ones before it. Once a product's launch is
+done, its maintain stage gets a recurring step for each channel its audience
+uses (a pin a week; a Bluesky post a week for English products; a blog post a
+month for German ones) and a fix whenever the quality check says improve. A
+missed one stays open and ages. A promise Ember makes you that names a project
+becomes a step of that product, and the steps in front of it carry it.
+
+**The Plan tab** shows:
+
+- **Now, if the tree steered**: the step the tree would take, and why. Next to
+  it are the three steps after it and what waits on you.
+- **The network**: your goal, each project in its own colour, each product as big
+  as its worth. Choose a product to open its stages and steps below it. Drag to
+  move it; Ctrl (or Cmd) and the mouse wheel zoom; **Fit** puts it back.
+- **The product you opened**: its stages and steps with their state, each step's
+  weight and how it was worked out, its numbers (views, favorites, orders, pins,
+  posts, blog posts) and its worth.
+- **Shadow picks**: for each cycle, what it worked on and the step the tree would
+  have taken instead.
+
+**Your part.** **Pin** a step to have it come first once the tree steers.
+**Set worth** gives a product your own worth, from 0.5 to 10, in place of the
+one Ember's code computes; **Use Ember's code's** takes yours back. Neither
+changes anything in Ember's cycles yet: they are recorded in the shadow picks.
+
+**How a step is weighed.** A product's worth is what it could earn a month (from
+Ember's revenue sub-goal for its line, else its venture's split, else its type's
+default), damped so that optimistic numbers count less ($5 a month is 2, $20 is
+4.6, $60 is 7.4), times its chance: 0.4 in research, 0.6 in create, 0.8 in
+release and 1 once it is live, and then, after 30 views, how it sells. A step's
+weight is that worth times its kind (shipping, launching, fixing and marketing
+1, creating 0.8) times its channel's results, times one plus its urgency (a
+promise at least 2; a defect the quality check found 2; a missed views bar makes
+the product's marketing urgent), its age (0.5 for each day it has waited ready)
+and momentum (1 for the product worked on last). A step carries the weight of
+the most important step waiting on it. Each cycle takes a pinned step first,
+then a promise due within a day, then a venture cycle when the venture share is
+behind, else the heaviest step; to leave the product it is on, another step must
+weigh 25% more, for up to three cycles in a row.
+
+**Good to know.** A product's audience (English, German or both) is guessed from
+its title and description, since no record holds a listing's language yet. A
+KDP book's marketing waits: pins, posts and the blog's product box can't link
+Amazon yet. The diagnostics report lists the tree, the shadow picks and the
+ranking the tree would take now.
+
 ## Library
 
 The **Library** tab is where you hand the agent reference material you find:
