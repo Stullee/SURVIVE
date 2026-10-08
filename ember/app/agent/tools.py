@@ -298,7 +298,8 @@ def _write_text(venture: bool) -> str:
         f"Create, overwrite, append to or delete a workspace text file (at most {WRITE_CHARS:,} characters a call: "
         f"a longer file {longer}, create then append, one part per reply; "
         f"{Limits().max_file_bytes // 1024} KB per file; {Limits().max_total_bytes // (1024 * 1024)} MB in total). "
-        f"Endings: .md .txt .csv .tsv .json .yaml .yml .html .css .xml{made}"
+        f"Endings: .md .txt .csv .tsv .json .yaml .yml .html .css .xml{made} restore undoes the last overwrite,"
+        " edit or delete."
     )
 
 
@@ -350,7 +351,7 @@ SPECS: dict[str, Spec] = {
             _write_text(venture=False),
             {
                 "path": _s("e.g. 'drafts/post.md'.", 200),
-                "mode": _s("", 10, enum=("create", "overwrite", "append", "edit", "delete", "copy")),
+                "mode": _s("", 10, enum=("create", "overwrite", "append", "edit", "delete", "copy", "restore")),
                 "content": Field(
                     "string",
                     "The text; for copy, the file to copy.",
@@ -361,7 +362,11 @@ SPECS: dict[str, Spec] = {
                 # 0.32.0: live, a fix of two formulas meant rewriting both 4 KB specs in parts of 2,500 characters,
                 # and the cycle's writes ran out halfway: both files were left cut off, unreadable to make_spreadsheet.
                 # No maxLength of its own (the fixed prompt's room): a call's texts together hold CALL_CHARS.
-                "find": Field("string", "For edit: text there once; content replaces it.", required=False),
+                "find": Field(
+                    "string", "For edit: text there once (or count times); content replaces it.", required=False
+                ),
+                # 0.33.0: live, a book's 48 weekly tables needed 7 more rows each: 48 edits, or none at all
+                "count": _i("", required=False, minimum=2),
             },
             per_cycle=10,
         ),
@@ -677,7 +682,7 @@ SPECS: dict[str, Spec] = {
             "Send your owner a short message for their inbox. Name the messages of theirs it answers: each stays in "
             "FROM YOUR OWNER until one of yours answers it. At most "
             f"{MESSAGES_PER_DAY} a day that answer none of theirs. A promise goes in commits, with "
-            "due: OBLIGATIONS keeps it until you close it.",
+            "due and project_id: OBLIGATIONS keeps it until you close it.",
             {
                 "text": _s("", 2_000),
                 "answers": _s(
@@ -689,6 +694,7 @@ SPECS: dict[str, Spec] = {
                 "due": _s(
                     f"YYYY-MM-DD the promise is due, within {obligations.PROMISE_DAYS} days.", 10, required=False
                 ),
+                "project_id": _i("", required=False),
             },
             per_cycle=2,
             reflect=True,
@@ -752,8 +758,8 @@ SPECS: dict[str, Spec] = {
         Spec(
             "draft",
             f"Have a long text file written in a call of its own (up to about {DRAFT_CHARS:,} characters, a few "
-            "cents to a dime): a guide, a planner's pages, a document's Markdown. Give a precise brief and the files "
-            "it builds on; it is saved in your workspace, none of it through your replies.",
+            "cents to a dime): a guide, a planner's pages, a document's Markdown. It is saved in your workspace, none "
+            "of it through your replies.",
             {
                 "path": _s("The text file to write, e.g. 'drafts/guide.md'.", 200),
                 "brief": _s("Purpose, readers, structure, length, tone and language.", ONE_REPLY_CHARS),
@@ -796,7 +802,7 @@ SPECS: dict[str, Spec] = {
             "Have code written and run for you in your workshop, a sandbox on Anthropic's servers (Python with "
             "pandas, matplotlib, pillow, reportlab, python-pptx, openpyxl and more; no internet), for what your "
             "make_ tools can't do: charts, PowerPoint files, data work, pictures drawn by code. Its files are "
-            "checked and kept in your workspace, its script in workshop/scripts/ (run it again with script). A run "
+            "checked and kept in your workspace, its script in workshop/scripts/. A run "
             "costs cents to dollars. Guide 'workshop' first.",
             {
                 "task": _s("Each file to make (name, size, format) and what is in it.", ONE_REPLY_CHARS),
@@ -877,7 +883,7 @@ SPECS: dict[str, Spec] = {
         Spec(
             "make_cost_statement",
             "A Nebenkostenabrechnung from your JSON (tenants, costs, Umlageschlüssel): an Excel file and its cover "
-            "picture, every number checked against Ember's own sums. Free; guide 'statements'.",
+            "picture, its numbers checked. Free; guide 'statements'.",
             # a .json and a .xlsx: make.cost_statement says so (the prompt has no room for more)
             {"source": _s("", 200), "output": _s("", 200)},
             per_cycle=3,
@@ -1184,11 +1190,10 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "propose_blog_post",
-            "Propose a post for your owner's blog on their own website, from a Markdown file in your workspace: its "
+            "Propose a post for your owner's blog on their own website, from your Markdown file: its "
             "front matter (slug, title, description, lead and the product it recommends) and its text. Ember's code "
-            "renders it in the site's design and, once your owner approves its preview, uploads it and adds it to the "
-            "blog's list. The same slug again replaces that post (a waiting request "
-            "for it is withdrawn). Guide 'blog' first. Free.",
+            "renders it and, once your owner approves its preview, uploads it to the blog. The same slug again "
+            "replaces that post (a waiting request for it is withdrawn). Guide 'blog' first. Free.",
             {
                 "source": _s("e.g. 'blog/bewerbung-nachfassen.md'.", 200),
                 "reason": _s("Why now, and what you expect.", 300, cut=True),
@@ -1241,7 +1246,7 @@ ORDINARY_VENTURE_FIELDS = ("venture_id", "learned", "stage", "next_question", "n
 ORDINARY_VARIANTS: dict[str, Spec] = {
     "venture_update": replace(
         SPECS["venture_update"],
-        description="Update a venture: learned (with sources) goes to its knowledge file; park one with a note. Its "
+        description="Update a venture: learned goes to its knowledge file; park one with a note. Its "
         "scores and business case are set in a venture cycle. Only your owner backs or kills one. Free.",
         fields={name: SPECS["venture_update"].fields[name] for name in ORDINARY_VENTURE_FIELDS},
     ),
@@ -1442,6 +1447,8 @@ class CycleTools:
     conversation_tokens: int = 0
     largest_step_tokens: int = 0
     policy_note: str = ""  # 0.13.0: what the owner's unlock did with the request just made (policy.apply)
+    # 0.33.0: the messages to the owner sent back once for a promise in their words only (_unrecorded_promise)
+    bounced: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -2010,16 +2017,21 @@ def _product(path: str, data: bytes) -> str:
 
 def _workspace_write(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     path, mode = args["path"], args["mode"]
+    if mode == "restore":
+        return _restore(ctx, conn, path)
+    if args.get("count") is not None and mode != "edit":
+        raise ToolError("count is for mode edit: how often find's passage is there")
+    kept = _keep_version(ctx, conn, path, mode)  # 0.33.0: what it held, before it changes
     if mode == "delete":
         ctx.workspace.delete(path)
-        return Outcome(True, f"Deleted {path}.", f"deleted {path}")
+        return Outcome(True, f"Deleted {path}.{_restorable(kept)}", f"deleted {path}")
     content = args.get("content")
     if not content:
-        raise ToolError("content is required unless mode is delete")
+        raise ToolError("content is required unless mode is delete or restore")
     if mode == "copy":
         return _copy(ctx, content.strip(), path)
     if mode == "edit":
-        return _edit(ctx, path, args.get("find") or "", content)
+        return _edit(ctx, path, args.get("find") or "", content, args.get("count"))
     if args.get("find"):
         raise ToolError("find is for mode edit: the passage it replaces")
     size = ctx.workspace.write(path, content, append=mode == "append", create_only=mode == "create")
@@ -2027,14 +2039,64 @@ def _workspace_write(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
     return Outcome(
         True,
         f"Wrote {path} ({size:,} bytes). Using {total / (1024 * 1024):.2f} of "
-        f"{ctx.workspace.limits.max_total_bytes // (1024 * 1024)} MB.",
+        f"{ctx.workspace.limits.max_total_bytes // (1024 * 1024)} MB.{_restorable(kept)}",
         f"{mode} {path}",
     )
 
 
-def _edit(ctx: ToolContext, path: str, find: str, content: str) -> Outcome:
+# 0.33.0: the earlier texts of each file Ember's code keeps (migration 0086), the newest first
+VERSIONS_KEPT = 5
+CHANGES = ("overwrite", "edit", "copy", "delete")
+
+
+def _keep_version(ctx: ToolContext, conn: Any, path: str, reason: str) -> bool:
+    """0.33.0: the text a workspace file holds, kept before workspace_write changes it (``reason``: overwrite, edit,
+    copy, delete or restore), so restore can bring it back; the newest VERSIONS_KEPT of each file. False when there is
+    nothing to keep (no such text file yet, or a change that loses nothing: create, append)."""
+    if reason not in (*CHANGES, "restore") or kind_of(path) != "text" or not ctx.workspace.exists(path):
+        return False
+    where, params = ctx.scope.where()
+    conn.execute(
+        "INSERT INTO workspace_versions (mode, session, path, content, reason, cycle_id, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (*params, path, ctx.workspace.read(path), reason, ctx.cycle_id or None, ctx.now()),
+    )
+    conn.execute(
+        f"DELETE FROM workspace_versions WHERE {where} AND path = ? AND id NOT IN (SELECT id FROM workspace_versions"
+        f" WHERE {where} AND path = ? ORDER BY id DESC LIMIT ?)",
+        (*params, path, *params, path, VERSIONS_KEPT),
+    )
+    return True
+
+
+def _restorable(kept: bool) -> str:
+    return " Its text before is kept: restore brings it back." if kept else ""
+
+
+def _restore(ctx: ToolContext, conn: Any, path: str) -> Outcome:
+    """0.33.0: a text file as it was before workspace_write last changed it; what it held until now is kept in turn,
+    so a second restore undoes the first."""
+    where, params = ctx.scope.where()
+    row = conn.execute(
+        f"SELECT * FROM workspace_versions WHERE {where} AND path = ? ORDER BY id DESC LIMIT 1", (*params, path)
+    ).fetchone()
+    if row is None:
+        raise ToolError(f"no earlier text of {path} is kept: only what workspace_write overwrote, edited or deleted")
+    _keep_version(ctx, conn, path, "restore")
+    size = ctx.workspace.write(path, row["content"])
+    when = str(row["created_at"])[:16].replace("T", " ")
+    return Outcome(
+        True,
+        f"Restored {path} ({size:,} bytes) as it was before the {row['reason']} of {when} UTC"
+        f" (cycle #{row['cycle_id']}). A second restore undoes this one.",
+        f"restore {path}",
+    )
+
+
+def _edit(ctx: ToolContext, path: str, find: str, content: str, expected: int | None = None) -> Outcome:
     """0.32.0: one passage of a text file replaced, the rest kept as it is: a small fix of a long file is one small
-    call (it took rewriting the file in parts of WRITE_CHARS)."""
+    call (it took rewriting the file in parts of WRITE_CHARS). 0.33.0: ``expected`` (count) times, each replaced: one
+    call changes a passage repeated through a file (live, a book's 48 weekly tables)."""
     if not find:
         raise ToolError("edit needs find: the passage to replace, exactly as the file holds it")
     text = ctx.workspace.read(path)
@@ -2046,10 +2108,16 @@ def _edit(ctx: ToolContext, path: str, find: str, content: str) -> Outcome:
             f"{path} doesn't hold find's passage"
             + (": it does with other spaces or line breaks, so copy them as workspace_read shows them" if near else "")
         )
-    if count > 1:
-        raise ToolError(f"find's passage is in {path} {count} times: give more of it around, so it is there once")
-    size = ctx.workspace.write(path, text.replace(find, content, 1))
-    return Outcome(True, f"Edited {path}: one passage replaced ({size:,} bytes now).", f"edit {path}")
+    if expected is not None and count != expected:
+        raise ToolError(f"find's passage is in {path} {count} times, not {expected}: nothing was changed")
+    if count > 1 and expected is None:
+        raise ToolError(
+            f"find's passage is in {path} {count} times: give more of it around, so it is there once, or count"
+            f" {count} to change each"
+        )
+    size = ctx.workspace.write(path, text.replace(find, content))
+    times = "one passage" if count == 1 else f"{count} passages"
+    return Outcome(True, f"Edited {path}: {times} replaced ({size:,} bytes now).{_restorable(True)}", f"edit {path}")
 
 
 def _copy(ctx: ToolContext, source: str, path: str) -> Outcome:
@@ -2169,7 +2237,12 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         raise ToolError(f"project #{row['id']} is {row['status']}, which is final")
     changes: dict[str, Any] = {}
     status = args.get("status")
-    if status not in CLOSED_STATUSES:  # 0.28.0: closing another line (a review's stop) is no work on it
+    # 0.28.0: closing another line (a review's stop) is no work on it; 0.33.0: nor is keeping its record (a note, its
+    # next step, its hypothesis, waiting): live, a Pinterest project's next step said "waiting on owner" for a day
+    # after its owner set it up, and the daily review read it as "never set up". Reopening it, a bet on it or moving it
+    # to a venture is its own cycle's work, and a cycle without a line yet takes the one it touches first.
+    work = status in ("idea", "active") or bool(args.get("bet")) or args.get("venture_id") is not None
+    if status not in CLOSED_STATUSES and (work or ctx.state.focus_project_id is None):
         _line(ctx, int(row["id"]), "update")
     if status in ("idea", "active") and status != row["status"]:
         held = ventures.owner_stopped(conn, ctx.scope, row["venture_id"])
@@ -2491,9 +2564,24 @@ def _venture_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     )
 
 
+# 0.33.0: what any cycle may keep of a venture another line's cycle found out about (venture_update's fields)
+KEPT_BY_ANY_CYCLE = frozenset({"venture_id", "learned", "note", "next_question", "stage"})
+
+
+def _kept_by_any_cycle(args: dict[str, Any], row: Any) -> bool:
+    """0.33.0: an update of a venture that is no venture cycle's work: what was learned, a note, its next question, or
+    parking an idea not backed yet (live, the cycle after the venture cycle that showed venture #23 couldn't work was
+    refused its park, and the venture stayed proposed)."""
+    given = {name for name, value in args.items() if value not in (None, "")}
+    stage = args.get("stage")
+    parks = stage == "parked" and row["stage"] in ventures.EXPLORING
+    return given <= KEPT_BY_ANY_CYCLE and (not stage or parks)
+
+
 def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     row = _open_venture(conn, ctx.scope, args["venture_id"])
-    _line_venture(ctx, conn, int(row["id"]), "update")  # 0.28.0
+    if not _kept_by_any_cycle(args, row):  # 0.33.0
+        _line_venture(ctx, conn, int(row["id"]), "update")  # 0.28.0
     vid, current = row["id"], row["stage"]
     changes: dict[str, Any] = {}
     for name in ("pitch", "next_question", *ventures.CASE_FIELDS):
@@ -3481,6 +3569,9 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
         raise ToolError(f"your owner hasn't read your last {MAX_UNREAD_MESSAGES} messages yet")
     named = list(dict.fromkeys(int(n) for n in re.findall(r"\d{1,9}", args.get("answers") or "")))[:20]
     promised = _promise(ctx, args)
+    about = _promised_line(ctx, conn, args.get("project_id"), promised is not None)
+    if promised is None:  # 0.33.0
+        _unrecorded_promise(ctx, conn, args["text"])
     # 0.12.0: at most MESSAGES_PER_DAY a day that answer none of the owner's (the prompt's "once a day" was prose)
     if (
         not store.answerable(conn, ctx.scope, named)
@@ -3495,14 +3586,19 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     answered = store.mark_answered(conn, ctx.scope, named, message_id)
     text = f"Message #{message_id} is in your owner's inbox."
     again = obligations.repeated_promise(conn, ctx.scope, *promised) if promised is not None else None
+    on = f" on line #{about}" if about is not None else ""
     if again is not None:  # 0.24.0: no second obligation for the same promise
+        named_now = about is not None and obligations.name_line(conn, int(again["id"]), about)  # 0.33.0
         text += (
-            f" Its promise repeats your open promise #{again['id']} (due {again['due']}): no new obligation; close "
-            f"#{again['id']} with obligation_done once kept."
+            f" Its promise repeats your open promise #{again['id']} (due {again['due']}"
+            f"{', now' + on if named_now else ''}): no new obligation; close #{again['id']} with obligation_done once"
+            " kept."
         )
     elif promised is not None:
-        made = obligations.promise(conn, ctx.scope, ctx.cycle_id, message_id, promised[0], promised[1], ctx.now())
-        text += f" Your promise is obligation #{made}, due {promised[1]}: close it with obligation_done once kept."
+        made = obligations.promise(
+            conn, ctx.scope, ctx.cycle_id, message_id, promised[0], promised[1], ctx.now(), about
+        )
+        text += f" Your promise is obligation #{made}, due {promised[1]}{on}: close it with obligation_done once kept."
     if answered:
         text += f" It answers {_numbers(answered)}: they leave FROM YOUR OWNER."
     wrong = [n for n in named if n not in answered]
@@ -3517,6 +3613,47 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
 
 def _numbers(ids: list[int]) -> str:
     return ", ".join(f"#{i}" for i in ids)
+
+
+# 0.33.0: words that promise later work. Live, "Next ordinary cycle I'll finish the Haushaltsbuch 2027 interior",
+# "coming next cycle" and "Today's focus: finishing and sending the ... proposal" were said in three messages of
+# 2026-10-07 with no commits: no obligation kept them, and nothing was sent.
+PROMISE_WORDS = re.compile(
+    r"\bnext (?:ordinary |marketing |venture )?cycle\b|\b(?:coming|comes) (?:today|tomorrow|tonight|this week)\b"
+    r"|\btoday'?s focus\b|\bwill (?:re)?(?:check|send|publish|post|finish|propose|report|deliver|ship|fix)\b"
+    r"|\bn[äa]chste[nr]? (?:zyklus|runde)\b|\bkommt (?:heute|morgen)\b",
+    re.IGNORECASE,
+)
+QUOTED = re.compile(r'"[^"]*"|“[^”]*”|„[^“”]*[“”]')
+
+
+def _unrecorded_promise(ctx: ToolContext, conn: Any, text: str) -> None:
+    """0.33.0: a message whose words promise later work but whose promise isn't recorded (commits) goes back once;
+    sent again unchanged, it goes out (its words promised nothing after all). A message that reports on an open
+    promise (#n) goes out."""
+    said = PROMISE_WORDS.search(QUOTED.sub(" ", text))  # what it quotes (its owner's words) promises nothing
+    key = " ".join(text.split())
+    if said is None or key in ctx.state.bounced or _reports_promise(ctx, conn, text):
+        return
+    ctx.state.bounced.add(key)
+    raise ToolError(
+        f'your message promises later work ("{said.group(0)}") but records no promise: put what you promise in '
+        "commits, with due and project_id, so OBLIGATIONS keeps it until it is kept; send it again unchanged if it "
+        "promises nothing"
+    )
+
+
+def _promised_line(ctx: ToolContext, conn: Any, project_id: int | None, promises: bool) -> int | None:
+    """0.33.0: the open project a message's promise is about (project_id), or None; raises ToolError. Live, a
+    promise had no line: the KDP book promised three times never got a cycle of its line."""
+    if project_id is None:
+        return None
+    if not promises:
+        raise ToolError("project_id names the project a promise is about: give commits and due with it")
+    row = store.project(conn, ctx.scope, project_id)
+    if row is None or row["status"] not in store.OPEN_STATUSES:
+        raise ToolError(f"project #{project_id} isn't one of your open projects")
+    return int(project_id)
 
 
 def _promise(ctx: ToolContext, args: dict[str, Any]) -> tuple[str, str] | None:
@@ -3579,8 +3716,6 @@ def _obligation_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
             answered.append(f"#{number} is your owner's message, which your message #{by} answered: nothing to close")
         elif row is None or row["status"] != "open":
             refused.append(_not_open(conn, ctx.scope, number, row))
-        elif (other := _other_line(ctx, conn, row)) is not None:  # 0.28.0
-            refused.append(f"#{number} is line #{other}'s: it closes in a cycle on that line")
         elif row["kind"] == "promise" and not obligations.told_since(conn, ctx.scope, row["message_id"]):
             refused.append(
                 f"#{number} is a promise: tell your owner it is kept (or why not) with message_owner first, naming "
@@ -3605,16 +3740,6 @@ def _answered_by(conn: Any, scope: AgentScope, number: int) -> int | None:
         f"SELECT answered_by FROM messages WHERE id = ? AND {where} AND sender = 'owner'", (number, *params)
     ).fetchone()
     return int(found["answered_by"]) if found is not None and found["answered_by"] else None
-
-
-def _other_line(ctx: ToolContext, conn: Any, row: Any) -> int | None:
-    """0.28.0: the other product line a decision or a miss is about, in a cycle on one line (None when it is this
-    line's, of no line, or the cycle has none yet)."""
-    line = ctx.state.focus_project_id
-    if not ctx.state.one_line or line is None or row["kind"] == "promise":
-        return None
-    owed = obligations.owed(conn, ctx.scope, row).line
-    return owed if owed is not None and owed != line else None
 
 
 def _not_open(conn: Any, scope: AgentScope, number: int, row: Any) -> str:

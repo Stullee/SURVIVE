@@ -25,7 +25,9 @@ from ..integrations import etsy_publisher, site_publisher
 from . import metrics
 from .store import AgentScope
 
-ENOUGH = 3  # reach actions for a product line before too few views count against the product itself
+# Reach actions for a product line before too few views count against the product itself (0.33.0: ones that bring
+# visitors, Funnel.traffic: a listing edit is reach, yet changes nothing for a listing nobody sees)
+ENOUGH = 3
 SEEN_VIEWS = 10  # fewer views than this: not seen yet (the listing test's day-7 bar)
 _LISTING = re.compile(r"etsy\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?listing/(\d+)", re.IGNORECASE)
 
@@ -54,6 +56,13 @@ class Funnel:
         return self.posts + self.pins + self.bluesky + self.edits
 
     @property
+    def traffic(self) -> int:
+        """0.33.0: what was done to bring visitors to its listings: blog posts, pins and Bluesky posts. Live, the
+        lines' own title and tag edits (most of their reach: 10 and 9 on lines #3 and #5) made them fairly tested,
+        and their day-14 bars would have parked them while nobody had been brought to them."""
+        return self.posts + self.pins + self.bluesky
+
+    @property
     def stage(self) -> str:
         if not self.listings:
             return "not_listed"
@@ -80,7 +89,7 @@ class Funnel:
             f"{self.posts} blog post(s), {self.pins} pin(s), {self.bluesky} Bluesky post(s),"
             f" {self.edits} listing edit(s)"
         )
-        enough = "" if self.reach >= ENOUGH else f": less than the {ENOUGH} a fair test needs"
+        enough = "" if self.traffic >= ENOUGH else f": less than the {ENOUGH} a fair test needs (not edits)"
         return (
             f"funnel: {len(self.listings)} live listing(s), {self.views} views, {self.favorites} favorites,"
             f" {self.orders} orders: {STAGES[self.stage]} · reach done: {reach}{enough}"

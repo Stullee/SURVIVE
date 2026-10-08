@@ -134,6 +134,7 @@ TABLES = (
     "quality_checks",
     "observations",
     "memory_versions",
+    "workspace_versions",  # 0.33.0
     "lesson_pins",
     "research_checks",
     "research_sources",

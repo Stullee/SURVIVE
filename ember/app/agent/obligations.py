@@ -13,7 +13,8 @@ bug 1: and a backed venture's first test due within a week unmet, with what is a
 strategy that names a parked or killed venture, ``stale_strategy``: live, it named dropshipping as the priority long
 after the agent had parked it, and every plan read it). The plan shows
 them first and never cuts them; a pressing one (``pressing``) makes a wake cycle an ordinary one rather than a
-venture cycle. The agent closes a promise, decision or miss with
+venture cycle (0.33.0: a promise or a decision, the owner's; a promise names the line it is about, and READY puts a
+line with one due soon first). The agent closes a promise, decision or miss with
 ``obligation_done``, saying what it did; a promise only once its owner has heard from it since, and a miss also closes
 when a milestone replaces it.
 """
@@ -41,6 +42,10 @@ MAX_BYTES = 2_600
 PROMISE_DAYS = 14  # a promise is due within this many days
 PRESSING_OVERDUE_DAYS = 3  # a promise overdue this long still makes the cycle an ordinary one
 PRESSING_NEW_DAYS = 2  # a decision or a miss is pressing this long
+# 0.33.0: what the owner said or was promised decides what a cycle is; a miss of a milestone is ranked, not forced
+# (live, four misses on 2026-10-07 took the next cycles' lines and kept every marketing cycle away for two days)
+FORCING = ("promise", "decision")
+PROMISED_DAYS = 2  # 0.33.0: a promise due this soon (or overdue) puts its line first in READY
 HEADING = "OBLIGATIONS (kept by Ember's code: deal with them first)"
 SAME_PROMISE_DAYS = 2  # 0.24.0: a promise due this close to an open one, with most of its words, repeats it
 SAME_WORDS = 0.6
@@ -110,14 +115,32 @@ def decision_what(r: sqlite3.Row) -> str:
 
 
 def promise(
-    conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, message_id: int, what: str, due: str, now: str
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    cycle_id: int,
+    message_id: int,
+    what: str,
+    due: str,
+    now: str,
+    project_id: int | None = None,
 ) -> int:
+    """A promise the agent made its owner; 0.33.0: with the line it is about (``project_id``), if it named one."""
     cursor = conn.execute(
-        "INSERT INTO obligations (mode, session, kind, what, due, created_at, cycle_id, message_id)"
-        " VALUES (?, ?, 'promise', ?, ?, ?, ?, ?)",
-        (scope.mode, scope.session, what, due, now, cycle_id, message_id),
+        "INSERT INTO obligations (mode, session, kind, what, due, created_at, cycle_id, message_id, project_id)"
+        " VALUES (?, ?, 'promise', ?, ?, ?, ?, ?, ?)",
+        (scope.mode, scope.session, what, due, now, cycle_id, message_id, project_id),
     )
     return int(cursor.lastrowid)
+
+
+def name_line(conn: sqlite3.Connection, obligation_id: int, project_id: int) -> bool:
+    """0.33.0: a promise made without a line gets the one its repetition names (once: migration 0085 fixes it)."""
+    cursor = conn.execute(
+        "UPDATE obligations SET project_id = ? WHERE id = ? AND kind = 'promise' AND status = 'open'"
+        " AND project_id IS NULL",
+        (project_id, obligation_id),
+    )
+    return cursor.rowcount == 1
 
 
 def repeated_promise(conn: sqlite3.Connection, scope: AgentScope, what: str, due: str) -> sqlite3.Row | None:
@@ -184,15 +207,29 @@ def told_since(conn: sqlite3.Connection, scope: AgentScope, message_id: int) -> 
 def pressing(conn: sqlite3.Connection, scope: AgentScope, today: date, messages: bool = True) -> list[str]:
     """What makes this wake cycle an ordinary one rather than a venture cycle: the owner's messages waiting for an
     answer (0.19.3: only with ``messages``, when the owner's message woke it; a venture cycle answers them first), a
-    promise due by tomorrow (or overdue for PRESSING_OVERDUE_DAYS at most), a decision or a miss of the last
-    PRESSING_NEW_DAYS days. Empty when nothing presses."""
+    promise due by tomorrow (or overdue for PRESSING_OVERDUE_DAYS at most) or a decision of the last PRESSING_NEW_DAYS
+    days (0.33.0: the owner's, FORCING; a miss presses no more, lines.kind). Empty when nothing presses."""
     found = []
     waiting = messages_waiting(conn, scope)
     if waiting and messages:
         found.append(f"{waiting} message{'s' if waiting != 1 else ''} of your owner's to answer")
     for r in open_rows(conn, scope):
-        if presses(r, today):
+        if r["kind"] in FORCING and presses(r, today):
             found.append(f"obligation #{r['id']} ({r['kind']})")
+    return found
+
+
+def promised(conn: sqlite3.Connection, scope: AgentScope, today: date) -> dict[int, list[tuple[int, str]]]:
+    """0.33.0: the lines with a promise to the owner due within PROMISED_DAYS or overdue, each with those promises
+    (number, due day): READY puts them first (lines.py), before the line in progress."""
+    last = (today + timedelta(days=PROMISED_DAYS)).isoformat()
+    found: dict[int, list[tuple[int, str]]] = {}
+    for r in open_rows(conn, scope):
+        if r["kind"] != "promise" or str(r["due"]) > last:
+            continue
+        line = owed(conn, scope, r).line
+        if line is not None:
+            found.setdefault(line, []).append((int(r["id"]), str(r["due"])))
     return found
 
 
@@ -226,26 +263,29 @@ MARKETING_EXECUTORS = frozenset(
 @dataclass(frozen=True)
 class Owed:
     """0.28.0: what an open obligation is about: its product line (None: of no line, so any cycle may meet it) and
-    whether it is a marketing cycle's work (else an ordinary cycle's)."""
+    whether it is a marketing cycle's work (else an ordinary cycle's). 0.33.0: whether it is the owner's (``forces``:
+    a promise to them, or their decision): only those decide what a cycle is and take a line; a miss is ranked."""
 
     line: int | None
     marketing: bool = False
+    forces: bool = False
 
 
 def owed(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> Owed:
-    """0.28.0: an open obligation's line and kind of work, from the records it points to (it has no columns of its own
-    for them): a decision by its request (ventures.request_line), a miss by its milestone (a line's bar, or a backed
-    venture's milestone while the venture has one open project). A decision on a pin, a post, a blog post, the link
-    page or a Reddit post and a push to bring buyers (gates.owes_push) are marketing work. A promise has no line: it is
-    made in an answer to the owner, often about another line than the cycle's. Nor has an obligation of a line that is
-    closed, or that the owner's park or kill stopped: no cycle works on it, so any cycle may close it."""
+    """0.28.0: an open obligation's line and kind of work, from the records it points to: a decision by its request
+    (ventures.request_line), a miss by its milestone (a line's bar, or a backed venture's milestone while the venture
+    has one open project). A decision on a pin, a post, a blog post, the link page or a Reddit post and a push to bring
+    buyers (gates.owes_push) are marketing work. A promise is made in an answer to the owner, often about another line
+    than the cycle's: 0.33.0, it has the line it names (project_id), and none without one. No obligation has the line
+    of one that is closed, or that the owner's park or kill stopped: no cycle works on it, so any cycle may close it."""
     if row["kind"] == "promise":
-        return Owed(None)
+        return Owed(_working(conn, scope, row["project_id"]), forces=True)
     if row["kind"] == "decision":
         request = conn.execute("SELECT * FROM approvals WHERE id = ?", (row["approval_id"],)).fetchone()
         if request is None:
-            return Owed(None)
-        return Owed(_working(conn, scope, ventures.request_line(conn, scope, request)), _markets(request))
+            return Owed(None, forces=True)
+        line = _working(conn, scope, ventures.request_line(conn, scope, request))
+        return Owed(line, _markets(request), forces=True)
     milestone = conn.execute(
         "SELECT project_id, venture_id FROM milestones WHERE id = ?", (row["milestone_id"],)
     ).fetchone()

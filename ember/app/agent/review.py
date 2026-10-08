@@ -201,7 +201,8 @@ def scorecard(
     channels: str = "",
 ) -> Scorecard:
     """The facts of the last WINDOW_DAYS days and today so far, as text for the review call. ``channels``: the
-    channels waiting for the owner's setup (0.24.0, loop._waiting_channels), with the shop's listings."""
+    channels waiting for the owner's setup (0.24.0) and, 0.33.0, the ones ready (loop._review_channels), with the shop's
+    listings."""
     today = clock.today()
     first = today - timedelta(days=WINDOW_DAYS)
     since = to_iso(clock.day_start(first))

@@ -781,7 +781,7 @@ a.btn-primary { color: var(--text); }
 .msg-state[data-state="waiting"] { color: var(--warning-text); font-weight: 600; }
 button.msg-state { font-size: 1em; text-decoration: none; }
 button.msg-state:hover { text-decoration: underline; }
-.msg-status .link-button[data-remove] { font-size: 1em; color: var(--muted); }
+.msg-status .link-button[data-remove], .msg-status .link-button[data-keep] { font-size: 1em; color: var(--muted); }
 
 /* What a message of the agent's promised (and the open promises beside the conversation). */
 .msg-promises { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--grid); display: grid; gap: 6px; }

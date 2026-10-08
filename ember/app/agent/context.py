@@ -147,6 +147,8 @@ MARKETING_BRIEF = (
 # 0.28.0: the line's funnel and reach in FOCUS (a marketing cycle's live listings too); 0.30.0: and the next step its
 # last cycle left
 LINE_FOCUS_BUDGET = 1_000
+# 0.33.0: the strategy in the work steps' brief, inside its budget (the strategy file holds 2,000 bytes at most)
+STRATEGY_BRIEF_BUDGET = 1_200
 # 0.12.0: the brief's copy of OBLIGATIONS (the plan's is never cut), on top of the brief's budget like the owner's.
 OBLIGATIONS_BRIEF_BUDGET = 1_000
 # 0.12.0: the lessons the owner pinned come first in LESSONS, on top of its budget (at most memory.MAX_PINS of them).
@@ -1052,7 +1054,10 @@ def brief(
     focus_text = "\n\n".join(focus_parts) or "None."
     steps = "\n".join(f"{i}. {flat(step)}" for i, step in enumerate(plan.get("steps", []), 1))
     money = f"\nPath to money: {flat(plan['money_path'])}" if plan.get("money_path") else ""
-    head = [("STATUS", status_text(s, dry_run)), ("PLAN", f"Goal: {flat(plan.get('goal'))}{money}\n{steps}")]
+    # 0.33.0: why the plan chose this (the work steps saw only its goal and steps: live, their answer to the owner on
+    # "why do you scatter" said "not a token problem" right below a plan that blamed "$1 cycles and thin memory")
+    why = f"Why: {flat(plan['assessment'])}\n" if plan.get("assessment") else ""
+    head = [("STATUS", status_text(s, dry_run)), ("PLAN", f"{why}Goal: {flat(plan.get('goal'))}{money}\n{steps}")]
     standing = instructions_section(s)
     owner, lines, too_long = _owner(s, OWNER_BUDGET)
     owners = [("FROM YOUR OWNER", owner)] if owner else []
@@ -1072,6 +1077,8 @@ def brief(
         *([("MARKETING CYCLE", MARKETING_BRIEF)] if s.marketing else []),  # 0.28.0
         *learned,  # before the FOCUS: a brief over its budget loses its end, and this section's room is its own
         ("FOCUS", focus_text),
+        # 0.33.0: the strategy the plan was made by (the work steps saw none unless they read it)
+        *([(STRATEGY_HEADING, cut(strategy, STRATEGY_BRIEF_BUDGET))] if (strategy := s.memory.get("strategy")) else []),
         (LESSONS_HEADING, lessons_text(s, 800)),
         ("WORKSPACE", "\n".join(s.workspace[:20]) or "Empty."),
         *researched,

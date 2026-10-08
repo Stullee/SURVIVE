@@ -38,7 +38,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
@@ -58,6 +58,7 @@ PRESS_HOURS = 24  # a pressing obligation takes its line for a cycle at most thi
 MAX_STREAK = prompts.LINE_STREAK  # 0.30.0: ordinary cycles in a row on one line before READY ranks it as usual
 HANDOFF_CHARS = 70  # 0.30.0: of a line's last handoff, as READY quotes it
 HANDOFF_FOCUS_CHARS = 300  # 0.30.0: as FOCUS quotes it
+REVIEW_WHY_CHARS = 240  # 0.33.0: of today's review's why on the line, as FOCUS quotes it
 HEADING = "Ranked by Ember's code. Take one (ready: its key), or say why none:"
 PRESSED_HEADING = "A pressing obligation of this line comes first: Ember's code takes it for this cycle."
 QUESTIONS = "This week's questions (keep them in mind; not items to take):"
@@ -131,18 +132,21 @@ def kind(
     run (a share, the burn mode, a shop) and ``marketable`` are the lines they may take; ``owed``: the pressing
     obligations; ``messages``: the owner woke it and their messages wait (0.19.3: they wait for what they asked).
 
-    What the owner and the pressing product work wait for comes first (an ordinary cycle), then a pressing push to
-    bring buyers to a line (a marketing cycle); else the share furthest behind its part of the day's spending, if one
-    is (ventures need nothing pressing), else an ordinary cycle."""
+    What the owner waits for comes first: their messages and a promise or decision of theirs that presses (an ordinary
+    cycle; a marketing one for their decision on a pin or a post); else the share furthest behind its part of the
+    day's spending, if one is (ventures need nothing pressing), else an ordinary cycle. 0.33.0: a miss (a missed
+    milestone, a push to bring buyers) decides nothing here: READY ranks its line. Live, four misses of 2026-10-07 made
+    every cycle an ordinary one for two days and took their lines one by one, while Pinterest had just been set up."""
     spent, ventured, marketed = spends
     v_turn = ventures_run and ventures.venture_turn(venture_share, spent, ventured)
     m_turn = markets and marketing_turn(share, spent, marketed)
     lines = set(marketable)
-    if messages or any(not (o.marketing and markets) for o in owed):
+    owners = [o for o in owed if o.forces]
+    if messages or any(not (o.marketing and markets) for o in owners):
         return Turn(ORDINARY, owed_first=v_turn or m_turn)
-    if any(o.line in lines for o in owed):
+    if any(o.line in lines for o in owners):
         return Turn(MARKETING)
-    if owed:  # a push for a line that can't be marketed now: what presses still comes before the ventures
+    if owners:  # their decision on a line that can't be marketed now: still before the ventures
         v_turn = False
     if v_turn and m_turn:
         behind = spent * share - 100 * marketed > spent * venture_share - 100 * ventured
@@ -165,8 +169,9 @@ def ready(
 ) -> list[Item]:
     """An ordinary plan's READY: the open lines the owner's park or kill doesn't stop, at most MAX_LINES, each with its
     jobs (what it owes, its milestone due, the critic's fixes, a missing demand note, building or scaling it), ranked
-    (_Facts.rank): a line a pressing obligation takes, one that owes something, (0.30.0) the line the newest ordinary
-    cycles worked on while it has work, a line today's review said to stop, one that only waits for the owner and one
+    (_Facts.rank): a line a pressing obligation takes (0.33.0: the owner's, a promise or a decision; a promise's line
+    first), (0.33.0) one with a promise due soon, (0.30.0) the line the newest ordinary cycles worked on while it has
+    work, one that owes something, a line today's review said to stop, one that only waits for the owner and one
     that just had MAX_STREAK cycles in a row after the others, this week's focus lines and the changes today's review
     asked for, one with a milestone due within DUE_DAYS, one with another task of its own, one that sells, the one
     worked on longest ago; and a new line in the explore burn mode (first while fewer than IN_FLIGHT lines are in
@@ -177,7 +182,10 @@ def ready(
     if not lines:
         return [Item(NEW, None, "start your first product line (project_create)")] if explore else []
     facts = _facts(conn, scope, today, lines, last=_last(conn, scope, marketing=False), markets=markets)
-    pressed = _pressed(conn, scope, [o for o in owed if not (o.marketing and markets)], set(lines), since)
+    # 0.33.0: only the owner's obligations take a line (a miss is ranked), a line promised soon before the rest
+    owners = [o for o in owed if o.forces and not (o.marketing and markets)]
+    owners.sort(key=lambda o: not (o.line in facts and facts[o.line].promised))
+    pressed = _pressed(conn, scope, owners, set(lines), since)
     if pressed is not None:
         f = facts[pressed]
         return [Item(LINE, pressed, f.text(markets), pressed=True, job=True)]
@@ -202,7 +210,8 @@ def marketing(
     """A marketing plan's READY: the open, unstopped lines with a live listing of Ember's own (an edit takes only
     those), or one Printify made while ``printify_links`` (a channel that links one is on: the owner's blog, whose post
     may recommend it, and 0.32.0: Bluesky and Pinterest, whose posts and pins took only Ember's own), at most
-    MAX_LINES, ranked: a line a pressing push takes, one that owes a push to bring buyers (gates.MARKET), (0.30.0) this
+    MAX_LINES, ranked: a line the owner's pressing decision on a pin or a post takes (0.33.0: a push to bring buyers
+    takes none, it ranks), one that owes a push to bring buyers (gates.MARKET; 0.33.0: day 7's too), (0.30.0) this
     week's focus lines (``today``: the weekly look's, weekly.focus), then by its funnel (not seen with too little reach
     done, selling, liked but not bought, seen but not liked, not seen though marketed), the one marketed longest ago
     first."""
@@ -212,7 +221,7 @@ def marketing(
         return []
     owes = _owes(conn, scope)
     pushes = {pid for pid, (_, market) in owes.items() if market}
-    pressed = _pressed(conn, scope, [o for o in owed if o.marketing], set(eligible), since)
+    pressed = _pressed(conn, scope, [o for o in owed if o.marketing and o.forces], set(eligible), since)  # 0.33.0
     last = _last(conn, scope, marketing=True)
     titles = {int(p["id"]): p for p in open_projects(conn, scope)}
     chosen = set(weekly.focus(conn, scope, today)) if today is not None else set()
@@ -227,7 +236,7 @@ def marketing(
 
     def job(pid: int) -> bool:
         f = funnels[pid]
-        return pid in pushes or (f.stage == "not_seen" and f.reach < reach.ENOUGH)
+        return pid in pushes or (f.stage == "not_seen" and f.traffic < reach.ENOUGH)
 
     if pressed is not None:
         return [Item(MARKET, pressed, text(pressed), pressed=True, job=True)]
@@ -235,7 +244,7 @@ def marketing(
     def rank(pid: int) -> tuple[Any, ...]:
         f = funnels[pid]
         unseen = f.stage == "not_seen"
-        stage = 0 if unseen and f.reach < reach.ENOUGH else _STAGE_RANK.get(f.stage, 4)
+        stage = 0 if unseen and f.traffic < reach.ENOUGH else _STAGE_RANK.get(f.stage, 4)
         return (pid not in pushes, pid not in chosen, stage, last.get(pid, ""), pid)
 
     return [Item(MARKET, pid, text(pid), job=job(pid)) for pid in sorted(eligible, key=rank)[:MAX_LINES]]
@@ -324,15 +333,22 @@ def recent(conn: sqlite3.Connection, scope: AgentScope, limit: int = 10) -> list
     ).fetchall()
 
 
-def focus_text(conn: sqlite3.Connection, scope: AgentScope, line: int, marketing: bool) -> str:
+def focus_text(
+    conn: sqlite3.Connection, scope: AgentScope, line: int, marketing: bool, today: date | None = None
+) -> str:
     """The work steps' FOCUS on the cycle's line: Ember's code keeps the tools on it, its funnel and the reach done
     for it, and in a marketing cycle its live listings (a pin, a post and an edit name one). 0.30.0: in an ordinary
     cycle, the next step the last cycle on the line left (the cycles between were often about other things), and on a
-    live line without an open bet, to bet on what the cycle's change brings (a bet settled is a case to learn from)."""
+    live line without an open bet, to bet on what the cycle's change brings (a bet settled is a case to learn from).
+    0.33.0: what today's review said of the line (``today``): the work steps saw no review, and live, the cycle whose
+    review said "no title or tag edits" on its line spent its steps on them."""
     found = [
         f"Your line this cycle: project #{line}. Ember's code keeps your tools on it: what another line needs waits for"
         " a cycle of its own."
     ]
+    judged = review_said(conn, scope, today, line) if today is not None else ""
+    if judged:
+        found.append(judged)
     said = handoffs(conn, scope).get(line) if not marketing else None
     if said is not None:
         quoted = json.dumps(_one_line(said[1], HANDOFF_FOCUS_CHARS), ensure_ascii=False)
@@ -384,6 +400,8 @@ class _Facts:
     neck: str = ""  # the bottleneck today's review named for it
     markets: bool = False  # marketing cycles run: a change for reach is theirs
     focused: bool = False  # this week has a focus line that doesn't only wait (the same for every line)
+    # 0.33.0: its promises to the owner due within obligations.PROMISED_DAYS or overdue (number, due day)
+    promised: list[tuple[int, str]] = field(default_factory=list)
 
     @property
     def change(self) -> bool:
@@ -434,10 +452,13 @@ class _Facts:
         """0.30.0: what it owes; the line in progress; then not a line to stop, one only waiting or one that just had
         its MAX_STREAK cycles; this week's focus and the review's changes; a milestone due; another task of its own;
         selling; the one worked on longest ago (0.28.0 went from what was owed and due straight to the one worked on
-        longest ago, so every cycle took another line)."""
+        longest ago, so every cycle took another line). 0.33.0: a promise to the owner due soon first, then the line
+        in progress, then what it owes: live, a missed milestone's obligation took a line two cycles into the KDP
+        book promised for the day after next, and the book wasn't finished."""
         return (
-            not self.owes,
+            not self.promised,
             not self.continues,
+            not self.owes,
             self.verdict == "stop",
             self.waits,
             self.rested,
@@ -451,8 +472,11 @@ class _Facts:
     def text(self, markets: bool) -> str:
         """What READY says of the line, the most pressing first (an item holds ITEM_CHARS)."""
         parts = [f"{self.title} [{self.status}]"]
-        if self.owes:
-            parts.append("owes " + ", ".join(f"obligation #{n}" for n in self.owes[:2]))
+        if self.promised:  # 0.33.0
+            parts.append("promised to your owner: " + ", ".join(f"#{n} due {due}" for n, due in self.promised[:2]))
+        others = [n for n in self.owes if n not in {p for p, _ in self.promised}]
+        if others:
+            parts.append("owes " + ", ".join(f"obligation #{n}" for n in others[:2]))
         if self.continues:  # 0.30.0
             nth = f"cycle {self.streak + 1} of at most {MAX_STREAK} in a row"
             said = f": next {json.dumps(_one_line(self.handoff, HANDOFF_CHARS), ensure_ascii=False)}"
@@ -511,6 +535,7 @@ def _facts(
     # 0.30.0: a bar of a line's listing test is Ember's code's check, not the cycle's work (_bar)
     milestones = [m for m in roadmap.open_milestones(conn, scope) if not roadmap.waiting(m, today) and not _bar(m)]
     running, streak = _streak(conn, scope)  # 0.30.0: the line in progress
+    promised = obligations.promised(conn, scope, today)  # 0.33.0
     said = handoffs(conn, scope)
     judged = verdicts(conn, scope, today)
     chosen = set(weekly.focus(conn, scope, today))
@@ -548,6 +573,7 @@ def _facts(
             verdict=verdict,
             neck=neck,
             markets=markets,
+            promised=promised.get(pid, []),
         )
     focused = any(f.focus and not f.waits for f in found.values())
     for f in found.values():
@@ -614,6 +640,22 @@ def verdicts(conn: sqlite3.Connection, scope: AgentScope, today: date) -> dict[i
         if isinstance(pid, int) and not isinstance(pid, bool) and v.get("verdict") in review.VERDICTS:
             found[pid] = (str(v["verdict"]), str(v.get("bottleneck") or ""))
     return found
+
+
+def review_said(conn: sqlite3.Connection, scope: AgentScope, today: date, line: int) -> str:
+    """0.33.0: today's review's verdict on a line, its bottleneck and why, for the work steps' FOCUS ("" without
+    one)."""
+    row = review.of_day(conn, scope, today)
+    try:
+        items = json.loads(row["verdicts"] or "[]") if row is not None else []
+    except ValueError:
+        return ""
+    for v in items if isinstance(items, list) else []:
+        if isinstance(v, dict) and v.get("project_id") == line and v.get("verdict") in review.VERDICTS:
+            neck = f" ({v['bottleneck']})" if v.get("bottleneck") else ""
+            why = _one_line(str(v.get("why") or ""), REVIEW_WHY_CHARS)
+            return f"Today's review of it: {v['verdict']}{neck}" + (f": {why}" if why else "")
+    return ""
 
 
 def fixes(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> list[str]:

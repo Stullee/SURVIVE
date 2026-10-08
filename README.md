@@ -146,6 +146,20 @@ and left them cut off), `make_spreadsheet` names a formula that points at a head
 row, and her release notes no longer start again with each update. See
 [the report](analysis-0.32.0/ember-diagnostics-0.32.0.md).
 
+0.33.0 makes what Ember promised you and what you decided come before what her
+code generates. A promise now names its project, and that project comes first;
+missed milestones no longer force cycles onto their lines or keep marketing away
+(on 2026-10-07 four of them took the next cycles for title and tag edits her
+review had ruled out, while a KDP book promised three times got none), and a
+missed day-7 views bar asks for buyers rather than new titles. A message that
+promises work only in words comes back to her to record it; any cycle may keep
+another line's record up to date; her work steps see why the plan chose the
+work, the review's verdict and her strategy; the review sees which channels are
+ready. `workspace_write` can change every copy of a passage at once and restore
+a file's text from before an overwrite or delete, the workshop's budget hold no
+longer refuses runs late in the day, and **Keep as instruction** on your
+messages in the Inbox turns one into a standing instruction.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

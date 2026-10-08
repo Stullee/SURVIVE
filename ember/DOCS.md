@@ -245,13 +245,23 @@ it runs one **wake cycle**:
    (a request you rejected or carried out, or one that failed), milestones
    Ember's code closed missed, overdue milestones and live listings with too
    few photos. It closes a promise only after telling you it is kept (or why
-   not). While something is pressing (a promise due by tomorrow, a decision or
-   miss of the last two days, or your unanswered message when the cycle is the
-   one it woke), a wake cycle is an ordinary one, not a venture or marketing
-   cycle. A pressing obligation of one line makes READY offer only that line
-   (once a day at most), and a pressing push to bring buyers to a line (a
-   missed bar of its listing test) makes the cycle a marketing cycle on it.
-   Each obligation names its line. A scheduled venture or marketing cycle
+   not). While something of yours is pressing (a promise due by tomorrow, a
+   decision of the last two days, or your unanswered message when the cycle is
+   the one it woke), a wake cycle is an ordinary one, not a venture or
+   marketing cycle, and a pressing obligation of one line makes READY offer
+   only that line (once a day at most). Each obligation names its line; since
+   0.33.0 a promise names the project it is about too, and READY puts a line
+   with a promise due within two days first, then the line in progress, then
+   the lines that owe something. A missed milestone no longer decides what a
+   cycle is or takes its line (live, four misses on one evening took the next
+   cycles' lines one by one and kept every marketing cycle away for two days):
+   READY ranks it, and a missed views bar's push to bring buyers is a marketing
+   cycle's work. A message of the agent's that promises later work in words
+   only ("next cycle I'll ...") comes back to it once, to record the promise.
+   Any cycle may keep another line's record up to date (a note, its next step,
+   waiting; parking an idea with what it learned; closing an obligation with
+   its evidence); work on another line (a request, a bet, reopening it) waits
+   for that line's cycle. A scheduled venture or marketing cycle
    answers your waiting messages first (0.19.3), and leaves what needs files or
    the shop to the next ordinary cycle.
 2. **Act**: it uses its tools, up to the *Tool steps per cycle* option: files in
@@ -360,6 +370,8 @@ Since 0.18.0 each project with live listings also shows its funnel (views,
 favorites, orders: where it is stuck) and the reach done for it (blog posts,
 pins, listing edits). Since 0.24.0 it also sees the channels that wait for your
 setup (such as Pinterest without its app secret), so it doesn't plan with them,
+and since 0.33.0 the ones that are ready (live, a review read an old "waiting on
+owner" note and wrote that Pinterest was never set up, hours after you had),
 and its roadmap says which milestones Ember's code checks and closes itself and
 whose dates don't move (a product line's listing test, your goal, the money goal).
 
@@ -501,7 +513,11 @@ agent's workspace:
   that leaves data out or (since 0.32.0) points at a title, a header or an
   empty cell below the data. To fix a few words or a formula of a long file,
   the agent replaces just that passage (`workspace_write`'s `edit`, 0.32.0)
-  instead of writing the file again in parts.
+  instead of writing the file again in parts; since 0.33.0 one edit can change
+  every copy of a passage when it says how many there are (a planner's 48
+  weekly tables). Ember's code also keeps the text a file held before the
+  agent overwrote, edited or deleted it (its newest 5), and `restore` brings it
+  back: live, an overwrite left a book's 24 KB interior as its 671-byte header.
 - **Listing photos** (`make_image`): up to three pages, sheets or pictures (or a
   zoomed-in region of one), fanned out next to a title, a subtitle and a badge,
   in Etsy's 4:3 size (3000 x 2250) or square or portrait; or a photo of words
@@ -627,7 +643,10 @@ what the run's code prints or looks at, and that one run read ten times more
 than the price allows for. So each call keeps back the most of its cap per
 run, its raised estimate, and 1.5 times the costliest of the last 20 workshop
 calls in 14 days (what they are known to cost, interrupted ones included),
-under the daily cap and the balance, and a run waits until that fits. **Reset
+under the daily cap and the balance. Since 0.33.0 a run keeps back no more than
+the day has left, and never less than its own worst case: live, a $2.76 hold
+refused every run once the day's spending passed about $3, though each run was
+priced below what was left. **Reset
 estimates** doesn't clear those runs; they stop counting after 14 days. A call
 can still cost more than all of this; Ember then books what it cost, makes no
 more workshop calls in that cycle, and raises the workshop's estimates. Runs
@@ -1101,21 +1120,23 @@ of the roadmap's 20 places:
 
 | Day | Bar | If missed, the agent owes |
 |---|---|---|
-| 7 | 10 views in all | fixing the titles, tags and category of its listings once |
+| 7 | 10 views in all | a push to bring buyers to its listings: pins, posts, a blog post (0.33.0; before, a fix of their titles, tags and category) |
 | 14 | 30 views and 2 favorites | parking the product line, with the numbers |
 | 21 | a first order | stopping building that product type |
 
 **Marketing before parking** (0.18.0). A listing nobody has seen hasn't been
 tested. A product line that misses its day-14 views with less than 3 things done
 to bring buyers to it (blog posts on your site that recommend its listings, pins
-that link them, changes of them carried out at Etsy) owes a push to bring buyers
+and Bluesky posts that link them; since 0.33.0 not changes of them carried out at
+Etsy, which bring nobody to a listing nobody sees) owes a push to bring buyers
 instead of a park, and gets one more bar at once: 30 views by day 28. Missed,
 that one parks it. The bars after it come 14 days later, each with at least a
 week to run.
 
 A miss is an obligation with that action, shown first in the agent's plan
-until it is done. Ember can't edit the listings Printify made, so a product
-line live only through Printify owes asking you once to fix them at day 7. A first order by day 21 sets a decision point of its own:
+until it is done. (Before 0.33.0 a product line live only through Printify owed
+asking you to fix its listings at day 7; its push now brings buyers, as a pin or
+a post may link a listing Printify made.) A first order by day 21 sets a decision point of its own:
 **Scale it: 5 variants or a bundle**, which the agent closes when they are
 live. The test's dates never move, except that a bar opening on or after its
 day is due the day after it opens. Only you drop its milestones: your drop
@@ -1405,7 +1426,11 @@ no longer shown); a study that failed three times stops until you press
   Ember to work in general, and messages for one-off things. While there are
   none, the card suggests a start ("Work on your own. Ask me only to approve
   something that leaves the container, or for money. ..."); it is only saved
-  when you press **Save**.
+  when you press **Save**. Since 0.33.0 each of your messages has **Keep as
+  instruction**: it opens the editor with the message added at the end. A
+  message leaves the agent's plans once it is answered (live, "Bluesky posts in
+  English only" was acknowledged in the morning and a German post proposed that
+  evening); the instructions stay in every plan.
 - **Inbox**: the agent's messages to you, and yours to it. Your message wakes
   it to read it (see the option **Wake Ember when you write**): 5 minutes after
   your last message or decision (at most 15 after the first, at least 30
@@ -2458,7 +2483,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.32.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.33.0 (by /u/your name)`.
 
 ## Amazon KDP
 

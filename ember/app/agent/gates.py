@@ -10,14 +10,16 @@ last sync read them (no views history is kept for this). 0.15.0: day 14's favori
 the agent's or the owner's places (roadmap.placed). A bar dropped (by the owner, or with a parked venture) ends the
 product line's test: no next bar is set.
 
-A missed bar is an obligation with its action: fix the titles, tags and category once (day 7); park the product line
-with the numbers (day 14: one obligation for its two bars); stop building that product type (day 21). A first order by
+A missed bar is an obligation with its action: fix the titles, tags and category once (day 7; 0.33.0: bring buyers to
+its listings, PUSH); park the product line with the numbers (day 14: one obligation for its two bars); stop building
+that product type (day 21). A first order by
 day 21 is met with its own action: scale it (5 variants or a bundle), a decision point Ember's code sets for the agent
 to close. Their dates never move (0.15.0: a bar that opens on or after its day is due the day after it opens) and only
 the owner drops them; a closed project takes its open ones with it.
 
 0.18.0: marketing before parking. A product line that misses its day-14 views bar with less reach than reach.ENOUGH
-(blog posts, pins and listing edits for its listings, reach.py) wasn't seen, so it wasn't tested: it owes a push to
+(blog posts, pins and Bluesky posts for its listings, reach.Funnel.traffic; 0.33.0: not listing edits, which bring no
+visitors) wasn't seen, so it wasn't tested: it owes a push to
 bring buyers (MARKET) instead of a park, and gets one more views bar, 30 views by day 28 ('retry_views'), set at once.
 Missed, that one parks it. The bars after it come RETRY_DAYS later than they would have, each with at least
 RETRY_FLOOR_DAYS to run.
@@ -55,16 +57,19 @@ class Gate:
     missed: str  # what the agent owes when it is missed
 
 
-# 0.15.0: a product line live only through Printify can't use propose_etsy_edit (it edits Ember's own listings)
-PRINTIFY_FIX = (
-    "ask your owner once (message_owner) to fix the titles, tags and category of its Printify listings, with yours,"
-    " then let them run"
+# 0.33.0: a day-7 miss owes a push to bring buyers (a marketing cycle's work: owes_push), not a fix of titles and tags.
+# Live, all five lines missed day 7 on 2026-10-07 with 0 to 3 views and no visitors brought, and each owed an edit of
+# listings its review had just called fine. (0.15.0's ask of the owner for a line live only through Printify went
+# with it: since 0.32.0 a pin or a post may link a listing Printify made.)
+PUSH = (
+    "bring buyers to its listings with pins, posts or a blog post: unseen listings need visitors, not new titles or"
+    " tags (its marketing cycles' work)"
 )
 PARK = "park the product line (its project) with the numbers, unless your owner says otherwise"
 # 0.18.0: a day-14 views miss with too little reach: nobody saw it, so it wasn't tested
 MARKET = (
-    f"bring buyers to its listings before its last views bar on day 28 (blog posts that recommend them, pins, better"
-    f" titles and tags: at least {reach.ENOUGH} in all); it wasn't seen, so it isn't parked yet"
+    f"bring buyers to its listings before its last views bar on day 28 (blog posts that recommend them, pins, posts:"
+    f" at least {reach.ENOUGH} in all); it wasn't seen, so it isn't parked yet"
 )
 GATES = (
     Gate(
@@ -73,8 +78,9 @@ GATES = (
         "views_total",
         10,
         "Day 7: 10 views",
-        "Its listings have 10 views in all by day 7 (Etsy's numbers). Missed: fix their titles, tags and category once",
-        "fix the titles, tags and category of its listings once (propose_etsy_edit), then let them run",
+        "Its listings have 10 views in all by day 7 (Etsy's numbers). Missed: bring buyers to them (pins, posts, a blog"
+        " post)",
+        PUSH,
     ),
     Gate(
         "day14_views",
@@ -147,7 +153,8 @@ def started(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, list[sqlit
 
 def owes_push(conn: sqlite3.Connection, scope: AgentScope, project_id: int, milestone_id: int) -> bool:
     """0.28.0: whether a product line's missed bar owes a push to bring buyers (MARKET), a marketing cycle's work: its
-    day-14 views bar, missed with too little reach, which set the retry bar (_retry)."""
+    day-14 views bar, missed with too little reach, which set the retry bar (_retry); 0.33.0: its day-7 views bar
+    (PUSH)."""
     where, params = scope.where()
     bars = {
         str(r["gate"]): int(r["milestone_id"])
@@ -155,7 +162,7 @@ def owes_push(conn: sqlite3.Connection, scope: AgentScope, project_id: int, mile
             f"SELECT gate, milestone_id FROM listing_gates WHERE {where} AND project_id = ?", (*params, project_id)
         )
     }
-    return bars.get("day14_views") == milestone_id and RETRY in bars
+    return bars.get("day7_views") == milestone_id or (bars.get("day14_views") == milestone_id and RETRY in bars)
 
 
 def _live_projects(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, sqlite3.Row]:
@@ -270,11 +277,8 @@ def _retry(
 
 def _owe(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row, gate: Gate, project: str, now: str) -> str:
     """The obligation a missed bar leaves: its action first, then the numbers (0.15.0: the plan's line is cut at
-    obligations.LINE_CHARS, and the action came after the numbers; a product line live only through Printify owes
-    asking the owner, PRINTIFY_FIX)."""
+    obligations.LINE_CHARS, and the action came after the numbers)."""
     missed = gate.missed
-    if gate.key == "day7_views" and _printify_only(conn, scope, int(row["project_id"])):
-        missed = PRINTIFY_FIX
     what = (
         f"project #{row['project_id']}: {missed} (milestone #{row['milestone_id']} "
         f"{_title(gate.title, project)!r} was missed: {str(row['result'])[:160]})"
@@ -285,13 +289,6 @@ def _owe(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row, gate: Ga
         (scope.mode, scope.session, what[:400], now[:10], now, row["milestone_id"]),
     )
     return f"Obligation: {missed.split(':')[0]} (project #{row['project_id']}, milestone #{row['milestone_id']})"
-
-
-def _printify_only(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> bool:
-    """Whether a product line's live listings are all ones Printify made (0.15.0)."""
-    rows = etsy_publisher.live_rows(metrics.listings(conn, scope, None, None), {})
-    mine = [r for r in rows if r["for_project"] and int(r["for_project"]) == project_id]
-    return bool(mine) and all(r["printify"] for r in mine)
 
 
 def _scale(
@@ -354,7 +351,7 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, today: date, now: str) -> 
                 if funnels is None:
                     funnels = reach.funnels(conn, scope)
                 funnel = funnels.get(project_id)
-                if funnel is None or funnel.reach < reach.ENOUGH:  # 0.18.0: not seen, so not tested
+                if funnel is None or funnel.traffic < reach.ENOUGH:  # 0.18.0: not seen, so not tested (0.33.0)
                     said, made = _retry(conn, scope, project, r, today, now)
                     happened.append(said)
                     owed.add(int(r["milestone_id"]))

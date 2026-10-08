@@ -285,10 +285,12 @@ class Workshop:
         first = request
         done: list[Any] = []
         for attempt in range(1 + MAX_CONTINUATIONS):
+            money = self.meter.rooms(cycle_id, WORKSHOP, keep=keep)[1]
             try:
                 # 0.15.0: the cap is checked against the request as priced; what the call holds of the day can be more
+                # (0.33.0: no more than the day has left, and never less than its worst case)
                 quote = self.meter.quote(request, WORKSHOP, scaled=False)
-                held = self.meter.reservation(request, WORKSHOP)
+                held = self.meter.reservation(request, WORKSHOP, room=money)
             except Unpriceable as exc:
                 run.failure = f"the run can't be priced ({exc})"
                 break
@@ -304,7 +306,6 @@ class Workshop:
                     "times its hold above the last will's reserve" + kept  # 0.23.0: meter.rooms, as the guard
                 )
                 break
-            money = self.meter.rooms(cycle_id, WORKSHOP, keep=keep)[1]
             if held > money:
                 run.failure = (
                     f"{going_on} holds ${micros_to_usd(held):.3f} of the day (the workshop's cap per run, or what "
@@ -313,7 +314,7 @@ class Workshop:
                 )
                 break
             try:
-                result = self.meter.call(cycle_id, WORKSHOP, request)
+                result = self.meter.call(cycle_id, WORKSHOP, request, hold=held)
             except CallRefused as exc:
                 if exc.category in ("state", "system"):
                     raise
