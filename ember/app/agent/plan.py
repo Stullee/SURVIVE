@@ -19,7 +19,8 @@ In 0.34.0 the tree ran in the shadow: each cycle recorded the step it would have
 READY took. 0.35.0 (Release 2b): the tree steers. ``steer`` takes each cycle's step before the plan, and the step
 decides what the cycle is (a marketing step a marketing cycle, any other an ordinary one, unless it is the ventures'
 turn); the plan sees it as YOUR STEP (``step_text``). The owner's decisions on a product's requests are steps too
-(``_decisions``), taken first like a promise due, and a promise nothing in front of it carries is a step of its own.
+(``_decisions``), taken first like a promise due. 0.35.1: a promise is a step of its own, taken before the heaviest
+step and the ventures' turn until it is kept; one made without naming its product gets the one its words name.
 """
 
 from __future__ import annotations
@@ -55,9 +56,17 @@ CLICKS_PER_PIN, REACTIONS_PER_POST = 0.5, 3.0  # results that make a channel wor
 STALE_DAYS = 14  # a step waiting this long is shown for the daily review's look (Release 2c asks it)
 PICKS_SHOWN = 12
 HISTORY = 12  # cycles read back for the streak
-# 0.35.0: an owner's decision (or a promise nothing carries) is taken first once in this many hours; the rest of the
-# time it is weighed (live, an obligation nobody closed took every cycle's line until 0.28.0 limited it to once a day)
+# 0.35.0: an owner's decision is taken first once in this many hours; the rest of the time it is weighed (live, an
+# obligation nobody closed took every cycle's line until 0.28.0 limited it to once a day). 0.35.1: a promise is taken
+# first up to PROMISE_TRIES times in them, then weighed until they have passed
 OBLIGATION_HOURS = 24
+PROMISE_TRIES = 3
+# 0.35.1: the channel a promise names (pins, a Bluesky post, a blog post): its step is a marketing cycle's
+PROMISE_CHANNELS = (
+    ("pinterest", re.compile(r"\b(pins?|pinterest)\b", re.IGNORECASE)),
+    ("bluesky", re.compile(r"\bbluesky\b", re.IGNORECASE)),
+    ("blog", re.compile(r"\bblog", re.IGNORECASE)),
+)
 ALTERNATIVES = 3  # the other steps YOUR STEP names
 # 0.35.0: a product's decide-by dates once it has a live listing (in place of the listing test's bars, gates.py until
 # 0.34.0): from the day its first listing was seen live. Day 7: 10 views, or its marketing is urgent for a week.
@@ -486,6 +495,7 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, cha
             _close_product(conn, scope, product, project, now)
             said.append(f"Plan tree: product #{product['id']} closed with line #{project['id']}.")
     said += move(conn, scope, now)  # once: the milestones the tree takes the place of (migration 0088)
+    said += _link_promises(conn, scope)
     decided = _decided(conn, scope)
     for product in nodes(conn, scope, "level = 'product' AND status = 'open'"):
         project = conn.execute("SELECT * FROM projects WHERE id = ?", (product["project_id"],)).fetchone()
@@ -628,6 +638,7 @@ def _promises(facts: Facts, product: Mapping[str, Any], now: str) -> list[str]:
             project_id=product["project_id"],
             stage=stage["stage"],
             kind="promise",
+            channel=promise_channel(what),
             title=f"Keep promise #{promise['id']}: {what}"[:160],
             check_kind="obligation",
             check_spec=json.dumps({"id": promise["id"]}),
@@ -646,6 +657,27 @@ def _promises(facts: Facts, product: Mapping[str, Any], now: str) -> list[str]:
         if _holds(facts, step):
             kept = "the promise was kept" if step["kind"] == "promise" else "the obligation was closed"
             _close(conn, step["id"], now, "done", f"Ember's code: {kept}")
+    return said
+
+
+def promise_channel(what: str) -> str | None:
+    """0.35.1: the channel a promise's words name (PROMISE_CHANNELS), None for none."""
+    return next((channel for channel, words in PROMISE_CHANNELS if words.search(what)), None)
+
+
+def _link_promises(conn: sqlite3.Connection, scope: AgentScope) -> list[str]:
+    """0.35.1: an open promise made without naming its product gets the one its words name (obligations.promised_line:
+    a listing's number, KDP), so it becomes a step of that product."""
+    where, params = scope.where()
+    said: list[str] = []
+    for row in conn.execute(
+        f"SELECT id, what FROM obligations WHERE {where} AND kind = 'promise' AND status = 'open'"
+        " AND project_id IS NULL ORDER BY id",
+        params,
+    ).fetchall():
+        line = obligations.promised_line(conn, scope, str(row["what"]))
+        if line is not None and obligations.name_line(conn, int(row["id"]), line):
+            said.append(f"Plan tree: promise #{row['id']} names line #{line}: a step of that product now.")
     return said
 
 
@@ -1183,16 +1215,18 @@ def candidates(
     conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, channels: Mapping[str, bool]
 ) -> list[Candidate]:
     """Every open step of the open products, ready or waiting, weighed by weights.py's parts (the scorer leaves out
-    the waiting ones). A promise step is taken through the steps in front of it, which carry it. 0.35.0: when none of
-    its product's steps is ready, the promise is a step of its own, and so is an owner's decision (``_decisions``),
-    in whatever stage it stands; either is taken first at most once every OBLIGATION_HOURS (weights.choose's promise
-    rule) and weighed the rest of the time. The owner's word comes before Ember's hold: only their park or kill, or a
-    closed line, stops these two."""
+    the waiting ones). An owner's decision (``_decisions``) is a step of its own in whatever stage it stands, taken
+    first at most once every OBLIGATION_HOURS (weights.choose's promise rule) and weighed the rest of the time. 0.35.1:
+    so is a promise, taken first (weights.Step.promise) up to PROMISE_TRIES times in OBLIGATION_HOURS; it waits while
+    a request of its product made since it was promised waits on the owner. The owner's word comes before Ember's
+    hold: only their park or kill, or a closed line, stops these two."""
     facts = Facts(conn, scope, now)
     factors = _channel_factors(conn, scope)
     missed = _missed(conn, scope, today)
     worked = _worked(conn, scope)
-    lately = _taken_since(conn, scope, to_iso(from_iso(now) - timedelta(hours=OBLIGATION_HOURS)))
+    lately = _taken_counts(conn, scope, to_iso(from_iso(now) - timedelta(hours=OBLIGATION_HOURS)))
+    asked = _asked(conn, scope)
+    promised_at = _promised_at(conn, scope)
     found: list[Candidate] = []
     for product in nodes(conn, scope, "level = 'product' AND status = 'open'"):
         pid = int(product["project_id"])
@@ -1220,19 +1254,6 @@ def candidates(
             if step["status"] == "open" and (stage["status"] == "open" or step["obligation_id"] is not None)
         ]
         owed = [(stage, step) for stage, step in rows if step["obligation_id"] is not None]
-        promises = [
-            weights.Step(
-                step["id"],
-                pid,
-                str(step["title"]),
-                "ship",
-                worth,
-                urgency=_promise_urgency(step, today),
-                promise_hours=_promise_hours(step, today),
-            )
-            for _, step in owed
-            if step["kind"] == "promise"
-        ]
         work = [(stage, step) for stage, step in rows if step["obligation_id"] is None]
         steps: dict[int, weights.Step] = {}
         reasons: dict[int, str | None] = {}
@@ -1275,7 +1296,7 @@ def candidates(
         ordered = [steps[step["id"]] for _, step in work]
         for index, (stage, step) in enumerate(work):
             behind = ordered[index + 1 :] if stage["stage"] in SEQUENTIAL else []
-            waiting = tuple(s for s in behind if s.product == pid) + tuple(promises)
+            waiting = tuple(s for s in behind if s.product == pid)
             found.append(
                 Candidate(
                     weights.Step(**{**_fields(steps[step["id"]]), "waiting": waiting}),
@@ -1283,11 +1304,14 @@ def candidates(
                     reasons[step["id"]],
                 )
             )
-        carried = any(reason is None for reason in reasons.values())
         for stage, step in owed:
-            if step["kind"] == "promise" and carried:
-                continue  # the steps in front of it carry it
+            promise = step["kind"] == "promise"
             reason = "hold" if stopped else _waiting(step, channels)
+            made = promised_at.get(int(step["obligation_id"]))
+            if reason is None and promise and made and any(line == pid and at > made for line, at in asked):
+                reason = "owner"  # a request for it waits on the owner's decision
+            tries = lately.get(int(step["id"]), 0)
+            first = tries < PROMISE_TRIES if promise else tries == 0
             since = max(filter(None, (step["ready_since"], worked.get(pid))), default=None)
             found.append(
                 Candidate(
@@ -1299,7 +1323,8 @@ def candidates(
                         worth,
                         urgency=_promise_urgency(step, today),
                         age_days=round(_days(since, now), 3) if reason is None else 0.0,
-                        promise_hours=_promise_hours(step, today) if step["id"] not in lately else None,
+                        promise_hours=_promise_hours(step, today) if first else None,
+                        promise=promise and first,
                         blocked=reason is not None,
                     ),
                     str(stage["stage"]),
@@ -1309,15 +1334,36 @@ def candidates(
     return found
 
 
-def _taken_since(conn: sqlite3.Connection, scope: AgentScope, since: str) -> set[int]:
-    """The steps cycles took since ``since`` (0.35.0: an owner's decision or a promise's own step is taken first once
-    in OBLIGATION_HOURS)."""
+def _taken_counts(conn: sqlite3.Connection, scope: AgentScope, since: str) -> dict[int, int]:
+    """How often cycles took each step since ``since`` (0.35.0: an owner's decision is taken first once in
+    OBLIGATION_HOURS; 0.35.1: a promise PROMISE_TRIES times)."""
     where, params = scope.where()
     return {
-        int(r[0])
+        int(r[0]): int(r[1])
         for r in conn.execute(
-            f"SELECT node_id FROM plan_picks WHERE {where} AND node_id IS NOT NULL AND created_at >= ?",
+            f"SELECT node_id, COUNT(*) FROM plan_picks WHERE {where} AND node_id IS NOT NULL AND created_at >= ?"
+            " GROUP BY node_id",
             (*params, since),
+        )
+    }
+
+
+def _asked(conn: sqlite3.Connection, scope: AgentScope) -> list[tuple[int | None, str]]:
+    """0.35.1: the requests waiting on the owner's decision, each with its product line and when it was made."""
+    where, params = scope.where()
+    return [
+        (ventures.request_line(conn, scope, r), str(r["created_at"]))
+        for r in conn.execute(f"SELECT * FROM approvals WHERE {where} AND status = 'pending'", params).fetchall()
+    ]
+
+
+def _promised_at(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, str]:
+    """0.35.1: when each open promise was made."""
+    where, params = scope.where()
+    return {
+        int(r["id"]): str(r["created_at"])
+        for r in conn.execute(
+            f"SELECT id, created_at FROM obligations WHERE {where} AND kind = 'promise' AND status = 'open'", params
         )
     }
 
@@ -1437,6 +1483,8 @@ def _markets(row: Mapping[str, Any] | None) -> bool:
         return False
     if row["check_kind"] in ("pin", "post", "blog"):
         return True
+    if row["kind"] == "promise" and row["channel"]:  # 0.35.1: a promise of pins, a post or a blog post
+        return True
     return row["check_kind"] == "request" and _spec(row).get("executor") in obligations.MARKETING_EXECUTORS
 
 
@@ -1467,7 +1515,8 @@ def record(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, now: str,
 
 TAKEN = {
     "pin": "your owner pinned it",
-    "promise": "a promise to your owner, or their decision, is due",
+    "promise": "your promise to your owner comes first until you keep it",
+    "decision": "your owner's decision on one of its requests is due",
     "weight": "the heaviest step that is ready",
     "margin": f"you are on its product, and no other step is {round((weights.MARGIN - 1) * 100)}% heavier",
 }
@@ -1481,6 +1530,14 @@ WAITS = {
 }
 QUESTIONS = "This week's questions (keep them in mind; not steps to take):"
 NEW_PRODUCT = "Start a new product (project_create): Ember's code lays it out with its stages and steps."
+
+
+def _taken(decided: str, row: Mapping[str, Any] | None) -> str:
+    """Why a step was taken (TAKEN's key): the promise rule takes a promise or an owner's decision (0.35.1: said
+    apart)."""
+    if decided == "promise" and row is not None and row["kind"] != "promise":
+        return "decision"
+    return decided
 
 
 def check_words(kind: str | None, spec: Mapping[str, Any]) -> str:
@@ -1516,7 +1573,22 @@ def step_text(
             where = f" of product line #{step.product} {_quoted(product[0]['title'])} ({kind})"
         stage = f", stage {row['stage']}" if row is not None and row["stage"] else ""
         lines.append(f"Step #{step.id}{where}{stage}: {_cut(step.title, 160)}")
-        if row is not None and row["check_kind"]:
+        if row is not None and row["kind"] == "promise":  # 0.35.1: the promise itself, with where its product stands
+            lines.append("Done when: you kept it and closed it with obligation_done.")
+            stages = _stages(conn, scope, int(product[0]["id"])) if product else []
+            ahead = [
+                s
+                for part in stages
+                if part["status"] == "open"
+                for s in _steps(conn, scope, part["id"])
+                if s["status"] == "open" and s["kind"] != "promise"
+            ]
+            if ahead:
+                lines.append(
+                    "Its product's open steps: "
+                    + " · ".join(f"#{s['id']} {s['title']} ({s['stage']})" for s in ahead[:4])
+                )
+        elif row is not None and row["check_kind"]:
             done = (
                 "you say it is done (plan_step done)"
                 if row["check_kind"] == "agent"
@@ -1531,7 +1603,7 @@ def step_text(
         if parts is not None:
             carried = node(conn, scope, parts.carried_from) if parts.carried_from else None
             lines.append(
-                f"Why: {TAKEN.get(steered.pick.decided, steered.pick.decided)}. Weight "
+                f"Why: {TAKEN.get(_taken(steered.pick.decided, row), steered.pick.decided)}. Weight "
                 + parts.text(str(carried["title"]) if carried is not None else None)
             )
         if row is not None and row["parent_id"] is not None:

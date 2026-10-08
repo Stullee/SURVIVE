@@ -3,6 +3,22 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.35.1
+
+Your promises come first, and you don't sleep hours while your plan has work.
+
+- A promise to your owner is a step of its product from the moment you make it: Ember's code takes it before the
+  heaviest step and before the ventures' turn, the soonest due first, until you keep it (up to three cycles a day;
+  then it is weighed like any step until the day is over). YOUR STEP shows the promise, its product's open steps,
+  and that it is done once you kept it and closed it with obligation_done. Name its product with message_owner's
+  project_id; without one, Ember's code takes the product its words name: the number of one of your listings, or KDP
+  or Printify while only one product of that type is open. A promise of pins, a Bluesky post or a blog post is a
+  marketing cycle's step. While a request of its product, made since the promise, waits on your owner, the promise
+  waits too.
+- While your plan has a step ready, every cycle sleeps your owner's shortest sleep at most, a venture cycle too:
+  whatever you choose, Ember's code wakes you then. Your owner's daily cap is the only brake on spending; time idle
+  is a cost too.
+
 ## 0.35.0
 
 The plan tree steers now: before each cycle Ember's code takes its step from it, and the step decides what the cycle is

@@ -207,7 +207,7 @@ it runs one **wake cycle**:
    [venture cycle](#ventures) decides one venture, and a cycle an event woke
    works on one line at most. Since 0.35.0 the [plan tree](#plan) under your
    goal decides: before the plan, Ember's code takes the cycle's **step** from it
-   (what you pinned, a promise to you or your decision that is due, the ventures'
+   (what you pinned, a promise to you, your decision that is due, the ventures'
    turn, else the heaviest step), and the step decides what the cycle is (a
    marketing step a marketing cycle, any other an ordinary one) and which product
    line its tools work on. The plan sees it as **YOUR STEP** (what done means, why
@@ -230,10 +230,12 @@ it runs one **wake cycle**:
    (a request you rejected or carried out, or one that failed), milestones
    Ember's code closed missed, overdue milestones and live listings with too
    few photos. It closes a promise only after telling you it is kept (or why
-   not). A promise that names its project (message_owner's project_id) and your
-   decision on a product's request are steps of that product in the plan tree:
-   due within a day, they come first, at most once a day each; the rest of the
-   time they are weighed like any step. A missed milestone decides nothing.
+   not). A promise about a product (message_owner's project_id, or since 0.35.1
+   the product its words name: a listing's number, KDP) is a step of that
+   product in the plan tree, taken first from the moment it is made until it is
+   kept (three times a day at most; then it is weighed like any step). Your
+   decision on a product's request is a step too: due within a day, it comes
+   first once a day. A missed milestone decides nothing.
    A message of the agent's that promises later work in words
    only ("next cycle I'll ...") comes back to it once, to record the promise.
    Any cycle may keep another line's record up to date (a note, its hypothesis,
@@ -455,14 +457,14 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   line's newest listing was checked, and its verdicts were read as verdicts on
   another listing of the line. A line whose work your park stopped gets no
   check. The score and fixes show in the daily review.
-- **Waiting time.** While an ordinary or marketing cycle's plan has a step
-  ready (0.35.0: in the plan tree; READY's jobs until 0.34.0), the sleep of a
-  cycle that worked is cut to 3 hours, never below your default interval (*Wake
-  interval*) or shortest sleep, and not in maintenance. On a live line without
-  an open bet, the work steps are asked for one. The week's questions alone cut
-  no sleep, nor does a plan that chose to do nothing (0.21.0: under the default
-  options it cut every cycle's sleep, up to 8 plans a day; raising the wake
-  interval now slows Ember down again).
+- **Waiting time.** While a cycle's plan has a step ready (0.35.0: in the plan
+  tree; READY's jobs until 0.34.0), the sleep of a cycle that worked is cut to
+  your shortest sleep (*Shortest sleep*; 0.35.1, a venture cycle's too: until then 3
+  hours, never below your *Default sleep*), not in maintenance. Your daily cap,
+  not the sleep, is what holds the spending back: with work ready, Ember may
+  spend it early in the day and then wait for the next. On a live line without
+  an open bet, the work steps are asked for one. A plan that chose to do nothing
+  cuts no sleep.
 
 All of it counts toward the daily cap, not the cycle cap, and none of it ends a
 cycle. The diagnostics report lists the bets, cases, principles, weekly looks
@@ -996,20 +998,26 @@ posts and blog posts that link the product. A later stage done closes the ones
 before it. Once a product's stages before maintain are done, its maintain stage
 gets a recurring step for each channel its audience uses, and a fix whenever
 the quality check says improve (the step quotes what the critic said). A promise
-Ember makes you that names a project becomes a step of that product, and so does
-your decision on one of its requests.
+Ember makes you about a product becomes a step of that product, and so does your
+decision on one of its requests. A promise names its product with message_owner's
+project_id, or (0.35.1) by its words: the number of one of Ember's listings, or a
+type with only one product open (KDP, Printify). A promise of pins, a Bluesky post
+or a blog post is a marketing cycle's step. A promise whose product has a request
+waiting for you, made since the promise, waits for your decision.
 
 **How a cycle gets its step.** In this order: a step you pinned; a promise to
-you or your decision that is due within a day (each first at most once a day;
-the rest of the time it is weighed); a venture cycle when the ventures' share
-of the day's spending is behind (your message waiting or a promise due comes
-first); else the heaviest step. To leave the product it is on, another step
-must weigh 25% more, for up to three cycles in a row. The step decides the
-cycle: a marketing step makes a [marketing cycle](#marketing-cycles), any other
-an ordinary one, and Ember's code keeps the cycle's tools on its product line.
-With no step ready, Ember starts a new product in the explore burn mode;
-otherwise nothing new starts. While her plan has steps ready, her code cuts a
-long sleep to 3 hours (never below your shortest sleep).
+you or your decision that is due within a day; (0.35.1) any other promise to
+you, the soonest due first, from the moment it is made; a venture cycle when the
+ventures' share of the day's spending is behind (your message waiting or a
+promise due comes first); else the heaviest step. A promise comes first up to
+three times a day, your decision once; after that each is weighed like any step
+until the day is over. To leave the product it is on, another step must weigh
+25% more, for up to three cycles in a row. The step decides the cycle: a
+marketing step makes a [marketing cycle](#marketing-cycles), any other an
+ordinary one, and Ember's code keeps the cycle's tools on its product line. With
+no step ready, Ember starts a new product in the explore burn mode; otherwise
+nothing new starts. While her plan has steps ready, her code cuts any cycle's
+long sleep to your shortest sleep.
 
 **How a step is weighed.** A product's worth is what it could earn a month (from
 Ember's revenue sub-goal for its line, else its venture's split, else its type's
@@ -1021,7 +1029,8 @@ weight is that worth times its kind (shipping, launching, fixing and marketing
 promise at least 2; a defect the quality check found 2; a missed views date
 makes the product's marketing urgent), its age (0.5 for each day it has waited
 ready) and momentum (1 for the product worked on last). A step carries the
-weight of the most important step waiting on it.
+weight of the most important step waiting on it (since 0.35.1 a promise is a
+step of its own, not carried).
 
 **What Ember may change.** With her **plan_step** tool she adds steps to a
 product (to a stage, or before a step), splits a step into smaller ones or
@@ -2444,7 +2453,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.35.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.35.1 (by /u/your name)`.
 
 ## Amazon KDP
 

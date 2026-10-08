@@ -404,18 +404,18 @@ def test_an_idle_plan_keeps_the_agent_s_sleep(data_dir: Path) -> None:
     assert agent._meta_time("next_wake_at") == agent.clock.now() + timedelta(minutes=720)
 
 
-@pytest.mark.parametrize(("lined", "worked", "most"), [(True, False, 2), (False, True, 2), (True, True, 6)])
+@pytest.mark.parametrize(("lined", "worked", "most"), [(True, False, 2), (False, True, 2), (True, True, 48)])
 def test_cycles_a_day_under_the_default_options(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch, lined: bool, worked: bool, most: int
 ) -> None:
     """0.21.0: the scheduled cycles of a day, projected from the wakes Ember's code sets after each, when the agent
     asks for 12 hours of sleep: an idle plan's or a sleep with no step ready stands; with a step ready (0.35.0: of the
-    plan tree; READY's work until 0.34.0) a cycle that worked sleeps the owner's default interval
-    (wake_interval_minutes, 4 hours), not 3 hours."""
+    plan tree; READY's work until 0.34.0) a cycle that worked sleeps (0.35.1) the owner's shortest sleep
+    (min_sleep_minutes, 30 minutes): the daily cap, not the sleep, is what holds the spending back."""
     monkeypatch.setattr(review, "due", lambda *_: False)  # the day's review would answer a plan of this script
     journal = calls(("write_journal", {"summary": "Worked", "entry": "Looked around."}))
     script = [plan(steps=["look around"], sleep=720), text("Done."), journal] if worked else [plan(steps=[], sleep=720)]
-    agent, _ = make_agent(data_dir, script * 12, DEFAULTS)
+    agent, _ = make_agent(data_dir, script * 50, DEFAULTS)
     if lined:  # a product line whose plan has a step ready
         scope, stamp = agent.scope(), now(agent)
         with agent.db.transaction() as conn:

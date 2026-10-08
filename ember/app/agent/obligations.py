@@ -133,6 +133,39 @@ def promise(
     return int(cursor.lastrowid)
 
 
+# 0.35.1: the number of one of Ember's listings in a promise's words (Etsy's are 10 digits), and the types a promise
+# may name for its product when only one product of that type is open
+LISTING_NUMBER = re.compile(r"(?<!\d)(\d{8,12})(?!\d)")
+NAMED_TYPES = (
+    ("kdp_book", re.compile(r"\bkdp\b", re.IGNORECASE)),
+    ("printify_pod", re.compile(r"\bprintify\b", re.IGNORECASE)),
+)
+
+
+def promised_line(conn: sqlite3.Connection, scope: AgentScope, what: str) -> int | None:
+    """0.35.1: the product line a promise's words name, when Ember named none: the line of one of Ember's listings whose
+    number they name, else the one open product of a type they name (KDP, Printify). None when neither tells (a report
+    to the owner, say). Live, a KDP book and two pins for a listing were promised without their line, so no step of
+    the plan stood for them and the plan took other work first."""
+    for number in LISTING_NUMBER.findall(what):
+        line = _working(conn, scope, ventures.listing_project(conn, scope, int(number)))
+        if line is not None:
+            return line
+    where, params = scope.where()
+    for name, words in NAMED_TYPES:
+        if not words.search(what):
+            continue
+        rows = conn.execute(
+            f"SELECT project_id FROM plan_nodes WHERE {where} AND level = 'product' AND status = 'open'"
+            " AND template LIKE ?",
+            (*params, f"{name}@%"),
+        ).fetchall()
+        lines = {line for r in rows if (line := _working(conn, scope, r["project_id"])) is not None}
+        if len(lines) == 1:
+            return lines.pop()
+    return None
+
+
 def name_line(conn: sqlite3.Connection, obligation_id: int, project_id: int) -> bool:
     """0.33.0: a promise made without a line gets the one its repetition names (once: migration 0085 fixes it)."""
     cursor = conn.execute(

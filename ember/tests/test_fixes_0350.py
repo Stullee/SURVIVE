@@ -84,8 +84,8 @@ def test_the_tree_takes_each_cycles_step_its_line_and_kind_and_the_plan_sees_you
     assert "\nDone when: " in planner and "\nWhy: the heaviest step that is ready. Weight worth " in planner
     first_plan = texts(fake, "plan")[0]  # cycle 1, no product: a new one may start (the explore burn mode)
     assert "No step of your plan is ready." in first_plan and plan.NEW_PRODUCT in first_plan
-    # its plan had steps ready: the 600 minutes it chose are cut (slack.py), not below the owner's interval
-    assert end.sleep_minutes == max(slack.SLEEP_MINUTES, agent.settings.wake_interval_minutes)
+    # its plan had steps ready: the 600 minutes it chose are cut (slack.py) to the owner's shortest sleep (0.35.1)
+    assert end.sleep_minutes == agent.settings.min_sleep_minutes
     assert slack.WHY in (end.sleep_cut or "")
     assert "ready" not in json_schema(fake)["required"]  # an ordinary plan has no READY item to name
 
@@ -174,7 +174,7 @@ def test_an_owners_decision_on_a_products_request_is_a_step_taken_first_once_a_d
     ]
 
 
-def test_a_promise_nothing_in_front_of_carries_is_a_step_of_its_own(data_dir: Path) -> None:
+def test_a_promise_is_a_step_of_its_own_while_its_product_waits_on_the_owner(data_dir: Path) -> None:
     agent, _ = lined(data_dir, titles=())
     book = project(agent, *BOOK)
     keep(agent)
@@ -341,10 +341,10 @@ def test_the_tool_is_an_ordinary_and_marketing_cycles_and_milestone_plan_is_gone
 
 
 def test_the_sleep_is_cut_while_the_plan_has_steps_ready() -> None:
-    assert slack.sleep(600, True, 60, "explore") == slack.SLEEP_MINUTES
-    assert slack.sleep(600, False, 60, "explore") == 600
-    assert slack.sleep(600, True, 60, "maintenance") == 600
-    assert slack.sleep(600, True, 240, "explore") == 240
+    assert slack.sleep(600, True, 30, "explore") == 30  # 0.35.1: to the owner's shortest sleep
+    assert slack.sleep(600, False, 30, "explore") == 600
+    assert slack.sleep(600, True, 30, "maintenance") == 600
+    assert slack.sleep(20, True, 30, "explore") == 20
 
 
 # --- decide-by dates in place of the listing test's bars, and the records the tree takes the place of ---

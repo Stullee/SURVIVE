@@ -18,17 +18,21 @@ never below the owner's default interval (wake_interval_minutes), so raising it 
 
 0.35.0: the plan tree takes each cycle's step (plan.py): an ordinary or marketing cycle whose plan had steps ready is
 busy, whatever else waits on the owner.
+
+0.35.1: live, the first venture cycles on 0.35.0 slept 6 hours, then 3, while the plan had 8 steps ready and a KDP book
+was promised to the owner: a venture cycle's sleep was never cut, and a cut one still kept 3 hours. The owner: "time is
+money", their daily cap is the only brake. Now any cycle whose plan had steps ready sleeps the owner's shortest sleep
+(min_sleep_minutes) at most: a venture cycle too.
 """
 
 from __future__ import annotations
 
-SLEEP_MINUTES = 180
 WHY = "your plan has steps ready"  # why Ember's code cut the sleep, as the System log and the dashboard say
 
 
 def sleep(minutes: int | None, busy: bool, shortest: int, burn_mode: str) -> int | None:
-    """The sleep a cycle that worked keeps: cut to SLEEP_MINUTES, or ``shortest`` if longer, while ``busy`` (its plan
+    """The sleep a cycle that worked keeps: at most ``shortest`` (the owner's shortest sleep) while ``busy`` (its plan
     had steps ready; not in maintenance or dormant)."""
     if minutes is None or not busy or burn_mode in ("maintenance", "dormant"):
         return minutes
-    return min(minutes, max(SLEEP_MINUTES, shortest))
+    return min(minutes, shortest)

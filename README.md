@@ -188,6 +188,14 @@ dates, its Autonomy box and your Close, Drop, Keep and Lift-hold buttons, what
 changed today, the channels, the upgrades the plan waits on, and your
 milestones.
 
+0.35.1: a promise comes first, and Ember doesn't sleep hours while there is work.
+A promise to you is a step of its product from the moment it is made, taken
+before the heaviest step and the ventures' turn until it is kept; one made
+without naming its product gets the one its words name (a listing's number, KDP),
+and a promise of pins makes a marketing cycle. While the plan has a step ready,
+any cycle, a venture cycle too, sleeps your shortest sleep: your daily cap is the
+brake.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
