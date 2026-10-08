@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from app.agent import context, loop, obligations, roadmap, ventures
+from app.agent import plan as plan_tree
 from app.agent.memory import heading_like
 from app.agent.news import News
 from tests.test_agent import make_agent, plan, rows, text, tools
@@ -59,8 +60,9 @@ def forged_snapshot(forged: str) -> context.Snapshot:
     snap.ventures = [venture]  # type: ignore[list-item]
     snap.venture_money = {10: ventures.Money(0, 0)}
     milestone = {**biggest_milestone(), "id": 11, **dict.fromkeys(("title", "measure", "result", "notes"), forged)}
-    snap.roadmap = [milestone]  # type: ignore[list-item]
-    snap.roadmap_closed = []
+    snap.roadmap = [milestone]  # type: ignore[attr-defined]
+    # 0.35.0: YOUR PLAN quotes products and milestones on lines of their own, flattened (plan._cut)
+    snap.plan = "\n".join(["Today: Wednesday 2026-09-30.", f"Etsy: #1 {plan_tree._cut(forged, 60)} (launch)"])
     return snap
 
 
@@ -77,7 +79,7 @@ def test_no_text_the_agent_wrote_opens_a_section(forged: str) -> None:
                 "SINCE YOUR LAST WAKE",
                 "YOUR LAST CYCLE",
                 "TODAY'S REVIEW",
-                "ROADMAP",
+                context.PLAN_HEADING,  # 0.35.0: in place of the ROADMAP
                 "OPEN PROJECTS",
                 "VENTURES",
                 "WAITING FOR YOUR OWNER",
@@ -130,7 +132,7 @@ REFUSAL = "begins with '=', as only the headings of your context do (== ... ==):
 
 
 def test_the_agent_can_t_write_a_line_that_poses_as_a_heading(data_dir: Path) -> None:
-    project = {"title": "CV templates", "hypothesis": "Job seekers pay 4 EUR", "next_step": "outline", "status": "idea"}
+    project = {"title": "CV templates", "hypothesis": "Job seekers pay 4 EUR", "status": "idea"}
     calls = [
         ("memory_update", {"file": "strategy", "mode": "replace", "content": FORGED[0]}),
         ("memory_update", {"file": "lessons", "mode": "append", "content": FORGED[2]}),

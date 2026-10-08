@@ -42,7 +42,6 @@ from . import (
     knockouts,
     learning,
     library,
-    lines,
     memory,
     metrics,
     never,
@@ -136,7 +135,6 @@ def dashboard(agent: Agent) -> dict[str, Any]:
             (simulated, scope.session, ACTIVITY_CYCLES),
         ).fetchall()
         activity = [_activity(conn, c) for c in cycles]
-        line_desk = _line_desk(agent, conn, scope)  # 0.28.0
         journal = [
             {
                 "cycle_id": j["cycle_id"],
@@ -224,7 +222,6 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "projects": projects,
         "venture_choices": venture_choices,
         "activity": activity,
-        "lines": line_desk,  # 0.28.0: the Projects tab's Line desk
         "mind": {
             **agent.memory_files(),
             "journal": journal,
@@ -1218,46 +1215,6 @@ def _review(conn: sqlite3.Connection, r: sqlite3.Row) -> dict[str, Any]:
         "milestones": review.milestone_verdicts(r),  # 0.12.0: its verdicts on milestones, and what came of them
         "note": r["note"],
         "scorecard": r["scorecard"],
-    }
-
-
-def _line_desk(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope) -> dict[str, Any]:
-    """0.28.0: the Line desk: the share of each day's spending the owner gives marketing cycles and what they had
-    today, how Ember's code ranks the lines for an ordinary and a marketing plan now (lines.py; what presses takes its
-    line when a cycle runs), and what the last plans took or why they took none."""
-    mode = burn.peek(agent.db, agent.economy.life.evaluate())
-    today = agent.clock.today()
-    share = lines.marketing_share(agent.settings.venture_share, agent.settings.marketing_share)
-    spent, _, marketed = ventures.day_spends(conn, scope, today)
-    # 0.32.0: a channel that links a listing Printify made (the blog's posts; Bluesky's and Pinterest's took none)
-    links = agent.settings.blog_enabled or agent.settings.bluesky_enabled or agent.settings.pinterest_enabled
-    market = lines.marketing(conn, scope, printify_links=links, today=today) if share and mode.marketing_cycles else []
-    ordinary = lines.ready(conn, scope, today=today, explore=mode.mode == burn.EXPLORE, markets=bool(market))
-    cycles = conn.execute(
-        "SELECT COUNT(*) FROM cycles WHERE simulated = ? AND session = ? AND marketing = 1",
-        (1 if scope.simulated else 0, scope.session),
-    ).fetchone()[0]
-    return {
-        "mode": mode.mode,
-        "share": share,
-        "owner_share": agent.settings.marketing_share,  # what the options say (the share is within the ventures')
-        "today": {"spent_usd": _usd(spent), "marketing_usd": _usd(marketed)},
-        "marketing_cycles": int(cycles),
-        "ready": [i.to_json() for i in ordinary],
-        "market": [i.to_json() for i in market],
-        "picks": [
-            {
-                "cycle_id": p["cycle_id"],
-                "created_at": p["created_at"],
-                "kind": p["kind"],
-                "pick": p["pick"],
-                "project_id": p["project_id"],
-                "pressed": bool(p["pressed"]),
-                "why_not": p["why_not"],
-                "shown": len(json.loads(p["items"])),
-            }
-            for p in lines.recent(conn, scope, 8)
-        ],
     }
 
 

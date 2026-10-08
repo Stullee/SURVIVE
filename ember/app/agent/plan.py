@@ -1395,7 +1395,7 @@ def step_text(
             kind = templates.by_key(product[0]["template"]).title
             where = f" of product line #{step.product} {_quoted(product[0]['title'])} ({kind})"
         stage = f", stage {row['stage']}" if row is not None and row["stage"] else ""
-        lines.append(f"Step #{step.id}{where}{stage}: {step.title}")
+        lines.append(f"Step #{step.id}{where}{stage}: {_cut(step.title, 160)}")
         if row is not None and row["check_kind"]:
             done = (
                 "you say it is done (plan_step done)"
@@ -1500,7 +1500,10 @@ def _product_line(conn: sqlite3.Connection, scope: AgentScope, facts: Facts, pro
     ]
     promise = f" · {', '.join(promised)}" if promised else ""
     held = f": {_cut(product['hold_reason'], 60)}" if product["hold_reason"] else ""
-    return f"#{line} {_cut(product['title'], 40)} ({stage}{held}{numbers}{promise})"
+    own = conn.execute("SELECT id FROM milestones WHERE product_node = ?", (product["id"],)).fetchone()
+    unlocked = policy.unlocked_text(policy.unlocked(conn, scope, int(own["id"])), True) if own is not None else ""
+    unlocks = f" · {unlocked}" if unlocked else ""  # 0.16.3 (analysis bug 5): what your owner unlocked for it
+    return f"#{line} {_cut(product['title'], 40)} ({stage}{held}{numbers}{promise}{unlocks})"
 
 
 def focus_text(conn: sqlite3.Connection, scope: AgentScope, steered: Steer) -> str:
@@ -1509,7 +1512,7 @@ def focus_text(conn: sqlite3.Connection, scope: AgentScope, steered: Steer) -> s
     if step is None:
         return ""
     row = node(conn, scope, step.id)
-    said = f"Your step this cycle: #{step.id} {step.title}"
+    said = f"Your step this cycle: #{step.id} {_cut(step.title, 160)}"
     if row is not None and row["check_kind"]:
         done = (
             "say so with plan_step done"

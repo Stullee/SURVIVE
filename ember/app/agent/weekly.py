@@ -19,7 +19,9 @@ failed one is kept and tried again the next day.
 sub-goals were in every plan, not in the view), and what it said to start and stop was text no ranking read, so the
 next cycles took their lines as before. Now the view shows the goal with how far each sub-goal got (``goal_text``), and
 the look chooses the week's focus: up to MAX_FOCUS product lines its ordinary and marketing cycles push first
-(``focus``; lines.ready and lines.marketing rank them after what is owed and the line in progress).
+(``focus``; until 0.34.0 READY ranked them after what is owed and the line in progress). 0.35.0: the plan tree
+weighs no focus line: the look still names them (the owner's dashboard shows them), and Release 2c lets it edit the
+tree.
 """
 
 from __future__ import annotations

@@ -88,8 +88,7 @@ def _status(state: str = "alive") -> str:
 
 def _project_lines(projects: dict[int, dict[str, Any]]) -> str:
     lines = [
-        f"#{pid} [{p['status']}] {p['title']} · spent $0.10 · earned $0.00\n"
-        f"   hypothesis: {p['hypothesis']}"
+        f"#{pid} [{p['status']}] {p['title']} · spent $0.10 · earned $0.00\n   hypothesis: {p['hypothesis']}"
         for pid, p in projects.items()
         if p["status"] in OPEN
     ]

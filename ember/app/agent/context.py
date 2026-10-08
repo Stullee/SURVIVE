@@ -17,7 +17,7 @@ import re
 import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 from ..economy.costs import micros_to_usd
@@ -30,7 +30,6 @@ from . import (
     learning,
     library,
     obligations,
-    policy,
     reach,
     review,
     roadmap,
@@ -288,16 +287,10 @@ class Snapshot:
     marketing_spent: int = 0  # 0.28.0: today's spending in marketing cycles
     marketing_apart: bool = False  # 0.28.0: marketing cycles run, so an ordinary cycle has no marketing tools
     call_costs: dict[str, int] = field(default_factory=dict)  # what research and brainstorms cost lately (0.10.1)
-    today: date | None = None  # the owner's local date (the roadmap's horizons are counted from it)
-    roadmap: list[sqlite3.Row] = field(default_factory=list)  # the open milestones, the first due first (0.11.0)
-    roadmap_closed: list[sqlite3.Row] = field(default_factory=list)  # closed in the last roadmap.CLOSED_DAYS days
-    roadmap_spent: dict[int, int] = field(default_factory=dict)  # what each milestone's work cost (0.12.0)
-    # 0.16.3 (analysis bug 5): what stands unlocked for each open milestone, from the grants: its rules' short names
-    # and levels (policy.unlocked_text), so the ROADMAP keeps its room (the work step's FOCUS says them in full)
-    roadmap_unlocks: dict[int, str] = field(default_factory=dict)
-    # 0.29.0: how far each open milestone got (roadmap.progress), the goal at the root's from the books
-    roadmap_progress: dict[int, roadmap.Progress] = field(default_factory=dict)
-    plan: str = ""  # 0.35.0: YOUR PLAN, the plan tree under the goal (plan.plan_text), in place of the ROADMAP
+    today: date | None = None  # the owner's local date (the milestones' horizons are counted from it)
+    # 0.35.0: YOUR PLAN, the plan tree under the goal (plan.plan_text), in place of the ROADMAP (0.11.0 to 0.34.0):
+    # with how far the goal got (0.29.0) and what stands unlocked for each product (0.16.3, analysis bug 5)
+    plan: str = ""
     library: library.Shelf | None = None  # the owner's library (0.12.0): None while it is empty
     # the owner's decisions on its requests wake the agent (0.12.0, the wake_on_decision option; 0.31.0, and the
     # wake_on_approval or wake_on_rejection one)
@@ -384,8 +377,6 @@ def snapshot(
     spent, ventured, marketed = ventures.day_spends(conn, scope, today) if today is not None else (0, 0, 0)
     memories = memory.read_all()
     written = {int(r["cycle_id"]) for r in (journal[:1] + ([handoff] if handoff is not None else []))}
-    milestones = roadmap.open_milestones(conn, scope)
-    progress = roadmap.progress_for(conn, scope, today, books) if today is not None else {}  # 0.29.0
     return Snapshot(
         status=status,
         local_time=local_time,
@@ -446,12 +437,7 @@ def snapshot(
         marketing_apart=marketing_apart,
         call_costs=ventures.call_costs(conn, scope) if venture else {},
         today=today,
-        roadmap=milestones,
-        roadmap_closed=_closed_lately(conn, scope, today),
-        roadmap_spent={mid: cost for mid, (_, cost) in roadmap.effort(conn, scope).items()},
-        roadmap_unlocks={mid: policy.unlocked_text(rows, True) for mid, rows in policy.standing(conn, scope).items()},
-        roadmap_progress=progress,
-        plan=_plan(conn, scope, now, today, milestones, progress) if today is not None else "",
+        plan=_plan(conn, scope, now, today, books) if today is not None else "",
         library=shelf,
         decision_wakes=decision_wakes,
         burn=burn,
@@ -475,21 +461,13 @@ def _worked_on(conn: sqlite3.Connection, cycle_id: int) -> str:
     return f"a cycle on {line}" if line else ""  # a handoff of no line is for whatever comes next
 
 
-def _closed_lately(conn: sqlite3.Connection, scope: AgentScope, today: date | None) -> list[sqlite3.Row]:
-    if today is None:
-        return []
-    return roadmap.closed_since(conn, scope, (today - timedelta(days=roadmap.CLOSED_DAYS)).isoformat())
-
-
 def _plan(
-    conn: sqlite3.Connection,
-    scope: AgentScope,
-    now: str | None,
-    today: date,
-    milestones: list[sqlite3.Row],
-    progress: dict[int, roadmap.Progress],
+    conn: sqlite3.Connection, scope: AgentScope, now: str | None, today: date, books: tuple[int, int] | None
 ) -> str:
-    """0.35.0: YOUR PLAN: the goal at the root (how far it got), the plan tree's products, the milestones still open."""
+    """0.35.0: YOUR PLAN: the goal at the root (how far it got, 0.29.0), the plan tree's products, the milestones still
+    open (a venture's first test, the owner's own)."""
+    milestones = roadmap.open_milestones(conn, scope)
+    progress = roadmap.progress_for(conn, scope, today, books)
     top = roadmap.root(conn, scope)
     goal = roadmap.root_line(top, today, progress) if top is not None else ""
     rest = [m for m in milestones if top is None or m["id"] != top["id"]]
@@ -497,21 +475,6 @@ def _plan(
     if len(rest) > SHOWN_MILESTONES:
         shown.append(f"… and {len(rest) - SHOWN_MILESTONES} more")
     return plan_tree.plan_text(conn, scope, now or f"{today.isoformat()}T00:00:00+00:00", today, goal, shown)
-
-
-def roadmap_text(s: Snapshot) -> str:
-    """The planner's ROADMAP (0.11.0), counted from the owner's today; what Ember's code closed since the last cycle
-    ended is a check of its own (0.12.0)."""
-    since = dict(s.last_cycle).get("ended_at") if s.last_cycle is not None else None
-    return roadmap.planner_text(
-        s.roadmap,
-        s.roadmap_closed,
-        s.today or date.today(),
-        since,
-        s.roadmap_spent,
-        s.roadmap_unlocks,
-        s.roadmap_progress,
-    )
 
 
 def _safe_listing(workspace: Jail, shown: int = 19, budget: int = 900) -> list[str]:

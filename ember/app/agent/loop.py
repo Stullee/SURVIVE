@@ -718,7 +718,7 @@ class CycleRunner:
         self._keep_money_goal(scope, status.runway.net_days, settle=False)
 
     def _snapshot(self, kind: str = lines.ORDINARY, cycle_id: int | None = None, keep: bool = True) -> context.Snapshot:
-        """What the plan, the brief and the will see; ``kind``: the cycle's (lines.kind); ``cycle_id``: the cycle's
+        """What the plan, the brief and the will see; ``kind``: the cycle's (plan.steer); ``cycle_id``: the cycle's
         (none for the diagnostics' preview). First (``keep``) Ember's code keeps its rules (``_keep``)."""
         if keep:
             self._keep(cycle_id)

@@ -29,7 +29,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..integrations import etsy_publisher, mailstore, qa, site_publisher
-from . import gates, roadmap, stages, ventures
+from . import roadmap, stages, ventures
 from .store import OPEN_STATUSES, AgentScope
 
 KINDS = ("promise", "decision", "miss")
@@ -208,7 +208,8 @@ def pressing(conn: sqlite3.Connection, scope: AgentScope, today: date, messages:
     """What makes this wake cycle an ordinary one rather than a venture cycle: the owner's messages waiting for an
     answer (0.19.3: only with ``messages``, when the owner's message woke it; a venture cycle answers them first), a
     promise due by tomorrow (or overdue for PRESSING_OVERDUE_DAYS at most) or a decision of the last PRESSING_NEW_DAYS
-    days (0.33.0: the owner's, FORCING; a miss presses no more, lines.kind). Empty when nothing presses."""
+    days (0.33.0: the owner's, FORCING; a miss presses no more). Empty when nothing presses. 0.35.0: it skips the
+    ventures' turn (loop._cycle_kind); the plan tree takes a promise's or decision's step first."""
     found = []
     waiting = messages_waiting(conn, scope)
     if waiting and messages:
@@ -274,10 +275,11 @@ class Owed:
 def owed(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> Owed:
     """0.28.0: an open obligation's line and kind of work, from the records it points to: a decision by its request
     (ventures.request_line), a miss by its milestone (a line's bar, or a backed venture's milestone while the venture
-    has one open project). A decision on a pin, a post, a blog post, the link page or a Reddit post and a push to bring
-    buyers (gates.owes_push) are marketing work. A promise is made in an answer to the owner, often about another line
-    than the cycle's: 0.33.0, it has the line it names (project_id), and none without one. No obligation has the line
-    of one that is closed, or that the owner's park or kill stopped: no cycle works on it, so any cycle may close it."""
+    has one open project). A decision on a pin, a post, a blog post, the link page or a Reddit post is marketing work
+    (until 0.34.0 a listing test bar's push to bring buyers was too). A promise is made in an answer to the owner,
+    often about another line than the cycle's: 0.33.0, it has the line it names (project_id), and none without one. No
+    obligation has the line of one that is closed, or that the owner's park or kill stopped: no cycle works on it, so
+    any cycle may close it."""
     if row["kind"] == "promise":
         return Owed(_working(conn, scope, row["project_id"]), forces=True)
     if row["kind"] == "decision":
@@ -294,8 +296,7 @@ def owed(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> Owed:
     project = milestone["project_id"]
     if project is None and milestone["venture_id"] is not None:
         project = only_project(conn, scope, int(milestone["venture_id"]))
-    market = project is not None and gates.owes_push(conn, scope, int(project), int(row["milestone_id"]))
-    return Owed(_working(conn, scope, project), market)
+    return Owed(_working(conn, scope, project))  # 0.35.0: no bar's push (a decide-by date makes marketing urgent)
 
 
 def _markets(request: sqlite3.Row) -> bool:
