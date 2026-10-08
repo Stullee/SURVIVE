@@ -248,6 +248,17 @@ def review_text(conn: sqlite3.Connection, scope: AgentScope, project_id: int) ->
     return "; ".join(parts)
 
 
+def fixes(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> list[str]:
+    """What the newest check of each listing of the line said to fix, when the listing wasn't changed since (0.24.0:
+    each names its listing; a change waits for the next check, ``due``). 0.35.0: YOUR STEP quotes them on the plan
+    tree's critic step (lines.py's, for READY, until 0.34.0)."""
+    found = []
+    for row in newest(conn, scope, project_id) or unplaced(conn, scope, project_id):
+        if row["verdict"] == "improve" and row["fixes"] and not changed_since(conn, scope, row):
+            found.append(f"the quality critic said of {label(conn, scope, row['listing_id'])}: {row['fixes'][:200]}")
+    return found
+
+
 def verdict(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> str:
     """A product line's verdict: improve while the newest check of any of its live listings says so, else pass; ""
     before any check. 0.24.0: a line none of whose live listings was checked yet has its unplaced check's."""

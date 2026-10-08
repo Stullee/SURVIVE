@@ -221,7 +221,7 @@ def test_the_work_steps_see_why_the_plan_chose_its_line_the_review_of_it_and_the
     with agent.db.transaction() as conn:
         agent.memory().update(conn, "strategy", "replace", "Bring buyers to what is live first.", 1, now(agent))
     why = "Line #3 owes its book; its pins wait for a marketing cycle."
-    fake.script.extend([take("line #3", focus=3, assessment=why), ToolCalls([("project_list", {})]), Reply("Done.")])
+    fake.script.extend([take(3, assessment=why), ToolCalls([("project_list", {})]), Reply("Done.")])
     fake.script.append(JOURNAL)
     agent.run_cycle("schedule")
     brief = texts(fake, "work")[-1]

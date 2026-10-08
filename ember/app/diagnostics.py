@@ -1050,7 +1050,8 @@ def _agent(state: AppState, full: bool = True) -> str:
         ).fetchall()
         columns = ["subject", "metric", "days", "subjects", "newest"]
         out.append("-- observations (by subject and metric)\n" + _rows(observed, columns))
-        # 0.34.0: the step the plan tree would take now, its next ones with their weight's parts, and what waits
+        # 0.34.0: the step the plan tree takes now (0.35.0: the next cycle's), its next ones with their weight's parts,
+        # and what waits
         try:
             pick, found = plan.choose(
                 conn, scope, to_iso(agent.clock.now()), agent.clock.today(), plan.channels_from(agent.settings)
@@ -1060,7 +1061,7 @@ def _agent(state: AppState, full: bool = True) -> str:
                 for s, p in pick.ranked[:8]
             ]
             out.append(
-                f"-- plan tree: the ranking now (it would take: {pick.decided})\n"
+                f"-- plan tree: the ranking now (the next cycle takes: {pick.decided})\n"
                 + _rows(ranking, ["step", "line", "weight", "title", "why"])
             )
             waiting = [

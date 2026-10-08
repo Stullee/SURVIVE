@@ -3,7 +3,7 @@ Ember's code settles them; the daily review writes a retrospective of each thing
 weekly look reads the whole business, rewrites the strategy and draws principles from the cases, whose confidence
 Ember's code sets; the plan's LESSONS shows that playbook first and the work steps recall the matching cases; an
 independent critic scores a product line's listing; and an ordinary plan gets READY, the useful work while projects
-wait, with no long sleep while it lists something."""
+wait, with no long sleep while it lists something (0.35.0: while the plan tree has a step ready)."""
 
 from __future__ import annotations
 
@@ -21,24 +21,27 @@ from app.agent import (  # noqa: E402
     bets,
     context,
     learning,
-    lines,
     prompts,
     quality,
     reach,
     review,
-    slack,
+    store,
     tools,
     ventures,
     weekly,
 )
+from app.agent import plan as plan_tree  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import etsy_publisher  # noqa: E402
 from app.integrations.etsy import NotSent  # noqa: E402
 from tests.test_agent import make_agent, plan, rows, text  # noqa: E402
 from tests.test_agent import tools as calls  # noqa: E402
-from tests.test_etsy import call, shop_context  # noqa: E402
-from tests.test_listing_gates import started  # noqa: E402
+from tests.test_etsy import (  # noqa: E402
+    call,
+    shop_context,
+    started,  # noqa: E402
+)
 from tests.test_owner_loop import owner  # noqa: E402
 from tests.test_printify import proposed  # noqa: E402
 
@@ -375,65 +378,56 @@ def test_cases_and_principles_are_found_by_their_words(data_dir: Path) -> None:
 # --- waiting time ---
 
 
-def test_an_ordinary_plan_gets_ready_and_no_long_sleep_while_it_lists_something(data_dir: Path) -> None:
+def test_the_critic_s_fixes_are_a_step_of_the_line_your_step_quotes(data_dir: Path) -> None:
+    """0.35.0: the critic's fixes are the line's own work, a step of the plan tree's (READY's item until 0.34.0)."""
     agent, project = started(data_dir)
-    with agent.db.connection() as conn:
-        found = lines.ready(conn, agent.scope(), today=agent.clock.today(), explore=True, markets=True)
-        market = lines.marketing(conn, agent.scope(), printify_links=False)
-    # 0.28.0: one line in flight, so a new line comes first. 0.30.0: its listing test's bar is Ember's code's check of
-    # Etsy's numbers, no job of an ordinary cycle's (it made every live line a job), and the line waits for its owner
-    assert [i.key for i in found] == ["new line", f"line #{project}"] and not found[1].job and not found[0].job
-    assert "milestone #" not in found[1].text and "its marketing cycles bring buyers" in found[1].text
-    assert [i.key for i in market] == [f"market #{project}"] and market[0].job  # nobody saw it: buyers to bring
-    assert lines.text(found).startswith(lines.HEADING)
-    assert slack.sleep(720, found, 30, "explore") == 720
-    with agent.db.transaction() as conn:  # the critic's fixes are the line's own work
+    scope, stamp, today = agent.scope(), now(agent), agent.clock.today()
+    with agent.db.transaction() as conn:
         verdict = {"score": 5, "verdict": "improve", "fixes": "A cover that shows the recipes."}
-        quality.save(conn, agent.scope(), project, None, verdict, None, now(agent))
-    with agent.db.connection() as conn:
-        found = lines.ready(conn, agent.scope(), today=agent.clock.today(), explore=True, markets=True)
-    assert found[1].job and "the critic on " in found[1].text
-    assert slack.sleep(720, found, 30, "explore") == slack.SLEEP_MINUTES
-    assert slack.sleep(720, found, 240, "explore") == 240  # not below the owner's shortest sleep
-    assert slack.sleep(720, found, 30, "maintenance") == 720
-    assert slack.sleep(720, [], 30, "explore") == 720
+        quality.save(conn, scope, project, None, verdict, None, stamp)
+        plan_tree.keep(conn, scope, stamp, today, {})
+    [fix] = rows(agent, f"SELECT id FROM plan_nodes WHERE project_id = {project} AND check_kind = 'critic'")
+    with agent.db.transaction() as conn:
+        plan_tree.pin(conn, scope, fix["id"], True, "Owner", stamp)
+        steered = plan_tree.steer(conn, scope, stamp, today, {})
+        shown = plan_tree.step_text(conn, scope, steered, explore=True)
+    assert steered.step is not None and steered.step.id == fix["id"]
+    assert "\n- the quality critic said of " in shown and ": A cover that shows the recipes." in shown
 
 
-WORK = lines.Item(lines.LINE, 1, "no demand note", job=True)
-# 0.28.0: a line only waiting for the owner and a new line are no work to wake sooner for (this week's questions are
-# READY's context lines, no items)
-IDLE = [lines.Item(lines.LINE, 2, "waits for your owner: request #3"), lines.Item(lines.NEW, None, "a new line")]
-
-
-def test_this_week_s_questions_and_an_idle_plan_keep_the_agent_s_sleep(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """0.21.0 (analysis 0.20.1, FIX NOW 5): READY always holds the weekly look's questions (for 7 days), so every
+def test_an_idle_plan_keeps_the_agent_s_sleep(data_dir: Path) -> None:
+    """0.21.0 (analysis 0.20.1, FIX NOW 5): READY always held the weekly look's questions (for 7 days), so every
     completed or idle cycle's sleep was cut to 3 hours, "Nothing until 10-07." too: up to 8 paid plans a day."""
-    assert slack.sleep(720, IDLE, 30, "explore") == 720
-    assert slack.sleep(720, [*IDLE, WORK], 30, "explore") == slack.SLEEP_MINUTES
-    monkeypatch.setattr(lines, "ready", lambda *_, **__: [WORK, *IDLE])
     agent, _ = make_agent(data_dir, [plan(steps=[], sleep=720)], DEFAULTS)
     end = agent.run_cycle("schedule")
     assert (end.status, end.sleep_minutes, end.sleep_cut) == ("idle", 720, None)
     assert agent._meta_time("next_wake_at") == agent.clock.now() + timedelta(minutes=720)
 
 
-@pytest.mark.parametrize(
-    ("ready", "worked", "most"),
-    [([WORK, *IDLE], False, 2), (IDLE, True, 2), ([WORK, *IDLE], True, 6)],
-)
+@pytest.mark.parametrize(("lined", "worked", "most"), [(True, False, 2), (False, True, 2), (True, True, 6)])
 def test_cycles_a_day_under_the_default_options(
-    data_dir: Path, monkeypatch: pytest.MonkeyPatch, ready: list[lines.Item], worked: bool, most: int
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, lined: bool, worked: bool, most: int
 ) -> None:
     """0.21.0: the scheduled cycles of a day, projected from the wakes Ember's code sets after each, when the agent
-    asks for 12 hours of sleep: an idle plan's or a sleep with only questions in READY stands; with work in READY a
-    cycle that worked sleeps the owner's default interval (wake_interval_minutes, 4 hours), not 3 hours."""
-    monkeypatch.setattr(lines, "ready", lambda *_, **__: ready)
+    asks for 12 hours of sleep: an idle plan's or a sleep with no step ready stands; with a step ready (0.35.0: of the
+    plan tree; READY's work until 0.34.0) a cycle that worked sleeps the owner's default interval
+    (wake_interval_minutes, 4 hours), not 3 hours."""
     monkeypatch.setattr(review, "due", lambda *_: False)  # the day's review would answer a plan of this script
     journal = calls(("write_journal", {"summary": "Worked", "entry": "Looked around."}))
     script = [plan(steps=["look around"], sleep=720), text("Done."), journal] if worked else [plan(steps=[], sleep=720)]
     agent, _ = make_agent(data_dir, script * 12, DEFAULTS)
+    if lined:  # a product line whose plan has a step ready
+        scope, stamp = agent.scope(), now(agent)
+        with agent.db.transaction() as conn:
+            first = conn.execute(
+                "INSERT INTO cycles (life_id, boot_id, started_at, ended_at, status, trigger, simulated, cap_micros,"
+                " session) VALUES (?, 'b', ?, ?, 'idle', 'schedule', 1, 0, ?)",
+                (scope.life_id, stamp, stamp, scope.session),
+            ).lastrowid
+            store.create_project(
+                conn, scope, cycle_id=int(first), title="Planner", hypothesis="Someone pays 5 EUR for it",
+                next_step="", status="active", now=stamp,
+            )  # fmt: skip
     day_ends, cycles = agent.clock.now() + timedelta(days=1), 0
     while agent.clock.now() < day_ends:
         assert agent.run_cycle("schedule").status == ("completed" if worked else "idle")

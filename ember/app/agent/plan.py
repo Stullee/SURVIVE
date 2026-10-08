@@ -59,11 +59,10 @@ HISTORY = 12  # cycles read back for the streak
 # time it is weighed (live, an obligation nobody closed took every cycle's line until 0.28.0 limited it to once a day)
 OBLIGATION_HOURS = 24
 ALTERNATIVES = 3  # the other steps YOUR STEP names
-# 0.35.0: a listing product's decide-by dates (in place of the listing test's bars, gates.py until 0.34.0): from the
-# day its first listing was seen live. Day 7: 10 views, or its marketing is urgent for a week. Day 14: 30 views and 2
+# 0.35.0: a product's decide-by dates once it has a live listing (in place of the listing test's bars, gates.py until
+# 0.34.0): from the day its first listing was seen live. Day 7: 10 views, or its marketing is urgent for a week. Day 14: 30 views and 2
 # favorites; missed with less reach than reach.ENOUGH, one more try by day 28 (its marketing urgent meanwhile), else
 # the owner decides. Day 21: an order brings a step to scale it; none, the owner decides (keep or drop it).
-LISTED = ("etsy_digital", "printify_pod")  # the templates whose products are listings
 DAY7_VIEWS, DAY14_VIEWS, DAY14_FAVORITES = 10, 30, 2
 PUSH_DAYS = 7  # a views bar missed: the product's marketing is urgent this long
 MOVED_KEY = "plan_tree.milestones_upto"  # migration 0088: the newest milestone the plan tree took the place of
@@ -786,13 +785,12 @@ def _products_of(conn: sqlite3.Connection, scope: AgentScope, milestone: Mapping
 
 
 def _decide_by(facts: Facts, product: Mapping[str, Any], now: str, today: date) -> list[str]:
-    """A listing product's decide-by dates (LISTED), each read once on or after its day from the start of its test
-    (the day its first listing was seen live; a listing test begun before 0.35.0 keeps its start and what its bars
-    found). Their verdicts are kept on the product (decide_by), and a views bar missed makes its marketing urgent
+    """A product's decide-by dates once a listing of its line is live (whatever its template: a line laid out before
+    its first listing keeps the one it got), each read once on or after its day from the start of its test (the day
+    its first listing was seen live; a listing test begun before 0.35.0 keeps its start and what its bars found).
+    Their verdicts are kept on the product (decide_by), and a views bar missed makes its marketing urgent
     (pushed_until). What the owner decides comes as a step of theirs; a first order brings Ember a step to scale it."""
     conn, scope = facts.conn, facts.scope
-    if templates.by_key(product["template"]).name not in LISTED:
-        return []
     line = int(product["project_id"])
     found: dict[str, str] = json.loads(product["decide_by"]) if product["decide_by"] else {}
     start = product["live_since"]
@@ -942,16 +940,18 @@ def _audience_channels(product: Mapping[str, Any]) -> list[str]:
 def _recurring(
     facts: Facts, product: Mapping[str, Any], now: str, today: date, channels: Mapping[str, bool]
 ) -> list[str]:
-    """A live product's recurring steps, once its launch is done: one open step per channel's duty (a missed one stays
-    open and ages), and a fix whenever the critic says improve."""
+    """A live product's recurring steps: once every stage before its maintain stage is done (its launch, or a
+    template's last before it), one open step per channel's duty (a missed one stays open and ages); and a fix
+    whenever the critic says improve (it judges live listings only)."""
     conn, scope = facts.conn, facts.scope
-    stages = {s["stage"]: s for s in _stages(conn, scope, product["id"])}
-    maintain, launch = stages.get("maintain"), stages.get("launch")
-    if maintain is None or maintain["status"] != "open" or launch is None or launch["status"] == "open":
+    stages = _stages(conn, scope, product["id"])
+    maintain = next((s for s in stages if s["stage"] == "maintain"), None)
+    if maintain is None or maintain["status"] != "open":
         return []
     said: list[str] = []
     title = str(product["title"])
-    if templates.by_key(product["template"]).name != "kdp_book":  # a book can't be linked yet (Amazon links)
+    launched = not any(s["status"] == "open" for s in stages if s["stage"] != "maintain")
+    if launched and templates.by_key(product["template"]).name != "kdp_book":  # a book can't be linked yet
         funnel = facts.funnel(product["project_id"])
         for channel in _audience_channels(product):
             if not channels.get(channel, False):
@@ -1116,6 +1116,7 @@ def candidates(
             product["owner_worth"],
         )
         verdict = facts.verdict(pid)
+        live = facts.live(pid) > 0  # its maintain steps (the critic's fix, a decide-by's) are ready once it is live
         rows = [
             (stage, step)
             for stage in _stages(conn, scope, product["id"])
@@ -1142,7 +1143,9 @@ def candidates(
         first_taken = False
         for stage, step in work:
             sequential = stage["stage"] in SEQUENTIAL
-            later = stage["id"] != current["id"] and not (stage["stage"] == "maintain" and current["stage"] == "launch")
+            later = stage["id"] != current["id"] and not (
+                stage["stage"] == "maintain" and (current["stage"] == "launch" or live)
+            )
             reason: str | None
             if stopped or held:
                 reason = "hold"
@@ -1415,6 +1418,10 @@ def step_text(
                 else f"{check_words(row['check_kind'], _spec(row))} (Ember's code checks it)"
             )
             lines.append(f"Done when: {done}.")
+        if row is not None and row["check_kind"] == "critic" and step.product is not None:
+            from . import quality  # here, not at the top: quality imports prompts, which imports tools, then this
+
+            lines += [f"- {_cut(f, 260)}" for f in quality.fixes(conn, scope, step.product)[:3]]
         parts = steered.pick.parts
         if parts is not None:
             carried = node(conn, scope, parts.carried_from) if parts.carried_from else None
@@ -2064,7 +2071,6 @@ def view(
     waiting_owner = [_step_brief(c, None, titles) for c in found if c.waiting == "owner"]
     goal = roadmap.root(conn, scope)
     return {
-        "preview": False,  # 0.35.0: the tree steers
         "today": today.isoformat(),
         "goal": {"title": goal["title"], "due": goal["due"]} if goal is not None else None,
         "projects": projects,

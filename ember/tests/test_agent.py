@@ -25,14 +25,12 @@ from tests.economy_helpers import ScriptedTransport, make_economy
 
 _ids = itertools.count(1)
 # No venture cycles (0.10.0): these tests follow the ordinary cycle; tests/test_ventures.py has the venture ones.
-# 0.15.0: an owner named in owner_user_ids, as the owner's unlocks act only then. 0.28.0: no marketing cycles either
-# (tests/test_fixes_0280.py has them)
+# 0.15.0: an owner named in owner_user_ids, as the owner's unlocks act only then.
 ROOMY = Settings(
     starting_balance_usd=50,
     daily_spend_cap_usd=5,
     cycle_spend_cap_usd=1,
     venture_share=0,
-    marketing_share=0,
     owner_user_ids=("8f14e45fceea167a5a36dedd4bea2543",),
 )
 

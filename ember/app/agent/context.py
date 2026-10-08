@@ -283,8 +283,6 @@ class Snapshot:
     venture_share: int = 0  # the owner's share of the spending for ventures, in percent
     venture_day: tuple[int, int] = (0, 0)  # today's spending, and the venture cycles' part of it
     marketing: bool = False  # 0.28.0: a marketing cycle (lines.py)
-    marketing_share: int = 0  # 0.28.0: marketing cycles' share of the spending, in percent (0: none run)
-    marketing_spent: int = 0  # 0.28.0: today's spending in marketing cycles
     marketing_apart: bool = False  # 0.28.0: marketing cycles run, so an ordinary cycle has no marketing tools
     call_costs: dict[str, int] = field(default_factory=dict)  # what research and brainstorms cost lately (0.10.1)
     today: date | None = None  # the owner's local date (the milestones' horizons are counted from it)
@@ -325,7 +323,6 @@ def snapshot(
     venture: bool = False,
     venture_share: int = 0,
     marketing: bool = False,
-    marketing_share: int = 0,
     marketing_apart: bool = False,
     shelf: library.Shelf | None = None,
     pinterest: str = "",
@@ -374,7 +371,7 @@ def snapshot(
     ).fetchone()
     files = _safe_listing(workspace)
     standing = store.standing_instructions(conn, scope)
-    spent, ventured, marketed = ventures.day_spends(conn, scope, today) if today is not None else (0, 0, 0)
+    spent, ventured, _ = ventures.day_spends(conn, scope, today) if today is not None else (0, 0, 0)
     memories = memory.read_all()
     written = {int(r["cycle_id"]) for r in (journal[:1] + ([handoff] if handoff is not None else []))}
     return Snapshot(
@@ -432,8 +429,6 @@ def snapshot(
         venture_share=venture_share,
         venture_day=(spent, ventured),
         marketing=marketing,
-        marketing_share=marketing_share,
-        marketing_spent=marketed,
         marketing_apart=marketing_apart,
         call_costs=ventures.call_costs(conn, scope) if venture else {},
         today=today,
@@ -534,7 +529,7 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
         lines.append(f"Burn mode, set by Ember's code: {s.burn}.")
     if s.workspace_usage:
         lines.append(s.workspace_usage)
-    if s.venture_share or s.marketing_share:
+    if s.venture_share:
         lines.append(_share_line(s))
         if s.venture:
             lines.append(ventures.room_text(s.cycle_cap, s.call_costs, s.brainstorm))
@@ -544,20 +539,14 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
 
 
 def _share_line(s: Snapshot) -> str:
-    """STATUS's line on the shares of the spending the owner gives ventures and (0.28.0) marketing, in one line (the
-    section's room is small), and what kind of cycle this is."""
+    """STATUS's line on the share of the spending the owner gives ventures, in one line (the section's room is small),
+    and what kind of cycle this is (0.35.0: the marketing share retired; the plan tree's step decides a marketing
+    cycle)."""
     spent, ventured = s.venture_day
-    given = [
-        (name, share, part)
-        for name, share, part in (
-            ("ventures", s.venture_share, ventured),
-            ("marketing", s.marketing_share, s.marketing_spent),
-        )
-        if share
-    ]
-    names = " and ".join(f"{name} {share}%" for name, share, _ in given)
-    parts = " and ".join(f"${micros_to_usd(part):.2f}" for _, _, part in given)
-    text = f"Your owner gives {names} of your spending: {parts} of today's ${micros_to_usd(spent):.2f} so far."
+    text = (
+        f"Your owner gives ventures {s.venture_share}% of your spending: ${micros_to_usd(ventured):.2f} of today's"
+        f" ${micros_to_usd(spent):.2f} so far."
+    )
     if s.venture:
         return text + " This is a venture cycle."
     if s.marketing:

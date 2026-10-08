@@ -8,7 +8,8 @@ them toward the goal, which its view now shows) and the review's changes; a bar 
 The playbook was written only by the weekly look, once a week, which came right after the first review of 0.18.0,
 when hardly any case existed, and which was skipped at every cycle once its view outgrew its budget: now each
 retrospective's lesson joins it as a hypothesis the day its case is kept, the look's view fits, the look curates, and
-the owner sees the playbook under Mind → Playbook."""
+the owner sees the playbook under Mind → Playbook. 0.35.0: READY retired; the plan tree takes each cycle's step and
+keeps a product going up to 3 cycles in a row (tests/test_fixes_0350.py)."""
 
 from __future__ import annotations
 
@@ -26,19 +27,22 @@ from app.agent import (  # noqa: E402
     lines,
     loop,
     prompts,
-    reach,
     review,
     roadmap,
     store,
     views,
     weekly,
+    weights,
 )
 from app.agent.service import Agent  # noqa: E402
 from app.config import Settings  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
-from tests.test_etsy import call, shop_context  # noqa: E402
-from tests.test_fixes_0280 import lined, milestone, now, ready  # noqa: E402
-from tests.test_listing_gates import started  # noqa: E402
+from tests.test_etsy import (  # noqa: E402
+    call,
+    shop_context,
+    started,  # noqa: E402
+)
+from tests.test_fixes_0280 import lined, now  # noqa: E402
 
 
 def ran(
@@ -61,10 +65,6 @@ def ran(
                 (scope.life_id, stamp, stamp, status, trigger, scope.session, project, venture, marketing),
             ).lastrowid
         )
-
-
-def keys(items: list[lines.Item]) -> list[str]:
-    return [i.key for i in items]
 
 
 def judged(agent: Agent, *verdicts: tuple[int, str, str]) -> None:
@@ -101,115 +101,18 @@ def journal(agent: Agent, cycle_id: int, handoff: str) -> None:
         store.write_journal(conn, agent.scope(), cycle_id, "agent", "Worked on it", "What I did.", now(agent), handoff)
 
 
-# --- READY keeps a plan going ---
+# --- the week's focus, and handoffs that follow their line ---
 
 
-def test_ready_keeps_the_line_in_progress_for_a_few_cycles_then_gives_another_line_its_turn(data_dir: Path) -> None:
-    agent, _ = lined(data_dir)
-    assert keys(ready(agent, explore=False)) == ["line #3", "line #2", "line #1"]
-    for n in range(1, lines.MAX_STREAK):
-        ran(agent, 2)
-        first = ready(agent, explore=False)[0]
-        assert first.key == "line #2" and first.job, n
-        assert f"in progress, cycle {n + 1} of at most {lines.MAX_STREAK} in a row" in first.text
-    # a marketing, a venture, a reactive and an idle cycle in between don't break the run, nor count in it
-    ran(agent, 2, marketing=1)
-    ran(agent, None, venture=1)
-    ran(agent, 1, trigger="event")
-    ran(agent, 3, status="idle")
-    assert ready(agent, explore=False)[0].key == "line #2"
-    ran(agent, 2)  # its third ordinary cycle in a row: another line with work comes first
-    found = ready(agent, explore=False)
-    assert found[0].key != "line #2" and found[-1].key == "line #2"
-    assert f"had {lines.MAX_STREAK} cycles in a row: another line with work first" in found[-1].text
-    ran(agent, 3)  # a cycle on another line: its run begins, and line #2 is a line like the others again
-    found = ready(agent, explore=False)
-    assert found[0].key == "line #3" and "in progress, cycle 2 of" in found[0].text
-    assert "cycles in a row" not in next(i for i in found if i.key == "line #2").text
-
-
-def test_the_run_ends_when_the_line_waits_or_the_review_says_stop(data_dir: Path) -> None:
-    agent, _ = lined(data_dir)
-    ran(agent, 1)
-    assert ready(agent, explore=False)[0].key == "line #1"
-    with agent.db.transaction() as conn:
-        store.update_project(conn, 1, now(agent), status="waiting")
-    found = ready(agent, explore=False)
-    assert found[-1].key == "line #1" and "in progress" not in found[-1].text  # only waiting for the owner
-    with agent.db.transaction() as conn:
-        store.update_project(conn, 1, now(agent), status="active")
-    judged(agent, (1, "stop", "none"), (3, "continue", "too_early"))
-    found = ready(agent, explore=False)
-    assert keys(found)[-1] == "line #1" and "in progress" not in found[-1].text
-    assert "your review said stop: close it (project_update)" in found[-1].text
-
-
-def test_the_week_s_focus_and_the_review_s_changes_come_after_the_line_in_progress(data_dir: Path) -> None:
+def test_the_weekly_look_keeps_the_week_s_focus_lines(data_dir: Path) -> None:
     agent, _ = lined(data_dir, ("Planner", "Poster", "Checklist", "Bundle"))
     happened = looked(agent, [3, 99, 3, "2"])
     assert happened[1:3] == ["this week's focus: #3", "not a focus (no open line of yours): #99"]
     [row] = rows(agent, "SELECT answer FROM weekly_reviews")
     assert json.loads(row["answer"])["focus"] == [3]  # kept as Ember's code kept it
-    judged(agent, (1, "change", "appeal"), (4, "change", "reach"))
-    found = ready(agent, explore=False)
-    # the changes are tasks of their own, then the focus line (a change for reach is an ordinary cycle's while no
-    # marketing cycles run)
-    assert keys(found) == ["line #4", "line #1", "line #3", "line #2"]
-    assert "your review: change (appeal)" in found[1].text and "this week's focus" in found[2].text
-    with agent.db.connection() as conn:
-        found = lines.ready(conn, agent.scope(), today=agent.clock.today(), explore=False, markets=True)
-    assert keys(found) == ["line #1", "line #3", "line #4", "line #2"]  # reach is the marketing cycles' now
-    assert "your review: change" not in found[2].text
-    # while the focus line has work, a detour to another line stays one cycle: it builds no run
-    ran(agent, 2)
-    found = ready(agent, explore=False)
-    assert found[0].key != "line #2" and "in progress" not in next(i for i in found if i.key == "line #2").text
-    ran(agent, 3)  # the focus line's own cycles run on
-    assert ready(agent, explore=False)[0].key == "line #3"
     with agent.db.connection() as conn:
         text = weekly.planner_text(weekly.latest(conn, agent.scope(), agent.clock.today()))
-    assert "This week's focus lines (READY ranks them after what is owed and the line in progress): #3" in text
-
-
-def test_the_week_s_focus_lines_get_the_marketing_cycles_first(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    agent, _ = lined(data_dir)
-    unseen = {pid: reach.Funnel(listings=[900 + pid]) for pid in (1, 2, 3)}
-    monkeypatch.setattr(reach, "funnels", lambda *_: unseen)
-    with agent.db.connection() as conn:
-        before = lines.marketing(conn, agent.scope(), printify_links=True, today=agent.clock.today())
-    assert keys(before) == ["market #1", "market #2", "market #3"]
-    looked(agent, [2])
-    with agent.db.connection() as conn:
-        after = lines.marketing(conn, agent.scope(), printify_links=True, today=agent.clock.today())
-    assert keys(after) == ["market #2", "market #1", "market #3"] and " · this week's focus · " in after[0].text
-
-
-def test_a_bar_of_a_listing_test_is_no_milestone_due_but_the_agent_s_own_is(data_dir: Path) -> None:
-    agent, _ = lined(data_dir)
-    stamp, soon = now(agent), agent.clock.today().isoformat()
-    with agent.db.transaction() as conn:
-        bar = roadmap.create(
-            conn,
-            agent.scope(),
-            title="Day 7: 10 views of Poster",
-            measure="Ember's code checks it",
-            due=soon,
-            now=stamp,
-            project_id=2,
-            created_by="code",
-            kind="first_test",
-            metric="views_total",
-            target=10,
-        )
-    found = ready(agent, explore=False)
-    poster = next(i for i in found if i.key == "line #2")
-    assert f"milestone #{bar} " not in poster.text and not poster.job
-    own = milestone(agent, 1, 3, "The planner's first listing")
-    found = ready(agent, explore=False)
-    assert found[0].key == "line #1" and f"milestone #{own} due " in found[0].text and found[0].job
-
-
-# --- handoffs follow their line ---
+    assert "This week's focus lines: #3" in text
 
 
 def test_each_line_keeps_the_next_step_its_last_cycle_left(data_dir: Path) -> None:
@@ -223,8 +126,6 @@ def test_each_line_keeps_the_next_step_its_last_cycle_left(data_dir: Path) -> No
         assert said[2] == (worked, "Make the poster's cover photo and check it at 1000 px")
         focus = lines.focus_text(conn, agent.scope(), 2, marketing=False)
         assert "left as next" not in lines.focus_text(conn, agent.scope(), 2, marketing=True)
-    first = ready(agent, explore=False)[0]
-    assert first.key == "line #2" and ': next "Make the poster' in first.text
     left = f'Your last cycle on it (#{worked}) left as next: "Make the poster\'s cover photo and check it at 1000 px"'
     assert left in focus
     planner = agent.planner_preview()  # the plan's YOUR LAST CYCLE says where its handoff was written
@@ -441,6 +342,5 @@ def test_the_owner_sees_the_playbook_under_mind(data_dir: Path) -> None:
 def test_the_planner_s_rules_ask_to_finish_what_was_started() -> None:
     rules = " ".join(prompts.PLANNER_RULES.split())
     assert "Keep 2-3 lines going across your cycles" not in rules
-    assert f"READY keeps your line in progress first while it has work ({lines.MAX_STREAK} cycles in a row" in rules
-    assert "this week's focus lines" in " ".join(prompts.MARKETING_RULES.split())
+    assert f"Finish what you start: it keeps you on that product up to {weights.STREAK_CAP} cycles in a row" in rules
     assert context.LINE_FOCUS_BUDGET >= 1_000  # room for the line's last handoff in FOCUS
