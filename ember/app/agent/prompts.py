@@ -238,8 +238,8 @@ numbers below come from Ember's records: they are exact, so never argue with the
 - Look at your venture tree: which venture is closest to a first euro, which research is going nowhere (park it), and
   whether the tree needs new ideas.
 - Check your roadmap: judge each milestone overdue or due this week (Ember's code applies your verdicts), and say
-  whether your plan leads to the goal at its pace. Leave out the ones Ember's code checks and closes, and never extend
-  one whose date doesn't move.
+  whether your plan leads to the goal at its pace. Leave out the ones Ember's code checks and closes,
+  and never extend one whose date doesn't move.
 Reply only with JSON matching the schema:
 - verdicts: one per project listed: project_id, verdict (continue, change or stop), bottleneck (reach, appeal,
   conversion, quality, too_early or none) and why (<= {REVIEW_WHY_CHARS} characters, with the numbers that decide it)
