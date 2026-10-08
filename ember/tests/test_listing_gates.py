@@ -63,7 +63,7 @@ def test_a_product_line_s_test_begins_with_its_first_live_listing_one_bar_at_a_t
     assert (row["metric"], row["target"], row["created_by"], row["kind"]) == ("views_total", 10, "code", "first_test")
     assert (row["project_id"], row["status"], row["started_on"]) == (project, "open", today.isoformat())
     assert row["due"] == (today + timedelta(days=7)).isoformat() and row["title"].startswith("Day 7: 10 views of ")
-    assert "Missed: fix their titles, tags and category once" in row["measure"]
+    assert "Missed: bring buyers to them (pins, posts, a blog post)" in row["measure"]  # 0.33.0: not edits
     assert keep(agent) == []  # the bar is being checked
     agent.clock.advance(days=2)
     close(agent, "day7_views", "done")
@@ -109,10 +109,10 @@ def test_a_miss_is_owed_with_its_bar_s_action(data_dir: Path, monkeypatch: pytes
     agent, _ = started(data_dir)
     close(agent, "day7_views", "missed")
     happened = keep(agent)
-    assert happened[0].startswith("Obligation: fix the titles, tags and category of its listings once")
+    assert happened[0].startswith("Obligation: bring buyers to its listings with pins, posts or a blog post")
     [owed] = rows(agent, "SELECT kind, what, milestone_id FROM obligations")
     assert owed["kind"] == "miss" and owed["milestone_id"] == bars(agent)["day7_views"]["id"]
-    assert "fix the titles, tags and category of its listings once (propose_etsy_edit)" in owed["what"]
+    assert gates.PUSH in owed["what"] and "propose_etsy_edit" not in owed["what"]  # 0.33.0: buyers, not edits
     assert set(bars(agent)) == {"day7_views", "day14_views"}  # a miss doesn't end the test
     close(agent, "day14_views", "missed")
     keep(agent)

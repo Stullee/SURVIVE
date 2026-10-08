@@ -3702,17 +3702,21 @@
     $("instructions-status").setAttribute("data-kind", kind || "");
   }
 
-  function openInstructions() {
+  // 0.33.0: ``add``, one of the owner's messages to keep as a standing instruction (Keep as instruction), at the end
+  function openInstructions(add) {
     if (ui.instructions.editing || laterTitle()) return;
+    var adding = typeof add === "string" ? add.trim() : "";  // the Edit button passes its click event
     var current = currentInstructions();
     ui.instructions.editing = true;
     $("instructions-form").hidden = false;
     var box = $("instructions-text");
-    box.value = current ? current.text : INSTRUCTIONS_SUGGESTION;
+    if (adding) box.value = (current ? current.text + "\n" : "") + "- " + adding;
+    else box.value = current ? current.text : INSTRUCTIONS_SUGGESTION;
     box.placeholder = INSTRUCTIONS_SUGGESTION;
     instructionsError("");
     instructionsCount();
-    setInstructionsStatus(current ? "" : "Filled in with the suggestion: change it as you like. Nothing is saved until you press Save.", "");
+    setInstructionsStatus(adding ? "Your message is added at the end: shorten it as you like. Nothing is saved until you press Save."
+      : current ? "" : "Filled in with the suggestion: change it as you like. Nothing is saved until you press Save.", "");
     syncInstructionsEdit(ui.data ? ui.data.agent || standInAgent(ui.data) : null);
     box.focus();
   }
@@ -3944,8 +3948,17 @@
           h("span", { "aria-hidden": "true", text: "◌ " }), "Not answered yet"));
       }
     }
-    if (!m.removed) parts.push(removeButton(num(m.id)));
+    if (!m.removed) parts.push(keepButton(m), removeButton(num(m.id)));
     return h("p", { class: "msg-status" }, parts);
+  }
+
+  // 0.33.0: one of the owner's messages kept as a standing instruction: a message leaves the agent's plans once it is
+  // answered, the instructions are in every plan (live, "Bluesky in English only" was acknowledged, then forgotten).
+  function keepButton(m) {
+    var btn = h("button", { type: "button", class: "link-button", "data-keep": String(num(m.id)), text: "Keep as instruction",
+      title: "Add it to your standing instructions: " + agentName() + " reads them in every plan, and a message only until it is answered" });
+    btn.addEventListener("click", function () { openInstructions(asText(m.text)); });
+    return btn;
   }
 
   // A message brought into view in the conversation, marked for a moment; focus goes to the conversation, so the

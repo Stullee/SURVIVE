@@ -470,7 +470,10 @@ def workshop_reservation(
 
     0.16.2: the costliest call, not the 95th percentile (of 20 calls, that left the costliest out); and the owner's
     Reset estimates no longer clears the tail: one click on it dropped the hold after a run like #423 from $2.76 to
-    the $1.50 cap per run, which the same run would have broken the daily cap with."""
+    the $1.50 cap per run, which the same run would have broken the daily cap with. 0.33.0: a run holds at most what
+    the day has left (MeteredModel.reservation's room), and at least its worst case: live, a $2.76 hold refused every
+    run once the day's spending passed about $3 (four refusals in two days, two cycles of a book's edits lost), while
+    each of those runs was priced below what was left. A run that costs more than it held is booked as it happens."""
     return max(quote, usd_cap_to_micros(settings.workshop_run_cap_usd), _tail_hold(db, clock, simulated, model))
 
 
@@ -667,10 +670,15 @@ class MeteredModel:
     # --- calls ---
 
     def call(
-        self, cycle_id: int, purpose: str, request: Mapping[str, Any], venture_id: int | None = None
+        self,
+        cycle_id: int,
+        purpose: str,
+        request: Mapping[str, Any],
+        venture_id: int | None = None,
+        hold: int | None = None,
     ) -> CallResult:
-        """Reserve, send and settle one model request (``venture_id``: the venture it serves, if not the cycle's).
-        Raises CallRefused or CallFailed."""
+        """Reserve, send and settle one model request (``venture_id``: the venture it serves, if not the cycle's;
+        ``hold``: 0.33.0, what a workshop call holds, reservation with its room). Raises CallRefused or CallFailed."""
         with self.db.connection() as conn:
             if conn.in_transaction:
                 # The reservation must be committed before the request is sent, and nothing may hold the
@@ -678,7 +686,7 @@ class MeteredModel:
                 raise RuntimeError("model calls must not run inside a database transaction")
         # The request that is priced is exactly the request that is sent.
         frozen = copy.deepcopy(dict(request))
-        reservation = self.reserve(cycle_id, purpose, frozen, venture_id)
+        reservation = self.reserve(cycle_id, purpose, frozen, venture_id, hold)
         try:
             outcome = self.transport.send(frozen)
         except Exception as exc:  # noqa: BLE001 - a transport bug must not lose the reservation
@@ -705,11 +713,14 @@ class MeteredModel:
             purpose if scaled else None,
         )
 
-    def reservation(self, request: Mapping[str, Any], purpose: str = "work") -> int:
+    def reservation(self, request: Mapping[str, Any], purpose: str = "work", room: int | None = None) -> int:
         """0.15.0: what the guard would hold of the daily cap and the balance for ``request`` as a ``purpose`` call now
         (reads only): its worst case, a workshop call's at least its cap per run and what recent runs cost
-        (workshop_reservation). Raises Unpriceable."""
-        return self._held(purpose, str(request.get("model") or ""), self.quote(request, purpose))
+        (workshop_reservation). 0.33.0: with ``room`` (what is left of the day and the balance), a workshop call
+        holds no more than that, and never less than its worst case. Raises Unpriceable."""
+        quote = self.quote(request, purpose)
+        held = self._held(purpose, str(request.get("model") or ""), quote)
+        return held if room is None or purpose != WORKSHOP else max(quote, min(held, room))
 
     def _held(self, purpose: str, model: str, estimate: int) -> int:
         if purpose == RESEARCH:  # 0.21.0: what recent research calls cost, like a workshop call's
@@ -900,9 +911,15 @@ class MeteredModel:
         return max(0, own_cap - in_cap), max(0, money)
 
     def reserve(
-        self, cycle_id: int, purpose: str, request: Mapping[str, Any], venture_id: int | None = None
+        self,
+        cycle_id: int,
+        purpose: str,
+        request: Mapping[str, Any],
+        venture_id: int | None = None,
+        hold: int | None = None,
     ) -> Reservation:
-        """Check and record a call before it is sent. Raises CallRefused after committing the refusal."""
+        """Check and record a call before it is sent. Raises CallRefused after committing the refusal. ``hold``:
+        0.33.0, what a workshop call holds (reservation with its room), never less than its worst case."""
         if not _PURPOSE.match(purpose):
             raise ValueError("bad purpose name")
         model = str(request.get("model") or "")
@@ -954,6 +971,8 @@ class MeteredModel:
                 priced = self._estimate(plan, price, search_price, geo, container_price, None)
                 quote = self._estimate(plan, price, search_price, geo, container_price, purpose)
                 estimate = self._held(purpose, plan.model, quote)  # 0.15.0: a workshop call holds more
+                if hold is not None and purpose == WORKSHOP:  # 0.33.0: as much as the day has left
+                    estimate = max(quote, min(estimate, hold))
                 # 0.12.0: the cycle cap counts the expected cost (a reflection may go over the caps: _allowance)
                 expected, allowance = quote, Allowance()
                 if purpose not in OUTSIDE_CYCLE_CAP:

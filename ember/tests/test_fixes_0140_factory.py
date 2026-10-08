@@ -13,6 +13,7 @@ import warnings
 import zipfile
 import zlib
 from pathlib import Path
+from typing import Any
 
 import pypdfium2
 import pypdfium2.raw as pdfium_c
@@ -167,7 +168,12 @@ def test_workspace_write_copies_a_file_for_free(data_dir: Path) -> None:
     agent, _ = make_agent(data_dir, [])
     ctx = ctx_for(agent)
     a_cv(ctx.workspace)
-    write = tools.HANDLERS["workspace_write"]
+    handler = tools.HANDLERS["workspace_write"]
+
+    def write(ctx: Any, args: dict[str, Any], _: None) -> Any:
+        with agent.db.transaction() as conn:  # 0.33.0: a text file it replaces keeps its text (workspace_versions)
+            return handler(ctx, args, conn)
+
     copied = write(ctx, {"path": "shop/de/cv.pdf", "mode": "copy", "content": "shop/cv.pdf"}, None)
     assert copied.ok and copied.text.startswith("Copied shop/cv.pdf to shop/de/cv.pdf (")
     assert ctx.workspace.read_bytes("shop/de/cv.pdf") == ctx.workspace.read_bytes("shop/cv.pdf")

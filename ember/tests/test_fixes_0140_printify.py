@@ -765,19 +765,18 @@ def test_a_printify_only_line_that_misses_day_7_is_owed_what_it_can_do(data_dir:
     agent, _ = listed(data_dir)
     pod = venture_titled(agent, "Print on demand in the Etsy shop")
     project = pod_line(agent, pod)
-    shop_line = project_of(agent, rows(agent, "SELECT id FROM approvals WHERE executor = 'etsy_listing'")[0]["id"])
     scope, now = agent.scope(), to_iso(agent.clock.now())
     with agent.db.transaction() as conn:
         gates.keep(conn, scope, agent.clock.today(), now)
         [bar] = gates.started(conn, scope)[project]
         said = gates._owe(conn, scope, bar, gates.BY_KEY["day7_views"], "Posters", now)
-        assert gates._printify_only(conn, scope, project) and not gates._printify_only(conn, scope, shop_line)
-    # propose_etsy_edit refuses the listings Printify made: the obligation names what the agent can do.
+    # propose_etsy_edit refuses the listings Printify made, and 0.33.0: a day-7 miss owes buyers, not edits, which
+    # pins and posts may bring to a listing Printify made (0.32.0): the line owes what every line owes.
     [what] = [
         r["what"] for r in rows(agent, f"SELECT what FROM obligations WHERE milestone_id = {bar['milestone_id']}")
     ]
-    assert "message_owner" in what and "propose_etsy_edit" not in what
-    assert said.startswith("Obligation: ask your owner once")
+    assert what.startswith(f"project #{project}: {gates.PUSH}") and "propose_etsy_edit" not in what
+    assert said.startswith("Obligation: bring buyers to its listings with pins, posts or a blog post (project #")
 
 
 def test_a_closed_line_s_printify_listing_still_counts_for_the_print_on_demand_venture(data_dir: Path) -> None:

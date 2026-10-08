@@ -386,7 +386,7 @@ class PausingMeter:
     def quote(self, request: dict[str, Any], purpose: str = "work", *, scaled: bool = True) -> int:
         return 100_000
 
-    def reservation(self, request: dict[str, Any], purpose: str = "work") -> int:
+    def reservation(self, request: dict[str, Any], purpose: str = "work", room: int | None = None) -> int:
         return 100_000
 
     def headroom(self, cycle_id: int, purpose: str, keep: int = 0) -> int:
@@ -395,7 +395,7 @@ class PausingMeter:
     def rooms(self, cycle_id: int, purpose: str, keep: int = 0) -> tuple[int, int]:
         return 10**9, 10**9
 
-    def call(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> Any:
+    def call(self, cycle_id: int, purpose: str, request: dict[str, Any], hold: int | None = None) -> Any:
         self.calls += 1
         return SimpleNamespace(cost_micros=450_000, response={"content": [], "stop_reason": "pause_turn"})
 

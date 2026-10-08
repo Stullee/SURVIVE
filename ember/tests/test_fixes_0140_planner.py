@@ -190,7 +190,8 @@ def test_a_missed_bars_action_survives_the_obligation_line(data_dir: Path) -> No
     keep(agent)
     with agent.db.connection() as conn:
         shown = obligations.text(conn, agent.scope(), agent.clock.today())
-    assert f"project #{project}: fix the titles, tags and category of its listings once (propose_etsy_edit)" in shown
+    # 0.33.0: day 7's action is a push to bring buyers
+    assert f"project #{project}: bring buyers to its listings with pins, posts or a blog post: unseen listings" in shown
 
 
 # --- FIX NOW 24: the Inbox, WAITING FOR YOUR OWNER and the release notes ---

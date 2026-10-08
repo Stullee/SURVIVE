@@ -1012,7 +1012,9 @@ class CycleRunner:
 
         line = plan.focus_project_id if not ctx.venture else None
         with self.db.connection() as conn:
-            line_focus = lines.focus_text(conn, self.scope, line, ctx.marketing) if line is not None else ""
+            line_focus = (  # 0.33.0: with today's review of it
+                lines.focus_text(conn, self.scope, line, ctx.marketing, self.clock.today()) if line is not None else ""
+            )
         brief, briefed = context.brief(
             snap,
             self.dry_run,
@@ -1265,20 +1267,38 @@ class CycleRunner:
             critic=judged,
         )
 
-    def _waiting_channels(self) -> str:
+    def _review_channels(self) -> str:
         """0.24.0: the channels switched on that wait for the owner's setup, for the daily review (as the plan shows
         them, _waiting). Live, four reviews in a row ordered "send the Pinterest request today" while no Pinterest tool
-        could, and the owner had said three times that Pinterest still had to approve their app."""
-        lines = []
-        if self.pinterest is not None and not self.pinterest_on:
-            lines.append(("Pinterest", _waiting("Pinterest", self.pinterest.status(), self._etsy_state())))
-        if self.bluesky is not None and not self.bluesky_on:
-            lines.append(("Bluesky", _waiting("Bluesky", self.bluesky.status(), "ok", venture=False)))
-        if self.printify is not None and not self.printify_on:
-            waits = _waiting("Printify", self.printify.status(), self._etsy_state(), self.printify_waits)
-            lines.append(("Printify", waits))
-        found = [f"- {name}: {line}" for name, line in lines if line]
-        return "CHANNELS NOT READY (no request or tool can use them until then)\n" + "\n".join(found) if found else ""
+        could, and the owner had said three times that Pinterest still had to approve their app. 0.33.0: and the ones
+        ready this cycle, which said nothing: live, the review of 2026-10-08 read a Pinterest project's old next step
+        ("waiting on owner") and wrote "Pinterest was never set up" and that the owner "won't do setup-heavy channels",
+        hours after they had set it up."""
+        ready, waits = [], []
+        if self.pinterest is not None and self.pinterest_on:
+            account = self.pinterest.username() or "your owner's account"
+            ready.append(f"Pinterest: {account}, at most {self.settings.pinterest_pins_per_day} pins a day")
+        elif self.pinterest is not None:
+            waits.append(("Pinterest", _waiting("Pinterest", self.pinterest.status(), self._etsy_state())))
+        if self.bluesky is not None and self.bluesky_on:
+            ready.append(f"Bluesky: at most {self.settings.bluesky_posts_per_day} posts a day")
+        elif self.bluesky is not None:
+            waits.append(("Bluesky", _waiting("Bluesky", self.bluesky.status(), "ok", venture=False)))
+        if self.printify is not None and self.printify_on:
+            ready.append(f"Printify: at most {self.settings.printify_products_per_day} products a day")
+        elif self.printify is not None:
+            waits.append(
+                ("Printify", _waiting("Printify", self.printify.status(), self._etsy_state(), self.printify_waits))
+            )
+        if self.blog_on:
+            ready.append("your owner's blog (German posts)")
+        if self.kdp_on:
+            ready.append("Amazon KDP (your owner publishes)")
+        found = [f"- {name}: {line}" for name, line in waits if line]
+        parts = [f"CHANNELS READY (their tools work now): {'; '.join(ready)}."] if ready else []
+        if found:
+            parts.append("CHANNELS NOT READY (no request or tool can use them until then)\n" + "\n".join(found))
+        return "\n".join(parts)
 
     def _review(self, cycle_id: int, ctx: tools.ToolContext) -> None:
         """The daily review, before the first plan of the day. It never ends the cycle: a review the budget can't
@@ -1295,7 +1315,7 @@ class CycleRunner:
                 self.economy.life.scope(),
                 status,
                 dry_run=self.dry_run,
-                channels=self._waiting_channels(),
+                channels=self._review_channels(),
             )
         request = prompts.review_request(self.settings, card.text)
         if not context.fits(request, REVIEW_CALL.input_tokens):

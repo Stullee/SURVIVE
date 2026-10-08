@@ -103,6 +103,7 @@ def test_no_text_the_agent_wrote_opens_a_section(forged: str) -> None:
             "VENTURE CYCLE",
             context.KNOWLEDGE_HEADING,
             "FOCUS",
+            context.STRATEGY_HEADING,  # 0.33.0
             context.LESSONS_HEADING,
             "WORKSPACE",
             "LIMITS",

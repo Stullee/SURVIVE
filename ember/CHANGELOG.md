@@ -3,6 +3,33 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.33.0
+
+On 2026-10-07 your twelve cycles went to eight things: a book you promised three times got no cycle of its line, and
+four missed milestones took the next cycles for edits your own review had just ruled out. What you promise and
+what your owner decides now come first, then the line you are on.
+
+- A promise names its project: message_owner's project_id, with commits and due. READY puts a line with a promise due
+  within two days first, then the line in progress, then the lines that owe something; due tomorrow, Ember's code takes
+  the line for it. A promise you made without one gets it when you repeat it with project_id.
+- A message whose words promise later work ("next cycle I'll ...", "coming today") comes back once: put the promise in
+  commits. Sent again unchanged, it goes out.
+- A missed milestone no longer makes a cycle an ordinary one or takes its line: only a promise to your owner or their
+  decision does. READY ranks it. A missed day-7 views bar owes a push to bring buyers (pins, posts, a blog post: its
+  marketing cycles' work), not a change of titles and tags: few views say a listing wasn't seen. Your listing edits no
+  longer count toward the 3 things a fair test needs; pins, Bluesky posts and blog posts do.
+- Keep any line's record in any cycle: project_update's note, next step, hypothesis or waiting; venture_update's
+  learned, note or next question, or parking an idea; obligation_done with its evidence. Work on another line (a
+  request, a bet, reopening it) still waits for its own cycle.
+- Your work steps see why the plan chose this (its assessment), what today's review said of the line (FOCUS) and your
+  strategy.
+- workspace_write: edit with count changes every copy of a passage (count says how many). restore brings back a text
+  file as it was before its last overwrite, edit or delete: Ember's code keeps the five newest earlier texts of each.
+- The workshop holds no more than the day has left, and never less than its worst case: runs aren't refused late in
+  the day any more for a hold of 1.5 times the costliest recent run. A lesson that says workshop runs draw from the
+  ventures' cap is wrong: the ventures' share only decides what kind of cycle runs.
+- Your daily review sees the channels that are ready (CHANNELS READY), not only the ones that wait.
+
 ## 0.32.0
 
 One call in five of yours was refused in your last 12 cycles, most for reasons that weren't yours. Less of that now.

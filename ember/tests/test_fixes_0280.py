@@ -196,6 +196,8 @@ def kind(spends: tuple[int, int, int], **changes: Any) -> lines.Turn:
 
 
 PUSH = obligations.Owed(4, marketing=True)  # a push to bring buyers to line #4 (gates.MARKET)
+OWNERS = obligations.Owed(4, forces=True)  # 0.33.0: the owner's (a promise to them, their decision) on line #4
+PIN = obligations.Owed(4, marketing=True, forces=True)  # 0.33.0: the owner's decision on a pin of line #4
 
 
 @pytest.mark.parametrize(
@@ -209,17 +211,22 @@ PUSH = obligations.Owed(4, marketing=True)  # a push to bring buyers to line #4 
         ((1000, 150, 100), {}, lines.Turn(lines.VENTURE)),  # as far behind: the ventures first
         ((1000, 100, 200), {"ventures_run": False}, lines.Turn(lines.ORDINARY)),  # not in the burn mode
         ((1000, 250, 100), {"markets": False}, lines.Turn(lines.ORDINARY)),  # nothing live to market
-        # what the owner and pressing product work wait for comes first
+        # what the owner waits for comes first: their messages, a promise to them or their decision
         ((1000, 100, 100), {"messages": True}, lines.Turn(lines.ORDINARY, owed_first=True)),
-        ((1000, 100, 100), {"owed": [obligations.Owed(4)]}, lines.Turn(lines.ORDINARY, owed_first=True)),
-        ((1000, 100, 100), {"owed": [obligations.Owed(None)]}, lines.Turn(lines.ORDINARY, owed_first=True)),
-        ((1000, 250, 200), {"owed": [obligations.Owed(None)]}, lines.Turn(lines.ORDINARY)),
-        # a pressing push to bring buyers: a marketing cycle, whatever the shares
-        ((1000, 100, 200), {"owed": [PUSH]}, lines.Turn(lines.MARKETING)),
-        ((1000, 100, 200), {"owed": [PUSH], "markets": False}, lines.Turn(lines.ORDINARY, owed_first=True)),
-        # a push for a line that can't be marketed: still before the ventures, and marketing's share decides
-        ((1000, 100, 100), {"owed": [obligations.Owed(9, True)]}, lines.Turn(lines.MARKETING)),
-        ((1000, 100, 200), {"owed": [obligations.Owed(9, True)]}, lines.Turn(lines.ORDINARY)),
+        ((1000, 100, 100), {"owed": [OWNERS]}, lines.Turn(lines.ORDINARY, owed_first=True)),
+        ((1000, 100, 100), {"owed": [obligations.Owed(None, forces=True)]}, lines.Turn(lines.ORDINARY, True)),
+        ((1000, 250, 200), {"owed": [obligations.Owed(None, forces=True)]}, lines.Turn(lines.ORDINARY)),
+        # their decision on a pin or a post: a marketing cycle, whatever the shares
+        ((1000, 100, 200), {"owed": [PIN]}, lines.Turn(lines.MARKETING)),
+        ((1000, 100, 200), {"owed": [PIN], "markets": False}, lines.Turn(lines.ORDINARY, owed_first=True)),
+        # on a line that can't be marketed: still before the ventures, and marketing's share decides
+        ((1000, 100, 100), {"owed": [obligations.Owed(9, True, True)]}, lines.Turn(lines.MARKETING)),
+        ((1000, 100, 200), {"owed": [obligations.Owed(9, True, True)]}, lines.Turn(lines.ORDINARY)),
+        # 0.33.0: a miss (a missed milestone, a push to bring buyers) decides nothing: the shares do
+        ((1000, 100, 100), {"owed": [obligations.Owed(4)]}, lines.Turn(lines.VENTURE)),
+        ((1000, 100, 200), {"owed": [PUSH]}, lines.Turn(lines.VENTURE)),
+        ((1000, 250, 100), {"owed": [PUSH, obligations.Owed(None)]}, lines.Turn(lines.MARKETING)),
+        ((1000, 250, 200), {"owed": [obligations.Owed(4)]}, lines.Turn(lines.ORDINARY)),
     ],
 )
 def test_what_a_cycle_is(spends: tuple[int, int, int], changes: dict[str, Any], turn: lines.Turn) -> None:
@@ -245,18 +252,19 @@ def test_ready_ranks_the_lines_by_what_they_owe_and_need(data_dir: Path) -> None
     cycle(agent, project=4)  # a cycle worked on line #4
     found = ready(agent)
     # 0.30.0: the line the last cycle worked on comes right after what is owed (0.28.0 put it after the ones never
-    # worked on, so every cycle took another line)
-    assert [i.key for i in found] == ["line #2", "line #4", "line #3", "line #5", "line #1", "new line"]
+    # worked on, so every cycle took another line); 0.33.0: before it, while it has work (a decision that presses
+    # takes its line anyway: test_a_pressing_obligation_takes_its_line_once_a_day)
+    assert [i.key for i in found] == ["line #4", "line #2", "line #3", "line #5", "line #1", "new line"]
     assert [i.job for i in found] == [True, True, True, False, False, False]
-    assert found[0].text.startswith(f"Owing [active] · owes obligation #{obligation_of(agent, owed)} · ")
-    assert found[1].text.startswith("Worked [active] · in progress, cycle 2 of at most 3 in a row · ")
-    assert found[1].text.endswith(f"last worked on {agent.clock.today().isoformat()}")
+    assert found[1].text.startswith(f"Owing [active] · owes obligation #{obligation_of(agent, owed)} · ")
+    assert found[0].text.startswith("Worked [active] · in progress, cycle 2 of at most 3 in a row · ")
+    assert found[0].text.endswith(f"last worked on {agent.clock.today().isoformat()}")
     assert f"milestone #{due} due " in found[2].text and "nothing live yet: build it" in found[2].text
     assert found[3].text.endswith("never worked on") and found[4].text.startswith("Waiting [waiting]")
     assert found[-1].text == "start a new product line (project_create): 4 in flight"
     assert [i.key for i in ready(agent, explore=False)] == [i.key for i in found[:-1]]  # no new line outside explore
     text = lines.text(found, ["Which line sells first?"])
-    assert text.startswith(f"{lines.HEADING}\n1. line #2: Owing [active]")
+    assert text.startswith(f"{lines.HEADING}\n1. line #4: Worked [active]")
     assert text.endswith(f"\n6. new line: {found[-1].text}\n{lines.QUESTIONS}\n- Which line sells first?")
     with agent.db.transaction() as conn:
         for project in (2, 3, 4, 5):
@@ -272,8 +280,9 @@ def test_ready_without_lines_offers_the_first_one_in_explore(data_dir: Path) -> 
 
 def test_a_pressing_obligation_takes_its_line_once_a_day(data_dir: Path) -> None:
     agent, _ = lined(data_dir)
-    owed = [obligations.Owed(3)]
+    owed = [obligations.Owed(3, forces=True)]  # 0.33.0: the owner's (a miss takes no line: below)
     since = to_iso(agent.clock.now() - timedelta(hours=lines.PRESS_HOURS))
+    assert not any(i.pressed for i in ready(agent, owed=[obligations.Owed(3)], since=since))
     pressed = ready(agent, owed=owed, since=since)
     assert [(i.key, i.pressed, i.job) for i in pressed] == [("line #3", True, True)]
     assert lines.text(pressed).startswith(f"{lines.PRESSED_HEADING}\n1. line #3: Checklist")
@@ -336,13 +345,13 @@ def test_an_ordinary_plan_takes_one_line_and_the_cycle_counts_for_it(data_dir: P
             ToolCalls(
                 [
                     ("project_update", {"project_id": 3, "next_step": "add a cover"}),
-                    ("project_update", {"project_id": 2, "next_step": "redo the poster"}),
+                    ("project_update", {"project_id": 2, "bet": "+5 views in 7 days: a redone poster"}),  # its work
                     ("project_update", {"project_id": 1, "status": "abandoned", "note": "no demand"}),  # a close
                     ("project_create", {"title": "Stickers", "hypothesis": "h", "next_step": "n", "status": "idea"}),
                 ]
             ),
             Reply("Done."),
-            ToolCalls([("project_update", {"project_id": 2, "note": "waits"})]),  # the reflection too
+            ToolCalls([("project_update", {"project_id": 2, "note": "waits"})]),  # 0.33.0: its record, any cycle
         ]
     )
     assert agent.run_cycle("schedule").status == "completed"
@@ -355,14 +364,14 @@ def test_an_ordinary_plan_takes_one_line_and_the_cycle_counts_for_it(data_dir: P
         ("project_update", "error", "act"),
         ("project_update", "ok", "act"),
         ("project_create", "error", "act"),
-        ("project_update", "error", "reflect"),
+        ("project_update", "ok", "reflect"),
     ]
     assert answers[1]["result"] == (
         "Error: this cycle works on product line #3: no update for project #2, whose work waits for a cycle of its "
         "own (say so in your journal's next)."
     )
     assert "a new product line is a cycle of its own" in answers[3]["result"]
-    assert "this cycle works on product line #3" in answers[4]["result"]
+    assert answers[4]["result"].startswith("Project #2: updated.")
     [pick] = rows(agent, "SELECT kind, pick, project_id, pressed, why_not, items FROM desk_picks WHERE cycle_id = 2")
     assert (pick["kind"], pick["pick"], pick["project_id"], pick["pressed"], pick["why_not"]) == (
         "line",
@@ -446,7 +455,9 @@ def test_a_cycle_without_a_line_takes_the_one_its_first_call_works_on(data_dir: 
     ]
     assert rows(agent, "SELECT path, project_id FROM workspace_files") == [{"path": "notes.md", "project_id": 2}]
     assert workspace.read("notes.md") == "# Notes\n"
-    outcome = call(ctx, "project_update", {"project_id": 3, "next_step": "x"})
+    assert call(ctx, "project_update", {"project_id": 3, "next_step": "x"}).ok  # 0.33.0: its record, any cycle
+    assert ctx.state.focus_project_id == 2
+    outcome = call(ctx, "project_update", {"project_id": 3, "status": "active", "note": "back to it"})
     assert outcome.text == (
         "Error: this cycle works on product line #2: no update for project #3, whose work waits for a cycle of its own "
         "(say so in your journal's next)."
@@ -512,24 +523,19 @@ def test_obligations_name_their_line_and_close_in_its_cycle(data_dir: Path) -> N
         found = {int(r["id"]): obligations.owed(conn, scope, r) for r in obligations.open_rows(conn, scope)}
         owed = obligations.pressing_owed(conn, scope, agent.clock.today())
         listed = obligations.text(conn, scope, agent.clock.today())
-    assert found[rejected] == obligations.Owed(2)
-    assert found[pin] == obligations.Owed(3, marketing=True)  # a pin's request is a marketing cycle's work
+    assert found[rejected] == obligations.Owed(2, forces=True)  # 0.33.0: the owner's decision
+    assert found[pin] == obligations.Owed(3, marketing=True, forces=True)  # a pin's request: a marketing cycle's work
     assert obligations.Owed(1) in found.values()  # the missed milestone's line
-    assert found[promised] == obligations.Owed(None)  # a promise is of no line
+    assert found[promised] == obligations.Owed(None, forces=True)  # a promise that names no line
     assert {o for _, o in owed} == set(found.values())
     assert f"\n- [line #2] #{rejected} decision (" in listed and f"\n- [line #3] #{pin} decision (" in listed
     assert f"\n- #{promised} promise to your owner, due today" in listed  # of no line
     seen = obligations.for_line(listed, 1)
     assert "[line #2: waits for its own cycle]" in seen and "[line #1]" in seen
     ctx = working(agent, line=1)
+    # 0.33.0: what another line owes is met (or decided) in any cycle, with its evidence; its work stays its own
     closing = call(ctx, "obligation_done", {"numbers": f"{rejected}, {pin}", "result": "answered in message #1"})
-    assert closing.text == (
-        f"Error: #{rejected} is line #2's: it closes in a cycle on that line; #{pin} is line #3's: it closes in a "
-        "cycle on that line."
-    )
-    with agent.db.transaction() as conn:
-        store.update_project(conn, 2, now(agent), status="abandoned")  # a closed line: any cycle may close its own
-    assert call(ctx, "obligation_done", {"numbers": str(rejected), "result": "closed project #2"}).ok
+    assert closing.text == f"Closed #{rejected}, #{pin}."
 
 
 # --- marketing cycles ---
