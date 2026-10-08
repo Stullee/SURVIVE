@@ -30,7 +30,7 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import etsy, executor, mailstore
 from ..integrations.mail import BODY_MAX, valid_address
-from . import audit, knockouts, library, memory, metrics, policy, predictions, roadmap, stages, store, ventures
+from . import audit, knockouts, library, memory, metrics, plan, policy, predictions, roadmap, stages, store, ventures
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
@@ -631,6 +631,51 @@ class Owner:
                 self.db, "info", "owner", f"{who or 'The owner'} {verb} the knock-out {rule} of venture #{venture_id}"
             )
             return Reply(200, {"id": venture_id, "rule": rule, "lifted": lift})
+
+        return _reply(run)
+
+    # --- the plan tree (0.34.0: a preview; Ember's cycles don't read it yet) ---
+
+    def pin_step(self, node_id: int, body: Any, who: str | None) -> Reply:
+        """Pin a step of the plan tree (it comes first once the tree steers), or unpin it."""
+
+        def run() -> Reply:
+            data = _body(body, {"pinned"})
+            pinned = data.get("pinned", True)
+            if not isinstance(pinned, bool):
+                raise OwnerError("pinned", "pinned is true or false")
+            with self.db.transaction() as conn:
+                try:
+                    plan.pin(conn, self.scope, node_id, pinned, _signed(who), self._now())
+                except plan.PlanError as exc:
+                    raise OwnerError(exc.field, str(exc), exc.status) from exc
+            said = "pinned" if pinned else "unpinned"
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} {said} plan step #{node_id}")
+            return Reply(200, {"id": node_id, "pinned": pinned})
+
+        return _reply(run)
+
+    def set_worth(self, node_id: int, body: Any, who: str | None) -> Reply:
+        """Set a product's worth (from 0.5 to 10; it replaces the one Ember's code computes), or clear it (null)."""
+
+        def run() -> Reply:
+            data = _body(body, {"worth"})
+            worth = data.get("worth")
+            if worth is not None and (isinstance(worth, bool) or not isinstance(worth, int | float)):
+                raise OwnerError("worth", "worth is a number, or null to clear it")
+            value = None if worth is None else round(float(worth), 2)
+            with self.db.transaction() as conn:
+                try:
+                    plan.set_worth(conn, self.scope, node_id, value, _signed(who), self._now())
+                except plan.PlanError as exc:
+                    raise OwnerError(exc.field, str(exc), exc.status) from exc
+            said = (
+                f"set product #{node_id}'s worth to {value:g}"
+                if value is not None
+                else f"cleared product #{node_id}'s worth"
+            )
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} {said} in the plan tree")
+            return Reply(200, {"id": node_id, "worth": value})
 
         return _reply(run)
 

@@ -47,6 +47,7 @@ from . import (
     metrics,
     never,
     obligations,
+    plan,
     policy,
     predictions,
     prompts,
@@ -213,6 +214,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         proposals = sum(1 for m in open_milestones if m["proposed_due"])  # the agent's dates for the owner's (0.12.0)
         roadmap_stamp = _roadmap_stamp(conn, scope, simulated, today.isoformat())
         library_stamp = _library_stamp(conn, scope)
+        plan_stamp = plan.stamp(conn, scope)  # 0.34.0
         pinned = [{"id": r["id"], "text": r["text"], "created_at": r["created_at"]} for r in memory.pins(conn, scope)]
         models = _models(agent, conn, scope)
         audit_view = audit.view(conn, scope)
@@ -248,6 +250,8 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "roadmap": {"stamp": roadmap_stamp, "overdue": overdue, "proposals": proposals, "goal": goal_summary(agent)},
         # And the library (api/library, 0.12.0): this changes whenever a document or its study does.
         "library": {"stamp": library_stamp},
+        # 0.34.0: and the plan tree (api/plan): whenever a node, a pick or the owner's word on it changes.
+        "plan_stamp": plan_stamp,
     }
 
 
@@ -481,6 +485,14 @@ def goal_summary(agent: Agent) -> dict[str, Any] | None:
             money = (earned, roadmap.money_needed(conn, scope, spent))
         found = roadmap.progress([top], today, money, readings)
     return _goal_json(top, found.get(int(top["id"])), today)
+
+
+def plan_view(agent: Agent) -> dict[str, Any]:
+    """0.34.0: the plan tree for the owner's Plan tab (plan.py): a preview, while the tree runs in the shadow."""
+    with agent.db.connection() as conn:
+        return plan.view(
+            conn, agent.scope(), to_iso(agent.clock.now()), agent.clock.today(), plan.channels_from(agent.settings)
+        )
 
 
 def roadmap_view(agent: Agent) -> dict[str, Any]:

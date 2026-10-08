@@ -3,6 +3,22 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.34.0
+
+Release 2 begins: one plan tree under your owner's goal will decide what you work on next, in place of READY's ranking,
+the spending shares' turns and the chores Ember's code generates. In this version it runs in the shadow only: nothing
+about your cycles changes, and READY still offers your lines.
+
+- Ember's code lays the tree out and keeps it: projects (Etsy, KDP, Printify, the website, the channels), each open line
+  a product under one of them, and each product's stages (research, create, release, launch, maintain) with small steps.
+  A stage closes only when its check passes in your records: a demand note, a request to your owner, a live listing,
+  pins, Bluesky posts and blog posts that link it. A live product gets a week's pin and post and a month's blog post.
+- A promise you make with project_id becomes a step of that product, and the steps in front of it carry it. A promise
+  without a project has no place in the tree: name the project.
+- Each cycle records the step the tree would have taken, with its weight's parts, next to the line your plan took. A
+  week of these tunes the weights before the tree steers (0.35.0). Your owner sees the tree in a new Plan tab, where
+  they can pin a step or set a product's worth.
+
 ## 0.33.0
 
 On 2026-10-07 your twelve cycles went to eight things: a book you promised three times got no cycle of its line, and

@@ -32,7 +32,7 @@ from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
 from . import privacy
-from .agent import library, lines, ventures
+from .agent import library, lines, plan, ventures
 from .agent.context import RESEARCH_HEADING
 from .agent.sandbox import kind_of
 from .agent.tools import LIBRARY_TOOLS
@@ -83,6 +83,8 @@ WIDE_COLUMNS = dict.fromkeys(
         "focus",
         "ventures",
         "roadmap",
+        "ranked",  # 0.34.0: a shadow pick's candidates
+        "why",
     ),
     TEXT_CHARS,
 ) | {"input": INPUT_CHARS, "result": RESULT_CHARS}
@@ -135,6 +137,9 @@ TABLES = (
     "observations",
     "memory_versions",
     "workspace_versions",  # 0.33.0
+    "plan_nodes",  # 0.34.0
+    "plan_picks",
+    "plan_words",
     "lesson_pins",
     "research_checks",
     "research_sources",
@@ -897,6 +902,36 @@ def _agent(state: AppState, full: bool = True) -> str:
             ("cases", ["id", "subject", "cause", "sure", "expected", "happened", "why", "lesson"], 20),
             ("principles", ["id", "status", "confidence", "supports", "against", "text", "retired_why"], 40),
             ("weekly_reviews", ["id", "day", "status", "answer", "outcome", "note"], 4),
+            # 0.34.0: the plan tree, in the shadow: its newest nodes, each cycle's shadow pick, the owner's word on it
+            (
+                "plan_nodes",
+                [
+                    "id",
+                    "parent_id",
+                    "level",
+                    "project_id",
+                    "stage",
+                    "kind",
+                    "status",
+                    "waiting",
+                    "pinned",
+                    "owner_worth",
+                    "could_earn",
+                    "audience",
+                    "due",
+                    "ready_since",
+                    "source",
+                    "title",
+                    "result",
+                ],
+                150,
+            ),
+            (
+                "plan_picks",
+                ["cycle_id", "kind", "line", "node_id", "product", "decided", "weight", "parts", "ranked"],
+                24,
+            ),
+            ("plan_words", ["id", "node_id", "action", "value", "signed", "created_at"], 20),
             (
                 "quality_checks",
                 ["id", "project_id", "listing_id", "created_at", "status", "score", "verdict", "fixes", "note"],
@@ -1017,6 +1052,30 @@ def _agent(state: AppState, full: bool = True) -> str:
         ).fetchall()
         columns = ["subject", "metric", "days", "subjects", "newest"]
         out.append("-- observations (by subject and metric)\n" + _rows(observed, columns))
+        # 0.34.0: the step the plan tree would take now, its next ones with their weight's parts, and what waits
+        try:
+            pick, found = plan.choose(
+                conn, scope, to_iso(agent.clock.now()), agent.clock.today(), plan.channels_from(agent.settings)
+            )
+            ranking = [
+                {"step": s.id, "line": s.product, "weight": round(p.total, 2), "title": s.title, "why": p.text()}
+                for s, p in pick.ranked[:8]
+            ]
+            out.append(
+                f"-- plan tree: the ranking now (it would take: {pick.decided})\n"
+                + _rows(ranking, ["step", "line", "weight", "title", "why"])
+            )
+            waiting = [
+                {"step": c.step.id, "line": c.step.product, "waiting": c.waiting, "title": c.step.title}
+                for c in found
+                if c.waiting not in (None, "step")
+            ]
+            out.append(
+                "-- plan tree: steps that wait (on the owner, a channel, an upgrade, a hold)\n"
+                + _rows(waiting[:15], ["step", "line", "waiting", "title"])
+            )
+        except Exception as exc:  # noqa: BLE001 - the report goes on without it
+            out.append(f"-- plan tree: unavailable ({type(exc).__name__})")
         if full:  # what the study learned: Ember's words, but drawn from the owner's documents (full report only)
             learned = conn.execute(
                 f"SELECT document_id, part, topic, text FROM learnings WHERE {where} ORDER BY id DESC LIMIT 20", params

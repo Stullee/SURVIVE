@@ -87,6 +87,7 @@
     <button type="button" role="tab" class="tab" id="tab-ledger" aria-controls="panel-ledger" aria-selected="false">Ledger</button>
     <button type="button" role="tab" class="tab" id="tab-ventures" aria-controls="panel-ventures" aria-selected="false">Ventures <span class="badge" id="badge-ventures" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-roadmap" aria-controls="panel-roadmap" aria-selected="false">Roadmap <span class="badge badge-alert" id="badge-roadmap" hidden></span><span class="badge" id="badge-roadmap-proposals" hidden></span></button>
+    <button type="button" role="tab" class="tab" id="tab-plan" aria-controls="panel-plan" aria-selected="false">Plan</button>
     <button type="button" role="tab" class="tab" id="tab-library" aria-controls="panel-library" aria-selected="false">Library</button>
     <button type="button" role="tab" class="tab" id="tab-activity" aria-controls="panel-activity" aria-selected="false">Activity</button>
     <button type="button" role="tab" class="tab" id="tab-approvals" aria-controls="panel-approvals" aria-selected="false">Approvals <span class="badge" id="badge-approvals" hidden></span><span class="badge badge-todo" id="badge-approvals-todo" hidden></span></button>
@@ -396,6 +397,32 @@
         <div class="rm-tip" id="rm-tip" hidden></div>
       </article>
       <div class="queue" id="roadmap"></div>
+    </section>
+
+    <section class="panel" id="panel-plan" role="tabpanel" aria-labelledby="tab-plan" hidden>
+      <article class="card" id="pl-card" aria-labelledby="pl-title">
+        <div class="card-head">
+          <div>
+            <h2 id="pl-title" tabindex="-1">Plan <span class="pl-preview">preview</span></h2>
+            <p class="card-sub" id="pl-sub">&nbsp;</p>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn" id="pl-zoom-out" aria-label="Zoom out">&minus;</button>
+            <button type="button" class="btn" id="pl-zoom-in" aria-label="Zoom in">+</button>
+            <button type="button" class="btn" id="pl-fit">Fit</button>
+            <button type="button" class="btn" id="pl-refresh">Refresh</button>
+          </div>
+        </div>
+        <p class="form-status" id="pl-status" role="status"></p>
+        <p class="form-status" id="pl-load-status" role="status"></p>
+        <div class="pl-now" id="pl-now"></div>
+        <p class="hint" id="pl-net-hint">Each project in its own colour, each product as big as its worth. Choose a product to open its stages and steps. Drag to move; Ctrl and the wheel zoom.</p>
+        <div class="pl-net" id="pl-net"></div>
+        <div class="pl-detail" id="pl-detail"></div>
+        <h3 class="small-head" id="pl-picks-head">Shadow picks</h3>
+        <p class="hint" id="pl-picks-hint">For each cycle, what it worked on and the step the tree would have taken instead.</p>
+        <div class="pl-picks" id="pl-picks"></div>
+      </article>
     </section>
 
     <section class="panel" id="panel-library" role="tabpanel" aria-labelledby="tab-library" hidden>

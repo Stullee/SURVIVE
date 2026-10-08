@@ -100,6 +100,7 @@ from . import (
     weekly,
 )
 from . import memory as memory_files
+from . import plan as plan_tree
 from .memory import Memory
 from .sandbox import Jail, SandboxError
 from .store import AgentScope
@@ -277,6 +278,7 @@ class CycleRunner:
         self.line_items: list[lines.Item] = []
         self.reactive = False  # 0.13.0: a cycle an event woke (run sets it)
         self.kind = lines.ORDINARY  # 0.28.0: what the cycle is (lines.kind; _plan_act_reflect sets it)
+        self.ready_line: int | None = None  # 0.34.0: the line READY's plan took (the plan tree's shadow pick)
         self.marketing_apart = False  # 0.28.0: marketing cycles run, so an ordinary cycle has no marketing tools
         self.owner_waits = False  # 0.28.0: the owner woke the cycle and their messages wait: READY isn't forced
         self.max_steps = settings.max_tool_steps
@@ -713,6 +715,7 @@ class CycleRunner:
         self._guarded(self._keep_playbook, cycle_id or 0, "the playbook's keeper")  # 0.30.0: the cases' lessons
         predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
         self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
+        self._guarded(self._keep_plan, cycle_id or 0, "the plan tree's keeper")  # 0.34.0: after the obligations
         # 0.29.0: once more after the grading (the owner's goal met or missed: the money goal stands in for it) and the
         # gates (their new bars lead to the goal too); the money goal was settled already
         self._keep_money_goal(scope, status.runway.net_days, settle=False)
@@ -987,6 +990,8 @@ class CycleRunner:
                     )
         ctx.state.focus_project_id = plan.focus_project_id
         ctx.state.focus_venture_id = plan.focus_venture_id
+        self.ready_line = plan.focus_project_id
+        self._guarded(self._shadow_pick, cycle_id, "the plan tree's shadow pick")  # 0.34.0: changes nothing here
         self._progress(
             cycle_id,
             plan=json.dumps(plan.to_json(), ensure_ascii=False),
@@ -1416,6 +1421,31 @@ class CycleRunner:
                 f"Ember's code marked {len(marked)} lesson(s) to re-check{gone} (tools {running} changed): {quoted}"
             )
             events.record(self.db, "info", "agent", message[:300])
+
+    def _keep_plan(self, cycle_id: int) -> None:
+        """0.34.0: the plan tree (plan.py): new product lines laid out, what its checks show done closed, the promise
+        and recurring steps added. In the shadow: nothing in the cycle reads it yet."""
+        with self.db.transaction() as conn:
+            happened = plan_tree.keep(
+                conn, self.scope, to_iso(self.clock.now()), self.clock.today(), plan_tree.channels_from(self.settings)
+            )
+        for line in happened:
+            events.record(self.db, "info", "agent", line[:300])
+
+    def _shadow_pick(self, cycle_id: int) -> None:
+        """0.34.0: the step the plan tree would take this cycle, recorded next to what READY took (the cycle's kind
+        and line), so a week of real cycles can tune its weights before it steers."""
+        with self.db.transaction() as conn:
+            plan_tree.shadow_pick(
+                conn,
+                self.scope,
+                cycle_id,
+                to_iso(self.clock.now()),
+                self.clock.today(),
+                self.kind,
+                self.ready_line,
+                plan_tree.channels_from(self.settings),
+            )
 
     def _guarded(self, step: Callable[[int], None], cycle_id: int, name: str) -> None:
         """0.18.0: a learning step before the plan: a bug in it is logged and the cycle goes on (Stopping and EndCycle
