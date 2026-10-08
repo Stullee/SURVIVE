@@ -840,9 +840,7 @@ def test_a_project_with_listings_revenue_or_a_bet_keeps_its_venture(data_dir: Pa
         )
     moved = call(ctx, "project_update", {"project_id": 1, "venture_id": other})
     assert not moved.ok and "project #1 has listings: what Ember's code counts" in moved.text
-    made = call(
-        ctx, "project_create", {"title": "Seating charts", "hypothesis": "h", "next_step": "n", "status": "idea"}
-    )
+    made = call(ctx, "project_create", {"title": "Seating charts", "hypothesis": "h", "status": "idea"})
     assert (
         made.ok and call(ctx, "project_update", {"project_id": made.project_id, "venture_id": other}).ok
     )  # nothing ties it
@@ -861,12 +859,13 @@ def test_the_owner_s_park_or_kill_stops_its_projects(data_dir: Path) -> None:
         parked, killed = (
             ventures.create(conn, agent.scope(), title=t, pitch="p.", stage="building", now=now) for t in ("A", "B")
         )
-    project = {"hypothesis": "h", "next_step": "n", "status": "active"}
+    project = {"hypothesis": "h", "status": "active"}
     first = call(ctx, "project_create", {"title": "Under A", "venture_id": parked, **project}).project_id
     with agent.db.transaction() as conn:
         second = store.create_project(
-            conn, agent.scope(), cycle_id=ctx.cycle_id, title="Under B", now=now, **{**project, "venture_id": killed}
-        )
+            conn, agent.scope(), cycle_id=ctx.cycle_id, title="Under B", now=now, next_step="",
+            **{**project, "venture_id": killed},
+        )  # fmt: skip
     who = owner(agent)
     assert who.decide_venture(parked, {"action": "park", "comment": "Not now."}, "Stefan").status == 200
     assert who.decide_venture(killed, {"action": "kill", "comment": "No."}, "Stefan").status == 200
@@ -883,7 +882,7 @@ def test_the_owner_s_park_or_kill_stops_its_projects(data_dir: Path) -> None:
     assert who.decide_venture(parked, {"action": "back", "confirm": True}, "Stefan").status == 200
     # 0.23.1: taken up again, it is what it was (stages.resume_projects)
     assert rows(agent, f"SELECT status, next_step FROM projects WHERE id = {first}") == [
-        {"status": "active", "next_step": "n"}
+        {"status": "active", "next_step": ""}  # 0.35.0: its steps are the plan tree's
     ]
 
 

@@ -85,9 +85,7 @@ def test_a_line_of_no_venture_doesn_t_sell_in_a_parked_channel(data_dir: Path) -
     _, leg = line_of(agent)
     park(agent, leg)
     ctx = shop_context(agent)
-    made = call(
-        ctx, "project_create", {"title": "Planners again", "hypothesis": "h", "next_step": "List one", "status": "idea"}
-    )
+    made = call(ctx, "project_create", {"title": "Planners again", "hypothesis": "h", "status": "idea"})
     assert made.ok, made.text
     with agent.db.transaction() as conn:
         demand.add(

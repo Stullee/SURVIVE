@@ -23,7 +23,6 @@ TIMESTAMP = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ"
 PROJECT = {
     "title": "Printable meal-planning templates",
     "hypothesis": "Busy parents pay 3 EUR for a printable weekly plan",
-    "next_step": "outline",
     "status": "active",
 }
 DIGEST = "".join(f"- Planner {n}: {n + 2} EUR on Etsy; bundles with shopping lists sell best.\n" for n in range(12))
@@ -122,7 +121,7 @@ def test_a_cycle_is_easy_to_read(ingress_client: TestClient) -> None:
         "2 | agent | not read by owner yet | No, I can't generate images: I will write text templates.",
         f"1 | owner | seen by agent in cycle #1, not answered yet | {QUESTION}",
     ]
-    assert "1 | active | - | Printable meal-planning templates | outline | " in records
+    assert "1 | active | - | Printable meal-planning templates |  | " in records  # 0.35.0: no next step
     workspace = records.split("-- workspace: ", 1)[1].splitlines()
     assert workspace[0] == f"1 files, 1 folders, {len(DRAFT)} B"
     assert workspace[1] == "  projects/"

@@ -86,7 +86,7 @@ def test_a_removed_password_is_scrubbed_wherever_the_agent_copied_it(ingress_cli
     agent = ingress_client.app.state.ember.agent
     assert post(ingress_client, "api/inbox", {"text": f"Here is the login: {SECRET}"}).status_code == 201
     copy = f"The owner's login is example-user / {PASSWORD}"
-    project = {"title": "Etsy shop", "hypothesis": "Printables sell", "next_step": "log in", "status": "active"}
+    project = {"title": "Etsy shop", "hypothesis": "Printables sell", "status": "active"}
     agent.transport = ScriptedTransport(
         simulated=True,
         outcomes=[

@@ -79,15 +79,14 @@
       <p class="goal-strip-title" id="goal-strip-title"></p>
     </div>
     <div class="goal-strip-bar" id="goal-strip-bar"></div>
-    <button type="button" class="btn" id="goal-strip-open">Roadmap</button>
+    <button type="button" class="btn" id="goal-strip-open">Plan</button>
   </section>
 
   <nav class="tabs" role="tablist" aria-label="Sections">
     <button type="button" role="tab" class="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true">Overview</button>
     <button type="button" role="tab" class="tab" id="tab-ledger" aria-controls="panel-ledger" aria-selected="false">Ledger</button>
     <button type="button" role="tab" class="tab" id="tab-ventures" aria-controls="panel-ventures" aria-selected="false">Ventures <span class="badge" id="badge-ventures" hidden></span></button>
-    <button type="button" role="tab" class="tab" id="tab-roadmap" aria-controls="panel-roadmap" aria-selected="false">Roadmap <span class="badge badge-alert" id="badge-roadmap" hidden></span><span class="badge" id="badge-roadmap-proposals" hidden></span></button>
-    <button type="button" role="tab" class="tab" id="tab-plan" aria-controls="panel-plan" aria-selected="false">Plan</button>
+    <button type="button" role="tab" class="tab" id="tab-plan" aria-controls="panel-plan" aria-selected="false">Plan <span class="badge badge-alert" id="badge-roadmap" hidden></span><span class="badge" id="badge-roadmap-proposals" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-library" aria-controls="panel-library" aria-selected="false">Library</button>
     <button type="button" role="tab" class="tab" id="tab-activity" aria-controls="panel-activity" aria-selected="false">Activity</button>
     <button type="button" role="tab" class="tab" id="tab-approvals" aria-controls="panel-approvals" aria-selected="false">Approvals <span class="badge" id="badge-approvals" hidden></span><span class="badge badge-todo" id="badge-approvals-todo" hidden></span></button>
@@ -263,8 +262,6 @@
         <div class="queue" id="ventures"></div>
       </div>
       <div class="vt-view" id="vt-running" role="tabpanel" aria-labelledby="vt-tab-running" hidden>
-        <!-- 0.28.0: the Line desk: how Ember's code ranks the product lines for the next plans, what they took. -->
-        <div class="vt-desk" id="pj-desk"></div>
         <!-- Outside the lists: a control with focus here never holds back their next render. -->
         <div class="pj-bar" id="projects-bar" hidden>
           <dl class="pj-stats" id="projects-stats"></dl>
@@ -292,7 +289,7 @@
       </div>
     </section>
 
-    <section class="panel" id="panel-roadmap" role="tabpanel" aria-labelledby="tab-roadmap" hidden>
+    <section class="panel" id="panel-plan" role="tabpanel" aria-labelledby="tab-plan" hidden>
       <article class="card goal-card" id="rm-goal-card" aria-labelledby="rm-goal-title">
         <div class="card-head">
           <div>
@@ -315,7 +312,7 @@
           </div>
         </div>
         <form class="vt-form" id="rm-goal-form" novalidate hidden>
-          <p class="form-intro" id="rm-goal-form-intro">What Ember works toward: everything on the roadmap leads to it. Ember's code checks it from the revenue less expenses you record in the Ledger.</p>
+          <p class="form-intro" id="rm-goal-form-intro">What Ember works toward: everything in the plan leads to it. Ember's code checks it from the revenue less expenses you record in the Ledger.</p>
           <div class="field">
             <label for="rm-goal-amount">Earn (USD)</label>
             <input type="text" id="rm-goal-amount" inputmode="decimal" autocomplete="off" aria-describedby="rm-goal-amount-error">
@@ -346,10 +343,42 @@
         </form>
         <p class="form-status" id="rm-goal-status" role="status"></p>
       </article>
+      <article class="card" id="pl-card" aria-labelledby="pl-title">
+        <div class="card-head">
+          <div>
+            <h2 id="pl-title" tabindex="-1">Plan</h2>
+            <p class="card-sub" id="pl-sub">&nbsp;</p>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn" id="pl-zoom-out" aria-label="Zoom out">&minus;</button>
+            <button type="button" class="btn" id="pl-zoom-in" aria-label="Zoom in">+</button>
+            <button type="button" class="btn" id="pl-fit">Fit</button>
+            <button type="button" class="btn" id="pl-refresh">Refresh</button>
+          </div>
+        </div>
+        <p class="form-status" id="pl-status" role="status"></p>
+        <p class="form-status" id="pl-load-status" role="status"></p>
+        <div class="pl-now" id="pl-now"></div>
+        <p class="hint" id="pl-net-hint">Each project in its own colour, each product as big as its worth. Choose a product to open its stages and steps. Drag to move; Ctrl and the wheel zoom.</p>
+        <div class="pl-net" id="pl-net"></div>
+        <div class="pl-detail" id="pl-detail"></div>
+        <h3 class="small-head" id="pl-changes-head">Changes today</h3>
+        <p class="hint" id="pl-changes-hint">What Ember, Ember's code and you changed in the plan today, with why.</p>
+        <div class="pl-changes" id="pl-changes"></div>
+        <h3 class="small-head" id="pl-channels-head">Channels</h3>
+        <p class="hint" id="pl-channels-hint">Each channel's steps across the products: what comes next, and what it did in the last 14 days.</p>
+        <div class="pl-channels" id="pl-channels"></div>
+        <h3 class="small-head" id="pl-upgrades-head">Upgrades the plan waits on</h3>
+        <p class="hint" id="pl-upgrades-hint">Each upgrade request with the steps that wait on it and what they would weigh once it is built.</p>
+        <div class="pl-upgrades" id="pl-upgrades"></div>
+        <h3 class="small-head" id="pl-picks-head">Recent cycles</h3>
+        <p class="hint" id="pl-picks-hint">For each cycle, the step Ember's code took for it and why.</p>
+        <div class="pl-picks" id="pl-picks"></div>
+      </article>
       <article class="card" id="rm-card">
         <div class="card-head">
           <div>
-            <h2 id="rm-title" tabindex="-1">Roadmap</h2>
+            <h2 id="rm-title" tabindex="-1">Milestones</h2>
             <p class="card-sub" id="rm-sub">&nbsp;</p>
           </div>
           <div class="form-actions">
@@ -381,48 +410,15 @@
             <select id="rm-form-parent"></select>
           </div>
           <div class="form-actions">
-            <button type="submit" class="btn btn-primary" id="rm-form-save">Add to the roadmap</button>
+            <button type="submit" class="btn btn-primary" id="rm-form-save">Add milestone</button>
             <button type="button" class="btn" id="rm-form-cancel">Cancel</button>
           </div>
         </form>
         <p class="form-status" id="rm-status" role="status"></p>
         <p class="form-status" id="rm-load-status" role="status"></p>
         <p class="rm-summary" id="rm-summary"></p>
-        <h3 class="small-head" id="rm-tree-head">Goal tree</h3>
-        <p class="hint" id="rm-tree-hint">Each milestone under the one it leads to, with how far it got. Choose one for its card.</p>
-        <div class="gt-wrap" id="rm-tree"></div>
-        <h3 class="small-head" id="rm-timeline-head">Timeline</h3>
-        <div class="rm-legend" id="rm-legend" aria-hidden="true"></div>
-        <div class="rm-chart" id="rm-chart"></div>
-        <div class="rm-tip" id="rm-tip" hidden></div>
       </article>
       <div class="queue" id="roadmap"></div>
-    </section>
-
-    <section class="panel" id="panel-plan" role="tabpanel" aria-labelledby="tab-plan" hidden>
-      <article class="card" id="pl-card" aria-labelledby="pl-title">
-        <div class="card-head">
-          <div>
-            <h2 id="pl-title" tabindex="-1">Plan <span class="pl-preview">preview</span></h2>
-            <p class="card-sub" id="pl-sub">&nbsp;</p>
-          </div>
-          <div class="form-actions">
-            <button type="button" class="btn" id="pl-zoom-out" aria-label="Zoom out">&minus;</button>
-            <button type="button" class="btn" id="pl-zoom-in" aria-label="Zoom in">+</button>
-            <button type="button" class="btn" id="pl-fit">Fit</button>
-            <button type="button" class="btn" id="pl-refresh">Refresh</button>
-          </div>
-        </div>
-        <p class="form-status" id="pl-status" role="status"></p>
-        <p class="form-status" id="pl-load-status" role="status"></p>
-        <div class="pl-now" id="pl-now"></div>
-        <p class="hint" id="pl-net-hint">Each project in its own colour, each product as big as its worth. Choose a product to open its stages and steps. Drag to move; Ctrl and the wheel zoom.</p>
-        <div class="pl-net" id="pl-net"></div>
-        <div class="pl-detail" id="pl-detail"></div>
-        <h3 class="small-head" id="pl-picks-head">Shadow picks</h3>
-        <p class="hint" id="pl-picks-hint">For each cycle, what it worked on and the step the tree would have taken instead.</p>
-        <div class="pl-picks" id="pl-picks"></div>
-      </article>
     </section>
 
     <section class="panel" id="panel-library" role="tabpanel" aria-labelledby="tab-library" hidden>

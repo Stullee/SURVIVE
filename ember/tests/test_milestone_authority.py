@@ -213,12 +213,8 @@ def test_dropping_a_milestone_drops_the_open_ones_leading_to_it(data_dir: Path) 
 
 def test_the_last_four_open_places_are_the_owners(data_dir: Path) -> None:
     agent = agent_with_a_cycle(data_dir)
-    for n in range(16):
+    for n in range(16):  # the agent's own, kept from before 0.35.0 (milestone_plan retired)
         create(agent, title=f"Step {n}", measure="x", due=day(10))
-    assert refused(agent, "milestone_plan", milestones=[dict(title="One more", measure="x", due=day(10))]) == (
-        "16 of your and your owner's milestones are open already, and the other 4 of the 20 places are kept for your "
-        "owner: close or drop one first"
-    )
     for n in range(4):
         add(agent, title=f"Owner's {n}", measure="x", due=day(10))
     full = owner(agent).add_milestone({"title": "Fifth", "measure": "x", "due": day(10)}, None)
@@ -282,8 +278,8 @@ def test_the_dry_runs_fake_proposes_once_then_closes_an_owners_overdue_milestone
     """It moved an overdue milestone a week once, then closed it; for the owner's, the move is a proposal that stays
     open, so without this it proposed a new date every cycle."""
     late = row(id=4, due=day(-2), created_by="owner")
-    ask = fake_llm.roadmap_plan(f"== ROADMAP ==\n{roadmap.planner_text([late], [], TODAY)}")
+    ask = fake_llm.roadmap_plan(f"== YOUR PLAN ==\n{roadmap.milestone_line(late, TODAY, False)}")
     assert ask == ([fake_llm.MOVE_MILESTONE_STEP.format(id=4)], 4)
     waiting = {**late, "proposed_due": day(5)}
-    ask = fake_llm.roadmap_plan(f"== ROADMAP ==\n{roadmap.planner_text([waiting], [], TODAY)}")
+    ask = fake_llm.roadmap_plan(f"== YOUR PLAN ==\n{roadmap.milestone_line(waiting, TODAY, False)}")
     assert ask == ([fake_llm.CLOSE_MILESTONE_STEP.format(id=4)], 4)

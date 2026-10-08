@@ -135,7 +135,7 @@ def open_project(
         cycle_id=cycle_id,
         title=title,
         hypothesis=hypothesis if len(hypothesis) <= 400 else hypothesis[:399].rstrip() + "…",
-        next_step=f"Run its first test (milestone #{test_id}): what to make or set up, where buyers see it, and a bet.",
+        next_step="",  # 0.35.0: its steps are the plan tree's (plan.py lays it out)
         status="active",
         now=now,
         venture_id=int(venture["id"]),
@@ -197,7 +197,8 @@ def stop_projects(conn: sqlite3.Connection, venture_id: int, stage: str, now: st
         status = "abandoned" if stage == "killed" else "waiting"
         said = f"[owner] Your owner {stage} venture #{venture_id}."
         if stage == "parked" and row["next_step"] != PARKED_STEP:
-            said += f" {_WAS.format(status=row['status'])}{' '.join(str(row['next_step'] or '-').split())}"
+            step = " ".join(str(row["next_step"] or "").split())  # 0.35.0: none (its steps are the plan tree's)
+            said += f" {_WAS.format(status=row['status'])}{step}" if step else f" It was {row['status']}."
         nxt = "None: closed with its venture." if stage == "killed" else PARKED_STEP
         conn.execute(  # a kill closes it, now (the review and the lessons read what closed when)
             "UPDATE projects SET status = ?, next_step = ?, notes = ?, updated_at = CASE WHEN ? = 'abandoned' THEN ?"
@@ -211,20 +212,21 @@ def stop_projects(conn: sqlite3.Connection, venture_id: int, stage: str, now: st
 def resume_projects(conn: sqlite3.Connection, venture_id: int) -> list[int]:
     """0.23.1: the owner took a venture they parked up again (back or research): its waiting projects get back what
     stop_projects kept in their notes, their status and next step, unless the agent set another next step meanwhile.
-    One whose park left nothing (0.22.0's, migration 0077) gets a next step saying so. Returns their numbers."""
+    One whose park left nothing (0.22.0's, migration 0077) stays waiting. 0.35.0: a project has no next step of its
+    own (its steps are the plan tree's); one kept before is given back. Returns their numbers."""
     resumed = []
     said = f"[owner] Your owner took venture #{venture_id} up again."
     for row in conn.execute(
         "SELECT id, notes FROM projects WHERE venture_id = ? AND status = 'waiting' AND next_step = ? ORDER BY id",
         (venture_id, PARKED_STEP),
     ).fetchall():
-        status, nxt = "waiting", f"None yet: your owner took venture #{venture_id} up again; set one (project_update)."
+        status, nxt = "waiting", ""
         mark = f"[owner] Your owner parked venture #{venture_id}. "
         for line in reversed(str(row["notes"]).split("\n")):
             if line.startswith(mark):
-                kept = re.match(re.escape(mark) + r"It was (idea|active|waiting); its next step: (.+)$", line)
+                kept = re.match(re.escape(mark) + r"It was (idea|active|waiting)(?:\.|; its next step: (.+))$", line)
                 if kept is not None:
-                    status, nxt = kept[1], kept[2]
+                    status, nxt = kept[1], "" if kept[2] in (None, "-") else kept[2]
                 break
         conn.execute(
             "UPDATE projects SET status = ?, next_step = ?, notes = ? WHERE id = ?",

@@ -17,6 +17,7 @@ from app import paths  # noqa: E402
 from app.agent import context, policy, roadmap, stages, store, tools, ventures  # noqa: E402
 from app.agent.fake_llm import FakeTransport, request_kind  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
+from tests.roadmap_helpers import set_milestone  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import call, listed, shop_context  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
@@ -75,21 +76,7 @@ def test_no_milestone_links_to_a_parked_venture_or_a_project_it_stopped(data_dir
     agent, _ = listed(data_dir)
     a, b, project, _, _ = a_line(agent)
     assert owner(agent).decide_venture(a, {"action": "park"}, "Stefan").status == 200
-    ctx = shop_context(agent)
-    item = {"title": "Back to A", "measure": "a sale", "due": due(agent)}
-    linked = call(ctx, "milestone_plan", {"milestones": [{**item, "venture_id": a}]})
-    assert not linked.ok and (
-        f"your owner parked venture #{a}: no milestone is linked to it while it is parked; it is theirs to take up "
-        "again" in linked.text
-    )
-    linked = call(ctx, "milestone_plan", {"milestones": [{**item, "project_id": project}]})
-    assert not linked.ok and (
-        f"project #{project} belongs to venture #{a}, which your owner parked: its work waits until they take it "
-        "up again" in linked.text
-    )
-    free = call(ctx, "milestone_plan", {"milestones": [{**item, "title": "A free goal"}]})
-    assert free.ok, free.text
-    mid = int(rows(agent, "SELECT MAX(id) AS id FROM milestones")[0]["id"])
+    mid = set_milestone(agent, "A free goal", due(agent), measure="a sale")  # 0.35.0: milestone_plan retired
     ctx = shop_context(agent)
     moved = call(ctx, "milestone_update", {"milestone_id": mid, "venture_id": a})
     assert not moved.ok and "no milestone is linked to it while it is parked" in moved.text
@@ -97,7 +84,7 @@ def test_no_milestone_links_to_a_parked_venture_or_a_project_it_stopped(data_dir
     assert not moved.ok and f"project #{project} belongs to venture #{a}, which your owner parked" in moved.text
     with agent.db.transaction() as conn:
         ventures.update(conn, b, to_iso(agent.clock.now()), stage="parked", parked_by="agent")
-    own = call(shop_context(agent), "milestone_plan", {"milestones": [{**item, "venture_id": b}]})
+    own = call(shop_context(agent), "milestone_update", {"milestone_id": mid, "venture_id": b})
     assert not own.ok and (
         f"you parked venture #{b}: no milestone is linked to it while it is parked; take it up again first" in own.text
     )
@@ -129,12 +116,8 @@ def test_a_plan_can_t_focus_on_a_project_the_owner_s_park_stopped(data_dir: Path
     before = len(fake.sent)
     agent.run_cycle("schedule")
     cycle = rows(agent, "SELECT id, project_id FROM cycles ORDER BY id DESC LIMIT 1")[0]
-    assert cycle["project_id"] != project  # (the fake's work made a project of its own)
+    assert cycle["project_id"] != project  # 0.35.0: the plan tree's line, never one the owner's park holds
     work = next(r for r in list(fake.sent)[before:] if request_kind(r) == "work")
-    assert (
-        f"No focus project: your plan's #{project} waits, because your owner parked venture #{a}. Work on what "
-        "doesn't need it, until they take the venture up again." in sent_text(work)
-    )
     assert f"Focus project: #{project}" not in sent_text(work)
 
 
@@ -203,35 +186,6 @@ def test_the_owner_s_park_stops_what_the_unlocks_of_its_milestones_approved_at_o
     price = price_of(agent, listing_id)
     agent.clock.advance(hours=25)
     assert agent.execute_approved() == [] and price_of(agent, listing_id) == price
-
-
-def test_a_goal_the_owner_s_park_dropped_is_planned_again_without_a_move(data_dir: Path) -> None:
-    """After the owner takes the venture up again, the agent sets the goal its park dropped again: the owner's drop is
-    no move of the agent's (two moves already, and replacing it was refused)."""
-    agent, _ = listed(data_dir)
-    a, b, project, goal, _ = a_line(agent)
-    with agent.db.transaction() as conn:  # the agent moved its date twice, all it may
-        for days in (35, 40):
-            conn.execute("UPDATE milestones SET due = ?, moves = moves + 1 WHERE id = ?", (due(agent, days), goal))
-    assert owner(agent).decide_venture(a, {"action": "park"}, "Stefan").status == 200
-    assert owner(agent).decide_venture(a, {"action": "back", "confirm": True}, "Stefan").status == 200
-    again = {"title": "Ten sales of A", "measure": "10 orders", "due": due(agent, 45), "replaces": goal}
-    made = call(shop_context(agent), "milestone_plan", {"milestones": [again]})
-    assert made.ok, made.text
-    [row] = rows(agent, f"SELECT moves, project_id FROM milestones WHERE replaces_id = {goal}")
-    assert row == {"moves": 2, "project_id": project}  # its link to the project, working again, is kept
-
-
-def test_a_replacement_doesn_t_inherit_a_link_the_park_stopped(data_dir: Path) -> None:
-    agent, _ = listed(data_dir)
-    a, b, project, goal, _ = a_line(agent)
-    assert owner(agent).decide_venture(a, {"action": "park"}, "Stefan").status == 200
-    elsewhere = {"title": "Ten sales of A", "measure": "10 orders", "due": due(agent), "replaces": goal}
-    made = call(shop_context(agent), "milestone_plan", {"milestones": [{**elsewhere, "venture_id": b}]})
-    assert made.ok, made.text  # it was refused for the project it would have inherited, which it never named
-    [row] = rows(agent, f"SELECT venture_id, project_id FROM milestones WHERE replaces_id = {goal}")
-    assert row == {"venture_id": b, "project_id": None}
-    assert project
 
 
 def test_the_set_aside_focus_doesn_t_cut_the_venture_s_pitch() -> None:

@@ -37,7 +37,6 @@ LISTING = {
 PROJECT = {
     "title": "Planners",
     "hypothesis": "People buy printable planners.",
-    "next_step": "List one",
     "status": "active",
 }
 

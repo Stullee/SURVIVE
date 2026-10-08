@@ -1,7 +1,8 @@
 """0.13.0: a prediction ledger. The agent's odds and its business cases were never checked against what came of them,
 so nothing told it, its owner or the critic whether they could be trusted. Now a metric milestone the agent gives odds
 (milestone_plan's likely) and a backed venture's first sale by its case's month are predictions Ember's code settles
-from its records. Their record is a calibration line that triage (READY), the critic and the daily review read."""
+from its records. Their record is a calibration line that triage (READY), the critic and the daily review read.
+0.35.0: milestone_plan retired; the odds given before still settle."""
 
 from __future__ import annotations
 
@@ -12,14 +13,15 @@ from pathlib import Path
 import pytest
 
 from app.agent import critic, econ, metrics, predictions, ventures, views
-from app.agent.fake_llm import FakeTransport, Reply, ToolCalls, request_kind
+from app.agent.fake_llm import FakeTransport, request_kind
 from app.agent.service import Agent
 from app.economy.clock import to_iso
+from tests.roadmap_helpers import set_milestone  # noqa: E402
 from tests.test_agent import rows
 from tests.test_critic import proposed
 from tests.test_loop_shapes import run
 from tests.test_owner_loop import owner
-from tests.test_ventures import DROPSHIPPING, ETSY, JOURNAL, PRINT, VENTURING, plan, tool_results
+from tests.test_ventures import DROPSHIPPING, ETSY, PRINT, VENTURING, plan
 
 
 def settle(agent: Agent) -> None:
@@ -41,24 +43,21 @@ def test_a_milestones_odds_are_settled_by_code(data_dir: Path) -> None:
     agent, _ = run(data_dir, fake)  # ordinary cycles: the roadmap is laid out there
     today = agent.clock.today()
     soon, later = (today + timedelta(days=7)).isoformat(), (today + timedelta(days=14)).isoformat()
-    odds = [  # 0.29.0: each leads to the money goal #1
-        {"title": "Research that finds", "metric": "research_calls_ok", "target": "1", "due": soon, "likely": 70},
-        {"title": "First revenue", "metric": "revenue_verified_usd", "target": "5", "due": later, "likely": 40},
-    ]
-    odds = [{**m, "parent": "#1"} for m in odds]
-    guess = [{"title": "A guess", "measure": "Something good", "due": soon, "likely": 50, "parent": "#1"}]
-    calls = ToolCalls([("milestone_plan", {"milestones": odds}), ("milestone_plan", {"milestones": guess})])
-    fake.script.extend([plan(steps=["lay out the roadmap"]), calls, Reply("Done."), JOURNAL])
-    agent.run_cycle("schedule")
-    made, refused = tool_results(agent, "milestone_plan")
-    assert made["status"] == "ok" and "Your odds of 70% by then are kept: Ember's code settles them." in made["result"]
-    assert refused["status"] == "error" and "likely is for a milestone with a metric" in refused["result"]
+    for title, metric, target, due, likely in (  # given before 0.35.0, each leading to the money goal #1
+        ("Research that finds", "research_calls_ok", "1", soon, 70),
+        ("First revenue", "revenue_verified_usd", "5", later, 40),
+    ):
+        made = set_milestone(agent, title, due, metric=metric, target=target)
+        [row] = rows(agent, f"SELECT measure FROM milestones WHERE id = {made}")
+        with agent.db.transaction() as conn:
+            claim = f"milestone #{made}: {row['measure']}"
+            predictions.add_milestone(conn, agent.scope(), made, likely, claim, due, to_iso(agent.clock.now()))
     [first, second] = rows(agent, "SELECT milestone_id, claim, due FROM predictions ORDER BY id")
     assert first["due"] == soon and first["claim"].endswith(
         "Research calls that found something since it was set: at least 1 call (Ember's code checks it)"
     )
     with agent.db.transaction() as conn:  # research that found something: the first milestone is met
-        ventures.add_research(conn, ETSY, 2, None, "q", None, 2, 10, to_iso(agent.clock.now()))
+        ventures.add_research(conn, ETSY, 1, None, "q", None, 2, 10, to_iso(agent.clock.now()))
     settle(agent)
     assert called(agent)[0][:3] == ("milestone", 0.7, "hit")
     assert called(agent)[1][2] == "open"
@@ -74,7 +73,7 @@ def test_a_milestones_odds_are_settled_by_code(data_dir: Path) -> None:
     assert review.endswith(f"Your record: {record}.")
     shown = {m["title"]: m["prediction"] for m in views.roadmap_view(agent)["items"]}
     assert (shown["Research that finds"]["likely"], shown["Research that finds"]["status"]) == (70, "hit")
-    assert "A guess" not in shown and shown["First revenue"]["status"] == "miss"  # a guess without a metric: refused
+    assert shown["First revenue"]["status"] == "miss"
     assert views.roadmap_view(agent)["forecasts"] == record
     with pytest.raises(sqlite3.IntegrityError, match="a settled prediction is final"), agent.db.transaction() as conn:
         conn.execute("UPDATE predictions SET result = 'no'")

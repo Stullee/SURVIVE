@@ -1299,7 +1299,7 @@ class Agent:
             bluesky=self.bluesky,
             bluesky_posts=self.bluesky_posts,
         )
-        kind, planner = runner.planner_preview()  # 0.28.0: as lines.kind decides it (a scheduled wake-up's)
+        kind, planner = runner.planner_preview()  # 0.35.0: as the plan tree decides it (a scheduled wake-up's)
         return f"(the next cycle is {'an' if kind == 'ordinary' else 'a'} {kind} cycle)\n{planner}"
 
     def cycle_detail(self, cycle_id: int) -> dict[str, Any] | None:

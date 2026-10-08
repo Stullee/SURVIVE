@@ -309,10 +309,10 @@ def test_the_agent_hears_that_a_channel_waits_for_its_owner(data_dir: Path) -> N
     work = next(r for r in fake.sent if request_kind(r) == "work")
     assert not {t["name"] for t in work["tools"]} & {"propose_pin", "pinterest_boards"}
     agent.pinterest._fake = FakePinterest(agent.clock, None, lambda s: None)
-    agent.pinterest.mode = "dry_run"  # set up: its section is the account's again
+    agent.pinterest.mode = "dry_run"  # set up: its account is a marketing cycle's section (0.35.0), no waiting line
     agent.run_cycle("schedule")
     text = [r for r in fake.sent if request_kind(r) == "plan"][-1]["messages"][0]["content"][0]["text"]
-    assert "== PINTEREST ==\nYour owner's account: ember-dry-run" in text and "setup (pinterest_app_id" not in text
+    assert "setup (pinterest_app_id" not in text
 
 
 # 0.15.0 (ventures): these ventures have no numbers yet, so the owner backs them with confirm ("Back it anyway").

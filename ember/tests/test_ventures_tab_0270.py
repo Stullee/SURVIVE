@@ -41,7 +41,7 @@ def test_one_tab_holds_the_ventures_and_their_projects(ingress_client: TestClien
 
 
 def test_the_backed_and_live_ventures_are_in_running_the_others_in_pipeline() -> None:
-    assert '  var TABS = ["overview", "ledger", "ventures", "roadmap",' in SCRIPT
+    assert '  var TABS = ["overview", "ledger", "ventures", "plan",' in SCRIPT  # 0.35.0: Plan takes Roadmap's place
     assert '  var VENTURE_VIEWS = ["pipeline", "running"];' in SCRIPT
     assert "  var RUNNING_STAGES = { building: true, live: true };" in SCRIPT
     groups = SCRIPT[SCRIPT.index("  var VENTURE_GROUPS = [") : SCRIPT.index("  var RUNNING_STAGES")]

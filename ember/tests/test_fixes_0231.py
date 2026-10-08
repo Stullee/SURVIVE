@@ -30,9 +30,13 @@ from app.economy.metering import NotSent  # noqa: E402
 from app.integrations import executor  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_agent import tools as calls  # noqa: E402
-from tests.test_etsy import call, listed, shop_context  # noqa: E402
+from tests.test_etsy import (  # noqa: E402
+    call,
+    listed,
+    shop_context,
+    started,  # noqa: E402
+)
 from tests.test_fixes_0140_unlock_safety import answer, status_of  # noqa: E402
-from tests.test_listing_gates import started  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
 from tests.test_mail import mail_cycle  # noqa: E402
 from tests.test_never import a_use, approve_as_code  # noqa: E402
@@ -168,13 +172,12 @@ def parked_line(data_dir: Path) -> tuple[Any, Any, int, int, int]:
     made = call(
         ctx,
         "project_create",
-        {"title": "Under A", "hypothesis": "h", "next_step": "Order the sample\nposter", "status": "active"}
-        | {"venture_id": first},
+        {"title": "Under A", "hypothesis": "h", "status": "active", "venture_id": first},
     )
     idea = call(
         ctx,
         "project_create",
-        {"title": "Also under A", "hypothesis": "h", "next_step": "Sketch it", "status": "idea", "venture_id": first},
+        {"title": "Also under A", "hypothesis": "h", "status": "idea", "venture_id": first},
     )
     assert made.ok and idea.ok
     assert owner(agent).decide_venture(first, {"action": "park", "comment": "Not now."}, "Stefan").status == 200
@@ -205,22 +208,31 @@ def test_a_project_of_a_venture_the_owner_parked_stays_with_it(data_dir: Path) -
     assert call(ctx, "project_update", {"project_id": made, "venture_id": free}).ok
 
 
-def test_the_owner_s_park_keeps_a_project_s_next_step_and_taking_it_up_gives_it_back(data_dir: Path) -> None:
-    agent, ctx, parked, _, project = parked_line(data_dir)
+def test_the_owner_s_park_keeps_a_project_s_status_and_taking_it_up_gives_it_back(data_dir: Path) -> None:
+    agent, ctx, parked, _, _ = parked_line(data_dir)
     found = rows(agent, f"SELECT status, next_step, notes FROM projects WHERE venture_id = {parked} ORDER BY id")
     assert [(r["status"], r["next_step"]) for r in found] == [("waiting", stages.PARKED_STEP)] * 2
-    assert found[0]["notes"].endswith(
-        f"[owner] Your owner parked venture #{parked}. It was active; its next step: Order the sample poster"
+    assert found[0]["notes"].endswith(f"[owner] Your owner parked venture #{parked}. It was active.")
+    assert found[1]["notes"].endswith(f"[owner] Your owner parked venture #{parked}. It was idea.")
+    with agent.db.transaction() as conn:  # one kept before 0.35.0, with a next step of its own
+        older = store.create_project(
+            conn, agent.scope(), cycle_id=ctx.cycle_id, title="Older under A", hypothesis="h",
+            next_step="Order the sample poster", status="active", now=to_iso(agent.clock.now()), venture_id=parked,
+        )  # fmt: skip
+        stages.stop_projects(conn, parked, "parked", to_iso(agent.clock.now()))
+    [kept] = rows(agent, f"SELECT notes FROM projects WHERE id = {older}")
+    assert kept["notes"].endswith(
+        f"Your owner parked venture #{parked}. It was active; its next step: Order the sample poster"
     )
-    assert found[1]["notes"].endswith(f"Your owner parked venture #{parked}. It was idea; its next step: Sketch it")
     idea = rows(agent, "SELECT id FROM projects WHERE title = 'Also under A'")[0]["id"]
-    assert call(ctx, "project_update", {"project_id": idea, "next_step": "Ask the owner about A"}).ok  # its own step
     assert owner(agent).decide_venture(parked, {"action": "back", "confirm": True}, "Stefan").status == 200
-    found = rows(agent, f"SELECT status, next_step, notes FROM projects WHERE venture_id = {parked} ORDER BY id")
+    found = rows(agent, f"SELECT id, status, next_step, notes FROM projects WHERE venture_id = {parked} ORDER BY id")
     assert [(r["status"], r["next_step"]) for r in found] == [
+        ("active", ""),
+        ("idea", ""),
         ("active", "Order the sample poster"),
-        ("waiting", "Ask the owner about A"),  # what the agent set meanwhile stays; it makes it active itself
     ]
+    assert found[2]["id"] == older
     assert found[0]["notes"].endswith(f"[owner] Your owner took venture #{parked} up again.")
     assert call(ctx, "project_update", {"project_id": idea, "status": "active"}).ok
 
@@ -242,10 +254,7 @@ def test_a_project_stopped_at_the_upgrade_to_0_22_gets_a_true_next_step_when_tak
         )
     assert owner(agent).decide_venture(venture, {"action": "research"}, "Stefan").status == 200
     assert rows(agent, f"SELECT status, next_step FROM projects WHERE id = {project}") == [
-        {
-            "status": "waiting",
-            "next_step": f"None yet: your owner took venture #{venture} up again; set one (project_update).",
-        }
+        {"status": "waiting", "next_step": ""}  # 0.35.0: its steps are the plan tree's
     ]
 
 
@@ -347,6 +356,7 @@ def test_projects_the_owner_s_park_stopped_come_after_the_working_ones(data_dir:
     assert "(the ones waiting while your owner parks their venture come last)" in projects.split("\n", 1)[0]
     for pid in stopped:
         assert f"\n#{pid} [waiting]" not in projects  # named in the first line only
-    assert "next: List product 9" in projects
+    nine = next(int(p["id"]) for p in listed_ if p["title"] == "Working line 9")
+    assert f"\n#{nine} [active] Working line 9 · spent $0.00" in projects  # 0.35.0: its steps are YOUR PLAN's
     shown = call(ctx, "project_list", {})
     assert shown.text.split("\n")[-1].startswith(f"#{stopped[-1]} [waiting]")

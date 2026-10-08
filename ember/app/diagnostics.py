@@ -32,7 +32,7 @@ from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
 from . import privacy
-from .agent import library, lines, plan, ventures
+from .agent import library, plan, ventures
 from .agent.context import RESEARCH_HEADING
 from .agent.sandbox import kind_of
 from .agent.tools import LIBRARY_TOOLS
@@ -582,15 +582,13 @@ def _scheduler(state: AppState) -> str:
         }
         with state.db.connection() as conn:
             spent, ventured, marketed = ventures.day_spends(conn, agent.scope(), agent.clock.today())
-        share = lines.marketing_share(agent.settings.venture_share, agent.settings.marketing_share)
         data["next_cycle"] = {  # which kind of cycle the next one is (0.11.1: the report didn't say)
             "venture": ventures.venture_turn(agent.settings.venture_share, spent, ventured),
             "venture_share_pct": agent.settings.venture_share,
             "spent_today_usd": micros_to_usd(spent),
             "venture_cycles_today_usd": micros_to_usd(ventured),
-            # 0.28.0: the marketing cycles' turn by share (lines.kind also needs something live to market)
-            "marketing": lines.marketing_turn(share, spent, marketed),
-            "marketing_share_pct": share,
+            # 0.35.0: otherwise the plan tree's step decides it (a marketing step a marketing cycle): the report's
+            # "plan tree" part has the ranking now
             "marketing_cycles_today_usd": micros_to_usd(marketed),
         }
         decision = agent.decide(preview=True)  # 0.15.0: nothing marked or kept (the report only reads)
@@ -1052,7 +1050,8 @@ def _agent(state: AppState, full: bool = True) -> str:
         ).fetchall()
         columns = ["subject", "metric", "days", "subjects", "newest"]
         out.append("-- observations (by subject and metric)\n" + _rows(observed, columns))
-        # 0.34.0: the step the plan tree would take now, its next ones with their weight's parts, and what waits
+        # 0.34.0: the step the plan tree takes now (0.35.0: the next cycle's), its next ones with their weight's parts,
+        # and what waits
         try:
             pick, found = plan.choose(
                 conn, scope, to_iso(agent.clock.now()), agent.clock.today(), plan.channels_from(agent.settings)
@@ -1062,7 +1061,7 @@ def _agent(state: AppState, full: bool = True) -> str:
                 for s, p in pick.ranked[:8]
             ]
             out.append(
-                f"-- plan tree: the ranking now (it would take: {pick.decided})\n"
+                f"-- plan tree: the ranking now (the next cycle takes: {pick.decided})\n"
                 + _rows(ranking, ["step", "line", "weight", "title", "why"])
             )
             waiting = [

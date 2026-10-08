@@ -1442,47 +1442,9 @@ body[data-stale="true"] .live { display: none; }
 .vt-projects-head { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 1rem; }
 .vt-projects .pj-title { margin: 0; }
 
-/* The roadmap (0.11.0): a timeline of milestones, a row each, under the goal it leads to. The state has its own
-   shape as well as its color (open: diamond, overdue: triangle, done: disc, missed: cross, dropped: dash). */
+/* The milestones (0.11.0; 0.35.0: on the Plan tab, the timeline and the goal tree retired). */
 #rm-card { position: relative; }
 .rm-summary { color: var(--text-2); font-size: 0.9rem; margin: 4px 0 8px; }
-.rm-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.8rem; color: var(--text-2); margin-bottom: 8px; }
-.rm-key { display: inline-flex; align-items: center; gap: 6px; }
-.rm-key svg { display: block; overflow: visible; }
-.rm-chart { overflow-x: auto; border: 1px solid var(--grid); border-radius: var(--radius); background: var(--surface); }
-.rm-chart .empty-state { border: 0; }
-.rm-loading { padding: 16px; margin: 0; }
-.rm-svg { display: block; }
-.rm-axis, .rm-now { pointer-events: none; }
-.rm-grid { stroke: var(--grid); stroke-width: 1; }
-.rm-month { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.rm-today { stroke: var(--text-2); stroke-width: 1.5; }
-.rm-today-label { fill: var(--text-2); font-size: 11px; font-weight: 600; }
-.rm-row { cursor: pointer; outline: none; }
-.rm-hit { fill: transparent; }
-.rm-row:hover .rm-hit, .rm-row:focus-visible .rm-hit { fill: var(--surface-2); }
-.rm-row[data-selected="true"] .rm-hit { fill: var(--surface-2); stroke: var(--focus); stroke-width: 1; }
-.rm-row:focus-visible .rm-label { font-weight: 600; }
-.rm-label { fill: var(--text); font-size: 12px; }
-.rm-glyph { fill: var(--text-2); font-size: 11px; }
-.rm-row[data-state="done"] .rm-label, .rm-row[data-state="missed"] .rm-label, .rm-row[data-state="dropped"] .rm-label { fill: var(--muted); }
-.rm-row[data-state="dropped"] .rm-label { text-decoration: line-through; }
-.rm-bar { fill: var(--rm-color); opacity: 0.28; }
-.rm-mark { fill: var(--rm-color); stroke: var(--surface); stroke-width: 2; }
-.rm-row[data-state="missed"] .rm-mark, .rm-row[data-state="dropped"] .rm-mark,
-.rm-key[data-state="missed"] .rm-mark, .rm-key[data-state="dropped"] .rm-mark { fill: none; stroke: var(--rm-color); stroke-width: 3; stroke-linecap: round; }
-.rm-first { fill: var(--surface); stroke: var(--rm-color); stroke-width: 1.5; }
-.rm-slip { stroke: var(--rm-color); stroke-width: 1.5; opacity: 0.5; }
-.rm-row[data-state="open"], .rm-key[data-state="open"] { --rm-color: var(--accent); }
-.rm-row[data-state="overdue"], .rm-key[data-state="overdue"] { --rm-color: var(--critical); }
-.rm-row[data-state="done"], .rm-key[data-state="done"] { --rm-color: var(--good); }
-.rm-row[data-state="missed"], .rm-key[data-state="missed"] { --rm-color: var(--serious); }
-.rm-row[data-state="dropped"], .rm-key[data-state="dropped"] { --rm-color: var(--muted); }
-.rm-tip { position: absolute; z-index: 5; max-width: min(340px, calc(100% - 16px)); padding: 8px 10px; border: 1px solid var(--grid);
-  border-radius: 8px; background: var(--surface); color: var(--text); box-shadow: 0 4px 16px var(--ring); font-size: 0.85rem; pointer-events: none; }
-.rm-tip p { margin: 2px 0; }
-.rm-tip-title { font-weight: 600; }
-.rm-tip-state { color: var(--text-2); }
 .card.milestone .rm-card-title:focus { outline: none; }
 .card.milestone[data-selected="true"] { box-shadow: 0 0 0 3px var(--focus); }
 .card.milestone .notes { margin-top: 8px; font-size: 0.9rem; }
@@ -1519,34 +1481,6 @@ body[data-stale="true"] .live { display: none; }
 .item-grid > .item-wide { grid-column: 1 / -1; }
 .item-wide .pbar { margin: 6px 0 4px; max-width: 420px; }
 
-/* The goal tree: each milestone under the one it leads to, with a line to its parent. */
-.gt-wrap { margin-bottom: 12px; }
-.gt { list-style: none; margin: 0; padding: 0; }
-.gt .gt { margin-left: 14px; padding-left: 12px; border-left: 1px solid var(--grid); }
-.gt-node { margin: 0; }
-.gt-row {
-  display: grid; grid-template-columns: 1.2em minmax(0, 1fr) minmax(120px, 220px); gap: 4px 10px; align-items: center;
-  padding: 6px 8px; border-radius: 8px;
-}
-.gt-row:hover { background: var(--surface-2); }
-.gt-row[data-goal="true"] { background: var(--surface-2); }
-.gt-glyph { color: var(--text-2); font-size: 0.85rem; text-align: center; }
-.gt-row[data-state="overdue"] .gt-glyph { color: var(--critical-text); }
-.gt-row[data-state="done"] .gt-glyph { color: var(--good-text); }
-.gt-text { display: grid; min-width: 0; }
-.gt-name {
-  font: inherit; text-align: left; color: var(--text); background: none; border: 0; padding: 0; cursor: pointer;
-  overflow-wrap: anywhere;
-}
-.gt-row[data-goal="true"] .gt-name { font-weight: 600; }
-.gt-name:hover { text-decoration: underline; }
-.gt-name:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
-.gt-row[data-state="done"] .gt-name, .gt-row[data-state="missed"] .gt-name, .gt-row[data-state="dropped"] .gt-name { color: var(--muted); }
-.gt-row[data-state="dropped"] .gt-name { text-decoration: line-through; }
-.gt-meta { color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
-.gt-progress { display: grid; grid-template-columns: minmax(0, 1fr) 3.2em; gap: 8px; align-items: center; }
-.gt-pct { font-size: 0.85rem; font-variant-numeric: tabular-nums; text-align: right; color: var(--text-2); }
-
 /* The Overview's strip: the goal under the key numbers. */
 .goal-strip {
   display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.5fr) auto; gap: 8px 16px; align-items: center;
@@ -1558,9 +1492,6 @@ body[data-stale="true"] .live { display: none; }
 .goal-strip-bar .pbar { margin: 4px 0; }
 
 @media (max-width: 600px) {
-  .gt-row { grid-template-columns: 1.2em minmax(0, 1fr); }
-  .gt-progress { grid-column: 2; }
-  .gt .gt { margin-left: 6px; padding-left: 8px; }
   .goal-strip { grid-template-columns: minmax(0, 1fr); }
   .goal-strip .btn { justify-self: start; }
   .goal-percent { font-size: 2rem; }
@@ -1580,8 +1511,7 @@ body[data-stale="true"] .live { display: none; }
 .audit-item .item-head { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
 .audit-changes { margin: 0.3rem 0 0.3rem 1.2rem; padding: 0; font-size: 0.9em; }
 
-/* 0.34.0: the plan tree (a preview), drawn as a floating node network */
-.pl-preview { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent-text); background: var(--accent-track); border-radius: 999px; padding: 2px 8px; vertical-align: middle; margin-left: 6px; }
+/* 0.34.0: the plan tree, drawn as a floating node network (0.35.0: it steers Ember's cycles) */
 .pl-now { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--gap); margin: 12px 0; }
 .pl-now-card { background: var(--surface-2); border-radius: var(--radius); padding: 10px 12px; min-width: 0; }
 .pl-now-card .small-head { margin-top: 0; }
@@ -1640,4 +1570,14 @@ body[data-stale="true"] .live { display: none; }
 .pl-step-weight { font-variant-numeric: tabular-nums; color: var(--text-2); }
 .pl-why { flex-basis: 100%; margin: 0; font-size: 0.8rem; overflow-wrap: anywhere; }
 .pl-stale { color: var(--warning-text); font-size: 0.8rem; }
-.pl-table tr[data-agrees="false"] td:last-child { color: var(--warning-text); }
+/* 0.35.0: the owner's word on a product: Ember's hold, its decide-by dates, close or drop, its unlocks */
+.pl-hold { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--warning) 14%, var(--surface)); }
+.pl-hold p { margin: 0; flex: 1 1 18em; overflow-wrap: anywhere; }
+.pl-decide { margin: 8px 0; }
+.pl-decide .small-head { margin: 0 0 2px; }
+.pl-end { margin: 12px 0; }
+.pl-end .small-head { margin: 0 0 4px; }
+.pl-end .confirm { margin-top: 8px; }
+.pl-why-input { width: 100%; max-width: 36em; margin: 6px 0; }
+.pl-decide-buttons { display: inline-flex; gap: 6px; }
+.pl-changes-list li { margin: 2px 0; }

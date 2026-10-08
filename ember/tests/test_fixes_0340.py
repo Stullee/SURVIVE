@@ -190,20 +190,21 @@ def test_a_live_products_recurring_marketing_comes_once_its_launch_is_done(data_
     assert not [s for s in keep(agent, no_bluesky) if "for this period" in s]  # one open step per duty
 
 
-# --- the shadow pick ---
+# --- the pick ---
 
 
-def test_each_cycle_records_the_trees_pick_next_to_readys_and_changes_nothing_else(data_dir: Path) -> None:
+def test_each_cycle_records_the_trees_pick(data_dir: Path) -> None:
     agent, fake = lined(data_dir)  # lines #1 Planner, #2 Poster, #3 Checklist, after an idle cycle
-    fake.script.extend([take("line #3", focus=3), ToolCalls([("project_list", {})]), Reply("Done."), JOURNAL])
+    fake.script.extend([take(3), ToolCalls([("project_list", {})]), Reply("Done."), JOURNAL])
     assert agent.run_cycle("schedule").status == "completed"
     picks = rows(agent, "SELECT cycle_id, kind, line, decided, node_id, product, ranked FROM plan_picks ORDER BY id")
     assert [(p["cycle_id"], p["decided"]) for p in picks][0] == (1, "none")  # no line yet in the first cycle
     last = picks[-1]
-    assert (last["cycle_id"], last["kind"], last["line"]) == (2, "ordinary", 3)
-    assert last["decided"] in ("weight", "margin") and last["node_id"] is not None and last["product"] in (1, 2, 3)
+    assert (last["cycle_id"], last["kind"]) == (2, "ordinary") and last["line"] in (1, 2, 3)
+    assert last["decided"] in ("weight", "margin") and last["node_id"] is not None and last["product"] is not None
     assert rows(agent, "SELECT COUNT(*) AS n FROM plan_nodes WHERE level = 'product'") == [{"n": 3}]
-    assert rows(agent, "SELECT project_id FROM cycles WHERE id = 2") == [{"project_id": 3}]  # READY's line was worked
+    # 0.35.0: the tree's line is the cycle's, whatever the plan named
+    assert rows(agent, "SELECT project_id FROM cycles WHERE id = 2") == [{"project_id": last["line"]}]
     failed = [r for r in rows(agent, "SELECT level, message FROM events") if "plan tree" in r["message"].lower()]
     assert [r for r in failed if r["level"] != "info"] == []
 
@@ -217,7 +218,7 @@ def test_the_plan_tab_shows_the_tree_and_takes_a_pin_and_a_worth(ingress_client:
     book = project(agent, *BOOK)
     keep(agent)
     shown = ingress_client.get("api/plan").json()
-    assert shown["preview"] is True and [p["platform"] for p in shown["projects"]] == ["kdp"]
+    assert [p["platform"] for p in shown["projects"]] == ["kdp"]
     [product] = shown["projects"][0]["products"]
     assert product["line"] == book and product["template"] == "KDP book" and product["stage"] == "research"
     assert [s["stage"] for s in product["stages"]] == list(templates.STAGES)
@@ -244,5 +245,5 @@ def test_the_plan_tab_shows_the_tree_and_takes_a_pin_and_a_worth(ingress_client:
     assert 'id="tab-plan"' in html and 'id="panel-plan"' in html
     report = ingress_client.get("api/diagnostics").text
     assert "-- plan_nodes" in report and "-- plan_words" in report
-    assert "-- plan tree: the ranking now (it would take: pin)" in report  # the demand note is still pinned
+    assert "-- plan tree: the ranking now (the next cycle takes: pin)" in report  # the demand note is still pinned
     assert ingress_client.get("api/dashboard").json()["plan_stamp"] == ingress_client.get("api/plan").json()["stamp"]

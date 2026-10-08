@@ -223,16 +223,17 @@ def test_the_scorecard_holds_the_agent_to_its_last_verdicts(data_dir: Path) -> N
         assert "- #1 stop: No demand after a day. → still " in text and "you haven't carried it out" in text
 
 
-def test_the_dry_run_agent_carries_out_its_stop(data_dir: Path) -> None:
+def test_the_dry_run_agent_holds_what_its_review_stopped(data_dir: Path) -> None:
+    from tests.test_fixes_0300 import judged  # noqa: PLC0415
+
     fake = FakeTransport()
-    agent, _ = run(data_dir, fake, cycles=14)  # 14 cycles on one project: the fake's review says stop
-    agent.clock.advance(days=1)
-    for _ in range(3):
-        agent.run_cycle("schedule")
-    verdicts = json.loads(rows(agent, "SELECT verdicts FROM reviews")[0]["verdicts"])
-    assert verdicts[0]["project_id"] == 1 and verdicts[0]["verdict"] == "stop"
-    assert rows(agent, "SELECT status FROM projects WHERE id = 1")[0]["status"] == "abandoned"
-    assert rows(agent, "SELECT COUNT(*) AS n FROM projects WHERE status = 'active'")[0]["n"] == 1  # a new start
+    agent, _ = run(data_dir, fake, cycles=2)  # the fake started line #1 and works on it
+    judged(agent, (1, "stop", "demand"))  # today's review says stop
+    agent.run_cycle("schedule")  # the plan tree's step is line #1's (its only product)
+    # 0.35.0: only the owner closes or drops a product: the agent holds it, to work elsewhere
+    assert rows(agent, "SELECT status FROM projects WHERE id = 1")[0]["status"] == "active"
+    [product] = rows(agent, "SELECT hold_reason FROM plan_nodes WHERE level = 'product' AND project_id = 1")
+    assert product["hold_reason"] and "stop" in product["hold_reason"]
     no_invalid(fake)
 
 

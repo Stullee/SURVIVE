@@ -1,4 +1,6 @@
-"""The roadmap (0.11.0): milestones the agent plans ahead with, keeps honest, and aims every cycle at."""
+"""The roadmap (0.11.0): milestones the agent plans ahead with, keeps honest, and aims every cycle at. 0.35.0: the plan
+tree takes the roadmap's place (agent/plan.py, YOUR PLAN): Ember lays out no milestones of her own any more
+(milestone_plan retired), and keeps the ones still open (a venture's first test, the owner's own) honest."""
 
 from __future__ import annotations
 
@@ -129,130 +131,6 @@ def test_only_real_dates_are_read() -> None:
 # --- the tools ---
 
 
-def test_the_agent_lays_out_its_roadmap_and_keeps_it_honest(data_dir: Path) -> None:
-    fake = FakeTransport(
-        script=[
-            plan(),
-            ToolCalls(
-                [
-                    (
-                        "milestone_plan",
-                        {
-                            "milestones": [
-                                {
-                                    "key": "goal",
-                                    "title": "Two legs that earn",
-                                    "measure": "30 EUR a month",
-                                    "due": day(80),
-                                },
-                                {
-                                    "key": "sale",
-                                    "parent": "goal",
-                                    "title": "First sale",
-                                    "measure": "Revenue recorded",
-                                    "due": day(20),
-                                },
-                                {"parent": "sale", "title": "Listing ready", "measure": "Proposed", "due": day(5)},
-                            ]
-                        },
-                    ),
-                    (
-                        "milestone_plan",
-                        {"milestones": [{"title": "After", "measure": "x", "due": day(30), "parent": "3"}]},
-                    ),
-                    (
-                        "milestone_plan",
-                        {
-                            "milestones": [
-                                {"key": "solid", "title": "Solid", "measure": "x", "due": day(10)},
-                                {"parent": "solid", "title": "Past", "measure": "x", "due": day(-1)},
-                            ]
-                        },
-                    ),
-                    (
-                        "milestone_plan",
-                        {"milestones": [{"title": "Orphan", "measure": "x", "due": day(9), "parent": "nope"}]},
-                    ),
-                ]
-            ),
-            ToolCalls(
-                [
-                    ("milestone_plan", {"milestones": [{"title": "first  SALE", "measure": "x", "due": day(10)}]}),
-                    ("milestone_plan", {"milestones": [{"title": "Far", "measure": "x", "due": day(367)}]}),
-                    ("milestone_plan", {"milestones": [{"title": "Vague", "measure": "x", "due": "1 October"}]}),
-                    ("milestone_plan", {"milestones": []}),
-                ]
-            ),
-            ToolCalls(
-                [
-                    ("milestone_update", {"milestone_id": 3, "due": day(7)}),
-                    ("milestone_update", {"milestone_id": 3, "due": day(25), "note": "Photos take longer."}),
-                    ("milestone_update", {"milestone_id": 3, "due": day(7), "note": "Photos take longer."}),
-                    ("milestone_update", {"milestone_id": 2, "due": day(6), "note": "Sooner."}),
-                ]
-            ),
-            ToolCalls(
-                [
-                    ("milestone_update", {"milestone_id": 3, "status": "done"}),
-                    ("milestone_update", {"milestone_id": 3, "result": "Proposed."}),
-                    ("milestone_update", {"milestone_id": 3, "status": "done", "result": "Proposed as request #4."}),
-                    ("milestone_update", {"milestone_id": 3, "note": "One more thing."}),
-                ]
-            ),
-            ToolCalls(
-                [
-                    ("milestone_update", {"milestone_id": 1, "parent_id": 2}),
-                    ("milestone_update", {"milestone_id": 2, "venture_id": 1, "note": "The Etsy leg's."}),
-                    ("milestone_update", {"milestone_id": 2, "project_id": 99}),
-                    ("milestone_update", {"milestone_id": 1, "status": "dropped", "result": "Too far out."}),
-                ]
-            ),
-            Reply("Done."),
-            JOURNAL,
-        ]
-    )
-    agent, _ = run(data_dir, fake)
-    created = tool_results(agent, "milestone_plan")
-    assert [r["status"] for r in created] == ["ok"] + ["error"] * 7
-    laid = created[0]["result"].splitlines()  # 0.12.0: a whole tree in one call
-    assert laid[0].startswith("Milestone #1 is on your roadmap, due 2026-11-20 (in 80 days).")
-    assert laid[1].startswith("Milestone #2 is on your roadmap, leading to #1, due 2026-09-21")
-    assert laid[2].startswith("Milestone #3 is on your roadmap, leading to #2, due 2026-09-06")
-    assert (
-        "milestone #3 is due 2026-09-06: a milestone leading to it is due by then at the latest" in created[1]["result"]
-    )
-    assert created[2]["result"] == (
-        "Error: milestone 2 of 2: due must be today (2026-09-01) or later. Nothing was put on your roadmap."
-    )
-    assert rows(agent, "SELECT id FROM milestones WHERE title = 'Solid'") == []  # all or none
-    assert "parent 'nope' is no key of an earlier milestone in this call, nor a number" in created[3]["result"]
-    assert "open milestone #2 already has this title" in created[4]["result"]
-    assert "due can be at most a year ahead (2027-09-02)" in created[5]["result"]
-    assert "due must be a date written YYYY-MM-DD, e.g. 2026-09-08" in created[6]["result"]
-    assert "milestones must be a list of 1 to 12 objects" in created[7]["result"]
-    updated = tool_results(agent, "milestone_update")
-    assert [r["status"] for r in updated] == ["error", "error", "ok", "error"] * 2 + ["error", "ok", "error", "ok"]
-    assert "say in note why the date moves" in updated[0]["result"]
-    assert "it leads to milestone #2, due 2026-09-21: move that first" in updated[1]["result"]
-    assert updated[2]["result"] == "Milestone #3: moved to 2026-09-08 (in 7 days; moved 1 time)."
-    assert "milestone #3 leads to it and is due 2026-09-08: move that first" in updated[3]["result"]
-    assert "say in result what shows its measure is met" in updated[4]["result"]
-    assert "result is for closing a milestone: set status too" in updated[5]["result"]
-    assert updated[6]["result"] == "Milestone #3: done."
-    assert "milestone #3 is done, which is final" in updated[7]["result"]
-    assert "milestone #2 leads to #1 already" in updated[8]["result"]
-    assert "there is no project #99" in updated[10]["result"]
-    # 0.12.0: the open milestones leading to a dropped one go with it (they stayed open and looked like goals).
-    assert updated[11]["result"] == "Milestone #1: dropped. Dropped with it, as they led to it: #2."
-    goal, sale, listing = (milestone(agent, i) for i in (1, 2, 3))
-    assert (goal["status"], goal["result"], goal["closed_cycle_id"]) == ("dropped", "Too far out.", 1)
-    assert (sale["status"], sale["venture_id"], sale["notes"]) == ("dropped", 1, "[#c1] The Etsy leg's.")
-    assert (sale["result"], sale["closed_by"], sale["closed_cycle_id"]) == ("Dropped with #1: Too far out.", "agent", 1)
-    assert (listing["status"], listing["moves"], listing["first_due"], listing["due"]) == ("done", 1, day(5), day(7))
-    assert listing["notes"] == "[#c1] Photos take longer." and listing["closed_at"] is not None
-    assert listing["created_cycle_id"] == 1 and listing["created_by"] == "agent"
-
-
 def test_the_agent_cant_drop_a_milestone_its_owner_added(data_dir: Path) -> None:
     fake = FakeTransport(
         script=[
@@ -324,36 +202,6 @@ def test_what_a_milestone_promised_and_how_it_ended_are_final(data_dir: Path) ->
 # --- planning ---
 
 
-def test_the_planner_sees_the_roadmap_by_horizon_with_its_checks() -> None:
-    open_ = [
-        row(id=4, title="Late", measure="Five listings live", due=day(-1), first_due=day(-8), moves=1, parent_id=2),
-        row(id=2, title="First sale", due=day(20), parent_id=1, venture_id=1, project_id=12),
-        row(id=1, title="Two legs", measure="30 EUR a month", created_by="owner", owner_comment="Make it 50"),
-    ]
-    closed = [row(id=3, title="Photos", status="missed", result="No time", closed_at="2026-08-30T10:00:00Z")]
-    assert roadmap.planner_text(open_, closed, TODAY).split("\n") == [
-        "Today: Tuesday 2026-09-01. 3 open milestones: 1 overdue, 1 this month, 1 next three months.",
-        "Roadmap check: 1 milestone is overdue (#4). Close each with milestone_update: done if its measure is met "
-        "(with the evidence), missed if not (why, and what now); or move its date with the reason, if it is still "
-        "worth reaching.",
-        "Roadmap check: nothing is due this week. Add this week's milestone: the next step toward your nearest goal.",
-        "Goals (the rest leads to them):",  # 0.12.0: first, one line each, so a cut never takes them
-        '#1 "Two legs" · due Sun 2026-10-11 (in 40 days) · measure: "30 EUR a month" · your owner\'s: "Make it 50"',
-        "Overdue:",
-        '#4 "Late" · due Mon 2026-08-31 (1 day late) · measure: "Five listings live" · leads to #2 · moved 1 time '
-        "(first due 2026-08-24)",
-        "This month (to Thu 2026-10-01):",
-        '#2 "First sale" · due Mon 2026-09-21 (in 20 days) · venture #1 · project #12 · leads to #1',
-        'Closed in the last 14 days: #3 "Photos" missed 2026-08-30: "No time".',
-    ]
-    this_month = [row(id=5, due=day(3)), row(id=6, due=day(12), parent_id=5)]
-    assert roadmap.checks(this_month, TODAY) == [
-        "Roadmap check: nothing is planned beyond this month. Add a goal for the next three months."
-    ]
-    empty = roadmap.planner_text([], [], TODAY)
-    assert empty.startswith("Today: Tuesday 2026-09-01. No open milestones.\nRoadmap check: your roadmap is empty.")
-
-
 def test_a_cycle_aims_at_a_milestone_and_the_brief_says_what_done_means(data_dir: Path) -> None:
     fake = FakeTransport(
         script=[
@@ -367,9 +215,9 @@ def test_a_cycle_aims_at_a_milestone_and_the_brief_says_what_done_means(data_dir
         ]
     )
     agent, _ = run(data_dir, fake, cycles=0)
-    agent.run_cycle("schedule")  # an empty roadmap
-    first = section(planner_texts(fake)[0], "ROADMAP")
-    assert first.startswith("Today: Tuesday 2026-09-01. No open milestones.\nRoadmap check: your roadmap is empty.")
+    agent.run_cycle("schedule")  # no goal, no product, no milestone: YOUR PLAN says so
+    first = section(planner_texts(fake)[0], "YOUR PLAN")
+    assert first == "Today: Tuesday 2026-09-01.\nYour plan has no products yet: your first one starts it."
     goal = create(agent, title="Two legs", measure="30 EUR a month", due=day(60))
     create(agent, title="First sale", measure="Owner records revenue", due=day(3), parent_id=goal)
     agent.run_cycle("schedule")
@@ -380,8 +228,8 @@ def test_a_cycle_aims_at_a_milestone_and_the_brief_says_what_done_means(data_dir
         {"milestone_id": None},  # no such milestone: the plan's focus is dropped
     ]
     assert json.loads(rows(agent, "SELECT plan FROM cycles WHERE id = 3")[0]["plan"])["focus_milestone_id"] is None
-    roadmap_ = section(planner_texts(fake)[1], "ROADMAP")
-    assert '\nThis week (to Mon 2026-09-07):\n#2 "First sale" · due Fri 2026-09-04 (in 3 days)' in roadmap_
+    still = section(planner_texts(fake)[1], "YOUR PLAN")
+    assert '\nMilestones still open:\n#2 "First sale" · due Fri 2026-09-04 (in 3 days)' in still
     brief = next(r for r in fake.sent if request_kind(r) == "work")["messages"][0]["content"][0]["text"]
     focus = section(brief, "FOCUS").split("\n")
     assert focus[:4] == [
@@ -393,16 +241,14 @@ def test_a_cycle_aims_at_a_milestone_and_the_brief_says_what_done_means(data_dir
     ]
 
 
-def test_the_rules_ask_the_agent_to_plan_ahead() -> None:
+def test_the_rules_point_at_the_plan_and_milestone_plan_is_gone() -> None:
     assert "focus_milestone_id" in prompts.PLAN_SCHEMA["required"]
-    assert "Plan ahead with your roadmap (ROADMAP)" in prompts.PLANNER_RULES
-    assert "ROADMAP is your plan ahead" in prompts.OPERATING_RULES
+    assert "YOUR PLAN is the tree under your owner's goal" in prompts.OPERATING_RULES
+    assert "change its steps (plan_step)" in prompts.PLANNER_RULES and "roadmap" not in prompts.PLANNER_RULES
     assert "roadmap" in prompts.REVIEW_SCHEMA["required"] and "Check your roadmap" in prompts.REVIEW_RULES
-    assert "the roadmap" in prompts.reflect_prompt()
-    specs = {name: tools.SPECS[name] for name in ("milestone_plan", "milestone_update")}
-    assert all(spec.reflect for spec in specs.values())
-    names = {d["name"] for d in tools.definitions()}
-    assert set(specs) <= names
+    assert "your plan" in prompts.reflect_prompt()
+    assert tools.SPECS["milestone_update"].reflect and "milestone_plan" not in tools.SPECS
+    assert {"milestone_update", "plan_step"} <= {d["name"] for d in tools.definitions()}
 
 
 # --- the owner's word ---
@@ -459,10 +305,7 @@ def test_the_owner_adds_notes_and_drops_milestones_and_the_agent_hears_it(data_d
         'Your owner dropped milestone #1 "Pinterest live": stop working toward it. Owner\'s comment: "Not now".' in text
     )
     assert 'Your owner wrote a note on milestone #2 "Account made". Owner\'s comment: "Still, well done".' in text
-    assert section(text, "ROADMAP").endswith(
-        'Closed in the last 14 days: #2 "Account made" dropped 2026-09-01: "Dropped by your owner with #1: Not now"; '
-        '#1 "Pinterest live" dropped 2026-09-01: "Dropped by your owner: Not now".'
-    )
+    assert "Milestones still open" not in section(text, "YOUR PLAN")  # both dropped
     assert rows(agent, "SELECT id, seen_cycle_id FROM milestones ORDER BY id") == [
         {"id": 1, "seen_cycle_id": 1},
         {"id": 2, "seen_cycle_id": 1},
@@ -521,6 +364,9 @@ def _review_text(agent: Agent) -> str:
 def test_the_daily_review_gets_the_roadmap_in_its_scorecard(data_dir: Path) -> None:
     settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=0)
     agent, _ = run(data_dir, FakeTransport(seed=5, scenario="founder"), cycles=2, settings=settings)
+    goal = create(agent, title="Two legs", measure="30 EUR a month", due=day(84))
+    month = create(agent, title="First sale", measure="Owner records revenue", due=day(25), parent_id=goal)
+    create(agent, title="Listing ready", measure="Proposed to my owner", due=day(5), parent_id=month)
     agent.clock.advance(days=1)
     agent.run_cycle("schedule")
     made = rows(agent, "SELECT scorecard, roadmap FROM reviews")[0]
@@ -575,21 +421,27 @@ def test_the_roadmap_tab(ingress_client: TestClient) -> None:
     )
     assert ingress_client.get("api/dashboard").json()["roadmap"]["stamp"] != empty["stamp"]
     html = ingress_client.get("/").text
-    assert 'id="tab-roadmap"' in html and 'id="panel-roadmap"' in html
+    # 0.35.0: the milestones are on the Plan tab (the Roadmap tab retired)
+    assert 'id="tab-roadmap"' not in html and 'id="rm-card"' in html and 'id="roadmap"' in html
 
 
 # --- the dry run ---
 
 
-def test_the_fake_lays_out_a_roadmap_and_keeps_it(data_dir: Path) -> None:
+def test_the_fake_keeps_the_milestones_still_open_honest(data_dir: Path) -> None:
+    """0.35.0: the fake lays out no roadmap (milestone_plan retired); it aims at the milestone YOUR PLAN lists due
+    first, moves one overdue a week once, then closes it."""
     settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=0)
     fake = FakeTransport(seed=3, scenario="founder")
-    agent, ends = run(data_dir, fake, cycles=2, settings=settings)
-    assert [e.status for e in ends] == ["completed", "completed"]
-    laid = rows(agent, "SELECT id, parent_id, due, created_cycle_id, project_id FROM milestones ORDER BY id")
-    assert [(m["id"], m["parent_id"], m["due"]) for m in laid] == [(1, None, day(84)), (2, 1, day(25)), (3, 2, day(5))]
-    assert {m["created_cycle_id"] for m in laid} == {1} and laid[1]["project_id"] is not None
-    assert rows(agent, "SELECT milestone_id FROM cycles ORDER BY id") == [{"milestone_id": None}, {"milestone_id": 3}]
+
+    def milestones(agent: Agent) -> None:
+        goal = create(agent, title="Two legs", measure="30 EUR a month", due=day(84))
+        month = create(agent, title="First sale", measure="Owner records revenue", due=day(25), parent_id=goal)
+        create(agent, title="Listing ready", measure="Proposed to my owner", due=day(5), parent_id=month)
+
+    agent, ends = run(data_dir, fake, cycles=1, settings=settings, before=milestones)
+    assert [e.status for e in ends] == ["completed"]
+    assert rows(agent, "SELECT milestone_id FROM cycles ORDER BY id") == [{"milestone_id": 3}]
     agent.clock.advance(days=7)  # the week's milestone is overdue now: moved a week, then closed
     agent.run_cycle("schedule")
     week = milestone(agent, 3)
@@ -607,10 +459,6 @@ def test_a_done_needs_its_evidence_and_is_shown_as_the_agents_word(data_dir: Pat
             plan(),
             ToolCalls(
                 [
-                    (
-                        "milestone_plan",
-                        {"milestones": [{"title": "3 listings live", "measure": "3 listings on Etsy", "due": day(5)}]},
-                    ),
                     ("milestone_update", {"milestone_id": 1, "status": "done", "result": "Done."}),
                     ("milestone_update", {"milestone_id": 1, "status": "done", "result": "All up, as planned."}),
                     ("milestone_update", {"milestone_id": 1, "status": "done", "result": "3 live: #901, #902, #903"}),
@@ -620,7 +468,9 @@ def test_a_done_needs_its_evidence_and_is_shown_as_the_agents_word(data_dir: Pat
             JOURNAL,
         ]
     )
-    agent, _ = run(data_dir, fake)
+    agent, _ = run(
+        data_dir, fake, before=lambda a: create(a, title="3 listings live", measure="3 listings on Etsy", due=day(5))
+    )
     bare, vague, done = tool_results(agent, "milestone_update")
     assert bare["status"] == vague["status"] == "error" and done["status"] == "ok"
     assert "a number (3 listings live, 12 views) or a reference (#123, a link or a workspace file)" in bare["result"]
@@ -657,9 +507,9 @@ def test_the_fake_model_never_calls_a_milestone_done() -> None:
     assert decide < source.index('"status": "done"') < source.index('if step[1] == "move":')
 
 
-def test_every_goal_survives_the_roadmaps_cut_at_every_scale() -> None:
-    """0.12.0 (FIX NOW 8), the analysis's reproduction: with 18 milestones, the cut took all 3 goals at every budget
-    scale (they came last, under "Next three months")."""
+def test_your_plan_keeps_the_goal_first_at_every_scale() -> None:
+    """0.12.0 (FIX NOW 8): with 18 milestones, the ROADMAP's cut took all 3 goals at every budget scale. 0.35.0: YOUR
+    PLAN in its place keeps its floor at every scale, the goal first and each product on a line of its own."""
     import dataclasses
 
     from app.agent import context
@@ -667,20 +517,11 @@ def test_every_goal_survives_the_roadmaps_cut_at_every_scale() -> None:
     from tests.test_agent_requests import overflowing_snapshot
 
     snap = overflowing_snapshot()
-    assert snap.today is not None
-
-    def on(days: int) -> str:
-        return (snap.today + timedelta(days=days)).isoformat()  # type: ignore[operator]
-
-    long = {"measure": "Revenue my owner recorded reaches the amount in one month, from two different legs " * 3}
-    goals = [row(id=i, title=f"Goal {i}: " + "ä" * 80, due=on(80 + i), **long) for i in (1, 2, 3)]
-    months = [row(id=10 + i, title=f"Month {i}", due=on(20 + i), parent_id=1 + i % 3, **long) for i in range(5)]
-    weeks = [row(id=20 + i, title=f"Week {i}", due=on(i - 2), parent_id=10 + i % 5, **long) for i in range(10)]
-    snap = dataclasses.replace(snap, roadmap=sorted(goals + months + weeks, key=lambda r: r["due"]), roadmap_closed=[])
+    goal = 'Your owner\'s goal: #1 "Earn $100 a month" · due Sun 2026-11-15 (in 46 days) · 3%: $3 of $100'
+    products = [f"Etsy: #{i} Product {i} (launch, 1 of 4 steps done · {i} views)" for i in range(1, 60)]
+    snap = dataclasses.replace(snap, plan="\n".join(["Today: Wednesday 2026-09-30.", goal, *products]))
     for scale in PLANNER_SCALES:
         planner, _ = context.planner_context(snap, dry_run=True, scale=scale)
-        shown = section(planner, "ROADMAP")
-        assert shown.startswith("Today: Wednesday 2026-09-30. 18 open milestones: 2 overdue,"), scale
-        assert "Roadmap check: 2 milestones are overdue (#20, #21)" in shown, scale
-        for goal in (1, 2, 3):
-            assert f'\n#{goal} "Goal {goal}: ää' in shown, (scale, goal)
+        shown = section(planner, "YOUR PLAN")
+        assert shown.startswith(f"Today: Wednesday 2026-09-30.\n{goal}\nEtsy: #1 Product 1"), scale
+        assert len(shown.encode()) >= context.PLAN_FLOOR - 200, scale

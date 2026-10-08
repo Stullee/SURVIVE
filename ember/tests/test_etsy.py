@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 httpx2 = pytest.importorskip("httpx2")
 
 from app import paths  # noqa: E402
+from app.agent import plan as plan_tree  # noqa: E402
 from app.agent import prompts, review, tools  # noqa: E402
 from app.agent.fake_llm import FakeTransport, request_kind, validate_request  # noqa: E402
 from app.config import Settings  # noqa: E402
@@ -673,6 +674,33 @@ def listed(data_dir: Path) -> tuple[Any, int]:
     return agent, 900_000_001
 
 
+def market_next(agent: Any, channel: str) -> int:
+    """0.35.0: the next cycle a marketing cycle in ``channel``: the owner's pin of the plan's first open step there."""
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        plan_tree.keep(conn, agent.scope(), now, agent.clock.today(), plan_tree.channels_from(agent.settings))
+        [step, *_] = plan_tree.nodes(
+            conn, agent.scope(), "level = 'step' AND status = 'open' AND channel = ?", (channel,)
+        )
+        plan_tree.pin(conn, agent.scope(), int(step["id"]), True, "Owner", now)
+    return int(step["id"])
+
+
+def started(data_dir: Path) -> tuple[Any, int]:
+    """A dry-run agent whose first listing is live, with its product's test begun (0.35.0: the day Ember's code saw it
+    live, kept on its product in the plan tree); the project's number."""
+    agent, _ = listed(data_dir)
+    [project] = rows(agent, "SELECT a.project_id FROM approvals a WHERE a.executor = 'etsy_listing'")
+    assert project["project_id"], "the fake's listing belongs to its focus project"
+    with agent.db.transaction() as conn:
+        plan_tree.keep(conn, agent.scope(), to_iso(agent.clock.now()), agent.clock.today(), {})
+    [product] = rows(
+        agent, f"SELECT live_since FROM plan_nodes WHERE level = 'product' AND project_id = {project['project_id']}"
+    )
+    assert product["live_since"] == agent.clock.today().isoformat()
+    return agent, int(project["project_id"])
+
+
 def shop_context(agent: Any) -> tools.ToolContext:
     """The tools' context in the agent's last cycle, with its shop (and one department among the categories)."""
     ctx = tools.ToolContext(
@@ -1239,7 +1267,7 @@ def test_a_proposal_is_checked_before_it_reaches_the_owner(data_dir: Path) -> No
         ("propose_etsy_listing", {**base, "files": "shop/missing.pdf"}),
         ("propose_etsy_listing", {**base, "photos": "shop/p.pdf"}),
     ]
-    line = {"title": "Planners", "hypothesis": "Printables sell.", "next_step": "List one", "status": "active"}
+    line = {"title": "Planners", "hypothesis": "Printables sell.", "status": "active"}
     fake = FakeTransport(
         script=[
             Plan(PLAN),

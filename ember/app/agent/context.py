@@ -17,7 +17,7 @@ import re
 import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 from ..economy.costs import micros_to_usd
@@ -39,6 +39,7 @@ from . import (
     ventures,
     weekly,
 )
+from . import plan as plan_tree
 from .agenda import REACTIVE_STEPS
 from .agenda import line as agenda_line
 from .memory import Memory, heading_like, lesson_key, pins
@@ -82,18 +83,25 @@ PLANNER_BUDGETS = {
     "blog": 900,  # 0.14.0: when the owner switched their blog on
     "kdp": 900,  # 0.25.0: when the owner switched Amazon KDP on
     "ventures": 2_600,
-    "ready": 1_550,  # 0.13.0: a venture cycle's READY list (desk.MAX_ITEMS items) and the forecasts' record
-    "roadmap": 2_200,  # 0.11.0 (and never less than ROADMAP_FLOOR, whatever the scale: 0.12.0; 0.29.0: the goal)
+    # 0.13.0: a venture cycle's READY list (desk.MAX_ITEMS items) and the forecasts' record; 0.35.0: or an ordinary or
+    # marketing cycle's YOUR STEP (plan.step_text): a cycle has one of them
+    "ready": 1_550,
+    # 0.11.0's ROADMAP (and never less than PLAN_FLOOR, whatever the scale: 0.12.0; 0.29.0: the goal); 0.35.0: YOUR
+    # PLAN, the plan tree's products under the goal
+    "plan": 2_200,
     "library": 1_200,  # 0.12.0: the owner's library, when it holds documents
 }
 # 0.12.0: the ROADMAP isn't scaled down with the other sections (its checks and goals come first, and the cut took
-# every goal once the budget shrank). 0.29.0: with the owner's goal first, and how far each milestone got.
-ROADMAP_FLOOR = 2_200
+# every goal once the budget shrank). 0.29.0: with the owner's goal first, and how far each milestone got. 0.35.0: YOUR
+# PLAN, in its place.
+PLAN_FLOOR = 2_200
+PLAN_HEADING = "YOUR PLAN"  # 0.35.0: the plan tree under the owner's goal (plan.plan_text)
+SHOWN_MILESTONES = 6  # 0.35.0: the milestones still open YOUR PLAN lists (a venture's first test, the owner's own)
 # 0.15.0: what the sections leave of their budgets goes to the sections that were cut, in this order (the day's review
 # lost its advice and ROADMAP a first test while 8.6 KB went unused). The plan stays within the budgets' sum.
 SPARE_ORDER = (
     "review",
-    "roadmap",
+    "plan",
     "journal",
     "projects",
     "ventures",
@@ -111,6 +119,8 @@ SPARE_ORDER = (
     "library",
     "workshop",
 )
+READY_HEADING = "READY"  # 0.13.0: a venture cycle's decisions, ranked by Ember's code (desk.py)
+STEP_HEADING = "YOUR STEP"  # 0.35.0: the step the plan tree took for an ordinary or marketing cycle (plan.py)
 # 0.12.0: while requests wait for the owner, the plan is told that waiting isn't its job.
 WAITING_NOTE = "Your owner's decision on these wakes you: don't wait for it, work on something else meanwhile."
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
@@ -274,25 +284,20 @@ class Snapshot:
     venture_share: int = 0  # the owner's share of the spending for ventures, in percent
     venture_day: tuple[int, int] = (0, 0)  # today's spending, and the venture cycles' part of it
     marketing: bool = False  # 0.28.0: a marketing cycle (lines.py)
-    marketing_share: int = 0  # 0.28.0: marketing cycles' share of the spending, in percent (0: none run)
-    marketing_spent: int = 0  # 0.28.0: today's spending in marketing cycles
     marketing_apart: bool = False  # 0.28.0: marketing cycles run, so an ordinary cycle has no marketing tools
     call_costs: dict[str, int] = field(default_factory=dict)  # what research and brainstorms cost lately (0.10.1)
-    today: date | None = None  # the owner's local date (the roadmap's horizons are counted from it)
-    roadmap: list[sqlite3.Row] = field(default_factory=list)  # the open milestones, the first due first (0.11.0)
-    roadmap_closed: list[sqlite3.Row] = field(default_factory=list)  # closed in the last roadmap.CLOSED_DAYS days
-    roadmap_spent: dict[int, int] = field(default_factory=dict)  # what each milestone's work cost (0.12.0)
-    # 0.16.3 (analysis bug 5): what stands unlocked for each open milestone, from the grants: its rules' short names
-    # and levels (policy.unlocked_text), so the ROADMAP keeps its room (the work step's FOCUS says them in full)
-    roadmap_unlocks: dict[int, str] = field(default_factory=dict)
-    # 0.29.0: how far each open milestone got (roadmap.progress), the goal at the root's from the books
-    roadmap_progress: dict[int, roadmap.Progress] = field(default_factory=dict)
+    today: date | None = None  # the owner's local date (the milestones' horizons are counted from it)
+    # 0.35.0: YOUR PLAN, the plan tree under the goal (plan.plan_text), in place of the ROADMAP (0.11.0 to 0.34.0):
+    # with how far the goal got (0.29.0) and what stands unlocked for each product (0.16.3, analysis bug 5)
+    plan: str = ""
     library: library.Shelf | None = None  # the owner's library (0.12.0): None while it is empty
     # the owner's decisions on its requests wake the agent (0.12.0, the wake_on_decision option; 0.31.0, and the
     # wake_on_approval or wake_on_rejection one)
     decision_wakes: bool = False
     burn: str = ""  # 0.12.0: the burn mode Ember's code set from the net runway (burn.Burn.text)
-    ready: str = ""  # READY, ranked by Ember's code: a venture cycle's (desk.text), 0.18.0: an ordinary one's (slack)
+    # READY, ranked by Ember's code: a venture cycle's (desk.text); 0.35.0: an ordinary or marketing cycle's YOUR STEP,
+    # the step the plan tree took (plan.step_text)
+    ready: str = ""
     agenda: list[sqlite3.Row] = field(default_factory=list)  # 0.13.0: events no plan has shown yet (agenda.py)
     reactive: bool = False  # 0.13.0: a cycle an event woke
 
@@ -319,7 +324,6 @@ def snapshot(
     venture: bool = False,
     venture_share: int = 0,
     marketing: bool = False,
-    marketing_share: int = 0,
     marketing_apart: bool = False,
     shelf: library.Shelf | None = None,
     pinterest: str = "",
@@ -334,9 +338,10 @@ def snapshot(
     agenda: list[sqlite3.Row] | None = None,
     reactive: bool = False,
     books: tuple[int, int] | None = None,
+    now: str | None = None,
 ) -> Snapshot:
     """What the planner, the brief and the will see; ``today`` (the owner's local date) finds the day's review and
-    the day's spending on ventures."""
+    the day's spending on ventures; ``now`` (0.35.0): the plan tree's numbers are read then."""
     projects = store.open_projects(conn, scope)
     todays_review = review.of_day(conn, scope, today) if today is not None else None
     mail = None
@@ -367,7 +372,7 @@ def snapshot(
     ).fetchone()
     files = _safe_listing(workspace)
     standing = store.standing_instructions(conn, scope)
-    spent, ventured, marketed = ventures.day_spends(conn, scope, today) if today is not None else (0, 0, 0)
+    spent, ventured, _ = ventures.day_spends(conn, scope, today) if today is not None else (0, 0, 0)
     memories = memory.read_all()
     written = {int(r["cycle_id"]) for r in (journal[:1] + ([handoff] if handoff is not None else []))}
     return Snapshot(
@@ -425,16 +430,12 @@ def snapshot(
         venture_share=venture_share,
         venture_day=(spent, ventured),
         marketing=marketing,
-        marketing_share=marketing_share,
-        marketing_spent=marketed,
         marketing_apart=marketing_apart,
         call_costs=ventures.call_costs(conn, scope) if venture else {},
         today=today,
-        roadmap=roadmap.open_milestones(conn, scope),
-        roadmap_closed=_closed_lately(conn, scope, today),
-        roadmap_spent={mid: cost for mid, (_, cost) in roadmap.effort(conn, scope).items()},
-        roadmap_unlocks={mid: policy.unlocked_text(rows, True) for mid, rows in policy.standing(conn, scope).items()},
-        roadmap_progress=roadmap.progress_for(conn, scope, today, books) if today is not None else {},  # 0.29.0
+        plan=_plan(conn, scope, now, today, books, last_cycle["ended_at"] if last_cycle else None)
+        if today is not None
+        else "",
         library=shelf,
         decision_wakes=decision_wakes,
         burn=burn,
@@ -458,25 +459,34 @@ def _worked_on(conn: sqlite3.Connection, cycle_id: int) -> str:
     return f"a cycle on {line}" if line else ""  # a handoff of no line is for whatever comes next
 
 
-def _closed_lately(conn: sqlite3.Connection, scope: AgentScope, today: date | None) -> list[sqlite3.Row]:
-    if today is None:
-        return []
-    return roadmap.closed_since(conn, scope, (today - timedelta(days=roadmap.CLOSED_DAYS)).isoformat())
-
-
-def roadmap_text(s: Snapshot) -> str:
-    """The planner's ROADMAP (0.11.0), counted from the owner's today; what Ember's code closed since the last cycle
-    ended is a check of its own (0.12.0)."""
-    since = dict(s.last_cycle).get("ended_at") if s.last_cycle is not None else None
-    return roadmap.planner_text(
-        s.roadmap,
-        s.roadmap_closed,
-        s.today or date.today(),
-        since,
-        s.roadmap_spent,
-        s.roadmap_unlocks,
-        s.roadmap_progress,
-    )
+def _plan(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    now: str | None,
+    today: date,
+    books: tuple[int, int] | None,
+    since: str | None = None,
+) -> str:
+    """0.35.0: YOUR PLAN: the goal at the root (how far it got, 0.29.0), what the owner did to the plan since the last
+    cycle (``since``), the plan tree's products, the milestones still open (a venture's first test, the owner's own)."""
+    milestones = roadmap.open_milestones(conn, scope)
+    progress = roadmap.progress_for(conn, scope, today, books)
+    top = roadmap.root(conn, scope)
+    goal = roadmap.root_line(top, today, progress) if top is not None else ""
+    rest = [m for m in milestones if top is None or m["id"] != top["id"]]
+    unlocks = {mid: policy.unlocked_text(rows, True) for mid, rows in policy.standing(conn, scope).items()}
+    shown = [
+        roadmap.milestone_line(m, today, False, unlocks=unlocks, progress=progress) for m in rest[:SHOWN_MILESTONES]
+    ]
+    if len(rest) > SHOWN_MILESTONES:
+        shown.append(f"… and {len(rest) - SHOWN_MILESTONES} more")
+    closed = [  # 0.12.0: what Ember's code closed from its records since the last cycle
+        f"#{r['id']} {roadmap.title_q(r)} {r['status']}"
+        for r in (roadmap.closed_since(conn, scope, since) if since else [])
+        if r["closed_by"] == "code"
+    ]
+    when = now or f"{today.isoformat()}T00:00:00+00:00"
+    return plan_tree.plan_text(conn, scope, when, today, goal, shown, since, closed[:4])
 
 
 def _safe_listing(workspace: Jail, shown: int = 19, budget: int = 900) -> list[str]:
@@ -529,7 +539,7 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
         lines.append(f"Burn mode, set by Ember's code: {s.burn}.")
     if s.workspace_usage:
         lines.append(s.workspace_usage)
-    if s.venture_share or s.marketing_share:
+    if s.venture_share:
         lines.append(_share_line(s))
         if s.venture:
             lines.append(ventures.room_text(s.cycle_cap, s.call_costs, s.brainstorm))
@@ -539,20 +549,14 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
 
 
 def _share_line(s: Snapshot) -> str:
-    """STATUS's line on the shares of the spending the owner gives ventures and (0.28.0) marketing, in one line (the
-    section's room is small), and what kind of cycle this is."""
+    """STATUS's line on the share of the spending the owner gives ventures, in one line (the section's room is small),
+    and what kind of cycle this is (0.35.0: the marketing share retired; the plan tree's step decides a marketing
+    cycle)."""
     spent, ventured = s.venture_day
-    given = [
-        (name, share, part)
-        for name, share, part in (
-            ("ventures", s.venture_share, ventured),
-            ("marketing", s.marketing_share, s.marketing_spent),
-        )
-        if share
-    ]
-    names = " and ".join(f"{name} {share}%" for name, share, _ in given)
-    parts = " and ".join(f"${micros_to_usd(part):.2f}" for _, _, part in given)
-    text = f"Your owner gives {names} of your spending: {parts} of today's ${micros_to_usd(spent):.2f} so far."
+    text = (
+        f"Your owner gives ventures {s.venture_share}% of your spending: ${micros_to_usd(ventured):.2f} of today's"
+        f" ${micros_to_usd(spent):.2f} so far."
+    )
     if s.venture:
         return text + " This is a venture cycle."
     if s.marketing:
@@ -582,9 +586,9 @@ def project_lines(s: Snapshot) -> str:
         )
     for p in s.projects[:SHOWN_PROJECTS]:
         spent, earned = s.project_money.get(p["id"], (0, 0))
-        lines.append(
-            f"#{p['id']} [{p['status']}] {flat(p['title'])} · next: {flat(p['next_step']) or '-'} · spent "
-            f"${micros_to_usd(spent):.2f} · earned ${micros_to_usd(earned):.2f}"
+        lines.append(  # 0.35.0: its next steps are YOUR PLAN's
+            f"#{p['id']} [{p['status']}] {flat(p['title'])} · spent ${micros_to_usd(spent):.2f} · earned "
+            f"${micros_to_usd(earned):.2f}"
         )
         lines.append(f"   hypothesis: {flat(p['hypothesis'])}")
         if p["id"] in s.project_funnels:  # 0.18.0
@@ -919,9 +923,9 @@ def _planner_texts(s: Snapshot, dry_run: bool, journal: int = PLANNER_BUDGETS["j
         "status": status_text(s, dry_run),
         "journal": last_cycle_text(s, journal),
         "review": s.review,
-        "roadmap": roadmap_text(s),
+        "plan": s.plan,  # 0.35.0: in place of the ROADMAP
         "projects": project_lines(s),
-        "ready": s.ready,  # 0.18.0: an ordinary plan's too; 0.28.0: the lines it takes one from (lines.py)
+        "ready": s.ready,  # a venture plan's READY, 0.35.0: or an ordinary or marketing plan's YOUR STEP
         "ventures": ventures.planner_lines(s.ventures, s.venture_money, s.venture),
         "pending": pending,
         "mail": mail_text(s),
@@ -959,7 +963,7 @@ def _allot(texts: dict[str, str], budgets: dict[str, int], used: int) -> dict[st
 def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str, Shown]:
     """The planner's context, and what of the owner's news and of the changelog it lists and shows whole."""
     b = {k: int(v * scale) for k, v in PLANNER_BUDGETS.items()}
-    b["roadmap"] = max(b["roadmap"], ROADMAP_FLOOR)
+    b["plan"] = max(b["plan"], PLAN_FLOOR)
     head = _news_head(s)
     owner, lines, _ = _owner(s, b["news"] - json_bytes(head))
     events = "\n".join(agenda_line(r) for r in s.agenda)  # 0.13.0: after the owner's news, cut first
@@ -971,8 +975,6 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
     own = [since, software, *(text for _, text in standing)]
     used = sum(map(json_bytes, own)) + min(json_bytes(lessons), b["lessons"])
     t = _allot(_planner_texts(s, dry_run, b["journal"]), b, used)
-    # 0.28.0: while marketing cycles run, an ordinary plan leaves the marketing channels (and their tools) to them
-    elsewhere = s.marketing_apart and not (s.marketing or s.venture or s.reactive)
     parts = [
         ("STATUS", t["status"]),
         *([(obligations.HEADING, s.obligations)] if s.obligations else []),  # 0.12.0: first, never cut
@@ -981,18 +983,21 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *([("YOUR LAST CYCLE", t["journal"])] if t["journal"] else []),
         *([("YOUR SOFTWARE", software)] if s.news.changelog else []),
         *([("TODAY'S REVIEW", t["review"])] if t["review"] else []),
-        ("ROADMAP", t["roadmap"]),
+        (PLAN_HEADING, t["plan"]),  # 0.35.0: in place of the ROADMAP
         ("OPEN PROJECTS", t["projects"]),
-        *([("READY", t["ready"])] if t["ready"] else []),  # 0.13.0: the decision desk (0.28.0: or lines.py)
+        # 0.13.0: the decision desk's READY; 0.35.0: or the step the plan tree took (YOUR STEP)
+        *([(READY_HEADING if s.venture else STEP_HEADING, t["ready"])] if t["ready"] else []),
         ("VENTURES", t["ventures"]),
         ("WAITING FOR YOUR OWNER", t["pending"]),
         *([("MAIL", t["mail"])] if s.mail is not None else []),
         *([("ETSY SHOP", t["etsy"])] if t["etsy"] else []),
-        *([("PINTEREST", t["pinterest"])] if t["pinterest"] and not elsewhere else []),
-        *([("BLUESKY", t["bluesky"])] if t["bluesky"] and not elsewhere else []),
+        # 0.28.0: an ordinary plan leaves the marketing channels to marketing cycles (0.35.0: loop.py leaves out a
+        # ready channel's section, and keeps one that waits for the owner's setup)
+        *([("PINTEREST", t["pinterest"])] if t["pinterest"] else []),
+        *([("BLUESKY", t["bluesky"])] if t["bluesky"] else []),
         *([("PRINTIFY", t["printify"])] if t["printify"] else []),
         *([("WEBSITE", t["website"])] if t["website"] else []),
-        *([("BLOG", t["blog"])] if t["blog"] and not elsewhere else []),
+        *([("BLOG", t["blog"])] if t["blog"] else []),
         *([("KDP", t["kdp"])] if t["kdp"] else []),
         (STRATEGY_HEADING, t["strategy"]),
         (IDENTITY_HEADING, t["identity"]),
@@ -1048,8 +1053,7 @@ def brief(
     if focus is not None:
         focus_parts.append(
             f"Focus project: #{focus['id']} {flat(focus['title'])} [{focus['status']}]\n"
-            f"Hypothesis: {flat(focus['hypothesis'])}\nNext step: {flat(focus['next_step']) or '-'}\n"
-            f"Notes: {flat(focus['notes'][-600:]) or '-'}"
+            f"Hypothesis: {flat(focus['hypothesis'])}\nNotes: {flat(focus['notes'][-600:]) or '-'}"
         )
     focus_text = "\n\n".join(focus_parts) or "None."
     steps = "\n".join(f"{i}. {flat(step)}" for i, step in enumerate(plan.get("steps", []), 1))

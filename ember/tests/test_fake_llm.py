@@ -88,8 +88,7 @@ def _status(state: str = "alive") -> str:
 
 def _project_lines(projects: dict[int, dict[str, Any]]) -> str:
     lines = [
-        f"#{pid} [{p['status']}] {p['title']} · next: {p['next'] or '-'} · spent $0.10 · earned $0.00\n"
-        f"   hypothesis: {p['hypothesis']}"
+        f"#{pid} [{p['status']}] {p['title']} · spent $0.10 · earned $0.00\n   hypothesis: {p['hypothesis']}"
         for pid, p in projects.items()
         if p["status"] in OPEN
     ]
@@ -124,7 +123,7 @@ def brief(
     if project is not None:
         focus = (
             f"Focus project: #{pid} {project['title']} [{project['status']}]\n"
-            f"Hypothesis: {project['hypothesis']}\nNext step: {project['next'] or '-'}\nNotes: -"
+            f"Hypothesis: {project['hypothesis']}\nNotes: -"
         )
     steps = "\n".join(f"{i}. {step}" for i, step in enumerate(plan.get("steps", []), 1))
     return _sections(
@@ -318,14 +317,12 @@ class Sim:
         if name == "project_create":
             pid = max(self.projects, default=0) + 1
             self.projects[pid] = {"title": args["title"], "hypothesis": args["hypothesis"], "status": args["status"]}
-            self.projects[pid]["next"] = args["next_step"]
             return True, f"Created project #{pid}."
         if name == "project_update":
             project = self.projects.get(args["project_id"])
             if project is None or project["status"] not in OPEN:
                 return False, f"Error: there is no open project #{args['project_id']}."
             project["status"] = args.get("status", project["status"])
-            project["next"] = args.get("next_step", project["next"])
             return True, f"Project #{args['project_id']}: updated."
         if name == "research":
             return self.research(args["question"], args.get("url"))
@@ -889,7 +886,7 @@ def calls_in(response: dict[str, Any]) -> list[tuple[str, Any]]:
 
 
 def test_the_founder_follows_the_context_and_the_conversation() -> None:
-    projects = {3: {"title": "Tea tasting notes", "hypothesis": "h", "status": "active", "next": "research"}}
+    projects = {3: {"title": "Tea tasting notes", "hypothesis": "h", "status": "active"}}
     plan = json.loads(text_of(answer(prompts.plan_request(SETTINGS, planner_context(projects, last_cycle=5)))))
     assert plan["focus_project_id"] == 3 and any("approv" in s for s in plan["steps"])  # cycle 6
     fresh = json.loads(text_of(answer(prompts.plan_request(SETTINGS, planner_context()))))
@@ -1046,7 +1043,7 @@ def test_scripted_turns_come_first_then_the_scenario_takes_over() -> None:
 # --- the owner's news ---
 
 MESSAGE = "Printable meal-planning templates sounds like a good idea, will you create them by image generation?"
-TEA = {3: {"title": "Tea tasting notes", "hypothesis": "h", "status": "active", "next": "research"}}
+TEA = {3: {"title": "Tea tasting notes", "hypothesis": "h", "status": "active"}}
 ACKNOWLEDGED = [
     'My owner approved request #3 "Post the guide" with changes; I\'d use their version.',
     'My owner rejected request #4 "Write to a shop"; I won\'t pursue it as it was.',

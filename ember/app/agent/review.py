@@ -26,7 +26,7 @@ from ..economy.ledger import Books, Scope
 from ..economy.life import LifeStatus, Runway
 from ..integrations import etsy, etsy_publisher
 from ..version import app_version
-from . import learning, predictions, prompts, quality, reach, roadmap, ventures
+from . import learning, plan, predictions, prompts, quality, reach, roadmap, ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope, open_projects
 
 WINDOW_DAYS = 7
@@ -428,8 +428,8 @@ def _project_lines(
     steps: bool = True,
 ) -> str:
     """The projects, each with (0.18.0) its funnel and the reach done for it when it has live listings; the first
-    ``full`` in full, the others in a line each, with their next step if ``steps`` (0.22.0: fewer and shorter when
-    the scorecard's room asks for it)."""
+    ``full`` in full, the others in a line each, with their stage in the plan if ``steps`` (0.22.0: fewer and shorter
+    when the scorecard's room asks for it; 0.35.0: a project's next step was its own until the plan tree's)."""
     if not projects:
         return "PROJECTS\nNo projects: nothing is being tried."
     lines = ["PROJECTS (open ones, then those closed in the period)"]
@@ -442,7 +442,8 @@ def _project_lines(
     for index, p in enumerate(projects):
         pid = p["id"]
         if index >= full:  # 0.19.1: an open project beyond the first ones, in one line (the scorecard's size)
-            step = f" · next step: {_one_line(p['next_step'], 100)}" if p["next_step"] and steps else ""
+            stage = plan.current_stage_name(conn, scope, int(pid)) if steps else ""
+            step = f" · plan: {stage}" if stage else ""
             age = _days(now, p["created_at"])
             lines.append(f"#{pid} [{p['status']}] {_one_line(p['title'], 80)} · open {age}{step}")
             continue
@@ -476,8 +477,9 @@ def _project_lines(
             lines.append(f"   {funnel}")
             checked = quality.review_text(conn, scope, int(pid))  # 0.24.0: each with the listing it judged
             lines.append(f"   {reach.research_text(conn, scope, int(pid), p['venture_id'], checked)}")  # 0.18.0
-        if p["next_step"]:
-            lines.append(f"   next step: {_one_line(p['next_step'], 150)}")
+        stage = plan.current_stage_name(conn, scope, int(pid))
+        if stage:
+            lines.append(f"   plan: {stage}")
     return "\n".join(lines)
 
 

@@ -64,9 +64,10 @@ and saving what it learned to that venture with new scores. It takes the decisio
 aiming the cycle at its venture. The critic of a proposed venture's case (0.13.0) doubts its
 demand: it halves the agent's sales, puts the first sale a month later and would test it first.
 
-It keeps a roadmap (0.11.0): when the planner's ROADMAP says it is empty, it lays one out (a goal three months ahead,
-a milestone this month that leads to it and one this week), aims each cycle at the first milestone listed, and an
-overdue milestone is moved a week once (for the owner's, a proposed date), then closed missed.
+It keeps its milestones (0.11.0; 0.35.0: those still open, YOUR PLAN lists them; laying a roadmap out retired with
+milestone_plan): it aims each cycle at the first milestone listed, and an overdue milestone is moved a week once (for
+the owner's, a proposed date), then closed missed. 0.35.0: an ordinary or marketing cycle works on YOUR STEP's line,
+and holds a line its review stopped (only the owner closes one).
 
 Tests can also pass ``script=[...]`` (:class:`Reply`, :class:`ToolCalls`, :class:`Plan`, :class:`Raw`,
 :class:`Fail`, :class:`Overrun`): turns answered in order (one per valid request) before the scenario takes over.
@@ -91,6 +92,8 @@ from typing import Any
 
 from ..economy.estimate import MAX_SERVER_ITERATIONS
 from ..economy.metering import Completed, FilesError, Interrupted, NotSent, Outcome, Rejected, rough_token_count
+from .context import PLAN_HEADING, STEP_HEADING
+from .plan import NEW_PRODUCT
 from .prompts import DRAFT_MARKER, REFLECT_MARKER
 from .tools import SPECS
 
@@ -712,13 +715,14 @@ WORKSHOP_STEP = "Have the workshop make a price chart for the listing photos"
 ETSY_STEP = "Propose an Etsy listing for the finished product"
 _CATEGORY_LINE = re.compile(r"^(\d+): ", re.M)
 REVIEW_STOP_CYCLES = 12  # the fake's daily review stops a project that took this many cycles without earning
-CLOSE_STEP = "Close project #{id}: my review says stop"
+# 0.35.0: only the owner closes a project: the fake holds the line of its step that its review stopped
+HOLD_STEP = "Hold project #{id}: my review says stop"
 # A project line of the review's scorecard: id, status, title, cycles in all.
 _SCORECARD_PROJECT = re.compile(r"^#(\d+) \[(\w+)[^\]]*\] (.*?) · open .*?cycles in the period \((\d+) in all\)", re.M)
 _NO_REVENUE = "Revenue recorded: $0.00 in these days"
 _REVIEW_STOP = re.compile(r"^- #(\d+)[^\n]*?: stop: ", re.M)
 _SETTLED = re.compile(r"^- ((?:bet|milestone|project|venture|request) #\d+): ([^\n]*)", re.M)  # 0.18.0
-_CLOSE = re.compile(r"close project #(\d+)")
+_HOLD = re.compile(r"hold project #(\d+)")
 PROMOTE_STEP = "Ask for this workshop script to be built into Ember:"
 # Venture cycles (0.10.0): the planner's VENTURES lines, the brief's focus venture, a brainstorm's tree.
 VENTURE_TASK = "Plan this venture cycle"
@@ -728,9 +732,8 @@ BLUESKY_STEP = "Post about a live listing of line #{id} on Bluesky"  # 0.28.0: a
 _LISTING_FOCUS = re.compile(r"^- listing #(\d+)", re.MULTILINE)  # the live listings a marketing cycle's FOCUS lists
 VENTURE_SECTION = "VENTURES"
 READY_SECTION = "READY"  # 0.13.0: the decision desk's ranked items
-_READY_ITEM = re.compile(
-    r"^\d+\. ((build|appraise|answer|triage|brainstorm|line|market|new line)(?: #(\d+))?): ", re.MULTILINE
-)
+_READY_ITEM = re.compile(r"^\d+\. ((build|appraise|answer|triage|brainstorm)(?: #(\d+))?): ", re.MULTILINE)
+_STEP_LINE = re.compile(r"^Step #\d+ of product line #(\d+)", re.MULTILINE)  # 0.35.0: YOUR STEP's line
 BRAINSTORM_STEP = "Brainstorm new ventures for my tree"
 BRAINSTORM_BELOW = 8  # the fake brainstorms while its tree has fewer ideas than this
 RESEARCH_VENTURE_STEP = "Research venture #{id}: {title}"
@@ -741,22 +744,11 @@ _STUDY_TITLE = re.compile(r'^Document #\d+ ("(?:[^"\\]|\\.)*")', re.MULTILINE)
 _STUDY_PART = re.compile(r"^\[Part (\d+)\]\n(.*?)(?=\n\n\[Part \d+\]\n|\n</data id=)", re.MULTILINE | re.DOTALL)
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _TREE_TITLE = re.compile(r"^\s*- #\d+ (.+?) \([a-z]+(?:, weight \d+)?\)$", re.MULTILINE)
-# The roadmap (0.11.0): the planner's ROADMAP lines, and what the brief's PLAN asks of it.
-ROADMAP_SECTION = "ROADMAP"
-ROADMAP_STEP = "Lay out my roadmap: a goal for the next three months, this month's milestone and this week's"
-# 0.29.0: under the goal at the root (the owner's, or the money goal): a sub-goal, this month's and this week's
-GOAL_STEP = "Lay out my roadmap toward goal #{id} (due {due}): a sub-goal, this month's milestone and this week's"
+# The roadmap (0.11.0): the milestones still open (0.35.0: YOUR PLAN lists them), and what the brief's PLAN asks of
+# them. Laying a roadmap out retired with milestone_plan: the plan tree is Ember's code's.
 MOVE_MILESTONE_STEP = "Move overdue milestone #{id} a week"
 CLOSE_MILESTONE_STEP = "Close overdue milestone #{id}"
 DECIDE_MILESTONE_STEP = "Decide at overdue milestone #{id}"  # 0.12.0: a decision point Ember's code set never moves
-_EMPTY_ROADMAP = "Roadmap check: your roadmap is empty"
-_NOTHING_MINE = "Roadmap check: nothing of yours leads to the goal"  # 0.29.0
-_ROOT_LINE = re.compile(
-    r"^(?:Your owner's goal|The goal \(Ember's code's, until your owner sets theirs\)): #(\d+) "
-    r'"(?:[^"\\]|\\.)*" · due \w+ (\d{4}-\d{2}-\d{2})',
-    re.MULTILINE,
-)
-_GOAL_STEP = re.compile(r"toward goal #(\d+) \(due (\d{4}-\d{2}-\d{2})\)")
 _MILESTONE_LINE = re.compile(r'^#(\d+) "(?:[^"\\]|\\.)*" · due \w+ (\d{4}-\d{2}-\d{2}) \(([^)]*)\)(.*)$', re.MULTILINE)
 _OVERDUE_STEP = re.compile(r"(move|close|decide at) overdue milestone #(\d+)")
 _TODAY = re.compile(r"^Time: [A-Za-z]+ (\d{4}-\d{2}-\d{2}) ", re.MULTILINE)
@@ -914,15 +906,10 @@ def standing_instructions(text: str) -> str | None:
 
 
 def roadmap_plan(text: str) -> tuple[list[str], int | None]:
-    """What the planner's ROADMAP asks of a cycle: the steps (lay it out when it is empty; move an overdue milestone a
-    week once, or propose that for the owner's, then close it) and the milestone to aim at (the one due first:
-    overdue, or due soonest)."""
-    roadmap = section(text, ROADMAP_SECTION) or ""
-    if _EMPTY_ROADMAP in roadmap:
-        return [ROADMAP_STEP], None
-    root = _ROOT_LINE.search(roadmap)
-    if root is not None and _NOTHING_MINE in roadmap:  # 0.29.0: split the goal
-        return [GOAL_STEP.format(id=root[1], due=root[2])], None
+    """What the milestones still open ask of a cycle (0.35.0: YOUR PLAN lists them): the steps (move an overdue
+    milestone a week once, or propose that for the owner's, then close it) and the milestone to aim at (the one due
+    first: overdue, or due soonest)."""
+    roadmap = section(text, PLAN_HEADING) or ""
     lines = list(_MILESTONE_LINE.finditer(roadmap))
     focus = int(min(lines, key=lambda m: m[2])[1]) if lines else None  # the one due first (the goals come first)
     late = next((m for m in lines if m[3].endswith("late")), None)
@@ -1584,22 +1571,17 @@ class FakeTransport:
             return self._marketing_plan(context, rng, state, balance)
         open_ = [p for p in parse_projects(section(context, "OPEN PROJECTS") or "") if p.status in _OPEN_STATUSES]
         stopped = {int(m[1]) for m in _REVIEW_STOP.finditer(context)} & {p.id for p in open_}
-        close = [CLOSE_STEP.format(id=pid) for pid in sorted(stopped)][:1]  # one project closed a cycle
-        open_ = [p for p in open_ if p.id not in stopped]
         focus = next((p for p in open_ if p.status == "active"), open_[0] if open_ else None)
-        # 0.28.0: an ordinary plan takes READY's first line (its project is the focus), a new line only without one:
-        # the fake builds one line to a listing before it starts another (as before 0.28.0, its tests count on it)
-        ready = [(m[1], m[2], m[3]) for m in _READY_ITEM.finditer(section(context, READY_SECTION) or "")]
-        took = next((r for r in ready if r[1] == "line"), ready[0] if ready else None)
-        if took is not None and took[1] == "line" and took[2]:
-            line = int(took[2])
+        # 0.35.0: an ordinary plan works on YOUR STEP's line (the plan tree's step); with none ready, it starts a new
+        # product when YOUR STEP says it may. A line its review stopped is held (only the owner closes one).
+        step = section(context, STEP_HEADING) or ""
+        took = _STEP_LINE.search(step)
+        if took is not None:
+            line = int(took[1])
             focus = next((p for p in open_ if p.id == line), None) or Project(line, "active", f"project #{line}")
-        elif took is not None and took[1] == "new line":
+        elif NEW_PRODUCT in step:
             focus = None
-        if REACTIVE_TASK in context:
-            pick = "none: an event woke me"
-        else:
-            pick = took[0] if took is not None else "none: READY lists nothing to take"
+        close = [HOLD_STEP.format(id=focus.id)] if focus is not None and focus.id in stopped else []
         news = owner_news(context, NEWS_SECTION)
         heard = _following(standing_instructions(context)) + _heard(news)
         answer = [ANSWER_STEP if len(news.messages) == 1 else "Answer my owner's messages"] if news.messages else []
@@ -1621,7 +1603,6 @@ class FakeTransport:
                 "focus_milestone_id": None,
                 "steps": answer,
                 "sleep_minutes": rng.choice([480, 720, 1_440]),
-                "ready": "none: nothing is worth spending money on right now",
             }
         taken = {p.title.lower() for p in open_}
         idea = (
@@ -1685,7 +1666,6 @@ class FakeTransport:
             "focus_milestone_id": milestone,
             "steps": steps,
             "sleep_minutes": 720 if critical else rng.choice([120, 180, 240, 360]),
-            "ready": pick,
         }
         if self.scenario == "drain":
             plan["assessment"] = (plan["assessment"] + " " + _filler(rng, 600))[:590]
@@ -1711,8 +1691,6 @@ class FakeTransport:
             vid = int(top[2])
             focus = next((v for v in tree if v[0] == vid), (vid, top[1], f"venture #{vid}"))
         ahead, milestone = roadmap_plan(context) if state != "critical" else ([], None)
-        # laying out the roadmap belongs to ordinary cycles (milestone_plan refuses a venture cycle's)
-        ahead = [s for s in ahead if not s.lower().startswith("lay out my roadmap")]
         steps = [*answer, *ahead]
         if (len(ideas) < BRAINSTORM_BELOW or (top is not None and top[1] == "brainstorm")) and state != "critical":
             steps.append(BRAINSTORM_STEP)
@@ -1739,22 +1717,19 @@ class FakeTransport:
         }
 
     def _marketing_plan(self, context: str, rng: random.Random, state: str, balance: str) -> dict[str, Any]:
-        """0.28.0: a marketing cycle: answer the owner, then bring buyers to READY's first line (a Bluesky post that
-        links one of its live listings, when Ember has the account)."""
+        """0.28.0: a marketing cycle: answer the owner, then bring buyers to YOUR STEP's line (0.35.0: the plan tree's
+        marketing step; a Bluesky post that links one of its live listings, when Ember has the account)."""
         news = owner_news(context, NEWS_SECTION)
         answer = [ANSWER_STEP if len(news.messages) == 1 else "Answer my owner's messages"] if news.messages else []
-        ready = [(m[1], m[2], m[3]) for m in _READY_ITEM.finditer(section(context, READY_SECTION) or "")]
-        top = ready[0] if ready else None
-        line = int(top[2]) if top is not None and top[2] else None
+        took = _STEP_LINE.search(section(context, STEP_HEADING) or "")
+        line = int(took[1]) if took is not None else None
         steps = [*answer]
         if line is not None:
             if "\n== BLUESKY ==\n" in context:
                 steps.append(BLUESKY_STEP.format(id=line))
             steps.append(f"Update project #{line} with what the reach should bring")
         return {
-            "assessment": f"I am {state} with ${balance}. A marketing cycle: {len(ready)} line(s) to bring buyers to."[
-                :600
-            ],
+            "assessment": f"I am {state} with ${balance}. A marketing cycle: line #{line} to bring buyers to."[:600],
             "goal": f"Bring buyers to line #{line}'s listings."[:300] if line else "Nothing to market now.",
             "money_path": "Buyers who see a listing can buy it: views, then favorites, then orders show it works.",
             "focus_project_id": line,
@@ -1762,7 +1737,6 @@ class FakeTransport:
             "focus_milestone_id": None,
             "steps": steps,
             "sleep_minutes": rng.choice([120, 180, 240]),
-            "ready": top[0] if top is not None else "none: READY lists no line to market",
         }
 
     # work
@@ -1811,14 +1785,13 @@ class FakeTransport:
             "make": "into a pdf" in steps,
             "workshop": "the workshop make" in steps,
             "promote": "built into ember" in steps,
-            "close": "close project #" in steps,
+            "close": "hold project #" in steps,
             "etsy_find": "propose an etsy listing" in steps,
             "etsy_propose": "propose an etsy listing" in steps,
             "demand": "propose an etsy listing" in steps,  # 0.12.0: a product line's first listing needs a note
             "brainstorm": BRAINSTORM_STEP.lower() in steps,
             "venture_save": "save what i learned to venture #" in steps,
             "milestone_close": "overdue milestone #" in steps,
-            "roadmap": "lay out my roadmap" in steps,
             "bluesky": "on bluesky" in steps,  # 0.28.0: a marketing cycle's post
         }
         wanted["research"] = wanted["research"] or wanted["etsy_propose"]  # 0.12.0: a demand note cites research
@@ -1840,7 +1813,6 @@ class FakeTransport:
             stages = (
                 "close",
                 "milestone_close",
-                "roadmap",
                 "mail_read",
                 "mail_reply",
                 "brainstorm",
@@ -1900,13 +1872,11 @@ class FakeTransport:
             return "workspace_list", {}
         if stage == "close":
             plan = _PLAN_SECTION.search(conv.brief)
-            closing = _CLOSE.search(plan[1].lower()) if plan else None
-            if closing is None:
+            if plan is None or _HOLD.search(plan[1].lower()) is None:
                 return None
-            return "project_update", {
-                "project_id": int(closing[1]),
-                "status": "abandoned",
-                "note": "Stopped in my daily review: no sign of demand after many cycles.",
+            return "plan_step", {
+                "action": "hold",
+                "why": "My daily review says stop: no sign of demand after many cycles.",
             }
         if stage == "reply":
             news = owner_news(conv.brief, OWNER_SECTION)
@@ -1915,14 +1885,7 @@ class FakeTransport:
                 args["answers"] = ", ".join(str(m.id) for m in news.messages)
             return "message_owner", args
         if stage == "create":
-            return "project_create", {
-                "title": idea.title,
-                "hypothesis": idea.hypothesis,
-                "next_step": "Research demand and write a first draft",
-                "status": "active",
-            }
-        if stage == "roadmap":
-            return self._roadmap(conv, idea)
+            return "project_create", {"title": idea.title, "hypothesis": idea.hypothesis, "status": "active"}
         if stage == "milestone_close":
             return self._close_milestone(conv, rng)
         if stage == "brainstorm":
@@ -2089,17 +2052,7 @@ class FakeTransport:
         if stage == "update":
             if pid is None:
                 return None
-            args = {
-                "project_id": pid,
-                "next_step": rng.choice(
-                    [
-                        "Ask my owner which marketplace to try first",
-                        "Check three competing offers and their prices",
-                        "Turn the draft into a one-page sample",
-                    ]
-                ),
-                "note": f"Drafted {path}; demand is still unverified.",
-            }
+            args = {"project_id": pid, "note": f"Drafted {path}; demand is still unverified."}
             if conv.focus is not None and conv.focus.status == "idea":
                 args["status"] = "active"
             return "project_update", args
@@ -2140,50 +2093,6 @@ class FakeTransport:
             minutes = 1 if self.scenario == "drain" else rng.choice([120, 180, 240, 360])
             return "set_sleep", {"minutes": minutes, "reason": "The next step needs my owner or new information."}
         raise ValueError(f"unknown stage {stage}")
-
-    def _roadmap(self, conv: _Conversation, idea: Idea) -> tuple[str, dict] | None:
-        """A new roadmap in one milestone_plan call (0.12.0): a goal about three months ahead, this month's milestone
-        leading to it, and this week's leading to that. 0.29.0: under the goal at the root the plan named, the first a
-        sub-goal of it, none due after it."""
-        today = today_of(conv.brief)
-        if today is None:
-            return None
-        plan = _PLAN_SECTION.search(conv.brief)
-        root = _GOAL_STEP.search(plan[1]) if plan else None
-        last = date.fromisoformat(root[2]) if root else date.max
-
-        def due(days: int) -> str:
-            return min(today + timedelta(days=days), last).isoformat()
-
-        month: dict[str, Any] = {
-            "key": "month",
-            "parent": "goal",
-            "title": f"First sale: {idea.title}"[:100],
-            "measure": "My owner records the first revenue for it",
-            "due": due(25),
-        }
-        if conv.project_id is not None:
-            month["project_id"] = conv.project_id
-        goal: dict[str, Any] = {
-            "key": "goal",
-            "title": "Two legs that earn: 30 EUR a month in all",
-            "measure": "Revenue my owner recorded reaches 30 EUR in one month, from two different legs",
-            "due": due(84),
-        }
-        if root is not None:
-            goal["parent"] = f"#{root[1]}"
-        return "milestone_plan", {
-            "milestones": [
-                goal,
-                month,
-                {
-                    "parent": "month",
-                    "title": f"Listing ready for my owner: {idea.title}"[:100],
-                    "measure": "The PDF, the photos and the listing text are finished and proposed to my owner",
-                    "due": due(5),
-                },
-            ]
-        }
 
     def _close_milestone(self, conv: _Conversation, rng: random.Random) -> tuple[str, dict] | None:
         """The plan's overdue milestone: moved a week the first time (for the owner's, proposed), closed missed after
@@ -2556,9 +2465,8 @@ _CASE_NUMBERS = re.compile(
 _MARKS = re.compile(r" \((?:pinned|has numbers|pinned, has numbers)\)$")
 
 _STAGE_TOOLS = {
-    "close": "project_update",
+    "close": "plan_step",
     "milestone_close": "milestone_update",
-    "roadmap": "milestone_plan",
     "brainstorm": "brainstorm",
     "venture_save": "venture_update",
     "etsy_find": "etsy_categories",
@@ -2587,7 +2495,6 @@ _STAGE_TOOLS = {
     "sleep": "set_sleep",
 }
 _INTROS = {
-    "roadmap": "My roadmap is empty, so I'll plan ahead first: a goal, then the steps toward it.",
     "milestone_close": "One of my milestones is overdue; I'll deal with it honestly first.",
     "mail_read": "Someone wrote to me; I'll read it first.",
     "mail_reply": "That's a real question, so I'll draft an answer for my owner to approve.",

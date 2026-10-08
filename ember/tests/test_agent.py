@@ -25,14 +25,12 @@ from tests.economy_helpers import ScriptedTransport, make_economy
 
 _ids = itertools.count(1)
 # No venture cycles (0.10.0): these tests follow the ordinary cycle; tests/test_ventures.py has the venture ones.
-# 0.15.0: an owner named in owner_user_ids, as the owner's unlocks act only then. 0.28.0: no marketing cycles either
-# (tests/test_fixes_0280.py has them)
+# 0.15.0: an owner named in owner_user_ids, as the owner's unlocks act only then.
 ROOMY = Settings(
     starting_balance_usd=50,
     daily_spend_cap_usd=5,
     cycle_spend_cap_usd=1,
     venture_share=0,
-    marketing_share=0,
     owner_user_ids=("8f14e45fceea167a5a36dedd4bea2543",),
 )
 
@@ -103,7 +101,6 @@ def test_a_full_cycle(data_dir: Path) -> None:
     project = {
         "title": "Niche guide",
         "hypothesis": "People pay 5 EUR for a guide",
-        "next_step": "outline",
         "status": "active",
     }
     agent, transport = make_agent(
@@ -151,7 +148,7 @@ def test_a_full_cycle(data_dir: Path) -> None:
 
 
 def test_the_cycle_that_starts_a_project_counts_toward_it(data_dir: Path) -> None:
-    project = {"title": "Niche guide", "hypothesis": "People pay 5 EUR", "next_step": "outline", "status": "active"}
+    project = {"title": "Niche guide", "hypothesis": "People pay 5 EUR", "status": "active"}
     other = {**project, "title": "Second idea"}
     agent, transport = make_agent(
         data_dir,
@@ -172,10 +169,10 @@ def test_the_cycle_that_starts_a_project_counts_toward_it(data_dir: Path) -> Non
     assert spent == {"Niche guide": (micros_to_usd(cost), 1)}
     # 0.28.0: one product line a cycle: the cycle's line is the one it started, and a second one is a cycle of its own
     second = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'project_create' ORDER BY id")[1]
-    assert second["status"] == "error" and "a new product line is a cycle of its own" in second["result"]
+    assert second["status"] == "error" and "a new product line starts in a cycle of its own" in second["result"]
     agent.run_cycle("schedule")  # the next plan sees what the project cost
     planner = transport.sent[-1]["messages"][0]["content"][0]["text"]
-    assert f"#1 [active] Niche guide · next: outline · spent ${micros_to_usd(cost):.2f} · earned $0.00" in planner
+    assert f"#1 [active] Niche guide · spent ${micros_to_usd(cost):.2f} · earned $0.00" in planner
     assert rows(agent, "SELECT project_id FROM cycles ORDER BY id") == [{"project_id": 1}, {"project_id": 1}]
 
 
@@ -351,7 +348,7 @@ def test_the_reflection_is_told_why_the_work_ended(data_dir: Path, monkeypatch: 
     assert prompt.startswith(
         "REFLECT PHASE. Your work steps for this cycle are over (the conversation reached its size limit)"
     )
-    assert "only journal, memory updates, projects, ventures, the roadmap, messages to your owner" in prompt
+    assert "only journal, memory updates, projects, ventures, your plan, messages to your owner" in prompt
     # 0.10.1: the first venture cycle's reflection spent its one reply on other calls and wrote no journal; 0.11.1:
     # one was cut off at its length limit, so the journal comes first.
     assert (  # 0.12.0: the first half was a bare string, so it never checked anything
@@ -406,23 +403,23 @@ def test_a_journal_written_while_working_ends_the_work_and_the_reflection_writes
 def test_too_long_notes_are_cut_with_a_note_instead_of_refused(data_dir: Path) -> None:
     from app.agent import tools as agent_tools
 
-    long_step = "Post the draft answer. " * 20  # 460 characters, over next_step's 200
+    long_step = "Buyers pay for the draft answer. " * 15  # 495 characters, over hypothesis's 400
     agent, _ = make_agent(
         data_dir,
         [
             plan(),
-            tools(("project_create", {"title": "T", "hypothesis": "h", "next_step": long_step, "status": "idea"})),
+            tools(("project_create", {"title": "T", "hypothesis": long_step, "status": "idea"})),
             text("Done."),
             text("Reflected."),
         ],
     )
     agent.run_cycle("schedule")
     call = rows(agent, "SELECT status, result FROM tool_calls ORDER BY id")[0]
-    assert call["status"] == "ok" and "next_step was cut to 200 of its 460 characters" in call["result"]
-    stored = rows(agent, "SELECT next_step FROM projects")[0]["next_step"]
-    assert len(stored) <= 200 and stored.endswith("draft…")
+    assert call["status"] == "ok" and "hypothesis was cut to 400 of its 495 characters" in call["result"]
+    stored = rows(agent, "SELECT hypothesis FROM projects")[0]["hypothesis"]
+    assert len(stored) <= 400 and stored.endswith("…")
     create = next(d for d in agent_tools.definitions() if d["name"] == "project_create")
-    assert create["input_schema"]["properties"]["next_step"]["maxLength"] == 200  # the model sees the limit
+    assert create["input_schema"]["properties"]["hypothesis"]["maxLength"] == 400  # the model sees the limit
 
 
 def test_the_models_own_cycle_tags_are_not_doubled(data_dir: Path) -> None:
@@ -664,7 +661,7 @@ def test_stopping_interrupts_the_cycle(data_dir: Path) -> None:
 
 
 def test_records_are_kept_per_dry_run_session(data_dir: Path) -> None:
-    project = {"title": "Old idea", "hypothesis": "h", "next_step": "n", "status": "idea"}
+    project = {"title": "Old idea", "hypothesis": "h", "status": "idea"}
     agent, _ = make_agent(data_dir, [plan(), tools(("project_create", project)), text("done"), text("r")])
     agent.run_cycle("schedule")
     assert len(agent.dashboard()["projects"]) == 1

@@ -69,7 +69,7 @@
     rm: { data: null, byId: {}, stamp: null, busy: false, again: false, error: null, selected: null, saving: false },
     // 0.34.0: the plan tree (a preview): loaded while its tab is open, again whenever the dashboard's plan stamp
     // changes; selected: the product opened below the tree; view: the network's zoom and position.
-    pl: { data: null, stamp: null, busy: false, again: false, error: null, selected: null, view: null, size: null, dragged: false },
+    pl: { data: null, stamp: null, busy: false, again: false, error: null, selected: null, view: null, size: null, dragged: false, centred: false },
     // 0.29.0: the owner's goal: its form is being saved, its removal is being confirmed or sent
     goal: { saving: false, removing: false },
     // The library (0.12.0): loaded while its tab is open, again whenever the dashboard's library stamp changes.
@@ -559,7 +559,7 @@
     header: "Header", controls: "Controls", kpis: "Key numbers", badges: "Tab badges", memorial: "Memorial",
     now: "Now", lives: "Previous lives", charts: "Charts", table: "Table", ledger: "Ledger", forms: "Forms",
     projects: "Projects", activity: "Activity", approvals: "Approvals", inbox: "Inbox", instructions: "Standing instructions",
-    upgrades: "Upgrades", mind: "Mind", ventures: "Ventures", roadmap: "Roadmap", plan: "Plan", library: "Library",
+    upgrades: "Upgrades", mind: "Mind", ventures: "Ventures", roadmap: "Milestones", plan: "Plan", library: "Library",
     cycleDetail: "Cycle details", diagnostics: "Diagnostics", email: "Email", workspace: "Workspace", workspaceFile: "Workspace file",
   };
 
@@ -659,7 +659,7 @@
     section("upgrades", [d.upgrades, coming, agent.name, minute], null, function () { return renderUpgrades(arr(d.upgrades)); });
     // The tree is loaded apart: again when it changed (a venture, or a cycle that ended), while its tab is open.
     if (ui.tab === "ventures" && !ui.vt.busy && d.ventures_stamp !== undefined && d.ventures_stamp !== ui.vt.stamp) loadVentures();
-    if (ui.tab === "roadmap" && !ui.rm.busy && isObject(d.roadmap) && d.roadmap.stamp !== ui.rm.stamp) loadRoadmap();
+    if (ui.tab === "plan" && !ui.rm.busy && isObject(d.roadmap) && d.roadmap.stamp !== ui.rm.stamp) loadRoadmap();
     if (ui.tab === "plan" && !ui.pl.busy && d.plan_stamp !== undefined && d.plan_stamp !== ui.pl.stamp) loadPlan();
     if (ui.tab === "library" && !ui.lib.busy && isObject(d.library) && d.library.stamp !== ui.lib.stamp) loadLibrary();
     section("mind", [d.mind, ui.mind, minute], ["mind-body"], function () { renderMind(d.mind); });
@@ -1636,7 +1636,7 @@
 
   function projectsKey(d) {
     return [d.projects, arr(d.activity).map(function (c) { return c.cycle_id; }), d.venture_choices, ui.pj.filter, ui.pj.sort,
-      Object.keys(runningSlots()), agentName(), Math.floor(Date.now() / 60000), d.lines];
+      Object.keys(runningSlots()), agentName(), Math.floor(Date.now() / 60000)];
   }
 
   function renderProjectsNow() {
@@ -1696,7 +1696,6 @@
   // puts the cards there, each with an empty box for them), then the others. A list the owner is busy in (focus or a
   // selection) is left as it is and drawn on the next poll (false).
   function renderProjects(d) {
-    renderLineDesk(d);
     var el = $("projects");
     var name = agentName();
     var projects = arr(d.projects).filter(function (p) { return isObject(p) && p.id !== undefined; });
@@ -1850,7 +1849,7 @@
       // 0.27.0: in its venture's card, a level below the card's heading (a venture's own card says which it is)
       h(ctx.inCard ? "h5" : "h3", { class: "pj-title", id: "pj-title-" + p.id, text: p.title || "Untitled project" }),
       p.hypothesis ? h("p", { class: "hypothesis", text: p.hypothesis }) : null,
-      p.next_step ? h("div", { class: "pj-next" }, h("p", { class: "pj-next-label", text: "Next step" }), h("p", { class: "pj-next-text", text: String(p.next_step) })) : null,
+      p.plan_stage ? h("div", { class: "pj-next" }, h("p", { class: "pj-next-label", text: "In the plan" }), h("p", { class: "pj-next-text", text: String(p.plan_stage) })) : null,
       projectMoney(p),
       projectLog(p, ctx, true),
       h("p", { class: "pj-foot" }, plural(p.cycles, "cycle"), " · started ", timeEl(p.created_at), " · updated ", timeEl(p.updated_at)));
@@ -2094,57 +2093,6 @@
       label = "No line";
     }
     return h("span", { class: "chip", text: label, title: "What cycle #" + c.cycle_id + " was about" });
-  }
-
-  // 0.28.0: the Line desk: what Ember's code ranks for an ordinary and a marketing plan now (each plan takes one line
-  // or says why none, and Ember's code keeps that cycle's tools on it), what the last plans took, and the marketing
-  // share of each day's spending.
-  function renderLineDesk(d) {
-    var el = $("pj-desk");
-    if (!el) return;
-    var desk = isObject(d.lines) ? d.lines : null;
-    if (!desk) { replace(el, []); return; }
-    var name = agentName();
-    var ready = arr(desk.ready);
-    var market = arr(desk.market);
-    var picks = arr(desk.picks);
-    var today = isObject(desk.today) ? desk.today : {};
-    function ranked(items, empty) {
-      return items.length ?
-        h("ol", { class: "vt-ready" }, items.map(function (item) {
-          return h("li", null, h("strong", { text: String(item.key) }), " · " + String(item.text));
-        })) :
-        h("p", { class: "muted small", text: empty });
-    }
-    var share = num(desk.share) || 0;
-    var paused = desk.mode === "maintenance" || desk.mode === "dormant";
-    var shareText = !share ?
-      "Marketing cycles are off (Share for marketing is 0 in the app's options, or the ventures' share takes all of " +
-        "it): the ordinary cycles market." :
-      paused ?
-        "Marketing cycles pause in the " + desk.mode + " burn mode (they run in explore and focus): the ordinary " +
-          "cycles market meanwhile." :
-        "Marketing cycles get " + share + "% of each day's spending: " + usd(today.marketing_usd) + " of today's " +
-          usd(today.spent_usd) + " so far, in " + plural(num(desk.marketing_cycles) || 0, "marketing cycle") + " in all.";
-    var taken = picks.length ?
-      h("ul", { class: "vt-picks muted small" }, picks.map(function (p) {
-        var what = p.pick ? "took " + p.pick + (p.pressed ? " (an obligation pressed)" : "") : "took none: " + String(p.why_not);
-        return h("li", null, "Cycle #" + p.cycle_id + (p.kind === "market" ? " (marketing) " : " ") + what + " · ", timeEl(p.created_at));
-      })) : null;
-    var lines = ready.filter(function (i) { return i.kind === "line"; }).length;
-    var opened = !!el.querySelector("details[open]");  // drawn again each minute: an open box stays open
-    replace(el, h("details", { class: "vt-desk-box", open: opened },
-      h("summary", null, h("strong", { text: "Line desk: " }),
-        "one product line a cycle · " + plural(lines, "line") + " ranked · " + plural(market.length, "line") + " to market"),
-      h("p", { class: "muted small", text: "Ranked by " + name + "'s code: what a line owes, its milestone due, its jobs " +
-        "(the critic's fixes, a demand note, building or scaling it), then the one worked on longest ago. Each cycle's plan " +
-        "takes one line or says why none, and " + name + "'s code keeps that cycle's tools on it." }),
-      h("p", { class: "muted small", text: shareText }),
-      h("p", { class: "small" }, h("strong", { text: "For an ordinary cycle" })),
-      ranked(ready, "No line to work on now."),
-      h("p", { class: "small" }, h("strong", { text: "For a marketing cycle" })),
-      ranked(market, share ? "Nothing live to market now." : "No marketing cycles while their share is 0."),
-      taken));
   }
 
   function cycleSummary(c) {
@@ -4333,7 +4281,7 @@
         reviewLine("Not working", r.not_working),
         reviewLine("What your decisions tell it", r.owner_feedback),
         reviewLine("Ventures", r.ventures),
-        reviewLine("Roadmap", r.roadmap),
+        reviewLine("Milestones", r.roadmap),
         reviewLine("Lesson", r.lesson),
         r.scorecard ? h("details", { class: "review-numbers" }, h("summary", { text: "The numbers it judged" }),
           h("pre", { class: "mind-text", text: asText(r.scorecard) })) : null);
@@ -8910,12 +8858,11 @@
     $("vt-form-pitch").addEventListener("input", function () { setVentureFieldError("vt-form-pitch", ""); ventureCounter("vt-form-pitch", ventureLimit("pitch", 600)); });
   }
 
-  // ------------------------------------------------------------------ roadmap (0.11.0)
-  // Where Ember is heading: goals for the next months, the milestones that lead to them and this week's steps, each
-  // with a date and a measure of done. Drawn as a timeline (a row per milestone, under the goal it leads to; today
-  // marked) and listed below as cards by horizon. The owner adds milestones, leaves notes and drops them.
-  // 0.29.0: the owner's goal leads it (its card first, with its form), then the goal tree: every milestone under the
-  // one it leads to, with how far it got.
+  // ------------------------------------------------------------------ milestones (0.11.0)
+  // The milestones that lead to the goal, each with a date and a measure of done, listed as cards by horizon. The
+  // owner adds milestones, leaves notes and drops them. 0.29.0: the owner's goal leads them (its card first, with its
+  // form). 0.35.0: on the Plan tab, under the plan: the Roadmap tab, its timeline and its goal tree retired (the plan
+  // tree is Ember's way to the goal).
 
   var MILESTONE_STATE = {
     overdue: { icon: "▲", label: "Overdue", tone: "critical", order: 0 },
@@ -8937,32 +8884,12 @@
     { key: "closed", title: "Done, missed and dropped", match: function () { return true; } },
   ];
 
-  // The timeline's marks: the state (open, overdue, done, missed, dropped) has its own shape and color, and the row
-  // its label, so no state is told by color alone.
-  var MARK_STATES = [
-    { key: "open", label: "Open" }, { key: "overdue", label: "Overdue" }, { key: "done", label: "Done" },
-    { key: "missed", label: "Missed" }, { key: "dropped", label: "Dropped" },
-  ];
-  var RM = { row: 30, axis: 38, pad: 12, label: 250, narrowLabel: 150, minPlot: 360, before: 21, after: 91, charWidth: 6.6 };
-  var monthFmt = new Intl.DateTimeFormat(undefined, { month: "short", timeZone: "UTC" });
-
   // Calendar days as whole numbers (days since 1970-01-01), so dates compare and space out exactly.
   function dayOf(y, m, d) { return Math.round(Date.UTC(y, m, d) / 86400000); }
   function dayNumber(iso) {
     var p = String(iso || "").split("-");
     return p.length === 3 ? dayOf(Number(p[0]), Number(p[1]) - 1, Number(p[2])) : NaN;
   }
-  function stampDay(iso) {  // a timestamp's day on the owner's calendar
-    var t = new Date(iso);
-    return iso && validDate(t) ? dayOf(t.getFullYear(), t.getMonth(), t.getDate()) : NaN;
-  }
-  function dayParts(n) { var d = new Date(n * 86400000); return { y: d.getUTCFullYear(), m: d.getUTCMonth() }; }
-
-  function markState(m) {
-    if (m.status !== "open") return m.status;
-    return m.horizon === "overdue" ? "overdue" : "open";
-  }
-
   function whenText(days) {
     var d = num(days);
     if (isNaN(d)) return "";
@@ -8978,7 +8905,7 @@
     safely("roadmap", renderRoadmap);
     request("GET", "api/roadmap").then(function (res) {
       if (!res.ok) throw httpError(res);
-      if (!isObject(res.data) || !Array.isArray(res.data.items)) throw new RequestError("malformed", res.data === undefined ? "not JSON" : "the roadmap is missing");
+      if (!isObject(res.data) || !Array.isArray(res.data.items)) throw new RequestError("malformed", res.data === undefined ? "not JSON" : "the milestones are missing");
       rm.data = res.data;
       rm.stamp = res.data.stamp;
       rm.error = null;
@@ -8999,26 +8926,19 @@
     var data = rm.data;
     var name = agentName();
     $("rm-refresh").textContent = rm.busy ? "Refreshing…" : "Refresh";
-    setStatusText("rm-load-status", rm.error && !rm.busy ? "Couldn't load the roadmap (" + errorText(rm.error) + ")." +
-      (data ? " What you see is the roadmap loaded earlier." : " Try Refresh.") : "", rm.error && !rm.busy ? "error" : "");
-    $("rm-sub").textContent = "Where " + name + " is heading: your goal at the top, the sub-goals that lead to it, this " +
-      "month's milestones and this week's steps, each with a date, a measure of done and how far it got. " + name +
-      " plans every cycle toward the one due first.";
+    setStatusText("rm-load-status", rm.error && !rm.busy ? "Couldn't load the milestones (" + errorText(rm.error) + ")." +
+      (data ? " What you see are the milestones loaded earlier." : " Try Refresh.") : "", rm.error && !rm.busy ? "error" : "");
+    $("rm-sub").textContent = "Yours, and those Ember's code sets (a venture's first test, the money goal), each with a " +
+      "date, a measure of done and how far it got. " + name + "'s steps are the plan's above.";
     safely("goal", function () { renderGoalCard(data); });
-    if (!data) {
-      replace($("rm-chart"), rm.busy ? h("p", { class: "muted rm-loading", text: "Loading the roadmap…" }) : []);
-      return;
-    }
+    if (!data) return;
     var items = arr(data.items).filter(function (m) { return isObject(m) && m.id !== undefined; });
     renderRoadmapSummary(data, items);
-    renderGoalTree(data, items);
-    renderRoadmapLegend();
-    renderRoadmapChart(data, items);
     fillMilestoneParents(items);
     var rows = items.map(function (m) { return Object.assign({}, m, { status: m.horizon, state: m.status }); }).sort(milestoneOrder);
     return renderQueue($("roadmap"), {
       kind: "milestone", rows: rows, groups: ROADMAP_GROUPS,
-      empty: emptyState("div", "No milestones yet.", name + " lays out its roadmap in its next wake cycle; add your own with Add milestone."),
+      empty: emptyState("div", "No milestones yet.", "Add your own with Add milestone: " + name + "'s plan leads to them."),
       view: milestoneView,
       viewKey: data.today,
       actionKey: function (m) { return String(m.state) + "|" + String(m.owner_version); },
@@ -9069,202 +8989,13 @@
     $("rm-summary").textContent = parts.join(" ");
   }
 
-  function renderRoadmapLegend() {
-    var el = $("rm-legend");
-    if (el.childNodes.length) return;
-    var keys = MARK_STATES.map(function (s) {
-      return h("span", { class: "rm-key", "data-state": s.key }, legendMark(markPath(s.key, 7, 7)), s.label);
-    });
-    keys.push(h("span", { class: "rm-key", "data-state": "open" }, legendMark(diamondPath(7, 7, 4.5), "rm-first"), "First date, when it moved"));
-    keys.push(h("span", { class: "rm-key" }, svg("svg", { width: 14, height: 14, "aria-hidden": "true" },
-      svg("line", { class: "rm-today", x1: 7, x2: 7, y1: 0, y2: 14 })), "Today"));
-    replace(el, keys);
-  }
-
-  function legendMark(d, cls) {
-    return svg("svg", { width: 14, height: 14, viewBox: "0 0 14 14", "aria-hidden": "true" }, svg("path", { class: cls || "rm-mark", d: d }));
-  }
-
-  function diamondPath(cx, cy, r) {
-    return "M" + cx + " " + (cy - r) + " L" + (cx + r) + " " + cy + " L" + cx + " " + (cy + r) + " L" + (cx - r) + " " + cy + " Z";
-  }
-
-  // Open: a diamond. Overdue: a triangle. Done: a disc. Missed: a cross. Dropped: a dash.
-  function markPath(state, cx, cy) {
-    if (state === "overdue") return "M" + cx + " " + (cy - 6.5) + " L" + (cx + 6.5) + " " + (cy + 5) + " L" + (cx - 6.5) + " " + (cy + 5) + " Z";
-    if (state === "done") return "M" + (cx - 5.5) + " " + cy + " a5.5 5.5 0 1 0 11 0 a5.5 5.5 0 1 0 -11 0 Z";
-    if (state === "missed") return "M" + (cx - 4.5) + " " + (cy - 4.5) + " L" + (cx + 4.5) + " " + (cy + 4.5) + " M" + (cx + 4.5) + " " + (cy - 4.5) + " L" + (cx - 4.5) + " " + (cy + 4.5);
-    if (state === "dropped") return "M" + (cx - 5) + " " + cy + " L" + (cx + 5) + " " + cy;
-    return diamondPath(cx, cy, 6.5);
-  }
-
-  // The rows: every milestone under the one it leads to (each goal followed by its steps), by date.
-  function roadmapRows(items, start) {
-    var shown = items.filter(function (m) { return m.status === "open" || stampDay(m.closed_at) >= start; });
-    var byId = {};
-    shown.forEach(function (m) { byId[String(m.id)] = m; });
-    var kids = {};
-    var roots = [];
-    shown.forEach(function (m) {
-      var parent = m.parent_id !== null && m.parent_id !== undefined && byId[String(m.parent_id)] ? String(m.parent_id) : null;
-      if (parent) (kids[parent] = kids[parent] || []).push(m);
-      else roots.push(m);
-    });
-    var order = function (x, y) { return dayNumber(x.due) - dayNumber(y.due) || num(x.id) - num(y.id); };
-    // The plan first: open goals by date; what ended lately below them.
-    var closedLast = function (x, y) {
-      var cx = x.status !== "open";
-      var cy = y.status !== "open";
-      return cx !== cy ? (cx ? 1 : -1) : order(x, y);
-    };
-    var rows = [];
-    var seen = {};
-    function walk(list, depth) {
-      list.slice().sort(depth ? order : closedLast).forEach(function (m) {
-        if (seen[String(m.id)]) return;
-        seen[String(m.id)] = true;
-        rows.push({ m: m, depth: depth });
-        walk(kids[String(m.id)] || [], depth + 1);
-      });
-    }
-    walk(roots, 0);
-    return rows;
-  }
-
-  function renderRoadmapChart(data, items) {
-    var el = $("rm-chart");
-    hideMilestoneTip();
-    var name = agentName();
-    var today = dayNumber(data.today);
-    var open = items.filter(function (m) { return m.status === "open"; });
-    if (isNaN(today) || !items.length) {
-      replace(el, emptyState("div", "Nothing planned yet.", name + " lays out its roadmap itself: a goal for the next three months, " +
-        "this month's milestones toward it and this week's steps."));
-      return;
-    }
-    var lastDue = open.reduce(function (last, m) { var d = dayNumber(m.due); return isNaN(d) ? last : Math.max(last, d); }, today);
-    var start = today - RM.before;
-    var end = Math.max(today + RM.after, lastDue + 7);
-    var rows = roadmapRows(items, start);
-    if (!rows.length) {
-      replace(el, emptyState("div", "Nothing open or closed lately.", "Older milestones are in the list below."));
-      return;
-    }
-    var width = el.clientWidth || 720;
-    var labelW = width < 640 ? RM.narrowLabel : RM.label;
-    var plotW = Math.max(RM.minPlot, width - labelW - RM.pad * 3);
-    var totalW = RM.pad + labelW + plotW + RM.pad * 2;
-    var height = RM.axis + rows.length * RM.row + RM.pad;
-    var x0 = RM.pad + labelW + RM.pad;
-    function x(day) { return x0 + (Math.min(Math.max(day, start), end) - start) / (end - start) * plotW; }
-    function inside(day) { return !isNaN(day) && day >= start && day <= end; }
-
-    var grid = [];
-    var first = true;
-    for (var n = dayOf(dayParts(start).y, dayParts(start).m + 1, 1); n <= end; n = dayOf(dayParts(n).y, dayParts(n).m + 1, 1)) {
-      var gx = x(n);
-      var parts = dayParts(n);
-      grid.push(svg("line", { class: "rm-grid", x1: gx, x2: gx, y1: RM.axis - 8, y2: height - RM.pad }));
-      grid.push(svg("text", { class: "rm-month", x: gx + 4, y: RM.axis - 12 },
-        monthFmt.format(new Date(n * 86400000)) + (first || parts.m === 0 ? " " + parts.y : "")));
-      first = false;
-    }
-    var tx = x(today);
-    var now = [
-      svg("line", { class: "rm-today", x1: tx, x2: tx, y1: RM.axis - 26, y2: height - RM.pad }),
-      svg("text", { class: "rm-today-label", x: tx, y: 11, "text-anchor": "middle" }, "Today"),
-    ];
-
-    var marks = rows.map(function (r, i) {
-      var m = r.m;
-      var state = markState(m);
-      var y = RM.axis + i * RM.row + RM.row / 2;
-      var due = dayNumber(m.due);
-      var planned = stampDay(m.created_at);
-      var until = m.status === "open" ? due : stampDay(m.closed_at);
-      var indent = Math.min(r.depth, 4) * 12;
-      var chars = Math.max(6, Math.floor((labelW - indent - 18) / RM.charWidth));
-      var label = MILESTONE_STATE[m.horizon] || MILESTONE_STATE[m.status] || { label: String(m.status) };
-      var parts = [
-        svg("rect", { class: "rm-hit", x: 0, y: y - RM.row / 2, width: totalW, height: RM.row }),
-        svg("text", { class: "rm-glyph", x: RM.pad + indent, y: y + 4 }, (MILESTONE_STATE[m.horizon] || MILESTONE_STATE[m.status] || { icon: "" }).icon),
-        svg("text", { class: "rm-label", x: RM.pad + indent + 14, y: y + 4 }, shortTitle(m.title, chars)),
-      ];
-      // From when it was planned to its date (to when it ended, once closed).
-      if (!isNaN(planned) && !isNaN(until) && Math.max(planned, until) >= start) {
-        var a = x(Math.min(planned, until));
-        var b = x(Math.max(planned, until));
-        if (b - a >= 2) parts.push(svg("rect", { class: "rm-bar", x: a, y: y - 3, width: b - a, height: 6, rx: 3 }));
-      }
-      // Where it was first due, when its date moved.
-      var firstDue = dayNumber(m.first_due);
-      if (num(m.moves) > 0 && inside(firstDue) && firstDue !== due && inside(due)) {
-        parts.push(svg("line", { class: "rm-slip", x1: x(firstDue), x2: x(due), y1: y, y2: y }));
-        parts.push(svg("path", { class: "rm-first", d: diamondPath(x(firstDue), y, 4.5) }));
-      }
-      if (inside(due)) parts.push(svg("path", { class: "rm-mark", d: markPath(state, x(due), y) }));
-      var g = svg("g", {
-        class: "rm-row", "data-state": state, "data-id": m.id, tabindex: "0", role: "button",
-        "data-selected": String(ui.rm.selected) === String(m.id) ? "true" : null,
-        "aria-label": "#" + m.id + " " + m.title + ", " + label.label + ", due " + fmtDay(m.due) +
-          (m.status === "open" ? " (" + whenText(m.days) + ")" : "") + ". Show its card.",
-      }, parts);
-      g.addEventListener("pointerenter", function () { showMilestoneTip(m, g); });
-      g.addEventListener("pointerleave", hideMilestoneTip);
-      g.addEventListener("focus", function () { showMilestoneTip(m, g); });
-      g.addEventListener("blur", hideMilestoneTip);
-      g.addEventListener("click", function () { showMilestoneCard(m.id); });
-      g.addEventListener("keydown", function (ev) {
-        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); showMilestoneCard(m.id); }
-        else if (ev.key === "Escape") hideMilestoneTip();
-      });
-      return g;
-    });
-    var picture = svg("svg", { class: "rm-svg", width: totalW, height: height, viewBox: "0 0 " + totalW + " " + height,
-      role: "group", "aria-label": "Roadmap timeline, " + plural(rows.length, "milestone") + ", today " + fmtDay(data.today) },
-      svg("g", { class: "rm-axis" }, grid), svg("g", { class: "rm-rows" }, marks), svg("g", { class: "rm-now" }, now));
-    var scrollLeft = el.scrollLeft;
-    replace(el, picture);
-    el.scrollLeft = scrollLeft;
-  }
-
   // 0.12.0: a milestone the agent closed as done on its own word, not checked by Ember's code or by you.
   function selfReported(m) {
     return m.status === "done" && m.closed_by === "agent";
   }
 
-  function showMilestoneTip(m, row) {
-    var tip = $("rm-tip");
-    var state = MILESTONE_STATE[m.horizon] || MILESTONE_STATE[m.status] || { icon: "", label: String(m.status) };
-    var due = "Due " + fmtDay(m.due) + (m.status === "open" ? " (" + whenText(m.days) + ")" : "");
-    var ended = { done: selfReported(m) ? "Done (self-reported)" : "Done", missed: "Missed", dropped: "Dropped" }[m.status];
-    replace(tip, [
-      h("p", { class: "rm-tip-title", text: m.title }),
-      h("p", { class: "rm-tip-state" }, h("span", { "aria-hidden": "true", text: state.icon + " " }), state.label + " · " + due),
-      num(m.moves) > 0 ? h("p", { class: "muted", text: "Moved " + plural(m.moves, "time") + "; first due " + fmtDay(m.first_due) }) : null,
-      m.proposed_due ? h("p", { class: "muted", text: agentName() + " proposes " + fmtDay(m.proposed_due) + ": your decision" }) : null,
-      h("p", null, h("strong", { text: "Done when: " }), asText(m.measure)),
-      progressOf(m) ? h("p", null, h("strong", { text: "Progress: " }), progressLine(progressOf(m))) : null,  // 0.29.0
-      ended && m.result ? h("p", null, h("strong", { text: ended + ": " }), asText(m.result)) : null,
-    ]);
-    tip.hidden = false;
-    var card = $("rm-card").getBoundingClientRect();
-    var mark = row.querySelector(".rm-mark") || row;
-    var at = mark.getBoundingClientRect();
-    var left = Math.min(Math.max(8, at.left - card.left - 16), Math.max(8, card.width - tip.offsetWidth - 8));
-    tip.style.left = left + "px";
-    tip.style.top = (at.bottom - card.top + 8) + "px";
-  }
-
-  function hideMilestoneTip() { var tip = $("rm-tip"); if (tip) tip.hidden = true; }
-
   function showMilestoneCard(id) {
     ui.rm.selected = id;
-    hideMilestoneTip();
-    Array.prototype.forEach.call($("rm-chart").querySelectorAll(".rm-row"), function (g) {
-      if (g.getAttribute("data-id") === String(id)) g.setAttribute("data-selected", "true");
-      else g.removeAttribute("data-selected");
-    });
     var card = $("roadmap").querySelector('article[data-id="' + String(id) + '"]');
     if (!card) return;
     Array.prototype.forEach.call($("roadmap").querySelectorAll("article[data-selected]"), function (c) { c.removeAttribute("data-selected"); });
@@ -9288,17 +9019,20 @@
     return "email replies only: it names no project or venture, so no listing is its";
   }
 
-  function milestoneAutonomy(m) {
+  // 0.35.0: ``target`` (a product's box on the Plan tab): its URL, what it is and why unlocks are off.
+  function milestoneAutonomy(m, target) {
     // 0.15.0: a rule the milestone never covers isn't offered (one still unlocked from before shows, to take back)
     var rules = arr(m.autonomy).filter(function (r) { return r.fits !== false || r.level !== "manual"; });
     if (!rules.length) return null;
-    var off = ui.rm.data && ui.rm.data.unlocks_off ? String(ui.rm.data.unlocks_off) : "";  // 0.15.0
+    var off = target ? target.off : ui.rm.data && ui.rm.data.unlocks_off ? String(ui.rm.data.unlocks_off) : "";  // 0.15.0
+    var what = target ? target.what : "this milestone";
     var on = rules.filter(function (r) { return r.level !== "manual"; }).length;
     var status = h("p", { class: "muted small", role: "status" });
     return h("div", { class: "rm-autonomy" }, h("details", null,
       h("summary", null, h("strong", { text: "Autonomy: " }), on ? plural(on, "rule") + " unlocked" : "all manual"),
-      h("p", { class: "muted small", text: "What " + agentName() + "'s code may carry out for this milestone without your click, " +
-        autonomyScope(m) + ". It takes back an unlock itself on an unclear result, a spent budget, the milestone's end or your veto." }),
+      h("p", { class: "muted small", text: "What " + agentName() + "'s code may carry out for " + what + " without your click, " +
+        autonomyScope(m) + ". It takes back an unlock itself on an unclear result, a spent budget, " +
+        (target ? "the product's end" : "the milestone's end") + " or your veto." }),
       off ? h("p", { class: "warn-box", text: "Unlocks are off while " + off + ": " + agentName() + "'s code takes them back " +
         "and you can't grant one. Put your Home Assistant user ID in owner_user_ids (Configuration tab), outside safe mode." }) : null,
       h("ul", { class: "vt-evidence" }, rules.map(function (r) {
@@ -9312,7 +9046,7 @@
         var budget = h("input", { type: "number", min: "1", max: "100", value: String(r.budget), "aria-label": "In all", class: "num-small" });
         var save = h("button", { type: "button", class: "btn btn-small", text: "Save" });
         save.addEventListener("click", function () {
-          setAutonomy(save, status, m, r, { rule: r.rule, level: level.value, per_day: parseInt(perDay.value, 10), budget: parseInt(budget.value, 10) });
+          setAutonomy(save, status, m, r, { rule: r.rule, level: level.value, per_day: parseInt(perDay.value, 10), budget: parseInt(budget.value, 10) }, target);
         });
         var use = r.level !== "manual" ? " · used " + r.used + " of " + r.budget + " (" + r.used_today + " today)" : "";
         var why = r.why ? " · taken back: " + String(r.why) : "";
@@ -9322,13 +9056,14 @@
       status));
   }
 
-  function setAutonomy(button, status, m, r, body) {
+  function setAutonomy(button, status, m, r, body, target) {
     button.disabled = true;
     status.removeAttribute("data-kind");
-    request("POST", "api/milestones/" + m.id + "/autonomy", body).then(function (res) {
+    request("POST", target ? target.url : "api/milestones/" + m.id + "/autonomy", body).then(function (res) {
       if (res.ok) {
         status.textContent = "Saved: " + r.label + ", " + (AUTONOMY_LEVELS[body.level] || body.level) + ". " + agentName() + " hears it on its next wake.";
         refresh();
+        if (target) loadPlan();
         return;
       }
       ownerFailure(res, {}, function (msg) { status.textContent = msg; status.setAttribute("data-kind", "error"); }, null);
@@ -9478,7 +9213,7 @@
           "What leads to it goes on: " + name + "'s own goal (earn what it spends) stands in for it from its next wake, until you set another." :
           "What leads to it goes on, but " + name + "'s code sets no money goal of its own again. Setting your own goal takes its place instead." })] } :
         { title: "Drop this milestone?", submit: "Drop", danger: true,
-        intro: [h("p", { text: name + " stops working toward it. It stays on the roadmap, marked dropped, and so do the open milestones that lead to it: they are dropped with it." })] },
+        intro: [h("p", { text: name + " stops working toward it. It stays in the list, marked dropped, and so do the open milestones that lead to it: they are dropped with it." })] },
       accept: { title: "Move it to " + fmtDay(it.row.proposed_due) + "?", submit: "Accept new date",
         intro: [h("p", { text: name + " proposed it" + (it.row.proposed_note ? ": " + asText(it.row.proposed_note) : ".") }),
           h("p", { class: "muted small", text: "It is due " + fmtDay(it.row.due) + " now. A date moves " + roadmapLimit("moves", 2) + " times at most." })] },
@@ -9585,7 +9320,7 @@
       sub = "By " + fmtDay(g.due) + " (" + whenText(g.days) + ") · " + (mine ? "checked by " + name + "'s code from the revenue less expenses you record" +
         (g.per === "total" ? (g.counts_from ? ", counted from " + fmtDay(g.counts_from) : "") : ", over the last " + roadmapLimit("window_days", 30) + " days") : asText(g.measure));
     } else if (data) {
-      sub = "Everything on the roadmap leads to your goal: an amount to earn a month or in total, by a date.";
+      sub = "Everything in the plan leads to your goal: an amount to earn a month or in total, by a date.";
     }
     $("rm-goal-sub").textContent = sub;
     var p = g ? progressOf(g) : null;
@@ -9604,7 +9339,7 @@
     } else if (mine && g.comment) {
       note = "Why it matters: " + g.comment;
     } else if (g) {
-      note = "Set your own goal to lead the roadmap: it takes the place of this one, and what leads to this one leads to yours.";
+      note = "Set your own goal to lead the plan: it takes the place of this one, and what leads to this one leads to yours.";
     }
     $("rm-goal-note").textContent = note;
     $("rm-goal-note").hidden = !note;
@@ -9624,7 +9359,7 @@
     showGoalConfirm(false);
     var g = currentGoal();
     var mine = !!(g && g.owner);
-    $("rm-goal-form-intro").textContent = "What " + name + " works toward: everything on the roadmap leads to it. " + name +
+    $("rm-goal-form-intro").textContent = "What " + name + " works toward: everything in the plan leads to it. " + name +
       "'s code checks it from the revenue less expenses you record in the Ledger (in USD, like the books)." +
       (mine ? " Your new goal takes the place of the one standing; what leads to it stays." : "");
     ["amount", "due"].forEach(function (k) { setGoalFieldError("rm-goal-" + k, ""); });
@@ -9701,7 +9436,7 @@
       setStatusText("rm-goal-status", msg ? "Nothing was saved: " + lowerFirst(msg) : "Nothing was saved (" + httpError(res).message + ").", "error");
     }).catch(function (err) {
       if (!(err instanceof RequestError)) console.error(err);
-      setStatusText("rm-goal-status", "Couldn't reach " + agentName() + ", so it's not clear whether your goal was saved. Refresh the roadmap before you try again.", "error");
+      setStatusText("rm-goal-status", "Couldn't reach " + agentName() + ", so it's not clear whether your goal was saved. Refresh the plan before you try again.", "error");
     }).then(function () {
       ui.goal.saving = false;
       $("rm-goal-save").disabled = false;
@@ -9741,65 +9476,11 @@
       loadRoadmap();
     }).catch(function (err) {
       if (!(err instanceof RequestError)) console.error(err);
-      setStatusText("rm-goal-status", "Couldn't reach " + agentName() + ". Refresh the roadmap to see whether your goal stands.", "error");
+      setStatusText("rm-goal-status", "Couldn't reach " + agentName() + ". Refresh the plan to see whether your goal stands.", "error");
     }).then(function () {
       ui.goal.removing = false;
       $("rm-goal-confirm-yes").disabled = false;
     });
-  }
-
-  // The goal tree: the open milestones and those met or missed in the last two weeks (the dropped ones are in the
-  // list below), each under the one it leads to, the goal first, then by date.
-  function treeOrder(x, y) {
-    if (isGoal(x) !== isGoal(y)) return isGoal(x) ? -1 : 1;
-    var closedX = x.status !== "open";
-    var closedY = y.status !== "open";
-    if (closedX !== closedY) return closedX ? 1 : -1;
-    return dayNumber(x.due) - dayNumber(y.due) || num(x.id) - num(y.id);
-  }
-
-  function renderGoalTree(data, items) {
-    var el = $("rm-tree");
-    if (isBusy(el)) return;
-    var today = dayNumber(data.today);
-    var shown = {};
-    items.forEach(function (m) {
-      var closed = stampDay(m.closed_at);
-      if (m.status === "open" || (m.status !== "dropped" && !isNaN(closed) && !isNaN(today) && today - closed <= 14)) shown[String(m.id)] = m;
-    });
-    var below = {};
-    var roots = [];
-    Object.keys(shown).forEach(function (k) {
-      var m = shown[k];
-      var parent = m.parent_id !== null && m.parent_id !== undefined ? shown[String(m.parent_id)] : null;
-      if (parent) (below[String(parent.id)] = below[String(parent.id)] || []).push(m);
-      else roots.push(m);
-    });
-    if (!roots.length) {
-      replace(el, emptyState("div", "Nothing on the roadmap yet.", agentName() + " lays it out toward your goal in its next wake cycle."));
-      return;
-    }
-    replace(el, h("ul", { class: "gt" }, roots.sort(treeOrder).map(function (m) { return treeNode(m, below); })));
-  }
-
-  function treeNode(m, below) {
-    var kids = (below[String(m.id)] || []).sort(treeOrder);
-    var p = progressOf(m);
-    var goal = isGoal(m);
-    var state = markState(m);
-    var when = m.status === "open" ? "due " + fmtDay(m.due) + " (" + whenText(m.days) + ")" :
-      (MILESTONE_STATE[m.status] || { label: String(m.status) }).label.toLowerCase() + (m.closed_at ? " " + fmtDate(m.closed_at) : "");
-    var who = m.owner_goal ? "your goal" : m.kind === "money_goal" ? agentName() + "'s own goal" : m.created_by === "owner" ? "yours" :
-      m.created_by === "code" ? "set by Ember's code" : "";
-    var glyph = goal ? "◎" : (MILESTONE_STATE[m.horizon] || MILESTONE_STATE[m.status] || { icon: "" }).icon;
-    var open = h("button", { type: "button", class: "gt-name", text: m.title || "Untitled milestone" });
-    open.addEventListener("click", function () { showMilestoneCard(m.id); });
-    var row = h("div", { class: "gt-row", "data-state": state, "data-goal": goal ? "true" : null },
-      h("span", { class: "gt-glyph", "aria-hidden": "true", text: glyph }),
-      h("span", { class: "gt-text" }, open,
-        h("span", { class: "gt-meta", text: ["#" + m.id, when, who, p && p.basis !== "open" && p.text ? asText(p.text) : ""].filter(Boolean).join(" · ") })),
-      h("span", { class: "gt-progress" }, progressBar(p, "How far #" + m.id + " got"), h("span", { class: "gt-pct", text: p && p.basis === "done" ? "Done" : percentText(p) })));
-    return h("li", { class: "gt-node" }, row, kids.length ? h("ul", { class: "gt" }, kids.map(function (k) { return treeNode(k, below); })) : null);
   }
 
   // The Overview's strip: the goal and how far it got.
@@ -9813,10 +9494,10 @@
     var mine = !!(g && g.owner);
     $("goal-strip-label").textContent = mine ? "Your goal" : g ? name + "'s own goal, until you set yours" : "No goal yet";
     $("goal-strip-title").textContent = g ? g.title + " · by " + fmtDay(g.due) + " (" + whenText(g.days) + ")" :
-      "Set the goal " + name + " works toward on the Roadmap tab.";
+      "Set the goal " + name + " works toward on the Plan tab.";
     var p = g ? progressOf(g) : null;
     replace($("goal-strip-bar"), g ? [progressBar(p, "How far the goal got"), h("p", { class: "tile-sub", text: progressLine(p) })] : []);
-    $("goal-strip-open").textContent = mine ? "Roadmap" : "Set your goal";
+    $("goal-strip-open").textContent = mine ? "Plan" : "Set your goal";
   }
 
   function initGoal() {
@@ -9833,7 +9514,7 @@
     $("rm-goal-confirm-no").addEventListener("click", function () { showGoalConfirm(false); $("rm-goal-remove").focus(); });
     $("rm-goal-confirm-yes").addEventListener("click", removeGoal);
     $("goal-strip-open").addEventListener("click", function () {
-      selectTab("roadmap", true);
+      selectTab("plan", true);
       var g = ui.data && isObject(ui.data.roadmap) && isObject(ui.data.roadmap.goal) ? ui.data.roadmap.goal : null;
       if (!(g && g.owner) && ui.rm.data) openGoalForm(true);
     });
@@ -9930,7 +9611,7 @@
         var id = isObject(res.data) ? res.data.id : null;
         ["title", "measure", "due"].forEach(function (k) { $("rm-form-" + k).value = ""; });
         openMilestoneForm(false);
-        setStatusText("rm-status", "Added to the roadmap" + (id ? " as #" + id : "") + ". " + agentName() + " sees it on its next wake.", "ok");
+        setStatusText("rm-status", "Added" + (id ? " as milestone #" + id : "") + ". " + agentName() + " sees it on its next wake.", "ok");
         ui.rm.selected = id;
         loadRoadmap();
         return;
@@ -9947,7 +9628,7 @@
       setStatusText("rm-status", msg ? "Nothing was saved: " + lowerFirst(msg) : "Nothing was saved (" + httpError(res).message + ").", "error");
     }).catch(function (err) {
       if (!(err instanceof RequestError)) console.error(err);
-      setStatusText("rm-status", "Couldn't reach " + agentName() + ", so it's not clear whether the milestone was saved. Refresh the roadmap before you try again.", "error");
+      setStatusText("rm-status", "Couldn't reach " + agentName() + ", so it's not clear whether the milestone was saved. Refresh the milestones before you try again.", "error");
     }).then(function () {
       ui.rm.saving = false;
       $("rm-form-save").disabled = false;
@@ -9967,14 +9648,6 @@
     $("rm-form-title").addEventListener("input", function () { setMilestoneFieldError("rm-form-title", ""); milestoneCounter("rm-form-title", roadmapLimit("title", 100)); });
     $("rm-form-measure").addEventListener("input", function () { setMilestoneFieldError("rm-form-measure", ""); milestoneCounter("rm-form-measure", roadmapLimit("measure", 300)); });
     $("rm-form-due").addEventListener("input", function () { setMilestoneFieldError("rm-form-due", ""); });
-    // The timeline fits the page's width: drawn again when the window changes size.
-    var pending = null;
-    window.addEventListener("resize", function () {
-      window.clearTimeout(pending);
-      pending = window.setTimeout(function () {
-        if (ui.tab === "roadmap" && ui.rm.data) safely("roadmap", function () { renderRoadmapChart(ui.rm.data, arr(ui.rm.data.items)); });
-      }, 150);
-    });
   }
 
   // ------------------------------------------------------------------ library (0.12.0)
@@ -10296,7 +9969,8 @@
 
   // The tree under the owner's goal as a floating node network: its projects (one colour each), their products (as
   // big as their worth), and the opened product's stages with their steps below, each stage's steps on a line in
-  // their order. A preview: Ember doesn't follow the tree yet, and every cycle records the step it would have taken.
+  // their order. 0.35.0: it steers Ember's cycles (each takes its step from it); the owner closes, drops and keeps
+  // products here, lifts Ember's hold, sets each product's unlocks, and sees what changed, the channels and upgrades.
   var PLAN_W = 960;
   var PLAN_COLOURS = 6;
   var PLAN_WAIT = {
@@ -10304,7 +9978,7 @@
     step: "after the one before", hold: "on hold",
   };
   var PLAN_DECIDED = {
-    pin: "you pinned it", promise: "a promise is due", venture: "a venture cycle (the venture share)",
+    pin: "you pinned it", promise: "a promise or your decision is due", venture: "a venture cycle (the venture share)",
     weight: "the heaviest step", margin: "the product worked on last keeps it", none: "nothing is ready",
   };
 
@@ -10340,7 +10014,7 @@
   function renderPlan() {
     var pl = ui.pl, d = pl.data;
     setStatusText("pl-load-status", pl.error ? "Couldn't load the plan: " + errorText(pl.error) : !d && pl.busy ? "Loading the plan…" : "", pl.error ? "error" : "");
-    if (!d) { ["pl-now", "pl-net", "pl-detail", "pl-picks"].forEach(function (id) { replace($(id), null); }); return; }
+    if (!d) { ["pl-now", "pl-net", "pl-detail", "pl-changes", "pl-channels", "pl-upgrades", "pl-picks"].forEach(function (id) { replace($(id), null); }); return; }
     var products = planProducts(d);
     var known = products.some(function (x) { return x.product.id === pl.selected; });
     if (!known) {
@@ -10351,10 +10025,13 @@
     }
     var goal = isObject(d.goal) ? d.goal : null;
     $("pl-sub").textContent = (goal ? "Your goal: " + goal.title + " (by " + fmtDay(goal.due) + "). " : "")
-      + "Ember doesn't follow the tree yet: each cycle records the step it would have taken.";
+      + "Each cycle takes its step from this plan: what you pinned, a promise or your decision due, then the heaviest step.";
     renderPlanNow(d);
     renderPlanNet(d, products);
-    renderPlanDetail(products);
+    if (!isBusy($("pl-detail"))) renderPlanDetail(products);  // a reason being typed stays
+    renderPlanChanges(d);
+    renderPlanChannels(d);
+    renderPlanUpgrades(d);
     renderPlanPicks(d);
   }
 
@@ -10363,7 +10040,7 @@
     var next = arr(d.next), waiting = arr(d.waiting);
     replace($("pl-now"), [
       h("div", { class: "pl-now-card" },
-        h("p", { class: "small-head", text: "Now, if the tree steered" }),
+        h("p", { class: "small-head", text: "The next cycle's step" }),
         h("p", { class: "pl-now-title", text: now.id ? now.title : sentence(PLAN_DECIDED[now.decided] || "nothing is ready") }),
         now.id ? h("p", { class: "muted", text: sentence(PLAN_DECIDED[now.decided] || now.decided) + (now.line ? " · line #" + now.line : "") }) : null,
         now.why ? h("p", { class: "pl-why muted", text: now.why }) : null),
@@ -10475,6 +10152,11 @@
     root.appendChild(nodeLayer);
     replace(host, root);
     planApplyView();
+    // a phone shows the network wider than the screen: it opens once on the goal, in the middle
+    if (!pl.centred && host.clientWidth && host.scrollWidth > host.clientWidth) {
+      host.scrollLeft = (host.scrollWidth - host.clientWidth) / 2;
+      pl.centred = true;
+    }
   }
 
   function planNode(n) {
@@ -10554,6 +10236,8 @@
     planZoomAt(factor, rect.left + rect.width / 2, rect.top + rect.height / 2);
   }
 
+  var PLAN_VERDICT = { met: "met", missed: "missed", retry: "too little reach: one more try", decide: "you decide", scale: "sold: scale it" };
+
   function renderPlanDetail(products) {
     var pl = ui.pl, host = $("pl-detail");
     var open = products.filter(function (x) { return x.product.id === pl.selected; })[0];
@@ -10565,14 +10249,105 @@
         h("h3", { class: "pl-detail-title", text: q.title + " · line #" + q.line }),
         h("p", { class: "hint", text: [q.template, q.stage ? "in " + q.stage : q.status, audience ? "speaks " + audience : ""].filter(Boolean).join(" · ") })),
       h("p", { class: "pl-numbers", text: "Views " + (n.views || 0) + " · favorites " + (n.favorites || 0) + " · orders " + (n.orders || 0) + " · pins " + (n.pins || 0) + " · Bluesky posts " + (n.posts || 0) + " · blog posts " + (n.blog || 0) }),
-      planWorthForm(q),
+      planHold(q),
+      planDecideBy(q),
+      q.status === "open" ? planWorthForm(q) : null,
+      q.status === "open" ? planEndActions(q) : null,
+      q.status === "open" ? planAutonomy(q) : null,
       arr(q.stages).map(function (s) {
         var state = s.status !== "open" ? s.status : s.current ? "now" : "later";
         return h("section", { class: "pl-stage", "data-status": s.status, "data-current": s.current ? "true" : null },
           h("h4", { class: "pl-stage-title", text: s.title + " · " + state + (s.total ? " (" + s.done + " of " + s.total + ")" : "") }),
-          arr(s.steps).length ? h("ul", { class: "pl-steps" }, arr(s.steps).map(planStepRow)) : h("p", { class: "muted", text: s.stage === "maintain" ? "Its recurring steps come once the launch is done." : "No steps." }));
+          arr(s.steps).length ? h("ul", { class: "pl-steps" }, arr(s.steps).map(function (st) { return planStepRow(st, q); })) : h("p", { class: "muted", text: s.stage === "maintain" ? "Its recurring steps come once the stages before it are done." : "No steps." }));
       }),
     ]);
+  }
+
+  // 0.35.0: Ember may hold a product to work elsewhere (with her reason); the owner lifts the hold here.
+  function planHold(q) {
+    if (!q.hold || q.status !== "open") return null;
+    var lift = h("button", { type: "button", class: "btn btn-small", text: "Lift the hold" });
+    lift.addEventListener("click", function () { planProductAction(q, "resume", null, lift, "The hold is lifted: its steps are weighed again."); });
+    return h("div", { class: "pl-hold" },
+      h("p", null, h("strong", { text: agentName() + " holds it: " }), String(q.hold)),
+      lift);
+  }
+
+  // 0.35.0: a product's decide-by dates (from the day its first listing was seen live), in place of the listing test.
+  function planDecideBy(q) {
+    if (!q.live_since) return null;
+    var found = isObject(q.decide_by) ? q.decide_by : {};
+    var days = [["day7", "Day 7: 10 views"], ["day14", "Day 14: 30 views and 2 favorites"], ["day28", "Day 28: one more try"], ["day21", "Day 21: a first order"]];
+    var parts = days.filter(function (x) { return x[0] !== "day28" || found.day28 || found.day14 === "retry"; }).map(function (x) {
+      return x[1] + " · " + (found[x[0]] ? PLAN_VERDICT[found[x[0]]] || found[x[0]] : "not yet");
+    });
+    var pushed = q.pushed_until && q.pushed_until >= ui.pl.data.today ? "Its marketing comes first until " + fmtDay(q.pushed_until) + "." : "";
+    return h("div", { class: "pl-decide" },
+      h("p", { class: "small-head", text: "Its test, from " + fmtDay(q.live_since) }),
+      h("ul", { class: "pl-list" }, parts.map(function (t) { return h("li", { text: t }); })),
+      pushed ? h("p", { class: "muted", text: pushed }) : null);
+  }
+
+  // 0.35.0: only the owner closes a product (done: its line succeeded) or drops one, with an optional reason.
+  function planEndActions(q) {
+    var box = h("div", { class: "pl-end" });
+    var why = h("input", { type: "text", maxlength: "300", class: "pl-why-input", "aria-label": "Why (optional)", placeholder: "Why (optional)" });
+    var confirm = h("div", { class: "confirm", hidden: true });
+    var buttons = h("div", { class: "form-actions" });
+    function ask(done) {
+      replace(confirm, [
+        h("p", { text: done ? "Close “" + q.title + "” as done? Its open steps close with it and " + agentName() + " stops working on it." :
+          "Drop “" + q.title + "”? Its open steps close with it and " + agentName() + " stops working on it. This can't be undone here." }),
+        why,
+        h("div", { class: "form-actions" },
+          planButton(done ? "Close as done" : "Drop it", done ? "btn btn-primary" : "btn btn-danger", function (button) {
+            planProductAction(q, done ? "done" : "drop", { why: why.value.trim() }, button, done ? "Closed as done." : "Dropped.");
+          }),
+          planButton("Cancel", "btn", function () { confirm.hidden = true; buttons.hidden = false; })),
+      ]);
+      confirm.hidden = false;
+      buttons.hidden = true;
+      why.focus();
+    }
+    replace(buttons, [
+      planButton("Close as done", "btn", function () { ask(true); }),
+      planButton("Drop it", "btn", function () { ask(false); }),
+    ]);
+    ui.pl.askEnd = ask;  // a decide-by step's Drop it asks the same
+    replace(box, [h("p", { class: "small-head", text: "Your decision" }), buttons, confirm]);
+    return box;
+  }
+
+  function planButton(text, cls, onClick) {
+    var button = h("button", { type: "button", class: cls, text: text });
+    button.addEventListener("click", function () { onClick(button); });
+    return button;
+  }
+
+  // POST api/plan/products/{id}/{action} (done, drop, resume), then the plan again.
+  function planProductAction(q, action, body, button, said) {
+    button.disabled = true;
+    request("POST", "api/plan/products/" + encodeURIComponent(String(q.id)) + "/" + action, body || {}).then(function (res) {
+      if (!res.ok) {
+        ownerFailure(res, {}, function (msg) { setStatusText("pl-status", msg, "error"); }, function (msg) { setStatusText("pl-status", msg, "error"); });
+        button.disabled = false;
+        return;
+      }
+      setStatusText("pl-status", said + " " + agentName() + " sees it on its next wake.", "ok");
+      loadPlan();
+      refresh();
+    }).catch(function (err) {
+      button.disabled = false;
+      setStatusText("pl-status", "Couldn't reach " + agentName() + ": " + errorText(err) + ". Refresh the plan to see whether it changed.", "error");
+    });
+  }
+
+  // 0.35.0: a product's Autonomy box (its unlocks stand on its own milestone, which Ember's code keeps).
+  function planAutonomy(q) {
+    if (!arr(q.autonomy).length) return null;
+    var off = ui.pl.data && ui.pl.data.unlocks_off ? String(ui.pl.data.unlocks_off) : "";
+    return milestoneAutonomy({ id: q.milestone, autonomy: q.autonomy, project_id: q.line, project_title: q.title },
+      { url: "api/plan/products/" + encodeURIComponent(String(q.id)) + "/autonomy", what: "this product", off: off });
   }
 
   // A promise to the owner is no step Ember takes: the steps in front of it carry it until it is kept.
@@ -10582,17 +10357,36 @@
     return st.waiting ? PLAN_WAIT[st.waiting] || st.waiting : "ready";
   }
 
-  function planStepRow(st) {
+  function planStepRow(st, q) {
     var row = h("li", { class: "pl-step", id: "pl-step-" + st.id, tabindex: "-1", "data-status": st.status, "data-waiting": st.waiting || null, "data-kind": st.kind },
       h("span", { class: "pl-step-state", text: planStepState(st) }),
       h("span", { class: "pl-step-title", text: st.title }),
       st.weight !== null && st.weight !== undefined ? h("span", { class: "pl-step-weight", text: "weight " + st.weight }) : null,
       st.due ? h("span", { class: "muted", text: "due " + fmtDay(st.due) }) : null,
       st.stale ? h("span", { class: "pl-stale", text: "ready " + Math.floor(st.age_days) + " days" }) : null,
-      planPinButton(st));
+      planPinButton(st),
+      planDecideButtons(st, q));
     if (st.why) row.appendChild(h("p", { class: "pl-why muted", text: st.why }));
     else if (st.status !== "open" && st.result) row.appendChild(h("p", { class: "pl-why muted", text: st.result }));
     return row;
+  }
+
+  // 0.35.0: at a decide-by date the owner keeps the product (the step closes) or drops it.
+  function planDecideButtons(st, q) {
+    if (st.status !== "open" || st.template !== "decide/owner" || !q) return null;
+    var keep = planButton("Keep it", "btn btn-small", function (button) {
+      button.disabled = true;
+      request("POST", "api/plan/steps/" + encodeURIComponent(String(st.id)) + "/keep", {}).then(function (res) {
+        if (!res.ok) throw httpError(res);
+        setStatusText("pl-status", "Kept: " + agentName() + " goes on with it.", "ok");
+        loadPlan();
+      }).catch(function (err) {
+        button.disabled = false;
+        setStatusText("pl-status", "Couldn't save it: " + errorText(err), "error");
+      });
+    });
+    var drop = planButton("Drop it", "btn btn-small", function () { if (ui.pl.askEnd) ui.pl.askEnd(false); });
+    return h("span", { class: "pl-decide-buttons" }, keep, drop);
   }
 
   function planPinButton(st) {
@@ -10606,7 +10400,7 @@
     button.disabled = true;
     request("POST", "api/plan/steps/" + encodeURIComponent(String(id)) + "/pin", { pinned: pinned }).then(function (res) {
       if (!res.ok) throw httpError(res);
-      setStatusText("pl-status", pinned ? "Pinned. Once the tree steers, a pinned step comes first." : "Unpinned.", "ok");
+      setStatusText("pl-status", pinned ? "Pinned: the next cycle takes it first." : "Unpinned.", "ok");
       loadPlan();
     }).catch(function (err) {
       button.disabled = false;
@@ -10643,18 +10437,65 @@
     });
   }
 
+  var PLAN_ACTORS = { agent: null, code: "Ember's code", owner: "You" };
+  var PLAN_ACTIONS = {
+    add: "added", split: "split", replace: "replaced", done: "said done", wait: "said it waits", unwait: "lifted the wait on",
+    hold: "held", resume: "resumed", drop: "dropped", close: "closed",
+  };
+
+  // 0.35.0: today's changes to the plan that weren't a check passing, the newest first.
+  function renderPlanChanges(d) {
+    var changes = arr(d.changes), name = agentName();
+    if (!changes.length) { replace($("pl-changes"), h("p", { class: "muted", text: "No changes today." })); return; }
+    replace($("pl-changes"), h("ul", { class: "pl-list pl-changes-list" }, changes.map(function (c) {
+      var who = PLAN_ACTORS[c.actor] || name;
+      return h("li", null, timeEl(c.at), " · ", h("strong", { text: who + " " + (PLAN_ACTIONS[c.action] || c.action) + " " }),
+        "#" + c.id + " " + c.title + (c.line ? " (line #" + c.line + ")" : ""),
+        c.why ? h("span", { class: "muted", text: ": " + c.why }) : null);
+    })));
+  }
+
+  var PLAN_CHANNELS = { pinterest: "Pinterest", bluesky: "Bluesky", blog: "Blog" };
+
+  // 0.35.0: each channel as a mirror of the products' marketing: what it does next and did lately.
+  function renderPlanChannels(d) {
+    var channels = arr(d.channels);
+    replace($("pl-channels"), h("div", { class: "pl-now" }, channels.map(function (c) {
+      var open = arr(c.steps).filter(function (st) { return st.status === "open"; });
+      var done = arr(c.steps).filter(function (st) { return st.status === "done"; });
+      return h("div", { class: "pl-now-card" },
+        h("p", { class: "small-head", text: (PLAN_CHANNELS[c.channel] || c.channel) + (c.factor !== 1 ? " · works " + c.factor + "×" : "") }),
+        open.length ? h("ul", { class: "pl-list" }, open.map(function (st) {
+          return h("li", null, st.title, h("span", { class: "muted", text: " · line #" + st.line + (st.due ? " · due " + fmtDay(st.due) : "") + (st.waiting ? " · " + (PLAN_WAIT[st.waiting] || st.waiting) : "") }));
+        })) : h("p", { class: "muted", text: "Nothing to do now." }),
+        done.length ? h("p", { class: "muted", text: plural(done.length, "step") + " done in the last 14 days." }) : null);
+    })));
+  }
+
+  // 0.35.0: the upgrades open with the steps waiting on each and what they would weigh: what is worth building next.
+  function renderPlanUpgrades(d) {
+    var upgrades = arr(d.upgrades).filter(function (u) { return arr(u.steps).length; });
+    if (!upgrades.length) { replace($("pl-upgrades"), h("p", { class: "muted", text: "No step waits on an upgrade." })); return; }
+    replace($("pl-upgrades"), h("ul", { class: "pl-list" }, upgrades.map(function (u) {
+      var steps = arr(u.steps);
+      return h("li", null,
+        h("strong", { text: u.id ? "Upgrade #" + u.id + " " + u.title + " (" + u.status + ")" : "No upgrade request yet" }),
+        h("ul", { class: "pl-list" }, steps.map(function (st) {
+          return h("li", null, st.title, h("span", { class: "muted", text: " · line #" + st.line + (st.weight !== null && st.weight !== undefined ? " · would weigh " + st.weight : "") }));
+        })));
+    })));
+  }
+
   function renderPlanPicks(d) {
     var picks = arr(d.picks);
-    if (!picks.length) { replace($("pl-picks"), h("p", { class: "muted", text: "No cycle has run with the tree yet." })); return; }
+    if (!picks.length) { replace($("pl-picks"), h("p", { class: "muted", text: "No cycle has run with the plan yet." })); return; }
     replace($("pl-picks"), h("div", { class: "table-wrap" }, h("table", { class: "pl-table" },
-      h("thead", null, h("tr", null, ["Cycle", "When", "Kind", "The cycle worked on", "The tree would have taken", ""].map(function (t) { return h("th", { scope: "col", text: t }); }))),
+      h("thead", null, h("tr", null, ["Cycle", "When", "Kind", "Its step", "Why"].map(function (t) { return h("th", { scope: "col", text: t }); }))),
       h("tbody", null, picks.map(function (p) {
-        var worked = p.kind === "venture" ? "a venture" : p.line_title ? p.line_title + " (#" + p.line + ")" : p.worked ? "line #" + p.worked : "no line";
-        var tree = p.step ? p.step_title + " · " + (p.product_title || "line #" + p.product) : sentence(PLAN_DECIDED[p.decided] || p.decided);
-        return h("tr", { "data-agrees": p.agrees ? "true" : "false" },
+        var step = p.step ? p.step_title + " · " + (p.product_title || "line #" + p.product) : p.kind === "venture" ? "a venture" : "none ready";
+        return h("tr", null,
           h("td", { text: "#" + p.cycle }), h("td", { text: fmtDateTime(p.at) }), h("td", { text: p.kind }),
-          h("td", { text: worked }), h("td", { text: tree }),
-          h("td", { text: p.step ? (p.agrees ? "same product" : "another product") : "" }));
+          h("td", { text: step }), h("td", { text: sentence(PLAN_DECIDED[p.decided] || p.decided) }));
       })))));
   }
 
@@ -10701,7 +10542,7 @@
 
   // ------------------------------------------------------------------ tabs
 
-  var TABS = ["overview", "ledger", "ventures", "roadmap", "plan", "library", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
+  var TABS = ["overview", "ledger", "ventures", "plan", "library", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
   var MIND_TABS = ["strategy", "playbook", "lessons", "identity", "journal", "reviews"];  // 0.30.0: the playbook
   var VENTURE_VIEWS = ["pipeline", "running"];  // 0.27.0
 
@@ -10718,6 +10559,7 @@
   }
 
   function selectTab(name, focus) {
+    if (name === "roadmap") name = "plan";  // 0.35.0: the Roadmap tab's goal and milestones are the Plan tab's
     if (TABS.indexOf(name) < 0) name = "overview";
     ui.tab = name;
     savePref("ember-tab", name);
@@ -10732,8 +10574,7 @@
     if (name === "overview" && ui.charts.flow) { ui.charts.flow.resize(); ui.charts.balance.resize(); }
     if (name === "workspace") { ui.ws.visit = true; refreshWorkspace(); }
     if (name === "ventures") loadVentures();
-    if (name === "roadmap") loadRoadmap();
-    if (name === "plan") loadPlan();
+    if (name === "plan") { loadPlan(); loadRoadmap(); }
     if (name === "library") loadLibrary();
     if (name === "inbox" && ui.chat.stick) scrollChatToEnd();  // it can't scroll while the tab is hidden
   }

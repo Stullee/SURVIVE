@@ -165,11 +165,23 @@ def overflowing_snapshot() -> context.Snapshot:
         venture_day=(10**12, 10**12),
         decision_wakes=True,
         today=today,
-        roadmap=[  # type: ignore[misc]
-            {**milestone, "id": 1_000 + i, "due": (today + timedelta(days=i * 7 - 5)).isoformat()}
-            for i in range(roadmap.MAX_OPEN)
-        ],
-        roadmap_closed=[{**milestone, "id": 2_000 + i, "status": "missed"} for i in range(12)],  # type: ignore[misc]
+        # 0.35.0: YOUR PLAN at its longest: the goal, a project's products and the milestones still open
+        plan="\n".join(
+            [
+                f"Today: {today:%A} {today.isoformat()}.",
+                f"Your owner's goal: {'ä' * 300}",
+                *(f"Etsy: #{10**9 + i} {'ä' * 40} (launch, 1 of 4 steps done · {10**6} views)" for i in range(60)),
+                "Milestones still open:",
+                *(
+                    roadmap.milestone_line(
+                        {**milestone, "id": 1_000 + i, "due": (today + timedelta(days=i * 7 - 5)).isoformat()},
+                        today,
+                        False,
+                    )
+                    for i in range(6)
+                ),
+            ]
+        ),
         obligations=filler(obligations.MAX_BYTES),  # 0.12.0: at its bound
         library=library.Shelf(  # 0.12.0: a full library, with its newly studied documents at their longest
             documents=library.MAX_DOCUMENTS,
@@ -245,8 +257,7 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     assert "\n== WORKSHOP ==\nWorkshop check: workshop/scripts/" in planner
     assert "\n== TODAY'S REVIEW ==\nää" in planner and "\n== ETSY SHOP ==\nää" in planner
     assert "\n== VENTURES ==\n#1000 [researching] ää" in planner
-    assert "\n== ROADMAP ==\nToday: Wednesday 2026-09-30. 20 open milestones: 1 overdue, 1 this week," in planner
-    assert "Roadmap check: 1 milestone is overdue (#1000)" in planner
+    assert "\n== YOUR PLAN ==\nToday: Wednesday 2026-09-30.\nYour owner's goal: ää" in planner
     assert "\n== YOUR OWNER'S LIBRARY ==\n500 documents from your owner (5,000,000 characters)" in planner
     assert '\n== YOUR LAST CYCLE ==\nYour handoff to this cycle: "ää' in planner  # 0.12.0
     assert f"\n== WAITING FOR YOUR OWNER ==\n{context.WAITING_NOTE}\n#1000 create_account" in planner

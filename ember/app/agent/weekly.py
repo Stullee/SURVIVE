@@ -19,7 +19,9 @@ failed one is kept and tried again the next day.
 sub-goals were in every plan, not in the view), and what it said to start and stop was text no ranking read, so the
 next cycles took their lines as before. Now the view shows the goal with how far each sub-goal got (``goal_text``), and
 the look chooses the week's focus: up to MAX_FOCUS product lines its ordinary and marketing cycles push first
-(``focus``; lines.ready and lines.marketing rank them after what is owed and the line in progress).
+(``focus``; until 0.34.0 READY ranked them after what is owed and the line in progress). 0.35.0: the plan tree
+weighs no focus line: the look still names them (the owner's dashboard shows them), and Release 2c lets it edit the
+tree.
 """
 
 from __future__ import annotations
@@ -333,10 +335,7 @@ def planner_text(row: sqlite3.Row | None) -> str:
         lines.append(f"The business's bottleneck: {_one(answer['bottleneck'], 300)}")
     chosen = [i for i in answer.get("focus") or [] if isinstance(i, int) and not isinstance(i, bool)]
     if chosen:  # 0.30.0
-        lines.append(
-            "This week's focus lines (READY ranks them after what is owed and the line in progress): "
-            + ", ".join(f"#{i}" for i in chosen)
-        )
+        lines.append("This week's focus lines: " + ", ".join(f"#{i}" for i in chosen))
     if answer.get("stop"):
         lines.append("Stop: " + "; ".join(_one(i, 120) for i in answer["stop"]))
     if answer.get("start"):

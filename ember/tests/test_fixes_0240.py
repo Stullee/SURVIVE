@@ -20,7 +20,8 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app import paths  # noqa: E402
-from app.agent import bets, lines, loop, memory, obligations, prompts, quality, roadmap, tools, ventures  # noqa: E402
+from app.agent import bets, loop, memory, obligations, prompts, quality, roadmap, tools, ventures  # noqa: E402
+from app.agent import plan as plan_tree  # noqa: E402
 from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls, request_kind  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import bluesky  # noqa: E402
@@ -28,9 +29,12 @@ from app.products import make  # noqa: E402
 from tests.test_agent import make_agent, plan, rows, text  # noqa: E402
 from tests.test_agent import tools as calls  # noqa: E402
 from tests.test_bluesky import WORDS, a_post, post_context, posted  # noqa: E402
-from tests.test_etsy import call, shop_context  # noqa: E402
+from tests.test_etsy import (  # noqa: E402
+    call,
+    shop_context,
+    started,  # noqa: E402
+)
 from tests.test_fixes_0140_channels import not_set_up  # noqa: E402
-from tests.test_listing_gates import started  # noqa: E402
 from tests.test_loop_shapes import JOURNAL, PLAN, run  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
 from tests.test_pinterest import PINNING  # noqa: E402
@@ -112,7 +116,7 @@ def test_every_verdict_names_the_listing_it_judged(data_dir: Path) -> None:
         named = quality.label(conn, scope, second)
         older = quality.label(conn, scope, first)
         said = quality.review_text(conn, scope, project)
-        items = lines.fixes(conn, scope, project)  # 0.28.0: the line's jobs in READY (slack.py's improve items)
+        items = quality.fixes(conn, scope, project)  # 0.35.0: YOUR STEP quotes them on the critic's step
         assert quality.verdict(conn, scope, project) == "improve"
     assert named == f'listing #{second} "Resume Template Commercial License Bundle"'
     assert said.startswith(f"quality 5/10, improve ({agent.clock.today().isoformat()}, {named}): The cover letter")
@@ -138,7 +142,7 @@ def test_a_verdict_older_than_a_change_of_its_listing_waits_for_the_next_check(d
             (scope.mode, scope.session, approval, first, now(agent), now(agent)),
         )
     with agent.db.connection() as conn:
-        ready = lines.fixes(conn, scope, project)
+        ready = quality.fixes(conn, scope, project)
         said = quality.review_text(conn, scope, project)
         assert quality.due(conn, scope, agent.clock.today()) == (project, first)
     assert ready == [
@@ -152,8 +156,9 @@ def quality_label(agent: Any, listing: int) -> str:
         return quality.label(conn, agent.scope(), listing)
 
 
-def test_a_line_whose_work_the_owner_s_park_stopped_gets_no_check_and_nothing_in_ready(data_dir: Path) -> None:
-    """With 0.23.3 nothing may change, pin, post or recommend such a line's listings: no paid check, no READY item."""
+def test_a_line_whose_work_the_owner_s_park_stopped_gets_no_check_and_no_step(data_dir: Path) -> None:
+    """With 0.23.3 nothing may change, pin, post or recommend such a line's listings: no paid check, no step taken
+    (0.35.0: its steps wait while the park holds; READY until 0.34.0)."""
     agent, project = started(data_dir)
     with agent.db.transaction() as conn:
         leg = ventures.create(conn, agent.scope(), title="A", pitch="p.", stage="building", now=now(agent))
@@ -161,14 +166,16 @@ def test_a_line_whose_work_the_owner_s_park_stopped_gets_no_check_and_nothing_in
     [listing] = [r["listing_id"] for r in rows(agent, "SELECT listing_id FROM etsy_listings")]
     checked(agent, project, listing)
     with agent.db.connection() as conn:
-        assert lines.fixes(conn, agent.scope(), project)
+        assert quality.fixes(conn, agent.scope(), project)
     assert owner(agent).decide_venture(leg, {"action": "park", "comment": "Stop."}, "Stefan").status == 200
     agent.clock.advance(days=quality.RECHECK_DAYS + 1)  # due again by its age, if it weren't stopped
     with agent.db.connection() as conn:
         assert quality.due(conn, agent.scope(), agent.clock.today()) is None
-        items = lines.ready(conn, agent.scope(), today=agent.clock.today(), explore=False, markets=False)
-        items += lines.marketing(conn, agent.scope(), printify_links=True)
-    assert not [i for i in items if i.project_id == project]
+    with agent.db.transaction() as conn:
+        plan_tree.keep(conn, agent.scope(), now(agent), agent.clock.today(), {})
+        found = plan_tree.candidates(conn, agent.scope(), now(agent), agent.clock.today(), {})
+    mine = [c for c in found if c.step.product == project]
+    assert mine and {c.waiting for c in mine} == {"hold"}
 
 
 def test_the_upgrade_names_the_listing_each_earlier_check_judged(data_dir: Path) -> None:
@@ -249,7 +256,7 @@ def test_a_project_update_written_inside_a_work_step_s_journal_is_made(data_dir:
         "summary": "Found the cover's maths",
         "entry": 'Checked the cover.</entry>\n<parameter name="next">Fix the cover.</parameter>\n</invoke>\n'
         f'<invoke name="project_update">\n<parameter name="project_id">{project}',
-        "next_step": "Rebuild the cover with the building's numbers.",
+        "hypothesis": "Buyers pay for a cover with the building's numbers.",
         "note": "Cover maths checked.",
     }
     made = call(ctx, "write_journal", leaked)
@@ -261,8 +268,8 @@ def test_a_project_update_written_inside_a_work_step_s_journal_is_made(data_dir:
         "entry": "Checked the cover.",
         "next": "Fix the cover.",
     }  # noqa: E501
-    [row] = rows(agent, f"SELECT next_step, notes FROM projects WHERE id = {project}")
-    assert row["next_step"] == leaked["next_step"] and row["notes"].endswith("Cover maths checked.")
+    [row] = rows(agent, f"SELECT hypothesis, notes FROM projects WHERE id = {project}")
+    assert row["hypothesis"] == leaked["hypothesis"] and row["notes"].endswith("Cover maths checked.")
 
 
 def test_an_unknown_tool_written_inside_a_text_takes_nothing_out() -> None:
@@ -413,7 +420,13 @@ def test_an_owner_s_message_given_to_obligation_done_is_named_as_such(data_dir: 
 
 def test_a_milestone_ember_s_code_set_says_its_date_doesn_t_move(data_dir: Path) -> None:
     agent, project = started(data_dir)
-    [bar] = rows(agent, f"SELECT * FROM milestones WHERE project_id = {project} AND created_by = 'code'")
+    with agent.db.transaction() as conn:  # a venture's first test (0.35.0: the listing test's bars retired)
+        made = roadmap.create(
+            conn, agent.scope(), title="First test: A", measure="Ember's code checks it", now=now(agent),
+            due=(agent.clock.today() + timedelta(days=21)).isoformat(), project_id=project, created_by="code",
+            kind="first_test", metric="views_total", target=10,
+        )  # fmt: skip
+    [bar] = rows(agent, f"SELECT * FROM milestones WHERE id = {made}")
     assert roadmap.owner_said(bar) == " · set by Ember's code (its date doesn't move)"
     with agent.db.connection() as conn:
         card = roadmap.review_text(conn, agent.scope(), agent.clock.today(), "2000-01-01T00:00:00Z")

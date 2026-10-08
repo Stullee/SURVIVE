@@ -634,10 +634,10 @@ class Owner:
 
         return _reply(run)
 
-    # --- the plan tree (0.34.0: a preview; Ember's cycles don't read it yet) ---
+    # --- the plan tree (0.34.0: a preview; 0.35.0: it steers Ember's cycles) ---
 
     def pin_step(self, node_id: int, body: Any, who: str | None) -> Reply:
-        """Pin a step of the plan tree (it comes first once the tree steers), or unpin it."""
+        """Pin a step of the plan tree (it comes first in the next cycle), or unpin it."""
 
         def run() -> Reply:
             data = _body(body, {"pinned"})
@@ -654,6 +654,71 @@ class Owner:
             return Reply(200, {"id": node_id, "pinned": pinned})
 
         return _reply(run)
+
+    def end_product(self, node_id: int, body: Any, who: str | None, done: bool) -> Reply:
+        """0.35.0: close a product of the plan (done: its line succeeded) or drop it (abandoned), with its steps and
+        its unlocks: only the owner does (Ember holds a product at most)."""
+
+        def run() -> Reply:
+            data = _body(body, {"why"})
+            why = _text(data, "why", 300) or ""
+            with self.db.transaction() as conn:
+                try:
+                    line = plan.end_product(conn, self.scope, node_id, done, why, _signed(who), self._now())
+                except plan.PlanError as exc:
+                    raise OwnerError(exc.field, str(exc), exc.status) from exc
+            said = "closed it as done" if done else "dropped it"
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} {said}: product line #{line} in the plan")
+            return Reply(200, {"id": node_id, "line": line, "status": "done" if done else "dropped"})
+
+        return _reply(run)
+
+    def resume_product(self, node_id: int, who: str | None) -> Reply:
+        """0.35.0: lift Ember's hold on a product: its steps are weighed again."""
+
+        def run() -> Reply:
+            with self.db.transaction() as conn:
+                try:
+                    line = plan.owner_resume(conn, self.scope, node_id, _signed(who), self._now())
+                except plan.PlanError as exc:
+                    raise OwnerError(exc.field, str(exc), exc.status) from exc
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} lifted the hold on product line #{line}")
+            return Reply(200, {"id": node_id, "line": line, "hold": None})
+
+        return _reply(run)
+
+    def keep_product(self, node_id: int, body: Any, who: str | None) -> Reply:
+        """0.35.0: answer a decide-by date with keep it (drop is end_product): the decision step closes."""
+
+        def run() -> Reply:
+            data = _body(body, {"why"})
+            why = _text(data, "why", 200) or ""
+            with self.db.transaction() as conn:
+                try:
+                    line = plan.owner_keep(conn, self.scope, node_id, why, _signed(who), self._now())
+                except plan.PlanError as exc:
+                    raise OwnerError(exc.field, str(exc), exc.status) from exc
+            events.record(
+                self.db, "info", "owner", f"{who or 'The owner'} kept product line #{line} at its decide-by date"
+            )
+            return Reply(200, {"id": node_id, "line": line, "kept": True})
+
+        return _reply(run)
+
+    def product_autonomy(self, node_id: int, body: Any, who: str | None) -> Reply:
+        """0.35.0: the Autonomy box of a product: its unlocks stand on the product's own milestone (made the first time
+        one is set; the roadmap shows none of it), checked as set_autonomy checks a milestone's."""
+        with self.db.transaction() as conn:
+            row = plan.node(conn, self.scope, node_id)
+            if row is None or row["level"] != "product":
+                return Reply(404, {"error": "no such product", "field": "id"})
+            if row["status"] != "open":
+                return Reply(409, {"error": f"this product is {row['status']}", "field": "id"})
+            milestone_id = plan.product_milestone(conn, self.scope, row, self._now())
+        reply = self.set_autonomy(milestone_id, body, who)
+        if reply.status == 200 and isinstance(reply.body, dict):
+            return Reply(200, {**reply.body, "product": node_id})
+        return reply
 
     def set_worth(self, node_id: int, body: Any, who: str | None) -> Reply:
         """Set a product's worth (from 0.5 to 10; it replaces the one Ember's code computes), or clear it (null)."""

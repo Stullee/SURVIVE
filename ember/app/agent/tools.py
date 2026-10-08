@@ -40,7 +40,6 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -48,7 +47,6 @@ from .. import paths
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
-from ..economy.life import ledger_scope
 from ..integrations import (
     bluesky,
     bluesky_publisher,
@@ -81,18 +79,20 @@ from . import (
     metrics,
     netguard,
     obligations,
+    plan,
     policy,
     predictions,
     roadmap,
     stages,
     store,
+    templates,
     ventures,
     website,
     workfiles,
 )
 from .memory import CAPS, HEADING_REFUSAL, MAX_APPEND_LINES, Memory, MemoryError_, heading_line
 from .sandbox import Jail, Limits, QuotaError, SandboxError, kind_of
-from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
+from .store import OPEN_STATUSES, AgentScope
 
 log = logging.getLogger(__name__)
 
@@ -167,7 +167,8 @@ VENTURE_TOOLS = frozenset({"brainstorm", "evidence", "venture_case"})
 LIBRARY_TOOLS = frozenset({"knowledge_search", "library_read"})
 # Offered only in ordinary cycles (0.12.0): a venture cycle researches and decides, so its prompt no longer carries
 # the tools for building and selling (making and looking at files, the workshop, the shop, email and Reddit). They
-# belong to ordinary cycles, like the legs they serve. 0.13.0: so does laying out the roadmap (milestone_plan).
+# belong to ordinary cycles, like the legs they serve. 0.35.0: so do the changes to the plan tree's steps (plan_step;
+# laying out a roadmap of Ember's own, milestone_plan, retired: the plan tree replaces it).
 ORDINARY_TOOLS = (
     frozenset(
         {
@@ -180,7 +181,7 @@ ORDINARY_TOOLS = (
             "workshop",
             "draft",
             "propose_reddit_post",
-            "milestone_plan",
+            "plan_step",
         }
     )
     | ETSY_TOOLS
@@ -315,15 +316,14 @@ def _b(description: str) -> Field:
     return Field("boolean", description, required=False)
 
 
-def _a(description: str, most: int, items: dict[str, Field]) -> Field:
+def _a(description: str, most: int, items: dict[str, Field], required: bool = True) -> Field:
     """0.12.0: a list of 1 to ``most`` objects, each with ``items`` as its fields."""
-    return Field("array", description, max_len=most, items=tuple(items.items()))
+    return Field("array", description, required, max_len=most, items=tuple(items.items()))
 
 
 APPROVAL_TYPES = ("publish", "contact", "create_account", "spend_money", "sell", "other")
-# A roadmap laid out in one call (0.12.0: each child needed its parent's number from a turn before).
-PLAN_MILESTONES = 12
-PROJECT_STATUSES = ("idea", "active", "waiting", "succeeded", "failed", "abandoned")
+# 0.35.0: Ember's own (succeeded, failed and abandoned close a project: only the owner closes or drops one)
+PROJECT_STATUSES = ("idea", "active", "waiting")
 
 SPECS: dict[str, Spec] = {
     spec.name: spec
@@ -398,7 +398,6 @@ SPECS: dict[str, Spec] = {
                 "hypothesis": _s(
                     "What you believe and how you will know (who pays, for what, how much).", 400, cut=True
                 ),
-                "next_step": _s("The next concrete step (long text: a workspace file).", 200, cut=True),
                 "status": _s("", 10, enum=("idea", "active")),
                 "venture_id": _i("The venture it belongs to (its leg), if any.", required=False),
             },
@@ -407,12 +406,10 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "project_update",
-            "Update one of your projects. A closed project (succeeded, failed, abandoned) is final. 'succeeded' needs "
-            "revenue recorded for it.",
+            "Update one of your projects (its steps are your plan's: plan_step). Only your owner closes or drops one.",
             {
                 "project_id": _i(""),
                 "status": _s("", 10, required=False, enum=PROJECT_STATUSES),
-                "next_step": _s("The next concrete step (long text: a workspace file).", 200, required=False, cut=True),
                 "hypothesis": _s("A sharper hypothesis.", 400, required=False, cut=True),
                 "note": _s("A short note: what happened, what you learned.", 300, required=False, cut=True),
                 "venture_id": _i("Link it to this venture (its leg).", required=False),
@@ -425,10 +422,36 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "project_list",
-            "List your open projects: number, status, title, venture, last change and next step (close the stale "
-            "ones with project_update). Free.",
+            "List your open projects: number, status, title, venture, last change and the stage of your plan. Free.",
             {},
             per_cycle=3,
+        ),
+        Spec(
+            "plan_step",
+            "Change your plan for this cycle's product line, with why (your owner sees each change): add steps (to a "
+            "stage, or before a step), split a step into smaller ones or replace it, say a step you added is done, say "
+            "a step waits on a block Ember's code checks (a request to your owner, an upgrade request, another step, "
+            f"or a day at most {plan.WAIT_DAYS} days ahead; {plan.WAITS_A_DAY} a day), or hold the product to work "
+            "elsewhere (resume it later). What your owner, a promise or Ember's code put there stays, and a step "
+            "with a check closes when it passes. Free.",
+            {
+                "action": _s("", 8, enum=plan.ACTIONS),
+                "step_id": _i("The step (add: the one the new steps come before).", required=False),
+                "steps": _a(
+                    "add, split, replace: the new steps, in order.",
+                    plan.MAX_NEW_STEPS,
+                    {"title": _s("A small concrete step.", plan.TITLE_CHARS), "kind": _s("", 8, enum=plan.STEP_KINDS)},
+                    required=False,
+                ),
+                "stage": _s("add: its stage, if not the current one.", 10, required=False, enum=templates.STAGES),
+                "on": _s("wait: what blocks it.", 8, required=False, enum=plan.WAIT_ON),
+                "ref": _i("wait: the request's, upgrade request's or step's number.", required=False),
+                "until": _s("wait on a day: YYYY-MM-DD.", 10, required=False),
+                "project_id": _i("resume: the product line on hold.", required=False),
+                "why": _s("Your reason (done: what was done).", 200, cut=True),
+            },
+            per_cycle=6,
+            reflect=True,
         ),
         Spec(
             "venture_create",
@@ -574,56 +597,6 @@ SPECS: dict[str, Spec] = {
                 "part": _i("Which part, from 1.", required=False, minimum=1),
             },
             per_cycle=10,
-        ),
-        Spec(
-            "milestone_plan",
-            f"Put 1 to {PLAN_MILESTONES} milestones on your roadmap: sub-goals of the goal, the milestones leading "
-            "to them and this week's steps, each due no later than its parent. With a metric, "
-            "Ember's code checks it and closes it (done once met, missed after its date); without, your done is "
-            f"self-reported. Title, measure, metric and costs are final; a date can move. At most "
-            f"{roadmap.MAX_OPEN - roadmap.OWNER_SLOTS} open (Ember's code's aside). Free.",
-            {
-                "milestones": _a(
-                    "Parents first.",
-                    PLAN_MILESTONES,
-                    {
-                        "key": _s("Its name in this call, for others' parent.", 20, required=False),
-                        "parent": _s("A key from this call, or a milestone's number.", 20, required=False),
-                        "title": _s("What you will reach.", roadmap.LIMITS["title"]),
-                        "measure": _s(
-                            "How you will know: a number or a fact (optional with a metric).",
-                            roadmap.LIMITS["measure"],
-                            required=False,
-                        ),
-                        "metric": _s(
-                            f"Checked by Ember's code, for its project or venture (else all): {metrics.help_text()}.",
-                            24,
-                            required=False,
-                            enum=metrics.NAMES,
-                        ),
-                        "target": _s(
-                            "A number (USD for *_usd); a stage for stage_reached; none for case_complete and qa_clean.",
-                            12,
-                            required=False,
-                        ),
-                        "due": _s("YYYY-MM-DD, at most a year ahead.", 10),
-                        "likely": _i(
-                            "With a metric: your odds (%) it is met in time; Ember's code settles them.",
-                            minimum=predictions.LIKELY[0],
-                            maximum=predictions.LIKELY[1],
-                            required=False,
-                        ),
-                        "venture_id": _i("The venture it serves.", required=False),
-                        "project_id": _i("The project it serves.", required=False),
-                        "replaces": _i("The dropped or missed milestone it replaces.", required=False),
-                        "budget_usd": _s("API spending you plan for it.", 10, required=False),
-                        "cash_eur": _s("Your owner's cash it needs.", 10, required=False),
-                        "owner_hours": _s("Your owner's hours it needs.", 6, required=False),
-                    },
-                ),
-            },
-            per_cycle=3,
-            reflect=True,
         ),
         Spec(
             "milestone_update",
@@ -1314,25 +1287,13 @@ def definitions(
 
 
 def _channel_guides(spec: Spec, channels: dict[str, bool]) -> Spec:
-    """0.13.0: the guide tool's topics and milestone_plan's metrics without the manuals and the metrics of the channels
-    this cycle doesn't have."""
+    """0.13.0: the guide tool's topics without the manuals of the channels this cycle doesn't have."""
     off = {channel for channel, on in channels.items() if not on}
     if not off:
         return spec
     if spec.name == "guide":
         topic = spec.fields["topic"]
         return replace(spec, fields={"topic": replace(topic, enum=tuple(t for t in topic.enum if t not in off))})
-    if spec.name == "milestone_plan":
-        unused = {name for channel in off for name in metrics.CHANNEL_METRICS.get(channel, ((), ""))[0]}
-        milestones = spec.fields["milestones"]
-        items = dict(milestones.items)
-        metric = items["metric"]
-        items["metric"] = replace(
-            metric,
-            description=metric.description.replace(metrics.help_text(), metrics.help_text(off)),
-            enum=tuple(m for m in metric.enum if m not in unused),
-        )
-        return replace(spec, fields={"milestones": replace(milestones, items=tuple(items.items()))})
     return spec
 
 
@@ -1640,7 +1601,7 @@ def _run(
         if spec is not None and ctx.venture and name in ORDINARY_TOOLS:
             raise ToolError(
                 f"{name} is not one of your tools in a venture cycle: making files, the shop, Pinterest, Bluesky, "
-                "KDP, email, Reddit and laying out the roadmap belong to ordinary and marketing cycles"
+                "KDP, email, Reddit and your plan's steps belong to ordinary and marketing cycles"
             )
         if spec is not None and ctx.marketing and name in BUILDING_TOOLS:  # 0.28.0
             raise ToolError(
@@ -1649,8 +1610,8 @@ def _run(
             )
         if spec is not None and ctx.marketing_apart and not ctx.marketing and name in MARKETING_TOOLS:  # 0.28.0
             raise ToolError(
-                f"{name} belongs to marketing cycles: your owner gives marketing a share of your spending, and a "
-                "marketing cycle brings buyers to one line's listings with pins, Bluesky posts and blog posts"
+                f"{name} belongs to marketing cycles: a marketing step of your plan gets a cycle of its own, which "
+                "brings buyers to one line's listings with pins, Bluesky posts and blog posts"
             )
         if spec is None or not offered(
             name,
@@ -1671,8 +1632,8 @@ def _run(
             raise ToolError(f"there is no tool called {str(name)[:40]!r}")
         if phase == "reflect" and not spec.reflect:
             raise ToolError(
-                f"{name} can't be used while reflecting; only journal, memory updates, projects, ventures, the "
-                "roadmap, sleep, messages and upgrade requests (nothing reads a tool's answer after this last reply)"
+                f"{name} can't be used while reflecting; only journal, memory updates, projects, ventures, your "
+                "plan, sleep, messages and upgrade requests (nothing reads a tool's answer after this last reply)"
             )
         if phase == "act" and not spec.act:
             if name != "write_journal":
@@ -2167,12 +2128,12 @@ def _no_heading(args: dict[str, Any], *names: str) -> None:
 
 
 def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
-    _no_heading(args, "title", "hypothesis", "next_step")
+    _no_heading(args, "title", "hypothesis")
     line = ctx.state.focus_project_id
     if ctx.state.one_line and line is not None:  # 0.28.0: one line a cycle
         raise ToolError(
-            f"this cycle works on product line #{line}: a new product line is a cycle of its own (READY offers 'new "
-            "line' when Ember's code ranks your lines)"
+            f"this cycle works on product line #{line}: a new product line starts in a cycle of its own (Ember's code "
+            "gives you one when no step of your plan is ready)"
         )
     open_ = store.open_projects(conn, ctx.scope)  # 0.19.1: as many as the agent needs (it was at most 8)
     if any(p["title"].strip().lower() == args["title"].strip().lower() for p in open_):
@@ -2186,7 +2147,7 @@ def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         cycle_id=ctx.cycle_id,
         title=args["title"].strip(),
         hypothesis=args["hypothesis"].strip(),
-        next_step=args["next_step"].strip(),
+        next_step="",  # 0.35.0: its steps are the plan tree's (plan.py lays it out)
         status=args["status"],
         now=ctx.now(),
         venture_id=venture_id,
@@ -2201,7 +2162,10 @@ def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         store.update_cycle(conn, ctx.cycle_id, project_id=project_id)
     alike = _alike(conn, ctx, f"{args['title']} {args.get('hypothesis') or ''}")
     return Outcome(
-        True, f"Created project #{project_id}.{alike}", f"created #{project_id} {args['title'][:60]}", project_id
+        True,
+        f"Created project #{project_id}: Ember's code lays it out in your plan with its stages and steps.{alike}",
+        f"created #{project_id} {args['title'][:60]}",
+        project_id,
     )
 
 
@@ -2221,15 +2185,15 @@ def _project_list(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     lines = [f"{len(projects)} open projects, the one changed last first, the ones your owner's park stopped last:"]
     for p in projects:
         venture = f" · venture #{p['venture_id']}" if p["venture_id"] else ""
-        step = _cut(" ".join(str(p["next_step"] or "").split()), 80) or "-"
         title = _cut(" ".join(str(p["title"]).split()), 80)
         changed = str(p["updated_at"])[:10]
-        lines.append(f"#{p['id']} [{p['status']}] {title}{venture} · changed {changed} · next: {step}")
+        stage = plan.current_stage_name(conn, ctx.scope, int(p["id"]))  # 0.35.0: its steps are the plan's
+        lines.append(f"#{p['id']} [{p['status']}] {title}{venture} · changed {changed} · plan: {stage or '-'}")
     return Outcome(True, "\n".join(lines), f"{len(projects)} open projects")
 
 
 def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
-    _no_heading(args, "next_step", "hypothesis", "note")
+    _no_heading(args, "hypothesis", "note")
     row = store.project(conn, ctx.scope, args["project_id"])
     if row is None:
         raise ToolError(f"there is no project #{args['project_id']}")
@@ -2237,12 +2201,14 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         raise ToolError(f"project #{row['id']} is {row['status']}, which is final")
     changes: dict[str, Any] = {}
     status = args.get("status")
-    # 0.28.0: closing another line (a review's stop) is no work on it; 0.33.0: nor is keeping its record (a note, its
-    # next step, its hypothesis, waiting): live, a Pinterest project's next step said "waiting on owner" for a day
-    # after its owner set it up, and the daily review read it as "never set up". Reopening it, a bet on it or moving it
-    # to a venture is its own cycle's work, and a cycle without a line yet takes the one it touches first.
+    if status is not None and status not in PROJECT_STATUSES:  # 0.35.0: past the schema too (a call run from a text)
+        raise ToolError(f"only your owner closes or drops a project: project #{row['id']} stays {row['status']}")
+    # 0.33.0: keeping another line's record (a note, its hypothesis, waiting) is no work on it: live, a Pinterest
+    # project's next step said "waiting on owner" for a day after its owner set it up, and the daily review read it as
+    # "never set up". Reopening it, a bet on it or moving it to a venture is its own cycle's work, and a cycle without a
+    # line yet takes the one it touches first. 0.35.0: only the owner closes a project (its next step is the plan's).
     work = status in ("idea", "active") or bool(args.get("bet")) or args.get("venture_id") is not None
-    if status not in CLOSED_STATUSES and (work or ctx.state.focus_project_id is None):
+    if work or ctx.state.focus_project_id is None:
         _line(ctx, int(row["id"]), "update")
     if status in ("idea", "active") and status != row["status"]:
         held = ventures.owner_stopped(conn, ctx.scope, row["venture_id"])
@@ -2254,19 +2220,7 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
                 + (" until they take it up again" if what == "parked" else "; close this one")
             )
     if status and status != row["status"]:
-        if status == "succeeded":
-            earned, cost = project_net(conn, ctx.scope, row["id"])
-            if earned <= 0:
-                raise ToolError("a project can only succeed once your owner has recorded revenue for it")
-            if earned <= cost:
-                raise ToolError(
-                    f"a project succeeds when it earned more than it cost: #{row['id']} earned "
-                    f"${micros_to_usd(earned):.2f} (revenue less its expenses) and cost ${micros_to_usd(cost):.2f} "
-                    "in API calls so far"
-                )
         changes["status"] = status
-    if args.get("next_step"):
-        changes["next_step"] = args["next_step"].strip()
     if args.get("hypothesis"):
         changes["hypothesis"] = args["hypothesis"].strip()
     if args.get("note"):
@@ -2346,6 +2300,68 @@ def _left_behind(ctx: ToolContext, conn: Any, before: Any) -> str:
     if others:
         return ""
     return f" Venture #{old} ({venture['title']}) has no open project now: its test needs one."
+
+
+def _plan_step(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.35.0: Ember's change to her plan (plan.py), on the cycle's product line (resume names the line on hold: a
+    held line never has a cycle of its own). Each change is kept with its reason, which the owner sees."""
+    _no_heading(args, "why")
+    steps = args.get("steps") or []
+    for step in steps:
+        if heading_line(step["title"]):
+            raise ToolError(HEADING_REFUSAL.format(name="steps"))
+    action, why = args["action"], " ".join(args["why"].split())
+    now = ctx.now()
+    if action == "resume":
+        line = args.get("project_id")
+        if line is None:
+            raise ToolError("resume names the product line on hold (project_id)")
+    else:
+        line = ctx.state.focus_project_id
+        if line is None:
+            raise ToolError("this cycle works on no product line yet: plan_step changes the plan of your step's line")
+        if action in ("add", "split", "replace") and not steps:
+            raise ToolError(f"{action} needs the new steps (steps)")
+    try:
+        if action == "add":
+            text = plan.add_steps(
+                conn,
+                ctx.scope,
+                line,
+                steps,
+                why,
+                ctx.cycle_id,
+                now,
+                stage=args.get("stage"),
+                before=args.get("step_id"),
+            )
+        elif action == "split":
+            text = plan.split_step(conn, ctx.scope, line, args.get("step_id"), steps, why, ctx.cycle_id, now)
+        elif action == "replace":
+            text = plan.replace_step(conn, ctx.scope, line, args.get("step_id"), steps, why, ctx.cycle_id, now)
+        elif action == "done":
+            text = plan.step_done(conn, ctx.scope, line, args.get("step_id"), why, ctx.cycle_id, now)
+        elif action == "wait":
+            text = plan.wait_step(
+                conn,
+                ctx.scope,
+                line,
+                args.get("step_id"),
+                args.get("on"),
+                args.get("ref"),
+                args.get("until"),
+                why,
+                ctx.cycle_id,
+                now,
+                ctx.clock.today(),
+            )
+        elif action == "hold":
+            text = plan.hold(conn, ctx.scope, line, why, ctx.cycle_id, now)
+        else:
+            text = plan.resume(conn, ctx.scope, line, why, ctx.cycle_id, now)
+    except plan.PlanError as exc:
+        raise ToolError(str(exc)) from None
+    return Outcome(True, text, f"{action}: {_cut(text, 80)}", line)
 
 
 def project_net(conn: Any, scope: AgentScope, project_id: int) -> tuple[int, int]:
@@ -2939,268 +2955,6 @@ def _parent(conn: Any, scope: AgentScope, parent_id: int, due: date, milestone_i
     return parent
 
 
-def _metric(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tuple[metrics.Metric, int, int | None] | None:
-    """0.12.0: the metric Ember's code checks a new milestone by, its target and baseline (views or favorites now,
-    for what is gained from now on); refused when it can't be checked, or is met already."""
-    name = args.get("metric")
-    if not name:
-        return None
-    m = metrics.CATALOGUE[name]
-    project_id, venture_id = args.get("project_id"), args.get("venture_id")
-    if m.venture and venture_id is None:
-        raise ToolError(f"{name} measures a venture: give venture_id")
-    if m.etsy and ctx.etsy is None:
-        raise ToolError(f"{name} is read from your Etsy shop, which isn't set up")
-    if m.history and not (ctx.etsy and ctx.etsy.stats_history):
-        raise ToolError(
-            f"{name} needs the views history, which your owner hasn't turned on (the etsy_stats_history option): "
-            "choose listings_live or orders_observed, or ask your owner"
-        )
-    try:
-        target = metrics.parse_target(m, args.get("target"))
-    except metrics.TargetError as exc:
-        raise ToolError(str(exc)) from None
-    row = {
-        "metric": name,
-        "target": target,
-        "baseline": None,
-        "created_at": ctx.now(),
-        "project_id": project_id,
-        "venture_id": venture_id,
-    }
-    baseline = None
-    if m.history:
-        baseline = metrics.listing_counts(conn, ctx.scope, row, "views" if name == "views_delta" else "favorites")
-    elif not m.since_set:  # how things are now: a target met already is no milestone
-        books = metrics.Books(  # 0.29.0: the books too (revenue_month_usd)
-            ledger_scope(ctx.db, ctx.scope.mode),
-            ctx.clock,
-            ctx.db.get_meta(etsy_publisher.meta_key(ctx.scope.mode, "last_sync_at")),
-        )
-        now = metrics.read(conn, ctx.scope, row, books, ctx.now(), new=True)
-        if isinstance(now, metrics.Reading) and now.value >= target:
-            raise ToolError(
-                f"{name} is {metrics.amount(m, now.value)} already{now.detail}, so a target of "
-                f"{metrics.target_text(m, target)} is met at once: aim further"
-            )
-    return m, target, baseline
-
-
-def _amount(text: Any, name: str, most: int, scale: int) -> int | None:
-    """0.12.0: an amount a milestone may take (USD, EUR or hours), in its smallest unit (``scale`` of them to one)."""
-    raw = " ".join(str(text or "").split()).replace(",", ".").lstrip("$€").removesuffix("h").strip()
-    if not raw:
-        return None
-    try:
-        value = Decimal(raw)
-    except InvalidOperation:
-        raise ToolError(f"{name} is a number, e.g. 1.50") from None
-    if not value.is_finite() or value <= 0 or value > most:
-        raise ToolError(f"{name} is a number above 0 and at most {most:,}")
-    return max(1, int(value * scale))
-
-
-_NUMBER = re.compile(r"^#?(\d{1,9})$")
-
-
-def _milestone_plan(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
-    """0.12.0: 1 to PLAN_MILESTONES milestones in one call, a parent named by its key in the call or its number. All
-    or none: a refused one refuses the call, and nothing is put on the roadmap."""
-    items = args["milestones"]
-    keys: dict[str, int] = {}
-    made: list[tuple[int, str]] = []
-    for i, item in enumerate(items, 1):
-        key = " ".join((item.get("key") or "").split())
-        try:
-            if key and (key in keys or _NUMBER.match(key)):
-                raise ToolError(f"key {key!r} is taken or looks like a milestone's number: choose another")
-            parent = " ".join((item.get("parent") or "").split())
-            parent_id = None
-            if parent:
-                number = _NUMBER.match(parent)
-                if number is None and parent not in keys:
-                    raise ToolError(f"parent {parent!r} is no key of an earlier milestone in this call, nor a number")
-                parent_id = int(number[1]) if number else keys[parent]
-            milestone_id, line = _milestone_create(ctx, {**item, "parent_id": parent_id}, conn)
-        except ToolError as exc:
-            if len(items) == 1:
-                raise
-            name = f"milestone {i} of {len(items)}" + (f" ({key})" if key else "")
-            raise ToolError(f"{name}: {_unstop(str(exc))}. Nothing was put on your roadmap") from None
-        if key:
-            keys[key] = milestone_id
-        made.append((milestone_id, line))
-    ids = [m for m, _ in made]
-    summary = f"milestone{'s' if len(ids) != 1 else ''} {_numbers(ids)}"
-    return Outcome(True, "\n".join(line for _, line in made), summary[:300])
-
-
-# 0.15.0: a number of views or favorites of the shop's listings in a milestone's words, which Ember's code counts on
-# Etsy (not a pin's, a post's or the website's)
-_COUNTED = re.compile(r"\b\d[\d.,]*\s+(views?|favou?rites?)\b", re.IGNORECASE)
-_SHOP = re.compile(r"\b(?:listings?|etsy|shop)\b", re.IGNORECASE)
-_ELSEWHERE = re.compile(
-    r"\b(?:pins?|pinterest|website|site|blog|posts?|reddit|instagram|tiktok|youtube|videos?)\b", re.IGNORECASE
-)
-_LIVE = re.compile(r"\b(?:live|listed)\b", re.IGNORECASE)  # 0.15.0: "X live" goals, self-graded: a hint, not a refusal
-_SOLD = re.compile(r"\b\d+\s+(?:orders?|sales?)\b", re.IGNORECASE)  # 0.15.0: "3 sales" goals: a hint as well
-
-
-def _milestone_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> tuple[int, str]:
-    """One milestone of a plan (``args``: its fields, its parent's number as parent_id): its number, and the line
-    that says what happened."""
-    title = " ".join(args["title"].split())
-    measure = " ".join((args.get("measure") or "").split())
-    if not title:
-        raise ToolError("the title can't be empty")
-    if args.get("target") and not args.get("metric"):
-        raise ToolError("target is a metric's: set metric too")
-    if not measure and not args.get("metric"):
-        raise ToolError("say how you will know it is reached: a measure, or a metric Ember's code checks")
-    words = f"{title} {measure}"
-    counted = _COUNTED.search(words) if not args.get("metric") and ctx.etsy is not None else None
-    if counted is not None and _SHOP.search(words) and not _ELSEWHERE.search(words):  # 0.15.0: code has the number
-        name = "views_total" if counted[1].lower().startswith("view") else "favorites_total"
-        raise ToolError(
-            f"Ember's code counts your listings' {name.split('_')[0]} in all on Etsy: set metric {name} and target "
-            "(with project_id or venture_id for theirs only), and it checks it for you"
-        )
-    today = ctx.clock.today()
-    due = _due_date(args["due"], today)
-    places = roadmap.MAX_OPEN - roadmap.OWNER_SLOTS  # 0.12.0: the last places are your owner's
-    if roadmap.placed(conn, ctx.scope) >= places:  # 0.15.0: Ember's code's milestones take none
-        raise ToolError(
-            f"{places} of your and your owner's milestones are open already, and the other {roadmap.OWNER_SLOTS} of "
-            f"the {roadmap.MAX_OPEN} places are kept for your owner: close or drop one first"
-        )
-    if roadmap.count(conn, ctx.scope) >= roadmap.MAX_MILESTONES:
-        raise ToolError(f"your roadmap holds {roadmap.MAX_MILESTONES:,} milestones, as many as it can")
-    same = roadmap.open_by_title(conn, ctx.scope, title)
-    if same is not None:
-        raise ToolError(f"open milestone #{same['id']} already has this title")
-    replaces = _replaced(ctx, args, conn, title, today)
-    if replaces is not None:  # 0.12.0: it serves what the one it replaces served, unless it says otherwise
-        for name in ("parent_id", "venture_id", "project_id"):
-            if args.get(name) is None and replaces[name] is not None:
-                if name == "parent_id":
-                    parent = roadmap.get(conn, ctx.scope, replaces[name])
-                    kept = parent is not None and parent["status"] == "open"
-                else:  # 0.23.2: not a link to a venture parked or a project stopped since
-                    kept = _linkable(conn, ctx.scope, name, replaces[name])
-                if kept:
-                    args = {**args, name: replaces[name]}
-    parent_id = args.get("parent_id")
-    if parent_id is not None:
-        _parent(conn, ctx.scope, parent_id, due)
-    else:
-        top = roadmap.root(conn, ctx.scope)
-        if top is not None:  # 0.29.0: everything leads to the goal
-            raise ToolError(
-                f"every milestone leads to the goal #{top['id']} {roadmap.title_q(top)}: give parent #{top['id']} "
-                "for a sub-goal of it, or the milestone it leads to"
-            )
-    if args.get("venture_id") is not None:
-        _milestone_venture(conn, ctx.scope, args["venture_id"])
-    if args.get("project_id") is not None:
-        _open_project(conn, ctx.scope, args["project_id"])
-    checked = _metric(ctx, args, conn)
-    likely = args.get("likely")
-    if likely is not None and checked is None:
-        raise ToolError("likely is for a milestone with a metric: Ember's code settles your odds by it")
-    costs = {
-        "budget_micros": _amount(args.get("budget_usd"), "budget_usd", 1_000, 1_000_000),
-        "cash_cents": _amount(args.get("cash_eur"), "cash_eur", 100_000, 100),
-        "owner_minutes": _amount(args.get("owner_hours"), "owner_hours", 200, 60),
-    }
-    if checked is not None and not measure:
-        measure = metrics.measure_text(checked[0], checked[1], args.get("project_id"), args.get("venture_id"))
-    milestone_id = roadmap.create(
-        conn,
-        ctx.scope,
-        title=title,
-        measure=measure[: roadmap.LIMITS["measure"]],
-        due=due.isoformat(),
-        now=ctx.now(),
-        cycle_id=ctx.cycle_id,
-        parent_id=parent_id,
-        venture_id=args.get("venture_id"),
-        project_id=args.get("project_id"),
-        metric=checked[0].name if checked else None,
-        target=checked[1] if checked else None,
-        baseline=checked[2] if checked else None,
-        **costs,
-        replaces=replaces,
-    )
-    if likely is not None:  # 0.13.0: the agent's odds, settled by Ember's code (the prediction ledger)
-        predictions.add_milestone(
-            conn, ctx.scope, milestone_id, likely, f"milestone #{milestone_id}: {measure}", due.isoformat(), ctx.now()
-        )
-    leads = f", leading to #{parent_id}" if parent_id is not None else ""
-    close = (
-        f"Ember's code checks {checked[0].name} ({metrics.target_text(checked[0], checked[1])}) from its records and "
-        "closes it: done once met, missed if its date passes first."
-        if checked
-        else "When its measure is met, close it with milestone_update (done, with the evidence)."
-    )
-    if checked is None and ctx.etsy is not None and _LIVE.search(words) and not _ELSEWHERE.search(words):
-        close += (
-            " If it means listings live on Etsy, metric listings_live (with project_id) lets Ember's code check it."
-        )
-    if checked is None and ctx.etsy is not None and _SOLD.search(words) and not _ELSEWHERE.search(words):
-        close += (
-            " If it means orders in the Etsy shop, metric orders_observed (with project_id or venture_id) lets "
-            "Ember's code count them."
-        )
-    instead = ""
-    if replaces is not None:
-        moves = roadmap.replaced_moves(replaces)
-        instead = (
-            f" It replaces #{replaces['id']} ({replaces['status']}; its measure was "
-            f"{json.dumps(' '.join(replaces['measure'].split())[:160], ensure_ascii=False)}), first due "
-            f"{replaces['first_due']}, moved {moves} time{'s' if moves != 1 else ''}."
-        )
-    odds = f" Your odds of {likely}% by then are kept: Ember's code settles them." if likely is not None else ""
-    return milestone_id, (
-        f"Milestone #{milestone_id} is on your roadmap{leads}, due {due.isoformat()} ({roadmap.when(due, today)}). "
-        + close
-        + instead
-        + odds
-    )
-
-
-def _replaced(ctx: ToolContext, args: dict[str, Any], conn: Any, title: str, today: date) -> Any:
-    """0.12.0: the dropped or missed milestone a new one replaces (it names it in replaces), or None. Dropping and
-    creating a milestone again reset its moves and let its measure soften unseen: one much like a milestone dropped
-    or missed lately must name it, and a dropped one's replacement can't move it beyond the limit."""
-    number = args.get("replaces")
-    if number is None:
-        like = roadmap.like_closed(conn, ctx.scope, title, today)
-        if like is not None:
-            raise ToolError(
-                f"milestone #{like['id']} {json.dumps(like['title'], ensure_ascii=False)} was {like['status']} on "
-                f"{str(like['closed_at'])[:10]}: if this one takes its place, name it in replaces (it keeps its first "
-                "date and moves); if not, give it a title of its own"
-            )
-        return None
-    old = roadmap.get(conn, ctx.scope, number)
-    if old is None:
-        raise ToolError(f"there is no milestone #{number}")
-    if old["status"] not in ("dropped", "missed"):
-        raise ToolError(f"milestone #{number} is {old['status']}: a milestone replaces one that was dropped or missed")
-    if old["created_by"] != "agent":
-        who = "your owner's" if old["created_by"] == "owner" else "Ember's code's"
-        raise ToolError(f"milestone #{number} was {who}: only your own are replaced")
-    taken = conn.execute("SELECT id FROM milestones WHERE replaces_id = ? AND status = 'open'", (number,)).fetchone()
-    if taken is not None:
-        raise ToolError(f"open milestone #{taken['id']} replaces #{number} already")
-    if roadmap.replaced_moves(old) > roadmap.MAX_MOVES:
-        raise ToolError(
-            f"milestone #{number} was dropped after moving {old['moves']} times: replacing it would move it once more, "
-            f"beyond {roadmap.MAX_MOVES}. Aim for a goal of its own, or ask your owner"
-        )
-    return old
-
-
 # What a "done" names as its evidence (0.12.0): a number, a reference (#123) or a link or file. "Done." closed one.
 EVIDENCE = re.compile(r"\d|https?://|[\w-]+/[\w./-]+\.\w+")
 
@@ -3269,7 +3023,7 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     if status == "done" and row["kind"] == "first_test":  # 0.15.0: a venture goes live on it
         raise ToolError(
             f"milestone #{mid} is a first test, met as Ember's code checks it or your owner confirms it: tell your "
-            "owner what shows it is met (message_owner), and your owner confirms it on the Roadmap tab"
+            "owner what shows it is met (message_owner), and your owner confirms it on the Plan tab"
         )
     if row["created_by"] == "code":  # 0.12.0: the money goal and its decision points
         if args.get("due") and args["due"] != row["due"]:
@@ -3325,7 +3079,7 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
             )
     if moved_to is not None and theirs:
         if row["proposed_due"] == moved_to.isoformat():
-            raise ToolError(f"you proposed {moved_to.isoformat()} already: your owner decides on the Roadmap tab")
+            raise ToolError(f"you proposed {moved_to.isoformat()} already: your owner decides on the Plan tab")
         changes.update(
             proposed_due=moved_to.isoformat(),
             proposed_note=" ".join(note.split())[: roadmap.NOTE_CHARS],
@@ -5517,10 +5271,10 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "project_create": _project_create,
     "project_update": _project_update,
     "project_list": _project_list,
+    "plan_step": _plan_step,
     "venture_create": _venture_create,
     "venture_update": _venture_update,
     "brainstorm": _brainstorm,
-    "milestone_plan": _milestone_plan,
     "milestone_update": _milestone_update,
     "request_approval": _request_approval,
     "withdraw_request": _withdraw_request,

@@ -42,7 +42,6 @@ from . import (
     knockouts,
     learning,
     library,
-    lines,
     memory,
     metrics,
     never,
@@ -123,7 +122,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
             (simulated, scope.session),
         ).fetchone()
         now = _now(agent, conn, latest) if latest else None
-        projects = [_project(conn, p) for p in store.all_projects(conn, scope)]
+        projects = [_project(conn, scope, p) for p in store.all_projects(conn, scope)]
         where, params = scope.where()
         venture_choices = [  # what revenue and expenses can belong to, besides projects (0.12.0)
             {"id": v["id"], "title": v["title"], "stage": v["stage"]}
@@ -136,7 +135,6 @@ def dashboard(agent: Agent) -> dict[str, Any]:
             (simulated, scope.session, ACTIVITY_CYCLES),
         ).fetchall()
         activity = [_activity(conn, c) for c in cycles]
-        line_desk = _line_desk(agent, conn, scope)  # 0.28.0
         journal = [
             {
                 "cycle_id": j["cycle_id"],
@@ -224,7 +222,6 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "projects": projects,
         "venture_choices": venture_choices,
         "activity": activity,
-        "lines": line_desk,  # 0.28.0: the Projects tab's Line desk
         "mind": {
             **agent.memory_files(),
             "journal": journal,
@@ -488,16 +485,18 @@ def goal_summary(agent: Agent) -> dict[str, Any] | None:
 
 
 def plan_view(agent: Agent) -> dict[str, Any]:
-    """0.34.0: the plan tree for the owner's Plan tab (plan.py): a preview, while the tree runs in the shadow."""
+    """0.34.0: the plan tree for the owner's Plan tab (plan.py; 0.35.0: it steers Ember's cycles), with why no unlock
+    acts now (the products' Autonomy boxes)."""
     with agent.db.connection() as conn:
-        return plan.view(
+        found = plan.view(
             conn, agent.scope(), to_iso(agent.clock.now()), agent.clock.today(), plan.channels_from(agent.settings)
         )
+    return {**found, "unlocks_off": agent.unlocks_off()}
 
 
 def roadmap_view(agent: Agent) -> dict[str, Any]:
-    """The Roadmap tab: every milestone (the newest 300) with its dates, horizon, links, effort, result and the
-    owner's word, counted from the owner's today."""
+    """The Plan tab's milestones (0.35.0; the Roadmap tab's before): every milestone (the newest 300) with its dates,
+    horizon, links, effort, result and the owner's word, counted from the owner's today."""
     scope = agent.scope()
     simulated = 1 if agent.mode == "dry_run" else 0
     today = agent.clock.today()
@@ -1084,7 +1083,7 @@ def _now(agent: Agent, conn: sqlite3.Connection, c: sqlite3.Row) -> dict[str, An
     }
 
 
-def _project(conn: sqlite3.Connection, p: sqlite3.Row) -> dict[str, Any]:
+def _project(conn: sqlite3.Connection, scope: store.AgentScope, p: sqlite3.Row) -> dict[str, Any]:
     spent = conn.execute(
         "SELECT COALESCE(SUM(l.cost_micros), 0), COUNT(DISTINCT y.id) FROM llm_calls l JOIN cycles y"
         " ON y.id = l.cycle_id WHERE y.project_id = ?",
@@ -1107,7 +1106,7 @@ def _project(conn: sqlite3.Connection, p: sqlite3.Row) -> dict[str, Any]:
         "venture_id": p["venture_id"],
         "hypothesis": p["hypothesis"],
         "status": p["status"],
-        "next_step": p["next_step"],
+        "plan_stage": plan.current_stage_name(conn, scope, int(p["id"])),  # 0.35.0: its steps are the plan's
         "notes": p["notes"],
         "spent_usd": _usd(spent[0]),
         "earned_usd": _usd(earned),
@@ -1218,46 +1217,6 @@ def _review(conn: sqlite3.Connection, r: sqlite3.Row) -> dict[str, Any]:
         "milestones": review.milestone_verdicts(r),  # 0.12.0: its verdicts on milestones, and what came of them
         "note": r["note"],
         "scorecard": r["scorecard"],
-    }
-
-
-def _line_desk(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope) -> dict[str, Any]:
-    """0.28.0: the Line desk: the share of each day's spending the owner gives marketing cycles and what they had
-    today, how Ember's code ranks the lines for an ordinary and a marketing plan now (lines.py; what presses takes its
-    line when a cycle runs), and what the last plans took or why they took none."""
-    mode = burn.peek(agent.db, agent.economy.life.evaluate())
-    today = agent.clock.today()
-    share = lines.marketing_share(agent.settings.venture_share, agent.settings.marketing_share)
-    spent, _, marketed = ventures.day_spends(conn, scope, today)
-    # 0.32.0: a channel that links a listing Printify made (the blog's posts; Bluesky's and Pinterest's took none)
-    links = agent.settings.blog_enabled or agent.settings.bluesky_enabled or agent.settings.pinterest_enabled
-    market = lines.marketing(conn, scope, printify_links=links, today=today) if share and mode.marketing_cycles else []
-    ordinary = lines.ready(conn, scope, today=today, explore=mode.mode == burn.EXPLORE, markets=bool(market))
-    cycles = conn.execute(
-        "SELECT COUNT(*) FROM cycles WHERE simulated = ? AND session = ? AND marketing = 1",
-        (1 if scope.simulated else 0, scope.session),
-    ).fetchone()[0]
-    return {
-        "mode": mode.mode,
-        "share": share,
-        "owner_share": agent.settings.marketing_share,  # what the options say (the share is within the ventures')
-        "today": {"spent_usd": _usd(spent), "marketing_usd": _usd(marketed)},
-        "marketing_cycles": int(cycles),
-        "ready": [i.to_json() for i in ordinary],
-        "market": [i.to_json() for i in market],
-        "picks": [
-            {
-                "cycle_id": p["cycle_id"],
-                "created_at": p["created_at"],
-                "kind": p["kind"],
-                "pick": p["pick"],
-                "project_id": p["project_id"],
-                "pressed": bool(p["pressed"]),
-                "why_not": p["why_not"],
-                "shown": len(json.loads(p["items"])),
-            }
-            for p in lines.recent(conn, scope, 8)
-        ],
     }
 
 

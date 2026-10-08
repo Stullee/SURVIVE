@@ -6,12 +6,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from app.agent import plan as plan_tree
 from app.agent import store, workfiles
 from app.economy.clock import to_iso
 from tests.test_agent import make_agent, plan, rows, text, tools
 
-PROJECT = {"title": "Meal planners", "hypothesis": "Families pay 4 EUR", "next_step": "make one", "status": "active"}
-OTHER = {"title": "CV templates", "hypothesis": "Job seekers pay 6 EUR", "next_step": "draft", "status": "active"}
+PROJECT = {"title": "Meal planners", "hypothesis": "Families pay 4 EUR", "status": "active"}
+OTHER = {"title": "CV templates", "hypothesis": "Job seekers pay 6 EUR", "status": "active"}
 
 
 def write(path: str, content: str = "text", mode: str = "create") -> tuple[str, dict[str, Any]]:
@@ -59,13 +60,18 @@ def test_a_file_keeps_its_first_project_and_a_deleted_file_goes(data_dir: Path) 
             text("Done."),
             text("Reflected."),
             plan(steps=["the CVs"]),
-            tools(("project_create", OTHER)),  # 0.28.0: a new product line is a cycle of its own
             tools(write("notes/a.md", " more", "append"), write("notes/b.md"), write("notes/gone.md", "", "delete")),
             text("Done."),
             text("Reflected."),
         ],
     )
     assert agent.run_cycle("schedule").status == "completed"
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:  # the CVs, the next cycle's line (0.35.0: the plan tree takes it)
+        store.create_project(conn, agent.scope(), cycle_id=1, next_step="", now=now, **OTHER)
+        plan_tree.keep(conn, agent.scope(), now, agent.clock.today(), {})
+        [first, *_] = plan_tree.nodes(conn, agent.scope(), "level = 'step' AND status = 'open' AND project_id = 2")
+        plan_tree.pin(conn, agent.scope(), int(first["id"]), True, "Owner", now)
     assert agent.run_cycle("schedule").status == "completed"
     assert filed(agent) == {
         "notes/a.md": (1, None, 2, "workspace_write"),  # the project it was written for; the cycle that changed it

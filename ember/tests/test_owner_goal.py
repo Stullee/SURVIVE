@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.agent import fake_llm, roadmap, tools
+from app.agent import context, roadmap, tools
 from app.agent.fake_llm import FakeTransport
 from app.agent.service import Agent
 from app.economy.clock import to_iso
@@ -80,16 +80,20 @@ def keep(agent: Agent, settle: bool = True) -> list[str]:
 
 
 def started(data_dir: Path, plans: int = 1) -> tuple[Agent, int]:
-    """An agent after its first plan (the money goal #1 with its decision points #2 and #3) with a sub-goal of its
-    own under it (#4); ``plans``: the plans its fake model has for this cycle and the next."""
+    """An agent after its first plan (the money goal #1; 0.35.0: no decision points under it) with a sub-goal of its
+    own under it (#2, as a milestone of Ember's from before milestone_plan retired); ``plans``: the plans its fake
+    model has for this cycle and the next."""
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[]) for _ in range(plans)]))
-    step = made(
-        call(
-            agent,
-            "milestone_plan",
-            milestones=[dict(title="Printables bring $50 a month", measure="x", due=day(agent, 60), parent="#1")],
+    with agent.db.transaction() as conn:
+        step = roadmap.create(
+            conn,
+            agent.scope(),
+            title="Printables bring $50 a month",
+            measure="x",
+            due=day(agent, 60),
+            now=to_iso(agent.clock.now()),
+            parent_id=1,
         )
-    )
     return agent, step
 
 
@@ -118,24 +122,14 @@ def test_the_owners_goal_takes_the_money_goals_place(data_dir: Path) -> None:
     money = milestone(agent, 1)
     assert (money["status"], money["closed_by"]) == ("dropped", "code")
     assert money["result"] == f"Your owner set their goal #{goal['id']}: it takes the place of this one."
-    assert [(milestone(agent, i)["status"], milestone(agent, i)["closed_by"]) for i in (2, 3)] == [
-        ("dropped", "code")
-    ] * 2
     assert milestone(agent, step)["parent_id"] == goal["id"]  # what led to the money goal leads to the owner's
     events = [e["message"] for e in agent.db.recent_events(limit=10)]
     assert f"Felix set the goal #{goal['id']}" in events
-    keep(agent)  # the next plan: the owner's goal gets its decision points, and no money goal comes back
+    keep(agent)  # the next plan: no money goal comes back, and (0.35.0) no decision points: decide-by dates instead
     with agent.db.connection() as conn:
         assert roadmap.money_goal(conn, agent.scope()) is None
         assert roadmap.root(conn, agent.scope())["id"] == goal["id"]
-        decisions = [r for r in roadmap.children(conn, goal["id"]) if r["kind"] == "decision"]
-    assert [(r["title"], r["due"]) for r in decisions] == [
-        (roadmap.DECISION_TITLE, day(agent, 30)),  # a quarter and half of its 120 days (no spending: no runway)
-        (roadmap.DECISION_TITLE, day(agent, 60)),
-    ]
-    keep(agent)
-    with agent.db.connection() as conn:
-        assert len([r for r in roadmap.children(conn, goal["id"]) if r["kind"] == "decision"]) == 2  # once
+        assert [r for r in roadmap.children(conn, goal["id"]) if r["kind"] == "decision"] == []
 
 
 def test_the_goal_is_checked(data_dir: Path) -> None:
@@ -222,9 +216,6 @@ def test_a_goal_raised_in_total_keeps_counting_from_its_day(data_dir: Path) -> N
         "Your owner set a new goal in its place.",
     )
     assert milestone(agent, step)["parent_id"] == new["id"]
-    with agent.db.connection() as conn:
-        decisions = [r for r in roadmap.children(conn, first) if r["kind"] == "decision"]
-    assert decisions and all(r["status"] == "dropped" for r in decisions)  # the new goal brings its own
     view = agent.roadmap()
     assert view["goal"]["id"] == new["id"] and view["goal"]["progress"]["text"] == "$120 of $800"  # counted from day 1
     monthly = set_goal(agent, per="month", amount_usd="100", replaces=new["id"]).body["id"]
@@ -257,7 +248,7 @@ def test_the_owner_removes_their_goal_and_the_work_goes_on(data_dir: Path) -> No
     goal = set_goal(agent).body["id"]
     keep(agent)
     reply = owner(agent).decide_milestone(goal, {"action": "drop", "comment": "Too much for now."}, "Felix")
-    assert reply.status == 200 and len(reply.body["dropped_with"]) == 2, reply.body  # its two decision points
+    assert reply.status == 200 and reply.body["dropped_with"] == [], reply.body  # 0.35.0: no decision points
     assert (milestone(agent, step)["status"], milestone(agent, step)["parent_id"]) == ("open", None)
     keep(agent)
     with agent.db.connection() as conn:
@@ -271,41 +262,11 @@ def test_the_owner_removes_their_goal_and_the_work_goes_on(data_dir: Path) -> No
 # --- everything leads to the goal ---
 
 
-def test_the_agents_milestones_lead_to_the_goal(data_dir: Path) -> None:
-    agent, step = started(data_dir)
-    loose = call(agent, "milestone_plan", milestones=[dict(title="Somewhere", measure="x", due=day(agent, 10))])
-    assert not loose.ok and loose.text.startswith(
-        'Error: every milestone leads to the goal #1 "Earn as much as you spend": give parent #1'
-    ), loose.text
-    later = call(  # the money goal stands in: what leads to it may be due after it (it leads to the next one)
-        agent, "milestone_plan", milestones=[dict(title="Far", measure="x", due=day(agent, 200), parent="#1")]
-    )
-    assert later.ok, later.text
+def test_the_owners_milestones_lead_to_the_goal(data_dir: Path) -> None:
+    agent, _ = started(data_dir)
     goal = set_goal(agent, due=day(agent, 100)).body["id"]
-    beyond = call(
-        agent,
-        "milestone_plan",
-        milestones=[dict(title="After it", measure="x", due=day(agent, 101), parent=f"#{goal}")],
-    )
-    assert not beyond.ok and f"milestone #{goal} is due {day(agent, 100)}" in beyond.text
-    two = call(
-        agent,
-        "milestone_plan",
-        milestones=[
-            dict(
-                key="leg",
-                title="Posters bring $200 a month",
-                metric="revenue_month_usd",
-                target="200",
-                due=day(agent, 90),
-                parent=f"#{goal}",
-            ),
-            dict(parent="leg", title="10 posters live", measure="10 listings", due=day(agent, 20)),
-        ],
-    )
-    assert two.ok, two.text
     reply = owner(agent).add_milestone({"title": "Ask me first", "measure": "We talked", "due": day(agent, 9)}, "Felix")
-    assert reply.status == 201 and milestone(agent, reply.body["id"])["parent_id"] == goal  # the owner's too
+    assert reply.status == 201 and milestone(agent, reply.body["id"])["parent_id"] == goal
 
 
 def test_what_leads_to_no_goal_is_linked_to_it(data_dir: Path) -> None:
@@ -373,40 +334,14 @@ def test_the_plan_shows_the_goal_first_and_how_far_everything_got(data_dir: Path
     agent, step = started(data_dir)
     goal = set_goal(agent, amount_usd="100", comment="Cover the hosting").body["id"]
     agent.clock.advance(days=100)  # far behind its pace
-    text = roadmap_text(agent)
+    with agent.db.connection() as conn:
+        text = context._plan(conn, agent.scope(), to_iso(agent.clock.now()), agent.clock.today(), None)
     lines = text.split("\n")
     assert lines[1].startswith(f'Your owner\'s goal: #{goal} "Earn $100 a month" · due ')
     assert " · 0%: not checked yet (" in lines[1] and "% of its time gone: behind)" in lines[1]
     assert "Ember's code checks it from the books; only your owner changes it" in lines[1]
-    assert 'Their word on it: "Cover the hosting"' in lines[1]
-    assert f"Roadmap check: the goal #{goal} is at 0% with " in text
-    assert "% of its time gone. Say in your plan what changes" in text
-    assert f"Sub-goals (they lead to the goal #{goal}; the rest leads to them):" in text
-    assert f'#{step} "Printables bring $50 a month"' in text
-
-
-def roadmap_text(agent: Agent) -> str:
-    with agent.db.connection() as conn:
-        scope = agent.scope()
-        today = agent.clock.today()
-        found = roadmap.progress_for(conn, scope, today)
-        return roadmap.planner_text(roadmap.open_milestones(conn, scope), [], today, progress=found)
-
-
-def test_nothing_of_the_agents_leads_to_the_goal_yet(data_dir: Path) -> None:
-    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]))
-    text = roadmap_text(agent)
-    assert "The goal (Ember's code's, until your owner sets theirs): #1 \"Earn as much as you spend\"" in text
-    assert "Roadmap check: nothing of yours leads to the goal #1 yet. Split it with milestone_plan" in text
-    steps, focus = fake_llm.roadmap_plan(f"== ROADMAP ==\n{text}\n\n== OTHER ==\n")
-    assert steps == [fake_llm.GOAL_STEP.format(id=1, due=milestone(agent, 1)["due"])] and focus is None
-
-
-def test_the_dry_run_splits_the_goal(data_dir: Path) -> None:
-    agent, _ = run(data_dir, FakeTransport(seed=7), cycles=2)
-    laid = rows(agent, "SELECT id, parent_id, created_by, due FROM milestones WHERE created_by = 'agent' ORDER BY id")
-    assert laid and laid[0]["parent_id"] == 1, laid  # the fake's first under the money goal
-    assert all(r["parent_id"] is not None for r in laid)
+    assert "Everything in your plan leads to it." in lines[1] and 'Their word on it: "Cover the hosting"' in lines[1]
+    assert f'\nMilestones still open:\n#{step} "Printables bring $50 a month"' in text
 
 
 # --- the owner's view ---
@@ -436,8 +371,10 @@ def test_the_goal_on_the_roadmap_tab_and_the_overview(ingress_client: TestClient
     bad = post(ingress_client, "api/roadmap/goal", {"amount_usd": "x", "per": "month", "due": due})
     assert bad.status_code == 422 and bad.json()["field"] == "amount_usd"
     html = ingress_client.get("/").text
-    for element in ("goal-strip", "rm-goal-card", "rm-goal-form", "rm-goal-amount", "rm-goal-due", "rm-tree"):
+    for element in ("goal-strip", "rm-goal-card", "rm-goal-form", "rm-goal-amount", "rm-goal-due"):
         assert f'id="{element}"' in html, element
+    panel = html.split('id="panel-plan"', 1)[1].split('<section class="panel"', 1)[0]
+    assert 'id="rm-goal-card"' in panel  # 0.35.0: the goal leads the Plan tab
 
 
 def test_the_dashboard_reads_amounts_as_the_owner_writes_them() -> None:

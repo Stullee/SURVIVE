@@ -19,6 +19,7 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app.agent import never, policy, roadmap, store, ventures  # noqa: E402
+from app.agent import plan as plan_tree  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.economy.life import KILLED_KEY  # noqa: E402
 from app.integrations import connectors, etsy  # noqa: E402
@@ -228,6 +229,13 @@ def test_a_milestone_with_an_unlock_keeps_its_links_and_its_venture_its_projects
     assert listings["status"] == "error" and "project #1 has listings" in listings["result"]
     assert (made["status"], made["decided_by"]) == ("pending", None)
     reject(agent, made["id"])
+    stamp = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:  # 0.35.0: the plan tree takes a step of old_line's for its own cycle
+        plan_tree.keep(conn, agent.scope(), stamp, agent.clock.today(), {})
+        [step, *_] = plan_tree.nodes(
+            conn, agent.scope(), "level = 'step' AND status = 'open' AND project_id = ?", (old_line,)
+        )
+        plan_tree.pin(conn, agent.scope(), int(step["id"]), True, "Stefan", stamp)
     work_on(agent, first, ("project_update", {"project_id": old_line, "venture_id": other}))  # 0.28.0: its own cycle
     moved = tool_results(agent, "project_update")[-1]
     assert moved["status"] == "error" and f"your owner's unlock for milestone #{first}" in moved["result"]

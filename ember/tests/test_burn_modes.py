@@ -168,7 +168,7 @@ def test_focus_goes_on_with_the_tests_already_running(data_dir: Path, monkeypatc
     # 0.19.3: the backed venture's test is its project's work, in ordinary cycles: no venture cycle runs in focus
     assert rows(agent, "SELECT venture FROM cycles ORDER BY id")[-1] == {"venture": 0}
     [project] = rows(agent, f"SELECT status, next_step FROM projects WHERE venture_id = {DROPSHIPPING}")
-    assert project["status"] == "active" and project["next_step"].startswith("Run its first test (milestone #")
+    assert project["status"] == "active"  # 0.35.0: its steps are the plan tree's (no next step of its own)
     [refused] = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'brainstorm'")
     assert refused["status"] == "error"
 
