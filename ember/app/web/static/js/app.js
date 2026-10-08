@@ -9978,7 +9978,7 @@
     step: "after the one before", hold: "on hold",
   };
   var PLAN_DECIDED = {
-    pin: "you pinned it", promise: "a promise or your decision is due", venture: "a venture cycle (the venture share)",
+    pin: "you pinned it", promise: "a promise to you (first until kept) or your decision", venture: "a venture cycle (the venture share)",
     weight: "the heaviest step", margin: "the product worked on last keeps it", none: "nothing is ready",
   };
 

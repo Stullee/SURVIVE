@@ -133,7 +133,7 @@ def test_a_stage_closes_when_its_check_passes_and_a_later_stage_done_closes_the_
     assert publish.waiting == "owner" and publish.step.blocked  # the owner's step: it waits on them, never ages
 
 
-def test_a_promise_naming_a_product_is_its_step_and_the_step_in_front_carries_it_to_the_cycle(data_dir: Path) -> None:
+def test_a_promise_naming_a_product_is_its_step_and_comes_first(data_dir: Path) -> None:
     agent, _ = lined(data_dir, titles=())
     book = project(agent, *BOOK)
     tracker = project(agent, *TRACKER)
@@ -155,7 +155,7 @@ def test_a_promise_naming_a_product_is_its_step_and_the_step_in_front_carries_it
     with agent.db.connection() as conn:
         pick, _ = plan.choose(conn, agent.scope(), now(agent), agent.clock.today(), ALL)
     assert pick.decided == "promise" and pick.step is not None and pick.step.product == book
-    assert pick.parts is not None and pick.parts.carried_from == step["id"]  # the demand note carries the promise
+    assert pick.step.id == step["id"]  # 0.35.1: the promise itself, not the step in front of it
     with agent.db.transaction() as conn:
         conn.execute(
             "UPDATE obligations SET status = 'closed', closed_at = ?, closed_by = 'agent' WHERE id = ?",

@@ -705,8 +705,8 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "set_sleep",
-            "Choose how long to sleep after this cycle (clamped to the allowed range). Sleep long only when nothing "
-            "useful is left to do.",
+            "Choose how long to sleep after this cycle (clamped to the allowed range). While your plan has a step "
+            "ready, Ember's code wakes you after your owner's shortest sleep, whatever you choose.",
             {"minutes": _i("Minutes until the next wake-up.", minimum=1), "reason": _s("Why.", 200, cut=True)},
             per_cycle=5,
             reflect=True,
@@ -3324,6 +3324,8 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     named = list(dict.fromkeys(int(n) for n in re.findall(r"\d{1,9}", args.get("answers") or "")))[:20]
     promised = _promise(ctx, args)
     about = _promised_line(ctx, conn, args.get("project_id"), promised is not None)
+    if about is None and promised is not None:  # 0.35.1: the line its words name (a listing's number, KDP)
+        about = obligations.promised_line(conn, ctx.scope, promised[0])
     if promised is None:  # 0.33.0
         _unrecorded_promise(ctx, conn, args["text"])
     # 0.12.0: at most MESSAGES_PER_DAY a day that answer none of the owner's (the prompt's "once a day" was prose)
