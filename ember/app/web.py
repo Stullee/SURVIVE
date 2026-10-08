@@ -644,6 +644,31 @@ def roadmap(request: Request) -> JSONResponse:
     return JSONResponse(agent.roadmap())
 
 
+@router.get("/api/plan")
+def plan_tree(request: Request) -> JSONResponse:
+    """0.34.0: the plan tree's preview (it runs in the shadow: nothing in Ember's cycles reads it yet)."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    return JSONResponse(agent.plan())
+
+
+@router.post("/api/plan/steps/{node_id}/pin")
+def pin_plan_step(request: Request, node_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.pin_step(node_id, body, _owner(request)))
+
+
+@router.post("/api/plan/products/{node_id}/worth")
+def set_plan_worth(request: Request, node_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.set_worth(node_id, body, _owner(request)))
+
+
 @router.post("/api/roadmap")
 def add_milestone(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
     actions = _owner_actions(request)

@@ -1258,6 +1258,12 @@ class Agent:
 
         return views.roadmap_view(self)
 
+    def plan(self) -> dict[str, Any]:
+        """0.34.0: the plan tree's preview for the owner's Plan tab."""
+        from . import views
+
+        return views.plan_view(self)
+
     def library(self) -> dict[str, Any]:
         from . import views
 

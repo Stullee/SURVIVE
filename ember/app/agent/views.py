@@ -483,6 +483,16 @@ def goal_summary(agent: Agent) -> dict[str, Any] | None:
     return _goal_json(top, found.get(int(top["id"])), today)
 
 
+def plan_view(agent: Agent) -> dict[str, Any]:
+    """0.34.0: the plan tree for the owner's Plan tab (plan.py): a preview, while the tree runs in the shadow."""
+    from . import plan
+
+    with agent.db.connection() as conn:
+        return plan.view(
+            conn, agent.scope(), to_iso(agent.clock.now()), agent.clock.today(), plan.channels_from(agent.settings)
+        )
+
+
 def roadmap_view(agent: Agent) -> dict[str, Any]:
     """The Roadmap tab: every milestone (the newest 300) with its dates, horizon, links, effort, result and the
     owner's word, counted from the owner's today."""
