@@ -437,7 +437,9 @@ def snapshot(
         marketing_apart=marketing_apart,
         call_costs=ventures.call_costs(conn, scope) if venture else {},
         today=today,
-        plan=_plan(conn, scope, now, today, books) if today is not None else "",
+        plan=_plan(conn, scope, now, today, books, last_cycle["ended_at"] if last_cycle else None)
+        if today is not None
+        else "",
         library=shelf,
         decision_wakes=decision_wakes,
         burn=burn,
@@ -462,10 +464,15 @@ def _worked_on(conn: sqlite3.Connection, cycle_id: int) -> str:
 
 
 def _plan(
-    conn: sqlite3.Connection, scope: AgentScope, now: str | None, today: date, books: tuple[int, int] | None
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    now: str | None,
+    today: date,
+    books: tuple[int, int] | None,
+    since: str | None = None,
 ) -> str:
-    """0.35.0: YOUR PLAN: the goal at the root (how far it got, 0.29.0), the plan tree's products, the milestones still
-    open (a venture's first test, the owner's own)."""
+    """0.35.0: YOUR PLAN: the goal at the root (how far it got, 0.29.0), what the owner did to the plan since the last
+    cycle (``since``), the plan tree's products, the milestones still open (a venture's first test, the owner's own)."""
     milestones = roadmap.open_milestones(conn, scope)
     progress = roadmap.progress_for(conn, scope, today, books)
     top = roadmap.root(conn, scope)
@@ -474,7 +481,7 @@ def _plan(
     shown = [roadmap.milestone_line(m, today, False, progress=progress) for m in rest[:SHOWN_MILESTONES]]
     if len(rest) > SHOWN_MILESTONES:
         shown.append(f"… and {len(rest) - SHOWN_MILESTONES} more")
-    return plan_tree.plan_text(conn, scope, now or f"{today.isoformat()}T00:00:00+00:00", today, goal, shown)
+    return plan_tree.plan_text(conn, scope, now or f"{today.isoformat()}T00:00:00+00:00", today, goal, shown, since)
 
 
 def _safe_listing(workspace: Jail, shown: int = 19, budget: int = 900) -> list[str]:

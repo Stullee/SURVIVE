@@ -402,11 +402,7 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, cha
             laid.add(product_id)
             said.append(f"Plan tree: line #{project['id']} laid out as a product (#{product_id}).")
         elif product is not None and product["status"] == "open" and project["status"] in CLOSED_STATUSES:
-            ended = "done" if project["status"] == "succeeded" else "dropped"
-            for row in _descendants(conn, scope, product["id"]):
-                _close(conn, row["id"], now, ended, f"its line closed: {project['status']}")
-            _close(conn, product["id"], now, ended, f"its line closed: {project['status']}")
-            _close_milestone(conn, product["id"], now, f"Its product (line #{project['id']}) closed.")
+            _close_product(conn, scope, product, project, now)
             said.append(f"Plan tree: product #{product['id']} closed with line #{project['id']}.")
     said += move(conn, scope, now)  # once: the milestones the tree takes the place of (migration 0088)
     decided = _decided(conn, scope)
@@ -426,6 +422,22 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, cha
     said += _lift_waits(conn, scope, now, today)
     _clocks(conn, scope, now, today, channels)
     return said
+
+
+def _close_product(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    product: Mapping[str, Any],
+    project: Mapping[str, Any],
+    now: str,
+    by: str = "code",
+) -> None:
+    """A product whose line closed, with everything under it and its own milestone (its unlocks end with it)."""
+    ended = "done" if project["status"] == "succeeded" else "dropped"
+    for row in _descendants(conn, scope, product["id"]):
+        _close(conn, row["id"], now, ended, f"its line closed: {project['status']}")
+    _close(conn, product["id"], now, ended, f"its line closed: {project['status']}", by=by)
+    _close_milestone(conn, product["id"], now, f"Its product (line #{project['id']}) closed.")
 
 
 def _descendants(conn: sqlite3.Connection, scope: AgentScope, node_id: int) -> list[Any]:
@@ -1449,14 +1461,19 @@ def plan_text(
     today: date,
     goal: str = "",
     milestones: list[str] | None = None,
+    since: str | None = None,
 ) -> str:
-    """The planner's PLAN (0.35.0, in place of the roadmap): the owner's goal and how far it got (``goal``:
-    roadmap.root_line), then each project's open products with their stage and numbers, what waits on the owner, and
-    the milestones still open (``milestones``: a venture's first test, the owner's own). A product's steps are YOUR
-    STEP's to show, and the owner's Plan tab shows the whole tree: this stays short however big the tree grows."""
+    """The planner's YOUR PLAN (0.35.0, in place of the roadmap): the owner's goal and how far it got (``goal``:
+    roadmap.root_line), what the owner did to the plan since the last cycle (``since``: its end), then each project's
+    open products with their stage and numbers, what waits on the owner, and the milestones still open
+    (``milestones``: a venture's first test, the owner's own). A product's steps are YOUR STEP's to show, and the
+    owner's Plan tab shows the whole tree: this stays short however big the tree grows."""
     lines = [f"Today: {today:%A} {today.isoformat()}."]
     if goal:
         lines.append(goal)
+    words = owner_words(conn, scope, since)
+    if words:
+        lines.append("Your owner since your last cycle: " + "; ".join(words) + ".")
     facts = Facts(conn, scope, now)
     for top in nodes(conn, scope, "level = 'project'"):
         products = nodes(conn, scope, "parent_id = ? AND level = 'product' AND status = 'open'", (top["id"],))
@@ -1472,7 +1489,7 @@ def plan_text(
     if milestones:
         lines.append("Milestones still open:")
         lines += milestones
-    if len(lines) == 1 + bool(goal):
+    if len(lines) == 1 + bool(goal) + bool(words):
         lines.append("Your plan has no products yet: your first one starts it.")
     return "\n".join(lines)
 
@@ -1932,6 +1949,96 @@ def _lift_waits(conn: sqlite3.Connection, scope: AgentScope, now: str, today: da
     return said
 
 
+# --- the owner's word on a product (0.35.0) ---
+
+
+def _owner_product(conn: sqlite3.Connection, scope: AgentScope, node_id: int) -> sqlite3.Row:
+    row = node(conn, scope, node_id)
+    if row is None or row["level"] != "product":
+        raise PlanError("id", "no such product", 404)
+    if row["status"] != "open":
+        raise PlanError("id", f"this product is {row['status']}", 409)
+    return row
+
+
+def end_product(
+    conn: sqlite3.Connection, scope: AgentScope, node_id: int, done: bool, why: str, who: str | None, now: str
+) -> int:
+    """The owner closes a product: done (its line succeeded) or dropped (abandoned), with everything under it. Only
+    the owner does (Ember holds a product at most). Returns its line."""
+    product = _owner_product(conn, scope, node_id)
+    line = int(product["project_id"])
+    status = "succeeded" if done else "abandoned"
+    words = " ".join(why.split())[:300] or ("you marked it done" if done else "you dropped it")
+    conn.execute(
+        "UPDATE projects SET status = ?, updated_at = ?, notes = substr(notes || ?, -2000) WHERE id = ?"
+        " AND status IN ('idea', 'active', 'waiting')",
+        (status, now, f"\n[your owner] {words}", line),
+    )
+    project = conn.execute("SELECT * FROM projects WHERE id = ?", (line,)).fetchone()
+    _close_product(conn, scope, product, project, now, by="owner")
+    change(
+        conn, scope, node_id, None, "owner", "close" if done else "drop", f"{(who or 'your owner')[:60]}: {words}", now
+    )
+    return line
+
+
+def owner_resume(conn: sqlite3.Connection, scope: AgentScope, node_id: int, who: str | None, now: str) -> int:
+    """The owner lifts Ember's hold on a product. Returns its line."""
+    product = _owner_product(conn, scope, node_id)
+    resume(conn, scope, int(product["project_id"]), f"{(who or 'your owner')[:60]} lifted it", None, now, actor="owner")
+    return int(product["project_id"])
+
+
+def owner_keep(conn: sqlite3.Connection, scope: AgentScope, node_id: int, why: str, who: str | None, now: str) -> int:
+    """The owner keeps a product at its decide-by date: their step closes, the product goes on. Returns its line."""
+    row = node(conn, scope, node_id)
+    if row is None or row["level"] != "step" or row["template"] != "decide/owner":
+        raise PlanError("id", "no such decision of yours", 404)
+    if row["status"] != "open":
+        raise PlanError("id", "you decided it already", 409)
+    words = " ".join(why.split())[:200] or "keep it"
+    _close(conn, row["id"], now, "done", f"Your owner kept it: {words}", by="owner")
+    change(conn, scope, row["id"], None, "owner", "close", f"{(who or 'your owner')[:60]} kept it: {words}", now)
+    return int(row["project_id"])
+
+
+CLOSED_WORDS = {"close": "closed", "drop": "dropped", "resume": "resumed"}
+
+
+def owner_words(conn: sqlite3.Connection, scope: AgentScope, since: str | None) -> list[str]:
+    """What the owner did to the plan since ``since`` (the last cycle's end): a step pinned, a worth set, a product
+    closed, dropped or resumed, a decide-by date answered. YOUR PLAN says it right after the goal."""
+    if since is None:
+        return []
+    where, params = scope.where("w")
+    said = [
+        {
+            "pin": "pinned step",
+            "unpin": "unpinned step",
+            "worth": "set the worth of",
+            "clear_worth": "cleared the worth of",
+        }[r["action"]]
+        + f" #{r['node_id']} {_quoted(r['title'])}"
+        + (f" to {r['value']:g}" if r["action"] == "worth" else "")
+        for r in conn.execute(
+            f"SELECT w.*, n.title FROM plan_words w JOIN plan_nodes n ON n.id = w.node_id WHERE {where}"
+            " AND w.created_at > ? ORDER BY w.id",
+            (*params, since),
+        )
+    ]
+    where, params = scope.where("c")
+    said += [
+        f"{CLOSED_WORDS.get(r['action'], r['action'])} #{r['node_id']} {_quoted(r['title'])}: {_cut(r['why'], 80)}"
+        for r in conn.execute(
+            f"SELECT c.*, n.title FROM plan_changes c JOIN plan_nodes n ON n.id = c.node_id WHERE {where}"
+            " AND c.actor = 'owner' AND c.created_at > ? ORDER BY c.id",
+            (*params, since),
+        )
+    ]
+    return said
+
+
 # --- the owner's Plan tab ---
 
 
@@ -1939,7 +2046,8 @@ def view(
     conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, channels: Mapping[str, bool]
 ) -> dict[str, Any]:
     """The tree for the owner's Plan tab: every project, product, stage and step with its state and weight, the step
-    the tree would take now and the next ones, what waits on the owner, and the latest shadow picks."""
+    the tree would take now and the next ones, what waits on the owner, the latest picks, and (0.35.0) what changed
+    today, what each channel does and the upgrades the steps wait on."""
     pick, found = choose(conn, scope, now, today, channels)
     by_id = {c.step.id: c for c in found}
     parts = weights.parts_by_id(pick.ranked)
@@ -1956,7 +2064,7 @@ def view(
     waiting_owner = [_step_brief(c, None, titles) for c in found if c.waiting == "owner"]
     goal = roadmap.root(conn, scope)
     return {
-        "preview": True,
+        "preview": False,  # 0.35.0: the tree steers
         "today": today.isoformat(),
         "goal": {"title": goal["title"], "due": goal["due"]} if goal is not None else None,
         "projects": projects,
@@ -1966,8 +2074,99 @@ def view(
         ],
         "waiting": waiting_owner,
         "picks": _picks(conn, scope),
+        "changes": _changes_today(conn, scope, today),
+        "channels": _channels_view(conn, scope, by_id, parts, now),
+        "upgrades": _upgrades_view(conn, scope, by_id),
         "stamp": stamp(conn, scope),
     }
+
+
+def _changes_today(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[dict[str, Any]]:
+    """0.35.0: the changes to the tree today that weren't a check passing: Ember's (a step added, split, replaced,
+    done or waiting, a product held or resumed), Ember's code's (an owner's decision as a step, a wait lifted, a
+    decide-by date) and the owner's, the newest first."""
+    where, params = scope.where("c")
+    return [
+        {
+            "at": r["created_at"],
+            "actor": r["actor"],
+            "action": r["action"],
+            "id": r["node_id"],
+            "title": r["title"],
+            "line": r["project_id"],
+            "why": r["why"],
+        }
+        for r in conn.execute(
+            f"SELECT c.*, n.title, n.project_id FROM plan_changes c JOIN plan_nodes n ON n.id = c.node_id WHERE {where}"
+            " AND substr(c.created_at, 1, 10) = ? ORDER BY c.id DESC LIMIT 40",
+            (*params, today.isoformat()),
+        )
+    ]
+
+
+def _channels_view(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    by_id: Mapping[int, Candidate],
+    parts: Mapping[int, weights.Parts],
+    now: str,
+) -> list[dict[str, Any]]:
+    """0.35.0: each channel as a mirror of the products' marketing: what it does next and what it did lately, with
+    how well it works (clicks per pin, reactions per post: its factor in the weights)."""
+    factors = _channel_factors(conn, scope)
+    since = to_iso(from_iso(now) - timedelta(days=14))
+    found = []
+    for channel in CHANNELS:
+        steps = []
+        for row in nodes(
+            conn, scope, "level = 'step' AND channel = ? AND (status = 'open' OR closed_at >= ?)", (channel, since)
+        ):
+            candidate = by_id.get(row["id"])
+            weight = parts.get(row["id"])
+            steps.append(
+                {
+                    "id": row["id"],
+                    "line": row["project_id"],
+                    "title": row["title"],
+                    "status": row["status"],
+                    "due": row["due"],
+                    "closed_at": row["closed_at"],
+                    "waiting": candidate.waiting if candidate else None,
+                    "weight": round(weight.total, 2) if weight else None,
+                }
+            )
+        found.append({"channel": channel, "factor": factors.get(channel, 1.0), "steps": steps})
+    return found
+
+
+def _upgrades_view(conn: sqlite3.Connection, scope: AgentScope, by_id: Mapping[int, Candidate]) -> list[dict[str, Any]]:
+    """0.35.0: the upgrades open, each with the steps that wait on it and what they would weigh once it is built, so
+    the owner sees what is worth building next; steps that wait on an ability nobody asked for yet come last."""
+    where, params = scope.where()
+    found = []
+    for u in conn.execute(
+        f"SELECT id, title, status FROM upgrades WHERE {where} AND status IN ('new', 'accepted') ORDER BY id",
+        params,
+    ):
+        steps = nodes(
+            conn, scope, "level = 'step' AND status = 'open' AND waiting = 'upgrade' AND wait_ref = ?", (u["id"],)
+        )
+        found.append({"id": u["id"], "title": u["title"], "status": u["status"], "steps": _waiting_steps(steps, by_id)})
+    unasked = nodes(conn, scope, "level = 'step' AND status = 'open' AND waiting = 'upgrade' AND wait_ref IS NULL")
+    if unasked:
+        found.append({"id": None, "title": None, "status": None, "steps": _waiting_steps(unasked, by_id)})
+    return found
+
+
+def _waiting_steps(rows: list[Any], by_id: Mapping[int, Candidate]) -> list[dict[str, Any]]:
+    shown = []
+    for row in rows:
+        candidate = by_id.get(row["id"])
+        weight = weights.weigh(candidate.step).total if candidate is not None else None
+        shown.append(
+            {"id": row["id"], "line": row["project_id"], "title": row["title"], "weight": weight and round(weight, 2)}
+        )
+    return sorted(shown, key=lambda s: -(s["weight"] or 0))
 
 
 def _product_view(
@@ -2029,10 +2228,25 @@ def _product_view(
                 "total": sum(1 for s in steps if s["status"] != "dropped"),
             }
         )
+    own = conn.execute("SELECT id FROM milestones WHERE product_node = ?", (product["id"],)).fetchone()
+    unlocks = (
+        [
+            {"rule": g["rule"], "level": g["level"], "per_day": g["per_day"], "budget": g["budget"]}
+            for g in policy.unlocked(conn, scope, int(own["id"]))
+        ]
+        if own is not None
+        else []
+    )
     return {
         "id": product["id"],
         "line": pid,
         "title": project["title"] if project is not None else product["title"],
+        "hold": product["hold_reason"],  # 0.35.0: Ember's hold, with her reason
+        "live_since": product["live_since"],
+        "decide_by": json.loads(product["decide_by"]) if product["decide_by"] else {},
+        "pushed_until": product["pushed_until"],
+        "milestone": int(own["id"]) if own is not None else None,  # its own milestone (the Autonomy box's)
+        "unlocks": unlocks,
         "template": templates.by_key(product["template"]).title,
         "status": product["status"],
         "stage": stage_name if current is not None else None,

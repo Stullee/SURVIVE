@@ -646,7 +646,7 @@ def roadmap(request: Request) -> JSONResponse:
 
 @router.get("/api/plan")
 def plan_tree(request: Request) -> JSONResponse:
-    """0.34.0: the plan tree's preview (it runs in the shadow: nothing in Ember's cycles reads it yet)."""
+    """0.34.0: the plan tree (0.35.0: it steers Ember's cycles)."""
     agent = _state(request).agent
     if agent is None:
         return NO_AGENT
@@ -667,6 +667,50 @@ def set_plan_worth(request: Request, node_id: ItemId, body: Annotated[Any, Body(
     if actions is None:
         return NO_AGENT
     return _reply(actions.set_worth(node_id, body, _owner(request)))
+
+
+@router.post("/api/plan/products/{node_id}/drop")
+def drop_plan_product(request: Request, node_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.35.0: the owner drops a product (only they close or drop one)."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.end_product(node_id, body, _owner(request), done=False))
+
+
+@router.post("/api/plan/products/{node_id}/done")
+def close_plan_product(request: Request, node_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.end_product(node_id, body, _owner(request), done=True))
+
+
+@router.post("/api/plan/products/{node_id}/resume")
+def resume_plan_product(request: Request, node_id: ItemId) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.resume_product(node_id, _owner(request)))
+
+
+@router.post("/api/plan/products/{node_id}/autonomy")
+def plan_product_autonomy(request: Request, node_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    reply = actions.product_autonomy(node_id, body, _owner(request))
+    _wake_for_decision(request, reply, "roadmap")  # an unlock wakes Ember, as a milestone's does
+    return _reply(reply)
+
+
+@router.post("/api/plan/steps/{node_id}/keep")
+def keep_plan_product(request: Request, node_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.35.0: the owner keeps a product at its decide-by date (their decision step)."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.keep_product(node_id, body, _owner(request)))
 
 
 @router.post("/api/roadmap")
