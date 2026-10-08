@@ -75,7 +75,6 @@ from . import (
     digest,
     econ,
     evidence,
-    gates,
     knockouts,
     learning,
     library,
@@ -273,13 +272,13 @@ class CycleRunner:
         # 0.29.0: revenue less expenses and API spending over the last 30 days, as the last keeper read them
         self.money_numbers: tuple[int, int] | None = None
         self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
-        # 0.18.0: the READY list the last ordinary plan was shown (0.28.0: the lines it takes one from, lines.py; or a
-        # marketing plan's)
-        self.line_items: list[lines.Item] = []
+        # 0.35.0: what the plan tree decided for the cycle (plan.steer): its step and what the cycle is
+        self.steered: plan_tree.Steer | None = None
         self.reactive = False  # 0.13.0: a cycle an event woke (run sets it)
-        self.kind = lines.ORDINARY  # 0.28.0: what the cycle is (lines.kind; _plan_act_reflect sets it)
-        self.ready_line: int | None = None  # 0.34.0: the line READY's plan took (the plan tree's shadow pick)
-        self.marketing_apart = False  # 0.28.0: marketing cycles run, so an ordinary cycle has no marketing tools
+        self.kind = lines.ORDINARY  # 0.28.0: what the cycle is (0.35.0: plan.steer; _plan_act_reflect sets it)
+        # 0.28.0: marketing cycles run, so an ordinary cycle has no marketing tools (0.35.0: always, marketing steps
+        # have cycles of their own)
+        self.marketing_apart = False
         self.owner_waits = False  # 0.28.0: the owner woke the cycle and their messages wait: READY isn't forced
         self.max_steps = settings.max_tool_steps
         # 0.15.0: why the owner's unlocks don't act in this cycle (policy.off; the service knows safe mode)
@@ -393,11 +392,16 @@ class CycleRunner:
             return
         mode_now = burn.peek(self.db, self.economy.life.evaluate()).mode
         shortest = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes)
-        found = self.line_items if self.kind == lines.ORDINARY else []  # 0.28.0: an ordinary cycle's READY
-        kept = slack.sleep(end.sleep_minutes, found, shortest, mode_now)
+        # 0.35.0: an ordinary or marketing cycle whose plan had steps ready (plan.steer)
+        busy = (
+            self.kind in (lines.ORDINARY, lines.MARKETING)
+            and self.steered is not None
+            and bool(self.steered.pick.ranked)
+        )
+        kept = slack.sleep(end.sleep_minutes, busy, shortest, mode_now)
         if kept != end.sleep_minutes:  # 0.19.2: the agent's choice and words stay ("Ember chose" the cut)
             end.asked_minutes, end.sleep_minutes = end.sleep_minutes, kept
-            end.sleep_cut = f"Ember's code cut it to {kept} min: READY lists useful work"
+            end.sleep_cut = f"Ember's code cut it to {kept} min: {slack.WHY}"
 
     def _close_stale(self) -> None:
         """0.22.0: a cycle of this boot whose close failed is closed before the next one opens (metering.close_stale),
@@ -462,7 +466,7 @@ class CycleRunner:
         spent, _ = self.economy.books.cycle_spend(cycle_id)
         # 0.15.0: the sleep it chose (the scheduler may cut it: the dashboard's next wake says)
         tail = f"; chose {end.asked_minutes or end.sleep_minutes} min of sleep" if end.sleep_minutes else ""
-        tail += f", cut to {end.sleep_minutes} (READY lists useful work)" if end.sleep_cut else ""
+        tail += f", cut to {end.sleep_minutes} ({slack.WHY})" if end.sleep_cut else ""
         level = "info" if final in ("completed", "idle") else "warning"
         events.record(
             self.db,
@@ -481,48 +485,42 @@ class CycleRunner:
         return burn.Burn(row["burn_mode"], None)
 
     def _cycle_kind(self, cycle_id: int | None, trigger: str = "schedule") -> str:
-        """What the wake cycle is (lines.kind), recorded on it (0.28.0; 0.12.0's venture cycles): a venture cycle while
-        venture cycles have had less than the owner's share of the day's spending, a marketing cycle while marketing
-        cycles have had less than theirs (the share furthest behind first), unless what is owed comes first: an
-        ordinary cycle, or a marketing one for a pressing push to bring buyers to a line. An empty venture tree gets its
-        first ideas first. 0.19.3: the owner's waiting messages make it an ordinary cycle only when one woke it
-        (``trigger`` 'owner': they wait for what they asked); otherwise the cycle answers them first. Live, messages
-        turned 4 of 12 cycles that were the ventures' turn into ordinary ones, and 2 of 12 were venture cycles.
-        ``cycle_id`` None: the diagnostics' preview, which keeps nothing."""
+        """What the wake cycle is, recorded on it: 0.35.0, the plan tree decides (plan.steer). Its step decides it (a
+        marketing step a marketing cycle, any other an ordinary one), unless it is the ventures' turn: venture cycles
+        have had less than the owner's share of the day's spending, in a burn mode that runs them (0.12.0). What the
+        owner waits for skips the ventures' turn: their messages when one woke the cycle (``trigger`` 'owner',
+        0.19.3) and a promise or decision of theirs that presses (0.33.0). The pick is kept with every candidate
+        (plan_picks). ``cycle_id`` None: the diagnostics' preview, which keeps nothing."""
         mode = burn.peek(self.db, self.economy.life.evaluate())
         today = self.clock.today()
-        share = lines.marketing_share(self.settings.venture_share, self.settings.marketing_share)
+        now = to_iso(self.clock.now())
         with self.db.transaction() as conn:
             if cycle_id is not None:
-                ventures.seed(conn, self.scope, to_iso(self.clock.now()))
-            spends = ventures.day_spends(conn, self.scope, today)
-            runs = share > 0 and mode.marketing_cycles and self.etsy_on
-            marketable = lines.marketable(conn, self.scope, self._printify_links()) if runs else []
-            self.marketing_apart = bool(marketable)  # nothing live to market: no marketing cycles, nor a share kept
-            owed = [o for _, o in obligations.pressing_owed(conn, self.scope, today)]
+                ventures.seed(conn, self.scope, now)
+            spent, ventured, _ = ventures.day_spends(conn, self.scope, today)
+            turn = mode.venture_cycles and ventures.venture_turn(self.settings.venture_share, spent, ventured)
             self.owner_waits = trigger == "owner" and obligations.messages_waiting(conn, self.scope) > 0
-            turn = lines.kind(
-                venture_share=self.settings.venture_share,
-                share=share,
-                spends=spends,
-                ventures_run=mode.venture_cycles,
-                markets=self.marketing_apart,
-                marketable=marketable,
-                owed=owed,
-                messages=self.owner_waits,
+            first = obligations.pressing(conn, self.scope, today, messages=trigger == "owner") if turn else []
+            self.steered = plan_tree.steer(
+                conn, self.scope, now, today, self._channels(), venture_turn=turn and not first, cycle_id=cycle_id
             )
-            if cycle_id is not None and turn.kind in (lines.VENTURE, lines.MARKETING):
-                store.update_cycle(conn, cycle_id, **{turn.kind: 1})
-            owner = trigger == "owner"
-            first = obligations.pressing(conn, self.scope, today, messages=owner) if turn.owed_first else []
+            self.marketing_apart = True  # 0.35.0: marketing steps have cycles of their own
+            if cycle_id is not None:
+                plan_tree.record(conn, self.scope, cycle_id, now, self.steered)
+                if self.steered.kind in (lines.VENTURE, lines.MARKETING):
+                    store.update_cycle(conn, cycle_id, **{self.steered.kind: 1})
         if cycle_id is not None and first:
             events.record(
                 self.db,
                 "info",
                 "agent",
-                f"Cycle #{cycle_id} is an ordinary cycle: {first[0]} {_comes(first[0])} first"[:300],
+                f"Cycle #{cycle_id} is not a venture cycle: {first[0]} {_comes(first[0])} first"[:300],
             )
-        return turn.kind
+        return self.steered.kind
+
+    def _channels(self) -> dict[str, bool]:
+        """0.35.0: the channels a marketing step can be taken in now: set up, and found by this cycle's sync."""
+        return {"pinterest": self.pinterest_on, "bluesky": self.bluesky_on, "blog": self.blog_on}
 
     def _expire_requests(self) -> None:
         """0.12.0: the requests the owner didn't decide within their type's days expire (news for the agent)."""
@@ -702,22 +700,21 @@ class CycleRunner:
             raise Stopping
 
     def _keep(self, cycle_id: int | None) -> None:
-        """Ember's code keeps its rules before a plan: the money goal, the stages, the grading, the listing tests, the
-        bets, (0.30.0) the playbook, the predictions and the obligations (0.28.0: before what the cycle is, which reads
-        what they keep)."""
+        """Ember's code keeps its rules before a plan: the money goal, the stages, the grading, the bets, (0.30.0) the
+        playbook, the predictions and the obligations (0.28.0: before what the cycle is, which reads what they keep),
+        (0.34.0) the plan tree last. 0.35.0: no listing tests (gates.py): the plan tree's decide-by dates instead."""
         status = self.economy.life.evaluate()
         scope = self.economy.life.scope()
         self._keep_money_goal(scope, status.runway.net_days)  # 0.12.0: its decision points on the net runway
         self._keep_stages(cycle_id)
         metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
-        self._keep_gates()  # 0.13.0: after the grading, so a bar missed now is owed at once
         self._keep_bets()  # 0.18.0: after the grading, from the same Etsy numbers
         self._guarded(self._keep_playbook, cycle_id or 0, "the playbook's keeper")  # 0.30.0: the cases' lessons
         predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
         self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
         self._guarded(self._keep_plan, cycle_id or 0, "the plan tree's keeper")  # 0.34.0: after the obligations
-        # 0.29.0: once more after the grading (the owner's goal met or missed: the money goal stands in for it) and the
-        # gates (their new bars lead to the goal too); the money goal was settled already
+        # 0.29.0: once more after the grading (the owner's goal met or missed: the money goal stands in for it); the
+        # money goal was settled already
         self._keep_money_goal(scope, status.runway.net_days, settle=False)
 
     def _snapshot(self, kind: str = lines.ORDINARY, cycle_id: int | None = None, keep: bool = True) -> context.Snapshot:
@@ -750,9 +747,13 @@ class CycleRunner:
                 if venture
                 else []
             )
-            # 0.18.0: an ordinary plan's READY; 0.28.0: the lines an ordinary or marketing plan takes one from
-            self.line_items = self._line_items(conn, kind, mode)
+            # 0.35.0: an ordinary or marketing plan's YOUR STEP: the step the plan tree took for it (plan.steer)
             asked = lines.questions(conn, self.scope, self.clock.today()) if kind == lines.ORDINARY else []
+            step = (
+                plan_tree.step_text(conn, self.scope, self.steered, explore=mode.mode == burn.EXPLORE, questions=asked)
+                if self.steered is not None and kind in (lines.ORDINARY, lines.MARKETING) and not self.reactive
+                else ""
+            )
             shop = ""
             if self.etsy_on and self.etsy is not None:
                 name = self.etsy.shop_name() or "your shop"
@@ -820,12 +821,6 @@ class CycleRunner:
                 venture=venture,
                 venture_share=self.settings.venture_share,
                 marketing=kind == lines.MARKETING,  # 0.28.0
-                # the marketing cycles' share while they run (nothing live to market: none run, nor a share shown)
-                marketing_share=(
-                    lines.marketing_share(self.settings.venture_share, self.settings.marketing_share)
-                    if self.marketing_apart
-                    else 0
-                ),
                 marketing_apart=self.marketing_apart and kind == lines.ORDINARY,
                 shelf=library.shelf(conn, self.scope),
                 decision_wakes=self.settings.wakes_on("approval") or self.settings.wakes_on("rejection"),  # 0.31.0
@@ -834,11 +829,12 @@ class CycleRunner:
                 ready=(
                     desk.text(self.ready_items, predictions.calibration(conn, self.scope) if venture else "")
                     if venture
-                    else lines.text(self.line_items, asked)
+                    else step
                 ),
                 agenda=agenda.unseen(conn, self.scope),  # 0.13.0: what happened between cycles
                 reactive=self.reactive,
                 books=self.money_numbers,  # 0.29.0: the money goal's progress
+                now=to_iso(self.clock.now()),  # 0.35.0: YOUR PLAN's numbers
             )
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any], venture_id: int | None = None) -> CallResult:
@@ -881,6 +877,7 @@ class CycleRunner:
         # 0.28.0: Ember's code keeps its rules first, then decides what the cycle is: an ordinary, a marketing or a
         # venture cycle (a reactive one reacts to its event), each about one thing
         self._keep(cycle_id)
+        self.steered = None
         self.kind = lines.REACTIVE if self.reactive else self._cycle_kind(cycle_id, trigger)
         ctx.venture = self.kind == lines.VENTURE
         ctx.marketing = self.kind == lines.MARKETING
@@ -928,8 +925,9 @@ class CycleRunner:
         if planned.changelog:
             news.mark_changelog_seen(self.db, self.scope, snap.news)
         taken = self._take_ready(cycle_id, plan) if ctx.venture else None  # 0.13.0
-        # 0.28.0: an ordinary or marketing plan takes one line from READY (lines.py)
-        notes = [self._take_line(cycle_id, plan)] if self.kind in (lines.ORDINARY, lines.MARKETING) else []
+        notes: list[str] = []
+        if self.kind in (lines.ORDINARY, lines.MARKETING):  # 0.35.0: the line of the step the plan tree took
+            plan.focus_project_id = self.steered.line if self.steered is not None else None
         if not ctx.venture:
             plan.focus_venture_id = None  # 0.28.0: another venture is a venture cycle's work; a line's counts by it
         focus = None
@@ -990,8 +988,6 @@ class CycleRunner:
                     )
         ctx.state.focus_project_id = plan.focus_project_id
         ctx.state.focus_venture_id = plan.focus_venture_id
-        self.ready_line = plan.focus_project_id
-        self._guarded(self._shadow_pick, cycle_id, "the plan tree's shadow pick")  # 0.34.0: changes nothing here
         self._progress(
             cycle_id,
             plan=json.dumps(plan.to_json(), ensure_ascii=False),
@@ -1017,8 +1013,15 @@ class CycleRunner:
 
         line = plan.focus_project_id if not ctx.venture else None
         with self.db.connection() as conn:
-            line_focus = (  # 0.33.0: with today's review of it
-                lines.focus_text(conn, self.scope, line, ctx.marketing, self.clock.today()) if line is not None else ""
+            line_focus = "\n".join(  # 0.33.0: with today's review of it; 0.35.0: after the step the tree took
+                part
+                for part in (
+                    plan_tree.focus_text(conn, self.scope, self.steered) if self.steered is not None else "",
+                    lines.focus_text(conn, self.scope, line, ctx.marketing, self.clock.today())
+                    if line is not None
+                    else "",
+                )
+                if part
             )
         brief, briefed = context.brief(
             snap,
@@ -1057,52 +1060,6 @@ class CycleRunner:
             return CycleEnd(status, note, sleep_minutes=ctx.state.sleep_minutes, sleep_reason=ctx.state.sleep_reason)
         return CycleEnd(status, note, sleep_minutes=plan.sleep_minutes)
 
-    def _take_line(self, cycle_id: int, plan: Plan) -> str:
-        """0.28.0: the READY line an ordinary or marketing plan took (its project becomes the cycle's line), kept with
-        the list it came from, or why it took none; what FOCUS says of it. A line a pressing obligation takes is taken
-        whatever the plan said, and the plan's steps give way to the obligation. A plan that named its line as its focus
-        but no key of READY's (a slip, or a line beyond its first MAX_LINES) takes that line."""
-        items = self.line_items
-        taken, why = lines.choose(items, plan.ready)
-        note = ""
-        if items and items[0].pressed and taken is not items[0]:
-            taken, why = items[0], ""
-            note = (
-                f"Ember's code took {taken.key} for this cycle: an obligation of it presses (OBLIGATIONS). What your "
-                "plan meant for another line waits for its own cycle."
-            )
-            plan.steps = [f"Deal with what line #{taken.project_id} owes first (OBLIGATIONS), then its next step"]
-        elif taken is None and not plan.ready.lower().startswith("none") and plan.focus_project_id is not None:
-            named = self._named_line(plan.focus_project_id)
-            if named is not None:
-                taken, why = named, ""
-        if items or taken is not None:
-            kind = "market" if self.kind == lines.MARKETING else "line"
-            with self.db.transaction() as conn:
-                lines.record(conn, cycle_id, kind, items, taken, why, to_iso(self.clock.now()))
-        if taken is None and plan.focus_project_id is not None:
-            with self.db.connection() as conn:
-                held = ventures.project_stopped(conn, self.scope, plan.focus_project_id) is not None
-            if held:
-                return note  # a line the owner's park or kill stopped: FOCUS says why it waits (0.23.2), and drops it
-        plan.focus_project_id = taken.project_id if taken is not None else None
-        return note
-
-    def _named_line(self, project_id: int) -> lines.Item | None:
-        """0.28.0: the line a plan named as its focus, as an item of its READY (None if it can't be the cycle's)."""
-        found = next((i for i in self.line_items if i.project_id == project_id), None)
-        if found is not None:
-            return found
-        with self.db.connection() as conn:
-            if self.kind == lines.MARKETING:
-                ok = project_id in lines.marketable(conn, self.scope, self._printify_links())
-            else:
-                row = store.project(conn, self.scope, project_id)
-                ok = row is not None and row["status"] in store.OPEN_STATUSES
-                ok = ok and ventures.project_stopped(conn, self.scope, project_id) is None
-        kind = lines.MARKET if self.kind == lines.MARKETING else lines.LINE
-        return lines.Item(kind, project_id, "the line your plan named as its focus") if ok else None
-
     def _line_milestone(self, conn: Any, plan: Plan, focus: Any) -> str:
         """0.28.0: a cycle on one line is aimed at a milestone the line may serve (its own, its venture's, or one of no
         line): another line's gives way to the line's milestone due first, and so does none. What FOCUS says of it."""
@@ -1117,23 +1074,6 @@ class CycleRunner:
             return ""
         then = f"#{own}, its milestone due first" if own is not None else "none of its milestones (none is open)"
         return f"Your plan aimed at milestone #{aimed['id']}, which isn't line #{line}'s: the cycle is aimed at {then}."
-
-    def _line_items(self, conn: Any, kind: str, mode: burn.Burn) -> list[lines.Item]:
-        """0.28.0: an ordinary or marketing plan's READY (lines.py): a pressing obligation's line alone, unless the
-        owner woke the cycle with messages waiting (they wait for what they asked)."""
-        if kind not in (lines.ORDINARY, lines.MARKETING) or self.reactive:
-            return []
-        today = self.clock.today()
-        owed = [] if self.owner_waits else [o for _, o in obligations.pressing_owed(conn, self.scope, today)]
-        since = to_iso(self.clock.now() - timedelta(hours=lines.PRESS_HOURS))
-        if kind == lines.MARKETING:  # 0.30.0: with this week's focus lines (``today``)
-            return lines.marketing(
-                conn, self.scope, printify_links=self._printify_links(), owed=owed, since=since, today=today
-            )
-        explore = mode.mode == burn.EXPLORE
-        return lines.ready(
-            conn, self.scope, today=today, explore=explore, markets=self.marketing_apart, owed=owed, since=since
-        )
 
     def _take_ready(self, cycle_id: int, plan: Plan) -> desk.Item | None:
         """0.13.0: the READY item the venture plan took (its venture becomes the cycle's focus), kept with the list it
@@ -1180,14 +1120,6 @@ class CycleRunner:
             self.db.set_meta(key, since)
         with self.db.transaction() as conn:
             happened = obligations.keep(conn, self.scope, now, since)
-        for line in happened:
-            events.record(self.db, "info", "agent", line[:300])
-
-    def _keep_gates(self) -> None:
-        """0.13.0: a product line's listing test (gates.keep): its bars as milestones once its first listing is live,
-        and what a miss or a first order asks of the agent, kept by Ember's code before every plan."""
-        with self.db.transaction() as conn:
-            happened = gates.keep(conn, self.scope, self.clock.today(), to_iso(self.clock.now()))
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
 
@@ -1423,29 +1355,15 @@ class CycleRunner:
             events.record(self.db, "info", "agent", message[:300])
 
     def _keep_plan(self, cycle_id: int) -> None:
-        """0.34.0: the plan tree (plan.py): new product lines laid out, what its checks show done closed, the promise
-        and recurring steps added. In the shadow: nothing in the cycle reads it yet."""
+        """0.34.0: the plan tree (plan.py): new product lines laid out, what its checks show done closed, the promise,
+        decision and recurring steps added (the channels the owner switched on: a channel down for a cycle changes no
+        step's age)."""
         with self.db.transaction() as conn:
             happened = plan_tree.keep(
                 conn, self.scope, to_iso(self.clock.now()), self.clock.today(), plan_tree.channels_from(self.settings)
             )
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
-
-    def _shadow_pick(self, cycle_id: int) -> None:
-        """0.34.0: the step the plan tree would take this cycle, recorded next to what READY took (the cycle's kind
-        and line), so a week of real cycles can tune its weights before it steers."""
-        with self.db.transaction() as conn:
-            plan_tree.shadow_pick(
-                conn,
-                self.scope,
-                cycle_id,
-                to_iso(self.clock.now()),
-                self.clock.today(),
-                self.kind,
-                self.ready_line,
-                plan_tree.channels_from(self.settings),
-            )
 
     def _guarded(self, step: Callable[[int], None], cycle_id: int, name: str) -> None:
         """0.18.0: a learning step before the plan: a bug in it is logged and the cycle goes on (Stopping and EndCycle

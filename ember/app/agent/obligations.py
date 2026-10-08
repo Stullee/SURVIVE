@@ -405,7 +405,7 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date, strategy: str
         ids = ", ".join(f"#{m['id']}" for m in overdue[:6]) + (
             f" and {len(overdue) - 6} more" if len(overdue) > 6 else ""
         )
-        lines.append(f"- Overdue milestones {ids}: close, move or drop each (ROADMAP).")
+        lines.append(f"- Overdue milestones {ids}: close, move or drop each (YOUR PLAN).")
     few = etsy_publisher.few_photos(conn, scope)
     if few:
         shown = ", ".join(  # 0.28.0: with each listing's line
