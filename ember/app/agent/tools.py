@@ -3023,7 +3023,7 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     if status == "done" and row["kind"] == "first_test":  # 0.15.0: a venture goes live on it
         raise ToolError(
             f"milestone #{mid} is a first test, met as Ember's code checks it or your owner confirms it: tell your "
-            "owner what shows it is met (message_owner), and your owner confirms it on the Roadmap tab"
+            "owner what shows it is met (message_owner), and your owner confirms it on the Plan tab"
         )
     if row["created_by"] == "code":  # 0.12.0: the money goal and its decision points
         if args.get("due") and args["due"] != row["due"]:
@@ -3079,7 +3079,7 @@ def _milestone_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
             )
     if moved_to is not None and theirs:
         if row["proposed_due"] == moved_to.isoformat():
-            raise ToolError(f"you proposed {moved_to.isoformat()} already: your owner decides on the Roadmap tab")
+            raise ToolError(f"you proposed {moved_to.isoformat()} already: your owner decides on the Plan tab")
         changes.update(
             proposed_due=moved_to.isoformat(),
             proposed_note=" ".join(note.split())[: roadmap.NOTE_CHARS],

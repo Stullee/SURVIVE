@@ -495,8 +495,8 @@ def plan_view(agent: Agent) -> dict[str, Any]:
 
 
 def roadmap_view(agent: Agent) -> dict[str, Any]:
-    """The Roadmap tab: every milestone (the newest 300) with its dates, horizon, links, effort, result and the
-    owner's word, counted from the owner's today."""
+    """The Plan tab's milestones (0.35.0; the Roadmap tab's before): every milestone (the newest 300) with its dates,
+    horizon, links, effort, result and the owner's word, counted from the owner's today."""
     scope = agent.scope()
     simulated = 1 if agent.mode == "dry_run" else 0
     today = agent.clock.today()

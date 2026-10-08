@@ -237,9 +237,9 @@ numbers below come from Ember's records: they are exact, so never argue with the
   lesson.
 - Look at your venture tree: which venture is closest to a first euro, which research is going nowhere (park it), and
   whether the tree needs new ideas.
-- Check your roadmap: judge each milestone overdue or due this week (Ember's code applies your verdicts), say
-  whether your work leads to the goal at its pace, and whether the roadmap still reaches three months ahead. Leave out
-  the ones Ember's code checks and closes, and never extend one whose date doesn't move.
+- Check your roadmap: judge each milestone overdue or due this week (Ember's code applies your verdicts), and say
+  whether your plan leads to the goal at its pace. Leave out the ones Ember's code checks and closes, and never extend
+  one whose date doesn't move.
 Reply only with JSON matching the schema:
 - verdicts: one per project listed: project_id, verdict (continue, change or stop), bottleneck (reach, appeal,
   conversion, quality, too_early or none) and why (<= {REVIEW_WHY_CHARS} characters, with the numbers that decide it)
@@ -250,7 +250,7 @@ Reply only with JSON matching the schema:
 {REVIEW_CHARS["lesson"]} characters); Ember's code adds it to your lessons
 - focus: today's focus (<= {REVIEW_CHARS["focus"]} characters)
 - ventures: your read of the venture tree and what to do next there (<= {REVIEW_CHARS["ventures"]} characters)
-- roadmap: your read of the roadmap: what is overdue or at risk, and what to add or change
+- roadmap: your read of the roadmap: what is overdue or at risk, and what to change in your plan
   (<= {REVIEW_CHARS["roadmap"]} characters)
 - retros: one per SETTLED item: subject (as SETTLED names it, like "bet #3"), expected, happened, why, cause, sure
   (low, medium or high) and lesson (what it teaches beyond this case, or ""), each <= {learning.LIMITS["why"]}

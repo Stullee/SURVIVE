@@ -1245,8 +1245,7 @@ def news_line(row: Mapping[str, Any]) -> str:
         replaced = f" in place of #{row['replaces_id']}" if _column(row, "replaces_id") else ""
         line = (
             f"Your owner set their goal{replaced}: {name}, due {row['due']}: done when {_q(row['measure'])}. "
-            "Everything on your roadmap leads to it now: split it into sub-goals that reach it (milestone_plan, "
-            f"parent #{row['id']})"
+            "Your plan works toward it now: YOUR PLAN starts with it"  # 0.35.0: milestone_plan retired
         )
     elif action == "drop" and is_goal(row):
         line = (
