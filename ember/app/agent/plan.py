@@ -60,9 +60,10 @@ HISTORY = 12  # cycles read back for the streak
 OBLIGATION_HOURS = 24
 ALTERNATIVES = 3  # the other steps YOUR STEP names
 # 0.35.0: a product's decide-by dates once it has a live listing (in place of the listing test's bars, gates.py until
-# 0.34.0): from the day its first listing was seen live. Day 7: 10 views, or its marketing is urgent for a week. Day 14: 30 views and 2
-# favorites; missed with less reach than reach.ENOUGH, one more try by day 28 (its marketing urgent meanwhile), else
-# the owner decides. Day 21: an order brings a step to scale it; none, the owner decides (keep or drop it).
+# 0.34.0): from the day its first listing was seen live. Day 7: 10 views, or its marketing is urgent for a week.
+# Day 14: 30 views and 2 favorites; missed with less reach than reach.ENOUGH, one more try by day 28 (its marketing
+# urgent meanwhile), else the owner decides. Day 21: an order brings a step to scale it; none, the owner decides
+# (keep or drop it).
 DAY7_VIEWS, DAY14_VIEWS, DAY14_FAVORITES = 10, 30, 2
 PUSH_DAYS = 7  # a views bar missed: the product's marketing is urgent this long
 MOVED_KEY = "plan_tree.milestones_upto"  # migration 0088: the newest milestone the plan tree took the place of
@@ -121,8 +122,11 @@ def _close(conn: sqlite3.Connection, node_id: int, now: str, status: str, result
 # --- laying a product out ---
 
 
-def infer_template(conn: sqlite3.Connection, scope: AgentScope, project: Mapping[str, Any]) -> templates.Template:
-    """A product line's type, from its records first (its requests to the owner, its tools), then its words."""
+def infer_template(
+    conn: sqlite3.Connection, scope: AgentScope, project: Mapping[str, Any], records_only: bool = False
+) -> templates.Template:
+    """A product line's type, from its records first (its requests to the owner, its tools), then its words.
+    ``records_only`` (0.35.0, a generic product re-typed): its requests and the tools of one type only."""
     pid = project["id"]
     where, params = scope.where("a")
     executors = {
@@ -157,6 +161,8 @@ def infer_template(conn: sqlite3.Connection, scope: AgentScope, project: Mapping
         return templates.KDP_BOOK
     if used & {"propose_printify_product", "printify_catalog"}:
         return templates.PRINTIFY_POD
+    if records_only:
+        return templates.ETSY_DIGITAL if "propose_etsy_listing" in used else templates.GENERIC
     for pattern, template in (
         (r"\b(poster|posters|printify|print on demand)\b", templates.PRINTIFY_POD),
         (r"\b(blog|website|site)\b", templates.SITE_CONTENT),
@@ -258,26 +264,94 @@ def lay_out(conn: sqlite3.Connection, scope: AgentScope, project: Mapping[str, A
             source="template",
         )
         for number, step in enumerate(templates.steps_for(stage, audience)):
-            _insert(
-                conn,
-                scope,
-                now,
-                parent_id=stage_id,
-                level="step",
-                project_id=project["id"],
-                template=f"{template.key}/{stage.stage}/{step.key}",
-                stage=stage.stage,
-                kind=step.kind,
-                channel=step.channel,
-                title=step.title,
-                check_kind=step.check,
-                check_spec=json.dumps(step.spec),
-                seq=number,
-                source="template",
-                effort=step.effort,
-                waiting=step.waiting,
-            )
+            _template_step(conn, scope, now, stage_id, int(project["id"]), template, stage, step, number)
     return product
+
+
+def _template_step(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    now: str,
+    stage_id: int,
+    line: int,
+    template: templates.Template,
+    stage: templates.StageT,
+    step: templates.StepT,
+    seq: int,
+) -> int:
+    return _insert(
+        conn,
+        scope,
+        now,
+        parent_id=stage_id,
+        level="step",
+        project_id=line,
+        template=f"{template.key}/{stage.stage}/{step.key}",
+        stage=stage.stage,
+        kind=step.kind,
+        channel=step.channel,
+        title=step.title,
+        check_kind=step.check,
+        check_spec=json.dumps(step.spec),
+        seq=seq,
+        source="template",
+        effort=step.effort,
+        waiting=step.waiting,
+    )
+
+
+def _retemplate(
+    conn: sqlite3.Connection, scope: AgentScope, product: Mapping[str, Any], project: Mapping[str, Any], now: str
+) -> list[str]:
+    """0.35.0: a product laid out as generic (its words named no type, and its line had no records yet) takes the
+    template its line's records name once they do (its first request to the owner, the tools its cycles used). Its
+    open generic stages close, and that type's stages and steps take their place under the same product (a stage
+    done before stays done): what Ember, the owner or Ember's code added there moves along, a promise's or a
+    decision's step stays where it is (it is taken in any stage). A node's place is fixed, so the product stays under
+    its first project: the owner's Plan tab shows it under its type's."""
+    if templates.by_key(product["template"]).name != templates.GENERIC.name:
+        return []
+    template = infer_template(conn, scope, project, records_only=True)
+    if template.name == templates.GENERIC.name:
+        return []
+    line = int(project["id"])
+    audience = str(product["audience"] or "both")
+    old = {str(s["stage"]): s for s in _stages(conn, scope, product["id"]) if s["status"] != "dropped"}
+    moved = f"Ember's code: it is a {template.title} now"
+    for seq, stage in enumerate(template.stages):
+        row = old.get(stage.stage)
+        if row is not None and row["status"] != "open":
+            continue  # done before: it stays done
+        stage_id = _insert(
+            conn, scope, now, parent_id=product["id"], level="stage", project_id=line, stage=stage.stage,
+            title=f"{STAGE_TITLES[stage.stage]}: {stage.done}"[:160], check_kind=stage.check,
+            check_spec=json.dumps(stage.spec) if stage.check else None, seq=seq, source="template",
+        )  # fmt: skip
+        for number, step in enumerate(templates.steps_for(stage, audience)):
+            _template_step(conn, scope, now, stage_id, line, template, stage, step, number)
+        if row is None:
+            continue
+        for kept in _steps(conn, scope, row["id"]):
+            if kept["status"] != "open" or kept["obligation_id"] is not None:
+                continue
+            if kept["source"] == "template":
+                _close(conn, kept["id"], now, "dropped", moved)
+                continue
+            copy = _insert(
+                conn, scope, now, parent_id=stage_id, level="step", project_id=line, stage=stage.stage,
+                template=kept["template"], kind=kept["kind"], channel=kept["channel"], title=kept["title"],
+                check_kind=kept["check_kind"], check_spec=kept["check_spec"], seq=kept["seq"], source=kept["source"],
+                due=kept["due"], effort=kept["effort"], ready_since=kept["ready_since"], pinned=kept["pinned"],
+                waiting=kept["waiting"], wait_ref=kept["wait_ref"], wait_until=kept["wait_until"],
+                wait_why=kept["wait_why"],
+            )  # fmt: skip
+            _close(conn, kept["id"], now, "dropped", f"{moved}: as step #{copy}")
+        _close(conn, row["id"], now, "dropped", moved)
+    _update(conn, product["id"], now, template=template.key)
+    _platform(conn, scope, template.platform, now)  # its type's project, where the owner's tab shows it
+    why = f"its records show a {template.title}: that type's stages and steps"
+    change(conn, scope, int(product["id"]), None, "code", "replace", why, now)
+    return [f"Plan tree: line #{line} is a {template.title}: its plan takes that type's stages and steps."]
 
 
 # --- the checks ---
@@ -408,6 +482,10 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, cha
     for product in nodes(conn, scope, "level = 'product' AND status = 'open'"):
         project = conn.execute("SELECT * FROM projects WHERE id = ?", (product["project_id"],)).fetchone()
         if project is not None:
+            retyped = _retemplate(conn, scope, product, project, now)
+            if retyped:
+                said += retyped
+                product = node(conn, scope, int(product["id"])) or product
             template = templates.by_key(product["template"])
             earn = could_earn(conn, scope, project, template.could_earn)
             if earn != product["could_earn"]:
@@ -789,9 +867,12 @@ def _decide_by(facts: Facts, product: Mapping[str, Any], now: str, today: date) 
     its first listing keeps the one it got), each read once on or after its day from the start of its test (the day
     its first listing was seen live; a listing test begun before 0.35.0 keeps its start and what its bars found).
     Their verdicts are kept on the product (decide_by), and a views bar missed makes its marketing urgent
-    (pushed_until). What the owner decides comes as a step of theirs; a first order brings Ember a step to scale it."""
+    (pushed_until). What the owner decides comes as a step of theirs; a first order brings Ember a step to scale it.
+    None is read while the owner's park or kill of its venture stops the line (they decided on it already)."""
     conn, scope = facts.conn, facts.scope
     line = int(product["project_id"])
+    if ventures.project_stopped(conn, scope, line) is not None:
+        return []
     found: dict[str, str] = json.loads(product["decide_by"]) if product["decide_by"] else {}
     start = product["live_since"]
     if start is None:
@@ -1325,6 +1406,15 @@ def steer(
     return Steer(pick, tuple(found), kind)
 
 
+def on_channel(conn: sqlite3.Connection, scope: AgentScope, step: weights.Step | None) -> bool:
+    """0.35.0: whether a step is one of a channel's own product (its setup, in an ordinary cycle that keeps the
+    channel's section and tools)."""
+    if step is None or step.product is None:
+        return False
+    found = nodes(conn, scope, "level = 'product' AND project_id = ?", (step.product,))
+    return bool(found) and templates.by_key(found[0]["template"]).name == "channel"
+
+
 def _markets(row: Mapping[str, Any] | None) -> bool:
     """Whether a step's check needs the marketing tools (only a marketing cycle carries them): a pin, a post or a blog
     post, or a request a marketing cycle makes (obligations.MARKETING_EXECUTORS: a website product's post)."""
@@ -1469,12 +1559,14 @@ def plan_text(
     goal: str = "",
     milestones: list[str] | None = None,
     since: str | None = None,
+    closed: list[str] | None = None,
 ) -> str:
     """The planner's YOUR PLAN (0.35.0, in place of the roadmap): the owner's goal and how far it got (``goal``:
     roadmap.root_line), what the owner did to the plan since the last cycle (``since``: its end), then each project's
     open products with their stage and numbers, what waits on the owner, and the milestones still open
-    (``milestones``: a venture's first test, the owner's own). A product's steps are YOUR STEP's to show, and the
-    owner's Plan tab shows the whole tree: this stays short however big the tree grows."""
+    (``milestones``: a venture's first test, the owner's own) and those Ember's code closed since (``closed``). A
+    product's steps are YOUR STEP's to show, and the owner's Plan tab shows the whole tree: this stays short however
+    big the tree grows."""
     lines = [f"Today: {today:%A} {today.isoformat()}."]
     if goal:
         lines.append(goal)
@@ -1482,10 +1574,8 @@ def plan_text(
     if words:
         lines.append("Your owner since your last cycle: " + "; ".join(words) + ".")
     facts = Facts(conn, scope, now)
-    for top in nodes(conn, scope, "level = 'project'"):
-        products = nodes(conn, scope, "parent_id = ? AND level = 'product' AND status = 'open'", (top["id"],))
-        if products:
-            lines.append(f"{top['title']}: " + " · ".join(_product_line(conn, scope, facts, p) for p in products))
+    for top, products in grouped(conn, scope, "status = 'open'"):
+        lines.append(f"{top['title']}: " + " · ".join(_product_line(conn, scope, facts, p) for p in products))
     owners = [
         f"#{s['id']} {_cut(s['title'], 50)} (line #{s['project_id']})"
         for s in nodes(conn, scope, "level = 'step' AND status = 'open' AND kind = ?", (templates.OWNER_KIND,))
@@ -1496,9 +1586,22 @@ def plan_text(
     if milestones:
         lines.append("Milestones still open:")
         lines += milestones
+    if closed:
+        lines.append("Since your last cycle, Ember's code closed from its records: " + "; ".join(closed) + ".")
     if len(lines) == 1 + bool(goal) + bool(words):
         lines.append("Your plan has no products yet: your first one starts it.")
     return "\n".join(lines)
+
+
+def grouped(conn: sqlite3.Connection, scope: AgentScope, condition: str = "1") -> list[tuple[Any, list[Any]]]:
+    """Each project with its products (``condition``: which), each under its type's project: a product re-typed
+    from generic (``_retemplate``) stays under its first one in the records (a node's place is fixed)."""
+    tops = nodes(conn, scope, "level = 'project'")
+    homes = {str(t["platform"]): int(t["id"]) for t in tops}
+    found: dict[int, list[Any]] = {int(t["id"]): [] for t in tops}
+    for product in nodes(conn, scope, f"level = 'product' AND ({condition})"):
+        found[homes.get(templates.by_key(product["template"]).platform, int(product["parent_id"]))].append(product)
+    return [(t, found[int(t["id"])]) for t in tops if found[int(t["id"])]]
 
 
 def _product_open(conn: sqlite3.Connection, scope: AgentScope, line: int) -> bool:
@@ -2061,12 +2164,9 @@ def view(
     titles = {r["id"]: str(r["title"]) for r in nodes(conn, scope, "level = 'step' AND status = 'open'")}
     facts = Facts(conn, scope, now)
     projects: list[dict[str, Any]] = []
-    for top in nodes(conn, scope, "level = 'project'"):
-        products = []
-        for product in nodes(conn, scope, "parent_id = ? AND level = 'product'", (top["id"],)):
-            products.append(_product_view(conn, scope, product, by_id, parts, titles, facts, now))
-        if products:
-            projects.append({"id": top["id"], "platform": top["platform"], "title": top["title"], "products": products})
+    for top, rows in grouped(conn, scope):
+        products = [_product_view(conn, scope, q, by_id, parts, titles, facts, now) for q in rows]
+        projects.append({"id": top["id"], "platform": top["platform"], "title": top["title"], "products": products})
     ranked = [(s, p) for s, p in pick.ranked]
     waiting_owner = [_step_brief(c, None, titles) for c in found if c.waiting == "owner"]
     goal = roadmap.root(conn, scope)
@@ -2213,6 +2313,7 @@ def _product_view(
                     "waiting": candidate.waiting if candidate else None,
                     "due": step["due"],
                     "source": step["source"],
+                    "template": step["template"],  # 0.35.0: decide/owner is the owner's keep-or-drop
                     "pinned": bool(step["pinned"]),
                     "check": templates.CHECKS.get(step["check_kind"] or "", ""),
                     "result": step["result"],
@@ -2253,6 +2354,7 @@ def _product_view(
         "pushed_until": product["pushed_until"],
         "milestone": int(own["id"]) if own is not None else None,  # its own milestone (the Autonomy box's)
         "unlocks": unlocks,
+        "autonomy": _autonomy(conn, scope, int(own["id"]) if own is not None else None, now),
         "template": templates.by_key(product["template"]).title,
         "status": product["status"],
         "stage": stage_name if current is not None else None,
@@ -2272,6 +2374,31 @@ def _product_view(
         },
         "stages": stages,
     }
+
+
+def _autonomy(conn: sqlite3.Connection, scope: AgentScope, milestone_id: int | None, now: str) -> list[dict[str, Any]]:
+    """0.35.0: a product's Autonomy box: each rule's unlock on its own milestone, or (before one is set, and so its
+    milestone made) every rule manual, as a milestone of its line would show it."""
+    if milestone_id is not None:
+        return policy.view(conn, scope, _Day(now), milestone_id)
+    return [
+        {
+            "rule": rule.name,
+            "label": rule.label,
+            "action_class": rule.action_class,
+            "fits": rule.action_class != "email.reply",  # a milestone of a line: its listings, no email replies
+            "levels": list(policy.levels(rule.name)),
+            "level": "manual",
+            "per_day": policy.PER_DAY,
+            "budget": policy.BUDGET,
+            "used": 0,
+            "used_today": 0,
+            "by": None,
+            "why": None,
+            "since": None,
+        }
+        for rule in policy.RULES.values()
+    ]
 
 
 def _numbers(funnel: reach.Funnel | None) -> tuple[int, int, int]:

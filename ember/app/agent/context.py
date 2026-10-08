@@ -30,6 +30,7 @@ from . import (
     learning,
     library,
     obligations,
+    policy,
     reach,
     review,
     roadmap,
@@ -473,10 +474,19 @@ def _plan(
     top = roadmap.root(conn, scope)
     goal = roadmap.root_line(top, today, progress) if top is not None else ""
     rest = [m for m in milestones if top is None or m["id"] != top["id"]]
-    shown = [roadmap.milestone_line(m, today, False, progress=progress) for m in rest[:SHOWN_MILESTONES]]
+    unlocks = {mid: policy.unlocked_text(rows, True) for mid, rows in policy.standing(conn, scope).items()}
+    shown = [
+        roadmap.milestone_line(m, today, False, unlocks=unlocks, progress=progress) for m in rest[:SHOWN_MILESTONES]
+    ]
     if len(rest) > SHOWN_MILESTONES:
         shown.append(f"… and {len(rest) - SHOWN_MILESTONES} more")
-    return plan_tree.plan_text(conn, scope, now or f"{today.isoformat()}T00:00:00+00:00", today, goal, shown, since)
+    closed = [  # 0.12.0: what Ember's code closed from its records since the last cycle
+        f"#{r['id']} {roadmap.title_q(r)} {r['status']}"
+        for r in (roadmap.closed_since(conn, scope, since) if since else [])
+        if r["closed_by"] == "code"
+    ]
+    when = now or f"{today.isoformat()}T00:00:00+00:00"
+    return plan_tree.plan_text(conn, scope, when, today, goal, shown, since, closed[:4])
 
 
 def _safe_listing(workspace: Jail, shown: int = 19, budget: int = 900) -> list[str]:
@@ -965,8 +975,6 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
     own = [since, software, *(text for _, text in standing)]
     used = sum(map(json_bytes, own)) + min(json_bytes(lessons), b["lessons"])
     t = _allot(_planner_texts(s, dry_run, b["journal"]), b, used)
-    # 0.28.0: while marketing cycles run, an ordinary plan leaves the marketing channels (and their tools) to them
-    elsewhere = s.marketing_apart and not (s.marketing or s.venture or s.reactive)
     parts = [
         ("STATUS", t["status"]),
         *([(obligations.HEADING, s.obligations)] if s.obligations else []),  # 0.12.0: first, never cut
@@ -983,11 +991,13 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         ("WAITING FOR YOUR OWNER", t["pending"]),
         *([("MAIL", t["mail"])] if s.mail is not None else []),
         *([("ETSY SHOP", t["etsy"])] if t["etsy"] else []),
-        *([("PINTEREST", t["pinterest"])] if t["pinterest"] and not elsewhere else []),
-        *([("BLUESKY", t["bluesky"])] if t["bluesky"] and not elsewhere else []),
+        # 0.28.0: an ordinary plan leaves the marketing channels to marketing cycles (0.35.0: loop.py leaves out a
+        # ready channel's section, and keeps one that waits for the owner's setup)
+        *([("PINTEREST", t["pinterest"])] if t["pinterest"] else []),
+        *([("BLUESKY", t["bluesky"])] if t["bluesky"] else []),
         *([("PRINTIFY", t["printify"])] if t["printify"] else []),
         *([("WEBSITE", t["website"])] if t["website"] else []),
-        *([("BLOG", t["blog"])] if t["blog"] and not elsewhere else []),
+        *([("BLOG", t["blog"])] if t["blog"] else []),
         *([("KDP", t["kdp"])] if t["kdp"] else []),
         (STRATEGY_HEADING, t["strategy"]),
         (IDENTITY_HEADING, t["identity"]),

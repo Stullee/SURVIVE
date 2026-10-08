@@ -57,7 +57,7 @@ def test_a_venture_case_is_saved_with_its_numbers_and_shown(data_dir: Path) -> N
             ToolCalls(
                 [
                     ("venture_case", NUMBERS),
-                    ("milestone_plan", {"milestones": [{"title": "A goal", "due": "2026-12-01"}]}),
+                    ("plan_step", {"action": "hold", "why": "a venture first"}),
                 ]
             ),
             Reply("Done."),
@@ -78,9 +78,9 @@ def test_a_venture_case_is_saved_with_its_numbers_and_shown(data_dir: Path) -> N
         f"Saved the numbers of venture #{DROPSHIPPING} as case #1 (at an assumed USD 1.10 per EUR: your owner set no "
         "exchange rate). A sale at EUR 25.00 keeps EUR 13.00 (fees EUR 0.00, cost EUR 12.00); break-even at 2.4 sales"
     )
-    [planned] = tool_results(agent, "milestone_plan")  # 0.13.0: laying out the roadmap is an ordinary cycle's
+    [planned] = tool_results(agent, "plan_step")  # 0.13.0: the plan's steps are an ordinary cycle's (0.35.0)
     assert planned["status"] == "error"
-    assert "laying out the roadmap belong to ordinary and marketing cycles" in planned["result"]
+    assert "your plan's steps belong to ordinary and marketing cycles" in planned["result"]
     [saved] = rows(
         agent, "SELECT venture_id, channel, sales_low, sales_mid, sales_high, net_eur, break_even FROM venture_cases"
     )
@@ -108,5 +108,5 @@ def test_venture_case_is_a_venture_cycles_tool() -> None:
     venture = {d["name"] for d in tools.definitions(etsy=True, venture=True)}
     ordinary = {d["name"] for d in tools.definitions(etsy=True, venture=False)}
     assert "venture_case" in venture and "venture_case" not in ordinary
-    assert "milestone_plan" in ordinary and "milestone_plan" not in venture
+    assert "plan_step" in ordinary and "plan_step" not in venture
     assert "milestone_update" in venture and "milestone_update" in ordinary

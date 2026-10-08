@@ -141,10 +141,14 @@ def test_only_revenue_and_expenses_can_carry_attribution_in_the_database(ingress
         )
 
 
-def test_a_project_succeeds_only_when_it_earned_more_than_it_cost(ingress_client: TestClient) -> None:
-    """0.11.1: project_update(succeeded) always failed, because no revenue could name its project."""
+def test_only_the_owner_closes_a_project_even_one_that_earned_more_than_it_cost(ingress_client: TestClient) -> None:
+    """0.11.1: project_update(succeeded) always failed, because no revenue could name its project. 0.35.0: only the
+    owner closes a project (the Plan tab); Ember's code refuses a closing status even past the tool's schema."""
     agent = ingress_client.app.state.ember.agent
     project_id = project_with_a_sale(agent, cost_micros=500_000)  # its cycle cost $0.50
+    assert (
+        post(ingress_client, "api/ledger/revenue", entry("0.90", source="s", project_id=project_id)).status_code == 201
+    )
     ctx = tools.ToolContext(
         db=agent.db,
         clock=agent.clock,
@@ -156,23 +160,6 @@ def test_a_project_succeeds_only_when_it_earned_more_than_it_cost(ingress_client
         max_sleep=1440,
         state=tools.CycleTools(),
     )
-
-    def succeed() -> str:
-        with agent.db.transaction() as conn:
-            return tools.HANDLERS["project_update"](ctx, {"project_id": project_id, "status": "succeeded"}, conn).text
-
-    with pytest.raises(tools.ToolError, match="once your owner has recorded revenue for it"):
-        succeed()
-    assert (
-        post(ingress_client, "api/ledger/revenue", entry("0.60", source="s", project_id=project_id)).status_code == 201
-    )
-    assert (
-        post(ingress_client, "api/ledger/expense", entry("0.20", note="fee", project_id=project_id)).status_code == 201
-    )
-    with pytest.raises(tools.ToolError, match=r"earned \$0\.40 \(revenue less its expenses\) and cost \$0\.50"):
-        succeed()
-    assert (
-        post(ingress_client, "api/ledger/revenue", entry("0.20", source="s", project_id=project_id)).status_code == 201
-    )
-    assert succeed() == f"Project #{project_id}: active → succeeded."
-    assert rows(agent, f"SELECT status FROM projects WHERE id = {project_id}")[0]["status"] == "succeeded"
+    with agent.db.transaction() as conn, pytest.raises(tools.ToolError, match="only your owner closes or drops"):
+        tools.HANDLERS["project_update"](ctx, {"project_id": project_id, "status": "succeeded"}, conn)
+    assert rows(agent, f"SELECT status FROM projects WHERE id = {project_id}")[0]["status"] == "active"

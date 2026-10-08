@@ -4,7 +4,8 @@ A Haushaltsbuch KDP book was promised to the owner three times ("today's focus")
 line, so no cycle was taken for it, and the cycle two into the book went to a resume line's missed day-7 bar. Four more
 misses of 2026-10-07 made every cycle an ordinary one for two days, the day Pinterest's Standard access came, and took
 their lines one by one for edits of titles and tags their own review had just called fine; those edits counted as the
-reach that would have parked the lines on day 14 though nobody had been brought to them.
+reach that would have parked the lines on day 14 though nobody had been brought to them. 0.35.0: READY, the listing
+test's bars and the marketing share retired: the plan tree takes each cycle's step (tests/test_fixes_0350.py).
 """
 
 from __future__ import annotations
@@ -18,15 +19,16 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import gates, lines, obligations, reach, store, tools, ventures  # noqa: E402
+from app.agent import obligations, reach, store, tools, ventures  # noqa: E402
+from app.agent import plan as plan_tree  # noqa: E402
 from app.agent.fake_llm import FakeTransport, Overrun, Reply, ToolCalls, request_kind  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.economy.metering import WORKSHOP  # noqa: E402
-from tests import test_fixes_0140_money_guard, test_fixes_0320, test_listing_gates  # noqa: E402
+from tests import test_fixes_0140_money_guard, test_fixes_0320  # noqa: E402
 from tests.economy_helpers import FakeClock, make_economy  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
-from tests.test_etsy import call  # noqa: E402
-from tests.test_fixes_0280 import cycle, lined, milestone, now, ready, take, texts, working  # noqa: E402
+from tests.test_etsy import call, started  # noqa: E402
+from tests.test_fixes_0280 import cycle, lined, milestone, now, take, texts, working  # noqa: E402
 from tests.test_fixes_0300 import judged  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
 from tests.test_ventures import JOURNAL  # noqa: E402
@@ -65,16 +67,20 @@ def test_a_promise_names_its_line_which_comes_first_and_takes_the_cycle_when_due
     [promise] = rows(agent, "SELECT id, project_id FROM obligations WHERE kind = 'promise'")
     assert promise["project_id"] == 3
     assert ctx.state.focus_project_id is None  # a promise is often about another line than the cycle's: no lock
-    found = ready(agent)
-    assert [i.key for i in found][:2] == ["line #3", "line #2"]  # the promise's line, then the line in progress
-    assert f"promised to your owner: #{promise['id']} due {day(agent, 1)}" in found[0].text
     with agent.db.connection() as conn:
         owed = [o for _, o in obligations.pressing_owed(conn, agent.scope(), agent.clock.today())]
         listed = obligations.text(conn, agent.scope(), agent.clock.today())
     assert owed == [obligations.Owed(3, forces=True)]  # due tomorrow: it presses, on its line
     assert f"- [line #3] #{promise['id']} promise to your owner" in listed
-    pressed = ready(agent, owed=owed, since="")
-    assert [(i.key, i.pressed) for i in pressed] == [("line #3", True)]
+    with agent.db.transaction() as conn:  # 0.35.0: a step of line #3's in the plan tree
+        plan_tree.keep(conn, agent.scope(), now(agent), agent.clock.today(), {})
+    assert rows(agent, f"SELECT project_id FROM plan_nodes WHERE obligation_id = {promise['id']}") == [
+        {"project_id": 3}
+    ]
+    agent.clock.advance(days=1)  # due today: line #3 is taken first
+    with agent.db.transaction() as conn:
+        steered = plan_tree.steer(conn, agent.scope(), now(agent), agent.clock.today(), {})
+    assert steered.step is not None and steered.step.product == 3 and steered.pick.decided == "promise"
     with agent.db.transaction() as conn, pytest.raises(sqlite3.IntegrityError, match="is fixed"):
         conn.execute(f"UPDATE obligations SET project_id = 2 WHERE id = {promise['id']}")
 
@@ -113,35 +119,10 @@ def test_a_miss_neither_decides_the_cycle_nor_takes_its_line(data_dir: Path) -> 
         owed = [o for _, o in obligations.pressing_owed(conn, agent.scope(), agent.clock.today())]
         assert obligations.pressing(conn, agent.scope(), agent.clock.today()) == []  # nothing of the owner's
     assert owed == [obligations.Owed(1)]  # pressing, on line #1, but not the owner's
-    turn = lines.kind(
-        venture_share=25,
-        share=20,
-        spends=(1000, 250, 100),
-        ventures_run=True,
-        markets=True,
-        marketable=[1],
-        owed=owed,
-        messages=False,
-    )
-    assert turn == lines.Turn(lines.MARKETING)  # marketing's turn stays its turn
-    found = ready(agent, owed=owed, since="")
-    assert not any(i.pressed for i in found)
-    assert [i.key for i in found][:2] == ["line #2", "line #1"]  # the line in progress, then the one that owes
-
-
-def test_a_day_7_miss_owes_a_push_its_marketing_cycles_rank_first(data_dir: Path) -> None:
-    agent, project = test_listing_gates.started(data_dir)
-    test_listing_gates.close(agent, "day7_views", "missed")
-    test_listing_gates.keep(agent)
-    scope, today = agent.scope(), agent.clock.today()
-    with agent.db.connection() as conn:
-        [row] = obligations.open_rows(conn, scope)
-        assert obligations.owed(conn, scope, row) == obligations.Owed(project, marketing=True)
-        owed = [o for _, o in obligations.pressing_owed(conn, scope, today)]
-        market = lines.marketing(conn, scope, printify_links=False, owed=owed, since="", today=today)
-    assert row["what"].startswith(f"project #{project}: {gates.PUSH}")
-    assert [(i.key, i.pressed, i.job) for i in market] == [(f"market #{project}", False, True)]
-    assert f"owes: obligation #{row['id']}" in market[0].text
+    with agent.db.transaction() as conn:  # 0.35.0: the plan tree weighs its steps; nothing is taken first for it
+        plan_tree.keep(conn, agent.scope(), now(agent), agent.clock.today(), {})
+        steered = plan_tree.steer(conn, agent.scope(), now(agent), agent.clock.today(), {})
+    assert steered.pick.decided in ("weight", "margin")
 
 
 # --- reach that brings visitors ---
@@ -150,12 +131,13 @@ def test_a_day_7_miss_owes_a_push_its_marketing_cycles_rank_first(data_dir: Path
 def test_listing_edits_are_reach_but_not_the_visitors_a_fair_test_needs(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    agent, project = test_listing_gates.started(data_dir)
+    agent, project = started(data_dir)
     real = reach.funnels
 
     def edited(conn: Any, scope: Any) -> dict[int, reach.Funnel]:
         found = real(conn, scope)
         found[project].edits = 5  # five edits of its titles and tags, nothing else
+        found[project].views, found[project].favorites = 20, 0  # short of day 14's 30 views and 2 favorites
         return found
 
     monkeypatch.setattr(reach, "funnels", edited)
@@ -163,12 +145,14 @@ def test_listing_edits_are_reach_but_not_the_visitors_a_fair_test_needs(
         funnel = reach.funnels(conn, agent.scope())[project]
     assert (funnel.reach, funnel.traffic) == (5, 0)
     assert "less than the 3 a fair test needs (not edits)" in funnel.text()
-    test_listing_gates.close(agent, "day7_views", "done")
-    test_listing_gates.keep(agent)
-    test_listing_gates.close(agent, "day14_views", "missed")
-    happened = test_listing_gates.keep(agent)
-    assert happened[0].startswith(f"Obligation: bring buyers to project #{project}'s listings")  # not a park
-    assert "retry_views" in test_listing_gates.bars(agent)
+    agent.clock.advance(days=14)
+    with agent.db.transaction() as conn:  # 0.35.0: day 14's decide-by date (the listing test's bars until 0.34.0)
+        happened = plan_tree.keep(conn, agent.scope(), now(agent), agent.clock.today(), {})
+    said = "\n".join(happened)
+    assert f"Plan tree: line #{project} on day 14: 20 views, 0 favorites, 0 orders after 0 reach actions" in said
+    assert "too little reach to judge it: one more try" in said  # not the owner's decision
+    [product] = rows(agent, f"SELECT decide_by FROM plan_nodes WHERE level = 'product' AND project_id = {project}")
+    assert '"day14": "retry"' in product["decide_by"]
 
 
 # --- the review hears which channels are ready ---
@@ -206,7 +190,7 @@ def test_any_cycle_keeps_another_line_s_records_and_parks_an_idea_its_work_stays
         other = ventures.create(conn, agent.scope(), title="Coaches", pitch="p", stage="idea", now=now(agent))
     refused = call(ctx, "venture_update", {"venture_id": other, "stage": "researching"})
     assert not refused.ok and "a venture cycle's work: this cycle works on product line #1" in refused.text
-    kept = call(ctx, "project_update", {"project_id": 2, "next_step": "Pinterest is set up: pin the poster"})
+    kept = call(ctx, "project_update", {"project_id": 2, "note": "Pinterest is set up: pin the poster"})
     assert kept.ok and ctx.state.focus_project_id == 1
     bet = call(ctx, "project_update", {"project_id": 2, "bet": "+5 views in 7 days: pins"})
     assert not bet.ok and "no update for project #2" in bet.text
@@ -221,6 +205,10 @@ def test_the_work_steps_see_why_the_plan_chose_its_line_the_review_of_it_and_the
     with agent.db.transaction() as conn:
         agent.memory().update(conn, "strategy", "replace", "Bring buyers to what is live first.", 1, now(agent))
     why = "Line #3 owes its book; its pins wait for a marketing cycle."
+    with agent.db.transaction() as conn:  # 0.35.0: the plan tree takes the line: the owner's pin of a step of #3's
+        plan_tree.keep(conn, agent.scope(), now(agent), agent.clock.today(), {})
+        first = plan_tree.nodes(conn, agent.scope(), "level = 'step' AND project_id = 3 AND status = 'open'")[0]
+        plan_tree.pin(conn, agent.scope(), first["id"], True, "Stefan", now(agent))
     fake.script.extend([take(3, assessment=why), ToolCalls([("project_list", {})]), Reply("Done.")])
     fake.script.append(JOURNAL)
     agent.run_cycle("schedule")

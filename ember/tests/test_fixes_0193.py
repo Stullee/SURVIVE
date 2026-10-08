@@ -53,7 +53,7 @@ def test_a_backed_venture_gets_its_project_once(data_dir: Path) -> None:
     [project] = projects_of(agent, DROPSHIPPING)
     test = rows(agent, f"SELECT test_milestone_id FROM ventures WHERE id = {DROPSHIPPING}")[0]["test_milestone_id"]
     assert (project["title"], project["hypothesis"], project["status"]) == ("Dropshipping store", FIRST_TEST, "active")
-    assert project["next_step"].startswith(f"Run its first test (milestone #{test}): ")
+    assert project["next_step"] == ""  # 0.35.0: its steps are the plan tree's
     events = [e["message"] for e in agent.db.recent_events(limit=40)]
     assert (
         f"Ember's code opened project #{project['id']} for venture #{DROPSHIPPING}, which your owner backed: its first "

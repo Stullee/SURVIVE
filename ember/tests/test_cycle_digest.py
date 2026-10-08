@@ -71,26 +71,26 @@ def test_a_cycle_that_failed_before_it_planned_gets_one_too(data_dir: Path, monk
 
 
 def test_the_brief_shows_the_last_cycle_aimed_at_its_focus(data_dir: Path) -> None:
-    fake = FakeTransport(
-        script=[
-            plan(steps=[]),
-            plan(steps=["draft it"], milestone=4),
+    fake = FakeTransport(script=[plan(steps=[])])
+    agent, _ = run(data_dir, fake)
+    aim = create(agent, title="Planner drafted", measure="3 pages in drafts/", due=day(5))
+    fake.script.extend(
+        [
+            plan(steps=["draft it"], milestone=aim),
             ToolCalls([WRITE]),
             Reply("Done."),
             JOURNAL,
-            plan(steps=["draft more"], milestone=4),
+            plan(steps=["draft more"], milestone=aim),
             Reply("Done."),
             JOURNAL,
         ]
     )
-    agent, _ = run(data_dir, fake)
-    assert create(agent, title="Planner drafted", measure="3 pages in drafts/", due=day(5)) == 4
     agent.run_cycle("schedule")
     agent.run_cycle("schedule")
     briefs = [r["messages"][0]["content"][0]["text"] for r in fake.sent if request_kind(r) == "work"]
     assert "Its last cycle" not in section(briefs[0], "FOCUS")  # the first cycle on it
     focus = section(briefs[-1], "FOCUS")
     assert "Its last cycle (Ember's code's digest): Cycle #2 completed · $" in focus
-    assert "· for milestone #4 / Goal: " in focus and "Done (1): workspace_write (" in focus
-    [card] = [m for m in views.roadmap_view(agent)["items"] if m["id"] == 4]
+    assert f"· for milestone #{aim} / Goal: " in focus and "Done (1): workspace_write (" in focus
+    [card] = [m for m in views.roadmap_view(agent)["items"] if m["id"] == aim]
     assert card["last_digest"].startswith("Cycle #3 completed")  # the Roadmap card's, the newest

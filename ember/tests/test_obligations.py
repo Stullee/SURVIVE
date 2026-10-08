@@ -109,16 +109,11 @@ def test_a_decision_and_a_miss_are_owed_a_reaction(data_dir: Path) -> None:
     )
     shown = section(planner_texts(agent.transport)[-1], obligations.HEADING)  # type: ignore[attr-defined]
     assert f"- #{kinds[0]['id']} decision (" in shown and f"- #{kinds[1]['id']} miss (" in shown
-    missed = rows(agent, "SELECT id FROM milestones WHERE title = 'Three listings live'")[0]["id"]
-    again = call(
-        agent,
-        "milestone_plan",
-        milestones=[dict(title="Three listings live soon", measure="3 live", due=day(9), replaces=missed)],
-    )
-    assert again.ok, again.text
-    agent.run_cycle("schedule")
-    miss = rows(agent, f"SELECT status, closed_by, result FROM obligations WHERE id = {kinds[1]['id']}")[0]
-    assert (miss["status"], miss["closed_by"]) == ("closed", "code") and "replaces it" in miss["result"]
+    # 0.35.0: a replacement milestone no longer closes it (milestone_plan retired): the agent's reaction does
+    reacted = {"numbers": str(kinds[1]["id"]), "result": "1 of 3 live: the plan's steps for the next two go on"}
+    assert call(agent, "obligation_done", **reacted).ok
+    miss = rows(agent, f"SELECT status, closed_by FROM obligations WHERE id = {kinds[1]['id']}")[0]
+    assert (miss["status"], miss["closed_by"]) == ("closed", "agent")
 
 
 def test_a_venture_cycle_gives_way_to_what_is_owed(data_dir: Path) -> None:
@@ -131,8 +126,9 @@ def test_a_venture_cycle_gives_way_to_what_is_owed(data_dir: Path) -> None:
     agent.run_cycle("schedule")
     assert rows(agent, "SELECT venture FROM cycles ORDER BY id") == [{"venture": 1}, {"venture": 0}, {"venture": 1}]
     events = [e["message"] for e in agent.db.recent_events(limit=30)]
-    assert "Cycle #2 is an ordinary cycle: 1 message of your owner's to answer comes first" in events
-    assert not any(e.startswith("Cycle #3 is an ordinary cycle") for e in events)
+    # 0.35.0: the plan tree's step decides what it is instead (an ordinary or a marketing cycle)
+    assert "Cycle #2 is not a venture cycle: 1 message of your owner's to answer comes first" in events
+    assert not any(e.startswith("Cycle #3 is not a venture cycle") for e in events)
 
 
 def test_the_section_is_bounded_and_quoted(data_dir: Path) -> None:

@@ -5,7 +5,8 @@ the owner's own "Add milestone" was refused. The agent could move a bar or a met
 a losing forecast by dropping its milestone, and take a venture live on a first test it closed on its own word; the
 owner's drop of a bar opened the next one; a bar met days late after a sync gap was graded done; a parked venture's
 projects kept their bars; the print-on-demand venture backed under 0.12.0 kept its prose first test; a first sale
-recorded late could never count; and the agent's own views goal stayed self-reported.
+recorded late could never count; and the agent's own views goal stayed self-reported. 0.35.0: the listing test's
+bars and milestone_plan retired (each product's decide-by dates in the plan tree: tests/test_fixes_0350.py).
 """
 
 from __future__ import annotations
@@ -19,7 +20,8 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import econ, gates, metrics, predictions, reach, roadmap, stages, tools, ventures  # noqa: E402
+from app.agent import econ, metrics, predictions, roadmap, stages, tools, ventures  # noqa: E402
+from app.agent import plan as plan_tree  # noqa: E402
 from app.agent.fake_llm import FakeTransport  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.agent.store import AgentScope  # noqa: E402
@@ -27,8 +29,7 @@ from app.db import Database, discover_migrations, migrate  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from tests.roadmap_helpers import led_to_goal  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
-from tests.test_etsy import listed, shop_context  # noqa: E402
-from tests.test_listing_gates import bars, close, started  # noqa: E402
+from tests.test_etsy import listed, shop_context, started  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
 from tests.test_venture_stages import backed  # noqa: E402
@@ -55,9 +56,17 @@ def milestone(agent: Agent, milestone_id: int) -> dict[str, Any]:
     return rows(agent, f"SELECT * FROM milestones WHERE id = {milestone_id}")[0]
 
 
-def keep_gates(agent: Agent) -> list[str]:
+def keep_tree(agent: Agent) -> list[str]:
     with agent.db.transaction() as conn:
-        return gates.keep(conn, agent.scope(), agent.clock.today(), to_iso(agent.clock.now()))
+        return plan_tree.keep(conn, agent.scope(), to_iso(agent.clock.now()), agent.clock.today(), {})
+
+
+def roadmap_goal(agent: Agent) -> int:
+    """The money goal Ember's code keeps."""
+    with agent.db.connection() as conn:
+        goal = roadmap.money_goal(conn, agent.scope())
+    assert goal is not None
+    return int(goal["id"])
 
 
 def settle(agent: Agent) -> None:
@@ -71,14 +80,10 @@ def settle(agent: Agent) -> None:
 
 def test_code_milestones_take_no_place_of_the_agents_or_the_owners(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]))
-    for n in range(16):  # the day-14 bars of many product lines, the money goal and its decision points besides
+    for n in range(16):  # the first tests of many ventures, the money goal besides
         create(agent, title=f"Bar {n}", measure="x", due=day(agent, 10), created_by="code", kind="first_test")
-    mine = call(agent, "milestone_plan", milestones=[dict(title="My step", measure="3 drafts", due=day(agent, 5))])
-    assert mine.ok, mine.text
-    for n in range(15):
+    for n in range(16):  # the agent's own (0.35.0: kept from before; milestone_plan retired)
         create(agent, title=f"Step {n}", measure="x", due=day(agent, 10))
-    full = call(agent, "milestone_plan", milestones=[dict(title="One more", measure="x", due=day(agent, 5))])
-    assert not full.ok and full.text.startswith("Error: 16 of your and your owner's milestones are open"), full.text
     for n in range(4):  # the owner's 4 places stay free, whatever Ember's code set
         reply = owner(agent).add_milestone({"title": f"Owner's {n}", "measure": "x", "due": day(agent, 10)}, None)
         assert reply.status == 201, reply.body
@@ -103,51 +108,6 @@ def test_the_money_goal_comes_back_on_a_full_roadmap(data_dir: Path) -> None:
     assert happened[-1].startswith("Ember's code linked #")  # 0.29.0: the steps of no goal lead to it
 
 
-def test_a_product_line_holds_one_open_bar_at_a_time(data_dir: Path) -> None:
-    agent, _ = started(data_dir)
-    start = agent.clock.today()
-    close(agent, "day7_views", "done")
-    keep_gates(agent)
-    assert {k: r["status"] for k, r in bars(agent).items()} == {"day7_views": "done", "day14_views": "open"}
-    assert "then 2 favorites" in bars(agent)["day14_views"]["measure"]
-    close(agent, "day14_views", "done")
-    keep_gates(agent)
-    favorites = bars(agent)["day14_favorites"]
-    assert (favorites["status"], favorites["metric"], favorites["target"]) == ("open", "favorites_total", 2)
-    assert favorites["due"] == (start + timedelta(days=14)).isoformat()  # the bar's day, from the start
-    assert keep_gates(agent) == []
-    close(agent, "day14_favorites", "missed")
-    happened = keep_gates(agent)
-    assert happened[0].startswith("Obligation: park the product line")
-    assert bars(agent)["day21_sale"]["status"] == "open"
-    with agent.db.connection() as conn:
-        opened = [r for r in roadmap.open_milestones(conn, agent.scope()) if r["created_by"] == "code"]
-    assert [r["kind"] for r in opened].count("first_test") == 1  # the money goal and its decision points besides
-
-
-def test_a_missed_day_14_views_bar_misses_the_day_14_bar(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(reach, "ENOUGH", 0)  # 0.18.0: as if it had the reach a fair test needs (no retry)
-    agent, _ = started(data_dir)
-    close(agent, "day7_views", "done")
-    keep_gates(agent)
-    close(agent, "day14_views", "missed")
-    happened = keep_gates(agent)
-    assert happened[0].startswith("Obligation: park the product line")
-    found = bars(agent)
-    assert "day14_favorites" not in found and found["day21_sale"]["status"] == "open"  # no favorites bar after it
-    assert keep_gates(agent) == []
-
-
-def test_a_favorites_bar_opened_after_its_day_is_due_the_day_after_it_opens(data_dir: Path) -> None:
-    agent, _ = started(data_dir)
-    close(agent, "day7_views", "done")
-    keep_gates(agent)
-    close(agent, "day14_views", "done")  # met by day 14, but graded after midnight
-    agent.clock.advance(days=15)
-    keep_gates(agent)
-    assert bars(agent)["day14_favorites"]["due"] == day(agent, 1)
-
-
 # --- FIX NOW 20a: what a milestone Ember's code checks counts is fixed ---
 
 
@@ -160,17 +120,15 @@ def test_the_links_of_code_and_metric_milestones_are_fixed(data_dir: Path) -> No
             " 'active' FROM projects WHERE id = ?",
             (project,),
         ).lastrowid
-    bar = bars(agent)["day7_views"]["id"]
+    bar = create(
+        agent, title="First test", measure="x", due=day(agent, 10), created_by="code", kind="first_test",
+        metric="views_total", target=10, project_id=project, parent_id=roadmap_goal(agent),
+    )  # fmt: skip
     for link in ({"project_id": other_id}, {"venture_id": ETSY}):
         refused = call(agent, "milestone_update", milestone_id=bar, **link)
         assert not refused.ok and "what Ember's code counts for it is fixed" in refused.text, refused.text
-    goal = call(
-        agent,
-        "milestone_plan",
-        milestones=[dict(title="Orders of my line", metric="orders_observed", target="3", due=day(agent, 20))],
-    )
-    assert goal.ok, goal.text
-    mine = int(goal.text.split("#", 1)[1].split(" ", 1)[0])
+    mine = create(agent, title="Orders of my line", measure="3 orders", due=day(agent, 20), metric="orders_observed",
+                  target=3)  # fmt: skip
     refused = call(agent, "milestone_update", milestone_id=mine, project_id=project)
     assert not refused.ok and "what Ember's code counts for it is fixed" in refused.text, refused.text
     plain = create(agent, title="Plain", measure="x", due=day(agent, 20))
@@ -189,26 +147,17 @@ def test_the_links_of_code_and_metric_milestones_are_fixed(data_dir: Path) -> No
 # --- FIX NOW 20b: the owner's drop ends a product line's test ---
 
 
-def test_the_owners_drop_of_a_bar_ends_that_product_lines_test(data_dir: Path) -> None:
-    agent, project = started(data_dir)
-    bar = bars(agent)["day7_views"]["id"]
-    reply = owner(agent).decide_milestone(bar, {"action": "drop", "comment": "Stop testing this line."}, "Stefan")
-    assert reply.status == 200, reply.body
-    assert keep_gates(agent) == []
-    agent.clock.advance(days=8)
-    assert keep_gates(agent) == []
-    assert set(bars(agent)) == {"day7_views"}
-
-
-def test_the_owners_drop_of_the_money_goal_keeps_the_listing_tests(data_dir: Path) -> None:
+def test_the_owners_drop_of_the_money_goal_keeps_the_first_tests(data_dir: Path) -> None:
     agent, _ = started(data_dir)
-    bar = bars(agent)["day7_views"]
-    assert bar["parent_id"] is not None  # it leads to the money goal
-    reply = owner(agent).decide_milestone(bar["parent_id"], {"action": "drop"}, "Stefan")
-    assert reply.status == 200 and bar["id"] not in reply.body["dropped_with"], reply.body
-    after = milestone(agent, bar["id"])
+    goal = roadmap_goal(agent)
+    bar = create(
+        agent, title="First test", measure="x", due=day(agent, 10), created_by="code", kind="first_test",
+        parent_id=goal,
+    )  # fmt: skip
+    reply = owner(agent).decide_milestone(goal, {"action": "drop"}, "Stefan")
+    assert reply.status == 200 and bar not in reply.body["dropped_with"], reply.body
+    after = milestone(agent, bar)
     assert (after["status"], after["parent_id"]) == ("open", None)
-    assert keep_gates(agent) == []  # no second bar
     with agent.db.transaction() as conn:
         assert roadmap.keep_money_goal(conn, agent.scope(), agent.clock.today(), "2026-09-02T10:00:00Z", 0, 1, 60) == []
         assert roadmap.money_goal(conn, agent.scope()) is None  # dropped until the owner wants one
@@ -220,16 +169,11 @@ def test_the_owners_drop_of_the_money_goal_keeps_the_listing_tests(data_dir: Pat
 def test_the_agents_drop_settles_its_odds_as_a_miss(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]))
     made = []
-    for title in ("Research that finds", "More research that finds"):
-        outcome = call(
-            agent,
-            "milestone_plan",
-            milestones=[
-                dict(title=title, metric="research_calls_ok", target="5", due=day(agent, 7), likely=90),
-            ],
-        )
-        assert outcome.ok, outcome.text
-        made.append(int(outcome.text.split("#", 1)[1].split(" ", 1)[0]))
+    for title in ("Research that finds", "More research that finds"):  # set with odds before 0.35.0
+        mid = create(agent, title=title, measure="5 calls", metric="research_calls_ok", target=5, due=day(agent, 7))
+        with agent.db.transaction() as conn:
+            predictions.add_milestone(conn, agent.scope(), mid, 90, title, day(agent, 7), to_iso(agent.clock.now()))
+        made.append(mid)
     dropped = call(agent, "milestone_update", milestone_id=made[0], status="dropped", result="Out of reach.")
     assert dropped.ok and "Your odds on it (90%) count as a miss" in dropped.text, dropped.text
     assert owner(agent).decide_milestone(made[1], {"action": "drop"}, "Stefan").status == 200
@@ -358,40 +302,19 @@ def test_an_order_placed_after_its_date_does_not_meet_it(data_dir: Path) -> None
     assert missed["status"] == "missed" and "orders_total 0 orders, target" in missed["result"], missed["result"]
 
 
-# --- X10: a parked venture's projects drop their bars ---
+# --- X10: a parked venture's projects drop their bars (0.35.0: its products' decide-by dates wait) ---
 
 
-def test_a_parked_ventures_projects_drop_their_bars(data_dir: Path) -> None:
+def test_a_parked_ventures_products_read_no_decide_by_date(data_dir: Path) -> None:
     agent, project = started(data_dir)
     with agent.db.transaction() as conn:
         conn.execute(f"UPDATE projects SET venture_id = {ETSY} WHERE id = {project}")
     reply = owner(agent).decide_venture(ETSY, {"action": "park", "comment": "Not now."}, "Stefan")
     assert reply.status == 200, reply.body
-    bar = bars(agent)["day7_views"]
-    assert (bar["status"], bar["closed_by"]) == ("dropped", "owner")
-    assert bar["result"] == f"Your owner parked venture #{ETSY}."
-    assert keep_gates(agent) == []  # the product line's test ended with it
-    assert set(bars(agent)) == {"day7_views"}
-
-
-def test_code_parks_a_venture_with_its_projects_bars(data_dir: Path) -> None:
-    agent, project = started(data_dir)
-    with agent.db.transaction() as conn:
-        conn.execute(f"UPDATE projects SET venture_id = {DROPSHIPPING} WHERE id = {project}")
-        row = ventures.get(conn, agent.scope(), DROPSHIPPING)
-        assert row is not None
-        stages.park(conn, agent.scope(), row, to_iso(agent.clock.now()), "a test")
-    bar = bars(agent)["day7_views"]
-    assert (bar["status"], bar["closed_by"]) == ("dropped", "code")
-
-
-def test_the_agents_park_leaves_its_projects_bars_open(data_dir: Path) -> None:
-    agent, project = started(data_dir)
-    with agent.db.transaction() as conn:  # 0.22.0: a project with listings keeps its venture: one of Dropshipping's
-        conn.execute("UPDATE projects SET venture_id = ? WHERE id = ?", (DROPSHIPPING, project))
-    parked = call(agent, "venture_update", venture_id=DROPSHIPPING, stage="parked", note="not now")
-    assert parked.ok, parked.text
-    assert bars(agent)["day7_views"]["status"] == "open"  # the agent can't end a listing test by a park
+    agent.clock.advance(days=22)
+    assert not [s for s in keep_tree(agent) if "decide-by" in s or "day 7" in s]  # their word on it stands
+    found = rows(agent, f"SELECT decide_by FROM plan_nodes WHERE level = 'product' AND project_id = {project}")
+    assert found == [{"decide_by": "{}"}]
 
 
 # --- X14: the print-on-demand venture's prose first test becomes a first order ---
@@ -529,77 +452,7 @@ def test_a_first_sale_recorded_late_still_counts(data_dir: Path) -> None:
     }
 
 
-# --- X24: the agent's goals are graded by code where code has the number ---
-
-
-def test_the_agent_sets_views_and_favorites_in_all_that_code_grades(data_dir: Path) -> None:
-    agent, _ = listed(data_dir)
-    agent.clock.advance(minutes=61)
-    agent.sync_shop()
-    project = rows(agent, "SELECT a.project_id FROM approvals a WHERE a.executor = 'etsy_listing'")[0]["project_id"]
-    goal = call(
-        agent,
-        "milestone_plan",
-        milestones=[
-            dict(
-                title="Listings reach 200 views",
-                metric="views_total",
-                target="200",
-                due=day(agent, 7),
-                project_id=project,
-            ),
-        ],
-    )
-    assert goal.ok and "Ember's code checks views_total (at least 200 views)" in goal.text, goal.text
-    met = call(
-        agent,
-        "milestone_plan",
-        milestones=[dict(title="One view", metric="views_total", target="1", due=day(agent, 7))],
-    )
-    assert not met.ok and "views_total is 2 views already" in met.text, met.text
-    for title, measure, hint in (
-        ("Listings reach 20 views", "20 views in all", "views_total"),
-        ("Two favorites", "The poster listings have 2 favorites", "favorites_total"),
-    ):
-        prose = call(agent, "milestone_plan", milestones=[dict(title=title, measure=measure, due=day(agent, 7))])
-        assert not prose.ok and f"set metric {hint}" in prose.text, prose.text
-    for title, measure in (
-        ("Pins seen", "500 views on Pinterest"),
-        ("Site visited", "The website has 50 views"),
-        ("Shop video", "The shop's video has 100 views"),
-        ("Newsletter read", "40 views of the newsletter"),
-    ):
-        elsewhere = call(agent, "milestone_plan", milestones=[dict(title=title, measure=measure, due=day(agent, 7))])
-        assert elsewhere.ok, elsewhere.text  # not the shop's views
-    assert "orders_total" not in metrics.NAMES and metrics.CATALOGUE["orders_total"].code_only
-    mine = int(goal.text.split("#", 1)[1].split(" ", 1)[0])
-    agent.clock.advance(days=5)  # two views an hour in the fake shop
-    agent.sync_shop()
-    graded = milestone(agent, mine)
-    assert (graded["status"], graded["closed_by"]) == ("done", "code"), graded["result"]
-
-
-def test_a_goal_that_a_listing_is_live_hints_at_listings_live(data_dir: Path) -> None:
-    agent, _ = listed(data_dir)
-    hint = "metric listings_live (with project_id) lets Ember's code check it"
-    live = call(
-        agent,
-        "milestone_plan",
-        milestones=[dict(title="Nebenkosten tool live", measure="The listing is live", due=day(agent, 7))],
-    )
-    assert live.ok and hint in live.text, live.text  # a hint, not a refusal
-    other = call(agent, "milestone_plan", milestones=[dict(title="3 drafts", measure="3 drafts", due=day(agent, 7))])
-    assert other.ok and hint not in other.text, other.text
-
-
-def test_a_goal_of_orders_hints_at_orders_observed(data_dir: Path) -> None:
-    agent, _ = listed(data_dir)
-    hint = "metric orders_observed (with project_id or venture_id) lets Ember's code count them"
-    for words in ("Get 3 orders on Etsy", "Make 5 sales on the shop"):
-        sold = call(agent, "milestone_plan", milestones=[dict(title=words, measure=words, due=day(agent, 7))])
-        assert sold.ok and hint in sold.text, sold.text  # a hint, not a refusal
-    pins = call(agent, "milestone_plan", milestones=[dict(title="3 sales from pins", measure="x", due=day(agent, 7))])
-    assert pins.ok and hint not in pins.text, pins.text
+# --- X24: the agent's goals are graded by code where code has the number (0.35.0: milestone_plan retired) ---
 
 
 def test_the_focus_says_who_confirms_a_first_test_and_what_a_drop_costs(data_dir: Path) -> None:

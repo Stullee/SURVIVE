@@ -171,7 +171,10 @@ def test_a_first_test_that_never_ran_has_its_grace_starts_once_more_and_is_annou
     assert not any(f"venture #{pod}" in line for line in keep(agent))
     assert first_test_of(agent, pod)["status"] == "open"
     with agent.db.connection() as conn:
-        planned = roadmap.planner_text(roadmap.open_milestones(conn, agent.scope()), [], agent.clock.today())
+        today = agent.clock.today()  # 0.35.0: YOUR PLAN's milestone lines
+        planned = "\n".join(
+            roadmap.milestone_line(m, today, False) for m in roadmap.open_milestones(conn, agent.scope())
+        )
         owed = obligations.text(conn, agent.scope(), agent.clock.today())
     assert f"unmet by {ends}, Ember's code parks venture #{pod}" in line_of(planned, f"#{test['id']} ")
     assert f"#{test['id']}" not in "".join(line for line in planned.split("\n") if "overdue (" in line)
@@ -479,7 +482,7 @@ def test_after_the_upgrade_from_0130_the_plan_says_nothing_is_unlocked_and_hears
     agent.recover()
     planner = agent.planner_preview()
     assert "Unlocked for this milestone:" not in planner  # a note's own words (the release notes may name them)
-    shown = section(planner, "ROADMAP")
+    shown = section(planner, "YOUR PLAN")
     assert "note" not in line_of(shown, '#1 "Ten sales"') and "unlocked" not in line_of(shown, '#1 "Ten sales"')
     assert "your owner" not in line_of(shown, '#2 "First Nebenkosten sale"')
     assert line_of(shown, '#3 "A blog post"').endswith(' · your owner\'s note: "Write it in German first"')
@@ -613,7 +616,7 @@ def test_an_unlock_is_said_from_its_grant_and_each_change_is_news(data_dir: Path
     item = next(m for m in agent.roadmap()["items"] if m["id"] == goal)
     assert (item["owner_action"], item["owner_comment"], item["unlocked"]) == (None, None, granted)
     planner = agent.planner_preview()
-    shown = line_of(section(planner, "ROADMAP"), f'#{goal} "Ten sales"')
+    shown = line_of(section(planner, "YOUR PLAN"), f'#{goal} "Ten sales"')
     assert shown.endswith(" · your owner unlocked: taking listings off Etsy (veto window)")  # its room kept
     assert f"Unlocked by your owner (Ember's code carries these out without their click): {granted}" in (
         roadmap.focus_text(milestone(agent, goal), agent.clock.today(), None, unlocked=item["unlocked"])

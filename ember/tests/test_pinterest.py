@@ -42,7 +42,7 @@ from app.integrations.pinterest_live import LiveAccount, _Allowlist, connect  # 
 from app.logging_setup import redact  # noqa: E402
 from app.products import images  # noqa: E402
 from tests.test_agent import ROOMY, rows  # noqa: E402
-from tests.test_etsy import Etsy, call, shop_context, views_approval  # noqa: E402
+from tests.test_etsy import Etsy, call, market_next, shop_context, views_approval  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
 
@@ -580,6 +580,7 @@ def test_pins_are_read_for_the_plan_and_the_metrics(data_dir: Path) -> None:
     agent, fake, _ = pinned(data_dir)
     agent.clock.advance(hours=24 * 7)
     before = len(fake.sent)
+    market_next(agent, "pinterest")  # 0.35.0: a marketing cycle's plan has the PINTEREST section
     agent.run_cycle("schedule")
     [row] = rows(agent, "SELECT impressions, saves, clicks, synced_at FROM pinterest_pins")
     assert (row["impressions"], row["saves"], row["clicks"]) == (280, 3, 2) and row["synced_at"]

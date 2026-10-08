@@ -18,7 +18,10 @@ from app.agent.fake_llm import FakeTransport
 from app.agent.service import Agent
 from app.db import Database, discover_migrations, migrate
 from app.economy.clock import to_iso
-from tests.roadmap_helpers import led_to_goal
+from tests.roadmap_helpers import (
+    led_to_goal,
+    set_milestone,  # noqa: E402
+)
 from tests.test_agent import rows
 from tests.test_loop_shapes import run
 from tests.test_owner_loop import owner
@@ -139,19 +142,8 @@ def test_research_without_a_business_case_is_parked_after_three_weeks(data_dir: 
     assert call(agent, "venture_update", venture_id=DROPSHIPPING, stage="researching").ok
     agent.clock.advance(days=5)  # the clock starts with its research, not with the stage
     researched(agent, DROPSHIPPING)
-    step = call(
-        agent,
-        "milestone_plan",
-        milestones=[
-            dict(
-                title="Case for dropshipping",
-                measure="Its business case is proposed",
-                due=(agent.clock.today() + timedelta(days=30)).isoformat(),
-                venture_id=DROPSHIPPING,
-            )
-        ],
-    )
-    assert step.ok, step.text
+    due = (agent.clock.today() + timedelta(days=30)).isoformat()  # set by the agent before 0.35.0
+    set_milestone(agent, "Case for dropshipping", due, measure="Its business case is proposed", venture_id=DROPSHIPPING)
     theirs = owner(agent).add_milestone(
         {"title": "Ask me first", "measure": "We talked", "due": "2026-10-20"}, "Stefan"
     )

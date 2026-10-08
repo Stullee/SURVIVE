@@ -94,7 +94,7 @@ def test_an_automatic_reply_says_its_owner_did_not_review_it(data_dir: Path) -> 
     said = tool_results(agent, "propose_email")[-1]["result"]
     assert said.endswith(
         " It is approved 12 hours from now unless your owner decides first: your owner unlocked email"
-        " replies in threads the other person started for milestone #4 (veto window)."
+        f" replies in threads the other person started for milestone #{goal} (veto window)."
     )
     replies_after_the_veto_window(agent)
     assert status_of(agent, made["id"])["decided_by"] == policy.POLICY_BY

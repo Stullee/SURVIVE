@@ -3,7 +3,8 @@
 it from its records after each Etsy sync and before every plan, with no model call, and closes it: done once met (the
 numbers are its evidence), missed once its date has passed (with the numbers, and whether there was too little to
 judge). The agent can't close such a milestone done, and the database refuses it too; milestones without a metric stay
-allowed."""
+allowed. 0.35.0: milestone_plan retired (the plan tree takes the agent's own milestones' place): the owner's and
+Ember's code's milestones keep their metrics, and a test sets one as the tool did."""
 
 from __future__ import annotations
 
@@ -17,9 +18,8 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app.agent import metrics, roadmap, tools, ventures  # noqa: E402
-from app.economy.clock import to_iso  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
-from tests.roadmap_helpers import led_to_goal  # noqa: E402
+from tests.roadmap_helpers import led_to_goal, set_milestone  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import listed, proposed, shop_context  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
@@ -99,13 +99,7 @@ def test_the_catalogue() -> None:
 def test_a_live_listing_milestone_is_closed_by_code_after_the_sync(data_dir: Path) -> None:
     agent, _, request = proposed(data_dir)
     assert agent.sync_shop() is None
-    step = made(
-        call(
-            agent,
-            "milestone_plan",
-            milestones=[dict(title="My first listing live", metric="listings_live", target="1", due=day(agent, 7))],
-        )
-    )
+    step = set_milestone(agent, "My first listing live", day(agent, 7), metric="listings_live", target="1")
     row = milestone(agent, step)
     assert (row["metric"], row["target"], row["created_by"]) == ("listings_live", 1, "agent")
     assert row["measure"] == "Your listings live on Etsy now: at least 1 listing (Ember's code checks it)"
@@ -138,43 +132,10 @@ def test_a_live_listing_milestone_is_closed_by_code_after_the_sync(data_dir: Pat
     assert seen == [{"metric": "listings_live", "value": 1}]
 
 
-def test_a_target_met_already_is_refused(data_dir: Path) -> None:
-    agent, _ = listed(data_dir)
-    agent.sync_shop()
-    refused = call(
-        agent,
-        "milestone_plan",
-        milestones=[dict(title="A listing live", metric="listings_live", target="1", due=day(agent, 7))],
-    )
-    assert not refused.ok and "listings_live is 1 listing already (#900000001), so a target" in refused.text
-    for args, error in (
-        ({"metric": "stage_reached", "target": "building"}, "stage_reached measures a venture: give venture_id"),
-        ({"metric": "views_delta", "target": "100"}, "needs the views history"),
-        ({"metric": "listings_live", "target": "many"}, "whole number of listings"),
-        ({"target": "3"}, "target is a metric's: set metric too"),
-        ({}, "say how you will know it is reached"),
-    ):
-        refused = call(agent, "milestone_plan", milestones=[dict(title="Something", due=day(agent, 7), **args)])
-        assert not refused.ok and error in refused.text, (args, refused.text)
-    refused = call(
-        agent,
-        "milestone_plan",
-        shop=False,
-        milestones=[dict(title="Two live", metric="listings_live", target="2", due=day(agent, 7))],
-    )
-    assert not refused.ok and "isn't set up" in refused.text
-
-
 def test_a_miss_says_the_numbers_and_whether_there_was_enough_to_judge(data_dir: Path) -> None:
     agent, listing_id = listed(data_dir)
     agent.sync_shop()
-    step = made(
-        call(
-            agent,
-            "milestone_plan",
-            milestones=[dict(title="First order", metric="orders_observed", target="1", due=day(agent, 1))],
-        )
-    )
+    step = set_milestone(agent, "First order", day(agent, 1), metric="orders_observed", target="1")
     agent.clock.advance(days=2)
     agent.sync_shop()  # the fake shop's listing #900000001 never sells
     row = milestone(agent, step)
@@ -188,18 +149,13 @@ def test_a_miss_says_the_numbers_and_whether_there_was_enough_to_judge(data_dir:
 def test_old_numbers_are_not_graded(data_dir: Path) -> None:
     agent, _ = listed(data_dir)
     agent.sync_shop()
-    step = made(
-        call(
-            agent,
-            "milestone_plan",
-            milestones=[dict(title="Two live", metric="listings_live", target="2", due=day(agent, 1))],
-        )
-    )
+    step = set_milestone(agent, "Two live", day(agent, 1), metric="listings_live", target="2")
     agent.clock.advance(days=2)  # past its date, but the shop wasn't read since it was set
     assert grade(agent) == []
     assert milestone(agent, step)["status"] == "open"
-    with agent.db.connection() as conn:
-        text = roadmap.planner_text(roadmap.open_milestones(conn, agent.scope()), [], agent.clock.today())
+    with agent.db.connection() as conn:  # 0.35.0: as YOUR PLAN lists it
+        today = agent.clock.today()
+        text = "\n".join(roadmap.milestone_line(m, today, False) for m in roadmap.open_milestones(conn, agent.scope()))
     assert (
         f'#{step} "Two live"' in text
         and "Ember's code checks it: listings_live at least 2 listings; not checked" in text
@@ -210,35 +166,11 @@ def test_revenue_spending_and_a_ventures_stage(data_dir: Path) -> None:
     agent, _ = listed(data_dir)
     agent.clock.advance(minutes=1)  # what was spent before is not "since it was set"
     [project] = rows(agent, "SELECT id FROM projects ORDER BY id LIMIT 1")
-    earn = made(
-        call(
-            agent,
-            "milestone_plan",
-            milestones=[
-                dict(
-                    title="Earn 4 USD with it",
-                    metric="revenue_verified_usd",
-                    target="4",
-                    project_id=project["id"],
-                    due=day(agent, 20),
-                )
-            ],
-        )
+    earn = set_milestone(
+        agent, "Earn 4 USD with it", day(agent, 20), metric="revenue_verified_usd", target="4", project_id=project["id"]
     )
-    tight = made(
-        call(
-            agent,
-            "milestone_plan",
-            milestones=[dict(title="Spend a cent at most", metric="api_spend_usd", target="0.01", due=day(agent, 20))],
-        )
-    )
-    loose = made(
-        call(
-            agent,
-            "milestone_plan",
-            milestones=[dict(title="Spend 50 at most", metric="api_spend_usd", target="50", due=day(agent, 1))],
-        )
-    )
+    tight = set_milestone(agent, "Spend a cent at most", day(agent, 20), metric="api_spend_usd", target="0.01")
+    loose = set_milestone(agent, "Spend 50 at most", day(agent, 1), metric="api_spend_usd", target="50")
     with agent.db.transaction() as conn:
         venture = ventures.create(
             conn,
@@ -248,22 +180,10 @@ def test_revenue_spending_and_a_ventures_stage(data_dir: Path) -> None:
             stage="idea",
             now="2026-09-01T10:00:00Z",
         )
-    backed = made(
-        call(
-            agent,
-            "milestone_plan",
-            milestones=[
-                dict(title="Backed", metric="stage_reached", target="building", venture_id=venture, due=day(agent, 20))
-            ],
-        )
+    backed = set_milestone(
+        agent, "Backed", day(agent, 20), metric="stage_reached", target="building", venture_id=venture
     )
-    case = made(
-        call(
-            agent,
-            "milestone_plan",
-            milestones=[dict(title="A case", metric="case_complete", venture_id=venture, due=day(agent, 20))],
-        )
-    )
+    case = set_milestone(agent, "A case", day(agent, 20), metric="case_complete", venture_id=venture)
     assert grade(agent) == []
     owner_entry(agent.economy, "revenue", "5", project_id=project["id"], test_money=True)
     agent.run_cycle("schedule")  # Ember's code checks the milestones before the plan; the cycle spends more than a cent
@@ -290,14 +210,7 @@ def test_views_gained_need_the_history_and_count_from_when_it_was_set(data_dir: 
     agent.clock.advance(minutes=61)  # the cycles read the shop before the listing was live
     agent.sync_shop()
     before = rows(agent, f"SELECT views FROM etsy_listings WHERE listing_id = {listing_id}")[0]["views"]
-    step = made(
-        call(
-            agent,
-            "milestone_plan",
-            history=True,
-            milestones=[dict(title="Fifty more views", metric="views_delta", target="50", due=day(agent, 7))],
-        )
-    )
+    step = set_milestone(agent, "Fifty more views", day(agent, 7), metric="views_delta", target="50")
     assert milestone(agent, step)["baseline"] == before
     agent.clock.advance(hours=12)  # two views an hour in the fake shop
     agent.sync_shop()
@@ -313,21 +226,10 @@ def test_views_gained_need_the_history_and_count_from_when_it_was_set(data_dir: 
 def test_the_plan_sees_what_code_closed_since_the_last_cycle(data_dir: Path) -> None:
     agent, _, request = proposed(data_dir)
     agent.sync_shop()
-    step = made(
-        call(
-            agent,
-            "milestone_plan",
-            milestones=[dict(title="Live at last", metric="listings_live", target="1", due=day(agent, 7))],
-        )
-    )
+    step = set_milestone(agent, "Live at last", day(agent, 7), metric="listings_live", target="1")
     owner(agent).decide(request, {"decision": "approve"}, "Owner")
     agent.execute_approved()
     agent.clock.advance(minutes=61)
     agent.sync_shop()
-    last = rows(agent, "SELECT ended_at FROM cycles ORDER BY id DESC LIMIT 1")[0]["ended_at"]
-    with agent.db.connection() as conn:
-        closed = roadmap.closed_since(conn, agent.scope(), "2000-01-01")
-        text = roadmap.planner_text(roadmap.open_milestones(conn, agent.scope()), closed, agent.clock.today(), last)
-        later = roadmap.planner_text([], closed, agent.clock.today(), to_iso(agent.clock.now() + timedelta(minutes=1)))
-    assert f'since your last cycle, Ember\'s code closed from its records: #{step} "Live at last" done.' in text
-    assert "since your last cycle" not in later
+    text = agent.planner_preview()  # 0.35.0: YOUR PLAN says it
+    assert f'Since your last cycle, Ember\'s code closed from its records: #{step} "Live at last" done.' in text

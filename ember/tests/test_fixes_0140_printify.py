@@ -22,7 +22,8 @@ import pytest
 
 httpx2 = pytest.importorskip("httpx2")
 
-from app.agent import econ, gates, metrics, never, predictions, stages, tools, ventures  # noqa: E402
+from app.agent import econ, metrics, never, predictions, stages, tools, ventures  # noqa: E402
+from app.agent import plan as plan_tree  # noqa: E402
 from app.agent.store import canonical, create_project, insert_approval  # noqa: E402
 from app.db import Database, discover_migrations, migrate  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
@@ -517,9 +518,9 @@ def test_printify_listings_count_in_the_metrics_the_listing_test_and_the_venture
             assert isinstance(reading, metrics.Reading) and reading.value == value, (name, reading)
         qa_row = {"metric": "qa_clean", "target": 1, "baseline": 0, "project_id": project, "venture_id": None}
         assert metrics.read(conn, scope, {**qa_row, "created_at": start}, books, now).value == 1  # Printify's photos
-        assert project in gates._live_projects(conn, scope)
-        began = gates.keep(conn, scope, agent.clock.today(), now)
-        assert any(f"began the listing test of project #{project}" in line for line in began)
+        plan_tree.keep(conn, scope, now, agent.clock.today(), {})  # 0.35.0: its decide-by dates start
+        [product] = plan_tree.nodes(conn, scope, "level = 'product' AND project_id = ?", (project,))
+        assert product["live_since"] == agent.clock.today().isoformat()
         assert stages.sold(conn, scope, pod, ventures.Money())
         evidence = predictions._sold(conn, scope, books, pod, start, agent.clock.today().isoformat())
         assert "an Etsy order of its listings" in evidence
@@ -759,24 +760,6 @@ def test_the_migration_keeps_the_catalog_adds_order_tax_and_links_product_lines(
 
 
 # --- review round 2 --------------------------------------------------------------------------------------------------
-
-
-def test_a_printify_only_line_that_misses_day_7_is_owed_what_it_can_do(data_dir: Path) -> None:
-    agent, _ = listed(data_dir)
-    pod = venture_titled(agent, "Print on demand in the Etsy shop")
-    project = pod_line(agent, pod)
-    scope, now = agent.scope(), to_iso(agent.clock.now())
-    with agent.db.transaction() as conn:
-        gates.keep(conn, scope, agent.clock.today(), now)
-        [bar] = gates.started(conn, scope)[project]
-        said = gates._owe(conn, scope, bar, gates.BY_KEY["day7_views"], "Posters", now)
-    # propose_etsy_edit refuses the listings Printify made, and 0.33.0: a day-7 miss owes buyers, not edits, which
-    # pins and posts may bring to a listing Printify made (0.32.0): the line owes what every line owes.
-    [what] = [
-        r["what"] for r in rows(agent, f"SELECT what FROM obligations WHERE milestone_id = {bar['milestone_id']}")
-    ]
-    assert what.startswith(f"project #{project}: {gates.PUSH}") and "propose_etsy_edit" not in what
-    assert said.startswith("Obligation: bring buyers to its listings with pins, posts or a blog post (project #")
 
 
 def test_a_closed_line_s_printify_listing_still_counts_for_the_print_on_demand_venture(data_dir: Path) -> None:

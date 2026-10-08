@@ -371,8 +371,10 @@ def test_the_goal_on_the_roadmap_tab_and_the_overview(ingress_client: TestClient
     bad = post(ingress_client, "api/roadmap/goal", {"amount_usd": "x", "per": "month", "due": due})
     assert bad.status_code == 422 and bad.json()["field"] == "amount_usd"
     html = ingress_client.get("/").text
-    for element in ("goal-strip", "rm-goal-card", "rm-goal-form", "rm-goal-amount", "rm-goal-due", "rm-tree"):
+    for element in ("goal-strip", "rm-goal-card", "rm-goal-form", "rm-goal-amount", "rm-goal-due"):
         assert f'id="{element}"' in html, element
+    panel = html.split('id="panel-plan"', 1)[1].split('<section class="panel"', 1)[0]
+    assert 'id="rm-goal-card"' in panel  # 0.35.0: the goal leads the Plan tab
 
 
 def test_the_dashboard_reads_amounts_as_the_owner_writes_them() -> None:

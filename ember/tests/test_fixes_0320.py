@@ -27,14 +27,13 @@ from app.products import sheets  # noqa: E402
 from tests import (  # noqa: E402
     test_bluesky,
     test_knockouts,
-    test_listing_gates,
     test_pinterest,
     test_printify,
     test_venture_stages,
     test_ventures,
 )
 from tests.test_agent import ROOMY, rows  # noqa: E402
-from tests.test_etsy import call, shop_context  # noqa: E402
+from tests.test_etsy import call, shop_context, started  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
 
@@ -348,7 +347,7 @@ def test_the_release_notes_go_on_where_they_stopped_after_another_upgrade(
 
 
 def test_a_promise_said_in_other_words_is_one_promise_and_another_listing_s_is_its_own(data_dir: Path) -> None:
-    agent, _ = test_listing_gates.started(data_dir)
+    agent, _ = started(data_dir)
     agent.clock.advance(days=1)  # the fake's cycles wrote to the owner yesterday: today's two messages are free
     ctx = shop_context(agent)
     due = (agent.clock.today() + timedelta(days=3)).isoformat()
@@ -375,7 +374,7 @@ def test_a_promise_said_in_other_words_is_one_promise_and_another_listing_s_is_i
 
 
 def test_naming_an_answered_message_of_the_owner_s_in_obligation_done_is_no_error(data_dir: Path) -> None:
-    agent, _ = test_listing_gates.started(data_dir)
+    agent, _ = started(data_dir)
     agent.clock.advance(days=1)
     assert owner(agent).send_message({"text": "How do I claim the shop?"}, "Stefan").status == 201
     [message] = rows(agent, "SELECT MAX(id) AS id FROM messages")

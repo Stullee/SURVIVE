@@ -43,7 +43,7 @@ def many_projects(data_dir: Path) -> tuple[Any, list[int]]:
     made = call(
         shop_context(agent),
         "project_create",
-        {"title": "One more line", "hypothesis": "It sells too.", "next_step": "Draft it", "status": "idea"},
+        {"title": "One more line", "hypothesis": "It sells too.", "status": "idea"},
     )
     assert made.ok, made.text
     with agent.db.connection() as conn:
@@ -60,7 +60,7 @@ def test_the_agent_opens_as_many_projects_as_it_needs(data_dir: Path) -> None:
     same = call(
         shop_context(agent),
         "project_create",
-        {"title": "one more LINE", "hypothesis": "x", "next_step": "y", "status": "idea"},
+        {"title": "one more LINE", "hypothesis": "x", "status": "idea"},
     )
     assert not same.ok and "an open project already has this title" in same.text  # the title check stays
 
@@ -76,7 +76,7 @@ def test_the_plan_names_every_open_project(data_dir: Path) -> None:
     )
     for pid in ids[8:]:  # named in the first line, which a cut section keeps
         assert f"#{pid} " in first
-    assert f"#{ids[0]} [idea] One more line · next: Draft it" in projects  # the newest in full
+    assert f"#{ids[0]} [idea] One more line · spent $0.00" in projects  # the newest in full
 
 
 def test_the_daily_review_lists_every_open_project(data_dir: Path) -> None:
@@ -126,9 +126,9 @@ def test_project_list_shows_every_open_project_with_its_number(data_dir: Path) -
     listed = [line for line in shown.text.split("\n")[1:] if line]
     assert [int(line.split(" ", 1)[0][1:]) for line in listed] == ids
     assert listed[0].startswith(f"#{ids[0]} [idea] One more line · changed ")
-    assert listed[0].endswith(" · next: Draft it")
-    closed = call(shop_context(agent), "project_update", {"project_id": ids[-1], "status": "abandoned"})
-    assert closed.ok, closed.text
+    assert " · plan: " in listed[0]  # 0.35.0: its stage in the plan, in place of its next step
+    with agent.db.transaction() as conn:  # the owner drops it (only they close or drop one)
+        store.update_project(conn, ids[-1], to_iso(agent.clock.now()), status="abandoned")
     assert f"#{ids[-1]} " not in call(shop_context(agent), "project_list", {}).text
 
 

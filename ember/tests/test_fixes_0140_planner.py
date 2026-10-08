@@ -178,22 +178,6 @@ def test_a_ventures_focus_keeps_its_pitch_with_every_field_at_its_longest() -> N
     )  # with room to spare
 
 
-def test_a_missed_bars_action_survives_the_obligation_line(data_dir: Path) -> None:
-    # 0.13.0: "milestone #11 '…' was missed (Ember's code checked it…: views_total 0 views…, target a…": the action
-    # came after the numbers and the line's 160 characters.
-    pytest.importorskip("httpx2")
-    from app.agent import obligations
-    from tests.test_listing_gates import close, keep, started
-
-    agent, project = started(data_dir)
-    close(agent, "day7_views", "missed")
-    keep(agent)
-    with agent.db.connection() as conn:
-        shown = obligations.text(conn, agent.scope(), agent.clock.today())
-    # 0.33.0: day 7's action is a push to bring buyers
-    assert f"project #{project}: bring buyers to its listings with pins, posts or a blog post: unseen listings" in shown
-
-
 # --- FIX NOW 24: the Inbox, WAITING FOR YOUR OWNER and the release notes ---
 
 

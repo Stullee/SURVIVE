@@ -421,7 +421,8 @@ def test_the_roadmap_tab(ingress_client: TestClient) -> None:
     )
     assert ingress_client.get("api/dashboard").json()["roadmap"]["stamp"] != empty["stamp"]
     html = ingress_client.get("/").text
-    assert 'id="tab-roadmap"' in html and 'id="panel-roadmap"' in html
+    # 0.35.0: the milestones are on the Plan tab (the Roadmap tab retired)
+    assert 'id="tab-roadmap"' not in html and 'id="rm-card"' in html and 'id="roadmap"' in html
 
 
 # --- the dry run ---

@@ -674,6 +674,18 @@ def listed(data_dir: Path) -> tuple[Any, int]:
     return agent, 900_000_001
 
 
+def market_next(agent: Any, channel: str) -> int:
+    """0.35.0: the next cycle a marketing cycle in ``channel``: the owner's pin of the plan's first open step there."""
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        plan_tree.keep(conn, agent.scope(), now, agent.clock.today(), plan_tree.channels_from(agent.settings))
+        [step, *_] = plan_tree.nodes(
+            conn, agent.scope(), "level = 'step' AND status = 'open' AND channel = ?", (channel,)
+        )
+        plan_tree.pin(conn, agent.scope(), int(step["id"]), True, "Owner", now)
+    return int(step["id"])
+
+
 def started(data_dir: Path) -> tuple[Any, int]:
     """A dry-run agent whose first listing is live, with its product's test begun (0.35.0: the day Ember's code saw it
     live, kept on its product in the plan tree); the project's number."""
@@ -1255,7 +1267,7 @@ def test_a_proposal_is_checked_before_it_reaches_the_owner(data_dir: Path) -> No
         ("propose_etsy_listing", {**base, "files": "shop/missing.pdf"}),
         ("propose_etsy_listing", {**base, "photos": "shop/p.pdf"}),
     ]
-    line = {"title": "Planners", "hypothesis": "Printables sell.", "next_step": "List one", "status": "active"}
+    line = {"title": "Planners", "hypothesis": "Printables sell.", "status": "active"}
     fake = FakeTransport(
         script=[
             Plan(PLAN),

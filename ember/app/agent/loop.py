@@ -504,7 +504,8 @@ class CycleRunner:
             self.steered = plan_tree.steer(
                 conn, self.scope, now, today, self._channels(), venture_turn=turn and not first, cycle_id=cycle_id
             )
-            self.marketing_apart = True  # 0.35.0: marketing steps have cycles of their own
+            # 0.35.0: marketing steps have cycles of their own; a channel's own product (its setup) keeps its tools
+            self.marketing_apart = not plan_tree.on_channel(conn, self.scope, self.steered.step)
             if cycle_id is not None:
                 plan_tree.record(conn, self.scope, cycle_id, now, self.steered)
                 if self.steered.kind in (lines.VENTURE, lines.MARKETING):
@@ -792,6 +793,12 @@ class CycleRunner:
                 pod = _waiting("Printify", self.printify.status(), self._etsy_state(), self.printify_waits)
             site_text = website.planner_text(conn, self.scope, website.owner(self.settings)) if self.site_on else ""
             blog_text = site_publisher.text(conn, self.db, self.scope, self.settings) if self.blog_on else ""
+            if self.marketing_apart and kind == lines.ORDINARY:
+                # 0.35.0: a ready channel's account, posts and tools are a marketing cycle's; one waiting for the
+                # owner's setup still says so (live, the agent asked its owner for the same setup again and again)
+                pins = "" if self.pinterest_on else pins
+                posted = "" if self.bluesky_on else posted
+                blog_text = ""
             books = (  # 0.25.0
                 kdp.text(conn, self.scope, self.clock.now(), self.settings.kdp_author) if self.kdp_on else ""
             )

@@ -31,7 +31,7 @@ from PIL import Image
 pytest.importorskip("httpx2")
 
 from app import privacy  # noqa: E402
-from app.agent import bets, memory, news, review, roadmap, store, tools  # noqa: E402
+from app.agent import bets, memory, news, review, roadmap, store, tools, ventures  # noqa: E402
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls  # noqa: E402
 from app.integrations import bluesky, etsy, site_publisher  # noqa: E402
 from app.integrations.bluesky import FakeBluesky  # noqa: E402
@@ -379,9 +379,9 @@ def test_the_review_scorecard_shows_the_roadmap_before_the_projects(data_dir: Pa
                 status="active",
                 now=now,
             )
-        roadmap.create(conn, scope, title="Day 7: 10 views", measure="views", due="2026-09-20", now=now)
+        made = roadmap.create(conn, scope, title="Day 7: 10 views", measure="views", due="2026-09-20", now=now)
     card = _scorecard(agent)
-    assert '\n- due later this month: #4 "Day 7: 10 views" (2026-09-20)' in card.text
+    assert f'\n- due later this month: #{made} "Day 7: 10 views" (2026-09-20)' in card.text
     assert card.text.index("ROADMAP") < card.text.index("PROJECTS")
 
 
@@ -544,9 +544,9 @@ def test_a_refused_bet_keeps_the_rest_of_the_update(data_dir: Path) -> None:
             status="active",
             now="2026-09-01T12:00:00Z",
         )
-    made = call(ctx, "project_update", {"project_id": project, "next_step": "New", "bet": "more views soon"})
+    made = call(ctx, "project_update", {"project_id": project, "note": "New", "bet": "more views soon"})
     assert made.ok and "Your bet was not placed: write it as" in made.text
-    assert rows(agent, f"SELECT next_step FROM projects WHERE id = {project}")[0]["next_step"] == "New"
+    assert rows(agent, f"SELECT notes FROM projects WHERE id = {project}")[0]["notes"].endswith("New")
     alone = call(ctx, "project_update", {"project_id": project, "bet": "more views soon"})
     assert not alone.ok and alone.text.startswith("Error: bet: write it as")
 
@@ -665,9 +665,13 @@ def test_a_project_leaving_a_backed_venture_says_its_test_needs_one(data_dir: Pa
             )
             for title in ("Posters", "Mugs")
         )
-    closed = call(ctx, "project_update", {"project_id": first, "status": "abandoned", "note": "No demand."})
-    assert closed.ok and "no open project now" not in closed.text
-    last = call(ctx, "project_update", {"project_id": second, "status": "abandoned", "note": "No demand."})
+        other = ventures.create(
+            conn, agent.scope(), title="Mugs elsewhere", pitch="p.", stage="building", now="2026-09-01T12:00:00Z"
+        )
+    # 0.35.0: only the owner closes a project; a move to another venture leaves the test without one too
+    moved = call(ctx, "project_update", {"project_id": first, "venture_id": other})
+    assert moved.ok and "no open project now" not in moved.text
+    last = call(shop_context(agent), "project_update", {"project_id": second, "venture_id": other})
     assert last.ok and last.text.endswith(
         f"Venture #{pod} ({ventures_title(agent, pod)}) has no open project now: its test needs one."
     )

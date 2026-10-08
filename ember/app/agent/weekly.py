@@ -335,9 +335,7 @@ def planner_text(row: sqlite3.Row | None) -> str:
         lines.append(f"The business's bottleneck: {_one(answer['bottleneck'], 300)}")
     chosen = [i for i in answer.get("focus") or [] if isinstance(i, int) and not isinstance(i, bool)]
     if chosen:  # 0.30.0
-        lines.append(
-            "This week's focus lines: " + ", ".join(f"#{i}" for i in chosen)
-        )
+        lines.append("This week's focus lines: " + ", ".join(f"#{i}" for i in chosen))
     if answer.get("stop"):
         lines.append("Stop: " + "; ".join(_one(i, 120) for i in answer["stop"]))
     if answer.get("start"):

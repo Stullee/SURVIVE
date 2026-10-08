@@ -2201,6 +2201,8 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         raise ToolError(f"project #{row['id']} is {row['status']}, which is final")
     changes: dict[str, Any] = {}
     status = args.get("status")
+    if status is not None and status not in PROJECT_STATUSES:  # 0.35.0: past the schema too (a call run from a text)
+        raise ToolError(f"only your owner closes or drops a project: project #{row['id']} stays {row['status']}")
     # 0.33.0: keeping another line's record (a note, its hypothesis, waiting) is no work on it: live, a Pinterest
     # project's next step said "waiting on owner" for a day after its owner set it up, and the daily review read it as
     # "never set up". Reopening it, a bet on it or moving it to a venture is its own cycle's work, and a cycle without a

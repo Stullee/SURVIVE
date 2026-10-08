@@ -202,11 +202,6 @@ REPEATED: list[tuple[str, Callable[[], str], str]] = [
     ),
     ("Each is scored 1 to 5 (revenue, doability", _tool("venture_update"), "Scores from 1 to 5"),
     (
-        "Give one a metric where Ember's code can check it",
-        _tool("milestone_plan"),
-        "With a metric, Ember's code checks it",
-    ),
-    (
         "answer their messages with message_owner, honestly, naming them",
         _tool("message_owner"),
         "Name the messages of theirs it answers",

@@ -335,8 +335,9 @@ def blog_context(agent: Any, settings: Settings = BLOG) -> tools.ToolContext:
 def proposed(data_dir: Path, source: str = POST) -> tuple[Any, int]:
     fake = FakeTransport()
     agent, _ = run(data_dir, fake, cycles=1, settings=BLOG)
-    plan = next(r for r in fake.sent if request_kind(r) == "plan")
-    assert "== BLOG ==\nPosts on https://example.org/blog/: none known yet" in texts(plan)
+    with agent.db.connection() as conn:  # 0.35.0: a marketing cycle's BLOG section
+        shown = site_publisher.text(conn, agent.db, agent.scope(), BLOG)
+    assert "Posts on https://example.org/blog/: none known yet" in shown
     agent.roots()[0].write("blog/post.md", source)
     made = call(blog_context(agent), "propose_blog_post", {"source": "blog/post.md", "reason": "Search traffic."})
     assert made.ok, made.text
