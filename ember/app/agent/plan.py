@@ -306,9 +306,10 @@ def _retemplate(
     """0.35.0: a product laid out as generic (its words named no type, and its line had no records yet) takes the
     template its line's records name once they do (its first request to the owner, the tools its cycles used). Its
     open generic stages close, and that type's stages and steps take their place under the same product (a stage
-    done before stays done): what Ember, the owner or Ember's code added there moves along, a promise's or a
-    decision's step stays where it is (it is taken in any stage). A node's place is fixed, so the product stays under
-    its first project: the owner's Plan tab shows it under its type's."""
+    done before stays done): what Ember, the owner or Ember's code added there moves along (to the type's next stage
+    when it has none of that name: a site post has no create stage), a promise's or a decision's step stays where it
+    is (it is taken in any stage). A node's place is fixed, so the product stays under its first project: the owner's
+    Plan tab shows it under its type's."""
     if templates.by_key(product["template"]).name != templates.GENERIC.name:
         return []
     template = infer_template(conn, scope, project, records_only=True)
@@ -317,28 +318,33 @@ def _retemplate(
     line = int(project["id"])
     audience = str(product["audience"] or "both")
     old = {str(s["stage"]): s for s in _stages(conn, scope, product["id"]) if s["status"] != "dropped"}
-    moved = f"Ember's code: it is a {template.title} now"
+    moved = f"Ember's code: its type is {template.title} now"
+    made: dict[str, int] = {}
     for seq, stage in enumerate(template.stages):
         row = old.get(stage.stage)
         if row is not None and row["status"] != "open":
             continue  # done before: it stays done
-        stage_id = _insert(
+        made[stage.stage] = _insert(
             conn, scope, now, parent_id=product["id"], level="stage", project_id=line, stage=stage.stage,
             title=f"{STAGE_TITLES[stage.stage]}: {stage.done}"[:160], check_kind=stage.check,
             check_spec=json.dumps(stage.spec) if stage.check else None, seq=seq, source="template",
         )  # fmt: skip
         for number, step in enumerate(templates.steps_for(stage, audience)):
-            _template_step(conn, scope, now, stage_id, line, template, stage, step, number)
-        if row is None:
+            _template_step(conn, scope, now, made[stage.stage], line, template, stage, step, number)
+    order = list(STAGE_TITLES)
+    for name, row in old.items():
+        if row["status"] != "open":
             continue
+        # its stage in the new type, else the type's next one; none (a later one is done): its steps end here
+        target = next((n for n in order[order.index(name) :] if n in made), None)
         for kept in _steps(conn, scope, row["id"]):
             if kept["status"] != "open" or kept["obligation_id"] is not None:
                 continue
-            if kept["source"] == "template":
+            if kept["source"] == "template" or target is None:
                 _close(conn, kept["id"], now, "dropped", moved)
                 continue
             copy = _insert(
-                conn, scope, now, parent_id=stage_id, level="step", project_id=line, stage=stage.stage,
+                conn, scope, now, parent_id=made[target], level="step", project_id=line, stage=target,
                 template=kept["template"], kind=kept["kind"], channel=kept["channel"], title=kept["title"],
                 check_kind=kept["check_kind"], check_spec=kept["check_spec"], seq=kept["seq"], source=kept["source"],
                 due=kept["due"], effort=kept["effort"], ready_since=kept["ready_since"], pinned=kept["pinned"],
@@ -349,9 +355,11 @@ def _retemplate(
         _close(conn, row["id"], now, "dropped", moved)
     _update(conn, product["id"], now, template=template.key)
     _platform(conn, scope, template.platform, now)  # its type's project, where the owner's tab shows it
-    why = f"its records show a {template.title}: that type's stages and steps"
+    why = f"its records show its type, {template.title}: that type's stages and steps"
     change(conn, scope, int(product["id"]), None, "code", "replace", why, now)
-    return [f"Plan tree: line #{line} is a {template.title}: its plan takes that type's stages and steps."]
+    return [
+        f"Plan tree: line #{line}'s records show its type, {template.title}: it takes that type's stages and steps."
+    ]
 
 
 # --- the checks ---
@@ -530,6 +538,13 @@ def _descendants(conn: sqlite3.Connection, scope: AgentScope, node_id: int) -> l
 
 def _stages(conn: sqlite3.Connection, scope: AgentScope, product_id: int) -> list[Any]:
     return nodes(conn, scope, "parent_id = ? AND level = 'stage'", (product_id,))
+
+
+def _replaced(stage: Mapping[str, Any], product: Mapping[str, Any]) -> bool:
+    """0.35.0: a stage a re-type replaced (see _retemplate), dropped while its product went on."""
+    if stage["status"] != "dropped":
+        return False
+    return product["closed_at"] is None or str(stage["closed_at"]) < str(product["closed_at"])
 
 
 def _steps(conn: sqlite3.Connection, scope: AgentScope, stage_id: int) -> list[Any]:
@@ -1026,7 +1041,7 @@ def _recurring(
     whenever the critic says improve (it judges live listings only)."""
     conn, scope = facts.conn, facts.scope
     stages = _stages(conn, scope, product["id"])
-    maintain = next((s for s in stages if s["stage"] == "maintain"), None)
+    maintain = next((s for s in stages if s["stage"] == "maintain" and not _replaced(s, product)), None)
     if maintain is None or maintain["status"] != "open":
         return []
     said: list[str] = []
@@ -1834,7 +1849,10 @@ def add_steps(
         _make_room(conn, parent["id"], seq, len(steps), now)
     else:
         found = (
-            next((s for s in _stages(conn, scope, product["id"]) if s["stage"] == stage), None)
+            next(
+                (s for s in _stages(conn, scope, product["id"]) if s["stage"] == stage and not _replaced(s, product)),
+                None,
+            )
             if stage
             else current_stage(conn, scope, product["id"])
         )
@@ -2299,6 +2317,8 @@ def _product_view(
     )
     stages = []
     for stage in _stages(conn, scope, product["id"]):
+        if _replaced(stage, product):
+            continue
         steps = []
         for step in _steps(conn, scope, stage["id"]):
             candidate = by_id.get(step["id"])
@@ -2320,7 +2340,9 @@ def _product_view(
                     "weight": round(weight.total, 2) if weight else None,
                     "why": weight.text(titles.get(weight.carried_from or 0)) if weight else None,
                     "age_days": round(_days(step["ready_since"], now), 1) if step["ready_since"] else None,
-                    "stale": bool(step["ready_since"]) and _days(step["ready_since"], now) >= STALE_DAYS,
+                    "stale": step["status"] == "open"
+                    and bool(step["ready_since"])
+                    and _days(step["ready_since"], now) >= STALE_DAYS,
                 }
             )
         stages.append(

@@ -38,7 +38,6 @@ code from Etsy's own numbers): the agent never reports its own.
 | Spending cap per wake cycle | 0.50 USD | Hard limit per cycle. Must not exceed the daily cap (if it does, Ember uses the daily cap). A working cycle (its plan, a work step and the reflection) can cost up to about 0.25 USD with the default models; the dashboard warns you below 1.5 times that, when most cycles would end after a step or two. |
 | Spending stance | invest | What happens as the runway shrinks: **invest** keeps the agent exploring at your caps until its last will (under 15 days of runway the System log warns you once), **steady** goes no lower than focus, **conserve** is focus under 30 days and maintenance under 15. See [burn modes](#money). |
 | Share for ventures | 25 % | This share of each day's spending goes to venture cycles, where the agent researches new ways to earn. 0 switches them off. See [Ventures](#ventures). |
-| Share for marketing | 20 % | This share of each day's spending goes to marketing cycles, which bring buyers to one product line's live listings: pins, Bluesky posts, blog posts, Reddit drafts, better titles and tags. They run once a listing of Ember's is live, in the explore and focus [burn modes](#money), within what the ventures' share leaves (25 % and 20 % leave 55 % for product work). 0 switches them off, and ordinary cycles market as before. See [Marketing cycles](#marketing-cycles). |
 | Cash for a venture's first test (EUR) | 20 | A business case that needs more cash than this to start is knocked out: Ember's code won't propose it until you lift that knock-out on its card (see [Ventures](#ventures)). |
 | Daily study budget for the library | 0.50 USD | What the agent may spend a day studying the documents you add on the Library tab. It counts toward the daily cap, not the cycle cap (except in the maintenance [burn mode](#money)). 0: nothing is studied, but the documents can still be searched and read. See [Library](#library). |
 | Default sleep | 240 min | Time between wake cycles when the agent doesn't choose. |
@@ -206,29 +205,17 @@ it runs one **wake cycle**:
    about one thing** (0.28.0): an ordinary cycle works on one product line, a
    [marketing cycle](#marketing-cycles) brings buyers to one line's listings, a
    [venture cycle](#ventures) decides one venture, and a cycle an event woke
-   works on one line at most. For an ordinary cycle Ember's code ranks the open
-   product lines (**READY**), and the plan takes one or says why it takes none.
-   Since 0.30.0 the agent finishes what it starts: after a line that owes
-   something comes the line its last ordinary cycles worked on, while it has
-   work (not only waiting for you, and not one its daily review said to stop),
-   three cycles in a row at most, so the next one goes to another line with
-   work; a marketing, venture or event cycle in between doesn't end the run.
-   Then come the lines its own judgement chose: this week's **focus lines** (its
-   [weekly look](#the-learning-loop) picks up to three toward your goal) and the
-   changes the day's review asked for (while a focus line has work, a detour to
-   a line with nothing of its own to do stays one cycle); then a line with a
-   milestone due within 7 days, one with another task (the critic's fixes, a
-   missing demand note), one that sells, and the one worked on longest ago. A
-   line the review said to stop, one only waiting for you and one that just had
-   its three cycles come after the others; in the explore burn mode READY also
-   offers *a new line*, first while
-   fewer than two lines are in flight. Before 0.30.0 the line worked on longest
-   ago came right after what was owed and due, so nearly every cycle switched
-   lines (in a dry run, 13 cycles on four lines switched 11 times). Each line in
-   READY shows the next step the last cycle on it left, and the work steps see it
-   whole, so a line's handoff waits for that line's cycle. A bar of a line's
-   [listing test](#roadmap) is Ember's code's check of Etsy's numbers, not a
-   milestone due for a cycle (a missed bar's work comes as an obligation). It is
+   works on one line at most. Since 0.35.0 the [plan tree](#plan) under your
+   goal decides: before the plan, Ember's code takes the cycle's **step** from it
+   (what you pinned, a promise to you or your decision that is due, the ventures'
+   turn, else the heaviest step), and the step decides what the cycle is (a
+   marketing step a marketing cycle, any other an ordinary one) and which product
+   line its tools work on. The plan sees it as **YOUR STEP** (what done means, why
+   it was taken, what comes next) and the whole plan in a few lines as **YOUR
+   PLAN**. It stays on a product up to three cycles in a row unless another step
+   weighs clearly more. With no step ready, in the explore burn mode it starts a
+   new product; otherwise nothing new starts. (0.28.0 to 0.34.0 Ember's code
+   ranked the product lines for each plan, **READY**, and the plan took one.) It is
    told to
    do research and legwork itself, to build a thing completely before
    it asks you for one concrete action, to ask you in one batched message and
@@ -236,29 +223,20 @@ it runs one **wake cycle**:
    daily cap on experiments rather than sleep to save it. Every plan and work step
    also sees your [standing instructions](#your-part) and a short list of facts
    about the outside world that you collected (platform rules, German law, what
-   earns money), which comes with each Ember update. Every plan also sees its
-   [roadmap](#roadmap) and aims the cycle at its line's milestone due first
-   (Ember's code replaces a milestone of another line, and says so).
+   earns money), which comes with each Ember update.
    Before anything else it sees its **obligations**, which Ember's code keeps
    (never cut): your messages waiting for an answer, what it promised you (a
    message's promise, with the day it named), your decisions it must react to
    (a request you rejected or carried out, or one that failed), milestones
    Ember's code closed missed, overdue milestones and live listings with too
    few photos. It closes a promise only after telling you it is kept (or why
-   not). While something of yours is pressing (a promise due by tomorrow, a
-   decision of the last two days, or your unanswered message when the cycle is
-   the one it woke), a wake cycle is an ordinary one, not a venture or
-   marketing cycle, and a pressing obligation of one line makes READY offer
-   only that line (once a day at most). Each obligation names its line; since
-   0.33.0 a promise names the project it is about too, and READY puts a line
-   with a promise due within two days first, then the line in progress, then
-   the lines that owe something. A missed milestone no longer decides what a
-   cycle is or takes its line (live, four misses on one evening took the next
-   cycles' lines one by one and kept every marketing cycle away for two days):
-   READY ranks it, and a missed views bar's push to bring buyers is a marketing
-   cycle's work. A message of the agent's that promises later work in words
+   not). A promise that names its project (message_owner's project_id) and your
+   decision on a product's request are steps of that product in the plan tree:
+   due within a day, they come first, at most once a day each; the rest of the
+   time they are weighed like any step. A missed milestone decides nothing.
+   A message of the agent's that promises later work in words
    only ("next cycle I'll ...") comes back to it once, to record the promise.
-   Any cycle may keep another line's record up to date (a note, its next step,
+   Any cycle may keep another line's record up to date (a note, its hypothesis,
    waiting; parking an idea with what it learned; closing an obligation with
    its evidence); work on another line (a request, a bet, reopening it) waits
    for that line's cycle. A scheduled venture or marketing cycle
@@ -275,8 +253,9 @@ it runs one **wake cycle**:
    written and run in its [workshop](#the-workshop). Ember's code keeps the
    tools on the cycle's line (0.28.0): another line's listing, product, update,
    request, pin or post, or one of its obligations, is refused and waits for a
-   cycle on that line. Closing another line, messages to you, its memory, the
-   roadmap and new ideas for the venture tree are always allowed. A cycle
+   cycle on that line. Messages to you, its memory, its plan's steps and new
+   ideas for the venture tree are always allowed; since 0.35.0 only you close or
+   drop a project. A cycle
    that took no line takes the line of its first tool call that works on one,
    and the files it wrote until then go under that line.
 3. **Reflect**: it writes a journal entry, updates its memory and chooses how
@@ -372,8 +351,8 @@ pins, listing edits). Since 0.24.0 it also sees the channels that wait for your
 setup (such as Pinterest without its app secret), so it doesn't plan with them,
 and since 0.33.0 the ones that are ready (live, a review read an old "waiting on
 owner" note and wrote that Pinterest was never set up, hours after you had),
-and its roadmap says which milestones Ember's code checks and closes itself and
-whose dates don't move (a product line's listing test, your goal, the money goal).
+and its milestones say which ones Ember's code checks and closes itself and
+whose dates don't move (a venture's first test, your goal, the money goal).
 
 The agent then judges every project (**continue**, **change** or **stop**, with
 its bottleneck: **reach**, **appeal**, **conversion**, **quality**,
@@ -439,9 +418,9 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   the cases. It rewrites the agent's strategy (refused if it names a parked or
   killed venture), says what to stop and start, asks up to 3 questions for the
   week and (since 0.30.0) picks the week's **focus lines**: up to 3 open product
-  lines that bring the goal nearest soonest. Every plan that week sees them, and
-  READY gives them the ordinary and marketing cycles after what is owed and the
-  line in progress. Before 0.30.0 a business that had grown (many projects,
+  lines that bring the goal nearest soonest. Every plan that week sees them
+  (0.30.0 to 0.34.0 READY gave them the cycles after what was owed and the line
+  in progress; the plan tree doesn't weigh them yet). Before 0.30.0 a business that had grown (many projects,
   ventures and cases) made the look's view too big for its budget, and the look
   was skipped at every cycle with only a line in the app's log; now the view
   holds your standing instructions and the strategy first and the older cases
@@ -476,19 +455,14 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   line's newest listing was checked, and its verdicts were read as verdicts on
   another listing of the line. A line whose work your park stopped gets no
   check. The score and fixes show in the daily review.
-- **Waiting time.** An ordinary cycle's plan gets **READY**: its product
-  lines, each with its jobs (what it owes, its milestone due, the critic's
-  fixes, a missing demand note, a change the day's review asked for; since 0.28.0
-  the plan takes one line from it, and marketing cycles bring buyers to unseen
-  listings), and the week's questions. Since 0.30.0 the line in progress and a
-  focus line that doesn't only wait for you count as jobs too, and a bar of a
-  listing test no longer does (it made every live line a job). On a live line
-  without an open bet, the work steps are asked for one. While it lists a job, the sleep
-  of a cycle that worked is cut to 3 hours, never below your default interval
-  (*Wake interval*) or shortest sleep, and not in maintenance. The week's
-  questions alone cut no sleep, nor does a plan that chose to do nothing
-  (0.21.0: under the default options it cut every cycle's sleep, up to 8 plans
-  a day; raising the wake interval now slows Ember down again).
+- **Waiting time.** While an ordinary or marketing cycle's plan has a step
+  ready (0.35.0: in the plan tree; READY's jobs until 0.34.0), the sleep of a
+  cycle that worked is cut to 3 hours, never below your default interval (*Wake
+  interval*) or shortest sleep, and not in maintenance. On a live line without
+  an open bet, the work steps are asked for one. The week's questions alone cut
+  no sleep, nor does a plan that chose to do nothing (0.21.0: under the default
+  options it cut every cycle's sleep, up to 8 plans a day; raising the wake
+  interval now slows Ember down again).
 
 All of it counts toward the daily cap, not the cycle cap, and none of it ends a
 cycle. The diagnostics report lists the bets, cases, principles, weekly looks
@@ -783,8 +757,8 @@ rule; the aim is 2 a week). The desk works within
 your **Share for ventures**; it has no cap of its own.
 
 A venture cycle only researches and decides: its work steps don't carry the
-tools for making files, the workshop, the Etsy shop, email, Reddit or laying out
-the roadmap (they belong to ordinary and marketing cycles). With the shorter rules of 0.12.0, which no longer
+tools for making files, the workshop, the Etsy shop, email, Reddit or changing
+the plan's steps (they belong to ordinary and marketing cycles). With the shorter rules of 0.12.0, which no longer
 repeat what Ember's code enforces or what the constitution, your knowledge
 file or a tool's description already says, a venture cycle's fixed prompt is
 about 30% shorter than in 0.11.
@@ -883,7 +857,7 @@ euros. The tab's badge counts the ones waiting. On each card:
   channel is set up, so its 21 days don't run out during your setup (a first
   test set while the channel wasn't set up is dropped, and a new one starts
   once it is). The venture goes live only once that first test is met as
-  Ember's code checks it, or you drop it on the Roadmap tab: the agent's own
+  Ember's code checks it, or you drop it on the Plan tab: the agent's own
   word doesn't count (for a first test without a metric, it tells you, and
   your drop confirms it).
 - **Research next** (or **Research more**, **Research again**): it goes first
@@ -896,7 +870,7 @@ euros. The tab's badge counts the ones waiting. On each card:
   projects too: a kill closes them, a park makes them wait (the agent can't
   make them active again until you take the venture up), and the agent opens
   no project in a parked venture and moves none into one. 0.23.1: nor out of
-  one you parked or killed. A park keeps each project's next step in its
+  one you parked or killed. A park keeps each project's state in its
   notes, and taking the venture up again gives it back. 0.23.2: it also
   drops the open milestones of the venture's projects (the agent's too), and
   the agent can't focus a plan on a waiting project, link a milestone to the
@@ -916,23 +890,21 @@ after its date: a first test Ember's code checks has that week too, and is
 met if its number comes in it). A first test of Pinterest or Printify that is
 still unmet then while no pin or product was ever made never ran: it starts
 once more instead (once). A week before a first test's date, the System log
-tells you once what is at stake (when it is parked, and the listing tests of
-its product lines that end with it), and the agent's plan lists it among what
-it owes. It also parks an idea of the agent's that no one took up
+tells you once what is at stake (when it is parked), and the agent's plan lists
+it among what it owes. It also parks an idea of the agent's that no one took up
 (researched) within 30 days, the **triage** (your own ideas wait for you), and a
 **live** venture that has sold nothing 60 days after it went live (no revenue
 recorded for it, no Etsy order of its listings). A live venture that earns more
-than it costs gets a decision point instead: **Scale it** (21 days), a goal of
-its own on the roadmap, which the agent closes once more of what sells is under
+than it costs gets a milestone instead: **Scale it** (21 days), a goal of its
+own under your goal, which the agent closes once more of what sells is under
 way. Ventures already waiting as ideas or live when this version came count
 from the upgrade, so none is parked at once. A venture parked this way says **Parked by Ember's code**, with
 the reason in its notes; like one you parked, only you take it up again. Only
 you back or kill a venture: the database refuses it from anyone else. A venture
 that is parked or killed takes its open milestones with it (when the agent or
-Ember's code parked it, yours stay yours to drop). When you or Ember's code
-park or kill it, the open bars of its product lines' listing tests go too, which
-ends those tests; the agent's own park leaves them open. Each card shows its stage's
-rule, and so does the agent's plan.
+Ember's code parked it, yours stay yours to drop). While you park or kill it,
+its products' steps wait and their decide-by dates aren't read. Each card shows
+its stage's rule, and so does the agent's plan.
 
 **Add idea** puts your own idea into the tree, optionally as a branch of an
 existing venture: the agent scores and researches it and tells you what it
@@ -954,56 +926,36 @@ numbers. Live legs show spent and earned in the tab's summary.
 
 ## Marketing cycles
 
-Since 0.28.0 bringing buyers has cycles of its own. The **Share for marketing**
-option (20 % by default) is the part of each day's spending that goes to them:
-a wake cycle is a marketing cycle while marketing cycles have had less than
-that share of the day's spending (the day's first cycle is an ordinary one).
-When ventures and marketing are both behind their share, the one further
-behind goes first (the ventures when they are even). Marketing cycles run once
-a listing Ember made is live (with the [blog](#blog), Bluesky or Pinterest on,
-a Printify product's listing counts too: since 0.32.0 a post or a pin may link
-one), in the explore and focus [burn modes](#money). Like the
-ventures' share, it comes out of the same daily cap. What presses comes first:
-your messages, when they woke the cycle, and an obligation that needs product
-work make it an ordinary cycle; a missed bar of a line's listing test that
-asks for buyers makes it a marketing cycle on that line.
+Since 0.35.0 a cycle is a marketing cycle when its [plan](#plan) step is a
+marketing step: a pin, a Bluesky post, a blog post, or a request that a
+marketing cycle makes. (0.28.0 to 0.34.0 the **Share for marketing** option gave
+marketing cycles a part of each day's spending; that option is gone.) A
+product's marketing steps come from its type's launch stage and, once it is
+launched, the recurring steps of its maintain stage: a pin a week, a Bluesky
+post a week for English products, a blog post a month for German ones. A missed
+day-7 views date makes its marketing urgent for a week.
 
-A marketing cycle's plan gets **READY** with the lines that have live listings,
-ranked: a line that owes a push to bring buyers first, then (since 0.30.0) the
-week's focus lines, then the lines nobody has seen while little was done to
-bring buyers to them, the lines that sell, the ones liked but not bought, the
-ones seen but not liked, and among equals the one marketed longest ago. Each shows its funnel (views, favorites,
-orders) and the reach done for it. The plan takes one line, and the cycle
-brings buyers to its listings: pins and Bluesky posts that link them, a blog
-post that recommends one, the link page, a Reddit draft you post, better
-titles, tags and photos (a change of the listing you approve). Ember's code
-keeps every link on that line's listings. The agent bets on what the reach
-will bring, so the next marketing cycle learns from it, and its work steps see
-the line's live listings with their views and favorites. A marketing cycle
-makes no documents, spreadsheets, new listings, products or books and sends no
-email: that waits for the next ordinary cycle.
+A marketing cycle brings buyers to its step's product: pins and Bluesky posts
+that link its listings, a blog post that recommends one, the link page, a
+Reddit draft you post, better titles, tags and photos (a change you approve).
+Ember's code keeps every link on that product's listings. The agent bets on
+what the reach will bring, so the next marketing cycle learns from it. A
+marketing cycle makes no documents, spreadsheets, new listings, products or
+books and sends no email.
 
-While marketing cycles run, pins, Bluesky posts, blog posts and the link page
-belong to them: an ordinary cycle doesn't carry those tools, and its plan
-doesn't show Pinterest, Bluesky or the blog. A Reddit draft stays an ordinary
-cycle's tool too, as it is often a first test of demand. With the share at 0,
-or nothing live to market, ordinary cycles market as before.
+An ordinary cycle doesn't carry the marketing tools, and its plan doesn't show
+Pinterest, Bluesky or the blog, with two exceptions: a channel that waits for
+your setup still says so (so Ember doesn't ask you again), and an ordinary
+cycle on a channel's own product (setting it up) keeps that channel. The
+**Activity** list marks each cycle with its kind and its line (*Marketing · #4
+Nebenkosten*, *Product line · #7 …*).
 
-The **Line desk** in the Ventures tab's **Running** view shows today's
-marketing share and what marketing cycles had of the day's spending, the lines
-as Ember's code ranks them now for an ordinary and for a marketing plan, and
-what the last plans took or why they took none. The **Activity** list marks each cycle with
-its kind and its line (*Marketing · #4 Nebenkosten*, *Product line · #7 …*).
+## Plan
 
-## Roadmap
-
-Everything on the roadmap is led by **your goal**: what you want Ember to earn.
-You set it on the **Roadmap** tab, and the agent splits it into sub-goals that
-lead to it (the legs and ventures that bring the money), the milestones this
-month that lead to those, and this week's steps. Each milestone has a due date
-and a *measure of done*, a number or a fact the agent can check ("10 pins that
-link to the shop", "business case for venture #3 proposed"), can serve a venture
-or a project, and shows **how far it got**.
+**Since 0.35.0** one **plan tree** under your goal decides what Ember works on:
+before each cycle Ember's code takes the cycle's step from it. (In 0.34.0 it
+ran in the shadow, beside READY.) The **Plan** tab shows it, with your goal at
+the top and your milestones below. It replaces the Roadmap tab.
 
 **Your goal** (0.29.0). **Set your goal** asks for an amount in USD (the books'
 currency), whether it counts **a month** (revenue less expenses over the last 30
@@ -1011,7 +963,7 @@ days reaches it: a steady income) or **in total** (everything from the day you
 set it adds up to it), and the date to reach it by, at least a week and at most
 a year ahead, with an optional word on why it matters, which the agent reads with
 it. Ember's code checks it from the revenue and expenses you record in the
-Ledger, before every plan and whenever you open the Roadmap tab: met, it closes it
+Ledger, before every plan and whenever you open the Plan tab: met, it closes it
 **done**; past its date, **missed**. Only you change it: **Change goal** sets a new
 one in its place (what led to the old one leads to the new one, and a goal in
 total you raise keeps counting from the old one's day), and **Remove goal** takes
@@ -1028,22 +980,113 @@ three times what the agent spends); past its date it closes it **missed** and
 sets it again. The moment you set your goal, it gives way to yours: it is closed
 (dropped by Ember's code), and what led to it leads to your goal. You can drop
 it: then Ember's code sets no more of its own, and only your goal leads the
-roadmap.
+plan.
 
-**Decision points.** Ember's code puts two **decision points** under the goal at
-the root (yours or its own), at a quarter and at half of its time (or of the net
-runway, when that is shorter), where the agent decides from the numbers which
-projects and ventures go on, change or stop. It closes a decision point with its
-decision; their dates don't move, and they go with their goal.
+**The tree.** Under your goal are the projects, one for each platform (Etsy,
+KDP, Printify, the website, the channels), and under each project its products:
+every open product line is one, laid out the first time Ember's code sees it,
+from its type's template (an Etsy download, a Printify product, a KDP book,
+website content, a channel). A line whose words name no type is laid out as a
+plain product; once its records name one (its first listing request, a
+Printify product, a KDP package), it takes that type's stages and steps. A
+product has stages (research, create, release, launch, maintain), and each stage
+has small steps. A step or a stage counts as done only when its check passes in
+Ember's records: a demand note, a request to you, a live listing, pins, Bluesky
+posts and blog posts that link the product. A later stage done closes the ones
+before it. Once a product's stages before maintain are done, its maintain stage
+gets a recurring step for each channel its audience uses, and a fix whenever
+the quality check says improve (the step quotes what the critic said). A promise
+Ember makes you that names a project becomes a step of that product, and so does
+your decision on one of its requests.
 
-**Everything leads to the goal.** Every milestone the agent plans names the one
-it leads to (the goal for a sub-goal), up to 12 in one step; one that leads to
-nothing is refused. Yours lead to the goal unless you choose another milestone.
-The tests Ember's code sets (a venture's first test, a product line's listing
-bars, a scale point) lead to it too, and whatever is left leading to no open
-milestone (its parent closed) is linked to the nearest open one above it, or to
-the goal, before every plan. A sub-goal is due by your goal's date at the latest
-(Ember's own goal is the exception: what leads to it moves on to the next one).
+**How a cycle gets its step.** In this order: a step you pinned; a promise to
+you or your decision that is due within a day (each first at most once a day;
+the rest of the time it is weighed); a venture cycle when the ventures' share
+of the day's spending is behind (your message waiting or a promise due comes
+first); else the heaviest step. To leave the product it is on, another step
+must weigh 25% more, for up to three cycles in a row. The step decides the
+cycle: a marketing step makes a [marketing cycle](#marketing-cycles), any other
+an ordinary one, and Ember's code keeps the cycle's tools on its product line.
+With no step ready, Ember starts a new product in the explore burn mode;
+otherwise nothing new starts. While her plan has steps ready, her code cuts a
+long sleep to 3 hours (never below your shortest sleep).
+
+**How a step is weighed.** A product's worth is what it could earn a month (from
+Ember's revenue sub-goal for its line, else its venture's split, else its type's
+default), damped so that optimistic numbers count less ($5 a month is 2, $20 is
+4.6, $60 is 7.4), times its chance: 0.4 in research, 0.6 in create, 0.8 in
+release and 1 once it is live, and then, after 30 views, how it sells. A step's
+weight is that worth times its kind (shipping, launching, fixing and marketing
+1, creating 0.8) times its channel's results, times one plus its urgency (a
+promise at least 2; a defect the quality check found 2; a missed views date
+makes the product's marketing urgent), its age (0.5 for each day it has waited
+ready) and momentum (1 for the product worked on last). A step carries the
+weight of the most important step waiting on it.
+
+**What Ember may change.** With her **plan_step** tool she adds steps to a
+product (to a stage, or before a step), splits a step into smaller ones or
+replaces it, says a step she added is done (a step with a check closes only when
+the check passes), and says a step waits on something Ember's code can check:
+your answer to a request, an upgrade request, another step or a day at most 14
+days ahead (two a day at most); her code lifts the wait once the block is gone.
+What you, a promise or Ember's code put in the plan stays. She can **hold** a
+product to work on others, with her reason, and resume it. She can't close,
+drop or delete a project or product: only you do. Each change is kept with its
+reason, and you see today's under **Changes today**.
+
+**Decide-by dates** (in place of the listing test, 0.13.0 to 0.34.0). Once a
+product has a listing live, Ember's code reads its numbers on these days,
+counted from the first day it was seen live:
+
+| Day | Bar | If missed |
+|---|---|---|
+| 7 | 10 views | its marketing comes first for a week |
+| 14 | 30 views and 2 favorites | with too little reach (fewer than 3 things done to bring buyers), one more try until day 28 with its marketing first; otherwise you decide |
+| 21 | a first order | you decide; with an order, Ember gets a step to scale it (5 variants or a bundle) |
+
+"You decide" is a step of yours on the product: **Keep it** or **Drop it**. A
+test begun before 0.35.0 keeps its start and what its bars found. While you park
+or kill the product's venture, no date is read.
+
+**The Plan tab** shows:
+
+- **your goal**, with a large bar of how far it got, its pace and its date;
+- **the next cycle's step**, why it is taken, the three after it and what waits
+  on you;
+- **the network**: your goal, each project in its own colour, each product as
+  big as its worth. Choose a product to open its stages and steps below it. Drag
+  to move it; Ctrl (or Cmd) and the mouse wheel zoom; **Fit** puts it back;
+- **the product you opened**: its stages and steps with their state and weight,
+  its numbers, its worth, its test's dates, Ember's hold (**Lift the hold**),
+  **Close as done** and **Drop it** (with an optional reason), and its
+  **Autonomy** box: what Ember's code may carry out for its listings without
+  your click;
+- **Changes today**, **Channels** (each channel's steps across the products,
+  what comes next and what it did in the last 14 days), **Upgrades the plan
+  waits on** (each upgrade request with the steps waiting on it and what they
+  would weigh), and **Recent cycles** (the step each took and why);
+- **Milestones**: yours and those Ember's code sets (a venture's first test,
+  the money goal), as cards by horizon. The tab's badges count overdue
+  milestones (▲) and the new dates Ember proposed for yours (◔).
+
+**Your part.** **Pin** a step to have the next cycle take it. **Set worth** gives
+a product your own worth, from 0.5 to 10, in place of the one Ember's code
+computes; **Use Ember's code's** takes yours back. At a decide-by date, **Keep
+it** or **Drop it**. **Close as done** or **Drop it** ends a product (and its
+line) whenever you want. **Lift the hold** puts a product Ember held back in the
+plan. **Add milestone** puts a milestone of yours under the goal or the
+milestone you choose; it stays yours: only you drop it, and Ember can't move its
+date (she may propose one; **Accept new date** or **Keep the date**). **Note**
+leaves a comment on a milestone, and **Drop** takes an open one (and the open
+milestones leading to it) off. Ember reads your word on her next wake.
+
+**The upgrade to 0.35.0.** At the first cycle Ember's code moves the milestones
+the tree takes the place of: the listing test's bars and scale points (each
+product's decide-by dates keep their start and what the bars found), the goal's
+decision points, and Ember's own milestones (one about a product becomes a step
+of it; the rest are closed). The unlocks you gave on those milestones move to
+their product's Autonomy box first. Each move is in the System log. From then
+on Ember sets no milestones of her own: her steps are the plan's.
 
 **How far each milestone got.** Every milestone shows a share from 0 to 100%:
 
@@ -1058,19 +1101,8 @@ the goal, before every plan. A sub-goal is due by your goal's date at the latest
 A ceiling (API spending at most so much) shows what it used instead. An open,
 measured milestone also shows its **pace**: ahead of, on, or behind the share of
 its time gone (since it was set), and its bar marks where a straight line to its
-date would be today. The agent sees all of it in every plan: your goal first,
-with how far it got and its pace, then each sub-goal and milestone with its share.
-Ember's code flags a goal that nothing of the agent's leads to yet, and the goal
-or a sub-goal behind its pace, and asks the agent to act on it in its next plan.
-
-**Planning ahead.** Every plan sees the goal first, then the sub-goals that lead
-straight to it (one line each, never cut), then the rest by horizon (overdue, this
-week, this month, the next three months, later), and aims the cycle at its line's
-milestone due first (0.28.0), which the cycle's work step sees with its measure,
-how far it and the goal got, and what it leads to. Ember's code flags an empty roadmap,
-overdue milestones, a week with nothing due and nothing planned beyond the month,
-and asks the agent to fix that in its next plan. The daily review checks the
-roadmap too, the goal's pace included.
+date would be today. The agent sees your goal in every plan, first in YOUR PLAN, with how far it got
+and its pace, then the milestones still open with their share.
 
 **Milestones Ember's code checks.** A milestone can name a **metric** and a
 target, and then Ember's code checks it from its records, with no model call:
@@ -1096,10 +1128,10 @@ The metrics:
 | `stage_reached` | the venture reached a stage (researching, proposed, building, live) | Ember |
 | `api_spend_usd` | API spending since it was set: a ceiling, missed once passed, done at its date | Ember |
 | `qa_clean` | every live listing has at least 5 photos | Etsy and Ember |
-| `views_total`, `favorites_total`, `orders_total` | the listings' views, favorites or orders in all, as Etsy counts them now (only Ember's code sets milestones with `orders_total`: the listing test below; a milestone of the agent's that names a number of its listings' views or favorites must use the first two) | Etsy |
+| `views_total`, `favorites_total`, `orders_total` | the listings' views, favorites or orders in all, as Etsy counts them now (only Ember's code sets milestones with `orders_total`) | Etsy |
 
 The Etsy listings Printify made for Ember's products count in these metrics
-too, and so in the listing test and the venture rules below; `qa_clean`
+too, and so in the venture rules; `qa_clean`
 leaves them out (their photos are Printify's mockups).
 
 A milestone linked to a project or venture counts only what belongs to it (a
@@ -1107,46 +1139,12 @@ listing belongs to the project of the request that created it), and the links
 of a milestone Ember's code set or checks never change. Etsy's numbers
 count only from a sync after the milestone was set and at most 3 hours old; a
 milestone for a killed venture's stage or case is closed missed. Its card on
-the Roadmap tab shows where it stands (**Checked by Ember's code**), and the
-agent's plan says what Ember's code closed since its last cycle. A milestone
-without a metric is allowed; the agent's done on it stays self-reported.
+the Plan tab shows where it stands (**Checked by Ember's code**), and the
+agent's plan says what Ember's code closed since its last cycle.
 
-**A product line's listing test.** Once a product line (a project) has its
-first listing live on Etsy, Ember's code tests it, counted from that day: one
-bar at a time (the next once the one before is closed, so a product line holds
-one open milestone: day 14's 30 views, then its 2 favorites), each a milestone
-it checks from Etsy's own numbers (no views history is needed). These take none
-of the roadmap's 20 places:
-
-| Day | Bar | If missed, the agent owes |
-|---|---|---|
-| 7 | 10 views in all | a push to bring buyers to its listings: pins, posts, a blog post (0.33.0; before, a fix of their titles, tags and category) |
-| 14 | 30 views and 2 favorites | parking the product line, with the numbers |
-| 21 | a first order | stopping building that product type |
-
-**Marketing before parking** (0.18.0). A listing nobody has seen hasn't been
-tested. A product line that misses its day-14 views with less than 3 things done
-to bring buyers to it (blog posts on your site that recommend its listings, pins
-and Bluesky posts that link them; since 0.33.0 not changes of them carried out at
-Etsy, which bring nobody to a listing nobody sees) owes a push to bring buyers
-instead of a park, and gets one more bar at once: 30 views by day 28. Missed,
-that one parks it. The bars after it come 14 days later, each with at least a
-week to run.
-
-A miss is an obligation with that action, shown first in the agent's plan
-until it is done. (Before 0.33.0 a product line live only through Printify owed
-asking you to fix its listings at day 7; its push now brings buyers, as a pin or
-a post may link a listing Printify made.) A first order by day 21 sets a decision point of its own:
-**Scale it: 5 variants or a bundle**, which the agent closes when they are
-live. The test's dates never move, except that a bar opening on or after its
-day is due the day after it opens. Only you drop its milestones: your drop
-ends that product line's test, and so does your or Ember's code's park of its
-venture. A project that
-is closed takes its open ones with it. Existing product lines get theirs from
-the day this version first sees their listings live.
-
-**Forecasts Ember's code settles.** The agent can give a metric milestone its
-odds of being met by its date (0.13.0: 5 to 95%). When you back a venture, its
+**Forecasts Ember's code settles.** The agent gave its own metric milestones
+odds of being met by their date (0.13.0 to 0.34.0: 5 to 95%); those still open
+settle as before. When you back a venture, its
 business case's days to the first sale become a 50% call. Ember's code settles
 both from its records before every plan, with no model call:
 
@@ -1161,8 +1159,8 @@ both from its records before every plan, with no model call:
 A call never changes, and a settled one is final. The record in a few words
 (how often the milestones given odds were met against the odds given, with the
 Brier score, where a coin toss scores 0.25, and how many first sales came on
-time) reaches the agent's triage in READY, the critic and the daily review. You
-see it on the Roadmap tab, with each call on its milestone's card, on the
+time) reaches the critic and the daily review. You
+see it with the milestones on the Plan tab, with each call on its milestone's card, on the
 Ventures tab's Decision desk, and on a backed venture's card.
 
 **Money, time and waiting.** A milestone can carry what it may cost: the API
@@ -1171,7 +1169,7 @@ hours. These are set with it and can't be raised later: the plan shows "spent
 $0.42 of $1.00", and Ember's code flags a milestone that spent more than its
 budget. What counts toward a milestone is the work of the cycles aimed at it;
 their plans, the daily reviews, brainstorms and library study are overhead,
-shown as one line on the Roadmap tab. Every model call records the venture and
+shown as one line under the milestones on the Plan tab. Every model call records the venture and
 milestone its work served (a research call for another venture counts for that
 venture), and every request to you records the venture and milestone of the
 cycle that made it, so a venture's "spent" is its own work, not whole cycles. A milestone can also **wait**, for your
@@ -1182,110 +1180,12 @@ milestone's newest note.
 
 **Honest by design.** What a milestone promises (its title and its measure)
 can't be changed once it is written. Its date can move twice at most, with the
-reason, and every move is counted: the card and the timeline show where it was
-first due. A milestone ends **done** (with the evidence), **missed** (why, and
-what now; only once its date has passed) or **dropped** (why), and is final
-then. Dropping a milestone drops the open milestones that lead to it too, so no
-step is left behind looking like a goal of its own. A new milestone much like
-one the agent dropped or missed in the last 30 days must name it (**replaces**):
-it keeps that one's first date and moves (one more for a dropped one, never
-beyond two), the agent is shown the measure it replaces, and its card says
-**replaces #n**: dropping and starting again can't reset the count or soften
-the measure unseen. A done the agent closes must name its
-evidence (a number, or a reference such as a request, a link or a file), and it
-shows as **self-reported**: the agent's word, not checked from Ember's records,
-also in its daily review. Ember keeps who closed each milestone (the agent,
-you, or Ember's code from its records).
-
-**The Roadmap tab.** Your goal comes first, with a large bar of how far it got,
-the amount, its pace and its date (and, while you have none, Ember's own goal,
-with **Set your goal**). The **goal tree** below it shows every open milestone
-under the one it leads to (and those met or missed in the last two weeks), each
-with its bar and share; choose one for its card. The Overview shows the goal and
-its bar under the key numbers.
-
-**The timeline.** A row per milestone, under the goal it leads to: a bar from
-when it was planned to its date, a mark on its date (open ◆, overdue ▲, done ●,
-missed ✕, dropped –), a hollow ◇ where it was first due if its date moved, and a
-line for today. Hover or focus a row for its measure and how far it got; click it
-for its card. The cards below are grouped by horizon, each with its progress. The
-tab's badges count overdue milestones (▲) and the new dates the agent proposed
-for yours (◔).
-
-**Your part.** **Set your goal** (or **Change goal**) leads everything, as above.
-**Add milestone** puts a milestone of yours on the roadmap, leading to the goal
-or to the milestone you choose; the agent plans toward it, and it stays yours:
-only you can drop it, and the agent can't move its date. When the agent wants a
-new date for it, it proposes one with the reason, and the card shows **Accept new
-date** and **Keep the date**; until you accept, the date stands. **Note** leaves a
-comment on any milestone, and **Drop** takes an open one (and the open milestones
-leading to it) off the plan; dropping a goal at the root keeps what leads to it.
-Of the 20 open places on the roadmap, the agent fills 16 at most: the last 4 are
-kept for yours. Your goal and the milestones Ember's code sets (its own goal,
-decision points, first tests and listing bars) take none of them. The agent reads
-your word on its next wake, and setting your goal wakes it like a decision.
-
-## Plan (preview)
-
-**Since 0.34.0** Ember's code keeps one **plan tree** under your goal. It is
-the first part of Release 2: the tree will decide what Ember works on next, in
-place of READY's ranking, the spending shares' turns and the chores her code
-generates. For now it runs **in the shadow**: Ember's cycles go exactly as
-before, and every cycle only records the step the tree would have taken.
-
-**The tree.** Your goal sits at the top. Under it are the projects, one for each
-platform (Etsy, KDP, Printify, the website, the channels), and under each project
-its products: every open product line is one, laid out the first time Ember's
-code sees it from its type's template (an Etsy download, a Printify product, a
-KDP book, website content). A product has five stages (research, create,
-release, launch, maintain), and each stage has small steps. A step or a stage
-counts as done only when its check passes in Ember's records: a demand note, a
-request to you, a live listing, pins, Bluesky posts and blog posts that link the
-product. A later stage done closes the ones before it. Once a product's launch is
-done, its maintain stage gets a recurring step for each channel its audience
-uses (a pin a week; a Bluesky post a week for English products; a blog post a
-month for German ones) and a fix whenever the quality check says improve. A
-missed one stays open and ages. A promise Ember makes you that names a project
-becomes a step of that product, and the steps in front of it carry it.
-
-**The Plan tab** shows:
-
-- **Now, if the tree steered**: the step the tree would take, and why. Next to
-  it are the three steps after it and what waits on you.
-- **The network**: your goal, each project in its own colour, each product as big
-  as its worth. Choose a product to open its stages and steps below it. Drag to
-  move it; Ctrl (or Cmd) and the mouse wheel zoom; **Fit** puts it back.
-- **The product you opened**: its stages and steps with their state, each step's
-  weight and how it was worked out, its numbers (views, favorites, orders, pins,
-  posts, blog posts) and its worth.
-- **Shadow picks**: for each cycle, what it worked on and the step the tree would
-  have taken instead.
-
-**Your part.** **Pin** a step to have it come first once the tree steers.
-**Set worth** gives a product your own worth, from 0.5 to 10, in place of the
-one Ember's code computes; **Use Ember's code's** takes yours back. Neither
-changes anything in Ember's cycles yet: they are recorded in the shadow picks.
-
-**How a step is weighed.** A product's worth is what it could earn a month (from
-Ember's revenue sub-goal for its line, else its venture's split, else its type's
-default), damped so that optimistic numbers count less ($5 a month is 2, $20 is
-4.6, $60 is 7.4), times its chance: 0.4 in research, 0.6 in create, 0.8 in
-release and 1 once it is live, and then, after 30 views, how it sells. A step's
-weight is that worth times its kind (shipping, launching, fixing and marketing
-1, creating 0.8) times its channel's results, times one plus its urgency (a
-promise at least 2; a defect the quality check found 2; a missed views bar makes
-the product's marketing urgent), its age (0.5 for each day it has waited ready)
-and momentum (1 for the product worked on last). A step carries the weight of
-the most important step waiting on it. Each cycle takes a pinned step first,
-then a promise due within a day, then a venture cycle when the venture share is
-behind, else the heaviest step; to leave the product it is on, another step must
-weigh 25% more, for up to three cycles in a row.
-
-**Good to know.** A product's audience (English, German or both) is guessed from
-its title and description, since no record holds a listing's language yet. A
-KDP book's marketing waits: pins, posts and the blog's product box can't link
-Amazon yet. The diagnostics report lists the tree, the shadow picks and the
-ranking the tree would take now.
+reason, and every move is counted. A milestone ends **done** (with the
+evidence), **missed** (why, and what now; only once its date has passed) or
+**dropped** (why), and is final then. Dropping a milestone drops the open
+milestones that lead to it too. Ember keeps who closed each milestone (the
+agent, you, or Ember's code from its records). Of the 20 open places, the last 4
+are kept for yours; your goal and the milestones Ember's code sets take none.
 
 ## Library
 
@@ -1330,10 +1230,12 @@ no longer shown); a study that failed three times stops until you press
   and keeps what it learned (see [Library](#library)).
 - **Ventures**: back, park or kill the agent's business cases and add your own
   ideas on the Ventures tab (see [Ventures](#ventures)).
-- **Roadmap**: add milestones you want reached by a date, leave notes, drop
-  what no longer matters (see [Roadmap](#roadmap)).
+- **Plan** (0.35.0, in place of the Roadmap tab): set your goal, pin a step,
+  set a product's worth, keep or drop a product at its decide-by date, close or
+  drop one, lift Ember's hold, set a product's unlocks, and add milestones you
+  want reached by a date (see [Plan](#plan)).
 - **Projects** (the Ventures tab's **Running** view since 0.27.0): the
-  agent's open projects as cards (its hypothesis, next step, what it earned
+  agent's open projects as cards (its hypothesis, its stage in the plan, what it earned
   and cost, and what it nets after its expenses such as Etsy's fees), the
   closed ones as rows that open. A backed or live venture's projects are in
   its card; the others follow under **Other projects**. Choose Open, Closed or
@@ -1342,9 +1244,6 @@ no longer shown); a study that failed three times stops until you press
   in its log opens that cycle on the Activity tab (the last 10 cycles are
   there) (0.19.4). Its **Files** shows the files written for it on the
   Workspace tab (0.26.0), whose **Open in Ventures** brings you back to it.
-  The **Line desk** above them shows how Ember's code ranks the lines for the
-  next plans and what the last ones took (0.28.0, see [Marketing
-  cycles](#marketing-cycles)).
 - **Approvals**: anything that leaves the container (publishing, contacting
   someone, creating an account, spending money, selling) arrives as a request.
   Approve it, approve it with your own changes to the text, or reject it, with
@@ -1367,8 +1266,8 @@ no longer shown); a study that failed three times stops until you press
   Ember's code can undo it. A listing, or a change to one, with fewer than 5
   photos (the one **QA** number: the Etsy guide, the plan's defects and the
   `qa_clean` metric read it too) says so on its card before you decide.
-- **Autonomy** (0.13.0): on the Roadmap tab, an open milestone's card has an
-  **Autonomy** box. There you can let Ember's code carry out a few small kinds
+- **Autonomy** (0.13.0): on the Plan tab, each open product (0.35.0) and each
+  open milestone's card has an **Autonomy** box. There you can let Ember's code carry out a few small kinds
   of request for that milestone without your click. Each is off (**Ask me**)
   until you choose otherwise (0.15.0: an unlock carries only what belongs to
   its milestone, whatever the plan works on: a milestone of a project covers
@@ -1403,7 +1302,7 @@ no longer shown); a study that failed three times stops until you press
   budget is spent, the milestone closes (met, missed or dropped), or you veto
   or cancel one of its requests. It never widens one. When you approved 5
   requests of a kind unchanged and without a comment within 30 days, the
-  Roadmap tab suggests an unlock, and you decide (0.15.0: not again within 30
+  Plan tab suggests an unlock, and you decide (0.15.0: not again within 30
   days after Ember's code took that unlock back for a reason other than a
   spent budget). Ember hears each change in its news, Ember's code's
   take-backs too, and its plans and the milestone's card say what stands
@@ -1734,7 +1633,7 @@ included: encrypt your backups.
   an email-reply unlock doesn't send it. Ember's
   code checks two things, and the card and the agent both see the result:
   that the subject keeps the thread ("Re: …"), and that the answer is short
-  (at most 200 words). On the Roadmap, the metrics `inquiries_received` and
+  (at most 200 words). On a milestone, the metrics `inquiries_received` and
   `inquiries_answered` count people's emails, and Ember's answers to them,
   from a milestone's start. If someone asks to stop after an answer your
   email-reply unlock sent, that unlock is taken back.
@@ -2545,7 +2444,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.34.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.35.0 (by /u/your name)`.
 
 ## Amazon KDP
 

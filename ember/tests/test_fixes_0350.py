@@ -25,8 +25,9 @@ from app.agent.service import Agent  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import call  # noqa: E402
 from tests.test_fixes_0280 import lined, now, texts, working  # noqa: E402
-from tests.test_fixes_0340 import ALL, BOOK, TRACKER, keep, project, request, steps_of  # noqa: E402
+from tests.test_fixes_0340 import ALL, BOOK, TRACKER, keep, project, request, steps_of, tree  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
+from tests.test_owner_loop import owner  # noqa: E402
 from tests.test_ventures import JOURNAL, VENTURING  # noqa: E402
 
 WORK = {
@@ -436,3 +437,93 @@ def test_the_milestones_the_tree_takes_the_place_of_move_once_with_the_owners_un
         assert own["id"] not in {m["id"] for m in roadmap.open_milestones(conn, agent.scope())}  # hidden
     assert steps_of(agent, tracker)[f"From your milestone #{mine}: Tracker listed"] == "open"
     assert not [s for s in keep(agent) if "closed:" in s]  # once
+
+
+# --- a product's type from its records, a channel's own product, the owner's Plan tab ---
+
+
+def test_a_plain_product_takes_its_type_once_its_records_name_it(data_dir: Path) -> None:
+    agent, _ = lined(data_dir, titles=("Hiking trail guides",))  # its words name no type
+    keep(agent)
+    [product] = rows(agent, "SELECT id, template FROM plan_nodes WHERE level = 'product'")
+    assert product["template"].startswith("generic@")
+    added = plan_step(agent, 1, action="add", stage="create", steps=[{"title": "Sketch the map", "kind": "create"}])
+    assert added.ok, added.text
+    request(agent, 1, "etsy_listing")  # its first listing request names it
+    said = keep(agent)
+    assert "Plan tree: line #1's records show its type, Etsy download: it takes that type's stages and steps." in said
+    nodes = {n["title"]: n for n in tree(agent) if n["project_id"] == 1 and n["level"] == "step"}
+    assert nodes["Make it"]["status"] == "dropped" and nodes["Propose the listing"]["status"] == "done"  # its check
+    # her own step moved along, into the new create stage (done with it: the listing is proposed)
+    assert [n["status"] for n in tree(agent) if n["title"] == "Sketch the map"] == ["dropped", "done"]
+    with agent.db.connection() as conn:
+        shown = plan.view(conn, agent.scope(), now(agent), agent.clock.today(), ALL)
+    assert [(p["platform"], [q["template"] for q in p["products"]]) for p in shown["projects"]] == [
+        ("etsy", ["Etsy download"])  # under its type's project, though its node stays where it was laid out
+    ]
+    assert not [s for s in keep(agent) if "records show its type" in s]  # once
+
+
+def test_a_retyped_product_shows_and_works_only_its_types_stages(data_dir: Path) -> None:
+    agent, _ = lined(data_dir, titles=("Hiking trail guides",))
+    keep(agent)
+    request(agent, 1, "etsy_listing")
+    keep(agent)
+    [product] = [q for p in agent.plan()["projects"] for q in p["products"]]
+    assert [s["stage"] for s in product["stages"]] == ["research", "create", "release", "launch", "maintain"]
+    assert not [st for s in product["stages"] for st in s["steps"] if st["status"] == "dropped"]
+    added = plan_step(agent, 1, action="add", stage="maintain", steps=[{"title": "Ask for a review", "kind": "ship"}])
+    assert added.ok, added.text  # into the type's maintain stage, not the generic one it replaced
+    with agent.db.transaction() as conn:  # launched: its maintain stage takes the recurring steps
+        for stage in plan.nodes(conn, agent.scope(), "project_id = 1 AND level = 'stage' AND status = 'open'"):
+            if stage["stage"] != "maintain":
+                for step in plan.nodes(conn, agent.scope(), "parent_id = ? AND status = 'open'", (stage["id"],)):
+                    plan._close(conn, step["id"], now(agent), "done", "test", by="owner")
+                plan._close(conn, stage["id"], now(agent), "done", "test", by="owner")
+    keep(agent)
+    maintain = [n for n in tree(agent) if n["project_id"] == 1 and n["stage"] == "maintain" and n["level"] == "stage"]
+    assert [m["status"] for m in maintain] == ["dropped", "open"]
+    under = rows(agent, f"SELECT title, template FROM plan_nodes WHERE parent_id = {maintain[1]['id']}")
+    assert "Ask for a review" in [u["title"] for u in under]
+    assert [u for u in under if (u["template"] or "").startswith("recurring/")]
+
+
+def test_a_retyped_products_stage_its_type_lacks_hands_its_steps_on(data_dir: Path) -> None:
+    agent, _ = lined(data_dir, titles=("Hiking trail guides",))
+    keep(agent)
+    added = plan_step(agent, 1, action="add", stage="create", steps=[{"title": "Sketch the map", "kind": "create"}])
+    assert added.ok, added.text
+    request(agent, 1, "site_post")  # a site post has no create stage: the release stage takes her step
+    keep(agent)
+    stages = [n for n in tree(agent) if n["project_id"] == 1 and n["level"] == "stage" and n["status"] != "dropped"]
+    assert [s["stage"] for s in stages] == ["research", "release", "maintain"]
+    [moved] = [n for n in tree(agent) if n["title"] == "Sketch the map" and n["status"] == "open"]
+    assert moved["stage"] == "release" and moved["parent_id"] == stages[1]["id"]
+
+
+def test_a_channels_own_product_keeps_its_tools_in_an_ordinary_cycle(data_dir: Path) -> None:
+    agent, _ = lined(data_dir, titles=("Pinterest boards for the shop",))  # a channel's own product
+    keep(agent)
+    with agent.db.connection() as conn:
+        steer = plan.steer(conn, agent.scope(), now(agent), agent.clock.today(), ALL)
+        assert steer.kind == "ordinary" and plan.on_channel(conn, agent.scope(), steer.step)
+        assert not plan.on_channel(conn, agent.scope(), None)
+
+
+def test_the_plan_tab_has_each_products_unlocks_and_its_owner_actions(data_dir: Path) -> None:
+    agent, _ = lined(data_dir, titles=())
+    tracker = project(agent, *TRACKER)
+    keep(agent)
+    shown = agent.plan()
+    [product] = [q for p in shown["projects"] for q in p["products"]]
+    rules = {r["rule"]: r for r in product["autonomy"]}
+    assert rules["qa_fix"]["level"] == "manual" and rules["qa_fix"]["fits"] is True
+    assert rules["email_reply"]["fits"] is False  # a product's unlocks cover its listings, not email replies
+    assert product["milestone"] is None and shown["unlocks_off"] is not None
+    actions = owner(agent)
+    assert actions.product_autonomy(product["id"], {"rule": "qa_fix", "level": "auto"}, "Stefan").status == 200
+    again = {q["line"]: q for p in agent.plan()["projects"] for q in p["products"]}[tracker]
+    assert again["milestone"] is not None and {r["rule"]: r["level"] for r in again["autonomy"]}["qa_fix"] == "auto"
+    assert actions.end_product(product["id"], {"why": "No demand."}, "Stefan", done=False).status == 200
+    assert rows(agent, f"SELECT status FROM projects WHERE id = {tracker}") == [{"status": "abandoned"}]
+    assert agent.plan()["projects"][0]["products"][0]["status"] == "dropped"

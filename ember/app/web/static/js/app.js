@@ -69,7 +69,7 @@
     rm: { data: null, byId: {}, stamp: null, busy: false, again: false, error: null, selected: null, saving: false },
     // 0.34.0: the plan tree (a preview): loaded while its tab is open, again whenever the dashboard's plan stamp
     // changes; selected: the product opened below the tree; view: the network's zoom and position.
-    pl: { data: null, stamp: null, busy: false, again: false, error: null, selected: null, view: null, size: null, dragged: false },
+    pl: { data: null, stamp: null, busy: false, again: false, error: null, selected: null, view: null, size: null, dragged: false, centred: false },
     // 0.29.0: the owner's goal: its form is being saved, its removal is being confirmed or sent
     goal: { saving: false, removing: false },
     // The library (0.12.0): loaded while its tab is open, again whenever the dashboard's library stamp changes.
@@ -10152,6 +10152,11 @@
     root.appendChild(nodeLayer);
     replace(host, root);
     planApplyView();
+    // a phone shows the network wider than the screen: it opens once on the goal, in the middle
+    if (!pl.centred && host.clientWidth && host.scrollWidth > host.clientWidth) {
+      host.scrollLeft = (host.scrollWidth - host.clientWidth) / 2;
+      pl.centred = true;
+    }
   }
 
   function planNode(n) {

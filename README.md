@@ -173,6 +173,21 @@ the tree as a floating node network, the step the tree would take now, what
 waits on you and the shadow picks; there you can pin a step or set a product's
 worth.
 
+0.35.0: the plan tree steers. Before each cycle Ember's code takes its step from
+the tree (what you pinned, a promise or your decision that is due, the
+ventures' turn, else the heaviest step), and the step decides what the cycle is
+and which product line it works on; Ember sees it as YOUR STEP, and the whole
+plan in a few lines as YOUR PLAN. She changes her own steps with their reasons
+(add, split, replace, done, wait on something her code can check) and can hold a
+product to work elsewhere, but only you close or drop one. READY's ranking, the
+marketing share, the listing test's bars, the goal's decision points and
+Ember's own milestones retire: each product with a live listing has decide-by
+dates (day 7, 14 and 21), where you keep it or drop it. The Plan tab takes the
+Roadmap tab's place: your goal, the tree, the product you open with its test's
+dates, its Autonomy box and your Close, Drop, Keep and Lift-hold buttons, what
+changed today, the channels, the upgrades the plan waits on, and your
+milestones.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

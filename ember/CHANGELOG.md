@@ -3,6 +3,39 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.35.0
+
+The plan tree steers now: before each cycle Ember's code takes its step from it, and the step decides what the cycle is
+and which product line it works on. READY's ranking, the marketing share, the listing test's bars, the goal's decision
+points and milestone_plan retire; your owner's Plan tab takes the Roadmap tab's place.
+
+- YOUR STEP is your cycle's step: what done means, why Ember's code took it (your owner's pin, a promise or their
+  decision due within a day, else the heaviest step; it keeps you on a product up to 3 cycles in a row unless another
+  step weighs 25% more), what comes after it, and the next heaviest. YOUR PLAN, in place of the ROADMAP, is the whole
+  plan in a few lines: the goal, what your owner did to the plan since your last cycle, each product with its stage and
+  numbers, what waits on your owner, the milestones still open and what Ember's code closed. Plan the cycle's work on
+  your step; your tools stay on its product line. A marketing step makes a marketing cycle, any other an ordinary one.
+  With no step ready, start a new product in the explore burn mode (project_create); otherwise end the cycle.
+- plan_step changes your plan, each change with why (your owner sees it): add steps to a stage or before a step, split
+  a step or replace it, say a step you added is done (a step with a check closes when it passes), or say a step waits
+  on something Ember's code can check: a request to your owner, an upgrade request, another step or a day at most 14
+  days ahead (2 a day). Ember's code lifts the wait once the block is gone. What your owner, a promise or Ember's code
+  put there stays. hold puts a product aside to work on others, with your reason; resume takes it up again.
+- Only your owner closes, drops or deletes a project or product. project_update no longer takes next_step (a product's
+  steps are your plan's) or a closing status; project_create starts a product, and Ember's code lays it out. A product
+  whose words name no type takes its type's stages once its records name one (its first listing request).
+- A product with a live listing has decide-by dates, counted from the day it was first seen live: day 7, 10 views, or
+  its marketing comes first for a week; day 14, 30 views and 2 favorites, with one more try until day 28 when too
+  little was done to bring buyers, else your owner decides; day 21, a first order brings you a step to scale it,
+  none and your owner decides. A missed bar no longer owes you a park or a push.
+- The critic's fixes are a step of the product's, and YOUR STEP quotes what it said. A promise that names its project
+  and your owner's decision on a product's request are steps of that product.
+- The milestones the tree takes the place of were moved once: the listing test's bars and scale points, the goal's
+  decision points and your own milestones (one about a product became a step of it). Your owner's unlocks on them
+  moved to their product.
+- An ordinary cycle's plan shows Pinterest, Bluesky and the blog only while they wait for your owner's setup (don't
+  ask them about it again); a channel's own product keeps its tools for its setup.
+
 ## 0.34.0
 
 Release 2 begins: one plan tree under your owner's goal will decide what you work on next, in place of READY's ranking,
