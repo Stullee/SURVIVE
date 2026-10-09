@@ -244,7 +244,7 @@ def research_refusal(values: Mapping[str, Any] | sqlite3.Row) -> str:
     )
     return (
         f"venture #{values['id']} has used its research budget ({spent} of ${RESEARCH_BUDGET_USD:.2f}){decide} Only "
-        "your owner grants more research for it (Research more on the Ventures tab)"
+        "your owner grants more research for it (Research more, on the Plan tab)"
     )
 
 

@@ -85,8 +85,7 @@
   <nav class="tabs" role="tablist" aria-label="Sections">
     <button type="button" role="tab" class="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true">Overview</button>
     <button type="button" role="tab" class="tab" id="tab-ledger" aria-controls="panel-ledger" aria-selected="false">Ledger</button>
-    <button type="button" role="tab" class="tab" id="tab-ventures" aria-controls="panel-ventures" aria-selected="false">Ventures <span class="badge" id="badge-ventures" hidden></span></button>
-    <button type="button" role="tab" class="tab" id="tab-plan" aria-controls="panel-plan" aria-selected="false">Plan <span class="badge badge-alert" id="badge-roadmap" hidden></span><span class="badge" id="badge-roadmap-proposals" hidden></span></button>
+    <button type="button" role="tab" class="tab" id="tab-plan" aria-controls="panel-plan" aria-selected="false">Plan <span class="badge badge-alert" id="badge-roadmap" hidden></span><span class="badge" id="badge-roadmap-proposals" hidden></span><span class="badge" id="badge-ventures" hidden></span></button>
     <button type="button" role="tab" class="tab" id="tab-library" aria-controls="panel-library" aria-selected="false">Library</button>
     <button type="button" role="tab" class="tab" id="tab-activity" aria-controls="panel-activity" aria-selected="false">Activity</button>
     <button type="button" role="tab" class="tab" id="tab-approvals" aria-controls="panel-approvals" aria-selected="false">Approvals <span class="badge" id="badge-approvals" hidden></span><span class="badge badge-todo" id="badge-approvals-todo" hidden></span></button>
@@ -206,87 +205,6 @@
         <div id="correction-form-slot"></div>
         <ol class="ledger" id="ledger-list"></ol>
       </article>
-    </section>
-
-    <!-- 0.27.0: ventures and their projects in one tab. Pipeline: the tree and the ventures still being decided (or
-         parked and killed). Running: the backed and live ventures, each with its projects in its card, then the
-         projects of no running venture. -->
-    <section class="panel" id="panel-ventures" role="tabpanel" aria-labelledby="tab-ventures" hidden>
-      <div class="subtabs" id="vt-views" role="tablist" aria-label="Ventures">
-        <button type="button" role="tab" class="subtab" id="vt-tab-pipeline" aria-controls="vt-pipeline" aria-selected="true">Pipeline <span class="badge" id="badge-pipeline" hidden></span></button>
-        <button type="button" role="tab" class="subtab" id="vt-tab-running" aria-controls="vt-running" aria-selected="false" tabindex="-1">Running</button>
-      </div>
-      <div class="vt-view" id="vt-pipeline" role="tabpanel" aria-labelledby="vt-tab-pipeline">
-        <article class="card" id="vt-card">
-          <div class="card-head">
-            <div>
-              <h2 id="vt-title" tabindex="-1">Venture tree</h2>
-              <p class="card-sub" id="vt-sub">&nbsp;</p>
-            </div>
-            <div class="form-actions">
-              <button type="button" class="btn" id="vt-add" aria-controls="vt-form" aria-expanded="false">Add idea</button>
-              <button type="button" class="btn" id="vt-refresh">Refresh</button>
-            </div>
-          </div>
-          <form class="vt-form" id="vt-form" novalidate hidden>
-            <div class="field">
-              <label for="vt-form-title">Idea</label>
-              <input type="text" id="vt-form-title" autocomplete="off" aria-describedby="vt-form-title-count vt-form-title-error">
-              <p class="counter" id="vt-form-title-count"></p>
-              <p class="field-error" id="vt-form-title-error" hidden></p>
-            </div>
-            <div class="field">
-              <label for="vt-form-pitch">What it is, and who would pay for it</label>
-              <textarea id="vt-form-pitch" rows="3" aria-describedby="vt-form-pitch-hint vt-form-pitch-count vt-form-pitch-error"></textarea>
-              <p class="hint" id="vt-form-pitch-hint">Ember scores it, researches it in a venture cycle and tells you what it would take.</p>
-              <p class="counter" id="vt-form-pitch-count"></p>
-              <p class="field-error" id="vt-form-pitch-error" hidden></p>
-            </div>
-            <div class="field">
-              <label for="vt-form-parent">Branch of</label>
-              <select id="vt-form-parent"></select>
-            </div>
-            <div class="form-actions">
-              <button type="submit" class="btn btn-primary" id="vt-form-save">Add to the tree</button>
-              <button type="button" class="btn" id="vt-form-cancel">Cancel</button>
-            </div>
-          </form>
-          <p class="form-status" id="vt-status" role="status"></p>
-          <p class="form-status" id="vt-load-status" role="status"></p>
-          <p class="vt-summary" id="vt-summary"></p>
-          <div class="vt-desk" id="vt-desk"></div>
-          <div class="vt-legend" id="vt-legend" aria-hidden="true"></div>
-          <div class="vt-tree" id="vt-tree"></div>
-          <svg id="vt-svg-ns" width="0" height="0" aria-hidden="true" focusable="false" hidden></svg>
-        </article>
-        <div class="queue" id="ventures"></div>
-      </div>
-      <div class="vt-view" id="vt-running" role="tabpanel" aria-labelledby="vt-tab-running" hidden>
-        <!-- Outside the lists: a control with focus here never holds back their next render. -->
-        <div class="pj-bar" id="projects-bar" hidden>
-          <dl class="pj-stats" id="projects-stats"></dl>
-          <div class="pj-controls">
-            <div class="segmented" role="group" aria-label="Show projects">
-              <button type="button" class="seg" data-pj-filter="open" aria-pressed="true">Open <span class="seg-count" id="pj-count-open"></span></button>
-              <button type="button" class="seg" data-pj-filter="closed" aria-pressed="false">Closed <span class="seg-count" id="pj-count-closed"></span></button>
-              <button type="button" class="seg" data-pj-filter="all" aria-pressed="false">All <span class="seg-count" id="pj-count-all"></span></button>
-            </div>
-            <label class="pj-sort" for="projects-sort">Sort
-              <select id="projects-sort">
-                <option value="status">Active first</option>
-                <option value="updated">Recently updated</option>
-                <option value="net">Best net</option>
-                <option value="earned">Most earned</option>
-                <option value="spent">Most spent</option>
-                <option value="started">Newest</option>
-              </select>
-            </label>
-          </div>
-        </div>
-        <p class="form-status" id="rn-status" role="status"></p>
-        <div class="queue" id="vt-running-list"></div>
-        <div class="pj-list" id="projects"></div>
-      </div>
     </section>
 
     <section class="panel" id="panel-plan" role="tabpanel" aria-labelledby="tab-plan" hidden>
@@ -419,6 +337,85 @@
         <p class="rm-summary" id="rm-summary"></p>
       </article>
       <div class="queue" id="roadmap"></div>
+      <!-- 0.37.0: the Ventures tab is the Plan tab's: each venture being explored is a node of the plan, its next
+           decision a step. Ventures: the tree and the ventures still being decided (or parked and killed), each
+           with its step. Product lines: the backed and live ventures, each with its projects in its card, then the
+           projects of no running venture (until 0.27.0 the Projects tab). -->
+      <div class="subtabs" id="vt-views" role="tablist" aria-label="Ventures and product lines">
+        <button type="button" role="tab" class="subtab" id="vt-tab-pipeline" aria-controls="vt-pipeline" aria-selected="true">Ventures <span class="badge" id="badge-pipeline" hidden></span></button>
+        <button type="button" role="tab" class="subtab" id="vt-tab-running" aria-controls="vt-running" aria-selected="false" tabindex="-1">Product lines</button>
+      </div>
+      <div class="vt-view" id="vt-pipeline" role="tabpanel" aria-labelledby="vt-tab-pipeline">
+        <article class="card" id="vt-card">
+          <div class="card-head">
+            <div>
+              <h2 id="vt-title" tabindex="-1">Venture tree</h2>
+              <p class="card-sub" id="vt-sub">&nbsp;</p>
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn" id="vt-add" aria-controls="vt-form" aria-expanded="false">Add idea</button>
+              <button type="button" class="btn" id="vt-refresh">Refresh</button>
+            </div>
+          </div>
+          <form class="vt-form" id="vt-form" novalidate hidden>
+            <div class="field">
+              <label for="vt-form-title">Idea</label>
+              <input type="text" id="vt-form-title" autocomplete="off" aria-describedby="vt-form-title-count vt-form-title-error">
+              <p class="counter" id="vt-form-title-count"></p>
+              <p class="field-error" id="vt-form-title-error" hidden></p>
+            </div>
+            <div class="field">
+              <label for="vt-form-pitch">What it is, and who would pay for it</label>
+              <textarea id="vt-form-pitch" rows="3" aria-describedby="vt-form-pitch-hint vt-form-pitch-count vt-form-pitch-error"></textarea>
+              <p class="hint" id="vt-form-pitch-hint">Ember scores it, researches it in a venture cycle and tells you what it would take.</p>
+              <p class="counter" id="vt-form-pitch-count"></p>
+              <p class="field-error" id="vt-form-pitch-error" hidden></p>
+            </div>
+            <div class="field">
+              <label for="vt-form-parent">Branch of</label>
+              <select id="vt-form-parent"></select>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary" id="vt-form-save">Add to the tree</button>
+              <button type="button" class="btn" id="vt-form-cancel">Cancel</button>
+            </div>
+          </form>
+          <p class="form-status" id="vt-status" role="status"></p>
+          <p class="form-status" id="vt-load-status" role="status"></p>
+          <p class="vt-summary" id="vt-summary"></p>
+          <div class="vt-steps" id="vt-steps"></div>
+          <div class="vt-legend" id="vt-legend" aria-hidden="true"></div>
+          <div class="vt-tree" id="vt-tree"></div>
+          <svg id="vt-svg-ns" width="0" height="0" aria-hidden="true" focusable="false" hidden></svg>
+        </article>
+        <div class="queue" id="ventures"></div>
+      </div>
+      <div class="vt-view" id="vt-running" role="tabpanel" aria-labelledby="vt-tab-running" hidden>
+        <!-- Outside the lists: a control with focus here never holds back their next render. -->
+        <div class="pj-bar" id="projects-bar" hidden>
+          <dl class="pj-stats" id="projects-stats"></dl>
+          <div class="pj-controls">
+            <div class="segmented" role="group" aria-label="Show projects">
+              <button type="button" class="seg" data-pj-filter="open" aria-pressed="true">Open <span class="seg-count" id="pj-count-open"></span></button>
+              <button type="button" class="seg" data-pj-filter="closed" aria-pressed="false">Closed <span class="seg-count" id="pj-count-closed"></span></button>
+              <button type="button" class="seg" data-pj-filter="all" aria-pressed="false">All <span class="seg-count" id="pj-count-all"></span></button>
+            </div>
+            <label class="pj-sort" for="projects-sort">Sort
+              <select id="projects-sort">
+                <option value="status">Active first</option>
+                <option value="updated">Recently updated</option>
+                <option value="net">Best net</option>
+                <option value="earned">Most earned</option>
+                <option value="spent">Most spent</option>
+                <option value="started">Newest</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <p class="form-status" id="rn-status" role="status"></p>
+        <div class="queue" id="vt-running-list"></div>
+        <div class="pj-list" id="projects"></div>
+      </div>
     </section>
 
     <section class="panel" id="panel-library" role="tabpanel" aria-labelledby="tab-library" hidden>

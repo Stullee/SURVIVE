@@ -217,9 +217,12 @@ def test_the_reports_scheduler_planner_and_plan_tree_name_the_same_next_cycle(
         keep(agent)  # 0.36.0: the plan lays out its Ventures; their Explore step is its only step
         venture = client.get("api/diagnostics").text
         cycle(agent)  # the cycle the promise was made in
-        promise(agent, "Send the owner the pin report", days=1)  # due tomorrow: it comes first
+        # 0.37.0: due tomorrow, a step of the plan's Owner project, weighed: heavier than the ventures' steps. Laid out
+        # by the next cycle's keeper, which the report runs and takes back (until then the Explore step waited)
+        promise(agent, "Send the owner the pin report", days=1)
         ordinary = client.get("api/diagnostics").text
-    for text, kind, takes in ((venture, "venture", "weight"), (ordinary, "ordinary", "none")):  # 0.36.0: by weight
+        assert rows(agent, "SELECT COUNT(*) AS n FROM plan_nodes WHERE obligation_id IS NOT NULL") == [{"n": 0}]
+    for text, kind, takes in ((venture, "venture", "weight"), (ordinary, "ordinary", "weight")):
         scheduler = json.loads(section(text, "SCHEDULER"))["next_cycle"]
         assert (scheduler["kind"], scheduler["venture"], scheduler["decided"]) == (kind, kind == "venture", takes)
         assert section(text, diagnostics.PLANNER_TITLE).startswith(

@@ -33,13 +33,13 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture(autouse=True)
 def ventures_in_the_plan(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """0.36.0: the plan lays out its Ventures and their Explore step only in a test marked ``exploring``: elsewhere the
-    plan is the products' alone and no cycle is a venture cycle (as the venture share of 0 made it, until 0.35.3). An
-    exploring test explores whenever the Explore step weighs most, without the turns it takes with a new product
-    while no product step is ready, unless it is marked ``exploring(turns=True)``."""
+    """0.36.0: the plan lays out its Ventures (0.37.0: each venture's node and step) only in a test marked
+    ``exploring``: elsewhere the plan is the products' alone and no cycle is a venture cycle (as the venture share of 0
+    made it, until 0.35.3). An exploring test explores whenever a venture's step weighs most, without the turns the
+    ventures take with a new product while no product step is ready, unless it is marked ``exploring(turns=True)``."""
     marker = request.node.get_closest_marker("exploring")
     if marker is None:
-        monkeypatch.setattr(plan, "_explore", lambda conn, scope, now: [])
+        monkeypatch.setattr(plan, "_ventures", lambda conn, scope, now: [])
     elif not marker.kwargs.get("turns"):
         monkeypatch.setattr(plan, "_ventured_last", lambda conn, scope, before: False)
 

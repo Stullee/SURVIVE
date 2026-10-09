@@ -21,6 +21,7 @@ from tests.test_agent import plan, reply, rows, text  # noqa: E402
 from tests.test_agent import tools as calls  # noqa: E402
 from tests.test_executor import REPLY  # noqa: E402
 from tests.test_mail import JOURNAL, READER, mail_cycle  # noqa: E402
+from tests.test_obligations import forcing  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
 from tests.test_policy import a_milestone  # noqa: E402
 from tests.test_ventures import tool_results  # noqa: E402
@@ -75,7 +76,7 @@ def test_a_person_s_email_waits_until_ember_answers_or_closes_it(data_dir: Path)
     assert owner(agent).decide(request["id"], {"decision": "reject"}, "Stefan").status == 200
     assert waiting(agent) == [1]  # turned down: it waits again
     with agent.db.connection() as conn:
-        assert obligations.pressing(conn, agent.scope(), agent.clock.today()) == []  # a new one wakes Ember instead
+        assert forcing(conn, agent.scope(), agent.clock.today()) == []  # a new one wakes Ember instead
         assert "- An email from a person waits for your answer: #1 (today): answer with propose_email" in (
             obligations.text(conn, agent.scope(), agent.clock.today())
         )

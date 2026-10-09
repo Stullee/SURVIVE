@@ -16,7 +16,7 @@ from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls
 from app.db import Database, discover_migrations, migrate
 from tests.test_agent import rows
 from tests.test_loop_shapes import run
-from tests.test_ventures import DROPSHIPPING, JOURNAL, PRINT, RESEARCH, VENTURING, found
+from tests.test_ventures import DROPSHIPPING, JOURNAL, PRINT, RESEARCH, VENTURING, aim, found
 
 
 def research(venture_id: int | None = None) -> tuple[str, dict[str, Any]]:
@@ -63,7 +63,7 @@ def test_each_call_names_what_its_work_served(data_dir: Path) -> None:
             JOURNAL,
         ]
     )
-    agent, ends = run(data_dir, fake, settings=VENTURING)
+    agent, ends = run(data_dir, fake, before=aim(DROPSHIPPING), settings=VENTURING)
     assert ends[0].status == "completed"
     calls = rows(agent, "SELECT purpose, venture_id, milestone_id, overhead, cost_micros FROM llm_calls ORDER BY id")
     by = [(c["purpose"], c["venture_id"], c["milestone_id"], c["overhead"]) for c in calls]

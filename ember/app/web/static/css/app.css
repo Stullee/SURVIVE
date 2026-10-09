@@ -1393,6 +1393,18 @@ body[data-stale="true"] .live { display: none; }
 /* ---- Ventures (0.10.0): the venture tree, left to right; a node's size is its weight, its colour its stage. */
 .vt-summary { color: var(--text-2); font-size: 0.9rem; margin: 4px 0 8px; }
 .vt-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.8rem; color: var(--text-2); margin-bottom: 8px; }
+/* 0.37.0: each venture's next decision as a step of the plan (the decision desk's READY until 0.36.0). */
+.vt-steps { margin: 0 0 12px; }
+.vt-steps:empty { display: none; }
+.vt-step-list { display: grid; gap: 8px; margin: 6px 0 0; padding: 0; list-style: none; }
+.vt-step { padding: 8px 10px; border: 1px solid var(--grid); border-radius: var(--radius); min-width: 0; overflow-wrap: anywhere; }
+.vt-step p { margin: 0; }
+.vt-step-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.vt-step-head .btn { margin-left: auto; }
+.vt-step .link-button { font-size: 1em; font-weight: 600; color: var(--text); }
+.vt-step-title { margin-top: 2px; }
+.vt-step-waiting { margin-top: 8px; }
+.vt-step-waiting > summary { cursor: pointer; color: var(--text-2); width: max-content; max-width: 100%; }
 .vt-key { display: inline-flex; align-items: center; gap: 6px; }
 .vt-dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--vt-stroke); background: var(--vt-fill); }
 .vt-tree { overflow: auto; max-height: 72vh; border: 1px solid var(--grid); border-radius: var(--radius); background: var(--surface-2); }
@@ -1439,7 +1451,8 @@ body[data-stale="true"] .live { display: none; }
 .card.venture .notes > summary { cursor: pointer; color: var(--text-2); width: max-content; max-width: 100%; }
 .card.venture .vt-card-title:focus { outline: none; }
 
-/* 0.27.0: the Ventures tab's views (Pipeline, Running); a running venture's projects in its card, as in Projects before. */
+/* 0.27.0: the Ventures tab's views (Pipeline, Running; 0.37.0: the Plan tab's Ventures and Product lines); a running
+   venture's projects in its card, as in Projects before. */
 .vt-view { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); min-width: 0; }
 .vt-projects { display: grid; gap: 10px; min-width: 0; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--grid); }
 .vt-projects-head { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 1rem; }

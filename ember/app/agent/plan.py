@@ -33,9 +33,8 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
-from ..economy import burn
 from ..economy.clock import from_iso, to_iso
-from . import desk, metrics, obligations, policy, reach, roadmap, templates, ventures, weights
+from . import critic, desk, metrics, obligations, policy, reach, roadmap, templates, ventures, weights
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
 
 SEQUENTIAL = (
@@ -59,9 +58,9 @@ CLICKS_PER_PIN, REACTIONS_PER_POST = 0.5, 3.0  # results that make a channel wor
 STALE_DAYS = 14  # a step waiting this long is shown for the daily review's look (Release 2c asks it)
 PICKS_SHOWN = 12
 HISTORY = 12  # cycles read back for the streak
-# 0.35.0: an owner's decision is taken first once in this many hours; the rest of the time it is weighed (live, an
-# obligation nobody closed took every cycle's line until 0.28.0 limited it to once a day). 0.35.1: a promise is taken
-# first up to PROMISE_TRIES times in them, then weighed until they have passed
+# 0.35.0: an owner's decision was taken first once in this many hours, the rest of the time weighed (live, an
+# obligation nobody closed took every cycle's line until 0.28.0 limited it to once a day); 0.35.1: a promise up to
+# PROMISE_TRIES times. 0.37.0: both are weighed always, urgent until taken that often in these hours
 OBLIGATION_HOURS = 24
 PROMISE_TRIES = 3
 # 0.35.1: the channel a promise names (pins, a Bluesky post, a blog post): its step is a marketing cycle's
@@ -71,10 +70,6 @@ PROMISE_CHANNELS = (
     ("blog", re.compile(r"\bblog", re.IGNORECASE)),
 )
 ALTERNATIVES = 3  # the other steps YOUR STEP names
-# 0.36.0: the Ventures project's one step, exploring, weighed like any other (the venture share retired): a cycle that
-# takes it is a venture cycle, whose READY (desk.py) says which decision; one that takes none leaves it waiting a day
-EXPLORE_TEMPLATE = "explore@1"
-EXPLORE_TITLE = "Explore: your ventures' next decision"
 # 0.35.0: a product's decide-by dates once it has a live listing (in place of the listing test's bars, gates.py until
 # 0.34.0): from the day its first listing was seen live. Day 7: 10 views, or its marketing is urgent for a week.
 # Day 14: 30 views and 2 favorites; missed with less reach than reach.ENOUGH, one more try by day 28 (its marketing
@@ -531,48 +526,35 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, cha
         said += _decisions(facts, product, decided.get(int(product["project_id"]), []), now)
         said += _recurring(facts, product, now, today, channels)
         said += _decide_by(facts, product, now, today)
-    said += _explore(conn, scope, now)
+    said += _ventures(conn, scope, now)  # 0.37.0: each venture a node, its next decision a step
+    said += _owner_owed(conn, scope, now)  # 0.37.0: and what is owed to the owner of no product
     said += _lift_waits(conn, scope, now, today)
     _clocks(conn, scope, now, today, channels)
     return said
 
 
-# --- exploring: the Ventures project and its Explore step (0.36.0) ---
+# --- the ventures: the plan's sub-goal, each venture a node with its next decision as a step (0.37.0) ---
+
+# 0.37.0: each venture being explored is a node of the Ventures project, its next decision (desk.py's, READY's until
+# then) a step under it, weighed like any step: a cycle that takes one is a venture cycle on that venture. 0.36.0 had
+# one Explore step for all of them, and READY said which (migration 0091 closed it). Each decision's step: its
+# template, its kind (the owner's decision on a case waits on them) and its title.
+VENTURE_STEPS: dict[str, tuple[str, str, str]] = {
+    "triage": ("triage@1", "create", "Triage it: research it, or park it with why"),
+    "appraise": ("appraise@1", "create", "Research its next question; then its business case, or park it"),
+    "answer": ("answer@1", "create", "Answer the critic with evidence or new numbers, or park it"),
+    "decide": ("decide@1", templates.OWNER_KIND, "Your owner decides on its business case: back it or park it"),
+}
+BRAINSTORM_TEMPLATE = "brainstorm@1"
+BRAINSTORM_TITLE = "Brainstorm six new ideas for your ventures"
+# the steps that make a venture cycle (the owner's decision is theirs)
+VENTURE_TEMPLATES = frozenset({"triage@1", "appraise@1", "answer@1", BRAINSTORM_TEMPLATE})
+DECISION_OF = {template: decision for decision, (template, _, _) in VENTURE_STEPS.items()}
 
 
 def ventures_node(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | None:
     found = nodes(conn, scope, "level = 'project' AND platform = 'ventures'")
     return found[0] if found else None
-
-
-def explore_step(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | None:
-    found = nodes(conn, scope, "level = 'step' AND status = 'open' AND template = ?", (EXPLORE_TEMPLATE,))
-    return found[0] if found else None
-
-
-def _explore(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[str]:
-    """The Ventures project and its Explore step, laid out once: live, the venture share made 10 of 24 cycles venture
-    cycles that Ember, told "nothing new" by its owner, left undone. Now the plan weighs when Ember explores."""
-    top = ventures_node(conn, scope)
-    said: list[str] = []
-    if top is None:
-        top_id = _platform(conn, scope, "ventures", now)
-        said.append("Plan tree: your ventures are its Explore step now, weighed like any other step.")
-    else:
-        top_id = int(top["id"])
-    if explore_step(conn, scope) is None:
-        _insert(
-            conn,
-            scope,
-            now,
-            parent_id=top_id,
-            level="step",
-            kind="create",
-            template=EXPLORE_TEMPLATE,
-            title=EXPLORE_TITLE,
-            source="code",
-        )
-    return said
 
 
 def new_things_held(conn: sqlite3.Connection, scope: AgentScope) -> str | None:
@@ -584,12 +566,103 @@ def new_things_held(conn: sqlite3.Connection, scope: AgentScope) -> str | None:
     return str(top["hold_reason"])
 
 
-def _last_venture_cycle(conn: sqlite3.Connection, scope: AgentScope) -> str | None:
-    row = conn.execute(
-        "SELECT MAX(started_at) FROM cycles WHERE session = ? AND simulated = ? AND venture = 1",
-        (scope.session, 1 if scope.simulated else 0),
-    ).fetchone()
-    return row[0] if row else None
+def venture_decision(conn: sqlite3.Connection, v: Mapping[str, Any]) -> str | None:
+    """A venture's next decision by its stage: triage an idea, appraise one being researched, answer the critic on a
+    proposed one it judged test or park, else the owner's decision on its case; None once it is backed, live, parked
+    or killed (a backed one's work is its product line's)."""
+    stage = v["stage"]
+    if stage == "idea":
+        return "triage"
+    if stage == "researching":
+        return "appraise"
+    if stage != "proposed":
+        return None
+    case_row = ventures.latest_case(conn, int(v["id"])) if v["cases"] else None
+    judged = critic.latest(conn, int(v["id"])) if case_row is not None else None
+    return "answer" if judged is not None and judged["verdict"] in ("test", "park") else "decide"
+
+
+def _open_steps(conn: sqlite3.Connection, scope: AgentScope, parent_id: int) -> list[Any]:
+    return nodes(conn, scope, "level = 'step' AND status = 'open' AND parent_id = ?", (parent_id,))
+
+
+def _ventures(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[str]:
+    """The Ventures project with a node for each venture being explored and its next decision as a step (the step
+    before it closed once its stage moved on), the node closed once the venture is backed or live (done: its work is
+    its product line's) or parked or killed (dropped); and a brainstorm step while the funnel is thin
+    (desk.brainstorm_due). Kept before every plan."""
+    top_id = _platform(conn, scope, "ventures", now)
+    first = not nodes(conn, scope, "level = 'venture'")
+    open_nodes = {int(n["venture_id"]): n for n in nodes(conn, scope, "level = 'venture' AND status = 'open'")}
+    rows = ventures.all_ventures(conn, scope)
+    made = 0
+    for v in rows:
+        vid = int(v["id"])
+        decision = venture_decision(conn, v)
+        here = open_nodes.get(vid)
+        if decision is None:
+            if here is not None:
+                ended = "done" if v["stage"] in ("building", "live") else "dropped"
+                why = _cut(f"venture #{vid} is {v['stage']}", 300)
+                for step in _open_steps(conn, scope, int(here["id"])):
+                    _close(conn, step["id"], now, ended, why)
+                _close(conn, here["id"], now, ended, why)
+            continue
+        if here is None:
+            here_id = _insert(
+                conn,
+                scope,
+                now,
+                parent_id=top_id,
+                level="venture",
+                venture_id=vid,
+                title=_cut(" ".join(str(v["title"]).split()), 160),
+                source="code",
+            )
+            made += 1
+        else:
+            here_id = int(here["id"])
+        template, kind, title = VENTURE_STEPS[decision]
+        steps = _open_steps(conn, scope, here_id)
+        if any(s["template"] == template for s in steps):
+            continue
+        for step in steps:
+            _close(conn, step["id"], now, "done", _cut(f"venture #{vid} is {v['stage']} now", 300))
+        _insert(
+            conn, scope, now, parent_id=here_id, level="step", kind=kind, template=template, title=title, source="code"
+        )
+    due = desk.brainstorm_due(rows)
+    brainstorms = nodes(conn, scope, "level = 'step' AND status = 'open' AND template = ?", (BRAINSTORM_TEMPLATE,))
+    if due and not brainstorms:
+        _insert(
+            conn,
+            scope,
+            now,
+            parent_id=top_id,
+            level="step",
+            kind="create",
+            template=BRAINSTORM_TEMPLATE,
+            title=BRAINSTORM_TITLE,
+            source="code",
+        )
+    elif not due:
+        for step in brainstorms:
+            _close(conn, step["id"], now, "done", "enough ideas wait, or have their numbers")
+    if first and made:
+        return ["Plan tree: each venture you explore is a node of its Ventures now, its next decision a step."]
+    return []
+
+
+def _last_taken(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, str]:
+    """When a cycle last took each step (0.37.0: a venture's step ages from then, so the others come in turn)."""
+    where, params = scope.where()
+    return {
+        int(r[0]): str(r[1])
+        for r in conn.execute(
+            f"SELECT node_id, MAX(created_at) FROM plan_picks WHERE {where} AND node_id IS NOT NULL GROUP BY node_id",
+            params,
+        )
+    }
 
 
 def _ventured_last(conn: sqlite3.Connection, scope: AgentScope, before: int | None) -> bool:
@@ -602,48 +675,99 @@ def _ventured_last(conn: sqlite3.Connection, scope: AgentScope, before: int | No
     return bool(row and row["venture"])
 
 
-def _explore_candidate(
+def venture_worth(conn: sqlite3.Connection, v: Mapping[str, Any] | None) -> float:
+    """What a venture's step is worth unless the owner set one: what its business case expects a month (the critic's
+    where it is lower), as a product's worth from what it could earn (weights.prior), at least weights.EXPLORE_WORTH;
+    an idea's by its scores (ventures.weight, an unscored one's as middling), half to one and a half of that, so the
+    heaviest ideas are researched first (READY's order until 0.36.0)."""
+    if v is None:
+        return weights.EXPLORE_WORTH
+    case_row = ventures.latest_case(conn, int(v["id"])) if v["cases"] else None
+    ev = critic.ranking_ev(case_row, critic.latest(conn, int(v["id"])) if case_row is not None else None)
+    if ev is not None and ev > 0:
+        return max(weights.EXPLORE_WORTH, weights.prior(ev))
+    if v["stage"] == "idea":
+        scored = ventures.weight(v)
+        return round(weights.EXPLORE_WORTH * (0.5 + (50 if scored is None else scored) / 100), 3)
+    return weights.EXPLORE_WORTH
+
+
+def _venture_candidates(
     conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, exploring: bool, turn: bool = False
 ) -> list[Candidate]:
-    """The Explore step as the scorer sees it: the ventures' worth (the owner's, else weights.EXPLORE_WORTH), the
-    urgency of READY's most pressing item (the owner's wish, a venture about to be parked), its age since the last
-    venture cycle. It waits while the owner holds the ventures ('hold'), while the cycle runs no venture work
-    ('mode': a burn mode without venture cycles, or what the owner waits for first: ``exploring`` false), when a new
-    product has its turn ('turn': no product step is ready and the cycle before explored, so a cycle that may start
-    one comes between two venture cycles), on its date (the last venture cycle found nothing to do) or while READY
-    would be empty ('empty')."""
-    top, step = ventures_node(conn, scope), explore_step(conn, scope)
-    if top is None or step is None:
+    """The ventures' steps as the scorer sees them: each worth the owner's (the venture's, else all the ventures'),
+    else what its case expects (venture_worth); urgent when the owner wished for it (weights.ASKED) or Ember's code
+    parks it soon (weights.PARK_SOON); aging since it was ready or a cycle last took it. They wait on the owner (their
+    decision on a case), while the owner holds new things ('hold'), while the cycle runs no venture work ('mode': a
+    burn mode without venture cycles, or what the owner waits for first: ``exploring`` false), when a new product has
+    its turn ('turn': no product step is ready and the cycle before explored; not the step the owner pinned), an
+    idea while ventures.MAX_ACTIVE are researched or proposed ('room'), and once its venture was backed, parked or
+    killed until the next cycle's keeper closes it ('moved')."""
+    top = ventures_node(conn, scope)
+    if top is None:
         return []
-    items: list[desk.Item] = []
-    reason: str | None = None
-    if top["hold_reason"]:
-        reason = "hold"
-    elif not exploring:
-        reason = "mode"
-    elif turn:
-        reason = "turn"
-    elif step["waiting"]:
-        reason = str(step["waiting"])
-    else:
-        items = desk.ready(conn, scope, mode=burn.EXPLORE, today=today, cash_eur=0.0, net_days=None)
-        reason = None if items else "empty"
-    tiers = {i.tier for i in items}
-    urgency = weights.ASKED if "wish" in tiers else weights.PARK_SOON if "urgent" in tiers else 0.0
-    since = max(filter(None, (step["ready_since"], _last_venture_cycle(conn, scope))), default=None)
-    worth = float(top["owner_worth"]) if top["owner_worth"] is not None else weights.EXPLORE_WORTH
-    explore = weights.Step(
-        step["id"],
-        None,
-        str(step["title"]),
-        "create",
-        worth,
-        urgency=urgency,
-        age_days=round(_days(since, now), 3) if reason is None else 0.0,
-        pinned=bool(step["pinned"]),
-        blocked=reason is not None,
-    )
-    return [Candidate(explore, "explore", reason)]
+    rows = {int(v["id"]): v for v in ventures.all_ventures(conn, scope)}
+    room = sum(1 for v in rows.values() if v["stage"] in ventures.EXPLORED) < ventures.MAX_ACTIVE
+    taken = _last_taken(conn, scope)
+    owned = (*VENTURE_TEMPLATES, VENTURE_STEPS["decide"][0])
+    marks = ", ".join("?" for _ in owned)
+    found: list[Candidate] = []
+    for step in nodes(conn, scope, f"level = 'step' AND status = 'open' AND template IN ({marks})", owned):
+        parent = node(conn, scope, int(step["parent_id"]))
+        v = rows.get(int(parent["venture_id"])) if parent is not None and parent["venture_id"] is not None else None
+        item = desk.item(conn, v, today=today, room=room) if v is not None else None
+        mine = parent is not None and parent["venture_id"] is not None  # a venture's step (not the brainstorm)
+        reason: str | None
+        if mine and (v is None or v["stage"] not in ventures.EXPLORING):
+            reason = "moved"  # backed, parked or killed since the tree was kept: the next cycle's keeper closes it
+        elif step["kind"] == templates.OWNER_KIND:
+            reason = "owner"
+        elif top["hold_reason"]:
+            reason = "hold"
+        elif not exploring:
+            reason = "mode"
+        elif turn and not step["pinned"]:  # the owner's Explore next is their word: it doesn't wait for the turn
+            reason = "turn"
+        elif step["waiting"]:
+            reason = str(step["waiting"])
+        elif mine and item is None:
+            reason = "room"
+        else:
+            reason = None
+        if parent is not None and parent["owner_worth"] is not None:
+            worth = float(parent["owner_worth"])
+        elif top["owner_worth"] is not None:
+            worth = float(top["owner_worth"])
+        else:
+            worth = venture_worth(conn, v)
+        tier = item.tier if item is not None else ""
+        urgency = weights.ASKED if tier == "wish" else weights.PARK_SOON if tier == "urgent" else 0.0
+        since = max(filter(None, (step["ready_since"], taken.get(int(step["id"])))), default=None)
+        found.append(
+            Candidate(
+                weights.Step(
+                    step["id"],
+                    None,
+                    str(step["title"]),
+                    _kind(step),
+                    worth,
+                    urgency=urgency,
+                    age_days=round(_days(since, now), 3) if reason is None else 0.0,
+                    pinned=bool(step["pinned"]),
+                    blocked=reason is not None,
+                ),
+                "venture",
+                reason,
+            )
+        )
+    return found
+
+
+def venture_of(conn: sqlite3.Connection, scope: AgentScope, step_id: int | None) -> int | None:
+    """The venture a step of the Ventures is about (None: a brainstorm, or no venture's step)."""
+    row = node(conn, scope, step_id) if step_id is not None else None
+    parent = node(conn, scope, int(row["parent_id"])) if row is not None and row["parent_id"] is not None else None
+    return int(parent["venture_id"]) if parent is not None and parent["venture_id"] is not None else None
 
 
 def ventures_view(
@@ -653,67 +777,103 @@ def ventures_view(
     parts: Mapping[int, weights.Parts],
     today: date,
 ) -> dict[str, Any] | None:
-    """The Ventures project as the owner's tabs show it: its worth (theirs, else EXPLORE_WORTH), their hold, and the
-    Explore step: its weight now, or what it waits on; READY's first items (what a venture cycle would decide).
-    None before it is laid out."""
-    top, step = ventures_node(conn, scope), explore_step(conn, scope)
-    if top is None or step is None:
+    """The Ventures as the owner's Plan tab shows them: their worth (the owner's, else each venture's own) and their
+    hold, each venture being explored with its step (its weight now, or what it waits on) and what it needs decided,
+    and the brainstorm when one is due. None before they are laid out."""
+    top = ventures_node(conn, scope)
+    if top is None:
         return None
-    candidate = next((c for c in found if c.step.id == step["id"]), None)
-    weight = parts.get(int(step["id"]))
-    items = desk.ready(conn, scope, mode=burn.EXPLORE, today=today, cash_eur=0.0, net_days=None)
+    by_id = {c.step.id: c for c in found}
+    rows = {int(v["id"]): v for v in ventures.all_ventures(conn, scope)}
+    room = sum(1 for v in rows.values() if v["stage"] in ventures.EXPLORED) < ventures.MAX_ACTIVE
+
+    def shown(step: Mapping[str, Any]) -> dict[str, Any]:
+        candidate, weight = by_id.get(int(step["id"])), parts.get(int(step["id"]))
+        return {
+            "id": step["id"],
+            "title": step["title"],
+            "decision": DECISION_OF.get(str(step["template"]), "brainstorm"),
+            "pinned": bool(step["pinned"]),
+            "waiting": candidate.waiting if candidate is not None else None,
+            "weight": round(weight.total, 2) if weight else None,
+            "why": weight.text() if weight else None,
+        }
+
+    items = []
+    for here in nodes(conn, scope, "level = 'venture' AND status = 'open'"):
+        v = rows.get(int(here["venture_id"]))
+        steps = _open_steps(conn, scope, int(here["id"]))
+        item = desk.item(conn, v, today=today, room=room) if v is not None else None
+        items.append(
+            {
+                "node": here["id"],
+                "venture": here["venture_id"],
+                "title": v["title"] if v is not None else here["title"],
+                "stage": v["stage"] if v is not None else None,
+                "owner_worth": here["owner_worth"],
+                "worth": here["owner_worth"]
+                if here["owner_worth"] is not None
+                else top["owner_worth"]
+                if top["owner_worth"] is not None
+                else venture_worth(conn, v),
+                "step": shown(steps[0]) if steps else None,
+                "needs": _needs(item, v),
+            }
+        )
+    brainstorm = nodes(conn, scope, "level = 'step' AND status = 'open' AND template = ?", (BRAINSTORM_TEMPLATE,))
     return {
         "id": top["id"],
-        "worth": top["owner_worth"] if top["owner_worth"] is not None else weights.EXPLORE_WORTH,
+        "worth": top["owner_worth"],  # the owner's for every venture, or None: each venture's own
         "owner_worth": top["owner_worth"],
         "hold": top["hold_reason"],
         "hold_by": top["hold_by"],
-        "step": {
-            "id": step["id"],
-            "title": step["title"],
-            "pinned": bool(step["pinned"]),
-            "waiting": candidate.waiting if candidate is not None else None,
-            "wait_until": step["wait_until"],
-            "wait_why": step["wait_why"],
-            "weight": round(weight.total, 2) if weight else None,
-            "why": weight.text() if weight else None,
-        },
-        "ready": [item.text for item in items[:3]],
+        "ventures": items,
+        "brainstorm": (
+            {**shown(brainstorm[0]), "needs": desk.brainstorm_due(list(rows.values()))} if brainstorm else None
+        ),
     }
 
 
+def _needs(item: desk.Item | None, v: Mapping[str, Any] | None) -> str | None:
+    """What a venture needs now (desk.item), without its title: the Plan tab's row names it."""
+    if item is None or v is None:
+        return None
+    title = " ".join(str(v["title"] or "").split())[:50]  # as desk.item begins its text
+    return item.text.replace(f"{title} · ", "", 1)
+
+
 def _ventures_line(conn: sqlite3.Connection, scope: AgentScope) -> str:
-    """YOUR PLAN's line on the ventures: the Explore step, its worth, and the owner's hold or its wait."""
-    top, step = ventures_node(conn, scope), explore_step(conn, scope)
-    if top is None or step is None:
+    """YOUR PLAN's line on the ventures: those being explored with their next decision (VENTURES shows the tree), the
+    owner's worth and hold, and a brainstorm due."""
+    top = ventures_node(conn, scope)
+    if top is None:
         return ""
-    worth = top["owner_worth"] if top["owner_worth"] is not None else weights.EXPLORE_WORTH
-    said = f"Ventures: your Explore step #{step['id']} (worth {worth:g}"
-    said += ", your owner's)" if top["owner_worth"] is not None else ")"
+    open_nodes = nodes(conn, scope, "level = 'venture' AND status = 'open'")
+    words = []
+    for here in open_nodes[:VENTURES_SHOWN]:
+        steps = _open_steps(conn, scope, int(here["id"]))
+        decision = DECISION_OF.get(str(steps[0]["template"]), "") if steps else ""
+        words.append(f"#{here['venture_id']} {_cut(str(here['title']), 40)} ({VENTURE_WORDS.get(decision, '-')})")
+    more = len(open_nodes) - VENTURES_SHOWN
+    said = "Ventures, each next decision a step of yours: " + (" · ".join(words) if words else "none being explored")
+    if more > 0:
+        said += f" · {more} more"
+    if nodes(conn, scope, "level = 'step' AND status = 'open' AND template = ?", (BRAINSTORM_TEMPLATE,)):
+        said += " · a brainstorm is due"
+    if top["owner_worth"] is not None:
+        said += f" · your owner's worth for them: {float(top['owner_worth']):g}"
     if top["hold_reason"] and top["hold_by"] == "owner":
-        return said + (
-            f" · your owner holds new things: {_cut(top['hold_reason'], 80)}: no venture cycle and no new product until"
-            " they resume them."
+        said += (
+            f" · your owner holds new things: {_cut(top['hold_reason'], 80)}: no venture cycle and no new product"
+            " until they resume them."
         )
-    if top["hold_reason"]:
-        return said + f" · on hold: {_cut(top['hold_reason'], 80)}: no venture cycle until they're resumed."
-    if step["waiting"] == "date" and step["wait_until"]:
-        return said + f" · waits until {step['wait_until']}: {_cut(step['wait_why'] or '', 80)}"
-    return said + " · weighed like any step: it makes a venture cycle when it weighs most."
+    elif top["hold_reason"]:
+        said += f" · on hold: {_cut(top['hold_reason'], 80)}: no venture cycle until they're resumed."
+    return said
 
 
-def explore_idle(
-    conn: sqlite3.Connection, scope: AgentScope, cycle_id: int | None, why: str, now: str, today: date
-) -> None:
-    """A venture cycle that took no READY item leaves the Explore step waiting until tomorrow (the plan weighs the
-    rest meanwhile): live, the venture share brought ten such cycles a day."""
-    step = explore_step(conn, scope)
-    if step is None or step["waiting"]:
-        return
-    tomorrow = (today + timedelta(days=1)).isoformat()
-    words = _cut(f"your last venture cycle took no READY item: {why}", 200)
-    _update(conn, step["id"], now, waiting="date", wait_until=tomorrow, wait_why=words, ready_since=None)
-    change(conn, scope, step["id"], cycle_id, "code", "wait", f"until {tomorrow}: {words}", now)
+VENTURES_SHOWN = 6  # the ventures YOUR PLAN's line names (VENTURES lists the tree)
+VENTURE_WORDS = {"triage": "triage", "appraise": "research", "answer": "answer the critic", "decide": "your owner's"}
 
 
 def _close_product(
@@ -857,6 +1017,88 @@ def _promises(facts: Facts, product: Mapping[str, Any], now: str) -> list[str]:
             kept = "the promise was kept" if step["kind"] == "promise" else "the obligation was closed"
             _close(conn, step["id"], now, "done", f"Ember's code: {kept}")
     return said
+
+
+def _owner_owed(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[str]:
+    """0.37.0: a promise to the owner, or their decision, of no product line is a step of the Owner project, weighed
+    like any step (until 0.36.0 only an obligation in OBLIGATIONS, its pressing ones coming first by a rule of their
+    own): done once its obligation is closed. Laid out after a promise's words could name its product
+    (_link_promises), and never moved there later (a node's place is fixed)."""
+    where, params = scope.where()
+    said: list[str] = []
+    owed = [
+        row
+        for row in conn.execute(
+            f"SELECT * FROM obligations WHERE {where} AND kind IN ('promise', 'decision') AND status = 'open'"
+            " AND id NOT IN (SELECT obligation_id FROM plan_nodes WHERE obligation_id IS NOT NULL) ORDER BY id",
+            params,
+        ).fetchall()
+        if obligations.owed(conn, scope, row).line is None
+    ]
+    if owed:
+        top = _platform(conn, scope, "owner", now)
+        for row in owed:
+            what = " ".join(str(row["what"]).split())
+            promise = row["kind"] == "promise"
+            _insert(
+                conn,
+                scope,
+                now,
+                parent_id=top,
+                level="step",
+                kind="promise" if promise else "fix",
+                title=(f"Keep promise #{row['id']}: {what}" if promise else f"Obligation #{row['id']}: {what}")[:160],
+                check_kind="obligation",
+                check_spec=json.dumps({"id": row["id"]}),
+                source="promise" if promise else "code",
+                obligation_id=row["id"],
+                due=row["due"],
+            )
+            said.append(f"Plan tree: obligation #{row['id']} ({row['kind']}, of no product) is a step of your owner's.")
+    top_row = nodes(conn, scope, "level = 'project' AND platform = 'owner'")
+    if top_row:
+        facts = Facts(conn, scope, now)
+        for step in _open_steps(conn, scope, int(top_row[0]["id"])):
+            if _holds(facts, step):
+                kept = "the promise was kept" if step["kind"] == "promise" else "the obligation was closed"
+                _close(conn, step["id"], now, "done", f"Ember's code: {kept}")
+    return said
+
+
+def _owner_candidates(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    now: str,
+    today: date,
+    channels: Mapping[str, bool],
+    lately: Mapping[int, int],
+) -> list[Candidate]:
+    """0.37.0: the Owner project's steps as the scorer sees them: worth weights.PROMISE_WORTH, urgent as their day
+    nears (_owed_urgency)."""
+    top = nodes(conn, scope, "level = 'project' AND platform = 'owner'")
+    if not top:
+        return []
+    found = []
+    for step in _open_steps(conn, scope, int(top[0]["id"])):
+        reason = _waiting(step, channels)
+        found.append(
+            Candidate(
+                weights.Step(
+                    step["id"],
+                    None,
+                    str(step["title"]),
+                    _kind(step),
+                    weights.PROMISE_WORTH,
+                    urgency=_owed_urgency(step, today, lately),
+                    age_days=round(_days(step["ready_since"], now), 3) if reason is None else 0.0,
+                    pinned=bool(step["pinned"]),
+                    blocked=reason is not None,
+                ),
+                "owner",
+                reason,
+            )
+        )
+    return found
 
 
 def promise_channel(what: str) -> str | None:
@@ -1423,14 +1665,15 @@ def candidates(
     before: int | None = None,
 ) -> list[Candidate]:
     """Every open step of the open products, ready or waiting, weighed by weights.py's parts (the scorer leaves out
-    the waiting ones). An owner's decision (``_decisions``) is a step of its own in whatever stage it stands, taken
-    first at most once every OBLIGATION_HOURS (weights.choose's promise rule) and weighed the rest of the time. 0.35.1:
-    so is a promise, taken first (weights.Step.promise) up to PROMISE_TRIES times in OBLIGATION_HOURS; it waits while
-    a request of its product made since it was promised waits on the owner. The owner's word comes before Ember's
-    hold: only their park or kill, or a closed line, stops these two. 0.36.0: and the Explore step (``exploring``:
-    whether this cycle may explore; ``before``: the cycle it is for, None the next), which takes turns with a new
-    product while no product step is ready (a new install's first cycles: live until 0.35.3 the day's first cycle was
-    an ordinary one, which started a product)."""
+    the waiting ones). An owner's decision (``_decisions``) is a step of its own in whatever stage it stands, and
+    (0.35.1) so is a promise; it waits while a request of its product made since it was promised waits on the owner.
+    0.37.0: both are weighed like any step, worth at least weights.PROMISE_WORTH and urgent as their day nears, until
+    cycles took them PROMISE_TRIES times (a decision once) in OBLIGATION_HOURS (until 0.36.0 they came first that
+    often); those of no product are the Owner project's (``_owner_candidates``). The owner's word comes before Ember's
+    hold: only their park or kill, or a closed line, stops these two. 0.36.0: and the ventures' steps (0.37.0: each
+    venture's; ``exploring``: whether this cycle may explore; ``before``: the cycle it is for, None the next), which
+    take turns with a new product while no product step is ready (a new install's first cycles: live until 0.35.3 the
+    day's first cycle was an ordinary one, which started a product)."""
     facts = Facts(conn, scope, now)
     factors = _channel_factors(conn, scope, now)
     missed = _missed(conn, scope, today)
@@ -1523,8 +1766,6 @@ def candidates(
             made = promised_at.get(int(step["obligation_id"]))
             if reason is None and promise and made and any(line == pid and at > made for line, at in asked):
                 reason = "owner"  # a request for it waits on the owner's decision
-            tries = lately.get(int(step["id"]), 0)
-            first = tries < PROMISE_TRIES if promise else tries == 0
             since = max(filter(None, (step["ready_since"], worked.get(pid))), default=None)
             found.append(
                 Candidate(
@@ -1533,19 +1774,18 @@ def candidates(
                         pid,
                         str(step["title"]),
                         _kind(step),
-                        worth,
-                        urgency=_promise_urgency(step, today),
+                        max(worth, weights.PROMISE_WORTH),  # 0.37.0: the owner's, whatever its product is worth
+                        urgency=_owed_urgency(step, today, lately),
                         age_days=round(_days(since, now), 3) if reason is None else 0.0,
-                        promise_hours=_promise_hours(step, today) if first else None,
-                        promise=promise and first,
                         blocked=reason is not None,
                     ),
                     str(stage["stage"]),
                     reason,
                 )
             )
+    found += _owner_candidates(conn, scope, now, today, channels, lately)  # 0.37.0: what is owed of no product
     turn = exploring and not any(c.waiting is None for c in found) and _ventured_last(conn, scope, before)
-    return found + _explore_candidate(conn, scope, now, today, exploring, turn)  # 0.36.0: and the Explore step
+    return found + _venture_candidates(conn, scope, now, today, exploring, turn)  # 0.37.0: and the ventures' steps
 
 
 def _taken_counts(conn: sqlite3.Connection, scope: AgentScope, since: str) -> dict[int, int]:
@@ -1598,13 +1838,16 @@ def _promise_urgency(row: Mapping[str, Any], today: date) -> float:
     return weights.promise_urgency(max(left, 0) + 0.5, slips=1 if left < 0 else 0)
 
 
-def _promise_hours(row: Mapping[str, Any], today: date) -> float | None:
-    if not row["due"]:
-        return None
-    return (date.fromisoformat(row["due"]) - today).days * 24 + 12.0  # by the end of its day
+def _owed_urgency(row: Mapping[str, Any], today: date, lately: Mapping[int, int]) -> float:
+    """0.37.0: a promise's or an owner's decision's urgency, as its day nears (weights.promise_urgency), until cycles
+    took it PROMISE_TRIES times (a decision once) in OBLIGATION_HOURS without closing it: then the floor until those
+    hours have passed (0.35.0 to 0.36.0 that many times it came first)."""
+    tries = lately.get(int(row["id"]), 0)
+    fresh = tries < PROMISE_TRIES if row["kind"] == "promise" else tries == 0
+    return _promise_urgency(row, today) if fresh else weights.PROMISE_FLOOR
 
 
-PASSING = ("mode", "turn")  # 0.36.0: what the Explore step waits on for one cycle only: its clock runs on
+PASSING = ("mode", "turn")  # what a venture's step waits on for one cycle only (0.36.0: the Explore step's): it ages
 
 
 def _clocks(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, channels: Mapping[str, bool]) -> None:
@@ -1664,12 +1907,13 @@ def settings() -> dict[str, Any]:
 @dataclass(frozen=True)
 class Steer:
     """0.35.0: what the tree decided for a cycle: its step (None when nothing is ready), what the cycle is ('ordinary',
-    'marketing' or 'venture', 0.36.0: for the Explore step: lines.py's kinds) and every candidate it was chosen
-    from."""
+    'marketing' or 'venture', 0.37.0: for a step of the ventures: lines.py's kinds), every candidate it was chosen
+    from, and (0.37.0) the venture a venture step is about (None: a brainstorm, or another kind of cycle)."""
 
     pick: weights.Pick
     found: tuple[Candidate, ...]
     kind: str
+    venture: int | None = None
 
     @property
     def step(self) -> weights.Step | None:
@@ -1690,19 +1934,18 @@ def steer(
     exploring: bool = False,
     cycle_id: int | None = None,
 ) -> Steer:
-    """The step a cycle takes (weights.choose: a pin, a promise or decision due, the heaviest step) and so what the
-    cycle is: a venture cycle for the Explore step (0.36.0: in place of the ventures' turn; ``exploring``: whether
-    this cycle may explore), a marketing cycle for a marketing step, else an ordinary one (also when no step is
-    ready: it may start a new product, or end)."""
+    """The step a cycle takes (weights.choose: a pin, else the heaviest step; 0.37.0: a promise or decision of the
+    owner's weighed like any) and so what the cycle is: a venture cycle for a step of the ventures (0.37.0: aimed at
+    its venture; 0.36.0: the Explore step, in place of the ventures' turn; ``exploring``: whether this cycle may
+    explore), a marketing cycle for a marketing step, else an ordinary one (also when no step is ready: it may start
+    a new product, or end)."""
     pick, found = choose(conn, scope, now, today, channels, exploring=exploring, before=cycle_id)
     row = node(conn, scope, pick.step.id) if pick.step is not None else None
-    if row is not None and row["template"] == EXPLORE_TEMPLATE:
-        kind = "venture"
-    elif pick.step is not None and (pick.step.kind == "market" or _markets(row)):
-        kind = "marketing"
-    else:
-        kind = "ordinary"
-    return Steer(pick, tuple(found), kind)
+    if row is not None and row["template"] in VENTURE_TEMPLATES:
+        return Steer(pick, tuple(found), "venture", venture_of(conn, scope, int(row["id"])))
+    if pick.step is not None and (pick.step.kind == "market" or _markets(row)):
+        return Steer(pick, tuple(found), "marketing")
+    return Steer(pick, tuple(found), "ordinary")
 
 
 def on_channel(conn: sqlite3.Connection, scope: AgentScope, step: weights.Step | None) -> bool:
@@ -1754,10 +1997,8 @@ def record(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, now: str,
 
 # --- what the plan sees of it ---
 
-TAKEN = {
+TAKEN = {  # 0.37.0: a promise or an owner's decision is weighed like any step (until 0.36.0 it came first)
     "pin": "your owner pinned it",
-    "promise": "your promise to your owner comes first until you keep it",
-    "decision": "your owner's decision on one of its requests is due",
     "weight": "the heaviest step that is ready",
     "margin": f"you are on its product, and no other step is {round((weights.MARGIN - 1) * 100)}% heavier",
 }
@@ -1771,14 +2012,6 @@ WAITS = {
 }
 QUESTIONS = "This week's questions (keep them in mind; not steps to take):"
 NEW_PRODUCT = "Start a new product (project_create): Ember's code lays it out with its stages and steps."
-
-
-def _taken(decided: str, row: Mapping[str, Any] | None) -> str:
-    """Why a step was taken (TAKEN's key): the promise rule takes a promise or an owner's decision (0.35.1: said
-    apart)."""
-    if decided == "promise" and row is not None and row["kind"] != "promise":
-        return "decision"
-    return decided
 
 
 def check_words(kind: str | None, spec: Mapping[str, Any]) -> str:
@@ -1799,10 +2032,19 @@ def step_text(
     *,
     explore: bool,
     questions: list[str] | None = None,
+    cash_eur: float = 0.0,
+    net_days: float | None = None,
+    forecasts: str = "",
+    today: date | None = None,
 ) -> str:
     """YOUR STEP, as an ordinary or marketing plan sees it: the step Ember's code took, what done means and why it was
     taken, what comes after it in its stage, and the next heaviest steps; with no step ready, what waits and whether a
-    new product may start (the explore burn mode). Its most important lines come first: the context cuts the end."""
+    new product may start (the explore burn mode). Its most important lines come first: the context cuts the end.
+    0.37.0: a venture plan's too (in place of READY): its venture's decision and what it needs now (desk.item, with
+    the cash a venture may need, ``cash_eur``, the net runway, ``net_days``, and the day, ``today``), and the record of
+    the agent's forecasts (``forecasts``)."""
+    if steered.kind == "venture" and steered.step is not None:
+        return _venture_step_text(conn, scope, steered, cash_eur, net_days, forecasts, today)
     lines: list[str] = []
     step = steered.step
     if step is not None:
@@ -1844,7 +2086,7 @@ def step_text(
         if parts is not None:
             carried = node(conn, scope, parts.carried_from) if parts.carried_from else None
             lines.append(
-                f"Why: {TAKEN.get(_taken(steered.pick.decided, row), steered.pick.decided)}. Weight "
+                f"Why: {TAKEN.get(steered.pick.decided, steered.pick.decided)}. Weight "
                 + parts.text(str(carried["title"]) if carried is not None else None)
             )
         if row is not None and row["parent_id"] is not None:
@@ -1858,7 +2100,7 @@ def step_text(
     else:
         waiting: dict[str, int] = {}
         for c in steered.found:
-            if c.waiting is not None and c.stage != "explore":  # YOUR PLAN's Ventures line says what that waits on
+            if c.waiting is not None and c.stage != "venture":  # YOUR PLAN's Ventures line says what they wait on
                 waiting[c.waiting] = waiting.get(c.waiting, 0) + 1
         said = ", ".join(f"{n} on {WAITS.get(why, why)}" for why, n in sorted(waiting.items(), key=lambda w: -w[1]))
         lines.append(f"No step of your plan is ready{f' ({said})' if said else ''}.")
@@ -1876,9 +2118,10 @@ def step_text(
             )
     others = [(s, p) for s, p in steered.pick.ranked if step is None or s.id != step.id][:ALTERNATIVES]
     if others:
+        places = _places(conn, scope)
         lines.append(
             "Next heaviest: "
-            + " · ".join(f"#{s.id} {_cut(s.title, 60)} ({_line_of(s)}, {p.total:.1f})" for s, p in others)
+            + " · ".join(f"#{s.id} {_cut(s.title, 60)} ({_line_of(s, places)}, {p.total:.1f})" for s, p in others)
         )
     if questions:
         lines.append(QUESTIONS)
@@ -1886,9 +2129,103 @@ def step_text(
     return "\n".join(lines)
 
 
-def _line_of(step: weights.Step) -> str:
-    """Where a ranked step belongs: its product line, or (0.36.0) the ventures, the Explore step's."""
-    return f"line #{step.product}" if step.product is not None else "your ventures"
+VENTURE_DONE = {  # 0.37.0: when a venture's step is done (Ember's code reads the venture's stage and records)
+    "triage": "you researched it (stage researching) or parked it with why (venture_update).",
+    "appraise": (
+        "you saved what your research found (evidence, venture_update learned) and rescored it; once its research is"
+        " done, its business case (venture_case, stage proposed) or parked with why."
+    ),
+    "answer": "you answered the critic with evidence or new numbers (venture_case), or parked it with why.",
+    "brainstorm": "your brainstorm (the brainstorm tool) added its ideas to your tree.",
+}
+
+
+def _venture_step_text(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    steered: Steer,
+    cash_eur: float,
+    net_days: float | None,
+    forecasts: str,
+    today: date | None,
+) -> str:
+    """YOUR STEP for a venture cycle (0.37.0): the venture's decision Ember's code took, what it needs now, its next
+    question, what done means, why it was taken, the record of the agent's forecasts and the next heaviest steps."""
+    step = steered.step
+    assert step is not None
+    row = node(conn, scope, step.id)
+    decision = DECISION_OF.get(str(row["template"]), "brainstorm") if row is not None else "brainstorm"
+    v = ventures.get(conn, scope, steered.venture) if steered.venture is not None else None
+    lines: list[str] = []
+    if v is not None:
+        lines.append(f"Step #{step.id} of venture #{v['id']} {_quoted(v['title'])} ({v['stage']}): {step.title}")
+        everyone = ventures.all_ventures(conn, scope)
+        room = sum(1 for x in everyone if x["stage"] in ventures.EXPLORED) < ventures.MAX_ACTIVE
+        item = (
+            desk.item(conn, v, today=today, cash_eur=cash_eur, net_days=net_days, room=room)
+            if today is not None
+            else None
+        )
+        if item is not None:
+            lines.append(f"Now: {item.text}")
+        if decision == "appraise" and v["next_question"]:
+            lines.append(f"Its next question: {_cut(' '.join(str(v['next_question']).split()), 300)}")
+    else:
+        lines.append(f"Step #{step.id} of your ventures: {step.title}")
+        due = desk.brainstorm_due(ventures.all_ventures(conn, scope))
+        if due:
+            lines.append(f"Now: {due}.")
+    lines.append(f"Done when: {VENTURE_DONE.get(decision, VENTURE_DONE['brainstorm'])}")
+    parts = steered.pick.parts
+    if parts is not None:
+        lines.append(f"Why: {TAKEN.get(steered.pick.decided, steered.pick.decided)}. Weight {parts.text(None)}")
+    if forecasts:
+        lines.append(f"Your forecasts, settled by Ember's code: {forecasts}.")
+    others = [(s, p) for s, p in steered.pick.ranked if s.id != step.id][:ALTERNATIVES]
+    if others:
+        places = _places(conn, scope)
+        lines.append(
+            "Next heaviest: "
+            + " · ".join(f"#{s.id} {_cut(s.title, 60)} ({_line_of(s, places)}, {p.total:.1f})" for s, p in others)
+        )
+    return "\n".join(lines)
+
+
+def _line_of(step: weights.Step, places: Mapping[int, Place]) -> str:
+    """Where a ranked step belongs: its product line, or (0.37.0) its venture, the ventures (a brainstorm) or the
+    owner (a promise or decision of no product)."""
+    if step.product is not None:
+        return f"line #{step.product}"
+    place = places.get(step.id)
+    if place is not None and place.kind == "venture":
+        return f"venture #{place.venture}"
+    return "for your owner" if place is not None and place.kind == "owner" else "your ventures"
+
+
+@dataclass(frozen=True)
+class Place:
+    """0.37.0: where a step of no product line belongs: a venture's (``venture``, its node's ``title``), the ventures'
+    as a whole (a brainstorm) or the owner's (a promise or decision of no product)."""
+
+    kind: str  # 'venture', 'ventures' or 'owner'
+    venture: int | None = None
+    title: str = ""
+
+
+def _places(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, Place]:
+    """Each step of no product line, open or closed, with where it belongs (Place)."""
+    where, params = scope.where("s")
+    found: dict[int, Place] = {}
+    for r in conn.execute(
+        "SELECT s.id, p.level, p.platform, p.venture_id, p.title FROM plan_nodes s JOIN plan_nodes p"
+        f" ON p.id = s.parent_id WHERE {where} AND s.level = 'step' AND s.project_id IS NULL",
+        params,
+    ):
+        if r["level"] == "venture":
+            found[int(r["id"])] = Place("venture", int(r["venture_id"]), str(r["title"]))
+        elif r["platform"] in ("ventures", "owner"):
+            found[int(r["id"])] = Place(str(r["platform"]))
+    return found
 
 
 def plan_text(
@@ -2034,8 +2371,8 @@ def set_worth(
     row = node(conn, scope, node_id)
     if row is None:
         raise PlanError("id", "no such product", 404)
-    if row["level"] != "product" and not _is_ventures(row):  # 0.36.0: and the ventures'
-        raise PlanError("id", "a worth is a product's, or your ventures'")
+    if row["level"] not in ("product", "venture") and not _is_ventures(row):  # 0.36.0: the ventures'; 0.37.0: each's
+        raise PlanError("id", "a worth is a product's, a venture's, or all your ventures'")
     if row["status"] != "open":
         raise PlanError("id", "this product is closed", 409)
     if worth is not None and not weights.OWNER_WORTH_MIN <= worth <= weights.OWNER_WORTH_MAX:
@@ -2592,8 +2929,8 @@ def view(
 ) -> dict[str, Any]:
     """The tree for the owner's Plan tab: every project, product, stage and step with its state and weight, the step
     the tree would take now and the next ones, what waits on the owner, the latest picks, and (0.35.0) what changed
-    today, what each channel does and the upgrades the steps wait on. 0.36.0: and the ventures (their Explore step;
-    ``exploring``: whether the burn mode runs venture cycles)."""
+    today, what each channel does and the upgrades the steps wait on. 0.36.0: and the ventures (0.37.0: each venture's
+    step; ``exploring``: whether the burn mode runs venture cycles), each step of a venture naming it."""
     pick, found = choose(conn, scope, now, today, channels, exploring)
     by_id = {c.step.id: c for c in found}
     parts = weights.parts_by_id(pick.ranked)
@@ -2604,18 +2941,19 @@ def view(
         products = [_product_view(conn, scope, q, by_id, parts, titles, facts, now) for q in rows]
         projects.append({"id": top["id"], "platform": top["platform"], "title": top["title"], "products": products})
     ranked = [(s, p) for s, p in pick.ranked]
-    waiting_owner = [_step_brief(c, None, titles) for c in found if c.waiting == "owner"]
+    places = _places(conn, scope)
+    waiting_owner = [_step_brief(c, None, titles, places) for c in found if c.waiting == "owner"]
     goal = roadmap.root(conn, scope)
     return {
         "today": today.isoformat(),
         "goal": {"title": goal["title"], "due": goal["due"]} if goal is not None else None,
         "projects": projects,
-        "now": _pick_view(pick, titles),
-        "next": [_step_brief(by_id[s.id], p, titles) for s, p in ranked if pick.step is None or s.id != pick.step.id][
-            :3
-        ],
+        "now": _pick_view(pick, titles, places),
+        "next": [
+            _step_brief(by_id[s.id], p, titles, places) for s, p in ranked if pick.step is None or s.id != pick.step.id
+        ][:3],
         "waiting": waiting_owner,
-        "picks": _picks(conn, scope),
+        "picks": _picks(conn, scope, places),
         "changes": _changes_today(conn, scope, today),
         "channels": _channels_view(conn, scope, by_id, parts, now),
         "upgrades": _upgrades_view(conn, scope, by_id),
@@ -2848,7 +3186,17 @@ def _numbers(funnel: reach.Funnel | None) -> tuple[int, int, int]:
     return (funnel.views, funnel.favorites, funnel.orders) if funnel else (0, 0, 0)
 
 
-def _step_brief(candidate: Candidate, parts: weights.Parts | None, titles: Mapping[int, str]) -> dict[str, Any]:
+def _venture_named(places: Mapping[int, Place], step_id: int | None) -> dict[str, Any]:
+    """0.37.0: a venture's step names its venture (its title says only the decision)."""
+    place = places.get(step_id) if step_id is not None else None
+    if place is None or place.kind != "venture":
+        return {"venture": None, "venture_title": None}
+    return {"venture": place.venture, "venture_title": place.title}
+
+
+def _step_brief(
+    candidate: Candidate, parts: weights.Parts | None, titles: Mapping[int, str], places: Mapping[int, Place]
+) -> dict[str, Any]:
     return {
         "id": candidate.step.id,
         "line": candidate.step.product,
@@ -2857,12 +3205,21 @@ def _step_brief(candidate: Candidate, parts: weights.Parts | None, titles: Mappi
         "waiting": candidate.waiting,
         "weight": round(parts.total, 2) if parts else None,
         "why": parts.text(titles.get(parts.carried_from or 0)) if parts else None,
+        **_venture_named(places, candidate.step.id),
     }
 
 
-def _pick_view(pick: weights.Pick, titles: Mapping[int, str]) -> dict[str, Any] | None:
+def _pick_view(pick: weights.Pick, titles: Mapping[int, str], places: Mapping[int, Place]) -> dict[str, Any] | None:
     if pick.step is None:
-        return {"decided": pick.decided, "id": None, "title": None, "line": None, "weight": None, "why": None}
+        return {
+            "decided": pick.decided,
+            "id": None,
+            "title": None,
+            "line": None,
+            "weight": None,
+            "why": None,
+            **_venture_named(places, None),
+        }
     return {
         "decided": pick.decided,
         "id": pick.step.id,
@@ -2870,10 +3227,11 @@ def _pick_view(pick: weights.Pick, titles: Mapping[int, str]) -> dict[str, Any] 
         "line": pick.step.product,
         "weight": round(pick.parts.total, 2) if pick.parts else None,
         "why": pick.parts.text(titles.get(pick.parts.carried_from or 0)) if pick.parts else None,
+        **_venture_named(places, pick.step.id),
     }
 
 
-def _picks(conn: sqlite3.Connection, scope: AgentScope) -> list[dict[str, Any]]:
+def _picks(conn: sqlite3.Connection, scope: AgentScope, places: Mapping[int, Place]) -> list[dict[str, Any]]:
     where, params = scope.where("k")
     rows = conn.execute(
         "SELECT k.*, n.title AS step_title, p.title AS line_title, q.title AS product_title, c.project_id AS worked"
@@ -2897,6 +3255,7 @@ def _picks(conn: sqlite3.Connection, scope: AgentScope) -> list[dict[str, Any]]:
             "decided": r["decided"],
             "weight": r["weight"],
             "agrees": r["product"] is not None and r["product"] == (r["worked"] or r["line"]),
+            **_venture_named(places, r["node_id"]),
         }
         for r in rows
     ]

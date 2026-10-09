@@ -117,7 +117,7 @@ def test_a_backed_ventures_first_sale_is_a_prediction_the_critic_and_triage_read
     record = "first sales by the business case's month: 1 of 2 on time"
     shown = {v["id"]: v["first_sale"] for v in views.ventures_view(agent)["items"]}
     assert (shown[DROPSHIPPING]["status"], shown[DROPSHIPPING]["likely"]) == ("hit", 50) and shown[ETSY] is None
-    assert views.ventures_view(agent)["desk"]["forecasts"] == record
+    assert views.ventures_view(agent)["forecasts"] == record  # 0.37.0: the decision desk's until then
     agent.run_cycle("schedule")  # the fake model plans by itself: READY carries the record for its triage
     planner = [r for r in fake.sent if request_kind(r) == "plan"][-1]["messages"][0]["content"][0]["text"]
     assert f"\nYour forecasts, settled by Ember's code: {record}.\n" in planner
