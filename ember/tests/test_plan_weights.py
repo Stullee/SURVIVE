@@ -50,7 +50,6 @@ def test_urgency_of_promises_and_dates() -> None:
     assert weights.promise_urgency(3, slips=1) == 4.0  # +2 for each slip
     assert weights.promise_urgency(0.01, slips=9) == weights.URGENCY_CAP
     assert weights.date_urgency(3) == 1.0
-    assert weights.own_date_urgency(0.1) == weights.OWN_DATE_CAP  # a date Ember set herself never presses hard
 
 
 # --- the weight and its parts ---

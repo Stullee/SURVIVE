@@ -229,16 +229,16 @@ def test_obligations_name_their_line_and_close_in_its_cycle(data_dir: Path) -> N
         )
         message = store.insert_message(conn, agent.scope(), 1, "I'll send the numbers", stamp)
         promised = obligations.promise(conn, agent.scope(), 1, message, "send the numbers", stamp[:10], stamp)
-    scope = agent.scope()
+    scope, today = agent.scope(), agent.clock.today()
     with agent.db.connection() as conn:
-        found = {int(r["id"]): obligations.owed(conn, scope, r) for r in obligations.open_rows(conn, scope)}
-        owed = obligations.pressing_owed(conn, scope, agent.clock.today())
-        listed = obligations.text(conn, scope, agent.clock.today())
+        owing = obligations.open_rows(conn, scope)
+        found = {int(r["id"]): obligations.owed(conn, scope, r) for r in owing}
+        listed = obligations.text(conn, scope, today)
     assert found[rejected] == obligations.Owed(2, forces=True)  # 0.33.0: the owner's decision
     assert found[pin] == obligations.Owed(3, marketing=True, forces=True)  # a pin's request: a marketing cycle's work
     assert obligations.Owed(1) in found.values()  # the missed milestone's line
     assert found[promised] == obligations.Owed(None, forces=True)  # a promise that names no line
-    assert {o for _, o in owed} == set(found.values())
+    assert all(obligations.presses(r, today) for r in owing)  # all four are new: each presses
     assert f"\n- [line #2] #{rejected} decision (" in listed and f"\n- [line #3] #{pin} decision (" in listed
     assert f"\n- #{promised} promise to your owner, due today" in listed  # of no line
     seen = obligations.for_line(listed, 1)
