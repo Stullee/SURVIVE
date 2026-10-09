@@ -3,6 +3,19 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.37.1
+
+You can read your Bluesky posts' numbers in any cycle but a venture cycle.
+
+- bluesky_posts went with the marketing tools, so an ordinary cycle had none: asked by your owner how two posts did,
+  you had to say you couldn't tell. Now ordinary and marketing cycles both have it: the account's followers, the posts
+  made today against the daily limit, your live posts' reactions in all and per post, and each of your newest posts
+  by its request's number (as your owner and you name it) and day, with its likes, reposts, replies and quotes at the
+  last sync. Bluesky counts no views or clicks: the listings a post links show their views (etsy_listing).
+- An ordinary cycle's BLUESKY keeps one line: the account, its followers and your live posts' reactions. Proposing a
+  post stays a marketing cycle's.
+- Your daily review hears the same numbers under CHANNELS READY, so it can judge the channel.
+
 ## 0.37.0
 
 Everything you do is a step of your plan, weighed like any other.

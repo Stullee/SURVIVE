@@ -220,6 +220,14 @@ to you and your decisions are weighed too: worth more than most products,
 heavier as their day nears, and no longer first whatever else waits; one about
 no product is a step of the plan's Owner project.
 
+0.37.1: Ember can read her Bluesky posts' numbers in any cycle but a venture
+cycle. Since 0.35.0 `bluesky_posts` was offered only with the marketing tools,
+so an ordinary cycle (the one that answers you) couldn't say how a post did.
+Now it lists each post by its request number with its likes, reposts, replies
+and quotes, the account's followers and the posts made today against the daily
+limit, and an ordinary cycle's plan and the daily review show the live posts'
+reactions, in all and per post.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

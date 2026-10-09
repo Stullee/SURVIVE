@@ -508,8 +508,8 @@ def test_a_post_is_checked_before_it_reaches_the_owner(data_dir: Path) -> None:
     agent, _ = listed(data_dir)
     ctx = post_context(agent)
     shown = call(ctx, "bluesky_posts", {})
-    assert shown.ok and "Ember's Bluesky account: @ember-dry-run.bsky.social (at most 2 posts a day)." in shown.text
-    assert "No post of yours yet." in shown.text
+    head = f"Ember's Bluesky account: @{FakeBluesky.HANDLE} (0 posted today, at most 2 a day)."  # 0.37.1: today's
+    assert shown.ok and f"{head}\nNo post of yours yet." == shown.text
     agent.roots()[0].write_bytes("shop/notes.pdf", b"%PDF-1.7 x")
     for args, message in (
         ({"text": "Look: https://example.com"}, "the words hold a link"),
@@ -699,17 +699,18 @@ def test_a_post_deleted_at_bluesky_is_noted_at_the_sync(data_dir: Path) -> None:
 
 
 def test_posts_are_read_for_the_plan_the_metrics_and_the_reach(data_dir: Path) -> None:
-    agent, fake, _ = posted(data_dir)
+    agent, fake, request = posted(data_dir)
     agent.clock.advance(hours=24 * 7)
     before = len(fake.sent)
     market_next(agent, "bluesky")  # 0.35.0: a marketing cycle's plan has the BLUESKY section
     agent.run_cycle("schedule")
-    [row] = rows(agent, "SELECT rkey, likes, reposts, replies, quotes, synced_at FROM bluesky_posts")
+    [row] = rows(agent, "SELECT finished_at, likes, reposts, replies, quotes, synced_at FROM bluesky_posts")
     assert (row["likes"], row["reposts"], row["replies"], row["quotes"]) == (14, 3, 2, 1) and row["synced_at"]
     plan = next(r for r in list(fake.sent)[before:] if request_kind(r) == "plan")
     text = plan["messages"][0]["content"][0]["text"]
     assert f"\n== BLUESKY ==\nEmber's account: @{FakeBluesky.HANDLE} (3 followers; at most 2 posts a day).\n" in text
-    assert f"- post {row['rkey']} (active): {WORDS[:60]} -> {etsy.listing_url(LISTING)}: 14 likes" in text
+    day = row["finished_at"][:10]  # 0.37.1: each by its request's number and day
+    assert f"- request #{request}, {day} (active): {WORDS[:60]} -> {etsy.listing_url(LISTING)}: 14 likes" in text
     work = next(r for r in list(fake.sent)[before:] if request_kind(r) == "work")
     assert {t["name"] for t in work["tools"]} >= tools.BLUESKY_TOOLS
     now = to_iso(agent.clock.now())
