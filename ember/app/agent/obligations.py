@@ -13,8 +13,8 @@ bug 1: and a backed venture's first test due within a week unmet, with what is a
 strategy that names a parked or killed venture, ``stale_strategy``: live, it named dropshipping as the priority long
 after the agent had parked it, and every plan read it). The plan shows
 them first and never cuts them; a pressing one (``pressing``) makes a wake cycle an ordinary one rather than a
-venture cycle (0.33.0: a promise or a decision, the owner's; a promise names the line it is about, and READY puts a
-line with one due soon first). The agent closes a promise, decision or miss with
+venture cycle (0.33.0: a promise or a decision, the owner's; a promise names the line it is about, and until 0.35.0
+READY put a line with one due soon first). The agent closes a promise, decision or miss with
 ``obligation_done``, saying what it did; a promise only once its owner has heard from it since, and a miss also closes
 when a milestone replaces it.
 """
@@ -45,7 +45,6 @@ PRESSING_NEW_DAYS = 2  # a decision or a miss is pressing this long
 # 0.33.0: what the owner said or was promised decides what a cycle is; a miss of a milestone is ranked, not forced
 # (live, four misses on 2026-10-07 took the next cycles' lines and kept every marketing cycle away for two days)
 FORCING = ("promise", "decision")
-PROMISED_DAYS = 2  # 0.33.0: a promise due this soon (or overdue) puts its line first in READY
 HEADING = "OBLIGATIONS (kept by Ember's code: deal with them first)"
 SAME_PROMISE_DAYS = 2  # 0.24.0: a promise due this close to an open one, with most of its words, repeats it
 SAME_WORDS = 0.6
@@ -253,20 +252,6 @@ def pressing(conn: sqlite3.Connection, scope: AgentScope, today: date, messages:
     return found
 
 
-def promised(conn: sqlite3.Connection, scope: AgentScope, today: date) -> dict[int, list[tuple[int, str]]]:
-    """0.33.0: the lines with a promise to the owner due within PROMISED_DAYS or overdue, each with those promises
-    (number, due day): READY puts them first (lines.py), before the line in progress."""
-    last = (today + timedelta(days=PROMISED_DAYS)).isoformat()
-    found: dict[int, list[tuple[int, str]]] = {}
-    for r in open_rows(conn, scope):
-        if r["kind"] != "promise" or str(r["due"]) > last:
-            continue
-        line = owed(conn, scope, r).line
-        if line is not None:
-            found.setdefault(line, []).append((int(r["id"]), str(r["due"])))
-    return found
-
-
 def messages_waiting(conn: sqlite3.Connection, scope: AgentScope) -> int:
     """The owner's messages waiting for an answer."""
     where, params = scope.where()
@@ -354,12 +339,6 @@ def only_project(conn: sqlite3.Connection, scope: AgentScope, venture_id: int) -
         (*params, venture_id),
     ).fetchall()
     return int(rows[0]["id"]) if len(rows) == 1 else None
-
-
-def pressing_owed(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[tuple[int, Owed]]:
-    """0.28.0: the pressing obligations (``presses``) with their line and kind of work, the most urgent first: what
-    decides whether a wake cycle is an ordinary or a marketing one, and which line its READY offers alone."""
-    return [(int(r["id"]), owed(conn, scope, r)) for r in open_rows(conn, scope) if presses(r, today)]
 
 
 def stale_strategy(conn: sqlite3.Connection, scope: AgentScope, strategy: str) -> str:

@@ -68,7 +68,8 @@ def test_a_promise_names_its_line_which_comes_first_and_takes_the_cycle_when_due
     assert promise["project_id"] == 3
     assert ctx.state.focus_project_id is None  # a promise is often about another line than the cycle's: no lock
     with agent.db.connection() as conn:
-        owed = [o for _, o in obligations.pressing_owed(conn, agent.scope(), agent.clock.today())]
+        owing = obligations.open_rows(conn, agent.scope())
+        owed = [obligations.owed(conn, agent.scope(), r) for r in owing if obligations.presses(r, agent.clock.today())]
         listed = obligations.text(conn, agent.scope(), agent.clock.today())
     assert owed == [obligations.Owed(3, forces=True)]  # due tomorrow: it presses, on its line
     assert f"- [line #3] #{promise['id']} promise to your owner" in listed
@@ -116,7 +117,8 @@ def test_a_miss_neither_decides_the_cycle_nor_takes_its_line(data_dir: Path) -> 
         )
     cycle(agent, project=2)  # line #2 is in progress
     with agent.db.connection() as conn:
-        owed = [o for _, o in obligations.pressing_owed(conn, agent.scope(), agent.clock.today())]
+        owing = obligations.open_rows(conn, agent.scope())
+        owed = [obligations.owed(conn, agent.scope(), r) for r in owing if obligations.presses(r, agent.clock.today())]
         assert obligations.pressing(conn, agent.scope(), agent.clock.today()) == []  # nothing of the owner's
     assert owed == [obligations.Owed(1)]  # pressing, on line #1, but not the owner's
     with agent.db.transaction() as conn:  # 0.35.0: the plan tree weighs its steps; nothing is taken first for it
