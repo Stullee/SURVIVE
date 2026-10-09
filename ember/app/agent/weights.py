@@ -257,3 +257,11 @@ def streak_of(products: Sequence[int | None]) -> tuple[int | None, int]:
 
 def parts_by_id(ranked: Iterable[tuple[Step, Parts]]) -> Mapping[int, Parts]:
     return {s.id: p for s, p in ranked}
+
+
+def settings() -> dict[str, Any]:
+    """Every number above, by its name, a table as a copy (0.35.2: the diagnostics list them, so the picks a report
+    shows can be re-scored without Ember's code)."""
+    return {
+        name: dict(value) if isinstance(value, dict) else value for name, value in globals().items() if name.isupper()
+    }

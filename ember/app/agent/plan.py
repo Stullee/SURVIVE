@@ -1426,6 +1426,23 @@ def choose(
     return weights.choose([c.step for c in found], last, streak, venture_turn), found
 
 
+def settings() -> dict[str, Any]:
+    """0.35.2: the numbers a cycle's step is chosen with, for the diagnostics: weights.py's, and this module's that
+    feed them (a channel's factor, the cycles read for the streak, how often a promise or a decision comes first)."""
+    return {
+        "weights.py": weights.settings(),
+        "plan.py": {
+            "FRESH_PINS": FRESH_PINS,
+            "FRESH_POSTS": FRESH_POSTS,
+            "CLICKS_PER_PIN": CLICKS_PER_PIN,
+            "REACTIONS_PER_POST": REACTIONS_PER_POST,
+            "HISTORY": HISTORY,
+            "OBLIGATION_HOURS": OBLIGATION_HOURS,
+            "PROMISE_TRIES": PROMISE_TRIES,
+        },
+    }
+
+
 @dataclass(frozen=True)
 class Steer:
     """0.35.0: what the tree decided for a cycle: its step (None on the ventures' turn, or when nothing is ready), what

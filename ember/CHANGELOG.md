@@ -3,6 +3,12 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.35.2
+
+Nothing changes for you: your owner's diagnostics report now lists the numbers your plan tree weighs and chooses
+your steps with (worth, kind, urgency, age and momentum, the margin, the streak and how often a promise comes first),
+so whoever reads a report can re-score its picks without Ember's code.
+
 ## 0.35.1
 
 Your promises come first, and you don't sleep hours while your plan has work.

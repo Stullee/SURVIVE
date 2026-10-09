@@ -1030,7 +1030,8 @@ promise at least 2; a defect the quality check found 2; a missed views date
 makes the product's marketing urgent), its age (0.5 for each day it has waited
 ready) and momentum (1 for the product worked on last). A step carries the
 weight of the most important step waiting on it (since 0.35.1 a promise is a
-step of its own, not carried).
+step of its own, not carried). Since 0.35.2 the [diagnostics](#diagnostics)
+report lists every one of these numbers, as your version runs them.
 
 **What Ember may change.** With her **plan_step** tool she adds steps to a
 product (to a stage, or before a step), splits a step into smaller ones or
@@ -2453,7 +2454,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.35.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.35.2 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -2539,9 +2540,10 @@ The **Diagnostics** tab shows a plain-text report of the whole system: options
 without the keys, database, economy, lives, ledger, scheduler, what the agent's
 next plan would see, the latest wake cycles with every model call, what the
 model wrote and every tool call (texts whole), research, the agent's records
-(journal entries, approvals, ventures, the roadmap, listings, memory and the
-workspace's text files), the mailbox (its status, its emails and the sends) and
-recent events. Use **Copy** to paste it into a bug report or a chat.
+(journal entries, approvals, ventures, the roadmap, the plan tree with its
+picks and its weights' settings, listings, memory and the workspace's text
+files), the mailbox (its status, its emails and the sends) and recent events.
+Use **Copy** to paste it into a bug report or a chat.
 
 The report is **shareable** by default: it leaves out other people's text (the
 emails the agent read, the web pages it researched and the emails it wrote to

@@ -10,7 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import diagnostics, logging_setup
-from app.agent import ventures
+from app.agent import plan as plan_tree
+from app.agent import ventures, weights
 from app.agent.store import canonical
 from app.config import LoadedSettings, Settings
 from tests.economy_helpers import ScriptedTransport
@@ -136,6 +137,22 @@ def test_a_cycle_is_easy_to_read(ingress_client: TestClient) -> None:
     assert post(ingress_client, "api/inbox/read", {"up_to_id": 2}).status_code == 200
     records = section(report(ingress_client), "AGENT RECORDS")
     assert re.search(rf"\n2 \| agent \| read by owner {TIMESTAMP} \| No, I can't", records)
+
+
+def test_the_plan_trees_weights_settings_are_listed(ingress_client: TestClient) -> None:
+    """0.35.2: the report showed each pick's weight and its parts, but not the numbers they were weighed and chosen
+    with (weights.py's, and plan.py's tries for a promise): re-scoring the picks needed Ember's code beside it."""
+    records = section(report(ingress_client), "AGENT RECORDS")
+    heading = "\n-- plan tree: its weights' settings (weights.py and plan.py, as this version runs them)\n"
+    shown = json.loads(records.split(heading, 1)[1].split("\n-- ", 1)[0])
+    assert shown == plan_tree.settings()  # whole: nothing masked or cut
+    for name in ("MARGIN", "STREAK_CAP", "AGE_PER_DAY", "MOMENTUM", "PROMISE_FLOOR", "KIND", "STAGE_CHANCE"):
+        assert shown["weights.py"][name] == getattr(weights, name), name
+    assert shown["plan.py"]["PROMISE_TRIES"] == plan_tree.PROMISE_TRIES
+    assert shown["plan.py"]["OBLIGATION_HOURS"] == plan_tree.OBLIGATION_HOURS
+    listed = plan_tree.settings()["weights.py"]["KIND"]
+    listed["ship"] = -1.0
+    assert weights.KIND["ship"] != -1.0  # a copy: listing the settings changes no weight
 
 
 def big_cycles(client: TestClient, count: int, calls: int, content: str, result: str | None = None) -> None:
