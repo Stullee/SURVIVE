@@ -57,7 +57,6 @@ from . import (
     store,
     ventures,
     weekly,
-    weights,
     workfiles,
 )
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
@@ -488,7 +487,8 @@ def goal_summary(agent: Agent) -> dict[str, Any] | None:
 def plan_view(agent: Agent) -> dict[str, Any]:
     """0.34.0: the plan tree for the owner's Plan tab (plan.py; 0.35.0: it steers Ember's cycles), with why no unlock
     acts now (the products' Autonomy boxes)."""
-    exploring = burn.peek(agent.db, agent.economy.life.evaluate()).venture_cycles  # 0.36.0: the Explore step's
+    # 0.36.0: whether the burn mode runs venture cycles (0.37.0: the ventures' steps wait while it doesn't)
+    exploring = burn.peek(agent.db, agent.economy.life.evaluate()).venture_cycles
     with agent.db.connection() as conn:
         found = plan.view(
             conn,
@@ -684,9 +684,9 @@ def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated
 
 
 def ventures_view(agent: Agent) -> dict[str, Any]:
-    """The Ventures tab: the whole tree with every venture's scores, business case, money and the owner's word, the
-    criteria that weigh them, and today's spending on them (0.36.0: their Explore step in the plan, in place of the
-    venture share)."""
+    """The Ventures (0.37.0: on the Plan tab): the whole tree with every venture's scores, business case, money and the
+    owner's word, the criteria that weigh them, and today's spending on them (0.36.0: the plan's Ventures, in place
+    of the venture share)."""
     scope = agent.scope()
     simulated = 1 if agent.mode == "dry_run" else 0
     workspace, _ = agent.roots()
@@ -719,17 +719,16 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
             (simulated, scope.session),
         ).fetchone()[0]
         stamp = _ventures_stamp(conn, scope, simulated)
-        top, step = plan.ventures_node(conn, scope), plan.explore_step(conn, scope)  # 0.36.0
+        top = plan.ventures_node(conn, scope)  # 0.36.0: the plan's Ventures (0.37.0: each venture a node of them)
         explore = (
             {
                 "node": top["id"],
-                "worth": top["owner_worth"] if top["owner_worth"] is not None else weights.EXPLORE_WORTH,
+                "worth": top["owner_worth"],  # the owner's for every venture, or None: each venture's own
                 "owner_worth": top["owner_worth"],
                 "hold": top["hold_reason"],
                 "hold_by": top["hold_by"],
-                "wait_until": step["wait_until"],
             }
-            if top is not None and step is not None
+            if top is not None
             else None
         )
         digests = digest.newest_by(conn, scope, "venture_id")  # 0.12.0
@@ -750,17 +749,8 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
             for v in rows
             if v["stage"] in (*ventures.EXPLORING, "parked")
         }
-        # 0.13.0: the decision desk: READY as a venture cycle would get it now, and what the last venture plans took
-        mode = burn.peek(agent.db, status).mode
-        ready_now = desk.ready(
-            conn,
-            scope,
-            mode=mode,
-            today=agent.clock.today(),
-            cash_eur=agent.settings.venture_cash_eur,
-            net_days=net_days,
-        )
-        picks = desk.recent(conn, scope, 8)
+        # 0.13.0: the ventures decided this week (the aim: 2); 0.37.0: their next decisions are the plan's steps (the
+        # Plan tab shows them), in place of the decision desk's READY
         week = desk.decided(conn, scope, to_iso(agent.clock.now() - timedelta(days=7)))
         record = predictions.calibration(conn, scope)  # 0.13.0: the forecasts' record
         sales = {  # 0.13.0: each backed venture's first sale, as its case predicted it (the newest)
@@ -855,23 +845,8 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         "case": [{"name": name, "label": label} for name, label, _ in ventures.CASE],
         "limits": {"title": ventures.LIMITS["title"], "pitch": ventures.LIMITS["pitch"], "comment": 1_000},
         "items": items,
-        "desk": {  # 0.13.0
-            "mode": mode,
-            "ready": [i.to_json() for i in ready_now],
-            "picks": [
-                {
-                    "cycle_id": p["cycle_id"],
-                    "created_at": p["created_at"],
-                    "pick": p["pick"],
-                    "venture_id": p["venture_id"],
-                    "why_not": p["why_not"],
-                    "shown": len(json.loads(p["items"])),
-                }
-                for p in picks
-            ],
-            "decided_week": week,
-            "forecasts": record or None,  # 0.13.0
-        },
+        "decided_week": week,  # 0.13.0 (the decision desk's until 0.36.0)
+        "forecasts": record or None,  # 0.13.0
         "stamp": stamp,
     }
 

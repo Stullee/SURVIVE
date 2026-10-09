@@ -60,15 +60,19 @@ REACH = 3.0  # a live product's launch marketing: its first buyers before the cr
 IMPROVE = 1.0  # the critic's suggestions (an improve verdict above DEFECT_SCORE)
 ASKED = 2.0  # the owner asked for it
 RECURRING_DUE = 1.0  # a recurring step on its due day
-# 0.36.0: the Explore step (plan.py): the ventures' worth unless the owner sets one (that of a product that could earn
-# $5 a month), and a venture Ember's code parks within a week by its stage's rule
+# 0.36.0: the ventures (plan.py; 0.37.0: each venture's step): their worth unless the owner sets one or a business case
+# expects more (that of a product that could earn $5 a month), and a venture Ember's code parks within a week by its
+# stage's rule
 EXPLORE_WORTH = 2.0
 PARK_SOON = 1.0
 AGE_PER_DAY = 0.5
 MOMENTUM = 1.0
 STREAK_CAP = 3  # cycles in a row on one product with momentum and the margin (prompts.py's streak)
 MARGIN = 1.25
-PROMISE_HOURS = 24.0
+# 0.37.0: a promise to the owner, and their decision on a request, are weighed like any step (until 0.36.0 taken first
+# when due within a day, or up to three times a day): worth at least this, whatever its product is worth (a promise is
+# the owner's), and urgent as its day nears (promise_urgency)
+PROMISE_WORTH = 5.0
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -123,8 +127,6 @@ class Step:
     urgency: float = 0.0  # the largest urgency that applies (promise_urgency, date_urgency, DEFECT, ...)
     age_days: float = 0.0  # days ready and untouched (plan.py counts none while it is blocked or on hold)
     pinned: bool = False  # the owner pinned it
-    promise_hours: float | None = None  # hours until a promise it serves is due (negative: overdue)
-    promise: bool = False  # 0.35.1: a promise to the owner: taken before the heaviest step
     blocked: bool = False  # waits on the owner, a channel, a date or an approval: not a candidate
     waiting: tuple[Step, ...] = field(default=(), compare=False)  # open steps that wait on this one
 
@@ -188,17 +190,11 @@ def weigh(step: Step, last_product: int | None = None, streak: int = 0) -> Parts
     return Parts(step.worth, kind, channel, urgency, age, momentum, own, carried, source, max(own, carried))
 
 
-def promise_hours(step: Step) -> float | None:
-    """Hours until the soonest promise the step serves is due: its own, or one of a step waiting on it."""
-    hours = [h for h in (step.promise_hours, *(w.promise_hours for w in step.waiting)) if h is not None]
-    return min(hours) if hours else None
-
-
 @dataclass(frozen=True)
 class Pick:
     step: Step | None
-    decided: str  # 'pin', 'promise', 'weight', 'margin' (the product worked on last kept it), 'none' (and 'venture',
-    # the ventures' turn, in the records until 0.35.3)
+    decided: str  # 'pin', 'weight', 'margin' (the product worked on last kept it), 'none' (in the records too:
+    # 'promise' until 0.36.0, 'venture', the ventures' turn, until 0.35.3)
     parts: Parts | None
     ranked: tuple[tuple[Step, Parts], ...]  # every candidate, best first
 
@@ -223,22 +219,14 @@ def rank(steps: Iterable[Step], last_product: int | None = None, streak: int = 0
 
 
 def choose(steps: Sequence[Step], last_product: int | None = None, streak: int = 0) -> Pick:
-    """The step a cycle takes, in this order: a step the owner pinned; a promise or an owner's decision due within 24
-    hours (or overdue), with no margin; (0.35.1) any other promise to the owner, the soonest due first; else the
-    heaviest step, unless the product worked on last (fewer than STREAK_CAP cycles in a row) has a step the winner
-    doesn't beat by MARGIN. 0.36.0: no ventures' turn any more (the Explore step is weighed like any other)."""
+    """The step a cycle takes: a step the owner pinned, else the heaviest step, unless the product worked on last
+    (fewer than STREAK_CAP cycles in a row) has a step the winner doesn't beat by MARGIN. 0.37.0: a promise to the
+    owner, or their decision, is weighed like any step (0.35.0 to 0.36.0 they came first: one due within 24 hours, and
+    any promise up to three times a day); 0.36.0: no ventures' turn (the ventures' steps are weighed like any)."""
     ranked = tuple(rank(steps, last_product, streak))
     for step, parts in ranked:
         if step.pinned:
             return Pick(step, "pin", parts, ranked)
-    due = [(s, p, h) for s, p in ranked if (h := promise_hours(s)) is not None and h <= PROMISE_HOURS]
-    if due:
-        step, parts, _ = min(due, key=lambda sph: (sph[2], -sph[1].total, sph[0].id))
-        return Pick(step, "promise", parts, ranked)
-    promised = [(s, p) for s, p in ranked if s.promise]
-    if promised:
-        step, parts = min(promised, key=lambda sp: (_hours(sp[0]), -sp[1].total, sp[0].id))
-        return Pick(step, "promise", parts, ranked)
     if not ranked:
         return Pick(None, "none", None, ranked)
     best, parts = ranked[0]
@@ -247,10 +235,6 @@ def choose(steps: Sequence[Step], last_product: int | None = None, streak: int =
         if kept is not None and parts.total < MARGIN * kept[1].total:
             return Pick(kept[0], "margin", kept[1], ranked)
     return Pick(best, "weight", parts, ranked)
-
-
-def _hours(step: Step) -> float:
-    return step.promise_hours if step.promise_hours is not None else math.inf
 
 
 def streak_of(products: Sequence[int | None]) -> tuple[int | None, int]:

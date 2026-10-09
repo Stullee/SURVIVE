@@ -18,7 +18,17 @@ from app.config import Settings
 from tests.test_agent import rows
 from tests.test_loop_shapes import run
 from tests.test_owner_loop import owner
-from tests.test_ventures import DROPSHIPPING, JOURNAL, VENTURING, found, plan, tool_results
+from tests.test_ventures import (
+    COMPANION,
+    DROPSHIPPING,
+    JOURNAL,
+    VENTURING,
+    WEBSITE,
+    aim,
+    found,
+    plan,
+    tool_results,
+)
 
 ORDINARY = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
 
@@ -47,14 +57,14 @@ def test_research_stops_at_the_budget_until_the_owner_grants_more(
             JOURNAL,
         ]
     )
-    agent, _ = run(data_dir, fake, settings=VENTURING)
+    agent, _ = run(data_dir, fake, before=aim(DROPSHIPPING), settings=VENTURING)
     brief = next(r for r in fake.sent if request_kind(r) == "work")["messages"][0]["content"][0]["text"]
     assert "(scores need 1, a business case 2); research budget: $0.02 of $0.02 left\n" in brief
     [refused] = [r for r in tool_results(agent, "research") if r["status"] == "error"]
     assert refused["result"] == (
         f"Error: venture #{DROPSHIPPING} has used its research budget ($0.03 of $0.02): decide it now: its business "
         "case (stage proposed) or parked, with why in its note. Only your owner grants more research for it (Research "
-        "more on the Ventures tab)."
+        "more, on the Plan tab)."
     )
     item = next(v for v in views.ventures_view(agent)["items"] if v["id"] == DROPSHIPPING)
     assert (item["research_spent_usd"], item["research_left_usd"]) == (pytest.approx(0.0256, abs=0.002), 0)
@@ -118,7 +128,8 @@ def test_a_venture_cycles_research_is_a_ventures(data_dir: Path) -> None:
     fake = FakeTransport(
         script=[plan(steps=["Brainstorm"]), ToolCalls([research("What sells in Germany?")]), Reply("Done."), JOURNAL]
     )
-    agent, _ = run(data_dir, fake, settings=VENTURING)
+    # 0.37.0: a venture cycle is aimed at its step's venture: one with none is a brainstorm's
+    agent, _ = run(data_dir, fake, before=aim(None, parked=(WEBSITE, COMPANION)), settings=VENTURING)
     assert rows(agent, "SELECT venture, venture_id FROM cycles") == [{"venture": 1, "venture_id": None}]
     [refused] = tool_results(agent, "research")
     assert refused["status"] == "error"

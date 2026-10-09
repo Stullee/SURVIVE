@@ -209,6 +209,17 @@ kept until you remove it (live, a new text for one week's order of work had
 replaced the rules set before it). What comes next is the plan's. A live
 product's first pins now come before the critic's suggestions (0.35.3).
 
+0.37.0: everything Ember does is a step of the plan, weighed like any other.
+Each venture being explored is a node of the plan's Ventures, its next decision
+(triage an idea, research it, answer the critic, your decision on its case) a
+step worth what its business case expects, an idea by its scores; a venture
+cycle works on that step, aimed at its venture, in place of the ranked READY
+list it picked from. The Ventures tab is now part of the Plan tab: the tree with
+each venture's step (**Explore next** pins one), and the product lines. Promises
+to you and your decisions are weighed too: worth more than most products,
+heavier as their day nears, and no longer first whatever else waits; one about
+no product is a step of the plan's Owner project.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

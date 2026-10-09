@@ -84,8 +84,8 @@ PLANNER_BUDGETS = {
     "blog": 900,  # 0.14.0: when the owner switched their blog on
     "kdp": 900,  # 0.25.0: when the owner switched Amazon KDP on
     "ventures": 2_600,
-    # 0.13.0: a venture cycle's READY list (desk.MAX_ITEMS items) and the forecasts' record; 0.35.0: or an ordinary or
-    # marketing cycle's YOUR STEP (plan.step_text): a cycle has one of them
+    # 0.13.0 to 0.36.0: a venture cycle's READY list and the forecasts' record; 0.35.0: an ordinary or marketing
+    # cycle's YOUR STEP (plan.step_text); 0.37.0: every cycle's YOUR STEP, a venture cycle's with the forecasts' record
     "ready": 1_550,
     # 0.11.0's ROADMAP (and never less than PLAN_FLOOR, whatever the scale: 0.12.0; 0.29.0: the goal); 0.35.0: YOUR
     # PLAN, the plan tree's products under the goal
@@ -120,7 +120,6 @@ SPARE_ORDER = (
     "library",
     "workshop",
 )
-READY_HEADING = "READY"  # 0.13.0: a venture cycle's decisions, ranked by Ember's code (desk.py)
 STEP_HEADING = "YOUR STEP"  # 0.35.0: the step the plan tree took for an ordinary or marketing cycle (plan.py)
 # 0.12.0: while requests wait for the owner, the plan is told that waiting isn't its job.
 WAITING_NOTE = "Your owner's decision on these wakes you: don't wait for it, work on something else meanwhile."
@@ -281,7 +280,7 @@ class Snapshot:
     kdp: str = ""  # the KDP section ("" while Amazon KDP is off), 0.25.0
     ventures: list[sqlite3.Row] = field(default_factory=list)  # the venture tree (0.10.0)
     venture_money: dict[int, ventures.Money] = field(default_factory=dict)
-    venture: bool = False  # a venture cycle (0.36.0: the plan's Explore step; the venture share retired)
+    venture: bool = False  # a venture cycle (0.37.0: a step of the plan's Ventures; the venture share retired)
     marketing: bool = False  # 0.28.0: a marketing cycle (lines.py)
     marketing_apart: bool = False  # 0.28.0: marketing cycles run, so an ordinary cycle has no marketing tools
     call_costs: dict[str, int] = field(default_factory=dict)  # what research and brainstorms cost lately (0.10.1)
@@ -294,8 +293,8 @@ class Snapshot:
     # wake_on_approval or wake_on_rejection one)
     decision_wakes: bool = False
     burn: str = ""  # 0.12.0: the burn mode Ember's code set from the net runway (burn.Burn.text)
-    # READY, ranked by Ember's code: a venture cycle's (desk.text); 0.35.0: an ordinary or marketing cycle's YOUR STEP,
-    # the step the plan tree took (plan.step_text)
+    # YOUR STEP, the step the plan tree took (plan.step_text): 0.35.0 an ordinary or marketing cycle's, 0.37.0 a
+    # venture cycle's too (until then the decision desk's READY, desk.text)
     ready: str = ""
     agenda: list[sqlite3.Row] = field(default_factory=list)  # 0.13.0: events no plan has shown yet (agenda.py)
     reactive: bool = False  # 0.13.0: a cycle an event woke
@@ -546,10 +545,10 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
 
 def _kind_line(s: Snapshot) -> str:
     """STATUS's line on what kind of cycle this is, "" for an ordinary one where marketing has no cycles of its own
-    (0.35.0: the plan tree's step decides a marketing cycle; 0.36.0: and a venture cycle, the Explore step: the
+    (0.35.0: the plan tree's step decides a marketing cycle; 0.36.0: and a venture cycle, 0.37.0 a venture's step: the
     venture share and its line on today's spending retired)."""
     if s.venture:
-        return "This is a venture cycle: your plan's Explore step."
+        return "This is a venture cycle: YOUR STEP is a venture's next decision."
     if s.marketing:
         return "This is a marketing cycle."
     if s.marketing_apart:
@@ -916,7 +915,7 @@ def _planner_texts(s: Snapshot, dry_run: bool, journal: int = PLANNER_BUDGETS["j
         "review": s.review,
         "plan": s.plan,  # 0.35.0: in place of the ROADMAP
         "projects": project_lines(s),
-        "ready": s.ready,  # a venture plan's READY, 0.35.0: or an ordinary or marketing plan's YOUR STEP
+        "ready": s.ready,  # YOUR STEP (0.13.0 to 0.36.0 a venture plan's was READY)
         "ventures": ventures.planner_lines(s.ventures, s.venture_money, s.venture),
         "pending": pending,
         "mail": mail_text(s),
@@ -976,8 +975,8 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
         *([("TODAY'S REVIEW", t["review"])] if t["review"] else []),
         (PLAN_HEADING, t["plan"]),  # 0.35.0: in place of the ROADMAP
         ("OPEN PROJECTS", t["projects"]),
-        # 0.13.0: the decision desk's READY; 0.35.0: or the step the plan tree took (YOUR STEP)
-        *([(READY_HEADING if s.venture else STEP_HEADING, t["ready"])] if t["ready"] else []),
+        # 0.35.0: the step the plan tree took (YOUR STEP); 0.37.0: a venture cycle's too (READY until then)
+        *([(STEP_HEADING, t["ready"])] if t["ready"] else []),
         ("VENTURES", t["ventures"]),
         ("WAITING FOR YOUR OWNER", t["pending"]),
         *([("MAIL", t["mail"])] if s.mail is not None else []),

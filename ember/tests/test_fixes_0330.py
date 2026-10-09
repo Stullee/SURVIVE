@@ -31,6 +31,7 @@ from tests.test_etsy import call, started  # noqa: E402
 from tests.test_fixes_0280 import cycle, lined, milestone, now, take, texts, working  # noqa: E402
 from tests.test_fixes_0300 import judged  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
+from tests.test_obligations import forcing  # noqa: E402
 from tests.test_ventures import JOURNAL  # noqa: E402
 
 
@@ -41,7 +42,7 @@ def day(agent: Any, days: int) -> str:
 # --- a promise names its line, which comes first ---
 
 
-def test_a_promise_names_its_line_which_comes_first_and_takes_the_cycle_when_due(data_dir: Path) -> None:
+def test_a_promise_names_its_line_which_takes_the_cycle_when_due(data_dir: Path) -> None:
     agent, _ = lined(data_dir)  # lines #1 Planner, #2 Poster, #3 Checklist
     cycle(agent, project=2)  # line #2 is in progress
     ctx = working(agent)
@@ -78,10 +79,10 @@ def test_a_promise_names_its_line_which_comes_first_and_takes_the_cycle_when_due
     assert rows(agent, f"SELECT project_id FROM plan_nodes WHERE obligation_id = {promise['id']}") == [
         {"project_id": 3}
     ]
-    agent.clock.advance(days=1)  # due today: line #3 is taken first
+    agent.clock.advance(days=1)  # due today: line #3's promise weighs most (0.37.0: by its urgency; first until then)
     with agent.db.transaction() as conn:
         steered = plan_tree.steer(conn, agent.scope(), now(agent), agent.clock.today(), {})
-    assert steered.step is not None and steered.step.product == 3 and steered.pick.decided == "promise"
+    assert steered.step is not None and steered.step.product == 3 and steered.pick.decided == "weight"
     with agent.db.transaction() as conn, pytest.raises(sqlite3.IntegrityError, match="is fixed"):
         conn.execute(f"UPDATE obligations SET project_id = 2 WHERE id = {promise['id']}")
 
@@ -119,7 +120,7 @@ def test_a_miss_neither_decides_the_cycle_nor_takes_its_line(data_dir: Path) -> 
     with agent.db.connection() as conn:
         owing = obligations.open_rows(conn, agent.scope())
         owed = [obligations.owed(conn, agent.scope(), r) for r in owing if obligations.presses(r, agent.clock.today())]
-        assert obligations.pressing(conn, agent.scope(), agent.clock.today()) == []  # nothing of the owner's
+        assert forcing(conn, agent.scope(), agent.clock.today()) == []  # nothing of the owner's
     assert owed == [obligations.Owed(1)]  # pressing, on line #1, but not the owner's
     with agent.db.transaction() as conn:  # 0.35.0: the plan tree weighs its steps; nothing is taken first for it
         plan_tree.keep(conn, agent.scope(), now(agent), agent.clock.today(), {})

@@ -18,7 +18,7 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import obligations, plan, store  # noqa: E402
+from app.agent import obligations, plan, store, weights  # noqa: E402
 from app.agent.fake_llm import FakeTransport, Plan, Reply  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
@@ -57,12 +57,15 @@ def test_a_promise_without_its_product_gets_the_one_its_words_name(data_dir: Pat
     report = promise(agent, "Report Bluesky reactions and Etsy view deltas for posts #43/#44")
     said = keep(agent)
     assert lines_of(agent)[pins] == line and lines_of(agent)[kdp] == book
-    assert lines_of(agent)[report] is None  # its words name no product: no step of the plan
+    assert lines_of(agent)[report] is None  # its words name no product
     assert f"Plan tree: promise #{pins} names line #{line}: a step of that product now." in said
     steps = {r["obligation_id"]: r for r in rows(agent, "SELECT * FROM plan_nodes WHERE obligation_id IS NOT NULL")}
     assert steps[pins]["channel"] == "pinterest" and steps[pins]["project_id"] == line
     assert steps[kdp]["channel"] is None and steps[kdp]["project_id"] == book
-    assert report not in steps
+    # 0.37.0: a step of the Owner project, weighed like any (until then no step of the plan at all)
+    [top] = rows(agent, "SELECT id FROM plan_nodes WHERE level = 'project' AND platform = 'owner'")
+    assert (steps[report]["parent_id"], steps[report]["project_id"]) == (top["id"], None)
+    assert f"Plan tree: obligation #{report} (promise, of no product) is a step of your owner's." in said
 
 
 def test_message_owner_names_the_line_a_promise_is_about_from_its_words(data_dir: Path) -> None:
@@ -78,25 +81,37 @@ def test_message_owner_names_the_line_a_promise_is_about_from_its_words(data_dir
     assert [r["project_id"] for r in rows(agent, "SELECT project_id FROM obligations WHERE kind = 'promise'")] == [book]
 
 
-@pytest.mark.exploring  # 0.36.0: the ventures' turn retired; the Explore step is weighed like any step
-def test_a_promise_comes_before_the_heaviest_step_and_the_explore_step(data_dir: Path) -> None:
+def urgency_of(steer: plan.Steer, step_id: int) -> float:
+    [found] = [c.step.urgency for c in steer.found if c.step.id == step_id]
+    return found
+
+
+@pytest.mark.exploring  # 0.37.0: a promise is weighed like any step (0.35.1 to 0.36.0 it came first)
+def test_a_promise_is_weighed_like_any_step_more_as_its_day_nears(data_dir: Path) -> None:
     agent, _ = lined(data_dir)  # lines #1 Planner, #2 Poster, #3 Checklist, each with steps ready
     book = project(agent, *BOOK)
     kdp = promise(agent, "Propose the Haushaltsbuch 2027 KDP book", days=5)
     keep(agent)
     first = steered(agent, exploring=True)
-    assert first.pick.decided == "promise" and first.kind == "ordinary" and first.line == book
+    assert first.pick.decided == "weight" and first.kind == "ordinary" and first.line == book
     assert first.step is not None and first.step.title.startswith(f"Keep promise #{kdp}: ")
+    # worth the owner's word (its product could earn nothing yet), urgent at the floor while its day is 5 days off
+    assert first.pick.parts is not None
+    assert (first.pick.parts.worth, first.pick.parts.urgency) == (weights.PROMISE_WORTH, weights.PROMISE_FLOOR)
     with agent.db.connection() as conn:
         text = plan.step_text(conn, agent.scope(), first, explore=False)
     assert "Done when: you kept it and closed it with obligation_done." in text
-    assert "Its product's open steps: #" in text and "Why: your promise to your owner comes first" in text
-    for _ in range(plan.PROMISE_TRIES):  # taken three times today without being kept: weighed, like any step
-        with agent.db.transaction() as conn:
-            plan.record(conn, agent.scope(), cycle(agent, book), now(agent), first)
-    assert steered(agent, exploring=True).pick.decided in ("weight", "margin")
-    agent.clock.advance(hours=plan.OBLIGATION_HOURS + 1)
-    assert steered(agent, exploring=True).pick.decided == "promise"  # a day later, first again
+    assert "Its product's open steps: #" in text and "Why: the heaviest step that is ready" in text
+    agent.clock.advance(days=5)  # its day: more urgent
+    due = steered(agent, exploring=True)
+    assert due.step is not None and due.step.id == first.step.id
+    assert urgency_of(due, first.step.id) == weights.promise_urgency(0.5)
+    for _ in range(plan.PROMISE_TRIES):  # taken three times today without being kept: back to the floor, so a
+        with agent.db.transaction() as conn:  # promise Ember can't keep yet doesn't take every cycle
+            plan.record(conn, agent.scope(), cycle(agent, book), now(agent), due)
+    assert urgency_of(steered(agent, exploring=True), first.step.id) == weights.PROMISE_FLOOR
+    agent.clock.advance(hours=plan.OBLIGATION_HOURS + 1)  # a day later, overdue: urgent again, with its slip
+    assert urgency_of(steered(agent, exploring=True), first.step.id) == weights.promise_urgency(0.5, slips=1)
 
 
 def test_a_promise_of_pins_is_a_marketing_cycles_and_waits_while_its_request_does(data_dir: Path) -> None:

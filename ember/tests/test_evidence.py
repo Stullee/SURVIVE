@@ -17,7 +17,7 @@ from app.agent.fake_llm import FakeTransport, Reply, ToolCalls, request_kind
 from app.agent.service import Agent
 from tests.test_agent import rows
 from tests.test_loop_shapes import run
-from tests.test_ventures import DROPSHIPPING, JOURNAL, VENTURING, found, plan, tool_results
+from tests.test_ventures import DROPSHIPPING, JOURNAL, VENTURING, aim, found, plan, tool_results
 
 NOW = "2026-09-30T12:00:00Z"
 PAGES = (
@@ -92,7 +92,9 @@ def test_a_claim_is_graded_by_where_its_page_came_from(data_dir: Path) -> None:
             JOURNAL,
         ]
     )
-    agent, ends = run(data_dir, fake, cycles=2, settings=VENTURING)
+    agent, ends = run(data_dir, fake, before=aim(DROPSHIPPING), settings=VENTURING)
+    aim(DROPSHIPPING)(agent)  # 0.37.0: the next venture cycle on it too
+    ends.append(agent.run_cycle("schedule"))
     assert [e.status for e in ends] == ["completed", "completed"]
     saved = rows(agent, "SELECT venture_id, cycle_id, low, high, source FROM evidence ORDER BY id")
     assert [(r["source"], r["low"], r["high"]) for r in saved] == [
