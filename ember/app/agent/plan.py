@@ -52,6 +52,8 @@ RECURRING = {
 CHANNEL_AUDIENCES = {"pinterest": ("en", "de", "both"), "bluesky": ("en", "both"), "blog": ("de", "both")}
 REQUESTED = ("pending", "approved", "approved_with_changes", "done")  # a request made (not refused, not lapsed)
 FRESH_PINS, FRESH_POSTS = 4, 4  # a channel's results count once this many items are live
+# 0.35.3: and each of them live this long (live, four pins hours old, with no click yet, put Pinterest at its floor)
+RESULT_DAYS = 7
 CLICKS_PER_PIN, REACTIONS_PER_POST = 0.5, 3.0  # results that make a channel worth 1.0
 STALE_DAYS = 14  # a step waiting this long is shown for the daily review's look (Release 2c asks it)
 PICKS_SHOWN = 12
@@ -383,6 +385,7 @@ class Facts:
     now: str
     _funnels: dict[int, reach.Funnel] | None = None
     _verdicts: dict[int, str] = field(default_factory=dict)
+    _lowest: dict[int, int | None] = field(default_factory=dict)
 
     def funnel(self, project_id: int) -> reach.Funnel | None:
         if self._funnels is None:
@@ -395,6 +398,15 @@ class Facts:
         if project_id not in self._verdicts:
             self._verdicts[project_id] = quality.verdict(self.conn, self.scope, project_id)
         return self._verdicts[project_id]
+
+    def defect(self, project_id: int) -> bool:
+        """0.35.3: whether the critic's lowest score of the product is a defect's (weights.DEFECT_SCORE or less)."""
+        from . import quality
+
+        if project_id not in self._lowest:
+            self._lowest[project_id] = quality.lowest(self.conn, self.scope, project_id)
+        score = self._lowest[project_id]
+        return score is not None and score <= weights.DEFECT_SCORE
 
     def live(self, project_id: int) -> int:
         rows = metrics.listings(self.conn, self.scope, project_id, None)
@@ -1159,14 +1171,16 @@ def _waiting(row: Mapping[str, Any], channels: Mapping[str, bool]) -> str | None
     return None
 
 
-def _channel_factors(conn: sqlite3.Connection, scope: AgentScope) -> dict[str, float]:
-    """How well each channel works, per item (an untested channel: 1.0): clicks per live pin, reactions per post."""
+def _channel_factors(conn: sqlite3.Connection, scope: AgentScope, now: str) -> dict[str, float]:
+    """How well each channel works, per item (an untested channel: 1.0): clicks per live pin, reactions per post,
+    of those live RESULT_DAYS at least (0.35.3)."""
     where, params = scope.where()
     factors = {c: 1.0 for c in CHANNELS}
+    settled = to_iso(from_iso(now) - timedelta(days=RESULT_DAYS))
     pins = conn.execute(
         f"SELECT COUNT(*) AS n, COALESCE(SUM(clicks), 0) AS clicks FROM pinterest_pins WHERE {where}"
-        " AND status = 'active'",
-        params,
+        " AND status = 'active' AND finished_at <= ?",
+        (*params, settled),
     ).fetchone()
     if pins["n"] >= FRESH_PINS:
         factors["pinterest"] = round(
@@ -1174,8 +1188,9 @@ def _channel_factors(conn: sqlite3.Connection, scope: AgentScope) -> dict[str, f
         )
     posts = conn.execute(
         "SELECT COUNT(*) AS n, COALESCE(SUM(COALESCE(likes, 0) + COALESCE(reposts, 0) + COALESCE(replies, 0)"
-        f" + COALESCE(quotes, 0)), 0) AS reactions FROM bluesky_posts WHERE {where} AND status = 'active'",
-        params,
+        f" + COALESCE(quotes, 0)), 0) AS reactions FROM bluesky_posts WHERE {where} AND status = 'active'"
+        " AND finished_at <= ?",
+        (*params, settled),
     ).fetchone()
     if posts["n"] >= FRESH_POSTS:
         factors["bluesky"] = round(
@@ -1221,7 +1236,7 @@ def candidates(
     a request of its product made since it was promised waits on the owner. The owner's word comes before Ember's
     hold: only their park or kill, or a closed line, stops these two."""
     facts = Facts(conn, scope, now)
-    factors = _channel_factors(conn, scope)
+    factors = _channel_factors(conn, scope, now)
     missed = _missed(conn, scope, today)
     worked = _worked(conn, scope)
     lately = _taken_counts(conn, scope, to_iso(from_iso(now) - timedelta(hours=OBLIGATION_HOURS)))
@@ -1273,10 +1288,12 @@ def candidates(
             if sequential and stage["id"] == current["id"] and reason is None:
                 first_taken = True
             urgency = 0.0
+            if step["kind"] == "market" and stage["stage"] == "launch" and live:  # 0.35.3: its first buyers
+                urgency = weights.REACH
             if step["kind"] == "market" and pid in missed:
-                urgency = weights.MISSED_BAR
-            if step["check_kind"] == "critic" and verdict == "improve":
-                urgency = max(urgency, weights.DEFECT)
+                urgency = max(urgency, weights.MISSED_BAR)
+            if step["check_kind"] == "critic" and verdict == "improve":  # 0.35.3: a defect, or suggestions
+                urgency = max(urgency, weights.DEFECT if facts.defect(pid) else weights.IMPROVE)
             if step["due"] and step["source"] == "code" and date.fromisoformat(step["due"]) <= today:
                 urgency = max(urgency, weights.RECURRING_DUE)
             since = max(filter(None, (step["ready_since"], worked.get(pid))), default=None)
@@ -2326,7 +2343,7 @@ def _channels_view(
 ) -> list[dict[str, Any]]:
     """0.35.0: each channel as a mirror of the products' marketing: what it does next and what it did lately, with
     how well it works (clicks per pin, reactions per post: its factor in the weights)."""
-    factors = _channel_factors(conn, scope)
+    factors = _channel_factors(conn, scope, now)
     since = to_iso(from_iso(now) - timedelta(days=14))
     found = []
     for channel in CHANNELS:

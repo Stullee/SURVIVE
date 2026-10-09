@@ -582,8 +582,15 @@ def _scheduler(state: AppState) -> str:
         }
         with state.db.connection() as conn:
             spent, ventured, marketed = ventures.day_spends(conn, agent.scope(), agent.clock.today())
+        try:  # 0.35.3: as the planner's preview decides it, not by the ventures' share alone
+            steer = agent.next_steer()
+            kind, decided = steer.kind, steer.pick.decided
+        except Exception as exc:  # noqa: BLE001 - the scheduler's other numbers stay
+            kind, decided = None, f"unavailable ({type(exc).__name__})"
         data["next_cycle"] = {  # which kind of cycle the next one is (0.11.1: the report didn't say)
-            "venture": ventures.venture_turn(agent.settings.venture_share, spent, ventured),
+            "kind": kind,
+            "venture": kind == "venture",
+            "decided": decided,
             "venture_share_pct": agent.settings.venture_share,
             "spent_today_usd": micros_to_usd(spent),
             "venture_cycles_today_usd": micros_to_usd(ventured),
@@ -870,7 +877,12 @@ def _agent(state: AppState, full: bool = True) -> str:
             ("messages", ["id", "sender", "seen", "text"], 15),
             ("standing_instructions", ["id", "created_at", "entered_by", "text"], 3),  # the newest is the current
             ("upgrades", ["id", "status", "priority", "title", "released_version", "seen_cycle_id", "script_path"], 15),
-            ("workshop_runs", ["id", "cycle_id", "status", "cost_micros", "script_used", "script_path", "task"], 10),
+            # 0.35.3: with the run's summary (its failure or the helper's answer): why a run kept nothing
+            (
+                "workshop_runs",
+                ["id", "cycle_id", "status", "cost_micros", "script_used", "script_path", "task", "summary"],
+                10,
+            ),
             (
                 "reviews",
                 [
@@ -1056,11 +1068,10 @@ def _agent(state: AppState, full: bool = True) -> str:
             + _json(plan.settings())
         )
         # 0.34.0: the step the plan tree takes now (0.35.0: the next cycle's), its next ones with their weight's parts,
-        # and what waits
+        # and what waits. 0.35.3: as the loop decides it (the ventures' turn, what the owner waits for first)
         try:
-            pick, found = plan.choose(
-                conn, scope, to_iso(agent.clock.now()), agent.clock.today(), plan.channels_from(agent.settings)
-            )
+            steered = agent.next_steer()
+            pick, found = steered.pick, steered.found
             ranking = [
                 {"step": s.id, "line": s.product, "weight": round(p.total, 2), "title": s.title, "why": p.text()}
                 for s, p in pick.ranked[:8]

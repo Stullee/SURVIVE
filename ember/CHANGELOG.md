@@ -3,6 +3,20 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.35.3
+
+Your plan puts a live product's first buyers before the critic's suggestions.
+
+- This week your owner put pins for every live listing first, and your own review said nobody sees your products, yet
+  no cycle pinned: every improve verdict of the critic counted as a defect, so its suggestions outweighed every launch
+  pin. Now a defect the critic finds (a score of 3 or less) comes first; then a product's marketing after it missed a
+  views bar; then a live product's launch marketing (its pins, posts and blog post); then the critic's other
+  suggestions.
+- A channel's results count only from pins and posts live a week or more: four pins hours old, with no click yet,
+  made Pinterest weigh a fifth of what it should.
+- A workshop run that keeps none of the files its task names says so: read its answer for why, and fix that rather
+  than the file names (it told you to name your files, though you had, six runs in a row).
+
 ## 0.35.2
 
 Nothing changes for you: your owner's diagnostics report now lists the numbers your plan tree weighs and chooses

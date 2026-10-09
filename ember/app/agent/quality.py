@@ -268,6 +268,14 @@ def verdict(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> str
     return "improve" if any(r["verdict"] == "improve" for r in checked) else "pass"
 
 
+def lowest(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> int | None:
+    """0.35.3: the lowest score of the checks ``verdict`` reads (the plan tree weighs a low one as a defect, the rest
+    of an improve verdict as suggestions); None before any."""
+    checked = newest(conn, scope, project_id) or unplaced(conn, scope, project_id)
+    scores = [int(r["score"]) for r in checked if r["score"] is not None]
+    return min(scores) if scores else None
+
+
 def changed_since(conn: sqlite3.Connection, scope: AgentScope, check: sqlite3.Row) -> bool:
     """0.24.0: whether a change of the checked listing was carried out after the check (its fixes may be done: the
     listing is checked again next, ``due``)."""

@@ -605,7 +605,11 @@ without files gets the files its first run had (a script that read a workbook
 ran without it and made up its numbers), and a task that names a file of the
 workspace it doesn't hand over is refused before it is paid for. The files
 handed over are uploaded for the run only (they expire within the hour), and
-every file is deleted from Anthropic's storage when the run is over.
+every file is deleted from Anthropic's storage when the run is over. A run that
+keeps none of the files its task names says so, and points the agent to its
+answer for why (until 0.35.2 it told the agent to name its files, though it
+had: live, six runs failed in a row while it reworded them); the diagnostics
+report shows each run's answer.
 
 **What it costs.** A run is one metered call (up to three if a long run
 pauses): tokens at the workshop model's prices, plus sandbox time. Anthropic's
@@ -1025,13 +1029,18 @@ default), damped so that optimistic numbers count less ($5 a month is 2, $20 is
 4.6, $60 is 7.4), times its chance: 0.4 in research, 0.6 in create, 0.8 in
 release and 1 once it is live, and then, after 30 views, how it sells. A step's
 weight is that worth times its kind (shipping, launching, fixing and marketing
-1, creating 0.8) times its channel's results, times one plus its urgency (a
-promise at least 2; a defect the quality check found 2; a missed views date
-makes the product's marketing urgent), its age (0.5 for each day it has waited
-ready) and momentum (1 for the product worked on last). A step carries the
-weight of the most important step waiting on it (since 0.35.1 a promise is a
-step of its own, not carried). Since 0.35.2 the [diagnostics](#diagnostics)
-report lists every one of these numbers, as your version runs them.
+1, creating 0.8) times its channel's results (since 0.35.3 only of the pins and
+posts live a week or more), times one plus its urgency, its age (0.5 for each
+day it has waited ready) and momentum (1 for the product worked on last). The
+urgencies: a promise at least 2; since 0.35.3 a defect the critic found (a
+score of 3 or less) 5, a missed views date 4 on the product's marketing, a live
+product's launch marketing 3 (its first buyers) and the critic's other
+suggestions 1, so a live product's first pins come before its polish (until
+0.35.2 every suggestion counted as a defect, and no pin was made). A step
+carries the weight of the most important step waiting on it (since 0.35.1 a
+promise is a step of its own, not carried). Since 0.35.2 the
+[diagnostics](#diagnostics) report lists every one of these numbers, as your
+version runs them.
 
 **What Ember may change.** With her **plan_step** tool she adds steps to a
 product (to a stage, or before a step), splits a step into smaller ones or
@@ -2454,7 +2463,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.35.2 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.35.3 (by /u/your name)`.
 
 ## Amazon KDP
 

@@ -19,6 +19,11 @@ waited equally long keep their order by worth), and it doesn't run while a step 
 promise only carried weight to the steps in front of it, and came first only on its last day. The owner: "a promise
 should alter the plan", "I want it asap". A promise is now a step of its own, taken before the heaviest step and the
 ventures' turn from the moment it is made, until it is kept.
+
+0.35.3: live on 2026-10-09 the critic's suggestions for six live products (scores 4 to 6, each counted as a defect)
+outweighed their first pins, which the owner had put first for the week, and Pinterest's factor fell to its floor on
+four pins hours old. A defect the critic found (a low score) still comes first; a missed views bar puts the product's
+marketing above every other product's; a live product's launch marketing comes before the critic's suggestions.
 """
 
 from __future__ import annotations
@@ -40,10 +45,15 @@ CHANNEL_MIN, CHANNEL_MAX = 0.2, 1.5
 URGENCY_CAP = 12.0
 PROMISE_FLOOR, PROMISE_SCALE, PROMISE_SLIP = 2.0, 4.5, 2.0
 DATE_SCALE = 3.0  # the owner's own date: 3 / days left
-DEFECT = 2.0  # a defect Ember's code found (a quality check that says improve)
+# 0.35.3: the critic's verdicts and a product's first buyers, a ladder: a defect, a missed views bar, a live product's
+# launch marketing, the critic's suggestions (each improve verdict counted as a defect until 0.35.2)
+DEFECT = 5.0  # the critic found a defect (a score of DEFECT_SCORE or less): fixed before more buyers see it
+DEFECT_SCORE = 3
+MISSED_BAR = 4.0  # a product missed a views bar lately: its marketing comes first (a push for buyers, 0.33.0)
+REACH = 3.0  # a live product's launch marketing: its first buyers before the critic's suggestions
+IMPROVE = 1.0  # the critic's suggestions (an improve verdict above DEFECT_SCORE)
 ASKED = 2.0  # the owner asked for it
 RECURRING_DUE = 1.0  # a recurring step on its due day
-MISSED_BAR = 2.0  # a product missed a views bar lately: its marketing is urgent (a push for buyers, 0.33.0)
 OWN_DATE_CAP = 1.5  # a date Ember set herself
 AGE_PER_DAY = 0.5
 MOMENTUM = 1.0
