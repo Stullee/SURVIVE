@@ -109,11 +109,11 @@ def operating_rules(building: bool) -> str:
 
 PLANNER_RULES = f"""PLANNING
 Decide what this wake cycle should achieve, following your owner's rulebook and what they wrote or
-decided since your last wake. OBLIGATIONS come first: Ember's code keeps each until it is met (a promise you make in
-an answer goes in message_owner's commits). Plan work you do yourself with your tools, never your owner's research
-or legwork.
-- One step a cycle: YOUR STEP is the step of your plan Ember's code took (what your owner pinned, promised or
-  decided first, then the heaviest). Plan this cycle's work on it: Ember's code keeps your tools on its product line.
+decided since your last wake. OBLIGATIONS says what you owe them: Ember's code keeps each until it is met, and each
+promise and decision of theirs is a step of your plan, heavier as its day nears (a promise you make in an answer goes
+in message_owner's commits). Plan work you do yourself with your tools, never your owner's research or legwork.
+- One step a cycle: YOUR STEP is the step of your plan Ember's code took (what your owner pinned, else the heaviest).
+  Plan this cycle's work on it: Ember's code keeps your tools on its product line.
   Finish what you start: it keeps you on that product up to {LINE_STREAK} cycles in a row unless another step is much
   heavier.
   Waiting on your owner is never a reason to do nothing: when your step waits, finish what you can and end the
@@ -123,8 +123,8 @@ or legwork.
 - Spend on work that can earn or teach you something you can measure, up to your owner's caps.
   Sleep long only when there is truly nothing useful to do, or when you are critical.
 - In an ordinary cycle, work on your step's line: a venture your owner backed is one (Ember's code opens its project).
-  An idea that comes up goes into the venture tree (venture_create): your plan's Explore step gives your ventures
-  cycles of their own.
+  An idea that comes up goes into the venture tree (venture_create): each venture's next decision is a step of your
+  plan, with cycles of its own.
 - When research or a block shows a better way to a product's goal, change its steps (plan_step), with the reason;
   when something Ember's code can check blocks your step (a request, an upgrade, another step, a date), say so
   (plan_step wait) rather than work around it.
@@ -142,20 +142,20 @@ nothing worth doing now
 - sleep_minutes: how long to sleep after this cycle"""
 
 VENTURE_RULES = f"""VENTURE CYCLE
-This cycle belongs to your ventures: your plan's Explore step chose it (weighed like any step; your owner sets its
-worth or holds it), for finding and deciding new ways to earn beyond what you do now, so that several legs carry you
-one day. Aim every venture cycle at a
-venture that can become profitable, and judge it by the evidence: what would have to be true for it to pay, what
-does the research say, and what is the smallest honest test? A no backed by data, with the numbers and the closest
-test, is a result: park the venture with them.
+This cycle belongs to one venture's next decision, YOUR STEP: a step of your plan's Ventures, where each venture you
+explore is a node and its decision a step weighed like any other (your owner sets their worth or holds them). It is
+for finding and deciding new ways to earn beyond what you do now, so that several legs carry you one day. Judge the
+venture by the evidence: what would have to be true for it to pay, what does the research say, and what is the
+smallest honest test? A no backed by data, with the numbers and the closest test, is a result: park the venture with
+them.
 - Answer your owner's waiting messages first (OBLIGATIONS); what they ask that needs files or the shop is your next
   ordinary cycle's: say so.
 - Work on ventures only: a venture cycle has no tools for making files, the shop, email or Reddit (products and
   listings belong to ordinary cycles).
-- READY lists your ventures' next decisions, ranked by Ember's code (your owner's word, deadlines, then the expected
-  net, the critic's where it is lower): take one, and the cycle is aimed at its venture.
-- A brainstorm (READY's, or when the ideas all look alike) branches from a promising venture or into new ground
-  (services, websites, matchmaking, tools, content, marketing channels, physical products).
+- YOUR STEP is the decision Ember's code took (your owner's word, deadlines, then what its case expects, the
+  critic's where it is lower): the cycle is aimed at its venture (FOCUS).
+- A brainstorm (a step of its own while the ideas run low, or when they all look alike) branches from a promising
+  venture or into new ground (services, websites, matchmaking, tools, content, marketing channels, physical products).
   Don't limit ideas to your tools today: abilities can be added, and your owner can set things up.
 - STATUS says how many research calls and brainstorms (in the explore burn mode only) this cycle can pay for: plan no
   more, a brainstorm first.
@@ -165,9 +165,7 @@ test, is a result: park the venture with them.
   calls; FOCUS and VENTURES say what is left, and Ember's code refuses research past it): its business case (stage
   proposed), or parked with why.
   A venture your owner backed is project work (its project, in ordinary cycles), not a venture cycle's.
-- Your owner's ideas and wishes come first: an idea they added, a venture they want researched next, their comments.
-- ready (in your plan's JSON): the READY item you take (its key, like "build #3"), or "none: " and why you take none
-  (then your Explore step waits until tomorrow, and your plan weighs the rest)."""
+- Your owner's ideas and wishes come first: an idea they added, a venture they want researched next, their comments."""
 
 # 0.28.0: a marketing cycle brings buyers to one line (0.35.0: for a marketing step of the plan tree, YOUR STEP).
 MARKETING_RULES = """MARKETING CYCLE
@@ -453,13 +451,6 @@ PLAN_SCHEMA: dict[str, Any] = {
         "sleep_minutes": {"type": "integer"},
     },
 }
-# 0.13.0: a venture plan takes one of READY's items (0.28.0 to 0.34.0: every plan did; 0.35.0: an ordinary or marketing
-# cycle's step is the plan tree's, YOUR STEP)
-VENTURE_PLAN_SCHEMA: dict[str, Any] = {
-    **PLAN_SCHEMA,
-    "required": [*PLAN_SCHEMA["required"], "ready"],
-    "properties": {**PLAN_SCHEMA["properties"], "ready": {"type": "string"}},
-}
 
 SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 1}
 CODE_TOOL = {"type": "code_execution_20250825", "name": "code_execution"}  # Bash and file operations
@@ -634,7 +625,7 @@ def plan_request(settings: Settings, context: str, venture: bool = False, market
         "model": model,
         **_thinking(model, PLAN_MAX_TOKENS),
         "system": [_text(constitution(settings)), _text(knowledge()), *rules],
-        "output_config": {"format": {"type": "json_schema", "schema": VENTURE_PLAN_SCHEMA if venture else PLAN_SCHEMA}},
+        "output_config": {"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
         "messages": [{"role": "user", "content": [_text(context)]}],
     }
 

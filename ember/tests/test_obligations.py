@@ -6,7 +6,7 @@ first in every plan, lets a venture cycle give way to it, and limits the message
 from __future__ import annotations
 
 import sqlite3
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -157,7 +157,7 @@ def test_the_section_is_bounded_and_quoted(data_dir: Path) -> None:
 
 def test_what_presses_is_shown_before_older_obligations(data_dir: Path) -> None:
     """0.22.0 (analysis 0.20.1, FIX NOW 14): OBLIGATIONS showed the oldest five by due date, and a new pressing item hid
-    under "and 1 more, due later" while pressing() made the cycle about it."""
+    under "and 1 more, due later" while it pressed (it made the cycle about it until 0.36.0)."""
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]))
     today = agent.clock.today()
     stale = (today - timedelta(days=obligations.PRESSING_OVERDUE_DAYS + 1)).isoformat()
@@ -172,9 +172,19 @@ def test_what_presses_is_shown_before_older_obligations(data_dir: Path) -> None:
                 _scope(agent.scope()),
             ).lastrowid
             obligations.promise(conn, agent.scope(), 1, int(message), what, str(due), "now")
-        assert obligations.pressing(conn, agent.scope(), today) == [f"obligation #{obligations.SHOWN + 1} (promise)"]
+        assert forcing(conn, agent.scope(), today) == [obligations.SHOWN + 1]
     text = owed(agent)
     assert "Send the numbers" in text and "- and 1 more obligations, none pressing." in text
+
+
+def forcing(conn: Any, scope: AgentScope, today: date) -> list[int]:
+    """The owner's promises and decisions that press (obligations.presses; until 0.37.0 obligations.pressing kept the
+    ventures waiting for them)."""
+    return [
+        int(r["id"])
+        for r in obligations.open_rows(conn, scope)
+        if r["kind"] in obligations.FORCING and obligations.presses(r, today)
+    ]
 
 
 def _scope(scope: AgentScope) -> tuple[Any, ...]:

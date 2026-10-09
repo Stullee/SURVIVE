@@ -321,7 +321,8 @@ PLATFORMS = {
     "website": "Website",
     "channels": "Channels",
     "other": "Other",
-    "ventures": "Ventures",  # 0.36.0: the Explore step's project (plan.py)
+    "ventures": "Ventures",  # 0.36.0: the ventures' project (0.37.0: each venture a node of it, plan.py)
+    "owner": "Your owner",  # 0.37.0: the promises and the owner's decisions of no product, as steps (plan.py)
 }
 
 

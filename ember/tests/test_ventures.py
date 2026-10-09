@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.agent import context, econ, prompts, store, tools, ventures
+from app.agent import plan as plan_tree
 from app.agent.fake_llm import FakeTransport, Plan, Raw, Reply, ToolCalls, request_kind, validate_request
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
@@ -22,11 +23,36 @@ from tests.test_loop_shapes import run
 from tests.test_owner_api import post
 from tests.test_owner_loop import owner
 
-# Every cycle a venture cycle.
+# A test marked exploring (conftest): its plan's ventures' steps make venture cycles (0.36.0: the venture share, which
+# made every cycle one, retired).
 VENTURING = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
 JOURNAL = ToolCalls([("write_journal", {"summary": "Worked on ventures", "entry": "Researched and scored."})])
 TITLES = [seed[2] for seed in ventures.SEEDS]
 ETSY, PINTEREST, DROPSHIPPING, PRINT, WEBSITE, RECRUITING, COMPANION, FIVERR = range(1, 9)
+
+
+def aim(venture: int | None, parked: tuple[int, ...] = ()) -> Any:
+    """0.37.0: the next venture cycle on ``venture`` (None: a brainstorm), as its owner asks for it: its step pinned
+    (else the plan's weights pick the venture; the plan's focus_venture_id no longer does), the ``parked`` ideas
+    parked first (two of the six seeded ones make a brainstorm due). A ``before`` for run(), or call it."""
+
+    def pin(agent: Agent) -> None:
+        stamp = to_iso(agent.clock.now())
+        with agent.db.transaction() as conn:
+            ventures.seed(conn, agent.scope(), stamp)
+            for idea in parked:
+                ventures.update(conn, idea, stamp, stage="parked", notes="Parked for the test.")
+            plan_tree.keep(conn, agent.scope(), stamp, agent.clock.today(), {})
+
+            def mine(step: sqlite3.Row) -> bool:
+                if venture is None:
+                    return bool(step["template"] == plan_tree.BRAINSTORM_TEMPLATE)
+                return plan_tree.venture_of(conn, agent.scope(), int(step["id"])) == venture
+
+            [step] = [s for s in plan_tree.nodes(conn, agent.scope(), "level = 'step' AND status = 'open'") if mine(s)]
+            plan_tree.pin(conn, agent.scope(), int(step["id"]), True, "Stefan", stamp)
+
+    return pin
 
 
 def plan(steps: list[str] | None = None, venture: int | None = None, project: int | None = None) -> Plan:
@@ -165,7 +191,7 @@ def test_the_weight_counts_revenue_double_and_turns_the_bad_ones_around() -> Non
 
 
 @pytest.mark.exploring(turns=True)  # 0.36.0: the plan's Explore step makes its venture cycles (the share retired)
-def test_the_explore_step_makes_venture_cycles_among_the_others(data_dir: Path) -> None:
+def test_the_ventures_steps_make_venture_cycles_among_the_others(data_dir: Path) -> None:
     settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
     fake = FakeTransport(seed=5, scenario="founder")
     agent, ends = run(data_dir, fake, cycles=8, settings=settings)
@@ -182,7 +208,7 @@ def test_the_explore_step_makes_venture_cycles_among_the_others(data_dir: Path) 
     focused = rows(agent, "SELECT venture_id FROM cycles WHERE venture = 1 AND venture_id IS NOT NULL")
     assert focused and agent.ventures()["items"][focused[0]["venture_id"] - 1]["spent_usd"] > 0
     texts = planner_texts(fake)
-    kind = "This is a venture cycle: your plan's Explore step."
+    kind = "This is a venture cycle: YOUR STEP is a venture's next decision."
     assert any(kind in t and "Plan this venture cycle." in t for t in texts)
     assert any(kind not in t and "Plan this wake cycle." in t for t in texts)
 
@@ -223,7 +249,7 @@ def test_a_venture_cycle_researches_up_to_eight_times(data_dir: Path) -> None:
             JOURNAL,
         ]
     )
-    agent, _ = run(data_dir, fake, settings=VENTURING)
+    agent, _ = run(data_dir, fake, before=aim(DROPSHIPPING), settings=VENTURING)
     statuses = [r["status"] for r in tool_results(agent, "research")]
     assert statuses == ["ok"] * 8 + ["error"]
     assert "at most 8 times per cycle" in tool_results(agent, "research")[-1]["result"]
@@ -284,7 +310,7 @@ def test_the_planner_sees_the_tree_and_the_venture_rules(data_dir: Path) -> None
     assert "#3 [idea] Dropshipping store · not scored yet" in tree
     assert "#2 [idea] Pinterest for the Etsy shop (branch of #1) · not scored yet" in tree
     assert "Parked or killed (don't start them again): #8 Services on Fiverr." in tree
-    assert "\nThis is a venture cycle: your plan's Explore step.\n" in text  # 0.36.0: no share of the spending
+    assert "\nThis is a venture cycle: YOUR STEP is a venture's next decision.\n" in text  # 0.36.0: no share
     assert (
         "A research call costs about $0.05 and a brainstorm about $0.10 (lately): this cycle's $1.00 pays for about"
         " $0.35 of them after planning, the work steps and the reflection, so about 7 research calls, or a brainstorm"
@@ -441,7 +467,7 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
             JOURNAL,
         ]
     )
-    agent, ends = run(data_dir, fake, settings=VENTURING)
+    agent, ends = run(data_dir, fake, before=aim(DROPSHIPPING), settings=VENTURING)
     assert ends[0].status == "completed"
     created = tool_results(agent, "venture_create")
     assert created[0]["status"] == "error" and "venture #3 (idea) already has this title" in created[0]["result"]
@@ -467,10 +493,7 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
     assert "\nResearch for venture #3: 2 calls that found something.\n" in research[1]["result"]
     assert updates[2]["status"] == "ok" and "Now weight 57 (revenue 4, doability 3" in updates[2]["result"]
     assert updates[3]["status"] == "error" and "must be one of" in updates[3]["result"]  # only the owner backs
-    assert (
-        updates[4]["status"] == "ok"
-        and "Your owner sees its business case on the Ventures tab." in updates[4]["result"]
-    )
+    assert updates[4]["status"] == "ok" and "Your owner sees its business case on the Plan tab." in updates[4]["result"]
     assert updates[5]["status"] == "error"  # 0.12.0: Fiverr is parked by the owner (put on hold before ventures)
     assert "your owner parked venture #8: only they take it up again" in updates[5]["result"]
     assert updates[6]["status"] == "error" and "say why in note" in updates[6]["result"]
@@ -524,7 +547,12 @@ def test_research_counts_for_the_venture_it_names_once_it_finds_pages(data_dir: 
         ]
     )
     settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
-    agent, ends = run(data_dir, fake, before=killed, settings=settings)
+
+    def aimed(agent: Agent) -> None:
+        killed(agent)
+        aim(DROPSHIPPING)(agent)  # 0.37.0: the owner's Explore next on it
+
+    agent, ends = run(data_dir, fake, before=aimed, settings=settings)
     ends.append(agent.run_cycle("schedule"))
     assert [e.status for e in ends] == ["completed", "completed"] and [t for t in fake.trace if t[1] == "invalid"] == []
     assert rows(agent, "SELECT venture, venture_id FROM cycles ORDER BY id") == [
@@ -772,7 +800,7 @@ def test_the_ventures_tab(ingress_client: TestClient) -> None:
     assert item["owner_action"] == "note" and item["owner_comment"] == "Hi" and item["created_by"] == "owner"
     assert post(ingress_client, "api/ventures/99/decide", {"action": "park"}).status_code == 404
     html = ingress_client.get("/").text
-    assert 'id="tab-ventures"' in html and 'id="panel-ventures"' in html and 'id="vt-svg-ns"' in html
+    assert 'id="panel-plan"' in html and 'id="vt-svg-ns"' in html and 'id="tab-ventures"' not in html  # 0.37.0
 
 
 # --- the review and the rules ---

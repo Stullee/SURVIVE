@@ -86,21 +86,25 @@ def test_a_blocked_step_is_no_candidate_and_does_not_age() -> None:
 # --- the order each cycle takes ---
 
 
-def test_a_pin_comes_first_then_a_promise_due_within_a_day_then_the_weight() -> None:
-    # 0.36.0: no ventures' turn between them any more: the Explore step is weighed like any step (test_fixes_0360.py)
-    heavy = step(1, 1, worth=9, urgency=3)
-    promised = step(2, 2, worth=1, promise_hours=20)
+def test_a_pin_comes_first_then_the_weight_a_promise_weighed_like_any_step() -> None:
+    # 0.36.0: no ventures' turn between them any more: the ventures' steps are weighed like any step
+    # 0.37.0: a promise too, worth at least PROMISE_WORTH and urgent as its day nears (plan.py), where until then one
+    # due within a day came first whatever weighed more
+    heavy = step(1, 1, worth=9, urgency=3)  # 9 × (1 + 3) = 36
+    tomorrow = step(2, 2, worth=weights.PROMISE_WORTH, urgency=weights.promise_urgency(1.5))  # 5 × (1 + 3) = 20
     pinned = step(3, 3, worth=0.5, pinned=True)
-    assert weights.choose([heavy, promised, pinned]).decided == "pin"
-    pick = weights.choose([heavy, promised])
-    assert (pick.step, pick.decided) == (promised, "promise")  # no margin, whatever weighs more
-    assert weights.choose([heavy, step(4, 4, promise_hours=30)]).step == heavy
+    assert weights.choose([heavy, tomorrow, pinned]).decided == "pin"
+    pick = weights.choose([heavy, tomorrow])
+    assert (pick.step, pick.decided) == (heavy, "weight")
+    today = step(4, 4, worth=weights.PROMISE_WORTH, urgency=weights.promise_urgency(0.5))  # 5 × (1 + 9) = 50
+    assert weights.choose([heavy, today]).step == today
 
 
-def test_a_promise_on_a_later_step_makes_the_step_in_front_of_it_take_the_cycle_when_due() -> None:
-    propose = step(2, 14, worth=2.8, promise_hours=-5)  # overdue
+def test_an_urgent_later_step_makes_the_step_in_front_of_it_take_the_cycle() -> None:
+    # until 0.36.0 a promise on the later step (0.37.0: a promise is a step of its own; its urgency is any step's)
+    propose = step(2, 14, worth=2.8, urgency=weights.promise_urgency(0.5, slips=1))  # overdue: 2.8 × (1 + 11)
     interior = step(1, 14, worth=2.8, kind="create", waiting=(propose,))
-    assert weights.choose([step(3, 6, worth=9, urgency=5), interior]).step == interior
+    assert weights.choose([step(3, 6, worth=9, urgency=2), interior]).step == interior
 
 
 def test_the_product_worked_on_last_keeps_the_cycle_unless_beaten_by_the_margin_until_its_streak_ends() -> None:
@@ -219,7 +223,6 @@ def _october_7(*, promise: bool, kdp_age: float, budget_age: float, pinterest: b
         worth=W_KDP,
         kind="ship",
         urgency=weights.promise_urgency(3) if promise else 0.0,
-        promise_hours=80 if promise else None,
     )
     interior = step(141, KDP, worth=W_KDP, kind="create", age_days=kdp_age, waiting=(propose,), blocked=kdp_proposed)
     budget = step(61, BUDGET, worth=W_ETSY, kind="fix", age_days=budget_age)

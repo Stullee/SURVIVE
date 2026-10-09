@@ -12,9 +12,10 @@ one (0.13.0, Phase E1: mailstore.inquiries), overdue milestones and live listing
 bug 1: and a backed venture's first test due within a week unmet, with what is at stake: stages.owed; 0.18.0: and a
 strategy that names a parked or killed venture, ``stale_strategy``: live, it named dropshipping as the priority long
 after the agent had parked it, and every plan read it). The plan shows
-them first and never cuts them; a pressing one (``pressing``) makes a wake cycle an ordinary one rather than a
-venture cycle (0.33.0: a promise or a decision, the owner's; a promise names the line it is about, and READY puts a
-line with one due soon first). The agent closes a promise, decision or miss with
+them first and never cuts them; a pressing one (``presses``) made a wake cycle an ordinary one rather than a
+venture cycle (0.33.0 to 0.36.0: a promise or a decision, the owner's). 0.37.0: each promise and decision is a step of
+the plan, weighed like any (its product's, or the Owner project's when it names none). The agent closes a promise,
+decision or miss with
 ``obligation_done``, saying what it did; a promise only once its owner has heard from it since, and a miss also closes
 when a milestone replaces it.
 """
@@ -237,22 +238,6 @@ def told_since(conn: sqlite3.Connection, scope: AgentScope, message_id: int) -> 
     return found is not None
 
 
-def pressing(conn: sqlite3.Connection, scope: AgentScope, today: date, messages: bool = True) -> list[str]:
-    """What presses: the owner's messages waiting for an answer (0.19.3: only with ``messages``), a promise due by
-    tomorrow (or overdue for PRESSING_OVERDUE_DAYS at most) or a decision of the last PRESSING_NEW_DAYS days (0.33.0:
-    the owner's, FORCING; a miss presses no more). Empty when nothing presses. Until 0.35.3 it skipped the ventures'
-    turn (loop._cycle_kind); since 0.36.0 it keeps the plan's Explore step waiting, so the cycle isn't a venture
-    cycle."""
-    found = []
-    waiting = messages_waiting(conn, scope)
-    if waiting and messages:
-        found.append(f"{waiting} message{'s' if waiting != 1 else ''} of your owner's to answer")
-    for r in open_rows(conn, scope):
-        if r["kind"] in FORCING and presses(r, today):
-            found.append(f"obligation #{r['id']} ({r['kind']})")
-    return found
-
-
 def promised(conn: sqlite3.Connection, scope: AgentScope, today: date) -> dict[int, list[tuple[int, str]]]:
     """0.33.0: the lines with a promise to the owner due within PROMISED_DAYS or overdue, each with those promises
     (number, due day): READY puts them first (lines.py), before the line in progress."""
@@ -280,8 +265,10 @@ def messages_waiting(conn: sqlite3.Connection, scope: AgentScope) -> int:
 
 
 def presses(row: sqlite3.Row, today: date) -> bool:
-    """Whether an open obligation makes a cycle an ordinary one (``pressing``): a promise due by tomorrow (or overdue
-    for PRESSING_OVERDUE_DAYS at most), a decision or a miss of the last PRESSING_NEW_DAYS days."""
+    """Whether an open obligation presses: a promise due by tomorrow (or overdue for PRESSING_OVERDUE_DAYS at most), a
+    decision or a miss of the last PRESSING_NEW_DAYS days. OBLIGATIONS shows these first. Until 0.35.3 one of the
+    owner's (FORCING) skipped the ventures' turn, and in 0.36.0 it kept the plan's Explore step waiting; since 0.37.0 a
+    promise or decision is a step of the plan, weighed like any (plan.py)."""
     if row["kind"] == "promise":
         first = (today - timedelta(days=PRESSING_OVERDUE_DAYS)).isoformat()
         return first <= row["due"] <= (today + timedelta(days=1)).isoformat()

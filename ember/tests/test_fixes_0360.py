@@ -21,20 +21,17 @@ pytest.importorskip("httpx2")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.agent import desk, plan, quality, store, weights  # noqa: E402
-from app.agent.fake_llm import FakeTransport, Reply  # noqa: E402
+from app.agent import plan, quality, store, weights  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import discover_migrations, migrate  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
-from tests.test_desk import taking  # noqa: E402
 from tests.test_etsy import a_change, call, listed, shop_context  # noqa: E402
 from tests.test_fixes_0280 import cycle, lined, now, working  # noqa: E402
 from tests.test_fixes_0340 import ALL, BOOK, TRACKER, keep, project  # noqa: E402
 from tests.test_fixes_0350 import changes, plan_step, steered  # noqa: E402
-from tests.test_loop_shapes import run  # noqa: E402
 from tests.test_owner_api import post  # noqa: E402
-from tests.test_ventures import JOURNAL, VENTURING  # noqa: E402
+from tests.test_ventures import DROPSHIPPING, ETSY  # noqa: E402
 
 NOW = "2026-10-09T10:00:00Z"
 
@@ -75,7 +72,7 @@ def test_the_rebuilt_tree_keeps_its_nodes_and_an_existing_hold_is_embers(tmp_pat
     )
     conn.commit()
     conn.close()
-    assert migrate(db_file, discover_migrations(), backup_dir=tmp_path / "backups") == [89, 90]
+    assert migrate(db_file, discover_migrations(), backup_dir=tmp_path / "backups") == [89, 90, 91]
     conn = sqlite3.connect(db_file)
     conn.row_factory = sqlite3.Row
     rows = [dict(r) for r in conn.execute("SELECT id, level, title, hold_reason, hold_by, owner_worth FROM plan_nodes")]
@@ -132,7 +129,7 @@ def test_the_current_instructions_become_the_first_rules_one_a_paragraph_or_a_li
     conn.execute(said, ("dry_run", 1, "2026-10-02T10:00:00Z", None, ""))  # cleared: no rules
     conn.commit()
     conn.close()
-    assert migrate(db_file, discover_migrations(), backup_dir=tmp_path / "backups") == [90]
+    assert migrate(db_file, discover_migrations(), backup_dir=tmp_path / "backups") == [90, 91]
     conn = sqlite3.connect(db_file)
     conn.row_factory = sqlite3.Row
     rules = [dict(r) for r in conn.execute("SELECT mode, session, place, created_at, entered_by, text FROM rules")]
@@ -239,7 +236,7 @@ def test_the_plan_tab_holds_a_product_and_freezes_titles_and_tags(ingress_client
     assert any(f"froze the titles and tags of the listings until {until}" in m for m in said)
 
 
-# --- the venture share retires: the plan's Explore step ---
+# --- the venture share retires: the plan decides when Ember explores (0.37.0: each venture's step) ---
 
 
 def exploring_agent(data_dir: Path) -> Agent:
@@ -260,21 +257,32 @@ def plan_node(agent: Agent, node_id: int) -> sqlite3.Row:
         return plan.node(conn, agent.scope(), node_id)
 
 
-def explore_waits(steer: plan.Steer) -> list[str | None]:
-    return [c.waiting for c in steer.found if c.stage == "explore"]
+def explore_waits(steer: plan.Steer) -> set[str | None]:
+    """What the ventures' steps wait on (0.36.0: the one Explore step's; 0.37.0: each venture's)."""
+    return {c.waiting for c in steer.found if c.stage == "venture"}
+
+
+def venture_step(agent: Agent, venture: int) -> int:
+    with agent.db.connection() as conn:
+        [step] = [
+            s
+            for s in plan.nodes(conn, agent.scope(), "level = 'step' AND status = 'open'")
+            if plan.venture_of(conn, agent.scope(), int(s["id"])) == venture
+        ]
+    return int(step["id"])
 
 
 @pytest.mark.exploring
-def test_the_explore_step_makes_a_venture_cycle_when_it_weighs_most(data_dir: Path) -> None:
+def test_a_ventures_step_makes_a_venture_cycle_when_it_weighs_most(data_dir: Path) -> None:
     agent = exploring_agent(data_dir)
     with agent.db.connection() as conn:
-        top, step = plan.ventures_node(conn, agent.scope()), plan.explore_step(conn, agent.scope())
-    assert top is not None and top["hold_reason"] is None and step["title"] == plan.EXPLORE_TITLE
-    explore = explored(agent)  # no product yet: exploring is the plan's only step
-    assert explore.kind == "venture" and explore.step is not None and explore.step.id == step["id"]
+        top = plan.ventures_node(conn, agent.scope())
+    assert top is not None and top["hold_reason"] is None
+    explore = explored(agent)  # no product yet: the ventures' steps are the plan's only ones
+    assert explore.kind == "venture" and explore.step is not None and explore.venture == ETSY
     assert explore.pick.decided == "weight" and explore.step.worth == weights.EXPLORE_WORTH and explore.line is None
-    off = explored(agent, exploring=False)  # a burn mode without venture cycles, or the owner's message first
-    assert off.kind == "ordinary" and off.step is None and explore_waits(off) == ["mode"]
+    off = explored(agent, exploring=False)  # a burn mode without venture cycles, or what the owner waits for first
+    assert off.kind == "ordinary" and off.step is None and explore_waits(off) == {"mode"}
     tracker = project(agent, *TRACKER)
     keep(agent)
     [product] = rows(agent, f"SELECT id FROM plan_nodes WHERE level = 'product' AND project_id = {tracker}")
@@ -282,28 +290,29 @@ def test_the_explore_step_makes_a_venture_cycle_when_it_weighs_most(data_dir: Pa
         plan.set_worth(conn, agent.scope(), product["id"], 6.0, "Owner", now(agent))
     work = explored(agent)  # the product weighs more: an ordinary cycle on it
     assert work.kind == "ordinary" and work.line == tracker
-    with agent.db.transaction() as conn:  # the owner's worth for the ventures, as for a product
+    with agent.db.transaction() as conn:  # the owner's worth for all the ventures, as for a product
         plan.set_worth(conn, agent.scope(), top["id"], 10.0, "Owner", now(agent))
     assert explored(agent).kind == "venture"
-    with agent.db.transaction() as conn:  # Explore next: one venture cycle first, then the pin is spent
+    step = venture_step(agent, DROPSHIPPING)
+    with agent.db.transaction() as conn:  # Explore next on one: one venture cycle first, then the pin is spent
         plan.set_worth(conn, agent.scope(), top["id"], None, "Owner", now(agent))
-        plan.pin(conn, agent.scope(), step["id"], True, "Owner", now(agent))
+        plan.pin(conn, agent.scope(), step, True, "Owner", now(agent))
     pinned = explored(agent)
-    assert pinned.kind == "venture" and pinned.pick.decided == "pin"
+    assert pinned.kind == "venture" and pinned.pick.decided == "pin" and pinned.venture == DROPSHIPPING
     with agent.db.transaction() as conn:
         plan.record(conn, agent.scope(), cycle(agent, status="running"), now(agent), pinned)
-    assert plan_node(agent, step["id"])["pinned"] == 0 and explored(agent).kind == "ordinary"
+    assert plan_node(agent, step)["pinned"] == 0 and explored(agent).kind == "ordinary"
 
 
 @pytest.mark.exploring
-def test_the_owners_hold_stops_exploring_and_an_idle_venture_cycle_waits_a_day(data_dir: Path) -> None:
+def test_the_owners_hold_stops_exploring_and_new_products(data_dir: Path) -> None:
     agent = exploring_agent(data_dir)
     with agent.db.connection() as conn:
         top = plan.ventures_node(conn, agent.scope())
     with agent.db.transaction() as conn:  # "nothing new": the owner's word the plan reads
         assert plan.owner_hold(conn, agent.scope(), top["id"], "nothing new this week", "Owner", now(agent)) is None
     held = explored(agent)
-    assert held.kind == "ordinary" and explore_waits(held) == ["hold"]
+    assert held.kind == "ordinary" and explore_waits(held) == {"hold"}
     with agent.db.connection() as conn:
         said = plan.plan_text(conn, agent.scope(), now(agent), agent.clock.today())
         step = plan.step_text(conn, agent.scope(), held, explore=True)
@@ -318,11 +327,6 @@ def test_the_owners_hold_stops_exploring_and_an_idle_venture_cycle_waits_a_day(d
     assert not refused.ok and "your owner holds new things (nothing new this week): no new product" in refused.text
     with agent.db.transaction() as conn:
         assert plan.owner_resume(conn, agent.scope(), top["id"], "Owner", now(agent)) is None
-        plan.explore_idle(conn, agent.scope(), None, "nothing new, my owner said", now(agent), agent.clock.today())
-    idle = explored(agent)
-    assert idle.kind == "ordinary" and explore_waits(idle) == ["date"]
-    agent.clock.advance(days=1)
-    keep(agent)  # its day has come: weighed again
     assert explored(agent).kind == "venture"
 
 
@@ -331,7 +335,7 @@ def test_with_no_product_step_ready_exploring_and_a_new_product_take_turns(data_
     agent = exploring_agent(data_dir)
     assert [r["venture"] for r in rows(agent, "SELECT venture FROM cycles")] == [1]  # nothing else was ready
     turn = explored(agent)  # a new install: the cycle after a venture cycle may start a product
-    assert turn.kind == "ordinary" and turn.step is None and explore_waits(turn) == ["turn"]
+    assert turn.kind == "ordinary" and turn.step is None and explore_waits(turn) == {"turn"}
     with agent.db.connection() as conn:
         assert plan.step_text(conn, agent.scope(), turn, explore=True) == (
             f"No step of your plan is ready.\n{plan.NEW_PRODUCT}"
@@ -343,23 +347,9 @@ def test_with_no_product_step_ready_exploring_and_a_new_product_take_turns(data_
     ventured = cycle(agent, status="running")
     with agent.db.transaction() as conn:
         store.update_cycle(conn, ventured, venture=1)
-    weighed = explored(agent)  # a product step is ready: exploring is weighed against it, with no turns
-    assert explore_waits(weighed) == [None] and weighed.step is not None
+    weighed = explored(agent)  # a product step is ready: the ventures are weighed against it, with no turns
+    assert explore_waits(weighed) == {None} and weighed.step is not None
     assert {s.product for s, _ in weighed.pick.ranked} == {tracker, None}
-
-
-@pytest.mark.exploring
-def test_a_venture_cycle_that_takes_no_ready_item_leaves_the_explore_step_waiting_a_day(data_dir: Path) -> None:
-    fake = FakeTransport(script=[taking("none: my owner said nothing new"), Reply("Nothing to do."), JOURNAL])
-    agent, ends = run(data_dir, fake, settings=VENTURING)
-    assert ends[0].status == "completed"
-    assert rows(agent, "SELECT kind, decided FROM plan_picks") == [{"kind": "venture", "decided": "weight"}]
-    with agent.db.connection() as conn:
-        step = plan.explore_step(conn, agent.scope())
-    assert step["waiting"] == "date" and step["wait_until"] == (agent.clock.today() + timedelta(days=1)).isoformat()
-    assert step["wait_why"].endswith("took no READY item: my owner said nothing new")
-    assert desk.declined("None: my owner said nothing new") and not desk.declined("research #3")
-    assert not desk.declined("")  # a wrong or missing answer only loses the cycle: the step doesn't wait
 
 
 def test_the_venture_share_option_is_gone_and_an_old_one_is_ignored() -> None:

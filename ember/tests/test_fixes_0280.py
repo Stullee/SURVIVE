@@ -284,6 +284,6 @@ def test_the_status_line_shows_the_kind_of_cycle() -> None:
     assert context._kind_line(snap) == "This is a marketing cycle."  # type: ignore[arg-type]
     snap.marketing = False  # 0.35.0: the marketing share retired; a marketing step has a cycle of its own
     assert context._kind_line(snap) == "Pins, Bluesky posts and blog posts belong to marketing cycles."  # type: ignore[arg-type]
-    snap.venture = True
-    assert context._kind_line(snap) == "This is a venture cycle: your plan's Explore step."  # type: ignore[arg-type]
+    snap.venture = True  # 0.37.0: each venture's next decision is a step of its own
+    assert context._kind_line(snap) == "This is a venture cycle: YOUR STEP is a venture's next decision."  # type: ignore[arg-type]
     assert context._kind_line(SimpleNamespace(venture=False, marketing=False, marketing_apart=False)) == ""  # type: ignore[arg-type]

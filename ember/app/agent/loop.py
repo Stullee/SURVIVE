@@ -71,7 +71,6 @@ from . import (
     bets,
     context,
     critic,
-    desk,
     digest,
     econ,
     evidence,
@@ -190,7 +189,6 @@ class Plan:
     money_path: str = ""  # how the goal leads to income (or what a learning experiment would show)
     focus_venture_id: int | None = None  # 0.10.0
     focus_milestone_id: int | None = None  # 0.11.0
-    ready: str = ""  # 0.13.0: a venture plan's READY item (its key), or "none: " and why
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -202,7 +200,6 @@ class Plan:
             "focus_milestone_id": self.focus_milestone_id,
             "steps": self.steps,
             "sleep_minutes": self.sleep_minutes,
-            **({"ready": self.ready} if self.ready else {}),
         }
 
 
@@ -271,7 +268,6 @@ class CycleRunner:
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
         # 0.29.0: revenue less expenses and API spending over the last 30 days, as the last keeper read them
         self.money_numbers: tuple[int, int] | None = None
-        self.ready_items: list[desk.Item] = []  # 0.13.0: the READY list the last venture plan was shown
         # 0.35.0: what the plan tree decided for the cycle (plan.steer): its step and what the cycle is
         self.steered: plan_tree.Steer | None = None
         self.reactive = False  # 0.13.0: a cycle an event woke (run sets it)
@@ -494,21 +490,29 @@ class CycleRunner:
     def _cycle_kind(self, cycle_id: int | None, trigger: str = "schedule") -> str:
         """What the wake cycle is, recorded on it: 0.35.0, the plan tree decides (plan.steer). Its step decides it (a
         marketing step a marketing cycle, any other an ordinary one). 0.36.0: the venture share retired, and the plan's
-        Explore step makes a venture cycle, weighed like any step: in a burn mode that runs venture cycles (0.12.0),
-        and not while the owner waits for something (obligations.pressing): their messages when one woke the cycle
-        (``trigger`` 'owner', 0.19.3), a promise or decision of theirs that presses (0.33.0). The pick is kept with
-        every candidate (plan_picks). ``cycle_id`` None: the diagnostics' preview, which keeps nothing."""
+        Explore step makes a venture cycle (0.37.0: each venture's step), weighed like any step: in a burn mode that
+        runs venture cycles (0.12.0), and not when the owner's message woke the cycle (``trigger`` 'owner', 0.19.3: it
+        is answered first). 0.37.0: a promise or decision of the owner's is a step too, weighed like the others (until
+        0.36.0 one that pressed came first). The pick is kept with every candidate (plan_picks). ``cycle_id`` None:
+        the diagnostics' preview, which keeps nothing: 0.37.0, it lays the tree out as the cycle's keeper would (a
+        promise made since is a step of it then) and takes that back once it has steered."""
         mode = burn.peek(self.db, self.economy.life.evaluate())
         today = self.clock.today()
         now = to_iso(self.clock.now())
         with self.db.transaction() as conn:
             if cycle_id is not None:
                 ventures.seed(conn, self.scope, now)
+            else:
+                conn.execute("SAVEPOINT preview")
+                try:
+                    plan_tree.keep(conn, self.scope, now, today, plan_tree.channels_from(self.settings))
+                except Exception:  # noqa: BLE001 - the preview steers the tree as it is
+                    log.exception("The plan tree's keeper failed in the preview")
+                    conn.execute("ROLLBACK TO preview")
             self.owner_waits = trigger == "owner" and obligations.messages_waiting(conn, self.scope) > 0
-            # what the owner waits for comes first: their messages when one woke the cycle (0.19.3), a promise or a
-            # decision of theirs that presses (0.33.0), whether or not it is a step of the plan
-            first = obligations.pressing(conn, self.scope, today, messages=trigger == "owner")
-            exploring = mode.venture_cycles and not first
+            # the owner's messages that woke the cycle come first (0.19.3); 0.37.0: a promise or decision of theirs is
+            # a step of the plan, weighed like the ventures' (0.33.0 to 0.36.0 one that pressed kept them waiting)
+            exploring = mode.venture_cycles and not self.owner_waits
             self.steered = plan_tree.steer(
                 conn, self.scope, now, today, self._channels(), exploring=exploring, cycle_id=cycle_id
             )
@@ -518,6 +522,9 @@ class CycleRunner:
                 plan_tree.record(conn, self.scope, cycle_id, now, self.steered)
                 if self.steered.kind in (lines.VENTURE, lines.MARKETING):
                     store.update_cycle(conn, cycle_id, **{self.steered.kind: 1})
+            else:
+                conn.execute("ROLLBACK TO preview")
+                conn.execute("RELEASE preview")
         return self.steered.kind
 
     def _channels(self) -> dict[str, bool]:
@@ -736,24 +743,24 @@ class CycleRunner:
         local = self.clock.now().astimezone(self.clock.tz).strftime("%A %Y-%m-%d %H:%M %Z")
         with self.db.connection() as conn:
             fresh = news.collect(conn, self.db, self.scope, app_version())
-            # 0.13.0: the decision desk: a venture plan takes one of READY's items, or says why none
-            self.ready_items = (
-                desk.ready(
-                    conn,
-                    self.scope,
-                    mode=mode.mode,
-                    today=self.clock.today(),
-                    cash_eur=self.settings.venture_cash_eur,
-                    net_days=status.runway.net_days,
-                )
-                if venture
-                else []
-            )
-            # 0.35.0: an ordinary or marketing plan's YOUR STEP: the step the plan tree took for it (plan.steer)
+            # 0.35.0: an ordinary or marketing plan's YOUR STEP: the step the plan tree took for it (plan.steer);
+            # 0.37.0: a venture plan's too, in place of the decision desk's READY (0.13.0)
             asked = lines.questions(conn, self.scope, self.clock.today()) if kind == lines.ORDINARY else []
             step = (
-                plan_tree.step_text(conn, self.scope, self.steered, explore=mode.mode == burn.EXPLORE, questions=asked)
-                if self.steered is not None and kind in (lines.ORDINARY, lines.MARKETING) and not self.reactive
+                plan_tree.step_text(
+                    conn,
+                    self.scope,
+                    self.steered,
+                    explore=mode.mode == burn.EXPLORE,
+                    questions=asked,
+                    cash_eur=self.settings.venture_cash_eur,
+                    net_days=status.runway.net_days,
+                    forecasts=predictions.calibration(conn, self.scope) if venture else "",
+                    today=self.clock.today(),
+                )
+                if self.steered is not None
+                and kind in (lines.ORDINARY, lines.MARKETING, lines.VENTURE)
+                and not self.reactive
                 else ""
             )
             shop = ""
@@ -833,11 +840,7 @@ class CycleRunner:
                 decision_wakes=self.settings.wakes_on("approval") or self.settings.wakes_on("rejection"),  # 0.31.0
                 burn=_burn_line(mode, self.clock),
                 brainstorm=mode.brainstorms,
-                ready=(
-                    desk.text(self.ready_items, predictions.calibration(conn, self.scope) if venture else "")
-                    if venture
-                    else step
-                ),
+                ready=step,
                 agenda=agenda.unseen(conn, self.scope),  # 0.13.0: what happened between cycles
                 reactive=self.reactive,
                 books=self.money_numbers,  # 0.29.0: the money goal's progress
@@ -931,7 +934,8 @@ class CycleRunner:
                 library.mark_seen(conn, cycle_id, shown)  # the documents this plan listed as newly studied
         if planned.changelog:
             news.mark_changelog_seen(self.db, self.scope, snap.news)
-        taken = self._take_ready(cycle_id, plan) if ctx.venture else None  # 0.13.0
+        if ctx.venture and self.steered is not None and self.steered.venture is not None:
+            plan.focus_venture_id = self.steered.venture  # 0.37.0: Ember's code aims it at its step's venture
         notes: list[str] = []
         if self.kind in (lines.ORDINARY, lines.MARKETING):  # 0.35.0: the line of the step the plan tree took
             plan.focus_project_id = self.steered.line if self.steered is not None else None
@@ -960,12 +964,12 @@ class CycleRunner:
                     plan.focus_venture_id = None  # 0.19.3: a backed or live venture is its project's work
                     venture_focus = (
                         f"Venture #{venture['id']} is {venture['stage']}: your owner backed it, so its work is its "
-                        "project's, in ordinary cycles. This venture cycle finds and decides new ventures (READY)."
+                        "project's, in ordinary cycles. This venture cycle finds and decides new ventures (YOUR STEP)."
                     )
                 else:
                     venture_focus = self._venture_focus(conn, venture, cycle_id)
-                    if taken is not None and taken.venture_id == plan.focus_venture_id:
-                        venture_focus = f"Decision desk: you took {taken.key}: {taken.text}\n{venture_focus}"
+                    if ctx.venture and self.steered is not None and self.steered.step is not None:
+                        venture_focus = f"Your step: #{self.steered.step.id} {self.steered.step.title}\n{venture_focus}"
             if not ctx.venture and plan.focus_project_id is not None:  # 0.28.0: aimed at the line's milestone
                 notes.append(self._line_milestone(conn, plan, focus))
             if plan.focus_milestone_id is not None:
@@ -1081,21 +1085,6 @@ class CycleRunner:
             return ""
         then = f"#{own}, its milestone due first" if own is not None else "none of its milestones (none is open)"
         return f"Your plan aimed at milestone #{aimed['id']}, which isn't line #{line}'s: the cycle is aimed at {then}."
-
-    def _take_ready(self, cycle_id: int, plan: Plan) -> desk.Item | None:
-        """0.13.0: the READY item the venture plan took (its venture becomes the cycle's focus), kept with the list it
-        came from, or why it took none."""
-        if not self.ready_items:
-            return None
-        taken, why = desk.choose(self.ready_items, plan.ready)
-        if taken is not None and taken.venture_id is not None:
-            plan.focus_venture_id = taken.venture_id
-        with self.db.transaction() as conn:
-            desk.record(conn, cycle_id, self.ready_items, taken, why, to_iso(self.clock.now()))
-            if taken is None and desk.declined(plan.ready):  # 0.36.0: the Explore step waits until tomorrow (live:
-                # ten venture cycles a day that took nothing on purpose); a wrong or missing answer only loses the cycle
-                plan_tree.explore_idle(conn, self.scope, cycle_id, why, to_iso(self.clock.now()), self.clock.today())
-        return taken
 
     def _money_numbers(self, books_scope: Any) -> tuple[int, int]:
         """0.29.0: revenue less expenses and API spending over the last 30 days, in micros: what the money goal is
@@ -1741,7 +1730,6 @@ class CycleRunner:
         venture = data.get("focus_venture_id")
         milestone = data.get("focus_milestone_id")
         sleep = data.get("sleep_minutes")
-        ready = " ".join(str(data.get("ready") or "").split())[:300]  # 0.13.0: a venture plan's
         return Plan(
             assessment=str(data.get("assessment") or "")[: prompts.PLAN_CHARS["assessment"]],
             goal=str(data.get("goal") or "")[: prompts.PLAN_CHARS["goal"]],
@@ -1751,7 +1739,6 @@ class CycleRunner:
             focus_milestone_id=milestone if isinstance(milestone, int) and not isinstance(milestone, bool) else None,
             steps=steps,
             sleep_minutes=self._clamp_sleep(sleep) if isinstance(sleep, int) and not isinstance(sleep, bool) else None,
-            ready=ready,
         )
 
     def _clamp_sleep(self, minutes: int) -> int:

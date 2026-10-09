@@ -1,6 +1,8 @@
 """0.27.0: the Projects and Ventures tabs are one, Ventures, with two views: Pipeline (the tree and the ventures still
 being decided) and Running (the backed and live ventures, each with its projects in its card, then the other
-projects). The owner saw the same work twice: a backed venture and the project Ember's code opens for it."""
+projects). The owner saw the same work twice: a backed venture and the project Ember's code opens for it. 0.37.0: the
+Ventures tab is the Plan tab's (each venture being explored is a node of the plan), its views Ventures and Product
+lines."""
 
 from __future__ import annotations
 
@@ -22,9 +24,10 @@ def panel(html: str, panel_id: str) -> str:
 def test_one_tab_holds_the_ventures_and_their_projects(ingress_client: TestClient) -> None:
     html = ingress_client.get("/").text
     assert 'id="tab-projects"' not in html and 'id="panel-projects"' not in html
+    assert 'id="tab-ventures"' not in html and 'id="panel-ventures"' not in html  # 0.37.0: the Plan tab's
     tabs = re.findall(r'role="tab" class="tab" id="tab-(\w+)"', html)
-    assert tabs.count("ventures") == 1 and "projects" not in tabs
-    ventures = panel(html, "panel-ventures")
+    assert "ventures" not in tabs and "projects" not in tabs and tabs.count("plan") == 1
+    ventures = panel(html, "panel-plan")
     # Two views, each a tab panel its view's tab controls; Pipeline is shown until the script says otherwise.
     for view, hidden in (("pipeline", ""), ("running", " hidden")):
         assert f'id="vt-tab-{view}" aria-controls="vt-{view}"' in ventures
@@ -36,12 +39,14 @@ def test_one_tab_holds_the_ventures_and_their_projects(ingress_client: TestClien
     for part in ('id="projects-bar"', 'data-pj-filter="open"', 'id="projects-sort"', 'id="vt-running-list"'):
         assert part in running, part
     assert 'id="projects"' in running
-    # The business cases waiting for the owner are counted on the tab and on Pipeline.
-    assert 'id="badge-ventures"' in html and 'id="badge-pipeline"' in ventures
+    # The business cases waiting for the owner are counted on the tab (0.37.0: Plan) and on Pipeline (Ventures).
+    plan_tab = html[html.index('id="tab-plan"') : html.index("</button>", html.index('id="tab-plan"'))]
+    assert 'id="badge-ventures"' in plan_tab and 'id="badge-pipeline"' in ventures
+    assert '>Ventures <span class="badge" id="badge-pipeline"' in ventures and ">Product lines</button>" in ventures
 
 
 def test_the_backed_and_live_ventures_are_in_running_the_others_in_pipeline() -> None:
-    assert '  var TABS = ["overview", "ledger", "ventures", "plan",' in SCRIPT  # 0.35.0: Plan takes Roadmap's place
+    assert '  var TABS = ["overview", "ledger", "plan", "library",' in SCRIPT  # 0.37.0: Plan holds the ventures
     assert '  var VENTURE_VIEWS = ["pipeline", "running"];' in SCRIPT
     assert "  var RUNNING_STAGES = { building: true, live: true };" in SCRIPT
     groups = SCRIPT[SCRIPT.index("  var VENTURE_GROUPS = [") : SCRIPT.index("  var RUNNING_STAGES")]
@@ -69,8 +74,12 @@ def test_a_running_venture_card_holds_its_projects() -> None:
 
 
 def test_the_old_projects_tab_and_its_links_lead_to_running() -> None:
-    assert '  if (ui.tab === "projects") { ui.tab = "ventures"; ui.vtView = "running"; }' in SCRIPT
+    assert (
+        '  if (ui.tab === "projects") ui.vtView = "running";\n'
+        '  if (ui.tab === "projects" || ui.tab === "ventures") ui.tab = "plan";'
+    ) in SCRIPT  # 0.37.0: both old tabs are the Plan tab's views
+    assert 'if (name === "ventures" || name === "projects") name = "plan";' in SCRIPT
     reveal = SCRIPT[SCRIPT.index("  function revealProject(id) {") : SCRIPT.index("  function showProject() {")]
-    assert 'selectTab("ventures", false);' in reveal and 'selectVentureView("running", false);' in reveal
-    assert 'selectTab("projects"' not in SCRIPT
-    assert '"Projects")' not in SCRIPT and '"Open in Ventures"' in SCRIPT  # the workspace's links, for both
+    assert 'selectTab("plan", false);' in reveal and 'selectVentureView("running", false);' in reveal
+    assert 'selectTab("projects"' not in SCRIPT and 'selectTab("ventures"' not in SCRIPT
+    assert '"Projects")' not in SCRIPT and '"Open in Plan"' in SCRIPT  # the workspace's links, for both
