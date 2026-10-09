@@ -139,7 +139,7 @@ def dashboard(request: Request) -> dict[str, Any]:
         "inbox_before": None,
         "promises_open": [],
         "upgrades": [],
-        "instructions": None,
+        "rules": [],
         "mind": None,
         "badges": None,
     }
@@ -512,12 +512,31 @@ def _wake_for_decision(request: Request, reply: Any, kind: str) -> None:
         reply.body["wake"] = wake
 
 
-@router.post("/api/instructions")
-def set_instructions(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+@router.post("/api/rules")
+def add_rule(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.36.0: a rule for the owner's rulebook (in place of the standing instructions)."""
     actions = _owner_actions(request)
     if actions is None:
         return NO_AGENT
-    return _reply(actions.set_instructions(body, _owner(request)))
+    return _reply(actions.add_rule(body, _owner(request)))
+
+
+@router.post("/api/rules/{rule_id}")
+def change_rule(request: Request, rule_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.36.0: a rule's new words (a new rule in its place)."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.change_rule(rule_id, body, _owner(request)))
+
+
+@router.post("/api/rules/{rule_id}/remove")
+def remove_rule(request: Request, rule_id: ItemId) -> JSONResponse:
+    """0.36.0: a rule out of the rulebook (its history is kept)."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.remove_rule(rule_id, _owner(request)))
 
 
 @router.post("/api/lessons/pins")
@@ -692,6 +711,24 @@ def resume_plan_product(request: Request, node_id: ItemId) -> JSONResponse:
     if actions is None:
         return NO_AGENT
     return _reply(actions.resume_product(node_id, _owner(request)))
+
+
+@router.post("/api/plan/products/{node_id}/hold")
+def hold_plan_product(request: Request, node_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.36.0: the owner holds a product (only they resume a hold of theirs)."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.hold_product(node_id, body, _owner(request)))
+
+
+@router.post("/api/plan/freeze")
+def freeze_plan(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.36.0: the owner freezes the titles and tags of the live listings until a day, or lifts the freeze."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.freeze(body, _owner(request)))
 
 
 @router.post("/api/plan/products/{node_id}/autonomy")

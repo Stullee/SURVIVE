@@ -321,6 +321,7 @@ PLATFORMS = {
     "website": "Website",
     "channels": "Channels",
     "other": "Other",
+    "ventures": "Ventures",  # 0.36.0: the Explore step's project (plan.py)
 }
 
 

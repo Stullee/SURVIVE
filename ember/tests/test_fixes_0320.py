@@ -184,6 +184,7 @@ def calling(agent: Any, tool: str, *, venture: bool = False, **args: Any) -> too
     return tools.run(ctx, tool, args, f"toolu_{tool}", llm_call, "act")
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_refused_proposal_keeps_its_case_and_names_every_gap_and_knock_out_at_once(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[test_ventures.plan(steps=[])]), settings=test_ventures.VENTURING)
     vid = test_ventures.DROPSHIPPING

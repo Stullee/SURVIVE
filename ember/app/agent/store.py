@@ -1,4 +1,4 @@
-"""The agent's records in SQLite: projects, tool calls, journal, queue items, the owner's standing instructions.
+"""The agent's records in SQLite: projects, tool calls, journal, queue items, the owner's rulebook (0.36.0).
 
 Everything is scoped to a mode and a session (see migration 0003), so a dry run
 never mixes with the live agent. Functions that change something take the
@@ -612,19 +612,29 @@ def upgrades_for_owner(conn: sqlite3.Connection, scope: AgentScope, decided: int
     ).fetchall()
 
 
-def standing_instructions(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | None:
-    """The owner's current standing instructions (the newest row; its text is empty once they were cleared)."""
+def rules(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
+    """0.36.0: the owner's rulebook (in place of the standing instructions): the rules in force, in their places."""
     where, params = scope.where()
     return conn.execute(
-        f"SELECT * FROM standing_instructions WHERE {where} ORDER BY id DESC LIMIT 1", params
-    ).fetchone()
+        f"SELECT * FROM rules WHERE {where} AND removed_at IS NULL ORDER BY place, id", params
+    ).fetchall()
 
 
-def instructions_json(row: sqlite3.Row | None) -> dict[str, Any] | None:
-    """The standing instructions as the dashboard shows them: None while there are none."""
-    if row is None or not row["text"]:
-        return None
-    return {"text": row["text"], "updated_at": row["created_at"], "entered_by": row["entered_by"]}
+def rule(conn: sqlite3.Connection, scope: AgentScope, rule_id: int) -> sqlite3.Row | None:
+    where, params = scope.where()
+    return conn.execute(f"SELECT * FROM rules WHERE {where} AND id = ?", (*params, rule_id)).fetchone()
+
+
+def rules_json(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    """The rulebook as the dashboard shows it."""
+    return [
+        {"id": r["id"], "text": r["text"], "created_at": r["created_at"], "entered_by": r["entered_by"]} for r in rows
+    ]
+
+
+def rulebook_text(rows: list[sqlite3.Row]) -> str:
+    """The rulebook as the agent reads it: each rule on a line of its own, with its number ("" while there are none)."""
+    return "\n".join(f"#{r['id']} {' '.join(str(r['text']).split())}" for r in rows)
 
 
 def open_messages(conn: sqlite3.Connection, scope: AgentScope, limit: int = 8) -> list[sqlite3.Row]:

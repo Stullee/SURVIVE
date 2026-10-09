@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,7 @@ def taking(ready: str, venture: int | None = None) -> Plan:
     return Plan({**dict(plan(venture=venture).plan), "ready": ready})  # type: ignore[arg-type]
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_ready_ranks_the_ventures_next_decisions(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)  # the tree is planted
     # Etsy is being researched (no listing is live yet) and six ideas wait: the research first, then the ideas
@@ -84,6 +86,7 @@ def test_ready_ranks_the_ventures_next_decisions(data_dir: Path) -> None:
     assert items[-1].kind == "brainstorm" and len(items) == desk.MAX_ITEMS
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_proposed_venture_the_critic_doubts_is_answered_first(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     proposed(agent)  # DROPSHIPPING, with its numbers
@@ -107,6 +110,7 @@ def test_a_proposed_venture_the_critic_doubts_is_answered_first(data_dir: Path) 
     )
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_venture_plan_takes_a_ready_item_or_says_why_none(data_dir: Path) -> None:
     fake = FakeTransport(script=[plan(steps=[])])
     agent, _ = run(data_dir, fake, settings=VENTURING)  # its plan names none: kept as such
@@ -123,26 +127,22 @@ def test_a_venture_plan_takes_a_ready_item_or_says_why_none(data_dir: Path) -> N
     assert f"\nDecision desk: you took triage #{DROPSHIPPING}: Dropshipping store · an idea" in brief
     assert f"Focus venture: #{DROPSHIPPING} Dropshipping store" in brief  # the plan named no venture: the pick's
     assert rows(agent, "SELECT venture_id FROM cycles WHERE id = 2") == [{"venture_id": DROPSHIPPING}]
-    fake.script.extend(
-        [
-            taking("none: my owner wants the Etsy research finished first"),
-            Reply("Done."),
-            JOURNAL,
-            taking("appraise #99"),
-            Reply("Done."),
-            JOURNAL,
-        ]
-    )
-    agent.run_cycle("schedule")
-    agent.run_cycle("schedule")
+    fake.script.extend([taking("appraise #99"), Reply("Done."), JOURNAL])
+    agent.run_cycle("schedule")  # 0.36.0: a wrong or missing answer only loses the cycle: the Explore step is ready
     agent.run_cycle("schedule")  # the fake model plans by itself: it takes READY's first item
+    fake.script.extend([taking("none: my owner wants the Etsy research finished first"), Reply("Done."), JOURNAL])
+    agent.run_cycle("schedule")  # 0.36.0: "none" leaves the plan's Explore step waiting until tomorrow
     picks = rows(agent, "SELECT cycle_id, pick, venture_id, why_not, items FROM desk_picks ORDER BY id")
     assert [(p["cycle_id"], p["pick"], p["venture_id"], p["why_not"]) for p in picks] == [
         (1, None, None, "the plan named none"),
         (2, f"triage #{DROPSHIPPING}", DROPSHIPPING, None),
-        (3, None, None, "my owner wants the Etsy research finished first"),
-        (4, None, None, "'appraise #99' isn't on the READY list"),
-        (5, json.loads(picks[4]["items"])[0]["key"], json.loads(picks[4]["items"])[0]["venture_id"], None),
+        (3, None, None, "'appraise #99' isn't on the READY list"),
+        (4, json.loads(picks[3]["items"])[0]["key"], json.loads(picks[3]["items"])[0]["venture_id"], None),
+        (5, None, None, "my owner wants the Etsy research finished first"),
+    ]
+    tomorrow = (agent.clock.today() + timedelta(days=1)).isoformat()
+    assert rows(agent, "SELECT waiting, wait_until FROM plan_nodes WHERE template = 'explore@1'") == [
+        {"waiting": "date", "wait_until": tomorrow}
     ]
     assert [i["key"] for i in json.loads(picks[1]["items"])][:2] == [f"appraise #{ETSY}", f"triage #{PINTEREST}"]
     shown = views.ventures_view(agent)["desk"]

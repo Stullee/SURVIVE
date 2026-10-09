@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
+
 from app.agent import desk, stages, ventures
 from app.agent.fake_llm import FakeTransport
 from app.agent.service import Agent
@@ -38,6 +40,7 @@ def idea(agent: Agent, title: str, by: str = "agent") -> int:
         )
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_an_idea_no_one_takes_up_is_parked_after_triage_days(data_dir: Path) -> None:
     agent = agent_with_tree(data_dir)
     mine, theirs = idea(agent, "Printable chore charts"), idea(agent, "Owner's idea", by="owner")
@@ -56,6 +59,7 @@ def test_an_idea_no_one_takes_up_is_parked_after_triage_days(data_dir: Path) -> 
     assert venture(agent, theirs)["stage"] == "idea"  # the owner's ideas wait for them
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_an_idea_close_to_its_triage_date_is_urgent_on_the_desk(data_dir: Path) -> None:
     agent = agent_with_tree(data_dir)
     mine = idea(agent, "Wedding game printables")
@@ -69,6 +73,7 @@ def test_an_idea_close_to_its_triage_date_is_urgent_on_the_desk(data_dir: Path) 
     assert items.index(mine_item) <= 1  # among the urgent ones, before the plain triage items
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_venture_already_waiting_counts_from_when_the_rule_came(data_dir: Path) -> None:
     agent = agent_with_tree(data_dir)
     mine = idea(agent, "Old idea")
@@ -92,6 +97,7 @@ def record_revenue(agent: Agent, venture_id: int, amount: str) -> None:
     owner_entry(agent.economy, "revenue", amount, venture_id=venture_id, test_money=True)
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_live_venture_that_earns_more_than_it_costs_gets_a_decision_point_to_scale(data_dir: Path) -> None:
     agent = agent_with_tree(data_dir)
     live(agent, ETSY)
@@ -108,6 +114,7 @@ def test_a_live_venture_that_earns_more_than_it_costs_gets_a_decision_point_to_s
     assert not any("scale venture" in line for line in keep(agent))  # once
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_live_venture_that_sells_nothing_is_parked_after_live_days(data_dir: Path) -> None:
     agent = agent_with_tree(data_dir)
     live(agent, ETSY)

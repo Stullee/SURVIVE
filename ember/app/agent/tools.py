@@ -2135,10 +2135,13 @@ def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
             f"this cycle works on product line #{line}: a new product line starts in a cycle of its own (Ember's code "
             "gives you one when no step of your plan is ready)"
         )
+    venture_id = args.get("venture_id")
+    held = plan.new_things_held(conn, ctx.scope)
+    if held and venture_id is None:  # 0.36.0: the owner's "nothing new", kept by Ember's code
+        raise ToolError(f"your owner holds new things ({held}): no new product until they resume them")
     open_ = store.open_projects(conn, ctx.scope)  # 0.19.1: as many as the agent needs (it was at most 8)
     if any(p["title"].strip().lower() == args["title"].strip().lower() for p in open_):
         raise ToolError("an open project already has this title")
-    venture_id = args.get("venture_id")
     if venture_id is not None:
         _working_venture(conn, ctx.scope, venture_id)
     project_id = store.create_project(
@@ -4337,6 +4340,12 @@ def _propose_etsy_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
     for name in [n for n in ("title", "description", "price", "tags", "photos", "files") if n in changes]:
         if changes[name] == getattr(now, name):
             del changes[name]  # the same as now: no change
+    frozen = plan.frozen(conn, ctx.scope, ctx.clock.today())  # 0.36.0: the owner's freeze, kept by Ember's code
+    if frozen and ("title" in changes or "tags" in changes):
+        raise ToolError(
+            f"your owner froze the titles and tags of your listings until {frozen}: propose the other changes without"
+            " title and tags"
+        )
     if action == "deactivate" and changes:
         raise ToolError("deactivate on its own: a change to a listing that leaves the shop helps nobody")
     if not changes and action is None:

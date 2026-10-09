@@ -318,6 +318,7 @@ def test_the_agent_hears_that_a_channel_waits_for_its_owner(data_dir: Path) -> N
 # 0.15.0 (ventures): these ventures have no numbers yet, so the owner backs them with confirm ("Back it anyway").
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_channel_venture_s_first_test_waits_for_its_channel(data_dir: Path) -> None:
     settings = VENTURING.model_copy(update={"pinterest_enabled": True})
     transport = FakeTransport(script=[plan(steps=[])])
@@ -340,6 +341,7 @@ def test_a_channel_venture_s_first_test_waits_for_its_channel(data_dir: Path) ->
     assert row["due"] == (agent.clock.today() + timedelta(days=stages.FIRST_TEST_DAYS)).isoformat()
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_venture_without_a_channel_still_gets_its_test_when_backed(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     back = {"action": "back", "confirm": True}
@@ -366,6 +368,7 @@ def test_the_agent_hears_why_a_set_up_channel_s_tools_are_off(data_dir: Path, mo
         assert f"== {name} ==\nSwitched on, but it waits for your owner's setup (the Etsy shop isn't connected)" in text
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_first_test_set_before_its_channel_was_set_up_starts_again(data_dir: Path) -> None:
     """The live case: venture #2 was backed under 0.13.0 (its first test set at once) while Pinterest wasn't set up."""
     settings = VENTURING.model_copy(update={"pinterest_enabled": True})
@@ -390,6 +393,7 @@ def test_a_first_test_set_before_its_channel_was_set_up_starts_again(data_dir: P
     assert row["due"] == (agent.clock.today() + timedelta(days=stages.FIRST_TEST_DAYS)).isoformat()
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_channel_venture_backed_while_its_channel_is_ready_gets_its_test_at_once(data_dir: Path) -> None:
     settings = VENTURING.model_copy(update={"pinterest_enabled": True})
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=settings)
@@ -401,6 +405,7 @@ def test_a_channel_venture_backed_while_its_channel_is_ready_gets_its_test_at_on
     assert agent.channels_ready() == []
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_first_test_running_when_the_channel_is_switched_off_starts_again(data_dir: Path, monkeypatch: Any) -> None:
     """Switched off mid-test, the channel's test isn't left to pass its date and be missed the moment it is back."""
     settings = VENTURING.model_copy(update={"pinterest_enabled": True})

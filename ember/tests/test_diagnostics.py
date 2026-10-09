@@ -108,12 +108,12 @@ def test_a_cycle_is_easy_to_read(ingress_client: TestClient) -> None:
     assert re.fullmatch(r"    \[\d+ characters of web text left out\]", research[1]) and len(research) == 2
 
     preview = section(full, diagnostics.PLANNER_TITLE)
-    # The first cycle of the day was an ordinary one, so ventures are owed their share: the next is a venture cycle.
-    assert preview.startswith("\n(the next cycle is a venture cycle)\n== STATUS ==\n")
+    # 0.36.0: the plan's step decides the next cycle (the venture share retired): an ordinary one here
+    assert preview.startswith("\n(the next cycle is an ordinary cycle)\n== STATUS ==\n")
     assert "\n== OPEN PROJECTS ==\n#1 [active] Printable meal-planning templates" in preview
-    assert preview.endswith("\n== TASK ==\nPlan this venture cycle. Reply with the JSON plan only.\n")
+    assert preview.endswith("\n== TASK ==\nPlan this wake cycle. Reply with the JSON plan only.\n")
     scheduler = json.loads(section(full, "SCHEDULER").strip())
-    assert scheduler["next_cycle"]["venture"] is True and scheduler["next_cycle"]["spent_today_usd"] > 0
+    assert scheduler["next_cycle"]["venture"] is False and scheduler["next_cycle"]["spent_today_usd"] > 0
 
     records = section(full, "AGENT RECORDS")
     messages = records.split("-- messages\n", 1)[1].split("\n--", 1)[0].splitlines()

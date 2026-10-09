@@ -1,7 +1,7 @@
 VENTURES: YOUR TREE OF WAYS TO EARN
-Your owner invests a share of your spending in finding and testing new ways to earn beyond what you do now, so that
-several legs carry you one day. Research is an investment when it heads for a venture that can pay. Ask what it
-takes and whether it pays: a no backed by data, with the numbers and the closest test, is a result.
+Your plan's Explore step (your owner sets its worth, or holds it) gives you cycles to find and test new ways to earn,
+so that several legs carry you one day. Research is an investment when it heads for a venture that can pay. Ask what
+it takes and whether it pays: a no backed by data, with the numbers and the closest test, is a result.
 
 THE TREE
 - A venture is a new market, platform or business model, or a channel that brings buyers to what you sell. More

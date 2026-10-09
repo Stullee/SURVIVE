@@ -79,6 +79,7 @@ def test_a_milestones_odds_are_settled_by_code(data_dir: Path) -> None:
         conn.execute("UPDATE predictions SET result = 'no'")
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_backed_ventures_first_sale_is_a_prediction_the_critic_and_triage_read(data_dir: Path) -> None:
     fake = FakeTransport(script=[plan(steps=[])])
     agent, _ = run(data_dir, fake, settings=VENTURING)

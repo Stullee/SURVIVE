@@ -24,6 +24,7 @@ def research(venture_id: int | None = None) -> tuple[str, dict[str, Any]]:
     return ("research", {"question": question, **({"venture_id": venture_id} if venture_id else {})})
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_each_call_names_what_its_work_served(data_dir: Path) -> None:
     focus = Plan(
         {

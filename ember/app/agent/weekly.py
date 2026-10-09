@@ -77,13 +77,13 @@ def view(
     now: datetime,
     money: str,
     strategy: str,
-    instructions: str,
+    rulebook: str,
     goal: str = "",
 ) -> str:
     """The week as the weekly look reads it, whole (``cut`` bounds it; ``money``: the books' lines Ember's code wrote
     for it; 0.30.0: ``goal``, the goal and its sub-goals, ``goal_text``). 0.30.0: the most important first, as a cut
-    takes the end: the owner's standing instructions and the strategy came last, after up to 30 earlier cases and the
-    whole playbook, which now grows every day."""
+    takes the end: the owner's standing instructions (0.36.0: their rulebook) and the strategy came last, after up to 30
+    earlier cases and the whole playbook, which now grows every day."""
     since = to_iso(now - timedelta(days=DAYS))
     month = to_iso(now - timedelta(days=30))
     where, params = scope.where()
@@ -91,7 +91,7 @@ def view(
         f"THE WEEK TO {now:%a %Y-%m-%d} (from Ember's records: exact)",
         money,
         goal,
-        f"YOUR OWNER'S STANDING INSTRUCTIONS\n{instructions or 'None.'}",
+        f"YOUR OWNER'S RULEBOOK\n{rulebook or 'None.'}",
         f"YOUR STRATEGY NOW\n{strategy.strip() or 'None.'}",
     ]
     funnels = reach.funnels(conn, scope)

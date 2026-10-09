@@ -10,11 +10,11 @@ agent can do, how hard and how risky it is, how soon the first euro comes and wh
 guesses them first; research replaces the guesses. Their ``weight`` (0 to 100, revenue counting double) ranks the
 ideas: the agent researches the heaviest first, and the Ventures tab draws the tree with it.
 
-The agent finds and researches ventures in venture cycles: Ember's code makes a cycle a venture cycle while venture
-cycles have had less than the owner's share of the day's spending (the ``venture_share`` option), so ventures get that
-share whatever else is going on. What the agent learns goes into the venture's knowledge file in its workspace
-(``file_of``); its scorecard (demand, economics, setup, first euro, risks and the first test) is the business case the
-owner decides on the Ventures tab.
+The agent finds and researches ventures in venture cycles: until 0.35.3 Ember's code made a cycle a venture cycle
+while venture cycles had had less than the owner's share of the day's spending (the ``venture_share`` option); since
+0.36.0 the plan tree's Explore step makes one, weighed like any step (plan.py). What the agent learns goes into the
+venture's knowledge file in its workspace (``file_of``); its scorecard (demand, economics, setup, first euro, risks
+and the first test) is the business case the owner decides on the Ventures tab.
 
 Stages: idea → researching → proposed (a business case) → building (the owner backed it) → live (launched or
 earning), with parked and killed on the side. The agent can't back or kill a venture: only the owner can
@@ -650,16 +650,6 @@ def room_text(cycle_cap: float, costs: dict[str, int], brainstorms: bool = True)
         f" cycle's ${cycle_cap:.2f} pays for about {usd(room)} of them after planning, the work steps and the"
         f" reflection, so about {calls} research calls, or a brainstorm and {after}."
     )
-
-
-def venture_turn(share: int, spent: int, ventured: int) -> bool:
-    """Whether the next cycle is a venture cycle: ventures have had less than ``share`` percent of the day's spending
-    (the day's first cycle, with nothing spent yet, is an ordinary one; 100 makes every cycle a venture cycle)."""
-    if share <= 0:
-        return False
-    if share >= 100:
-        return True
-    return ventured * 100 < spent * share
 
 
 # --- what the agent is shown ---

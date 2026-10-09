@@ -1,5 +1,4 @@
-"""The owner's side: approvals, the inbox, standing instructions, upgrade requests, ventures, the roadmap, the kill
-switch.
+"""The owner's side: approvals, the inbox, the rulebook, upgrade requests, ventures, the roadmap, the kill switch.
 
 Only the owner's HTTP endpoints call this module; the agent's tools never import
 it (a test checks), so the agent can't decide its own requests. Every change is
@@ -35,7 +34,11 @@ from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
 REMOVED_TEXT = "[removed by the owner]"  # the only text a message may be changed to (migration 0006)
-INSTRUCTIONS_MAX = 1_500  # characters of the standing instructions (migration 0007)
+# 0.36.0: the owner's rulebook, in place of the standing instructions (1,500 characters in one text, migration 0007):
+# each rule holds until the owner removes it (migration 0090). Every plan and work step shows them all.
+RULE_MAX = 500  # characters of one rule
+RULEBOOK_MAX = 1_500  # characters of all the rules in force together
+RULES_MAX = 20  # rules in force at once
 CANCELLED = "Cancelled by the owner before it was sent"
 LISTING_CANCELLED = "Cancelled by the owner before it was listed"
 CHANGE_CANCELLED = "Cancelled by the owner before the listing was changed"
@@ -114,6 +117,25 @@ def _body(body: Any, allowed: set[str]) -> dict[str, Any]:
     if unknown:
         raise OwnerError(unknown[0], f"unknown field {unknown[0]!r}")
     return body
+
+
+def _rule_text(body: Any) -> str:
+    """A rule's words, checked like a message's (0.36.0)."""
+    text = _text(_body(body, {"text"}), "text", RULE_MAX, required=True)
+    if text is None:  # _text raises first; for the type checker
+        raise OwnerError("text", "please fill in text")
+    return text
+
+
+def _rule_room(current: list[sqlite3.Row], text: str) -> None:
+    """Whether the rulebook has room for one more rule (``current``: the rules that stay)."""
+    if len(current) >= RULES_MAX:
+        raise OwnerError("text", f"the rulebook holds {RULES_MAX} rules: remove or merge one first")
+    used = sum(len(r["text"]) for r in current)
+    if used + len(text) > RULEBOOK_MAX:
+        raise OwnerError(
+            "text", f"the rulebook holds {RULEBOOK_MAX:,} characters ({used:,} in use): shorten or remove a rule first"
+        )
 
 
 def _signed(who: str | None) -> str:
@@ -344,33 +366,79 @@ class Owner:
 
         return _reply(run)
 
-    # --- standing instructions ---
+    # --- the rulebook (0.36.0, in place of the standing instructions) ---
 
-    def set_instructions(self, body: Any, who: str | None) -> Reply:
-        """Replace the owner's standing instructions (an empty text clears them); every version is kept."""
+    def add_rule(self, body: Any, who: str | None) -> Reply:
+        """A rule for how Ember works, at the end of the rulebook: it holds until the owner removes it."""
 
         def run() -> Reply:
-            data = _body(body, {"text"})
-            if "text" not in data:
-                raise OwnerError("text", "send the instructions as text (empty to clear them)")
-            text = _text(data, "text", INSTRUCTIONS_MAX) or ""
+            text = _rule_text(body)
             with self.db.transaction() as conn:
-                current = store.standing_instructions(conn, self.scope)
-                if (current["text"] if current else "") == text:  # nothing changed (a second click): no new version
-                    return Reply(200, {"instructions": store.instructions_json(current), "changed": False})
-                conn.execute(
-                    "INSERT INTO standing_instructions (mode, session, created_at, entered_by, text)"
-                    " VALUES (?, ?, ?, ?, ?)",
-                    (self.scope.mode, self.scope.session, self._now(), who, text),
-                )
-                saved = store.standing_instructions(conn, self.scope)
-            actor = who or "The owner"
-            events.record(
-                self.db, "info", "owner", f"{actor} {'changed' if text else 'cleared'} the standing instructions"
-            )
-            return Reply(200, {"instructions": store.instructions_json(saved), "changed": True})
+                current = store.rules(conn, self.scope)
+                _rule_room(current, text)
+                place = max((int(r["place"]) for r in current), default=0) + 1
+                added = self._insert_rule(conn, place, text, who)
+                saved = store.rules(conn, self.scope)
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} added rule #{added} to the rulebook")
+            return Reply(201, {"rule": added, "rules": store.rules_json(saved)})
 
         return _reply(run)
+
+    def change_rule(self, rule_id: int, body: Any, who: str | None) -> Reply:
+        """A rule's new words: a new rule in its place (the old one is kept, removed); the same words change nothing."""
+
+        def run() -> Reply:
+            text = _rule_text(body)
+            with self.db.transaction() as conn:
+                old = self._rule_in_force(conn, rule_id)
+                if old["text"] == text:  # a second click: no new rule
+                    shown = store.rules_json(store.rules(conn, self.scope))
+                    return Reply(200, {"rule": rule_id, "changed": False, "rules": shown})
+                _rule_room([r for r in store.rules(conn, self.scope) if r["id"] != rule_id], text)
+                conn.execute(
+                    "UPDATE rules SET removed_at = ?, removed_by = ? WHERE id = ?", (self._now(), _signed(who), rule_id)
+                )
+                changed = self._insert_rule(conn, int(old["place"]), text, who, replaces=rule_id)
+                saved = store.rules(conn, self.scope)
+            actor = who or "The owner"
+            events.record(self.db, "info", "owner", f"{actor} changed rule #{rule_id}: it is rule #{changed} now")
+            return Reply(200, {"rule": changed, "changed": True, "rules": store.rules_json(saved)})
+
+        return _reply(run)
+
+    def remove_rule(self, rule_id: int, who: str | None) -> Reply:
+        """A rule out of the rulebook (kept in its history)."""
+
+        def run() -> Reply:
+            with self.db.transaction() as conn:
+                self._rule_in_force(conn, rule_id)
+                conn.execute(
+                    "UPDATE rules SET removed_at = ?, removed_by = ? WHERE id = ?", (self._now(), _signed(who), rule_id)
+                )
+                saved = store.rules(conn, self.scope)
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} removed rule #{rule_id} from the rulebook")
+            return Reply(200, {"rules": store.rules_json(saved)})
+
+        return _reply(run)
+
+    def _rule_in_force(self, conn: sqlite3.Connection, rule_id: int) -> sqlite3.Row:
+        row = store.rule(conn, self.scope, rule_id)
+        if row is None:
+            raise OwnerError("rule", f"there is no rule #{rule_id}", 404)
+        if row["removed_at"] is not None:
+            raise OwnerError("rule", f"rule #{rule_id} was removed", 409)
+        return row
+
+    def _insert_rule(
+        self, conn: sqlite3.Connection, place: int, text: str, who: str | None, replaces: int | None = None
+    ) -> int:
+        return int(
+            conn.execute(
+                "INSERT INTO rules (mode, session, place, created_at, entered_by, text, replaces)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (self.scope.mode, self.scope.session, place, self._now(), who, text, replaces),
+            ).lastrowid
+        )
 
     def pin_lesson(self, body: Any, who: str | None, lessons: str) -> Reply:
         """0.12.0: pin one of the agent's lessons (``lessons``: its lessons file now): it is never dropped, a rewrite
@@ -682,8 +750,51 @@ class Owner:
                     line = plan.owner_resume(conn, self.scope, node_id, _signed(who), self._now())
                 except plan.PlanError as exc:
                     raise OwnerError(exc.field, str(exc), exc.status) from exc
-            events.record(self.db, "info", "owner", f"{who or 'The owner'} lifted the hold on product line #{line}")
+            what = f"product line #{line}" if line is not None else "the ventures"  # 0.36.0: or the ventures
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} lifted the hold on {what}")
             return Reply(200, {"id": node_id, "line": line, "hold": None})
+
+        return _reply(run)
+
+    def hold_product(self, node_id: int, body: Any, who: str | None) -> Reply:
+        """0.36.0: the owner holds a product, with their reason: its steps wait until they resume it (Ember can't). Or
+        new things on the Ventures ("nothing new"): no venture cycle and no new product until they resume them."""
+
+        def run() -> Reply:
+            data = _body(body, {"why"})
+            why = _text(data, "why", 200) or ""
+            with self.db.transaction() as conn:
+                try:
+                    line = plan.owner_hold(conn, self.scope, node_id, why, _signed(who), self._now())
+                except plan.PlanError as exc:
+                    raise OwnerError(exc.field, str(exc), exc.status) from exc
+            what = f"product line #{line}" if line is not None else "new things (ventures and new products)"
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} held {what} in the plan")
+            return Reply(200, {"id": node_id, "line": line, "hold": "owner"})
+
+        return _reply(run)
+
+    def freeze(self, body: Any, who: str | None) -> Reply:
+        """0.36.0: freeze the titles and tags of Ember's live listings until a day (its last), or lift the freeze
+        (null). Ember's code keeps it: the listing edits refuse them, and the critic asks for none."""
+
+        def run() -> Reply:
+            data = _body(body, {"until"})
+            until = data.get("until")
+            if "until" not in data or until is not None and not isinstance(until, str):
+                raise OwnerError("until", "give the freeze's last day as YYYY-MM-DD, or null to lift it")
+            with self.db.transaction() as conn:
+                try:
+                    held = plan.freeze(conn, self.scope, until, _signed(who), self._now(), self.clock.today())
+                except plan.PlanError as exc:
+                    raise OwnerError(exc.field, str(exc), exc.status) from exc
+            said = (
+                f"froze the titles and tags of the listings until {held}"
+                if held
+                else "lifted the freeze of the listings' titles and tags"
+            )
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} {said}")
+            return Reply(200, {"until": held})
 
         return _reply(run)
 

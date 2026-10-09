@@ -3,6 +3,28 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.36.0
+
+Your plan decides when you explore, and your owner's word on it is kept by Ember's code.
+
+- The venture share is gone: a cycle was a venture cycle whenever ventures had had less than your owner's share of the
+  day's spending, and on 2026-10-09 ten of twenty-four cycles were venture cycles that you, told "nothing new", left
+  undone. Your ventures are your plan's Explore step now, weighed like any step (YOUR PLAN's Ventures line says its
+  worth and what it waits on): when it weighs most, the cycle is a venture cycle, and READY says which decision. A
+  venture plan that takes no READY item ("none: ...") leaves the step waiting until tomorrow: say none only when
+  there is truly nothing to decide. The step waits too while your owner waits for something (the message that woke
+  the cycle, a promise or decision due within a day). While no step of a product is ready, exploring and starting a
+  new product take turns.
+- Your owner can hold new things ("nothing new"): no venture cycle and no new product (project_create refuses one)
+  until they resume them. They can hold a product too: its steps wait, and plan_step resume can't lift their hold
+  (your own hold you still lift).
+- Your owner can freeze the titles and tags of your live listings until a day: propose_etsy_edit refuses such a
+  change (propose the rest without them), the critic asks for none, and YOUR PLAN says so.
+- Your owner's standing instructions are a rulebook now (YOUR OWNER'S RULEBOOK, in every plan and work step): their
+  rules for how you work, each with its number, each holding until they remove it. Live, their new text for one
+  week's order of work replaced the rules they had set before, and those dropped out. Their current instructions are
+  the first rules. What comes next is your plan's, which they steer on their Plan tab.
+
 ## 0.35.3
 
 Your plan puts a live product's first buyers before the critic's suggestions.

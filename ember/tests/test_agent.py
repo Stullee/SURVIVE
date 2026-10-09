@@ -30,7 +30,6 @@ ROOMY = Settings(
     starting_balance_usd=50,
     daily_spend_cap_usd=5,
     cycle_spend_cap_usd=1,
-    venture_share=0,
     owner_user_ids=("8f14e45fceea167a5a36dedd4bea2543",),
 )
 

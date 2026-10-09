@@ -238,11 +238,11 @@ def told_since(conn: sqlite3.Connection, scope: AgentScope, message_id: int) -> 
 
 
 def pressing(conn: sqlite3.Connection, scope: AgentScope, today: date, messages: bool = True) -> list[str]:
-    """What makes this wake cycle an ordinary one rather than a venture cycle: the owner's messages waiting for an
-    answer (0.19.3: only with ``messages``, when the owner's message woke it; a venture cycle answers them first), a
-    promise due by tomorrow (or overdue for PRESSING_OVERDUE_DAYS at most) or a decision of the last PRESSING_NEW_DAYS
-    days (0.33.0: the owner's, FORCING; a miss presses no more). Empty when nothing presses. 0.35.0: it skips the
-    ventures' turn (loop._cycle_kind); the plan tree takes a promise's or decision's step first."""
+    """What presses: the owner's messages waiting for an answer (0.19.3: only with ``messages``), a promise due by
+    tomorrow (or overdue for PRESSING_OVERDUE_DAYS at most) or a decision of the last PRESSING_NEW_DAYS days (0.33.0:
+    the owner's, FORCING; a miss presses no more). Empty when nothing presses. Until 0.35.3 it skipped the ventures'
+    turn (loop._cycle_kind); since 0.36.0 it keeps the plan's Explore step waiting, so the cycle isn't a venture
+    cycle."""
     found = []
     waiting = messages_waiting(conn, scope)
     if waiting and messages:

@@ -45,6 +45,7 @@ def projects_of(agent: Any, venture: int) -> list[dict[str, Any]]:
     return rows(agent, f"SELECT id, title, hypothesis, status, next_step FROM projects WHERE venture_id = {venture}")
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_backed_venture_gets_its_project_once(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])] * 3), settings=VENTURING)
     assert projects_of(agent, DROPSHIPPING) == []
@@ -65,6 +66,7 @@ def test_a_backed_venture_gets_its_project_once(data_dir: Path) -> None:
     assert [p["status"] for p in projects_of(agent, DROPSHIPPING)] == ["abandoned"]
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_venture_cycle_isnt_aimed_at_a_backed_venture(data_dir: Path) -> None:
     fake = FakeTransport(script=[plan(steps=[]), plan(steps=["Research it"], venture=DROPSHIPPING)])
     agent, _ = run(data_dir, fake, settings=VENTURING)
@@ -79,6 +81,7 @@ def test_a_venture_cycle_isnt_aimed_at_a_backed_venture(data_dir: Path) -> None:
     )
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_backed_ventures_take_none_of_the_room_for_research(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     backed(agent)

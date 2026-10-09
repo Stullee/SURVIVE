@@ -69,6 +69,7 @@ def found(agent: Agent, net_days: float | None = 100.0) -> list[tuple[str, bool]
         return [(k.rule, k.overridden) for k in knockouts.check(conn, row, cash_eur=20.0, net_days=net_days)]
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_each_knock_out_is_found_from_the_case(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
     assert found(agent) == [("vendor_only", False)]  # no case, no evidence: its demand has no independent page
@@ -90,6 +91,7 @@ def test_each_knock_out_is_found_from_the_case(data_dir: Path) -> None:
     assert found(agent) == [("cold_outreach", False)]  # the case's words plan it
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_knocked_out_venture_is_proposed_only_once_the_owner_lifts_it(data_dir: Path) -> None:
     propose = ToolCalls([("venture_update", {"venture_id": DROPSHIPPING, "stage": "proposed"})])
     fake = FakeTransport(script=[plan(steps=[]), plan(venture=DROPSHIPPING), propose, Reply("Done."), JOURNAL])

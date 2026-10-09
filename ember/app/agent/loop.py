@@ -493,23 +493,24 @@ class CycleRunner:
 
     def _cycle_kind(self, cycle_id: int | None, trigger: str = "schedule") -> str:
         """What the wake cycle is, recorded on it: 0.35.0, the plan tree decides (plan.steer). Its step decides it (a
-        marketing step a marketing cycle, any other an ordinary one), unless it is the ventures' turn: venture cycles
-        have had less than the owner's share of the day's spending, in a burn mode that runs them (0.12.0). What the
-        owner waits for skips the ventures' turn: their messages when one woke the cycle (``trigger`` 'owner',
-        0.19.3) and a promise or decision of theirs that presses (0.33.0). The pick is kept with every candidate
-        (plan_picks). ``cycle_id`` None: the diagnostics' preview, which keeps nothing."""
+        marketing step a marketing cycle, any other an ordinary one). 0.36.0: the venture share retired, and the plan's
+        Explore step makes a venture cycle, weighed like any step: in a burn mode that runs venture cycles (0.12.0),
+        and not while the owner waits for something (obligations.pressing): their messages when one woke the cycle
+        (``trigger`` 'owner', 0.19.3), a promise or decision of theirs that presses (0.33.0). The pick is kept with
+        every candidate (plan_picks). ``cycle_id`` None: the diagnostics' preview, which keeps nothing."""
         mode = burn.peek(self.db, self.economy.life.evaluate())
         today = self.clock.today()
         now = to_iso(self.clock.now())
         with self.db.transaction() as conn:
             if cycle_id is not None:
                 ventures.seed(conn, self.scope, now)
-            spent, ventured, _ = ventures.day_spends(conn, self.scope, today)
-            turn = mode.venture_cycles and ventures.venture_turn(self.settings.venture_share, spent, ventured)
             self.owner_waits = trigger == "owner" and obligations.messages_waiting(conn, self.scope) > 0
-            first = obligations.pressing(conn, self.scope, today, messages=trigger == "owner") if turn else []
+            # what the owner waits for comes first: their messages when one woke the cycle (0.19.3), a promise or a
+            # decision of theirs that presses (0.33.0), whether or not it is a step of the plan
+            first = obligations.pressing(conn, self.scope, today, messages=trigger == "owner")
+            exploring = mode.venture_cycles and not first
             self.steered = plan_tree.steer(
-                conn, self.scope, now, today, self._channels(), venture_turn=turn and not first, cycle_id=cycle_id
+                conn, self.scope, now, today, self._channels(), exploring=exploring, cycle_id=cycle_id
             )
             # 0.35.0: marketing steps have cycles of their own; a channel's own product (its setup) keeps its tools
             self.marketing_apart = not plan_tree.on_channel(conn, self.scope, self.steered.step)
@@ -517,13 +518,6 @@ class CycleRunner:
                 plan_tree.record(conn, self.scope, cycle_id, now, self.steered)
                 if self.steered.kind in (lines.VENTURE, lines.MARKETING):
                     store.update_cycle(conn, cycle_id, **{self.steered.kind: 1})
-        if cycle_id is not None and first:
-            events.record(
-                self.db,
-                "info",
-                "agent",
-                f"Cycle #{cycle_id} is not a venture cycle: {first[0]} {_comes(first[0])} first"[:300],
-            )
         return self.steered.kind
 
     def _channels(self) -> dict[str, bool]:
@@ -833,7 +827,6 @@ class CycleRunner:
                 blog=blog_text,
                 kdp=books,
                 venture=venture,
-                venture_share=self.settings.venture_share,
                 marketing=kind == lines.MARKETING,  # 0.28.0
                 marketing_apart=self.marketing_apart and kind == lines.ORDINARY,
                 shelf=library.shelf(conn, self.scope),
@@ -1099,6 +1092,9 @@ class CycleRunner:
             plan.focus_venture_id = taken.venture_id
         with self.db.transaction() as conn:
             desk.record(conn, cycle_id, self.ready_items, taken, why, to_iso(self.clock.now()))
+            if taken is None and desk.declined(plan.ready):  # 0.36.0: the Explore step waits until tomorrow (live:
+                # ten venture cycles a day that took nothing on purpose); a wrong or missing answer only loses the cycle
+                plan_tree.explore_idle(conn, self.scope, cycle_id, why, to_iso(self.clock.now()), self.clock.today())
         return taken
 
     def _money_numbers(self, books_scope: Any) -> tuple[int, int]:
@@ -1405,14 +1401,14 @@ class CycleRunner:
             spent = books.api_spend_between(ledger_scope, start, now)
             lines.append(f"Last {days} days: revenue less expenses {_usd(earned)}, API spending {_usd(spent)}.")
         with self.db.connection() as conn:
-            standing = store.standing_instructions(conn, self.scope)
+            rulebook = store.rulebook_text(store.rules(conn, self.scope))  # 0.36.0: the standing instructions retired
             whole = weekly.view(
                 conn,
                 self.scope,
                 now,
                 "MONEY\n" + "\n".join(lines),
                 self.memory.read("strategy"),
-                standing["text"] if standing else "",
+                rulebook,
                 # 0.30.0: the goal it plans the week toward, with how far each sub-goal got
                 goal=weekly.goal_text(conn, self.scope, self.clock.today(), self._money_numbers(ledger_scope)),
             )
@@ -1582,7 +1578,7 @@ class CycleRunner:
             if chosen is None:
                 return
             project_id, listing_id = chosen  # 0.24.0: each listing of a product line, the one judged named
-            text, picture = quality.case(conn, self.scope, self.workspace, project_id, listing_id)
+            text, picture = quality.case(conn, self.scope, self.workspace, project_id, listing_id, self.clock.today())
             judged = quality.label(conn, self.scope, listing_id)
         request = prompts.quality_request(self.settings, text, picture)
         try:
@@ -2276,7 +2272,7 @@ class CycleRunner:
             with self.db.connection() as conn:
                 tree = ventures.all_ventures(conn, self.scope)
                 parent = ventures.get(conn, self.scope, venture_id) if venture_id is not None else None
-                standing = store.standing_instructions(conn, self.scope)
+                rulebook = store.rulebook_text(store.rules(conn, self.scope))
             if venture_id is not None and (parent is None or parent["stage"] == "killed"):
                 return tools.Outcome(False, f"Error: there is no venture #{venture_id} to branch from.", "refused")
             if len(tree) >= ventures.MAX_VENTURES:
@@ -2287,7 +2283,7 @@ class CycleRunner:
             earned = self.economy.books.totals(self.economy.life.scope())["revenue"]
             request = prompts.brainstorm_request(
                 self.settings,
-                _brainstorm_context(status, earned, standing["text"] if standing else "", tree, parent, theme),
+                _brainstorm_context(status, earned, rulebook, tree, parent, theme),
             )
             try:
                 fits, expected, _ = self.meter.affordable(
@@ -2463,11 +2459,6 @@ def _unset(status: tuple[str, str | None], etsy: str) -> bool:
     return status[0] in ("not_configured", "not_connected") or (status[0] == "ok" and etsy != "ok")
 
 
-def _comes(what: str) -> str:
-    """0.19.2: "1 message ... comes first", "2 messages ... come first"."""
-    return "come" if re.match(r"\d+ messages\b", what) else "comes"
-
-
 def _bluesky_head(connection: BlueskyConnection, daily_limit: int) -> str:
     """0.19.0: BLUESKY's first line: the account, its followers at the last sync and the day's limit."""
     followers = connection.followers()
@@ -2609,10 +2600,10 @@ def _kept(ctx: tools.ToolContext) -> str:
     return f" after the ${micros_to_usd(reserve):.3f} kept for your reflection" if reserve else ""
 
 
-def _brainstorm_context(status: Any, earned: int, instructions: str, tree: list[Any], parent: Any, theme: str) -> str:
-    """What a brainstorm is told: the owner's standing instructions, the money, the tree so far and the task."""
+def _brainstorm_context(status: Any, earned: int, rulebook: str, tree: list[Any], parent: Any, theme: str) -> str:
+    """What a brainstorm is told: the owner's rulebook (0.36.0), the money, the tree so far and the task."""
     runway = f"{status.runway.days:.0f} days" if status.runway.days is not None else "unknown"
-    quoted = json.dumps(instructions, ensure_ascii=False) if instructions.strip() else "None."
+    quoted = json.dumps(rulebook, ensure_ascii=False) if rulebook.strip() else "None."
     task = "Find ideas in new ground: anything that fits the agent and its owner and isn't in the tree yet."
     if parent is not None:
         task = (
@@ -2624,7 +2615,7 @@ def _brainstorm_context(status: Any, earned: int, instructions: str, tree: list[
         task += f"\nTheme: {json.dumps(theme, ensure_ascii=False)}"
     return "\n\n".join(
         [
-            f"THE OWNER'S STANDING INSTRUCTIONS (their words)\n{quoted}",
+            f"THE OWNER'S RULEBOOK (their words)\n{quoted}",
             f"MONEY\nBalance ${micros_to_usd(status.balance):.2f}, runway {runway} at the recent spending;"
             f" revenue so far ${micros_to_usd(earned):.2f}.",
             "THE VENTURE TREE (don't repeat these ideas; branch from them or go somewhere new)\n"

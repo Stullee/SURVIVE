@@ -42,6 +42,7 @@ def test_the_numbers_are_worked_out_the_same_way_for_every_venture() -> None:
     )
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_venture_case_is_saved_with_its_numbers_and_shown(data_dir: Path) -> None:
     fake = FakeTransport(
         script=[

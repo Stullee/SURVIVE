@@ -10,8 +10,8 @@ steers (plan.py keeps the tree; this module only weighs and chooses, without a d
 A step's weight = worth × kind × channel × (1 + urgency + age + momentum), and a product's worth = what it could
 earn × its chance; the owner's own worth replaces it. Each cycle takes the first of: a step the owner pinned, a promise
 or an owner's decision due within 24 hours (no margin), (0.35.1) any other promise to the owner, the soonest due
-first, a venture cycle when the venture share is behind, else the highest weight, where a step of another product must
-be 25% better than the best of the product worked on last (for up to 3 cycles in a row). A step carries the weight of
+first, else the highest weight, where a step of another product must be 25% better than the best of the product
+worked on last (for up to 3 cycles in a row). A step carries the weight of
 the most important step waiting on it. Age has no cap: it only lifts an older step over newer ones (two steps that
 waited equally long keep their order by worth), and it doesn't run while a step is blocked or its product is on hold.
 
@@ -24,6 +24,12 @@ ventures' turn from the moment it is made, until it is kept.
 outweighed their first pins, which the owner had put first for the week, and Pinterest's factor fell to its floor on
 four pins hours old. A defect the critic found (a low score) still comes first; a missed views bar puts the product's
 marketing above every other product's; a live product's launch marketing comes before the critic's suggestions.
+
+0.36.0: the venture share retires. It made a cycle a venture cycle whenever ventures had had less than the owner's
+share of the day's spending: live, 10 of 24 cycles, which Ember, told "nothing new", left undone (cheap idle cycles
+made the share want more of them). Exploring is one more step of the tree now (plan.py's Explore step: worth
+EXPLORE_WORTH unless the owner sets one, a wish of the owner's ASKED, a venture about to be parked PARK_SOON), weighed
+like any other and held by the owner's word.
 """
 
 from __future__ import annotations
@@ -54,6 +60,10 @@ REACH = 3.0  # a live product's launch marketing: its first buyers before the cr
 IMPROVE = 1.0  # the critic's suggestions (an improve verdict above DEFECT_SCORE)
 ASKED = 2.0  # the owner asked for it
 RECURRING_DUE = 1.0  # a recurring step on its due day
+# 0.36.0: the Explore step (plan.py): the ventures' worth unless the owner sets one (that of a product that could earn
+# $5 a month), and a venture Ember's code parks within a week by its stage's rule
+EXPLORE_WORTH = 2.0
+PARK_SOON = 1.0
 OWN_DATE_CAP = 1.5  # a date Ember set herself
 AGE_PER_DAY = 0.5
 MOMENTUM = 1.0
@@ -120,7 +130,7 @@ class Step:
     age_days: float = 0.0  # days ready and untouched (plan.py counts none while it is blocked or on hold)
     pinned: bool = False  # the owner pinned it
     promise_hours: float | None = None  # hours until a promise it serves is due (negative: overdue)
-    promise: bool = False  # 0.35.1: a promise to the owner: taken before the heaviest step and the ventures' turn
+    promise: bool = False  # 0.35.1: a promise to the owner: taken before the heaviest step
     blocked: bool = False  # waits on the owner, a channel, a date or an approval: not a candidate
     waiting: tuple[Step, ...] = field(default=(), compare=False)  # open steps that wait on this one
 
@@ -193,7 +203,8 @@ def promise_hours(step: Step) -> float | None:
 @dataclass(frozen=True)
 class Pick:
     step: Step | None
-    decided: str  # 'pin', 'promise', 'venture', 'weight', 'margin' (the product worked on last kept it), 'none'
+    decided: str  # 'pin', 'promise', 'weight', 'margin' (the product worked on last kept it), 'none' (and 'venture',
+    # the ventures' turn, in the records until 0.35.3)
     parts: Parts | None
     ranked: tuple[tuple[Step, Parts], ...]  # every candidate, best first
 
@@ -217,11 +228,11 @@ def rank(steps: Iterable[Step], last_product: int | None = None, streak: int = 0
     return sorted(weighed, key=lambda sp: (-round(sp[1].total, 9), -sp[0].age_days, sp[0].id))
 
 
-def choose(steps: Sequence[Step], last_product: int | None = None, streak: int = 0, venture_turn: bool = False) -> Pick:
+def choose(steps: Sequence[Step], last_product: int | None = None, streak: int = 0) -> Pick:
     """The step a cycle takes, in this order: a step the owner pinned; a promise or an owner's decision due within 24
-    hours (or overdue), with no margin; (0.35.1) any other promise to the owner, the soonest due first; a venture
-    cycle when the venture share is behind (``venture_turn``); else the heaviest step, unless the product worked on
-    last (fewer than STREAK_CAP cycles in a row) has a step the winner doesn't beat by MARGIN."""
+    hours (or overdue), with no margin; (0.35.1) any other promise to the owner, the soonest due first; else the
+    heaviest step, unless the product worked on last (fewer than STREAK_CAP cycles in a row) has a step the winner
+    doesn't beat by MARGIN. 0.36.0: no ventures' turn any more (the Explore step is weighed like any other)."""
     ranked = tuple(rank(steps, last_product, streak))
     for step, parts in ranked:
         if step.pinned:
@@ -234,8 +245,6 @@ def choose(steps: Sequence[Step], last_product: int | None = None, streak: int =
     if promised:
         step, parts = min(promised, key=lambda sp: (_hours(sp[0]), -sp[1].total, sp[0].id))
         return Pick(step, "promise", parts, ranked)
-    if venture_turn:
-        return Pick(None, "venture", None, ranked)
     if not ranked:
         return Pick(None, "none", None, ranked)
     best, parts = ranked[0]

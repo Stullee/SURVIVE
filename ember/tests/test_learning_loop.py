@@ -46,7 +46,7 @@ from tests.test_owner_loop import owner  # noqa: E402
 from tests.test_printify import proposed  # noqa: E402
 
 # The default sleeps (without venture cycles, as the tests' ROOMY)
-DEFAULTS = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=0)
+DEFAULTS = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
 
 
 def now(agent: Any) -> str:

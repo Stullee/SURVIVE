@@ -109,10 +109,15 @@ def newest(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> list
 
 
 def case(
-    conn: sqlite3.Connection, scope: AgentScope, workspace: Jail, project_id: int, listing_id: int
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    workspace: Jail,
+    project_id: int,
+    listing_id: int,
+    today: date | None = None,
 ) -> tuple[str, bytes | None]:
     """What the critic reads of a project's live listing (``listing_id``): the listing as text, and its cover photo (a
-    PNG) if readable."""
+    PNG) if readable. 0.36.0: on ``today``, the owner's freeze of titles and tags (a fix of them can't be made)."""
     where, params = scope.where()
     project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     rows = conn.execute(
@@ -169,6 +174,15 @@ def case(
     funnel = reach.funnels(conn, scope).get(project_id)
     if funnel is not None:
         lines.append(funnel.text())
+    if today is not None:
+        from . import plan  # here, as plan reads this module's verdicts in its checks
+
+        frozen = plan.frozen(conn, scope, today)
+        if frozen:  # live, the critic asked for a new title and tags the owner had frozen, so its step never passed
+            lines.append(
+                f"THE OWNER'S FREEZE: the title and tags stay as they are until {frozen}. Judge them, but put no change"
+                " of them in fixes: judge what can change now."
+            )
     return "\n".join(lines), picture
 
 

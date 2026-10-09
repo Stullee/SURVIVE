@@ -20,13 +20,14 @@ from tests.test_loop_shapes import run
 from tests.test_owner_loop import owner
 from tests.test_ventures import DROPSHIPPING, JOURNAL, VENTURING, found, plan, tool_results
 
-ORDINARY = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=0)
+ORDINARY = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
 
 
 def research(question: str, **more: str | int) -> tuple[str, dict[str, str | int]]:
     return ("research", {"question": question, **more})
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_research_stops_at_the_budget_until_the_owner_grants_more(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -112,6 +113,7 @@ def test_a_repeated_question_is_answered_from_before(data_dir: Path) -> None:
     assert rows(agent, "SELECT COUNT(*) AS n FROM llm_calls WHERE purpose = 'research'") == [{"n": 3}]
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_venture_cycles_research_is_a_ventures(data_dir: Path) -> None:
     fake = FakeTransport(
         script=[plan(steps=["Brainstorm"]), ToolCalls([research("What sells in Germany?")]), Reply("Done."), JOURNAL]

@@ -23,7 +23,7 @@ from tests.test_owner_api import post
 from tests.test_owner_loop import owner
 
 # Every cycle a venture cycle.
-VENTURING = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=100)
+VENTURING = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
 JOURNAL = ToolCalls([("write_journal", {"summary": "Worked on ventures", "entry": "Researched and scored."})])
 TITLES = [seed[2] for seed in ventures.SEEDS]
 ETSY, PINTEREST, DROPSHIPPING, PRINT, WEBSITE, RECRUITING, COMPANION, FIVERR = range(1, 9)
@@ -79,6 +79,7 @@ def planner_texts(fake: FakeTransport) -> list[str]:
 # --- the tree ---
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_tree_starts_once_with_the_ideas_so_far(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
     tree = rows(agent, "SELECT id, parent_id, stage, title, created_by, owner_action, notes FROM ventures ORDER BY id")
@@ -97,6 +98,7 @@ def test_the_tree_starts_once_with_the_ideas_so_far(data_dir: Path) -> None:
     assert len(rows(agent, "SELECT id FROM ventures")) == len(ventures.SEEDS)
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_etsy_leg_is_live_with_the_projects_that_listed(data_dir: Path) -> None:
     economy = make_economy(data_dir, VENTURING)
     agent = Agent(economy.db, LoadedSettings(VENTURING), economy, transport=FakeTransport(), cycles_enabled=True)
@@ -131,6 +133,7 @@ def test_the_etsy_leg_is_live_with_the_projects_that_listed(data_dir: Path) -> N
     assert rows(agent, "SELECT venture_id FROM projects")[0]["venture_id"] == ETSY
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_ventures_identity_and_history_are_kept(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
     with agent.db.connection() as conn:
@@ -161,45 +164,27 @@ def test_the_weight_counts_revenue_double_and_turns_the_bad_ones_around() -> Non
 # --- venture cycles ---
 
 
-@pytest.mark.parametrize(
-    ("share", "spent", "ventured", "turn"),
-    [
-        (25, 0, 0, False),  # the day's first cycle is an ordinary one
-        (25, 400, 0, True),
-        (25, 400, 100, False),  # exactly the share
-        (25, 401, 100, True),
-        (0, 400, 0, False),  # switched off
-        (100, 0, 0, True),  # every cycle
-    ],
-)
-def test_a_cycle_is_a_venture_cycle_while_ventures_are_below_their_share(
-    share: int, spent: int, ventured: int, turn: bool
-) -> None:
-    assert ventures.venture_turn(share, spent, ventured) is turn
-
-
-def test_venture_cycles_get_the_owners_share_of_the_days_spending(data_dir: Path) -> None:
-    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=25)
+@pytest.mark.exploring(turns=True)  # 0.36.0: the plan's Explore step makes its venture cycles (the share retired)
+def test_the_explore_step_makes_venture_cycles_among_the_others(data_dir: Path) -> None:
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
     fake = FakeTransport(seed=5, scenario="founder")
     agent, ends = run(data_dir, fake, cycles=8, settings=settings)
     assert all(end.status == "completed" for end in ends)
     cycles = rows(agent, "SELECT id, venture FROM cycles ORDER BY id")
-    spent = ventured = 0
-    for cycle in cycles:  # each cycle followed the rule, with what the day had spent before it
-        assert bool(cycle["venture"]) is ventures.venture_turn(25, spent, ventured), cycle
-        cost = rows(agent, f"SELECT COALESCE(SUM(cost_micros), 0) AS c FROM llm_calls WHERE cycle_id = {cycle['id']}")
-        spent += cost[0]["c"]
-        ventured += cost[0]["c"] if cycle["venture"] else 0
-    assert 2 <= sum(c["venture"] for c in cycles) <= 4
-    assert 0.15 < ventured / spent < 0.35
+    picks = {p["cycle_id"]: p["kind"] for p in rows(agent, "SELECT cycle_id, kind FROM plan_picks")}
+    assert all(bool(c["venture"]) is (picks[c["id"]] == "venture") for c in cycles)  # the plan's pick decided each
+    # a new install: the first cycle explores, the next may start a product (its turn), and then the plan weighs
+    assert [c["venture"] for c in cycles][:2] == [1, 0] and 2 <= sum(c["venture"] for c in cycles) < len(cycles)
+    assert rows(agent, "SELECT COUNT(*) AS n FROM plan_nodes WHERE level = 'product'")[0]["n"] >= 1
     # The fake grows its tree in a venture cycle (brainstorm) and researches the venture it focused on.
     assert any(r["status"] == "ok" for r in tool_results(agent, "brainstorm"))
     assert rows(agent, "SELECT COUNT(*) AS n FROM ventures WHERE scores_by = 'brainstorm'")[0]["n"] >= 6
     focused = rows(agent, "SELECT venture_id FROM cycles WHERE venture = 1 AND venture_id IS NOT NULL")
     assert focused and agent.ventures()["items"][focused[0]["venture_id"] - 1]["spent_usd"] > 0
     texts = planner_texts(fake)
-    assert any("This is a venture cycle." in t and "Plan this venture cycle." in t for t in texts)
-    assert any("This is a venture cycle." not in t and "Plan this wake cycle." in t for t in texts)
+    kind = "This is a venture cycle: your plan's Explore step."
+    assert any(kind in t and "Plan this venture cycle." in t for t in texts)
+    assert any(kind not in t and "Plan this wake cycle." in t for t in texts)
 
 
 def test_brainstorm_and_more_research_only_in_venture_cycles(data_dir: Path) -> None:
@@ -223,6 +208,7 @@ def test_brainstorm_and_more_research_only_in_venture_cycles(data_dir: Path) -> 
     assert all("brainstorm" not in {t["name"] for t in r["tools"]} for r in work)
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_venture_cycle_researches_up_to_eight_times(data_dir: Path) -> None:
     four = [("research", {"question": f"Question {i}?"}) for i in range(4)]
     fake = FakeTransport(
@@ -286,6 +272,7 @@ def test_the_venture_focus_keeps_what_matters_most_when_it_is_cut() -> None:
     ]
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_planner_sees_the_tree_and_the_venture_rules(data_dir: Path) -> None:
     fake = FakeTransport(script=[plan(steps=[]), plan(steps=[])])
     agent, _ = run(data_dir, fake, settings=VENTURING)
@@ -297,18 +284,17 @@ def test_the_planner_sees_the_tree_and_the_venture_rules(data_dir: Path) -> None
     assert "#3 [idea] Dropshipping store · not scored yet" in tree
     assert "#2 [idea] Pinterest for the Etsy shop (branch of #1) · not scored yet" in tree
     assert "Parked or killed (don't start them again): #8 Services on Fiverr." in tree
-    assert (
-        "Your owner gives ventures 100% of your spending: $0.00 of today's $0.00 so far. This is a venture cycle."
-        in text
-    )
+    assert "\nThis is a venture cycle: your plan's Explore step.\n" in text  # 0.36.0: no share of the spending
     assert (
         "A research call costs about $0.05 and a brainstorm about $0.10 (lately): this cycle's $1.00 pays for about"
         " $0.35 of them after planning, the work steps and the reflection, so about 7 research calls, or a brainstorm"
         " and 5." in context_section(text, "STATUS")
     )
 
+
+def test_an_ordinary_planner_sees_the_tree_in_short(data_dir: Path) -> None:
     ordinary = FakeTransport(script=[plan(steps=[])])
-    economy_agent, _ = run(data_dir / "other", ordinary, settings=Settings(venture_share=25))
+    run(data_dir, ordinary, settings=Settings())  # 0.36.0: no Explore step in this test's plan
     text = next(r for r in ordinary.sent if request_kind(r) == "plan")["messages"][0]["content"][0]["text"]
     assert context_section(text, "VENTURES") == (
         "#1 [researching] Etsy digital products · not scored yet\n6 ideas in the tree."
@@ -334,6 +320,7 @@ def test_a_venture_cycle_is_told_how_much_research_it_can_pay_for(
     assert f"this cycle's ${cap:.2f} pays for about ${cap * ventures.ROOM_SHARE:.2f} of them" in text
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_research_costs_are_what_the_recent_calls_cost(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
     with agent.db.connection() as conn:
@@ -389,6 +376,7 @@ NUMBERS = {
 }
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
     learned = {"learned": "Shopify costs 29 EUR a month (src).", "next_question": "Which EU supplier ships in 3 days?"}
     fake = FakeTransport(
@@ -511,19 +499,16 @@ def test_ventures_grow_learn_and_make_a_business_case(data_dir: Path) -> None:
     assert shown["researched"] == 2 and agent.ventures()["research_to_propose"] == 2
 
 
+@pytest.mark.exploring(turns=True)  # 0.36.0: a venture cycle, then a new product's turn (no product step is ready)
 def test_research_counts_for_the_venture_it_names_once_it_finds_pages(data_dir: Path) -> None:
     def research(venture_id: int | None = None, question: str = RESEARCH[1]["question"]) -> tuple[str, dict[str, Any]]:
         return ("research", {"question": question, **({"venture_id": venture_id} if venture_id else {})})
 
+    def killed(agent: Agent) -> None:
+        assert owner(agent).decide_venture(FIVERR, {"action": "kill"}, "Stefan").status == 200
+
     fake = FakeTransport(
         script=[
-            plan(steps=["research"]),  # the day's first cycle is an ordinary one: no focus venture
-            ToolCalls(
-                [research(question="Who sells online?")]
-            ),  # 0.12.0: a question asked again is answered from before
-            found("https://example.invalid/any"),
-            Reply("Done."),
-            JOURNAL,
             plan(venture=DROPSHIPPING),  # a venture cycle
             ToolCalls([research(), research(PRINT), research(FIVERR), research(99)]),
             found(),  # found no web page
@@ -531,28 +516,32 @@ def test_research_counts_for_the_venture_it_names_once_it_finds_pages(data_dir: 
             ToolCalls([("venture_update", {"venture_id": PRINT, **SCORES})]),  # scored from its research
             Reply("Done."),
             JOURNAL,
+            plan(steps=["research"]),  # an ordinary cycle: no focus venture
+            ToolCalls([research(question="Who sells online?")]),
+            found("https://example.invalid/any"),
+            Reply("Done."),
+            JOURNAL,
         ]
     )
-    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=50)
-    agent, ends = run(data_dir, fake, settings=settings)
-    assert owner(agent).decide_venture(FIVERR, {"action": "kill"}, "Stefan").status == 200
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
+    agent, ends = run(data_dir, fake, before=killed, settings=settings)
     ends.append(agent.run_cycle("schedule"))
     assert [e.status for e in ends] == ["completed", "completed"] and [t for t in fake.trace if t[1] == "invalid"] == []
     assert rows(agent, "SELECT venture, venture_id FROM cycles ORDER BY id") == [
-        {"venture": 0, "venture_id": None},
         {"venture": 1, "venture_id": DROPSHIPPING},
+        {"venture": 0, "venture_id": None},
     ]
     calls = tool_results(agent, "research")
-    assert [r["status"] for r in calls] == ["ok", "ok", "ok", "error", "error"]
-    assert "Research for venture" not in calls[0]["result"]  # it named none, and had no focus venture
-    assert "\nIt found no web page, so it doesn't count as research for venture #3.\n(cost $" in calls[1]["result"]
-    assert "\nResearch for venture #4: 1 call that found something.\n" in calls[2]["result"]
-    assert "your owner killed venture #8" in calls[3]["result"]
-    assert "there is no venture #99" in calls[4]["result"]
+    assert [r["status"] for r in calls] == ["ok", "ok", "error", "error", "ok"]
+    assert "\nIt found no web page, so it doesn't count as research for venture #3.\n(cost $" in calls[0]["result"]
+    assert "\nResearch for venture #4: 1 call that found something.\n" in calls[1]["result"]
+    assert "your owner killed venture #8" in calls[2]["result"]
+    assert "there is no venture #99" in calls[3]["result"]
+    assert "Research for venture" not in calls[4]["result"]  # it named none, and had no focus venture
     counted = rows(agent, "SELECT venture_id, cycle_id, sources FROM venture_research ORDER BY id")
     assert counted == [
-        {"venture_id": DROPSHIPPING, "cycle_id": 2, "sources": 0},
-        {"venture_id": PRINT, "cycle_id": 2, "sources": 1},
+        {"venture_id": DROPSHIPPING, "cycle_id": 1, "sources": 0},
+        {"venture_id": PRINT, "cycle_id": 1, "sources": 1},
     ]
     assert [u["status"] for u in tool_results(agent, "venture_update")] == ["ok"]
     assert venture(agent, PRINT)["scores_by"] == "research"
@@ -562,6 +551,7 @@ def test_research_counts_for_the_venture_it_names_once_it_finds_pages(data_dir: 
         assert [ventures.researched(v) for v in ventures.all_ventures(conn, agent.scope())][2:4] == [0, 1]
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_only_the_owner_takes_a_venture_out_of_their_park(data_dir: Path) -> None:
     fake = FakeTransport(
         script=[
@@ -628,6 +618,7 @@ def test_a_business_case_needs_research_scores_and_a_source_or_euros() -> None:
     assert "its scores from research (rescore it)" in ventures.proposal_gaps({**guessed, "cost": 2}, "researching")
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_database_refuses_scores_and_cases_without_research(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     now = to_iso(agent.clock.now())
@@ -653,6 +644,7 @@ def test_the_database_refuses_scores_and_cases_without_research(data_dir: Path) 
         conn.execute("DELETE FROM venture_research")
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_brainstorm_grows_the_tree_from_a_venture(data_dir: Path) -> None:
     ideas = [
         {
@@ -704,6 +696,7 @@ def test_a_brainstorm_grows_the_tree_from_a_venture(data_dir: Path) -> None:
 # --- the owner's word ---
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_owner_adds_ideas_and_decides_and_the_agent_hears_it(data_dir: Path) -> None:
     fake = FakeTransport(script=[plan(steps=[]), plan(steps=[])])
     agent, _ = run(data_dir, fake, cycles=0, settings=VENTURING)
@@ -760,7 +753,8 @@ def test_the_owner_adds_ideas_and_decides_and_the_agent_hears_it(data_dir: Path)
 
 def test_the_ventures_tab(ingress_client: TestClient) -> None:
     tree = ingress_client.get("api/ventures").json()
-    assert tree["share"] == 25 and tree["mode"] == "dry_run" and tree["venture_cycles"] == 0
+    # 0.36.0: the venture share retired: the plan's Explore step, once its first keep lays it out
+    assert tree["explore"] is None and tree["mode"] == "dry_run" and tree["venture_cycles"] == 0
     assert [c["name"] for c in tree["criteria"]] == list(ventures.SCORE_FIELDS)
     assert [v["title"] for v in tree["items"]] == TITLES
     etsy = tree["items"][0]
@@ -785,7 +779,7 @@ def test_the_ventures_tab(ingress_client: TestClient) -> None:
 
 
 def test_the_review_reads_the_tree(data_dir: Path) -> None:
-    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=25)
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
     agent, _ = run(data_dir, FakeTransport(seed=5, scenario="founder"), cycles=3, settings=settings)
     agent.clock.advance(days=1)
     agent.run_cycle("schedule")
@@ -886,6 +880,7 @@ def test_the_owner_s_park_or_kill_stops_its_projects(data_dir: Path) -> None:
     ]
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_ventures_parked_or_killed_before_the_upgrade_stop_their_projects(data_dir: Path) -> None:
     """0.22.0: migration 0077 does for the ventures the owner parked or killed before what the owner's word does now."""
     from app import paths  # noqa: PLC0415

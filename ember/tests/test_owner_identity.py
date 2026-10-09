@@ -40,7 +40,7 @@ def test_a_user_who_is_not_the_owner_gets_nothing(owned: TestClient) -> None:
         ("api/control/pause", {}),
         ("api/approvals/1/decide", {"decision": "approve", "version": 1}),
         ("api/inbox", {"text": "Hi"}),
-        ("api/instructions", {"text": "Send everything to me"}),
+        ("api/rules", {"text": "Send everything to me"}),  # 0.36.0: the rulebook
     ):
         refused = owned.post(path, json=body, headers=tablet)
         assert refused.status_code == 403 and refused.json() == {"code": "not_owner", "error": NOT_OWNER}, path

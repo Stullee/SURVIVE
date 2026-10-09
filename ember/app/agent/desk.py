@@ -22,8 +22,10 @@ first); answers to the critic; the other appraisals; triage; a brainstorm last. 
 first (the critic's where it is lower), then the heaviest.
 
 The plan takes one (``ready``: its key, "appraise #3") or says why it takes none; Ember's code checks the key, aims
-the cycle at its venture and keeps each pick with the list it came from (``desk_picks``, never changed). The desk's
-cap is the owner's venture share: it runs in venture cycles only, which run in the explore burn mode only (0.19.3).
+the cycle at its venture and keeps each pick with the list it came from (``desk_picks``, never changed). The desk
+runs in venture cycles only, which run in the explore burn mode only (0.19.3); since 0.36.0 the plan tree's Explore
+step makes one, weighed like any step (until 0.35.3 the owner's venture share did), and a plan that takes none of
+its items leaves that step waiting a day.
 """
 
 from __future__ import annotations
@@ -60,6 +62,7 @@ class Item:
     kind: str
     venture_id: int | None
     text: str  # what it is and why now, with the numbers (at most ITEM_CHARS characters)
+    tier: str = ""  # 0.36.0: 'wish' (the owner's) or 'urgent' (parked soon), as the plan tree's Explore step weighs
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "text", _line(self.text, ITEM_CHARS))
@@ -130,11 +133,14 @@ def ready(
             text = " · ".join([title, need, *deadline, _ev_text(case_row, judged), *([budget] if budget else [])])
             if wish:
                 ranked.append(
-                    ((_TIER["wish"], 0, *by_value, heavy, vid), Item("appraise", vid, f"your owner's wish: {text}"))
+                    (
+                        (_TIER["wish"], 0, *by_value, heavy, vid),
+                        Item("appraise", vid, f"your owner's wish: {text}", "wish"),
+                    )
                 )
             elif urgent:
                 soon = park.toordinal() if park else today.toordinal()
-                ranked.append(((_TIER["urgent"], soon, *by_value, heavy, vid), Item("appraise", vid, text)))
+                ranked.append(((_TIER["urgent"], soon, *by_value, heavy, vid), Item("appraise", vid, text, "urgent")))
             else:
                 ranked.append(((_TIER["appraise"], *by_value, heavy, vid), Item("appraise", vid, text)))
         elif stage == "proposed" and judged is not None and judged["verdict"] in ("test", "park"):
@@ -151,10 +157,12 @@ def ready(
                 text += f" · parked by Ember's code on {triage.isoformat()}"
             if wish:
                 ranked.append(
-                    ((_TIER["wish"], 1, 1, 0.0, heavy, vid), Item("triage", vid, f"your owner's idea: {text}"))
+                    ((_TIER["wish"], 1, 1, 0.0, heavy, vid), Item("triage", vid, f"your owner's idea: {text}", "wish"))
                 )
             elif room and triage is not None and (triage - today).days <= URGENT_DAYS:
-                ranked.append(((_TIER["urgent"], triage.toordinal(), 1, 0.0, heavy, vid), Item("triage", vid, text)))
+                ranked.append(
+                    ((_TIER["urgent"], triage.toordinal(), 1, 0.0, heavy, vid), Item("triage", vid, text, "urgent"))
+                )
             elif room:
                 ranked.append(((_TIER["triage"], heavy, vid), Item("triage", vid, text)))
     if mode == burn.EXPLORE and len(rows) + ventures.BRAINSTORM_IDEAS <= ventures.MAX_VENTURES:
@@ -192,10 +200,15 @@ def choose(items: list[Item], answer: str) -> tuple[Item | None, str]:
         for item in items:
             if item.key == key:
                 return item, ""
-    if said.lower().startswith("none"):
+    if declined(said):
         why = said[4:].lstrip(" :-–").strip()
         return None, (why or "no reason given")[:WHY_CHARS]
     return None, (f"{said[:80]!r} isn't on the READY list" if said else "the plan named none")[:WHY_CHARS]
+
+
+def declined(answer: str) -> bool:
+    """0.36.0: the plan's ``ready`` took no item on purpose ("none: why"), not by a wrong or missing answer."""
+    return " ".join(str(answer or "").split()).lower().startswith("none")
 
 
 def record(conn: sqlite3.Connection, cycle_id: int, items: list[Item], pick: Item | None, why: str, now: str) -> None:

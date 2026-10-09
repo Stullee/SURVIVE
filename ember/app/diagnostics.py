@@ -112,6 +112,7 @@ TABLES = (
     "obligations",
     "messages",
     "standing_instructions",
+    "rules",
     "upgrades",
     "workshop_runs",
     "reviews",
@@ -140,6 +141,7 @@ TABLES = (
     "plan_nodes",  # 0.34.0
     "plan_picks",
     "plan_words",
+    "plan_freezes",  # 0.36.0
     "lesson_pins",
     "research_checks",
     "research_sources",
@@ -591,7 +593,6 @@ def _scheduler(state: AppState) -> str:
             "kind": kind,
             "venture": kind == "venture",
             "decided": decided,
-            "venture_share_pct": agent.settings.venture_share,
             "spent_today_usd": micros_to_usd(spent),
             "venture_cycles_today_usd": micros_to_usd(ventured),
             # 0.35.0: otherwise the plan tree's step decides it (a marketing step a marketing cycle): the report's
@@ -875,7 +876,9 @@ def _agent(state: AppState, full: bool = True) -> str:
                 15,
             ),
             ("messages", ["id", "sender", "seen", "text"], 15),
-            ("standing_instructions", ["id", "created_at", "entered_by", "text"], 3),  # the newest is the current
+            ("standing_instructions", ["id", "created_at", "entered_by", "text"], 3),  # until 0.36.0: the newest
+            # 0.36.0: the rulebook in their place: the rules in force and the latest removed (an edit is a new rule)
+            ("rules", ["id", "place", "created_at", "entered_by", "replaces", "removed_at", "text"], 25),
             ("upgrades", ["id", "status", "priority", "title", "released_version", "seen_cycle_id", "script_path"], 15),
             # 0.35.3: with the run's summary (its failure or the helper's answer): why a run kept nothing
             (
@@ -924,6 +927,8 @@ def _agent(state: AppState, full: bool = True) -> str:
                     "kind",
                     "status",
                     "waiting",
+                    "hold_reason",
+                    "hold_by",  # 0.36.0: whose hold it is
                     "pinned",
                     "owner_worth",
                     "could_earn",
@@ -942,6 +947,7 @@ def _agent(state: AppState, full: bool = True) -> str:
                 24,
             ),
             ("plan_words", ["id", "node_id", "action", "value", "signed", "created_at"], 20),
+            ("plan_freezes", ["id", "what", "until", "signed", "created_at", "lifted_at"], 10),  # 0.36.0
             (
                 "quality_checks",
                 ["id", "project_id", "listing_id", "created_at", "status", "score", "verdict", "fixes", "note"],
@@ -1086,7 +1092,8 @@ def _agent(state: AppState, full: bool = True) -> str:
                 if c.waiting not in (None, "step")
             ]
             out.append(
-                "-- plan tree: steps that wait (on the owner, a channel, an upgrade, a hold)\n"
+                "-- plan tree: steps that wait (on the owner, a channel, an upgrade, a hold; 0.36.0: the Explore step"
+                " also on its date, the burn mode or an owner's message first, an empty READY)\n"
                 + _rows(waiting[:15], ["step", "line", "waiting", "title"])
             )
         except Exception as exc:  # noqa: BLE001 - the report goes on without it

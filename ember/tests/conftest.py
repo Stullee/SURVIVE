@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.agent import plan
 from app.config import LoadedSettings, Settings, load_settings
 from app.main import create_app
 from tests.economy_helpers import close_databases
@@ -28,6 +29,19 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("EMBER_SCHEDULER", "off")
     monkeypatch.setenv("EMBER_FAKE_DELAY_MS", "0")
     return directory
+
+
+@pytest.fixture(autouse=True)
+def ventures_in_the_plan(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """0.36.0: the plan lays out its Ventures and their Explore step only in a test marked ``exploring``: elsewhere the
+    plan is the products' alone and no cycle is a venture cycle (as the venture share of 0 made it, until 0.35.3). An
+    exploring test explores whenever the Explore step weighs most, without the turns it takes with a new product
+    while no product step is ready, unless it is marked ``exploring(turns=True)``."""
+    marker = request.node.get_closest_marker("exploring")
+    if marker is None:
+        monkeypatch.setattr(plan, "_explore", lambda conn, scope, now: [])
+    elif not marker.kwargs.get("turns"):
+        monkeypatch.setattr(plan, "_ventured_last", lambda conn, scope, before: False)
 
 
 @pytest.fixture(autouse=True)

@@ -131,9 +131,6 @@ class Settings(BaseModel):
     # any addition to the prompts or a higher safety factor stopped scheduled wake-ups).
     daily_spend_cap_usd: float = Field(default=1.5, ge=0, le=1_000)
     cycle_spend_cap_usd: float = Field(default=0.5, ge=0, le=1_000)
-    # Ventures (0.10.0): this percent of each day's spending goes to venture cycles, where the agent researches new
-    # ways to earn and brings the owner business cases. 0: no venture cycles.
-    venture_share: int = Field(default=25, ge=0, le=100)
     # 0.18.0: how the burn modes treat a shrinking runway (economy/burn.py): invest keeps explore until the last will,
     # steady goes no lower than focus, conserve is the burn modes of 0.12.0 to 0.17.0.
     spending_stance: Literal["invest", "steady", "conserve"] = "invest"
