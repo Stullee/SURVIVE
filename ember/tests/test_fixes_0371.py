@@ -53,9 +53,14 @@ def _october_9_evening() -> list[weights.Step]:
         _owed(142, None, 9),
     ]
     for product, pins, critic in ((4, 26, 29), (6, 56, 59), (7, 71, 74), (8, 87, 89)):
-        steps.append(weights.Step(pins, product, f"pins #{product}", "market", 2.0, urgency=weights.REACH, age_days=1.38))
-        steps.append(weights.Step(critic, product, f"critic #{product}", "fix", 2.0, urgency=weights.IMPROVE, age_days=1.38))
+        steps.append(
+            weights.Step(pins, product, f"pins #{product}", "market", 2.0, urgency=weights.REACH, age_days=1.38)
+        )
+        steps.append(
+            weights.Step(critic, product, f"critic #{product}", "fix", 2.0, urgency=weights.IMPROVE, age_days=1.38)
+        )
     steps.append(weights.Step(12, 3, "pins #3", "market", 2.0, urgency=weights.REACH, age_days=0.35))
+    steps.append(weights.Step(14, 3, "critic #3", "fix", 2.0, urgency=weights.IMPROVE, age_days=0.35))
     steps.append(weights.Step(140, None, "brainstorm", "create", weights.EXPLORE_WORTH))
     return steps
 

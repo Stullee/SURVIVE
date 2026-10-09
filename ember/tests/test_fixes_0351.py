@@ -95,8 +95,8 @@ def test_a_promise_is_weighed_like_any_step_more_as_its_day_nears(data_dir: Path
     first = steered(agent, exploring=True)
     assert first.pick.decided == "weight" and first.kind == "ordinary" and first.line == book
     assert first.step is not None and first.step.title.startswith(f"Keep promise #{kdp}: ")
-    # worth the owner's word (its product could earn nothing yet); 0.37.1: no urgency while its day is 5 days off (0.37.0
-    # kept the floor from the start)
+    # worth the owner's word (its product could earn nothing yet); 0.37.1: no urgency while its day is 5 days off
+    # (0.37.0 kept the floor from the start)
     assert first.pick.parts is not None
     assert (first.pick.parts.worth, first.pick.parts.urgency) == (weights.PROMISE_WORTH, 0.0)
     with agent.db.connection() as conn:

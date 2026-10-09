@@ -35,10 +35,10 @@ like any other and held by the owner's word.
 product step more than about 12, so the promises still came first whatever else waited: nine were open (four of them
 one KDP job, two of them one report, the latest due in 9 days), and the pins the owner had put first for the week ranked
 tenth. A promise is worth PROMISE_WORTH now (3, its product's worth when that is more) and urgent only from
-PROMISE_NEAR_DAYS before its day: until then it weighs its worth and its waiting, below a live product's launch
-marketing; two days before its day it weighs 9, the day before 12, on its day 30. plan.py: one taken PROMISE_TRIES
-times in a day without being kept weighs its worth alone until the day is over (it kept the floor, which still
-outweighed every product step).
+PROMISE_NEAR_DAYS before its day: until then it weighs its worth and its waiting, at first below a live product's
+launch marketing; two days before its day it weighs 9, the day before 12, on its day 30. plan.py: one taken
+PROMISE_TRIES times in a day without being kept weighs its worth alone until the day is over (it kept the floor, which
+still outweighed every product step).
 """
 
 from __future__ import annotations

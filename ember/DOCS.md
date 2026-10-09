@@ -1077,8 +1077,8 @@ before), whatever their product is worth, and urgent only near their day:
 nothing until two days before it, 2 then, 3 the day before, 9 on the day and 11
 once it has passed; once cycles took one three times in a day without keeping
 it (your decision once) it has no urgency until that day is over. Until two days
-before its day a promise weighs its worth and its waiting, below a live
-product's first pins: in 0.37.0 every promise weighed at least 15, more than any
+before its day a promise weighs its worth and its waiting, at first less than a
+live product's first pins: in 0.37.0 every promise weighed at least 15, more than any
 step of a product, whenever its day was. A
 venture's step (0.37.0) is a creating step, worth as [Ventures](#ventures) says,
 urgent by 2 when you asked for it and by 1 when Ember's code parks the venture
@@ -2541,7 +2541,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.37.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.37.1 (by /u/your name)`.
 
 ## Amazon KDP
 
