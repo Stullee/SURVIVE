@@ -18,7 +18,7 @@ from app.economy.pricing import LAST_WILL, PLANNER_OPENING, REFLECT, WORK
 
 SETTINGS = Settings(agent_name="X" * 40)
 HEADINGS = {
-    "instructions": context.INSTRUCTIONS_HEADING,
+    "rules": context.RULES_HEADING,  # 0.36.0: the rulebook (the standing instructions retired)
     "news": "SINCE YOUR LAST WAKE",
     "research": context.RESEARCH_HEADING,
     "strategy": context.STRATEGY_HEADING,
@@ -33,7 +33,7 @@ def filler(budget: int) -> str:
 
 
 def biggest_planner_context() -> str:
-    # Every section at its budget: the standing instructions, RECENT RESEARCH and MAIL included, and (0.12.0) the
+    # Every section at its budget: the rulebook, RECENT RESEARCH and MAIL included, and (0.12.0) the
     # OBLIGATIONS at their bound (never cut) and the lessons the owner pinned (on top of LESSONS' budget).
     parts = [f"== {HEADINGS.get(k, k.upper())} ==\n{filler(v)}" for k, v in context.PLANNER_BUDGETS.items()]
     owed = f"== {obligations.HEADING} ==\n{filler(obligations.MAX_BYTES)}"
@@ -150,7 +150,7 @@ def overflowing_snapshot() -> context.Snapshot:
         mail=context.MailView(
             "ä" * 60 + "@example.org", 10**6, tuple((10**9 + i, "ä" * 320, "ä" * 300) for i in range(3))
         ),
-        instructions="😀" * 1_500,
+        rules="😀" * 1_500,
         proven=[
             (f"workshop/scripts/{'ä' * 170}-{i}.py", f"its files are in approved request #{10**9 + i}") for i in (1, 2)
         ],
@@ -161,8 +161,6 @@ def overflowing_snapshot() -> context.Snapshot:
         ],
         venture_money={1_000 + i: ventures.Money(10**12, 10**12) for i in range(60)},
         venture=True,
-        venture_share=100,
-        venture_day=(10**12, 10**12),
         decision_wakes=True,
         today=today,
         # 0.35.0: YOUR PLAN at its longest: the goal, a project's products and the milestones still open
@@ -180,6 +178,9 @@ def overflowing_snapshot() -> context.Snapshot:
                     )
                     for i in range(6)
                 ),
+                # 0.36.0: the Ventures line at its longest (the owner's worth and hold)
+                f"Ventures: your Explore step #{10**9} (worth 1000, your owner's) · your owner holds new things:"
+                f" {'ä' * 80}: no venture cycle and no new product until they resume them.",
             ]
         ),
         obligations=filler(obligations.MAX_BYTES),  # 0.12.0: at its bound
@@ -253,7 +254,7 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     snap = overflowing_snapshot()
     planner, _ = context.planner_context(snap, dry_run=True)
     assert f"== {context.RESEARCH_HEADING} ==" in planner and "== FROM YOUR OWNER ==" not in planner
-    assert "\n== MAIL ==\n" in planner and f"\n== {context.INSTRUCTIONS_HEADING} ==\n" in planner
+    assert "\n== MAIL ==\n" in planner and f"\n== {context.RULES_HEADING} ==\n" in planner
     assert "\n== WORKSHOP ==\nWorkshop check: workshop/scripts/" in planner
     assert "\n== TODAY'S REVIEW ==\nää" in planner and "\n== ETSY SHOP ==\nää" in planner
     assert "\n== VENTURES ==\n#1000 [researching] ää" in planner
@@ -281,7 +282,7 @@ def test_the_real_contexts_stay_within_what_the_profiles_measure() -> None:
     assert "\n== VENTURE CYCLE ==\n" in brief and "Focus venture: #1000000000 ää" in brief
     assert '\n== FOCUS ==\nFocus milestone: #1000000000 "ää' in brief
     assert "== FROM YOUR OWNER ==" in brief and "\n== MAIL ==\n" in brief and brief.endswith("bytes cut]")
-    assert f"\n== {context.INSTRUCTIONS_HEADING} ==\n" in brief
+    assert f"\n== {context.RULES_HEADING} ==\n" in brief
     # The owner's and the research sections' room comes on top, even when the research itself is cut at the end.
     assert context.BRIEF_BUDGET < context.json_bytes(brief) <= context.BRIEF_MAX
     for request, profile in zip(first_step_and_reflection(brief), (WORK, REFLECT), strict=True):

@@ -42,9 +42,9 @@ WORK = {
 }
 
 
-def steered(agent: Agent, venture_turn: bool = False, channels: dict[str, bool] = ALL) -> plan.Steer:
+def steered(agent: Agent, exploring: bool = False, channels: dict[str, bool] = ALL) -> plan.Steer:
     with agent.db.connection() as conn:
-        return plan.steer(conn, agent.scope(), now(agent), agent.clock.today(), channels, venture_turn=venture_turn)
+        return plan.steer(conn, agent.scope(), now(agent), agent.clock.today(), channels, exploring=exploring)
 
 
 def step_id(agent: Agent, line: int, title: str) -> int:
@@ -94,7 +94,7 @@ def json_schema(fake: Any) -> dict[str, Any]:
     return [r for r in fake.sent if request_kind(r) == "plan"][-1]["output_config"]["format"]["schema"]
 
 
-def test_a_marketing_step_makes_a_marketing_cycle_and_the_ventures_turn_a_venture_cycle(data_dir: Path) -> None:
+def test_a_marketing_step_makes_a_marketing_cycle(data_dir: Path) -> None:
     agent, _ = lined(data_dir, titles=())
     poster = project(agent, "Bauhaus posters", "People hang the posters in the living room and the office")
     keep(agent)
@@ -108,8 +108,7 @@ def test_a_marketing_step_makes_a_marketing_cycle_and_the_ventures_turn_a_ventur
     marketing = steered(agent)
     assert marketing.kind == "marketing" and marketing.step is not None
     assert marketing.step.title == "This week's pin for Bauhaus posters" and marketing.line == poster
-    venture = steered(agent, venture_turn=True)
-    assert venture.kind == "venture" and venture.step is None and venture.pick.decided == "venture"
+    # 0.36.0: the ventures' turn retired; the plan's Explore step makes a venture cycle (tests/test_fixes_0360.py)
     off = steered(agent, channels={"pinterest": False, "bluesky": False, "blog": False})
     assert off.step is None and off.kind == "ordinary"  # the pin waits on a channel that isn't set up
     with agent.db.connection() as conn:
@@ -118,6 +117,7 @@ def test_a_marketing_step_makes_a_marketing_cycle_and_the_ventures_turn_a_ventur
     assert "Nothing new starts in this burn mode" in text
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_owners_waiting_messages_skip_the_ventures_turn(data_dir: Path) -> None:
     fake = FakeTransport(script=[Plan(WORK), Reply("Done."), JOURNAL])
     agent, _ = run(data_dir, fake, cycles=0, settings=VENTURING)  # every cycle the ventures' turn
@@ -165,7 +165,8 @@ def test_an_owners_decision_on_a_products_request_is_a_step_taken_first_once_a_d
     with agent.db.transaction() as conn:  # taken by a cycle: the next ones weigh it like any step for a day
         plan.record(conn, agent.scope(), working(agent).cycle_id, now(agent), first)
     again = steered(agent)
-    assert again.pick.decided == "weight" and {c.step.product for c in again.found} == {tracker, book}
+    products = {c.step.product for c in again.found if c.stage != "explore"}  # 0.36.0: and the Explore step, held
+    assert again.pick.decided == "weight" and products == {tracker, book}
     with agent.db.transaction() as conn:
         obligations.close_one(conn, owed, "redid the photos", "agent", None, now(agent))
     keep(agent)

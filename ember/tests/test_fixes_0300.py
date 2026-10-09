@@ -207,7 +207,8 @@ def test_a_big_business_still_gets_its_weekly_look_with_the_frame_first(data_dir
     assert row["status"] == "ok", row["note"]
     view = row["view"]
     assert view.endswith("[view cut]") and len(view) <= weekly.VIEW_CHARS
-    assert view.index("YOUR OWNER'S STANDING INSTRUCTIONS") < view.index("YOUR STRATEGY NOW") < view.index("PROJECTS")
+    # 0.36.0: the owner's rulebook in place of their standing instructions
+    assert view.index("YOUR OWNER'S RULEBOOK") < view.index("YOUR STRATEGY NOW") < view.index("PROJECTS")
 
 
 # --- the playbook grows every day ---

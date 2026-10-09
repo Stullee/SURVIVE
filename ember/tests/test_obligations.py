@@ -116,6 +116,7 @@ def test_a_decision_and_a_miss_are_owed_a_reaction(data_dir: Path) -> None:
     assert (miss["status"], miss["closed_by"]) == ("closed", "agent")
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_venture_cycle_gives_way_to_what_is_owed(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[]), plan(steps=[]), plan(steps=[])]), settings=VENTURING)
     assert rows(agent, "SELECT venture FROM cycles") == [{"venture": 1}]  # every cycle a venture cycle
@@ -124,11 +125,14 @@ def test_a_venture_cycle_gives_way_to_what_is_owed(data_dir: Path) -> None:
     # 0.19.3: a scheduled venture cycle answers the message first and stays a venture cycle (live, messages turned 4 of
     # 12 cycles that were the ventures' turn into ordinary ones)
     agent.run_cycle("schedule")
+    # 0.36.0: the message that woke cycle #2 kept its plan's Explore step waiting ('mode'), so the plan tree's step
+    # decided what it is (an ordinary or a marketing cycle); cycle #3's plan explored again
     assert rows(agent, "SELECT venture FROM cycles ORDER BY id") == [{"venture": 1}, {"venture": 0}, {"venture": 1}]
-    events = [e["message"] for e in agent.db.recent_events(limit=30)]
-    # 0.35.0: the plan tree's step decides what it is instead (an ordinary or a marketing cycle)
-    assert "Cycle #2 is not a venture cycle: 1 message of your owner's to answer comes first" in events
-    assert not any(e.startswith("Cycle #3 is not a venture cycle") for e in events)
+    assert [p["kind"] for p in rows(agent, "SELECT kind FROM plan_picks ORDER BY id")] == [
+        "venture",
+        "ordinary",
+        "venture",
+    ]
 
 
 def test_the_section_is_bounded_and_quoted(data_dir: Path) -> None:

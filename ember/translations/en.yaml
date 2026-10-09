@@ -20,12 +20,6 @@ configuration:
     description: >-
       Hard limit on API spending in one wake cycle. Must not exceed the daily
       cap: if it does, Ember uses the daily cap and says so on the dashboard.
-  venture_share:
-    name: Share for ventures (%)
-    description: >-
-      This percent of each day's spending goes to venture cycles, where the
-      agent researches new ways to earn beyond what it does now and brings you
-      business cases on the Ventures tab. 0 switches venture cycles off.
   spending_stance:
     name: Spending stance
     description: >-

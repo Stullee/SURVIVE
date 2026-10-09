@@ -77,9 +77,9 @@
     lib: { data: null, stamp: null, busy: false, again: false, error: null, saving: false, docs: {} },
     refocus: null,       // after the owner's own action: the card status line to focus once the list is re-rendered
     sending: false,      // an inbox message is on its way
-    // The standing instructions' editor: open while the owner edits (polls never touch it then), whether a save is on its
-    // way, and the text last warned about as looking like a password (saved as it is if Save is pressed again).
-    instructions: { editing: false, saving: false, secretWarned: null },
+    // 0.36.0: the rulebook's form: the rule being changed (null: a new one), whether a save is on its way, and the text
+    // last warned about as looking like a password (saved as it is if the owner presses the button again).
+    rules: { editing: null, saving: false, secretWarned: null },
     markingRead: false,
     killBusy: false,
     // 0.15.0: the Inbox's older messages, loaded on request: those pages, the message the next one begins before (null:
@@ -558,7 +558,7 @@
     banners: "Banners", system: "System status", transitions: "Life-state history", events: "System log",
     header: "Header", controls: "Controls", kpis: "Key numbers", badges: "Tab badges", memorial: "Memorial",
     now: "Now", lives: "Previous lives", charts: "Charts", table: "Table", ledger: "Ledger", forms: "Forms",
-    projects: "Projects", activity: "Activity", approvals: "Approvals", inbox: "Inbox", instructions: "Standing instructions",
+    projects: "Projects", activity: "Activity", approvals: "Approvals", inbox: "Inbox", rules: "Rulebook",
     upgrades: "Upgrades", mind: "Mind", ventures: "Ventures", roadmap: "Milestones", plan: "Plan", library: "Library",
     cycleDetail: "Cycle details", diagnostics: "Diagnostics", email: "Email", workspace: "Workspace", workspaceFile: "Workspace file",
   };
@@ -652,8 +652,8 @@
       return renderApprovals(arr(d.approvals), projectTitles(d), emailLimits(d));
     });
     section("audit", [d.audit, agent.name, agent.state, agent.killed, minute], ["audit-feed", "audit-take-back"], function () { renderAudit(d.audit, agent.state === "killed" || !!agent.killed); });
-    section("instructions", [d.instructions, agent.name, coming, !!agent.unavailable, minute], ["instructions-view"], function () {
-      renderInstructions(isObject(d.instructions) ? d.instructions : null, agent);
+    section("rules", [d.rules, agent.name, coming, !!agent.unavailable, ui.rules.editing, minute], ["rules-list"], function () {
+      renderRules(arr(d.rules).filter(isObject), agent);
     });
     section("inbox", [d.inbox, d.inbox_before, d.promises_open, d.badges, agent.name, coming, d.mode, minute], ["inbox", "owed"], function () { renderInboxOf(d); });
     section("upgrades", [d.upgrades, coming, agent.name, minute], null, function () { return renderUpgrades(arr(d.upgrades)); });
@@ -3589,153 +3589,210 @@
     return spec;
   }
 
-  // ---- Standing instructions (top of the Inbox)
+  // ---- The rulebook (the Mind tab's first card; 0.36.0, in place of the standing instructions beside the conversation:
+  // live, a new text for one week's order of work replaced the owner's rules, and they dropped out with it)
 
-  var INSTRUCTIONS_MAX = 1500;
-  // Offered while there are none, never saved by itself: the owner saves it (changed or not) with Save.
-  var INSTRUCTIONS_SUGGESTION = "Work on your own. Ask me only to approve something that leaves the container, or for money. " +
-    "Keep 2-3 experiments going; when one waits for me, work on another. Spend your daily budget on experiments rather " +
-    "than sleeping to save it.";
+  var RULE_MAX = 500;  // owner.RULE_MAX: one rule
+  var RULEBOOK_MAX = 1500;  // owner.RULEBOOK_MAX: all the rules in force together
+  var RULES_MAX = 20;  // owner.RULES_MAX
+  var RULE_EXAMPLE = "e.g. Bluesky posts in English, linking the Etsy listing itself. Blog posts in German.";
 
-  function currentInstructions() {
-    var instr = ui.data && isObject(ui.data.instructions) ? ui.data.instructions : null;
-    return instr && typeof instr.text === "string" && instr.text ? instr : null;
+  function currentRules() {
+    return ui.data ? arr(ui.data.rules).filter(isObject) : [];
   }
 
-  function renderInstructions(instr, agent) {
+  // The characters the rules in force use, but for the one being changed (``except``: its id).
+  function rulesUsed(except) {
+    return currentRules().reduce(function (n, r) { return num(r.id) === except ? n : n + String(r.text || "").length; }, 0);
+  }
+
+  function renderRules(rules, agent) {
     var name = agent.name || "Ember";
-    var text = instr && typeof instr.text === "string" ? instr.text : "";
-    var sub = $("instructions-sub");
-    if (text) {
-      replace(sub, ["Set by " + (instr.entered_by ? String(instr.entered_by) : "you") + " · ", timeEl(instr.updated_at)]);
-      replace($("instructions-view"), h("p", { class: "instructions-text", text: text }));
-    } else {
-      sub.textContent = "None yet.";
-      replace($("instructions-view"), h("div", { class: "instructions-empty" },
-        h("p", { class: "muted", text: "A suggestion to start from (nothing is saved until you press Save):" }),
-        h("p", { class: "instructions-text instructions-suggestion", text: INSTRUCTIONS_SUGGESTION })));
-    }
-    $("instructions-note").textContent = name + " reads these in every plan. Use them for lasting guidance; use messages for one-off things.";
-    $("instructions-label").textContent = "Standing instructions for " + name;
-    syncInstructionsEdit(agent);
+    $("rules-sub").textContent = rules.length
+      ? rules.length + (rules.length === 1 ? " rule" : " rules") + " · " + intFmt.format(rulesUsed(null)) + " of 1,500 characters"
+      : "No rules yet.";
+    replace($("rules-list"), rules.map(ruleItem));
+    $("rules-list").hidden = !rules.length;
+    $("rules-note").textContent = name + " reads every rule in every plan: how to work (languages, style, what to avoid)." +
+      " A rule holds until you remove it. What comes next is your plan's: pin, hold, set a worth or freeze titles and tags" +
+      " on the Plan tab, and " + name + "'s code keeps it. Use messages for one-off things.";
+    syncRulesForm(agent);
+    rulesCount();
   }
 
-  function syncInstructionsEdit(agent) {
-    var edit = $("instructions-edit");
+  function ruleItem(r) {
+    var id = num(r.id);
+    var edit = h("button", { type: "button", class: "link-button", text: "Edit" });
+    edit.addEventListener("click", function () { openRule(id); });
+    var remove = h("button", { type: "button", class: "link-button", text: "Remove" });
+    remove.addEventListener("click", function () { removeRule(id, remove); });
+    return h("li", { class: "rule", "data-id": String(id), "data-editing": ui.rules.editing === id ? "true" : "false" },
+      h("span", { class: "rule-num", text: "#" + id }),
+      h("span", { class: "rule-body" },
+        h("span", { class: "rule-text", text: asText(r.text) }),
+        h("span", { class: "rule-meta" }, "By " + (r.entered_by ? String(r.entered_by) : "you") + " · ", timeEl(r.created_at),
+          " · ", edit, " · ", remove)));
+  }
+
+  function syncRulesForm(agent) {
+    var editing = ui.rules.editing;  // null while a new rule is written; a rule's id while it is changed
     var later = laterTitle();
-    var editing = ui.instructions.editing;
-    edit.hidden = editing;
-    edit.setAttribute("aria-expanded", editing ? "true" : "false");
-    edit.textContent = currentInstructions() ? "Edit" : "Write instructions";
-    edit.disabled = !!later || !!(agent && agent.unavailable);
-    if (later) edit.title = later;
-    else if (agent && agent.unavailable) edit.title = "The agent is not available";
-    else edit.removeAttribute("title");
-    $("instructions-view").hidden = editing;
+    var save = $("rules-save");
+    $("rules-label").textContent = editing ? "Rule #" + editing + " in new words (it becomes a new rule in its place)" : "A new rule";
+    save.textContent = ui.rules.saving ? "Saving…" : editing ? "Save" : "Add rule";
+    save.disabled = ui.rules.saving || !!later || !!(agent && agent.unavailable);
+    if (later) save.title = later;
+    else if (agent && agent.unavailable) save.title = "The agent is not available";
+    else save.removeAttribute("title");
+    $("rules-cancel").hidden = !editing;
+    $("rules-text").placeholder = RULE_EXAMPLE;
   }
 
-  function instructionsCount() {
-    var n = $("instructions-text").value.trim().length;
-    var el = $("instructions-count");
-    el.textContent = intFmt.format(n) + " / 1,500 characters";
-    el.setAttribute("data-over", n > INSTRUCTIONS_MAX ? "true" : "false");
+  function rulesCount() {
+    var n = $("rules-text").value.trim().length;
+    var room = Math.max(0, Math.min(RULE_MAX, RULEBOOK_MAX - rulesUsed(ui.rules.editing)));
+    var el = $("rules-count");
+    el.textContent = intFmt.format(n) + " / " + intFmt.format(room) + " characters";
+    el.setAttribute("data-over", n > room ? "true" : "false");
   }
 
-  function instructionsError(text) {
-    var err = $("instructions-error");
+  function rulesError(text) {
+    var err = $("rules-error");
     err.textContent = text || "";
     err.hidden = !text;
-    if (text) $("instructions-text").setAttribute("aria-invalid", "true");
-    else $("instructions-text").removeAttribute("aria-invalid");
+    if (text) $("rules-text").setAttribute("aria-invalid", "true");
+    else $("rules-text").removeAttribute("aria-invalid");
   }
 
-  function setInstructionsStatus(text, kind) {
-    $("instructions-status").textContent = text;
-    $("instructions-status").setAttribute("data-kind", kind || "");
+  function setRulesStatus(text, kind) {
+    $("rules-status").textContent = text;
+    $("rules-status").setAttribute("data-kind", kind || "");
   }
 
-  // 0.33.0: ``add``, one of the owner's messages to keep as a standing instruction (Keep as instruction), at the end
-  function openInstructions(add) {
-    if (ui.instructions.editing || laterTitle()) return;
-    var adding = typeof add === "string" ? add.trim() : "";  // the Edit button passes its click event
-    var current = currentInstructions();
-    ui.instructions.editing = true;
-    $("instructions-form").hidden = false;
-    var box = $("instructions-text");
-    if (adding) box.value = (current ? current.text + "\n" : "") + "- " + adding;
-    else box.value = current ? current.text : INSTRUCTIONS_SUGGESTION;
-    box.placeholder = INSTRUCTIONS_SUGGESTION;
-    instructionsError("");
-    instructionsCount();
-    setInstructionsStatus(adding ? "Your message is added at the end: shorten it as you like. Nothing is saved until you press Save."
-      : current ? "" : "Filled in with the suggestion: change it as you like. Nothing is saved until you press Save.", "");
-    syncInstructionsEdit(ui.data ? ui.data.agent || standInAgent(ui.data) : null);
+  function renderRulesNow() {
+    ui.rendered.rules = null;
+    if (!ui.data) return;
+    var agent = ui.data.agent || standInAgent(ui.data);
+    safely("rules", function () { renderRules(currentRules(), agent); });
+  }
+
+  // A rule to change (``id``), or (0.33.0, Keep as rule) one of the owner's messages to keep as a new rule (``add``):
+  // that one brings the Mind tab, where the rulebook is.
+  function openRule(id, add) {
+    if (ui.rules.saving || laterTitle()) return;
+    var rule = id ? currentRules().filter(function (r) { return num(r.id) === id; })[0] : null;
+    var box = $("rules-text");
+    if (typeof add === "string") {
+      selectTab("mind", false);
+      revealEl($("rules-card"), $("rules-text"));
+    }
+    ui.rules.editing = rule ? id : null;
+    if (rule) box.value = String(rule.text || "");
+    else if (typeof add === "string") box.value = add.trim();
+    rulesError("");
+    rulesCount();
+    setRulesStatus(rule ? "Change its words, then Save. Nothing is saved until you do."
+      : typeof add === "string" ? "Your message is in the box: shorten it to the rule, then Add rule." : "", "");
+    renderRulesNow();
     box.focus();
   }
 
-  function closeInstructions() {
-    ui.instructions.editing = false;
-    $("instructions-form").hidden = true;
-    instructionsError("");
-    ui.rendered.instructions = null;  // show what changed while the editor was open
-    if (ui.data) {
-      var agent = ui.data.agent || standInAgent(ui.data);
-      safely("instructions", function () { renderInstructions(currentInstructions(), agent); });
-    }
-    $("instructions-edit").focus();
+  function closeRule() {
+    ui.rules.editing = null;
+    $("rules-text").value = "";
+    rulesError("");
+    rulesCount();
+    renderRulesNow();
   }
 
-  function saveInstructions() {
-    if (ui.instructions.saving || !ui.instructions.editing || laterTitle()) return;
-    var box = $("instructions-text");
+  function saveRule() {
+    if (ui.rules.saving || laterTitle()) return;
+    var box = $("rules-text");
     var text = box.value.trim();
-    instructionsError("");
-    if (text.length > INSTRUCTIONS_MAX) {
-      instructionsError("Keep the instructions under 1,500 characters (they have " + intFmt.format(text.length) + ").");
+    var editing = ui.rules.editing;
+    var used = rulesUsed(editing);
+    rulesError("");
+    if (!text) { rulesError("Write the rule first."); box.focus(); return; }
+    if (text.length > RULE_MAX) {
+      rulesError("Keep a rule under 500 characters (this one has " + intFmt.format(text.length) + ").");
       box.focus();
       return;
     }
-    // Unlike a message's text, a saved version can't be removed later, and every plan sends it to Anthropic.
-    if (SECRET_HINT.test(text) && ui.instructions.secretWarned !== text) {
-      ui.instructions.secretWarned = text;
-      instructionsError("This looks like it contains a password. " + agentName() + " can't log in anywhere, and every " +
-        "saved version of the instructions is kept for good and sent to Anthropic with every plan. Remove it, or press " +
-        "Save again to save it anyway.");
+    if (!editing && currentRules().length >= RULES_MAX) {
+      rulesError("The rulebook holds " + RULES_MAX + " rules: remove or merge one first.");
+      return;
+    }
+    if (used + text.length > RULEBOOK_MAX) {
+      rulesError("The rulebook holds 1,500 characters (" + intFmt.format(used) + " in use): shorten or remove a rule first.");
       box.focus();
       return;
     }
-    ui.instructions.saving = true;
-    var save = $("instructions-save");
-    save.disabled = true;
-    save.textContent = "Saving…";
-    setInstructionsStatus("Saving…", "");
-    request("POST", "api/instructions", { text: text }).then(function (res) {
+    // Every rule is kept for good, and every plan sends the rulebook to Anthropic.
+    if (SECRET_HINT.test(text) && ui.rules.secretWarned !== text) {
+      ui.rules.secretWarned = text;
+      rulesError("This looks like it contains a password. " + agentName() + " can't log in anywhere, and every rule is " +
+        "kept for good and sent to Anthropic with every plan. Remove it, or press " + (editing ? "Save" : "Add rule") +
+        " again to save it anyway.");
+      box.focus();
+      return;
+    }
+    ui.rules.saving = true;
+    syncRulesForm(ui.data ? ui.data.agent || standInAgent(ui.data) : null);
+    setRulesStatus("Saving…", "");
+    request("POST", editing ? "api/rules/" + editing : "api/rules", { text: text }).then(function (res) {
       var data = isObject(res.data) ? res.data : {};
       if (res.ok) {
-        if (ui.data) ui.data.instructions = isObject(data.instructions) ? data.instructions : null;
-        closeInstructions();
-        setInstructionsStatus(data.changed === false ? "Nothing changed: these are already the instructions."
-          : text ? "Saved. " + agentName() + " follows them from its next plan on."
-          : "Cleared. " + agentName() + " has no standing instructions now.", "ok");
+        if (ui.data && Array.isArray(data.rules)) ui.data.rules = data.rules;
+        closeRule();
+        setRulesStatus(data.changed === false ? "Nothing changed: rule #" + editing + " already says that."
+          : editing ? "Saved as rule #" + data.rule + " in the place of #" + editing + ". " + agentName() + " follows it from its next plan on."
+          : "Added rule #" + data.rule + ". " + agentName() + " follows it from its next plan on.", "ok");
         refresh();
         return;
       }
       if (res.status === 422 && data.field === "text" && typeof data.error === "string" && data.error) {
-        instructionsError(endSentence(sentence(data.error)));
-        setInstructionsStatus("Nothing was saved.", "error");
+        rulesError(endSentence(sentence(data.error)));
+        setRulesStatus("Nothing was saved.", "error");
         box.focus();
         return;
       }
-      ownerFailure(res, {}, function (msg) { setInstructionsStatus(msg, "error"); }, null);
+      ownerFailure(res, {}, function (msg) { setRulesStatus(msg, "error"); }, null);
     }).catch(function (err) {
       if (!(err instanceof RequestError)) console.error(err);
-      setInstructionsStatus((err.kind === "timeout" ? "Ember did not answer in time" : "Couldn't reach Ember") +
-        ", so the instructions may or may not have been saved. Check them after the next update.", "error");
+      setRulesStatus((err.kind === "timeout" ? "Ember did not answer in time" : "Couldn't reach Ember") +
+        ", so the rule may or may not have been saved. Check the rulebook after the next update.", "error");
       refresh();
     }).then(function () {
-      ui.instructions.saving = false;
-      save.textContent = "Save";
-      save.disabled = false;
+      ui.rules.saving = false;
+      syncRulesForm(ui.data ? ui.data.agent || standInAgent(ui.data) : null);
+    });
+  }
+
+  // Two clicks, like a message's Remove text: the rule leaves the rulebook (its history is kept).
+  function removeRule(id, btn) {
+    if (btn.getAttribute("data-armed") !== "true") {
+      btn.setAttribute("data-armed", "true");
+      btn.textContent = "Click again to remove rule #" + id;
+      window.setTimeout(function () { btn.removeAttribute("data-armed"); btn.textContent = "Remove"; }, 6000);
+      return;
+    }
+    btn.disabled = true;
+    setRulesStatus("Removing…", "");
+    request("POST", "api/rules/" + id + "/remove", {}).then(function (res) {
+      var data = isObject(res.data) ? res.data : {};
+      if (!res.ok) {
+        ownerFailure(res, {}, function (msg) { setRulesStatus(msg, "error"); }, null);
+        btn.disabled = false;
+        return;
+      }
+      if (ui.data && Array.isArray(data.rules)) ui.data.rules = data.rules;
+      if (ui.rules.editing === id) closeRule();
+      else renderRulesNow();
+      setRulesStatus("Removed rule #" + id + ".", "ok");
+      refresh();
+    }).catch(function (err) {
+      setRulesStatus("Couldn't remove the rule (" + errorText(err) + ").", "error");
+      btn.disabled = false;
     });
   }
 
@@ -3904,12 +3961,13 @@
     return h("p", { class: "msg-status" }, parts);
   }
 
-  // 0.33.0: one of the owner's messages kept as a standing instruction: a message leaves the agent's plans once it is
-  // answered, the instructions are in every plan (live, "Bluesky in English only" was acknowledged, then forgotten).
+  // 0.33.0: one of the owner's messages kept as a standing instruction (0.36.0: a rule of their rulebook): a message
+  // leaves the agent's plans once it is answered, the rules are in every plan (live, "Bluesky in English only" was
+  // acknowledged, then forgotten).
   function keepButton(m) {
-    var btn = h("button", { type: "button", class: "link-button", "data-keep": String(num(m.id)), text: "Keep as instruction",
-      title: "Add it to your standing instructions: " + agentName() + " reads them in every plan, and a message only until it is answered" });
-    btn.addEventListener("click", function () { openInstructions(asText(m.text)); });
+    var btn = h("button", { type: "button", class: "link-button", "data-keep": String(num(m.id)), text: "Keep as rule",
+      title: "Add it to your rulebook (the Mind tab): " + agentName() + " reads the rules in every plan, and a message only until it is answered" });
+    btn.addEventListener("click", function () { openRule(null, asText(m.text)); });
     return btn;
   }
 
@@ -4299,7 +4357,7 @@
     disputed: { icon: "!", label: "Disputed", tone: "warning" },
   };
 
-  // Mind → Playbook (0.30.0): the agent's rulebook, the principles Ember's code keeps from its own cases, each with
+  // Mind → Playbook (0.30.0): the agent's principles, which Ember's code keeps from its own cases, each with
   // the cases for and against it, and this week's look; older servers send none.
   function renderPlaybook(body, playbook) {
     if (!isObject(playbook)) {
@@ -4310,7 +4368,7 @@
     var retired = arr(playbook.retired);
     var cases = Number(playbook.cases) || 0;
     var early = Number(playbook.cases_too_early) || 0;
-    var parts = [h("p", { class: "muted small", text: agentName() + "'s rulebook, drawn from its own cases. Each " +
+    var parts = [h("p", { class: "muted small", text: agentName() + "'s principles, drawn from its own cases (your own rules are the Rulebook above). Each " +
       "day the lessons of its retrospectives join it as hypotheses; three cases that agree make a principle " +
       "established, a case against it makes it disputed, and Ember's code retires what no case confirms for weeks. " +
       "Once a week its weekly look confirms, merges and retires them, and chooses the week's focus lines." })];
@@ -6086,17 +6144,16 @@
   });
   $("inbox-mark-read").addEventListener("click", markAllRead);
 
-  // ------------------------------------------------------------------ standing instructions
+  // ------------------------------------------------------------------ the rulebook (0.36.0)
 
-  $("instructions-edit").addEventListener("click", openInstructions);
-  $("instructions-cancel").addEventListener("click", function () { setInstructionsStatus("", ""); closeInstructions(); });
-  $("instructions-form").addEventListener("submit", function (ev) { ev.preventDefault(); saveInstructions(); });
-  $("instructions-text").addEventListener("keydown", function (ev) {
-    if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); saveInstructions(); }
+  $("rules-cancel").addEventListener("click", function () { setRulesStatus("", ""); closeRule(); });
+  $("rules-form").addEventListener("submit", function (ev) { ev.preventDefault(); saveRule(); });
+  $("rules-text").addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); saveRule(); }
   });
-  $("instructions-text").addEventListener("input", function () {
-    instructionsError("");
-    instructionsCount();
+  $("rules-text").addEventListener("input", function () {
+    rulesError("");
+    rulesCount();
   });
 
   // ------------------------------------------------------------------ diagnostics
@@ -8227,13 +8284,17 @@
       return counts[k] + " " + word;
     });
     var today = isObject(data.today) ? data.today : {};
-    var share = num(data.share);
+    // 0.36.0: exploring is the plan's Explore step (the venture share retired): weighed like any step, held by you
+    var explore = isObject(data.explore) ? data.explore : null;
     var parts = [];
-    if (share > 0) {
-      parts.push("Ventures get " + share + "% of " + name + "'s spending (the venture_share option): " + usd(today.ventures_usd) +
-        " of today's " + usd(today.spent_usd) + " so far, in " + plural(num(data.venture_cycles) || 0, "venture cycle") + " in all.");
+    if (explore && explore.hold) {
+      parts.push((explore.hold_by === "owner" ? "You hold new things" : "Your ventures are on hold") + " (" + explore.hold +
+        "): no venture cycle" + (explore.hold_by === "owner" ? " and no new product" : "") +
+        " until you resume them on the Plan tab. Your ideas still go into the tree.");
     } else {
-      parts.push("Venture cycles are off: venture_share is 0 in the app's options. Your ideas still go into the tree.");
+      parts.push("Exploring is your plan's Explore step (worth " + (explore ? explore.worth : "2") + "): a venture cycle comes when it weighs most;" +
+        " set its worth or hold it on the Plan tab. Venture cycles spent " + usd(today.ventures_usd) + " of today's " + usd(today.spent_usd) +
+        ", " + plural(num(data.venture_cycles) || 0, "venture cycle") + " in all.");
     }
     parts.push(plural(items.length, "venture") + " in the tree" + (tally.length ? ": " + tally.join(", ") : "") + ".");
     var legs = items.filter(function (v) { return v.stage === "live" || v.stage === "building"; });
@@ -9975,10 +10036,13 @@
   var PLAN_COLOURS = 6;
   var PLAN_WAIT = {
     owner: "waits on you", channel: "its channel is off", upgrade: "waits on an upgrade",
-    step: "after the one before", hold: "on hold",
+    step: "after the one before", hold: "on hold", date: "waits for a day",
+    mode: "no venture cycle now (the burn mode, or what you wait for comes first)", empty: "no venture decision is due",  // 0.36.0: the Explore step's
+    turn: "a new product's turn (no product step is ready)",
   };
   var PLAN_DECIDED = {
-    pin: "you pinned it", promise: "a promise to you (first until kept) or your decision", venture: "a venture cycle (the venture share)",
+    pin: "you pinned it", promise: "a promise to you (first until kept) or your decision",
+    venture: "a venture cycle (the venture share, until 0.35.3)",
     weight: "the heaviest step", margin: "the product worked on last keeps it", none: "nothing is ready",
   };
 
@@ -10026,7 +10090,7 @@
     var goal = isObject(d.goal) ? d.goal : null;
     $("pl-sub").textContent = (goal ? "Your goal: " + goal.title + " (by " + fmtDay(goal.due) + "). " : "")
       + "Each cycle takes its step from this plan: what you pinned, a promise or your decision due, then the heaviest step.";
-    renderPlanNow(d);
+    if (!isBusy($("pl-now"))) renderPlanNow(d);  // 0.36.0: a freeze's day being chosen stays
     renderPlanNet(d, products);
     if (!isBusy($("pl-detail"))) renderPlanDetail(products);  // a reason being typed stays
     renderPlanChanges(d);
@@ -10056,7 +10120,80 @@
         waiting.length
           ? h("ul", { class: "pl-list" }, waiting.map(function (s) { return h("li", { text: s.title + (s.line ? " (line #" + s.line + ")" : "") }); }))
           : h("p", { class: "muted", text: "Nothing." })),
+      planFreezeCard(d),
+      planVenturesCard(d),
     ]);
+  }
+
+  // 0.36.0: your ventures are the plan's Explore step (the venture share retired): weighed like any step, at the worth
+  // you give them; hold them for "nothing new", or pin the step to explore next.
+  function planVenturesCard(d) {
+    var v = isObject(d.ventures) ? d.ventures : null;
+    if (!v) return null;
+    var st = isObject(v.step) ? v.step : {};
+    var state = v.hold
+      ? v.hold_by === "owner"
+        ? "You hold new things: " + v.hold + ". No venture cycle and no new product until you resume them."
+        : agentName() + " holds them: " + v.hold
+      : st.waiting === "date" && st.wait_until
+        ? "Waits until " + fmtDay(st.wait_until) + (st.wait_why ? ": " + st.wait_why : "")
+        : st.waiting ? sentence(PLAN_WAIT[st.waiting] || st.waiting)
+          : st.weight !== null && st.weight !== undefined ? "Weight " + st.weight + " now: a venture cycle comes when it weighs most." : "";
+    var owned = v.owner_worth !== null && v.owner_worth !== undefined;
+    var worth = h("input", { type: "number", min: "0.5", max: "10", step: "0.5", class: "pl-worth-input", "aria-label": "Their worth",
+      placeholder: String(v.worth), value: owned ? String(v.owner_worth) : "" });
+    var target = { id: v.id };
+    return h("div", { class: "pl-now-card" },
+      h("p", { class: "small-head", text: "Ventures" }),
+      state ? h("p", { text: state }) : null,
+      arr(v.ready).length ? h("ul", { class: "pl-list muted" }, arr(v.ready).map(function (t) { return h("li", { text: t }); })) : null,
+      h("div", { class: "form-actions" },
+        worth,
+        planButton("Set worth", "btn btn-small", function (button) {
+          var value = worth.value.trim() === "" ? null : Number(worth.value);
+          planProductAction(target, "worth", { worth: value }, button, value === null ? "Their worth is " + agentName() + "'s again." : "Their worth is " + value + ".");
+        })),
+      h("div", { class: "form-actions" },
+        v.hold
+          ? planButton("Resume", "btn btn-small", function (button) { planProductAction(target, "resume", null, button, "Resumed: exploring is weighed again, and new products may start."); })
+          : planButton("Hold new things", "btn btn-small", function (button) { planProductAction(target, "hold", { why: "nothing new for now" }, button, "Held: no venture cycle and no new product until you resume them."); }),
+        st.id && !v.hold ? planButton(st.pinned ? "Unpin" : "Explore next", "btn btn-small", function (button) { pinPlanStep(st.id, !st.pinned, button); }) : null));
+  }
+
+  // 0.36.0: the owner's freeze of the listings' titles and tags, which Ember's code keeps: the listing edits refuse
+  // them and the critic asks for none (a sentence in the standing instructions was read by neither).
+  function planFreezeCard(d) {
+    var head = h("p", { class: "small-head", text: "Titles and tags" });
+    if (d.freeze) {
+      return h("div", { class: "pl-now-card" }, head,
+        h("p", { text: "Frozen until " + fmtDay(d.freeze) + ": " + agentName() + " changes neither." }),
+        planButton("Lift the freeze", "btn btn-small", function (button) { planFreeze(null, button); }));
+    }
+    var day = h("input", { type: "date", class: "pl-freeze-day", "aria-label": "Their last frozen day", min: d.today });
+    return h("div", { class: "pl-now-card" }, head,
+      h("p", { class: "muted", text: agentName() + " may change them. Freeze them until a day:" }),
+      h("div", { class: "form-actions" }, day, planButton("Freeze", "btn btn-small", function (button) {
+        if (!day.value) { setStatusText("pl-status", "Choose the freeze's last day.", "error"); return; }
+        planFreeze(day.value, button);
+      })));
+  }
+
+  // POST api/plan/freeze (its last day, or null to lift it), then the plan again.
+  function planFreeze(until, button) {
+    button.disabled = true;
+    request("POST", "api/plan/freeze", { until: until }).then(function (res) {
+      if (!res.ok) {
+        ownerFailure(res, {}, function (msg) { setStatusText("pl-status", msg, "error"); }, function (msg) { setStatusText("pl-status", msg, "error"); });
+        button.disabled = false;
+        return;
+      }
+      setStatusText("pl-status", (until ? "Titles and tags are frozen until " + fmtDay(until) + "." : "The freeze is lifted.") + " " + agentName() + " sees it on its next wake.", "ok");
+      loadPlan();
+      refresh();
+    }).catch(function (err) {
+      button.disabled = false;
+      setStatusText("pl-status", "Couldn't reach " + agentName() + ": " + errorText(err) + ". Refresh the plan to see whether it changed.", "error");
+    });
   }
 
   // A smooth link from a parent's foot to a child's head (vertical tangents at both ends).
@@ -10263,13 +10400,15 @@
     ]);
   }
 
-  // 0.35.0: Ember may hold a product to work elsewhere (with her reason); the owner lifts the hold here.
+  // 0.35.0: Ember may hold a product to work elsewhere (with her reason); the owner lifts the hold here. 0.36.0: or
+  // the owner holds it themselves (Ember can't lift that one).
   function planHold(q) {
     if (!q.hold || q.status !== "open") return null;
-    var lift = h("button", { type: "button", class: "btn btn-small", text: "Lift the hold" });
+    var mine = q.hold_by === "owner";
+    var lift = h("button", { type: "button", class: "btn btn-small", text: mine ? "Resume it" : "Lift the hold" });
     lift.addEventListener("click", function () { planProductAction(q, "resume", null, lift, "The hold is lifted: its steps are weighed again."); });
     return h("div", { class: "pl-hold" },
-      h("p", null, h("strong", { text: agentName() + " holds it: " }), String(q.hold)),
+      h("p", null, h("strong", { text: mine ? "You hold it: " : agentName() + " holds it: " }), String(q.hold)),
       lift);
   }
 
@@ -10309,7 +10448,23 @@
       buttons.hidden = true;
       why.focus();
     }
+    // 0.36.0: the owner holds it: its steps wait until they resume it (Ember can't), with an optional reason
+    function askHold() {
+      replace(confirm, [
+        h("p", { text: "Hold “" + q.title + "”? Its steps wait until you resume it; " + agentName() + " can't resume it." }),
+        why,
+        h("div", { class: "form-actions" },
+          planButton("Hold it", "btn btn-primary", function (button) {
+            planProductAction(q, "hold", { why: why.value.trim() }, button, "Held: its steps wait until you resume it.");
+          }),
+          planButton("Cancel", "btn", function () { confirm.hidden = true; buttons.hidden = false; })),
+      ]);
+      confirm.hidden = false;
+      buttons.hidden = true;
+      why.focus();
+    }
     replace(buttons, [
+      q.hold_by === "owner" ? null : planButton("Hold it", "btn", askHold),
       planButton("Close as done", "btn", function () { ask(true); }),
       planButton("Drop it", "btn", function () { ask(false); }),
     ]);

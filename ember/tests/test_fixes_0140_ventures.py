@@ -83,6 +83,7 @@ def problem(agent: Agent, source: str, said: str | None, project_id: int = 1) ->
         return demand.source_problem(conn, agent.scope(), source, project_id, said)
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_library_document_backs_a_demand_note_only_when_linked_or_an_export_with_its_number(
     data_dir: Path,
 ) -> None:
@@ -109,6 +110,7 @@ def test_a_library_document_backs_a_demand_note_only_when_linked_or_an_export_wi
     assert problem(agent, "library #99", said) == "there is no document #99 in your owner's library"
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_comma_export_keeps_its_columns_apart_and_a_count_like_2000_can_be_cited(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     product_line(agent)
@@ -125,6 +127,7 @@ def test_a_comma_export_keeps_its_columns_apart_and_a_count_like_2000_can_be_cit
     assert demand.numbers("1,200 12.500,00 4.99 1200,450") == {"1200", "12500", "450"}
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_demand_note_needs_an_independent_page_and_a_number(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     product_line(agent)
@@ -149,6 +152,7 @@ def claim(agent: Agent, url: str, metric: str, unit: str = "EUR") -> str:
     return grade
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_vendors_are_matched_on_any_domain_and_only_demand_lifts_vendor_only(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
     case(agent)
@@ -174,6 +178,7 @@ def test_vendors_are_matched_on_any_domain_and_only_demand_lifts_vendor_only(dat
     assert found(agent) == []
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_claim_graded_before_a_vendor_was_known_doesnt_lift_vendor_only(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
     case(agent)
@@ -254,6 +259,7 @@ def test_a_proposal_from_before_the_gates_goes_back_to_researching(tmp_path: Pat
     new.close()
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_owners_back_sends_a_knocked_out_proposal_back_to_researching_first(data_dir: Path) -> None:
     fake = FakeTransport(script=[plan(steps=[])])
     agent, _ = run(data_dir, fake, settings=VENTURING)  # a first cycle, for the research rows to belong to
@@ -284,6 +290,7 @@ def test_the_owners_back_sends_a_knocked_out_proposal_back_to_researching_first(
     assert backed.status == 200 and backed.body["stage"] == "building"  # the owner's call, knowing it
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_owners_words_with_a_back_that_sends_it_to_researching_are_kept(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     with agent.db.transaction() as conn:  # a proposal without numbers (from before the gates)
@@ -300,6 +307,7 @@ def test_the_owners_words_with_a_back_that_sends_it_to_researching_are_kept(data
     assert card["backing_problem"] == "it has no numbers (venture_case) yet"  # not proposed: no talk of a proposal
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_owners_back_on_a_venture_without_numbers_needs_their_confirmation(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     with agent.db.transaction() as conn:  # dropshipping #3 after the upgrade: researching, with no case
@@ -316,6 +324,7 @@ def test_the_owners_back_on_a_venture_without_numbers_needs_their_confirmation(d
 # --- FIX 18d: no venture starts live on the agent's word ---
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_agent_cant_start_a_venture_live(data_dir: Path) -> None:
     assert "live" not in ventures.AGENT_START_STAGES
     [spec] = [d for d in tools.definitions(etsy=True, venture=True) if d["name"] == "venture_create"]
@@ -385,6 +394,7 @@ def test_an_ordinary_cycles_research_counts_toward_its_lines_ventures_budget(
     assert spent == [{"venture_id": DROPSHIPPING, "sources": 1}, {"venture_id": DROPSHIPPING, "sources": 0}]
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_paid_failure_of_researchs_continuation_counts_toward_the_budget(data_dir: Path) -> None:
     found_it = research_found("https://example.invalid/sellers").response
     paused = Raw({**found_it, "content": found_it["content"][:1], "stop_reason": "pause_turn"})  # a search under way
@@ -444,6 +454,7 @@ def test_the_expected_net_counts_the_fixed_costs_before_the_first_sale() -> None
     assert "first sale in 21 days" in econ.compute(shop).text(econ.Case("other", 30, 18, 39, (0, 5, 15), 20, 0, 21, 5))
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_slow_compares_the_first_sale_in_days_with_half_the_runway(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
     independent(agent)
@@ -513,6 +524,7 @@ def test_cold_outreach_words_read_negations_and_german(words: str, cold: bool) -
 # --- X28: the desk's decisions ---
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_desk_counts_decisions_not_code_parks(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
     since = to_iso(agent.clock.now())

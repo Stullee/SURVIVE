@@ -58,6 +58,7 @@ def card(agent: Agent) -> dict:
     return next(v for v in views.ventures_view(agent)["items"] if v["id"] == DROPSHIPPING)
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_critic_reviews_a_proposed_case_before_the_plan(data_dir: Path) -> None:
     fake = FakeTransport(script=[plan(steps=[])])
     agent, _ = run(data_dir, fake, settings=VENTURING)  # a first cycle, for the research rows to belong to
@@ -121,6 +122,7 @@ def test_the_critic_reviews_a_proposed_case_before_the_plan(data_dir: Path) -> N
         conn.execute("UPDATE venture_critiques SET verdict = 'back'")
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_failed_critique_is_kept_and_tried_again_once(data_dir: Path) -> None:
     fake = FakeTransport(script=[plan(steps=[])])
     agent, _ = run(data_dir, fake, settings=VENTURING)
@@ -176,6 +178,7 @@ def test_the_critics_answer_is_checked_by_code() -> None:
     assert critic.ranking_ev({"ev_eur": 2.0}, {"ev_eur": 3.5}) == 2.0
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_fake_models_critic_halves_the_agents_sales(data_dir: Path) -> None:
     fake = FakeTransport(script=[plan(steps=[])])
     agent, _ = run(data_dir, fake, settings=VENTURING)

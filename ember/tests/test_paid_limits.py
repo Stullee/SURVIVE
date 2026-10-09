@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.agent.fake_llm import Fail, FakeTransport, Reply, ToolCalls
 from app.config import Settings
 from app.economy.metering import Interrupted
@@ -38,6 +40,7 @@ def test_failed_research_counts_toward_the_limit(data_dir: Path) -> None:
     assert "research can be used at most 3 times per cycle" in calls[3]["result"]
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_brainstorm_without_usable_ideas_counts(data_dir: Path) -> None:
     brainstorm = ("brainstorm", {})
     fake = FakeTransport(

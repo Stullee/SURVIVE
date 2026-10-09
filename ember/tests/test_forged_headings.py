@@ -38,7 +38,7 @@ def forged_snapshot(forged: str) -> context.Snapshot:
     snap = overflowing_snapshot()
     snap.owner_messages = []
     snap.news = News()
-    snap.instructions = ""
+    snap.rules = ""
     snap.mail = None
     snap.research = []
     snap.proven = []

@@ -19,9 +19,7 @@ from tests.test_ventures import JOURNAL, found, plan
 
 HAIKU = "claude-haiku-4-5"
 ROUTED = Settings(strategy_model="claude-opus-5-5", research_model=HAIKU)
-CHECKING = Settings(
-    starting_balance_usd=100, daily_spend_cap_usd=50, cycle_spend_cap_usd=2, venture_share=0, research_model=HAIKU
-)
+CHECKING = Settings(starting_balance_usd=100, daily_spend_cap_usd=50, cycle_spend_cap_usd=2, research_model=HAIKU)
 
 
 def test_venture_plans_and_reviews_run_on_the_strategy_model() -> None:

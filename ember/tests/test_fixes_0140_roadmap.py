@@ -188,6 +188,7 @@ def test_the_agents_drop_settles_its_odds_as_a_miss(data_dir: Path) -> None:
 # --- FIX NOW 20d: a venture goes live on a first test Ember's code or the owner closed ---
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_venture_goes_live_only_on_a_first_test_code_or_the_owner_closed(data_dir: Path) -> None:
     agent, test = backed(data_dir)
     refused = call(agent, "milestone_update", milestone_id=test, status="done", result="3 samples sold, #71-#73")
@@ -203,6 +204,7 @@ def test_a_venture_goes_live_only_on_a_first_test_code_or_the_owner_closed(data_
         conn.execute(f"UPDATE ventures SET stage = 'live' WHERE id = {DROPSHIPPING}")
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_owners_word_on_a_first_test_takes_the_venture_live(data_dir: Path) -> None:
     agent, test = backed(data_dir)
     assert owner(agent).decide_milestone(test, {"action": "drop", "comment": "Met: 3 sold."}, "Stefan").status == 200
@@ -425,6 +427,7 @@ def test_the_pod_ventures_prose_first_test_becomes_a_first_order(tmp_path: Path)
 # --- X23: a first sale recorded late still counts ---
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_first_sale_recorded_late_still_counts(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     this_month = econ.Case("other", 30.0, 10.0, 0.0, (1, 3, 8), 10.0, 2.0, 0, 3.0)

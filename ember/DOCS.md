@@ -37,7 +37,6 @@ code from Etsy's own numbers): the agent never reports its own.
 | Daily spending cap | 1.50 USD | Hard limit per day. Calls that could exceed it are refused. |
 | Spending cap per wake cycle | 0.50 USD | Hard limit per cycle. Must not exceed the daily cap (if it does, Ember uses the daily cap). A working cycle (its plan, a work step and the reflection) can cost up to about 0.25 USD with the default models; the dashboard warns you below 1.5 times that, when most cycles would end after a step or two. |
 | Spending stance | invest | What happens as the runway shrinks: **invest** keeps the agent exploring at your caps until its last will (under 15 days of runway the System log warns you once), **steady** goes no lower than focus, **conserve** is focus under 30 days and maintenance under 15. See [burn modes](#money). |
-| Share for ventures | 25 % | This share of each day's spending goes to venture cycles, where the agent researches new ways to earn. 0 switches them off. See [Ventures](#ventures). |
 | Cash for a venture's first test (EUR) | 20 | A business case that needs more cash than this to start is knocked out: Ember's code won't propose it until you lift that knock-out on its card (see [Ventures](#ventures)). |
 | Daily study budget for the library | 0.50 USD | What the agent may spend a day studying the documents you add on the Library tab. It counts toward the daily cap, not the cycle cap (except in the maintenance [burn mode](#money)). 0: nothing is studied, but the documents can still be searched and read. See [Library](#library). |
 | Default sleep | 240 min | Time between wake cycles when the agent doesn't choose. |
@@ -207,10 +206,10 @@ it runs one **wake cycle**:
    [venture cycle](#ventures) decides one venture, and a cycle an event woke
    works on one line at most. Since 0.35.0 the [plan tree](#plan) under your
    goal decides: before the plan, Ember's code takes the cycle's **step** from it
-   (what you pinned, a promise to you, your decision that is due, the ventures'
-   turn, else the heaviest step), and the step decides what the cycle is (a
-   marketing step a marketing cycle, any other an ordinary one) and which product
-   line its tools work on. The plan sees it as **YOUR STEP** (what done means, why
+   (what you pinned, a promise to you, your decision that is due, else the
+   heaviest step), and the step decides what the cycle is (a marketing step a
+   marketing cycle, since 0.36.0 the Explore step a venture cycle, any other an
+   ordinary one) and which product line its tools work on. The plan sees it as **YOUR STEP** (what done means, why
    it was taken, what comes next) and the whole plan in a few lines as **YOUR
    PLAN**. It stays on a product up to three cycles in a row unless another step
    weighs clearly more. With no step ready, in the explore burn mode it starts a
@@ -221,9 +220,10 @@ it runs one **wake cycle**:
    it asks you for one concrete action, to ask you in one batched message and
    only for decisions, money and what only a person can do, and to spend its
    daily cap on experiments rather than sleep to save it. Every plan and work step
-   also sees your [standing instructions](#your-part) and a short list of facts
-   about the outside world that you collected (platform rules, German law, what
-   earns money), which comes with each Ember update.
+   also sees your **rulebook** (since 0.36.0; your standing instructions before)
+   and a short list of facts about the outside world that you collected
+   (platform rules, German law, what earns money), which comes with each Ember
+   update.
    Before anything else it sees its **obligations**, which Ember's code keeps
    (never cut): your messages waiting for an answer, what it promised you (a
    message's promise, with the day it named), your decisions it must react to
@@ -425,10 +425,10 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   in progress; the plan tree doesn't weigh them yet). Before 0.30.0 a business that had grown (many projects,
   ventures and cases) made the look's view too big for its budget, and the look
   was skipped at every cycle with only a line in the app's log; now the view
-  holds your standing instructions and the strategy first and the older cases
-  last, it is cut until it fits, and a look that still can't come through is
+  holds your rulebook (until 0.36.0 your standing instructions) and the
+  strategy first and the older cases last, it is cut until it fits, and a look that still can't come through is
   shown in the System log and tried again the next day.
-- **The playbook.** The agent's rulebook: principles drawn from its cases, each
+- **The playbook.** The agent's principles, drawn from its cases, each
   citing them. Ember's code sets their confidence: established with 3 agreeing
   cases and none against, disputed once a case is against, a hypothesis
   otherwise. A principle no case confirms for 6 weeks (4 months once
@@ -695,12 +695,26 @@ focuses on), and the agent can score a venture once one of them found web pages
 (in a venture cycle, where it also writes the business case).
 The card's **Research** line counts them.
 
-**Venture cycles.** The **Share for ventures** option (25 % by default) is the
-part of each day's spending the agent puts into ventures: a wake cycle is a
-venture cycle while venture cycles have had less than that share of the day's
-spending, so ventures get it whatever else is going on. It comes out of the
-same daily cap, so it doesn't raise what Ember spends; raise the daily cap if
-you want more research. Venture cycles are for new ventures: ideas, research
+**Venture cycles.** Since 0.36.0 your [plan](#plan) decides when the agent
+explores: its **Ventures** project holds one **Explore** step, weighed like any
+other step: at worth 2 (a product that could earn $5 a month) unless you set
+one, more when you asked for a venture's research or added an idea, or when a
+venture is about to be parked by its stage's rule, and more the longer it has
+waited. When it weighs most, the cycle is a venture cycle. While no step of a
+product is ready (a new install's first cycles), exploring and starting a new
+product take turns: a cycle that may start one comes between two venture
+cycles. On the Plan tab's
+**Ventures** card you set their worth, **Hold new things** for "nothing new"
+(no venture cycle and no new product until you **Resume**) or press **Explore
+next** (a pin, spent by the one venture cycle it brings). A
+venture cycle whose plan says it takes none of the desk's items leaves the step
+waiting until the next day. Until 0.35.3 the **Share for ventures** option made a cycle
+a venture cycle while venture cycles had had less than that share of the day's
+spending: live, 10 of 24 cycles were venture cycles the agent, told "nothing
+new", left undone, and cheap idle cycles made the share want more of them. The
+option is gone; an old setting is ignored (if yours was 0, set the ventures'
+worth to 0.5 on the Plan tab, or **Hold new things**, which stops new products
+too). Venture cycles are for new ventures: ideas, research
 and business cases (0.19.3). A venture you back becomes project work: Ember's
 code opens its project, and ordinary cycles run its first test. In a venture
 cycle the agent:
@@ -760,7 +774,7 @@ box on the Ventures tab shows the list as it stands, what the last venture
 plans took (or why none), and how many ventures were decided in the last 7
 days (proposed, parked or killed by the agent or you, not parked by a stage's
 rule; the aim is 2 a week). The desk works within
-your **Share for ventures**; it has no cap of its own.
+the daily cap; it has no cap of its own.
 
 A venture cycle only researches and decides: its work steps don't carry the
 tools for making files, the workshop, the Etsy shop, email, Reddit or changing
@@ -1011,16 +1025,19 @@ waiting for you, made since the promise, waits for your decision.
 
 **How a cycle gets its step.** In this order: a step you pinned; a promise to
 you or your decision that is due within a day; (0.35.1) any other promise to
-you, the soonest due first, from the moment it is made; a venture cycle when the
-ventures' share of the day's spending is behind (your message waiting or a
-promise due comes first); else the heaviest step. A promise comes first up to
+you, the soonest due first, from the moment it is made; else the heaviest step
+(since 0.36.0 the Explore step of your ventures is one of them: the ventures'
+turn, a share of the day's spending, retired; it waits while you wait for
+something: the message that woke the cycle, a promise to you or your decision
+that is due within a day). A promise comes first up to
 three times a day, your decision once; after that each is weighed like any step
 until the day is over. To leave the product it is on, another step must weigh
 25% more, for up to three cycles in a row. The step decides the cycle: a
-marketing step makes a [marketing cycle](#marketing-cycles), any other an
-ordinary one, and Ember's code keeps the cycle's tools on its product line. With
-no step ready, Ember starts a new product in the explore burn mode; otherwise
-nothing new starts. While her plan has steps ready, her code cuts any cycle's
+marketing step makes a [marketing cycle](#marketing-cycles), the Explore step
+a [venture cycle](#ventures), any other an ordinary one, and Ember's code keeps
+the cycle's tools on its product line. With
+no step ready, Ember starts a new product in the explore burn mode (unless you
+hold new things); otherwise nothing new starts. While her plan has steps ready, her code cuts any cycle's
 long sleep to your shortest sleep.
 
 **How a step is weighed.** A product's worth is what it could earn a month (from
@@ -1071,13 +1088,17 @@ or kill the product's venture, no date is read.
 
 - **your goal**, with a large bar of how far it got, its pace and its date;
 - **the next cycle's step**, why it is taken, the three after it and what waits
-  on you;
+  on you; (0.36.0) **Titles and tags**, your freeze of the listings' titles and
+  tags; and **Ventures**, their Explore step (its weight, or what it waits on,
+  and the decisions a venture cycle would take up), with their worth, **Hold
+  new things** or **Resume**, and **Explore next**;
 - **the network**: your goal, each project in its own colour, each product as
   big as its worth. Choose a product to open its stages and steps below it. Drag
   to move it; Ctrl (or Cmd) and the mouse wheel zoom; **Fit** puts it back;
 - **the product you opened**: its stages and steps with their state and weight,
-  its numbers, its worth, its test's dates, Ember's hold (**Lift the hold**),
-  **Close as done** and **Drop it** (with an optional reason), and its
+  its numbers, its worth, its test's dates, Ember's hold (**Lift the hold**) or
+  yours (**Resume it**), **Hold it**, **Close as done** and **Drop it** (with an
+  optional reason), and its
   **Autonomy** box: what Ember's code may carry out for its listings without
   your click;
 - **Changes today**, **Channels** (each channel's steps across the products,
@@ -1093,7 +1114,18 @@ a product your own worth, from 0.5 to 10, in place of the one Ember's code
 computes; **Use Ember's code's** takes yours back. At a decide-by date, **Keep
 it** or **Drop it**. **Close as done** or **Drop it** ends a product (and its
 line) whenever you want. **Lift the hold** puts a product Ember held back in the
-plan. **Add milestone** puts a milestone of yours under the goal or the
+plan. Since 0.36.0 **Hold it** holds a product yourself, with an optional
+reason: its steps wait until you **Resume it**, and Ember can't lift your hold
+(her own she can). **Hold new things** on the Ventures card is "nothing new":
+no venture cycle and no new product (Ember's code refuses one) until you
+**Resume**. **Freeze** on the Titles and tags card
+keeps the live listings' titles and tags as they are until the day you choose
+(at most 60 days ahead): Ember's code refuses a change of them, the quality
+critic asks for none, and Ember's plan says so; **Lift the freeze** ends it.
+Live, "no title or tag edits before 10-20" was a sentence in the standing
+instructions that the plan and the critic never read. Your **rulebook** is for
+how Ember works (languages, style, what to avoid); what comes next is the
+plan's. **Add milestone** puts a milestone of yours under the goal or the
 milestone you choose; it stays yours: only you drop it, and Ember can't move its
 date (she may propose one; **Accept new date** or **Keep the date**). **Note**
 leaves a comment on a milestone, and **Drop** takes an open one (and the open
@@ -1398,19 +1430,25 @@ no longer shown); a study that failed three times stops until you press
   What the unlocks held for your veto, or approved without Ember's code having
   begun it, waits for your click again, and Ember hears it in its news. 0.15.0
   took back every unlock of 0.13.0 once: grant again what you want.
-- **Standing instructions**, beside the conversation in the **Inbox** (below it
-  on a narrow screen): lasting guidance the
-  agent reads in every plan and work step, so you don't have to repeat it in
-  messages (at most 1,500 characters). **Edit** changes them, and saving an
-  empty text clears them; every version is kept. Use them for how you want
-  Ember to work in general, and messages for one-off things. While there are
-  none, the card suggests a start ("Work on your own. Ask me only to approve
-  something that leaves the container, or for money. ..."); it is only saved
-  when you press **Save**. Since 0.33.0 each of your messages has **Keep as
-  instruction**: it opens the editor with the message added at the end. A
-  message leaves the agent's plans once it is answered (live, "Bluesky posts in
-  English only" was acknowledged in the morning and a German post proposed that
-  evening); the instructions stay in every plan.
+- **Rulebook** (since 0.36.0, in place of the standing instructions in the
+  **Inbox**), the first card of the **Mind** tab, above the agent's own notes:
+  your rules for how the agent works (languages, style, what to avoid), each with its
+  number, which it reads in every plan and work step, so you don't have to
+  repeat them in messages. **Add rule** adds one (at most 500 characters; 20
+  rules and 1,500 characters in all); **Edit** gives one new words, which become
+  a new rule in its place; **Remove** (click twice) takes one out. Each rule
+  holds until you remove it, and the history keeps every one. The standing
+  instructions were one text: live, a new one for the week's order of work
+  (2026-10-07) replaced the rules set before it, and they dropped out with it.
+  What comes next belongs to your plan (its pins, holds, worths and the freeze
+  on the Plan tab), and one-off things to messages. At the upgrade your current
+  standing instructions become your first rules, one a paragraph (and one a
+  line that starts with "- "): read them once, shorten or split them, and move a
+  week's order of work to the Plan tab. Since 0.33.0 each of your messages has
+  **Keep as rule** (**Keep as instruction** until 0.36.0): it opens the Mind tab
+  with the message in the form, to shorten to the rule. A message leaves the agent's plans once
+  it is answered (live, "Bluesky posts in English only" was acknowledged in the
+  morning and a German post proposed that evening); a rule stays in every plan.
 - **Inbox**: the agent's messages to you, and yours to it. Your message wakes
   it to read it (see the option **Wake Ember when you write**): 5 minutes after
   your last message or decision (at most 15 after the first, at least 30
@@ -2463,7 +2501,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.35.3 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.36.0 (by /u/your name)`.
 
 ## Amazon KDP
 

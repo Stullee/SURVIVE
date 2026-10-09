@@ -362,7 +362,7 @@ def _review_text(agent: Agent) -> str:
 
 
 def test_the_daily_review_gets_the_roadmap_in_its_scorecard(data_dir: Path) -> None:
-    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=0)
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
     agent, _ = run(data_dir, FakeTransport(seed=5, scenario="founder"), cycles=2, settings=settings)
     goal = create(agent, title="Two legs", measure="30 EUR a month", due=day(84))
     month = create(agent, title="First sale", measure="Owner records revenue", due=day(25), parent_id=goal)
@@ -431,7 +431,7 @@ def test_the_roadmap_tab(ingress_client: TestClient) -> None:
 def test_the_fake_keeps_the_milestones_still_open_honest(data_dir: Path) -> None:
     """0.35.0: the fake lays out no roadmap (milestone_plan retired); it aims at the milestone YOUR PLAN lists due
     first, moves one overdue a week once, then closes it."""
-    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1, venture_share=0)
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)
     fake = FakeTransport(seed=3, scenario="founder")
 
     def milestones(agent: Agent) -> None:

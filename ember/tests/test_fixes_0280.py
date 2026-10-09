@@ -278,14 +278,12 @@ def test_reports_name_the_marketing_cycles() -> None:
     assert weekly._went_to({"venture": 1, "project_id": None, "marketing": 0}) == "venture cycles"  # type: ignore[arg-type]
 
 
-def test_the_status_line_shows_the_ventures_share_and_the_kind_of_cycle() -> None:
-    snap = SimpleNamespace(
-        venture_day=(2_000_000, 500_000), venture_share=25, venture=False, marketing=True, marketing_apart=True
-    )
-    assert context._share_line(snap) == (  # type: ignore[arg-type]
-        "Your owner gives ventures 25% of your spending: $0.50 of today's $2.00 so far. This is a marketing cycle."
-    )
+def test_the_status_line_shows_the_kind_of_cycle() -> None:
+    # 0.36.0: the venture share retired (the plan's Explore step makes a venture cycle), and its line on the spending
+    snap = SimpleNamespace(venture=False, marketing=True, marketing_apart=True)
+    assert context._kind_line(snap) == "This is a marketing cycle."  # type: ignore[arg-type]
     snap.marketing = False  # 0.35.0: the marketing share retired; a marketing step has a cycle of its own
-    assert context._share_line(snap).endswith(  # type: ignore[arg-type]
-        " Pins, Bluesky posts and blog posts belong to marketing cycles."
-    )
+    assert context._kind_line(snap) == "Pins, Bluesky posts and blog posts belong to marketing cycles."  # type: ignore[arg-type]
+    snap.venture = True
+    assert context._kind_line(snap) == "This is a venture cycle: your plan's Explore step."  # type: ignore[arg-type]
+    assert context._kind_line(SimpleNamespace(venture=False, marketing=False, marketing_apart=False)) == ""  # type: ignore[arg-type]

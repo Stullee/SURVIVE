@@ -141,6 +141,7 @@ def test_maintenance_stays_down_through_a_week_of_its_own_spending(data_dir: Pat
     assert burn_events(economy)[-1] == "Burn mode: focus"
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_maintenance_runs_one_small_cycle_a_day(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(burn, "_raw", lambda status: burn.MAINTENANCE)
     agent, ends = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
@@ -153,6 +154,7 @@ def test_maintenance_runs_one_small_cycle_a_day(data_dir: Path, monkeypatch: pyt
     assert agent.economy.sensors()["burn_mode"] == "maintenance"
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_focus_goes_on_with_the_tests_already_running(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(burn, "_raw", lambda status: burn.FOCUS)
     brainstorm = ToolCalls([("brainstorm", {})])

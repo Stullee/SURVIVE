@@ -198,7 +198,7 @@ def test_a_maintenance_cycles_review_leaves_what_the_cycle_needs_to_work(
 
 def test_status_says_the_event_reserve_cut_the_cycles_cap(data_dir: Path) -> None:
     fake = FakeTransport(script=[Plan(PLAN), Reply("Ok."), JOURNAL])
-    agent, _ = run(data_dir, fake, cycles=0, settings=DAY.model_copy(update={"venture_share": 0}))
+    agent, _ = run(data_dir, fake, cycles=0, settings=DAY)
     spent_before(agent.economy)
     agent.run_cycle("schedule")
     status = section(planner_texts(fake)[0], "STATUS")
@@ -215,6 +215,7 @@ def test_status_says_the_options_cap_when_nothing_cuts_it(data_dir: Path) -> Non
     assert f"This cycle may spend up to ${ROOMY.cycle_spend_cap_usd:.2f}.\n" in status + "\n"
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_focus_mode_offers_no_brainstorm(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(burn, "_raw", lambda status: burn.FOCUS)
     fake = FakeTransport(script=[venture_plan(steps=["Research the venture"]), Reply("Ok."), JOURNAL])

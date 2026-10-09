@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from app.agent import prompts, tools
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls, request_kind
 from tests.test_agent import rows
@@ -53,6 +55,7 @@ def test_a_venture_cycle_carries_no_tools_for_building_or_selling() -> None:
     assert names(reflection) == names(venture)  # the reflection reads the work's list from the cache
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_venture_cycle_refuses_them(data_dir: Path) -> None:
     make = ("make_document", {"source": "drafts/a.md", "output": "a.pdf"})
     fake = FakeTransport(script=[plan(steps=["Make the planner"]), ToolCalls([make]), Reply("Done."), JOURNAL])

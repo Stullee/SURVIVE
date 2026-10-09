@@ -86,14 +86,14 @@ def test_a_blocked_step_is_no_candidate_and_does_not_age() -> None:
 # --- the order each cycle takes ---
 
 
-def test_a_pin_comes_first_then_a_promise_due_within_a_day_then_the_venture_turn_then_the_weight() -> None:
+def test_a_pin_comes_first_then_a_promise_due_within_a_day_then_the_weight() -> None:
+    # 0.36.0: no ventures' turn between them any more: the Explore step is weighed like any step (test_fixes_0360.py)
     heavy = step(1, 1, worth=9, urgency=3)
     promised = step(2, 2, worth=1, promise_hours=20)
     pinned = step(3, 3, worth=0.5, pinned=True)
     assert weights.choose([heavy, promised, pinned]).decided == "pin"
-    pick = weights.choose([heavy, promised], venture_turn=True)
+    pick = weights.choose([heavy, promised])
     assert (pick.step, pick.decided) == (promised, "promise")  # no margin, whatever weighs more
-    assert weights.choose([heavy, step(4, 4, promise_hours=30)], venture_turn=True).decided == "venture"
     assert weights.choose([heavy, step(4, 4, promise_hours=30)]).step == heavy
 
 

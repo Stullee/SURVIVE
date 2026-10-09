@@ -65,6 +65,7 @@ def backed(data_dir: Path) -> tuple[Agent, int]:
     return agent, int(test)
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_backed_ventures_first_test_is_a_milestone_it_meets_before_it_goes_live(data_dir: Path) -> None:
     agent, test = backed(data_dir)
     row = milestone(agent, test)
@@ -99,6 +100,7 @@ def test_a_backed_ventures_first_test_is_a_milestone_it_meets_before_it_goes_liv
     assert venture(agent, DROPSHIPPING)["stage"] == "live"
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_missed_first_test_parks_the_venture_until_the_owner_takes_it_up(data_dir: Path) -> None:
     agent, test = backed(data_dir)
     agent.clock.advance(days=stages.FIRST_TEST_DAYS + 3)
@@ -137,6 +139,7 @@ def researched(agent: Agent, venture_id: int) -> None:
         )
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_research_without_a_business_case_is_parked_after_three_weeks(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     assert call(agent, "venture_update", venture_id=DROPSHIPPING, stage="researching").ok
@@ -174,6 +177,7 @@ def test_research_without_a_business_case_is_parked_after_three_weeks(data_dir: 
     assert keep(agent) == []  # the owner's word started the clock again
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_only_the_owner_backs_or_kills_and_a_kill_drops_its_milestones(data_dir: Path) -> None:
     agent, test = backed(data_dir)
     for stage in ("killed", "building"):
@@ -188,6 +192,7 @@ def test_only_the_owner_backs_or_kills_and_a_kill_drops_its_milestones(data_dir:
     assert (row["status"], row["closed_by"], row["result"]) == ("dropped", "owner", "Your owner killed venture #3.")
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_plan_shows_the_stage_rules(data_dir: Path) -> None:
     agent, test = backed(data_dir)
     researched(agent, ETSY)
@@ -203,6 +208,7 @@ def test_the_plan_shows_the_stage_rules(data_dir: Path) -> None:
     assert f"Stage rule (Ember's code keeps it): first test: milestone #{test}; it goes live once that is met" in focus
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_met_money_goal_keeps_the_first_test(data_dir: Path) -> None:
     agent, test = backed(data_dir)
     with agent.db.transaction() as conn:

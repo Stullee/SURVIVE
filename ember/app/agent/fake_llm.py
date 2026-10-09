@@ -30,8 +30,8 @@ planner's ``SINCE YOUR LAST WAKE`` section put "Answer my owner's message" first
 in the act brief's ``FROM YOUR OWNER`` section, the first act turn is a ``message_owner`` reply that quotes
 the latest one and says plainly that it comes from the dry-run fake model, which can't answer it (with dry
 run off, Claude does). That reply is the cycle's only message to the owner. The owner's decisions are
-acknowledged in the plan's assessment, the reply and the journal, and the owner's standing instructions
-(``YOUR OWNER'S STANDING INSTRUCTIONS``) are quoted in the plan's assessment. Only those sections are read,
+acknowledged in the plan's assessment, the reply and the journal, and the owner's rulebook
+(``YOUR OWNER'S RULEBOOK``, 0.36.0) is quoted in the plan's assessment. Only those sections are read,
 never tool results, and their quoted parts are parsed as JSON.
 
 It also tries the rest of what the agent can do. With unread mail in the ``MAIL`` section it plans to read
@@ -184,7 +184,7 @@ _FETCH_FIELDS = frozenset(
 )
 _DOMAIN = re.compile(r"^(?!https?:)[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s]*)?$")
 NEWS_SECTION = "SINCE YOUR LAST WAKE"  # the planner context's news
-INSTRUCTIONS_SECTION = "YOUR OWNER'S STANDING INSTRUCTIONS"  # in the planner context and the brief, JSON-quoted
+RULES_SECTION = "YOUR OWNER'S RULEBOOK"  # in the planner context and the brief, JSON-quoted (0.36.0)
 MAIL_SECTION = "MAIL"  # the unread emails, in the planner context and the brief
 MAIL_STEP = "Read my new email and answer real questions with propose_email"
 SEARCHED_SITE = "etsy.com"  # some research is limited to it (Reddit blocks Anthropic's web tools: 0.10.1)
@@ -195,7 +195,7 @@ DRY_RUN_EMAIL = (
 OWNER_SECTION = "FROM YOUR OWNER"  # the act brief's news (the same lines)
 ANSWER_STEP = "Answer my owner's message"
 QUOTE_CHARS = 120
-INSTRUCTIONS_CHARS = 80  # of the standing instructions, quoted in a plan's assessment
+RULES_CHARS = 80  # of the rulebook, quoted in a plan's assessment
 DRY_RUN_REPLY = (
     "This reply comes from Ember's built-in fake model in dry run: it can't really understand or answer your "
     "message. With dry run off, Claude reads and answers your messages."
@@ -895,9 +895,9 @@ def unread_mail(text: str) -> list[MailLine]:
     return found
 
 
-def standing_instructions(text: str) -> str | None:
-    """The owner's standing instructions a context shows (their start, when they were shortened), or None."""
-    body = (section(text, INSTRUCTIONS_SECTION) or "").strip()
+def rulebook(text: str) -> str | None:
+    """The owner's rulebook a context shows (its start, when it was shortened), or None."""
+    body = (section(text, RULES_SECTION) or "").strip()
     try:
         value, _ = _JSON.raw_decode(body)
     except ValueError:
@@ -1583,7 +1583,7 @@ class FakeTransport:
             focus = None
         close = [HOLD_STEP.format(id=focus.id)] if focus is not None and focus.id in stopped else []
         news = owner_news(context, NEWS_SECTION)
-        heard = _following(standing_instructions(context)) + _heard(news)
+        heard = _following(rulebook(context)) + _heard(news)
         answer = [ANSWER_STEP if len(news.messages) == 1 else "Answer my owner's messages"] if news.messages else []
         if self.scenario == "idle":
             rest, goal = (
@@ -2744,11 +2744,11 @@ def acknowledge(decision: Decision, to_owner: bool = False) -> str:
     return sentences.get(decision.status, f"{what[0].upper()}{what[1:]}: {decision.status}.")
 
 
-def _following(instructions: str | None) -> str:
-    """What a plan's assessment says about the owner's standing instructions ("" if there are none)."""
-    if not instructions:
+def _following(rules: str | None) -> str:
+    """What a plan's assessment says about the owner's rulebook ("" while it has no rule)."""
+    if not rules:
         return ""
-    return f'My owner\'s standing instructions say "{_quote(instructions, INSTRUCTIONS_CHARS)}"; I follow them. '
+    return f'My owner\'s rulebook says "{_quote(rules, RULES_CHARS)}"; I follow it. '
 
 
 def _heard(news: OwnerNews) -> str:

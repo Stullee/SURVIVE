@@ -56,12 +56,13 @@ RESEARCH_CHARS = 200  # of each question and digest
 # Ember's mailbox (only when it has one): its address and the newest unread emails, sender and subject quoted.
 MAIL_BUDGET = 600
 MAIL_SHOWN = 3
-# The owner's standing instructions (at most 1,500 characters, JSON-quoted), in every plan and work step.
-INSTRUCTIONS_HEADING = "YOUR OWNER'S STANDING INSTRUCTIONS"
-INSTRUCTIONS_BUDGET = 1_700
+# The owner's rulebook (0.36.0, in place of the standing instructions, 1,500 characters in one text): their rules, at
+# most 1,500 characters together, one a line with its number, JSON-quoted, in every plan and work step.
+RULES_HEADING = "YOUR OWNER'S RULEBOOK"
+RULES_BUDGET = 1_700
 PLANNER_BUDGETS = {
     "status": 900,  # (0.10.1: with a venture cycle's research room; 0.12.0: and the burn mode)
-    "instructions": INSTRUCTIONS_BUDGET,
+    "rules": RULES_BUDGET,
     "news": 2_300,
     "software": CHANGELOG_LIMIT,
     "projects": 2_000,
@@ -130,7 +131,7 @@ OPEN_UPGRADES = 5  # 0.15.0: the open upgrade requests WAITING FOR YOUR OWNER li
 SHOWN_PROJECTS = 8  # open projects the plan shows in full, the ones updated last (0.19.1: the others by name)
 QUOTE_CAP = 300  # characters of each text quoted in a decision or upgrade line, when the owner's news is shortened
 SHORTEST_QUOTE = 40  # no quoted text is shortened below this; if that isn't enough, the last lines are cut
-# The owner's (standing instructions and news), the mail and the research sections (and their headings) come on top
+# The owner's (the rulebook and news), the mail and the research sections (and their headings) come on top
 # of the brief's budget, so they never squeeze the rest.
 # (6,500 since 0.10.0: a venture's focus is longer. A milestone's (0.11.0) is short: a brief with a venture's, a
 # project's and a milestone's focus at their longest loses its end, as a brief over its budget always does.)
@@ -168,7 +169,7 @@ PINS_HEADING = "Pinned by your owner (always kept):"
 # The largest brief, those sections and their headings included: the WORK and REFLECT profiles are measured on it.
 BRIEF_MAX = (
     BRIEF_BUDGET
-    + INSTRUCTIONS_BUDGET
+    + RULES_BUDGET
     + OWNER_BUDGET
     + MAIL_BUDGET
     + RESEARCH_BUDGET
@@ -268,7 +269,7 @@ class Snapshot:
     news: News = field(default_factory=News)
     research: list[sqlite3.Row] = field(default_factory=list)
     mail: MailView | None = None  # None: Ember has no mailbox (then there is no MAIL section)
-    instructions: str = ""  # the owner's standing instructions ("" while there are none)
+    rules: str = ""  # 0.36.0: the owner's rulebook as the agent reads it (store.rulebook_text; "" while it's empty)
     proven: list[tuple[str, str]] = field(default_factory=list)  # workshop scripts worth building in: (path, why)
     review: str = ""  # today's daily review, as the planner sees it ("" before it is made)
     etsy: str = ""  # the ETSY SHOP section ("" without a shop)
@@ -280,9 +281,7 @@ class Snapshot:
     kdp: str = ""  # the KDP section ("" while Amazon KDP is off), 0.25.0
     ventures: list[sqlite3.Row] = field(default_factory=list)  # the venture tree (0.10.0)
     venture_money: dict[int, ventures.Money] = field(default_factory=dict)
-    venture: bool = False  # a venture cycle
-    venture_share: int = 0  # the owner's share of the spending for ventures, in percent
-    venture_day: tuple[int, int] = (0, 0)  # today's spending, and the venture cycles' part of it
+    venture: bool = False  # a venture cycle (0.36.0: the plan's Explore step; the venture share retired)
     marketing: bool = False  # 0.28.0: a marketing cycle (lines.py)
     marketing_apart: bool = False  # 0.28.0: marketing cycles run, so an ordinary cycle has no marketing tools
     call_costs: dict[str, int] = field(default_factory=dict)  # what research and brainstorms cost lately (0.10.1)
@@ -322,7 +321,6 @@ def snapshot(
     today: date | None = None,
     etsy: str = "",
     venture: bool = False,
-    venture_share: int = 0,
     marketing: bool = False,
     marketing_apart: bool = False,
     shelf: library.Shelf | None = None,
@@ -371,8 +369,7 @@ def snapshot(
         params,
     ).fetchone()
     files = _safe_listing(workspace)
-    standing = store.standing_instructions(conn, scope)
-    spent, ventured, _ = ventures.day_spends(conn, scope, today) if today is not None else (0, 0, 0)
+    rulebook = store.rulebook_text(store.rules(conn, scope))
     memories = memory.read_all()
     written = {int(r["cycle_id"]) for r in (journal[:1] + ([handoff] if handoff is not None else []))}
     return Snapshot(
@@ -407,7 +404,7 @@ def snapshot(
         news=news or News(),
         research=store.recent_research(conn, scope, RESEARCH_CALLS),
         mail=mail,
-        instructions=standing["text"] if standing else "",
+        rules=rulebook,
         proven=store.proven_scripts(conn, scope),
         review="\n\n".join(  # 0.18.0: with the week's look
             text
@@ -427,8 +424,6 @@ def snapshot(
         ventures=ventures.all_ventures(conn, scope),
         venture_money=ventures.money(conn, scope),
         venture=venture,
-        venture_share=venture_share,
-        venture_day=(spent, ventured),
         marketing=marketing,
         marketing_apart=marketing_apart,
         call_costs=ventures.call_costs(conn, scope) if venture else {},
@@ -539,31 +534,27 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
         lines.append(f"Burn mode, set by Ember's code: {s.burn}.")
     if s.workspace_usage:
         lines.append(s.workspace_usage)
-    if s.venture_share:
-        lines.append(_share_line(s))
-        if s.venture:
-            lines.append(ventures.room_text(s.cycle_cap, s.call_costs, s.brainstorm))
+    kind = _kind_line(s)
+    if kind:
+        lines.append(kind)
+    if s.venture:
+        lines.append(ventures.room_text(s.cycle_cap, s.call_costs, s.brainstorm))
     if st.last_will_due:
         lines.append("Your money is nearly gone: your last will is due.")
     return "\n".join(lines)
 
 
-def _share_line(s: Snapshot) -> str:
-    """STATUS's line on the share of the spending the owner gives ventures, in one line (the section's room is small),
-    and what kind of cycle this is (0.35.0: the marketing share retired; the plan tree's step decides a marketing
-    cycle)."""
-    spent, ventured = s.venture_day
-    text = (
-        f"Your owner gives ventures {s.venture_share}% of your spending: ${micros_to_usd(ventured):.2f} of today's"
-        f" ${micros_to_usd(spent):.2f} so far."
-    )
+def _kind_line(s: Snapshot) -> str:
+    """STATUS's line on what kind of cycle this is, "" for an ordinary one where marketing has no cycles of its own
+    (0.35.0: the plan tree's step decides a marketing cycle; 0.36.0: and a venture cycle, the Explore step: the
+    venture share and its line on today's spending retired)."""
     if s.venture:
-        return text + " This is a venture cycle."
+        return "This is a venture cycle: your plan's Explore step."
     if s.marketing:
-        return text + " This is a marketing cycle."
+        return "This is a marketing cycle."
     if s.marketing_apart:
-        return text + " Pins, Bluesky posts and blog posts belong to marketing cycles."
-    return text
+        return "Pins, Bluesky posts and blog posts belong to marketing cycles."
+    return ""
 
 
 def flat(text: Any) -> str:
@@ -827,11 +818,11 @@ def mail_section(s: Snapshot) -> list[tuple[str, str]]:
     return [("MAIL", cut(mail_text(s), MAIL_BUDGET))] if s.mail is not None else []
 
 
-def instructions_text(s: Snapshot, budget: int = INSTRUCTIONS_BUDGET) -> str:
-    """The owner's standing instructions, JSON-quoted (so they can't pose as a heading), in ``budget`` bytes; empty
-    while there are none. Instructions that don't fit (many multibyte characters, or a smaller planner) keep their
-    start and their end, like a shortened message."""
-    text = s.instructions.strip()
+def rules_text(s: Snapshot, budget: int = RULES_BUDGET) -> str:
+    """The owner's rulebook, JSON-quoted (so no rule can pose as a heading), in ``budget`` bytes; empty while it has no
+    rule. A rulebook that doesn't fit (many multibyte characters, or a smaller planner) keeps its start and its end,
+    like a shortened message."""
+    text = s.rules.strip()
     if not text:
         return ""
     if json_bytes(_quote(text)) <= budget:
@@ -840,9 +831,9 @@ def instructions_text(s: Snapshot, budget: int = INSTRUCTIONS_BUDGET) -> str:
     return cut(_quote(text, chars), budget)
 
 
-def instructions_section(s: Snapshot, budget: int = INSTRUCTIONS_BUDGET) -> list[tuple[str, str]]:
-    text = instructions_text(s, budget)
-    return [(INSTRUCTIONS_HEADING, text)] if text else []
+def rules_section(s: Snapshot, budget: int = RULES_BUDGET) -> list[tuple[str, str]]:
+    text = rules_text(s, budget)
+    return [(RULES_HEADING, text)] if text else []
 
 
 def lessons_text(s: Snapshot, budget: int, pins_budget: int = PINS_BUDGET) -> str:
@@ -969,7 +960,7 @@ def planner_context(s: Snapshot, dry_run: bool, scale: float = 1.0) -> tuple[str
     events = "\n".join(agenda_line(r) for r in s.agenda)  # 0.13.0: after the owner's news, cut first
     since = cut("\n".join(part for part in (head, owner, events) if part) or "Nothing new.", b["news"])
     software = cut(s.news.changelog, b["software"])
-    standing = instructions_section(s, b["instructions"])
+    standing = rules_section(s, b["rules"])
     lessons = lessons_text(s, b["lessons"], int(PINS_BUDGET * scale))
     # The sections cut on their own budget (the owner's, the changelog and the lessons, whose pins come on top).
     own = [since, software, *(text for _, text in standing)]
@@ -1062,7 +1053,7 @@ def brief(
     # "why do you scatter" said "not a token problem" right below a plan that blamed "$1 cycles and thin memory")
     why = f"Why: {flat(plan['assessment'])}\n" if plan.get("assessment") else ""
     head = [("STATUS", status_text(s, dry_run)), ("PLAN", f"{why}Goal: {flat(plan.get('goal'))}{money}\n{steps}")]
-    standing = instructions_section(s)
+    standing = rules_section(s)
     owner, lines, too_long = _owner(s, OWNER_BUDGET)
     owners = [("FROM YOUR OWNER", owner)] if owner else []
     mailed = mail_section(s)

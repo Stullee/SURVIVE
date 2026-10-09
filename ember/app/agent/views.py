@@ -1,5 +1,5 @@
 """Dashboard data for the agent's sections: Now, Projects, Ventures, Roadmap, Activity, Mind, Workspace, the owner
-queues and the owner's standing instructions."""
+queues and the owner's rulebook."""
 
 from __future__ import annotations
 
@@ -57,6 +57,7 @@ from . import (
     store,
     ventures,
     weekly,
+    weights,
     workfiles,
 )
 from .sandbox import Entry, Jail, Missing, SandboxError, kind_of
@@ -204,7 +205,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         ]
         will = store.last_will(conn, scope.life_id) if scope.life_id else None
         counts = badges(conn, scope)
-        instructions = store.instructions_json(store.standing_instructions(conn, scope))
+        rules = store.rules_json(store.rules(conn, scope))  # 0.36.0: the rulebook (the standing instructions retired)
         stamp = _ventures_stamp(conn, scope, simulated)
         today = agent.clock.today()
         open_milestones = roadmap.open_milestones(conn, scope)
@@ -237,7 +238,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
         "inbox_before": inbox_before,  # 0.15.0: older messages load on request (api/inbox?before=)
         "promises_open": promises_open,
         "upgrades": upgrades,
-        "instructions": instructions,
+        "rules": rules,
         "last_will": {"text": will["text"], "cut_off": bool(will["cut_off"])} if will else None,
         # The venture tree is loaded apart (api/ventures) while its tab is open: this changes whenever it does.
         "ventures_stamp": stamp,
@@ -487,9 +488,15 @@ def goal_summary(agent: Agent) -> dict[str, Any] | None:
 def plan_view(agent: Agent) -> dict[str, Any]:
     """0.34.0: the plan tree for the owner's Plan tab (plan.py; 0.35.0: it steers Ember's cycles), with why no unlock
     acts now (the products' Autonomy boxes)."""
+    exploring = burn.peek(agent.db, agent.economy.life.evaluate()).venture_cycles  # 0.36.0: the Explore step's
     with agent.db.connection() as conn:
         found = plan.view(
-            conn, agent.scope(), to_iso(agent.clock.now()), agent.clock.today(), plan.channels_from(agent.settings)
+            conn,
+            agent.scope(),
+            to_iso(agent.clock.now()),
+            agent.clock.today(),
+            plan.channels_from(agent.settings),
+            exploring,
         )
     return {**found, "unlocks_off": agent.unlocks_off()}
 
@@ -678,7 +685,8 @@ def _ventures_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated
 
 def ventures_view(agent: Agent) -> dict[str, Any]:
     """The Ventures tab: the whole tree with every venture's scores, business case, money and the owner's word, the
-    criteria that weigh them, and today's share of the spending."""
+    criteria that weigh them, and today's spending on them (0.36.0: their Explore step in the plan, in place of the
+    venture share)."""
     scope = agent.scope()
     simulated = 1 if agent.mode == "dry_run" else 0
     workspace, _ = agent.roots()
@@ -711,6 +719,19 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
             (simulated, scope.session),
         ).fetchone()[0]
         stamp = _ventures_stamp(conn, scope, simulated)
+        top, step = plan.ventures_node(conn, scope), plan.explore_step(conn, scope)  # 0.36.0
+        explore = (
+            {
+                "node": top["id"],
+                "worth": top["owner_worth"] if top["owner_worth"] is not None else weights.EXPLORE_WORTH,
+                "owner_worth": top["owner_worth"],
+                "hold": top["hold_reason"],
+                "hold_by": top["hold_by"],
+                "wait_until": step["wait_until"],
+            }
+            if top is not None and step is not None
+            else None
+        )
         digests = digest.newest_by(conn, scope, "venture_id")  # 0.12.0
         found = evidence.by_venture(conn, scope)  # 0.12.0
         cases = {v["id"]: ventures.latest_case(conn, v["id"]) for v in rows if v["cases"]}  # 0.13.0
@@ -822,7 +843,7 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         )
     return {
         "mode": agent.mode,
-        "share": agent.settings.venture_share,
+        "explore": explore,  # 0.36.0: the plan's Explore step (the venture share retired)
         "today": {"spent_usd": _usd(spent), "ventures_usd": _usd(ventured)},
         "venture_cycles": int(cycles),
         "research_budget_usd": ventures.RESEARCH_BUDGET_USD,  # 0.12.0: each venture's, while it isn't backed

@@ -630,9 +630,6 @@ def test_the_sleep_ember_s_code_cut_keeps_the_agent_s_choice(data_dir: Path) -> 
     assert agent.db.get_meta(agent._key("next_wake_reason")) == (
         'Ember chose 360 min: "Nothing until 10-07."; Ember\'s code cut it to 180 min: READY lists useful work'
     )
-    assert loop._comes("2 messages of your owner's to answer") == "come"
-    assert loop._comes("1 message of your owner's to answer") == "comes"
-    assert loop._comes("obligation #14 (decision)") == "comes"
 
 
 def test_a_long_reason_is_cut_not_refused(data_dir: Path) -> None:

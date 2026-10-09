@@ -38,9 +38,9 @@ def promise(agent: Agent, what: str, days: int = 2, line: int | None = None) -> 
         return obligations.promise(conn, agent.scope(), 1, message, what, due, now(agent), project_id=line)
 
 
-def steered(agent: Agent, venture_turn: bool = False) -> plan.Steer:
+def steered(agent: Agent, exploring: bool = False) -> plan.Steer:
     with agent.db.connection() as conn:
-        return plan.steer(conn, agent.scope(), now(agent), agent.clock.today(), ALL, venture_turn=venture_turn)
+        return plan.steer(conn, agent.scope(), now(agent), agent.clock.today(), ALL, exploring=exploring)
 
 
 def lines_of(agent: Agent) -> dict[int, Any]:
@@ -78,12 +78,13 @@ def test_message_owner_names_the_line_a_promise_is_about_from_its_words(data_dir
     assert [r["project_id"] for r in rows(agent, "SELECT project_id FROM obligations WHERE kind = 'promise'")] == [book]
 
 
-def test_a_promise_comes_before_the_heaviest_step_and_the_ventures_turn(data_dir: Path) -> None:
+@pytest.mark.exploring  # 0.36.0: the ventures' turn retired; the Explore step is weighed like any step
+def test_a_promise_comes_before_the_heaviest_step_and_the_explore_step(data_dir: Path) -> None:
     agent, _ = lined(data_dir)  # lines #1 Planner, #2 Poster, #3 Checklist, each with steps ready
     book = project(agent, *BOOK)
     kdp = promise(agent, "Propose the Haushaltsbuch 2027 KDP book", days=5)
     keep(agent)
-    first = steered(agent, venture_turn=True)
+    first = steered(agent, exploring=True)
     assert first.pick.decided == "promise" and first.kind == "ordinary" and first.line == book
     assert first.step is not None and first.step.title.startswith(f"Keep promise #{kdp}: ")
     with agent.db.connection() as conn:
@@ -93,9 +94,9 @@ def test_a_promise_comes_before_the_heaviest_step_and_the_ventures_turn(data_dir
     for _ in range(plan.PROMISE_TRIES):  # taken three times today without being kept: weighed, like any step
         with agent.db.transaction() as conn:
             plan.record(conn, agent.scope(), cycle(agent, book), now(agent), first)
-    assert steered(agent, venture_turn=True).pick.decided == "venture"
+    assert steered(agent, exploring=True).pick.decided in ("weight", "margin")
     agent.clock.advance(hours=plan.OBLIGATION_HOURS + 1)
-    assert steered(agent, venture_turn=True).pick.decided == "promise"  # a day later, first again
+    assert steered(agent, exploring=True).pick.decided == "promise"  # a day later, first again
 
 
 def test_a_promise_of_pins_is_a_marketing_cycles_and_waits_while_its_request_does(data_dir: Path) -> None:
@@ -116,6 +117,7 @@ def test_a_promise_of_pins_is_a_marketing_cycles_and_waits_while_its_request_doe
     assert again is not None and again.title.startswith(f"Keep promise #{pins}: ")  # decided: the promise again
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_venture_cycle_sleeps_the_owners_shortest_sleep_while_the_plan_has_steps_ready(data_dir: Path) -> None:
     fake = FakeTransport(script=[])
     agent, _ = run(data_dir, fake, cycles=0, settings=VENTURING)  # every cycle the ventures' turn

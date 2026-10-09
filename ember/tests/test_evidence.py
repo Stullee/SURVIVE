@@ -61,6 +61,7 @@ def test_a_page_is_matched_without_its_tracking() -> None:
     assert evidence.url_key("https://example.invalid") == "example.invalid"
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_claim_is_graded_by_where_its_page_came_from(data_dir: Path) -> None:
     fake = FakeTransport(
         script=[
@@ -127,6 +128,7 @@ def test_a_claim_is_graded_by_where_its_page_came_from(data_dir: Path) -> None:
     ) in brief
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_claim_never_changes(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
     researched(agent, "", PAGES[0])  # an empty address isn't kept
@@ -145,6 +147,7 @@ def test_a_claim_never_changes(data_dir: Path) -> None:
     assert rows(agent, "SELECT COUNT(*) AS n FROM research_sources") == [{"n": 1}]
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_ventures_tab_lists_a_ventures_evidence(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
     before = views.ventures_view(agent)

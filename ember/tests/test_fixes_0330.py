@@ -225,8 +225,9 @@ def test_the_work_steps_see_why_the_plan_chose_its_line_the_review_of_it_and_the
 def test_an_owner_s_message_can_be_kept_as_a_standing_instruction() -> None:
     script = (Path(__file__).parents[1] / "app" / "web" / "static" / "js" / "app.js").read_text(encoding="utf-8")
     assert "parts.push(keepButton(m), removeButton(num(m.id)))" in script
-    assert "openInstructions(asText(m.text))" in script
-    assert 'if (adding) box.value = (current ? current.text + "\\n" : "") + "- " + adding;' in script
+    # 0.36.0: as a rule of the owner's rulebook (the Mind tab's), in place of a line of the standing instructions
+    assert "openRule(null, asText(m.text))" in script and 'text: "Keep as rule"' in script
+    assert 'else if (typeof add === "string") box.value = add.trim();' in script
 
 
 def test_a_message_that_promises_in_words_only_goes_back_once(data_dir: Path) -> None:

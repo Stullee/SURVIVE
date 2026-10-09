@@ -16,7 +16,7 @@ from app.agent.sandbox import NAME, NAME_CHARS, Limits
 from app.economy.pricing import LAST_WILL
 from app.products import make
 from tests.test_agent_requests import SETTINGS
-from tests.test_autonomy import with_instructions
+from tests.test_autonomy import with_rules
 
 AGENT = Path(__file__).resolve().parents[1] / "app" / "agent"
 # A limit typed into a text: "at most 12", "up to 13", "within 14 days", "<= 300", "(1 to 10)".
@@ -45,7 +45,7 @@ def test_the_plan_is_told_the_limits_its_parser_keeps() -> None:
         assert f"- {field}: " in rules and f"(<= {chars} characters)" in rules
     assert f"at most {prompts.PLAN_STEPS} short concrete steps (each <= {prompts.STEP_CHARS} characters)" in rules
     assert loop.STEP_CHARS == prompts.STEP_CHARS
-    brief, _ = context.brief(with_instructions(""), False, {"goal": "g", "steps": ["s"]}, None, 12)
+    brief, _ = context.brief(with_rules(""), False, {"goal": "g", "steps": ["s"]}, None, 12)
     assert f"At most 12 steps this cycle and {tools.MAX_TOOL_CALLS_PER_TURN} tool calls per step." in brief
     assert loop.MAX_TOOL_CALLS_PER_TURN == tools.MAX_TOOL_CALLS_PER_TURN
     assert f"(at most {tools.MAX_TOOL_CALLS_PER_TURN} besides write_journal)" in flat(prompts.reflect_prompt())

@@ -205,19 +205,21 @@ def test_pins_and_posts_too_new_to_have_results_dont_judge_their_channel(data_di
 # --- the report: one answer for the next cycle ---
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_the_reports_scheduler_planner_and_plan_tree_name_the_same_next_cycle(
     client_factory: Callable[..., Iterator[TestClient]],
 ) -> None:
     """Live, the scheduler said the next cycle was a venture cycle (the ventures' share alone), the planner's preview
     an ordinary one (the owner's decision came first) and the plan tree's ranking "weight" (it never asked whether it
     was the ventures' turn)."""
-    with client_factory(LoadedSettings(VENTURING)) as client:  # every cycle the ventures' turn
+    with client_factory(LoadedSettings(VENTURING)) as client:
         agent = client.app.state.ember.agent
+        keep(agent)  # 0.36.0: the plan lays out its Ventures; their Explore step is its only step
         venture = client.get("api/diagnostics").text
         cycle(agent)  # the cycle the promise was made in
         promise(agent, "Send the owner the pin report", days=1)  # due tomorrow: it comes first
         ordinary = client.get("api/diagnostics").text
-    for text, kind, takes in ((venture, "venture", "venture"), (ordinary, "ordinary", "none")):
+    for text, kind, takes in ((venture, "venture", "weight"), (ordinary, "ordinary", "none")):  # 0.36.0: by weight
         scheduler = json.loads(section(text, "SCHEDULER"))["next_cycle"]
         assert (scheduler["kind"], scheduler["venture"], scheduler["decided"]) == (kind, kind == "venture", takes)
         assert section(text, diagnostics.PLANNER_TITLE).startswith(

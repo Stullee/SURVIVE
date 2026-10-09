@@ -716,8 +716,8 @@ a.btn-primary { color: var(--text); }
 .fact-error { color: var(--critical-text); font-weight: 600; }
 
 /* --- Inbox (0.19.4) ------------------------------------------------------ */
-/* The conversation scrolls inside, the newest at the bottom; beside it (on wide screens) what Ember owes you and your
-   standing instructions. */
+/* The conversation scrolls inside, the newest at the bottom; beside it (on wide screens) what Ember owes you (0.36.0:
+   your rulebook moved to the Mind tab). */
 
 .inbox-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); align-items: start; }
 .inbox-side { display: grid; gap: var(--gap); min-width: 0; }
@@ -836,16 +836,19 @@ button.owed-item:hover { border-color: var(--ring); border-left-color: var(--acc
 .inbox-side .card-head { flex-wrap: wrap; }
 .inbox-side .card-head .btn { white-space: nowrap; }
 
-/* The owner's standing instructions (top of the Inbox): their text, or a suggestion while there are none. */
-#instructions-title:focus { outline: none; }
-.instructions-text { white-space: pre-wrap; unicode-bidi: plaintext; margin: 0; }
-.instructions-empty { display: grid; gap: 4px; }
-.instructions-suggestion {
-  padding: 8px 10px; border-radius: 8px; background: var(--surface-2); color: var(--text-2); font-style: italic;
-}
-.instructions-form { display: grid; gap: 10px; }
-.instructions-note { margin-top: 8px; }
-#instructions-status { margin-top: 8px; }
+/* 0.36.0: the owner's rulebook (the Mind tab's first card, in place of the standing instructions in the Inbox): its
+   numbered rules, each with its Edit and Remove, and the form that adds one or gives one new words. */
+#rules-title:focus { outline: none; }
+.rules { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 8px; }
+.rule { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.rule[data-editing="true"] .rule-text { text-decoration: underline dotted; }
+.rule-num { color: var(--muted); font-variant-numeric: tabular-nums; }
+.rule-body { display: grid; gap: 2px; min-width: 0; }
+.rule-text { white-space: pre-wrap; unicode-bidi: plaintext; overflow-wrap: anywhere; }
+.rule-meta { color: var(--muted); font-size: 0.85em; }
+.rules-form { display: grid; gap: 10px; }
+.rules-note { margin-top: 8px; }
+#rules-status { margin-top: 8px; }
 
 /* --- Mind --------------------------------------------------------------- */
 

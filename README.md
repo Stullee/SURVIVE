@@ -196,6 +196,19 @@ and a promise of pins makes a marketing cycle. While the plan has a step ready,
 any cycle, a venture cycle too, sleeps your shortest sleep: your daily cap is the
 brake.
 
+0.36.0: the plan decides when Ember explores, and your word on it is kept by
+Ember's code. The venture share is gone (on 2026-10-09 it forced 10 of 24 cycles
+into venture work that Ember, told "nothing new", left undone): your ventures are
+one Explore step of the plan, weighed like any step at a worth you can set, and
+**Hold new things** on the Plan tab means "nothing new": no venture cycle and no
+new product. **Hold it** holds a product yourself (Ember can't lift your hold),
+and **Freeze** keeps your listings' titles and tags as they are until a day you
+choose: Ember's code refuses such edits and the critic asks for none. The
+standing instructions became a **rulebook**: rules for how Ember works, each
+kept until you remove it (live, a new text for one week's order of work had
+replaced the rules set before it). What comes next is the plan's. A live
+product's first pins now come before the critic's suggestions (0.35.3).
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

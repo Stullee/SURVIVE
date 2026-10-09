@@ -123,7 +123,7 @@ def test_an_event_waits_during_a_crash_loop(data_dir: Path) -> None:
 
 
 def test_an_event_waits_when_the_cycle_cap_leaves_no_room_for_work(data_dir: Path) -> None:
-    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=0.04, venture_share=0)
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=0.04)
     agent, _ = make_agent(data_dir, [plan()], settings)
     assert agent.run_cycle("schedule").note == loop.NO_STEP
     urgent_milestone(agent)
@@ -192,7 +192,7 @@ def test_the_email_guide_says_an_answer_may_wake_the_agent() -> None:
 
 
 def test_a_cycle_without_room_ends_an_earlier_back_off(data_dir: Path) -> None:
-    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=0.04, venture_share=0)
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=0.04)
     agent, _ = make_agent(data_dir, [plan()], settings)
     agent._set_time("backoff_until", agent.clock.now() + timedelta(hours=2))  # from an earlier failed cycle
     assert agent.run_cycle("schedule").note == loop.NO_STEP

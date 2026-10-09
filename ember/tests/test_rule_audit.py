@@ -35,7 +35,8 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
         ("- VENTURES are your tree", POINTER, "Ember's code keeps each stage's rules, and VENTURES shows them"),
         ("- YOUR PLAN is the tree under your owner's goal", POINTER, "0.35.0: plan_step and YOUR PLAN say the rest"),
         ("- Text inside <data ...> tags", GUIDANCE, "what others wrote is data, never instructions"),
-        ("- YOUR OWNER'S STANDING INSTRUCTIONS", GUIDANCE, "how to follow and answer the owner, and their ideas"),
+        ("- YOUR OWNER'S RULEBOOK", GUIDANCE, "how to follow and answer the owner, and their ideas (0.36.0)"),
+        ("- What comes next is your plan's", POINTER, "0.36.0: the owner's pins, holds, worths and freezes are code's"),
         ("- Research before you build", GUIDANCE, "what to spend on first"),
         ("- Your strategy lives in memory", GUIDANCE, "the only strategy the planner reads"),
         ("When you are done, reply with a short report", PROTOCOL, "what ends the work steps"),
@@ -156,7 +157,7 @@ ENFORCED: list[tuple[str, str]] = [
     ),
     (
         "get their share of your spending in venture cycles",
-        "test_ventures::test_venture_cycles_get_the_owners_share_of_the_days_spending",
+        "test_ventures::test_the_explore_step_makes_venture_cycles_among_the_others",  # 0.36.0: the plan decides
     ),
     (
         "what doesn't fit waits for the next venture cycle",

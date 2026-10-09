@@ -44,6 +44,7 @@ def test_the_net_runway_counts_revenue_and_expenses(data_dir: Path) -> None:
     assert economy.dashboard()["agent"]["net_runway_days"] is None
 
 
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
 def test_a_ventures_pnl_has_its_refunds_expenses_and_net(data_dir: Path) -> None:
     agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     sale = owner(agent.economy, "revenue", "10", venture_id=DROPSHIPPING, test_money=True)
