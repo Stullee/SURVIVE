@@ -148,7 +148,7 @@ def decided(agent: Agent, line: int, status: str = "rejected") -> int:
     return int(owed["id"])
 
 
-def test_an_owners_decision_on_a_products_request_is_a_step_taken_first_once_a_day(data_dir: Path) -> None:
+def test_an_owners_decision_on_a_products_request_is_a_step_urgent_until_a_cycle_takes_it(data_dir: Path) -> None:
     agent, _ = lined(data_dir, titles=())
     tracker = project(agent, *TRACKER)
     book = project(agent, *BOOK)
@@ -161,12 +161,14 @@ def test_an_owners_decision_on_a_products_request_is_a_step_taken_first_once_a_d
     assert step["title"].startswith(f"Obligation #{owed}: your owner rejected request #")
     assert changes(agent) == [(step["id"], "code", "add")]
     first = steered(agent)
-    assert first.pick.decided == "promise" and first.step is not None and first.step.id == step["id"]
-    with agent.db.transaction() as conn:  # taken by a cycle: the next ones weigh it like any step for a day
+    # 0.37.0: weighed like any step, worth the owner's word and urgent on its day (0.35.0 to 0.36.0 it came first)
+    assert first.pick.decided == "weight" and first.step is not None and first.step.id == step["id"]
+    assert first.pick.parts is not None and first.pick.parts.urgency == weights.promise_urgency(0.5)
+    with agent.db.transaction() as conn:  # taken by a cycle: the floor of a promise's urgency for a day
         plan.record(conn, agent.scope(), working(agent).cycle_id, now(agent), first)
     again = steered(agent)
-    products = {c.step.product for c in again.found if c.stage != "explore"}  # 0.36.0: and the Explore step, held
-    assert again.pick.decided == "weight" and products == {tracker, book}
+    assert [c.step.urgency for c in again.found if c.step.id == step["id"]] == [weights.PROMISE_FLOOR]
+    assert {c.step.product for c in again.found} == {tracker, book}
     with agent.db.transaction() as conn:
         obligations.close_one(conn, owed, "redid the photos", "agent", None, now(agent))
     keep(agent)
@@ -195,7 +197,7 @@ def test_a_promise_is_a_step_of_its_own_while_its_product_waits_on_the_owner(dat
     keep(agent)
     assert steps_of(agent, book)["You publish it at KDP and add its Amazon link"] == "open"
     pick = steered(agent)
-    assert pick.pick.decided == "promise" and pick.step is not None
+    assert pick.pick.decided == "weight" and pick.step is not None  # 0.37.0: weighed (first until then)
     assert pick.step.title.startswith(f"Keep promise #{promise}: ") and pick.line == book
 
 

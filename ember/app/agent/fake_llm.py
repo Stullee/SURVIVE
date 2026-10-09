@@ -731,8 +731,8 @@ REACTIVE_TASK = "Plan this reactive cycle"
 BLUESKY_STEP = "Post about a live listing of line #{id} on Bluesky"  # 0.28.0: a marketing cycle's
 _LISTING_FOCUS = re.compile(r"^- listing #(\d+)", re.MULTILINE)  # the live listings a marketing cycle's FOCUS lists
 VENTURE_SECTION = "VENTURES"
-READY_SECTION = "READY"  # 0.13.0: the decision desk's ranked items
-_READY_ITEM = re.compile(r"^\d+\. ((build|appraise|answer|triage|brainstorm)(?: #(\d+))?): ", re.MULTILINE)
+# 0.37.0: a venture cycle's YOUR STEP names its venture (0.13.0 to 0.36.0: READY's ranked items), or is a brainstorm
+_VENTURE_STEP = re.compile(r"^Step #\d+ of venture #(\d+) .*?\((\w+)\): ", re.MULTILINE)
 _STEP_LINE = re.compile(r"^Step #\d+ of product line #(\d+)", re.MULTILINE)  # 0.35.0: YOUR STEP's line
 BRAINSTORM_STEP = "Brainstorm new ventures for my tree"
 BRAINSTORM_BELOW = 8  # the fake brainstorms while its tree has fewer ideas than this
@@ -1684,15 +1684,16 @@ class FakeTransport:
         ]
         ideas = [v for v in tree if v[1] == "idea"]
         focus = next((v for v in tree if v[1] == "researching"), ideas[0] if ideas else None)
-        # 0.13.0: it takes the decision desk's first READY item (its venture is the focus)
-        ready = [(m[1], m[2], m[3]) for m in _READY_ITEM.finditer(section(context, READY_SECTION) or "")]
-        top = ready[0] if ready else None
-        if top is not None and top[2]:
-            vid = int(top[2])
-            focus = next((v for v in tree if v[0] == vid), (vid, top[1], f"venture #{vid}"))
+        # 0.37.0: YOUR STEP's venture is the focus (0.13.0 to 0.36.0: the decision desk's first READY item)
+        step = section(context, STEP_HEADING) or ""
+        took = _VENTURE_STEP.search(step)
+        if took is not None:
+            vid = int(took[1])
+            focus = next((v for v in tree if v[0] == vid), (vid, took[2], f"venture #{vid}"))
+        brainstorming = took is None and "Brainstorm" in step
         ahead, milestone = roadmap_plan(context) if state != "critical" else ([], None)
         steps = [*answer, *ahead]
-        if (len(ideas) < BRAINSTORM_BELOW or (top is not None and top[1] == "brainstorm")) and state != "critical":
+        if (len(ideas) < BRAINSTORM_BELOW or brainstorming) and state != "critical":
             steps.append(BRAINSTORM_STEP)
         if focus is not None:
             steps.append(RESEARCH_VENTURE_STEP.format(id=focus[0], title=focus[2])[:200])
@@ -1713,7 +1714,6 @@ class FakeTransport:
             "focus_milestone_id": milestone,
             "steps": steps,
             "sleep_minutes": rng.choice([60, 120, 180]),
-            "ready": top[0] if top else "none: READY lists nothing to decide now",
         }
 
     def _marketing_plan(self, context: str, rng: random.Random, state: str, balance: str) -> dict[str, Any]:

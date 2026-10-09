@@ -15,7 +15,7 @@ from app.agent import econ, tools, views
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls, request_kind
 from tests.test_agent import rows
 from tests.test_loop_shapes import run
-from tests.test_ventures import DROPSHIPPING, JOURNAL, NUMBERS, VENTURING, plan, tool_results
+from tests.test_ventures import DROPSHIPPING, JOURNAL, NUMBERS, VENTURING, aim, plan, tool_results
 
 
 def test_the_numbers_are_worked_out_the_same_way_for_every_venture() -> None:
@@ -68,7 +68,9 @@ def test_a_venture_case_is_saved_with_its_numbers_and_shown(data_dir: Path) -> N
             JOURNAL,
         ]
     )
-    agent, _ = run(data_dir, fake, cycles=2, settings=VENTURING)
+    agent, _ = run(data_dir, fake, before=aim(DROPSHIPPING), settings=VENTURING)
+    aim(DROPSHIPPING)(agent)  # 0.37.0: the next venture cycle on it too
+    agent.run_cycle("schedule")
     results = tool_results(agent, "venture_case")
     assert [r["status"] for r in results] == ["error"] * 4 + ["ok"]
     assert "sales must rise: sales_low (P10) <= sales_mid (P50) <= sales_high (P90)" in results[0]["result"]

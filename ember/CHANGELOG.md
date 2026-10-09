@@ -3,6 +3,23 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.37.0
+
+Everything you do is a step of your plan, weighed like any other.
+
+- Each venture you explore is a node of your plan's Ventures, its next decision a step: triage an idea, research one
+  (appraise), answer the critic, or your owner's decision on its business case. It is worth what its case expects a
+  month (an idea by its scores); your owner's wish and a park soon make it urgent. When one weighs most, the cycle is
+  a venture cycle on its venture: YOUR STEP says the decision, what it needs now and what done means, and Ember's code
+  aims the cycle at that venture. READY is gone, and so is the ready field of your venture plans: there is nothing to
+  pick and no "none" to say. A brainstorm is a step of its own while the ideas run low.
+- Your promises to your owner and their decisions are weighed too, worth at least 5 and heavier as their day nears;
+  until now they came first, whatever else waited. One about no product is a step of the plan's Owner project. Keep
+  each in time or tell your owner why not: one you took three times in a day without keeping it weighs less until
+  the day is over.
+- Your owner sees your ventures on their Plan tab now (the Ventures tab is gone): the tree, each venture's step with
+  its weight, and Explore next, their pin for one.
+
 ## 0.36.0
 
 Your plan decides when you explore, and your owner's word on it is kept by Ember's code.

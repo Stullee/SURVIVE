@@ -206,10 +206,10 @@ it runs one **wake cycle**:
    [venture cycle](#ventures) decides one venture, and a cycle an event woke
    works on one line at most. Since 0.35.0 the [plan tree](#plan) under your
    goal decides: before the plan, Ember's code takes the cycle's **step** from it
-   (what you pinned, a promise to you, your decision that is due, else the
-   heaviest step), and the step decides what the cycle is (a marketing step a
-   marketing cycle, since 0.36.0 the Explore step a venture cycle, any other an
-   ordinary one) and which product line its tools work on. The plan sees it as **YOUR STEP** (what done means, why
+   (what you pinned, else the heaviest step; since 0.37.0 a promise to you and
+   your decision are weighed like any step), and the step decides what the cycle
+   is (a marketing step a marketing cycle, a venture's step a venture cycle, any
+   other an ordinary one) and which product line its tools work on. The plan sees it as **YOUR STEP** (what done means, why
    it was taken, what comes next) and the whole plan in a few lines as **YOUR
    PLAN**. It stays on a product up to three cycles in a row unless another step
    weighs clearly more. With no step ready, in the explore burn mode it starts a
@@ -232,10 +232,14 @@ it runs one **wake cycle**:
    few photos. It closes a promise only after telling you it is kept (or why
    not). A promise about a product (message_owner's project_id, or since 0.35.1
    the product its words name: a listing's number, KDP) is a step of that
-   product in the plan tree, taken first from the moment it is made until it is
-   kept (three times a day at most; then it is weighed like any step). Your
-   decision on a product's request is a step too: due within a day, it comes
-   first once a day. A missed milestone decides nothing.
+   product in the plan tree, and since 0.37.0 one about no product is a step of
+   the plan's **Owner** project. Your decision on a product's request is a step
+   too. Since 0.37.0 each is weighed like any step: worth at least 5 (more than
+   most products), more urgent as its day nears, until cycles took it three
+   times in a day without keeping it (your decision once): then it weighs at the
+   floor until that day is over, so one Ember can't keep yet doesn't take every
+   cycle. (0.35.0 to 0.36.0 they came first.) A missed milestone decides
+   nothing.
    A message of the agent's that promises later work in words
    only ("next cycle I'll ...") comes back to it once, to record the promise.
    Any cycle may keep another line's record up to date (a note, its hypothesis,
@@ -661,20 +665,24 @@ returns it with a script, and nothing is sent to Anthropic.
 
 Ventures are the agent's ways to earn beyond what it does now: a new market,
 platform or business model, or a channel that brings buyers to what it already
-sells (a Pinterest account for the Etsy shop is a venture of its own). The
-**Ventures** tab shows them as a tree that keeps growing, and the projects that
-do their work (0.27.0: the Projects tab is part of it). It has two views, and
-this browser keeps the one you chose last:
+sells (a Pinterest account for the Etsy shop is a venture of its own). Since
+0.37.0 they are part of your [plan](#plan), and the **Plan** tab shows them
+below the milestones (until then they had a **Ventures** tab of their own): a
+tree that keeps growing, and the projects that do their work (0.27.0: the
+Projects tab is part of it). It has two views, and this browser keeps the one
+you chose last:
 
-- **Pipeline**: the tree, the decision desk, and the ventures still being
+- **Ventures** (**Pipeline** until 0.37.0): the tree, each venture's step in
+  your plan (the decision desk until 0.37.0), and the ventures still being
   decided: business cases for you, ventures being researched and ideas, then
   the parked and killed ones. Its badge counts the business cases waiting for
-  you, as the tab's does.
-- **Running**: the ventures you backed (building) and the live ones, each
-  card with the projects that do its work inside it, then the other projects
-  (of no venture, or of a venture that isn't backed or live). A venture you
-  back moves here with its card; one you park or kill moves back to Pipeline.
-  When the card still has your focus, the view goes with it.
+  you, as the Plan tab's does.
+- **Product lines** (**Running** until 0.37.0): the ventures you backed
+  (building) and the live ones, each card with the projects that do its work
+  inside it, then the other projects (of no venture, or of a venture that isn't
+  backed or live). A venture you back moves here with its card; one you park
+  or kill moves back to Ventures. When the card still has your focus, the view
+  goes with it.
 
 **The tree.** Every idea branches from the one it grew out of: a variant, a
 niche, another customer group, a channel, a next step research turned up. The
@@ -696,19 +704,26 @@ focuses on), and the agent can score a venture once one of them found web pages
 The card's **Research** line counts them.
 
 **Venture cycles.** Since 0.36.0 your [plan](#plan) decides when the agent
-explores: its **Ventures** project holds one **Explore** step, weighed like any
-other step: at worth 2 (a product that could earn $5 a month) unless you set
-one, more when you asked for a venture's research or added an idea, or when a
-venture is about to be parked by its stage's rule, and more the longer it has
-waited. When it weighs most, the cycle is a venture cycle. While no step of a
-product is ready (a new install's first cycles), exploring and starting a new
-product take turns: a cycle that may start one comes between two venture
-cycles. On the Plan tab's
-**Ventures** card you set their worth, **Hold new things** for "nothing new"
-(no venture cycle and no new product until you **Resume**) or press **Explore
-next** (a pin, spent by the one venture cycle it brings). A
-venture cycle whose plan says it takes none of the desk's items leaves the step
-waiting until the next day. Until 0.35.3 the **Share for ventures** option made a cycle
+explores. Since 0.37.0 each venture being explored (an idea, a venture being
+researched, a business case) is a node of the plan's **Ventures** project, and
+its next decision (below) a step of it, weighed like any other step: worth what
+its business case expects a month (the critic's number where it is lower), as a
+product's worth from what it could earn, at least 2 (a product that could earn
+$5 a month); an idea's from its scores, 1 to 3 (an unscored one 2), so the
+heaviest ideas are researched first; or the worth you set. It is more urgent
+when you asked for the venture's research or added the idea, or when Ember's
+code parks the venture within a week by its stage's rule, and it weighs more
+the longer it has waited. When a venture's step weighs most, the cycle is a
+venture cycle on that venture. (In 0.36.0 one **Explore** step stood for all of
+them, and a venture cycle's plan then took one venture from the decision desk.)
+While no step of a product is ready (a new install's first cycles), exploring
+and starting a new product take turns: a cycle that may start one comes between
+two venture cycles. On the Plan tab's **Ventures** box you set the worth of all
+your ventures (empty: each its own), and **Hold new things** for "nothing new"
+(no venture cycle and no new product until you **Resume**). **Explore next** on
+a venture's step (the box's **Their steps** leads to them) pins it: the next
+venture cycle takes it, even when it is a new product's turn, and the pin is
+spent. Until 0.35.3 the **Share for ventures** option made a cycle
 a venture cycle while venture cycles had had less than that share of the day's
 spending: live, 10 of 24 cycles were venture cycles the agent, told "nothing
 new", left undone, and cheap idle cycles made the share want more of them. The
@@ -719,12 +734,14 @@ and business cases (0.19.3). A venture you back becomes project work: Ember's
 code opens its project, and ordinary cycles run its first test. In a venture
 cycle the agent:
 
-- takes one of the **decision desk**'s items (0.13.0, below), or says why it
-  takes none;
-- in the explore burn mode, grows the tree with a **brainstorm**: a separate
-  call on the planner model that finds six new ideas that fit you and the agent
-  (about $0.05–0.15 with claude-opus-5-5), branching from a promising venture or
-  into new ground;
+- works on its step, **YOUR STEP** (since 0.37.0; until then one of the
+  decision desk's items it chose): its venture's next decision, what it needs
+  now, its next question and what done means. Ember's code aims the cycle at
+  that venture;
+- when its step is a **brainstorm** (a step of the Ventures project while the
+  ideas run low, below), grows the tree: a separate call on the planner model
+  that finds six new ideas that fit you and the agent (about $0.05–0.15 with
+  claude-opus-5-5), branching from a promising venture or into new ground;
 - researches one venture (up to 8 web searches instead of 3), keeps what
   it learns in the venture's knowledge file (`ventures/<number>-<name>.md` in
   its workspace, which the card opens; a full one continues in
@@ -744,37 +761,39 @@ cycle the agent:
   the reason. The card shows what is left. **Research next** (**more**,
   **again**) gives a venture a new budget: only you can.
 
-**Decision desk.** Ember's code ranks what the ventures need decided next
-(0.13.0), and each venture cycle's plan gets it as **READY**: at most five
-items, the most pressing first:
+**Each venture's next decision.** Ember's code names what each venture needs
+decided next (0.13.0), and since 0.37.0 it is that venture's step in your plan:
 
-1. your wishes: a venture you asked to have researched next, an idea you added;
-2. ventures close to being parked by their stage's rule (within 7 days, or
-   with at most a quarter of their research budget left);
-3. **answer**: a proposed venture the critic says to test or park: answer its
-   flaw with evidence or new numbers, or park it;
-4. **appraise**: the other ventures being researched, with what each needs
-   next (research, evidence, numbers, a knock-out to fix, then propose or
-   park);
-5. **triage**: ideas to research or park, while fewer than 8 ventures are
-   being researched or proposed (backed ones don't count);
-6. **brainstorm**: while fewer than 5 ideas wait and fewer than 5 ventures
-   have their numbers. When it is due it always gets the last place, even if
-   more items wait.
+- **triage** an idea: research it or park it with why, while fewer than 8
+  ventures are being researched or proposed (backed ones don't count; until
+  then the step waits for room);
+- **appraise** a venture being researched: what it needs next (research,
+  evidence, numbers, a knock-out to fix), then its business case, or park it;
+- **answer** the critic on a proposed venture it says to test or park: with
+  evidence or new numbers, or park it;
+- **your decision** on a business case: back it or park it (the step waits on
+  you);
+- a **brainstorm**, a step of the Ventures project of its own while fewer than
+  5 ideas wait and fewer than 5 ventures have their numbers.
 
-A venture you backed isn't on the list (before 0.19.3 it was, as **build**):
-its project is ordinary cycles' work.
+A venture you backed has no next decision here (before 0.19.3 it had **build**):
+its project is ordinary cycles' work. Once a venture's stage moves on, its step
+is done and the next one takes its place; a venture you back, or one parked or
+killed, closes its node.
 
-Within each, the highest expected net comes first (the critic's where it is
-lower), then the heaviest. The plan takes one item or says why it takes none.
-Ember's code checks the key and aims the cycle at the item's venture. It keeps
-each pick with the list it came from, and the work steps see it in their focus.
-Venture cycles run only in the explore burn mode. The **Decision desk**
-box on the Ventures tab shows the list as it stands, what the last venture
-plans took (or why none), and how many ventures were decided in the last 7
-days (proposed, parked or killed by the agent or you, not parked by a stage's
-rule; the aim is 2 a week). The desk works within
-the daily cap; it has no cap of its own.
+Until 0.36.0 these were the **decision desk**'s **READY** list, ranked by rules
+of its own (your wishes, ventures close to being parked, answers to the critic,
+the other appraisals, triage, a brainstorm last; within each, the highest
+expected net), and each venture cycle's plan took one item or said why it took
+none. Since 0.37.0 the plan's weights rank them, among all the other steps:
+your wish and a park soon make one urgent, its business case's expected net is
+its worth. Venture cycles run only in the explore burn mode. Under **Their
+steps in your plan**, above the tree, each venture's step shows with its
+weight or what it waits on and what it needs now; the summary above them says
+how many ventures were decided in the last 7 days (proposed, parked or killed
+by the agent or you, not parked by a stage's rule; the aim is 2 a week) and the
+record of the agent's forecasts. Venture cycles work within the daily cap; they
+have no cap of their own.
 
 A venture cycle only researches and decides: its work steps don't carry the
 tools for making files, the workshop, the Etsy shop, email, Reddit or changing
@@ -975,7 +994,8 @@ Nebenkosten*, *Product line · #7 …*).
 **Since 0.35.0** one **plan tree** under your goal decides what Ember works on:
 before each cycle Ember's code takes the cycle's step from it. (In 0.34.0 it
 ran in the shadow, beside READY.) The **Plan** tab shows it, with your goal at
-the top and your milestones below. It replaces the Roadmap tab.
+the top, your milestones below and (since 0.37.0) your ventures last. It
+replaces the Roadmap tab and (0.37.0) the Ventures tab.
 
 **Your goal** (0.29.0). **Set your goal** asks for an amount in USD (the books'
 currency), whether it counts **a month** (revenue less expenses over the last 30
@@ -1017,25 +1037,27 @@ before it. Once a product's stages before maintain are done, its maintain stage
 gets a recurring step for each channel its audience uses, and a fix whenever
 the quality check says improve (the step quotes what the critic said). A promise
 Ember makes you about a product becomes a step of that product, and so does your
-decision on one of its requests. A promise names its product with message_owner's
+decision on one of its requests. Since 0.37.0 the tree also has the **Ventures**
+project, where each venture being explored is a node and its next decision a
+step (see [Ventures](#ventures)), and the **Owner** project, where a promise or
+your decision about no product is a step. A promise names its product with message_owner's
 project_id, or (0.35.1) by its words: the number of one of Ember's listings, or a
 type with only one product open (KDP, Printify). A promise of pins, a Bluesky post
 or a blog post is a marketing cycle's step. A promise whose product has a request
 waiting for you, made since the promise, waits for your decision.
 
-**How a cycle gets its step.** In this order: a step you pinned; a promise to
-you or your decision that is due within a day; (0.35.1) any other promise to
-you, the soonest due first, from the moment it is made; else the heaviest step
-(since 0.36.0 the Explore step of your ventures is one of them: the ventures'
-turn, a share of the day's spending, retired; it waits while you wait for
-something: the message that woke the cycle, a promise to you or your decision
-that is due within a day). A promise comes first up to
-three times a day, your decision once; after that each is weighed like any step
-until the day is over. To leave the product it is on, another step must weigh
-25% more, for up to three cycles in a row. The step decides the cycle: a
-marketing step makes a [marketing cycle](#marketing-cycles), the Explore step
-a [venture cycle](#ventures), any other an ordinary one, and Ember's code keeps
-the cycle's tools on its product line. With
+**How a cycle gets its step.** A step you pinned; else the heaviest step. Since
+0.37.0 a promise to you and your decision are weighed like any step, and so is
+each venture's next decision (since 0.36.0 the ventures' turn, a share of the
+day's spending, is retired; their steps wait while the message you sent, which
+woke the cycle, waits for an answer). Until 0.36.0 a promise to you or your
+decision due within a day came first, and any other promise from the moment it
+was made, the soonest due first, up to three times a day (your decision once).
+To leave the product it is on, another step must weigh 25% more, for up to
+three cycles in a row. The step decides the cycle: a marketing step makes a
+[marketing cycle](#marketing-cycles), a venture's step a
+[venture cycle](#ventures) on that venture, any other an ordinary one, and
+Ember's code keeps the cycle's tools on its product line. With
 no step ready, Ember starts a new product in the explore burn mode (unless you
 hold new things); otherwise nothing new starts. While her plan has steps ready, her code cuts any cycle's
 long sleep to your shortest sleep.
@@ -1048,8 +1070,14 @@ release and 1 once it is live, and then, after 30 views, how it sells. A step's
 weight is that worth times its kind (shipping, launching, fixing and marketing
 1, creating 0.8) times its channel's results (since 0.35.3 only of the pins and
 posts live a week or more), times one plus its urgency, its age (0.5 for each
-day it has waited ready) and momentum (1 for the product worked on last). The
-urgencies: a promise at least 2; since 0.35.3 a defect the critic found (a
+day it has waited ready) and momentum (1 for the product worked on last). A
+promise to you and your decision (0.37.0) are worth at least 5, whatever their
+product is worth, and urgent as their day nears: 2 until the day before, 3 then,
+9 on the day and 11 once it has passed; once cycles took one three times in a
+day without keeping it (your decision once) it is 2 until that day is over. A
+venture's step (0.37.0) is a creating step, worth as [Ventures](#ventures) says,
+urgent by 2 when you asked for it and by 1 when Ember's code parks the venture
+within a week. The other urgencies: since 0.35.3 a defect the critic found (a
 score of 3 or less) 5, a missed views date 4 on the product's marketing, a live
 product's launch marketing 3 (its first buyers) and the critic's other
 suggestions 1, so a live product's first pins come before its polish (until
@@ -1088,10 +1116,10 @@ or kill the product's venture, no date is read.
 
 - **your goal**, with a large bar of how far it got, its pace and its date;
 - **the next cycle's step**, why it is taken, the three after it and what waits
-  on you; (0.36.0) **Titles and tags**, your freeze of the listings' titles and
-  tags; and **Ventures**, their Explore step (its weight, or what it waits on,
-  and the decisions a venture cycle would take up), with their worth, **Hold
-  new things** or **Resume**, and **Explore next**;
+  on you, a venture's step naming its venture; (0.36.0) **Titles and tags**,
+  your freeze of the listings' titles and tags; and **Ventures**: how many are
+  being explored and the heaviest of their steps, their worth, **Hold new
+  things** or **Resume**, and **Their steps**, which leads to them;
 - **the network**: your goal, each project in its own colour, each product as
   big as its worth. Choose a product to open its stages and steps below it. Drag
   to move it; Ctrl (or Cmd) and the mouse wheel zoom; **Fit** puts it back;
@@ -1107,7 +1135,12 @@ or kill the product's venture, no date is read.
   would weigh), and **Recent cycles** (the step each took and why);
 - **Milestones**: yours and those Ember's code sets (a venture's first test,
   the money goal), as cards by horizon. The tab's badges count overdue
-  milestones (▲) and the new dates Ember proposed for yours (◔).
+  milestones (▲) and the new dates Ember proposed for yours (◔), and (0.37.0)
+  the business cases waiting for you (◔);
+- (0.37.0, the Ventures tab until then) **Ventures** and **Product lines**: the
+  venture tree with **Their steps in your plan** (each venture's step with its
+  weight or what it waits on, what it needs now and **Explore next**; the name
+  opens the venture's card), and the projects. See [Ventures](#ventures).
 
 **Your part.** **Pin** a step to have the next cycle take it. **Set worth** gives
 a product your own worth, from 0.5 to 10, in place of the one Ember's code
@@ -1116,9 +1149,10 @@ it** or **Drop it**. **Close as done** or **Drop it** ends a product (and its
 line) whenever you want. **Lift the hold** puts a product Ember held back in the
 plan. Since 0.36.0 **Hold it** holds a product yourself, with an optional
 reason: its steps wait until you **Resume it**, and Ember can't lift your hold
-(her own she can). **Hold new things** on the Ventures card is "nothing new":
+(her own she can). **Hold new things** on the Ventures box is "nothing new":
 no venture cycle and no new product (Ember's code refuses one) until you
-**Resume**. **Freeze** on the Titles and tags card
+**Resume**. **Explore next** on a venture's step has the next venture cycle
+take it (0.37.0). **Freeze** on the Titles and tags card
 keeps the live listings' titles and tags as they are until the day you choose
 (at most 60 days ahead): Ember's code refuses a change of them, the quality
 critic asks for none, and Ember's plan says so; **Lift the freeze** ends it.
@@ -1211,8 +1245,8 @@ A call never changes, and a settled one is final. The record in a few words
 (how often the milestones given odds were met against the odds given, with the
 Brier score, where a coin toss scores 0.25, and how many first sales came on
 time) reaches the critic and the daily review. You
-see it with the milestones on the Plan tab, with each call on its milestone's card, on the
-Ventures tab's Decision desk, and on a backed venture's card.
+see it with the milestones on the Plan tab, with each call on its milestone's card, in the
+ventures' summary (the Ventures tab's Decision desk until 0.37.0), and on a backed venture's card.
 
 **Money, time and waiting.** A milestone can carry what it may cost: the API
 spending the agent plans for it, the cash it needs from you (EUR) and your
@@ -1280,12 +1314,13 @@ no longer shown); a study that failed three times stops until you press
 - **Library**: add pages and files worth knowing; the agent studies each once
   and keeps what it learned (see [Library](#library)).
 - **Ventures**: back, park or kill the agent's business cases and add your own
-  ideas on the Ventures tab (see [Ventures](#ventures)).
+  ideas, on the Plan tab since 0.37.0 (see [Ventures](#ventures)).
 - **Plan** (0.35.0, in place of the Roadmap tab): set your goal, pin a step,
   set a product's worth, keep or drop a product at its decide-by date, close or
   drop one, lift Ember's hold, set a product's unlocks, and add milestones you
   want reached by a date (see [Plan](#plan)).
-- **Projects** (the Ventures tab's **Running** view since 0.27.0): the
+- **Projects** (the Ventures tab's **Running** view since 0.27.0, the Plan
+  tab's **Product lines** since 0.37.0): the
   agent's open projects as cards (its hypothesis, its stage in the plan, what it earned
   and cost, and what it nets after its expenses such as Etsy's fees), the
   closed ones as rows that open. A backed or live venture's projects are in
@@ -2501,7 +2536,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.36.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.37.0 (by /u/your name)`.
 
 ## Amazon KDP
 

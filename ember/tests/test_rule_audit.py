@@ -59,16 +59,16 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
         ("- sleep_minutes:", SCHEMA, ""),
     ],
     "venture": [
-        ("VENTURE CYCLE This cycle belongs to your ventures", GUIDANCE, "what a venture cycle is for, and a no"),
+        ("VENTURE CYCLE This cycle belongs to one venture's next decision", GUIDANCE, "what it is for, and a no"),
         ("- Answer your owner's waiting messages first", GUIDANCE, "0.19.3: a scheduled venture cycle answers them"),
         ("- Work on ventures only", POINTER, "the venture cycle's tools are code's; the planner plans with them"),
-        ("- READY lists your ventures' next decisions", POINTER, "Ember's code ranks them and checks the pick"),
-        ("- A brainstorm", GUIDANCE, "where to brainstorm (READY says when)"),
+        # 0.37.0: Ember's code takes the step and aims the cycle at its venture (READY and the plan's ready retired)
+        ("- YOUR STEP is the decision Ember's code took", POINTER, "Ember's code takes it and aims the cycle"),
+        ("- A brainstorm", GUIDANCE, "where to brainstorm (a step of its own says when)"),
         ("- STATUS says how many research calls", POINTER, "Ember's code prices them and refuses the rest"),
         ("- One venture a cycle", GUIDANCE, "what research is for, and saving it"),
         ("- Decide every venture that isn't backed", POINTER, "Ember's code refuses research past the budget"),
         ("- Your owner's ideas and wishes come first", GUIDANCE, "whose ideas first"),
-        ("- ready (in your plan's JSON)", SCHEMA, "0.13.0: a venture plan's field (0.28.0 to 0.34.0: every plan's)"),
     ],
     "marketing": [
         ("MARKETING CYCLE This cycle brings buyers", GUIDANCE, "0.28.0: what a marketing cycle is for"),
@@ -157,14 +157,15 @@ ENFORCED: list[tuple[str, str]] = [
     ),
     (
         "get their share of your spending in venture cycles",
-        "test_ventures::test_the_explore_step_makes_venture_cycles_among_the_others",  # 0.36.0: the plan decides
+        "test_ventures::test_the_ventures_steps_make_venture_cycles_among_the_others",  # 0.36.0: the plan decides
     ),
     (
         "what doesn't fit waits for the next venture cycle",
         "test_ventures::test_a_venture_cycle_is_told_how_much_research_it_can_pay_for",
     ),
-    ("with fewer than 5 ideas waiting", "test_desk::test_ready_ranks_the_ventures_next_decisions"),
-    ("Research the heaviest ideas first", "test_desk::test_ready_ranks_the_ventures_next_decisions"),
+    # 0.37.0: the plan's steps (READY until then)
+    ("with fewer than 5 ideas waiting", "test_desk::test_each_ventures_next_decision_is_named_and_weighed"),
+    ("Research the heaviest ideas first", "test_desk::test_each_ventures_next_decision_is_named_and_weighed"),
 ]
 
 # 0.15.0: what the constitution said that Ember's code does otherwise: gone from every text, with the test that proves

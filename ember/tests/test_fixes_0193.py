@@ -24,7 +24,7 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app.agent import store, tools, ventures  # noqa: E402
-from app.agent.fake_llm import FakeTransport, request_kind  # noqa: E402
+from app.agent.fake_llm import FakeTransport  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import call, shop_context  # noqa: E402
@@ -72,13 +72,13 @@ def test_a_venture_cycle_isnt_aimed_at_a_backed_venture(data_dir: Path) -> None:
     agent, _ = run(data_dir, fake, settings=VENTURING)
     backed(agent)
     agent.run_cycle("schedule")
-    assert rows(agent, "SELECT venture, venture_id FROM cycles ORDER BY id")[-1] == {"venture": 1, "venture_id": None}
-    work = [r for r in fake.sent if request_kind(r) == "work"]
-    brief = work[0]["messages"][0]["content"][0]["text"]
-    assert (
-        f"Venture #{DROPSHIPPING} is building: your owner backed it, so its work is its project's, in ordinary cycles."
-        in brief
-    )
+    # 0.37.0: a backed venture's node in the plan's Ventures is closed (its work is its product line's), so no step aims
+    # a venture cycle at it, whatever the plan names
+    last = rows(agent, "SELECT venture, venture_id FROM cycles ORDER BY id")[-1]
+    assert last["venture_id"] != DROPSHIPPING
+    assert rows(agent, f"SELECT status, result FROM plan_nodes WHERE venture_id = {DROPSHIPPING}") == [
+        {"status": "done", "result": f"venture #{DROPSHIPPING} is building"}
+    ]
 
 
 @pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles

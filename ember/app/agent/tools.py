@@ -2641,7 +2641,7 @@ def _venture_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     transition = f"{current} → {changes['stage']}" if "stage" in changes else "updated"
     if dropped:
         transition += f" (its milestones {_numbers(dropped)} dropped with it)"
-    after = " Your owner sees its business case on the Ventures tab." if changes.get("stage") == "proposed" else ""
+    after = " Your owner sees its business case on the Plan tab." if changes.get("stage") == "proposed" else ""
     if scores:
         after += f" Now {ventures.scores_text({**dict(row), **changes})}."
     after += "".join(f" Not done (the rest is saved): {why}." for why in refused)
@@ -2675,7 +2675,7 @@ def _new_stage(
             else f"Ember's code parked venture #{vid} by its stage's rule: only your owner takes it up again"
         )
         raise ToolError(
-            f"{who} (Research next on the Ventures tab). If you found something that changes the picture, tell "
+            f"{who} (Research next, on the Plan tab). If you found something that changes the picture, tell "
             "them with message_owner"
         )
     if stage == "parked" and not (args.get("note") or "").strip():
@@ -2698,7 +2698,7 @@ def _new_stage(
         if knocked:  # 0.13.0
             raise ToolError(
                 f"venture #{vid} is knocked out by Ember's code: {out}. Fix what can be fixed (a new venture_case, "
-                "evidence), park it with the numbers, or ask your owner to lift a knock-out on the Ventures tab"
+                "evidence), park it with the numbers, or ask your owner to lift a knock-out on the Plan tab"
             )
         moved["proposed_at"] = ctx.now()
     moved["stage"] = stage

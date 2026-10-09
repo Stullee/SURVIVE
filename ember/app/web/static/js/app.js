@@ -92,8 +92,10 @@
 
   // The phase-1 scenario switcher is gone; drop its stored choice.
   try { window.localStorage.removeItem("ember-scenario"); } catch (e) { /* storage unavailable */ }
-  // 0.27.0: the Projects tab is the Ventures tab's Running view.
-  if (ui.tab === "projects") { ui.tab = "ventures"; ui.vtView = "running"; }
+  // 0.27.0: the Projects tab is the Ventures tab's Running view; 0.37.0: the Ventures tab is the Plan tab's (its Product
+  // lines view the Running one).
+  if (ui.tab === "projects") ui.vtView = "running";
+  if (ui.tab === "projects" || ui.tab === "ventures") ui.tab = "plan";
 
   // ------------------------------------------------------------------ helpers
 
@@ -658,7 +660,7 @@
     section("inbox", [d.inbox, d.inbox_before, d.promises_open, d.badges, agent.name, coming, d.mode, minute], ["inbox", "owed"], function () { renderInboxOf(d); });
     section("upgrades", [d.upgrades, coming, agent.name, minute], null, function () { return renderUpgrades(arr(d.upgrades)); });
     // The tree is loaded apart: again when it changed (a venture, or a cycle that ended), while its tab is open.
-    if (ui.tab === "ventures" && !ui.vt.busy && d.ventures_stamp !== undefined && d.ventures_stamp !== ui.vt.stamp) loadVentures();
+    if (ui.tab === "plan" && !ui.vt.busy && d.ventures_stamp !== undefined && d.ventures_stamp !== ui.vt.stamp) loadVentures();
     if (ui.tab === "plan" && !ui.rm.busy && isObject(d.roadmap) && d.roadmap.stamp !== ui.rm.stamp) loadRoadmap();
     if (ui.tab === "plan" && !ui.pl.busy && d.plan_stamp !== undefined && d.plan_stamp !== ui.pl.stamp) loadPlan();
     if (ui.tab === "library" && !ui.lib.busy && isObject(d.library) && d.library.stamp !== ui.lib.stamp) loadLibrary();
@@ -980,7 +982,7 @@
     setBadge("badge-approvals-todo", c.todo, "☐", "approved, to carry out");
     setBadge("badge-inbox", c.unread, "●", "unread");
     setBadge("badge-upgrades", c.upgrades, "◔", "new");
-    setBadge("badge-ventures", c.ventures, "◔", "business cases waiting for your decision");
+    setBadge("badge-ventures", c.ventures, "◔", "business cases waiting for your decision");  // 0.37.0: the Plan tab's
     setBadge("badge-pipeline", c.ventures, "◔", "business cases waiting for your decision");  // 0.27.0
     setBadge("badge-roadmap", c.overdue, "▲", "overdue milestones");
     setBadge("badge-roadmap-proposals", c.proposals, "◔", "proposed dates waiting for your decision");
@@ -1941,7 +1943,7 @@
     if (p.venture_id === null || p.venture_id === undefined) return null;
     var title = ctx.ventures[String(p.venture_id)];
     if (!title) return h("span", { class: "chip", text: "Venture #" + p.venture_id });
-    var b = h("button", { type: "button", class: "chip chip-button", "aria-label": "Venture: " + title + ". Open it in Ventures" },
+    var b = h("button", { type: "button", class: "chip chip-button", "aria-label": "Venture: " + title + ". Open it in Plan" },
       h("span", { "aria-hidden": "true", text: "◆" }), h("span", { class: "chip-text", text: title }), h("span", { class: "chip-arrow", "aria-hidden": "true", text: "→" }));
     b.addEventListener("click", function () { revealVenture(p.venture_id); });
     return b;
@@ -1982,10 +1984,10 @@
 
   // 0.26.0: a project's card (a closed one's row, opened), from the workspace: all projects shown if it is closed and
   // only the open ones were. 0.27.0: in the Ventures tab's Running view, once the ventures are loaded (a running
-  // venture's projects are in its card; loadVentures shows it then).
+  // venture's projects are in its card; loadVentures shows it then). 0.37.0: the Plan tab's Product lines view.
   function revealProject(id) {
     ui.pj.reveal = String(id);
-    selectTab("ventures", false);
+    selectTab("plan", false);
     selectVentureView("running", false);
     if (ui.vt.data) showProject();
   }
@@ -2021,7 +2023,7 @@
   function revealVenture(id) {
     ui.vt.selected = id;
     ui.vt.reveal = id;  // shown once the tree is loaded (selectTab loads it), in the view its card is in
-    selectTab("ventures", false);
+    selectTab("plan", false);
   }
 
   // ---- Activity: one item per cycle, patched in place. Returns false when an item was left out
@@ -7099,7 +7101,8 @@
     $("ws-files-title").focus({ preventScroll: true });
   }
 
-  // A project's or a venture's card in Ventures (from the list's groups and the viewer).
+  // A project's or a venture's card in the Plan tab's Ventures or Product lines (0.37.0; until then the Ventures tab's),
+  // from the list's groups and the viewer.
   function wsReveal(key) {
     var m = /^([pv]):(\d+)$/.exec(key || "");
     if (!m) return;
@@ -7327,7 +7330,7 @@
     });
   }
 
-  // A project's group (a venture's): its title and state, and a way to it in Ventures.
+  // A project's group (a venture's): its title and state, and a way to it in Plan (0.37.0: the Ventures tab's before).
   function wsOwnerHead(o, tag, id, stats) {
     var what = o.type === "none" ? "written with no project or venture in focus"
       : (o.type === "venture" ? "Venture" : "Project") + (o.state ? " · " + o.state : "");
@@ -7337,7 +7340,7 @@
         h("span", { class: "ws-owner-name", text: o.type === "none" ? "Not filed under a project" : o.title })),
       h("span", { class: "ws-group-meta", text: what + " · " + stats }),
       o.type !== "none" && o.known ? h("button", { type: "button", class: "link-button ws-owner-go", "data-ws-reveal": o.key,
-        "aria-label": o.title + ": open it in Ventures" }, "Open in Ventures", h("span", { "aria-hidden": "true", text: " →" })) : null);
+        "aria-label": o.title + ": open it in Plan" }, "Open in Plan", h("span", { "aria-hidden": "true", text: " →" })) : null);
   }
 
   function wsItemEl(item, open, withFolder, withOwner, owners) {
@@ -7657,7 +7660,7 @@
       if (!owner.known) return h("span", { class: "chip", text: owner.title });
       return h("button", { type: "button", class: "chip chip-button", "data-tone": owner.tone || null, "data-ws-reveal": owner.key,
         "aria-label": (owner.type === "venture" ? "Venture: " : "Project: ") + owner.title + (owner.state ? " (" + owner.state.toLowerCase() + ")" : "") +
-          ". Open it in Ventures" },
+          ". Open it in Plan" },
         h("span", { "aria-hidden": "true", text: owner.icon }), h("span", { class: "chip-text", text: owner.title }),
         owner.state ? h("span", { class: "ws-chip-state", "aria-hidden": "true", text: owner.state }) : null,
         h("span", { class: "chip-arrow", "aria-hidden": "true", text: "→" }));
@@ -8212,7 +8215,6 @@
     }
     var items = arr(data.items).filter(function (v) { return isObject(v) && v.id !== undefined; });
     renderVentureSummary(data, items);
-    renderVentureDesk(data);
     renderVentureLegend(data);
     renderVentureTree(items);
     fillParentSelect(items);
@@ -8284,19 +8286,22 @@
       return counts[k] + " " + word;
     });
     var today = isObject(data.today) ? data.today : {};
-    // 0.36.0: exploring is the plan's Explore step (the venture share retired): weighed like any step, held by you
+    // 0.36.0: the plan decides when Ember explores (the venture share retired), and you hold it; 0.37.0: each
+    // venture's next decision is a step of it (listed below)
     var explore = isObject(data.explore) ? data.explore : null;
     var parts = [];
     if (explore && explore.hold) {
       parts.push((explore.hold_by === "owner" ? "You hold new things" : "Your ventures are on hold") + " (" + explore.hold +
         "): no venture cycle" + (explore.hold_by === "owner" ? " and no new product" : "") +
-        " until you resume them on the Plan tab. Your ideas still go into the tree.");
+        " until you resume them in the plan's Ventures box above. Your ideas still go into the tree.");
     } else {
-      parts.push("Exploring is your plan's Explore step (worth " + (explore ? explore.worth : "2") + "): a venture cycle comes when it weighs most;" +
-        " set its worth or hold it on the Plan tab. Venture cycles spent " + usd(today.ventures_usd) + " of today's " + usd(today.spent_usd) +
+      parts.push("Each venture's next decision is a step of your plan (below), weighed like any other: a venture cycle comes when one weighs most." +
+        " Venture cycles spent " + usd(today.ventures_usd) + " of today's " + usd(today.spent_usd) +
         ", " + plural(num(data.venture_cycles) || 0, "venture cycle") + " in all.");
     }
-    parts.push(plural(items.length, "venture") + " in the tree" + (tally.length ? ": " + tally.join(", ") : "") + ".");
+    parts.push(plural(items.length, "venture") + " in the tree" + (tally.length ? ": " + tally.join(", ") : "") + "; " +
+      plural(num(data.decided_week) || 0, "venture") + " decided in the last 7 days (the aim: 2).");
+    if (data.forecasts) parts.push(name + "'s forecasts, settled by Ember's code: " + String(data.forecasts) + ".");
     var legs = items.filter(function (v) { return v.stage === "live" || v.stage === "building"; });
     if (legs.length) {
       parts.push("Legs: " + legs.map(function (v) {
@@ -8304,35 +8309,6 @@
       }).join("; ") + ".");
     }
     $("vt-summary").textContent = parts.join(" ");
-  }
-
-  // 0.13.0: the decision desk: what Ember's code ranks as the ventures' next decisions (a venture cycle's plan takes one
-  // or says why none), what the last venture plans took, and how many ventures were decided this week.
-  function renderVentureDesk(data) {
-    var name = agentName();
-    var d = isObject(data.desk) ? data.desk : null;
-    if (!d) { replace($("vt-desk"), []); return; }
-    var ready = arr(d.ready);
-    var picks = arr(d.picks);
-    var week = num(d.decided_week) || 0;
-    var list = ready.length ?
-      h("ol", { class: "vt-ready" }, ready.map(function (item) {
-        return h("li", null, h("strong", { text: String(item.key) }), " · " + String(item.text));
-      })) :
-      h("p", { class: "muted small", text: "Nothing to decide now" + (d.mode === "explore" ? "." : " in the " + d.mode + " burn mode: only backed ventures get venture cycles.") });
-    var taken = picks.length ?
-      h("ul", { class: "vt-picks muted small" }, picks.map(function (p) {
-        var what = p.pick ? "took " + p.pick : "took none: " + String(p.why_not);
-        return h("li", null, "Cycle #" + p.cycle_id + " " + what + " (of " + plural(num(p.shown) || 0, "item") + ") · ", timeEl(p.created_at));
-      })) : null;
-    replace($("vt-desk"), h("details", { class: "vt-desk-box" },
-      h("summary", null, h("strong", { text: "Decision desk: " }),
-        plural(ready.length, "decision") + " ready · " + plural(week, "venture") + " decided in the last 7 days (the aim: 2)"),
-      h("p", { class: "muted small", text: "Ranked by " + name + "'s code: backed ventures without a project, your wishes, " +
-        "deadlines, the critic's flags, then the expected net (the critic's where it is lower). Each venture cycle's plan takes one or says why none." }),
-      d.forecasts ? h("p", { class: "muted small", text: name + "'s forecasts, settled by Ember's code: " + String(d.forecasts) + "." }) : null,
-      list,
-      taken));
   }
 
   function renderVentureLegend(data) {
@@ -8483,9 +8459,9 @@
       if (g.getAttribute("data-id") === String(id)) g.setAttribute("data-selected", "true");
       else g.removeAttribute("data-selected");
     });
-    var card = $("panel-ventures").querySelector('article.venture[data-id="' + String(id) + '"]');
+    var card = $("panel-plan").querySelector('article.venture[data-id="' + String(id) + '"]');
     if (!card) return;
-    Array.prototype.forEach.call($("panel-ventures").querySelectorAll("article.venture[data-selected]"), function (c) { c.removeAttribute("data-selected"); });
+    Array.prototype.forEach.call($("panel-plan").querySelectorAll("article.venture[data-selected]"), function (c) { c.removeAttribute("data-selected"); });
     selectVentureView($("vt-running").contains(card) ? "running" : "pipeline", false);
     card.setAttribute("data-selected", "true");
     card.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -10037,11 +10013,13 @@
   var PLAN_WAIT = {
     owner: "waits on you", channel: "its channel is off", upgrade: "waits on an upgrade",
     step: "after the one before", hold: "on hold", date: "waits for a day",
-    mode: "no venture cycle now (the burn mode, or what you wait for comes first)", empty: "no venture decision is due",  // 0.36.0: the Explore step's
+    mode: "no venture cycle now (the burn mode, or what you wait for comes first)",  // 0.36.0: a venture's step
     turn: "a new product's turn (no product step is ready)",
+    room: "waits until fewer ventures are researched or proposed",  // 0.37.0: an idea's triage
+    moved: "its venture moved on: it closes at the next cycle",  // 0.37.0: backed, parked or killed since
   };
   var PLAN_DECIDED = {
-    pin: "you pinned it", promise: "a promise to you (first until kept) or your decision",
+    pin: "you pinned it", promise: "a promise to you or your decision (first, until 0.36.0)",
     venture: "a venture cycle (the venture share, until 0.35.3)",
     weight: "the heaviest step", margin: "the product worked on last keeps it", none: "nothing is ready",
   };
@@ -10078,7 +10056,7 @@
   function renderPlan() {
     var pl = ui.pl, d = pl.data;
     setStatusText("pl-load-status", pl.error ? "Couldn't load the plan: " + errorText(pl.error) : !d && pl.busy ? "Loading the plan…" : "", pl.error ? "error" : "");
-    if (!d) { ["pl-now", "pl-net", "pl-detail", "pl-changes", "pl-channels", "pl-upgrades", "pl-picks"].forEach(function (id) { replace($(id), null); }); return; }
+    if (!d) { ["pl-now", "pl-net", "pl-detail", "pl-changes", "pl-channels", "pl-upgrades", "pl-picks", "vt-steps"].forEach(function (id) { replace($(id), null); }); return; }
     var products = planProducts(d);
     var known = products.some(function (x) { return x.product.id === pl.selected; });
     if (!known) {
@@ -10097,6 +10075,14 @@
     renderPlanChannels(d);
     renderPlanUpgrades(d);
     renderPlanPicks(d);
+    renderVentureSteps(d);  // 0.37.0: in the Ventures view below
+  }
+
+  // Where a step belongs: its product line, or (0.37.0) its venture (a venture's step's title says only the decision).
+  function planWhere(s) {
+    if (s.line) return "line #" + s.line;
+    if (s.venture) return "venture #" + s.venture + (s.venture_title ? " " + s.venture_title : "");
+    return "";
   }
 
   function renderPlanNow(d) {
@@ -10106,58 +10092,111 @@
       h("div", { class: "pl-now-card" },
         h("p", { class: "small-head", text: "The next cycle's step" }),
         h("p", { class: "pl-now-title", text: now.id ? now.title : sentence(PLAN_DECIDED[now.decided] || "nothing is ready") }),
-        now.id ? h("p", { class: "muted", text: sentence(PLAN_DECIDED[now.decided] || now.decided) + (now.line ? " · line #" + now.line : "") }) : null,
+        now.id ? h("p", { class: "muted", text: sentence(PLAN_DECIDED[now.decided] || now.decided) + (planWhere(now) ? " · " + planWhere(now) : "") }) : null,
         now.why ? h("p", { class: "pl-why muted", text: now.why }) : null),
       h("div", { class: "pl-now-card" },
         h("p", { class: "small-head", text: "Next" }),
         next.length
           ? h("ol", { class: "pl-list" }, next.map(function (s) {
-            return h("li", null, s.title, h("span", { class: "muted", text: (s.line ? " · line #" + s.line : "") + (s.weight !== null && s.weight !== undefined ? " · weight " + s.weight : "") }));
+            return h("li", null, s.title, h("span", { class: "muted", text: (planWhere(s) ? " · " + planWhere(s) : "") + (s.weight !== null && s.weight !== undefined ? " · weight " + s.weight : "") }));
           }))
           : h("p", { class: "muted", text: "Nothing else is ready." })),
       h("div", { class: "pl-now-card" },
         h("p", { class: "small-head", text: "Waiting on you" }),
         waiting.length
-          ? h("ul", { class: "pl-list" }, waiting.map(function (s) { return h("li", { text: s.title + (s.line ? " (line #" + s.line + ")" : "") }); }))
+          ? h("ul", { class: "pl-list" }, waiting.map(function (s) { return h("li", { text: s.title + (planWhere(s) ? " (" + planWhere(s) + ")" : "") }); }))
           : h("p", { class: "muted", text: "Nothing." })),
       planFreezeCard(d),
       planVenturesCard(d),
     ]);
   }
 
-  // 0.36.0: your ventures are the plan's Explore step (the venture share retired): weighed like any step, at the worth
-  // you give them; hold them for "nothing new", or pin the step to explore next.
+  // 0.36.0: your ventures in the plan (the venture share retired), weighed like any step at the worth you give them;
+  // hold them for "nothing new". 0.37.0: each venture being explored is a node of the plan, its next decision a step
+  // (the Ventures view below lists them: renderVentureSteps).
   function planVenturesCard(d) {
     var v = isObject(d.ventures) ? d.ventures : null;
     if (!v) return null;
-    var st = isObject(v.step) ? v.step : {};
+    var list = arr(v.ventures).filter(isObject);
+    var ready = list.filter(function (x) { return isObject(x.step) && x.step.weight !== null && x.step.weight !== undefined; })
+      .sort(function (a, b) { return num(b.step.weight) - num(a.step.weight); });
     var state = v.hold
       ? v.hold_by === "owner"
         ? "You hold new things: " + v.hold + ". No venture cycle and no new product until you resume them."
         : agentName() + " holds them: " + v.hold
-      : st.waiting === "date" && st.wait_until
-        ? "Waits until " + fmtDay(st.wait_until) + (st.wait_why ? ": " + st.wait_why : "")
-        : st.waiting ? sentence(PLAN_WAIT[st.waiting] || st.waiting)
-          : st.weight !== null && st.weight !== undefined ? "Weight " + st.weight + " now: a venture cycle comes when it weighs most." : "";
+      : plural(list.length, "venture") + " explored, each next decision a step of your plan" +
+        (ready.length ? "; the heaviest: #" + ready[0].venture + " " + ready[0].title + " (weight " + ready[0].step.weight + ")." : ".");
     var owned = v.owner_worth !== null && v.owner_worth !== undefined;
     var worth = h("input", { type: "number", min: "0.5", max: "10", step: "0.5", class: "pl-worth-input", "aria-label": "Their worth",
-      placeholder: String(v.worth), value: owned ? String(v.owner_worth) : "" });
+      placeholder: "their own", value: owned ? String(v.owner_worth) : "" });
     var target = { id: v.id };
+    var brainstorm = isObject(v.brainstorm) ? v.brainstorm : null;
     return h("div", { class: "pl-now-card" },
       h("p", { class: "small-head", text: "Ventures" }),
-      state ? h("p", { text: state }) : null,
-      arr(v.ready).length ? h("ul", { class: "pl-list muted" }, arr(v.ready).map(function (t) { return h("li", { text: t }); })) : null,
+      h("p", { text: state }),
+      brainstorm && brainstorm.needs ? h("p", { class: "muted", text: "A brainstorm is due: " + brainstorm.needs + "." }) : null,
       h("div", { class: "form-actions" },
         worth,
         planButton("Set worth", "btn btn-small", function (button) {
           var value = worth.value.trim() === "" ? null : Number(worth.value);
-          planProductAction(target, "worth", { worth: value }, button, value === null ? "Their worth is " + agentName() + "'s again." : "Their worth is " + value + ".");
+          planProductAction(target, "worth", { worth: value }, button, value === null ? "Each venture is worth its own again (what its case expects, at least 2)." : "Every venture is worth " + value + ".");
         })),
       h("div", { class: "form-actions" },
         v.hold
-          ? planButton("Resume", "btn btn-small", function (button) { planProductAction(target, "resume", null, button, "Resumed: exploring is weighed again, and new products may start."); })
+          ? planButton("Resume", "btn btn-small", function (button) { planProductAction(target, "resume", null, button, "Resumed: the ventures' steps are weighed again, and new products may start."); })
           : planButton("Hold new things", "btn btn-small", function (button) { planProductAction(target, "hold", { why: "nothing new for now" }, button, "Held: no venture cycle and no new product until you resume them."); }),
-        st.id && !v.hold ? planButton(st.pinned ? "Unpin" : "Explore next", "btn btn-small", function (button) { pinPlanStep(st.id, !st.pinned, button); }) : null));
+        planButton("Their steps", "btn btn-small", function () {
+          selectVentureView("pipeline", false);
+          revealEl($("vt-steps"), $("vt-steps-head"));
+        })));
+  }
+
+  // 0.37.0: each venture's next decision as a step of the plan (the decision desk's READY until 0.36.0): its weight or
+  // what it waits on, what it needs now, and Explore next (a pin: the next venture cycle takes it). The heaviest first.
+  function renderVentureSteps(d) {
+    var el = $("vt-steps");
+    var v = d && isObject(d.ventures) ? d.ventures : null;
+    if (!v) { replace(el, []); return; }
+    var name = agentName();
+    var rows = arr(v.ventures).filter(function (x) { return isObject(x) && isObject(x.step); });
+    if (isObject(v.brainstorm)) rows.push({ venture: null, title: "Your ventures", stage: null, step: v.brainstorm, needs: v.brainstorm.needs });
+    var weighed = function (x) { return x.step.weight !== null && x.step.weight !== undefined; };
+    var vid = function (x) { return x.venture === null || x.venture === undefined ? Infinity : Number(x.venture); };  // the brainstorm last
+    var byVenture = function (a, b) { return vid(a) === vid(b) ? 0 : vid(a) < vid(b) ? -1 : 1; };
+    var ready = rows.filter(weighed).sort(function (a, b) { return num(b.step.weight) - num(a.step.weight) || byVenture(a, b); });
+    var waiting = rows.filter(function (x) { return !weighed(x); }).sort(byVenture);
+    function row(x) {
+      var st = x.step;
+      var who = x.venture !== null && x.venture !== undefined
+        ? h("button", { type: "button", class: "link-button", text: "#" + x.venture + " " + x.title })
+        : h("strong", { text: x.title });
+      if (who.tagName === "BUTTON") who.addEventListener("click", function () { showVentureCard(x.venture); });
+      var state = weighed(x) ? "weight " + st.weight : sentence(PLAN_WAIT[st.waiting] || st.waiting || "waits");
+      var pin = st.decision !== "decide" && !v.hold
+        ? planButton(st.pinned ? "Unpin" : "Explore next", "btn btn-small", function (button) { pinPlanStep(st.id, !st.pinned, button); })
+        : null;
+      if (pin) pin.setAttribute("aria-pressed", st.pinned ? "true" : "false");
+      return h("li", { class: "vt-step", "data-waiting": st.waiting || null },
+        h("p", { class: "vt-step-head" }, who,
+          x.stage ? h("span", { class: "muted", text: " · " + (VENTURE_STAGE[x.stage] ? VENTURE_STAGE[x.stage].label : x.stage) }) : null,
+          h("span", { class: "muted", text: " · " + state }), pin),
+        h("p", { class: "vt-step-title", text: "Step #" + st.id + ": " + st.title }),
+        x.needs ? h("p", { class: "muted small", text: "Now: " + x.needs }) : null,
+        st.why ? h("p", { class: "pl-why muted", text: st.why }) : null);
+    }
+    replace(el, [
+      h("h3", { class: "small-head", id: "vt-steps-head", tabindex: "-1", text: "Their steps in your plan" }),
+      h("p", { class: "hint", text: "Each venture being explored is a node of your plan, its next decision a step weighed like any other: " +
+        "worth what its business case expects a month (at least 2), or the worth you set on the plan's Ventures box; " +
+        "your wish and a park soon make it urgent. Explore next pins one: the next venture cycle takes it." }),
+      rows.length ? null : h("p", { class: "muted", text: "No venture is being explored: " + name + "'s code lays out a step for each idea, researched and proposed venture at its next cycle." }),
+      ready.length ? h("ol", { class: "vt-step-list" }, ready.map(row)) : null,
+      // the waiting ones folded below the ready ones; open when none is ready (a new product's turn: all of them)
+      waiting.length && ready.length ? h("details", { class: "vt-step-waiting" },
+        h("summary", null, plural(waiting.length, "step") + " waiting"),
+        h("ol", { class: "vt-step-list" }, waiting.map(row))) : null,
+      waiting.length && !ready.length ? h("ol", { class: "vt-step-list" }, waiting.map(row)) : null,
+    ]);
   }
 
   // 0.36.0: the owner's freeze of the listings' titles and tags, which Ember's code keeps: the listing edits refuse
@@ -10647,7 +10686,8 @@
     replace($("pl-picks"), h("div", { class: "table-wrap" }, h("table", { class: "pl-table" },
       h("thead", null, h("tr", null, ["Cycle", "When", "Kind", "Its step", "Why"].map(function (t) { return h("th", { scope: "col", text: t }); }))),
       h("tbody", null, picks.map(function (p) {
-        var step = p.step ? p.step_title + " · " + (p.product_title || "line #" + p.product) : p.kind === "venture" ? "a venture" : "none ready";
+        var step = p.step ? p.step_title + (p.product ? " · " + (p.product_title || "line #" + p.product) : p.venture ? " · venture #" + p.venture + " " + p.venture_title : "")
+          : p.kind === "venture" ? "a venture" : "none ready";
         return h("tr", null,
           h("td", { text: "#" + p.cycle }), h("td", { text: fmtDateTime(p.at) }), h("td", { text: p.kind }),
           h("td", { text: step }), h("td", { text: sentence(PLAN_DECIDED[p.decided] || p.decided) }));
@@ -10697,9 +10737,9 @@
 
   // ------------------------------------------------------------------ tabs
 
-  var TABS = ["overview", "ledger", "ventures", "plan", "library", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
+  var TABS = ["overview", "ledger", "plan", "library", "activity", "approvals", "inbox", "upgrades", "mind", "workspace", "system", "diagnostics"];
   var MIND_TABS = ["strategy", "playbook", "lessons", "identity", "journal", "reviews"];  // 0.30.0: the playbook
-  var VENTURE_VIEWS = ["pipeline", "running"];  // 0.27.0
+  var VENTURE_VIEWS = ["pipeline", "running"];  // 0.27.0; 0.37.0: the Plan tab's Ventures and Product lines
 
   // Arrow keys, Home and End move between tabs; focus follows the selection.
   function tabKeys(names, index, select) {
@@ -10715,6 +10755,7 @@
 
   function selectTab(name, focus) {
     if (name === "roadmap") name = "plan";  // 0.35.0: the Roadmap tab's goal and milestones are the Plan tab's
+    if (name === "ventures" || name === "projects") name = "plan";  // 0.37.0: so are the ventures
     if (TABS.indexOf(name) < 0) name = "overview";
     ui.tab = name;
     savePref("ember-tab", name);
@@ -10728,13 +10769,13 @@
     if (focus) $("tab-" + name).focus();
     if (name === "overview" && ui.charts.flow) { ui.charts.flow.resize(); ui.charts.balance.resize(); }
     if (name === "workspace") { ui.ws.visit = true; refreshWorkspace(); }
-    if (name === "ventures") loadVentures();
-    if (name === "plan") { loadPlan(); loadRoadmap(); }
+    if (name === "plan") { loadPlan(); loadRoadmap(); loadVentures(); }
     if (name === "library") loadLibrary();
     if (name === "inbox" && ui.chat.stick) scrollChatToEnd();  // it can't scroll while the tab is hidden
   }
 
   // 0.27.0: the Ventures tab's views (the Projects tab is its Running view), the one chosen last kept in this browser.
+  // 0.37.0: on the Plan tab, as Ventures and Product lines.
   function selectVentureView(name, focus) {
     if (VENTURE_VIEWS.indexOf(name) < 0) name = "pipeline";
     ui.vtView = name;

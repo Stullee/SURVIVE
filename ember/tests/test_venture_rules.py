@@ -10,13 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from app.agent import desk, stages, ventures
+from app.agent import desk, stages, ventures, weights
 from app.agent.fake_llm import FakeTransport
 from app.agent.service import Agent
-from app.economy import burn
 from app.economy.clock import to_iso
 from tests.economy_helpers import owner as owner_entry
 from tests.test_agent import rows
+from tests.test_desk import steps
 from tests.test_loop_shapes import run
 from tests.test_venture_stages import keep
 from tests.test_ventures import DROPSHIPPING, ETSY, VENTURING, plan, venture
@@ -59,18 +59,18 @@ def test_an_idea_no_one_takes_up_is_parked_after_triage_days(data_dir: Path) -> 
     assert venture(agent, theirs)["stage"] == "idea"  # the owner's ideas wait for them
 
 
-@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
-def test_an_idea_close_to_its_triage_date_is_urgent_on_the_desk(data_dir: Path) -> None:
+@pytest.mark.exploring  # 0.37.0: its step of the plan is urgent (READY's first places until 0.36.0)
+def test_an_idea_close_to_its_triage_date_is_urgent(data_dir: Path) -> None:
     agent = agent_with_tree(data_dir)
     mine = idea(agent, "Wedding game printables")
     agent.clock.advance(days=stages.TRIAGE_DAYS - desk.URGENT_DAYS)
     with agent.db.connection() as conn:
-        items = desk.ready(
-            conn, agent.scope(), mode=burn.EXPLORE, today=agent.clock.today(), cash_eur=20, net_days=None
-        )
-    mine_item = next(i for i in items if i.venture_id == mine)
-    assert mine_item.kind == "triage" and "parked by Ember's code on" in mine_item.text
-    assert items.index(mine_item) <= 1  # among the urgent ones, before the plain triage items
+        row = ventures.get(conn, agent.scope(), mine)
+        assert row is not None
+        mine_item = desk.item(conn, row, today=agent.clock.today())
+    assert mine_item is not None and (mine_item.kind, mine_item.tier) == ("triage", "urgent")
+    assert "parked by Ember's code on" in mine_item.text
+    assert steps(agent)[mine].step.urgency == weights.PARK_SOON
 
 
 @pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
