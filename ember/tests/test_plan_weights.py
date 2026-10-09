@@ -45,8 +45,13 @@ def test_chance_rises_as_the_stages_finish_and_the_owners_worth_replaces_the_cod
 
 
 def test_urgency_of_promises_and_dates() -> None:
-    assert weights.promise_urgency(10) == weights.PROMISE_FLOOR  # at least 2 from the moment of the promise
+    # 0.37.1: none while its day is more than PROMISE_NEAR_DAYS off (0.37.0: at least 2 from the moment of the promise,
+    # so live a report due in 9 days outweighed every product step); plan.py counts a day as its middle
+    assert weights.promise_urgency(10) == weights.promise_urgency(3.5) == 0.0
+    assert weights.promise_urgency(2.5) == weights.PROMISE_FLOOR  # two days before its day
+    assert weights.promise_urgency(1.5) == 3.0  # the day before
     assert weights.promise_urgency(1) == 4.5
+    assert weights.promise_urgency(0.5) == 9.0  # its day
     assert weights.promise_urgency(3, slips=1) == 4.0  # +2 for each slip
     assert weights.promise_urgency(0.01, slips=9) == weights.URGENCY_CAP
     assert weights.date_urgency(3) == 1.0
@@ -65,7 +70,7 @@ def test_weight_is_worth_times_kind_times_channel_times_one_plus_urgency_age_and
 
 
 def test_a_step_carries_the_weight_of_the_most_important_step_waiting_on_it() -> None:
-    propose = step(2, 14, worth=2.8, kind="ship", urgency=weights.promise_urgency(3))
+    propose = step(2, 14, worth=2.8, kind="ship", urgency=weights.promise_urgency(2.5))
     interior = step(1, 14, worth=2.8, kind="create", age_days=1, waiting=(propose,))
     parts = weights.weigh(interior)
     assert parts.carried_from == 2 and parts.total == parts.carried > parts.own
@@ -88,15 +93,20 @@ def test_a_blocked_step_is_no_candidate_and_does_not_age() -> None:
 def test_a_pin_comes_first_then_the_weight_a_promise_weighed_like_any_step() -> None:
     # 0.36.0: no ventures' turn between them any more: the ventures' steps are weighed like any step
     # 0.37.0: a promise too, worth at least PROMISE_WORTH and urgent as its day nears (plan.py), where until then one
-    # due within a day came first whatever weighed more
-    heavy = step(1, 1, worth=9, urgency=3)  # 9 × (1 + 3) = 36
-    tomorrow = step(2, 2, worth=weights.PROMISE_WORTH, urgency=weights.promise_urgency(1.5))  # 5 × (1 + 3) = 20
+    # due within a day came first whatever weighed more. 0.37.1: with the worths products have (this test gave the
+    # product a worth of 9, about $108 a month; live no product had more than 2.5, and every promise came first)
+    launch = weights.worth(5, "launch")  # a live Etsy product with the template's $5 a month: 2
+    pins = step(1, 1, worth=launch, kind="market", urgency=weights.REACH)  # its first pins: 2 × (1 + 3) = 8
+    later = step(2, 2, worth=weights.PROMISE_WORTH, urgency=weights.promise_urgency(5.5))  # 5 days off: 3 × 1 = 3
     pinned = step(3, 3, worth=0.5, pinned=True)
-    assert weights.choose([heavy, tomorrow, pinned]).decided == "pin"
-    pick = weights.choose([heavy, tomorrow])
-    assert (pick.step, pick.decided) == (heavy, "weight")
-    today = step(4, 4, worth=weights.PROMISE_WORTH, urgency=weights.promise_urgency(0.5))  # 5 × (1 + 9) = 50
-    assert weights.choose([heavy, today]).step == today
+    assert weights.choose([pins, later, pinned]).decided == "pin"
+    pick = weights.choose([pins, later])
+    assert (pick.step, pick.decided) == (pins, "weight")
+    tomorrow = step(4, 4, worth=weights.PROMISE_WORTH, urgency=weights.promise_urgency(1.5))  # 3 × (1 + 3) = 12
+    assert weights.choose([pins, later, tomorrow]).step == tomorrow
+    today = step(5, 5, worth=weights.PROMISE_WORTH, urgency=weights.promise_urgency(0.5))  # 3 × (1 + 9) = 30
+    defect = step(6, 6, worth=launch, kind="fix", urgency=weights.DEFECT)  # the critic's defect: 2 × (1 + 5) = 12
+    assert weights.choose([pins, defect, today]).step == today
 
 
 def test_an_urgent_later_step_makes_the_step_in_front_of_it_take_the_cycle() -> None:
@@ -215,13 +225,16 @@ W_ETSY = weights.worth(12, "launch")
 W_POSTERS = weights.worth(20, "launch")
 
 
-def _october_7(*, promise: bool, kdp_age: float, budget_age: float, pinterest: bool, kdp_proposed: bool = False):
+def _october_7(
+    *, promise: float | None, kdp_age: float, budget_age: float, pinterest: bool, kdp_proposed: bool = False
+):
+    """``promise``: the days left until the book's day, as plan.py counts them (None: not promised yet)."""
     propose = step(
         142,
         KDP,
         worth=W_KDP,
         kind="ship",
-        urgency=weights.promise_urgency(3) if promise else 0.0,
+        urgency=weights.promise_urgency(promise) if promise is not None else 0.0,
     )
     interior = step(141, KDP, worth=W_KDP, kind="create", age_days=kdp_age, waiting=(propose,), blocked=kdp_proposed)
     budget = step(61, BUDGET, worth=W_ETSY, kind="fix", age_days=budget_age)
@@ -230,20 +243,25 @@ def _october_7(*, promise: bool, kdp_age: float, budget_age: float, pinterest: b
     return [interior, budget, pins, bluesky]
 
 
-def test_october_7_the_budget_fix_at_13_11_then_the_promised_book_from_16_13_then_pins_at_cycle_135() -> None:
+def test_october_7_the_budget_fix_at_13_11_then_the_promised_book_from_10_08_then_pins() -> None:
     # 13:11 (#126): no promise yet; the bundle (#12) was just finished, so no product keeps the cycle
-    first = weights.choose(_october_7(promise=False, kdp_age=1, budget_age=3, pinterest=False), 12, 2)
+    first = weights.choose(_october_7(promise=None, kdp_age=1, budget_age=3, pinterest=False), 12, 2)
     assert first.step is not None and first.step.product == BUDGET
-    # 16:13 (#127): the book is promised for 10-10; the budget fix was worked at #126 and keeps it by the margin
-    # unless the book beats it by 25%: the promise, carried back to the interior with the chain's day of waiting, does
-    second = weights.choose(_october_7(promise=True, kdp_age=1, budget_age=0, pinterest=False), BUDGET, 1)
-    assert second.step is not None and second.step.product == KDP and second.parts is not None
-    assert second.parts.carried_from == 142
-    # 16:33 and 16:43 (#128, #129): the book keeps the cycles until it is proposed
+    # 16:13 (#127): the book is promised for 10-10, three days off. 0.37.1: until two days before its day a promise
+    # weighs its worth alone, so the budget fix worked at #126 keeps the cycle (0.34.0 to 0.37.0 the promise took it
+    # at once, and live every promise came first whatever its day: a report due in 9 days outweighed every pin)
+    second = weights.choose(_october_7(promise=3.5, kdp_age=1, budget_age=0, pinterest=False), BUDGET, 1)
+    assert second.step is not None and second.step.product == BUDGET
+    # 10-08, two days before its day: the promise, carried back to the interior with the chain's day of waiting, beats
+    # the budget fix by its 25%
+    urgent = weights.choose(_october_7(promise=2.5, kdp_age=1, budget_age=0, pinterest=False), BUDGET, 2)
+    assert urgent.step is not None and urgent.step.product == KDP and urgent.parts is not None
+    assert urgent.parts.carried_from == 142
+    # the book keeps the cycles until it is proposed
     for streak in (1, 2):
-        held = weights.choose(_october_7(promise=True, kdp_age=0, budget_age=0.1, pinterest=False), KDP, streak)
+        held = weights.choose(_october_7(promise=2.5, kdp_age=0, budget_age=0.1, pinterest=False), KDP, streak)
         assert held.step is not None and held.step.product == KDP
-    # 00:09 (#135, after the blog line #10): the book waits on the owner, Pinterest is open: pins for the career
-    # listings (a missed day-7 bar makes their marketing urgent, never a title and tag chore)
-    last = weights.choose(_october_7(promise=True, kdp_age=0, budget_age=0.3, pinterest=True, kdp_proposed=True), 10, 1)
+    # then (after the blog line #10) the book waits on the owner, Pinterest is open: pins for the career listings (a
+    # missed day-7 bar makes their marketing urgent, never a title and tag chore)
+    last = weights.choose(_october_7(promise=1.5, kdp_age=0, budget_age=0.3, pinterest=True, kdp_proposed=True), 10, 1)
     assert last.step is not None and last.step.id == 31

@@ -21,6 +21,7 @@ decides what the cycle is (a marketing step a marketing cycle, any other an ordi
 turn); the plan sees it as YOUR STEP (``step_text``). The owner's decisions on a product's requests are steps too
 (``_decisions``), taken first like a promise due. 0.35.1: a promise is a step of its own, taken before the heaviest
 step and the ventures' turn until it is kept; one made without naming its product gets the one its words name.
+0.37.0: a promise and a decision are weighed like any step (``candidates``); 0.37.1: urgent only near their day.
 """
 
 from __future__ import annotations
@@ -60,7 +61,8 @@ PICKS_SHOWN = 12
 HISTORY = 12  # cycles read back for the streak
 # 0.35.0: an owner's decision was taken first once in this many hours, the rest of the time weighed (live, an
 # obligation nobody closed took every cycle's line until 0.28.0 limited it to once a day); 0.35.1: a promise up to
-# PROMISE_TRIES times. 0.37.0: both are weighed always, urgent until taken that often in these hours
+# PROMISE_TRIES times. 0.37.0: both are weighed always, urgent until taken that often in these hours (0.37.1: then
+# their worth alone, below a live product's launch marketing)
 OBLIGATION_HOURS = 24
 PROMISE_TRIES = 3
 # 0.35.1: the channel a promise names (pins, a Bluesky post, a blog post): its step is a marketing cycle's
@@ -1669,11 +1671,12 @@ def candidates(
     (0.35.1) so is a promise; it waits while a request of its product made since it was promised waits on the owner.
     0.37.0: both are weighed like any step, worth at least weights.PROMISE_WORTH and urgent as their day nears, until
     cycles took them PROMISE_TRIES times (a decision once) in OBLIGATION_HOURS (until 0.36.0 they came first that
-    often); those of no product are the Owner project's (``_owner_candidates``). The owner's word comes before Ember's
-    hold: only their park or kill, or a closed line, stops these two. 0.36.0: and the ventures' steps (0.37.0: each
-    venture's; ``exploring``: whether this cycle may explore; ``before``: the cycle it is for, None the next), which
-    take turns with a new product while no product step is ready (a new install's first cycles: live until 0.35.3 the
-    day's first cycle was an ordinary one, which started a product)."""
+    often; 0.37.1: urgent only from weights.PROMISE_NEAR_DAYS before their day); those of no product are the Owner
+    project's (``_owner_candidates``). The owner's word comes before Ember's hold: only their park or kill, or a
+    closed line, stops these two. 0.36.0: and the ventures' steps (0.37.0: each venture's; ``exploring``: whether this
+    cycle may explore; ``before``: the cycle it is for, None the next), which take turns with a new product while no
+    product step is ready (a new install's first cycles: live until 0.35.3 the day's first cycle was an ordinary one,
+    which started a product)."""
     facts = Facts(conn, scope, now)
     factors = _channel_factors(conn, scope, now)
     missed = _missed(conn, scope, today)
@@ -1840,11 +1843,12 @@ def _promise_urgency(row: Mapping[str, Any], today: date) -> float:
 
 def _owed_urgency(row: Mapping[str, Any], today: date, lately: Mapping[int, int]) -> float:
     """0.37.0: a promise's or an owner's decision's urgency, as its day nears (weights.promise_urgency), until cycles
-    took it PROMISE_TRIES times (a decision once) in OBLIGATION_HOURS without closing it: then the floor until those
-    hours have passed (0.35.0 to 0.36.0 that many times it came first)."""
+    took it PROMISE_TRIES times (a decision once) in OBLIGATION_HOURS without closing it: then none until those hours
+    have passed, its worth alone (0.35.0 to 0.36.0 that many times it came first; 0.37.0 kept the floor, which still
+    outweighed every product step, so a promise Ember couldn't keep yet took every cycle)."""
     tries = lately.get(int(row["id"]), 0)
     fresh = tries < PROMISE_TRIES if row["kind"] == "promise" else tries == 0
-    return _promise_urgency(row, today) if fresh else weights.PROMISE_FLOOR
+    return _promise_urgency(row, today) if fresh else 0.0
 
 
 PASSING = ("mode", "turn")  # what a venture's step waits on for one cycle only (0.36.0: the Explore step's): it ages

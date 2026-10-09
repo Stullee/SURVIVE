@@ -1,8 +1,8 @@
 # Ember 0.37.0: how it works, and whether the plan's weights choose well
 
 *Your diagnostics report of 2026-10-09 16:06 UTC (version 0.37.0, build `bf87976452f4faf3`, cycles #165 to #176 in
-full), read against `55ce9a3` (0.37.0 and the cleanup merged after it). Nothing in the app is changed by this
-analysis.*
+full), read against `55ce9a3` (0.37.0 and the cleanup merged after it). 0.37.1 carries out the first of its
+recommendations: section 8.*
 
 **Evidence.** I read the code that decides what Ember does (`agent/weights.py`, `agent/plan.py`, `agent/templates.py`,
 the loop's steering and the diagnostics) line by line, the docs, the changelog from 0.28.0 on, and the report's
@@ -703,3 +703,43 @@ changes no conclusion: the pins rise to 11.4, still under the promises' 15.
 **The what-ifs** (the next picks, and `PROMISE_WORTH` 3 with the floor near the day only) use the same rebuilt state
 with one setting changed. They show direction, not tuned numbers: the full test suite and a week of picks should
 settle the numbers.
+
+---
+
+## 8. What 0.37.1 changes
+
+0.37.1 carries out recommendations 5.2.1, 5.2.2 and 5.2.9, and the part of 5.2.10 that is in the weights' own text.
+
+**The rule:**
+- **Worth:** `weights.PROMISE_WORTH` is 3 (it was 5). A promise is worth that, or its product's worth when that is
+  more.
+- **When it presses** (`weights.PROMISE_NEAR_DAYS` = 2): a promise has no urgency until two days before its day
+  (`weights.promise_urgency`). Then it is 2, the day before 3, on its day 9, and 11 once it slipped. Before that it
+  weighs its worth and its waiting: 3, plus 1.5 a day.
+- **The three-tries brake** (`plan._owed_urgency`): a promise taken three times in a day without being kept, or your
+  decision taken once, has no urgency until the day is over. It used to keep the floor of 2, which still outweighed
+  every product step.
+
+**On the evening of 10-09** (section 4.2's ranking, with 0.37.1's numbers):
+
+| Weight | Steps |
+|---|---|
+| 12.0 | the KDP promises #45 and #46: due in two days, on the line worked last |
+| 9.4 | the launch pins and posts of lines #4, #6, #7 and #8 |
+| 9.0 | the reports due in two days, #20 and #28 |
+| 8.3 | line #3's pins |
+| 6.0 | your decision #44, taken twice |
+| 5.4 and less | the critic's suggestions |
+| 3.0 | the reports due later (#18, #21, #27, #43), each until two days before its day |
+
+`tests/test_fixes_0371.py` replays it.
+
+**The trade-off.** A promise made three or more days ahead no longer takes the cycles at once. The KDP book promised
+on 10-07 for 10-10 would have waited behind the budget fix that afternoon and taken the cycles from 10-08. The
+acceptance test of 10-07 now says so. If you want promised work started sooner, it is one constant in the code,
+`PROMISE_NEAR_DAYS`. At 3, that book takes the cycle on 10-07, and a report due in three days weighs 9.0, just under the
+launch pins.
+
+**Not in 0.37.1:** recommendations 5.2.3 to 5.2.8, the OBLIGATIONS heading, and the report's changes (5.3). Your actions
+in 5.1 still apply. The pins come before the reports now without being pinned, but a promise within two days of its
+day still comes first.

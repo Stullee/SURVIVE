@@ -95,9 +95,10 @@ def test_a_promise_is_weighed_like_any_step_more_as_its_day_nears(data_dir: Path
     first = steered(agent, exploring=True)
     assert first.pick.decided == "weight" and first.kind == "ordinary" and first.line == book
     assert first.step is not None and first.step.title.startswith(f"Keep promise #{kdp}: ")
-    # worth the owner's word (its product could earn nothing yet), urgent at the floor while its day is 5 days off
+    # worth the owner's word (its product could earn nothing yet); 0.37.1: no urgency while its day is 5 days off (0.37.0
+    # kept the floor from the start)
     assert first.pick.parts is not None
-    assert (first.pick.parts.worth, first.pick.parts.urgency) == (weights.PROMISE_WORTH, weights.PROMISE_FLOOR)
+    assert (first.pick.parts.worth, first.pick.parts.urgency) == (weights.PROMISE_WORTH, 0.0)
     with agent.db.connection() as conn:
         text = plan.step_text(conn, agent.scope(), first, explore=False)
     assert "Done when: you kept it and closed it with obligation_done." in text
@@ -106,10 +107,10 @@ def test_a_promise_is_weighed_like_any_step_more_as_its_day_nears(data_dir: Path
     due = steered(agent, exploring=True)
     assert due.step is not None and due.step.id == first.step.id
     assert urgency_of(due, first.step.id) == weights.promise_urgency(0.5)
-    for _ in range(plan.PROMISE_TRIES):  # taken three times today without being kept: back to the floor, so a
-        with agent.db.transaction() as conn:  # promise Ember can't keep yet doesn't take every cycle
+    for _ in range(plan.PROMISE_TRIES):  # taken three times today without being kept: no urgency (0.37.1; 0.37.0 the
+        with agent.db.transaction() as conn:  # floor), so a promise Ember can't keep yet doesn't take every cycle
             plan.record(conn, agent.scope(), cycle(agent, book), now(agent), due)
-    assert urgency_of(steered(agent, exploring=True), first.step.id) == weights.PROMISE_FLOOR
+    assert urgency_of(steered(agent, exploring=True), first.step.id) == 0.0
     agent.clock.advance(hours=plan.OBLIGATION_HOURS + 1)  # a day later, overdue: urgent again, with its slip
     assert urgency_of(steered(agent, exploring=True), first.step.id) == weights.promise_urgency(0.5, slips=1)
 
