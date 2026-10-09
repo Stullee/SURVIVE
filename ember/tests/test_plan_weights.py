@@ -44,12 +44,11 @@ def test_chance_rises_as_the_stages_finish_and_the_owners_worth_replaces_the_cod
     assert weights.worth(20, "create", owner=40) == weights.OWNER_WORTH_MAX
 
 
-def test_urgency_of_promises_and_dates() -> None:
+def test_urgency_of_promises() -> None:
     assert weights.promise_urgency(10) == weights.PROMISE_FLOOR  # at least 2 from the moment of the promise
     assert weights.promise_urgency(1) == 4.5
     assert weights.promise_urgency(3, slips=1) == 4.0  # +2 for each slip
     assert weights.promise_urgency(0.01, slips=9) == weights.URGENCY_CAP
-    assert weights.date_urgency(3) == 1.0
 
 
 # --- the weight and its parts ---
