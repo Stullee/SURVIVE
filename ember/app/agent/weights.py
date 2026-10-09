@@ -64,7 +64,6 @@ RECURRING_DUE = 1.0  # a recurring step on its due day
 # $5 a month), and a venture Ember's code parks within a week by its stage's rule
 EXPLORE_WORTH = 2.0
 PARK_SOON = 1.0
-OWN_DATE_CAP = 1.5  # a date Ember set herself
 AGE_PER_DAY = 0.5
 MOMENTUM = 1.0
 STREAK_CAP = 3  # cycles in a row on one product with momentum and the margin (prompts.py's streak)
@@ -109,11 +108,6 @@ def promise_urgency(days_left: float, slips: int = 0) -> float:
 def date_urgency(days_left: float) -> float:
     """A date the owner set (a hard date): 3 ÷ days left."""
     return min(URGENCY_CAP, DATE_SCALE / max(days_left, 0.25))
-
-
-def own_date_urgency(days_left: float) -> float:
-    """A date Ember set herself counts, but never more than OWN_DATE_CAP."""
-    return min(OWN_DATE_CAP, DATE_SCALE / max(days_left, 0.25))
 
 
 @dataclass(frozen=True)
