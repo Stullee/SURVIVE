@@ -56,6 +56,7 @@ from ..integrations.pinterest_connection import PinterestConnection
 from ..integrations.printify_connection import PrintifyConnection
 from ..products import blog, site
 from . import agenda, audit, metrics, netguard, news, policy, stages, store, ventures, website, workfiles
+from . import plan as plan_tree
 from .loop import NO_STEP, CycleEnd, CycleRunner, recover_records
 from .memory import CAPS, Memory
 from .sandbox import Jail, SandboxError, kind_of
@@ -1277,9 +1278,17 @@ class Agent:
     def planner_preview(self) -> str:
         """What the next wake cycle's plan would see, built now for the diagnostics report (the daily review, new mail
         and the shop's latest numbers come in when the cycle runs)."""
+        kind, planner = self._preview_runner().planner_preview()  # 0.35.0: as the plan tree decides it (scheduled)
+        return f"(the next cycle is {'an' if kind == 'ordinary' else 'a'} {kind} cycle)\n{planner}"
+
+    def next_steer(self) -> plan_tree.Steer:
+        """0.35.3: the plan tree's decision for the next scheduled cycle, as the planner's preview makes it."""
+        return self._preview_runner().next_steer()
+
+    def _preview_runner(self) -> CycleRunner:
         scope = self.scope()
         workspace, memory_root = self.roots()
-        runner = CycleRunner(
+        return CycleRunner(
             self.db,
             self.settings,
             self.clock,
@@ -1299,8 +1308,6 @@ class Agent:
             bluesky=self.bluesky,
             bluesky_posts=self.bluesky_posts,
         )
-        kind, planner = runner.planner_preview()  # 0.35.0: as the plan tree decides it (a scheduled wake-up's)
-        return f"(the next cycle is {'an' if kind == 'ordinary' else 'a'} {kind} cycle)\n{planner}"
 
     def cycle_detail(self, cycle_id: int) -> dict[str, Any] | None:
         from . import views

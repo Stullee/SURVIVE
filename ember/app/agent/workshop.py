@@ -457,7 +457,17 @@ def report(run: Run, wrap: Any) -> tuple[bool, str, str]:
             + ": every file must be saved into $OUTPUT_DIR. Run the script again with script."
         )
     elif not run.kept:
-        lines.append("Nothing was kept: name the files you need in the task (e.g. 'chart.png, 1200 x 800 pixels').")
+        # 0.35.3: live, six runs in a row that named every file were told to name them, and the agent reworded its
+        # tasks for three cycles while the runs failed for another reason
+        handed = {PurePosixPath(n).name for n in run.inputs}
+        named = [n for n in dict.fromkeys(PurePosixPath(n).name for n in _NAMED.findall(run.task)) if n not in handed]
+        if named:
+            lines.append(
+                f"Nothing was kept: the run made none of the files the task names ({', '.join(named[:5])})"
+                + (": its answer above says what happened." if run.answer else ".")
+            )
+        else:
+            lines.append("Nothing was kept: name the files you need in the task (e.g. 'chart.png, 1200 x 800 pixels').")
     ok = bool(made(run)) and not run.failure
     files = ", ".join(path for path, _ in run.kept[:3]) if made(run) else ""
     summary = f"workshop {cost}: " + (files or run.failure or ("only its script" if run.kept else "nothing kept"))

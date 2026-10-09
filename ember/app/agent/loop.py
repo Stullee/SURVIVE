@@ -291,10 +291,7 @@ class CycleRunner:
         fetched, synced, marked or spent. 0.15.0: and nothing kept: Ember's code's keepers run in a cycle only (they
         ran here, outside the cycle's lock, and parked ventures and closed milestones when the report was made). So
         what they would change now (an obligation, a grade, a settled forecast) shows only after the next cycle."""
-        self.etsy_on = self.etsy is not None and self.publisher is not None and self.etsy.shop() is not None
-        self.pinterest_on = self.etsy_on and self.pinterest is not None and self.pinterest.account() is not None
-        self.printify_on = self.etsy_on and self.printify is not None and self.printify.account() is not None
-        self.bluesky_on = self.bluesky is not None and self.bluesky.account() is not None
+        self._preview_channels()
         kind = self._cycle_kind(None)  # 0.28.0: as the next scheduled cycle would be, nothing recorded
         snap = self._snapshot(kind, keep=False)
         planner = ""
@@ -306,6 +303,20 @@ class CycleRunner:
             if context.fits(request, PLANNER_OPENING.input_tokens):
                 break
         return kind, planner
+
+    def next_steer(self) -> plan_tree.Steer:
+        """0.35.3: the plan tree's decision for the next scheduled cycle, as ``planner_preview`` makes it: the
+        diagnostics' scheduler and plan tree show it (until 0.35.2 each answered on its own, the scheduler from the
+        ventures' share alone). Nothing is recorded."""
+        self._preview_channels()
+        self._cycle_kind(None)
+        return self.steered
+
+    def _preview_channels(self) -> None:
+        self.etsy_on = self.etsy is not None and self.publisher is not None and self.etsy.shop() is not None
+        self.pinterest_on = self.etsy_on and self.pinterest is not None and self.pinterest.account() is not None
+        self.printify_on = self.etsy_on and self.printify is not None and self.printify.account() is not None
+        self.bluesky_on = self.bluesky is not None and self.bluesky.account() is not None
 
     def run(self, trigger: str) -> CycleEnd:
         # 0.13.0: an event's wake-up is a lean reactive cycle: no venture work, review, study or critic, few steps
