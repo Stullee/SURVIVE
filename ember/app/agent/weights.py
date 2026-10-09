@@ -60,7 +60,6 @@ CHANNEL_MIN, CHANNEL_MAX = 0.2, 1.5
 URGENCY_CAP = 12.0
 PROMISE_FLOOR, PROMISE_SCALE, PROMISE_SLIP = 2.0, 4.5, 2.0
 PROMISE_NEAR_DAYS = 2  # 0.37.1: a promise is urgent from this many days before its day (before them: its worth alone)
-DATE_SCALE = 3.0  # the owner's own date: 3 / days left
 # 0.35.3: the critic's verdicts and a product's first buyers, a ladder: a defect, a missed views bar, a live product's
 # launch marketing, the critic's suggestions (each improve verdict counted as a defect until 0.35.2)
 DEFECT = 5.0  # the critic found a defect (a score of DEFECT_SCORE or less): fixed before more buyers see it
@@ -124,11 +123,6 @@ def promise_urgency(days_left: float, slips: int = 0) -> float:
     return min(URGENCY_CAP, max(PROMISE_FLOOR, PROMISE_SCALE / max(days_left, 0.25)) + PROMISE_SLIP * max(slips, 0))
 
 
-def date_urgency(days_left: float) -> float:
-    """A date the owner set (a hard date): 3 ÷ days left."""
-    return min(URGENCY_CAP, DATE_SCALE / max(days_left, 0.25))
-
-
 @dataclass(frozen=True)
 class Step:
     """A candidate step, as plan.py reads it from the tree: every number already computed by Ember's code."""
@@ -139,7 +133,7 @@ class Step:
     kind: str  # a key of KIND
     worth: float  # its product's worth
     channel: float = 1.0  # a marketing step: how well its channel works (clicks or view gains per item)
-    urgency: float = 0.0  # the largest urgency that applies (promise_urgency, date_urgency, DEFECT, ...)
+    urgency: float = 0.0  # the largest urgency that applies (promise_urgency, DEFECT, ...)
     age_days: float = 0.0  # days ready and untouched (plan.py counts none while it is blocked or on hold)
     pinned: bool = False  # the owner pinned it
     blocked: bool = False  # waits on the owner, a channel, a date or an approval: not a candidate

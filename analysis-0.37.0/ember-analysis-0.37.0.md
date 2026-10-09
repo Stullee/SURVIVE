@@ -740,6 +740,8 @@ acceptance test of 10-07 now says so. If you want promised work started sooner, 
 `PROMISE_NEAR_DAYS`. At 3, that book takes the cycle on 10-07, and a report due in three days weighs 9.0, just under the
 launch pins.
 
-**Not in 0.37.1:** recommendations 5.2.3 to 5.2.8, the OBLIGATIONS heading, and the report's changes (5.3). Your actions
+Recommendation 5.3.4 landed on its own, as PR #18: `date_urgency()` and `DATE_SCALE` are gone. 0.37.1 merges it.
+
+**Not in 0.37.1:** recommendations 5.2.3 to 5.2.8, the OBLIGATIONS heading, and the report's changes 5.3.1 to 5.3.3. Your actions
 in 5.1 still apply. The pins come before the reports now without being pinned, but a promise within two days of its
 day still comes first.

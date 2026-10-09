@@ -44,7 +44,7 @@ def test_chance_rises_as_the_stages_finish_and_the_owners_worth_replaces_the_cod
     assert weights.worth(20, "create", owner=40) == weights.OWNER_WORTH_MAX
 
 
-def test_urgency_of_promises_and_dates() -> None:
+def test_urgency_of_promises() -> None:
     # 0.37.1: none while its day is more than PROMISE_NEAR_DAYS off (0.37.0: at least 2 from the moment of the promise,
     # so live a report due in 9 days outweighed every product step); plan.py counts a day as its middle
     assert weights.promise_urgency(10) == weights.promise_urgency(3.5) == 0.0
@@ -54,7 +54,6 @@ def test_urgency_of_promises_and_dates() -> None:
     assert weights.promise_urgency(0.5) == 9.0  # its day
     assert weights.promise_urgency(3, slips=1) == 4.0  # +2 for each slip
     assert weights.promise_urgency(0.01, slips=9) == weights.URGENCY_CAP
-    assert weights.date_urgency(3) == 1.0
 
 
 # --- the weight and its parts ---
