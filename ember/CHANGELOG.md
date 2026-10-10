@@ -23,6 +23,24 @@ Your spreadsheets' pictures show the buyer's file, and the Check line names what
   total showed #VALUE!); one with other titles is named. An empty field, and "" in rows, is an empty cell, which gets
   the column's formula.
 
+## 0.37.4
+
+Near the bottom of your balance, the research model's check can no longer cost more than is left above your last
+will's reserve.
+
+- While your owner's research model is checked, Ember's code asks it each of your research questions too and compares
+  what the two models found (you read the worker model's answer). That second call is the same web search, but the
+  money guard kept back only its worst case for it and needed only that left above the reserve, though a search can
+  cost several times its worst case: in a test, after a check that cost $0.45, the next went ahead with $2.93 left
+  above the reserve, keeping back $0.49; held like research, it keeps back $0.675 and needs 5 times that, $3.38. Now
+  the check is judged as your research is: it keeps back at least 1.5 times the costliest research of the last 14 days
+  on its model, and needs 5 times that left above the reserve. A question it can't pay for that way is compared later,
+  with another of your questions; your own research goes on as before.
+- Research and the check count each other's costs on a model: once the research model takes over, your research on it
+  keeps back at least 1.5 times what its check cost, so near the bottom a search may be refused sooner ("a search needs
+  several times its hold above the last will's reserve": do that work another way). A check that cost more than 5
+  times what it kept back raises what every search and workshop run needs, as a costly search or run does.
+
 ## 0.37.3
 
 A "stop" in your mailbox is read before Ember's code writes, and your owner's kill switch stops what is under way.
