@@ -193,7 +193,7 @@ ORDINARY_TOOLS = (
     | MAIL_TOOLS
     | KDP_TOOLS
 )
-# 0.37.4: reading a channel's numbers brings no buyer: any cycle with the account but a venture cycle has it. Live, an
+# 0.37.5: reading a channel's numbers brings no buyer: any cycle with the account but a venture cycle has it. Live, an
 # ordinary cycle the owner asked how posts #43 and #44 did had no bluesky_posts, and answered that it couldn't say.
 CHANNEL_READS = frozenset({"bluesky_posts"})
 # 0.28.0: the tools that bring buyers to a line's listings (a pin, a Bluesky post, a blog post, the link page): a
@@ -1486,7 +1486,7 @@ class BlueskyAccess:
     handle: str
     daily_limit: int
     site_url: str = ""  # the owner's website ("": none set)
-    followers: int | None = None  # 0.37.4: at the last sync (None before one)
+    followers: int | None = None  # 0.37.5: at the last sync (None before one)
 
 
 @dataclass(frozen=True)
@@ -4530,7 +4530,7 @@ def _bluesky(ctx: ToolContext) -> BlueskyAccess:
 
 
 def _bluesky_posts(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
-    """0.37.4: with the followers, the posts made today and the reactions per post, each post by its request's number,
+    """0.37.5: with the followers, the posts made today and the reactions per post, each post by its request's number,
     and what Bluesky doesn't count (views, clicks): what the channel is judged by."""
     account = _bluesky(ctx)
     made = bluesky_publisher.posts(conn, ctx.scope, 12)
@@ -4713,7 +4713,7 @@ def _repeated_post(conn: Any, scope: AgentScope, text: str) -> str | None:
             said.append(bluesky.post_from_action(row["action"]).text)
         if any(bluesky.same_words(text, words) for words in said if words):
             if row["posted"] in ("running", "active", "unclear"):
-                return f"your post of request #{row['id']} on Bluesky"  # 0.37.4: as bluesky_posts names it
+                return f"your post of request #{row['id']} on Bluesky"  # 0.37.5: as bluesky_posts names it
             return f"request #{row['id']}, which waits for your owner"
     return None
 

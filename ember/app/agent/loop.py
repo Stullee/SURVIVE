@@ -622,7 +622,7 @@ class CycleRunner:
             self.bluesky.handle() or "Ember's account",
             self.settings.bluesky_posts_per_day,
             website.address(self.settings),  # the owner's website, which a post may link
-            self.bluesky.followers(),  # 0.37.4: bluesky_posts says them
+            self.bluesky.followers(),  # 0.37.5: bluesky_posts says them
         )
         self.bluesky_on = True
 
@@ -801,7 +801,7 @@ class CycleRunner:
             if self.marketing_apart and kind == lines.ORDINARY:
                 # 0.35.0: a ready channel's account, posts and tools are a marketing cycle's; one waiting for the
                 # owner's setup still says so (live, the agent asked its owner for the same setup again and again).
-                # 0.37.4: Bluesky's numbers stay in one line, with bluesky_posts: an ordinary cycle judges the channel
+                # 0.37.5: Bluesky's numbers stay in one line, with bluesky_posts: an ordinary cycle judges the channel
                 # and answers the owner about it (live, it told them it couldn't report on their posts)
                 pins = "" if self.pinterest_on else pins
                 if self.bluesky_on and self.bluesky is not None:
@@ -1222,7 +1222,7 @@ class CycleRunner:
         elif self.pinterest is not None:
             waits.append(("Pinterest", _waiting("Pinterest", self.pinterest.status(), self._etsy_state())))
         if self.bluesky is not None and self.bluesky_on:
-            # 0.37.4: with its numbers, which the review judges the channel by
+            # 0.37.5: with its numbers, which the review judges the channel by
             followers = self.bluesky.followers()
             known = "" if followers is None else f"{followers} follower{'' if followers == 1 else 's'}, "
             ready.append(

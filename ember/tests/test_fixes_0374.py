@@ -1,130 +1,119 @@
-"""0.37.4: bluesky_posts in an ordinary cycle, and each post by its request's number.
+"""0.37.4 (analysis 0.37.0, section 5, Money): the research model's check skipped the server-tool hold and the 5x rule.
 
-Live, the owner asked how posts #43 and #44 did on Bluesky, and Ember answered that it couldn't say: since 0.35.0 a
-ready channel's tools and section are a marketing cycle's, and bluesky_posts went with them, so the ordinary cycle that
-answered the owner (and any that judged the channel against its stop rule) had none of the posts' numbers, though the
-guide and its own plan named the tool. Reading them brings no buyer: bluesky_posts is in every cycle with the account
-but a venture cycle, an ordinary cycle's BLUESKY keeps the account's line with its live posts' reactions, and the daily
-review hears them. The tool names each post by its request's number (its record key at Bluesky said nothing to anyone),
-with the followers, the posts made today, the reactions a post and what Bluesky doesn't count.
+While the owner's research model is checked (research_model, loop._research_model), each of the agent's research
+questions is asked of it too (loop._compare_research), with research's own request (prompts.research_request) but as a
+research_check call. 0.21.0 made a workshop or research call need SERVER_TOOL_ROOM (5) times what it keeps back left
+above the last will's reserve, and research keep back at least 1.5 times the costliest recent research, because a
+search can cost several times its worst case. A research_check call had neither (metering.SERVER_TOOL_PURPOSES,
+MeteredModel._held): near the bottom of the balance a check whose quote fit once above the reserve was sent, and could
+cost more than was left. Research and its check now keep back what either cost on their model
+(metering.RESEARCH_PURPOSES): they send the same request.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
+import re
+from decimal import Decimal
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-pytest.importorskip("httpx2")
+from app.agent import prompts
+from app.config import Settings
+from app.economy import pricing
+from app.economy.costs import micros_to_usd
+from app.economy.metering import RESEARCH, RESEARCH_CHECK, CallRefused, Completed, server_tool_room
+from app.economy.service import Economy
+from tests.economy_helpers import ScriptedTransport, make_economy, message, metered, owner
+from tests.test_agent import make_agent, rows
+from tests.test_reflection_reserve import runner_and_cycle
 
-from app.agent import plan as plan_tree  # noqa: E402
-from app.agent import tools  # noqa: E402
-from app.agent.fake_llm import request_kind  # noqa: E402
-from app.economy.clock import from_iso, to_iso  # noqa: E402
-from app.integrations import bluesky_publisher  # noqa: E402
-from app.integrations.bluesky import FakeBluesky  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
-from tests.test_bluesky import a_post, post_context, posted  # noqa: E402
-from tests.test_etsy import call  # noqa: E402
-
-EVERY = {"mail": True, "workshop": True, "etsy": True, "venture": False, "library": True, "pinterest": True}
-EVERY |= {"bluesky": True, "blog": True, "printify": True, "site": True, "kdp": True}
-NUMBERS = "14 likes, 3 reposts, 2 replies, 1 quotes"  # the fake account's, at a sync a week on
-
-
-def ordinary_next(agent: Any) -> int:
-    """The next cycle an ordinary one: the owner's pin of the plan's first open step that needs no channel."""
-    now = to_iso(agent.clock.now())
-    with agent.db.transaction() as conn:
-        plan_tree.keep(conn, agent.scope(), now, agent.clock.today(), plan_tree.channels_from(agent.settings))
-        [step, *_] = plan_tree.nodes(
-            conn,
-            agent.scope(),
-            "level = 'step' AND status = 'open' AND waiting IS NULL AND channel IS NULL"
-            " AND kind NOT IN ('promise', 'owner', 'market')",
-        )
-        plan_tree.pin(conn, agent.scope(), int(step["id"]), True, "Owner", now)
-    return int(step["id"])
+HAIKU = "claude-haiku-4-5"
+# The owner's daily cap of 0.13.0 with a cycle cap as large, so only the balance refuses; Haiku 4.5 is being checked
+SETTINGS = Settings(starting_balance_usd=20, daily_spend_cap_usd=7, cycle_spend_cap_usd=7, research_model=HAIKU)
+QUESTION = "Who buys weekly meal planners?"
+CHECK = prompts.research_request(SETTINGS, QUESTION, None, None, HAIKU)  # what loop._compare_research sends
+WORKER = prompts.research_request(SETTINGS, QUESTION, None)  # the agent's own research, on the worker model
 
 
-def test_reading_the_posts_brings_no_buyer() -> None:
-    assert "bluesky_posts" in tools.CHANNEL_READS and not tools.CHANNEL_READS & tools.MARKETING_TOOLS
-    assert "propose_bluesky_post" in tools.MARKETING_TOOLS
-    for kind in ({}, {"marketing": True}, {"marketing_apart": True}):
-        assert tools.offered("bluesky_posts", **kind, **EVERY), kind
-    assert not tools.offered("propose_bluesky_post", marketing_apart=True, **EVERY)
-    assert not tools.offered("bluesky_posts", **{**EVERY, "venture": True})  # a venture cycle decides a venture
-    assert not tools.offered("bluesky_posts", **{**EVERY, "bluesky": False})  # nor without the account
-    names = {d["name"] for d in tools.definitions(marketing_apart=True, **EVERY)}
-    assert "bluesky_posts" in names and "propose_bluesky_post" not in names
+def costly(input_tokens: int, output_tokens: int) -> Completed:
+    """A search on Haiku that read far more than its worst case allows for."""
+    return Completed(message(input_tokens, output_tokens, model=HAIKU, server_tool_use={"web_search_requests": 5}))
 
 
-def test_an_ordinary_cycle_reads_each_post_by_its_request_s_number(data_dir: Path) -> None:
-    agent, _, request = posted(data_dir)
-    ctx = post_context(agent)
-    ctx.marketing_apart = True  # an ordinary cycle while marketing steps have cycles of their own
-    shown = call(ctx, "bluesky_posts", {})
-    assert shown.ok and shown.text.startswith(
-        f"Ember's Bluesky account: @{FakeBluesky.HANDLE} (1 posted today, at most 2 a day); 1 post live with 0"
-        " reactions (0.0 a post).\n"
-    )
-    assert "Numbers not read yet." in shown.text
-    refused = a_post(agent, ctx, text="Noch ein Planer #Wochenplaner")
-    assert refused.text.startswith("Error: propose_bluesky_post belongs to marketing cycles")  # posting stays theirs
-    agent.clock.advance(hours=24 * 7)
-    assert agent.bluesky_posts.sync(force=True) is None
-    ctx.bluesky = replace(ctx.bluesky, followers=agent.bluesky.followers())  # as the cycle's sync gives them
-    shown = call(ctx, "bluesky_posts", {})
-    [row] = rows(agent, "SELECT finished_at, synced_at FROM bluesky_posts")
-    read = from_iso(row["synced_at"]).astimezone(agent.clock.tz).strftime("%Y-%m-%d %H:%M")
-    with agent.db.connection() as conn:
-        listed = bluesky_publisher.text(conn, agent.scope(), 12)
-    assert shown.text == (
-        f"Ember's Bluesky account: @{FakeBluesky.HANDLE} (3 followers; 0 posted today, at most 2 a day); 1 post live"
-        " with 20 reactions (20.0 a post).\n"
-        f"{listed}\n"
-        f"Numbers as Ember's code read them at {read}. Bluesky counts no views or clicks: the listings a post links"
-        " show their views (etsy_listing)."
-    )
-    assert f"\n- request #{request}, {row['finished_at'][:10]} (active): " in shown.text and NUMBERS in shown.text
+def above_the_reserve(economy: Economy, left: int) -> int:
+    """Spend the balance down to ``left`` above the last will's reserve (to the cent); returns what is left."""
+    reserve = pricing.last_will_reserve(SETTINGS, economy.db, "dry_run") or 0
+    spent = economy.life.evaluate().balance - reserve - left
+    owner(economy, "adjustment", f"{spent / 1e6:.2f}", direction="subtract", test_money=True)
+    return economy.life.evaluate().balance - reserve
 
 
-def test_a_repeated_post_names_the_live_one_by_its_request(data_dir: Path) -> None:
-    agent, _, request = posted(data_dir)
-    again = a_post(agent, post_context(agent))
-    assert not again.ok and f"it says what your post of request #{request} on Bluesky" in again.text
+def test_near_the_bottom_a_check_needs_five_times_its_hold_above_the_reserve(data_dir: Path) -> None:
+    economy = make_economy(data_dir, SETTINGS)
+    model, transport = metered(economy, ScriptedTransport(outcomes=[costly(300_000, 20_000)]))
+    first = model.open_cycle("test")
+    cost = model.call(first, RESEARCH_CHECK, CHECK).cost_micros  # $0.45, 3.5 times its worst case
+    model.close_cycle(first)  # the overrun stopped it
+    cycle = model.open_cycle("test")
+    quote, hold = model.quote(CHECK, RESEARCH_CHECK), -(-cost * 3 // 2)  # $0.49 (raised), $0.675 (1.5 times $0.45)
+    above = above_the_reserve(economy, (5 * quote + 5 * hold) // 2)
+    assert 5 * quote <= above < 5 * hold  # the quote fits 5 times above the reserve, the hold doesn't
+    # until 0.37.4 the check was judged on its quote, once: the pre-check let it through and the guard sent it
+    assert model.affordable(CHECK, RESEARCH_CHECK, cycle)[0] is False
+    held = re.escape(f"(${micros_to_usd(hold):.4f}), so it needs 5.0 times that left above the last will's reserve")
+    with pytest.raises(CallRefused, match=f"a research_check call can cost more than it holds {held}"):
+        model.call(cycle, RESEARCH_CHECK, CHECK)
+    assert len(transport.sent) == 1
+    status = economy.life.evaluate()
+    assert status.can_run and status.last_will_at is None  # the reserve is whole: the last will can still be written
 
 
-def test_an_ordinary_cycle_s_plan_and_the_review_keep_bluesky_s_numbers(data_dir: Path) -> None:
-    agent, fake, request = posted(data_dir)
-    agent.clock.advance(hours=24 * 7)
-    ordinary_next(agent)
-    before = len(fake.sent)
-    agent.run_cycle("schedule")
-    [cycle] = rows(agent, "SELECT marketing, venture FROM cycles ORDER BY id DESC LIMIT 1")
-    assert (cycle["marketing"], cycle["venture"]) == (0, 0)
-    sent = list(fake.sent)[before:]
-    plan = next(r for r in sent if request_kind(r) == "plan")
-    text = plan["messages"][0]["content"][0]["text"]
-    assert (
-        f"\n== BLUESKY ==\nEmber's account: @{FakeBluesky.HANDLE} (3 followers; at most 2 posts a day).\n1 post live"
-        " with 20 reactions (20.0 a post). Posting is a marketing cycle's; bluesky_posts reads each post's numbers.\n"
-    ) in text
-    assert NUMBERS not in text  # each post's numbers are bluesky_posts'
-    work = next(r for r in sent if request_kind(r) == "work")
-    offered = {t["name"] for t in work["tools"]}
-    assert "bluesky_posts" in offered and "propose_bluesky_post" not in offered
-    [review] = [r for r in sent if request_kind(r) == "review"]
-    card = review["messages"][0]["content"][0]["text"]
-    assert "Bluesky: 3 followers, 1 post live with 20 reactions (20.0 a post), at most 2 posts a day" in card
+def test_near_the_bottom_the_agent_s_question_is_answered_and_its_check_waits(data_dir: Path) -> None:
+    """The research tool's own path: the worker model answers the agent, then loop._compare_research asks the research
+    model only if meter.affordable lets it, and a comparison it can't pay for waits for another question."""
+    answer = Completed(message(1_000, 200, server_tool_use={"web_search_requests": 1}))
+    agent, transport = make_agent(data_dir, [costly(300_000, 20_000), answer], SETTINGS)
+    first = agent.meter.open_cycle("test")
+    cost = agent.meter.call(first, RESEARCH_CHECK, CHECK).cost_micros
+    agent.meter.close_cycle(first)
+    quote, hold = agent.meter.quote(CHECK, RESEARCH_CHECK), -(-cost * 3 // 2)
+    own = agent.meter.reservation(WORKER, RESEARCH)
+    above = above_the_reserve(agent.economy, (5 * quote + 5 * hold) // 2)
+    assert 5 * own < 5 * quote <= above < 5 * hold  # the agent's search fits; the check's quote does, its hold doesn't
+    runner, cycle_id, ctx = runner_and_cycle(agent)
+    found = runner._research_fn(ctx)(QUESTION, None, cycle_id, None)
+    assert found.ok and found.summary == f"research: {QUESTION}"
+    # until 0.37.4 the check was sent too, and its comparison booked
+    calls = rows(agent, "SELECT purpose FROM llm_calls ORDER BY id")
+    assert [c["purpose"] for c in calls] == [RESEARCH_CHECK, RESEARCH] and len(transport.sent) == 2
+    assert rows(agent, "SELECT COUNT(*) AS n FROM research_checks")[0]["n"] == 0
 
 
-def test_the_summary_counts_live_posts_only(data_dir: Path) -> None:
-    agent, _, _ = posted(data_dir)
-    with agent.db.transaction() as conn:
-        conn.execute("UPDATE bluesky_posts SET likes = 1, reposts = 1, replies = 0, quotes = 0")
-        assert bluesky_publisher.summary(conn, agent.scope()) == "1 post live with 2 reactions (2.0 a post)"
-        conn.execute("UPDATE bluesky_posts SET status = 'deleted'")
-        assert bluesky_publisher.summary(conn, agent.scope()) == "no post live"
+def test_research_and_its_check_keep_back_what_either_cost_on_their_model(data_dir: Path) -> None:
+    """One tail for research's request on a model, whichever purpose sent it. Until the research model takes over, its
+    check's calls are the only research on it, so its first research keeps back what they cost; a check keeps back
+    what research on its model cost (while it was the worker, say). Another model's calls don't count."""
+    economy = make_economy(data_dir, SETTINGS)
+    model, _ = metered(economy, ScriptedTransport(outcomes=[costly(300_000, 20_000), costly(600_000, 40_000)]))
+    first = model.open_cycle("test")
+    check = model.call(first, RESEARCH_CHECK, CHECK).cost_micros  # $0.45
+    model.close_cycle(first)
+    on_haiku = CHECK  # research, once Haiku took over, sends the check's very request
+    assert model.quote(on_haiku, RESEARCH) < -(-check * 3 // 2) == model.reservation(on_haiku, RESEARCH)
+    assert model.reservation(WORKER, RESEARCH) == model.quote(WORKER, RESEARCH)  # nothing seen on the worker model
+    cycle = model.open_cycle("test")
+    research = model.call(cycle, RESEARCH, on_haiku).cost_micros  # $0.85
+    assert model.reservation(CHECK, RESEARCH_CHECK) == -(-research * 3 // 2) > model.quote(CHECK, RESEARCH_CHECK)
+
+
+def test_a_check_that_cost_more_than_five_times_its_hold_raises_what_every_such_call_needs(data_dir: Path) -> None:
+    """0.21.0: once a workshop or research call cost more than 5 times what it held, each needs that many times its
+    hold above the last will's reserve (server_tool_room). A check of the research model's counts too."""
+    economy = make_economy(data_dir, SETTINGS)
+    model, _ = metered(economy, ScriptedTransport(outcomes=[costly(600_000, 40_000)]))
+    cycle = model.open_cycle("test")
+    result = model.call(cycle, RESEARCH_CHECK, CHECK)
+    times = Decimal(result.cost_micros) / Decimal(result.estimate_micros)
+    assert times > 6  # $0.85, held at its worst case of $0.128
+    assert server_tool_room(economy.db, economy.clock, True) == times
