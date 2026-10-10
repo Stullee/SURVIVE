@@ -395,12 +395,17 @@ class CycleRunner:
     def _cut_sleep(self, end: CycleEnd, trigger: str) -> None:
         """0.18.0: no long sleep while work waits. 0.21.0: never an idle plan's (the agent chose to do nothing).
         0.35.1: any cycle whose plan had steps ready (plan.steer; a venture cycle too) sleeps the owner's shortest
-        sleep at most."""
+        sleep at most. 0.37.6: steps a cycle can advance (plan.busy): not one a cycle took with nothing it is checked
+        by moving since, nor this cycle's own step if it moved nothing (live on 2026-10-09 a step no cycle could
+        advance cut every sleep to 30 minutes until the daily cap was spent)."""
         if end.status != "completed" or trigger == "last_will":
             return
         mode_now = burn.peek(self.db, self.economy.life.evaluate()).mode
         shortest = self.settings.min_sleep_minutes
-        busy = self.steered is not None and bool(self.steered.pick.ranked)
+        busy = False
+        if self.steered is not None:
+            with self.db.connection() as conn:
+                busy = plan_tree.busy(conn, self.scope, self.steered, to_iso(self.clock.now()), end.cycle_id)
         kept = slack.sleep(end.sleep_minutes, busy, shortest, mode_now)
         if kept != end.sleep_minutes:  # 0.19.2: the agent's choice and words stay ("Ember chose" the cut)
             end.asked_minutes, end.sleep_minutes = end.sleep_minutes, kept
