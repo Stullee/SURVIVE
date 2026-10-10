@@ -177,11 +177,11 @@ def test_a_promise_of_no_product_is_a_step_of_the_owner_project_weighed_like_any
     assert (step["parent_id"], step["project_id"]) == (top["id"], None)
     assert (step["kind"], step["source"]) == ("promise", "promise")
     assert step["title"] == f"Keep promise #{report}: Report the Bluesky reactions of the week"
-    taken = steered(agent)  # worth the owner's word, at the floor of a promise's urgency 3 days out
+    taken = steered(agent)  # worth the owner's word; 0.37.1: 3 days out, no urgency yet (0.37.0: the floor)
     assert taken.step is not None and taken.step.id == step["id"] and taken.pick.decided == "weight"
     assert taken.kind == "ordinary" and taken.line is None
     assert taken.pick.parts is not None
-    assert (taken.pick.parts.worth, taken.pick.parts.urgency) == (weights.PROMISE_WORTH, weights.PROMISE_FLOOR)
+    assert (taken.pick.parts.worth, taken.pick.parts.urgency) == (weights.PROMISE_WORTH, 0.0)
     with agent.db.connection() as conn:
         text = plan.step_text(conn, agent.scope(), taken, explore=False)
     assert text.startswith(f"Step #{step['id']}: Keep promise #{report}: ")

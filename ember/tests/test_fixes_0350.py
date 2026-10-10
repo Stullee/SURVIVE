@@ -164,10 +164,10 @@ def test_an_owners_decision_on_a_products_request_is_a_step_urgent_until_a_cycle
     # 0.37.0: weighed like any step, worth the owner's word and urgent on its day (0.35.0 to 0.36.0 it came first)
     assert first.pick.decided == "weight" and first.step is not None and first.step.id == step["id"]
     assert first.pick.parts is not None and first.pick.parts.urgency == weights.promise_urgency(0.5)
-    with agent.db.transaction() as conn:  # taken by a cycle: the floor of a promise's urgency for a day
+    with agent.db.transaction() as conn:  # taken by a cycle: no urgency for a day (0.37.1; 0.37.0 kept the floor)
         plan.record(conn, agent.scope(), working(agent).cycle_id, now(agent), first)
     again = steered(agent)
-    assert [c.step.urgency for c in again.found if c.step.id == step["id"]] == [weights.PROMISE_FLOOR]
+    assert [c.step.urgency for c in again.found if c.step.id == step["id"]] == [0.0]
     assert {c.step.product for c in again.found} == {tracker, book}
     with agent.db.transaction() as conn:
         obligations.close_one(conn, owed, "redid the photos", "agent", None, now(agent))

@@ -204,7 +204,14 @@ def test_the_ventures_steps_make_venture_cycles_among_the_others(data_dir: Path)
     assert rows(agent, "SELECT COUNT(*) AS n FROM plan_nodes WHERE level = 'product'")[0]["n"] >= 1
     # The fake grows its tree in a venture cycle (brainstorm) and researches the venture it focused on.
     assert any(r["status"] == "ok" for r in tool_results(agent, "brainstorm"))
-    assert rows(agent, "SELECT COUNT(*) AS n FROM ventures WHERE scores_by = 'brainstorm'")[0]["n"] >= 6
+    # 0.37.1: the ideas its brainstorm added, by the cycle that made them (a later cycle may research one of them,
+    # which rescores it: with 0.37.1's release notes in its context the fake does)
+    brainstormed = rows(
+        agent,
+        "SELECT COUNT(*) AS n FROM ventures WHERE created_by = 'agent' AND created_cycle_id IN"
+        " (SELECT cycle_id FROM tool_calls WHERE tool = 'brainstorm' AND status = 'ok')",
+    )
+    assert brainstormed[0]["n"] >= 6
     focused = rows(agent, "SELECT venture_id FROM cycles WHERE venture = 1 AND venture_id IS NOT NULL")
     assert focused and agent.ventures()["items"][focused[0]["venture_id"] - 1]["spent_usd"] > 0
     texts = planner_texts(fake)
