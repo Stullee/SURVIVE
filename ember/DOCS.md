@@ -497,17 +497,25 @@ agent's workspace:
   planners, worksheets, guides, and CV and letter templates. At most 40 pages.
 - **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
-  sheet, plus a picture of each sheet. Formulas may only use common
-  functions and cells of the same workbook: no links to other files or the web.
-  Ember's code tells the agent where each sheet's data are and names a formula
-  that leaves data out or (since 0.32.0) points at a title, a header or an
-  empty cell below the data. To fix a few words or a formula of a long file,
-  the agent replaces just that passage (`workspace_write`'s `edit`, 0.32.0)
-  instead of writing the file again in parts; since 0.33.0 one edit can change
-  every copy of a passage when it says how many there are (a planner's 48
-  weekly tables). Ember's code also keeps the text a file held before the
-  agent overwrote, edited or deleted it (its newest 5), and `restore` brings it
-  back: live, an overwrite left a book's 24 KB interior as its 671-byte header.
+  sheet, plus a picture of each sheet, drawn since 0.37.5 from the file itself:
+  every number as Excel shows it once it has calculated the file. Formulas may
+  only use common functions and cells of the same workbook: no links to other
+  files or the web. Ember's code tells the agent where each sheet's data are and
+  names a formula that leaves data out or (since 0.32.0) points at a title, a
+  header or an empty cell below the data. Since 0.37.5 it also names one that
+  counts a total row or a header besides the data (`=SUM(C:C)` over a whole
+  column adds the total row under the data again), on the formula's own sheet,
+  over several columns and in a column's formula too; parts of the data that
+  formulas take together, such as four quarters of a year, are no longer named.
+  A CSV file of rows whose first line repeats the columns' titles has that line
+  left out, and an empty field is an empty cell. To fix a few words or a formula
+  of a long file, the agent replaces just that passage (`workspace_write`'s
+  `edit`, 0.32.0) instead of writing the file again in parts; since 0.33.0 one
+  edit can change every copy of a passage when it says how many there are (a
+  planner's 48 weekly tables). Ember's code also keeps the text a file held
+  before the agent overwrote, edited or deleted it (its newest 5), and `restore`
+  brings it back: live, an overwrite left a book's 24 KB interior as its
+  671-byte header.
 - **Listing photos** (`make_image`): up to three pages, sheets or pictures (or a
   zoomed-in region of one), fanned out next to a title, a subtitle and a badge,
   in Etsy's 4:3 size (3000 x 2250) or square or portrait; or a photo of words
@@ -548,7 +556,10 @@ agent's workspace:
 
 Pictures of a sheet (in `make_image` and the spreadsheets' own pictures) round
 as Excel does since 0.20.0, and a German workbook's (a cost statement's) are in
-German notation, 1.234,56 € and 31,97%.
+German notation, 1.234,56 € and 31,97%. Since 0.37.5 both are worked out from
+the file by the same code, a number in the General format is shown as Excel
+shows it (1234567, not 1.23457e+06), and a date in its column's format, also
+when a formula works it out.
 
 The agent reads the text of its PDF, Word and Excel files and copies files
 itself, for free (the workshop was paid for this). Pictures may have up to
@@ -1000,7 +1011,7 @@ books and sends no email.
 An ordinary cycle doesn't carry the marketing tools, and its plan doesn't show
 Pinterest, Bluesky or the blog, with three exceptions: a channel that waits for
 your setup still says so (so Ember doesn't ask you again), an ordinary cycle on
-a channel's own product (setting it up) keeps that channel, and (since 0.37.5)
+a channel's own product (setting it up) keeps that channel, and (since 0.37.6)
 Bluesky's numbers stay: the plan keeps one line with the account's followers
 and the live posts' reactions, and `bluesky_posts` reads each post's, so Ember
 can tell you how a post did (proposing posts stays a marketing cycle's). The
@@ -2215,7 +2226,7 @@ To stop Ember's access, delete the app password at Bluesky.
   each post's likes, reposts, replies and quotes, and any label Bluesky's
   moderation put on them. The agent's plan shows them (BLUESKY), and the
   metrics `bluesky_posts_live` and `bluesky_reactions` can measure a milestone.
-  Since 0.37.5 the agent reads them with `bluesky_posts` in any cycle but a
+  Since 0.37.6 the agent reads them with `bluesky_posts` in any cycle but a
   venture cycle (until then only in a marketing cycle): each post by its
   request number and day, with the account's followers and the posts made
   today against the daily limit. An ordinary cycle's plan and the daily review
@@ -2584,7 +2595,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.37.5 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.37.6 (by /u/your name)`.
 
 ## Amazon KDP
 
