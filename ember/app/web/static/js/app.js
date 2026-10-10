@@ -321,6 +321,8 @@
   }
 
   function agentName() { return (ui.data && ui.data.agent && ui.data.agent.name) || "Ember"; }
+  // 0.37.1: while the agent is paused or waits for money no unlock acts, and a veto window starts again once it runs
+  function vetoWaits() { var s = ui.data && ui.data.agent ? ui.data.agent.state : ""; return s === "paused" || s === "unfunded" || s === "dead"; }
 
   // ------------------------------------------------------------------ status vocabularies (icon + label, never color alone)
 
@@ -2834,7 +2836,9 @@
       a.description ? h("p", { class: "pre-line", text: String(a.description) }) : null,
       actionFlags(a.action_class),
       a.veto_until && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "⏱ " }),
-        h("strong", { text: "Your unlock: " }), name + "'s code approves it on " + fmtDateTime(a.veto_until) + " unless you decide first.") : null,
+        h("strong", { text: "Your unlock: " }), vetoWaits()
+          ? name + "'s code approves it 12 hours after " + name + " runs again (its veto window starts again then), unless you decide first."
+          : name + "'s code approves it on " + fmtDateTime(a.veto_until) + " unless you decide first.") : null,
       a.status === "pending" && a.decision_comment ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "↩ " }),
         String(a.decision_comment)) : null,  // 0.15.0: an unlock taken back before its approval ran
       a.unlock_ended && a.status === "pending" ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "⏱ " }),
@@ -3043,7 +3047,8 @@
     var name = agentName();
     var limit = limitText(email);
     var detail;
-    if (st === "waiting") detail = [name + " sends it by itself shortly; it checks for approved emails every few minutes."];
+    // 0.37.1: while Ember's mailbox can't be read, the email waits for it (a reply asking to stop may be there)
+    if (st === "waiting") detail = [ex.result ? endSentence(sentence(ex.result)) : name + " sends it by itself shortly; it checks for approved emails every few minutes."];
     else if (st === "waiting_limit") detail = [name + " has sent " + (limit === null ? "its emails" : "its " + plural(limit, "email")) + " for today, so this one waits for tomorrow's send limit."];
     else if (st === "running") detail = ex.started_at ? ["Sending since ", timeEl(ex.started_at), "."] : ["Sending now."];
     else if (st === "sent") detail = ["Sent ", timeEl(ex.finished_at || ex.started_at), ex.result ? ". " + endSentence(sentence(ex.result)) : "."];

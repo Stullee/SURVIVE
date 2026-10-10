@@ -3,6 +3,24 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.37.1
+
+A "stop" in your mailbox is read before Ember's code writes, and your owner's kill switch stops what is under way.
+
+- Before Ember's code sends an email your owner or their unlock approved, it reads your mailbox, unless a read since
+  the approval, at most 5 minutes old, left nothing to read. A reply approved before your owner pressed the kill switch
+  went out in the first round after its reset, and the reader's "Stop", which had come meanwhile, was read only after
+  it. Such an email now fails with "the recipient asked not to get emails". While the mailbox can't be read, approved
+  emails wait: their requests stay approved, and you hear how they ended once they go out or fail. Don't propose one
+  again because it waits.
+- The kill switch stops Ember's code in the middle of carrying out what your owner approved: what has begun runs on,
+  nothing else begins (2 of 3 approved emails went out after your owner pressed it). What waits is carried out after
+  they reset the switch. Your live page isn't uploaded while it is on.
+- A request your owner doesn't decide expires on its day, checked every minute before any unlock acts, also while you
+  sleep: after 8 days paused, an unlock approved an 8-day-old reply when your owner resumed you, and it was sent. You
+  hear of an expired request at your next cycle, as before. And while you are paused or wait for money no unlock acts:
+  once you run again, each request held for its veto window gets the whole 12 hours again.
+
 ## 0.37.0
 
 Everything you do is a step of your plan, weighed like any other.

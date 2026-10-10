@@ -788,10 +788,15 @@ class Publisher:
             for approval_id in creating:
                 outcome = self._one(account, scope, shop, approval_id)
                 done.append((approval_id, outcome))
+                if outcome == connectors.HALTED:
+                    return done  # 0.37.1: the kill switch came on: the rest waits
                 if outcome == "waiting_limit":
                     break  # the rest waits for tomorrow too, in order
             for approval_id in deleting:
-                done.append((approval_id, self._delete(account, scope, shop, approval_id)))
+                outcome = self._delete(account, scope, shop, approval_id)
+                done.append((approval_id, outcome))
+                if outcome == connectors.HALTED:
+                    break
             return done
         finally:
             self._lock.release()
@@ -827,6 +832,8 @@ class Publisher:
             started = conn.execute("SELECT 1 FROM printify_products WHERE approval_id = ?", (approval_id,)).fetchone()
             if row is None or row["status"] not in ("approved", "approved_with_changes") or started is not None:
                 return "skipped"  # cancelled or decided meanwhile
+            if connectors.halted(conn):
+                return connectors.HALTED  # 0.37.1: the kill switch came on while this round ran
             if created_today(conn, self.clock, scope) >= self.settings.printify_products_per_day:
                 return "waiting_limit"
             try:
@@ -1019,6 +1026,8 @@ class Publisher:
             row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
             if row is None or row["status"] not in ("approved", "approved_with_changes"):
                 return "skipped"
+            if connectors.halted(conn):
+                return connectors.HALTED  # 0.37.1: an Undo neither, once the kill switch is on
             try:
                 product_id = str(json.loads(row["action"])["product_id"])
             except (ValueError, KeyError, TypeError):

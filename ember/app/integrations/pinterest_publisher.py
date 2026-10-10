@@ -257,12 +257,20 @@ class Publisher:
                 for approval_id in [] if undos else self._approved(scope, "pinterest_pin"):
                     outcome = self._one(account, scope, approval_id)
                     done.append((approval_id, outcome))
+                    if outcome == connectors.HALTED:
+                        return done  # 0.37.1: the kill switch came on: the rest waits
                     if outcome == "waiting_limit":
                         break  # the rest waits for tomorrow too, in order
                 for approval_id in self._approved(scope, "pinterest_delete"):
-                    done.append((approval_id, self._delete(account, scope, approval_id)))
+                    outcome = self._delete(account, scope, approval_id)
+                    done.append((approval_id, outcome))
+                    if outcome == connectors.HALTED:
+                        return done
             for approval_id in self._approved(scope, TEST_EXECUTOR):  # with the sandbox off, it isn't made
-                done.append((approval_id, self._test(sandbox, approval_id)))
+                outcome = self._test(sandbox, approval_id)
+                done.append((approval_id, outcome))
+                if outcome == connectors.HALTED:
+                    break
             return done
         finally:
             self._lock.release()
@@ -359,6 +367,8 @@ class Publisher:
             started = conn.execute("SELECT 1 FROM pinterest_pins WHERE approval_id = ?", (approval_id,)).fetchone()
             if row is None or row["status"] not in ("approved", "approved_with_changes") or started is not None:
                 return "skipped"  # cancelled or decided meanwhile
+            if connectors.halted(conn):
+                return connectors.HALTED  # 0.37.1: the kill switch came on while this round ran
             if created_today(conn, self.clock, scope) >= self.settings.pinterest_pins_per_day:
                 return "waiting_limit"
             try:
@@ -508,6 +518,8 @@ class Publisher:
             row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
             if row is None or row["status"] not in ("approved", "approved_with_changes"):
                 return "skipped"
+            if connectors.halted(conn):
+                return connectors.HALTED  # 0.37.1: an Undo neither, once the kill switch is on
             try:
                 pin_id = str(json.loads(row["action"])["pin_id"])
             except (ValueError, KeyError, TypeError):
@@ -553,6 +565,8 @@ class Publisher:
             started = conn.execute("SELECT 1 FROM action_journal WHERE approval_id = ?", (approval_id,)).fetchone()
             if row is None or row["status"] not in ("approved", "approved_with_changes") or started is not None:
                 return "skipped"  # cancelled or decided meanwhile
+            if connectors.halted(conn):
+                return connectors.HALTED  # 0.37.1: the kill switch came on while this round ran
             connectors.begin(conn, approval_id, stamp)
             try:
                 if account is None:

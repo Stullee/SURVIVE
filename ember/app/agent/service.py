@@ -24,6 +24,7 @@ from ..db import Database
 from ..economy import burn
 from ..economy.clock import from_iso, to_iso
 from ..economy.costs import micros_to_usd
+from ..economy.life import KILLED_KEY
 from ..economy.metering import (
     EVENT_RESERVE_HOUR,
     MeteredModel,
@@ -57,7 +58,7 @@ from ..integrations.printify_connection import PrintifyConnection
 from ..products import blog, site
 from . import agenda, audit, metrics, netguard, news, policy, stages, store, ventures, website, workfiles
 from . import plan as plan_tree
-from .loop import NO_STEP, CycleEnd, CycleRunner, recover_records
+from .loop import NO_STEP, CycleEnd, CycleRunner, expire_requests, recover_records
 from .memory import CAPS, Memory
 from .sandbox import Jail, SandboxError, kind_of
 from .store import AgentScope
@@ -969,15 +970,25 @@ class Agent:
         milestone or a veto ended, then approve the requests whose veto window passed (one held by an unlock taken
         back waits for the owner; 0.15.0: none while unlocks are off, and they are taken back). Before the approved
         actions are carried out, in the scheduler's round. Then the owner's daily digest of the day before, once
-        (audit.py)."""
+        (audit.py). 0.37.1: first the requests the owner didn't decide within their days expire: only a cycle's start
+        expired them, after the round's unlocks, and on Resume after 8 days paused an unlock approved an 8-day-old
+        reply, which was sent. And while the life state stops the unlocks (paused, waiting for money), their veto
+        windows wait: once Ember runs again, each request held for one gets the whole window again (policy.restart)."""
         if self.executor_blocked():
+            if self.cycles_enabled and self.economy.health.lock_held and self._meta_time("windows_paused_at") is None:
+                self._set_time("windows_paused_at", self.clock.now())  # the life state stops the unlocks
             return
         self.take_back_while_off()
         scope = self.scope()
+        if expire_requests(self.db, scope, self.clock):
+            self.lift_sleep_cut()  # no request may wait any more: the sleep the agent chose stands
+        paused = self._meta_time("windows_paused_at") is not None
         with self.db.transaction() as conn:
-            happened = policy.keep(conn, scope, self.clock) + policy.run_due(
-                conn, scope, self.clock, self.unlocks_off()
-            )
+            happened = policy.keep(conn, scope, self.clock)  # what an unlock taken back held waits for the owner
+            if paused:
+                happened += policy.restart(conn, scope, self.clock)
+                self._set_time("windows_paused_at", None)
+            happened += policy.run_due(conn, scope, self.clock, self.unlocks_off())
             digests = audit.write_due(conn, scope, self.clock)
         for line in happened:
             events.record(self.db, "info", "control", line[:300])
@@ -1030,8 +1041,11 @@ class Agent:
 
     def publish_live(self) -> str | None:
         """0.16.0: upload the live view to the owner's website when it is due (every live.UPLOAD_MINUTES, at once when
-        the life state changed). Also while the agent is paused, waits for money or is dead: it costs no API money."""
-        if not self.cycles_enabled or not self.economy.health.lock_held:
+        the life state changed). Also while the agent is paused, waits for money or is dead: it costs no API money.
+        0.37.1: never while the kill switch is on, which stops everything Ember's code sends (it went on uploading
+        every 15 minutes): the page keeps its last upload, whose time tells its readers after an hour that Ember is
+        offline."""
+        if not self.cycles_enabled or not self.economy.health.lock_held or self.economy.life.flag(KILLED_KEY):
             return None
         with netguard.sealed() if self.mode == "dry_run" else contextlib.nullcontext():
             return self.live.run()

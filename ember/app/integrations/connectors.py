@@ -12,7 +12,8 @@ Now:
 * ``class_of``: a request's class, from its executor and action;
 * ``begin`` / ``finish`` / ``record``: the shared journal (``action_journal``). The email executor and the Etsy
   publisher write through it at the moments they write their own records (their behaviour is unchanged): the class,
-  the request, what it acts on, the state before and after, how it ended, and what would undo it (``undo_of``).
+  the request, what it acts on, the state before and after, how it ended, and what would undo it (``undo_of``);
+* ``halted`` (0.37.1): whether the kill switch is on, which every executor reads again before it begins an item.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from ..agent.store import AgentScope
+from ..economy.life import KILLED_KEY
 
 
 @dataclass(frozen=True)
@@ -231,6 +233,20 @@ def undo_of(name: str, status: str, subject: str | None) -> dict[str, Any] | Non
 
 def _json(value: Any) -> str | None:
     return None if value is None else json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+# 0.37.1: what a run says of the item it didn't begin because the kill switch came on (the item waits, approved)
+HALTED = "halted"
+
+
+def halted(conn: sqlite3.Connection) -> bool:
+    """0.37.1: whether the kill switch is on, as every executor reads it before it begins an item: in the transaction
+    that records the item's 'running' row (a kill can't come between the check and the row), and before work of the
+    item's own outside it (a page read from the owner's server). The scheduler's round checked the life state once,
+    before it began (Agent.executor_blocked): 2 of 3 approved emails went out after the owner pressed the switch. What
+    began runs on, once; the rest waits, and the run ends (HALTED)."""
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (KILLED_KEY,)).fetchone()
+    return row is not None and row[0] == "1"
 
 
 def begin(

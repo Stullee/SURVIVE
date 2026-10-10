@@ -65,7 +65,7 @@ def test_the_migration_drops_the_one_explore_step_and_a_venture_becomes_a_node(t
     conn.execute(node, (2, 1, "step", None, "explore@1", "create", "Explore your ventures", 1, NOW, NOW))
     conn.commit()
     conn.close()
-    assert migrate(db_file, discover_migrations(), backup_dir=tmp_path / "backups") == [91]
+    assert migrate(db_file, discover_migrations(), backup_dir=tmp_path / "backups") == [91, 92]
     conn = sqlite3.connect(db_file)
     conn.row_factory = sqlite3.Row
     explore = dict(conn.execute("SELECT status, closed_by, pinned, result FROM plan_nodes WHERE id = 2").fetchone())
