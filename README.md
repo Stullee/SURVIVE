@@ -238,6 +238,17 @@ went ahead holding $0.62 with $3.10 left, cost $3.21, and Ember died at -$0.08
 without its last will. Now only the day limits what a run keeps back, and the
 balance counts all of it.
 
+0.37.3 closes three gaps in timing at the approval boundary that the codebase
+analysis of 0.37.0 found (its 4.1.1 to 4.1.3). An approved email goes out only
+after Ember's code has read its mailbox since your approval: a "stop" that came
+while the kill switch was on, the app was down or reading failed was read after
+the first round had sent to its writer (§ 7 UWG). The kill switch stops a round
+that is already sending (2 of 3 approved emails went out after it was pressed),
+and the live page isn't uploaded while it is on. A request expires on its day
+before any unlock acts (on Resume after 8 days paused, an unlock approved an
+8-day-old reply), and a veto window that a pause interrupted gets its whole 12
+hours again once Ember runs.
+
 0.37.4: a spreadsheet's pictures show the buyer's file, and its Check line names
 what is wrong in it, not what is right. The pictures came from a second
 evaluator that read the spec: in the codebase analysis of 0.37.0 (findings 3.5,
@@ -316,19 +327,23 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   pinned key and only a post, the blog's list and the link page
   (`ember/app/integrations/sftp.py`, `site_publisher.py`). With the live view on
   (0.16.0), it uploads the live page, its banner and its chart there every 15
-  minutes, made from Ember's own numbers, with the agent's titles and last will
-  only as the owner approved each one (`live_view.py`). With Bluesky on
+  minutes (never while the kill switch is on, 0.37.3), made from Ember's own
+  numbers, with the agent's titles and last will only as the owner approved
+  each one (`live_view.py`). With Bluesky on
   (0.19.0), Ember's code logs in to `bsky.social` with the account's app
   password and posts what the owner approved to the account's own server at
   Bluesky, and nowhere else (`ember/app/integrations/bluesky_live.py`).
 - **Outside actions.** The agent has no tool that sends or posts anything. An
   email it proposes is sent by Ember's code only after the owner approves it,
   exactly as approved, once, to one recipient, with a footer saying an AI wrote
-  it and within a daily limit; a send is recorded before it starts and never
-  retried (`ember/app/integrations/executor.py`). A Reddit post becomes a link
-  the owner opens and posts from their own account; a KDP book (0.25.0) becomes
-  a package the owner publishes at KDP from their own account (Ember's code
-  never reaches Amazon).
+  it and within a daily limit, and (0.37.3) only after Ember's code read its
+  mailbox since the approval, so a "stop" waiting there is seen first; a send is
+  recorded before it starts and never retried
+  (`ember/app/integrations/executor.py`). The kill switch stops whatever
+  Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
+  post becomes a link the owner opens and posts from their own account; a KDP
+  book (0.25.0) becomes a package the owner publishes at KDP from their own
+  account (Ember's code never reaches Amazon).
 - **CSRF.** State-changing requests must carry an `X-Ember-Request: 1` header,
   which cross-site pages can't send.
 - **Strict CSP.** No inline scripts or styles; Chart.js is vendored, nothing is

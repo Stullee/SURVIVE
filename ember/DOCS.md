@@ -1364,8 +1364,11 @@ no longer shown); a study that failed three times stops until you press
   with its files, Copy buttons and a button that opens your KDP Bookshelf (see
   [Amazon KDP](#amazon-kdp)). A request you don't decide **expires**
   (emails and posts after 7 days, spending after 14, the rest after 30; the
-  card says when), the agent can **withdraw** one that is outdated (with its
-  reason), and each kind has its own limit of waiting requests (6 sales, 5
+  card says when; 0.37.3: checked every minute, before your unlocks act: only
+  a wake cycle's start expired them, and on Resume after a long pause an
+  unlock approved a reply past its days), the agent can **withdraw** one that
+  is outdated (with its reason), and each kind has its own limit of waiting
+  requests (6 sales, 5
   emails, 3 posts, 3 accounts, 3 spendings, 4 others), so waiting listings
   never block an email reply. Each card says what kind of action it is
   (0.13.0) and flags what matters for your decision: whether it reaches people,
@@ -1397,7 +1400,11 @@ no longer shown); a study that failed three times stops until you press
     unlock of them on **Run at once** was taken back at the upgrade).
 
   **Run unless I veto within 12 h** holds such a request on its card with the
-  time it will be approved, and you can still reject it. **Run at once**
+  time it will be approved, and you can still reject it. While Ember is
+  paused or waits for money no unlock acts, and its card says it is approved
+  12 hours after Ember runs again: once it runs, each request held this way
+  gets the whole 12 hours again (0.37.3: one whose window ran out during a
+  pause was approved the minute you resumed Ember). **Run at once**
   approves it when it is made. Each rule has a daily limit and a budget of
   actions. An unlock carries only a request that passes the checks its card
   shows (QA: a reply keeps "Re: …" and has at most 200 words, a listing has at
@@ -1590,7 +1597,14 @@ no longer shown); a study that failed three times stops until you press
   takes back every unlock too, as **Take back every unlock** does, so its reset
   approves nothing an unlock held. The dashboard keeps working. To undo it,
   change **Kill switch reset** in the app's **Configuration** tab to any other
-  number, save and restart the app.
+  number, save and restart the app. It also stops Ember's code in the middle
+  of carrying out what you approved (0.37.3: 2 of 3 approved emails went out
+  after the switch was pressed): what has begun runs on, once (an email being
+  handed over, a listing being created), and nothing else begins. What you
+  approved waits and is carried out after the reset (an email once Ember has
+  read its mailbox). The live view isn't uploaded while the switch is on: your
+  page keeps its last upload, whose time tells its readers after an hour that
+  Ember is offline (delete its files at your host if you want it gone).
 
 The agent hears about your decisions, messages and upgrades once, at its next
 wake-up.
@@ -1702,6 +1716,12 @@ included: encrypt your backups.
   stay. After a **Reject** nothing is sent.
 - Ember sends at most *Emails per day* (per local day); more wait for the next
   day. While an email waits, **Cancel sending** stops it.
+- Before an approved email goes out, Ember reads its mailbox, unless a read
+  that began after your approval, at most 5 minutes before, left nothing to
+  read (0.37.3): a "stop" that came while the kill switch was on, the app was
+  down or reading failed was read only after the first round had sent to its
+  writer. While the mailbox can't be read, or new mail is left to read, every
+  approved email waits, and its card says why.
 - Ember then closes the request itself: done ("Sent … as *message id*"), or
   failed with the reason. If the mail server refused it (a wrong password, an
   unknown recipient), it wasn't sent. If the connection broke while the email
@@ -2483,11 +2503,12 @@ The page has your site's head, header and footer and refreshes itself every 5
 minutes in an open tab. The page and the banner say when they were made (date
 and time) and that a time more than an hour old means Ember is offline: they
 can't tell by themselves when uploads stop (the app is down, the connection
-fails, a dry run). A part you switch off is replaced on your server by a version
-saying so (a banner you switched off doesn't keep showing an old balance), and
-switching **Ember live** off replaces the page, the banner and the chart with
-ones saying the live view is off. In a dry run the files go to the fake server
-and say "Probelauf".
+fails, a dry run, and since 0.37.3 the kill switch, which stops every upload
+until you reset it). A part you switch off is replaced on your server by a
+version saying so (a banner you switched off doesn't keep showing an old
+balance), and switching **Ember live** off replaces the page, the banner and
+the chart with ones saying the live view is off. In a dry run the files go to
+the fake server and say "Probelauf".
 
 ### Setting it up
 
